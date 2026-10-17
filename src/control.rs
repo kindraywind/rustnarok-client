@@ -749,6 +749,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.pick.iter().flat_map(|(list, _)| list.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
         .chain(game.pet.iter().flat_map(|pet| game.pet_window.button_boxes(pet)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
+        .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
             game.achievement_window
                 .button_boxes(&app.achievement_info, &game.achievements)
@@ -773,6 +775,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("Shop", game.shop.is_some()),
         ("Refine", game.refine.is_some()),
         ("Materials", game.materials.is_some()),
+        ("Roulette", game.roulette.is_some()),
         ("Achievements", game.achievement_window.frame.open),
         ("InventoryExpansion", game.expansion_asked.is_some()),
         ("PetAsked", game.pet_asked.is_some()),
@@ -855,6 +858,13 @@ fn game_state(app: &App, game: &Game) -> Value {
         "title": game.equipment.title,
         // Skills blocked after use: milliseconds left by skill ID, on the drawing's clock (still while a shot pauses it).
         "cooldowns": game.cooldowns.blocked(crate::control::now()).map(|(skill, left)| (skill.to_string(), json!(left.as_millis() as u64))).collect::<serde_json::Map<_, _>>(),
+        // The Lucky Roulette: points, bonus, prizes known, the wheel spinning, the prize waiting (or null).
+        "roulette": game.roulette.as_ref().map(|window| {
+            let now = crate::control::now();
+            let [gold, silver, bronze] = window.points;
+            let prize = window.shown_prize(now).map(|(row, column)| json!({"row": row, "column": column, "item": window.item_at((row, column))}));
+            json!({"gold": gold, "silver": silver, "bronze": bronze, "bonus": window.bonus, "prizes": window.prizes.len(), "spinning": window.spinning(now), "prize": prize})
+        }),
         // A taming item waiting for its monster.
         "capturing": game.capturing,
         "aimed_skill": game.targeting.map(|(id, level)| json!({"id": id, "level": level, "name": app.skill_info.get(&id).map(|info| info.name.as_str())})),
