@@ -566,6 +566,7 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_SPIRITS: u16 = 0x01D0;
 const CZ_REQ_ITEMCOMPOSITION_LIST: u16 = 0x017A;
 const ZC_ITEMCOMPOSITION_LIST: u16 = 0x017B;
 const CZ_REQ_ITEMCOMPOSITION: u16 = 0x017C;
@@ -1056,6 +1057,11 @@ pub enum MapEvent {
         equip: u16,
         card: u16,
         ok: bool,
+    },
+    /// How many spirit spheres (or coins) a unit carries; 0 takes them away.
+    Spirits {
+        id: u32,
+        count: u16,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
@@ -2783,6 +2789,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_ITEMCOMPOSITION_LIST => MapEvent::CardList(packet[4..].chunks_exact(2).map(|index| u16::from_le_bytes([index[0], index[1]])).collect()),
         // The result byte is rathena's "failure".
         ZC_ACK_ITEMCOMPOSITION => MapEvent::CardInserted { equip: u16_at(2), card: u16_at(4), ok: packet[6] == 0 },
+        ZC_SPIRITS => MapEvent::Spirits { id: u32_at(2), count: u16_at(6) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3454,6 +3461,15 @@ mod tests {
         let Some(MapEvent::MvpExp(90_000)) = decode_map_packet(&packet(ZC_MVP_GETTING_SPECIAL_EXP, 90_000)) else { panic!() };
         let Some(MapEvent::MvpOverweight) = decode_map_packet(&ZC_THROW_MVPITEM.to_le_bytes()) else { panic!() };
         assert_eq!([ZC_MVP, ZC_MVP_GETTING_ITEM, ZC_MVP_GETTING_SPECIAL_EXP, ZC_THROW_MVPITEM].map(packet_length), [Some(6), Some(6), Some(6), Some(2)]);
+    }
+
+    #[test]
+    fn decodes_spirits() {
+        let mut packet = ZC_SPIRITS.to_le_bytes().to_vec();
+        packet.extend_from_slice(&2_000_002u32.to_le_bytes());
+        packet.extend_from_slice(&5u16.to_le_bytes());
+        assert_eq!(Some(packet.len() as i32), packet_length(ZC_SPIRITS));
+        let Some(MapEvent::Spirits { id: 2_000_002, count: 5 }) = decode_map_packet(&packet) else { panic!() };
     }
 
     #[test]

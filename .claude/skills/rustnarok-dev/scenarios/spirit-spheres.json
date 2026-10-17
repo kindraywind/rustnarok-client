@@ -1,0 +1,22 @@
+{
+  "about": "Spirit spheres and coins (issue #54): a Monk with five spheres, then a Gunslinger with ten coins, circling the first account's character; a Novice again at the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@job 15"}, {"wait": 800},
+    {"say": "@spiritball 5"}, {"wait_for": {"packet": "0x01d0", "ms": 5000}},
+    {"wait": 300}, {"move": [900, 700]},
+    {"expect": {"spirits": 5}},
+    {"shot": "spheres", "crop": [412, 230, 200, 180], "threshold": 30},
+    {"say": "@spiritball 0"}, {"wait_for": {"packet": "0x01d0", "ms": 5000}},
+    {"expect": {"spirits": 0}},
+    {"say": "@job 24"}, {"wait": 800},
+    {"say": "@spiritball 10"}, {"wait_for": {"packet": "0x01d0", "ms": 5000}},
+    {"wait": 300},
+    {"expect": {"spirits": 10}},
+    {"shot": "coins", "crop": [412, 230, 200, 180], "threshold": 30},
+    {"say": "@spiritball 0"}, {"wait": 500},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}

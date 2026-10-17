@@ -174,12 +174,14 @@ def expect(wanted, state):
             for want in value:
                 if not any(all(item.get(field) == wanted for field, wanted in want.items()) for item in carried):
                     failures.append(f"nothing carried like {want}")
+        elif key == "spirits" and game.get("player", {}).get("spirits") != value:
+            failures.append(f"spirits {game.get('player', {}).get('spirits')} != {value}")
         elif key == "units_at_least":
             for kind, count in value.items():
                 have = sum(1 for unit in game.get("units", []) if unit.get("kind") == kind)
                 if have < count:
                     failures.append(f"{have} {kind} units < {count}")
-        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has"):
+        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits"):
             failures.append(f"unknown expectation {key}")
     return failures
 

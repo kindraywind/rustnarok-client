@@ -672,7 +672,8 @@ fn game_state(app: &App, game: &Game) -> Value {
                 NPC => json!("npc"),
                 other => json!(other),
             };
-            let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell});
+            let spirits = game.spirits.get(&Some(id)).copied().unwrap_or(0);
+            let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "spirits": spirits});
             if let Some(rect) = screen(Owner::Unit(id)) {
                 unit["screen"] = json!(rect);
             }
@@ -775,6 +776,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             "char_id": game.me.id,
             "job": game.me.job,
             "cell": game.player.cell,
+            "spirits": game.spirits.get(&None).copied().unwrap_or(0),
             "direction": game.player.direction,
             "moving": game.player.moving(),
             "casting": game.casts.contains_key(&None),
