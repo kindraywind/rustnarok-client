@@ -566,6 +566,9 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_START_CAPTURE: u16 = 0x019E;
+const CZ_TRYCAPTURE_MONSTER: u16 = 0x019F;
+const ZC_TRYCAPTURE_MONSTER: u16 = 0x01A0;
 const ZC_PETEGG_LIST: u16 = 0x01A6;
 const CZ_SELECT_PETEGG: u16 = 0x01A7;
 const ZC_CHANGESTATE_PET: u16 = 0x01A4;
@@ -1296,6 +1299,10 @@ pub enum MapEvent {
         id: u32,
         name: String,
     },
+    /// A taming item was used: pick the monster to tame.
+    CaptureStart,
+    /// The monster was tamed (its egg comes next), or not.
+    CaptureResult(bool),
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
         id: usize,
@@ -2357,6 +2364,11 @@ impl MapSession {
         self.stream.write_all(&encode_pet_act(act))
     }
 
+    /// Tries to tame this monster (after `CaptureStart`).
+    pub fn try_capture(&mut self, monster: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_try_capture(monster))
+    }
+
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
     pub fn card_list(&mut self, card: u16) -> io::Result<()> {
         self.stream.write_all(&encode_card_list(card))
@@ -3049,6 +3061,14 @@ fn encode_pet_act(act: &PetAct) -> [u8; 6] {
     packet
 }
 
+/// CZ_TRYCAPTURE_MONSTER: the monster to tame.
+fn encode_try_capture(monster: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_TRYCAPTURE_MONSTER.to_le_bytes());
+    packet[2..].copy_from_slice(&monster.to_le_bytes());
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -3487,6 +3507,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_PET_ACT => MapEvent::PetAct { id: u32_at(2), act: PetAct::decode(u32_at(6) as i32) },
         // ID, group, name, title.
         ZC_ACK_REQNAMEALL_NPC => MapEvent::UnitName { id: u32_at(2), name: c_string(&packet[10..34]) },
+        ZC_START_CAPTURE => MapEvent::CaptureStart,
+        ZC_TRYCAPTURE_MONSTER => MapEvent::CaptureResult(packet[2] == 1),
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -4427,6 +4449,15 @@ mod tests {
             ZC_ACK_REQNAMEALL_NPC,
         ];
         assert_eq!(ids.map(packet_length), [Some(-1), Some(4), Some(11), Some(37), Some(7), Some(3), Some(26), Some(10), Some(6), Some(58)]);
+    }
+
+    #[test]
+    fn decodes_taming() {
+        let Some(MapEvent::CaptureStart) = decode_map_packet(&[0x9E, 0x01]) else { panic!() };
+        let Some(MapEvent::CaptureResult(true)) = decode_map_packet(&[0xA0, 0x01, 1]) else { panic!() };
+        let Some(MapEvent::CaptureResult(false)) = decode_map_packet(&[0xA0, 0x01, 0]) else { panic!() };
+        assert_eq!(encode_try_capture(110_000_123), [0x9F, 0x01, 0xFB, 0x77, 0x8E, 0x06]);
+        assert_eq!([ZC_START_CAPTURE, CZ_TRYCAPTURE_MONSTER, ZC_TRYCAPTURE_MONSTER].map(packet_length), [Some(2), Some(6), Some(3)]);
     }
 
     #[test]
