@@ -57,6 +57,8 @@ pub struct Shown {
     pub identified: bool,
     pub refine: u8,
     pub cards: [u32; 4],
+    /// A broken item's line ("This item has been damaged."), shown first in red.
+    pub damaged: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -130,7 +132,8 @@ impl ItemWindow {
     /// The description, wrapped to the text column (colors kept per piece).
     pub fn lines(&self, items: &HashMap<u32, ItemInfo>, wrap: &dyn Fn(&str, f32) -> ColoredLines) -> ColoredLines {
         let Some(info) = items.get(&self.shown.item) else { return Vec::new() };
-        info.description(self.shown.identified).iter().flat_map(|line| wrap(line, TEXT_WIDTH)).collect()
+        let damaged = self.shown.damaged.iter().map(|line| format!("^ff0000{line}^000000"));
+        damaged.chain(info.description(self.shown.identified).iter().cloned()).flat_map(|line| wrap(&line, TEXT_WIDTH)).collect()
     }
 
     /// The pictures to load: the item's, and its cards' icons.
@@ -200,7 +203,7 @@ mod tests {
     fn grows_a_card_row_for_slotted_items() {
         let knife = ItemInfo { name: "Knife".into(), resource: "나이프".into(), slots: 3, ..Default::default() };
         let items = HashMap::from([(1201, knife)]);
-        let mut window = ItemWindow::new(Shown { item: 1201, identified: true, refine: 0, cards: [0; 4] });
+        let mut window = ItemWindow::new(Shown { item: 1201, identified: true, refine: 0, cards: [0; 4], damaged: None });
         assert_eq!(window.slots(&items), 3);
         assert_eq!(window.height(&items), SIZE[1] + CARDS_GAP + CARD_ROW);
         window.shown.identified = false;
