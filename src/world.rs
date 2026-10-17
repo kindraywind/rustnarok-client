@@ -305,6 +305,8 @@ pub struct World {
     model_pipeline: wgpu::RenderPipeline,
     water_pipeline: wgpu::RenderPipeline,
     sprite_pipeline: wgpu::RenderPipeline,
+    /// Shadows: drawn like sprites, but without writing depth.
+    shadow_pipeline: wgpu::RenderPipeline,
     /// Effects blended over, and added on; the same for effect shapes.
     effect_pipelines: [wgpu::RenderPipeline; 2],
     mesh_pipelines: [wgpu::RenderPipeline; 2],
@@ -451,6 +453,9 @@ impl World {
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &SPRITE_ATTRIBUTES,
         };
+        // A shadow and its sprite share a depth; rounding in the two quads' divides left the shadow nearer in places,
+        // so a shadow writing depth cut holes in its own sprite. Shadows lie on what's under them and hide nothing.
+        let shadow_pipeline = pipeline("sprite", "sprite_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false);
         let additive = wgpu::BlendState {
             color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
             alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
@@ -517,6 +522,7 @@ impl World {
             model_pipeline,
             water_pipeline,
             sprite_pipeline,
+            shadow_pipeline,
             effect_pipelines,
             mesh_pipelines,
             depth: RefCell::new(None),
@@ -535,6 +541,8 @@ pub struct WorldFrame<'a> {
     pub world: &'a World,
     pub view: &'a View,
     pub billboards: &'a [Billboard<'a>],
+    /// How many of the billboards, first, are shadows.
+    pub shadows: usize,
     pub effects: &'a [EffectQuad<'a>],
     pub meshes: &'a [EffectMesh<'a>],
     /// Seconds since the map was entered, for animated textures.
@@ -657,9 +665,11 @@ impl WorldPass for WorldFrame<'_> {
             pass.draw(0..6, 0..1);
         }
         if let Some(buffer) = &sprite_buffer {
-            pass.set_pipeline(&world.sprite_pipeline);
             pass.set_vertex_buffer(0, buffer.slice(..));
             for (index, (texture, ..)) in self.billboards.iter().enumerate() {
+                if index == 0 || index == self.shadows {
+                    pass.set_pipeline(if index < self.shadows { &world.shadow_pipeline } else { &world.sprite_pipeline });
+                }
                 let first = index as u32 * 6;
                 pass.set_bind_group(1, texture.bind_group(), &[]);
                 pass.draw(first..first + 6, 0..1);
