@@ -11,7 +11,7 @@
 //! GM commands or /organize; `RUSTNAROK_CLIENT_SAY_AT` seconds in instead),
 //! `RUSTNAROK_CLIENT_PICKUP=1` (pick up the nearest item once one lies around), `RUSTNAROK_CLIENT_INVENTORY=1` (open the inventory),
 //! `RUSTNAROK_CLIENT_CURSOR=x,y` (where the pointer starts, to see hover labels in screenshots),
-//! `RUSTNAROK_CLIENT_CAMERA=yaw,pitch,zoom` (start the camera turned, in degrees and zoom units),
+//! `RUSTNAROK_CLIENT_CAMERA=yaw,pitch,zoom` (the camera turned, in degrees and zoom units, on every map),
 //! `RUSTNAROK_CLIENT_WEAR=1` (put on every piece of equipment carried, once the inventory is in), `RUSTNAROK_CLIENT_EQUIPMENT=1` (open
 //! the equipment window), `RUSTNAROK_CLIENT_SHOT_LOADING=1` (screenshot the loading screen instead of the game),
 //! `RUSTNAROK_CLIENT_SKILLS=1` (open the skill window), `RUSTNAROK_CLIENT_SKILL=<id>:<level>` (use a skill 3 seconds in, on oneself
@@ -643,7 +643,15 @@ struct CameraGoal {
 
 impl CameraGoal {
     fn new(indoor: bool) -> Self {
-        Self { yaw: if indoor { YAW_INDOOR } else { 0.0 }, pitch: PITCH, zoom: ZOOM, indoor, dragging: None, last_press: None }
+        let mut goal = Self { yaw: if indoor { YAW_INDOOR } else { 0.0 }, pitch: PITCH, zoom: ZOOM, indoor, dragging: None, last_press: None };
+        // RUSTNAROK_CLIENT_CAMERA holds on every map, warps included.
+        if let Some([yaw, pitch, zoom]) = std::env::var("RUSTNAROK_CLIENT_CAMERA").ok().and_then(|camera| {
+            let values: Vec<f32> = camera.split(',').filter_map(|value| value.parse().ok()).collect();
+            <[f32; 3]>::try_from(values).ok()
+        }) {
+            (goal.yaw, goal.pitch, goal.zoom) = (yaw, pitch, zoom);
+        }
+        goal
     }
 
     /// The camera already in place, for a fresh map.
@@ -4470,13 +4478,7 @@ impl App {
                 let sprites = SpriteSet::player(&self.grf, &look, &self.look_tables);
                 let mut player = Actor::new(me.name.clone(), sprites, position.map(i32::from), direction, 150);
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
-                let mut camera_goal = CameraGoal::new(self.indoor.contains(&map_key(&map)));
-                if let Some([yaw, pitch, zoom]) = std::env::var("RUSTNAROK_CLIENT_CAMERA").ok().and_then(|camera| {
-                    let values: Vec<f32> = camera.split(',').filter_map(|value| value.parse().ok()).collect();
-                    <[f32; 3]>::try_from(values).ok()
-                }) {
-                    (camera_goal.yaw, camera_goal.pitch, camera_goal.zoom) = (yaw, pitch, zoom);
-                }
+                let camera_goal = CameraGoal::new(self.indoor.contains(&map_key(&map)));
                 let camera = camera_goal.camera(world.cell_position(position.map(f32::from)));
                 let now = Instant::now();
                 let minimap = minimap::load_map(gpu, &self.grf, &map);

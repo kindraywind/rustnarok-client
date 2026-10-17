@@ -1,0 +1,601 @@
+{
+ "about": "A player wearing a hat, sunglasses, a balloon, flapping wings, a knife and a guard, standing and in the battle stance (Heal cast on oneself strikes it) facing each of the eight ways, then sitting: headgear used to vanish in some frames and wings to show through the body (layers of one sprite fought over depth), and animated wings stood frozen.",
+ "account": "",
+ "slot": 0,
+ "env": {
+  "RUSTNAROK_CLIENT_CAMERA": "0,45,65"
+ },
+ "steps": [
+  {
+   "say": "@warp prt_fild08 170 360"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "say": "@killmonster2"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@heal"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "say": "@itemreset"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "say": "@item 1201 1"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "say": "@item 2101 1"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "say": "@item 2220 1"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "say": "@item 2201 1"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "say": "@item 19353 1"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "say": "@item 480069 1"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "click": [
+    11,
+    225
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "click_on": {
+    "inventory_item": 1201
+   },
+   "count": 2
+  },
+  {
+   "wait_for": {
+    "event": "Equipped",
+    "ms": 5000
+   }
+  },
+  {
+   "click_on": {
+    "inventory_item": 2101
+   },
+   "count": 2
+  },
+  {
+   "wait_for": {
+    "event": "Equipped",
+    "ms": 5000
+   }
+  },
+  {
+   "click_on": {
+    "inventory_item": 2220
+   },
+   "count": 2
+  },
+  {
+   "wait_for": {
+    "event": "Equipped",
+    "ms": 5000
+   }
+  },
+  {
+   "click_on": {
+    "inventory_item": 2201
+   },
+   "count": 2
+  },
+  {
+   "wait_for": {
+    "event": "Equipped",
+    "ms": 5000
+   }
+  },
+  {
+   "click_on": {
+    "inventory_item": 19353
+   },
+   "count": 2
+  },
+  {
+   "wait_for": {
+    "event": "Equipped",
+    "ms": 5000
+   }
+  },
+  {
+   "click_on": {
+    "inventory_item": 480069
+   },
+   "count": 2
+  },
+  {
+   "wait_for": {
+    "event": "Equipped",
+    "ms": 5000
+   }
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "click": [
+    512,
+    442
+   ]
+  },
+  {
+   "wait": 1200
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "player.direction": 0,
+     "player.moving": false
+    }
+   }
+  },
+  {
+   "shot": "gear-stand-0",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@useskill 28 1 {first}"
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "shot": "gear-ready-0",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "click": [
+    442,
+    442
+   ]
+  },
+  {
+   "wait": 1200
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "player.direction": 1,
+     "player.moving": false
+    }
+   }
+  },
+  {
+   "shot": "gear-stand-1",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@useskill 28 1 {first}"
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "shot": "gear-ready-1",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "click": [
+    442,
+    390
+   ]
+  },
+  {
+   "wait": 1200
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "player.direction": 2,
+     "player.moving": false
+    }
+   }
+  },
+  {
+   "shot": "gear-stand-2",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@useskill 28 1 {first}"
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "shot": "gear-ready-2",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "click": [
+    442,
+    338
+   ]
+  },
+  {
+   "wait": 1200
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "player.direction": 3,
+     "player.moving": false
+    }
+   }
+  },
+  {
+   "shot": "gear-stand-3",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@useskill 28 1 {first}"
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "shot": "gear-ready-3",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "click": [
+    512,
+    338
+   ]
+  },
+  {
+   "wait": 1200
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "player.direction": 4,
+     "player.moving": false
+    }
+   }
+  },
+  {
+   "shot": "gear-stand-4",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@useskill 28 1 {first}"
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "shot": "gear-ready-4",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "click": [
+    582,
+    338
+   ]
+  },
+  {
+   "wait": 1200
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "player.direction": 5,
+     "player.moving": false
+    }
+   }
+  },
+  {
+   "shot": "gear-stand-5",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@useskill 28 1 {first}"
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "shot": "gear-ready-5",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "click": [
+    582,
+    390
+   ]
+  },
+  {
+   "wait": 1200
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "player.direction": 6,
+     "player.moving": false
+    }
+   }
+  },
+  {
+   "shot": "gear-stand-6",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@useskill 28 1 {first}"
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "shot": "gear-ready-6",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "click": [
+    582,
+    442
+   ]
+  },
+  {
+   "wait": 1200
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "player.direction": 7,
+     "player.moving": false
+    }
+   }
+  },
+  {
+   "shot": "gear-stand-7",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@useskill 28 1 {first}"
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "shot": "gear-ready-7",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "key": "Insert"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "shot": "gear-sit",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "key": "Insert"
+  },
+  {
+   "wait": 800
+  }
+ ]
+}
