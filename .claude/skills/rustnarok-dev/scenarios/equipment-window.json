@@ -3,12 +3,60 @@
   "account": "",
   "slot": 0,
   "steps": [
-    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
-    {"say": "@heal"}, {"wait": 300},
-    {"say": "@item 2301 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
-    {"key": "Alt+Q"}, {"wait": 500},
-    {"expect": {"windows_open": ["Equipment"]}},
-    {"move": [900, 650]},
-    {"shot": "equipment", "crop": [478, 200, 284, 192]}
+    {
+      "say": "@warp iz_int01 18 26"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@job 4"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@item 2301 1"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Alt+Q"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Equipment"
+        ]
+      }
+    },
+    {
+      "move": [
+        900,
+        650
+      ]
+    },
+    {
+      "shot": "equipment",
+      "crop": [
+        478,
+        200,
+        284,
+        192
+      ]
+    }
   ]
 }

@@ -13,6 +13,17 @@ use crate::world;
 /// Sprite actions: each has 8 directions. Indices by kind of unit.
 pub const IDLE: usize = 0;
 pub const WALK: usize = 1;
+
+/// The status (EFST_ON_PUSH_CART) a unit pushing a cart has; its value is the cart's type.
+pub const PUSH_CART: u16 = 673;
+
+// ponytail: cart types 1 to 9 as 손수레, 손수레1 … 손수레8, as the files run; baby jobs' carts (베이비손수레…) not yet.
+/// The sprite (without extension) of a pushcart type.
+pub fn cart_path(kind: i32) -> String {
+    let number = if kind > 1 { (kind - 1).to_string() } else { String::new() };
+    format!("data\\sprite\\이팩트\\손수레{number}")
+}
+
 /// Players only.
 pub const SIT: usize = 2;
 pub const PICKUP: usize = 3;
@@ -726,6 +737,8 @@ pub struct Actor {
     pub sitting: bool,
     /// When a dying unit is removed.
     pub remove_at: Option<Instant>,
+    /// The pushcart it pulls, drawn behind it.
+    pub cart: Option<SpriteSet>,
     /// The action and frame last seen, so a frame's sound plays once each time it comes up.
     heard: Option<(usize, usize)>,
 }
@@ -752,6 +765,7 @@ impl Actor {
             ready: false,
             sitting: false,
             remove_at: None,
+            cart: None,
             heard: None,
         }
     }

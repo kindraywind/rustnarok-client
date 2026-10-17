@@ -1,0 +1,95 @@
+{
+  "about": "A merchant's pushcart: drawn behind them standing and walking, and seen by another player (issue #34). The first account is made a Merchant with a cart.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 161 176"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@job 5"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@allskill"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@cart 1"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "settle": 2500
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "merchant-cart",
+      "crop": [
+        380,
+        220,
+        260,
+        220
+      ]
+    },
+    {
+      "click": [
+        620,
+        470
+      ]
+    },
+    {
+      "wait": 350
+    },
+    {
+      "shot": "merchant-walking",
+      "crop": [
+        380,
+        220,
+        340,
+        300
+      ]
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "as": "second",
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "as": "second",
+      "shot": "seen-by-another",
+      "crop": [
+        300,
+        160,
+        480,
+        420
+      ]
+    }
+  ]
+}
