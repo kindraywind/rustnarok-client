@@ -3909,6 +3909,9 @@ impl App {
                     game.escape = None;
                 }
                 game.player.revive();
+                // The NPC is left behind: its shop and its buy-or-sell question close (the server doesn't say so).
+                game.shop = None;
+                game.deal_choice = None;
                 if map == game.map {
                     // A teleport on the same map: no loading, but the server takes the player off the map until
                     // the load is acknowledged (it drops everything else till then) and sends what's in view again.
