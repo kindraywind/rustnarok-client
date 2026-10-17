@@ -70,6 +70,7 @@ mod pick_list;
 mod quest;
 mod refine;
 mod render;
+mod roulette;
 mod shop;
 mod skills;
 mod sound;
@@ -536,6 +537,8 @@ struct Game {
     refine: Option<refine::Refine>,
     /// The material window (Change Material, Four Spirit Analysis).
     materials: Option<material::Materials>,
+    /// The Lucky Roulette's window.
+    roulette: Option<roulette::Roulette>,
     viewing: Option<Viewed>,
     bank: Option<bank::Bank>,
     trade_asked: Option<(String, u32, u16)>,
@@ -1316,6 +1319,8 @@ impl Game {
             || self.mail.hit(cursor).is_some()
             || self.quest_window.hit(cursor, &self.quests).is_some()
             || self.achievement_window.covers(cursor)
+            || self.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || roulette::icon_hit(cursor)
             || self.chat.contains(cursor)
             || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -1620,6 +1625,12 @@ impl Game {
             (Picking::Hatch, Some(egg)) => self.session.hatch(egg.index),
             (Picking::Hatch, None) => Ok(()),
         };
+    }
+
+    /// Closes the roulette's window; the server answers nothing.
+    fn close_roulette(&mut self) {
+        let _ = self.session.roulette(net::RouletteRequest::Close);
+        self.roulette = None;
     }
 
     /// Opens the pet window (or brings it up) with fresh news of the pet.
@@ -1936,6 +1947,7 @@ struct Assets {
     achievement: achievement::Assets,
     status: status::Assets,
     pet: pet::Assets,
+    roulette: roulette::Assets,
     item_window: iteminfo::Assets,
     guild: guild::Assets,
     clan: clan::Assets,
@@ -2036,6 +2048,7 @@ impl Assets {
             achievement: achievement::Assets::load(gpu, grf),
             status: status::Assets::load(gpu, grf),
             pet: pet::Assets::load(gpu, grf),
+            roulette: roulette::Assets::load(gpu, grf),
             item_window: iteminfo::Assets::load(gpu, grf),
             guild: guild::Assets::load(gpu, grf),
             clan: clan::Assets::load(gpu, grf),
@@ -3028,6 +3041,24 @@ impl App {
                     }
                 }
             }
+            // The Lucky Roulette: START spins, Get Prize claims (neither while the wheel spins), close lets it go.
+            Scene::Game(game) if game.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let window = game.roulette.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                match window.click(hit, control::now()) {
+                    Some(roulette::Action::Spin) => _ = game.session.roulette(net::RouletteRequest::Spin),
+                    Some(roulette::Action::Claim) => _ = game.session.roulette(net::RouletteRequest::Claim),
+                    Some(roulette::Action::Busy) => game.chat_line(self.messages.get(roulette::SPINNING).cloned().unwrap_or_default(), CHAT_ERROR),
+                    Some(roulette::Action::Close) => game.close_roulette(),
+                    None => {}
+                }
+            }
+            // Its icon asks for it.
+            Scene::Game(game) if roulette::icon_hit(cursor) => {
+                if game.roulette.is_none() {
+                    let _ = game.session.roulette(net::RouletteRequest::Open);
+                }
+            }
             // The material window: OK sends what's in; Cancel and the close button send nothing in (rathena forgets the
             // window either way).
             Scene::Game(game) if game.materials.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
@@ -3424,6 +3455,9 @@ impl App {
             game.mail.drag_to(self.cursor);
             game.quest_window.frame.drag_to(self.cursor, 466.0);
             game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
+            if let Some(window) = &mut game.roulette {
+                window.frame.drag_to(self.cursor, roulette::HEIGHT);
+            }
             if let Some(window) = &mut game.audio_window
                 && window.drag_to(self.cursor, &mut self.sound)
                 && let Some(audio) = &mut self.audio
@@ -3692,7 +3726,8 @@ impl App {
                     | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
                     | game.mail.drop_drag()
                     | game.quest_window.frame.drop_drag()
-                    | game.achievement_window.frame.drop_drag();
+                    | game.achievement_window.frame.drop_drag()
+                    | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag());
                 // A slider let go keeps its volume for next time.
                 let slid = game.audio_window.as_mut().is_some_and(options::AudioWindow::drop_drag);
                 if slid {
@@ -3784,6 +3819,14 @@ impl App {
             && game.mail.hit(cursor).is_some()
         {
             game.mail.start_drag(cursor);
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.roulette.as_ref().and_then(|window| window.hit(cursor))
+        {
+            if hit == roulette::Hit::Title(TitleHit::Title) {
+                game.roulette.as_mut().unwrap().frame.start_drag(cursor);
+            }
             return;
         }
         if let Scene::Game(game) = &mut self.scene
@@ -4265,6 +4308,7 @@ impl App {
                 Key::Named(NamedKey::Escape) if game.world_map.is_some() => game.world_map = None,
                 Key::Named(NamedKey::Escape) if game.pick.is_some() => game.answer_pick(None),
                 Key::Named(NamedKey::Escape) if game.capturing => game.capturing = false,
+                Key::Named(NamedKey::Escape) if game.roulette.is_some() => game.close_roulette(),
                 Key::Named(NamedKey::Escape) if game.targeting.is_some() => game.targeting = None,
                 Key::Named(NamedKey::Escape) if !game.chat.typing().is_empty() => game.chat.typing().clear(),
                 Key::Named(NamedKey::Escape) => game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: false }) },
@@ -4581,6 +4625,7 @@ impl App {
                     trade: None,
                     refine: None,
                     materials: None,
+                    roulette: None,
                     viewing: None,
                     bank: None,
                     trade_asked: None,
@@ -5029,8 +5074,9 @@ impl App {
                 game.player.revive();
                 // The NPC is left behind: its shop and its buy-or-sell question close (the server doesn't say so).
                 game.close_shop();
-                // rathena forgets the refine window on a map change; the material window goes too.
+                // rathena forgets the refine window on a map change; the material window and the roulette go too.
                 game.refine = None;
+                game.roulette = None;
                 game.materials = None;
                 game.deal_choice = None;
                 if map == game.map {
@@ -5974,6 +6020,45 @@ impl App {
             MapEvent::AchievementReward { .. } => {}
             MapEvent::TitleChanged { ok: true, title } => game.equipment.title = title,
             MapEvent::TitleChanged { .. } => {}
+            // The Lucky Roulette: opened (asked or by @roulette), its prizes, a spin, a claim.
+            MapEvent::RouletteOpen { prize, bonus, points } => {
+                let window = game.roulette.get_or_insert_with(roulette::Roulette::new);
+                (window.prize, window.bonus, window.points) = (prize, bonus, points);
+                if window.prizes.is_empty() {
+                    let _ = game.session.roulette(net::RouletteRequest::Prizes);
+                }
+            }
+            MapEvent::RoulettePrizes(prizes) => {
+                if let Some(window) = &mut game.roulette {
+                    window.prizes = prizes;
+                }
+            }
+            // ponytail: the wheel's sound plays as it starts; when the real client plays it isn't known.
+            MapEvent::RouletteSpun { result, row, column, bonus, points } => {
+                if let Some(window) = &mut game.roulette {
+                    (window.bonus, window.points) = (bonus, points);
+                    if result == 0 || result == 3 {
+                        window.spun(row, column, control::now());
+                        if let Some(audio) = &mut self.audio {
+                            audio.play(grf, "roulette.wav", 1.0);
+                        }
+                    }
+                }
+                if let Some(id) = roulette::spin_message(result) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
+            MapEvent::RouletteClaimed { result, bonus } => {
+                if let Some(window) = &mut game.roulette {
+                    window.bonus = bonus;
+                    if result == 0 {
+                        window.prize = None;
+                    }
+                }
+                if let Some(id) = roulette::claim_message(result) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
             MapEvent::IdentifyList(indexes) => {
                 let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
                 if items.is_empty() {
@@ -7180,6 +7265,7 @@ impl App {
         pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.achievement_window.icons(achievement_info));
+        pick_icons.extend(game.roulette.as_ref().map(|window| window.icons(items)).unwrap_or_default());
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         if game.vend_setup.is_some() {
@@ -7474,6 +7560,11 @@ impl App {
             items,
             pointer,
         );
+        // ponytail: the roulette's icon stands left of the minimap; where the real client puts it isn't known.
+        roulette::draw_icon(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.roulette, font, messages, pointer.0);
+        if let Some(window) = &game.roulette {
+            window.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.roulette, icons, items, font, messages, control::now(), pointer);
+        }
         if let Some(list) = &game.emotion_list {
             list.draw(&mut shop_layer, &assets.chrome, font, messages, game.emotion_sprite.as_ref(), &emotion_icons, pointer.0);
         }
