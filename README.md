@@ -13,8 +13,8 @@ from the player's files when it runs.
 
 ## What works
 
-- **Login to map**: the 2018+ login window (saved ID), server select, character select with sprites, character
-  creation (doram included) and deletion with its birthdate check, the loading screen.
+- **Login to map**: the 2018+ login window (saved ID), server select, character select with sprites and the 4-digit
+  PIN pad, character creation (doram included) and deletion with its birthdate check, the loading screen.
 - **The world**: GND ground with lightmaps, RSW models (RSM 1.x), water, GAT walkability, the camera (right drag
   turns, wheel zooms), cursors, minimap with NPC marks and party members, the world map.
 - **Characters**: players with heads, headgear, weapons, shields and garments; monsters, NPCs, warp portals; walking,
@@ -94,7 +94,7 @@ The binary (`src/main.rs` and its modules) is the game: `render` (wgpu: sprites,
 table `effects.txt`), `sound` (music and effects over cpal), `control` (the test-driver socket), and one module per
 window: `basic_info`, `inventory`, `equipment`, `iteminfo`, `status`, `skills`, `hotkeys`, `chat`, `party`, `guild`,
 `storage`, `shop`, `trade`, `chatroom`, `vend`, `mail`, `quest`, `escape`, `options`, `menu`, `minimap`, `worldmap`,
-`char_select`, `char_make`.
+`char_select`, `char_make`, `pin`.
 
 `main.rs` holds the scenes (login, character select, game), the game state, input, the server's events and
 drawing. The UI draws in a fixed 1024×768 canvas, scaled to the window.

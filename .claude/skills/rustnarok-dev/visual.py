@@ -7,7 +7,7 @@
   visual.py check <scenario.json>...                                baseline, this tree, then diff: the PR's pictures
   visual.py suite                                                   check every scenario in scenarios/, one report
 
-A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} with steps such as
+A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": {...}, "steps": [...]} with steps such as
   {"say": "@warp prontera 156 180"}  {"settle": 1500}  {"wait": 1500}  {"key": "Alt+E"}  {"type": "hello"}
   {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]]}  {"move": [x, y]}
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
@@ -19,7 +19,7 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
   {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command)
   {"expect": {"chat": "Item created.", "inventory_items": 5, "hp_at_least": 40, "map": "iz_int01.gat",
               "windows_open": ["Inventory"], "windows_closed": ["Skills"], "units_at_least": {"monster": 10},
-              "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null},
+              "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null}, "state": {"pin": "ask"},
               "identified": [1201], "unidentified": [1202], "inventory_has": [{"id": 1201, "cards": [4035, 0, 0, 0]}]}}
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
@@ -60,16 +60,39 @@ def wait_for_game(timeout=60):
     raise RuntimeError(f"not in the game after {timeout}s: {json.dumps(state)[:300]}")
 
 
+def wait_for_char_select(timeout=60):
+    """Until the client is at character select (and any initial 0x08b9 PIN state packet has arrived)."""
+    deadline = time.time() + timeout
+    state = {}
+    while time.time() < deadline:
+        state = drive.send({"cmd": "state"})
+        if state.get("scene") == "char_select":
+            drive.send({"cmd": "wait", "packet": "0x08b9", "ms": 1000})
+            time.sleep(0.05)
+            return drive.send({"cmd": "state"})
+        time.sleep(0.5)
+    raise RuntimeError(f"not at char_select after {timeout}s: {json.dumps(state)[:300]}")
+
+
 def launch_one(binary, player):
-    """One client in the game as `player` ({"account", "slot", "env"}), on the client `drive.use` points at."""
+    """One client as `player` ({"account", "slot", "start", "env"}), on the client `drive.use` points at."""
+    at_select = player.get("start") == "char_select"
+    slot = "select" if at_select else str(player.get("slot", "0"))
     for attempt in range(6):
-        drive.launch(player.get("account", ""), str(player.get("slot", "0")), binary=binary, env_extra=player.get("env", {}), quiet=True)
+        drive.launch(player.get("account", ""), slot, binary=binary, env_extra=player.get("env", {}), quiet=True)
         try:
-            return wait_for_game()
+            return wait_for_char_select() if at_select else wait_for_game()
         except RuntimeError:
             drive.quit_quietly()
             time.sleep(10)  # the server still holds the last session
-    raise RuntimeError("could not get into the game")
+    raise RuntimeError("could not launch client")
+
+
+def player_name(state):
+    if "game" in state:
+        return state["game"]["player"]["name"]
+    chars = state.get("characters") or []
+    return chars[0].get("name", "") if chars else ""
 
 
 def launch(binary, scenario):
@@ -79,12 +102,12 @@ def launch(binary, scenario):
     if reset:
         subprocess.run(reset, shell=True, check=True)
     drive.use("first")
-    names = {"first": launch_one(binary, scenario)["game"]["player"]["name"]}
+    names = {"first": player_name(launch_one(binary, scenario))}
     # A second player, for anything between two: its steps say "as": "second".
     if "second" in scenario:
         drive.use("second")
         try:
-            names["second"] = launch_one(binary, scenario["second"])["game"]["player"]["name"]
+            names["second"] = player_name(launch_one(binary, scenario["second"]))
         finally:
             drive.use("first")
     return names
@@ -181,7 +204,11 @@ def expect(wanted, state):
                 have = sum(1 for unit in game.get("units", []) if unit.get("kind") == kind)
                 if have < count:
                     failures.append(f"{have} {kind} units < {count}")
-        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits"):
+        elif key == "state":
+            for field, want in value.items():
+                if state.get(field) != want:
+                    failures.append(f"state.{field} {state.get(field)!r} != {want!r}")
+        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "state"):
             failures.append(f"unknown expectation {key}")
     return failures
 
