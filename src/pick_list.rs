@@ -1,5 +1,5 @@
-//! The lists the server asks the player to pick a carried item from: what a card goes into, what a Magnifier
-//! appraises. A titled window of rows (the item's icon and name), OK and Cancel.
+//! The lists the server asks the player to pick an item from: what a card goes into, what a Magnifier appraises,
+//! what to make. A titled window of rows (the item's icon and name), OK (or Make) and Cancel.
 
 use std::collections::HashMap;
 
@@ -27,8 +27,8 @@ const SELECTED: [u8; 4] = [0x34, 0x6A, 0xE1, 0x80];
 pub struct Assets {
     strip: Texture,
     bar: Texture,
-    /// OK and cancel: normal, hovered, pressed.
-    buttons: [[Texture; 3]; 2],
+    /// OK, cancel and make: normal, hovered, pressed.
+    buttons: [[Texture; 3]; 3],
     selected: Texture,
 }
 
@@ -39,7 +39,7 @@ impl Assets {
         Self {
             strip: image(format!("{UI}basic_interface\\itemwin_left.bmp")),
             bar: image(format!("{UI}basic_interface\\btnbar_mid2.bmp")),
-            buttons: [button("ok"), button("cancel")],
+            buttons: [button("ok"), button("cancel"), button("make")],
             selected: gpu.solid(SELECTED),
         }
     }
@@ -58,8 +58,10 @@ pub struct PickList {
     pub frame: Frame,
     /// The title's message number.
     title: usize,
-    /// The items to pick from, as carried.
+    /// The items to pick from: carried ones, or (to make) just their IDs.
     pub items: Vec<InventoryItem>,
+    /// Make rather than OK on the button.
+    pub making: bool,
     selected: Option<usize>,
     scroll: usize,
     clicks: Clicks,
@@ -69,7 +71,7 @@ impl PickList {
     pub fn new(title: usize, items: Vec<InventoryItem>) -> Self {
         let mut frame = Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor(), ((SCREEN[1] - Self::height()) / 2.0).floor()], WIDTH);
         frame.open = true;
-        Self { frame, title, items, selected: None, scroll: 0, clicks: Clicks::default() }
+        Self { frame, title, items, making: false, selected: None, scroll: 0, clicks: Clicks::default() }
     }
 
     fn height() -> f32 {
@@ -107,18 +109,18 @@ impl PickList {
         self.hit(cursor).is_some()
     }
 
-    /// What a click answers: Some(Some(index)) picks that carried item, Some(None) cancels, None is no answer yet.
-    pub fn click(&mut self, hit: Hit) -> Option<Option<u16>> {
+    /// What a click answers: Some(Some(row)) picks that row's item, Some(None) cancels, None is no answer yet.
+    pub fn click(&mut self, hit: Hit) -> Option<Option<usize>> {
         match hit {
             Hit::Title(TitleHit::Close) | Hit::Cancel => return Some(None),
             Hit::Title(title) => self.frame.click_title(title),
             Hit::Row(row) => {
                 self.selected = Some(row);
                 if self.clicks.double(row as u16) {
-                    return Some(Some(self.items[row].index));
+                    return Some(Some(row));
                 }
             }
-            Hit::Ok => return self.selected.map(|row| Some(self.items[row].index)),
+            Hit::Ok => return self.selected.map(Some),
             Hit::Window => {}
         }
         None
@@ -129,8 +131,8 @@ impl PickList {
         self.scroll = (self.scroll as i32 + rows).clamp(0, most as i32) as usize;
     }
 
-    /// The rows on screen: each item's inventory index and its box.
-    pub fn row_boxes(&self) -> Vec<(u16, [f32; 4])> {
+    /// The rows on screen: each item's ID and its box.
+    pub fn row_boxes(&self) -> Vec<(u32, [f32; 4])> {
         if !self.frame.open || self.frame.minimized {
             return Vec::new();
         }
@@ -138,7 +140,7 @@ impl PickList {
         let rows = self.items.iter().enumerate().skip(self.scroll).take(ROWS);
         rows.map(|(row, item)| {
             let [x, y] = self.frame.at([LEFT, top + (row - self.scroll) as f32 * ROW]);
-            (item.index, [x, y, WIDTH - LEFT - 1.0, ROW])
+            (item.id, [x, y, WIDTH - LEFT - 1.0, ROW])
         })
         .collect()
     }
@@ -190,7 +192,7 @@ impl PickList {
             usize::from(hovered) + usize::from(hovered && pointer.1)
         };
         let (ok, cancel) = Self::buttons();
-        layer.sprites.push((&assets.buttons[0][look(Hit::Ok)], frame.at(ok), BUTTON));
+        layer.sprites.push((&assets.buttons[if self.making { 2 } else { 0 }][look(Hit::Ok)], frame.at(ok), BUTTON));
         layer.sprites.push((&assets.buttons[1][look(Hit::Cancel)], frame.at(cancel), BUTTON));
     }
 }
@@ -209,9 +211,9 @@ mod tests {
         // OK picks the highlighted row; a double click picks at once; Cancel answers no.
         assert_eq!(list.click(Hit::Ok), None);
         assert_eq!(list.click(row), None);
-        assert_eq!(list.click(Hit::Ok), Some(Some(7)));
+        assert_eq!(list.click(Hit::Ok), Some(Some(1)));
         assert_eq!(list.click(Hit::Row(0)), None);
-        assert_eq!(list.click(Hit::Row(0)), Some(Some(4)));
+        assert_eq!(list.click(Hit::Row(0)), Some(Some(0)));
         assert_eq!(list.click(Hit::Cancel), Some(None));
         assert_eq!(list.click(Hit::Title(TitleHit::Close)), Some(None));
     }

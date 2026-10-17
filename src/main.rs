@@ -144,6 +144,13 @@ const INSERT_CARD: usize = 522;
 /// A card put in, or not.
 const CARD_DONE: usize = 493;
 const CARD_FAILED: usize = 494;
+/// Making lists' titles (things to make, Arrow Crafting's), nothing to make, and the results: made, not made.
+// ponytail: the titles per list and the result lines (428/429 exist too) are estimates.
+const MAKING_TITLE: usize = 425;
+const ARROW_TITLE: usize = 658;
+const NOTHING_TO_MAKE: usize = 424;
+const MADE: usize = 431;
+const NOT_MADE: usize = 430;
 /// Warp Portal's and Teleport's list: Teleport's random spot, and the last row.
 const RANDOM_AREA: usize = 212;
 const WARP_CANCEL: usize = 218;
@@ -1385,15 +1392,20 @@ impl Game {
         }
     }
 
-    /// The answer to a pick list: an item's inventory index, or None to cancel.
-    fn answer_pick(&mut self, answer: Option<u16>) {
-        let Some((_, picking)) = self.pick.take() else { return };
-        let _ = match (picking, answer) {
-            (Picking::Card(card), Some(equip)) => self.session.insert_card(card, equip),
-            // rathena keeps nothing for a card's list.
-            (Picking::Card(_), None) => Ok(()),
+    /// The answer to a pick list: the row picked, or None to cancel.
+    fn answer_pick(&mut self, answer: Option<usize>) {
+        let Some((list, picking)) = self.pick.take() else { return };
+        let picked = answer.and_then(|row| list.items.get(row));
+        let _ = match (picking, picked) {
+            (Picking::Card(card), Some(equip)) => self.session.insert_card(card, equip.index),
+            // rathena keeps nothing for a card's list, nor for Arrow Crafting's.
+            (Picking::Card(_) | Picking::Arrow, None) => Ok(()),
             // The server waits for the Magnifier's answer, a cancel too.
-            (Picking::Identify, index) => self.session.identify(index),
+            (Picking::Identify, item) => self.session.identify(item.map(|item| item.index)),
+            // A making list unanswered isn't sent again: a cancel answers item 0.
+            (Picking::Make, item) => self.session.make(item.map_or(0, |item| item.id)),
+            (Picking::Cook(kind), item) => self.session.cook(kind, item.map_or(0, |item| item.id)),
+            (Picking::Arrow, Some(item)) => self.session.make_arrow(item.id),
         };
     }
 
@@ -1498,6 +1510,11 @@ enum Picking {
     Card(u16),
     /// What a Magnifier appraises.
     Identify,
+    /// What to make (CZ_REQMAKINGITEM), what to cook (CZ_REQ_MAKINGITEM with the list's type), what Arrow
+    /// Crafting uses (CZ_REQ_MAKINGARROW).
+    Make,
+    Cook(u16),
+    Arrow,
 }
 
 struct Dialog {
@@ -3991,6 +4008,13 @@ impl App {
 
         let Scene::Game(game) = &mut self.scene else { return };
         let (grf, job_names, look_tables) = (&self.grf, &self.job_names, &self.look_tables);
+        // Which kind of pick a making list is (read before the event is taken apart).
+        let event_kind = match &event {
+            MapEvent::MakeList(_) => Some(Picking::Make),
+            MapEvent::CookList { kind, .. } => Some(Picking::Cook(*kind)),
+            MapEvent::ArrowList(_) => Some(Picking::Arrow),
+            _ => None,
+        };
         let (gpu, table) = (self.gpu.as_ref(), &self.effect_table);
         // The effects a skill plays at a moment on a unit (`role` as in the client's skill effect table).
         let skill_effects = |game: &mut Game, skill: u16, role: &str, unit: u32| {
@@ -4979,6 +5003,28 @@ impl App {
                 } else {
                     game.pick = Some((pick_list::PickList::new(ITEM_APPRAISAL, items), Picking::Identify));
                 }
+            }
+            // What to make, cook or craft: the pick list with the items by ID.
+            MapEvent::MakeList(items) | MapEvent::CookList { items, .. } | MapEvent::ArrowList(items) if items.is_empty() => {
+                game.chat_line(self.messages.get(NOTHING_TO_MAKE).cloned().unwrap_or_default(), CHAT_ERROR);
+                // An empty making list still waits for an answer.
+                let _ = match event_kind {
+                    Some(Picking::Make) => game.session.make(0),
+                    Some(Picking::Cook(kind)) => game.session.cook(kind, 0),
+                    _ => Ok(()),
+                };
+            }
+            MapEvent::MakeList(items) | MapEvent::CookList { items, .. } | MapEvent::ArrowList(items) => {
+                let picking = event_kind.unwrap_or(Picking::Arrow);
+                let rows = items.into_iter().map(|id| net::InventoryItem { id, identified: true, ..Default::default() }).collect();
+                let mut list = pick_list::PickList::new(if matches!(picking, Picking::Arrow) { ARROW_TITLE } else { MAKING_TITLE }, rows);
+                list.making = !matches!(picking, Picking::Arrow);
+                game.pick = Some((list, picking));
+            }
+            MapEvent::Made { result, item } => {
+                let name = inventory::item_name(&self.items, item, true, 0);
+                let (id, color) = if result % 2 == 0 { (MADE, CHAT_ITEM) } else { (NOT_MADE, CHAT_ERROR) };
+                game.chat_line(messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]), color);
             }
             MapEvent::CardList(indexes) => {
                 let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
