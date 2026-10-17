@@ -1002,8 +1002,8 @@ impl Game {
     }
 
     /// Whether players win over monsters under the pointer: Shift held, or aiming a skill for players, but not both.
-    // ponytail: "a skill for players" is one the server flags as for friends (Heal, Blessing); the official client asks
-    // its skill tables, which may list more.
+    // ponytail: "a skill for players" is one the server flags as for friends (Heal, Blessing); a skill table may list
+    // more.
     fn players_first(&self, shift: bool) -> bool {
         let support =
             self.targeting.and_then(|(id, _)| self.skills.iter().find(|skill| skill.id == id)).is_some_and(|skill| skill.kind & net::Skill::FRIEND != 0);
