@@ -566,6 +566,10 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const CZ_REQ_ITEMCOMPOSITION_LIST: u16 = 0x017A;
+const ZC_ITEMCOMPOSITION_LIST: u16 = 0x017B;
+const CZ_REQ_ITEMCOMPOSITION: u16 = 0x017C;
+const ZC_ACK_ITEMCOMPOSITION: u16 = 0x017D;
 const ZC_MVP_GETTING_ITEM: u16 = 0x010A;
 const ZC_MVP_GETTING_SPECIAL_EXP: u16 = 0x010B;
 const ZC_MVP: u16 = 0x010C;
@@ -1045,6 +1049,14 @@ pub enum MapEvent {
     MvpItem(u32),
     MvpExp(u32),
     MvpOverweight,
+    /// The carried equipment a card can go into (inventory indexes).
+    CardList(Vec<u16>),
+    /// A card put into equipment, or not; rathena takes the card away without saying so.
+    CardInserted {
+        equip: u16,
+        card: u16,
+        ok: bool,
+    },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
         id: usize,
@@ -1946,6 +1958,15 @@ impl MapSession {
 
     /// Public chat; the client sends "name : message".
     /// Shows an emotion over the player's head.
+    /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
+    pub fn card_list(&mut self, card: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_card_list(card))
+    }
+
+    pub fn insert_card(&mut self, card: u16, equip: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_insert_card(card, equip))
+    }
+
     /// Where Warp Portal or Teleport goes: a map from the list as it came, or "cancel".
     pub fn select_warp_point(&mut self, skill: u16, map: &str) -> io::Result<()> {
         self.stream.write_all(&encode_select_warp_point(skill, map))
@@ -2409,6 +2430,18 @@ fn encode_select_warp_point(skill: u16, map: &str) -> [u8; 20] {
     packet
 }
 
+/// CZ_REQ_ITEMCOMPOSITION_LIST: a card's inventory index, asking what it can go into.
+fn encode_card_list(card: u16) -> [u8; 4] {
+    let [[h0, h1], [c0, c1]] = [CZ_REQ_ITEMCOMPOSITION_LIST, card].map(u16::to_le_bytes);
+    [h0, h1, c0, c1]
+}
+
+/// CZ_REQ_ITEMCOMPOSITION: the card's inventory index, then the equipment's.
+fn encode_insert_card(card: u16, equip: u16) -> [u8; 6] {
+    let [[h0, h1], [c0, c1], [e0, e1]] = [CZ_REQ_ITEMCOMPOSITION, card, equip].map(u16::to_le_bytes);
+    [h0, h1, c0, c1, e0, e1]
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -2747,6 +2780,9 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_MVP_GETTING_ITEM => MapEvent::MvpItem(u32_at(2)),
         ZC_MVP_GETTING_SPECIAL_EXP => MapEvent::MvpExp(u32_at(2)),
         ZC_THROW_MVPITEM => MapEvent::MvpOverweight,
+        ZC_ITEMCOMPOSITION_LIST => MapEvent::CardList(packet[4..].chunks_exact(2).map(|index| u16::from_le_bytes([index[0], index[1]])).collect()),
+        // The result byte is rathena's "failure".
+        ZC_ACK_ITEMCOMPOSITION => MapEvent::CardInserted { equip: u16_at(2), card: u16_at(4), ok: packet[6] == 0 },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3529,6 +3565,15 @@ mod tests {
         let Some(MapEvent::Identified { ok: false, .. }) = decode_map_packet(&[0x79, 0x01, 9, 0, 1]) else { panic!() };
         assert_eq!(encode_identify(Some(9)), [0x78, 0x01, 9, 0]);
         assert_eq!(encode_identify(None), [0x78, 0x01, 0xFF, 0xFF]);
+        assert_eq!(encode_card_list(5), [0x7A, 0x01, 5, 0]);
+        assert_eq!(encode_insert_card(5, 9), [0x7C, 0x01, 5, 0, 9, 0]);
+        let list = [0x7B, 0x01, 8, 0, 9, 0, 12, 0];
+        let Some(MapEvent::CardList(indexes)) = decode_map_packet(&list) else { panic!() };
+        assert_eq!(indexes, [9, 12]);
+        let Some(MapEvent::CardInserted { equip: 9, card: 5, ok: true }) = decode_map_packet(&[0x7D, 0x01, 9, 0, 5, 0, 0]) else { panic!() };
+        let Some(MapEvent::CardInserted { ok: false, .. }) = decode_map_packet(&[0x7D, 0x01, 9, 0, 5, 0, 1]) else { panic!() };
+        let lengths = [CZ_REQ_ITEMCOMPOSITION_LIST, ZC_ITEMCOMPOSITION_LIST, CZ_REQ_ITEMCOMPOSITION, ZC_ACK_ITEMCOMPOSITION].map(packet_length);
+        assert_eq!(lengths, [Some(4), Some(-1), Some(6), Some(7)]);
         let warp = encode_select_warp_point(27, "prontera.gat");
         assert_eq!((&warp[..4], &warp[4..16], &warp[16..]), (&[0x1B, 0x01, 27, 0][..], &b"prontera.gat"[..], &[0u8; 4][..]));
         assert_eq!(&encode_select_warp_point(26, "cancel")[4..11], b"cancel\0");

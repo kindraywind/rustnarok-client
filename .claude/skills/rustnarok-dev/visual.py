@@ -11,7 +11,8 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
   {"say": "@warp prontera 156 180"}  {"settle": 1500}  {"wait": 1500}  {"key": "Alt+E"}  {"type": "hello"}
   {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]]}  {"move": [x, y]}
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
-    (targets by name from the control socket's `targets`: inventory_item (item id), hotkey (slot), skill (id),
+    (targets by name from the control socket's `targets`: inventory_item (item id), pick_item (a pick list's row, item
+    id), hotkey (slot), skill (id),
     unit (name, from `units`), or {"point": [x, y]}; "offset": [dx, dy] shifts from the centre; a target not
     on screen fails the step)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
@@ -19,7 +20,7 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
   {"expect": {"chat": "Item created.", "inventory_items": 5, "hp_at_least": 40, "map": "iz_int01.gat",
               "windows_open": ["Inventory"], "windows_closed": ["Skills"], "units_at_least": {"monster": 10},
               "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null},
-              "identified": [1201], "unidentified": [1202]}}
+              "identified": [1201], "unidentified": [1202], "inventory_has": [{"id": 1201, "cards": [4035, 0, 0, 0]}]}}
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
 diff; `threshold` (percent, default 1) is how much change a shot takes before the report flags it.
@@ -126,7 +127,7 @@ def locate(target):
                 return [round((x0 + x1) / 2) + dx, round((y0 + y1) / 2) + dy]
         return None
     for found in game.get("targets", []):
-        key = {"inventory_item": "id", "hotkey": "slot", "skill": "id"}.get(kind)
+        key = {"inventory_item": "id", "pick_item": "id", "hotkey": "slot", "skill": "id"}.get(kind)
         if found.get("kind") == kind and found.get(key) == value:
             x, y, w, h = found["box"]
             return [round(x + w / 2) + dx, round(y + h / 2) + dy]
@@ -167,12 +168,18 @@ def expect(wanted, state):
                 have = slots[int(slot)] if int(slot) < len(slots) else None
                 if (have or {}).get("id") != want if want is not None else have is not None:
                     failures.append(f"hotkey {slot} holds {have}, not {want}")
+        elif key == "inventory_has":
+            # Partial items: each passes when some carried item matches every key given, e.g. {"id": 1201, "cards": [...]}.
+            carried = game.get("inventory", [])
+            for want in value:
+                if not any(all(item.get(field) == wanted for field, wanted in want.items()) for item in carried):
+                    failures.append(f"nothing carried like {want}")
         elif key == "units_at_least":
             for kind, count in value.items():
                 have = sum(1 for unit in game.get("units", []) if unit.get("kind") == kind)
                 if have < count:
                     failures.append(f"{have} {kind} units < {count}")
-        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified"):
+        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has"):
             failures.append(f"unknown expectation {key}")
     return failures
 

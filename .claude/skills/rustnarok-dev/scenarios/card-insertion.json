@@ -1,0 +1,23 @@
+{
+  "about": "Card insertion (issue #37): a Hydra Card double-clicked lists the Knife it fits; a double click on its row puts the card in. The card stays listed after @refresh first (issue #35).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 1201 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@item 4035 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@refresh"}, {"settle": 1500},
+    {"expect": {"inventory_has": [{"id": 4035, "worn": 0}]}},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"click": [11, 252]}, {"wait": 300},
+    {"click_on": {"inventory_item": 4035}, "count": 2}, {"wait_for": {"event": "CardList", "ms": 5000}},
+    {"wait": 300}, {"move": [900, 700]},
+    {"expect": {"windows_open": ["PickList"]}},
+    {"shot": "card-list", "crop": [362, 250, 300, 260]},
+    {"click_on": {"pick_item": 1201}, "count": 2}, {"wait_for": {"event": "CardInserted", "ms": 5000}},
+    {"wait": 300}, {"move": [900, 700]},
+    {"expect": {"inventory_has": [{"id": 1201, "cards": [4035, 0, 0, 0]}], "chat": "Compounding has completed successfully.", "windows_closed": ["PickList"]}},
+    {"shot": "card-inserted", "crop": [0, 160, 320, 160]}
+  ]
+}

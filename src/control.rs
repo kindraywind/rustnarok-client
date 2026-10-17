@@ -717,12 +717,19 @@ fn game_state(app: &App, game: &Game) -> Value {
         .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
         .chain(game.skill_window.skill_boxes(&app.skill_trees, &jobs).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
+        .chain(
+            game.pick
+                .iter()
+                .flat_map(|(list, _)| list.row_boxes())
+                .map(|(index, area)| json!({"kind": "pick_item", "index": index, "id": item_of(index), "box": area})),
+        )
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
     let overlays = [
         ("NpcDialog", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none())),
         ("WarpList", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some())),
         ("Shop", game.shop.is_some()),
+        ("PickList", game.pick.is_some()),
         ("DealChoice", game.deal_choice.is_some()),
         ("Trade", game.trade.is_some()),
         ("TradeAsked", game.trade_asked.is_some()),
@@ -785,7 +792,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         // skill boxes, each with its box on screen.
         "targets": targets,
         // What's carried: index, item, how many, identified, worn where (0: not worn).
-        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn})).collect::<Vec<_>>(),
+        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "cards": item.cards})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
         "dialog": dialog,

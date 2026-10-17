@@ -58,6 +58,7 @@ mod menu;
 mod minimap;
 mod options;
 mod party;
+mod pick_list;
 mod quest;
 mod render;
 mod shop;
@@ -131,6 +132,12 @@ const REFINE_FAILED: usize = 3272;
 const MVP_ITEM: [usize; 2] = [143, 144];
 const MVP_EXP: [usize; 2] = [145, 146];
 const MVP_OVERWEIGHT: usize = 147;
+/// Pick lists' titles: a Magnifier's, a card's.
+const ITEM_APPRAISAL: usize = 521;
+const INSERT_CARD: usize = 522;
+/// A card put in, or not.
+const CARD_DONE: usize = 493;
+const CARD_FAILED: usize = 494;
 /// Warp Portal's and Teleport's list: Teleport's random spot, and the last row.
 const RANDOM_AREA: usize = 212;
 const WARP_CANCEL: usize = 218;
@@ -412,8 +419,10 @@ struct Game {
     whispered: VecDeque<(String, String)>,
     /// Names whose whispers we asked to block or allow, not yet answered (the answer doesn't name them).
     whisper_asked: VecDeque<String>,
-    /// A Magnifier's list is up: the server waits for a pick or a cancel.
-    identifying: bool,
+    /// A list of carried items to pick from, and what the pick is for.
+    pick: Option<(pick_list::PickList, Picking)>,
+    /// The card whose list was asked for (the list doesn't name it).
+    card_asked: Option<u16>,
     /// A skill an item cast that needs aiming (the player may not know it).
     item_skill: Option<net::Skill>,
     /// The deal under way; someone asking for one (name, character ID, level); whom we asked.
@@ -693,8 +702,6 @@ enum Choice {
     Befriend(u32),
     /// Invite them into the guild.
     GuildInvite(u32),
-    /// Identify this inventory item (a Magnifier's list).
-    Identify(u16),
 }
 
 /// A map about to load behind the loading screen.
@@ -1312,8 +1319,25 @@ impl Game {
             net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR | net::ITEM_PET_ARMOR | net::ITEM_AMMO if item.identified => {
                 let _ = self.session.wear(index, item.location);
             }
+            // A card asks what it can go into.
+            net::ITEM_CARD => {
+                self.card_asked = Some(index);
+                let _ = self.session.card_list(index);
+            }
             _ => {}
         }
+    }
+
+    /// The answer to a pick list: an item's inventory index, or None to cancel.
+    fn answer_pick(&mut self, answer: Option<u16>) {
+        let Some((_, picking)) = self.pick.take() else { return };
+        let _ = match (picking, answer) {
+            (Picking::Card(card), Some(equip)) => self.session.insert_card(card, equip),
+            // rathena keeps nothing for a card's list.
+            (Picking::Card(_), None) => Ok(()),
+            // The server waits for the Magnifier's answer, a cancel too.
+            (Picking::Identify, index) => self.session.identify(index),
+        };
     }
 
     /// Presses a hotkey slot: uses the item it holds (the first stack of it carried).
@@ -1408,6 +1432,15 @@ enum DialogButton {
     None,
     Next,
     Close,
+}
+
+/// What a pick list's answer is for.
+#[derive(Debug, Clone, Copy)]
+enum Picking {
+    /// The equipment this card (its inventory index) goes into.
+    Card(u16),
+    /// What a Magnifier appraises.
+    Identify,
 }
 
 struct Dialog {
@@ -1526,6 +1559,7 @@ struct Assets {
     char_make: char_make::Assets,
     skills: skills::Assets,
     shop: shop::Assets,
+    pick_list: pick_list::Assets,
     storage: storage::Assets,
     trade: trade::Assets,
     context_menu: menu::Assets,
@@ -1618,6 +1652,7 @@ impl Assets {
             char_make: char_make::Assets::load(gpu, grf),
             skills: skills::Assets::load(gpu, grf),
             shop: shop::Assets::load(gpu, grf),
+            pick_list: pick_list::Assets::load(gpu, grf),
             storage: storage::Assets::load(gpu, grf),
             trade: trade::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
@@ -2391,14 +2426,6 @@ impl App {
                         let _ = game.session.add_friend(&actor.name.clone());
                     }
                 }
-                Some(Choice::Identify(index)) => {
-                    game.identifying = false;
-                    let _ = game.session.identify(Some(index));
-                }
-                // A Magnifier's list closed without a pick: say so, or the server keeps the player waiting for it.
-                None if std::mem::take(&mut game.identifying) => {
-                    let _ = game.session.identify(None);
-                }
                 None => {}
             },
             // The room maker's fields and buttons.
@@ -2499,6 +2526,13 @@ impl App {
             Scene::Game(game) if game.amount.is_some() => {
                 if let Some(Some(ok)) = window::Amount::<Asked>::hit(cursor, assets.message.size, assets.ok[0].size) {
                     game.answer_amount(ok);
+                }
+            }
+            Scene::Game(game) if game.pick.as_ref().is_some_and(|(list, _)| list.covers(cursor)) => {
+                let (list, _) = game.pick.as_mut().unwrap();
+                let hit = list.hit(cursor).unwrap();
+                if let Some(answer) = list.click(hit) {
+                    game.answer_pick(answer);
                 }
             }
             Scene::Game(game) if game.shop.as_ref().is_some_and(|shop| shop.covers(cursor)) => {
@@ -2822,9 +2856,6 @@ impl App {
             };
             if state == ElementState::Pressed {
                 game.menu = None;
-                if std::mem::take(&mut game.identifying) {
-                    let _ = game.session.identify(None);
-                }
                 game.right_press = Some((self.cursor, on_unit));
             } else if let Some((start, Some(id))) = game.right_press.take()
                 && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
@@ -3400,6 +3431,7 @@ impl App {
                     }
                 }
                 Key::Named(NamedKey::Escape) if game.world_map.is_some() => game.world_map = None,
+                Key::Named(NamedKey::Escape) if game.pick.is_some() => game.answer_pick(None),
                 Key::Named(NamedKey::Escape) if game.targeting.is_some() => game.targeting = None,
                 Key::Named(NamedKey::Escape) if !game.chat.typing().is_empty() => game.chat.typing().clear(),
                 Key::Named(NamedKey::Escape) => game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: false }) },
@@ -3650,7 +3682,8 @@ impl App {
                     item_lines: 0,
                     whispered: VecDeque::new(),
                     whisper_asked: VecDeque::new(),
-                    identifying: false,
+                    pick: None,
+                    card_asked: None,
                     item_skill: None,
                     trade: None,
                     trade_asked: None,
@@ -4723,21 +4756,37 @@ impl App {
                 game.chat_line(line, WHISPER_COLOR);
             }
             MapEvent::ItemSkill(skill) => game.cast_item_skill(skill),
-            // ponytail: the list opens as the right-click menu at the pointer; the client's own appraisal window
-            // (a titled list with OK and Cancel) would replace it.
             MapEvent::IdentifyList(indexes) => {
-                let entries: Vec<_> = indexes
-                    .iter()
-                    .filter_map(|&index| {
-                        game.inventory.get(index).map(|item| Some((inventory::item_name(&self.items, item.id, false, 0), Choice::Identify(index))))
-                    })
-                    .collect();
-                if entries.is_empty() {
+                let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
+                if items.is_empty() {
                     let _ = game.session.identify(None);
                 } else {
-                    game.identifying = true;
-                    game.menu = Some(menu::Menu::new(self.cursor, entries, &self.font));
+                    game.pick = Some((pick_list::PickList::new(ITEM_APPRAISAL, items), Picking::Identify));
                 }
+            }
+            MapEvent::CardList(indexes) => {
+                let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
+                if let Some(card) = game.card_asked.take()
+                    && !items.is_empty()
+                {
+                    game.pick = Some((pick_list::PickList::new(INSERT_CARD, items), Picking::Card(card)));
+                }
+            }
+            // rathena takes the card without telling; it goes into the equipment's first empty slot.
+            // ponytail: the result in the chat; whether the real client shows it in a box isn't known.
+            MapEvent::CardInserted { equip, card, ok } => {
+                if ok {
+                    let id = game.inventory.get(card).map(|item| item.id);
+                    game.inventory.remove(card, 1);
+                    if let Some(id) = id
+                        && let Some(slot) =
+                            game.inventory.items.iter_mut().find(|item| item.index == equip).and_then(|item| item.cards.iter_mut().find(|slot| **slot == 0))
+                    {
+                        *slot = id;
+                    }
+                }
+                let id = if ok { CARD_DONE } else { CARD_FAILED };
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if ok { CHAT_ITEM } else { CHAT_ERROR });
             }
             MapEvent::Identified { index, ok } => {
                 if ok && let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index) {
@@ -5688,6 +5737,7 @@ impl App {
         let status_paths =
             game.status_icons.iter().filter_map(|(kind, ..)| status_icon_files.get(kind).map(|(_, file)| format!("data\\texture\\effect\\{file}")));
         let shop_icons = game.shop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default();
+        let pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items)).unwrap_or_default();
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         if game.vend_setup.is_some() {
@@ -5697,7 +5747,7 @@ impl App {
             trade_icons.extend(vend::icons(items, shop.goods.iter().map(|good| (good.item.id, good.item.identified))));
         }
         trade_icons.extend(game.mail.icons(items));
-        for path in skill_icons.chain(status_paths).chain(shop_icons).chain(game.storage.icons(items)).chain(trade_icons) {
+        for path in skill_icons.chain(status_paths).chain(shop_icons).chain(pick_icons).chain(game.storage.icons(items)).chain(trade_icons) {
             icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, false).ok());
         }
         let mut tooltip = Layer::default();
@@ -5907,6 +5957,9 @@ impl App {
         }
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
+        if let Some((list, _)) = &game.pick {
+            list.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, messages, font, pointer);
+        }
         if let Some(shop) = &game.shop {
             shop.draw(&mut shop_layer, &assets.chrome, &assets.shop, icons, items, messages, font, pointer);
         }
@@ -6183,6 +6236,7 @@ impl ApplicationHandler<NetEvent> for App {
                 if let Scene::Game(game) = &mut self.scene {
                     // Over the inventory the wheel scrolls it; elsewhere it zooms (away from you zooms out).
                     let on_shop = game.shop.as_ref().is_some_and(|shop| shop.covers(self.cursor));
+                    let on_pick = game.pick.as_ref().is_some_and(|(list, _)| list.covers(self.cursor));
                     let on_item = game.item_window.as_ref().is_some_and(|window| window.hit(self.cursor, &self.items).is_some());
                     let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.cart.items).is_some());
                     match game.window_at(self.cursor) {
@@ -6195,6 +6249,7 @@ impl ApplicationHandler<NetEvent> for App {
                             game.item_window.as_mut().unwrap().scroll_by(rows, lines);
                         }
                         _ if on_shop => game.shop.as_mut().unwrap().scroll_by(self.cursor, rows),
+                        _ if on_pick => game.pick.as_mut().unwrap().0.scroll_by(rows),
                         Some(Panel::Inventory) => game.inventory.scroll_by(rows),
                         Some(Panel::Cart) => game.cart.scroll_by(rows),
                         Some(Panel::Guild) => {
