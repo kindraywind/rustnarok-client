@@ -72,6 +72,7 @@ mod picking;
 mod quest;
 mod refine;
 mod render;
+mod roulette;
 mod shop;
 mod skills;
 mod sound;
@@ -360,6 +361,19 @@ const STATUS_STEP: [f32; 2] = [45.0, 36.0];
 const CLOCK_STEPS: usize = 32;
 /// A skill still blocked: "There is a Delay after using a Skill.", and the words after a cooldown's seconds left.
 const SKILL_DELAY: usize = 219;
+/// Equipment: a break ("[%s]'s %s has been damaged.", Weapon, Armor), the item's damaged line, and binding (the
+/// question before, the line after).
+const DAMAGED: usize = 1301;
+const DAMAGED_WEAPON: usize = 1302;
+const DAMAGED_ARMOR: usize = 1303;
+const ITEM_DAMAGED: usize = 699;
+const BIND_ASKS: usize = 1327;
+const BOUND: usize = 1328;
+/// Rentals: " The [%s] item will disappear in %d minutes.", the same in seconds, and " [%s] item has been deleted
+/// from the Inventory.".
+const RENTAL_MINUTES: usize = 1256;
+const RENTAL_SECONDS: usize = 1270;
+const RENTAL_ENDED: usize = 1258;
 const COOLDOWN_LEFT: usize = 3230;
 /// The spark of a landed hit, and a warp portal's rings.
 const EF_HIT1: u32 = 0;
@@ -536,6 +550,8 @@ struct Game {
     refine: Option<refine::Refine>,
     /// The material window (Change Material, Four Spirit Analysis).
     materials: Option<material::Materials>,
+    /// The Lucky Roulette's window.
+    roulette: Option<roulette::Roulette>,
     viewing: Option<Viewed>,
     bank: Option<bank::Bank>,
     trade_asked: Option<(String, u32, u16)>,
@@ -574,6 +590,10 @@ struct Game {
     friend_asked: Option<(u32, u32, String)>,
     /// The server asks whether to use this voucher to grow the inventory.
     expansion_asked: Option<u32>,
+    /// A bind-on-equip item (inventory index) waiting for OK to be worn; the broken items' indexes before the
+    /// inventory came again (None: there was none yet, at login).
+    bind_asked: Option<u16>,
+    broken_before: Option<Vec<u16>>,
     /// The player's pet: its unit (once the server says it's ours), what it's like, its window, and a question about
     /// it waiting for OK.
     pet_id: Option<u32>,
@@ -1340,6 +1360,8 @@ impl Game {
             || self.mail.hit(cursor).is_some()
             || self.quest_window.hit(cursor, &self.quests).is_some()
             || self.achievement_window.covers(cursor)
+            || self.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || roulette::icon_hit(cursor)
             || self.chat.contains(cursor)
             || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -1606,6 +1628,8 @@ impl Game {
             }
             // An egg (armor worn nowhere) hatches from the egg list only.
             net::ITEM_ARMOR if item.location == 0 => {}
+            // An item that binds once worn asks first.
+            net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR if item.identified && item.bind == 1 => self.bind_asked = Some(index),
             net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR | net::ITEM_PET_ARMOR | net::ITEM_AMMO if item.identified => {
                 let _ = self.session.wear(index, item.location);
             }
@@ -1649,6 +1673,20 @@ impl Game {
             (Picking::Hatch, Some(egg)) => self.session.hatch(egg.index),
             (Picking::Hatch, None) => Ok(()),
         };
+    }
+
+    /// Answers the bind question: OK wears the item.
+    fn answer_bind(&mut self, yes: bool) {
+        let Some(index) = self.bind_asked.take().filter(|_| yes) else { return };
+        if let Some(location) = self.inventory.get(index).map(|item| item.location) {
+            let _ = self.session.wear(index, location);
+        }
+    }
+
+    /// Closes the roulette's window; the server answers nothing.
+    fn close_roulette(&mut self) {
+        let _ = self.session.roulette(net::RouletteRequest::Close);
+        self.roulette = None;
     }
 
     /// Opens the pet window (or brings it up) with fresh news of the pet.
@@ -1965,6 +2003,7 @@ struct Assets {
     achievement: achievement::Assets,
     status: status::Assets,
     pet: pet::Assets,
+    roulette: roulette::Assets,
     item_window: iteminfo::Assets,
     guild: guild::Assets,
     clan: clan::Assets,
@@ -2066,6 +2105,7 @@ impl Assets {
             achievement: achievement::Assets::load(gpu, grf),
             status: status::Assets::load(gpu, grf),
             pet: pet::Assets::load(gpu, grf),
+            roulette: roulette::Assets::load(gpu, grf),
             item_window: iteminfo::Assets::load(gpu, grf),
             guild: guild::Assets::load(gpu, grf),
             clan: clan::Assets::load(gpu, grf),
@@ -2973,6 +3013,15 @@ impl App {
                     }
                 }
             }
+            // Wearing an item that binds: OK wears it.
+            Scene::Game(game) if game.bind_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.answer_bind(yes);
+                    }
+                }
+            }
             // Growing the inventory: OK or cancel.
             Scene::Game(game) if game.expansion_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
@@ -3058,6 +3107,24 @@ impl App {
                     hit => {
                         viewed.window.click(hit);
                     }
+                }
+            }
+            // The Lucky Roulette: START spins, Get Prize claims (neither while the wheel spins), close lets it go.
+            Scene::Game(game) if game.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let window = game.roulette.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                match window.click(hit, control::now()) {
+                    Some(roulette::Action::Spin) => _ = game.session.roulette(net::RouletteRequest::Spin),
+                    Some(roulette::Action::Claim) => _ = game.session.roulette(net::RouletteRequest::Claim),
+                    Some(roulette::Action::Busy) => game.chat_line(self.messages.get(roulette::SPINNING).cloned().unwrap_or_default(), CHAT_ERROR),
+                    Some(roulette::Action::Close) => game.close_roulette(),
+                    None => {}
+                }
+            }
+            // Its icon asks for it.
+            Scene::Game(game) if roulette::icon_hit(cursor) => {
+                if game.roulette.is_none() {
+                    let _ = game.session.roulette(net::RouletteRequest::Open);
                 }
             }
             // The material window: OK sends what's in; Cancel and the close button send nothing in (rathena forgets the
@@ -3204,6 +3271,9 @@ impl App {
                         // The title changes when the server answers.
                         if let equipment::Hit::WearTitle(title) = hit {
                             let _ = game.session.change_title(title);
+                        }
+                        if hit == equipment::Hit::TakeOffAll {
+                            let _ = game.session.take_off_all();
                         }
                         if let Some(index) = game.equipment.click(hit) {
                             let _ = game.session.take_off(index);
@@ -3456,6 +3526,9 @@ impl App {
             game.mail.drag_to(self.cursor);
             game.quest_window.frame.drag_to(self.cursor, 466.0);
             game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
+            if let Some(window) = &mut game.roulette {
+                window.frame.drag_to(self.cursor, roulette::HEIGHT);
+            }
             if let Some(window) = &mut game.audio_window
                 && window.drag_to(self.cursor, &mut self.sound)
                 && let Some(audio) = &mut self.audio
@@ -3594,7 +3667,9 @@ impl App {
                 _ => None,
             };
             if let Some(item) = described {
-                let shown = iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards };
+                let damaged = item.broken.then(|| self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
+                let shown =
+                    iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires };
                 let position = game.item_window.as_ref().map(|window| window.position);
                 let mut window = iteminfo::ItemWindow::new(shown);
                 if let Some(position) = position {
@@ -3727,7 +3802,8 @@ impl App {
                     | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
                     | game.mail.drop_drag()
                     | game.quest_window.frame.drop_drag()
-                    | game.achievement_window.frame.drop_drag();
+                    | game.achievement_window.frame.drop_drag()
+                    | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag());
                 // A slider let go keeps its volume for next time.
                 let slid = game.audio_window.as_mut().is_some_and(options::AudioWindow::drop_drag);
                 if slid {
@@ -3819,6 +3895,14 @@ impl App {
             && game.mail.hit(cursor).is_some()
         {
             game.mail.start_drag(cursor);
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.roulette.as_ref().and_then(|window| window.hit(cursor))
+        {
+            if hit == roulette::Hit::Title(TitleHit::Title) {
+                game.roulette.as_mut().unwrap().frame.start_drag(cursor);
+            }
             return;
         }
         if let Scene::Game(game) = &mut self.scene
@@ -4181,6 +4265,9 @@ impl App {
                 }
             }
             // The question holds the player busy until it's answered.
+            Scene::Game(game) if game.bind_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.answer_bind(*key == Key::Named(NamedKey::Enter));
+            }
             Scene::Game(game) if game.expansion_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.expansion_asked = None;
                 let _ = game.session.answer_expansion(*key == Key::Named(NamedKey::Enter));
@@ -4300,6 +4387,7 @@ impl App {
                 Key::Named(NamedKey::Escape) if game.world_map.is_some() => game.world_map = None,
                 Key::Named(NamedKey::Escape) if game.pick.is_some() => game.answer_pick(None),
                 Key::Named(NamedKey::Escape) if game.capturing => game.capturing = false,
+                Key::Named(NamedKey::Escape) if game.roulette.is_some() => game.close_roulette(),
                 Key::Named(NamedKey::Escape) if game.targeting.is_some() => game.targeting = None,
                 Key::Named(NamedKey::Escape) if !game.chat.typing().is_empty() => game.chat.typing().clear(),
                 Key::Named(NamedKey::Escape) => game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: false }) },
@@ -4616,6 +4704,7 @@ impl App {
                     trade: None,
                     refine: None,
                     materials: None,
+                    roulette: None,
                     viewing: None,
                     bank: None,
                     trade_asked: None,
@@ -4642,6 +4731,8 @@ impl App {
                     friends: Vec::new(),
                     friend_asked: None,
                     expansion_asked: None,
+                    bind_asked: None,
+                    broken_before: None,
                     pet_id: None,
                     pet: None,
                     pet_window: pet::PetWindow::default(),
@@ -5066,8 +5157,9 @@ impl App {
                 game.player.revive();
                 // The NPC is left behind: its shop and its buy-or-sell question close (the server doesn't say so).
                 game.close_shop();
-                // rathena forgets the refine window on a map change; the material window goes too.
+                // rathena forgets the refine window on a map change; the material window and the roulette go too.
                 game.refine = None;
+                game.roulette = None;
                 game.materials = None;
                 game.deal_choice = None;
                 if map == game.map {
@@ -5173,8 +5265,38 @@ impl App {
                     _ => game.chat_line(message(messages::CANT_CARRY), CHAT_ERROR),
                 }
             }
-            MapEvent::InventoryStart { kind: 0 } => game.inventory.clear(),
-            MapEvent::InventoryItems { kind: 0, items } => game.inventory.extend(items),
+            // The inventory again: what broke since says so; the out pet's egg (marked broken) stays hidden.
+            MapEvent::InventoryStart { kind: 0 } => {
+                let had = !game.inventory.items.is_empty();
+                game.broken_before = had.then(|| game.inventory.items.iter().filter(|item| item.broken).map(|item| item.index).collect());
+                game.inventory.clear();
+            }
+            MapEvent::InventoryItems { kind: 0, items } => {
+                // ponytail: rathena never sends ZC_EQUIPITEM_DAMAGED, so the client notices a break in the resent list.
+                if let Some(before) = &game.broken_before {
+                    let message = |id: usize| self.messages.get(id).map_or("", String::as_str);
+                    let lines: Vec<String> = inventory::newly_broken(before, &items)
+                        .into_iter()
+                        .map(|item| {
+                            let place = message(if item.kind == net::ITEM_WEAPON { DAMAGED_WEAPON } else { DAMAGED_ARMOR });
+                            messages::fill(message(DAMAGED), &[&game.me.name, &place])
+                        })
+                        .collect();
+                    for line in lines {
+                        game.chat_line(line, CHAT_ERROR);
+                    }
+                }
+                game.inventory.extend(items.into_iter().filter(|item| !inventory::hidden_egg(item)).collect());
+            }
+            MapEvent::BoundOnEquip(index) => {
+                if let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index) {
+                    item.bind = 2;
+                    let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
+                    game.chat_line(messages::fill(self.messages.get(BOUND).map_or("", String::as_str), &[&name]), CHAT_ITEM);
+                }
+            }
+            // ponytail: no line fits a refusal; it says nothing.
+            MapEvent::TookOffAll { .. } => {}
             // The storage opens with the inventory beside it.
             MapEvent::InventoryStart { kind: 2 } => {
                 game.storage.open();
@@ -6015,6 +6137,45 @@ impl App {
             MapEvent::AchievementReward { .. } => {}
             MapEvent::TitleChanged { ok: true, title } => game.equipment.title = title,
             MapEvent::TitleChanged { .. } => {}
+            // The Lucky Roulette: opened (asked or by @roulette), its prizes, a spin, a claim.
+            MapEvent::RouletteOpen { prize, bonus, points } => {
+                let window = game.roulette.get_or_insert_with(roulette::Roulette::new);
+                (window.prize, window.bonus, window.points) = (prize, bonus, points);
+                if window.prizes.is_empty() {
+                    let _ = game.session.roulette(net::RouletteRequest::Prizes);
+                }
+            }
+            MapEvent::RoulettePrizes(prizes) => {
+                if let Some(window) = &mut game.roulette {
+                    window.prizes = prizes;
+                }
+            }
+            // ponytail: the wheel's sound plays as it starts; when the real client plays it isn't known.
+            MapEvent::RouletteSpun { result, row, column, bonus, points } => {
+                if let Some(window) = &mut game.roulette {
+                    (window.bonus, window.points) = (bonus, points);
+                    if result == 0 || result == 3 {
+                        window.spun(row, column, control::now());
+                        if let Some(audio) = &mut self.audio {
+                            audio.play(grf, "roulette.wav", 1.0);
+                        }
+                    }
+                }
+                if let Some(id) = roulette::spin_message(result) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
+            MapEvent::RouletteClaimed { result, bonus } => {
+                if let Some(window) = &mut game.roulette {
+                    window.bonus = bonus;
+                    if result == 0 {
+                        window.prize = None;
+                    }
+                }
+                if let Some(id) = roulette::claim_message(result) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
             MapEvent::IdentifyList(indexes) => {
                 let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
                 if items.is_empty() {
@@ -6335,6 +6496,21 @@ impl App {
                     _ => game.chat_line(message(372), CHAT_ERROR),
                 }
             }
+            // A rental ended: its warning, its time up and gone from the inventory (the take-off and delete that may follow
+            // find nothing then).
+            // ponytail: rathena's comment says minutes; under a minute it's said in seconds.
+            MapEvent::RentalTime { item, seconds } => {
+                let name = inventory::item_name(&self.items, item, true, 0);
+                let (id, count) = if seconds < 60 { (RENTAL_SECONDS, seconds) } else { (RENTAL_MINUTES, seconds / 60) };
+                game.chat_line(messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name, &count]).trim_start().to_owned(), CHAT_ITEM);
+            }
+            MapEvent::RentalExpired { index, item } => {
+                let name = inventory::item_name(&self.items, item, true, 0);
+                game.chat_line(messages::fill(self.messages.get(RENTAL_ENDED).map_or("", String::as_str), &[&name]).trim_start().to_owned(), CHAT_ITEM);
+                game.inventory.remove(index, u16::MAX);
+            }
+            // An item no longer carried (a rental that ended) comes off without a word.
+            MapEvent::Unequipped { index, failed: false, .. } if game.inventory.get(index).is_none() => {}
             MapEvent::Unequipped { index, failed: false, .. } => {
                 let name = game.inventory.get(index).map(|item| inventory::item_name(&self.items, item.id, item.identified, item.refine)).unwrap_or_default();
                 game.inventory.set_worn(index, 0);
@@ -7243,6 +7419,7 @@ impl App {
         pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.achievement_window.icons(achievement_info));
+        pick_icons.extend(game.roulette.as_ref().map(|window| window.icons(items)).unwrap_or_default());
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         if game.vend_setup.is_some() {
@@ -7537,6 +7714,11 @@ impl App {
             items,
             pointer,
         );
+        // ponytail: the roulette's icon stands left of the minimap; where the real client puts it isn't known.
+        roulette::draw_icon(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.roulette, font, messages, pointer.0);
+        if let Some(window) = &game.roulette {
+            window.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.roulette, icons, items, font, messages, control::now(), pointer);
+        }
         if let Some(list) = &game.emotion_list {
             list.draw(&mut shop_layer, &assets.chrome, font, messages, game.emotion_sprite.as_ref(), &emotion_icons, pointer.0);
         }
@@ -7602,6 +7784,7 @@ impl App {
         // colors.
         let colored_question = match (game.expansion_asked, &game.pet_asked) {
             _ if game.dismiss_asked => Some(message(mercenary::DISMISS_QUESTION).to_owned()),
+            _ if game.bind_asked.is_some() => Some(message(BIND_ASKS).to_owned()),
             (Some(voucher), _) => {
                 let now = inventory::BASE_SLOTS + usize::from(game.inventory.expansion);
                 let name = inventory::item_name(items, voucher, true, 0);
@@ -7653,7 +7836,8 @@ impl App {
             amount.draw(&mut shop_layer, &assets.chrome, &assets.message, [&assets.ok, &assets.cancel], messages, pointer);
         }
         if let Some(window) = &game.item_window {
-            let lines = window.lines(items, &|text, width| wrap_colored(font, text, width));
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
+            let lines = window.lines(items, messages, now, &|text, width| wrap_colored(font, text, width));
             game.item_lines = lines.len();
             window.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
         }

@@ -57,10 +57,10 @@ struct_pass map '#include "packets.hpp"'
 struct_pass common '#include <common/packets.hpp>'
 
 # 3. Old-style map headers (`enum packet_headers { nameType = id }`), sized by the struct clif.cpp sends them as.
-# Only entries active at this PACKETVER (the enum is conditional too).
+# Only entries active at this PACKETVER (the enum is conditional too); a literal ID clif.cpp assigns passes as is.
 awk '/enum packet_headers \{/{inside=1} inside{print} inside && /\};/{exit}' "$G/pp_map.ii" \
   | grep -oE '[A-Za-z0-9_]+ = 0x[0-9a-fA-F]+' | awk '{print $1}' | sort -u > "$G/names_old.txt"
-python3 -I "$G/old_headers.py" . | awk 'NR == FNR { active[$1] = 1; next } $1 in active' "$G/names_old.txt" - > "$G/old_pairs.txt"
+python3 -I "$G/old_headers.py" . | awk 'NR == FNR { active[$1] = 1; next } $1 in active || $1 ~ /^0x/' "$G/names_old.txt" - > "$G/old_pairs.txt"
 {
   echo '#include <cstdio>'
   echo '#include <type_traits>'

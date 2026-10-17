@@ -615,6 +615,20 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_CASH_TIME_COUNTER: u16 = 0x0298;
+const ZC_CASH_ITEM_DELETE: u16 = 0x0299;
+const ZC_NOTIFY_BIND_ON_EQUIP: u16 = 0x02D3;
+const CZ_REQ_TAKEOFF_EQUIP_ALL: u16 = 0x0BAD;
+const ZC_ACK_TAKEOFF_EQUIP_ALL: u16 = 0x0BAE;
+const CZ_REQ_OPEN_ROULETTE: u16 = 0x0A19;
+const ZC_ACK_OPEN_ROULETTE: u16 = 0x0A1A;
+const CZ_REQ_ROULETTE_INFO: u16 = 0x0A1B;
+const ZC_ACK_ROULETTE_INFO: u16 = 0x0A1C;
+const CZ_REQ_CLOSE_ROULETTE: u16 = 0x0A1D;
+const CZ_REQ_GENERATE_ROULETTE: u16 = 0x0A1F;
+const ZC_ACK_GENERATE_ROULETTE: u16 = 0x0A20;
+const CZ_RECV_ROULETTE_ITEM: u16 = 0x0A21;
+const ZC_RECV_ROULETTE_ITEM: u16 = 0x0A22;
 const ZC_SKILL_POSTDELAY: u16 = 0x043D;
 const ZC_ALL_ACH_LIST: u16 = 0x0A23;
 const ZC_ACH_UPDATE: u16 = 0x0A24;
@@ -1051,6 +1065,25 @@ impl PetAct {
     }
 }
 
+/// What the client asks of the Lucky Roulette.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RouletteRequest {
+    Open,
+    Prizes,
+    Close,
+    Spin,
+    Claim,
+}
+
+/// A Lucky Roulette prize: its place (row 0 at the bottom, 9 wide, up to row 6, 3 wide), the item and how many.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RoulettePrize {
+    pub row: u8,
+    pub column: u8,
+    pub item: u32,
+    pub amount: u16,
+}
+
 #[derive(Debug)]
 pub enum MapEvent {
     Entered {
@@ -1479,6 +1512,44 @@ pub enum MapEvent {
     SkillCooldown {
         skill: u16,
         ms: u32,
+    },
+    /// The roulette window opens: a prize waiting to be claimed (row, column), the bonus item, and the gold, silver
+    /// and bronze points.
+    RouletteOpen {
+        prize: Option<(u8, u8)>,
+        bonus: u32,
+        points: [i32; 3],
+    },
+    /// The roulette's prizes.
+    RoulettePrizes(Vec<RoulettePrize>),
+    /// A spin's result (0 won, 1 failed, 2 not enough points, 3 lost) with where it stopped, the bonus and the points.
+    RouletteSpun {
+        result: u8,
+        row: u8,
+        column: u8,
+        bonus: u32,
+        points: [i32; 3],
+    },
+    /// A claim's result (0 claimed, 1 failed, 2 too many items, 3 too heavy) and the next bonus item.
+    RouletteClaimed {
+        result: u8,
+        bonus: u32,
+    },
+    /// A bind-on-equip item (inventory index) was put on: it's bound to the character now.
+    BoundOnEquip(u16),
+    /// Take Off All was done, or refused (the player can't act).
+    TookOffAll {
+        refused: bool,
+    },
+    /// A rental (by item ID) has this many seconds left.
+    RentalTime {
+        item: u32,
+        seconds: u32,
+    },
+    /// The rental at an inventory index has ended.
+    RentalExpired {
+        index: u16,
+        item: u32,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
@@ -2178,6 +2249,12 @@ pub struct InventoryItem {
     pub identified: bool,
     pub refine: u8,
     pub cards: [u32; 4],
+    /// Broken: it can't be worn until it's repaired.
+    pub broken: bool,
+    /// 0 not bound, 1 binds to the character once worn, 2 bound.
+    pub bind: u16,
+    /// A rental's end, Unix time in seconds (0: not a rental).
+    pub expires: u32,
 }
 
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
@@ -2225,6 +2302,7 @@ fn decode_normal_item(entry: &[u8]) -> InventoryItem {
         amount: u16_at(entry, 7),
         location: u32_at(entry, 9),
         cards: cards_at(entry, 13),
+        expires: u32_at(entry, 29),
         identified: entry[33] & 1 != 0,
         ..Default::default()
     }
@@ -2242,6 +2320,9 @@ fn decode_equip_item(entry: &[u8]) -> InventoryItem {
         cards: cards_at(entry, 15),
         refine: entry[65],
         identified: entry[67] & 1 != 0,
+        broken: entry[67] & 2 != 0,
+        bind: u16_at(entry, 35),
+        expires: u32_at(entry, 31),
     }
 }
 
@@ -2636,6 +2717,15 @@ impl MapSession {
     /// Wears an achievement's title (0 takes it off).
     pub fn change_title(&mut self, title: u32) -> io::Result<()> {
         self.stream.write_all(&encode_id(CZ_REQ_CHANGE_TITLE, title))
+    }
+
+    pub fn roulette(&mut self, request: RouletteRequest) -> io::Result<()> {
+        self.stream.write_all(&encode_roulette(request))
+    }
+
+    /// Takes off the general equipment (costumes, shadow gear and ammunition stay on).
+    pub fn take_off_all(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_REQ_TAKEOFF_EQUIP_ALL.to_le_bytes())
     }
 
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
@@ -3383,6 +3473,19 @@ fn encode_id(header: u16, id: u32) -> [u8; 6] {
     packet
 }
 
+/// The roulette's requests: open, the prizes, close, spin (just the header), and claim (a byte rathena doesn't read).
+fn encode_roulette(request: RouletteRequest) -> Vec<u8> {
+    let header = match request {
+        RouletteRequest::Open => CZ_REQ_OPEN_ROULETTE,
+        RouletteRequest::Prizes => CZ_REQ_ROULETTE_INFO,
+        RouletteRequest::Close => CZ_REQ_CLOSE_ROULETTE,
+        RouletteRequest::Spin => CZ_REQ_GENERATE_ROULETTE,
+        // ponytail: what the official client puts in the byte isn't knowable.
+        RouletteRequest::Claim => return [&CZ_RECV_ROULETTE_ITEM.to_le_bytes()[..], &[0]].concat(),
+    };
+    header.to_le_bytes().to_vec()
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -3591,6 +3694,9 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 kind: packet[32],
                 refine: packet[68],
                 worn: 0,
+                broken: packet[11] != 0,
+                bind: u16_at(38),
+                expires: u32_at(34),
             },
         },
         ZC_INVENTORY_START => MapEvent::InventoryStart { kind: packet[4] },
@@ -3873,6 +3979,31 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_REQ_ACH_REWARD_ACK => MapEvent::AchievementReward { ok: packet[2] == 1, id: u32_at(3) },
         ZC_ACK_CHANGE_TITLE => MapEvent::TitleChanged { ok: packet[2] == 0, title: u32_at(3) },
         ZC_SKILL_POSTDELAY => MapEvent::SkillCooldown { skill: u16_at(2), ms: u32_at(4) },
+        // Result, serial, the waiting prize's row and column (-1: none), bonus, gold, silver, bronze.
+        ZC_ACK_OPEN_ROULETTE => MapEvent::RouletteOpen {
+            prize: (packet[7] as i8 >= 0 && packet[8] as i8 >= 0).then_some((packet[7], packet[8])),
+            bonus: u32_at(9),
+            points: [13, 17, 21].map(|offset| u32_at(offset) as i32),
+        },
+        // Length, serial, then each prize: row, column, item, amount, 0.
+        ZC_ACK_ROULETTE_INFO => MapEvent::RoulettePrizes(
+            packet[8..]
+                .chunks_exact(12)
+                .map(|entry| RoulettePrize { row: entry[0], column: entry[2], item: self::u32_at(entry, 4), amount: self::u16_at(entry, 8) })
+                .collect(),
+        ),
+        ZC_ACK_GENERATE_ROULETTE => MapEvent::RouletteSpun {
+            result: packet[2],
+            row: u16_at(3) as u8,
+            column: u16_at(5) as u8,
+            bonus: u32_at(7),
+            points: [11, 15, 19].map(|offset| u32_at(offset) as i32),
+        },
+        ZC_RECV_ROULETTE_ITEM => MapEvent::RouletteClaimed { result: packet[2], bonus: u32_at(3) },
+        ZC_NOTIFY_BIND_ON_EQUIP => MapEvent::BoundOnEquip(u16_at(2)),
+        ZC_ACK_TAKEOFF_EQUIP_ALL => MapEvent::TookOffAll { refused: packet[2] != 0 },
+        ZC_CASH_TIME_COUNTER => MapEvent::RentalTime { item: u32_at(2), seconds: u32_at(6) },
+        ZC_CASH_ITEM_DELETE => MapEvent::RentalExpired { index: u16_at(2), item: u32_at(4) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -4995,6 +5126,112 @@ mod tests {
         let Some(MapEvent::SkillCooldown { skill: 8, ms: 10_000 }) = decode_map_packet(&[0x3D, 0x04, 8, 0, 0x10, 0x27, 0, 0]) else { panic!() };
         let Some(MapEvent::SkillCooldown { skill: 8, ms: 0 }) = decode_map_packet(&[0x3D, 0x04, 8, 0, 0, 0, 0, 0]) else { panic!() };
         assert_eq!(packet_length(ZC_SKILL_POSTDELAY), Some(8));
+    }
+
+    #[test]
+    fn decodes_the_roulette() {
+        let points = [&3i32.to_le_bytes()[..], &2i32.to_le_bytes(), &1i32.to_le_bytes()].concat();
+        let open = |row: i8, column: i8| {
+            [&ZC_ACK_OPEN_ROULETTE.to_le_bytes()[..], &[0], &0u32.to_le_bytes(), &[row as u8, column as u8], &5u32.to_le_bytes(), &points].concat()
+        };
+        let Some(MapEvent::RouletteOpen { prize: Some((2, 4)), bonus: 5, points: [3, 2, 1] }) = decode_map_packet(&open(2, 4)) else { panic!() };
+        let Some(MapEvent::RouletteOpen { prize: None, .. }) = decode_map_packet(&open(0, -1)) else { panic!() };
+        let Some(MapEvent::RouletteOpen { prize: None, .. }) = decode_map_packet(&open(-1, 0)) else { panic!() };
+
+        // Rows of 9 down to 3: 42 prizes.
+        let mut info = ZC_ACK_ROULETTE_INFO.to_le_bytes().to_vec();
+        info.extend_from_slice(&512u16.to_le_bytes());
+        info.extend_from_slice(&1u32.to_le_bytes());
+        for row in 0..7u16 {
+            for column in 0..9 - row {
+                let item = 500 + u32::from(row * 10 + column);
+                info.extend_from_slice(
+                    &[&row.to_le_bytes()[..], &column.to_le_bytes(), &item.to_le_bytes(), &1u16.to_le_bytes(), &0u16.to_le_bytes()].concat(),
+                );
+            }
+        }
+        let Some(MapEvent::RoulettePrizes(prizes)) = decode_map_packet(&info) else { panic!() };
+        assert_eq!(prizes.len(), 42);
+        assert_eq!(prizes[0], RoulettePrize { row: 0, column: 0, item: 500, amount: 1 });
+        assert_eq!((prizes[41].row, prizes[41].column, prizes[41].item), (6, 2, 562));
+
+        let spun = |result: u8| {
+            [&ZC_ACK_GENERATE_ROULETTE.to_le_bytes()[..], &[result], &0u16.to_le_bytes(), &4u16.to_le_bytes(), &5u32.to_le_bytes(), &points].concat()
+        };
+        let Some(MapEvent::RouletteSpun { result: 0, row: 0, column: 4, bonus: 5, points: [3, 2, 1] }) = decode_map_packet(&spun(0)) else { panic!() };
+        let Some(MapEvent::RouletteSpun { result: 2, .. }) = decode_map_packet(&spun(2)) else { panic!() };
+        let Some(MapEvent::RouletteSpun { result: 3, .. }) = decode_map_packet(&spun(3)) else { panic!() };
+        let claimed = [&ZC_RECV_ROULETTE_ITEM.to_le_bytes()[..], &[0], &7u32.to_le_bytes()].concat();
+        let Some(MapEvent::RouletteClaimed { result: 0, bonus: 7 }) = decode_map_packet(&claimed) else { panic!() };
+
+        assert_eq!(encode_roulette(RouletteRequest::Open), [0x19, 0x0A]);
+        assert_eq!(encode_roulette(RouletteRequest::Prizes), [0x1B, 0x0A]);
+        assert_eq!(encode_roulette(RouletteRequest::Close), [0x1D, 0x0A]);
+        assert_eq!(encode_roulette(RouletteRequest::Spin), [0x1F, 0x0A]);
+        assert_eq!(encode_roulette(RouletteRequest::Claim), [0x21, 0x0A, 0]);
+        // The open answer is 25 bytes at this version (the bonus item is 4 bytes), not packet_db's 23.
+        let ids = [
+            CZ_REQ_OPEN_ROULETTE,
+            ZC_ACK_OPEN_ROULETTE,
+            CZ_REQ_ROULETTE_INFO,
+            ZC_ACK_ROULETTE_INFO,
+            CZ_REQ_CLOSE_ROULETTE,
+            CZ_REQ_GENERATE_ROULETTE,
+            ZC_ACK_GENERATE_ROULETTE,
+            CZ_RECV_ROULETTE_ITEM,
+            ZC_RECV_ROULETTE_ITEM,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(2), Some(25), Some(2), Some(-1), Some(2), Some(2), Some(23), Some(3), Some(7)]);
+        assert_eq!(open(0, -1).len(), 25);
+    }
+
+    #[test]
+    fn decodes_equipment_states() {
+        // EQUIPITEM_INFO: bind at 35, flags at 67 (1 identified, 2 broken).
+        let mut entry = vec![0u8; EQUIP_ITEM_SIZE];
+        entry[..2].copy_from_slice(&5u16.to_le_bytes());
+        entry[2..6].copy_from_slice(&1201u32.to_le_bytes());
+        entry[35..37].copy_from_slice(&2u16.to_le_bytes());
+        entry[67] = 3;
+        let item = decode_equip_item(&entry);
+        assert_eq!((item.index, item.id, item.identified, item.broken, item.bind), (5, 1201, true, true, 2));
+        entry[67] = 1;
+        assert!(!decode_equip_item(&entry).broken);
+        // ZC_ITEM_PICKUP_ACK: broken at 11, bind at 38.
+        let mut pickup = vec![0u8; 70];
+        pickup[..2].copy_from_slice(&ZC_ITEM_PICKUP_ACK.to_le_bytes());
+        pickup[6..10].copy_from_slice(&2301u32.to_le_bytes());
+        pickup[11] = 1;
+        pickup[38..40].copy_from_slice(&1u16.to_le_bytes());
+        let Some(MapEvent::PickedUp { item, .. }) = decode_map_packet(&pickup) else { panic!() };
+        assert_eq!((item.id, item.broken, item.bind), (2301, true, 1));
+        let Some(MapEvent::BoundOnEquip(7)) = decode_map_packet(&[0xD3, 0x02, 7, 0]) else { panic!() };
+        let Some(MapEvent::TookOffAll { refused: false }) = decode_map_packet(&[0xAE, 0x0B, 0]) else { panic!() };
+        let Some(MapEvent::TookOffAll { refused: true }) = decode_map_packet(&[0xAE, 0x0B, 1]) else { panic!() };
+        assert_eq!(CZ_REQ_TAKEOFF_EQUIP_ALL.to_le_bytes(), [0xAD, 0x0B]);
+        let ids = [ZC_NOTIFY_BIND_ON_EQUIP, CZ_REQ_TAKEOFF_EQUIP_ALL, ZC_ACK_TAKEOFF_EQUIP_ALL, ZC_ITEM_PICKUP_ACK];
+        assert_eq!(ids.map(packet_length), [Some(4), Some(2), Some(3), Some(70)]);
+    }
+
+    #[test]
+    fn decodes_rentals() {
+        let time = [&ZC_CASH_TIME_COUNTER.to_le_bytes()[..], &5856u32.to_le_bytes(), &3599u32.to_le_bytes()].concat();
+        let Some(MapEvent::RentalTime { item: 5856, seconds: 3599 }) = decode_map_packet(&time) else { panic!() };
+        let gone = [&ZC_CASH_ITEM_DELETE.to_le_bytes()[..], &4u16.to_le_bytes(), &5856u32.to_le_bytes()].concat();
+        let Some(MapEvent::RentalExpired { index: 4, item: 5856 }) = decode_map_packet(&gone) else { panic!() };
+        // The end time: at 29 of a NORMALITEM_INFO entry, at 31 of an EQUIPITEM_INFO entry, at 34 of a pickup.
+        let mut normal = vec![0u8; NORMAL_ITEM_SIZE];
+        normal[29..33].copy_from_slice(&1_800_000_000u32.to_le_bytes());
+        assert_eq!(decode_normal_item(&normal).expires, 1_800_000_000);
+        let mut equip = vec![0u8; EQUIP_ITEM_SIZE];
+        equip[31..35].copy_from_slice(&1_800_000_001u32.to_le_bytes());
+        assert_eq!(decode_equip_item(&equip).expires, 1_800_000_001);
+        let mut pickup = vec![0u8; 70];
+        pickup[..2].copy_from_slice(&ZC_ITEM_PICKUP_ACK.to_le_bytes());
+        pickup[34..38].copy_from_slice(&1_800_000_002u32.to_le_bytes());
+        let Some(MapEvent::PickedUp { item, .. }) = decode_map_packet(&pickup) else { panic!() };
+        assert_eq!(item.expires, 1_800_000_002);
+        assert_eq!([ZC_CASH_TIME_COUNTER, ZC_CASH_ITEM_DELETE].map(packet_length), [Some(10), Some(8)]);
     }
 
     #[test]

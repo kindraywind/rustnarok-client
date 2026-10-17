@@ -43,6 +43,9 @@ const TITLES_TAB: usize = 2;
 /// "Disable Title", first in the titles' list, and the list's rows.
 const NO_TITLE: usize = 2686;
 const TITLE_ROW: f32 = 18.0;
+/// Take Off All, in the footer's right corner, and its name.
+const TAKE_OFF: [f32; 2] = [40.0, 20.0];
+const TAKE_OFF_NAME: usize = 3955;
 const SHOW_EQUIPMENT_MESSAGE: usize = 1362;
 /// "%s's Equipment": another player's window.
 const OTHERS_TITLE: usize = 1361;
@@ -86,8 +89,9 @@ pub struct Assets {
     footer: Texture,
     /// The Show Equipment box: off, on.
     checkbox: [Texture; 2],
-    /// Swap equipment and take everything off.
+    /// Swap equipment and take everything off; Take Off All pointed at.
     buttons: [Texture; 2],
+    take_off_hover: Texture,
 }
 
 impl Assets {
@@ -102,6 +106,7 @@ impl Assets {
             footer: footer.map_or_else(|_| gpu.solid([0xF0; 4]), |footer| gpu.texture(&footer, false)),
             checkbox: ["0", "1"].map(|look| image(format!("{UI}checkbox_{look}.bmp"))),
             buttons: [image(format!("{basic}btn_e_change_a.bmp")), image(format!("{basic}btn_e_off_a.bmp"))],
+            take_off_hover: image(format!("{basic}btn_e_off_b.bmp")),
         }
     }
 }
@@ -116,6 +121,7 @@ pub enum Hit {
     ShowBox,
     /// A title to wear (0: none).
     WearTitle(u32),
+    TakeOffAll,
     Window,
 }
 
@@ -136,6 +142,11 @@ impl Default for Equipment {
     fn default() -> Self {
         Self { frame: Frame::new(DEFAULT_POSITION, WIDTH), tab: 0, clicks: Clicks::default(), owner: None, shown: false, titles: Vec::new(), title: 0 }
     }
+}
+
+/// Take Off All's corner inside the window.
+fn take_off_at() -> [f32; 2] {
+    [WIDTH - 45.0, PANEL_TOP + PANEL_HEIGHT + 4.0]
 }
 
 /// A slot's top-left corner and size inside the window.
@@ -189,6 +200,9 @@ impl Equipment {
         if self.owner.is_none() && contains([6.0, footer_top + 6.0], [120.0, 14.0], local) {
             return Some(Hit::ShowBox);
         }
+        if self.owner.is_none() && contains(take_off_at(), TAKE_OFF, local) {
+            return Some(Hit::TakeOffAll);
+        }
         Some(
             self.slots(items)
                 .find(|&(column, row, _)| {
@@ -206,7 +220,7 @@ impl Equipment {
             Hit::Tab(tab) => self.tab = tab,
             // Someone else's items stay on.
             Hit::Slot(index) if self.owner.is_none() => return self.clicks.double(index).then_some(index),
-            Hit::Slot(_) | Hit::ShowBox | Hit::WearTitle(_) | Hit::Window => {}
+            Hit::Slot(_) | Hit::ShowBox | Hit::WearTitle(_) | Hit::TakeOffAll | Hit::Window => {}
         }
         None
     }
@@ -227,6 +241,9 @@ impl Equipment {
         };
         let tabs = (0..self.tabs()).map(|tab| (format!("equipment_tab:{tab}"), place([TAB_TEXT[tab][0] - 4.0, TITLE_HEIGHT], [TAB_WIDTH[tab], TABS_HEIGHT])));
         let mut boxes: Vec<_> = tabs.collect();
+        if self.owner.is_none() {
+            boxes.push(("take_off_all".to_owned(), place(take_off_at(), TAKE_OFF)));
+        }
         if self.tab == TITLES_TAB {
             let ids = std::iter::once(0).chain(self.titles.iter().map(|(id, _)| *id));
             boxes.extend(ids.enumerate().map(|(row, id)| (format!("title:{id}"), place([0.0, PANEL_TOP + 4.0 + row as f32 * TITLE_ROW], [WIDTH, TITLE_ROW]))));
@@ -324,6 +341,28 @@ impl Equipment {
         layer.texts.push((message(SHOW_EQUIPMENT_MESSAGE).to_owned(), at([19.0, footer_top + 6.0]), [0, 0, 0]));
         let [swap, take_off] = &assets.buttons;
         layer.sprites.push((swap, at([WIDTH - 90.0, footer_top + 4.0]), swap.size));
-        layer.sprites.push((take_off, at([WIDTH - 45.0, footer_top + 4.0]), take_off.size));
+        // ponytail: _a and _b read as normal and pointed at; the button's look isn't otherwise knowable.
+        let pointed = contains(at(take_off_at()), TAKE_OFF, cursor);
+        layer.sprites.push((if pointed { &assets.take_off_hover } else { take_off }, at(take_off_at()), TAKE_OFF));
+        if pointed {
+            window::tooltip(tooltip, chrome, font, message(TAKE_OFF_NAME), offset(cursor, [12.0, 12.0]), [255; 3]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn takes_off_all_from_its_button() {
+        let mut window = Equipment::default();
+        window.frame.open = true;
+        let [x, y] = window.frame.at(take_off_at());
+        assert_eq!(window.hit([x + 20.0, y + 10.0], &[]), Some(Hit::TakeOffAll));
+        assert!(window.button_boxes().iter().any(|(name, _)| name == "take_off_all"));
+        // Someone else's window has no such button.
+        let other = Equipment::of("Someone".into());
+        assert_ne!(other.hit(other.frame.at(offset(take_off_at(), [20.0, 10.0])), &[]), Some(Hit::TakeOffAll));
     }
 }

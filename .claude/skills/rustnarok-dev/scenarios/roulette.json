@@ -1,0 +1,31 @@
+{
+  "about": "The Lucky Roulette (issue #101): its icon opens the window with the 42 prizes and the points; START spends a bronze point and spins row 0, the prize lands in the RESULT box; Get Prize claims it; with no points left START says so; the close button and @roulette (whose answer used to break the packet reading: 25 bytes, not 23) open and close it. The bonus item and the prize are random, so their boxes and row 0 are masked.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@set RouletteGold 0"}, {"wait": 300},
+    {"say": "@set RouletteSilver 0"}, {"wait": 300},
+    {"say": "@set RouletteBronze 1"}, {"wait": 300},
+    {"click_on": {"button": "roulette"}}, {"wait_for": {"packet": "0x0a1c", "ms": 5000}}, {"wait": 300}, {"move": [1000, 750]},
+    {"expect": {"windows_open": ["Roulette"], "state": {"roulette.bronze": 1, "roulette.prizes": 42, "roulette.prize": null}}},
+    {"shot": "roulette-open", "crop": [192, 135, 640, 497], "mask": [[55, 131, 36, 36]], "threshold": 3},
+    {"click_on": {"button": "start"}}, {"wait_for": {"packet": "0x0a20", "ms": 5000}}, {"wait": 200},
+    {"expect": {"state": {"roulette.bronze": 0, "roulette.spinning": true}}},
+    {"wait": 6500}, {"move": [1000, 750]},
+    {"expect": {"state": {"roulette.spinning": false, "roulette.prize.row": 0}}},
+    {"shot": "roulette-won", "crop": [192, 135, 640, 497], "mask": [[55, 131, 36, 36], [183, 140, 36, 36], [150, 338, 340, 40]], "threshold": 3},
+    {"click_on": {"button": "prize"}}, {"wait_for": {"packet": "0x0a22", "ms": 5000}}, {"wait_for": {"event": "PickedUp", "ms": 5000}}, {"wait": 300},
+    {"expect": {"state": {"roulette.prize": null}}},
+    {"click_on": {"button": "start"}}, {"wait_for": {"packet": "0x0a20", "ms": 5000}}, {"wait": 300},
+    {"expect": {"chat": "Points is required to play Lucky Roulette."}},
+    {"click_on": {"button": "close"}}, {"wait": 300},
+    {"expect": {"windows_closed": ["Roulette"]}},
+    {"say": "@roulette"}, {"wait_for": {"packet": "0x0a1a", "ms": 5000}}, {"wait": 500},
+    {"expect": {"windows_open": ["Roulette"], "state": {"roulette.prizes": 42}}},
+    {"key": "Escape"}, {"wait": 300},
+    {"expect": {"windows_closed": ["Roulette"]}},
+    {"say": "@itemreset"}, {"wait": 800}
+  ]
+}

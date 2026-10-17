@@ -177,7 +177,12 @@
     },
     {
       "shot": "mercenary-dismiss",
-      "threshold": 20
+      "crop": [
+        372,
+        432,
+        280,
+        120
+      ]
     },
     {
       "key": "Enter"
