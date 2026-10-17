@@ -786,6 +786,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     let now = Instant::now();
     json!({
         "map": game.map,
+        // The weather effect IDs showing.
+        "weather": game.weather.ids(),
         "player": {
             "name": game.me.name,
             "account_id": game.account_id,

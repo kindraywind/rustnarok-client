@@ -74,6 +74,7 @@ mod status;
 mod storage;
 mod trade;
 mod vend;
+mod weather;
 mod window;
 mod world;
 mod worldmap;
@@ -576,6 +577,8 @@ struct Game {
     macro_lines: [String; macros::COUNT],
     /// Dev switch RUSTNAROK_CLIENT_ROOM ran.
     room_tried: bool,
+    /// The map's weather, from the server's weather effects until the map changes.
+    weather: weather::Weather,
     /// The right-click menu, and where a right press began (and on whom).
     menu: Option<menu::Menu<Choice>>,
     right_press: Option<([f32; 2], Option<u32>)>,
@@ -1806,6 +1809,7 @@ struct Assets {
     refine: refine::Assets,
     bank: bank::Assets,
     context_menu: menu::Assets,
+    weather: weather::Assets,
     party: party::Assets,
     chatroom: chatroom::Assets,
     escape: escape::Assets,
@@ -1902,6 +1906,7 @@ impl Assets {
             refine: refine::Assets::load(gpu, grf),
             bank: bank::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
+            weather: weather::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
             escape: escape::Assets::load(gpu, grf),
@@ -4275,6 +4280,7 @@ impl App {
                     trade_asked: None,
                     trade_with: String::new(),
                     menu: None,
+                    weather: weather::Weather::default(),
                     right_press: None,
                     party: None,
                     status_window: {
@@ -4687,6 +4693,8 @@ impl App {
                 game.chat_line(message, color.unwrap_or(if id.is_none() { CHAT_SELF } else { CHAT_WHITE }));
             }
             MapEvent::MapChange { map, position } => {
+                // The new map's weather comes once it has loaded.
+                game.weather.clear();
                 // Back at the save point: up again.
                 if game.escape.as_ref().is_some_and(|menu| menu.dead) {
                     game.escape = None;
@@ -5911,6 +5919,8 @@ impl App {
                     game.play_effect(gpu, grf, table, effect, user);
                 }
             }
+            // Weather comes as effects on the player: it shows until the map changes.
+            MapEvent::Effect { id, effect } if id == game.account_id && weather::is_weather(effect) => game.weather.start(effect, control::now()),
             MapEvent::Effect { id, effect } => {
                 if let Some(gpu) = gpu {
                     game.play_effect(gpu, grf, table, effect, id);
@@ -6202,6 +6212,12 @@ impl App {
         let now = control::now();
         let pointer = (self.cursor, self.mouse_down);
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
+
+        // Fireworks weather sets off fireworks around the player.
+        for [dx, dy] in game.weather.fireworks_due(now) {
+            let cell = [game.player.cell[0] + dx, game.player.cell[1] + dy].map(|value| value.max(0) as u16);
+            game.play_effect_at(gpu, grf, &self.effect_table, weather::FIREWORK, cell);
+        }
 
         // Bodies that finished dying leave; hits that land make their target flinch.
         game.units.retain(|_, actor| actor.remove_at.is_none_or(|at| at > now));
@@ -6830,7 +6846,12 @@ impl App {
         if let Some(member) = game.party.as_mut().and_then(|party| party.member(account)) {
             member.hp = Some(own_hp);
         }
-        let mut layers = vec![base, cutin_layer, chat_layer];
+        // Weather over the map, under the names and windows.
+        let mut weather_layer = Layer::default();
+        if self.effects_on {
+            game.weather.draw(&mut weather_layer, &assets.weather, now);
+        }
+        let mut layers = vec![weather_layer, base, cutin_layer, chat_layer];
         let mut preview = Some(preview);
         for &id in &game.windows {
             let mut layer = Layer::default();
