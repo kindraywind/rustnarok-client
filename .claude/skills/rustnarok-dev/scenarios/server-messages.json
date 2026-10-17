@@ -16,7 +16,7 @@
     {"expect": {"no_chat": "blueA blue"}},
     {"say": "@item 601 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"key": "Alt+E"}, {"wait": 400},
-    {"click": [59, 212], "count": 2}, {"wait_for": {"packet": "0x0189", "ms": 5000}},
+    {"click_on": {"inventory_item": 601}, "count": 2}, {"wait_for": {"packet": "0x0189", "ms": 5000}},
     {"key": "Alt+E"}, {"wait": 300}, {"move": [700, 300]},
     {"expect": {"chat": "Unavailable Area to Teleport"}},
     {"shot": "chat", "crop": [0, 540, 610, 228]},

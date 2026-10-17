@@ -202,6 +202,8 @@ pub enum Command {
     AllWhispers { allow: bool },
     /// /effect: effects off or on.
     Effect,
+    /// /memo: where the player stands becomes a Warp Portal destination.
+    Memo,
 }
 
 /// The command typed, if `text` is one; a name is the rest of the line, quotes taken off.
@@ -216,6 +218,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/exall" => Command::AllWhispers { allow: false },
         "/inall" => Command::AllWhispers { allow: true },
         "/effect" => Command::Effect,
+        "/memo" => Command::Memo,
         _ => return None,
     })
 }
@@ -233,6 +236,7 @@ mod tests {
             assert_eq!(command(text), Some(Command::Who));
         }
         assert_eq!(command("/where"), Some(Command::Where));
+        assert_eq!(command("/memo"), Some(Command::Memo));
         assert_eq!(command("/ex"), Some(Command::BlockList));
         assert_eq!(command("/ex Poring"), Some(Command::Whispers { name: "Poring".into(), allow: false }));
         assert_eq!(command("/in \"Big Poring\" "), Some(Command::Whispers { name: "Big Poring".into(), allow: true }));
