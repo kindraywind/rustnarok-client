@@ -3668,9 +3668,16 @@ impl App {
                 let Scene::CharSelect(select) = self.scene.base_mut() else { return };
                 let outcome = pin::PinPad::apply_server(&mut select.pin_pad, seed, state);
                 match outcome {
-                    pin::PinServerOutcome::Passed => {
+                    pin::PinServerOutcome::Passed { message } => {
                         select.pin_verified = true;
                         self.finish_char_select_entry();
+                        if let Some(id) = message
+                            && matches!(self.scene, Scene::CharSelect(_))
+                        {
+                            let text = self.message_text(id);
+                            let back = std::mem::replace(&mut self.scene, Scene::Login);
+                            self.message(text, back);
+                        }
                     }
                     pin::PinServerOutcome::Prompt => {
                         select.pin_verified = false;

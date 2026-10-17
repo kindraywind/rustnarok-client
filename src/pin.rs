@@ -13,11 +13,8 @@ pub const ENTER_MESSAGE: usize = 2566;
 pub const RECOMMEND_MESSAGE: usize = 1900;
 pub const MOUSE_HINT_MESSAGE: usize = 1906;
 pub const LOCKOUT_WARNING_MESSAGE: usize = 1907;
-#[allow(dead_code)]
-pub const AUTH_OK_MESSAGE: usize = 1888;
-#[allow(dead_code)]
+// ponytail: 1888 "Secured authentication is successful." isn't shown after a right PIN so Enter goes straight to the game; show it if the real client does.
 pub const CREATED_MESSAGE: usize = 1889;
-#[allow(dead_code)]
 pub const CHANGED_MESSAGE: usize = 1891;
 pub const WRONG_MESSAGE: usize = 1892;
 pub const MISMATCH_MESSAGE: usize = 1893;
@@ -140,7 +137,7 @@ pub enum PinAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PinServerOutcome {
     /// State 0: PIN verified or not needed; pad closes and character select is unlocked.
-    Passed,
+    Passed { message: Option<usize> },
     /// Pad stays open (states 1, 2, 3, 4).
     Prompt,
     /// State 5 or state 8 (< 3 tries): show message `id` (with `tries_left` for 1892) over character select.
@@ -169,8 +166,13 @@ impl PinPad {
     pub fn apply_server(pad: &mut Option<Self>, seed: u32, state: u16) -> PinServerOutcome {
         match state {
             0 => {
+                let message = match pad.as_ref().map(|existing| &existing.step) {
+                    Some(PinStep::NewConfirm { .. }) => Some(CREATED_MESSAGE),
+                    Some(PinStep::ChangeNewConfirm { .. }) => Some(CHANGED_MESSAGE),
+                    _ => None,
+                };
                 *pad = None;
-                PinServerOutcome::Passed
+                PinServerOutcome::Passed { message }
             }
             1 => {
                 let wrong_tries = pad.as_ref().map_or(0, |existing| existing.wrong_tries);
@@ -224,7 +226,6 @@ impl PinPad {
     }
 
     /// Control-state `pin` string: `"ask"`, `"new"`, or `"change"`.
-    #[allow(dead_code)]
     pub fn kind(&self) -> &'static str {
         match self.step {
             PinStep::Ask => "ask",
@@ -382,12 +383,6 @@ impl PinPad {
         None
     }
 
-    /// Whether `cursor` lies anywhere inside the pad window (so clicks don't fall through to character cards).
-    #[allow(dead_code)]
-    pub fn contains(&self, cursor: [f32; 2]) -> bool {
-        contains(Self::origin(), SIZE, cursor)
-    }
-
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, font: &Font, messages: &[String], pointer: ([f32; 2], bool)) {
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
         let (cursor, down) = pointer;
@@ -512,6 +507,8 @@ mod tests {
             }
         }
         assert_eq!(action, PinAction::Make { seed: 0xABCD, pin: "1357".into() });
+        assert_eq!(PinPad::apply_server(&mut pad, 0xABCD, 0), PinServerOutcome::Passed { message: Some(CREATED_MESSAGE) });
+        assert!(pad.is_none());
 
         // Voluntary change from state 1 (PinButton::Change).
         assert_eq!(PinPad::apply_server(&mut pad, 0x5555, 1), PinServerOutcome::Prompt);
@@ -542,16 +539,16 @@ mod tests {
         }
         assert_eq!(action, PinAction::Change { seed: 0x6666, old_pin: "1357".into(), new_pin: "2468".into() });
 
-        // State 0 sets pad to None and returns Passed.
-        assert_eq!(PinPad::apply_server(&mut pad, 0x7777, 0), PinServerOutcome::Passed);
+        // State 0 after Change sets pad to None and returns Passed with 1891; with no pad returns None.
+        assert_eq!(PinPad::apply_server(&mut pad, 0x7777, 0), PinServerOutcome::Passed { message: Some(CHANGED_MESSAGE) });
+        assert!(pad.is_none());
+        assert_eq!(PinPad::apply_server(&mut pad, 0x8888, 0), PinServerOutcome::Passed { message: None });
         assert!(pad.is_none());
     }
 
     #[test]
     fn hits_pad_buttons() {
         let mut pad = PinPad::new(0x1234_5678, PinStep::Ask, false);
-        assert!(pad.contains(offset(PinPad::origin(), [10.0, 10.0])));
-        assert!(!pad.contains([0.0, 0.0]));
 
         for index in 0..10u8 {
             let center = offset(PinPad::digit_place(index), [DIGIT_SIZE[0] / 2.0, DIGIT_SIZE[1] / 2.0]);
