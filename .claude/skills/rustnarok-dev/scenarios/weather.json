@@ -1,0 +1,371 @@
+{
+  "about": "Weather from rathena's map flags (issue #56): each GM weather command on Prontera shows its layer and its effect ID in the control state, and turning it off then @refresh clears it. Fireworks again on a dark map, where their additive bursts show. Flags last until the map server restarts, so every one is turned off again.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@clearweather"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@refresh"
+    },
+    {
+      "settle": 1000
+    },
+    {
+      "expect": {
+        "weather": []
+      }
+    },
+    {
+      "say": "@snow"
+    },
+    {
+      "wait_for": {
+        "packet": "0x01f3",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "expect": {
+        "chat": "It has started to snow.",
+        "weather": [
+          162
+        ]
+      }
+    },
+    {
+      "shot": "weather-snow",
+      "threshold": 100
+    },
+    {
+      "say": "@snow"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@refresh"
+    },
+    {
+      "settle": 1000
+    },
+    {
+      "expect": {
+        "weather": []
+      }
+    },
+    {
+      "say": "@sakura"
+    },
+    {
+      "wait_for": {
+        "packet": "0x01f3",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "expect": {
+        "chat": "Cherry tree leaves have begun to fall.",
+        "weather": [
+          163
+        ]
+      }
+    },
+    {
+      "shot": "weather-sakura",
+      "threshold": 100
+    },
+    {
+      "say": "@sakura"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@refresh"
+    },
+    {
+      "settle": 1000
+    },
+    {
+      "expect": {
+        "weather": []
+      }
+    },
+    {
+      "say": "@leaves"
+    },
+    {
+      "wait_for": {
+        "packet": "0x01f3",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "expect": {
+        "chat": "Fallen leaves fall.",
+        "weather": [
+          333
+        ]
+      }
+    },
+    {
+      "shot": "weather-leaves",
+      "threshold": 100
+    },
+    {
+      "say": "@leaves"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@refresh"
+    },
+    {
+      "settle": 1000
+    },
+    {
+      "expect": {
+        "weather": []
+      }
+    },
+    {
+      "say": "@clouds"
+    },
+    {
+      "wait_for": {
+        "packet": "0x01f3",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "expect": {
+        "chat": "Clouds appear.",
+        "weather": [
+          233
+        ]
+      }
+    },
+    {
+      "shot": "weather-clouds",
+      "threshold": 100
+    },
+    {
+      "say": "@clouds"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@refresh"
+    },
+    {
+      "settle": 1000
+    },
+    {
+      "expect": {
+        "weather": []
+      }
+    },
+    {
+      "say": "@clouds2"
+    },
+    {
+      "wait_for": {
+        "packet": "0x01f3",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "expect": {
+        "chat": "Alternative clouds appear.",
+        "weather": [
+          516
+        ]
+      }
+    },
+    {
+      "shot": "weather-clouds2",
+      "threshold": 100
+    },
+    {
+      "say": "@clouds2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@refresh"
+    },
+    {
+      "settle": 1000
+    },
+    {
+      "expect": {
+        "weather": []
+      }
+    },
+    {
+      "say": "@fog"
+    },
+    {
+      "wait_for": {
+        "packet": "0x01f3",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "expect": {
+        "chat": "Fog hangs over.",
+        "weather": [
+          515
+        ]
+      }
+    },
+    {
+      "shot": "weather-fog",
+      "threshold": 100
+    },
+    {
+      "say": "@fog"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@refresh"
+    },
+    {
+      "settle": 1000
+    },
+    {
+      "expect": {
+        "weather": []
+      }
+    },
+    {
+      "say": "@fireworks"
+    },
+    {
+      "wait_for": {
+        "packet": "0x01f3",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "expect": {
+        "chat": "Fireworks are launched.",
+        "weather": [
+          297
+        ]
+      }
+    },
+    {
+      "shot": "weather-fireworks",
+      "threshold": 100
+    },
+    {
+      "say": "@fireworks"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@refresh"
+    },
+    {
+      "settle": 1000
+    },
+    {
+      "expect": {
+        "weather": []
+      }
+    },
+    {
+      "say": "@warp iz_int01 18 26"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@fireworks"
+    },
+    {
+      "wait_for": {
+        "packet": "0x01f3",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "expect": {
+        "weather": [
+          297,
+          299,
+          301
+        ]
+      }
+    },
+    {
+      "shot": "weather-fireworks-dark",
+      "threshold": 100
+    },
+    {
+      "say": "@fireworks"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "weather": []
+      }
+    },
+    {
+      "say": "@clearweather"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

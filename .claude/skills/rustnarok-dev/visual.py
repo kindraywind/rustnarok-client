@@ -24,7 +24,7 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
               "windows_open": ["Inventory"], "windows_closed": ["Skills"], "units_at_least": {"monster": 10},
               "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null},
               "identified": [1201], "unidentified": [1202], "inventory_has": [{"id": 1201, "cards": [4035, 0, 0, 0]}],
-              "characters": {"1": "Name"} (at character select),
+              "characters": {"1": "Name"} (at character select), "weather": [162] ([] for none),
               "state": {"pet.intimacy": 950, "pet": null, "scene": "char_select"},
               "achievements": {"200005": "completed"}, "title": 1000}}  (state: values at dotted paths of the game state,
               or of the whole control state when the game state has no such field; achievements: each one "completed"
@@ -192,6 +192,12 @@ def expect(wanted, state):
             failures.append(f"zeny {game.get('player', {}).get('zeny')} != {value}")
         elif key == "spirits" and game.get("player", {}).get("spirits") != value:
             failures.append(f"spirits {game.get('player', {}).get('spirits')} != {value}")
+        elif key == "weather":
+            # Weather effect IDs showing: each listed one, or none at all for [].
+            showing = game.get("weather", [])
+            if value == [] and showing:
+                failures.append(f"weather {showing} showing, wanted none")
+            failures += [f"weather {effect} not showing (showing {showing})" for effect in value if effect not in showing]
         elif key == "characters":
             # {"<slot>": "<name>"} at character select (null for an empty slot).
             names = {str(character.get("slot")): character.get("name") for character in state.get("characters", [])}
@@ -219,7 +225,7 @@ def expect(wanted, state):
                     failures.append(f"achievement {achievement} is not {want}: {have}")
         elif key == "title" and game.get("title") != value:
             failures.append(f"title {game.get('title')} != {value}")
-        elif key not in ("achievements", "title", "state", "chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters"):
+        elif key not in ("achievements", "title", "state", "chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
             failures.append(f"unknown expectation {key}")
     return failures
 
