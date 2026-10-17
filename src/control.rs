@@ -718,12 +718,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
         .chain(game.skill_window.skill_boxes(&app.skill_trees, &jobs).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
-        .chain(
-            game.pick
-                .iter()
-                .flat_map(|(list, _)| list.row_boxes())
-                .map(|(index, area)| json!({"kind": "pick_item", "index": index, "id": item_of(index), "box": area})),
-        )
+        .chain(game.pick.iter().flat_map(|(list, _)| list.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();

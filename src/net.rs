@@ -566,6 +566,13 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_MAKABLEITEMLIST: u16 = 0x018D;
+const CZ_REQMAKINGITEM: u16 = 0x018E;
+const ZC_ACK_REQMAKINGITEM: u16 = 0x018F;
+const ZC_MAKINGITEM_LIST: u16 = 0x025A;
+const CZ_REQ_MAKINGITEM: u16 = 0x025B;
+const ZC_MAKINGARROW_LIST: u16 = 0x01AD;
+const CZ_REQ_MAKINGARROW: u16 = 0x01AE;
 const ZC_NPC_MARKET_OPEN: u16 = 0x0B7A;
 const CZ_NPC_MARKET_PURCHASE: u16 = 0x09D6;
 const ZC_NPC_MARKET_PURCHASE_RESULT: u16 = 0x0B4E;
@@ -1131,6 +1138,20 @@ pub enum MapEvent {
     MarketBought {
         ok: bool,
         items: Vec<(u32, u16)>,
+    },
+    /// What can be made (Pharmacy, forging, rune stones...): the items' IDs.
+    MakeList(Vec<u32>),
+    /// A cooking kit's (or another) making list: its type and the items.
+    CookList {
+        kind: u16,
+        items: Vec<u32>,
+    },
+    /// Arrow Crafting's (or a converter's, a poison's) list: the items it can use.
+    ArrowList(Vec<u32>),
+    /// Something made, or not: even results succeeded, odd ones failed.
+    Made {
+        result: u16,
+        item: u32,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
@@ -2130,6 +2151,19 @@ impl MapSession {
         self.stream.write_all(&header.to_le_bytes())
     }
 
+    /// Answers a making list: the item, or 0 to give it up (rathena then forgets the list).
+    pub fn make(&mut self, item: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_make(item))
+    }
+
+    pub fn cook(&mut self, kind: u16, item: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_cook(kind, item))
+    }
+
+    pub fn make_arrow(&mut self, item: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_make_arrow(item))
+    }
+
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
     pub fn card_list(&mut self, card: u16) -> io::Result<()> {
         self.stream.write_all(&encode_card_list(card))
@@ -2708,6 +2742,31 @@ fn encode_expanded_barter_buy(items: &[(u32, u32, u32)]) -> Vec<u8> {
     packet
 }
 
+/// CZ_REQMAKINGITEM: the item to make (0: none, which ends the list) and three extra ingredients (none here).
+fn encode_make(item: u32) -> [u8; 18] {
+    let mut packet = [0u8; 18];
+    packet[..2].copy_from_slice(&CZ_REQMAKINGITEM.to_le_bytes());
+    packet[2..6].copy_from_slice(&item.to_le_bytes());
+    packet
+}
+
+/// CZ_REQ_MAKINGITEM: the list's type and the item (0: none).
+fn encode_cook(kind: u16, item: u32) -> [u8; 8] {
+    let mut packet = [0u8; 8];
+    packet[..2].copy_from_slice(&CZ_REQ_MAKINGITEM.to_le_bytes());
+    packet[2..4].copy_from_slice(&kind.to_le_bytes());
+    packet[4..].copy_from_slice(&item.to_le_bytes());
+    packet
+}
+
+/// CZ_REQ_MAKINGARROW: the item picked.
+fn encode_make_arrow(item: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_REQ_MAKINGARROW.to_le_bytes());
+    packet[2..].copy_from_slice(&item.to_le_bytes());
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -3084,6 +3143,11 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         },
         ZC_NPC_BARTER_MARKET_ITEMINFO => MapEvent::Market { kind: MarketKind::Barter, goods: packet[4..].chunks_exact(31).map(decode_barter_goods).collect() },
         ZC_NPC_EXPANDED_BARTER_MARKET_ITEMINFO => MapEvent::Market { kind: MarketKind::Expanded, goods: decode_expanded_barter(&packet[8..]) },
+        // Each entry is the item and three materials rathena leaves at 0.
+        ZC_MAKABLEITEMLIST => MapEvent::MakeList(packet[4..].chunks_exact(16).map(|entry| self::u32_at(entry, 0)).collect()),
+        ZC_MAKINGITEM_LIST => MapEvent::CookList { kind: u16_at(4), items: packet[6..].chunks_exact(4).map(|id| self::u32_at(id, 0)).collect() },
+        ZC_MAKINGARROW_LIST => MapEvent::ArrowList(packet[4..].chunks_exact(4).map(|id| self::u32_at(id, 0)).collect()),
+        ZC_ACK_REQMAKINGITEM => MapEvent::Made { result: u16_at(2), item: u32_at(4) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3875,6 +3939,32 @@ mod tests {
         assert_eq!(opens, [Some(-1); 4]);
         let closes = [CZ_NPC_MARKET_CLOSE, CZ_NPC_BARTER_MARKET_CLOSE, CZ_NPC_EXPANDED_BARTER_MARKET_CLOSE].map(packet_length);
         assert_eq!(closes, [Some(2); 3]);
+    }
+
+    #[test]
+    fn decodes_making_lists() {
+        let mut make = ZC_MAKABLEITEMLIST.to_le_bytes().to_vec();
+        make.extend_from_slice(&36u16.to_le_bytes());
+        for item in [501u32, 502] {
+            make.extend_from_slice(&item.to_le_bytes());
+            make.extend_from_slice(&[0; 12]);
+        }
+        let Some(MapEvent::MakeList(items)) = decode_map_packet(&make) else { panic!() };
+        assert_eq!(items, [501, 502]);
+        let cook = [&ZC_MAKINGITEM_LIST.to_le_bytes()[..], &10u16.to_le_bytes(), &1u16.to_le_bytes(), &12046u32.to_le_bytes()].concat();
+        let Some(MapEvent::CookList { kind: 1, items }) = decode_map_packet(&cook) else { panic!() };
+        assert_eq!(items, [12046]);
+        let arrows = [&ZC_MAKINGARROW_LIST.to_le_bytes()[..], &8u16.to_le_bytes(), &713u32.to_le_bytes()].concat();
+        let Some(MapEvent::ArrowList(items)) = decode_map_packet(&arrows) else { panic!() };
+        assert_eq!(items, [713]);
+        let made = [&ZC_ACK_REQMAKINGITEM.to_le_bytes()[..], &2u16.to_le_bytes(), &501u32.to_le_bytes()].concat();
+        let Some(MapEvent::Made { result: 2, item: 501 }) = decode_map_packet(&made) else { panic!() };
+        assert_eq!(encode_make(501)[..6], [0x8E, 0x01, 0xF5, 0x01, 0, 0]);
+        assert_eq!(encode_make(0), [0x8E, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(encode_cook(1, 12046), [0x5B, 0x02, 1, 0, 0x0E, 0x2F, 0, 0]);
+        assert_eq!(encode_make_arrow(713), [0xAE, 0x01, 0xC9, 0x02, 0, 0]);
+        let ids = [ZC_MAKABLEITEMLIST, CZ_REQMAKINGITEM, ZC_ACK_REQMAKINGITEM, ZC_MAKINGITEM_LIST, CZ_REQ_MAKINGITEM, ZC_MAKINGARROW_LIST, CZ_REQ_MAKINGARROW];
+        assert_eq!(ids.map(packet_length), [Some(-1), Some(18), Some(8), Some(-1), Some(8), Some(-1), Some(6)]);
     }
 
     #[test]
