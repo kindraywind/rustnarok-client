@@ -354,6 +354,15 @@ const EF_MVP: u32 = 68;
 const CAST_AURAS: [u32; 10] = [12, 54, 57, 55, 56, 59, 58, 454, 58, 454];
 /// "Select a target", under an aimed skill's name.
 const TARGET_MESSAGE: usize = 234;
+/// Taming's result: the slot machine's success and failure actions (they play those sounds), how long the last
+/// frame stays, and the chat lines.
+// ponytail: the slot machine at the screen's middle and the lines in the chat; how and where the real client shows
+// the result isn't known.
+const SLOT_CAUGHT: usize = 2;
+const SLOT_MISSED: usize = 3;
+const SLOT_HOLD_MS: f32 = 1500.0;
+const TAMED: usize = 1574;
+const NOT_TAMED: usize = 1575;
 /// HP/SP bars under characters: border, background, HP (low HP), SP.
 const BAR_WIDTH: f32 = 60.0;
 const BAR_COLORS: [[u8; 4]; 5] = [[0x10, 0x18, 0x9C, 255], [0x42, 0x42, 0x42, 255], [0x10, 0xEF, 0x21, 255], [0xFF, 0x00, 0x00, 255], [0x18, 0x63, 0xDE, 255]];
@@ -456,6 +465,10 @@ struct Game {
     skill_window: skills::SkillWindow,
     /// A skill waiting for its target: ID and level.
     targeting: Option<(u16, u16)>,
+    /// A taming item waiting for its monster; the slot machine, and the result it plays (action, since when).
+    capturing: bool,
+    slot_sprite: Option<SpriteSet>,
+    slot: Option<(usize, Instant)>,
     /// Units casting (None = the player): when it began and how long it takes.
     casts: HashMap<Option<u32>, (Instant, Duration)>,
     /// Words over heads (chat, skill names), by unit (None = the player): text, color, when said.
@@ -3042,6 +3055,16 @@ impl App {
                     }
                 }
             }
+            // Taming: a monster under the pointer is the one to try (rathena checks the distance); anything else keeps
+            // aiming.
+            Scene::Game(game) if game.capturing => {
+                if let Some(Owner::Unit(id)) = hovered_any(&game.hit_boxes, cursor)
+                    && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER)
+                {
+                    game.capturing = false;
+                    let _ = game.session.try_capture(id);
+                }
+            }
             Scene::Game(game) if game.targeting.is_some() => {
                 // An aimed skill goes to the unit under the pointer, or the cell for ground skills.
                 let (id, _) = game.targeting.unwrap();
@@ -3252,7 +3275,7 @@ impl App {
                 game.item_window = Some(window);
             } else if let Some((asked, amount)) = moved {
                 game.give(asked, u32::from(amount));
-            } else if state == ElementState::Pressed && game.targeting.take().is_some() {
+            } else if state == ElementState::Pressed && (game.targeting.take().is_some() | std::mem::take(&mut game.capturing)) {
             } else if state == ElementState::Pressed {
                 game.camera_goal.press(self.cursor, self.modifiers);
             } else {
@@ -3845,6 +3868,7 @@ impl App {
                 Key::Named(NamedKey::Enter) => self.send_chat_input(self.modifiers.control_key(), self.modifiers.alt_key()),
                 Key::Named(NamedKey::Escape) if game.world_map.is_some() => game.world_map = None,
                 Key::Named(NamedKey::Escape) if game.pick.is_some() => game.answer_pick(None),
+                Key::Named(NamedKey::Escape) if game.capturing => game.capturing = false,
                 Key::Named(NamedKey::Escape) if game.targeting.is_some() => game.targeting = None,
                 Key::Named(NamedKey::Escape) if !game.chat.typing().is_empty() => game.chat.typing().clear(),
                 Key::Named(NamedKey::Escape) => game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: false }) },
@@ -4079,6 +4103,9 @@ impl App {
                         window
                     },
                     targeting: None,
+                    capturing: false,
+                    slot_sprite: SpriteSet::at(&self.grf, "data\\sprite\\slotmachine"),
+                    slot: None,
                     casts: HashMap::new(),
                     speech: HashMap::new(),
                     status_icons: Vec::new(),
@@ -4237,6 +4264,7 @@ impl App {
                 game.marks.clear();
                 game.signs.clear();
                 game.effects.clear();
+                game.capturing = false;
                 // The server announces the pet again on load.
                 (game.pet_id, game.pet) = (None, None);
                 game.player.stop_at(position.map(i32::from));
@@ -5388,6 +5416,21 @@ impl App {
                     actor.name = name;
                 }
             }
+            // A taming item: aim at the monster to tame.
+            MapEvent::CaptureStart => {
+                game.targeting = None;
+                game.capturing = true;
+            }
+            MapEvent::CaptureResult(caught) => {
+                let action = if caught { SLOT_CAUGHT } else { SLOT_MISSED };
+                game.slot = Some((action, Instant::now()));
+                let sound = game.slot_sprite.as_ref().and_then(|sprite| sprite.body_frame(action, Timing::Span(0.0))?.1.map(str::to_owned));
+                if let (Some(audio), Some(sound)) = (&mut self.audio, sound) {
+                    audio.play(grf, &sound, 1.0);
+                }
+                let (line, color) = if caught { (TAMED, CHAT_ITEM) } else { (NOT_TAMED, CHAT_ERROR) };
+                game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), color);
+            }
             MapEvent::IdentifyList(indexes) => {
                 let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
                 if items.is_empty() {
@@ -6218,6 +6261,20 @@ impl App {
             (Some(list), Some(sprite)) => list.icons(gpu, sprite),
             _ => Vec::new(),
         };
+        // Taming's slot machine: its result played once, then held a moment.
+        let slot_frame = match (&mut game.slot_sprite, game.slot) {
+            (Some(sprite), Some((action, start))) => {
+                let length = sprite.index_ms(action).unwrap_or(1000.0).max(1.0);
+                let elapsed = now.saturating_duration_since(start).as_secs_f32() * 1000.0;
+                if elapsed > length + SLOT_HOLD_MS {
+                    game.slot = None;
+                    Vec::new()
+                } else {
+                    sprite.frame_at(gpu, action, 0, Timing::Span((elapsed / length).min(1.0)))
+                }
+            }
+            _ => Vec::new(),
+        };
         // Emotions play once over heads.
         let mut shown = Vec::new();
         if let Some(sprite) = &mut game.emotion_sprite {
@@ -6746,17 +6803,22 @@ impl App {
             tooltip.sprites.push((icon, [pointer.0[0] - icon.size[0] / 2.0, pointer.0[1] - icon.size[1] / 2.0], icon.size));
         }
 
-        // An aimed skill: its name at the top, "select a target" at the bottom, its level by the pointer.
+        // An aimed skill: its name at the top, "select a target" at the bottom, its level by the pointer. Taming has
+        // no skill: the bottom line only.
+        let mut aim_lines = Vec::new();
         if let Some((id, level)) = game.targeting {
-            let name = skill_info.get(&id).map_or_else(|| id.to_string(), |info| info.name.clone());
-            for (text, top) in [(name, 45.0), (message(TARGET_MESSAGE).to_owned(), SCREEN[1] - 60.0 - 23.0)] {
-                let width = font.width(&text).ceil() + 14.0;
-                let left = ((SCREEN[0] - width) / 2.0).floor();
-                tooltip.sprites.push((&assets.target_fill, [left, top], [width, 23.0]));
-                tooltip.texts.push((text.clone(), [left + 8.0, top + 6.0], [0, 0, 0]));
-                tooltip.texts.push((text, [left + 7.0, top + 5.0], [0x00, 0xFF, 0x00]));
-            }
+            aim_lines.push((skill_info.get(&id).map_or_else(|| id.to_string(), |info| info.name.clone()), 45.0));
             tooltip.outlined(&level.to_string(), [pointer.0[0] + 20.0, pointer.0[1] - 18.0]);
+        }
+        if game.targeting.is_some() || game.capturing {
+            aim_lines.push((message(TARGET_MESSAGE).to_owned(), SCREEN[1] - 60.0 - 23.0));
+        }
+        for (text, top) in aim_lines {
+            let width = font.width(&text).ceil() + 14.0;
+            let left = ((SCREEN[0] - width) / 2.0).floor();
+            tooltip.sprites.push((&assets.target_fill, [left, top], [width, 23.0]));
+            tooltip.texts.push((text.clone(), [left + 8.0, top + 6.0], [0, 0, 0]));
+            tooltip.texts.push((text, [left + 7.0, top + 5.0], [0x00, 0xFF, 0x00]));
         }
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
@@ -6928,7 +6990,7 @@ impl App {
         };
         cursor_look.set(if game.camera_goal.dragging.is_some() {
             cursor::Kind::Rotate
-        } else if game.targeting.is_some() && !on_window {
+        } else if (game.targeting.is_some() || game.capturing) && !on_window {
             cursor::Kind::Target
         } else if on_window {
             cursor::Kind::Default
@@ -6947,6 +7009,10 @@ impl App {
                 },
             }
         });
+        if let Some(sprite) = &game.slot_sprite {
+            let middle = [SCREEN[0] / 2.0, SCREEN[1] / 2.0];
+            sprites.extend(slot_frame.into_iter().map(|(key, offset, size)| (sprite.texture(key), [middle[0] + offset[0], middle[1] + offset[1]], size)));
+        }
         sprites.extend(cursor_look.draw(gpu, pointer.0));
 
         game.effects.advance(gpu, now, yaw);
