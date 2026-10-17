@@ -87,8 +87,10 @@ and `wait_for` waits on a packet or event (`ItemUsed`, `PickedUp`) instead of a 
 scenario and `visual.py` exits non-zero — otherwise a scenario that silently did nothing still makes screenshots.
 Set `RUSTNAROK_CLIENT_SCENARIO_RESET` to a shell command that puts your server's test characters back in a known
 state (it runs before every scenario): what one scenario saves on the server otherwise leaks into the next. With
-rathena: delete the characters' `hotkey` rows, set `char.inventory_slots` back to 100 and `char.pet_id` to 0 (a pet a
-stopped run left out of its egg). `mask` keeps animated rectangles (water, portals) out of the diff; `threshold` sets how much change a shot may take
+rathena: delete the characters' `hotkey` rows and their `achievement` rows for 200000 and 200005 (achievements.json
+completes them again), set `char.inventory_slots` back to 100, `char.pet_id` to 0 (a pet a stopped run left out of its
+egg), `char.title_id` to 0 and `char.class` to 0 (a job left behind completes job achievements at login). A
+scenario that changes something saved on the character (`@job`, `@vit`) changes it back at its end. `mask` keeps animated rectangles (water, portals) out of the diff; `threshold` sets how much change a shot may take
 before the report flags it. `python3 -I $V suite` checks every scenario and writes `report.md` beside the sheets. Each starts
 a fresh client and pauses the clock for every shot. Add one for the feature you touch, and keep it: the set grows into
 the game's visual regression suite.

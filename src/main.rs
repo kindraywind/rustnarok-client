@@ -37,6 +37,7 @@
 //! `none` for the archive alone),
 //! `RUSTNAROK_CLIENT_SCREENSHOT=out.png` (save a settled frame and quit; in the game after `RUSTNAROK_CLIENT_SHOT_DELAY` seconds, 2 by default).
 
+mod achievement;
 mod actor;
 mod bank;
 mod basic_info;
@@ -502,6 +503,10 @@ struct Game {
     /// The quest log and its window.
     quests: Vec<net::Quest>,
     quest_window: quest::QuestWindow,
+    /// The achievements: the totals, the player's by ID, and their window.
+    achievement_totals: net::AchievementTotals,
+    achievements: HashMap<u32, net::Achievement>,
+    achievement_window: achievement::AchievementWindow,
     /// The item description window, and how many lines its text wraps to.
     item_window: Option<iteminfo::ItemWindow>,
     item_lines: usize,
@@ -698,6 +703,18 @@ fn seen_direction(direction: u8, yaw: f32) -> u8 {
 fn pet_sprites(grf: &Grf, name: &str, act: Option<&String>) -> Option<SpriteSet> {
     let worn = act.and_then(|act| SpriteSet::with_act(grf, &format!("data\\sprite\\몬스터\\{name}"), &format!("data\\sprite\\몬스터\\{act}")));
     worn.or_else(|| SpriteSet::single(grf, name, true))
+}
+
+/// The titles of the achievements done whose rewards were taken, by ID, with their names.
+fn earned_titles(achievements: &HashMap<u32, net::Achievement>, info: &HashMap<u32, lua::AchievementInfo>, names: &HashMap<u32, String>) -> Vec<(u32, String)> {
+    let mut titles: Vec<u32> = achievements
+        .values()
+        .filter(|achievement| achievement.completed && achievement.rewarded)
+        .filter_map(|achievement| info.get(&achievement.id).map(|info| info.reward_title).filter(|&title| title != 0))
+        .collect();
+    titles.sort_unstable();
+    titles.dedup();
+    titles.into_iter().map(|title| (title, names.get(&title).cloned().unwrap_or_else(|| title.to_string()))).collect()
 }
 
 fn character_look(character: &Character) -> Look {
@@ -1194,6 +1211,10 @@ impl Game {
                 self.chat_line(message(if *effects_on { EFFECTS_ON } else { EFFECTS_OFF }), CHAT_ITEM);
                 Ok(())
             }
+            chat::Command::Achievements => {
+                self.achievement_window.frame.toggle();
+                Ok(())
+            }
             chat::Command::EmotionList => {
                 self.toggle_emotion_list();
                 Ok(())
@@ -1231,6 +1252,7 @@ impl Game {
             || self.my_shop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
             || self.mail.hit(cursor).is_some()
             || self.quest_window.hit(cursor, &self.quests).is_some()
+            || self.achievement_window.covers(cursor)
             || self.chat.contains(cursor)
             || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -1811,6 +1833,7 @@ struct Assets {
     escape: escape::Assets,
     options: options::Assets,
     quest: quest::Assets,
+    achievement: achievement::Assets,
     status: status::Assets,
     pet: pet::Assets,
     item_window: iteminfo::Assets,
@@ -1907,6 +1930,7 @@ impl Assets {
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
             quest: quest::Assets::load(gpu, grf),
+            achievement: achievement::Assets::load(gpu, grf),
             status: status::Assets::load(gpu, grf),
             pet: pet::Assets::load(gpu, grf),
             item_window: iteminfo::Assets::load(gpu, grf),
@@ -2174,6 +2198,9 @@ struct App {
     job_names: HashMap<u16, String>,
     /// Pets' tables and what they say.
     pets: pet::Data,
+    /// The achievements (the translation's achievements.lub) and the titles they give, by ID.
+    achievement_info: HashMap<u32, lua::AchievementInfo>,
+    title_names: HashMap<u32, String>,
     /// Item names and resources by item ID, and the client's numbered messages.
     items: HashMap<u32, ItemInfo>,
     messages: Vec<String>,
@@ -2226,8 +2253,10 @@ struct App {
     account: Option<LoginAccepted>,
     /// The character chosen to play, until its map is entered.
     playing: Option<Character>,
-    /// Connected to the map server, waiting to enter: session and map name.
+    /// Connected to the map server, waiting to enter: session and map name; and what the server sent meanwhile (the
+    /// achievements, at login), handled once the game is on.
     entering: Option<(MapSession, String)>,
+    early_events: Vec<MapEvent>,
     fields: [String; 2],
     /// Remember the ID for next time (the login window's save box).
     save_id: bool,
@@ -2659,6 +2688,12 @@ impl App {
                 }
             }
             // The quest window: tabs, quests, their locks, and the picked one's details.
+            Scene::Game(game) if game.achievement_window.covers(cursor) => {
+                let hit = game.achievement_window.hit(cursor, &self.achievement_info, &game.achievements).unwrap();
+                if let Some(id) = game.achievement_window.click(hit) {
+                    let _ = game.session.claim_achievement(id);
+                }
+            }
             Scene::Game(game) if game.quest_window.hit(cursor, &game.quests).is_some() => {
                 let hit = game.quest_window.hit(cursor, &game.quests).unwrap();
                 if let Some((id, active)) = game.quest_window.click(hit, &game.quests) {
@@ -2995,6 +3030,7 @@ impl App {
                             Some("bank") => {
                                 let _ = game.session.open_bank(game.account_id);
                             }
+                            Some("achievement") => game.achievement_window.frame.toggle(),
                             Some("mail") => {
                                 let action = game.mail.toggle();
                                 game.mail_action(action);
@@ -3019,6 +3055,10 @@ impl App {
                         // The box changes when the server answers.
                         if hit == equipment::Hit::ShowBox {
                             let _ = game.session.show_equipment(!game.equipment.shown);
+                        }
+                        // The title changes when the server answers.
+                        if let equipment::Hit::WearTitle(title) = hit {
+                            let _ = game.session.change_title(title);
                         }
                         if let Some(index) = game.equipment.click(hit) {
                             let _ = game.session.take_off(index);
@@ -3246,6 +3286,7 @@ impl App {
             }
             game.mail.drag_to(self.cursor);
             game.quest_window.frame.drag_to(self.cursor, 466.0);
+            game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
             if let Some(window) = &mut game.audio_window
                 && window.drag_to(self.cursor, &mut self.sound)
                 && let Some(audio) = &mut self.audio
@@ -3367,6 +3408,45 @@ impl App {
     }
 
     /// The left button went down or up: a press grabs, a release drops or clicks.
+    /// The wheel turned `rows` notches (positive: toward the player): it scrolls what the pointer is over, or zooms.
+    fn wheel(&mut self, rows: i32) {
+        if let Scene::Game(game) = &mut self.scene {
+            // Over the inventory the wheel scrolls it; elsewhere it zooms (away from you zooms out).
+            let on_shop = game.shop.as_ref().is_some_and(|shop| shop.covers(self.cursor));
+            let on_pick = game.pick.as_ref().is_some_and(|(list, _)| list.covers(self.cursor));
+            let on_item = game.item_window.as_ref().is_some_and(|window| window.hit(self.cursor, &self.items).is_some());
+            let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.cart.items).is_some());
+            match game.window_at(self.cursor) {
+                _ if on_setup => {
+                    let count = game.cart.items.len();
+                    game.vend_setup.as_mut().unwrap().scroll_by(rows, count);
+                }
+                _ if on_item => {
+                    let lines = game.item_lines;
+                    game.item_window.as_mut().unwrap().scroll_by(rows, lines);
+                }
+                _ if on_shop => game.shop.as_mut().unwrap().scroll_by(self.cursor, rows),
+                _ if on_pick => game.pick.as_mut().unwrap().0.scroll_by(rows),
+                _ if game.achievement_window.covers(self.cursor) => game.achievement_window.scroll_by(rows, &self.achievement_info),
+                Some(Panel::Inventory) => game.inventory.scroll_by(rows),
+                Some(Panel::Cart) => game.cart.scroll_by(rows),
+                Some(Panel::Guild) => {
+                    if let Some(guild) = &game.guild {
+                        game.guild_window.scroll_by(rows, guild);
+                    }
+                }
+                Some(Panel::Storage) => {
+                    if let Some(assets) = &self.assets {
+                        game.storage.scroll_by(rows, &assets.storage, &self.items);
+                    }
+                }
+                Some(_) => {}
+                None if game.chat.contains(self.cursor) => game.chat.scroll_by(rows),
+                None => game.camera_goal.wheel(-rows as f32),
+            }
+        }
+    }
+
     fn left_button(&mut self, event_loop: &ActiveEventLoop, state: ElementState) {
         self.mouse_down = state == ElementState::Pressed;
         let dragged = match &mut self.scene {
@@ -3441,7 +3521,8 @@ impl App {
                     | game.room.as_mut().is_some_and(|room| room.frame.drop_drag())
                     | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
                     | game.mail.drop_drag()
-                    | game.quest_window.frame.drop_drag();
+                    | game.quest_window.frame.drop_drag()
+                    | game.achievement_window.frame.drop_drag();
                 // A slider let go keeps its volume for next time.
                 let slid = game.audio_window.as_mut().is_some_and(options::AudioWindow::drop_drag);
                 if slid {
@@ -3530,6 +3611,14 @@ impl App {
             && game.mail.hit(cursor).is_some()
         {
             game.mail.start_drag(cursor);
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && game.achievement_window.covers(cursor)
+        {
+            if game.achievement_window.hit(cursor, &self.achievement_info, &game.achievements) == Some(achievement::Hit::Title(TitleHit::Title)) {
+                game.achievement_window.frame.start_drag(cursor);
+            }
             return;
         }
         if let Scene::Game(game) = &mut self.scene
@@ -4149,7 +4238,10 @@ impl App {
                 match MapSession::connect(&ticket, self.client_tick(), move |event| {
                     let _ = proxy.send_event(NetEvent::Map(event));
                 }) {
-                    Ok(session) => self.entering = Some((session, map)),
+                    Ok(session) => {
+                        self.entering = Some((session, map));
+                        self.early_events.clear();
+                    }
                     Err(_) => self.message("맵 서버에 접속할 수 없습니다.", Scene::Login),
                 }
             }
@@ -4174,6 +4266,8 @@ impl App {
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
                 let _ = session.loaded();
+                // The player's own title comes with their own name tag.
+                let _ = session.ask_name(account.account_id);
                 let look = character_look(&me);
                 let sprites = SpriteSet::player(&self.grf, &look, &self.look_tables);
                 let mut player = Actor::new(me.name.clone(), sprites, position.map(i32::from), direction, 150);
@@ -4260,6 +4354,9 @@ impl App {
                     world_map: None,
                     quests: Vec::new(),
                     quest_window: quest::QuestWindow::default(),
+                    achievement_totals: net::AchievementTotals::default(),
+                    achievements: HashMap::new(),
+                    achievement_window: achievement::AchievementWindow::default(),
                     item_window: None,
                     item_lines: 0,
                     whispered: VecDeque::new(),
@@ -4371,6 +4468,9 @@ impl App {
                         Some([x.parse().ok()?, y.parse().ok()?])
                     }),
                 }));
+                for event in std::mem::take(&mut self.early_events) {
+                    self.map_event(event);
+                }
             }
             Err(error) => self.message(format!("맵을 불러올 수 없습니다: {map} ({error})"), Scene::Login),
         }
@@ -4446,7 +4546,12 @@ impl App {
             return;
         }
 
-        let Scene::Game(game) = &mut self.scene else { return };
+        let Scene::Game(game) = &mut self.scene else {
+            if self.entering.is_some() {
+                self.early_events.push(event);
+            }
+            return;
+        };
         let (grf, job_names, look_tables, pets) = (&self.grf, &self.job_names, &self.look_tables, &self.pets);
         // Which kind of pick a making list is (read before the event is taken apart).
         let event_kind = match &event {
@@ -5196,7 +5301,12 @@ impl App {
                 }
                 game.want_emblem(guild, emblem);
             }
-            MapEvent::NameTag(id, tag) => _ = game.name_tags.insert(id, tag),
+            MapEvent::NameTag(id, tag) => {
+                if id == game.account_id {
+                    game.equipment.title = tag.title;
+                }
+                game.name_tags.insert(id, tag);
+            }
             MapEvent::GuildNotice { subject, text } => {
                 if !subject.is_empty() {
                     game.chat_line(format!("[{subject}] {text}"), GUILD_CHAT);
@@ -5578,6 +5688,29 @@ impl App {
                 let (line, color) = if caught { (TAMED, CHAT_ITEM) } else { (NOT_TAMED, CHAT_ERROR) };
                 game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), color);
             }
+            // Achievements: the whole list, or one changed; a newly done one says so.
+            MapEvent::Achievements { totals, list } => {
+                game.achievement_totals = totals;
+                game.achievements = list.into_iter().map(|achievement| (achievement.id, achievement)).collect();
+                game.equipment.titles = earned_titles(&game.achievements, &self.achievement_info, &self.title_names);
+            }
+            MapEvent::AchievementUpdate { totals, achievement } => {
+                game.achievement_totals = totals;
+                if let Some(achievement) = achievement {
+                    // ponytail: a chat line when one is done; how the real client tells it isn't known.
+                    if achievement.completed && !game.achievements.get(&achievement.id).is_some_and(|known| known.completed) {
+                        let info = self.achievement_info.get(&achievement.id);
+                        let name = info.map_or_else(|| achievement.id.to_string(), |info| info.title.clone());
+                        game.chat_line(messages::fill(self.messages.get(achievement::ACHIEVED).map_or("", String::as_str), &[&name]), CHAT_ITEM);
+                    }
+                    game.achievements.insert(achievement.id, achievement);
+                    game.equipment.titles = earned_titles(&game.achievements, &self.achievement_info, &self.title_names);
+                }
+            }
+            // A claim's result shows in the achievement's update.
+            MapEvent::AchievementReward { .. } => {}
+            MapEvent::TitleChanged { ok: true, title } => game.equipment.title = title,
+            MapEvent::TitleChanged { .. } => {}
             MapEvent::IdentifyList(indexes) => {
                 let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
                 if items.is_empty() {
@@ -6197,6 +6330,7 @@ impl App {
             (&self.grf, &self.items, &self.messages, &mut self.icons, &mut self.cursor_look, &self.pc_job_names);
         let (audio, sound) = (&mut self.audio, &self.sound);
         let (worlds, map_names, quest_texts) = (&self.worlds, &self.map_names, &self.quest_texts);
+        let (achievement_info, title_names) = (&self.achievement_info, &self.title_names);
         let (skill_info, skill_trees, status_icon_files) = (&self.skill_info, &self.skill_trees, &self.status_icon_files);
         let font = &self.font;
         let now = control::now();
@@ -6543,6 +6677,7 @@ impl App {
         // names below); the server tells those each time the pointer comes onto them, as what it sends unasked can be
         // stale.
         let mut guild_line = None;
+        let mut title_line = None;
         let pointed = match hovered(&game.hit_boxes, pointer.0) {
             Some(Owner::Unit(id)) if game.units.get(&id).is_some_and(|actor| !actor.hidden && actor.kind != NPC && actor.sprites.is_some()) => Some(id),
             _ => None,
@@ -6556,6 +6691,10 @@ impl App {
                 Some(tag) if !tag.party.is_empty() => format!("{} ({})", actor.name, tag.party),
                 _ => actor.name.clone(),
             };
+            // ponytail: the title over the name; where the real client shows it isn't known.
+            if let Some(title) = tag.and_then(|tag| title_names.get(&tag.title)) {
+                title_line = Some((format!("[{title}]"), feet));
+            }
             if let Some(tag) = tag.filter(|tag| !tag.guild.is_empty()) {
                 guild_line = Some((name.clone(), format!("{} [{}]", tag.guild, tag.position), feet, actor.guild));
             }
@@ -6581,6 +6720,12 @@ impl App {
                 let x = (point[0] * SCREEN[0] - font.width(name) / 2.0).round();
                 base.outlined(name, [x, (point[1] * SCREEN[1] + 4.0).round()]);
             }
+        }
+        if let Some((title, feet)) = &title_line
+            && let Some(point) = view.project(*feet)
+        {
+            let x = (point[0] * SCREEN[0] - font.width(title) / 2.0).round();
+            base.outlined(title, [x, (point[1] * SCREEN[1] + 4.0 - font.line_height()).round()]);
         }
         if let Some((name, line, feet, guild_id)) = &guild_line
             && let Some(point) = view.project(*feet)
@@ -6746,6 +6891,7 @@ impl App {
         let mut pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
         pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
+        pick_icons.extend(game.achievement_window.icons(achievement_info));
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         if game.vend_setup.is_some() {
@@ -6866,6 +7012,7 @@ impl App {
                         job: pc_job_names.get(&game.me.job).map_or("", String::as_str),
                         status: &game.status,
                         unread_mail: game.mail.unread,
+                        reward_waiting: game.achievements.values().any(|achievement| achievement::claimable(Some(achievement))),
                     };
                     game.basic_info.draw(&mut layer, &assets.chrome, &assets.basic_info, font, messages, &info, pointer.0);
                 }
@@ -6999,6 +7146,20 @@ impl App {
             shop.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
         }
         game.quest_window.draw(&mut shop_layer, &assets.chrome, &assets.quest, font, messages, &game.quests, quest_texts, pointer.0);
+        game.achievement_window.draw(
+            &mut shop_layer,
+            &assets.chrome,
+            &assets.achievement,
+            icons,
+            font,
+            messages,
+            achievement_info,
+            &game.achievements,
+            &game.achievement_totals,
+            title_names,
+            items,
+            pointer,
+        );
         if let Some(list) = &game.emotion_list {
             list.draw(&mut shop_layer, &assets.chrome, font, messages, game.emotion_sprite.as_ref(), &emotion_icons, pointer.0);
         }
@@ -7315,39 +7476,8 @@ impl ApplicationHandler<NetEvent> for App {
                     MouseScrollDelta::LineDelta(_, y) => -y.signum() as i32,
                     MouseScrollDelta::PixelDelta(position) => -position.y.signum() as i32,
                 };
-                if let Scene::Game(game) = &mut self.scene {
-                    // Over the inventory the wheel scrolls it; elsewhere it zooms (away from you zooms out).
-                    let on_shop = game.shop.as_ref().is_some_and(|shop| shop.covers(self.cursor));
-                    let on_pick = game.pick.as_ref().is_some_and(|(list, _)| list.covers(self.cursor));
-                    let on_item = game.item_window.as_ref().is_some_and(|window| window.hit(self.cursor, &self.items).is_some());
-                    let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.cart.items).is_some());
-                    match game.window_at(self.cursor) {
-                        _ if on_setup => {
-                            let count = game.cart.items.len();
-                            game.vend_setup.as_mut().unwrap().scroll_by(rows, count);
-                        }
-                        _ if on_item => {
-                            let lines = game.item_lines;
-                            game.item_window.as_mut().unwrap().scroll_by(rows, lines);
-                        }
-                        _ if on_shop => game.shop.as_mut().unwrap().scroll_by(self.cursor, rows),
-                        _ if on_pick => game.pick.as_mut().unwrap().0.scroll_by(rows),
-                        Some(Panel::Inventory) => game.inventory.scroll_by(rows),
-                        Some(Panel::Cart) => game.cart.scroll_by(rows),
-                        Some(Panel::Guild) => {
-                            if let Some(guild) = &game.guild {
-                                game.guild_window.scroll_by(rows, guild);
-                            }
-                        }
-                        Some(Panel::Storage) => {
-                            if let Some(assets) = &self.assets {
-                                game.storage.scroll_by(rows, &assets.storage, &self.items);
-                            }
-                        }
-                        Some(_) => {}
-                        None if game.chat.contains(self.cursor) => game.chat.scroll_by(rows),
-                        None => game.camera_goal.wheel(-rows as f32),
-                    }
+                self.wheel(rows);
+                if let Some(gpu) = &self.gpu {
                     gpu.window.request_redraw();
                 }
             }
@@ -7578,6 +7708,9 @@ fn main() {
     let event_loop = event_loop.build().expect("event loop");
     control::listen(event_loop.create_proxy());
     let pets = pet::Data::load(&grf);
+    // ponytail: without the translation's achievements.lub the window lists nothing and names achievements by ID.
+    let achievement_info = lua::achievements(&grf).unwrap_or_default();
+    let title_names = lua::titles(&grf).unwrap_or_default();
     let job_names = lua::job_names(&grf).unwrap_or_else(|error| {
         eprintln!("no NPC/monster sprite names: {error}");
         HashMap::new()
@@ -7619,6 +7752,8 @@ fn main() {
         grf,
         job_names,
         pets,
+        achievement_info,
+        title_names,
         items,
         messages,
         icons: HashMap::new(),
@@ -7658,6 +7793,7 @@ fn main() {
         account: None,
         playing: None,
         entering: None,
+        early_events: Vec::new(),
         fields: [saved_id().unwrap_or_default(), String::new()],
         save_id: saved_id().is_some(),
         focus: usize::from(saved_id().is_some()),

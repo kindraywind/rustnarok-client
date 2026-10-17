@@ -15,6 +15,7 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
     id), menu_item (part of a right-click menu choice's label), button (a window button's name, e.g. "feed"),
     hotkey (slot), skill (id), char_slot (a card at character select, by slot), unit (name, from `units`), or
     {"point": [x, y]}; "offset": [dx, dy] shifts from the centre; a target not on screen fails the step)
+  {"wheel": [x, y, rows]}  (the mouse wheel over a point: rows > 0 scrolls down)
   {"click_unit": {"kind": "pet", "name": "Poring"}, "button": "right", "mods": "shift"}  (the middle of the nearest
     unit of that kind, and name if given, on screen)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
@@ -24,8 +25,10 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
               "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null},
               "identified": [1201], "unidentified": [1202], "inventory_has": [{"id": 1201, "cards": [4035, 0, 0, 0]}],
               "characters": {"1": "Name"} (at character select),
-              "state": {"pet.intimacy": 950, "pet": null, "scene": "char_select"}}}  (state: values at dotted paths of
-              the game state, or of the whole control state when the game state has no such field)
+              "state": {"pet.intimacy": 950, "pet": null, "scene": "char_select"},
+              "achievements": {"200005": "completed"}, "title": 1000}}  (state: values at dotted paths of the game state,
+              or of the whole control state when the game state has no such field; achievements: each one "completed"
+              or "rewarded"; title: the one worn)
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
 diff; `threshold` (percent, default 1) is how much change a shot takes before the report flags it.
@@ -209,7 +212,14 @@ def expect(wanted, state):
                     have = have.get(part) if isinstance(have, dict) else None
                 if have != want:
                     failures.append(f"state {path} is {have!r}, not {want!r}")
-        elif key not in ("state", "chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters"):
+        elif key == "achievements":
+            for achievement, want in value.items():
+                have = game.get("achievements", {}).get(achievement, {})
+                if not have.get(want):
+                    failures.append(f"achievement {achievement} is not {want}: {have}")
+        elif key == "title" and game.get("title") != value:
+            failures.append(f"title {game.get('title')} != {value}")
+        elif key not in ("achievements", "title", "state", "chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters"):
             failures.append(f"unknown expectation {key}")
     return failures
 
@@ -256,6 +266,9 @@ def step_on_client(action, shots_dir, name):
             if key in action:
                 command[key] = action[key]
         return drive.send(command)
+    if "wheel" in action:
+        x, y, rows = action["wheel"]
+        return drive.send({"cmd": "wheel", "x": x, "y": y, "rows": rows})
     if "click_unit" in action:
         # The nearest unit of a kind (and name, if given): the middle of its box on screen.
         want = action["click_unit"]
@@ -309,7 +322,14 @@ def run(scenarios, binary, out):
         scenario = json.load(open(path))
         name = os.path.splitext(os.path.basename(path))[0]
         print(f"{name}:")
-        names = launch(binary, scenario)
+        # A client that can't get in (say, no character in the slot on this server) fails its scenario, not the run.
+        try:
+            names = launch(binary, scenario)
+        except RuntimeError as error:
+            quit_all(scenario)
+            results[name] = [f"launch: {error}"]
+            print(f"  {name}: FAIL (launch: {error})")
+            continue
         failures = []
         try:
             for number, action in enumerate(with_names(scenario["steps"], names), 1):

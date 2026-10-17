@@ -26,6 +26,7 @@
     {"key": "Down"}, {"key": "Enter"}, {"wait_for": {"event": "SkillUnit", "ms": 5000}},
     {"wait_for": {"packet": "0x01d7", "ms": 5000}}, {"wait": 1500},
     {"expect": {"windows_closed": ["WarpList"]}},
-    {"shot": "warp-portal-open", "crop": [440, 120, 360, 300], "threshold": 5}
+    {"shot": "warp-portal-open", "crop": [440, 120, 360, 300], "threshold": 5},
+    {"say": "@job 0"}, {"wait": 500}
   ]
 }

@@ -615,6 +615,12 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_ALL_ACH_LIST: u16 = 0x0A23;
+const ZC_ACH_UPDATE: u16 = 0x0A24;
+const CZ_REQ_ACH_REWARD: u16 = 0x0A25;
+const ZC_REQ_ACH_REWARD_ACK: u16 = 0x0A26;
+const CZ_REQ_CHANGE_TITLE: u16 = 0x0A2E;
+const ZC_ACK_CHANGE_TITLE: u16 = 0x0A2F;
 const ZC_ITEMLISTWIN_OPEN: u16 = 0x07E3;
 const CZ_ITEMLISTWIN_RES: u16 = 0x07E4;
 const ZC_START_CAPTURE: u16 = 0x019E;
@@ -1356,6 +1362,26 @@ pub enum MapEvent {
     CaptureResult(bool),
     /// The material window opens: 0 for Change Material, 1 or 2 for Four Spirit Analysis at that level.
     MaterialWindow(u32),
+    /// All the player's achievements, with the totals (at login, and after a reward that gives a title).
+    Achievements {
+        totals: AchievementTotals,
+        list: Vec<Achievement>,
+    },
+    /// One achievement added or changed (none: the totals only), with the totals.
+    AchievementUpdate {
+        totals: AchievementTotals,
+        achievement: Option<Achievement>,
+    },
+    /// A reward claim taken, or refused.
+    AchievementReward {
+        ok: bool,
+        id: u32,
+    },
+    /// The title put on (0: taken off), or refused.
+    TitleChanged {
+        ok: bool,
+        title: u32,
+    },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
         id: usize,
@@ -1944,6 +1970,44 @@ pub struct NameTag {
     pub party: String,
     pub guild: String,
     pub position: String,
+    /// The title worn (0: none).
+    pub title: u32,
+}
+
+/// The player's achievement totals: score, rank (level), and the points into this rank and the points it needs.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct AchievementTotals {
+    pub score: u32,
+    pub level: u16,
+    pub points: u32,
+    pub needed: u32,
+}
+
+/// One of the player's achievements: done or not, each objective's count, when it was done (Unix time, 0 not yet),
+/// and whether its reward was taken.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Achievement {
+    pub id: u32,
+    pub completed: bool,
+    pub counts: [u32; 10],
+    pub completed_at: u32,
+    pub rewarded: bool,
+}
+
+/// A 50-byte achievement entry: ID, completed, ten counts, the time, rewarded.
+fn decode_achievement(entry: &[u8]) -> Achievement {
+    Achievement {
+        id: u32_at(entry, 0),
+        completed: entry[4] != 0,
+        counts: std::array::from_fn(|objective| u32_at(entry, 5 + objective * 4)),
+        completed_at: u32_at(entry, 45),
+        rewarded: entry[49] != 0,
+    }
+}
+
+/// Score, rank, points into it, points it needs.
+fn decode_totals(bytes: &[u8]) -> AchievementTotals {
+    AchievementTotals { score: u32_at(bytes, 0), level: u16_at(bytes, 4), points: u32_at(bytes, 6), needed: u32_at(bytes, 10) }
 }
 
 /// Someone in the player's guild.
@@ -2425,6 +2489,16 @@ impl MapSession {
     /// Answers the material window: what's in with OK, or a cancel.
     pub fn send_materials(&mut self, kind: u32, ok: bool, entries: &[(u16, u16)]) -> io::Result<()> {
         self.stream.write_all(&encode_materials(kind, ok, entries))
+    }
+
+    /// Claims a completed achievement's reward.
+    pub fn claim_achievement(&mut self, id: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_id(CZ_REQ_ACH_REWARD, id))
+    }
+
+    /// Wears an achievement's title (0 takes it off).
+    pub fn change_title(&mut self, title: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_id(CZ_REQ_CHANGE_TITLE, title))
     }
 
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
@@ -3140,6 +3214,14 @@ fn encode_materials(kind: u32, ok: bool, entries: &[(u16, u16)]) -> Vec<u8> {
     packet
 }
 
+/// CZ_REQ_ACH_REWARD and CZ_REQ_CHANGE_TITLE: a header and an ID.
+fn encode_id(header: u16, id: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&header.to_le_bytes());
+    packet[2..].copy_from_slice(&id.to_le_bytes());
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -3581,6 +3663,17 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_START_CAPTURE => MapEvent::CaptureStart,
         ZC_TRYCAPTURE_MONSTER => MapEvent::CaptureResult(packet[2] == 1),
         ZC_ITEMLISTWIN_OPEN => MapEvent::MaterialWindow(u32_at(2)),
+        ZC_ALL_ACH_LIST => MapEvent::Achievements {
+            totals: decode_totals(&packet[8..22]),
+            list: packet[22..usize::from(u16_at(2)).min(packet.len())].chunks_exact(50).map(decode_achievement).collect(),
+        },
+        // At login once with ID 0: the totals only (rathena zeroes the rest only in part).
+        ZC_ACH_UPDATE => MapEvent::AchievementUpdate {
+            totals: decode_totals(&packet[2..16]),
+            achievement: Some(decode_achievement(&packet[16..66])).filter(|achievement| achievement.id != 0),
+        },
+        ZC_REQ_ACH_REWARD_ACK => MapEvent::AchievementReward { ok: packet[2] == 1, id: u32_at(3) },
+        ZC_ACK_CHANGE_TITLE => MapEvent::TitleChanged { ok: packet[2] == 0, title: u32_at(3) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3754,7 +3847,11 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_CHANGE_GUILD => MapEvent::GuildEmblemChanged { guild: u32_at(2), emblem: u32_at(6), account: u32_at(10) },
         // ID, name, party, guild, position, title.
         ZC_ACK_REQNAMEALL => {
-            MapEvent::NameTag(u32_at(2), NameTag { party: c_string(&packet[30..54]), guild: c_string(&packet[54..78]), position: c_string(&packet[78..102]) })
+            let title = (u32_at(102) as i32).max(0) as u32;
+            MapEvent::NameTag(
+                u32_at(2),
+                NameTag { party: c_string(&packet[30..54]), guild: c_string(&packet[54..78]), position: c_string(&packet[78..102]), title },
+            )
         }
         ZC_GUILD_NOTICE => MapEvent::GuildNotice { subject: c_string(&packet[2..62]), text: c_string(&packet[62..182]) },
         ZC_GUILD_CHAT => MapEvent::GuildChat(c_string(&packet[4..])),
@@ -4567,6 +4664,54 @@ mod tests {
         assert_eq!(encode_materials(1, true, &[(5, 10), (7, 3)]), [0xE4, 0x07, 20, 0, 1, 0, 0, 0, 1, 0, 0, 0, 5, 0, 10, 0, 7, 0, 3, 0]);
         assert_eq!(encode_materials(0, false, &[]), [0xE4, 0x07, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!([ZC_ITEMLISTWIN_OPEN, CZ_ITEMLISTWIN_RES].map(packet_length), [Some(6), Some(-1)]);
+    }
+
+    #[test]
+    fn decodes_achievements() {
+        let entry = |id: u32, completed: bool, count: u32, at: u32, rewarded: bool| {
+            let mut entry = id.to_le_bytes().to_vec();
+            entry.push(u8::from(completed));
+            entry.extend_from_slice(&count.to_le_bytes());
+            entry.extend_from_slice(&[0; 36]);
+            entry.extend_from_slice(&at.to_le_bytes());
+            entry.push(u8::from(rewarded));
+            entry
+        };
+        let totals = [&120u32.to_le_bytes()[..], &3u16.to_le_bytes(), &20u32.to_le_bytes(), &100u32.to_le_bytes()].concat();
+        let mut list = ZC_ALL_ACH_LIST.to_le_bytes().to_vec();
+        list.extend_from_slice(&122u16.to_le_bytes());
+        list.extend_from_slice(&2u32.to_le_bytes());
+        list.extend_from_slice(&totals);
+        list.extend_from_slice(&entry(200005, true, 1, 1_700_000_000, false));
+        list.extend_from_slice(&entry(120001, false, 7, 0, false));
+        let Some(MapEvent::Achievements { totals: listed, list }) = decode_map_packet(&list) else { panic!() };
+        assert_eq!(listed, AchievementTotals { score: 120, level: 3, points: 20, needed: 100 });
+        assert_eq!((list[0].id, list[0].completed, list[0].counts[0], list[0].completed_at, list[0].rewarded), (200005, true, 1, 1_700_000_000, false));
+        assert_eq!((list[1].id, list[1].completed, list[1].counts[0]), (120001, false, 7));
+
+        let update = [&ZC_ACH_UPDATE.to_le_bytes()[..], &totals, &entry(200005, true, 1, 5, true)].concat();
+        let Some(MapEvent::AchievementUpdate { achievement: Some(achievement), .. }) = decode_map_packet(&update) else { panic!() };
+        assert_eq!((achievement.id, achievement.rewarded), (200005, true));
+        // ID 0: the totals only.
+        let totals_only = [&ZC_ACH_UPDATE.to_le_bytes()[..], &totals, &entry(0, false, 0, 0, false)].concat();
+        let Some(MapEvent::AchievementUpdate { totals: updated, achievement: None }) = decode_map_packet(&totals_only) else { panic!() };
+        assert_eq!(updated.needed, 100);
+
+        let reward = [&ZC_REQ_ACH_REWARD_ACK.to_le_bytes()[..], &[1], &200005u32.to_le_bytes()].concat();
+        let Some(MapEvent::AchievementReward { ok: true, id: 200005 }) = decode_map_packet(&reward) else { panic!() };
+        let title = [&ZC_ACK_CHANGE_TITLE.to_le_bytes()[..], &[0], &1000u32.to_le_bytes()].concat();
+        let Some(MapEvent::TitleChanged { ok: true, title: 1000 }) = decode_map_packet(&title) else { panic!() };
+        let mut name = ZC_ACK_REQNAMEALL.to_le_bytes().to_vec();
+        name.extend_from_slice(&7u32.to_le_bytes());
+        name.extend_from_slice(&[0; 96]);
+        name.extend_from_slice(&1000i32.to_le_bytes());
+        let Some(MapEvent::NameTag(7, tag)) = decode_map_packet(&name) else { panic!() };
+        assert_eq!(tag.title, 1000);
+
+        assert_eq!(encode_id(CZ_REQ_ACH_REWARD, 200005), [0x25, 0x0A, 0x45, 0x0D, 0x03, 0]);
+        assert_eq!(encode_id(CZ_REQ_CHANGE_TITLE, 0), [0x2E, 0x0A, 0, 0, 0, 0]);
+        let ids = [ZC_ALL_ACH_LIST, ZC_ACH_UPDATE, CZ_REQ_ACH_REWARD, ZC_REQ_ACH_REWARD_ACK, CZ_REQ_CHANGE_TITLE, ZC_ACK_CHANGE_TITLE];
+        assert_eq!(ids.map(packet_length), [Some(-1), Some(66), Some(6), Some(7), Some(6), Some(7)]);
     }
 
     #[test]
