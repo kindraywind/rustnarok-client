@@ -566,6 +566,11 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const CZ_REQ_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE: u16 = 0x0B14;
+const ZC_ACK_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE: u16 = 0x0B15;
+const CZ_REQ_EXTEND_BODYITEM_SIZE: u16 = 0x0B16;
+const ZC_ACK_EXTEND_BODYITEM_SIZE: u16 = 0x0B17;
+const CZ_CLOSE_MSGBOX_EXTEND_BODYITEM_SIZE: u16 = 0x0B19;
 const CZ_EQUIPWIN_MICROSCOPE: u16 = 0x02D6;
 const ZC_EQUIPWIN_MICROSCOPE: u16 = 0x0B37;
 const CZ_CONFIG: u16 = 0x02D8;
@@ -1097,6 +1102,13 @@ pub enum MapEvent {
         shown: bool,
         answer: bool,
     },
+    /// May the inventory grow: 0 ask (with the voucher it would use), 1 failed, 2 busy, 3 no voucher, 4 at the most.
+    ExpansionAsked {
+        result: u8,
+        voucher: u32,
+    },
+    /// The inventory grew (0), or why not (as above).
+    ExpansionDone(u8),
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
         id: usize,
@@ -2043,6 +2055,15 @@ impl MapSession {
         self.stream.write_all(&encode_config(CONFIG_OPEN_EQUIPMENT, shown))
     }
 
+    /// The inventory's expansion: may it grow, yes, no (the last needs no answer).
+    pub fn ask_expansion(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_REQ_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE.to_le_bytes())
+    }
+
+    pub fn answer_expansion(&mut self, yes: bool) -> io::Result<()> {
+        self.stream.write_all(&if yes { CZ_REQ_EXTEND_BODYITEM_SIZE } else { CZ_CLOSE_MSGBOX_EXTEND_BODYITEM_SIZE }.to_le_bytes())
+    }
+
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
     pub fn card_list(&mut self, card: u16) -> io::Result<()> {
         self.stream.write_all(&encode_card_list(card))
@@ -2912,6 +2933,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // Other settings come in ZC_CONFIG too (calling, auto-feeding); only the box's is read.
         ZC_CONFIG if u32_at(2) == CONFIG_OPEN_EQUIPMENT => MapEvent::ShowEquipment { shown: u32_at(6) != 0, answer: true },
         ZC_CONFIG_NOTIFY => MapEvent::ShowEquipment { shown: packet[2] != 0, answer: false },
+        ZC_ACK_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE => MapEvent::ExpansionAsked { result: packet[2], voucher: u32_at(3) },
+        ZC_ACK_EXTEND_BODYITEM_SIZE => MapEvent::ExpansionDone(packet[2]),
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3647,6 +3670,18 @@ mod tests {
         let Some(MapEvent::ShowEquipment { shown: false, answer: false }) = decode_map_packet(&[0xDA, 0x02, 0]) else { panic!() };
         let ids = [CZ_EQUIPWIN_MICROSCOPE, ZC_EQUIPWIN_MICROSCOPE, CZ_CONFIG, ZC_CONFIG, ZC_CONFIG_NOTIFY];
         assert_eq!(ids.map(packet_length), [Some(6), Some(-1), Some(10), Some(10), Some(3)]);
+    }
+
+    #[test]
+    fn decodes_inventory_expansion() {
+        let mut asked = ZC_ACK_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE.to_le_bytes().to_vec();
+        asked.push(0);
+        asked.extend_from_slice(&25793u32.to_le_bytes());
+        let Some(MapEvent::ExpansionAsked { result: 0, voucher: 25793 }) = decode_map_packet(&asked) else { panic!() };
+        let Some(MapEvent::ExpansionDone(4)) = decode_map_packet(&[0x17, 0x0B, 4]) else { panic!() };
+        let ids = [CZ_REQ_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE, ZC_ACK_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE, CZ_REQ_EXTEND_BODYITEM_SIZE, ZC_ACK_EXTEND_BODYITEM_SIZE];
+        assert_eq!(ids.map(packet_length), [Some(2), Some(7), Some(2), Some(3)]);
+        assert_eq!(packet_length(CZ_CLOSE_MSGBOX_EXTEND_BODYITEM_SIZE), Some(2));
     }
 
     #[test]
