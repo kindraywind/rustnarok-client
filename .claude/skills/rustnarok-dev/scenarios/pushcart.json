@@ -8,7 +8,7 @@
   },
   "steps": [
     {
-      "say": "@warp prontera 161 176"
+      "say": "@warp prontera 158 180"
     },
     {
       "settle": 1500
@@ -26,17 +26,16 @@
       "wait": 500
     },
     {
-      "say": "@cart 1"
+      "say": "@cart 0"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@cart 2"
     },
     {
       "wait": 1500
-    },
-    {
-      "wait": 1000
-    },
-    {
-      "as": "second",
-      "settle": 2500
     },
     {
       "move": [
@@ -55,8 +54,8 @@
     },
     {
       "click": [
-        620,
-        470
+        600,
+        384
       ]
     },
     {
@@ -85,10 +84,10 @@
       "as": "second",
       "shot": "seen-by-another",
       "crop": [
-        300,
-        160,
-        480,
-        420
+        380,
+        220,
+        420,
+        260
       ]
     }
   ]
