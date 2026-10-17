@@ -463,6 +463,7 @@ const ZC_ITEM_ENTRY: u16 = 0x009D;
 const ZC_ITEM_FALL_ENTRY: u16 = 0x0ADD;
 const ZC_ITEM_DISAPPEAR: u16 = 0x00A1;
 const CZ_ITEM_PICKUP: u16 = 0x0362;
+const CZ_ITEM_THROW: u16 = 0x0363;
 const ZC_ITEM_PICKUP_ACK: u16 = 0x0B41;
 const ZC_INVENTORY_START: u16 = 0x0B08;
 const ZC_INVENTORY_ITEMLIST_NORMAL: u16 = 0x0B09;
@@ -2141,6 +2142,12 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Drops `amount` of an inventory item at the player's feet; the answer is `ItemRemoved`, and the item shows up
+    /// on the ground.
+    pub fn drop_item(&mut self, index: u16, amount: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_drop_item(index, amount))
+    }
+
     /// Asks how many players are online; the answer is `UserCount`.
     pub fn user_count(&mut self) -> io::Result<()> {
         self.stream.write_all(&CZ_REQ_USER_COUNT.to_le_bytes())
@@ -2187,6 +2194,12 @@ fn encode_whisper_setting(name: &str, allow: bool) -> Vec<u8> {
     packet.extend_from_slice(&field);
     packet.push(u8::from(allow));
     packet
+}
+
+/// CZ_ITEM_THROW: the inventory index and how many to drop.
+fn encode_drop_item(index: u16, amount: u16) -> [u8; 6] {
+    let [[h0, h1], [i0, i1], [a0, a1]] = [CZ_ITEM_THROW, index, amount].map(u16::to_le_bytes);
+    [h0, h1, i0, i1, a0, a1]
 }
 
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
@@ -3014,6 +3027,12 @@ mod tests {
         assert_eq!(packet_length(ZC_ACK_READ_RODEX), Some(-1));
         assert_eq!(packet_length(ZC_ACK_ADD_ITEM_RODEX), Some(64));
         assert_eq!(packet_length(ZC_CHECKNAME), Some(34));
+    }
+
+    #[test]
+    fn encodes_dropping_an_item() {
+        assert_eq!(encode_drop_item(7, 300), [0x63, 0x03, 7, 0, 0x2C, 0x01]);
+        assert_eq!(packet_length(CZ_ITEM_THROW), Some(6));
     }
 
     #[test]

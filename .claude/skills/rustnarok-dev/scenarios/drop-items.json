@@ -1,0 +1,95 @@
+{
+  "about": "Dropping: a stack of potions dragged out of the inventory onto the field asks how many, and 2 land at the player's feet (issue #12).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@item 501 5"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Inventory"
+        ]
+      }
+    },
+    {
+      "drag": [
+        [
+          59,
+          212
+        ],
+        [
+          700,
+          520
+        ]
+      ]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "drop-asks-how-many"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "type": "2"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "ItemRemoved",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "ground_items_at_least": 1,
+        "chat": "You got"
+      }
+    },
+    {
+      "shot": "dropped"
+    }
+  ]
+}
