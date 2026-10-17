@@ -757,6 +757,7 @@ enum Panel {
     Party,
     Status,
     Guild,
+    Clan,
     Cart,
     Pet,
 }
@@ -975,6 +976,7 @@ impl Game {
             Panel::Party => self.party_window.frame.open && self.party_window.hit(cursor, self.party.as_ref(), &self.friends, self.account_id).is_some(),
             Panel::Status => self.status_window.frame.open && self.status_window.frame.local(cursor, self.status_height).is_some(),
             Panel::Guild => self.guild.is_some() && self.guild_window.frame.local(cursor, self.guild_window.height()).is_some(),
+            Panel::Clan => self.clan.is_some() && self.clan_window.frame.local(cursor, self.clan_window.height()).is_some(),
             Panel::Cart => self.cart.cart.is_some() && self.cart.hit(cursor).is_some(),
             Panel::Pet => self.pet.as_ref().is_some_and(|pet| self.pet_window.hit(cursor, pet).is_some()),
         })
@@ -2972,6 +2974,11 @@ impl App {
                         }
                         _ => {}
                     },
+                    Panel::Clan => {
+                        if let Some(clan::Hit::Title(title)) = game.clan.as_ref().and_then(|_| game.clan_window.hit(cursor)) {
+                            game.clan_window.frame.click_title(title);
+                        }
+                    }
                     Panel::Pet => match game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) {
                         Some(pet::Hit::Title(title)) => game.pet_window.frame.click_title(title),
                         Some(pet::Hit::Rename) => game.amount = Some(window::Amount::name(Asked::PetName, PET_NAME_RULE)),
@@ -3154,6 +3161,8 @@ impl App {
             game.status_window.frame.drag_to(self.cursor, status_height);
             let guild_height = game.guild_window.height();
             game.guild_window.frame.drag_to(self.cursor, guild_height);
+            let clan_height = game.clan_window.height();
+            game.clan_window.frame.drag_to(self.cursor, clan_height);
             let cart_height = game.cart.height();
             game.cart.frame.drag_to(self.cursor, cart_height);
             game.pet_window.frame.drag_to(self.cursor, pet::PetWindow::height());
@@ -3364,6 +3373,7 @@ impl App {
                     | game.party_window.frame.drop_drag()
                     | game.status_window.frame.drop_drag()
                     | game.guild_window.frame.drop_drag()
+                    | game.clan_window.frame.drop_drag()
                     | game.cart.frame.drop_drag()
                     | game.pet_window.frame.drop_drag()
                     | game.storage.frame.drop_drag()
@@ -3514,6 +3524,9 @@ impl App {
                 Panel::Guild if game.guild.as_ref().and_then(|guild| game.guild_window.hit(cursor, guild)) == Some(guild::Hit::Title(TitleHit::Title)) => {
                     game.guild_window.frame.start_drag(cursor)
                 }
+                Panel::Clan if game.clan.is_some() && game.clan_window.hit(cursor) == Some(clan::Hit::Title(TitleHit::Title)) => {
+                    game.clan_window.frame.start_drag(cursor)
+                }
                 Panel::Cart if game.cart.hit(cursor) == Some(inventory::Hit::Title(TitleHit::Title)) => game.cart.frame.start_drag(cursor),
                 Panel::Pet if game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) == Some(pet::Hit::Title(TitleHit::Title)) => {
                     game.pet_window.frame.start_drag(cursor)
@@ -3576,6 +3589,19 @@ impl App {
             && let Some(gpu) = &self.gpu
         {
             gpu.window.set_fullscreen(gpu.window.fullscreen().is_none().then_some(winit::window::Fullscreen::Borderless(None)));
+            return;
+        }
+        // Ctrl+G opens or closes the clan window while in a clan.
+        if let Scene::Game(game) = &mut self.scene
+            && self.modifiers.control_key()
+            && !self.modifiers.alt_key()
+            && !self.modifiers.super_key()
+            && event.physical_key == PhysicalKey::Code(KeyCode::KeyG)
+        {
+            if game.clan.is_some() {
+                game.clan_window.frame.toggle();
+                game.raise(Panel::Clan);
+            }
             return;
         }
         // Alt+E and Alt+Q open the inventory and the equipment anywhere in the game (by physical key: Option+letter
@@ -4188,6 +4214,7 @@ impl App {
                         Panel::Party,
                         Panel::Status,
                         Panel::Guild,
+                        Panel::Clan,
                         Panel::Cart,
                         Panel::Pet,
                     ],
@@ -6730,6 +6757,11 @@ impl App {
                             emblem,
                             pointer,
                         );
+                    }
+                }
+                Panel::Clan => {
+                    if let Some(clan) = &game.clan {
+                        game.clan_window.draw(&mut layer, &assets.chrome, &assets.clan, messages, clan, pointer.0);
                     }
                 }
                 Panel::Party => {
