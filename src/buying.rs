@@ -4,7 +4,8 @@
 use std::collections::HashMap;
 
 use rustnarok_client::lua::ItemInfo;
-use rustnarok_client::net::InventoryItem;
+use rustnarok_client::messages;
+use rustnarok_client::net::{BuyingItem, InventoryItem};
 use rustnarok_client::text::Font;
 
 use crate::render::Texture;
@@ -300,6 +301,79 @@ impl Setup {
     }
 }
 
+/// The owner's active buying store window: what it still wants to buy, its remaining zeny limit, and its close button.
+pub struct MyStore {
+    pub frame: Frame,
+    pub name: String,
+    pub limit: u32,
+    pub items: Vec<BuyingItem>,
+}
+
+impl MyStore {
+    pub fn new(name: String, limit: u32, items: Vec<BuyingItem>) -> Self {
+        let mut frame = Frame::new(POSITION, WIDTH);
+        frame.open = true;
+        Self { frame, name, limit, items }
+    }
+
+    pub fn height(&self) -> f32 {
+        TITLE_HEIGHT + LIMIT_FIELD + ROWS as f32 * ROW + FOOTER
+    }
+
+    pub fn close_button(&self) -> [f32; 2] {
+        [WIDTH - 60.0, self.height() - FOOTER + 4.0]
+    }
+
+    /// Over the window: true on its close button.
+    pub fn hit(&self, cursor: [f32; 2]) -> Option<bool> {
+        let local = self.frame.local(cursor, self.height())?;
+        Some(contains(self.close_button(), BUTTON, local) || self.frame.title_hit(local) == Some(TitleHit::Close))
+    }
+
+    /// Someone sold to our buying store (0x09E6): lower that item's wanted amount (drop the row at 0) and update the limit.
+    pub fn bought(&mut self, item_id: u32, amount: u16, limit_left: u32) {
+        self.limit = limit_left;
+        if let Some(position) = self.items.iter().position(|item| item.item_id == item_id) {
+            let left = &mut self.items[position].amount;
+            *left = left.saturating_sub(amount);
+            if *left == 0 {
+                self.items.remove(position);
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        icons: &'a HashMap<String, Option<Texture>>,
+        items: &HashMap<u32, ItemInfo>,
+        font: &Font,
+        messages: &[String],
+        pointer: ([f32; 2], bool),
+    ) {
+        let at = |local: [f32; 2]| self.frame.at(local);
+        let title = format!("{} : {}", messages.get(SETUP_TITLE).map_or("", String::as_str), self.name);
+        self.frame.draw_title(layer, chrome, &title, pointer.0);
+        let height = self.height();
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, height - TITLE_HEIGHT - FOOTER]));
+        let limit_line = messages::fill(messages.get(LIMIT_FORMAT).map_or("Price limit: %s Zeny", String::as_str), &[&group(u64::from(self.limit))]);
+        layer.texts.push((window::fit(font, &limit_line, WIDTH - 12.0), at([6.0, TITLE_HEIGHT + 5.0]), [0, 0, 0]));
+        for (place, wanted) in self.items.iter().enumerate().take(ROWS) {
+            let top = TITLE_HEIGHT + LIMIT_FIELD + place as f32 * ROW;
+            let display = InventoryItem { id: wanted.item_id, amount: wanted.amount, kind: wanted.kind, identified: true, ..Default::default() };
+            vend::draw_item(layer, icons, items, font, &display, at([4.0, top + 4.0]));
+            let text = format!("{} z", group(u64::from(wanted.price)));
+            layer.texts.push((text.clone(), at([WIDTH - 6.0 - font.width(&text), top + 10.0]), [0, 0, 0]));
+        }
+        layer.sprites.push((&assets.footer, at([0.0, height - FOOTER]), [WIDTH, FOOTER]));
+        let look = if self.hit(pointer.0) == Some(true) { 1 + usize::from(pointer.1) } else { 0 };
+        layer.sprites.push((&assets.close[look], at(self.close_button()), BUTTON));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,5 +435,20 @@ mod tests {
         // Clicking the picked row unpicks it.
         assert_eq!(setup.click(Hit::Row(0), &inv), None);
         assert!(setup.wanted.is_empty());
+    }
+
+    #[test]
+    fn buys_items_down_in_my_store() {
+        let mut store = MyStore::new(
+            "Buying Jellopy".into(),
+            1000,
+            vec![BuyingItem { price: 10, amount: 5, kind: 3, item_id: 909 }, BuyingItem { price: 20, amount: 2, kind: 0, item_id: 512 }],
+        );
+        store.bought(909, 2, 980);
+        assert_eq!(store.limit, 980);
+        assert_eq!(store.items[0].amount, 3);
+        store.bought(909, 3, 950);
+        assert_eq!(store.limit, 950);
+        assert_eq!(store.items, [BuyingItem { price: 20, amount: 2, kind: 0, item_id: 512 }]);
     }
 }
