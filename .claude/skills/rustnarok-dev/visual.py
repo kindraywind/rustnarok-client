@@ -26,6 +26,7 @@ diff; `threshold` (percent, default 1) is how much change a shot takes before th
 `settle` waits until the map has loaded again, then the given ms (GM commands sent while it loads are lost).
 Two players: "second": {"account": "2", "slot": 0, "env": {...}} starts a second client; a step with
 "as": "second" (a shot too) acts on it. The first account should be a GM (`@recall` brings the second over).
+"{first}" and "{second}" in any string are the two characters' names, so a scenario runs on anyone's server.
 Each scenario starts a fresh client; the clock is paused for every shot so frames repeat.
 Everything lands under docs/personal/visual/<date>/<HHMMSS>/ (gitignored): game images never go in the repository.
 """
@@ -77,15 +78,28 @@ def launch(binary, scenario):
     if reset:
         subprocess.run(reset, shell=True, check=True)
     drive.use("first")
-    state = launch_one(binary, scenario)
+    names = {"first": launch_one(binary, scenario)["game"]["player"]["name"]}
     # A second player, for anything between two: its steps say "as": "second".
     if "second" in scenario:
         drive.use("second")
         try:
-            launch_one(binary, scenario["second"])
+            names["second"] = launch_one(binary, scenario["second"])["game"]["player"]["name"]
         finally:
             drive.use("first")
-    return state
+    return names
+
+
+def with_names(value, names):
+    """`value` with "{first}" and "{second}" turned into the characters' names."""
+    if isinstance(value, str):
+        for client, name in names.items():
+            value = value.replace("{" + client + "}", name)
+        return value
+    if isinstance(value, list):
+        return [with_names(item, names) for item in value]
+    if isinstance(value, dict):
+        return {key: with_names(item, names) for key, item in value.items()}
+    return value
 
 
 def quit_all(scenario):
@@ -245,10 +259,10 @@ def run(scenarios, binary, out):
         scenario = json.load(open(path))
         name = os.path.splitext(os.path.basename(path))[0]
         print(f"{name}:")
-        launch(binary, scenario)
+        names = launch(binary, scenario)
         failures = []
         try:
-            for number, action in enumerate(scenario["steps"], 1):
+            for number, action in enumerate(with_names(scenario["steps"], names), 1):
                 failed = step(action, out, name)
                 if isinstance(failed, list) and failed:
                     failures += [f"step {number}: {message}" for message in failed]

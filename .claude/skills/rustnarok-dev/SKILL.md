@@ -80,6 +80,8 @@ warp: commands sent while a map loads are lost), keys, clicks, drags, and named 
 reordering; keep raw coordinates for the world and for things not yet in `targets`.
 **Two players**: `"second": {"account": "2", ...}` starts a second client (on `qa2.sock`); `"as": "second"` sends a
 step or a shot to it. Whispers, trades, parties and chat rooms can be scripted and seen from both sides.
+Name the characters `{first}` and `{second}`, not by their names on your server: `visual.py` puts in each
+client's own, so the scenario runs for everyone.
 **Make each scenario prove itself**: `expect` steps check the game state (chat lines, HP, map, open windows, units)
 and `wait_for` waits on a packet or event (`ItemUsed`, `PickedUp`) instead of a sleep. A failed one fails the
 scenario and `visual.py` exits non-zero — otherwise a scenario that silently did nothing still makes screenshots.
