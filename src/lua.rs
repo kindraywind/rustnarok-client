@@ -13,6 +13,8 @@ const PET_INFO: &str = "data\\luafiles514\\lua files\\datainfo\\petinfo.lub";
 const TITLE_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\titletable.lub";
 /// Not in data.grf: the translation's System folder has it.
 const ACHIEVEMENTS: &str = "system\\achievements.lub";
+/// The same table under the name older data (kRO 2022, its translations) gives it.
+const ACHIEVEMENT_LIST: &str = "system\\achievement_list.lub";
 const ITEM_INFO: &str = "data\\luafiles514\\lua files\\datainfo\\iteminfo.lub";
 const TRANSLATED_ITEM_INFO: &str = "system\\luafiles514\\iteminfo.lua";
 const ACCESSORY_ID: &str = "data\\luafiles514\\lua files\\datainfo\\accessoryid.lub";
@@ -181,9 +183,14 @@ pub struct AchievementInfo {
     pub score: u32,
 }
 
-/// The achievements by ID, from the System folder's achievements.lub.
+/// The achievements by ID, from the System folder's achievements.lub (or achievement_list.lub).
 pub fn achievements(grf: &Grf) -> io::Result<HashMap<u32, AchievementInfo>> {
-    achievement_table(grf.read(ACHIEVEMENTS)?)
+    achievement_table(achievement_source(|path| grf.read(path))?)
+}
+
+/// The achievement table's source: achievements.lub, else achievement_list.lub.
+fn achievement_source(read: impl Fn(&str) -> io::Result<Vec<u8>>) -> io::Result<Vec<u8>> {
+    read(ACHIEVEMENTS).or_else(|_| read(ACHIEVEMENT_LIST))
 }
 
 /// Reads `achievement_tbl` from the file's source; its `main()` (which calls the official client's functions) isn't run.
@@ -486,6 +493,24 @@ pub fn worlds(grf: &Grf) -> io::Result<(Vec<World>, [[u8; 4]; 2])> {
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
+
+    #[test]
+    fn finds_the_achievement_table_under_either_name() {
+        let only = |name: &'static str| {
+            move |path: &str| -> std::io::Result<Vec<u8>> {
+                if path == name {
+                    Ok(b"achievement_tbl = { [240000] = { title = \"First steps\" } }".to_vec())
+                } else {
+                    Err(std::io::ErrorKind::NotFound.into())
+                }
+            }
+        };
+        for name in [super::ACHIEVEMENTS, super::ACHIEVEMENT_LIST] {
+            let table = super::achievement_table(super::achievement_source(only(name)).unwrap()).unwrap();
+            assert_eq!(table[&240000].title, "First steps", "{name}");
+        }
+        assert!(super::achievement_source(only("elsewhere")).is_err());
+    }
 
     #[test]
     fn reads_achievements() {
