@@ -1378,6 +1378,13 @@ impl Game {
         }
     }
 
+    /// Closes the shop's windows; a market or barter tells the server, which keeps the player busy until it hears.
+    fn close_shop(&mut self) {
+        if let Some(kind) = self.shop.take().and_then(|shop| shop.market) {
+            let _ = self.session.close_market(kind);
+        }
+    }
+
     /// The answer to a pick list: an item's inventory index, or None to cancel.
     fn answer_pick(&mut self, answer: Option<u16>) {
         let Some((_, picking)) = self.pick.take() else { return };
@@ -2645,7 +2652,7 @@ impl App {
                     Some(shop::Action::Deal) => {
                         let _ = shop.send(&mut game.session);
                     }
-                    Some(shop::Action::Close) => game.shop = None,
+                    Some(shop::Action::Close) => game.close_shop(),
                     Some(shop::Action::Ask(row)) => game.amount = Some(window::Amount::new(Asked::Shop(row), None)),
                     None => {}
                 }
@@ -4186,7 +4193,7 @@ impl App {
                 }
                 game.player.revive();
                 // The NPC is left behind: its shop and its buy-or-sell question close (the server doesn't say so).
-                game.shop = None;
+                game.close_shop();
                 game.deal_choice = None;
                 if map == game.map {
                     // A teleport on the same map: no loading, but the server takes the player off the map until
@@ -4472,6 +4479,7 @@ impl App {
                         kind: good.item.kind,
                         identified: good.item.identified,
                         refine: good.item.refine,
+                        ..Default::default()
                     })
                     .collect();
                 let mut store = shop::Shop::new(false, offers);
@@ -5265,7 +5273,7 @@ impl App {
             MapEvent::ShopGoods(goods) => {
                 let offers = goods
                     .into_iter()
-                    .map(|goods| shop::Offer { item: goods.item, price: goods.discounted, index: 0, have: 0, kind: goods.kind, identified: true, refine: 0 })
+                    .map(|goods| shop::Offer { item: goods.item, price: goods.discounted, kind: goods.kind, identified: true, ..Default::default() })
                     .collect();
                 game.shop = Some(shop::Shop::new(false, offers));
                 game.auto_deal();
@@ -5275,11 +5283,77 @@ impl App {
                     .into_iter()
                     .filter_map(|(index, _, price)| {
                         let item = game.inventory.get(index)?;
-                        Some(shop::Offer { item: item.id, price, index, have: item.amount, kind: item.kind, identified: item.identified, refine: item.refine })
+                        Some(shop::Offer {
+                            item: item.id,
+                            price,
+                            index,
+                            have: item.amount,
+                            kind: item.kind,
+                            identified: item.identified,
+                            refine: item.refine,
+                            ..Default::default()
+                        })
                     })
                     .collect();
                 game.shop = Some(shop::Shop::new(true, offers));
                 game.auto_deal();
+            }
+            // Markets and barters: the plain shop's windows with stock and costs; they stay open after a purchase.
+            MapEvent::Market { kind, goods } => {
+                let offers = goods
+                    .into_iter()
+                    .map(|goods| {
+                        // The inventory index of what it costs: the field's name says so; rathena doesn't read it.
+                        let cost_index = goods
+                            .costs
+                            .first()
+                            .and_then(|&(item, _)| game.inventory.items.iter().find(|carried| carried.id == item))
+                            .map_or(0, |carried| carried.index);
+                        shop::Offer {
+                            item: goods.item,
+                            price: goods.zeny,
+                            kind: goods.kind,
+                            identified: true,
+                            stock: goods.stock,
+                            costs: goods.costs,
+                            shop_index: goods.index,
+                            cost_index,
+                            ..Default::default()
+                        }
+                    })
+                    .collect();
+                let mut store = shop::Shop::new(false, offers);
+                store.market = Some(kind);
+                game.shop = Some(store);
+            }
+            MapEvent::MarketBought { ok, items } => {
+                if ok && let Some(shop) = &mut game.shop {
+                    shop.bought(&items.iter().map(|&(item, amount)| (item, u32::from(amount))).collect::<Vec<_>>());
+                }
+                // ponytail: rathena sends 0 or 0xFFFF only; the lines are the plain shop's.
+                let (id, color) = if ok { (54, CHAT_ITEM) } else { (57, CHAT_ERROR) };
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+            }
+            // A barter's answer: its own lines (by their words), the window stays with what's left.
+            MapEvent::Bought(result)
+                if game.shop.as_ref().is_some_and(|shop| matches!(shop.market, Some(net::MarketKind::Barter | net::MarketKind::Expanded))) =>
+            {
+                let (id, color) = match result {
+                    0 => (3555, CHAT_ITEM),
+                    1 => (55, CHAT_ERROR),
+                    2 => (56, CHAT_ERROR),
+                    11 => (3554, CHAT_ERROR),
+                    13 => (3557, CHAT_ERROR),
+                    14 => (3556, CHAT_ERROR),
+                    _ => (57, CHAT_ERROR),
+                };
+                if result == 0
+                    && let Some(shop) = &mut game.shop
+                {
+                    let deal: Vec<_> = shop.deal.iter().map(|&(offer, amount)| (shop.offers[offer].item, amount)).collect();
+                    shop.bought(&deal);
+                }
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
             }
             MapEvent::Bought(result) | MapEvent::Sold(result) => {
                 // The client's words for how it went.

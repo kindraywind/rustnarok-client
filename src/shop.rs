@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::ItemInfo;
-use rustnarok_client::net::{ITEM_ARMOR, ITEM_PET_ARMOR, ITEM_PET_EGG, ITEM_WEAPON, MapSession};
+use rustnarok_client::net::{ITEM_ARMOR, ITEM_PET_ARMOR, ITEM_PET_EGG, ITEM_WEAPON, MapSession, MarketKind};
 use rustnarok_client::text::Font;
 
 use crate::inventory;
@@ -28,12 +28,17 @@ const SELECTED: [u8; 4] = [0x34, 0x6A, 0xE1, 0x80];
 const TITLES: [[usize; 2]; 2] = [[186, 185], [166, 168]];
 /// "합계 : %d z".
 const TOTAL_MESSAGE: usize = 3699;
+/// Barters: "%s %d ea" (an item it costs), "money" (zeny it costs), and the deal window's title.
+const COSTS_MESSAGE: usize = 3553;
+const MONEY_MESSAGE: usize = 3552;
+const EXCHANGE_TITLE: usize = 3689;
+const GREY: [u8; 3] = [0x70, 0x70, 0x70];
 
 pub struct Assets {
     strip: Texture,
     bar: Texture,
-    /// Buy, sell and cancel: normal, hovered, pressed.
-    buttons: [[Texture; 3]; 3],
+    /// Buy, sell, cancel and exchange: normal, hovered, pressed.
+    buttons: [[Texture; 3]; 4],
     selected: Texture,
 }
 
@@ -49,14 +54,14 @@ impl Assets {
         Self {
             strip: image(format!("{UI}basic_interface\\itemwin_left.bmp")),
             bar: image(format!("{UI}basic_interface\\btnbar_mid2.bmp")),
-            buttons: [button("buy"), button("sell"), button("cancel")],
+            buttons: [button("buy"), button("sell"), button("cancel"), button("exchange")],
             selected: gpu.solid(SELECTED),
         }
     }
 }
 
 /// Something the shop sells, or something carried it would buy.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Offer {
     pub item: u32,
     pub price: u32,
@@ -66,6 +71,13 @@ pub struct Offer {
     pub kind: u8,
     pub identified: bool,
     pub refine: u8,
+    /// Markets and barters: how many are left (None: no end).
+    pub stock: Option<u32>,
+    /// Barters: the items it costs and how many (`price` is the zeny it costs too).
+    pub costs: Vec<(u32, u32)>,
+    /// Barters: the shop's own index for it, and the inventory index of the item it costs.
+    pub shop_index: u32,
+    pub cost_index: u16,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -91,6 +103,8 @@ pub struct Shop {
     pub selling: bool,
     /// A player's shop: the vendor, their shop's ID, and its name (the first window's title).
     pub vendor: Option<(u32, u32, String)>,
+    /// A market or barter rather than a plain NPC shop.
+    pub market: Option<MarketKind>,
     pub offers: Vec<Offer>,
     /// Offers in the deal, and how many.
     pub deal: Vec<(usize, u32)>,
@@ -107,7 +121,7 @@ impl Shop {
             frame.open = true;
             frame
         });
-        Self { selling, vendor: None, offers, deal: Vec::new(), frames, scroll: [0; 2], selected: [None; 2], clicks: Clicks::default() }
+        Self { selling, vendor: None, market: None, offers, deal: Vec::new(), frames, scroll: [0; 2], selected: [None; 2], clicks: Clicks::default() }
     }
 
     fn height(window: usize) -> f32 {
@@ -208,6 +222,8 @@ impl Shop {
         } else {
             30_000
         };
+        // A market or barter has no more than its stock.
+        let limit = self.offers[offer].stock.map_or(limit, |stock| limit.min(stock));
         match self.deal.iter_mut().find(|(row, _)| *row == offer) {
             Some((_, had)) => *had = (*had + amount).min(limit),
             None => self.deal.push((offer, amount.min(limit))),
@@ -216,6 +232,17 @@ impl Shop {
 
     /// Asks the server for the deal.
     pub fn send(&self, session: &mut MapSession) -> std::io::Result<()> {
+        let deal = self.deal.iter().map(|&(offer, amount)| (&self.offers[offer], amount));
+        match self.market {
+            Some(MarketKind::Market) => return session.market_buy(&deal.map(|(offer, amount)| (offer.item, amount)).collect::<Vec<_>>()),
+            Some(MarketKind::Barter) => {
+                return session.barter_buy(&deal.map(|(offer, amount)| (offer.item, amount, offer.cost_index, offer.shop_index)).collect::<Vec<_>>());
+            }
+            Some(MarketKind::Expanded) => {
+                return session.expanded_barter_buy(&deal.map(|(offer, amount)| (offer.item, offer.shop_index, amount)).collect::<Vec<_>>());
+            }
+            None => {}
+        }
         if let Some((vendor, shop, _)) = &self.vendor {
             let items: Vec<_> = self.deal.iter().map(|&(offer, amount)| (amount as u16, self.offers[offer].index)).collect();
             return session.buy_from_vendor(*vendor, *shop, &items);
@@ -225,6 +252,42 @@ impl Shop {
         } else {
             session.buy(&self.deal.iter().map(|&(offer, amount)| (self.offers[offer].item, amount as u16)).collect::<Vec<_>>())
         }
+    }
+
+    /// After a purchase went through: what was bought leaves the stock, and the deal empties.
+    pub fn bought(&mut self, items: &[(u32, u32)]) {
+        for &(item, amount) in items {
+            if let Some(stock) = self.offers.iter_mut().find(|offer| offer.item == item).and_then(|offer| offer.stock.as_mut()) {
+                *stock = stock.saturating_sub(amount);
+            }
+        }
+        self.deal.clear();
+        self.selected[1] = None;
+    }
+
+    /// What a barter's deal costs, or a row's: "Ore 20 ea, ... money".
+    fn costs_text(&self, items: &HashMap<u32, ItemInfo>, messages: &[String], rows: &[(usize, u32)]) -> String {
+        let message = |id: usize| messages.get(id).map_or("", String::as_str);
+        let mut costs: Vec<(u32, u64)> = Vec::new();
+        let mut zeny = 0u64;
+        for &(offer, amount) in rows {
+            let offer = &self.offers[offer];
+            zeny += u64::from(offer.price) * u64::from(amount);
+            for &(item, each) in &offer.costs {
+                match costs.iter_mut().find(|(cost, _)| *cost == item) {
+                    Some((_, total)) => *total += u64::from(each) * u64::from(amount),
+                    None => costs.push((item, u64::from(each) * u64::from(amount))),
+                }
+            }
+        }
+        let mut parts: Vec<String> = costs
+            .into_iter()
+            .map(|(item, total)| rustnarok_client::messages::fill(message(COSTS_MESSAGE), &[&inventory::item_name(items, item, true, 0), &total]))
+            .collect();
+        if zeny > 0 {
+            parts.push(format!("{} {}", group(zeny), message(MONEY_MESSAGE)));
+        }
+        parts.join(", ")
     }
 
     /// Whether the pointer is on the shop's windows.
@@ -268,8 +331,10 @@ impl Shop {
             if !frame.open {
                 continue;
             }
+            let barter = matches!(self.market, Some(MarketKind::Barter | MarketKind::Expanded));
             let title = match &self.vendor {
                 Some((.., name)) if window == 0 => name.as_str(),
+                _ if barter && window == 1 => message(EXCHANGE_TITLE),
                 _ => message(TITLES[window][usize::from(self.selling)]),
             };
             frame.draw_title(layer, chrome, title, pointer.0);
@@ -300,18 +365,35 @@ impl Shop {
                     layer.texts.push((text, place, [0, 0, 0]));
                 }
                 let name = inventory::item_name(items, offer.item, offer.identified, offer.refine);
-                layer.texts.push((window::fit(font, &name, 115.0), frame.at([LEFT + 32.0, top + 10.0]), [0, 0, 0]));
+                // ponytail: a barter's costs and a market's stock go on a second line, in grey; where the real
+                // client shows them isn't known.
+                if barter {
+                    layer.texts.push((window::fit(font, &name, WIDTH - LEFT - 40.0), frame.at([LEFT + 32.0, top + 3.0]), [0, 0, 0]));
+                    let costs = self.costs_text(items, messages, &[(offer_index, amount.unwrap_or(1))]);
+                    layer.texts.push((window::fit(font, &costs, WIDTH - LEFT - 40.0), frame.at([LEFT + 32.0, top + 17.0]), GREY));
+                    continue;
+                }
+                let (name_top, price_top) = if offer.stock.is_some() { (3.0, 3.0) } else { (10.0, 10.0) };
+                layer.texts.push((window::fit(font, &name, 115.0), frame.at([LEFT + 32.0, top + name_top]), [0, 0, 0]));
                 let price = format!("{} z", group(u64::from(offer.price) * u64::from(amount.unwrap_or(1))));
-                layer.texts.push((price.clone(), frame.at([WIDTH - 4.0 - font.width(&price), top + 10.0]), [0, 0, 0]));
+                layer.texts.push((price.clone(), frame.at([WIDTH - 4.0 - font.width(&price), top + price_top]), [0, 0, 0]));
+                if let (Some(stock), 0) = (offer.stock, window) {
+                    let left = group(u64::from(stock));
+                    layer.texts.push((left.clone(), frame.at([WIDTH - 4.0 - font.width(&left), top + 17.0]), GREY));
+                }
             }
             // Footer: the deal's total and buttons.
             let footer = height - FOOTER;
             layer.sprites.push((&assets.bar, frame.at([0.0, footer]), [WIDTH, FOOTER]));
             if window == 1 {
-                let total = rustnarok_client::messages::fill(message(TOTAL_MESSAGE), &[&group(self.total())]);
+                let total = if barter {
+                    window::fit(font, &self.costs_text(items, messages, &self.deal.iter().map(|&(offer, amount)| (offer, amount)).collect::<Vec<_>>()), 150.0)
+                } else {
+                    rustnarok_client::messages::fill(message(TOTAL_MESSAGE), &[&group(self.total())])
+                };
                 layer.texts.push((total, frame.at([10.0, footer + 7.0]), [0, 0, 0]));
                 let (deal, cancel) = self.deal_button(1);
-                let deal_images = &assets.buttons[usize::from(self.selling)];
+                let deal_images = &assets.buttons[if barter { 3 } else { usize::from(self.selling) }];
                 layer.sprites.push((&deal_images[look(Hit::Deal)], frame.at(deal), BUTTON));
                 layer.sprites.push((&assets.buttons[2][look(Hit::Cancel)], frame.at(cancel), BUTTON));
             }
@@ -337,7 +419,7 @@ mod tests {
     use super::*;
 
     fn offer(item: u32, price: u32, have: u16, kind: u8) -> Offer {
-        Offer { item, price, index: 2, have, kind, identified: true, refine: 0 }
+        Offer { item, price, index: 2, have, kind, identified: true, ..Offer::default() }
     }
 
     #[test]
@@ -353,5 +435,12 @@ mod tests {
         selling.add(0, 10);
         assert_eq!(selling.deal, [(0, 4)]);
         assert_eq!(group(1_234_567), "1,234,567");
+        // A market takes no more than its stock, and what's bought leaves it.
+        let mut market = Shop::new(false, vec![Offer { stock: Some(3), ..offer(1010, 200, 0, 3) }]);
+        market.market = Some(MarketKind::Market);
+        market.add(0, 5);
+        assert_eq!(market.deal, [(0, 3)]);
+        market.bought(&[(1010, 2)]);
+        assert_eq!((market.offers[0].stock, market.deal.is_empty()), (Some(1), true));
     }
 }
