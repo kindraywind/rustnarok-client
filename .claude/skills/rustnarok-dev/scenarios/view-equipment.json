@@ -13,7 +13,7 @@
     {"as": "second", "click_on": {"inventory_item": 2301}, "count": 2}, {"as": "second", "wait_for": {"event": "Equipped", "ms": 5000}},
     {"as": "second", "key": "Alt+E"}, {"wait": 500},
     {"click_on": {"unit": "{second}"}, "button": "right"}, {"wait": 400},
-    {"click_on": {"unit": "{second}", "offset": [20, 26]}}, {"wait_for": {"packet": "0x0b37", "ms": 5000}},
+    {"click_on": {"menu_item": "Equipment"}}, {"wait_for": {"packet": "0x0b37", "ms": 5000}},
     {"wait": 300}, {"move": [900, 700]},
     {"expect": {"windows_open": ["OtherEquipment"]}},
     {"shot": "others-equipment", "crop": [490, 210, 300, 210]},

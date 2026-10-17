@@ -2947,7 +2947,7 @@ impl App {
                 && let Some(actor) = game.units.get(&id)
             {
                 let fill = |id: usize| rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&actor.name]);
-                let mut choices = vec![Some((fill(TRADE_CHOICE), Choice::Trade(id))), Some((fill(VIEW_CHOICE), Choice::ViewEquipment(id)))];
+                let mut choices = vec![Some((fill(TRADE_CHOICE), Choice::Trade(id)))];
                 // The guild's master can invite.
                 if game.guild.as_ref().is_some_and(|guild| guild.master && guild.members.iter().all(|member| member.account != id)) {
                     choices.push(Some((fill(GUILD_CHOICE), Choice::GuildInvite(id))));
@@ -2963,6 +2963,8 @@ impl App {
                 {
                     choices.extend([None, Some((fill(PARTY_ASK), Choice::Invite(id)))]);
                 }
+                // ponytail: last, under a line; where the real client lists it isn't known.
+                choices.extend([None, Some((fill(VIEW_CHOICE), Choice::ViewEquipment(id)))]);
                 game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             }
             // A right click on an item (inventory, storage or what's worn) describes it.
