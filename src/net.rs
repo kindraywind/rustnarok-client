@@ -566,6 +566,12 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_OPEN_REFINING_UI: u16 = 0x0AA0;
+const CZ_REFINING_SELECT_ITEM: u16 = 0x0AA1;
+const ZC_REFINING_MATERIAL_LIST: u16 = 0x0AA2;
+const CZ_REQ_REFINING: u16 = 0x0AA3;
+const CZ_CLOSE_REFINING_UI: u16 = 0x0AA4;
+const ZC_ACK_ITEMREFINING: u16 = 0x0188;
 const ZC_AUTOSPELLLIST: u16 = 0x0AFB;
 const CZ_SELECTAUTOSPELL: u16 = 0x01CE;
 const ZC_SKILL_SELECT_REQUEST: u16 = 0x0442;
@@ -1183,6 +1189,21 @@ pub enum MapEvent {
     SkillSelect {
         why: u32,
         skills: Vec<u16>,
+    },
+    /// The refine window opens.
+    RefineOpen,
+    /// What an item in the refine window can be refined with: ores (item, chance %, zeny), and how many Blacksmith's
+    /// Blessings protect it (0: they can't).
+    RefineMaterials {
+        index: u16,
+        blessings: u8,
+        materials: Vec<(u32, u8, u32)>,
+    },
+    /// A refine: 0 done, 1 failed and broke, 2 failed and went down, 3 failed; the item's level after.
+    Refined {
+        result: u16,
+        index: u16,
+        refine: u16,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
@@ -2213,6 +2234,19 @@ impl MapSession {
         self.stream.write_all(&encode_skill_select(why, skill))
     }
 
+    /// The refine window: put an item in (its ores come back), refine it, close the window.
+    pub fn refine_select(&mut self, index: u16) -> io::Result<()> {
+        self.stream.write_all(&[CZ_REFINING_SELECT_ITEM.to_le_bytes(), index.to_le_bytes()].concat())
+    }
+
+    pub fn refine(&mut self, index: u16, ore: u32, blessings: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_refine(index, ore, blessings))
+    }
+
+    pub fn close_refine(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_CLOSE_REFINING_UI.to_le_bytes())
+    }
+
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
     pub fn card_list(&mut self, card: u16) -> io::Result<()> {
         self.stream.write_all(&encode_card_list(card))
@@ -2859,6 +2893,16 @@ fn encode_skill_select(why: u32, skill: u16) -> [u8; 8] {
     packet
 }
 
+/// CZ_REQ_REFINING: the item, the ore, and whether Blacksmith's Blessings go with it.
+fn encode_refine(index: u16, ore: u32, blessings: bool) -> [u8; 9] {
+    let mut packet = [0u8; 9];
+    packet[..2].copy_from_slice(&CZ_REQ_REFINING.to_le_bytes());
+    packet[2..4].copy_from_slice(&index.to_le_bytes());
+    packet[4..8].copy_from_slice(&ore.to_le_bytes());
+    packet[8] = u8::from(blessings);
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -3272,6 +3316,13 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_ACK_WEAPONREFINE => MapEvent::Upgraded { result: u32_at(2), item: u32_at(6) },
         ZC_AUTOSPELLLIST => MapEvent::SpellList(packet[4..].chunks_exact(4).map(|skill| self::u32_at(skill, 0)).collect()),
         ZC_SKILL_SELECT_REQUEST => MapEvent::SkillSelect { why: u32_at(4), skills: packet[8..].chunks_exact(2).map(|skill| self::u16_at(skill, 0)).collect() },
+        ZC_OPEN_REFINING_UI => MapEvent::RefineOpen,
+        ZC_REFINING_MATERIAL_LIST => MapEvent::RefineMaterials {
+            index: u16_at(4),
+            blessings: packet[6],
+            materials: packet[7..].chunks_exact(9).map(|ore| (self::u32_at(ore, 0), ore[4], self::u32_at(ore, 5))).collect(),
+        },
+        ZC_ACK_ITEMREFINING => MapEvent::Refined { result: u16_at(2), index: u16_at(4), refine: u16_at(6) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -4138,6 +4189,26 @@ mod tests {
         assert_eq!(encode_skill_select(1, 0), [0x43, 0x04, 1, 0, 0, 0, 0, 0]);
         let ids = [ZC_AUTOSPELLLIST, CZ_SELECTAUTOSPELL, ZC_SKILL_SELECT_REQUEST, CZ_SKILL_SELECT_RESPONSE];
         assert_eq!(ids.map(packet_length), [Some(-1), Some(6), Some(-1), Some(8)]);
+    }
+
+    #[test]
+    fn decodes_the_refine_window() {
+        let Some(MapEvent::RefineOpen) = decode_map_packet(&[0xA0, 0x0A]) else { panic!() };
+        let mut list = ZC_REFINING_MATERIAL_LIST.to_le_bytes().to_vec();
+        list.extend_from_slice(&25u16.to_le_bytes());
+        list.extend_from_slice(&4u16.to_le_bytes());
+        list.push(0);
+        for (ore, chance, zeny) in [(1010u32, 100u8, 50u32), (6240, 100, 5000)] {
+            list.extend_from_slice(&ore.to_le_bytes());
+            list.push(chance);
+            list.extend_from_slice(&zeny.to_le_bytes());
+        }
+        let Some(MapEvent::RefineMaterials { index: 4, blessings: 0, materials }) = decode_map_packet(&list) else { panic!() };
+        assert_eq!(materials, [(1010, 100, 50), (6240, 100, 5000)]);
+        let Some(MapEvent::Refined { result: 0, index: 4, refine: 1 }) = decode_map_packet(&[0x88, 0x01, 0, 0, 4, 0, 1, 0]) else { panic!() };
+        assert_eq!(encode_refine(4, 1010, true), [0xA3, 0x0A, 4, 0, 0xF2, 0x03, 0, 0, 1]);
+        let ids = [ZC_OPEN_REFINING_UI, CZ_REFINING_SELECT_ITEM, ZC_REFINING_MATERIAL_LIST, CZ_REQ_REFINING, CZ_CLOSE_REFINING_UI, ZC_ACK_ITEMREFINING];
+        assert_eq!(ids.map(packet_length), [Some(2), Some(4), Some(-1), Some(9), Some(2), Some(8)]);
     }
 
     #[test]
