@@ -595,6 +595,14 @@ const ZC_ACK_BAN_GUILD: u16 = 0x0A82;
 const ZC_ACK_LEAVE_GUILD: u16 = 0x0A83;
 const ZC_GUILD_INFO: u16 = 0x0B7B;
 const ZC_MEMBERMGR_INFO: u16 = 0x0B7D;
+const ZC_POSITION_INFO: u16 = 0x0160;
+const ZC_GUILD_SKILLINFO: u16 = 0x0162;
+const ZC_BAN_LIST: u16 = 0x0B7C;
+const CZ_REQ_GUILD_EMBLEM_IMG: u16 = 0x0151;
+const ZC_GUILD_EMBLEM_IMG: u16 = 0x0152;
+const ZC_CHANGE_GUILD: u16 = 0x0B47;
+const CZ_REQNAME: u16 = 0x0368;
+const ZC_ACK_REQNAMEALL: u16 = 0x0A30;
 const CZ_ADD_FRIENDS: u16 = 0x0202;
 const CZ_DELETE_FRIENDS: u16 = 0x0203;
 const ZC_FRIENDS_STATE: u16 = 0x0206;
@@ -741,6 +749,9 @@ pub struct Unit {
     pub name: String,
     /// Sitting when it came into view.
     pub sitting: bool,
+    /// A player's guild and its emblem's version (0 for none).
+    pub guild: u32,
+    pub emblem: u32,
 }
 
 #[derive(Debug)]
@@ -1053,16 +1064,40 @@ pub enum MapEvent {
         index: u16,
         amount: u32,
     },
-    /// The player's guild: its ID, name, whether we lead it (ZC_UPDATE_GDID).
+    /// The player's guild: its ID, name, whether we lead it, its emblem's version (ZC_UPDATE_GDID).
     Guild {
         id: u32,
         name: String,
         master: bool,
+        emblem: u32,
     },
     GuildInfo(GuildInfo),
     GuildMembers(Vec<GuildMember>),
     /// Position names, by position ID.
     GuildPositions(Vec<(u32, String)>),
+    /// Positions' permissions and tax (ZC_POSITION_INFO).
+    GuildPositionInfo(Vec<GuildPosition>),
+    /// The guild's skills and the points left to put in them.
+    GuildSkills {
+        points: u16,
+        skills: Vec<Skill>,
+    },
+    /// Who was expelled from the guild (name), and why.
+    GuildExpelled(Vec<(String, String)>),
+    /// A guild's emblem: a zlib-compressed 24x24 BMP.
+    GuildEmblem {
+        guild: u32,
+        version: u32,
+        data: Vec<u8>,
+    },
+    /// A player's guild or its emblem changed (ZC_CHANGE_GUILD).
+    GuildEmblemChanged {
+        account: u32,
+        guild: u32,
+        emblem: u32,
+    },
+    /// A player's party, guild and position, shown with their name (ZC_ACK_REQNAMEALL), by account ID.
+    NameTag(u32, NameTag),
     GuildNotice {
         subject: String,
         text: String,
@@ -1466,6 +1501,28 @@ pub struct GuildInfo {
     /// Castles owned.
     pub territory: String,
     pub master: String,
+}
+
+/// A guild position's permissions (`GUILD_PERM_*` bits) and the share of its members' exp that goes to the guild.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GuildPosition {
+    pub id: u32,
+    pub mode: u32,
+    pub tax: u32,
+}
+
+impl GuildPosition {
+    pub const INVITE: u32 = 0x01;
+    pub const EXPEL: u32 = 0x10;
+    pub const STORAGE: u32 = 0x100;
+}
+
+/// What shows under a player's name: their party, and their guild with their position in it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NameTag {
+    pub party: String,
+    pub guild: String,
+    pub position: String,
 }
 
 /// Someone in the player's guild.
@@ -2002,10 +2059,24 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
-    /// Asks for a page of the guild window: 0 its info, 1 its members.
+    /// Asks for a page of the guild window: 0 its info, 1 its members, 2 positions, 3 skills, 4 the expel list.
     pub fn guild_page(&mut self, page: u32) -> io::Result<()> {
         let mut packet = CZ_REQ_GUILD_MENU.to_le_bytes().to_vec();
         packet.extend_from_slice(&page.to_le_bytes());
+        self.stream.write_all(&packet)
+    }
+
+    /// Asks for a guild's emblem; a guild without one doesn't answer.
+    pub fn guild_emblem(&mut self, guild: u32) -> io::Result<()> {
+        let mut packet = CZ_REQ_GUILD_EMBLEM_IMG.to_le_bytes().to_vec();
+        packet.extend_from_slice(&guild.to_le_bytes());
+        self.stream.write_all(&packet)
+    }
+
+    /// Asks for a unit's name; for a player, the server adds their party, guild and position.
+    pub fn ask_name(&mut self, id: u32) -> io::Result<()> {
+        let mut packet = CZ_REQNAME.to_le_bytes().to_vec();
+        packet.extend_from_slice(&id.to_le_bytes());
         self.stream.write_all(&packet)
     }
 
@@ -2282,6 +2353,9 @@ fn decode_unit(packet: &[u8], layout: &UnitLayout, position: ([u16; 2], u8)) -> 
         level: u16_at(layout.level),
         name: c_string(&packet[layout.name..(layout.name + 24).min(packet.len())]),
         sitting: layout.state.is_some_and(|state| packet.get(state) == Some(&2)),
+        // GUID and GEmblemVer follow the robe.
+        guild: u32_at(packet, layout.robe + 2),
+        emblem: u32::from(u16_at(layout.robe + 6)),
     }
 }
 
@@ -2617,7 +2691,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             refine: packet[56],
             ..Default::default()
         }),
-        ZC_UPDATE_GDID => MapEvent::Guild { id: u32_at(2), name: c_string(&packet[19..43]), master: packet[14] != 0 },
+        ZC_UPDATE_GDID => MapEvent::Guild { id: u32_at(2), name: c_string(&packet[19..43]), master: packet[14] != 0, emblem: u32_at(6) },
         // ID, level, members, most members, average level, exp, next exp, tax points, honor, virtue, emblem, name,
         // castles, zeny, master's ID and name.
         ZC_GUILD_INFO => MapEvent::GuildInfo(GuildInfo {
@@ -2653,6 +2727,23 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ),
         ZC_POSITION_ID_NAME_INFO => {
             MapEvent::GuildPositions(packet[4..].chunks_exact(28).map(|entry| (self::u32_at(entry, 0), c_string(&entry[4..28]))).collect())
+        }
+        // Each position: ID, permissions, rank, tax.
+        ZC_POSITION_INFO => MapEvent::GuildPositionInfo(
+            packet[4..]
+                .chunks_exact(16)
+                .map(|entry| GuildPosition { id: self::u32_at(entry, 0), mode: self::u32_at(entry, 4), tax: self::u32_at(entry, 12) })
+                .collect(),
+        ),
+        // The points left, then each skill as ZC_SKILLINFO_LIST has them.
+        ZC_GUILD_SKILLINFO => MapEvent::GuildSkills { points: u16_at(4), skills: packet[6..].chunks_exact(SKILL_SIZE).map(decode_skill).collect() },
+        // Each: character ID, reason, name.
+        ZC_BAN_LIST => MapEvent::GuildExpelled(packet[4..].chunks_exact(68).map(|entry| (c_string(&entry[44..68]), c_string(&entry[4..44]))).collect()),
+        ZC_GUILD_EMBLEM_IMG => MapEvent::GuildEmblem { guild: u32_at(4), version: u32_at(8), data: packet[12..].to_vec() },
+        ZC_CHANGE_GUILD => MapEvent::GuildEmblemChanged { guild: u32_at(2), emblem: u32_at(6), account: u32_at(10) },
+        // ID, name, party, guild, position, title.
+        ZC_ACK_REQNAMEALL => {
+            MapEvent::NameTag(u32_at(2), NameTag { party: c_string(&packet[30..54]), guild: c_string(&packet[54..78]), position: c_string(&packet[78..102]) })
         }
         ZC_GUILD_NOTICE => MapEvent::GuildNotice { subject: c_string(&packet[2..62]), text: c_string(&packet[62..182]) },
         ZC_GUILD_CHAT => MapEvent::GuildChat(c_string(&packet[4..])),
@@ -2899,6 +2990,45 @@ mod tests {
         assert_eq!(packet_length(0x09A0), Some(6));
         // Written by hand in rathena (clif_navigateTo, the sale tool): the tutorial maps' navigation used to drop us.
         assert_eq!([0x08E2, 0x09B5, 0x09BD].map(packet_length), [Some(27), Some(2), Some(2)]);
+    }
+
+    #[test]
+    fn decodes_guild_pages() {
+        let packet = |id: u16, body: &[u8]| {
+            let mut packet = id.to_le_bytes().to_vec();
+            packet.extend_from_slice(&((4 + body.len()) as u16).to_le_bytes());
+            packet.extend_from_slice(body);
+            packet
+        };
+        let mut position = [0u8; 16];
+        position[..4].copy_from_slice(&19u32.to_le_bytes());
+        position[4..8].copy_from_slice(&0x111u32.to_le_bytes());
+        position[12..16].copy_from_slice(&50u32.to_le_bytes());
+        let Some(MapEvent::GuildPositionInfo(positions)) = decode_map_packet(&packet(ZC_POSITION_INFO, &position)) else { panic!() };
+        assert_eq!(positions, [GuildPosition { id: 19, mode: 0x111, tax: 50 }]);
+
+        let mut skills = 3u16.to_le_bytes().to_vec();
+        let mut skill = [0u8; SKILL_SIZE];
+        skill[..2].copy_from_slice(&10004u16.to_le_bytes());
+        skill[6..8].copy_from_slice(&2u16.to_le_bytes());
+        skill[36] = 1;
+        skills.extend_from_slice(&skill);
+        let Some(MapEvent::GuildSkills { points: 3, skills }) = decode_map_packet(&packet(ZC_GUILD_SKILLINFO, &skills)) else { panic!() };
+        assert_eq!((skills[0].id, skills[0].level, skills[0].upgradable), (10004, 2, true));
+
+        let mut banned = [0u8; 68];
+        banned[4..11].copy_from_slice(b"spammer");
+        banned[44..49].copy_from_slice(b"Ghost");
+        let Some(MapEvent::GuildExpelled(list)) = decode_map_packet(&packet(ZC_BAN_LIST, &banned)) else { panic!() };
+        assert_eq!(list, [("Ghost".to_owned(), "spammer".to_owned())]);
+
+        // Players carry their guild and emblem version after the robe.
+        let mut stand = vec![0u8; 108];
+        stand[..2].copy_from_slice(&ZC_NOTIFY_STANDENTRY.to_le_bytes());
+        stand[49..53].copy_from_slice(&7u32.to_le_bytes());
+        stand[53..55].copy_from_slice(&3u16.to_le_bytes());
+        let Some(MapEvent::Unit(unit)) = decode_map_packet(&stand) else { panic!() };
+        assert_eq!((unit.guild, unit.emblem), (7, 3));
     }
 
     #[test]

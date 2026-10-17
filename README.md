@@ -18,14 +18,16 @@ from the player's files when it runs.
 - **The world**: GND ground with lightmaps, RSW models (RSM 1.x), water, GAT walkability, the camera (right drag
   turns, wheel zooms), cursors, minimap with NPC marks and party members, the world map.
 - **Characters**: players with heads, headgear, weapons, shields and garments; monsters, NPCs, warp portals; walking,
-  sitting, emotions; HP/SP bars, names, chat bubbles, cast bars.
+  sitting, emotions; HP/SP bars, names (monsters' and other players' when pointed at, a player's with their party,
+  guild, position and guild emblem), chat bubbles, cast bars.
 - **Combat and skills**: attacking with reach checks, damage numbers of every kind, death; the skill window and
   hotkeys, casting with targets, status icons, effects (STR animations, moving textures and sprites, cylinders, sprite
   animations, camera shakes), skills' units on the ground (Fire Wall, Safety Wall, Pneuma, warp portals, traps).
-- **Windows**: basic info with its menu, inventory, equipment, item descriptions with card slots, status (raising
-  stats), skills, hotkey bar, chat with whispers, party, guild (info, members, notice), friends, storage, cart, NPC
-  dialogs (menus, number and text input), NPC shops, trading, chat rooms, vending (own shop and others'), RODEX
-  mail, quests, the option menu (Esc) and audio settings, the right-click menu.
+- **Windows**: basic info with its menu, inventory, equipment, item descriptions with card slots, status
+  (raising stats), skills, hotkey bar, chat with whispers, party, guild (info with its emblem, members,
+  positions, skills, expel list, notice), friends, storage, cart, NPC dialogs (menus, number and text input),
+  NPC shops, trading, chat rooms, vending (own shop and others'), RODEX mail, quests, the option menu (Esc) and
+  audio settings, the right-click menu.
 - **Sound**: each map's music, sprites' own sounds (attacks, flinches, deaths), effect sounds, volume settings.
 - **macOS**: Retina-sharp text, resizable window, fullscreen (Ctrl+Cmd+F), an `.app` bundle.
 - **English** through a translation pack's loose files placed over data.grf, as the official client does.
@@ -146,7 +148,7 @@ PNG), `lua_dump`, `messages`, `job_name`, `act_sounds`, `str_dump`, `map_info`, 
 - Effects: those the client draws in code other than camera shakes (weather, auras, body flashes, songs), stone
   spikes (Earth Spike, Heaven's Drive), missiles flying from the caster (Soul Strike, Fire Ball); Warp Portal's
   destination menu; the graphics and hotkey settings windows behind the option menu.
-- Guild positions, skills, expulsion list and emblems; the status window's trait stats.
+- Guild management: editing positions, expelling, registering an emblem, alliances; the status window's trait stats.
 - World map: dungeons, monster info, the other worlds. Quests: the recommended tab.
 - Mail: returning mail, selecting several; the fee shown before sending.
 - Weapon hit sounds; RSM2 models; lightmap edge smoothing.

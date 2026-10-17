@@ -16,8 +16,10 @@ use crate::{Layer, UI, contains, offset};
 // ponytail: a grid of 28px dashed boxes 62x58 apart; calibrate against the real client.
 const COLUMNS: usize = 7;
 const ROWS: usize = 6;
-const CELL: [f32; 2] = [62.0, 58.0];
-const BOX: f32 = 28.0;
+pub const CELL: [f32; 2] = [62.0, 58.0];
+pub const BOX: f32 = 28.0;
+/// Where the level up button sits by a skill's box.
+pub const UP: [f32; 2] = [BOX + 1.0, 2.0];
 const SIDE: f32 = 13.0;
 const WIDTH: f32 = SIDE * 2.0 + COLUMNS as f32 * CELL[0];
 const TAB_HEIGHT: f32 = 20.0;
@@ -34,7 +36,7 @@ pub struct Assets {
     /// The dashed box a skill sits in.
     slot: Texture,
     /// The level up button: normal, hovered, pressed.
-    up: [Texture; 3],
+    pub up: [Texture; 3],
     /// The bottom bar's left end, middle and right end.
     bar: [Texture; 3],
     /// Whitens skills not learned.
@@ -113,6 +115,40 @@ pub fn icon_path(info: &SkillInfo) -> String {
     format!("{UI}item\\{}.bmp", info.resource.to_lowercase())
 }
 
+/// A skill's box with its corner at `corner` on screen: the icon, the level in its corner and the name under it; a
+/// level of 0 is a skill not learned, veiled and greyed.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_box<'a>(
+    layer: &mut Layer<'a>,
+    assets: &'a Assets,
+    icons: &'a HashMap<String, Option<Texture>>,
+    font: &Font,
+    corner: [f32; 2],
+    info: Option<&SkillInfo>,
+    name: &str,
+    level: u16,
+) {
+    layer.sprites.push((&assets.slot, offset(corner, [2.0, 2.0]), assets.slot.size));
+    if let Some(Some(icon)) = info.map(icon_path).and_then(|path| icons.get(&path)) {
+        layer.sprites.push((icon, offset(corner, [2.0, 2.0]), icon.size));
+        if level == 0 {
+            layer.sprites.push((&assets.veil, offset(corner, [2.0, 2.0]), icon.size));
+        }
+    }
+    if level > 0 {
+        // The level in the box's corner, white on a dark outline.
+        let text = level.to_string();
+        let place = offset(corner, [BOX - font.width(&text) - 1.0, BOX - font.line_height() + 2.0]);
+        for nudge in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+            layer.texts.push((text.clone(), offset(place, nudge), [0x2F, 0x2F, 0x2F]));
+        }
+        layer.texts.push((text, place, [255; 3]));
+    }
+    let shown = window::fit(font, name, CELL[0] - 2.0);
+    let place = [corner[0] + (BOX - font.width(&shown)) / 2.0, corner[1] + BOX + 2.0].map(f32::floor);
+    layer.texts.push((shown, place, if level > 0 { [0, 0, 0] } else { GREY }));
+}
+
 impl SkillWindow {
     pub fn height(&self) -> f32 {
         HEIGHT
@@ -148,7 +184,7 @@ impl SkillWindow {
         for &(place, id) in self.tree(trees, jobs) {
             let corner = box_corner(place);
             let upgradable = points > 0 && skills.iter().any(|skill| skill.id == id && skill.upgradable);
-            if upgradable && contains(offset(corner, [BOX + 1.0, 2.0]), [24.0, 24.0], local) {
+            if upgradable && contains(offset(corner, UP), [24.0, 24.0], local) {
                 return Some(Hit::LevelUp(id));
             }
             if let Some(skill) = skills.iter().find(|skill| skill.id == id).filter(|skill| steppable(skill))
@@ -233,37 +269,21 @@ impl SkillWindow {
             let known = skills.iter().find(|skill| skill.id == id);
             let level = known.map_or(0, |skill| skill.level);
             let skill_info = info.get(&id);
-            layer.sprites.push((&assets.slot, at(offset(corner, [2.0, 2.0])), assets.slot.size));
-            if let Some(Some(icon)) = skill_info.map(icon_path).and_then(|path| icons.get(&path)) {
-                layer.sprites.push((icon, at(offset(corner, [2.0, 2.0])), icon.size));
-                if level == 0 {
-                    layer.sprites.push((&assets.veil, at(offset(corner, [2.0, 2.0])), icon.size));
-                }
-            }
-            if level > 0 {
-                // The level it's used at in the box's corner, white on a dark outline.
-                let text = self.use_level(id, level).to_string();
-                let place = at(offset(corner, [BOX - font.width(&text) - 1.0, BOX - font.line_height() + 2.0]));
-                for nudge in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
-                    layer.texts.push((text.clone(), offset(place, nudge), [0x2F, 0x2F, 0x2F]));
-                }
-                layer.texts.push((text, place, [255; 3]));
-            }
+            let name = skill_info.map_or_else(|| id.to_string(), |info| info.name.clone());
+            // A learned skill's box shows the level it's used at.
+            let shown = if level > 0 { self.use_level(id, level) } else { 0 };
+            draw_box(layer, assets, icons, font, at(corner), skill_info, &name, shown);
             if known.is_some_and(steppable) {
                 for (arrow, at) in assets.arrows.iter().zip(ARROWS) {
                     layer.sprites.push((arrow, self.frame.at(offset(corner, at)), arrow.size));
                 }
             }
-            let name = skill_info.map_or_else(|| id.to_string(), |info| info.name.clone());
-            let shown = window::fit(font, &name, CELL[0] - 2.0);
-            let name_place = at([corner[0] + (BOX - font.width(&shown)) / 2.0, corner[1] + BOX + 2.0].map(f32::floor));
-            layer.texts.push((shown, name_place, if level > 0 { [0, 0, 0] } else { GREY }));
             if points > 0 && known.is_some_and(|skill| skill.upgradable) {
                 let state = match hit {
                     Some(Hit::LevelUp(target)) if target == id => 1 + usize::from(pointer.1),
                     _ => 0,
                 };
-                layer.sprites.push((&assets.up[state], at(offset(corner, [BOX + 1.0, 2.0])), assets.up[state].size));
+                layer.sprites.push((&assets.up[state], at(offset(corner, UP)), assets.up[state].size));
             }
             if hit == Some(Hit::Skill(id)) {
                 let max = skill_info.map_or(0, |info| info.max_level);

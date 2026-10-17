@@ -420,12 +420,16 @@ pub fn load_image(grf: &Grf, path: &str) -> Result<RgbaImage, String> {
     } else {
         image::load_from_memory(&bytes)
     };
-    let mut image = decoded.map_err(|error| format!("{path}: {error}"))?.to_rgba8();
+    Ok(key_out(decoded.map_err(|error| format!("{path}: {error}"))?.to_rgba8()))
+}
+
+/// Magenta, the client's color key, becomes transparent.
+pub fn key_out(mut image: RgbaImage) -> RgbaImage {
     for pixel in image.pixels_mut() {
         let [r, g, b, _] = pixel.0;
         if r >= 0xFE && g <= 0x03 && b >= 0xFE {
             pixel.0 = [0; 4];
         }
     }
-    Ok(image)
+    image
 }

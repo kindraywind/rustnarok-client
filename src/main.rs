@@ -410,6 +410,12 @@ struct Game {
     guild_invite: Option<(u32, String)>,
     /// Dev switch RUSTNAROK_CLIENT_GUILD=window ran.
     guild_shown: bool,
+    /// Guild emblems by guild ID: the version last asked for, and the image that came.
+    emblems: HashMap<u32, (u32, Option<Texture>)>,
+    /// What shows with players' names (party, guild, position) by account ID, and the unit last pointed at: a
+    /// player's tag is asked for each time the pointer comes onto them, as what the server sends unasked can be stale.
+    name_tags: HashMap<u32, net::NameTag>,
+    pointed: Option<u32>,
     /// The friend list, and someone asking to be friends (account, character, name).
     friends: Vec<net::Friend>,
     friend_asked: Option<(u32, u32, String)>,
@@ -806,7 +812,7 @@ impl Game {
             Panel::Storage => self.storage.frame.open && self.storage.frame.local(cursor, self.storage.height()).is_some(),
             Panel::Party => self.party_window.frame.open && self.party_window.hit(cursor, self.party.as_ref(), &self.friends, self.account_id).is_some(),
             Panel::Status => self.status_window.frame.open && self.status_window.frame.local(cursor, self.status_height).is_some(),
-            Panel::Guild => self.guild.is_some() && self.guild_window.frame.open && self.guild_window.hit(cursor).is_some(),
+            Panel::Guild => self.guild.is_some() && self.guild_window.frame.local(cursor, self.guild_window.height()).is_some(),
             Panel::Cart => self.cart.cart.is_some() && self.cart.hit(cursor).is_some(),
         })
     }
@@ -874,11 +880,26 @@ impl Game {
         self.effects.play(gpu, grf, table, effect, effects::Target::Ground, at, Instant::now());
     }
 
-    /// The guild window's pages: the guild's info and its members.
+    /// The guild window's pages: the guild's info and its members, and the open tab's (positions, skills, the expel
+    /// list; the notice comes by itself).
     fn ask_guild_pages(&mut self) {
         if self.guild.is_some() {
-            let _ = self.session.guild_page(0);
-            let _ = self.session.guild_page(1);
+            let tab = self.guild_window.tab as u32;
+            for page in [0, 1].into_iter().chain((2..=4).contains(&tab).then_some(tab)) {
+                let _ = self.session.guild_page(page);
+            }
+        }
+    }
+
+    /// Asks for a guild's emblem unless that version is here or asked for already.
+    fn want_emblem(&mut self, guild: u32, version: u32) {
+        if guild == 0 || version == 0 {
+            return;
+        }
+        let known = self.emblems.entry(guild).or_insert((0, None));
+        if known.0 != version {
+            known.0 = version;
+            let _ = self.session.guild_emblem(guild);
         }
     }
 
@@ -2503,9 +2524,18 @@ impl App {
                         let hit = game.cart.hit(cursor).unwrap();
                         game.cart.click(hit);
                     }
-                    Panel::Guild => match game.guild_window.hit(cursor) {
+                    Panel::Guild => match game.guild.as_ref().and_then(|guild| game.guild_window.hit(cursor, guild)) {
                         Some(guild::Hit::Title(title)) => game.guild_window.frame.click_title(title),
-                        Some(guild::Hit::Tab(tab)) => game.guild_window.tab = tab,
+                        Some(guild::Hit::Tab(tab)) => {
+                            game.guild_window.show_tab(tab);
+                            // Each page but the notice is asked for when shown.
+                            if tab <= 4 {
+                                let _ = game.session.guild_page(tab as u32);
+                            }
+                        }
+                        Some(guild::Hit::LevelUp(skill)) => {
+                            let _ = game.session.skill_up(skill);
+                        }
                         _ => {}
                     },
                     Panel::Status => {
@@ -3022,7 +3052,9 @@ impl App {
                 {
                     game.status_window.frame.start_drag(cursor)
                 }
-                Panel::Guild if game.guild_window.hit(cursor) == Some(guild::Hit::Title(TitleHit::Title)) => game.guild_window.frame.start_drag(cursor),
+                Panel::Guild if game.guild.as_ref().and_then(|guild| game.guild_window.hit(cursor, guild)) == Some(guild::Hit::Title(TitleHit::Title)) => {
+                    game.guild_window.frame.start_drag(cursor)
+                }
                 Panel::Cart if game.cart.hit(cursor) == Some(inventory::Hit::Title(TitleHit::Title)) => game.cart.frame.start_drag(cursor),
                 Panel::Equipment if game.equipment.hit(cursor, &game.inventory.items) == Some(equipment::Hit::Title(TitleHit::Title)) => {
                     game.equipment.frame.start_drag(cursor)
@@ -3593,6 +3625,9 @@ impl App {
                     guild_window: guild::GuildWindow::default(),
                     guild_invite: None,
                     guild_shown: false,
+                    emblems: HashMap::new(),
+                    name_tags: HashMap::new(),
+                    pointed: None,
                     signs: HashMap::new(),
                     sign_rects: Vec::new(),
                     room: None,
@@ -3739,6 +3774,7 @@ impl App {
             actor.look = (unit.kind == PLAYER).then(|| unit_look(unit));
             actor.hidden = HIDDEN_JOBS.contains(&unit.job) || unit.job == WARP_JOB;
             actor.head_direction = unit.head_direction;
+            actor.guild = unit.guild;
             actor
         };
         match event {
@@ -3756,11 +3792,13 @@ impl App {
                 actor.direction = unit.direction;
                 actor.head_direction = unit.head_direction;
                 actor.sitting = unit.sitting;
-                // A player seen again may have changed clothes meanwhile.
+                // A player seen again may have changed clothes (or guilds) meanwhile.
                 if actor.look.as_ref().is_some_and(|look| *look != unit_look(&unit)) {
                     actor.look = Some(unit_look(&unit));
                     actor.sprites = SpriteSet::player(grf, actor.look.as_ref().unwrap(), look_tables);
                 }
+                actor.guild = unit.guild;
+                game.want_emblem(unit.guild, unit.emblem);
             }
             MapEvent::Turn { id, direction, head_direction } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
@@ -3772,12 +3810,14 @@ impl App {
             MapEvent::UnitWalk { unit, to, .. } => {
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
                 let from = unit.position.map(i32::from);
+                actor.guild = unit.guild;
                 if actor.cell != from && !actor.moving() {
                     actor.cell = from;
                 }
                 if let Some(path) = world::find_path(&game.world.gat, actor.cell, to.map(i32::from)) {
                     actor.walk(path);
                 }
+                game.want_emblem(unit.guild, unit.emblem);
             }
             MapEvent::Vanish { id, reason } => {
                 // A body keeps what plays on it (the killing hit's effects) until it goes.
@@ -3801,6 +3841,8 @@ impl App {
                     _ => {
                         game.units.remove(&id);
                         game.unit_hp.remove(&id);
+                        // Whoever comes back with this account may be another character.
+                        game.name_tags.remove(&id);
                     }
                 }
             }
@@ -4186,14 +4228,17 @@ impl App {
                 }
             }
             // The guild: what it is, its pages, its talk, and who comes and goes.
-            MapEvent::Guild { id, name, master } => {
+            MapEvent::Guild { id, name, master, emblem } => {
                 let guild = game.guild.get_or_insert_with(guild::Guild::default);
                 guild.id = id;
                 guild.name = name;
                 guild.master = master;
+                guild.emblem = emblem;
+                game.want_emblem(id, emblem);
             }
             MapEvent::GuildInfo(info) => {
                 if let Some(guild) = &mut game.guild {
+                    guild.name.clone_from(&info.name);
                     guild.info = Some(info);
                 }
             }
@@ -4207,6 +4252,48 @@ impl App {
                     guild.positions = positions.into_iter().collect();
                 }
             }
+            MapEvent::GuildPositionInfo(info) => {
+                if let Some(guild) = &mut game.guild {
+                    guild.position_info = info;
+                }
+            }
+            MapEvent::GuildSkills { points, skills } => {
+                if let Some(guild) = &mut game.guild {
+                    guild.skill_points = points;
+                    guild.skills = skills;
+                }
+            }
+            MapEvent::GuildExpelled(expelled) => {
+                if let Some(guild) = &mut game.guild {
+                    guild.expelled = expelled;
+                }
+            }
+            MapEvent::GuildEmblem { guild, version, data } => {
+                if let Some(gpu) = gpu {
+                    match guild::decode_emblem(&data) {
+                        Some(image) => _ = game.emblems.insert(guild, (version, Some(gpu.texture(&image, false)))),
+                        None => eprintln!("guild {guild}: emblem {version} isn't a compressed BMP"),
+                    }
+                }
+            }
+            MapEvent::GuildEmblemChanged { account, guild, emblem } => {
+                // Joining a guild brings this (with its info) rather than ZC_UPDATE_GDID.
+                if account == game.account_id {
+                    if guild == 0 {
+                        game.guild = None;
+                        game.guild_window.frame.open = false;
+                    } else if game.guild.as_ref().is_none_or(|ours| ours.id != guild) {
+                        game.guild = Some(guild::Guild { id: guild, ..Default::default() });
+                    }
+                    if let Some(ours) = &mut game.guild {
+                        ours.emblem = emblem;
+                    }
+                } else if let Some(actor) = game.units.get_mut(&account) {
+                    actor.guild = guild;
+                }
+                game.want_emblem(guild, emblem);
+            }
+            MapEvent::NameTag(id, tag) => _ = game.name_tags.insert(id, tag),
             MapEvent::GuildNotice { subject, text } => {
                 if !subject.is_empty() {
                     game.chat_line(format!("[{subject}] {text}"), GUILD_CHAT);
@@ -5169,13 +5256,33 @@ impl App {
             _ => Vec::new(),
         };
 
-        // A monster or another player under the pointer shows its name at its feet (NPCs show theirs always).
-        if let Some(Owner::Unit(id)) = hovered(&game.hit_boxes, pointer.0)
-            && let Some(actor) = game.units.get(&id).filter(|actor| !actor.hidden && actor.kind != NPC && actor.sprites.is_some())
+        // A monster or another player under the pointer shows its name at its feet (NPCs show theirs always). A
+        // player's adds their party, and a line with their guild and position after the guild's emblem (drawn with the
+        // names below); the server tells those each time the pointer comes onto them, as what it sends unasked can be
+        // stale.
+        let mut guild_line = None;
+        let pointed = match hovered(&game.hit_boxes, pointer.0) {
+            Some(Owner::Unit(id)) if game.units.get(&id).is_some_and(|actor| !actor.hidden && actor.kind != NPC && actor.sprites.is_some()) => Some(id),
+            _ => None,
+        };
+        if let Some(id) = pointed
+            && let Some(actor) = game.units.get(&id)
             && let Some(&feet) = feet_of.get(&id)
         {
-            labels.push((actor.name.clone(), feet));
+            let tag = game.name_tags.get(&id).filter(|_| actor.kind == PLAYER);
+            let name = match tag {
+                Some(tag) if !tag.party.is_empty() => format!("{} ({})", actor.name, tag.party),
+                _ => actor.name.clone(),
+            };
+            if let Some(tag) = tag.filter(|tag| !tag.guild.is_empty()) {
+                guild_line = Some((name.clone(), format!("{} [{}]", tag.guild, tag.position), feet, actor.guild));
+            }
+            labels.push((name, feet));
+            if actor.kind == PLAYER && game.pointed != pointed {
+                let _ = game.session.ask_name(id);
+            }
         }
+        game.pointed = pointed;
         // The item under the pointer shows its name and amount.
         if let Some(Owner::Item(id)) = hovered(&game.hit_boxes, pointer.0)
             && let Some(item) = game.ground.get(&id)
@@ -5191,6 +5298,17 @@ impl App {
             if let Some(point) = view.project(*feet) {
                 let x = (point[0] * SCREEN[0] - font.width(name) / 2.0).round();
                 base.outlined(name, [x, (point[1] * SCREEN[1] + 4.0).round()]);
+            }
+        }
+        if let Some((name, line, feet, guild_id)) = &guild_line
+            && let Some(point) = view.project(*feet)
+        {
+            let top = (point[1] * SCREEN[1] + 4.0).round();
+            let left = |text: &str| (point[0] * SCREEN[0] - font.width(text) / 2.0).round();
+            base.outlined(line, [left(line), top + font.line_height()]);
+            // ponytail: the emblem left of the wider line, at the top; calibrate against the real client.
+            if let Some(emblem) = game.emblems.get(guild_id).and_then(|(_, emblem)| emblem.as_ref()) {
+                base.sprites.push((emblem, [left(name).min(left(line)) - guild::EMBLEM_SIZE[0] - 2.0, top], guild::EMBLEM_SIZE));
             }
         }
         let ratio = |value: Option<&i64>, maximum: Option<&i64>| match (value, maximum) {
@@ -5334,6 +5452,7 @@ impl App {
             .skill_window
             .icons(skill_trees, &jobs, skill_info)
             .into_iter()
+            .chain(game.guild.as_ref().map(|guild| game.guild_window.icons(guild, skill_info)).unwrap_or_default())
             .chain(game.hotkeys.keys.iter().flatten().filter(|key| key.skill).filter_map(|key| skill_info.get(&(key.id as u16)).map(skills::icon_path)));
         let status_paths =
             game.status_icons.iter().filter_map(|(kind, ..)| status_icon_files.get(kind).map(|(_, file)| format!("data\\texture\\effect\\{file}")));
@@ -5472,7 +5591,20 @@ impl App {
                 }
                 Panel::Guild => {
                     if let Some(guild) = &game.guild {
-                        game.guild_window.draw(&mut layer, &assets.chrome, &assets.guild, font, messages, guild, pc_job_names, pointer.0);
+                        let emblem = game.emblems.get(&guild.id).and_then(|(_, emblem)| emblem.as_ref());
+                        game.guild_window.draw(
+                            &mut layer,
+                            &mut tooltip,
+                            &assets.chrome,
+                            (&assets.guild, &assets.skills),
+                            icons,
+                            font,
+                            messages,
+                            guild,
+                            (pc_job_names, skill_info),
+                            emblem,
+                            pointer,
+                        );
                     }
                 }
                 Panel::Party => {
@@ -5834,6 +5966,11 @@ impl ApplicationHandler<NetEvent> for App {
                         _ if on_shop => game.shop.as_mut().unwrap().scroll_by(self.cursor, rows),
                         Some(Panel::Inventory) => game.inventory.scroll_by(rows),
                         Some(Panel::Cart) => game.cart.scroll_by(rows),
+                        Some(Panel::Guild) => {
+                            if let Some(guild) = &game.guild {
+                                game.guild_window.scroll_by(rows, guild);
+                            }
+                        }
                         Some(Panel::Storage) => {
                             if let Some(assets) = &self.assets {
                                 game.storage.scroll_by(rows, &assets.storage, &self.items);
