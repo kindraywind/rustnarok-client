@@ -61,6 +61,7 @@ mod macros;
 mod mail;
 mod material;
 mod menu;
+mod mercenary;
 mod minimap;
 mod options;
 mod party;
@@ -573,6 +574,14 @@ struct Game {
     pet: Option<net::Pet>,
     pet_window: pet::PetWindow,
     pet_asked: Option<PetAsked>,
+    /// The player's mercenary, its skills, its window and skill list, how it's steered, and whether dismissing it is
+    /// being asked.
+    mercenary: Option<net::Mercenary>,
+    mercenary_skills: Vec<net::Skill>,
+    mercenary_window: mercenary::Window,
+    mercenary_skill_list: mercenary::SkillList,
+    steering: mercenary::Steering,
+    dismiss_asked: bool,
     /// Each party member's minimap color.
     party_dots: HashMap<u32, Texture>,
     /// Chat rooms over their owners' heads (by owner), and where their signs were last drawn (room ID, password).
@@ -803,6 +812,8 @@ enum Panel {
     Clan,
     Cart,
     Pet,
+    Mercenary,
+    MercenarySkills,
 }
 
 /// What the box asking how many is for.
@@ -1024,6 +1035,8 @@ impl Game {
             Panel::Clan => self.clan.is_some() && self.clan_window.frame.local(cursor, self.clan_window.height()).is_some(),
             Panel::Cart => self.cart.cart.is_some() && self.cart.hit(cursor).is_some(),
             Panel::Pet => self.pet.as_ref().is_some_and(|pet| self.pet_window.hit(cursor, pet).is_some()),
+            Panel::Mercenary => self.mercenary.is_some() && self.mercenary_window.hit(cursor).is_some(),
+            Panel::MercenarySkills => self.mercenary.is_some() && self.mercenary_skill_list.hit(cursor, &self.mercenary_skills).is_some(),
         })
     }
 
@@ -1033,7 +1046,7 @@ impl Game {
 
     /// Starts using a skill: skills on oneself go off at once, the others wait for a target.
     fn use_skill(&mut self, id: u16, level: u16) {
-        let Some(skill) = self.skills.iter().find(|skill| skill.id == id) else { return };
+        let Some(skill) = self.skills.iter().find(|skill| skill.id == id) else { return self.use_mercenary_skill(id, level) };
         let level = level.clamp(1, skill.level.max(1));
         if skill.kind & net::Skill::SELF != 0 {
             let _ = self.session.use_skill(id, level, self.account_id);
@@ -1055,6 +1068,14 @@ impl Game {
     /// Uses the aimed skill on what was clicked, walking into its range first.
     fn aim_skill(&mut self, target: SkillTarget) {
         let Some((id, level)) = self.targeting.take() else { return };
+        // The mercenary casts its own skills from where it stands; out of its range the server does nothing.
+        if self.mercenary_skills.iter().any(|skill| skill.id == id) {
+            let _ = match target {
+                SkillTarget::Unit(unit) => self.session.use_skill(id, level, unit),
+                SkillTarget::Cell(cell) => self.session.use_skill_at(id, level, cell.map(|value| value.max(0) as u16)),
+            };
+            return;
+        }
         let goal = match target {
             SkillTarget::Unit(unit) if unit == self.account_id => Some(self.player.cell),
             SkillTarget::Unit(unit) => self.units.get(&unit).map(|actor| actor.cell),
@@ -1606,6 +1627,41 @@ impl Game {
         };
     }
 
+    /// The mercenary is gone (dismissed, its contract over, dead): its windows close. On a map change the server sends
+    /// it again, so they stay as they were.
+    fn forget_mercenary(&mut self, close: bool) {
+        self.mercenary = None;
+        self.mercenary_skills.clear();
+        self.steering = mercenary::Steering::default();
+        self.dismiss_asked = false;
+        if close {
+            self.mercenary_window.frame.open = false;
+            self.mercenary_skill_list.frame.open = false;
+        }
+    }
+
+    /// Answers the dismiss question: OK lets the mercenary go.
+    fn answer_dismiss(&mut self, yes: bool, messages: &[String]) {
+        self.dismiss_asked = false;
+        if yes && self.mercenary.is_some() {
+            let _ = self.session.mercenary_command(net::MERCENARY_DISMISS);
+            self.forget_mercenary(true);
+            // ponytail: rathena answers nothing; when the official client prints this isn't knowable.
+            self.chat_line(messages.get(mercenary::RELEASED).cloned().unwrap_or_default(), CHAT_ITEM);
+        }
+    }
+
+    /// Uses one of the mercenary's skills: on the mercenary at once when it's a self skill, otherwise aimed.
+    fn use_mercenary_skill(&mut self, id: u16, level: u16) {
+        let (Some(mercenary), Some(skill)) = (&self.mercenary, self.mercenary_skills.iter().find(|skill| skill.id == id)) else { return };
+        let level = level.clamp(1, skill.level.max(1));
+        if skill.kind & net::Skill::SELF != 0 {
+            let _ = self.session.use_skill(id, level, mercenary.id);
+        } else if skill.kind & (net::Skill::ENEMY | net::Skill::GROUND | net::Skill::FRIEND) != 0 {
+            self.targeting = Some((id, level));
+        }
+    }
+
     /// Presses a hotkey slot: uses the item it holds (the first stack of it carried).
     fn press_hotkey(&mut self, slot: usize) {
         if let Some(Some(net::Hotkey { skill: true, id, count })) = self.hotkeys.keys.get(slot).copied() {
@@ -1851,6 +1907,7 @@ struct Assets {
     bank: bank::Assets,
     context_menu: menu::Assets,
     weather: weather::Assets,
+    mercenary: mercenary::Assets,
     party: party::Assets,
     chatroom: chatroom::Assets,
     escape: escape::Assets,
@@ -1950,6 +2007,7 @@ impl Assets {
             bank: bank::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
             weather: weather::Assets::load(gpu, grf),
+            mercenary: mercenary::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
             escape: escape::Assets::load(gpu, grf),
@@ -2873,6 +2931,15 @@ impl App {
                     }
                 }
             }
+            // Dismissing the mercenary: OK lets it go.
+            Scene::Game(game) if game.dismiss_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.answer_dismiss(yes, &self.messages);
+                    }
+                }
+            }
             // A pet question: OK feeds it or renames it.
             Scene::Game(game) if game.pet_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
@@ -3113,6 +3180,20 @@ impl App {
                             game.clan_window.frame.click_title(title);
                         }
                     }
+                    Panel::Mercenary => match game.mercenary_window.hit(cursor) {
+                        Some(mercenary::Hit::Title(title)) => game.mercenary_window.frame.click_title(title),
+                        Some(mercenary::Hit::Skills) => {
+                            game.mercenary_skill_list.frame.toggle();
+                            game.raise(Panel::MercenarySkills);
+                        }
+                        Some(mercenary::Hit::Dismiss) => game.dismiss_asked = true,
+                        _ => {}
+                    },
+                    Panel::MercenarySkills => match game.mercenary_skill_list.hit(cursor, &game.mercenary_skills) {
+                        Some(mercenary::SkillHit::Title(title)) => game.mercenary_skill_list.frame.click_title(title),
+                        Some(mercenary::SkillHit::Skill(id)) => game.use_mercenary_skill(id, u16::MAX),
+                        _ => {}
+                    },
                     Panel::Pet => match game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) {
                         Some(pet::Hit::Title(title)) => game.pet_window.frame.click_title(title),
                         Some(pet::Hit::Rename) => game.amount = Some(window::Amount::name(Asked::PetName, PET_NAME_RULE)),
@@ -3310,6 +3391,9 @@ impl App {
             let cart_height = game.cart.height();
             game.cart.frame.drag_to(self.cursor, cart_height);
             game.pet_window.frame.drag_to(self.cursor, pet::PetWindow::height());
+            game.mercenary_window.frame.drag_to(self.cursor, mercenary::Window::height());
+            let skills_height = mercenary::SkillList::height(game.mercenary_skills.len());
+            game.mercenary_skill_list.frame.drag_to(self.cursor, skills_height);
             if let Some(window) = &mut game.item_window {
                 window.drag_to(self.cursor);
             }
@@ -3335,6 +3419,39 @@ impl App {
 
     /// The right button: Alt moves stacks to storage, a click on a player opens their menu, a press aims the camera.
     fn right_button(&mut self, state: ElementState) {
+        // ponytail: Ctrl + right click (not a drag, not on a window) orders the mercenary, an estimate of the official
+        // client's: at a monster it attacks, on the ground it goes there.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+            && self.modifiers.control_key()
+            && let Some(id) = game.mercenary.as_ref().map(|hired| hired.id)
+            && let Some((start, _)) = game.right_press
+            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+            && game.window_at(self.cursor).is_none()
+            && !game.chat.contains(self.cursor)
+        {
+            game.right_press = None;
+            let monster = match hovered(&game.hit_boxes, self.cursor) {
+                Some(Owner::Unit(target)) if game.units.get(&target).is_some_and(|actor| actor.kind == MONSTER) => Some(target),
+                _ => None,
+            };
+            if let Some(target) = monster {
+                // ponytail: rathena reads non-zero as "keep attacking" and says the client sends 0; 1 keeps it at it.
+                let _ = game.session.act_npc(id, target, 1);
+                game.steering.order = Some(mercenary::Order::Attack(target));
+                return;
+            }
+            let height = game.world.cell_position(game.player.cell.map(|value| value as f32))[1];
+            let view = game.camera.view(SCREEN[0] / SCREEN[1]);
+            if let Some(point) = view.pick([self.cursor[0] / SCREEN[0], self.cursor[1] / SCREEN[1]], height) {
+                let cell = [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32];
+                if game.world.gat.walkable(cell) {
+                    let _ = game.session.move_npc(id, cell.map(|value| value as u16));
+                    game.steering.order = Some(mercenary::Order::Move(game.player.cell));
+                }
+            }
+            return;
+        }
         // On the character select, a card's menu of moving and renaming.
         if let Scene::CharSelect(select) = &mut self.scene
             && state == ElementState::Pressed
@@ -3569,6 +3686,8 @@ impl App {
                     | game.clan_window.frame.drop_drag()
                     | game.cart.frame.drop_drag()
                     | game.pet_window.frame.drop_drag()
+                    | game.mercenary_window.frame.drop_drag()
+                    | game.mercenary_skill_list.frame.drop_drag()
                     | game.storage.frame.drop_drag()
                     | game.inventory.frame.drop_drag()
                     | game.equipment.frame.drop_drag()
@@ -3732,6 +3851,14 @@ impl App {
                 Panel::Pet if game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) == Some(pet::Hit::Title(TitleHit::Title)) => {
                     game.pet_window.frame.start_drag(cursor)
                 }
+                Panel::Mercenary if game.mercenary_window.hit(cursor) == Some(mercenary::Hit::Title(TitleHit::Title)) => {
+                    game.mercenary_window.frame.start_drag(cursor)
+                }
+                Panel::MercenarySkills
+                    if game.mercenary_skill_list.hit(cursor, &game.mercenary_skills) == Some(mercenary::SkillHit::Title(TitleHit::Title)) =>
+                {
+                    game.mercenary_skill_list.frame.start_drag(cursor)
+                }
                 Panel::Equipment if game.equipment.hit(cursor, &game.inventory.items) == Some(equipment::Hit::Title(TitleHit::Title)) => {
                     game.equipment.frame.start_drag(cursor)
                 }
@@ -3807,6 +3934,24 @@ impl App {
         }
         // Alt+E and Alt+Q open the inventory and the equipment anywhere in the game (by physical key: Option+letter
         // types dead keys on a Mac).
+        // Ctrl+R, the game's key for the mercenary window, and Ctrl+T, its follow switch, while there's a mercenary.
+        if let Scene::Game(game) = &mut self.scene
+            && self.modifiers.control_key()
+            && game.mercenary.is_some()
+        {
+            match event.physical_key {
+                PhysicalKey::Code(KeyCode::KeyR) => {
+                    game.mercenary_window.frame.toggle();
+                    game.raise(Panel::Mercenary);
+                    return;
+                }
+                PhysicalKey::Code(KeyCode::KeyT) => {
+                    game.steering.following = !game.steering.following;
+                    return;
+                }
+                _ => {}
+            }
+        }
         if let Scene::Game(game) = &mut self.scene
             && self.modifiers.alt_key()
         {
@@ -3984,6 +4129,9 @@ impl App {
             Scene::Game(game) if game.expansion_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.expansion_asked = None;
                 let _ = game.session.answer_expansion(*key == Key::Named(NamedKey::Enter));
+            }
+            Scene::Game(game) if game.dismiss_asked && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.answer_dismiss(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
             Scene::Game(game) if game.pet_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_pet(*key == Key::Named(NamedKey::Enter));
@@ -4447,6 +4595,12 @@ impl App {
                     pet: None,
                     pet_window: pet::PetWindow::default(),
                     pet_asked: None,
+                    mercenary: None,
+                    mercenary_skills: Vec::new(),
+                    mercenary_window: mercenary::Window::default(),
+                    mercenary_skill_list: mercenary::SkillList::default(),
+                    steering: mercenary::Steering::default(),
+                    dismiss_asked: false,
                     vend_setup: None,
                     my_shop: None,
                     mail: mail::Mail::default(),
@@ -4487,6 +4641,8 @@ impl App {
                         Panel::Clan,
                         Panel::Cart,
                         Panel::Pet,
+                        Panel::Mercenary,
+                        Panel::MercenarySkills,
                     ],
                     damages: Vec::new(),
                     status,
@@ -4627,6 +4783,7 @@ impl App {
             let sprites = match unit.kind {
                 PLAYER => SpriteSet::player(grf, &unit_look(unit), look_tables),
                 PET => job_names.get(&unit.job).and_then(|name| pet_sprites(grf, name, pets.tables.accessory_acts.get(&unit.head_bottom))),
+                MERCENARY if (6017..=6046).contains(&unit.job) => job_names.get(&unit.job).and_then(|name| SpriteSet::mercenary(grf, unit.job, name)),
                 // Hidden NPCs (script triggers) have no sprite in the client either.
                 _ if HIDDEN_JOBS.contains(&unit.job) => None,
                 _ => job_names.get(&unit.job).and_then(|name| SpriteSet::single(grf, name, unit.kind == MONSTER)),
@@ -4846,8 +5003,9 @@ impl App {
                 game.chat_line(message, color.unwrap_or(if id.is_none() { CHAT_SELF } else { CHAT_WHITE }));
             }
             MapEvent::MapChange { map, position } => {
-                // The new map's weather comes once it has loaded.
+                // The new map's weather comes once it has loaded, and the mercenary's news.
                 game.weather.clear();
+                game.forget_mercenary(false);
                 // Back at the save point: up again.
                 if game.escape.as_ref().is_some_and(|menu| menu.dead) {
                     game.escape = None;
@@ -5046,7 +5204,18 @@ impl App {
                 game.chat_line(format!("{before}{exp}{after}"), CHAT_ITEM);
             }
             MapEvent::MvpOverweight => game.chat_line(self.messages.get(MVP_OVERWEIGHT).cloned().unwrap_or_default(), CHAT_ERROR),
+            MapEvent::MercenaryInfo(hired) => game.mercenary = Some(hired),
+            MapEvent::MercenarySkills(list) => game.mercenary_skills = list,
+            MapEvent::MercenaryChanged { kind, value } => {
+                if let Some(hired) = &mut game.mercenary {
+                    hired.set(kind, value);
+                }
+            }
             MapEvent::Message { id, value, skill, color } => {
+                // The contract is over, or the mercenary died: it's gone.
+                if [mercenary::EXPIRED, mercenary::DIED].contains(&id) {
+                    game.forget_mercenary(true);
+                }
                 let template = self.messages.get(id).map_or("", String::as_str);
                 let text = match (value, skill) {
                     (Some(value), _) => messages::fill(template, &[&value]),
@@ -6417,6 +6586,20 @@ impl App {
         let pointer = (self.cursor, self.mouse_down);
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
 
+        // The mercenary follows the player unless told otherwise; an attack order lasts while its target is there.
+        if let Some(id) = game.mercenary.as_ref().map(|hired| hired.id)
+            && let Some(cell) = game.units.get(&id).map(|actor| actor.cell)
+        {
+            if let Some(mercenary::Order::Attack(target)) = game.steering.order
+                && game.units.get(&target).is_none_or(|actor| actor.remove_at.is_some())
+            {
+                game.steering.order = None;
+            }
+            if game.steering.should_call(cell, game.player.cell, now) {
+                let _ = game.session.move_to_owner(id);
+            }
+        }
+
         // Fireworks weather sets off fireworks around the player.
         for [dx, dy] in game.weather.fireworks_due(now) {
             let cell = [game.player.cell[0] + dx, game.player.cell[1] + dy].map(|value| value.max(0) as u16);
@@ -6970,6 +7153,7 @@ impl App {
             .icons(skill_trees, &jobs, skill_info)
             .into_iter()
             .chain(game.guild.as_ref().map(|guild| game.guild_window.icons(guild, skill_info)).unwrap_or_default())
+            .chain(mercenary::SkillList::icons(&game.mercenary_skills, skill_info))
             .chain(game.hotkeys.keys.iter().flatten().filter(|key| key.skill).filter_map(|key| skill_info.get(&(key.id as u16)).map(skills::icon_path)));
         let status_paths =
             game.status_icons.iter().filter_map(|(kind, ..)| status_icon_files.get(kind).map(|(_, file)| format!("data\\texture\\effect\\{file}")));
@@ -7115,6 +7299,19 @@ impl App {
                 Panel::Pet => {
                     if let Some(pet) = &game.pet {
                         game.pet_window.draw(&mut layer, &assets.chrome, &assets.pet, font, messages, pet, pointer);
+                    }
+                }
+                Panel::Mercenary => {
+                    if let Some(hired) = &game.mercenary {
+                        let job = game.units.get(&hired.id).map_or(0, |actor| actor.job);
+                        let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs());
+                        game.mercenary_window.draw(&mut layer, &assets.chrome, &assets.mercenary, font, messages, hired, job, unix, pointer);
+                    }
+                }
+                Panel::MercenarySkills => {
+                    if game.mercenary.is_some() {
+                        let list = &game.mercenary_skill_list;
+                        list.draw(&mut layer, &assets.chrome, &assets.skills, icons, font, messages, &game.mercenary_skills, skill_info, pointer.0);
                     }
                 }
                 Panel::Status => {
@@ -7320,6 +7517,7 @@ impl App {
         // Growing the inventory (which voucher, from how many slots to how many) or a pet question, in the message's
         // colors.
         let colored_question = match (game.expansion_asked, &game.pet_asked) {
+            _ if game.dismiss_asked => Some(message(mercenary::DISMISS_QUESTION).to_owned()),
             (Some(voucher), _) => {
                 let now = inventory::BASE_SLOTS + usize::from(game.inventory.expansion);
                 let name = inventory::item_name(items, voucher, true, 0);
