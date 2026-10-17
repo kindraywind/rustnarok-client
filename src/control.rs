@@ -732,6 +732,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("WarpList", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some())),
         ("Shop", game.shop.is_some()),
         ("Refine", game.refine.is_some()),
+        ("Materials", game.materials.is_some()),
         ("InventoryExpansion", game.expansion_asked.is_some()),
         ("PetAsked", game.pet_asked.is_some()),
         ("OtherEquipment", game.viewing.is_some()),
