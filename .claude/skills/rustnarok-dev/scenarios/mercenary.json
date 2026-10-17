@@ -1,0 +1,173 @@
+{
+  "about": "A mercenary (issue #47): a Bowman Scroll hires Mina, who shows with her bow and follows; the window (Ctrl+R) and the skill list; Ctrl + right click sends her at a Poring; Ctrl+T stops her following; Dismiss asks, then lets her go. RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's mercenary (rathena's `mercenary` table) and zero its `mercenary_owner` row, or a mercenary from an earlier run is already there and the scroll does nothing.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@item 12153"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "inventory_item": 12153
+      },
+      "count": 2
+    },
+    {
+      "wait_for": {
+        "packet": "0x029b",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "units_at_least": {
+          "mercenary": 1
+        },
+        "state": {
+          "mercenary.name": "Mina",
+          "mercenary.level": 20,
+          "mercenary.following": true
+        }
+      }
+    },
+    {
+      "shot": "mercenary",
+      "threshold": 20
+    },
+    {
+      "key": "Ctrl+R"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Mercenary"
+        ]
+      }
+    },
+    {
+      "shot": "mercenary-window",
+      "threshold": 20
+    },
+    {
+      "click_on": {
+        "button": "skill"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "MercenarySkills"
+        ]
+      }
+    },
+    {
+      "shot": "mercenary-skills",
+      "threshold": 20
+    },
+    {
+      "say": "@monster poring 1"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "click_unit": {
+        "kind": "monster",
+        "name": "Poring"
+      },
+      "button": "right",
+      "mods": "Ctrl"
+    },
+    {
+      "wait_for": {
+        "event": "Act",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Ctrl+T"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "mercenary.following": false
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "dismiss"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "mercenary-dismiss",
+      "threshold": 20
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "chat": "You have released the mercenary.",
+        "state": {
+          "mercenary": null
+        },
+        "windows_closed": [
+          "Mercenary",
+          "MercenarySkills"
+        ]
+      }
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    }
+  ]
+}
