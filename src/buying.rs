@@ -1,9 +1,17 @@
 //! Buying stores: setting one up from carried items (store name, zeny limit, and wanted items with price and
 //! amount) and the owner's window of what the store still wants to buy.
 
-use rustnarok_client::net::InventoryItem;
+use std::collections::HashMap;
 
-use crate::window::Frame;
+use rustnarok_client::lua::ItemInfo;
+use rustnarok_client::net::InventoryItem;
+use rustnarok_client::text::Font;
+
+use crate::render::Texture;
+use crate::shop::group;
+use crate::vend::{self, Assets};
+use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
+use crate::{Layer, contains};
 
 // ponytail: a 280px window of 32px rows like vend.rs; calibrate against the real client.
 pub const WIDTH: f32 = 280.0;
@@ -43,6 +51,29 @@ pub struct WantedRow {
     pub item_id: u32,
     pub price: u32,
     pub amount: u16,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Hit {
+    Title(TitleHit),
+    /// The store's name field.
+    Name,
+    /// The purchase zeny limit field.
+    Limit,
+    /// A carried item row, by place in `candidates(inventory)`.
+    Row(usize),
+    Ok,
+    Cancel,
+    Window,
+}
+
+/// What a click on the setup window asks for.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Action {
+    /// Ask the price (and then amount) of an inventory item: `(index, item_id)`.
+    Price(u16, u32),
+    Open,
+    Cancel,
 }
 
 /// Setting up a buying store: its name, its zeny limit, and the carried items picked with their prices and amounts.
@@ -148,6 +179,125 @@ impl Setup {
         let items = self.wanted.iter().map(|row| (row.item_id, row.amount, row.price)).collect();
         Ok((limit, items))
     }
+
+    pub fn height() -> f32 {
+        TITLE_HEIGHT + NAME_FIELD + LIMIT_FIELD + ROWS as f32 * ROW + FOOTER
+    }
+
+    pub fn buttons() -> [[f32; 2]; 2] {
+        let top = Self::height() - FOOTER + 4.0;
+        [[WIDTH - 110.0, top], [WIDTH - 60.0, top]]
+    }
+
+    pub fn hit(&self, cursor: [f32; 2], inventory: &[InventoryItem]) -> Option<Hit> {
+        let list = candidates(inventory);
+        let local = self.frame.local(cursor, Self::height())?;
+        if let Some(hit) = self.frame.title_hit(local) {
+            return Some(Hit::Title(hit));
+        }
+        let [ok, cancel] = Self::buttons();
+        if contains(ok, BUTTON, local) {
+            return Some(Hit::Ok);
+        }
+        if contains(cancel, BUTTON, local) {
+            return Some(Hit::Cancel);
+        }
+        if local[1] < TITLE_HEIGHT + NAME_FIELD {
+            return Some(Hit::Name);
+        }
+        if local[1] < TITLE_HEIGHT + NAME_FIELD + LIMIT_FIELD {
+            return Some(Hit::Limit);
+        }
+        let row = ((local[1] - TITLE_HEIGHT - NAME_FIELD - LIMIT_FIELD) / ROW) as usize + self.scroll;
+        Some(if local[1] < Self::height() - FOOTER && row < list.len() { Hit::Row(row) } else { Hit::Window })
+    }
+
+    pub fn click(&mut self, hit: Hit, inventory: &[InventoryItem]) -> Option<Action> {
+        self.focus = match hit {
+            Hit::Name => Some(Focus::Name),
+            Hit::Limit => Some(Focus::Limit),
+            _ => None,
+        };
+        match hit {
+            Hit::Title(TitleHit::Close) | Hit::Cancel => Some(Action::Cancel),
+            Hit::Title(title) => {
+                self.frame.click_title(title);
+                None
+            }
+            Hit::Row(row) => {
+                let item = *candidates(inventory).get(row)?;
+                if let Some(pos) = self.wanted.iter().position(|wanted| wanted.index == item.index) {
+                    self.wanted.remove(pos);
+                    None
+                } else if self.wanted.len() < self.most {
+                    Some(Action::Price(item.index, item.id))
+                } else {
+                    None
+                }
+            }
+            Hit::Ok => Some(Action::Open),
+            _ => None,
+        }
+    }
+
+    pub fn scroll_by(&mut self, rows: i32, inventory: &[InventoryItem]) {
+        let count = candidates(inventory).len();
+        self.scroll = (self.scroll as i32 + rows).clamp(0, count.saturating_sub(ROWS) as i32) as usize;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        icons: &'a HashMap<String, Option<Texture>>,
+        items: &HashMap<u32, ItemInfo>,
+        inventory: &[InventoryItem],
+        font: &Font,
+        messages: &[String],
+        pointer: ([f32; 2], bool),
+        caret: bool,
+    ) {
+        let at = |local: [f32; 2]| self.frame.at(local);
+        self.frame.draw_title(layer, chrome, messages.get(SETUP_TITLE).map_or("", String::as_str), pointer.0);
+        let height = Self::height();
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, height - TITLE_HEIGHT - FOOTER]));
+        // Store name field.
+        layer.sprites.push((&chrome.border, at([5.0, TITLE_HEIGHT + 3.0]), [WIDTH - 10.0, 18.0]));
+        layer.sprites.push((&chrome.white, at([6.0, TITLE_HEIGHT + 4.0]), [WIDTH - 12.0, 16.0]));
+        let name = if self.focus == Some(Focus::Name) && caret { format!("{}|", self.name) } else { self.name.clone() };
+        layer.texts.push((window::fit(font, &name, WIDTH - 20.0), at([9.0, TITLE_HEIGHT + 5.0]), [0, 0, 0]));
+        // Zeny limit label and field.
+        let limit_top = TITLE_HEIGHT + NAME_FIELD;
+        let label = messages.get(LIMIT_LABEL).map_or("Purchase Zeny Limit", String::as_str);
+        layer.texts.push((window::fit(font, label, 130.0), at([6.0, limit_top + 5.0]), [0, 0, 0]));
+        layer.sprites.push((&chrome.border, at([140.0, limit_top + 3.0]), [WIDTH - 145.0, 18.0]));
+        layer.sprites.push((&chrome.white, at([141.0, limit_top + 4.0]), [WIDTH - 147.0, 16.0]));
+        let limit = if self.focus == Some(Focus::Limit) && caret { format!("{}|", self.limit) } else { self.limit.clone() };
+        layer.texts.push((window::fit(font, &limit, WIDTH - 155.0), at([144.0, limit_top + 5.0]), [0, 0, 0]));
+        // Candidate items, picked ones highlighted with amount x price.
+        let list = candidates(inventory);
+        for (place, item) in list.iter().enumerate().skip(self.scroll).take(ROWS) {
+            let top = TITLE_HEIGHT + NAME_FIELD + LIMIT_FIELD + (place - self.scroll) as f32 * ROW;
+            let picked = self.wanted.iter().find(|wanted| wanted.index == item.index);
+            if picked.is_some() {
+                layer.sprites.push((&assets.picked, at([1.0, top]), [WIDTH - 2.0, ROW]));
+            }
+            vend::draw_item(layer, icons, items, font, item, at([4.0, top + 4.0]));
+            if let Some(wanted) = picked {
+                let text = format!("{} x {} z", wanted.amount, group(u64::from(wanted.price)));
+                layer.texts.push((text.clone(), at([WIDTH - 6.0 - font.width(&text), top + 10.0]), [0, 0, 0]));
+            }
+        }
+        let hit = self.hit(pointer.0, inventory);
+        layer.sprites.push((&assets.footer, at([0.0, height - FOOTER]), [WIDTH, FOOTER]));
+        let [ok, cancel] = Self::buttons();
+        for (images, place, target) in [(&assets.ok, ok, Hit::Ok), (&assets.cancel, cancel, Hit::Cancel)] {
+            let look = if hit == Some(target) { 1 + usize::from(pointer.1) } else { 0 };
+            layer.sprites.push((&images[look], at(place), BUTTON));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -197,5 +347,19 @@ mod tests {
         setup.focus = Some(Focus::Name);
         setup.type_text("Buying Jellopy");
         assert_eq!(setup.validate(&inv, 10_000), Ok((1000, vec![(909, 5, 10)])));
+    }
+
+    #[test]
+    fn picks_and_unpicks_candidates() {
+        let inv = [item(2, 909, 5), item(3, 512, 1)];
+        let mut setup = Setup::new(1);
+        assert_eq!(setup.click(Hit::Row(0), &inv), Some(Action::Price(2, 909)));
+        setup.set_price(2, 909, 10);
+        setup.set_amount(2, 5);
+        // Slot limit reached (1): clicking another row does nothing.
+        assert_eq!(setup.click(Hit::Row(1), &inv), None);
+        // Clicking the picked row unpicks it.
+        assert_eq!(setup.click(Hit::Row(0), &inv), None);
+        assert!(setup.wanted.is_empty());
     }
 }
