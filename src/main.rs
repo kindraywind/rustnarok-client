@@ -151,6 +151,13 @@ const ARROW_TITLE: usize = 658;
 const NOTHING_TO_MAKE: usize = 424;
 const MADE: usize = 431;
 const NOT_MADE: usize = 430;
+/// Blacksmith services: the lists' titles, a repair done or not, and Upgrade Weapon's results (refined, failed,
+/// skill too low, ore missing) in rathena's colors for them.
+const REPAIR_TITLE: usize = 812;
+const REPAIRED: usize = 813;
+const NOT_REPAIRED: usize = 814;
+const UPGRADE_TITLE: usize = 910;
+const UPGRADE_RESULTS: [(usize, [u8; 3]); 4] = [(911, [0, 255, 255]), (912, [0, 205, 205]), (913, [255, 200, 200]), (914, [255, 200, 200])];
 /// Warp Portal's and Teleport's list: Teleport's random spot, and the last row.
 const RANDOM_AREA: usize = 212;
 const WARP_CANCEL: usize = 218;
@@ -1406,6 +1413,9 @@ impl Game {
             (Picking::Make, item) => self.session.make(item.map_or(0, |item| item.id)),
             (Picking::Cook(kind), item) => self.session.cook(kind, item.map_or(0, |item| item.id)),
             (Picking::Arrow, Some(item)) => self.session.make_arrow(item.id),
+            // Both lists end with an answer, a cancel too.
+            (Picking::Repair, item) => self.session.repair(item),
+            (Picking::Upgrade, item) => self.session.upgrade_weapon(item.map_or(0, |item| u32::from(item.index))),
         };
     }
 
@@ -1515,6 +1525,9 @@ enum Picking {
     Make,
     Cook(u16),
     Arrow,
+    /// What Repair Weapon mends, what Upgrade Weapon refines.
+    Repair,
+    Upgrade,
 }
 
 struct Dialog {
@@ -5020,6 +5033,20 @@ impl App {
                 let mut list = pick_list::PickList::new(if matches!(picking, Picking::Arrow) { ARROW_TITLE } else { MAKING_TITLE }, rows);
                 list.making = !matches!(picking, Picking::Arrow);
                 game.pick = Some((list, picking));
+            }
+            // Blacksmith services: the target's broken items, the caster's weapons; an empty list opens nothing.
+            // ponytail: the results in the chat; whether the real client uses a box isn't known.
+            MapEvent::RepairList(items) | MapEvent::UpgradeList(items) if items.is_empty() => {}
+            MapEvent::RepairList(items) => game.pick = Some((pick_list::PickList::new(REPAIR_TITLE, items), Picking::Repair)),
+            MapEvent::UpgradeList(items) => game.pick = Some((pick_list::PickList::new(UPGRADE_TITLE, items), Picking::Upgrade)),
+            MapEvent::Repaired { ok, .. } => {
+                let (id, color) = if ok { (REPAIRED, CHAT_ITEM) } else { (NOT_REPAIRED, CHAT_ERROR) };
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+            }
+            MapEvent::Upgraded { result, item } => {
+                let (id, color) = UPGRADE_RESULTS.get(result as usize).copied().unwrap_or(UPGRADE_RESULTS[1]);
+                let name = inventory::item_name(&self.items, item, true, 0);
+                game.chat_line(messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]), color);
             }
             MapEvent::Made { result, item } => {
                 let name = inventory::item_name(&self.items, item, true, 0);

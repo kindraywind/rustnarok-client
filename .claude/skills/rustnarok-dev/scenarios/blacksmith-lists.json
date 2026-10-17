@@ -1,0 +1,29 @@
+{
+  "about": "Blacksmith services (issue #40): a Blacksmith's Repair Weapon lists a broken Knife and mends it; a job level 70 Whitesmith's Upgrade Weapon lists a Knife and refines it to +1. Ends a Novice.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@job 10"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500}, {"say": "@heal"}, {"wait": 400},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item2 1201 1 1 0 1 0 0 0 0"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@item 1002 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@useskill 108 1 self"}, {"wait_for": {"event": "RepairList", "ms": 8000}},
+    {"wait": 300}, {"move": [900, 700]},
+    {"expect": {"windows_open": ["PickList"]}},
+    {"shot": "repair-list", "crop": [362, 267, 300, 234]},
+    {"click_on": {"pick_item": 1201}, "count": 2}, {"wait_for": {"event": "Repaired", "ms": 5000}}, {"wait": 300},
+    {"expect": {"chat": "Item has been successfully repaired.", "windows_closed": ["PickList"]}},
+    {"say": "@job 4011"}, {"wait": 500}, {"say": "@joblevel 69"}, {"wait": 500},
+    {"say": "@allskill"}, {"wait": 500}, {"say": "@heal"}, {"wait": 400},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 1201 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@item 1010 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@useskill 477 10 self"}, {"wait_for": {"event": "UpgradeList", "ms": 8000}},
+    {"wait": 300}, {"move": [900, 700]},
+    {"shot": "upgrade-list", "crop": [362, 267, 300, 234]},
+    {"click_on": {"pick_item": 1201}, "count": 2}, {"wait_for": {"packet": "0x0223", "ms": 5000}}, {"wait": 800},
+    {"expect": {"chat": "Refined weapon:", "inventory_has": [{"id": 1201, "refine": 1}]}},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}
