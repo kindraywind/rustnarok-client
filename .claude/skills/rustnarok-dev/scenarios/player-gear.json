@@ -1,5 +1,5 @@
 {
- "about": "A player wearing a hat, sunglasses, a balloon, flapping wings, a knife and a guard, standing and in the battle stance facing each of the eight ways, then sitting: headgear used to vanish in some frames (layers of one sprite fought over depth) and animated wings stood frozen.",
+ "about": "A player wearing a hat, sunglasses, a balloon, flapping wings, a knife and a guard, standing and in the battle stance (Heal cast on oneself strikes it) facing each of the eight ways, then sitting: headgear used to vanish in some frames and wings to show through the body (layers of one sprite fought over depth), and animated wings stood frozen.",
  "account": "",
  "slot": 0,
  "env": {
@@ -17,6 +17,12 @@
   },
   {
    "wait": 500
+  },
+  {
+   "say": "@heal"
+  },
+  {
+   "wait": 300
   },
   {
    "say": "@itemreset"
