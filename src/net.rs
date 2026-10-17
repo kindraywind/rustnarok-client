@@ -615,6 +615,7 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_SKILL_POSTDELAY: u16 = 0x043D;
 const ZC_ALL_ACH_LIST: u16 = 0x0A23;
 const ZC_ACH_UPDATE: u16 = 0x0A24;
 const CZ_REQ_ACH_REWARD: u16 = 0x0A25;
@@ -1471,6 +1472,11 @@ pub enum MapEvent {
     TitleChanged {
         ok: bool,
         title: u32,
+    },
+    /// A skill can't be used again for this long from now (0: it can again).
+    SkillCooldown {
+        skill: u16,
+        ms: u32,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
@@ -3862,6 +3868,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         },
         ZC_REQ_ACH_REWARD_ACK => MapEvent::AchievementReward { ok: packet[2] == 1, id: u32_at(3) },
         ZC_ACK_CHANGE_TITLE => MapEvent::TitleChanged { ok: packet[2] == 0, title: u32_at(3) },
+        ZC_SKILL_POSTDELAY => MapEvent::SkillCooldown { skill: u16_at(2), ms: u32_at(4) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -4967,6 +4974,13 @@ mod tests {
         assert_eq!(encode_id(CZ_REQ_CHANGE_TITLE, 0), [0x2E, 0x0A, 0, 0, 0, 0]);
         let ids = [ZC_ALL_ACH_LIST, ZC_ACH_UPDATE, CZ_REQ_ACH_REWARD, ZC_REQ_ACH_REWARD_ACK, CZ_REQ_CHANGE_TITLE, ZC_ACK_CHANGE_TITLE];
         assert_eq!(ids.map(packet_length), [Some(-1), Some(66), Some(6), Some(7), Some(6), Some(7)]);
+    }
+
+    #[test]
+    fn decodes_cooldowns() {
+        let Some(MapEvent::SkillCooldown { skill: 8, ms: 10_000 }) = decode_map_packet(&[0x3D, 0x04, 8, 0, 0x10, 0x27, 0, 0]) else { panic!() };
+        let Some(MapEvent::SkillCooldown { skill: 8, ms: 0 }) = decode_map_packet(&[0x3D, 0x04, 8, 0, 0, 0, 0, 0]) else { panic!() };
+        assert_eq!(packet_length(ZC_SKILL_POSTDELAY), Some(8));
     }
 
     #[test]

@@ -1,0 +1,30 @@
+{
+  "about": "Skill cooldowns (issue #96): a Swordman's Endure (skill 8, 10 s cooldown) used from the hotkey bar shows the clock on the bar and in the skill window; pressed again while blocked it says so and sends nothing; the block runs out; @resetcooltime lifts one at once. rathena saves running cooldowns at logout: the scenario reset should delete the test character's `skillcooldown` rows.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@job 1"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500}, {"say": "@heal"}, {"wait": 400},
+    {"key": "Alt+S"}, {"wait": 400},
+    {"drag_on": [{"skill": 8}, {"hotkey": 0}]}, {"wait": 400},
+    {"expect": {"hotkeys": {"0": 8}}},
+    {"move": [497, 16]},
+    {"wait_for": {"packet": "0x043d", "pause": true, "do": {"cmd": "key", "key": "F1"}}},
+    {"expect": {"state_at_least": {"cooldowns.8": 9000}}},
+    {"shot": "cooldown-hotkey", "crop": [470, 0, 300, 70]},
+    {"shot": "cooldown-skills", "crop": [200, 120, 460, 425]},
+    {"cmd": {"cmd": "clock", "action": "resume"}},
+    {"key": "F1"}, {"wait": 300},
+    {"expect": {"chat": "There is a Delay after using a Skill."}},
+    {"wait": 10500},
+    {"expect": {"state": {"cooldowns.8": null}}},
+    {"wait_for": {"packet": "0x043d", "do": {"cmd": "key", "key": "F1"}}},
+    {"expect": {"state_at_least": {"cooldowns.8": 1}}},
+    {"say": "@resetcooltime"}, {"wait_for": {"packet": "0x043d", "ms": 5000}}, {"wait": 300},
+    {"expect": {"state": {"cooldowns.8": null}, "chat": "unblocking"}},
+    {"key": "Alt+S"}, {"wait": 300},
+    {"drag_on": [{"hotkey": 0}, {"point": [700, 500]}]}, {"wait": 400},
+    {"expect": {"hotkeys": {"0": null}}},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}

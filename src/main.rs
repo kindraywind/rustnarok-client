@@ -359,6 +359,9 @@ const STATUS_ICON: f32 = 32.0;
 const STATUS_STEP: [f32; 2] = [45.0, 36.0];
 /// Steps of the clock drawn over a status icon.
 const CLOCK_STEPS: usize = 32;
+/// A skill still blocked: "There is a Delay after using a Skill.", and the words after a cooldown's seconds left.
+const SKILL_DELAY: usize = 219;
+const COOLDOWN_LEFT: usize = 3230;
 /// The spark of a landed hit, and a warp portal's rings.
 const EF_HIT1: u32 = 0;
 const EF_WARPZONE2: u32 = 321;
@@ -477,6 +480,9 @@ struct Game {
     dragging: Option<(Dragged, [f32; 2], bool)>,
     skills: Vec<net::Skill>,
     skill_window: skills::SkillWindow,
+    /// Skills blocked after use, and the line one still blocked prints when used.
+    cooldowns: skills::Cooldowns,
+    skill_delay_line: String,
     /// A skill waiting for its target: ID and level.
     targeting: Option<(u16, u16)>,
     /// A taming item waiting for its monster; the slot machine, and the result it plays (action, since when).
@@ -1054,6 +1060,12 @@ impl Game {
 
     /// Starts using a skill: skills on oneself go off at once, the others wait for a target.
     fn use_skill(&mut self, id: u16, level: u16) {
+        // ponytail: a blocked skill says so and sends nothing (the server drops it without a word unless @showdelay is
+        // on); whether the real client asks the server anyway isn't known.
+        if self.cooldowns.left(id, control::now()).is_some() {
+            self.chat_line(self.skill_delay_line.clone(), CHAT_ERROR);
+            return;
+        }
         let Some(skill) = self.skills.iter().find(|skill| skill.id == id) else { return self.use_mercenary_skill(id, level) };
         let level = level.clamp(1, skill.level.max(1));
         if skill.kind & net::Skill::SELF != 0 {
@@ -4542,6 +4554,8 @@ impl App {
                     casts: HashMap::new(),
                     speech: HashMap::new(),
                     status_icons: Vec::new(),
+                    cooldowns: skills::Cooldowns::default(),
+                    skill_delay_line: self.messages.get(SKILL_DELAY).cloned().unwrap_or_default(),
                     effects: effects::Effects::default(),
                     deal_choice: None,
                     shop: None,
@@ -6188,6 +6202,8 @@ impl App {
                 }
             }
             MapEvent::SkillUnitGone { id } => game.effects.forget(id),
+            // Cooldowns: kept across map changes (the server doesn't repeat them), sent again after a relog.
+            MapEvent::SkillCooldown { skill, ms } => game.cooldowns.set(skill, ms, control::now()),
             MapEvent::SkillFailed { ok: true, .. } => {}
             MapEvent::SkillFailed { skill, detail, cause, .. } => {
                 game.casts.remove(&None);
@@ -7255,6 +7271,7 @@ impl App {
         }
         let mut layers = vec![weather_layer, base, cutin_layer, chat_layer];
         let mut preview = Some(preview);
+        let cooling = skills::Cooling { cooldowns: &game.cooldowns, clocks: &assets.clocks[0], now: control::now(), note: message(COOLDOWN_LEFT) };
         for &id in &game.windows {
             let mut layer = Layer::default();
             match id {
@@ -7269,6 +7286,7 @@ impl App {
                     &game.inventory.items,
                     font,
                     pointer.0,
+                    &cooling,
                 ),
                 Panel::Skills => game.skill_window.draw(
                     &mut layer,
@@ -7282,6 +7300,7 @@ impl App {
                     &game.skills,
                     game.skill_points(),
                     pointer,
+                    &cooling,
                 ),
                 Panel::BasicInfo => {
                     let info = basic_info::Info {
