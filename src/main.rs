@@ -57,6 +57,7 @@ mod inventory;
 mod iteminfo;
 mod macros;
 mod mail;
+mod material;
 mod menu;
 mod minimap;
 mod options;
@@ -517,6 +518,8 @@ struct Game {
     /// The deal under way; someone asking for one (name, character ID, level); whom we asked.
     trade: Option<trade::Trade>,
     refine: Option<refine::Refine>,
+    /// The material window (Change Material, Four Spirit Analysis).
+    materials: Option<material::Materials>,
     viewing: Option<Viewed>,
     bank: Option<bank::Bank>,
     trade_asked: Option<(String, u32, u16)>,
@@ -801,6 +804,8 @@ enum Asked {
     RoomPassword(u32),
     /// An inventory item, into the mail being written.
     Mail(u16),
+    /// An inventory item, into the material window.
+    Material(u16),
     /// The pet's new name.
     PetName,
 }
@@ -1234,7 +1239,7 @@ impl Game {
     /// Moves an item between the inventory and storage, asking how many when there's more than one.
     fn move_item(&mut self, asked: Asked) {
         let amount = match asked {
-            Asked::Store(index) | Asked::Drop(index) | Asked::Trade(index) | Asked::ToCart(index) | Asked::Mail(index) => {
+            Asked::Store(index) | Asked::Drop(index) | Asked::Trade(index) | Asked::ToCart(index) | Asked::Mail(index) | Asked::Material(index) => {
                 self.inventory.get(index).map(|item| item.amount)
             }
             Asked::FromCart(index) => self.cart.get(index).map(|item| item.amount),
@@ -1305,6 +1310,14 @@ impl Game {
             Asked::FromCart(index) => {
                 let have = self.cart.get(index).map_or(0, |item| u32::from(item.amount));
                 self.session.take_from_cart(index, amount.min(have))
+            }
+            // Nothing goes to the server until the window's OK.
+            Asked::Material(index) => {
+                let have = self.inventory.get(index).map_or(0, |item| item.amount);
+                if let Some(window) = &mut self.materials {
+                    window.add(index, amount.min(u32::from(have)) as u16, have);
+                }
+                Ok(())
             }
             Asked::Mail(index) => {
                 let have = self.inventory.get(index).map_or(0, |item| item.amount);
@@ -2867,6 +2880,17 @@ impl App {
                     }
                 }
             }
+            // The material window: OK sends what's in; Cancel and the close button send nothing in (rathena forgets the
+            // window either way).
+            Scene::Game(game) if game.materials.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let window = game.materials.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                if let Some(ok) = window.click(hit) {
+                    let entries = if ok { window.entries.clone() } else { Vec::new() };
+                    let _ = game.session.send_materials(window.kind, ok, &entries);
+                    game.materials = None;
+                }
+            }
             Scene::Game(game) if game.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
                 let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
                 let carried = &game.inventory.items;
@@ -3392,8 +3416,10 @@ impl App {
                 let on_trade = game.trade.as_ref().is_some_and(|trade| trade.hit(self.cursor).is_some());
                 let on_mail = matches!(game.mail.hit(self.cursor), Some(mail::Hit::Compose(_)));
                 let on_refine = game.refine.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+                let on_materials = game.materials.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 match (item, game.window_at(self.cursor)) {
                     (Some((Dragged::Item(index), _, true)), _) if on_mail => game.move_item(Asked::Mail(index)),
+                    (Some((Dragged::Item(index), _, true)), _) if on_materials => game.move_item(Asked::Material(index)),
                     // Into the refine machine: the server lists what refines it.
                     (Some((Dragged::Item(index), _, true)), _) if on_refine => {
                         let _ = game.session.refine_select(index);
@@ -4243,6 +4269,7 @@ impl App {
                     item_skill: None,
                     trade: None,
                     refine: None,
+                    materials: None,
                     viewing: None,
                     bank: None,
                     trade_asked: None,
@@ -4558,6 +4585,12 @@ impl App {
                 let id = EXPANSION_RESULTS.get(usize::from(result)).copied().unwrap_or(EXPANSION_RESULTS[1]);
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
             }
+            // Change Material or Four Spirit Analysis: the material window, with the inventory beside it.
+            MapEvent::MaterialWindow(kind) => {
+                game.materials = Some(material::Materials::new(kind));
+                game.inventory.frame.open = true;
+                game.raise(Panel::Inventory);
+            }
             // The refine window opens with the inventory beside it.
             MapEvent::RefineOpen => {
                 game.refine = Some(refine::Refine::new());
@@ -4661,8 +4694,9 @@ impl App {
                 game.player.revive();
                 // The NPC is left behind: its shop and its buy-or-sell question close (the server doesn't say so).
                 game.close_shop();
-                // rathena forgets the refine window on a map change.
+                // rathena forgets the refine window on a map change; the material window goes too.
                 game.refine = None;
+                game.materials = None;
                 game.deal_choice = None;
                 if map == game.map {
                     // A teleport on the same map: no loading, but the server takes the player off the map until
@@ -6711,6 +6745,7 @@ impl App {
         let shop_icons = game.shop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default();
         let mut pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
         pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
+        pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         if game.vend_setup.is_some() {
@@ -6996,6 +7031,9 @@ impl App {
         }
         if let Some(window) = &game.refine {
             window.draw(&mut shop_layer, &assets.chrome, &assets.refine, icons, items, &game.inventory.items, messages, font, pointer);
+        }
+        if let Some(window) = &game.materials {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(trade) = &game.trade {
             trade.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);

@@ -1,0 +1,23 @@
+{
+  "about": "The material window (issue #42): Four Spirit Analysis opens it with the inventory beside it; ten Flame Hearts dragged in (the amount asked), OK sends them and Red Blood comes back (level 1 can't fail). The scenario ends a Novice again.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@job 4067"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500}, {"say": "@heal"}, {"wait": 400},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 994 10"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@useskill 2462 1 self"}, {"wait_for": {"event": "MaterialWindow", "ms": 5000}}, {"wait": 300},
+    {"click": [11, 252]}, {"wait": 300}, {"move": [900, 700]},
+    {"expect": {"windows_open": ["Materials", "Inventory"]}},
+    {"shot": "materials-open", "crop": [0, 160, 600, 290]},
+    {"drag_on": [{"inventory_item": 994}, {"point": [440, 261]}]}, {"wait": 300},
+    {"expect": {"windows_open": ["Amount"]}},
+    {"type": "10"}, {"key": "Enter"}, {"wait": 300}, {"move": [900, 700]},
+    {"shot": "materials-in", "crop": [0, 160, 600, 290]},
+    {"click": [497, 417]}, {"wait_for": {"event": "PickedUp", "ms": 5000}}, {"wait": 500},
+    {"expect": {"windows_closed": ["Materials"], "inventory_has": [{"id": 990}]}},
+    {"shot": "materials-done", "crop": [0, 160, 600, 290]},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}

@@ -615,6 +615,8 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_ITEMLISTWIN_OPEN: u16 = 0x07E3;
+const CZ_ITEMLISTWIN_RES: u16 = 0x07E4;
 const ZC_START_CAPTURE: u16 = 0x019E;
 const CZ_TRYCAPTURE_MONSTER: u16 = 0x019F;
 const ZC_TRYCAPTURE_MONSTER: u16 = 0x01A0;
@@ -1352,6 +1354,8 @@ pub enum MapEvent {
     CaptureStart,
     /// The monster was tamed (its egg comes next), or not.
     CaptureResult(bool),
+    /// The material window opens: 0 for Change Material, 1 or 2 for Four Spirit Analysis at that level.
+    MaterialWindow(u32),
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
         id: usize,
@@ -2418,6 +2422,11 @@ impl MapSession {
         self.stream.write_all(&encode_try_capture(monster))
     }
 
+    /// Answers the material window: what's in with OK, or a cancel.
+    pub fn send_materials(&mut self, kind: u32, ok: bool, entries: &[(u16, u16)]) -> io::Result<()> {
+        self.stream.write_all(&encode_materials(kind, ok, entries))
+    }
+
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
     pub fn card_list(&mut self, card: u16) -> io::Result<()> {
         self.stream.write_all(&encode_card_list(card))
@@ -3118,6 +3127,19 @@ fn encode_try_capture(monster: u32) -> [u8; 6] {
     packet
 }
 
+/// CZ_ITEMLISTWIN_RES: the window's kind as it came, OK (1) or cancel (0), and each item's inventory index and amount.
+fn encode_materials(kind: u32, ok: bool, entries: &[(u16, u16)]) -> Vec<u8> {
+    let mut packet = CZ_ITEMLISTWIN_RES.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((12 + entries.len() * 4) as u16).to_le_bytes());
+    packet.extend_from_slice(&kind.to_le_bytes());
+    packet.extend_from_slice(&u32::from(ok).to_le_bytes());
+    for (index, amount) in entries {
+        packet.extend_from_slice(&index.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+    }
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -3558,6 +3580,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_ACK_REQNAMEALL_NPC => MapEvent::UnitName { id: u32_at(2), name: c_string(&packet[10..34]) },
         ZC_START_CAPTURE => MapEvent::CaptureStart,
         ZC_TRYCAPTURE_MONSTER => MapEvent::CaptureResult(packet[2] == 1),
+        ZC_ITEMLISTWIN_OPEN => MapEvent::MaterialWindow(u32_at(2)),
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -4536,6 +4559,14 @@ mod tests {
         let Some(MapEvent::CaptureResult(false)) = decode_map_packet(&[0xA0, 0x01, 0]) else { panic!() };
         assert_eq!(encode_try_capture(110_000_123), [0x9F, 0x01, 0xFB, 0x77, 0x8E, 0x06]);
         assert_eq!([ZC_START_CAPTURE, CZ_TRYCAPTURE_MONSTER, ZC_TRYCAPTURE_MONSTER].map(packet_length), [Some(2), Some(6), Some(3)]);
+    }
+
+    #[test]
+    fn decodes_material_window() {
+        let Some(MapEvent::MaterialWindow(1)) = decode_map_packet(&[0xE3, 0x07, 1, 0, 0, 0]) else { panic!() };
+        assert_eq!(encode_materials(1, true, &[(5, 10), (7, 3)]), [0xE4, 0x07, 20, 0, 1, 0, 0, 0, 1, 0, 0, 0, 5, 0, 10, 0, 7, 0, 3, 0]);
+        assert_eq!(encode_materials(0, false, &[]), [0xE4, 0x07, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!([ZC_ITEMLISTWIN_OPEN, CZ_ITEMLISTWIN_RES].map(packet_length), [Some(6), Some(-1)]);
     }
 
     #[test]
