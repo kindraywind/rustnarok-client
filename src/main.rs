@@ -1284,7 +1284,7 @@ impl Game {
     }
 
     /// The box asking how many (or for a name) is answered.
-    fn answer_amount(&mut self, ok: bool) {
+    fn answer_amount(&mut self, ok: bool, messages: &[String]) {
         let Some(amount) = self.amount.take().filter(|_| ok) else { return };
         let name = amount.typed.trim();
         let _ = match amount.what {
@@ -1307,6 +1307,19 @@ impl Game {
             Asked::BuyingAmount(index) => {
                 if let Some(setup) = &mut self.buying_setup {
                     setup.set_amount(index, amount.value().min(u32::from(u16::MAX)) as u16);
+                }
+                Ok(())
+            }
+            Asked::Shop(row) if amount.value() > 0 => {
+                if let Some(shop) = &mut self.shop
+                    && let Some((msg_id, arg)) = shop.add_checked(row, amount.value())
+                {
+                    let text = messages.get(msg_id).map_or("", String::as_str);
+                    let line = match arg {
+                        Some(limit) => rustnarok_client::messages::fill(text, &[&limit]),
+                        None => text.to_owned(),
+                    };
+                    self.chat_line(line, CHAT_ERROR);
                 }
                 Ok(())
             }
@@ -2865,6 +2878,8 @@ impl App {
                     // A vendor's sign opens their shop.
                     chatroom::SHOP if id != game.account_id => game.session.browse_vendor(id),
                     chatroom::SHOP => Ok(()),
+                    chatroom::BUYING_STORE if id != game.account_id => game.session.click_buying_store(id),
+                    chatroom::BUYING_STORE => Ok(()),
                     0 => {
                         game.amount = Some(window::Amount::name(Asked::RoomPassword(id), ROOM_PASSWORD));
                         Ok(())
@@ -2997,7 +3012,7 @@ impl App {
             // The box asking how many keeps the pointer until it's answered.
             Scene::Game(game) if game.amount.is_some() => {
                 if let Some(Some(ok)) = window::Amount::<Asked>::hit(cursor, assets.message.size, assets.ok[0].size) {
-                    game.answer_amount(ok);
+                    game.answer_amount(ok, &self.messages);
                 }
             }
             Scene::Game(game) if game.pick.as_ref().is_some_and(|(list, _)| list.covers(cursor)) => {
@@ -3927,8 +3942,8 @@ impl App {
                 game.answer_pet(*key == Key::Named(NamedKey::Enter));
             }
             Scene::Game(game) if game.amount.is_some() => match key {
-                Key::Named(NamedKey::Enter) => game.answer_amount(true),
-                Key::Named(NamedKey::Escape) => game.answer_amount(false),
+                Key::Named(NamedKey::Enter) => game.answer_amount(true, &self.messages),
+                Key::Named(NamedKey::Escape) => game.answer_amount(false, &self.messages),
                 Key::Named(NamedKey::Backspace) => {
                     game.amount.as_mut().unwrap().typed.pop();
                 }
@@ -5135,6 +5150,40 @@ impl App {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
                 }
             }
+            MapEvent::BuyingStoreSign { owner, title } => {
+                game.signs.insert(owner, chatroom::Sign::buying_store(owner, title));
+            }
+            MapEvent::BuyingStoreSignGone { owner } => {
+                game.signs.remove(&owner);
+            }
+            MapEvent::BuyingStoreItems { owner, store_id, limit, items } => {
+                game.shop = Some(shop::Shop::new_buying_store(owner, store_id, limit, &items, &game.inventory.items));
+            }
+            MapEvent::BuyingStoreSold { index, amount, price } => {
+                let name = game.inventory.get(index).map(|item| inventory::item_name(&self.items, item.id, item.identified, item.refine)).unwrap_or_default();
+                game.inventory.remove(index, amount);
+                let total = u64::from(price) * u64::from(amount);
+                let line = rustnarok_client::messages::fill(self.messages.get(1746).map_or("", String::as_str), &[&name, &amount, &total]);
+                game.chat_line(line, CHAT_ITEM);
+                // ponytail: whether the official client keeps the seller's window open isn't knowable.
+                game.shop = None;
+            }
+            MapEvent::BuyingStoreSellerFailed { result, item_id } => {
+                let line = match result {
+                    5 => self.messages.get(57).cloned(),
+                    6 => {
+                        let name = inventory::item_name(&self.items, item_id, true, 0);
+                        Some(rustnarok_client::messages::fill(self.messages.get(1747).map_or("", String::as_str), &[&name]))
+                    }
+                    7 => self.messages.get(1745).cloned(),
+                    _ => self.messages.get(57).cloned(),
+                };
+                if let Some(line) = line {
+                    game.chat_line(line, CHAT_ERROR);
+                }
+                // ponytail: whether the official client keeps the seller's window open isn't knowable.
+                game.shop = None;
+            }
             MapEvent::CartCount { most, weight, max_weight, .. } => game.cart.cart = Some((most, [weight, max_weight])),
             MapEvent::CartAdded(item) => game.cart.add(item),
             MapEvent::CartRemoved { index, amount } => game.cart.remove(index, amount.min(u32::from(u16::MAX)) as u16),
@@ -6166,11 +6215,6 @@ impl App {
                 game.attack_range = i32::from(range);
                 game.attack_from(target, cell.map(i32::from), target_cell.map(i32::from));
             }
-            MapEvent::BuyingStoreSign { .. }
-            | MapEvent::BuyingStoreSignGone { .. }
-            | MapEvent::BuyingStoreItems { .. }
-            | MapEvent::BuyingStoreSold { .. }
-            | MapEvent::BuyingStoreSellerFailed { .. } => {}
             MapEvent::Entered { .. } => unreachable!("handled above"),
             MapEvent::Disconnected(_) => self.message(self.messages.get(DISCONNECTED_MESSAGE).cloned().unwrap_or_default(), Scene::Login),
         }
