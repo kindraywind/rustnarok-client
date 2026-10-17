@@ -36,7 +36,7 @@
       "wait": 1500
     },
     {
-      "say": "@recall Rndevtwo"
+      "say": "@recall {second}"
     },
     {
       "as": "second",
@@ -53,7 +53,7 @@
     },
     {
       "click_on": {
-        "unit": "Rndevtwo"
+        "unit": "{second}"
       },
       "button": "right"
     },
@@ -65,7 +65,7 @@
     },
     {
       "click_on": {
-        "unit": "Rndevtwo",
+        "unit": "{second}",
         "offset": [
           20,
           52
