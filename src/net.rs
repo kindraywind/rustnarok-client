@@ -566,6 +566,15 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const CZ_REQ_OPEN_BANKING: u16 = 0x09B6;
+const ZC_ACK_OPEN_BANKING: u16 = 0x09B7;
+const CZ_REQ_BANKING_CHECK: u16 = 0x09AB;
+const ZC_BANKING_CHECK: u16 = 0x09A6;
+const CZ_REQ_BANKING_DEPOSIT: u16 = 0x09A7;
+const ZC_ACK_BANKING_DEPOSIT: u16 = 0x09A8;
+const CZ_REQ_BANKING_WITHDRAW: u16 = 0x09A9;
+const ZC_ACK_BANKING_WITHDRAW: u16 = 0x09AA;
+const CZ_REQ_CLOSE_BANKING: u16 = 0x09B8;
 const ZC_SPIRITS: u16 = 0x01D0;
 const CZ_REQ_ITEMCOMPOSITION_LIST: u16 = 0x017A;
 const ZC_ITEMCOMPOSITION_LIST: u16 = 0x017B;
@@ -1062,6 +1071,17 @@ pub enum MapEvent {
     Spirits {
         id: u32,
         count: u16,
+    },
+    /// The bank opens (rathena answers in its own words instead where banking is off).
+    BankOpened,
+    /// What the account keeps.
+    BankBalance(i64),
+    /// A deposit's or withdrawal's answer: rathena's reason (0 done), the balance and the zeny carried after.
+    BankMoved {
+        deposit: bool,
+        reason: u16,
+        balance: i64,
+        zeny: i32,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
@@ -1964,6 +1984,24 @@ impl MapSession {
 
     /// Public chat; the client sends "name : message".
     /// Shows an emotion over the player's head.
+    /// The bank's requests carry the player's own account: opening, the balance, closing.
+    pub fn open_bank(&mut self, account: u32) -> io::Result<()> {
+        self.send_id(CZ_REQ_OPEN_BANKING, account)
+    }
+
+    pub fn check_bank(&mut self, account: u32) -> io::Result<()> {
+        self.send_id(CZ_REQ_BANKING_CHECK, account)
+    }
+
+    pub fn close_bank(&mut self, account: u32) -> io::Result<()> {
+        self.send_id(CZ_REQ_CLOSE_BANKING, account)
+    }
+
+    /// Puts zeny in the bank, or takes it out.
+    pub fn move_zeny(&mut self, deposit: bool, account: u32, zeny: i32) -> io::Result<()> {
+        self.stream.write_all(&encode_bank_move(deposit, account, zeny))
+    }
+
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
     pub fn card_list(&mut self, card: u16) -> io::Result<()> {
         self.stream.write_all(&encode_card_list(card))
@@ -2448,6 +2486,15 @@ fn encode_insert_card(card: u16, equip: u16) -> [u8; 6] {
     [h0, h1, c0, c1, e0, e1]
 }
 
+/// CZ_REQ_BANKING_DEPOSIT or CZ_REQ_BANKING_WITHDRAW: the player's own account and the zeny.
+fn encode_bank_move(deposit: bool, account: u32, zeny: i32) -> [u8; 10] {
+    let mut packet = [0u8; 10];
+    packet[..2].copy_from_slice(&if deposit { CZ_REQ_BANKING_DEPOSIT } else { CZ_REQ_BANKING_WITHDRAW }.to_le_bytes());
+    packet[2..6].copy_from_slice(&account.to_le_bytes());
+    packet[6..].copy_from_slice(&zeny.to_le_bytes());
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -2790,6 +2837,14 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // The result byte is rathena's "failure".
         ZC_ACK_ITEMCOMPOSITION => MapEvent::CardInserted { equip: u16_at(2), card: u16_at(4), ok: packet[6] == 0 },
         ZC_SPIRITS => MapEvent::Spirits { id: u32_at(2), count: u16_at(6) },
+        ZC_ACK_OPEN_BANKING => MapEvent::BankOpened,
+        ZC_BANKING_CHECK => MapEvent::BankBalance(i64::from_le_bytes(packet[2..10].try_into().unwrap())),
+        ZC_ACK_BANKING_DEPOSIT | ZC_ACK_BANKING_WITHDRAW => MapEvent::BankMoved {
+            deposit: u16_at(0) == ZC_ACK_BANKING_DEPOSIT,
+            reason: u16_at(2),
+            balance: i64::from_le_bytes(packet[4..12].try_into().unwrap()),
+            zeny: u32_at(12) as i32,
+        },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3470,6 +3525,25 @@ mod tests {
         packet.extend_from_slice(&5u16.to_le_bytes());
         assert_eq!(Some(packet.len() as i32), packet_length(ZC_SPIRITS));
         let Some(MapEvent::Spirits { id: 2_000_002, count: 5 }) = decode_map_packet(&packet) else { panic!() };
+    }
+
+    #[test]
+    fn speaks_to_the_bank() {
+        assert_eq!(encode_bank_move(true, 2_000_002, 1000)[..2], CZ_REQ_BANKING_DEPOSIT.to_le_bytes());
+        assert_eq!(encode_bank_move(false, 2_000_002, 1000), [0xA9, 0x09, 0x82, 0x84, 0x1E, 0x00, 0xE8, 0x03, 0, 0]);
+        let Some(MapEvent::BankOpened) = decode_map_packet(&[0xB7, 0x09, 0, 0]) else { panic!() };
+        let mut check = ZC_BANKING_CHECK.to_le_bytes().to_vec();
+        check.extend_from_slice(&5_000_000_000i64.to_le_bytes());
+        check.extend_from_slice(&[0, 0]);
+        let Some(MapEvent::BankBalance(5_000_000_000)) = decode_map_packet(&check) else { panic!() };
+        let mut moved = ZC_ACK_BANKING_WITHDRAW.to_le_bytes().to_vec();
+        moved.extend_from_slice(&1u16.to_le_bytes());
+        moved.extend_from_slice(&1000i64.to_le_bytes());
+        moved.extend_from_slice(&4000i32.to_le_bytes());
+        let Some(MapEvent::BankMoved { deposit: false, reason: 1, balance: 1000, zeny: 4000 }) = decode_map_packet(&moved) else { panic!() };
+        let ids = [CZ_REQ_OPEN_BANKING, ZC_ACK_OPEN_BANKING, CZ_REQ_BANKING_CHECK, ZC_BANKING_CHECK, CZ_REQ_BANKING_DEPOSIT, ZC_ACK_BANKING_DEPOSIT];
+        assert_eq!(ids.map(packet_length), [Some(6), Some(4), Some(6), Some(12), Some(10), Some(16)]);
+        assert_eq!([CZ_REQ_BANKING_WITHDRAW, ZC_ACK_BANKING_WITHDRAW, CZ_REQ_CLOSE_BANKING].map(packet_length), [Some(10), Some(16), Some(6)]);
     }
 
     #[test]

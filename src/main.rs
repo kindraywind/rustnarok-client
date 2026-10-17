@@ -38,6 +38,7 @@
 //! `RUSTNAROK_CLIENT_SCREENSHOT=out.png` (save a settled frame and quit; in the game after `RUSTNAROK_CLIENT_SHOT_DELAY` seconds, 2 by default).
 
 mod actor;
+mod bank;
 mod basic_info;
 mod char_make;
 mod char_select;
@@ -132,6 +133,11 @@ const REFINE_FAILED: usize = 3272;
 const MVP_ITEM: [usize; 2] = [143, 144];
 const MVP_EXP: [usize; 2] = [145, 146];
 const MVP_OVERWEIGHT: usize = 147;
+/// The bank's refusals: unavailable, not enough zeny carried, too much to hold, not enough in the bank.
+const BANK_DOWN: usize = 2454;
+const BANK_NO_ZENY: usize = 2456;
+const BANK_OVERFLOW: usize = 2459;
+const BANK_SHORT: usize = 2455;
 /// Pick lists' titles: a Magnifier's, a card's.
 const ITEM_APPRAISAL: usize = 521;
 const INSERT_CARD: usize = 522;
@@ -440,6 +446,7 @@ struct Game {
     item_skill: Option<net::Skill>,
     /// The deal under way; someone asking for one (name, character ID, level); whom we asked.
     trade: Option<trade::Trade>,
+    bank: Option<bank::Bank>,
     trade_asked: Option<(String, u32, u16)>,
     trade_with: String,
     /// The status window, and its height (its background's).
@@ -1575,6 +1582,7 @@ struct Assets {
     pick_list: pick_list::Assets,
     storage: storage::Assets,
     trade: trade::Assets,
+    bank: bank::Assets,
     context_menu: menu::Assets,
     party: party::Assets,
     chatroom: chatroom::Assets,
@@ -1668,6 +1676,7 @@ impl Assets {
             pick_list: pick_list::Assets::load(gpu, grf),
             storage: storage::Assets::load(gpu, grf),
             trade: trade::Assets::load(gpu, grf),
+            bank: bank::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
@@ -2276,6 +2285,9 @@ impl App {
             if let Some(trade) = &mut game.trade {
                 trade.typing = false;
             }
+            if let Some(bank) = &mut game.bank {
+                bank.typing = false;
+            }
         }
         match &mut self.scene {
             Scene::Login => {
@@ -2526,6 +2538,26 @@ impl App {
                     }
                 }
             }
+            Scene::Game(game) if game.bank.as_ref().is_some_and(|bank| bank.hit(cursor).is_some()) => {
+                let carried = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
+                let bank = game.bank.as_mut().unwrap();
+                let hit = bank.hit(cursor).unwrap();
+                let account = game.account_id;
+                match bank.click(hit, carried) {
+                    Some(bank::Action::Deposit(zeny)) => {
+                        let _ = game.session.move_zeny(true, account, zeny);
+                    }
+                    Some(bank::Action::Withdraw(zeny)) => {
+                        let _ = game.session.move_zeny(false, account, zeny);
+                    }
+                    Some(bank::Action::Refuse(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+                    Some(bank::Action::Close) => {
+                        let _ = game.session.close_bank(account);
+                        game.bank = None;
+                    }
+                    None => {}
+                }
+            }
             Scene::Game(game) if game.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some()) => {
                 let trade = game.trade.as_mut().unwrap();
                 let hit = trade.hit(cursor).unwrap();
@@ -2606,6 +2638,10 @@ impl App {
                                 if game.guild_window.frame.open {
                                     game.ask_guild_pages();
                                 }
+                            }
+                            // The bank opens when the server says so: it answers in its own words where banking is off.
+                            Some("bank") => {
+                                let _ = game.session.open_bank(game.account_id);
                             }
                             Some("mail") => {
                                 let action = game.mail.toggle();
@@ -3406,6 +3442,16 @@ impl App {
                     _ => {}
                 }
             }
+            Scene::Game(game) if game.bank.as_ref().is_some_and(|bank| bank.typing) => {
+                let bank = game.bank.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Enter | NamedKey::Escape) => bank.typing = false,
+                    Key::Named(NamedKey::Backspace) => {
+                        bank.typed.pop();
+                    }
+                    _ => bank.type_text(event.text.as_deref().unwrap_or_default()),
+                }
+            }
             Scene::Game(game) if game.trade.as_ref().is_some_and(|trade| trade.typing) => {
                 let trade = game.trade.as_mut().unwrap();
                 match key {
@@ -3708,6 +3754,7 @@ impl App {
                     card_asked: None,
                     item_skill: None,
                     trade: None,
+                    bank: None,
                     trade_asked: None,
                     trade_with: String::new(),
                     menu: None,
@@ -3938,6 +3985,33 @@ impl App {
                     actor.walk(path);
                 }
                 game.want_emblem(unit.guild, unit.emblem);
+            }
+            // The bank: open on the server's word, then ask the balance; refusals by rathena's reasons.
+            // ponytail: which message goes with which reason is read off their words.
+            MapEvent::BankOpened => {
+                game.bank = Some(bank::Bank::new());
+                let _ = game.session.check_bank(game.account_id);
+            }
+            MapEvent::BankBalance(balance) => {
+                if let Some(bank) = &mut game.bank {
+                    bank.balance = balance;
+                }
+            }
+            MapEvent::BankMoved { deposit, reason, balance, zeny } => {
+                if let Some(bank) = &mut game.bank {
+                    bank.balance = balance;
+                }
+                game.status.insert(net::STATUS_ZENY, i64::from(zeny));
+                let refusal = match (deposit, reason) {
+                    (_, 0) => None,
+                    (true, 2) => Some(BANK_NO_ZENY),
+                    (true, 3) => Some(BANK_OVERFLOW),
+                    (false, 1) => Some(BANK_SHORT),
+                    _ => Some(BANK_DOWN),
+                };
+                if let Some(id) = refusal {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
             }
             MapEvent::Spirits { id, count } => {
                 let key = (id != game.account_id).then_some(id);
@@ -6051,6 +6125,10 @@ impl App {
         game.mail.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.mail, icons, items, font, messages, pc_job_names, pointer, caret);
         if let Some(make) = &game.room_make {
             make.draw(&mut shop_layer, &assets.chrome, &assets.chatroom, messages, pointer, caret);
+        }
+        if let Some(bank) = &game.bank {
+            let carried = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
+            bank.draw(&mut shop_layer, &assets.chrome, &assets.bank, messages, font, pointer, caret, carried);
         }
         if let Some(trade) = &game.trade {
             trade.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);
