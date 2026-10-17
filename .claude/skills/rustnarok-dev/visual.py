@@ -13,8 +13,8 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
     (targets by name from the control socket's `targets`: inventory_item (item id), pick_item (a pick list's row, item
     id), menu_item (part of a right-click menu choice's label), button (a window button's name, e.g. "feed"),
-    hotkey (slot), skill (id), unit (name, from `units`), or {"point": [x, y]}; "offset": [dx, dy] shifts from the
-    centre; a target not on screen fails the step)
+    hotkey (slot), skill (id), char_slot (a card at character select, by slot), unit (name, from `units`), or
+    {"point": [x, y]}; "offset": [dx, dy] shifts from the centre; a target not on screen fails the step)
   {"click_unit": {"kind": "pet", "name": "Poring"}, "button": "right", "mods": "shift"}  (the middle of the nearest
     unit of that kind, and name if given, on screen)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
@@ -23,7 +23,9 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
               "windows_open": ["Inventory"], "windows_closed": ["Skills"], "units_at_least": {"monster": 10},
               "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null},
               "identified": [1201], "unidentified": [1202], "inventory_has": [{"id": 1201, "cards": [4035, 0, 0, 0]}],
-              "state": {"pet.intimacy": 950, "pet": null}}}  (state: values at dotted paths of the game state)
+              "characters": {"1": "Name"} (at character select),
+              "state": {"pet.intimacy": 950, "pet": null, "scene": "char_select"}}}  (state: values at dotted paths of
+              the game state, or of the whole control state when the game state has no such field)
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
 diff; `threshold` (percent, default 1) is how much change a shot takes before the report flags it.
@@ -121,7 +123,8 @@ def locate(target):
     target = dict(target)
     dx, dy = target.pop("offset", [0, 0])
     (kind, value), = target.items()
-    game = drive.send({"cmd": "state"}).get("game", {})
+    state = drive.send({"cmd": "state"})
+    game = state.get("game", {})
     if kind == "unit":
         # A unit by name (its sprite's box on screen); "offset" from its centre, e.g. into the menu it opens.
         for unit in game.get("units", []):
@@ -129,12 +132,13 @@ def locate(target):
                 x0, y0, x1, y1 = unit["screen"]
                 return [round((x0 + x1) / 2) + dx, round((y0 + y1) / 2) + dy]
         return None
-    for found in game.get("targets", []):
+    # In the game the game's targets; at character select the screen's (char_slot, menu_item).
+    for found in game.get("targets", state.get("targets", [])):
         # A right-click menu's choice by (part of) its label.
         if kind == "menu_item" and found.get("kind") == kind and value in found.get("label", ""):
             x, y, w, h = found["box"]
             return [round(x + w / 2) + dx, round(y + h / 2) + dy]
-        key = {"inventory_item": "id", "pick_item": "id", "button": "name", "hotkey": "slot", "skill": "id"}.get(kind)
+        key = {"inventory_item": "id", "pick_item": "id", "button": "name", "hotkey": "slot", "skill": "id", "char_slot": "slot"}.get(kind)
         if found.get("kind") == kind and found.get(key) == value:
             x, y, w, h = found["box"]
             return [round(x + w / 2) + dx, round(y + h / 2) + dy]
@@ -185,20 +189,27 @@ def expect(wanted, state):
             failures.append(f"zeny {game.get('player', {}).get('zeny')} != {value}")
         elif key == "spirits" and game.get("player", {}).get("spirits") != value:
             failures.append(f"spirits {game.get('player', {}).get('spirits')} != {value}")
+        elif key == "characters":
+            # {"<slot>": "<name>"} at character select (null for an empty slot).
+            names = {str(character.get("slot")): character.get("name") for character in state.get("characters", [])}
+            for slot, name in value.items():
+                if names.get(slot) != name:
+                    failures.append(f"slot {slot} holds {names.get(slot)!r}, not {name!r}")
         elif key == "units_at_least":
             for kind, count in value.items():
                 have = sum(1 for unit in game.get("units", []) if unit.get("kind") == kind)
                 if have < count:
                     failures.append(f"{have} {kind} units < {count}")
         elif key == "state":
-            # Values at dotted paths of the game state, e.g. {"pet.intimacy": 950, "pet": null}.
+            # Values at dotted paths of the game state, e.g. {"pet.intimacy": 950, "pet": null}; a path the game state
+            # doesn't start with is read from the whole control state (e.g. "scene", or "selected" at character select).
             for path, want in value.items():
-                have = game
+                have = game if path.split(".")[0] in game else state
                 for part in path.split("."):
                     have = have.get(part) if isinstance(have, dict) else None
                 if have != want:
                     failures.append(f"state {path} is {have!r}, not {want!r}")
-        elif key not in ("state", "chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny"):
+        elif key not in ("state", "chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters"):
             failures.append(f"unknown expectation {key}")
     return failures
 

@@ -298,6 +298,13 @@ const MESSAGE_LINE: f32 = 16.0;
 const PROMPT_FIELD: [f32; 2] = [20.0, 70.0];
 const PROMPT_FIELD_SIZE: [f32; 2] = [240.0, 18.0];
 const PROMPT_LENGTH: usize = 6;
+/// The most letters a new name takes (NAME_LENGTH, less its terminator).
+const NAME_MOST: usize = NAME_LENGTH - 1;
+const MOVE_QUESTION: usize = 2016;
+const MOVE_FAILED: usize = 2017;
+const RENAME_QUESTION: usize = 1213;
+/// "Ready to change character name in.(%d)": the name prompt, with the renames left.
+const RENAME_PROMPT: usize = 2026;
 const QUIT_MESSAGE: usize = 17;
 const DELETE_QUESTION: usize = 19;
 const BIRTHDATE_MESSAGE: usize = 1815;
@@ -1728,6 +1735,12 @@ enum Then {
     AskBirthdate(u32),
     /// Delete this character with the birthdate typed in.
     Delete(u32),
+    /// Move a character from one slot to another, with its moves left.
+    Move(u8, u8, u16),
+    /// Ask whether to rename this character to the name typed in.
+    ConfirmName(u32),
+    /// Rename this character.
+    Rename(u32, String),
 }
 
 impl Scene {
@@ -2181,6 +2194,8 @@ struct App {
     quitting: bool,
     /// The game went back to character select at least once.
     returned: bool,
+    /// The slot of the character last played, selected again back at character select.
+    played_slot: Option<usize>,
     /// The login that's in progress: what the char and map servers need to see.
     account: Option<LoginAccepted>,
     /// The character chosen to play, until its map is entered.
@@ -2314,6 +2329,16 @@ impl App {
             Action::CancelReserve(id) => self.char_session.as_mut().map(|session| session.cancel_delete(id)),
             Action::Delete(id) => return self.ask(DELETE_QUESTION, Then::AskBirthdate(id)),
             Action::Close => return self.ask(QUIT_MESSAGE, Then::BackToLogin),
+            Action::Move(from, to, moves) => return self.ask(MOVE_QUESTION, Then::Move(from, to, moves)),
+            Action::Rename(id) => {
+                let Scene::CharSelect(select) = &self.scene else { return };
+                let renames = select.characters.iter().find(|character| character.id == id).map_or(0, |character| character.renames);
+                // ponytail: the prompt's text is the rename count message; the real client's rename window may differ.
+                let text = rustnarok_client::messages::fill(&self.message_text(RENAME_PROMPT), &[&renames]);
+                let back = std::mem::replace(&mut self.scene, Scene::Login);
+                self.scene = Scene::Prompt { text, input: String::new(), then: Then::ConfirmName(id), back: Box::new(back) };
+                return;
+            }
         };
         match sent {
             Some(Ok(())) => self.wait(),
@@ -2352,6 +2377,10 @@ impl App {
                 None => game.chat.typing().extend(typed),
             },
             Scene::CharMake(make, _) => make.type_text(text),
+            Scene::Prompt { input, then: Then::ConfirmName(_), .. } => {
+                let room = NAME_MOST - input.chars().count().min(NAME_MOST);
+                input.extend(typed.take(room));
+            }
             _ => {}
         }
     }
@@ -2448,6 +2477,28 @@ impl App {
                 Some(Ok(())) => self.wait(),
                 _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
             },
+            Then::Move(from, to, moves) => {
+                if let Scene::CharSelect(select) = &mut self.scene {
+                    select.moved_to = Some(usize::from(to));
+                }
+                match self.char_session.as_mut().map(|session| session.move_slot(u16::from(from), u16::from(to), moves)) {
+                    Some(Ok(())) => self.wait(),
+                    _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
+                }
+            }
+            Then::ConfirmName(id) => {
+                let name = input.trim().to_owned();
+                if name.is_empty() {
+                    return;
+                }
+                let text = rustnarok_client::messages::fill(&self.message_text(RENAME_QUESTION), &[&name]);
+                let back = std::mem::replace(&mut self.scene, Scene::Login);
+                self.scene = Scene::Confirm(text, Then::Rename(id, name), Box::new(back));
+            }
+            Then::Rename(id, name) => match self.char_session.as_mut().map(|session| session.rename(id, &name)) {
+                Some(Ok(())) => self.wait(),
+                _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
+            },
         }
     }
 
@@ -2519,7 +2570,8 @@ impl App {
                 }
             }
             Scene::CharSelect(select) => {
-                if let Some(action) = select.hit(cursor).and_then(|hit| select.click(hit)) {
+                let action = if select.menu.is_some() { select.click_menu(cursor) } else { select.hit(cursor).and_then(|hit| select.click(hit)) };
+                if let Some(action) = action {
                     self.select_action(action);
                 }
             }
@@ -3162,6 +3214,12 @@ impl App {
 
     /// The right button: Alt moves stacks to storage, a click on a player opens their menu, a press aims the camera.
     fn right_button(&mut self, state: ElementState) {
+        // On the character select, a card's menu of moving and renaming.
+        if let Scene::CharSelect(select) = &mut self.scene
+            && state == ElementState::Pressed
+        {
+            select.open_menu(self.cursor, &self.font, &self.messages);
+        }
         if let Scene::Game(game) = &mut self.scene {
             let assets = self.assets.as_ref();
             // Alt + right click moves a whole stack between the inventory and the open storage.
@@ -3691,6 +3749,11 @@ impl App {
                         self.select_action(action);
                     }
                 }
+                // Escape closes the card's menu or stops picking where to move first.
+                Key::Named(NamedKey::Escape) if select.menu.is_some() || select.moving.is_some() => {
+                    select.menu = None;
+                    select.moving = None;
+                }
                 Key::Named(NamedKey::Escape) => self.select_action(char_select::Action::Close),
                 _ => {}
             },
@@ -3861,12 +3924,18 @@ impl App {
                     self.close_message();
                 }
             }
-            Scene::Prompt { input, .. } if !matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+            Scene::Prompt { input, then, .. } if !matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 if matches!(key, Key::Named(NamedKey::Backspace)) {
                     input.pop();
                 }
-                let typed = event.text.as_deref().unwrap_or_default().chars().filter(char::is_ascii_digit);
-                input.extend(typed.take(PROMPT_LENGTH - input.len().min(PROMPT_LENGTH)));
+                let text = event.text.as_deref().unwrap_or_default();
+                // A new name takes any letters; the birthdate only digits.
+                if let Then::ConfirmName(_) = then {
+                    let room = NAME_MOST - input.chars().count().min(NAME_MOST);
+                    input.extend(text.chars().filter(|character| !character.is_control()).take(room));
+                } else {
+                    input.extend(text.chars().filter(char::is_ascii_digit).take(PROMPT_LENGTH - input.len().min(PROMPT_LENGTH)));
+                }
             }
             Scene::Confirm(..) | Scene::Prompt { .. } => match key {
                 Key::Named(NamedKey::Enter) => self.answer(),
@@ -3902,12 +3971,22 @@ impl App {
                 // A list sent again (after a deletion) keeps the cursor where it was.
                 if let Scene::CharSelect(previous) = self.scene.base() {
                     select.selected = previous.selected;
-                }
-                let autostart = std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok().and_then(|slot| slot.parse::<usize>().ok());
-                if let Some(slot) = autostart {
+                } else if let Some(slot) = self.played_slot.take() {
+                    // Back from the game: the character just played.
                     select.selected = slot;
                 }
-                self.scene = Scene::CharSelect(Box::new(select));
+                let autostart = std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok().and_then(|slot| slot.parse::<usize>().ok());
+                // Only the first list: later ones (after a move or a rename) keep the player's selection.
+                if let Some(slot) = autostart
+                    && !self.scripted
+                {
+                    select.selected = slot;
+                }
+                match &mut self.scene {
+                    // After a rename its message stays up over the new list.
+                    Scene::Message(_, back) if matches!(**back, Scene::CharSelect(_)) => **back = Scene::CharSelect(Box::new(select)),
+                    scene => *scene = Scene::CharSelect(Box::new(select)),
+                }
                 let first = !std::mem::replace(&mut self.scripted, true);
                 if autostart.is_some() && first {
                     self.start_game();
@@ -3942,6 +4021,40 @@ impl App {
                         self.message(self.message_text(1817), back);
                     }
                 }
+            }
+            NetEvent::Char(CharEvent::Moved { result, .. }) => {
+                self.settle();
+                let Scene::CharSelect(select) = &mut self.scene else { return };
+                let to = select.moved_to.take();
+                match (result, to) {
+                    // The list that follows keeps the selection, so it follows the character there.
+                    (0, Some(to)) => select.selected = to,
+                    (0, None) => {}
+                    _ => {
+                        let back = std::mem::replace(&mut self.scene, Scene::Login);
+                        self.message(self.message_text(MOVE_FAILED), back);
+                    }
+                }
+            }
+            NetEvent::Char(CharEvent::Renamed(result)) => {
+                self.settle();
+                // Renamed, renamed before, bad account, failed, name taken, in a guild, in a party, too long, symbols,
+                // prohibited, unknown.
+                let text = self.message_text(match result {
+                    0 => 1214,
+                    1 => 1218,
+                    2 => 1219,
+                    3 => 1215,
+                    4 => 1220,
+                    5 => 2022,
+                    6 => 2023,
+                    7 => 2027,
+                    8 => 2028,
+                    9 => 2029,
+                    _ => 2024,
+                });
+                let back = std::mem::replace(&mut self.scene, Scene::Login);
+                self.message(text, back);
             }
             // A deletion the server made comes after the new character list, which already replaced the wait.
             NetEvent::Char(CharEvent::Deleted { result: 1, .. }) => {}
@@ -4849,7 +4962,7 @@ impl App {
                 let Some(account) = self.account.clone() else { return };
                 let proxy = self.proxy.clone();
                 self.scene = Scene::Login;
-                self.playing = None;
+                self.played_slot = self.playing.take().map(|character| usize::from(character.slot));
                 self.returned = true;
                 self.play_music(None);
                 match CharSession::connect(&account.char_servers[self.char_server.min(account.char_servers.len() - 1)], &account, move |event| {
@@ -5968,7 +6081,12 @@ impl App {
             }
         }
 
-        let composed = compose(gpu, font, vec![base, overlay]);
+        // A character card's menu, over the cards.
+        let mut card_menu = Layer::default();
+        if let Scene::CharSelect(select) = &self.scene {
+            select.draw_menu(&mut card_menu, &assets.context_menu, font, self.cursor);
+        }
+        let composed = compose(gpu, font, vec![base, card_menu, overlay]);
         let mut sprites = flatten(&composed);
         if let Some(position) = caret {
             sprites.push((&assets.black, position, [1.0, font.line_height() - 2.0]));
@@ -7475,6 +7593,7 @@ fn main() {
         started: Instant::now(),
         screenshot: std::env::var("RUSTNAROK_CLIENT_SCREENSHOT").ok(),
         scripted: false,
+        played_slot: None,
     };
     if !picking && !app.connections.is_empty() {
         app.choose_connection(0);
