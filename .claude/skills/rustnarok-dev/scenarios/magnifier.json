@@ -1,5 +1,5 @@
 {
-  "about": "Magnifier: double-clicking one with an unidentified Knife carried shows the list of what it can identify; picking the Knife identifies it (issue #18).",
+  "about": "Magnifier: double-clicking one with an unidentified Knife carried shows the list of what it can identify (the pick list); picking the Knife identifies it (issue #18).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -90,10 +90,10 @@
       ]
     },
     {
-      "click": [
-        75,
-        222
-      ]
+      "click_on": {
+        "pick_item": 1201
+      },
+      "count": 2
     },
     {
       "wait_for": {
