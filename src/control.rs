@@ -724,12 +724,14 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .flat_map(|(list, _)| list.row_boxes())
                 .map(|(index, area)| json!({"kind": "pick_item", "index": index, "id": item_of(index), "box": area})),
         )
+        .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
     let overlays = [
         ("NpcDialog", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none())),
         ("WarpList", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some())),
         ("Shop", game.shop.is_some()),
+        ("OtherEquipment", game.viewing.is_some()),
         ("Bank", game.bank.is_some()),
         ("PickList", game.pick.is_some()),
         ("DealChoice", game.deal_choice.is_some()),

@@ -68,6 +68,19 @@ impl<T: Copy + PartialEq> Menu<T> {
         Some(None)
     }
 
+    /// Each choice's label and box on screen (for the test driver).
+    pub fn entry_boxes(&self) -> Vec<(String, [f32; 4])> {
+        let mut top = self.corner[1] + PADDING;
+        let mut boxes = Vec::new();
+        for entry in &self.entries {
+            if let Some((text, _)) = entry {
+                boxes.push((text.clone(), [self.corner[0] + PADDING, top, self.width - 2.0 * PADDING, ROW]));
+            }
+            top += if entry.is_some() { ROW } else { LINE };
+        }
+        boxes
+    }
+
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, pointer: [f32; 2]) {
         layer.sprites.push((&assets.white, self.corner, self.size()));
         let hovered = self.hit(pointer).flatten();
@@ -102,5 +115,7 @@ mod tests {
         assert_eq!(menu.hit([105.0, 100.0 + PADDING + ROW + 2.0]), Some(None));
         assert_eq!(menu.hit([105.0, 100.0 + PADDING + ROW + LINE + 3.0]), Some(Some(2)));
         assert_eq!(menu.hit([10.0, 10.0]), None);
+        let [x, y, w, h] = menu.entry_boxes()[1].1;
+        assert_eq!(menu.hit([x + w / 2.0, y + h / 2.0]), Some(Some(2)));
     }
 }

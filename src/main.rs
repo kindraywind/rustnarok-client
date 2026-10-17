@@ -184,6 +184,10 @@ const TRADE_CANCELLED: usize = 74;
 const TRADE_HEAVY: usize = 73;
 /// "Request a deal with %s".
 const TRADE_CHOICE: usize = 87;
+/// "Check %s's Equipment Info"; the Show Equipment box's answers, on and off.
+const VIEW_CHOICE: usize = 1360;
+const EQUIPMENT_SHOWN: usize = 1359;
+const EQUIPMENT_HIDDEN: usize = 1358;
 /// Vending: "%s %d sold.", "Items are sold out.", and "There are items priced 0..." (a shop refused for it).
 const VEND_SOLD: usize = 231;
 const VEND_SOLD_OUT: usize = 311;
@@ -446,6 +450,7 @@ struct Game {
     item_skill: Option<net::Skill>,
     /// The deal under way; someone asking for one (name, character ID, level); whom we asked.
     trade: Option<trade::Trade>,
+    viewing: Option<Viewed>,
     bank: Option<bank::Bank>,
     trade_asked: Option<(String, u32, u16)>,
     trade_with: String,
@@ -722,6 +727,15 @@ enum Choice {
     Befriend(u32),
     /// Invite them into the guild.
     GuildInvite(u32),
+    /// See what they wear.
+    ViewEquipment(u32),
+}
+
+/// Another player's equipment window: the window, what they wear, and their figure for its preview.
+struct Viewed {
+    window: equipment::Equipment,
+    items: Vec<net::InventoryItem>,
+    sprites: Option<SpriteSet>,
 }
 
 /// A map about to load behind the loading screen.
@@ -2442,6 +2456,9 @@ impl App {
                     game.trade_with = game.units.get(&id).map(|actor| actor.name.clone()).unwrap_or_default();
                     let _ = game.session.request_trade(id);
                 }
+                Some(Choice::ViewEquipment(id)) => {
+                    let _ = game.session.view_equipment(id);
+                }
                 Some(Choice::Invite(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         let _ = game.session.invite_to_party(&actor.name.clone());
@@ -2558,6 +2575,15 @@ impl App {
                     None => {}
                 }
             }
+            Scene::Game(game) if game.viewing.as_ref().is_some_and(|viewed| viewed.window.hit(cursor, &viewed.items).is_some()) => {
+                let viewed = game.viewing.as_mut().unwrap();
+                match viewed.window.hit(cursor, &viewed.items).unwrap() {
+                    equipment::Hit::Title(TitleHit::Close) => game.viewing = None,
+                    hit => {
+                        viewed.window.click(hit);
+                    }
+                }
+            }
             Scene::Game(game) if game.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some()) => {
                 let trade = game.trade.as_mut().unwrap();
                 let hit = trade.hit(cursor).unwrap();
@@ -2664,6 +2690,10 @@ impl App {
                     }
                     Panel::Equipment => {
                         let hit = game.equipment.hit(cursor, &game.inventory.items).unwrap();
+                        // The box changes when the server answers.
+                        if hit == equipment::Hit::ShowBox {
+                            let _ = game.session.show_equipment(!game.equipment.shown);
+                        }
                         if let Some(index) = game.equipment.click(hit) {
                             let _ = game.session.take_off(index);
                         }
@@ -2933,6 +2963,8 @@ impl App {
                 {
                     choices.extend([None, Some((fill(PARTY_ASK), Choice::Invite(id)))]);
                 }
+                // ponytail: last, under a line; where the real client lists it isn't known.
+                choices.extend([None, Some((fill(VIEW_CHOICE), Choice::ViewEquipment(id)))]);
                 game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             }
             // A right click on an item (inventory, storage or what's worn) describes it.
@@ -3754,6 +3786,7 @@ impl App {
                     card_asked: None,
                     item_skill: None,
                     trade: None,
+                    viewing: None,
                     bank: None,
                     trade_asked: None,
                     trade_with: String::new(),
@@ -4011,6 +4044,35 @@ impl App {
                 };
                 if let Some(id) = refusal {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
+            // Another player's equipment: their window with their figure, its weapon and shield from what they wear.
+            MapEvent::OtherEquipment(equipped) => {
+                let held = |location: u32| equipped.items.iter().find(|(item, _)| item.worn & location != 0).map_or(0, |(_, look)| u32::from(*look));
+                let look = Look {
+                    job: equipped.job,
+                    sex: equipped.sex,
+                    hair: equipped.hair,
+                    hair_color: equipped.hair_color,
+                    clothes_color: equipped.clothes_color,
+                    weapon: held(2),
+                    shield: held(32),
+                    head_top: equipped.head_top,
+                    head_mid: equipped.head_mid,
+                    head_bottom: equipped.head_bottom,
+                    robe: equipped.robe,
+                };
+                game.viewing = Some(Viewed {
+                    window: equipment::Equipment::of(equipped.name),
+                    items: equipped.items.into_iter().map(|(item, _)| item).collect(),
+                    sprites: SpriteSet::player(grf, &look, look_tables),
+                });
+            }
+            MapEvent::ShowEquipment { shown, answer } => {
+                game.equipment.shown = shown;
+                if answer {
+                    let id = if shown { EQUIPMENT_SHOWN } else { EQUIPMENT_HIDDEN };
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
                 }
             }
             MapEvent::Spirits { id, count } => {
@@ -5433,6 +5495,11 @@ impl App {
         }
         // The equipment window shows the character standing, facing front.
         let preview_feet = game.equipment.preview_feet();
+        let viewed_feet = game.viewing.as_ref().and_then(|viewed| viewed.window.preview_feet());
+        let viewed_placements = match (viewed_feet, game.viewing.as_mut().and_then(|viewed| viewed.sprites.as_mut())) {
+            (Some(_), Some(sprites)) => sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
+            _ => Vec::new(),
+        };
         let preview_placements = match (preview_feet, &mut game.player.sprites) {
             (Some(_), Some(sprites)) => sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
             _ => Vec::new(),
@@ -5667,6 +5734,12 @@ impl App {
             }
         }
 
+        let viewed_preview: Vec<Sprite> = match (viewed_feet, game.viewing.as_ref().and_then(|viewed| viewed.sprites.as_ref())) {
+            (Some(feet), Some(sprites)) => {
+                viewed_placements.iter().map(|(key, position, size)| (sprites.texture(*key), offset(feet, *position), *size)).collect()
+            }
+            _ => Vec::new(),
+        };
         let preview: Vec<Sprite> = match (preview_feet, &game.player.sprites) {
             (Some(feet), Some(sprites)) => {
                 preview_placements.iter().map(|(key, position, size)| (sprites.texture(*key), offset(feet, *position), *size)).collect()
@@ -5861,7 +5934,8 @@ impl App {
             .iter()
             .chain(game.cart.items.iter().filter(|_| game.cart.frame.open))
             .map(|item| (item.id, item.identified))
-            .chain(game.hotkeys.keys.iter().flatten().filter(|key| !key.skill).map(|key| (key.id, true)));
+            .chain(game.hotkeys.keys.iter().flatten().filter(|key| !key.skill).map(|key| (key.id, true)))
+            .chain(game.viewing.iter().flat_map(|viewed| viewed.items.iter()).map(|item| (item.id, item.identified)));
         for (id, identified) in shown_items {
             if let Some(info) = items.get(&id) {
                 let path = inventory::icon_path(info, identified);
@@ -6129,6 +6203,22 @@ impl App {
         if let Some(bank) = &game.bank {
             let carried = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
             bank.draw(&mut shop_layer, &assets.chrome, &assets.bank, messages, font, pointer, caret, carried);
+        }
+        if let Some(viewed) = &game.viewing {
+            let window = &viewed.window;
+            window.draw(
+                &mut shop_layer,
+                &mut tooltip,
+                &assets.chrome,
+                &assets.equipment,
+                icons,
+                items,
+                messages,
+                font,
+                pointer.0,
+                &viewed.items,
+                viewed_preview,
+            );
         }
         if let Some(trade) = &game.trade {
             trade.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);

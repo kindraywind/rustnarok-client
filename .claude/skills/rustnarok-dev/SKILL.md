@@ -75,7 +75,7 @@ pixels in red). `run`, `baseline` and `diff` do the steps one at a time. Output 
 
 Scenarios are JSON in `scenarios/` (the format is at the top of `visual.py`): GM commands, waits (`settle` after a
 warp: commands sent while a map loads are lost), keys, clicks, drags, and named shots, optionally cropped.
-**Click by name, not by pixels**: `click_on` / `drag_on` take `{"inventory_item": <id>}`, `{"pick_item": <id>}`, `{"hotkey": <slot>}`,
+**Click by name, not by pixels**: `click_on` / `drag_on` take `{"inventory_item": <id>}`, `{"pick_item": <id>}`, `{"menu_item": "<part of a label>"}`, `{"hotkey": <slot>}`,
 `{"skill": <id>}` from the control socket's `targets`, so a scenario survives windows moving and inventories
 reordering; keep raw coordinates for the world and for things not yet in `targets`.
 **Two players**: `"second": {"account": "2", ...}` starts a second client (on `qa2.sock`); `"as": "second"` sends a
