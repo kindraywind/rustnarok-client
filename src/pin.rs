@@ -1,7 +1,13 @@
 //! Second-password (PIN) number pad at character select (HC_SECOND_PASSWD_LOGIN 0x08B9).
 #![allow(dead_code)]
 
+use rustnarok_client::grf::Grf;
 use rustnarok_client::net;
+use rustnarok_client::text::Font;
+
+use crate::render::{Gpu, Texture};
+use crate::window::{self, Chrome, Frame};
+use crate::{Layer, SCREEN, UI, contains, offset};
 
 pub const TITLE_MESSAGE: usize = 1899;
 pub const ENTER_MESSAGE: usize = 2566;
@@ -16,6 +22,48 @@ pub const MISMATCH_MESSAGE: usize = 1893;
 pub const RESTRICTED_MESSAGE: usize = 1896;
 
 const MAX_TRIES: u8 = 3;
+
+// ponytail: pad window size and button coordinates on 2ndpassword_bg.bmp are estimates; measure from the bitmap in data.grf.
+const SIZE: [f32; 2] = [250.0, 290.0];
+const PROMPT_AREA: ([f32; 2], f32) = ([14.0, 24.0], 222.0);
+const LINE_STEP: f32 = 14.0;
+const INPUT_BOX: ([f32; 2], [f32; 2]) = ([75.0, 100.0], [100.0, 20.0]);
+// ponytail: how the official pad offers changing the PIN at state 1 isn't in rathena; place a small Change button beside the box.
+const CHANGE_BUTTON: ([f32; 2], [f32; 2]) = ([182.0, 100.0], [54.0, 20.0]);
+const GRID: [f32; 2] = [29.0, 132.0];
+const DIGIT_STEP: [f32; 2] = [49.0, 36.0];
+const DIGIT_SIZE: [f32; 2] = [44.0, 32.0];
+const CLEAR_SIZE: [f32; 2] = [93.0, 32.0];
+const OK_BUTTON: [f32; 2] = [146.0, 258.0];
+const CANCEL_BUTTON: [f32; 2] = [194.0, 258.0];
+const ACTION_SIZE: [f32; 2] = [42.0, 20.0];
+const TEXT_COLOR: [u8; 3] = [0, 0, 0];
+
+pub struct Assets {
+    background: Texture,
+    /// Normal, hovered (`_a`) and pressed (`_b`) images for digits 0..=9.
+    digits: [[Texture; 3]; 10],
+    /// Normal, hovered (`_a`) and pressed (`_b`) images for the clear button (`btn_big_numr`).
+    clear: [Texture; 3],
+    ok: [Texture; 3],
+    cancel: [Texture; 3],
+}
+
+impl Assets {
+    pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
+        let basic = format!("{UI}basic_interface\\");
+        let image = |path: String| gpu.load_texture(grf, &path, false);
+        // ponytail: _a and _b as hover and pressed, and btn_big_numr as clear, match the client's other buttons.
+        let button = |folder: &str, name: &str| ["", "_a", "_b"].map(|suffix| image(format!("{folder}{name}{suffix}.bmp")));
+        Self {
+            background: image(format!("{basic}2ndpassword_bg.bmp")),
+            digits: std::array::from_fn(|digit| button(&basic, &format!("btn_big_num{digit}"))),
+            clear: button(&basic, "btn_big_numr"),
+            ok: button(UI, "btn_ok"),
+            cancel: button(UI, "btn_cancel"),
+        }
+    }
+}
 
 /// rathena's `pincode_allowed` (`src/char/char_clif.cpp`): 4 ASCII digits, not all identical
 /// (`pincode_allow_repeated: no`), and not an ascending or descending run wrapping past 9 (`pincode_allow_sequential: no`).
@@ -290,6 +338,110 @@ impl PinPad {
             }
         }
     }
+
+    pub fn origin() -> [f32; 2] {
+        [((SCREEN[0] - SIZE[0]) / 2.0).floor(), ((SCREEN[1] - SIZE[1]) / 2.0).floor()]
+    }
+
+    fn at(local: [f32; 2]) -> [f32; 2] {
+        offset(Self::origin(), local)
+    }
+
+    fn digit_place(index: u8) -> [f32; 2] {
+        let col = f32::from(index % 4);
+        let row = f32::from(index / 4);
+        Self::at([GRID[0] + col * DIGIT_STEP[0], GRID[1] + row * DIGIT_STEP[1]])
+    }
+
+    fn clear_place() -> [f32; 2] {
+        Self::at([GRID[0] + 2.0 * DIGIT_STEP[0], GRID[1] + 2.0 * DIGIT_STEP[1]])
+    }
+
+    /// Returns the pad button under `cursor`, if any.
+    pub fn hit(&self, cursor: [f32; 2]) -> Option<PinButton> {
+        for index in 0..10u8 {
+            if contains(Self::digit_place(index), DIGIT_SIZE, cursor) {
+                return Some(PinButton::Digit(index));
+            }
+        }
+        if contains(Self::clear_place(), CLEAR_SIZE, cursor) {
+            return Some(PinButton::Clear);
+        }
+        if self.step == PinStep::Ask && contains(Self::at(CHANGE_BUTTON.0), CHANGE_BUTTON.1, cursor) {
+            return Some(PinButton::Change);
+        }
+        if contains(Self::at(OK_BUTTON), ACTION_SIZE, cursor) {
+            return Some(PinButton::Ok);
+        }
+        if contains(Self::at(CANCEL_BUTTON), ACTION_SIZE, cursor) {
+            return Some(PinButton::Cancel);
+        }
+        None
+    }
+
+    /// Whether `cursor` lies anywhere inside the pad window (so clicks don't fall through to character cards).
+    pub fn contains(&self, cursor: [f32; 2]) -> bool {
+        contains(Self::origin(), SIZE, cursor)
+    }
+
+    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, font: &Font, messages: &[String], pointer: ([f32; 2], bool)) {
+        let message = |id: usize| messages.get(id).map_or("", String::as_str);
+        let (cursor, down) = pointer;
+        let look = |hovered: bool| usize::from(hovered) + usize::from(hovered && down);
+        let hit = self.hit(cursor);
+        let corner = Self::origin();
+
+        layer.sprites.push((&assets.background, corner, assets.background.size));
+        let mut frame = Frame::new(corner, assets.background.size[0].max(SIZE[0]));
+        frame.open = true;
+        frame.draw_bare_title(layer, chrome, message(TITLE_MESSAGE), cursor);
+
+        let mut row = 0usize;
+        for id in [self.prompt_message(), MOUSE_HINT_MESSAGE, LOCKOUT_WARNING_MESSAGE] {
+            for line in window::wrap(font, message(id), PROMPT_AREA.1, 2) {
+                if !line.is_empty() && row < 5 {
+                    layer.texts.push((line, Self::at([PROMPT_AREA.0[0], PROMPT_AREA.0[1] + row as f32 * LINE_STEP]), TEXT_COLOR));
+                    row += 1;
+                }
+            }
+        }
+
+        let box_corner = Self::at(INPUT_BOX.0);
+        layer.sprites.push((&chrome.border, offset(box_corner, [-1.0, -1.0]), [INPUT_BOX.1[0] + 2.0, INPUT_BOX.1[1] + 2.0]));
+        layer.sprites.push((&chrome.white, box_corner, INPUT_BOX.1));
+        let stars = "*".repeat(self.input.len());
+        let stars_pos =
+            [box_corner[0] + ((INPUT_BOX.1[0] - font.width(&stars)) / 2.0).floor(), box_corner[1] + ((INPUT_BOX.1[1] - font.line_height()) / 2.0).floor()];
+        layer.texts.push((stars, stars_pos, TEXT_COLOR));
+
+        if self.step == PinStep::Ask {
+            let change_corner = Self::at(CHANGE_BUTTON.0);
+            layer.sprites.push((&chrome.border, offset(change_corner, [-1.0, -1.0]), [CHANGE_BUTTON.1[0] + 2.0, CHANGE_BUTTON.1[1] + 2.0]));
+            layer.sprites.push((&chrome.white, change_corner, CHANGE_BUTTON.1));
+            let label = "Change";
+            let label_pos = [
+                change_corner[0] + ((CHANGE_BUTTON.1[0] - font.width(label)) / 2.0).floor(),
+                change_corner[1] + ((CHANGE_BUTTON.1[1] - font.line_height()) / 2.0).floor(),
+            ];
+            layer.texts.push((label.to_owned(), label_pos, TEXT_COLOR));
+        }
+
+        let tab = self.table();
+        for index in 0..10u8 {
+            let shown_digit = usize::from(tab[usize::from(index)]);
+            let image = &assets.digits[shown_digit][look(hit == Some(PinButton::Digit(index)))];
+            layer.sprites.push((image, Self::digit_place(index), image.size));
+        }
+
+        let clear = &assets.clear[look(hit == Some(PinButton::Clear))];
+        layer.sprites.push((clear, Self::clear_place(), clear.size));
+
+        let ok = &assets.ok[look(hit == Some(PinButton::Ok))];
+        layer.sprites.push((ok, Self::at(OK_BUTTON), ok.size));
+
+        let cancel = &assets.cancel[look(hit == Some(PinButton::Cancel))];
+        layer.sprites.push((cancel, Self::at(CANCEL_BUTTON), cancel.size));
+    }
 }
 
 #[cfg(test)]
@@ -389,5 +541,41 @@ mod tests {
         // State 0 sets pad to None and returns Passed.
         assert_eq!(PinPad::apply_server(&mut pad, 0x7777, 0), PinServerOutcome::Passed);
         assert!(pad.is_none());
+    }
+
+    #[test]
+    fn hits_pad_buttons() {
+        let mut pad = PinPad::new(0x1234_5678, PinStep::Ask, false);
+        assert!(pad.contains(offset(PinPad::origin(), [10.0, 10.0])));
+        assert!(!pad.contains([0.0, 0.0]));
+
+        for index in 0..10u8 {
+            let center = offset(PinPad::digit_place(index), [DIGIT_SIZE[0] / 2.0, DIGIT_SIZE[1] / 2.0]);
+            assert_eq!(pad.hit(center), Some(PinButton::Digit(index)));
+        }
+        let clear_center = offset(PinPad::clear_place(), [CLEAR_SIZE[0] / 2.0, CLEAR_SIZE[1] / 2.0]);
+        assert_eq!(pad.hit(clear_center), Some(PinButton::Clear));
+
+        let change_center = offset(PinPad::at(CHANGE_BUTTON.0), [CHANGE_BUTTON.1[0] / 2.0, CHANGE_BUTTON.1[1] / 2.0]);
+        assert_eq!(pad.hit(change_center), Some(PinButton::Change));
+
+        let ok_center = offset(PinPad::at(OK_BUTTON), [ACTION_SIZE[0] / 2.0, ACTION_SIZE[1] / 2.0]);
+        assert_eq!(pad.hit(ok_center), Some(PinButton::Ok));
+
+        let cancel_center = offset(PinPad::at(CANCEL_BUTTON), [ACTION_SIZE[0] / 2.0, ACTION_SIZE[1] / 2.0]);
+        assert_eq!(pad.hit(cancel_center), Some(PinButton::Cancel));
+
+        let table = pad.table();
+        let mut action = PinAction::None;
+        for ch in "1357".bytes() {
+            let index = table.iter().position(|&d| d == ch - b'0').unwrap() as u8;
+            let center = offset(PinPad::digit_place(index), [DIGIT_SIZE[0] / 2.0, DIGIT_SIZE[1] / 2.0]);
+            let button = pad.hit(center).unwrap();
+            action = pad.press(button);
+        }
+        assert_eq!(action, PinAction::Check { seed: 0x1234_5678, pin: "1357".into() });
+
+        let pad_new = PinPad::new(0x1234_5678, PinStep::NewFirst, false);
+        assert_eq!(pad_new.hit(change_center), None);
     }
 }
