@@ -124,6 +124,8 @@ impl Hotkeys {
                 if let Some(Some(icon)) = icons.get(&crate::skills::icon_path(info)) {
                     layer.sprites.push((icon, corner, icon.size));
                 }
+                // The level it's used at, bottom right, as an item's amount.
+                count_text(layer, font, corner, &count.to_string());
                 if contains(corner, SLOT, cursor) {
                     window::tooltip(tooltip, chrome, font, &format!("{} Lv {count}", info.name), [corner[0], corner[1] + SLOT[1] + 2.0], [255; 3]);
                 }
@@ -136,15 +138,19 @@ impl Hotkeys {
             }
             // How many are carried, bottom right.
             let amount: u32 = inventory.iter().filter(|item| item.id == *id && item.worn == 0).map(|item| u32::from(item.amount)).sum();
-            let text = amount.to_string();
-            let place = [corner[0] + SLOT[0] - 1.0 - font.width(&text), corner[1] + 12.0];
-            layer.texts.push((text.clone(), [place[0] + 1.0, place[1] + 1.0], [255; 3]));
-            layer.texts.push((text, place, [0, 0, 0]));
+            count_text(layer, font, corner, &amount.to_string());
             if contains(corner, SLOT, cursor) {
                 window::tooltip(tooltip, chrome, font, info.name(true), [corner[0], corner[1] + SLOT[1] + 2.0], [255; 3]);
             }
         }
     }
+}
+
+/// A number at a slot's bottom right: black on a white shadow.
+fn count_text(layer: &mut Layer<'_>, font: &Font, corner: [f32; 2], text: &str) {
+    let place = [corner[0] + SLOT[0] - 1.0 - font.width(text), corner[1] + 12.0];
+    layer.texts.push((text.to_owned(), [place[0] + 1.0, place[1] + 1.0], [255; 3]));
+    layer.texts.push((text.to_owned(), place, [0, 0, 0]));
 }
 
 /// A slot's top-left corner inside the bar.

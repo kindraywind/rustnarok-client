@@ -39,6 +39,8 @@ pub struct Assets {
     bar: [Texture; 3],
     /// Whitens skills not learned.
     veil: Texture,
+    /// The arrows that pick the level to use: up, down.
+    arrows: [Texture; 2],
 }
 
 impl Assets {
@@ -49,6 +51,7 @@ impl Assets {
             up: ["skill_up_a", "skill_up_b", "skill_up_c"].map(image),
             bar: ["skill_botbar_left", "skill_botbar_mid", "skill_botbar_right"].map(image),
             veil: gpu.solid([255, 255, 255, 150]),
+            arrows: ["arw_up", "arw_down"].map(image),
         }
     }
 }
@@ -59,6 +62,12 @@ pub enum Hit {
     Tab(usize),
     Skill(u16),
     LevelUp(u16),
+    /// An arrow at a skill's box: one level more (`up`) or less to use, up to `learned`.
+    Step {
+        id: u16,
+        up: bool,
+        learned: u16,
+    },
     Window,
 }
 
@@ -74,12 +83,24 @@ pub struct SkillWindow {
     pub frame: Frame,
     tab: usize,
     clicks: Clicks,
+    /// The level picked to use, by skill; the learned level when none is.
+    chosen: HashMap<u16, u16>,
 }
 
 impl Default for SkillWindow {
     fn default() -> Self {
-        Self { frame: Frame::new(DEFAULT_POSITION, WIDTH), tab: usize::MAX, clicks: Clicks::default() }
+        Self { frame: Frame::new(DEFAULT_POSITION, WIDTH), tab: usize::MAX, clicks: Clicks::default(), chosen: HashMap::new() }
     }
+}
+
+// ponytail: the level arrows at the box's left, up over down; place them against the real client.
+/// Where a skill's level arrows sit, from its box's corner: up, then down.
+const ARROWS: [[f32; 2]; 2] = [[-12.0, 4.0], [-12.0, 16.0]];
+const ARROW: [f32; 2] = [11.0, 11.0];
+
+/// Whether a skill gets level arrows: learned past level 1, and used rather than passive.
+fn steppable(skill: &Skill) -> bool {
+    skill.level > 1 && skill.kind != 0
 }
 
 /// Where a skill's box sits in the window.
@@ -95,6 +116,11 @@ pub fn icon_path(info: &SkillInfo) -> String {
 impl SkillWindow {
     pub fn height(&self) -> f32 {
         HEIGHT
+    }
+
+    /// The level to use a skill at: the one picked, kept within what's learned, else the learned level.
+    pub fn use_level(&self, id: u16, learned: u16) -> u16 {
+        self.chosen.get(&id).map_or(learned, |&level| level.clamp(1, learned.max(1)))
     }
 
     /// The tab shown: the player's own job's unless another was picked.
@@ -125,6 +151,11 @@ impl SkillWindow {
             if upgradable && contains(offset(corner, [BOX + 1.0, 2.0]), [24.0, 24.0], local) {
                 return Some(Hit::LevelUp(id));
             }
+            if let Some(skill) = skills.iter().find(|skill| skill.id == id).filter(|skill| steppable(skill))
+                && let Some(arrow) = ARROWS.iter().position(|&at| contains(offset(corner, at), ARROW, local))
+            {
+                return Some(Hit::Step { id, up: arrow == 0, learned: skill.level });
+            }
             if contains(corner, [BOX, BOX], local) {
                 return Some(Hit::Skill(id));
             }
@@ -138,6 +169,11 @@ impl SkillWindow {
             Hit::Tab(tab) => self.tab = tab,
             Hit::Skill(id) => return self.clicks.double(id).then_some(Action::Use(id)),
             Hit::LevelUp(id) => return Some(Action::LevelUp(id)),
+            Hit::Step { id, up, learned } => {
+                let level = self.use_level(id, learned);
+                let level = if up { level + 1 } else { level.saturating_sub(1) };
+                self.chosen.insert(id, level.clamp(1, learned));
+            }
             Hit::Window => {}
         }
         None
@@ -205,13 +241,18 @@ impl SkillWindow {
                 }
             }
             if level > 0 {
-                // The level in the box's corner, white on a dark outline.
-                let text = level.to_string();
+                // The level it's used at in the box's corner, white on a dark outline.
+                let text = self.use_level(id, level).to_string();
                 let place = at(offset(corner, [BOX - font.width(&text) - 1.0, BOX - font.line_height() + 2.0]));
                 for nudge in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
                     layer.texts.push((text.clone(), offset(place, nudge), [0x2F, 0x2F, 0x2F]));
                 }
                 layer.texts.push((text, place, [255; 3]));
+            }
+            if known.is_some_and(steppable) {
+                for (arrow, at) in assets.arrows.iter().zip(ARROWS) {
+                    layer.sprites.push((arrow, self.frame.at(offset(corner, at)), arrow.size));
+                }
             }
             let name = skill_info.map_or_else(|| id.to_string(), |info| info.name.clone());
             let shown = window::fit(font, &name, CELL[0] - 2.0);
@@ -249,5 +290,32 @@ mod tests {
     fn places_skills_seven_a_row() {
         assert_eq!(box_corner(0), [SIDE + 17.0, GRID_TOP + 6.0]);
         assert_eq!(box_corner(8), [SIDE + 62.0 + 17.0, GRID_TOP + 58.0 + 6.0]);
+    }
+
+    #[test]
+    fn picks_the_level_to_use_within_what_is_learned() {
+        let mut window = SkillWindow::default();
+        assert_eq!(window.use_level(28, 10), 10);
+        for _ in 0..3 {
+            window.click(Hit::Step { id: 28, up: false, learned: 10 });
+        }
+        assert_eq!(window.use_level(28, 10), 7);
+        // Not past the learned level, nor under 1.
+        for _ in 0..5 {
+            window.click(Hit::Step { id: 28, up: true, learned: 10 });
+        }
+        assert_eq!(window.use_level(28, 10), 10);
+        for _ in 0..12 {
+            window.click(Hit::Step { id: 28, up: false, learned: 10 });
+        }
+        assert_eq!(window.use_level(28, 10), 1);
+        // A pick above a level later lost comes down to it; other skills keep their learned level.
+        window.click(Hit::Step { id: 34, up: false, learned: 5 });
+        assert_eq!(window.use_level(34, 2), 2);
+        assert_eq!(window.use_level(29, 3), 3);
+        let passive = Skill { id: 1, kind: 0, level: 9, sp: 0, range: 0, upgradable: false };
+        let heal = Skill { id: 28, kind: Skill::FRIEND, level: 10, sp: 13, range: 9, upgradable: false };
+        assert!(!steppable(&passive) && steppable(&heal));
+        assert!(!steppable(&Skill { level: 1, ..heal }));
     }
 }

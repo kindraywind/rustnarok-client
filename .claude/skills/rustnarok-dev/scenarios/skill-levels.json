@@ -1,0 +1,20 @@
+{
+  "about": "Skills: the skill window's level arrows (Heal from 10 down to 3), dragging it onto the hotkey bar, the level shown there (issue #7). The first account is made an Acolyte with every skill.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@job 4"}, {"wait": 800},
+    {"say": "@allskill"}, {"wait": 800},
+    {"key": "Alt+S"}, {"wait": 500},
+    {"move": [700, 600]},
+    {"shot": "skill-window", "crop": [200, 120, 460, 425]},
+    {"click": [346, 192]}, {"wait": 150}, {"click": [346, 192]}, {"wait": 150}, {"click": [346, 192]}, {"wait": 150},
+    {"click": [346, 192]}, {"wait": 150}, {"click": [346, 192]}, {"wait": 150}, {"click": [346, 192]}, {"wait": 150},
+    {"click": [346, 192]}, {"wait": 300},
+    {"move": [700, 600]},
+    {"shot": "skill-heal-picked", "crop": [200, 120, 460, 425]},
+    {"drag": [[367, 185], [555, 17]]}, {"wait": 400},
+    {"move": [700, 600]},
+    {"shot": "hotkey-bar-skill", "crop": [470, 0, 300, 40]}
+  ]
+}
