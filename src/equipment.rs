@@ -197,7 +197,9 @@ impl Equipment {
         // Tabs, the slot panel and the character standing on its shadow.
         layer.sprites.push((&assets.tabs, at([0.0, TITLE_HEIGHT]), assets.tabs.size));
         for (tab, &label) in TAB_LABELS.iter().enumerate() {
-            layer.texts.push((message(label).to_owned(), at(TAB_TEXT[tab]), if tab == self.tab { [0, 0, 0] } else { GREY }));
+            // Kept inside its tab, however long the translation's title is.
+            let title = window::fit(font, message(label), TAB_WIDTH[tab] - 6.0);
+            layer.texts.push((title, at(TAB_TEXT[tab]), if tab == self.tab { [0, 0, 0] } else { GREY }));
         }
         let panel = &assets.panels[self.tab];
         layer.sprites.push((panel, at([0.0, PANEL_TOP]), panel.size));
