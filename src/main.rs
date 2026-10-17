@@ -48,12 +48,14 @@ mod control;
 mod cursor;
 mod effects;
 mod emotion;
+mod emotion_list;
 mod equipment;
 mod escape;
 mod guild;
 mod hotkeys;
 mod inventory;
 mod iteminfo;
+mod macros;
 mod mail;
 mod menu;
 mod minimap;
@@ -524,6 +526,11 @@ struct Game {
     /// The room we're in, and the window making one.
     room: Option<chatroom::Room>,
     room_make: Option<chatroom::Make>,
+    /// The emotion list (Alt+L), when open.
+    emotion_list: Option<emotion_list::List>,
+    /// The macro window (Alt+M), when open, and the ten lines Alt+1 to Alt+0 send.
+    macro_window: Option<macros::Window>,
+    macro_lines: [String; macros::COUNT],
     /// Dev switch RUSTNAROK_CLIENT_ROOM ran.
     room_tried: bool,
     /// The right-click menu, and where a right press began (and on whom).
@@ -1124,7 +1131,24 @@ impl Game {
                 self.chat_line(message(if *effects_on { EFFECTS_ON } else { EFFECTS_OFF }), CHAT_ITEM);
                 Ok(())
             }
+            chat::Command::EmotionList => {
+                self.toggle_emotion_list();
+                Ok(())
+            }
         };
+    }
+
+    fn toggle_emotion_list(&mut self) {
+        self.emotion_list = if self.emotion_list.is_some() { None } else { Some(emotion_list::List::default()) };
+    }
+
+    /// Opens the macro window, or closes it keeping what was typed.
+    fn toggle_macro_window(&mut self) {
+        if self.macro_window.take().is_none() {
+            self.macro_window = Some(macros::Window::default());
+        } else {
+            macros::save(macros::path().as_deref(), &self.macro_lines);
+        }
     }
 
     /// Whether the pointer is over the interface (a window, the chat, a dialog) rather than the world.
@@ -1145,6 +1169,8 @@ impl Game {
             || self.mail.hit(cursor).is_some()
             || self.quest_window.hit(cursor, &self.quests).is_some()
             || self.chat.contains(cursor)
+            || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
+            || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
     }
 
     /// Moves an item between the inventory and storage, asking how many when there's more than one.
@@ -2238,6 +2264,9 @@ impl App {
                 }
                 None if game.storage.typing => game.storage.type_text(text),
                 None if game.room_make.is_some() => game.room_make.as_mut().unwrap().type_text(text),
+                None if game.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) => {
+                    game.macro_window.as_ref().unwrap().type_text(&mut game.macro_lines, text)
+                }
                 None if game.vend_setup.as_ref().is_some_and(|setup| setup.typing) => game.vend_setup.as_mut().unwrap().type_text(text),
                 None if game.mail.typing() => game.mail.type_text(text),
                 None if game.room.is_some() => game.room.as_mut().unwrap().input.push_str(text),
@@ -2546,6 +2575,24 @@ impl App {
                 None => {}
             },
             // The room maker's fields and buttons.
+            // The emotion list: a click shows that emotion.
+            Scene::Game(game) if game.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some()) => {
+                match game.emotion_list.as_ref().unwrap().hit(cursor) {
+                    Some(emotion_list::Hit::Title(TitleHit::Close)) => game.emotion_list = None,
+                    Some(emotion_list::Hit::Emotion(kind)) => {
+                        let _ = game.session.emote(kind);
+                    }
+                    _ => {}
+                }
+            }
+            // The macro window: a line's field takes the typing.
+            Scene::Game(game) if game.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                match game.macro_window.as_ref().unwrap().hit(cursor) {
+                    Some(macros::Hit::Title(TitleHit::Close)) => game.toggle_macro_window(),
+                    Some(macros::Hit::Line(line)) => game.macro_window.as_mut().unwrap().editing = Some(line),
+                    _ => game.macro_window.as_mut().unwrap().editing = None,
+                }
+            }
             Scene::Game(game) if game.room_make.as_ref().is_some_and(|make| make.hit(cursor).is_some()) => {
                 let make = game.room_make.as_mut().unwrap();
                 let hit = make.hit(cursor).unwrap();
@@ -3353,6 +3400,38 @@ impl App {
         }
     }
 
+    /// Sends what's on the chat's input line, as Enter does: the client's sound commands (/music, /sound, /bv, /v),
+    /// else `Game::send_chat` (party with `party`, guild with `guild`).
+    fn send_chat_input(&mut self, party: bool, guild: bool) {
+        let Scene::Game(game) = &mut self.scene else { return };
+        if let Some(shown) = self.sound.command(game.chat.input.trim()) {
+            game.chat.input.clear();
+            if let Some(audio) = &mut self.audio {
+                audio.set(&self.sound);
+            }
+            self.sound.save();
+            if let Some(id) = shown {
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
+            }
+        } else if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.effects_on) {
+            game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+        }
+    }
+
+    /// Alt+1 to Alt+0: sends macro line `line` as if typed and sent with Enter, keeping what the player was typing.
+    fn send_macro(&mut self, line: usize) {
+        let Scene::Game(game) = &mut self.scene else { return };
+        let text = game.macro_lines[line].clone();
+        if text.trim().is_empty() {
+            return;
+        }
+        let typing = std::mem::replace(&mut game.chat.input, text);
+        self.send_chat_input(false, false);
+        if let Scene::Game(game) = &mut self.scene {
+            game.chat.input = typing;
+        }
+    }
+
     fn key(&mut self, event: &control::KeyPress) {
         if event.state != ElementState::Pressed {
             return;
@@ -3392,7 +3471,16 @@ impl App {
                 }
                 return;
             }
-            // Alt+1 to Alt+0: the first ten emotions.
+            // Alt+L: the emotion list; Alt+M: the macro window.
+            if event.physical_key == PhysicalKey::Code(KeyCode::KeyL) {
+                game.toggle_emotion_list();
+                return;
+            }
+            if event.physical_key == PhysicalKey::Code(KeyCode::KeyM) {
+                game.toggle_macro_window();
+                return;
+            }
+            // Alt+1 to Alt+0: the ten macro lines.
             let digits = [
                 KeyCode::Digit1,
                 KeyCode::Digit2,
@@ -3406,9 +3494,9 @@ impl App {
                 KeyCode::Digit0,
             ];
             if let PhysicalKey::Code(code) = event.physical_key
-                && let Some(kind) = digits.iter().position(|digit| *digit == code)
+                && let Some(line) = digits.iter().position(|digit| *digit == code)
             {
-                let _ = game.session.emote(kind as u8);
+                self.send_macro(line);
                 return;
             }
             // Alt+U: the quest window.
@@ -3552,6 +3640,18 @@ impl App {
                 Key::Named(NamedKey::Tab) => game.mail.enter(true),
                 _ => game.mail.type_text(event.text.as_deref().unwrap_or_default()),
             },
+            // A macro line being edited takes the typing; Enter or Esc ends it.
+            Scene::Game(game) if game.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) => {
+                let window = game.macro_window.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Escape | NamedKey::Enter) => {
+                        window.editing = None;
+                        macros::save(macros::path().as_deref(), &game.macro_lines);
+                    }
+                    Key::Named(NamedKey::Backspace) => window.backspace(&mut game.macro_lines),
+                    _ => window.type_text(&mut game.macro_lines, event.text.as_deref().unwrap_or_default()),
+                }
+            }
             Scene::Game(game) if game.room_make.is_some() => {
                 let make = game.room_make.as_mut().unwrap();
                 match key {
@@ -3620,21 +3720,7 @@ impl App {
                 Key::Named(NamedKey::Tab) => game.chat.naming = !game.chat.naming,
                 Key::Named(NamedKey::Insert) => game.toggle_sit(),
                 Key::Named(NamedKey::Enter) if game.chat.naming => game.chat.naming = false,
-                Key::Named(NamedKey::Enter) => {
-                    // The sound commands (/music, /sound, /bv, /v) are the client's own.
-                    if let Some(shown) = self.sound.command(game.chat.input.trim()) {
-                        game.chat.input.clear();
-                        if let Some(audio) = &mut self.audio {
-                            audio.set(&self.sound);
-                        }
-                        self.sound.save();
-                        if let Some(id) = shown {
-                            game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
-                        }
-                    } else if let Some(id) = game.send_chat(self.modifiers.control_key(), self.modifiers.alt_key(), &self.messages, &mut self.effects_on) {
-                        game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
-                    }
-                }
+                Key::Named(NamedKey::Enter) => self.send_chat_input(self.modifiers.control_key(), self.modifiers.alt_key()),
                 Key::Named(NamedKey::Escape) if game.world_map.is_some() => game.world_map = None,
                 Key::Named(NamedKey::Escape) if game.pick.is_some() => game.answer_pick(None),
                 Key::Named(NamedKey::Escape) if game.targeting.is_some() => game.targeting = None,
@@ -3941,6 +4027,9 @@ impl App {
                     sign_rects: Vec::new(),
                     room: None,
                     room_make: None,
+                    emotion_list: None,
+                    macro_window: None,
+                    macro_lines: macros::load(macros::path().as_deref()),
                     room_tried: false,
                     windows: vec![
                         Panel::Hotkeys,
@@ -5906,6 +5995,11 @@ impl App {
             placements.iter().map(move |(key, position, size)| (sprites.texture(*key), *feet, *position, *size, [1.0; 4]))
         }));
         billboards.extend(in_front);
+        // The emotion list's pictures, posed while the sprite can still decode them.
+        let emotion_icons = match (&game.emotion_list, &mut game.emotion_sprite) {
+            (Some(list), Some(sprite)) => list.icons(gpu, sprite),
+            _ => Vec::new(),
+        };
         // Emotions play once over heads.
         let mut shown = Vec::new();
         if let Some(sprite) = &mut game.emotion_sprite {
@@ -6467,6 +6561,12 @@ impl App {
             shop.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
         }
         game.quest_window.draw(&mut shop_layer, &assets.chrome, &assets.quest, font, messages, &game.quests, quest_texts, pointer.0);
+        if let Some(list) = &game.emotion_list {
+            list.draw(&mut shop_layer, &assets.chrome, font, messages, game.emotion_sprite.as_ref(), &emotion_icons, pointer.0);
+        }
+        if let Some(window) = &game.macro_window {
+            window.draw(&mut shop_layer, &assets.chrome, font, messages, &game.macro_lines, pointer.0, caret);
+        }
         game.mail.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.mail, icons, items, font, messages, pc_job_names, pointer, caret);
         if let Some(make) = &game.room_make {
             make.draw(&mut shop_layer, &assets.chrome, &assets.chatroom, messages, pointer, caret);

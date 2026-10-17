@@ -740,6 +740,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("ItemInfo", game.item_window.is_some()),
         ("ChatRoom", game.room.is_some()),
         ("RoomMake", game.room_make.is_some()),
+        ("EmotionList", game.emotion_list.is_some()),
+        ("Macros", game.macro_window.is_some()),
         ("PartyInvite", game.party_invite.is_some()),
         ("FriendAsked", game.friend_asked.is_some()),
         ("GuildInvite", game.guild_invite.is_some()),
