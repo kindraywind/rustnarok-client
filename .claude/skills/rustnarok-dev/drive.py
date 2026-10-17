@@ -27,6 +27,16 @@ LOG = os.path.join(REPO, "docs", "personal", "client.log")
 ACCOUNTS = os.environ.get("RUSTNAROK_CLIENT_ACCOUNTS", os.path.expanduser("~/.config/rustnarok/accounts.txt"))
 
 
+CLIENTS = {"first": ("qa.sock", "client.log"), "second": ("qa2.sock", "client2.log")}
+
+
+def use(client="first"):
+    """Points every call that follows at one client: "first" (qa.sock) or "second" (qa2.sock), for two-player tests."""
+    global SOCK, LOG
+    sock, log = CLIENTS[client]
+    SOCK, LOG = os.path.join(REPO, sock), os.path.join(REPO, "docs", "personal", log)
+
+
 def account(n):
     fields = {}
     with open(ACCOUNTS) as f:

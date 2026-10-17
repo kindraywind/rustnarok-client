@@ -78,6 +78,8 @@ warp: commands sent while a map loads are lost), keys, clicks, drags, and named 
 **Click by name, not by pixels**: `click_on` / `drag_on` take `{"inventory_item": <id>}`, `{"hotkey": <slot>}`,
 `{"skill": <id>}` from the control socket's `targets`, so a scenario survives windows moving and inventories
 reordering; keep raw coordinates for the world and for things not yet in `targets`.
+**Two players**: `"second": {"account": "2", ...}` starts a second client (on `qa2.sock`); `"as": "second"` sends a
+step or a shot to it. Whispers, trades, parties and chat rooms can be scripted and seen from both sides.
 **Make each scenario prove itself**: `expect` steps check the game state (chat lines, HP, map, open windows, units)
 and `wait_for` waits on a packet or event (`ItemUsed`, `PickedUp`) instead of a sleep. A failed one fails the
 scenario and `visual.py` exits non-zero — otherwise a scenario that silently did nothing still makes screenshots.
