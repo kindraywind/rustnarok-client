@@ -566,6 +566,19 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_NPC_MARKET_OPEN: u16 = 0x0B7A;
+const CZ_NPC_MARKET_PURCHASE: u16 = 0x09D6;
+const ZC_NPC_MARKET_PURCHASE_RESULT: u16 = 0x0B4E;
+/// The market window closed (rathena gives it no name).
+const CZ_NPC_MARKET_CLOSE: u16 = 0x09D8;
+const ZC_NPC_BARTER_MARKET_ITEMINFO: u16 = 0x0B78;
+const CZ_NPC_BARTER_MARKET_PURCHASE: u16 = 0x0B0F;
+const CZ_NPC_BARTER_MARKET_CLOSE: u16 = 0x0B12;
+const ZC_NPC_EXPANDED_BARTER_MARKET_ITEMINFO: u16 = 0x0B79;
+const CZ_NPC_EXPANDED_BARTER_MARKET_PURCHASE: u16 = 0x0B57;
+const CZ_NPC_EXPANDED_BARTER_MARKET_CLOSE: u16 = 0x0B58;
+/// A market's or barter's stock that doesn't run out.
+const UNLIMITED: u32 = u32::MAX;
 const CZ_REQ_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE: u16 = 0x0B14;
 const ZC_ACK_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE: u16 = 0x0B15;
 const CZ_REQ_EXTEND_BODYITEM_SIZE: u16 = 0x0B16;
@@ -1109,6 +1122,16 @@ pub enum MapEvent {
     },
     /// The inventory grew (0), or why not (as above).
     ExpansionDone(u8),
+    /// A market or barter opens with what it offers.
+    Market {
+        kind: MarketKind,
+        goods: Vec<Bartered>,
+    },
+    /// A market purchase: done, with what was bought (item, amount), or failed.
+    MarketBought {
+        ok: bool,
+        items: Vec<(u32, u16)>,
+    },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
         id: usize,
@@ -1522,6 +1545,27 @@ pub enum MapEvent {
         value: i32,
     },
     Disconnected(io::Error),
+}
+
+/// NPC shops beyond the plain one: a market (its stock runs out), a barter (items for items), an expanded barter
+/// (several items and zeny).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MarketKind {
+    Market,
+    Barter,
+    Expanded,
+}
+
+/// What a market or barter offers: the item, what it costs (zeny; items and how many), how many are left (None: no
+/// end), and the shop's own index for it (barters).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bartered {
+    pub item: u32,
+    pub kind: u8,
+    pub zeny: u32,
+    pub costs: Vec<(u32, u32)>,
+    pub stock: Option<u32>,
+    pub index: u32,
 }
 
 /// An item an NPC shop sells.
@@ -2064,6 +2108,28 @@ impl MapSession {
         self.stream.write_all(&if yes { CZ_REQ_EXTEND_BODYITEM_SIZE } else { CZ_CLOSE_MSGBOX_EXTEND_BODYITEM_SIZE }.to_le_bytes())
     }
 
+    pub fn market_buy(&mut self, items: &[(u32, u32)]) -> io::Result<()> {
+        self.stream.write_all(&encode_market_buy(items))
+    }
+
+    pub fn barter_buy(&mut self, items: &[(u32, u32, u16, u32)]) -> io::Result<()> {
+        self.stream.write_all(&encode_barter_buy(items))
+    }
+
+    pub fn expanded_barter_buy(&mut self, items: &[(u32, u32, u32)]) -> io::Result<()> {
+        self.stream.write_all(&encode_expanded_barter_buy(items))
+    }
+
+    /// A market's or barter's window closed: until the server hears it, it keeps the player busy.
+    pub fn close_market(&mut self, kind: MarketKind) -> io::Result<()> {
+        let header = match kind {
+            MarketKind::Market => CZ_NPC_MARKET_CLOSE,
+            MarketKind::Barter => CZ_NPC_BARTER_MARKET_CLOSE,
+            MarketKind::Expanded => CZ_NPC_EXPANDED_BARTER_MARKET_CLOSE,
+        };
+        self.stream.write_all(&header.to_le_bytes())
+    }
+
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
     pub fn card_list(&mut self, card: u16) -> io::Result<()> {
         self.stream.write_all(&encode_card_list(card))
@@ -2566,6 +2632,82 @@ fn encode_config(setting: u32, on: bool) -> [u8; 10] {
     packet
 }
 
+/// A market's entry: item, type, price, stock, weight, where it's worn.
+fn decode_market_goods(entry: &[u8]) -> Bartered {
+    let stock = u32_at(entry, 9);
+    Bartered { item: u32_at(entry, 0), kind: entry[4], zeny: u32_at(entry, 5), costs: Vec::new(), stock: (stock != UNLIMITED).then_some(stock), index: 0 }
+}
+
+/// A barter's entry: item, type, stock, the item it costs and how many, weight, the shop's index, look, where worn.
+fn decode_barter_goods(entry: &[u8]) -> Bartered {
+    let stock = u32_at(entry, 5);
+    Bartered {
+        item: u32_at(entry, 0),
+        kind: entry[4],
+        zeny: 0,
+        costs: vec![(u32_at(entry, 9), u32_at(entry, 13))],
+        stock: (stock != UNLIMITED).then_some(stock),
+        index: u32_at(entry, 21),
+    }
+}
+
+/// An expanded barter's entries: each 32 bytes (item, type, stock, weight, the shop's index, zeny, look, where
+/// worn, how many costs), then its costs, 12 bytes each (item, refine, amount, type).
+fn decode_expanded_barter(mut rest: &[u8]) -> Vec<Bartered> {
+    let mut goods = Vec::new();
+    while rest.len() >= 32 {
+        let count = u32_at(rest, 28) as usize;
+        let Some(costs) = rest.get(32..32 + count * 12) else { break };
+        let stock = u32_at(rest, 6);
+        goods.push(Bartered {
+            item: u32_at(rest, 0),
+            kind: rest[4],
+            zeny: u32_at(rest, 18),
+            costs: costs.chunks_exact(12).map(|cost| (u32_at(cost, 0), u32_at(cost, 6))).collect(),
+            stock: (stock != UNLIMITED).then_some(stock),
+            index: u32_at(rest, 14),
+        });
+        rest = &rest[32 + count * 12..];
+    }
+    goods
+}
+
+/// CZ_NPC_MARKET_PURCHASE: (item, amount) pairs.
+fn encode_market_buy(items: &[(u32, u32)]) -> Vec<u8> {
+    let mut packet = CZ_NPC_MARKET_PURCHASE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((4 + items.len() * 8) as u16).to_le_bytes());
+    for &(item, amount) in items {
+        packet.extend_from_slice(&item.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+    }
+    packet
+}
+
+/// CZ_NPC_BARTER_MARKET_PURCHASE: (item, amount, inventory index of what it costs, the shop's index).
+fn encode_barter_buy(items: &[(u32, u32, u16, u32)]) -> Vec<u8> {
+    let mut packet = CZ_NPC_BARTER_MARKET_PURCHASE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((4 + items.len() * 14) as u16).to_le_bytes());
+    for &(item, amount, cost_index, shop_index) in items {
+        packet.extend_from_slice(&item.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+        packet.extend_from_slice(&cost_index.to_le_bytes());
+        packet.extend_from_slice(&shop_index.to_le_bytes());
+    }
+    packet
+}
+
+/// CZ_NPC_EXPANDED_BARTER_MARKET_PURCHASE: (item, the shop's index, amount).
+fn encode_expanded_barter_buy(items: &[(u32, u32, u32)]) -> Vec<u8> {
+    let mut packet = CZ_NPC_EXPANDED_BARTER_MARKET_PURCHASE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((4 + items.len() * 12) as u16).to_le_bytes());
+    for &(item, shop_index, amount) in items {
+        packet.extend_from_slice(&item.to_le_bytes());
+        packet.extend_from_slice(&shop_index.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+    }
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -2935,6 +3077,13 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_CONFIG_NOTIFY => MapEvent::ShowEquipment { shown: packet[2] != 0, answer: false },
         ZC_ACK_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE => MapEvent::ExpansionAsked { result: packet[2], voucher: u32_at(3) },
         ZC_ACK_EXTEND_BODYITEM_SIZE => MapEvent::ExpansionDone(packet[2]),
+        ZC_NPC_MARKET_OPEN => MapEvent::Market { kind: MarketKind::Market, goods: packet[4..].chunks_exact(19).map(decode_market_goods).collect() },
+        ZC_NPC_MARKET_PURCHASE_RESULT => MapEvent::MarketBought {
+            ok: u16_at(4) == 0,
+            items: packet[6..].chunks_exact(10).map(|entry| (self::u32_at(entry, 0), self::u16_at(entry, 4))).collect(),
+        },
+        ZC_NPC_BARTER_MARKET_ITEMINFO => MapEvent::Market { kind: MarketKind::Barter, goods: packet[4..].chunks_exact(31).map(decode_barter_goods).collect() },
+        ZC_NPC_EXPANDED_BARTER_MARKET_ITEMINFO => MapEvent::Market { kind: MarketKind::Expanded, goods: decode_expanded_barter(&packet[8..]) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3682,6 +3831,50 @@ mod tests {
         let ids = [CZ_REQ_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE, ZC_ACK_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE, CZ_REQ_EXTEND_BODYITEM_SIZE, ZC_ACK_EXTEND_BODYITEM_SIZE];
         assert_eq!(ids.map(packet_length), [Some(2), Some(7), Some(2), Some(3)]);
         assert_eq!(packet_length(CZ_CLOSE_MSGBOX_EXTEND_BODYITEM_SIZE), Some(2));
+    }
+
+    #[test]
+    fn decodes_markets_and_barters() {
+        let header = |id: u16, body: &[u8]| {
+            let mut packet = id.to_le_bytes().to_vec();
+            packet.extend_from_slice(&((4 + body.len()) as u16).to_le_bytes());
+            packet.extend_from_slice(body);
+            packet
+        };
+        let words = |values: &[(u32, usize)]| values.iter().flat_map(|&(value, size)| value.to_le_bytes()[..size].to_vec()).collect::<Vec<u8>>();
+        // A market: Phracon, 200 z, 999,999 left; Emveretarcon, 1,000 z, no end.
+        let mut market = words(&[(1010, 4), (3, 1), (200, 4), (999_999, 4), (20, 2), (0, 4)]);
+        market.extend(words(&[(1011, 4), (3, 1), (1000, 4), (UNLIMITED, 4), (20, 2), (0, 4)]));
+        let Some(MapEvent::Market { kind: MarketKind::Market, goods }) = decode_map_packet(&header(ZC_NPC_MARKET_OPEN, &market)) else { panic!() };
+        assert_eq!(goods.iter().map(|goods| (goods.item, goods.zeny, goods.stock)).collect::<Vec<_>>(), [(1010, 200, Some(999_999)), (1011, 1000, None)]);
+        let mut result = words(&[(0, 2)]);
+        result.extend(words(&[(1010, 4), (2, 2), (200, 4)]));
+        let Some(MapEvent::MarketBought { ok: true, items }) = decode_map_packet(&header(ZC_NPC_MARKET_PURCHASE_RESULT, &result)) else { panic!() };
+        assert_eq!(items, [(1010, 2)]);
+        // A barter: a Shadowdecon for 20 Shadowdecon Ore.
+        let barter = words(&[(25729, 4), (3, 1), (UNLIMITED, 4), (25728, 4), (20, 4), (10, 4), (1, 4), (0, 2), (0, 4)]);
+        let Some(MapEvent::Market { kind: MarketKind::Barter, goods }) = decode_map_packet(&header(ZC_NPC_BARTER_MARKET_ITEMINFO, &barter)) else { panic!() };
+        assert_eq!((goods[0].item, goods[0].costs.clone(), goods[0].index, goods[0].stock), (25729, vec![(25728, 20)], 1, None));
+        // An expanded barter: Oridecon for 5 Oridecon Stones; Bradium for 3 Oridecon and 50,000 z.
+        let mut expanded = words(&[(2, 4)]);
+        expanded.extend(words(&[(984, 4), (3, 2), (UNLIMITED, 4), (10, 4), (1, 4), (0, 4), (0, 2), (0, 4), (1, 4)]));
+        expanded.extend(words(&[(756, 4), (0, 2), (5, 4), (3, 2)]));
+        expanded.extend(words(&[(6224, 4), (3, 2), (UNLIMITED, 4), (10, 4), (2, 4), (50_000, 4), (0, 2), (0, 4), (1, 4)]));
+        expanded.extend(words(&[(984, 4), (0, 2), (3, 4), (3, 2)]));
+        let Some(MapEvent::Market { kind: MarketKind::Expanded, goods }) = decode_map_packet(&header(ZC_NPC_EXPANDED_BARTER_MARKET_ITEMINFO, &expanded)) else {
+            panic!()
+        };
+        let read: Vec<_> = goods.iter().map(|goods| (goods.item, goods.zeny, goods.costs.clone(), goods.index)).collect();
+        assert_eq!(read, [(984, 0, vec![(756, 5)], 1), (6224, 50_000, vec![(984, 3)], 2)]);
+
+        assert_eq!(encode_market_buy(&[(1010, 2)]), [0xD6, 0x09, 12, 0, 0xF2, 0x03, 0, 0, 2, 0, 0, 0]);
+        assert_eq!(encode_barter_buy(&[(25729, 1, 5, 1)]).len(), 18);
+        assert_eq!(encode_expanded_barter_buy(&[(984, 1, 1)])[4..], [0xD8, 0x03, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+        let opens =
+            [ZC_NPC_MARKET_OPEN, ZC_NPC_MARKET_PURCHASE_RESULT, ZC_NPC_BARTER_MARKET_ITEMINFO, ZC_NPC_EXPANDED_BARTER_MARKET_ITEMINFO].map(packet_length);
+        assert_eq!(opens, [Some(-1); 4]);
+        let closes = [CZ_NPC_MARKET_CLOSE, CZ_NPC_BARTER_MARKET_CLOSE, CZ_NPC_EXPANDED_BARTER_MARKET_CLOSE].map(packet_length);
+        assert_eq!(closes, [Some(2); 3]);
     }
 
     #[test]
