@@ -6000,6 +6000,16 @@ impl App {
                 game.attack_range = i32::from(range);
                 game.attack_from(target, cell.map(i32::from), target_cell.map(i32::from));
             }
+            MapEvent::OpenBuyingStore { .. }
+            | MapEvent::BuyingStoreOpenFailed { .. }
+            | MapEvent::MyBuyingStore { .. }
+            | MapEvent::BuyingStoreSign { .. }
+            | MapEvent::BuyingStoreSignGone { .. }
+            | MapEvent::BuyingStoreItems { .. }
+            | MapEvent::BuyingStoreBuyerFailed { .. }
+            | MapEvent::BuyingStoreSold { .. }
+            | MapEvent::BuyingStoreSellerFailed { .. }
+            | MapEvent::BuyingStoreUpdate { .. } => {}
             MapEvent::Entered { .. } => unreachable!("handled above"),
             MapEvent::Disconnected(_) => self.message(self.messages.get(DISCONNECTED_MESSAGE).cloned().unwrap_or_default(), Scene::Login),
         }
