@@ -728,6 +728,16 @@ impl Effects {
     }
 
     /// Drops the effects playing on a unit that went away.
+    /// Where a skill's ground unit stands, while an effect plays there for it.
+    pub fn ground_unit_at(&self, unit: u32) -> Option<Vector> {
+        let anchors = self.playing.iter().map(|playing| playing.anchor);
+        let anchors = anchors.chain(self.floating.iter().map(|floating| floating.anchor)).chain(self.rings.iter().map(|ring| ring.anchor));
+        anchors.chain(self.animations.iter().map(|animation| animation.anchor)).find_map(|anchor| match anchor {
+            Anchor::Lasting(id, at) if id == unit => Some(at),
+            _ => None,
+        })
+    }
+
     pub fn forget(&mut self, unit: u32) {
         self.playing.retain(|playing| !playing.anchor.on(unit));
         self.floating.retain(|floating| !floating.anchor.on(unit));

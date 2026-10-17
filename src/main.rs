@@ -4900,6 +4900,13 @@ impl App {
                 game.damages.push(Damage { target: None, amount, start: Instant::now(), kind: DamageKind::Heal { sp: kind == net::STATUS_SP }, flinch: None });
             }
             MapEvent::LookChange { id, kind, value, extra } => {
+                // A skill's ground unit becoming another (rathena's Warp Portal opens this way): the new one's effect.
+                if kind == net::LOOK_JOB
+                    && let Some(at) = game.effects.ground_unit_at(id)
+                    && let Some(gpu) = gpu
+                {
+                    game.effects.play_unit(gpu, grf, table, value, id, at, Instant::now());
+                }
                 // A job change comes as the player's new look.
                 if id == game.account_id && kind == net::LOOK_JOB {
                     game.me.job = value as u16;
