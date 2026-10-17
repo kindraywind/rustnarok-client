@@ -9,11 +9,12 @@
 
 A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} with steps such as
   {"say": "@warp prontera 156 180"}  {"settle": 1500}  {"wait": 1500}  {"key": "Alt+E"}  {"type": "hello"}
-  {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]]}  {"move": [x, y]}
+  {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]]}  {"move": [x, y]} (or a target)
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
     (targets by name from the control socket's `targets`: inventory_item (item id), pick_item (a pick list's row, item
     id), menu_item (part of a right-click menu choice's label), button (a window button's name, e.g. "feed"),
-    hotkey (slot), skill (id), char_slot (a card at character select, by slot), unit (name, from `units`), or
+    hotkey (slot), skill (id), char_slot (a card at character select, by slot), unit (name, from `units`),
+    ground_item (item id, from `ground_items`), or
     {"point": [x, y]}; "offset": [dx, dy] shifts from the centre; a target not on screen fails the step)
   {"wheel": [x, y, rows]}  (the mouse wheel over a point: rows > 0 scrolls down)
   {"click_unit": {"kind": "pet", "name": "Poring"}, "button": "right", "mods": "shift"}  (the middle of the nearest
@@ -129,11 +130,13 @@ def locate(target):
     (kind, value), = target.items()
     state = drive.send({"cmd": "state"})
     game = state.get("game", {})
-    if kind == "unit":
-        # A unit by name (its sprite's box on screen); "offset" from its centre, e.g. into the menu it opens.
-        for unit in game.get("units", []):
-            if unit.get("name") == value and unit.get("screen"):
-                x0, y0, x1, y1 = unit["screen"]
+    if kind in ("unit", "ground_item"):
+        # A unit by name or an item on the ground by item id (its sprite's box on screen); "offset" from its centre, e.g.
+        # into the menu it opens or onto its cell.
+        things = game.get("units", []) if kind == "unit" else game.get("ground_items", [])
+        for thing in things:
+            if thing.get("name" if kind == "unit" else "item") == value and thing.get("screen"):
+                x0, y0, x1, y1 = thing["screen"]
                 return [round((x0 + x1) / 2) + dx, round((y0 + y1) / 2) + dy]
         return None
     # In the game the game's targets; at character select the screen's (char_slot, menu_item).
@@ -258,8 +261,11 @@ def step_on_client(action, shots_dir, name):
     if "type" in action:
         return drive.send({"cmd": "type", "text": action["type"]})
     if "move" in action:
-        x, y = action["move"]
-        return drive.send({"cmd": "move", "x": x, "y": y})
+        # A point, or a target like click_on's.
+        point = locate(action["move"]) if isinstance(action["move"], dict) else action["move"]
+        if point is None:
+            return [f"move {action['move']}: not on screen"]
+        return drive.send({"cmd": "move", "x": point[0], "y": point[1]})
     if "click" in action:
         x, y = action["click"]
         command = {"cmd": "click", "x": x, "y": y}

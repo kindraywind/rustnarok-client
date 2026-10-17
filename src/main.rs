@@ -67,6 +67,7 @@ mod options;
 mod party;
 mod pet;
 mod pick_list;
+mod picking;
 mod quest;
 mod refine;
 mod render;
@@ -466,8 +467,8 @@ struct Game {
     digits: Option<Digits>,
     /// The NPC conversation on screen.
     dialog: Option<Dialog>,
-    /// Last frame's clickable units and items: what, screen rectangle (left, top, right, bottom) and distance.
-    hit_boxes: Vec<(Owner, [f32; 4], f32)>,
+    /// Last frame's clickable units and items.
+    hit_boxes: Vec<picking::Target<Owner>>,
     /// Items lying around, by ground ID.
     ground: HashMap<u32, FloorItem>,
     /// Ground item sprites by resource name.
@@ -998,6 +999,15 @@ impl Game {
         let Some(dialog) = &mut self.dialog else { return };
         let Some((text, value)) = dialog.input.take() else { return };
         let _ = if text { self.session.input_text(dialog.npc, &value) } else { self.session.input_number(dialog.npc, value.trim().parse().unwrap_or(0)) };
+    }
+
+    /// Whether players win over monsters under the pointer: Shift held, or aiming a skill for players, but not both.
+    // ponytail: "a skill for players" is one the server flags as for friends (Heal, Blessing); the official client asks
+    // its skill tables, which may list more.
+    fn players_first(&self, shift: bool) -> bool {
+        let support =
+            self.targeting.and_then(|(id, _)| self.skills.iter().find(|skill| skill.id == id)).is_some_and(|skill| skill.kind & net::Skill::FRIEND != 0);
+        shift != support
     }
 
     fn attack(&mut self, target: u32) {
@@ -2679,6 +2689,7 @@ impl App {
     fn click(&mut self, event_loop: &ActiveEventLoop) {
         let Some(assets) = &self.assets else { return };
         let cursor = self.cursor;
+        let shift = self.modifiers.shift_key();
         let hit = |position: [f32; 2], images: &ButtonImages| contains(position, images[0].size, cursor);
         // A click anywhere but the storage's search field takes the caret from it.
         if let Scene::Game(game) = &mut self.scene {
@@ -3306,7 +3317,7 @@ impl App {
             // Taming: a monster under the pointer is the one to try (rathena checks the distance); anything else keeps
             // aiming.
             Scene::Game(game) if game.capturing => {
-                if let Some(Owner::Unit(id)) = hovered_any(&game.hit_boxes, cursor)
+                if let Some(Owner::Unit(id)) = hovered_unit(&game.hit_boxes, cursor, false)
                     && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER)
                 {
                     game.capturing = false;
@@ -3317,7 +3328,7 @@ impl App {
                 // An aimed skill goes to the unit under the pointer, or the cell for ground skills.
                 let (id, _) = game.targeting.unwrap();
                 let ground = game.skills.iter().find(|skill| skill.id == id).is_some_and(|skill| skill.kind & net::Skill::GROUND != 0);
-                let unit = match hovered_any(&game.hit_boxes, cursor) {
+                let unit = match hovered_unit(&game.hit_boxes, cursor, game.players_first(shift)) {
                     Some(Owner::Unit(unit)) => Some((unit, game.units.get(&unit).map(|actor| actor.cell))),
                     Some(Owner::Player) => Some((game.account_id, Some(game.player.cell))),
                     _ => None,
@@ -3336,8 +3347,8 @@ impl App {
                 }
             }
             Scene::Game(game) => {
-                // Whatever is under the cursor (nearest first): talk to NPCs, attack monsters, pick items up.
-                match hovered(&game.hit_boxes, cursor) {
+                // Whatever is under the cursor (see `picking::pick`): talk to NPCs, attack monsters, pick items up.
+                match hovered(&game.hit_boxes, cursor, shift) {
                     Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
                         Some(NPC) => {
                             let _ = game.session.talk(id);
@@ -3451,7 +3462,7 @@ impl App {
             && !game.chat.contains(self.cursor)
         {
             game.right_press = None;
-            let monster = match hovered(&game.hit_boxes, self.cursor) {
+            let monster = match hovered(&game.hit_boxes, self.cursor, false) {
                 Some(Owner::Unit(target)) if game.units.get(&target).is_some_and(|actor| actor.kind == MONSTER) => Some(target),
                 _ => None,
             };
@@ -3493,12 +3504,15 @@ impl App {
                 },
                 _ => None,
             };
-            // A right click (not a drag) on another player (or our pet) opens the menu of what can be done with them.
-            let on_unit = match hovered(&game.hit_boxes, self.cursor) {
+            // A right click (not a drag) on another player (or our pet) opens the menu of what can be done with them;
+            // the monsters and items around don't get in the way.
+            let with_menu = game.hit_boxes.iter().copied().filter(|target| match target.owner {
+                Owner::Unit(id) => game.units.get(&id).is_some_and(|actor| actor.kind == PLAYER) || game.pet_id == Some(id),
+                _ => false,
+            });
+            let on_unit = match picking::pick(with_menu, self.cursor, true) {
                 _ if game.window_at(self.cursor).is_some() || game.chat.contains(self.cursor) => None,
-                Some(Owner::Unit(id)) if game.units.get(&id).is_some_and(|actor| actor.kind == PLAYER) => Some(id),
-                // And on our pet, its commands.
-                Some(Owner::Unit(id)) if game.pet_id == Some(id) => Some(id),
+                Some(Owner::Unit(id)) => Some(id),
                 _ => None,
             };
             if state == ElementState::Pressed {
@@ -6602,6 +6616,7 @@ impl App {
         let font = &self.font;
         let now = control::now();
         let pointer = (self.cursor, self.mouse_down);
+        let players_first = game.players_first(self.modifiers.shift_key());
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
 
         // The mercenary follows the player unless told otherwise; an attack order lasts while its target is there.
@@ -6741,9 +6756,12 @@ impl App {
             frames.push((Owner::Item(id), feet, sprites.frame(gpu, 0, 0, 0, Timing::Loop(0.0))));
         }
 
-        // Clickable areas: each unit's and item's sprite bounds on screen, in logical pixels.
+        // Clickable areas: each unit's and item's sprite bounds and the cell under it on screen, in logical pixels.
+        // The dead and the hidden can't be clicked.
+        let to_screen = |[x, y]: [f32; 2]| [x * SCREEN[0], y * SCREEN[1]];
         game.hit_boxes = frames
             .iter()
+            .filter(|(owner, ..)| !matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.remove_at.is_some() || actor.hidden)))
             .filter_map(|(owner, feet, placements)| {
                 let (mut low, mut high) = ([f32::MAX; 2], [f32::MIN; 2]);
                 for (_, position, size) in placements {
@@ -6754,8 +6772,27 @@ impl App {
                     }
                 }
                 let [left, top, right, bottom] = view.sprite_rect(*feet, low, high)?;
-                let distance = (0..3).map(|axis| (feet[axis] - view.eye[axis]).powi(2)).sum::<f32>();
-                Some((*owner, [left * SCREEN[0], top * SCREEN[1], right * SCREEN[0], bottom * SCREEN[1]], distance))
+                let sprite = [left * SCREEN[0], top * SCREEN[1], right * SCREEN[0], bottom * SCREEN[1]];
+                let half = world::CELL / 2.0;
+                let corners: Option<Vec<_>> = [[-half, -half], [half, -half], [half, half], [-half, half]]
+                    .iter()
+                    .map(|[dx, dz]| view.project([feet[0] + dx, feet[1], feet[2] + dz]).map(to_screen))
+                    .collect();
+                let cell = corners.map_or(sprite, |corners| picking::bounds(&corners));
+                let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]).powi(2)).sum::<f32>();
+                let kind = match owner {
+                    Owner::Player => picking::Kind::Player,
+                    Owner::Item(_) => picking::Kind::Item,
+                    Owner::Unit(id) => match game.units.get(id).map(|actor| actor.kind) {
+                        Some(MONSTER) => picking::Kind::Monster,
+                        Some(NPC) => picking::Kind::Npc,
+                        Some(HOMUNCULUS) => picking::Kind::Homunculus,
+                        Some(PLAYER) => picking::Kind::Player,
+                        _ => picking::Kind::Other,
+                    },
+                };
+                let min = if kind == picking::Kind::Item { picking::ITEM_MIN } else { picking::UNIT_MIN };
+                Some(picking::Target { owner: *owner, kind, sprite, area: picking::area(sprite, cell, min), depth })
             })
             .collect();
 
@@ -6965,7 +7002,7 @@ impl App {
         // stale.
         let mut guild_line = None;
         let mut title_line = None;
-        let pointed = match hovered(&game.hit_boxes, pointer.0) {
+        let pointed = match hovered(&game.hit_boxes, pointer.0, players_first) {
             Some(Owner::Unit(id)) if game.units.get(&id).is_some_and(|actor| !actor.hidden && actor.kind != NPC && actor.sprites.is_some()) => Some(id),
             _ => None,
         };
@@ -6992,7 +7029,7 @@ impl App {
         }
         game.pointed = pointed;
         // The item under the pointer shows its name and amount.
-        if let Some(Owner::Item(id)) = hovered(&game.hit_boxes, pointer.0)
+        if let Some(Owner::Item(id)) = hovered(&game.hit_boxes, pointer.0, players_first)
             && let Some(item) = game.ground.get(&id)
         {
             let name = inventory::item_name(items, item.item, item.identified, 0);
@@ -7627,7 +7664,7 @@ impl App {
         } else if on_window {
             cursor::Kind::Default
         } else {
-            match hovered(&game.hit_boxes, pointer.0) {
+            match hovered(&game.hit_boxes, pointer.0, players_first) {
                 Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
                     Some(MONSTER) => cursor::Kind::Attack,
                     Some(NPC) => cursor::Kind::Talk,
@@ -7704,18 +7741,14 @@ fn flatten<'a>(composed: &'a [Composed<'a>]) -> Vec<Sprite<'a>> {
         .collect()
 }
 
-/// The nearest unit or item whose sprite is under the pointer, the player aside (only skills aim at oneself).
-fn hovered(hit_boxes: &[(Owner, [f32; 4], f32)], cursor: [f32; 2]) -> Option<Owner> {
-    hovered_any(&hit_boxes.iter().filter(|(owner, ..)| *owner != Owner::Player).copied().collect::<Vec<_>>(), cursor)
+/// The unit or item the pointer is on (see `picking::pick`), the player aside (only skills aim at oneself).
+fn hovered(hit_boxes: &[picking::Target<Owner>], cursor: [f32; 2], players_first: bool) -> Option<Owner> {
+    picking::pick(hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player), cursor, players_first)
 }
 
-/// The nearest unit (the player included) or item whose sprite is under the pointer.
-fn hovered_any(hit_boxes: &[(Owner, [f32; 4], f32)], cursor: [f32; 2]) -> Option<Owner> {
-    hit_boxes
-        .iter()
-        .filter(|(_, [left, top, right, bottom], _)| cursor[0] >= *left && cursor[0] < *right && cursor[1] >= *top && cursor[1] < *bottom)
-        .min_by(|a, b| a.2.total_cmp(&b.2))
-        .map(|(owner, ..)| *owner)
+/// The unit the pointer is on, the player included: what skills and taming aim at.
+fn hovered_unit(hit_boxes: &[picking::Target<Owner>], cursor: [f32; 2], players_first: bool) -> Option<Owner> {
+    picking::pick(hit_boxes.iter().copied().filter(|target| !matches!(target.owner, Owner::Item(_))), cursor, players_first)
 }
 
 impl ApplicationHandler<NetEvent> for App {

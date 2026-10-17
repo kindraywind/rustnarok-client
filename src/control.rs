@@ -19,8 +19,8 @@
 //! - `type` `{text}`: into the focused field; non-ASCII runs (Hangul) come in as the input method's commit.
 //! - `say` `{text}`: a chat line or a GM command.
 //! - `state`: the scene and the login server; in the game the map, the player, open windows, the NPC dialog, the aimed
-//!   skill, units and ground items (with their screen boxes), counts and status icons. Everything comes from what the
-//!   client itself knows, whatever server it plays on.
+//!   skill, units and ground items (with their sprites' screen boxes and the areas a click picks them in), counts and
+//!   status icons. Everything comes from what the client itself knows, whatever server it plays on.
 //! - `wait` `{ms?, packet?, event?, fresh?, pause?, do?}`: sleeps `ms`; with a `packet` id ("0x08c8") or an `event`
 //!   (a `MapEvent`/`CharEvent` variant like "Act", or "LoginAccepted"/"LoginRefused"), waits up to `ms` (10 s by
 //!   default) for one seen since the previous command, so a quick answer isn't missed between two calls. `fresh`
@@ -675,7 +675,9 @@ fn state(app: &App) -> Value {
 }
 
 fn game_state(app: &App, game: &Game) -> Value {
-    let screen = |owner: Owner| game.hit_boxes.iter().find(|(seen, ..)| *seen == owner).map(|(_, rect, _)| rect.map(|side| side.round() as i32));
+    let target = |owner: Owner| game.hit_boxes.iter().find(|target| target.owner == owner);
+    let screen = |owner: Owner| target(owner).map(|target| target.sprite.map(|side| side.round() as i32));
+    let area = |owner: Owner| target(owner).map(|target| target.area.map(|side| side.round() as i32));
     let me = game.player.cell;
     let distance = |cell: [i32; 2]| (cell[0] - me[0]).abs().max((cell[1] - me[1]).abs());
     let status = |id: u16| game.status.get(&id).copied();
@@ -697,6 +699,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "spirits": spirits});
             if let Some(rect) = screen(Owner::Unit(id)) {
                 unit["screen"] = json!(rect);
+                unit["area"] = json!(area(Owner::Unit(id)));
             }
             if let Some(hp) = game.unit_hp.get(&id) {
                 unit["hp"] = json!(hp);
@@ -715,7 +718,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .iter()
         .map(|(&id, item)| {
             let name = inventory::item_name(&app.items, item.item, item.identified, 0);
-            json!({"id": id, "item": item.item, "name": name, "amount": item.amount, "cell": item.at, "screen": screen(Owner::Item(id))})
+            json!({"id": id, "item": item.item, "name": name, "amount": item.amount, "cell": item.at, "screen": screen(Owner::Item(id)), "area": area(Owner::Item(id))})
         })
         .collect();
     let open = |panel: &Panel| match panel {
