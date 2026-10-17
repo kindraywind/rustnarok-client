@@ -81,6 +81,13 @@ impl<T: Copy + PartialEq> Menu<T> {
         boxes
     }
 
+    /// `draw` inside a 1px grey line, for menus over white (the character select's cards).
+    pub fn draw_outlined<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, pointer: [f32; 2]) {
+        let [width, height] = self.size();
+        layer.sprites.push((&assets.line, offset(self.corner, [-1.0, -1.0]), [width + 2.0, height + 2.0]));
+        self.draw(layer, assets, font, pointer);
+    }
+
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, pointer: [f32; 2]) {
         layer.sprites.push((&assets.white, self.corner, self.size()));
         let hovered = self.hit(pointer).flatten();

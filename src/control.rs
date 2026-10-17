@@ -649,6 +649,13 @@ fn state(app: &App) -> Value {
                 .map(|character| json!({"slot": character.slot, "name": character.name, "job": character.job, "level": character.base_level, "map": character.map}))
                 .collect();
             state["selected"] = select.selected.into();
+            state["moving"] = select.moving.into();
+            state["targets"] = select
+                .card_boxes()
+                .into_iter()
+                .map(|(slot, area)| json!({"kind": "char_slot", "slot": slot, "box": area}))
+                .chain(select.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
+                .collect();
         }
         Scene::Game(game) => state["game"] = game_state(app, game),
         _ => {}

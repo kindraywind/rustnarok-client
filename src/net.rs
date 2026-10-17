@@ -142,12 +142,16 @@ const CH_DELETE_CHAR3: u16 = 0x0829;
 const HC_DELETE_CHAR3: u16 = 0x082A;
 const CH_DELETE_CHAR3_CANCEL: u16 = 0x082B;
 const HC_DELETE_CHAR3_CANCEL: u16 = 0x082C;
+const CH_REQ_CHANGE_CHARACTER_SLOT: u16 = 0x08D4;
+const HC_ACK_CHANGE_CHARACTER_SLOT: u16 = 0x0B70;
+const CH_REQ_CHANGE_CHARNAME: u16 = 0x08FC;
+const HC_ACK_CHANGE_CHARNAME: u16 = 0x08FD;
 /// HC_ACCEPT_ENTER before its character list.
 const ACCEPT_ENTER_HEADER: usize = 27;
 /// CHARACTER_INFO for PACKETVER_MAIN_NUM >= 20220330 (64-bit exp, HP and SP).
 const CHARACTER_INFO_SIZE: usize = 175;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Character {
     pub id: u32,
     pub exp: i64,
@@ -177,6 +181,12 @@ pub struct Character {
     /// Seconds until a reserved deletion can be completed (0: none reserved, below 0: it can be now).
     pub deletion: i32,
     pub sex: u8,
+    /// Slot moves left (0 when moving is off, 1 when unlimited).
+    pub moves: i32,
+    /// 1 when a rename is granted.
+    pub renames: i32,
+    /// The opposite of `renames`: no rename granted (or it was used).
+    pub name_changed: bool,
 }
 
 #[derive(Debug)]
@@ -211,6 +221,14 @@ pub enum CharEvent {
         id: u32,
         result: u32,
     },
+    /// HC_ACK_CHANGE_CHARACTER_SLOT: 0 moved (the list follows), 1 failed; the moves the character has left.
+    Moved {
+        result: u16,
+        moves: u16,
+    },
+    /// HC_ACK_CHANGE_CHARNAME: 0 renamed (the list follows), else the reason (1 renamed before, 2 bad account,
+    /// 3 failed, 4 name taken, 5 in a guild, 6 in a party, 7 too long, 8 bad characters, 9 prohibited, 10 unknown).
+    Renamed(u32),
     /// HC_ACCEPT_MAKECHAR: the new character.
     Made(Character),
     /// HC_REFUSE_MAKECHAR: 0 name taken, 1 underage, 2 symbols, 3 slot not available, 0xFF denied.
@@ -292,12 +310,38 @@ impl CharSession {
         self.stream.write_all(&packet)
     }
 
+    /// Moves the character in slot `from` to `to` (swapping with one there); the answer is a `Moved` event.
+    pub fn move_slot(&mut self, from: u16, to: u16, moves: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_move_slot(from, to, moves))
+    }
+
+    /// Renames a character; the answer is a `Renamed` event.
+    pub fn rename(&mut self, id: u32, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_rename(id, name))
+    }
+
     fn send_id(&mut self, header: u16, id: u32, rest: &[u8]) -> io::Result<()> {
         let mut packet = header.to_le_bytes().to_vec();
         packet.extend_from_slice(&id.to_le_bytes());
         packet.extend_from_slice(rest);
         self.stream.write_all(&packet)
     }
+}
+
+/// CH_REQ_CHANGE_CHARACTER_SLOT: from, to and the moves left (rathena ignores them).
+fn encode_move_slot(from: u16, to: u16, moves: u16) -> [u8; 8] {
+    let [[h0, h1], [f0, f1], [t0, t1], [m0, m1]] = [CH_REQ_CHANGE_CHARACTER_SLOT, from, to, moves].map(u16::to_le_bytes);
+    [h0, h1, f0, f1, t0, t1, m0, m1]
+}
+
+/// CH_REQ_CHANGE_CHARNAME: the character and its new name (24 bytes EUC-KR, NUL-terminated).
+fn encode_rename(id: u32, name: &str) -> Vec<u8> {
+    let mut field = name_field(name);
+    field[23] = 0;
+    let mut packet = CH_REQ_CHANGE_CHARNAME.to_le_bytes().to_vec();
+    packet.extend_from_slice(&id.to_le_bytes());
+    packet.extend_from_slice(&field);
+    packet
 }
 
 impl Drop for CharSession {
@@ -370,6 +414,8 @@ fn decode_char_packet(packet: &[u8]) -> Option<CharEvent> {
         HC_DELETE_CHAR3_CANCEL => Some(CharEvent::DeleteCanceled { id: u32_at(packet, 2), result: u32_at(packet, 6) }),
         HC_ACCEPT_MAKECHAR => Some(CharEvent::Made(decode_character(&packet[2..]))),
         HC_REFUSE_MAKECHAR => Some(CharEvent::MakeRefused(packet[2])),
+        HC_ACK_CHANGE_CHARACTER_SLOT => Some(CharEvent::Moved { result: u16_at(packet, 4), moves: u16_at(packet, 6) }),
+        HC_ACK_CHANGE_CHARNAME => Some(CharEvent::Renamed(u32_at(packet, 2))),
         // Slot info, page count, PIN state and blocked characters aren't needed yet.
         _ => None,
     }
@@ -410,6 +456,9 @@ fn decode_character(info: &[u8]) -> Character {
         map: c_string(&info[142..158]),
         deletion: i32_at(158),
         sex: info[174],
+        moves: i32_at(166),
+        renames: i32_at(170),
+        name_changed: i16_at(140) != 0,
     }
 }
 
@@ -3900,6 +3949,35 @@ mod tests {
         assert_eq!((character.id, character.hp, character.job, character.base_level), (150_001, 40, 4001, 99));
         assert_eq!((character.name.as_str(), character.map.as_str()), ("Tester", "prontera"));
         assert_eq!((character.stats, character.slot, character.sex), ([1, 2, 3, 4, 5, 6], 1, 1));
+        assert_eq!((character.moves, character.renames, character.name_changed), (0, 0, false));
+
+        // char_mmo_char_tobuf with two moves left and a rename granted.
+        info[166..170].copy_from_slice(&2i32.to_le_bytes());
+        info[170..174].copy_from_slice(&1i32.to_le_bytes());
+        info[140..142].copy_from_slice(&1u16.to_le_bytes());
+        let character = decode_character(&info);
+        assert_eq!((character.moves, character.renames, character.name_changed), (2, 1, true));
+    }
+
+    #[test]
+    fn moves_and_renames_characters() {
+        assert_eq!(encode_move_slot(1, 2, 2), [0xD4, 0x08, 1, 0, 2, 0, 2, 0]);
+        assert_eq!(packet_length(CH_REQ_CHANGE_CHARACTER_SLOT), Some(8));
+        let rename = encode_rename(150_002, "RenameTestA");
+        assert_eq!((rename.len(), &rename[..6]), (30, &[0xFC, 0x08, 0xF2, 0x49, 0x02, 0x00][..]));
+        assert_eq!(c_string(&rename[6..]), "RenameTestA");
+        assert_eq!(packet_length(CH_REQ_CHANGE_CHARNAME), Some(30));
+        // A 24-letter name keeps its terminator.
+        assert_eq!(encode_rename(1, &"x".repeat(30))[29], 0);
+
+        let mut moved = HC_ACK_CHANGE_CHARACTER_SLOT.to_le_bytes().to_vec();
+        moved.extend_from_slice(&[8, 0, 0, 0, 1, 0]);
+        assert!(matches!(decode_char_packet(&moved), Some(CharEvent::Moved { result: 0, moves: 1 })));
+        assert_eq!(packet_length(HC_ACK_CHANGE_CHARACTER_SLOT), Some(-1));
+        let mut renamed = HC_ACK_CHANGE_CHARNAME.to_le_bytes().to_vec();
+        renamed.extend_from_slice(&4u32.to_le_bytes());
+        assert!(matches!(decode_char_packet(&renamed), Some(CharEvent::Renamed(4))));
+        assert_eq!(packet_length(HC_ACK_CHANGE_CHARNAME), Some(6));
     }
 
     #[test]

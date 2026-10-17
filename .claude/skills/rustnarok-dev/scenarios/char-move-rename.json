@@ -1,0 +1,312 @@
+{
+  "about": "Moving a character to another slot and renaming it from its card's right-click menu at character select (issue #60). Plays the second account's slot 1: a spare character named RenameTestB (in no party or guild, slot 2 empty), on a GM account for @set; it ends as it started.",
+  "account": "2",
+  "slot": 1,
+  "steps": [
+    {
+      "say": "@set CharMoves 2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@set CharRename 2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click": [
+        511,
+        331
+      ]
+    },
+    {
+      "wait": 4000
+    },
+    {
+      "expect": {
+        "state": {
+          "scene": "char_select"
+        }
+      }
+    },
+    {
+      "click_on": {
+        "char_slot": 1
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "card-menu"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "char_slot": 1
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "Rename"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "RenameTestA"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "scene": "confirm"
+        }
+      }
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "packet": "0x08fd",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "characters": {
+          "1": "RenameTestA"
+        }
+      }
+    },
+    {
+      "shot": "renamed"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "char_slot": 1
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "Rename"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "RenameTestB"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "scene": "confirm"
+        }
+      }
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "packet": "0x08fd",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "characters": {
+          "1": "RenameTestB"
+        }
+      }
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "char_slot": 1
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "Move"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "moving": 1
+        }
+      }
+    },
+    {
+      "move": [
+        415,
+        188
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "picking"
+    },
+    {
+      "click_on": {
+        "char_slot": 2
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "scene": "confirm"
+        }
+      }
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b70",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "characters": {
+          "2": "RenameTestB",
+          "1": null
+        },
+        "state": {
+          "scene": "char_select",
+          "selected": 2
+        }
+      }
+    },
+    {
+      "shot": "moved"
+    },
+    {
+      "click_on": {
+        "char_slot": 2
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "Move"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "char_slot": 1
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "scene": "confirm"
+        }
+      }
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b70",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "characters": {
+          "1": "RenameTestB",
+          "2": null
+        },
+        "state": {
+          "scene": "char_select",
+          "selected": 1
+        }
+      }
+    }
+  ]
+}
