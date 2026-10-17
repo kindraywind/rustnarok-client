@@ -2522,7 +2522,8 @@ impl App {
                         let hit = game.skill_window.hit(cursor, &self.skill_trees, &jobs, &game.skills, points);
                         match hit.and_then(|hit| game.skill_window.click(hit)) {
                             Some(skills::Action::Use(id)) => {
-                                let level = game.skills.iter().find(|skill| skill.id == id).map_or(0, |skill| skill.level);
+                                let learned = game.skills.iter().find(|skill| skill.id == id).map_or(0, |skill| skill.level);
+                                let level = if learned > 0 { game.skill_window.use_level(id, learned) } else { 0 };
                                 if level > 0 {
                                     game.use_skill(id, level);
                                 }
@@ -2778,10 +2779,11 @@ impl App {
                 {
                     let key = match dragged {
                         Dragged::Item(index) => game.inventory.get(index).map(|item| net::Hotkey { skill: false, id: item.id, count: item.amount as i16 }),
+                        // At the level picked in the skill window.
                         Dragged::Skill(id) => game.skills.iter().find(|skill| skill.id == id).map(|skill| net::Hotkey {
                             skill: true,
                             id: u32::from(id),
-                            count: skill.level as i16,
+                            count: game.skill_window.use_level(id, skill.level) as i16,
                         }),
                         Dragged::Stored(_) | Dragged::Carted(_) => None,
                     };
