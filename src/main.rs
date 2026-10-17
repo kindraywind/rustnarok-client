@@ -400,6 +400,8 @@ struct Game {
     whispered: VecDeque<(String, String)>,
     /// Names whose whispers we asked to block or allow, not yet answered (the answer doesn't name them).
     whisper_asked: VecDeque<String>,
+    /// Ground skill units in view, by unit ID: their cells, for a unit that changes kind.
+    skill_units: HashMap<u32, [u16; 2]>,
     /// A Magnifier's list is up: the server waits for a pick or a cancel.
     identifying: bool,
     /// A skill an item cast that needs aiming (the player may not know it).
@@ -3639,6 +3641,7 @@ impl App {
                     whispered: VecDeque::new(),
                     whisper_asked: VecDeque::new(),
                     identifying: false,
+                    skill_units: HashMap::new(),
                     item_skill: None,
                     trade: None,
                     trade_asked: None,
@@ -3759,6 +3762,7 @@ impl App {
                 game.world = world;
                 game.map = map;
                 game.units.clear();
+                game.skill_units.clear();
                 game.ground.clear();
                 game.marks.clear();
                 game.signs.clear();
@@ -3940,6 +3944,7 @@ impl App {
                     // the load is acknowledged (it drops everything else till then) and sends what's in view again.
                     game.player.stop_at(position.map(i32::from));
                     game.units.clear();
+                    game.skill_units.clear();
                     game.ground.clear();
                     let _ = game.session.loaded();
                 } else {
@@ -4835,12 +4840,24 @@ impl App {
                 game.skill_motion(source, skill, 400.0, &self.skill_info);
             }
             MapEvent::SkillUnit { id, kind, cell } => {
+                game.skill_units.insert(id, cell);
                 if let Some(gpu) = gpu {
                     let at = game.world.cell_position(cell.map(f32::from));
                     game.effects.play_unit(gpu, grf, table, kind, id, at, Instant::now());
                 }
             }
-            MapEvent::SkillUnitGone { id } => game.effects.forget(id),
+            MapEvent::SkillUnitGone { id } => {
+                game.skill_units.remove(&id);
+                game.effects.forget(id);
+            }
+            // A ground skill's unit turning into another kind (a Warp Portal opening): the new kind's effect, same cell.
+            MapEvent::LookChange { id, kind: net::LOOK_JOB, value, .. } if game.skill_units.contains_key(&id) => {
+                game.effects.forget(id);
+                if let Some(gpu) = gpu {
+                    let at = game.world.cell_position(game.skill_units[&id].map(f32::from));
+                    game.effects.play_unit(gpu, grf, table, value, id, at, Instant::now());
+                }
+            }
             MapEvent::SkillFailed { ok: true, .. } => {}
             MapEvent::SkillFailed { skill, detail, cause, .. } => {
                 game.casts.remove(&None);
