@@ -166,6 +166,9 @@ pub struct Select {
     clicks: Clicks,
     /// When the selection last changed, for its animations.
     since: Instant,
+    pub pin_verified: bool,
+    pub pin_pad: Option<crate::pin::PinPad>,
+    pub auto_pin_tried: bool,
 }
 
 impl Select {
@@ -174,7 +177,18 @@ impl Select {
         let deletable_at =
             characters.iter().filter(|character| character.deletion != 0).map(|character| (character.id, after(now, character.deletion))).collect();
         let selected = characters.iter().map(|character| usize::from(character.slot)).min().unwrap_or(0);
-        Self { characters, figures, slots, selected, deletable_at, clicks: Clicks::default(), since: now }
+        Self {
+            characters,
+            figures,
+            slots,
+            selected,
+            deletable_at,
+            clicks: Clicks::default(),
+            since: now,
+            pin_verified: false,
+            pin_pad: None,
+            auto_pin_tried: false,
+        }
     }
 
     /// The screen position of the whole window (centered).
@@ -242,9 +256,14 @@ impl Select {
         }
     }
 
-    /// Whether the selected character can start (it exists and isn't being deleted).
+    /// Whether the server's PIN check has passed (state 0) and no PIN pad is open.
+    pub fn unlocked(&self) -> bool {
+        self.pin_verified && self.pin_pad.is_none()
+    }
+
+    /// Whether the selected character can start (it exists, isn't being deleted, and PIN state 0 has arrived).
     fn startable(&self) -> bool {
-        self.selected_character().is_some_and(|character| self.deletion(character.id) == Deletion::None)
+        self.unlocked() && self.selected_character().is_some_and(|character| self.deletion(character.id) == Deletion::None)
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {

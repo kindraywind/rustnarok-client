@@ -1,5 +1,4 @@
 //! Second-password (PIN) number pad at character select (HC_SECOND_PASSWD_LOGIN 0x08B9).
-#![allow(dead_code)]
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::net;
@@ -14,8 +13,11 @@ pub const ENTER_MESSAGE: usize = 2566;
 pub const RECOMMEND_MESSAGE: usize = 1900;
 pub const MOUSE_HINT_MESSAGE: usize = 1906;
 pub const LOCKOUT_WARNING_MESSAGE: usize = 1907;
+#[allow(dead_code)]
 pub const AUTH_OK_MESSAGE: usize = 1888;
+#[allow(dead_code)]
 pub const CREATED_MESSAGE: usize = 1889;
+#[allow(dead_code)]
 pub const CHANGED_MESSAGE: usize = 1891;
 pub const WRONG_MESSAGE: usize = 1892;
 pub const MISMATCH_MESSAGE: usize = 1893;
@@ -222,6 +224,7 @@ impl PinPad {
     }
 
     /// Control-state `pin` string: `"ask"`, `"new"`, or `"change"`.
+    #[allow(dead_code)]
     pub fn kind(&self) -> &'static str {
         match self.step {
             PinStep::Ask => "ask",
@@ -380,6 +383,7 @@ impl PinPad {
     }
 
     /// Whether `cursor` lies anywhere inside the pad window (so clicks don't fall through to character cards).
+    #[allow(dead_code)]
     pub fn contains(&self, cursor: [f32; 2]) -> bool {
         contains(Self::origin(), SIZE, cursor)
     }
