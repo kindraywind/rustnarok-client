@@ -596,16 +596,7 @@ impl SpriteSet {
             } else {
                 // Single-action sprites (some weapons) repeat their one action.
                 let Some(frames) = layer.act.actions.get(index % layer.act.actions.len().max(1)).filter(|frames| !frames.is_empty()) else { continue };
-                let chosen = match (look, part) {
-                    (Some(look), Part::Robe) => look.min(frames.len() - 1),
-                    (Some(look), part) if part.on_head() => {
-                        let group = (frames.len() / 3).max(1);
-                        (animated(layer, group) + group * look) % frames.len()
-                    }
-                    _ if part.on_head() => frame_index % frames.len(),
-                    _ => animated(layer, frames.len()),
-                };
-                &frames[chosen]
+                &frames[layer_frame(frames.len(), look, frame_index, body_frames.len(), |count| animated(layer, count))]
             };
             let shift = if part.on_head() { sprite::head_shift(body_frame, frame) } else { [0, 0] };
             placed.extend(
@@ -662,6 +653,21 @@ fn animated(layer: &Layer, index: usize, count: usize, timing: Timing) -> usize 
             (elapsed_ms / frame_ms) as usize % count
         }
         Timing::Span(progress) => ((progress * count as f32) as usize).min(count - 1),
+    }
+}
+
+/// Which of a layer's `count` frames goes with the body's frame `body_frame` of `body_count`. Standing or sitting
+/// (`look`: the head direction) a layer's frames come in three groups, one per head direction, and play within the
+/// group (`own(n)`: which of n frames the layer's own clock is at), so balloons bob and wings flap while weapons and
+/// shields hold still. Otherwise a layer with as many frames as the body keeps step with it.
+fn layer_frame(count: usize, look: Option<usize>, body_frame: usize, body_count: usize, own: impl Fn(usize) -> usize) -> usize {
+    match look {
+        Some(look) => {
+            let group = (count / 3).max(1);
+            (own(group) + group * look) % count
+        }
+        None if count == body_count => body_frame,
+        None => own(count),
     }
 }
 
@@ -909,6 +915,22 @@ mod tests {
         let ready = layers(READY * 8);
         assert!(ready.contains(&5) && ready.contains(&6), "{ready:?}");
         assert!(layers(attack_action(0, 0, 1) * 8).contains(&5));
+        // An animated wing flaps while its wearer stands still.
+        let winged = SpriteSet::player(&grf, &Look { hair: 1, robe: 61, ..Default::default() }, &tables).unwrap();
+        assert_ne!(winged.place(0, 0, Timing::Loop(0.0)), winged.place(0, 0, Timing::Loop(100.0)));
+    }
+
+    #[test]
+    fn picks_each_layers_frame() {
+        // Standing with the head turned (look 1): a 3-frame hat or shield shows frame 1 whatever its clock says;
+        // a 24-frame balloon or wing plays frames 8 to 15.
+        assert_eq!(layer_frame(3, Some(1), 1, 3, |_| 0), 1);
+        assert_eq!(layer_frame(24, Some(1), 1, 3, |count| count - 1), 15);
+        assert_eq!(layer_frame(24, Some(2), 2, 3, |_| 3), 19);
+        // Walking or attacking: in step with the body, or on its own clock when the frame counts differ.
+        assert_eq!(layer_frame(8, None, 5, 8, |_| 0), 5);
+        assert_eq!(layer_frame(10, None, 4, 9, |count| count - 1), 9);
+        assert_eq!(layer_frame(1, None, 4, 5, |_| 0), 0);
     }
 
     #[test]
