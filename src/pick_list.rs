@@ -26,10 +26,10 @@ const BUTTON: [f32; 2] = [42.0, 20.0];
 const SELECTED: [u8; 4] = [0x34, 0x6A, 0xE1, 0x80];
 
 pub struct Assets {
-    strip: Texture,
-    bar: Texture,
+    pub strip: Texture,
+    pub bar: Texture,
     /// OK, cancel and make: normal, hovered, pressed.
-    buttons: [[Texture; 3]; 3],
+    pub buttons: [[Texture; 3]; 3],
     selected: Texture,
 }
 

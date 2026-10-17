@@ -20,8 +20,8 @@
 //! - `say` `{text}`: a chat line or a GM command.
 //! - `state`: the scene and the login server; at character select the characters, selected slot and `pin` ("ask",
 //!   "new", "change" or "none"); in the game the map, the player, open windows, the NPC dialog, the aimed
-//!   skill, units and ground items (with their screen boxes), counts and status icons. Everything comes from what the
-//!   client itself knows, whatever server it plays on.
+//!   skill, units and ground items (with their sprites' screen boxes and the areas a click picks them in), counts and
+//!   status icons. Everything comes from what the client itself knows, whatever server it plays on.
 //! - `wait` `{ms?, packet?, event?, fresh?, pause?, do?}`: sleeps `ms`; with a `packet` id ("0x08c8") or an `event`
 //!   (a `MapEvent`/`CharEvent` variant like "Act", or "LoginAccepted"/"LoginRefused"), waits up to `ms` (10 s by
 //!   default) for one seen since the previous command, so a quick answer isn't missed between two calls. `fresh`
@@ -49,7 +49,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, NativeKeyCode, PhysicalKey, SmolStr};
 
 use crate::render::{Gpu, Sprite, WorldPass};
-use crate::{App, DialogButton, Game, MONSTER, NPC, NetEvent, Owner, PLAYER, Panel, Scene, inventory};
+use crate::{App, DialogButton, Game, HOMUNCULUS, MERCENARY, MONSTER, NPC, NetEvent, Owner, PET, PLAYER, Panel, Scene, inventory};
 
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(tag = "cmd", rename_all = "snake_case", deny_unknown_fields)]
@@ -81,6 +81,12 @@ pub enum Command {
     },
     Key {
         key: String,
+    },
+    /// The wheel at a point: `rows` notches, positive toward the player (scrolls down).
+    Wheel {
+        x: f32,
+        y: f32,
+        rows: i32,
     },
     Type {
         text: String,
@@ -392,6 +398,11 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             });
             Ok(Value::Null)
         }
+        Command::Wheel { x, y, rows } => {
+            point(app, [x, y]);
+            app.wheel(rows);
+            Ok(Value::Null)
+        }
         Command::Key { key } => {
             let (held, key) = parse_key(&key)?;
             hold(app, held, |app| app.key(&key));
@@ -651,6 +662,13 @@ fn state(app: &App) -> Value {
                 .collect();
             state["selected"] = select.selected.into();
             state["pin"] = select.pin_pad.as_ref().map_or("none", |pad| pad.kind()).into();
+            state["moving"] = select.moving.into();
+            state["targets"] = select
+                .card_boxes()
+                .into_iter()
+                .map(|(slot, area)| json!({"kind": "char_slot", "slot": slot, "box": area}))
+                .chain(select.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
+                .collect();
         }
         Scene::Game(game) => state["game"] = game_state(app, game),
         _ => {}
@@ -659,7 +677,9 @@ fn state(app: &App) -> Value {
 }
 
 fn game_state(app: &App, game: &Game) -> Value {
-    let screen = |owner: Owner| game.hit_boxes.iter().find(|(seen, ..)| *seen == owner).map(|(_, rect, _)| rect.map(|side| side.round() as i32));
+    let target = |owner: Owner| game.hit_boxes.iter().find(|target| target.owner == owner);
+    let screen = |owner: Owner| target(owner).map(|target| target.sprite.map(|side| side.round() as i32));
+    let area = |owner: Owner| target(owner).map(|target| target.area.map(|side| side.round() as i32));
     let me = game.player.cell;
     let distance = |cell: [i32; 2]| (cell[0] - me[0]).abs().max((cell[1] - me[1]).abs());
     let status = |id: u16| game.status.get(&id).copied();
@@ -672,12 +692,16 @@ fn game_state(app: &App, game: &Game) -> Value {
                 PLAYER => json!("player"),
                 MONSTER => json!("monster"),
                 NPC => json!("npc"),
+                PET => json!("pet"),
+                HOMUNCULUS => json!("homunculus"),
+                MERCENARY => json!("mercenary"),
                 other => json!(other),
             };
             let spirits = game.spirits.get(&Some(id)).copied().unwrap_or(0);
             let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "spirits": spirits});
             if let Some(rect) = screen(Owner::Unit(id)) {
                 unit["screen"] = json!(rect);
+                unit["area"] = json!(area(Owner::Unit(id)));
             }
             if let Some(hp) = game.unit_hp.get(&id) {
                 unit["hp"] = json!(hp);
@@ -696,7 +720,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .iter()
         .map(|(&id, item)| {
             let name = inventory::item_name(&app.items, item.item, item.identified, 0);
-            json!({"id": id, "item": item.item, "name": name, "amount": item.amount, "cell": item.at, "screen": screen(Owner::Item(id))})
+            json!({"id": id, "item": item.item, "name": name, "amount": item.amount, "cell": item.at, "screen": screen(Owner::Item(id)), "area": area(Owner::Item(id))})
         })
         .collect();
     let open = |panel: &Panel| match panel {
@@ -709,7 +733,11 @@ fn game_state(app: &App, game: &Game) -> Value {
         Panel::Party => game.party_window.frame.open,
         Panel::Status => game.status_window.frame.open,
         Panel::Guild => game.guild.is_some() && game.guild_window.frame.open,
+        Panel::Clan => game.clan.is_some() && game.clan_window.frame.open,
         Panel::Cart => game.cart.cart.is_some() && game.cart.frame.open,
+        Panel::Pet => game.pet.is_some() && game.pet_window.frame.open,
+        Panel::Mercenary => game.mercenary.is_some() && game.mercenary_window.frame.open,
+        Panel::MercenarySkills => game.mercenary.is_some() && game.mercenary_skill_list.frame.open,
     };
     let jobs = app.skill_trees.lineage(game.me.job);
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
@@ -722,6 +750,25 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.skill_window.skill_boxes(&app.skill_trees, &jobs).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
         .chain(game.pick.iter().flat_map(|(list, _)| list.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
+        .chain(game.pet.iter().flat_map(|pet| game.pet_window.button_boxes(pet)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
+        .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.achievement_window
+                .button_boxes(&app.achievement_info, &game.achievements)
+                .into_iter()
+                .chain(game.equipment.button_boxes())
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(
+            game.mercenary.iter().flat_map(|_| game.mercenary_window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(
+            game.mercenary
+                .iter()
+                .flat_map(|_| game.mercenary_skill_list.skill_boxes(&game.mercenary_skills))
+                .map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})),
+        )
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
     let overlays = [
@@ -729,7 +776,11 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("WarpList", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some())),
         ("Shop", game.shop.is_some()),
         ("Refine", game.refine.is_some()),
+        ("Materials", game.materials.is_some()),
+        ("Roulette", game.roulette.is_some()),
+        ("Achievements", game.achievement_window.frame.open),
         ("InventoryExpansion", game.expansion_asked.is_some()),
+        ("PetAsked", game.pet_asked.is_some()),
         ("OtherEquipment", game.viewing.is_some()),
         ("Bank", game.bank.is_some()),
         ("PickList", game.pick.is_some()),
@@ -774,6 +825,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     let now = Instant::now();
     json!({
         "map": game.map,
+        // The weather effect IDs showing.
+        "weather": game.weather.ids(),
         "player": {
             "name": game.me.name,
             "account_id": game.account_id,
@@ -794,16 +847,33 @@ fn game_state(app: &App, game: &Game) -> Value {
             "screen": screen(Owner::Player),
         },
         "windows": windows,
-        // What a test can click by name instead of by pixels: inventory items (index and item), hotkey slots and
-        // skill boxes, each with its box on screen.
+        // What a test can click by name instead of by pixels: inventory items (index and item), hotkey slots, skill
+        // boxes, pick list rows, menu choices and window buttons (by name), each with its box on screen.
         "targets": targets,
         // What's carried: index, item, how many, identified, worn where (0: not worn).
-        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "cards": item.cards})).collect::<Vec<_>>(),
+        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
         "dialog": dialog,
+        // Achievements: whether each is done and its reward taken; the title worn (0: none).
+        "achievements": game.achievements.iter().map(|(id, achievement)| (id.to_string(), json!({"completed": achievement.completed, "rewarded": achievement.rewarded}))).collect::<serde_json::Map<_, _>>(),
+        "title": game.equipment.title,
+        // Skills blocked after use: milliseconds left by skill ID, on the drawing's clock (still while a shot pauses it).
+        "cooldowns": game.cooldowns.blocked(crate::control::now()).map(|(skill, left)| (skill.to_string(), json!(left.as_millis() as u64))).collect::<serde_json::Map<_, _>>(),
+        // The Lucky Roulette: points, bonus, prizes known, the wheel spinning, the prize waiting (or null).
+        "roulette": game.roulette.as_ref().map(|window| {
+            let now = crate::control::now();
+            let [gold, silver, bronze] = window.points;
+            let prize = window.shown_prize(now).map(|(row, column)| json!({"row": row, "column": column, "item": window.item_at((row, column))}));
+            json!({"gold": gold, "silver": silver, "bronze": bronze, "bonus": window.bonus, "prizes": window.prizes.len(), "spinning": window.spinning(now), "prize": prize})
+        }),
+        // A taming item waiting for its monster.
+        "capturing": game.capturing,
         "aimed_skill": game.targeting.map(|(id, level)| json!({"id": id, "level": level, "name": app.skill_info.get(&id).map(|info| info.name.as_str())})),
         "units": units,
+        // The player's pet as the server last told it, or null.
+        "mercenary": game.mercenary.as_ref().map(|hired| json!({"id": hired.id, "name": hired.name, "level": hired.level, "hp": hired.hp, "loyalty": hired.loyalty, "summons": hired.summons, "kills": hired.kills, "following": game.steering.following, "order": game.steering.order.map(|order| format!("{order:?}"))})),
+        "pet": game.pet.as_ref().map(|pet| json!({"id": game.pet_id, "name": pet.name, "level": pet.level, "hunger": pet.hunger, "intimacy": pet.intimacy, "accessory": pet.accessory, "renamed": pet.renamed})),
         "ground_items": ground,
         "inventory_items": game.inventory.items.len(),
         "skills": game.skills.len(),
@@ -819,6 +889,7 @@ mod tests {
     #[test]
     fn parses_commands() {
         let parse = |line: &str| serde_json::from_str::<Command>(line);
+        assert_eq!(parse(r#"{"cmd":"wheel","x":390,"y":360,"rows":-2}"#).unwrap(), Command::Wheel { x: 390.0, y: 360.0, rows: -2 });
         assert_eq!(
             parse(r#"{"cmd":"click","x":512,"y":300.5,"button":"right"}"#).unwrap(),
             Command::Click { x: 512.0, y: 300.5, button: Button::Right, mods: String::new(), count: None }

@@ -57,6 +57,21 @@ pub struct Shown {
     pub identified: bool,
     pub refine: u8,
     pub cards: [u32; 4],
+    /// A broken item's line ("This item has been damaged."), shown first in red.
+    pub damaged: Option<String>,
+    /// A rental's end, Unix time in seconds (0: not a rental).
+    pub expires: u32,
+}
+
+/// "Time Left: %d hours %d minutes".
+const TIME_LEFT: usize = 2435;
+
+/// A rental's time left, in red, from its end and the time now (Unix seconds); None for an item that isn't one.
+// ponytail: the msgstringtable's end-date line (1255, local time) looks like the official one; std can't do local time,
+// so this counts down instead, assuming the server's clock and ours agree.
+pub fn rental_line(template: &str, expires: u32, now: u64) -> Option<String> {
+    let left = u64::from(expires).saturating_sub(now);
+    (expires > 0).then(|| format!("^ff0000{}^000000", rustnarok_client::messages::fill(template, &[&(left / 3600), &(left % 3600 / 60)])))
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -128,9 +143,13 @@ impl ItemWindow {
     }
 
     /// The description, wrapped to the text column (colors kept per piece).
-    pub fn lines(&self, items: &HashMap<u32, ItemInfo>, wrap: &dyn Fn(&str, f32) -> ColoredLines) -> ColoredLines {
+    /// The description's lines: a rental's time left (by `now`, Unix seconds) and a broken item's line first.
+    pub fn lines(&self, items: &HashMap<u32, ItemInfo>, messages: &[String], now: u64, wrap: &dyn Fn(&str, f32) -> ColoredLines) -> ColoredLines {
         let Some(info) = items.get(&self.shown.item) else { return Vec::new() };
-        info.description(self.shown.identified).iter().flat_map(|line| wrap(line, TEXT_WIDTH)).collect()
+        let rental = rental_line(messages.get(TIME_LEFT).map_or("", String::as_str), self.shown.expires, now);
+        let damaged = self.shown.damaged.iter().map(|line| format!("^ff0000{line}^000000"));
+        let description = info.description(self.shown.identified).iter().cloned();
+        rental.into_iter().chain(damaged).chain(description).flat_map(|line| wrap(&line, TEXT_WIDTH)).collect()
     }
 
     /// The pictures to load: the item's, and its cards' icons.
@@ -197,10 +216,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn counts_a_rental_down() {
+        let template = "Time Left: %d hours %d minutes";
+        assert_eq!(rental_line(template, 0, 1_000).as_deref(), None);
+        assert_eq!(rental_line(template, 1_000 + 7_500, 1_000).as_deref(), Some("^ff0000Time Left: 2 hours 5 minutes^000000"));
+        assert_eq!(rental_line(template, 1_000 + 59, 1_000).as_deref(), Some("^ff0000Time Left: 0 hours 0 minutes^000000"));
+        // Past its end: nothing left.
+        assert_eq!(rental_line(template, 1_000, 5_000).as_deref(), Some("^ff0000Time Left: 0 hours 0 minutes^000000"));
+    }
+
+    #[test]
     fn grows_a_card_row_for_slotted_items() {
         let knife = ItemInfo { name: "Knife".into(), resource: "나이프".into(), slots: 3, ..Default::default() };
         let items = HashMap::from([(1201, knife)]);
-        let mut window = ItemWindow::new(Shown { item: 1201, identified: true, refine: 0, cards: [0; 4] });
+        let mut window = ItemWindow::new(Shown { item: 1201, identified: true, refine: 0, cards: [0; 4], damaged: None, expires: 0 });
         assert_eq!(window.slots(&items), 3);
         assert_eq!(window.height(&items), SIZE[1] + CARDS_GAP + CARD_ROW);
         window.shown.identified = false;

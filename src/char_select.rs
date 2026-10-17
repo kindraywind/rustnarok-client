@@ -10,6 +10,7 @@ use rustnarok_client::net::Character;
 use rustnarok_client::text::Font;
 
 use crate::actor::{self, Placed, SpriteSet, Timing};
+use crate::menu::{self, Menu};
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Clicks};
 use crate::{Layer, SCREEN, UI, contains, offset};
@@ -63,6 +64,10 @@ const DEATH: usize = 8;
 const COUNTDOWN_MESSAGE: usize = 3349;
 const START_MESSAGE: usize = 3341;
 const LIST_MESSAGE: usize = 3343;
+const MOVE_CHOICE: usize = 2164;
+const RENAME_CHOICE: usize = 2165;
+/// "Ready to change character slot in.(%d)", the moves left, shown while picking where to move.
+const MOVES_LEFT_MESSAGE: usize = 2025;
 
 /// The buttons under the stats; which ones show depends on the selected character's deletion.
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -104,6 +109,18 @@ pub enum Action {
     CancelReserve(u32),
     Delete(u32),
     Close,
+    /// Move the character in the first slot to the second (swapping with one there), with its moves left.
+    Move(u8, u8, u16),
+    /// Rename this character.
+    Rename(u32),
+}
+
+/// A choice of a card's right-click menu.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Choice {
+    /// Move the character in this slot: the next card clicked is where to.
+    Move(usize),
+    Rename(u32),
 }
 
 /// Normal, hovered and pressed looks; the start button and the arrows also have an idle one first.
@@ -169,6 +186,12 @@ pub struct Select {
     pub pin_verified: bool,
     pub pin_pad: Option<crate::pin::PinPad>,
     pub auto_pin_tried: bool,
+    /// A card's right-click menu.
+    pub menu: Option<Menu<Choice>>,
+    /// The slot of a character picked to move, until a card is clicked to move it to.
+    pub moving: Option<usize>,
+    /// Where a move sent to the server goes, for the selection to follow once it's done.
+    pub moved_to: Option<usize>,
 }
 
 impl Select {
@@ -188,6 +211,9 @@ impl Select {
             pin_verified: false,
             pin_pad: None,
             auto_pin_tried: false,
+            menu: None,
+            moving: None,
+            moved_to: None,
         }
     }
 
@@ -284,7 +310,53 @@ impl Select {
         contains(Self::at(CLOSE), [17.0, 18.0], cursor).then_some(Hit::Close)
     }
 
+    // ponytail: the 2018+ screen has no bitmaps for moving and renaming (data.grf only has the older screen's Add-Ons
+    // side bar), so they're a right-click menu on the card; replace it with the real client's place for them.
+    /// A right click: on a character that may move or be renamed, the menu of those.
+    pub fn open_menu(&mut self, cursor: [f32; 2], font: &Font, messages: &[String]) {
+        self.moving = None;
+        let message = |id: usize| messages.get(id).cloned().unwrap_or_default();
+        let Some(Hit::Card(slot)) = self.hit(cursor) else { return self.menu = None };
+        let Some(character) = self.index_in(slot).map(|index| &self.characters[index]) else { return self.menu = None };
+        let choices: Vec<menu::Entry<Choice>> = [
+            (character.moves > 0).then(|| (message(MOVE_CHOICE), Choice::Move(slot))),
+            (character.renames > 0).then(|| (message(RENAME_CHOICE), Choice::Rename(character.id))),
+        ]
+        .into_iter()
+        .flatten()
+        .map(Some)
+        .collect();
+        self.menu = (!choices.is_empty()).then(|| Menu::new(cursor, choices, font));
+        if self.menu.is_some() && slot != self.selected {
+            self.selected = slot;
+            self.since = Instant::now();
+        }
+    }
+
+    /// A click while the menu is open: a choice, or anywhere else, which closes it.
+    pub fn click_menu(&mut self, cursor: [f32; 2]) -> Option<Action> {
+        match self.menu.take()?.hit(cursor).flatten()? {
+            Choice::Move(slot) => {
+                self.moving = Some(slot);
+                None
+            }
+            Choice::Rename(id) => Some(Action::Rename(id)),
+        }
+    }
+
+    /// The moves the character in `slot` has left.
+    fn moves(&self, slot: usize) -> i32 {
+        self.index_in(slot).map_or(0, |index| self.characters[index].moves)
+    }
+
     pub fn click(&mut self, hit: Hit) -> Option<Action> {
+        // Picking where to move: a usable card other than the character's own; anything else stops picking.
+        if let Some(from) = self.moving.take() {
+            return match hit {
+                Hit::Card(to) if to < self.slots && to != from => Some(Action::Move(from as u8, to as u8, self.moves(from).max(0) as u16)),
+                _ => None,
+            };
+        }
         let character = self.selected_character().map(|character| character.id);
         match hit {
             Hit::Card(slot) if slot < self.slots => {
@@ -386,7 +458,9 @@ impl Select {
             let cell = Self::cell(slot);
             let hovered = hit == Some(Hit::Card(slot));
             let character = self.index_in(slot).map(|index| &self.characters[index]);
-            let image = match (slot < self.slots, character, slot == self.selected) {
+            // Picking where to move, the card under the pointer shows as selected.
+            let target = hovered && self.moving.is_some_and(|from| from != slot);
+            let image = match (slot < self.slots, character, slot == self.selected || target) {
                 (false, ..) => &assets.lock,
                 (true, Some(_), true) => &assets.selected[frame],
                 (true, Some(_), false) => &assets.cards[look(hovered)],
@@ -457,8 +531,9 @@ impl Select {
         let label_place = [START[0] + START_LABEL[0] - (label.size[0] / 2.0).floor(), START[1] + START_LABEL[1] - (label.size[1] / 2.0).floor()];
         layer.sprites.push((label, offset(info, label_place), label.size));
 
-        // The page bar.
-        let title = message(LIST_MESSAGE);
+        // The page bar; picking where to move, the moves left instead of the title.
+        let moves_left = self.moving.map(|from| messages::fill(message(MOVES_LEFT_MESSAGE), &[&self.moves(from)]));
+        let title = moves_left.as_deref().unwrap_or(message(LIST_MESSAGE));
         let center = assets.info.size[0] / 2.0;
         layer.texts.push((
             title.to_owned(),
@@ -479,6 +554,24 @@ impl Select {
         }
         let close = &assets.close[look(hit == Some(Hit::Close))];
         layer.sprites.push((close, Self::at(CLOSE), close.size));
+    }
+
+    /// The card's menu, over the screen.
+    pub fn draw_menu<'a>(&self, layer: &mut Layer<'a>, assets: &'a menu::Assets, font: &Font, pointer: [f32; 2]) {
+        if let Some(menu) = &self.menu {
+            menu.draw_outlined(layer, assets, font, pointer);
+        }
+    }
+
+    /// Each usable card's box on screen (for the test driver).
+    pub fn card_boxes(&self) -> Vec<(usize, [f32; 4])> {
+        let first = self.page() * PER_PAGE;
+        (first..(first + PER_PAGE).min(self.slots))
+            .map(|slot| {
+                let [x, y] = offset(Self::cell(slot), CARD.0);
+                (slot, [x, y, CARD.1[0], CARD.1[1]])
+            })
+            .collect()
     }
 }
 
@@ -517,5 +610,37 @@ mod tests {
         assert_eq!(select.selected, 5, "slot 10 is locked");
         select.step(-1);
         assert_eq!((select.selected, select.enter()), (4, Some(Action::Make(4))));
+    }
+
+    #[test]
+    fn moves_and_renames_from_the_card_menu() {
+        let font = Font::load();
+        let messages: Vec<String> = (0..=RENAME_CHOICE).map(|id| id.to_string()).collect();
+        let character = |id, slot, moves, renames| Character { id, slot, moves, renames, ..Character::default() };
+        let mut select = Select::new(vec![character(1, 0, 0, 0), character(2, 1, 2, 1)], vec![None, None], 15);
+        let card = |slot: usize| offset(Select::cell(slot), [70.0, 90.0]);
+
+        // Nothing granted: no menu.
+        select.open_menu(card(0), &font, &messages);
+        assert!(select.menu.is_none());
+        select.open_menu(card(1), &font, &messages);
+        let choices: Vec<String> = select.menu.as_ref().unwrap().entry_boxes().into_iter().map(|(label, _)| label).collect();
+        assert_eq!((choices, select.selected), (vec!["2164".to_owned(), "2165".to_owned()], 1));
+
+        // Move, then the card to move to.
+        let [x, y, w, h] = select.menu.as_ref().unwrap().entry_boxes()[0].1;
+        assert_eq!(select.click_menu([x + w / 2.0, y + h / 2.0]), None);
+        assert_eq!(select.moving, Some(1));
+        assert_eq!(select.click(Hit::Card(1)), None, "its own card stops picking");
+        select.moving = Some(1);
+        assert_eq!(select.click(Hit::Card(16)), None, "a locked slot stops picking");
+        select.moving = Some(1);
+        assert_eq!(select.click(Hit::Card(0)), Some(Action::Move(1, 0, 2)));
+        assert_eq!(select.moving, None);
+
+        select.open_menu(card(1), &font, &messages);
+        let [x, y, w, h] = select.menu.as_ref().unwrap().entry_boxes()[1].1;
+        assert_eq!(select.click_menu([x + w / 2.0, y + h / 2.0]), Some(Action::Rename(2)));
+        assert!(select.menu.is_none());
     }
 }

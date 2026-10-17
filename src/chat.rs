@@ -206,6 +206,8 @@ pub enum Command {
     EmotionList,
     /// /memo: where the player stands becomes a Warp Portal destination.
     Memo,
+    /// /achievement: the achievement window, open or closed.
+    Achievements,
 }
 
 /// The command typed, if `text` is one; a name is the rest of the line, quotes taken off.
@@ -221,6 +223,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/inall" => Command::AllWhispers { allow: true },
         "/effect" => Command::Effect,
         "/emo" | "/emotion" => Command::EmotionList,
+        "/achievement" => Command::Achievements,
         "/memo" => Command::Memo,
         _ => return None,
     })
@@ -247,6 +250,7 @@ mod tests {
         assert_eq!(command("/inall"), Some(Command::AllWhispers { allow: true }));
         assert_eq!(command("/effect"), Some(Command::Effect));
         assert_eq!(command("/emo"), Some(Command::EmotionList));
+        assert_eq!(command("/achievement"), Some(Command::Achievements));
         assert_eq!(command("/emotion"), Some(Command::EmotionList));
         for text in ["/in", "/whom", "hello /who", "/sit", "/ho"] {
             assert_eq!(command(text), None, "{text}");

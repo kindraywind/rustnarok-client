@@ -146,12 +146,16 @@ const CH_SECOND_PASSWD_ACK: u16 = 0x08B8;
 const HC_SECOND_PASSWD_LOGIN: u16 = 0x08B9;
 const CH_MAKE_SECOND_PASSWD: u16 = 0x08BA;
 const CH_EDIT_SECOND_PASSWD: u16 = 0x08BE;
+const CH_REQ_CHANGE_CHARACTER_SLOT: u16 = 0x08D4;
+const HC_ACK_CHANGE_CHARACTER_SLOT: u16 = 0x0B70;
+const CH_REQ_CHANGE_CHARNAME: u16 = 0x08FC;
+const HC_ACK_CHANGE_CHARNAME: u16 = 0x08FD;
 /// HC_ACCEPT_ENTER before its character list.
 const ACCEPT_ENTER_HEADER: usize = 27;
 /// CHARACTER_INFO for PACKETVER_MAIN_NUM >= 20220330 (64-bit exp, HP and SP).
 const CHARACTER_INFO_SIZE: usize = 175;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Character {
     pub id: u32,
     pub exp: i64,
@@ -181,6 +185,12 @@ pub struct Character {
     /// Seconds until a reserved deletion can be completed (0: none reserved, below 0: it can be now).
     pub deletion: i32,
     pub sex: u8,
+    /// Slot moves left (0 when moving is off, 1 when unlimited).
+    pub moves: i32,
+    /// 1 when a rename is granted.
+    pub renames: i32,
+    /// The opposite of `renames`: no rename granted (or it was used).
+    pub name_changed: bool,
 }
 
 #[derive(Debug)]
@@ -215,6 +225,14 @@ pub enum CharEvent {
         id: u32,
         result: u32,
     },
+    /// HC_ACK_CHANGE_CHARACTER_SLOT: 0 moved (the list follows), 1 failed; the moves the character has left.
+    Moved {
+        result: u16,
+        moves: u16,
+    },
+    /// HC_ACK_CHANGE_CHARNAME: 0 renamed (the list follows), else the reason (1 renamed before, 2 bad account,
+    /// 3 failed, 4 name taken, 5 in a guild, 6 in a party, 7 too long, 8 bad characters, 9 prohibited, 10 unknown).
+    Renamed(u32),
     /// HC_ACCEPT_MAKECHAR: the new character.
     Made(Character),
     /// HC_REFUSE_MAKECHAR: 0 name taken, 1 underage, 2 symbols, 3 slot not available, 0xFF denied.
@@ -318,12 +336,38 @@ impl CharSession {
         self.stream.write_all(&encode_pin_change(self.account_id, seed, old_pin, new_pin))
     }
 
+    /// Moves the character in slot `from` to `to` (swapping with one there); the answer is a `Moved` event.
+    pub fn move_slot(&mut self, from: u16, to: u16, moves: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_move_slot(from, to, moves))
+    }
+
+    /// Renames a character; the answer is a `Renamed` event.
+    pub fn rename(&mut self, id: u32, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_rename(id, name))
+    }
+
     fn send_id(&mut self, header: u16, id: u32, rest: &[u8]) -> io::Result<()> {
         let mut packet = header.to_le_bytes().to_vec();
         packet.extend_from_slice(&id.to_le_bytes());
         packet.extend_from_slice(rest);
         self.stream.write_all(&packet)
     }
+}
+
+/// CH_REQ_CHANGE_CHARACTER_SLOT: from, to and the moves left (rathena ignores them).
+fn encode_move_slot(from: u16, to: u16, moves: u16) -> [u8; 8] {
+    let [[h0, h1], [f0, f1], [t0, t1], [m0, m1]] = [CH_REQ_CHANGE_CHARACTER_SLOT, from, to, moves].map(u16::to_le_bytes);
+    [h0, h1, f0, f1, t0, t1, m0, m1]
+}
+
+/// CH_REQ_CHANGE_CHARNAME: the character and its new name (24 bytes EUC-KR, NUL-terminated).
+fn encode_rename(id: u32, name: &str) -> Vec<u8> {
+    let mut field = name_field(name);
+    field[23] = 0;
+    let mut packet = CH_REQ_CHANGE_CHARNAME.to_le_bytes().to_vec();
+    packet.extend_from_slice(&id.to_le_bytes());
+    packet.extend_from_slice(&field);
+    packet
 }
 
 impl Drop for CharSession {
@@ -445,6 +489,8 @@ fn decode_char_packet(packet: &[u8]) -> Option<CharEvent> {
         HC_ACCEPT_MAKECHAR => Some(CharEvent::Made(decode_character(&packet[2..]))),
         HC_REFUSE_MAKECHAR => Some(CharEvent::MakeRefused(packet[2])),
         HC_SECOND_PASSWD_LOGIN => Some(CharEvent::Pin { seed: u32_at(packet, 2), state: u16_at(packet, 10) }),
+        HC_ACK_CHANGE_CHARACTER_SLOT => Some(CharEvent::Moved { result: u16_at(packet, 4), moves: u16_at(packet, 6) }),
+        HC_ACK_CHANGE_CHARNAME => Some(CharEvent::Renamed(u32_at(packet, 2))),
         // Slot info, page count and blocked characters aren't needed yet.
         _ => None,
     }
@@ -485,6 +531,9 @@ fn decode_character(info: &[u8]) -> Character {
         map: c_string(&info[142..158]),
         deletion: i32_at(158),
         sex: info[174],
+        moves: i32_at(166),
+        renames: i32_at(170),
+        name_changed: i16_at(140) != 0,
     }
 }
 
@@ -641,6 +690,66 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_CASH_TIME_COUNTER: u16 = 0x0298;
+const ZC_CASH_ITEM_DELETE: u16 = 0x0299;
+const ZC_NOTIFY_BIND_ON_EQUIP: u16 = 0x02D3;
+const CZ_REQ_TAKEOFF_EQUIP_ALL: u16 = 0x0BAD;
+const ZC_ACK_TAKEOFF_EQUIP_ALL: u16 = 0x0BAE;
+const CZ_REQ_OPEN_ROULETTE: u16 = 0x0A19;
+const ZC_ACK_OPEN_ROULETTE: u16 = 0x0A1A;
+const CZ_REQ_ROULETTE_INFO: u16 = 0x0A1B;
+const ZC_ACK_ROULETTE_INFO: u16 = 0x0A1C;
+const CZ_REQ_CLOSE_ROULETTE: u16 = 0x0A1D;
+const CZ_REQ_GENERATE_ROULETTE: u16 = 0x0A1F;
+const ZC_ACK_GENERATE_ROULETTE: u16 = 0x0A20;
+const CZ_RECV_ROULETTE_ITEM: u16 = 0x0A21;
+const ZC_RECV_ROULETTE_ITEM: u16 = 0x0A22;
+const ZC_SKILL_POSTDELAY: u16 = 0x043D;
+const ZC_ALL_ACH_LIST: u16 = 0x0A23;
+const ZC_ACH_UPDATE: u16 = 0x0A24;
+const CZ_REQ_ACH_REWARD: u16 = 0x0A25;
+const ZC_REQ_ACH_REWARD_ACK: u16 = 0x0A26;
+const CZ_REQ_CHANGE_TITLE: u16 = 0x0A2E;
+const ZC_ACK_CHANGE_TITLE: u16 = 0x0A2F;
+const ZC_ITEMLISTWIN_OPEN: u16 = 0x07E3;
+const CZ_ITEMLISTWIN_RES: u16 = 0x07E4;
+const ZC_START_CAPTURE: u16 = 0x019E;
+const CZ_TRYCAPTURE_MONSTER: u16 = 0x019F;
+const ZC_TRYCAPTURE_MONSTER: u16 = 0x01A0;
+const ZC_PETEGG_LIST: u16 = 0x01A6;
+const CZ_SELECT_PETEGG: u16 = 0x01A7;
+const ZC_CHANGESTATE_PET: u16 = 0x01A4;
+const ZC_PROPERTY_PET: u16 = 0x01A2;
+const ZC_FEED_PET: u16 = 0x01A3;
+const CZ_COMMAND_PET: u16 = 0x01A1;
+const CZ_RENAME_PET: u16 = 0x01A5;
+const ZC_MER_INIT: u16 = 0x029B;
+const ZC_MER_SKILLINFO_LIST: u16 = 0x029D;
+const ZC_MER_PAR_CHANGE: u16 = 0x02A2;
+const CZ_MER_COMMAND: u16 = 0x029F;
+const CZ_REQUEST_MOVENPC: u16 = 0x0232;
+const CZ_REQUEST_ACTNPC: u16 = 0x0233;
+const CZ_REQUEST_MOVETOOWNER: u16 = 0x0234;
+/// CZ_MER_COMMAND's dismiss.
+pub const MERCENARY_DISMISS: u8 = 2;
+/// ZC_MER_PAR_CHANGE's kinds (rathena's SP_ numbers).
+pub const MERCENARY_HP: u16 = 5;
+pub const MERCENARY_MAX_HP: u16 = 6;
+pub const MERCENARY_SP: u16 = 7;
+pub const MERCENARY_MAX_SP: u16 = 8;
+pub const MERCENARY_ATK: u16 = 41;
+pub const MERCENARY_MATK: u16 = 43;
+pub const MERCENARY_DEF: u16 = 45;
+pub const MERCENARY_MDEF: u16 = 47;
+pub const MERCENARY_HIT: u16 = 49;
+pub const MERCENARY_CRITICAL: u16 = 52;
+pub const MERCENARY_ASPD: u16 = 53;
+pub const MERCENARY_FLEE: u16 = 165;
+pub const MERCENARY_KILLS: u16 = 189;
+pub const MERCENARY_LOYALTY: u16 = 190;
+const ZC_PET_ACT: u16 = 0x01AA;
+const CZ_PET_ACT: u16 = 0x01A9;
+const ZC_ACK_REQNAMEALL_NPC: u16 = 0x0ADF;
 const ZC_OPEN_REFINING_UI: u16 = 0x0AA0;
 const CZ_REFINING_SELECT_ITEM: u16 = 0x0AA1;
 const ZC_REFINING_MATERIAL_LIST: u16 = 0x0AA2;
@@ -763,6 +872,11 @@ const ZC_BAN_LIST: u16 = 0x0B7C;
 const CZ_REQ_GUILD_EMBLEM_IMG: u16 = 0x0151;
 const ZC_GUILD_EMBLEM_IMG: u16 = 0x0152;
 const ZC_CHANGE_GUILD: u16 = 0x0B47;
+const ZC_NOTIFY_CLAN_CONNECTINFO: u16 = 0x0988;
+const ZC_ACK_CLAN_LEAVE: u16 = 0x0989;
+const ZC_CLANINFO: u16 = 0x098A;
+const CZ_CLAN_CHAT: u16 = 0x098D;
+const ZC_NOTIFY_CLAN_CHAT: u16 = 0x098E;
 const CZ_REQNAME: u16 = 0x0368;
 const ZC_ACK_REQNAMEALL: u16 = 0x0A30;
 const CZ_ADD_FRIENDS: u16 = 0x0202;
@@ -914,6 +1028,133 @@ pub struct Unit {
     /// A player's guild and its emblem's version (0 for none).
     pub guild: u32,
     pub emblem: u32,
+}
+
+/// What ZC_CHANGESTATE_PET says: the pet is ours, its intimacy (0–1000), hunger (0–100), accessory (item ID),
+/// a performance (1–3, 4 special), or the egg list is done.
+pub const PET_OWNED: u8 = 0;
+pub const PET_INTIMACY: u8 = 1;
+pub const PET_HUNGER: u8 = 2;
+pub const PET_ACCESSORY: u8 = 3;
+pub const PET_PERFORMANCE: u8 = 4;
+pub const PET_EGGS_DONE: u8 = 6;
+/// CZ_COMMAND_PET's commands.
+pub const PET_INFO: u8 = 0;
+pub const PET_FEED: u8 = 1;
+pub const PET_PERFORM: u8 = 2;
+pub const PET_RETURN: u8 = 3;
+pub const PET_UNEQUIP: u8 = 4;
+
+/// The player's pet as ZC_PROPERTY_PET has it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Pet {
+    pub name: String,
+    /// Renamed once already: it can't be again.
+    pub renamed: bool,
+    pub level: u16,
+    /// 0–100.
+    pub hunger: u16,
+    /// 0–1000.
+    pub intimacy: u16,
+    /// The accessory's item ID (0: none).
+    pub accessory: u16,
+    /// The monster it is.
+    pub monster: u16,
+}
+
+/// The player's mercenary as ZC_MER_INIT has it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Mercenary {
+    /// Its unit's ID.
+    pub id: u32,
+    pub atk: u16,
+    pub matk: u16,
+    pub hit: u16,
+    pub critical: u16,
+    pub def: u16,
+    pub mdef: u16,
+    pub flee: u16,
+    /// Attack motion, as the status window's ASPD value.
+    pub aspd: u16,
+    pub name: String,
+    pub level: u16,
+    pub hp: u32,
+    pub max_hp: u32,
+    pub sp: u32,
+    pub max_sp: u32,
+    /// When the contract ends, in Unix seconds.
+    pub contract_end: u32,
+    pub loyalty: u16,
+    pub summons: u32,
+    pub kills: u32,
+    pub range: u16,
+}
+
+impl Mercenary {
+    /// A ZC_MER_PAR_CHANGE value.
+    pub fn set(&mut self, kind: u16, value: u32) {
+        let short = value.min(u32::from(u16::MAX)) as u16;
+        match kind {
+            MERCENARY_HP => self.hp = value,
+            MERCENARY_MAX_HP => self.max_hp = value,
+            MERCENARY_SP => self.sp = value,
+            MERCENARY_MAX_SP => self.max_sp = value,
+            MERCENARY_ATK => self.atk = short,
+            MERCENARY_MATK => self.matk = short,
+            MERCENARY_DEF => self.def = short,
+            MERCENARY_MDEF => self.mdef = short,
+            MERCENARY_HIT => self.hit = short,
+            MERCENARY_CRITICAL => self.critical = short,
+            MERCENARY_ASPD => self.aspd = short,
+            MERCENARY_FLEE => self.flee = short,
+            MERCENARY_KILLS => self.kills = value,
+            MERCENARY_LOYALTY => self.loyalty = short,
+            _ => {}
+        }
+    }
+}
+
+/// What a pet does (ZC_PET_ACT, CZ_PET_ACT): below 100 an emotion (ZC_EMOTION's numbers), else a line of its
+/// talk table, sent as (monster − 100) × 100 + act × 10 + hunger band.
+#[derive(Debug, PartialEq)]
+pub enum PetAct {
+    Emotion(u8),
+    Talk { monster: u16, act: u8, hunger: u8 },
+}
+
+impl PetAct {
+    pub fn decode(value: i32) -> Self {
+        if value < 100 {
+            return Self::Emotion(value.max(0) as u8);
+        }
+        Self::Talk { monster: (value / 100 + 100) as u16, act: (value / 10 % 10) as u8, hunger: (value % 10) as u8 }
+    }
+
+    pub fn value(&self) -> i32 {
+        match *self {
+            Self::Emotion(kind) => i32::from(kind),
+            Self::Talk { monster, act, hunger } => (i32::from(monster) - 100) * 100 + i32::from(act) * 10 + i32::from(hunger),
+        }
+    }
+}
+
+/// What the client asks of the Lucky Roulette.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RouletteRequest {
+    Open,
+    Prizes,
+    Close,
+    Spin,
+    Claim,
+}
+
+/// A Lucky Roulette prize: its place (row 0 at the bottom, 9 wide, up to row 6, 3 wide), the item and how many.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RoulettePrize {
+    pub row: u8,
+    pub column: u8,
+    pub item: u32,
+    pub amount: u16,
 }
 
 #[derive(Debug)]
@@ -1280,6 +1521,109 @@ pub enum MapEvent {
         index: u16,
         refine: u16,
     },
+    /// Eggs that can hatch, by inventory index.
+    PetEggs(Vec<u16>),
+    /// A pet's state changed: `kind` is one of the PET_* states above.
+    PetState {
+        kind: u8,
+        id: u32,
+        value: i32,
+    },
+    /// What the player's pet is like now.
+    PetInfo(Pet),
+    /// The player's mercenary: hired, or on a map load.
+    MercenaryInfo(Mercenary),
+    /// The mercenary's skills.
+    MercenarySkills(Vec<Skill>),
+    /// One of the mercenary's values changed (a MERCENARY_* kind).
+    MercenaryChanged {
+        kind: u16,
+        value: u32,
+    },
+    /// The pet was fed (or there was no food), and its food.
+    PetFed {
+        ok: bool,
+        food: u32,
+    },
+    /// A pet emotes or talks.
+    PetAct {
+        id: u32,
+        act: PetAct,
+    },
+    /// A unit's new name (a renamed pet).
+    UnitName {
+        id: u32,
+        name: String,
+    },
+    /// A taming item was used: pick the monster to tame.
+    CaptureStart,
+    /// The monster was tamed (its egg comes next), or not.
+    CaptureResult(bool),
+    /// The material window opens: 0 for Change Material, 1 or 2 for Four Spirit Analysis at that level.
+    MaterialWindow(u32),
+    /// All the player's achievements, with the totals (at login, and after a reward that gives a title).
+    Achievements {
+        totals: AchievementTotals,
+        list: Vec<Achievement>,
+    },
+    /// One achievement added or changed (none: the totals only), with the totals.
+    AchievementUpdate {
+        totals: AchievementTotals,
+        achievement: Option<Achievement>,
+    },
+    /// A reward claim taken, or refused.
+    AchievementReward {
+        ok: bool,
+        id: u32,
+    },
+    /// The title put on (0: taken off), or refused.
+    TitleChanged {
+        ok: bool,
+        title: u32,
+    },
+    /// A skill can't be used again for this long from now (0: it can again).
+    SkillCooldown {
+        skill: u16,
+        ms: u32,
+    },
+    /// The roulette window opens: a prize waiting to be claimed (row, column), the bonus item, and the gold, silver
+    /// and bronze points.
+    RouletteOpen {
+        prize: Option<(u8, u8)>,
+        bonus: u32,
+        points: [i32; 3],
+    },
+    /// The roulette's prizes.
+    RoulettePrizes(Vec<RoulettePrize>),
+    /// A spin's result (0 won, 1 failed, 2 not enough points, 3 lost) with where it stopped, the bonus and the points.
+    RouletteSpun {
+        result: u8,
+        row: u8,
+        column: u8,
+        bonus: u32,
+        points: [i32; 3],
+    },
+    /// A claim's result (0 claimed, 1 failed, 2 too many items, 3 too heavy) and the next bonus item.
+    RouletteClaimed {
+        result: u8,
+        bonus: u32,
+    },
+    /// A bind-on-equip item (inventory index) was put on: it's bound to the character now.
+    BoundOnEquip(u16),
+    /// Take Off All was done, or refused (the player can't act).
+    TookOffAll {
+        refused: bool,
+    },
+    /// A rental (by item ID) has this many seconds left.
+    RentalTime {
+        item: u32,
+        seconds: u32,
+    },
+    /// The rental at an inventory index has ended.
+    RentalExpired {
+        index: u16,
+        item: u32,
+    },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
         id: usize,
@@ -1437,6 +1781,24 @@ pub enum MapEvent {
         reason: String,
         expelled: bool,
     },
+    /// The character's clan, at login or upon joining (`ZC_CLANINFO`).
+    ClanInfo {
+        id: u32,
+        name: String,
+        master: String,
+        map: String,
+        allies: Vec<String>,
+        hostile: Vec<String>,
+    },
+    /// Members online and the clan's capacity (`ZC_NOTIFY_CLAN_CONNECTINFO`).
+    ClanOnlineCount {
+        online: i16,
+        max: i16,
+    },
+    /// The character left their clan (`ZC_ACK_CLAN_LEAVE`).
+    ClanLeft,
+    /// A line of clan chat (`ZC_NOTIFY_CLAN_CHAT`).
+    ClanChat(String),
     /// The friend list, at login (everyone offline until told otherwise).
     Friends(Vec<Friend>),
     /// A friend logged in or out.
@@ -1868,6 +2230,44 @@ pub struct NameTag {
     pub party: String,
     pub guild: String,
     pub position: String,
+    /// The title worn (0: none).
+    pub title: u32,
+}
+
+/// The player's achievement totals: score, rank (level), and the points into this rank and the points it needs.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct AchievementTotals {
+    pub score: u32,
+    pub level: u16,
+    pub points: u32,
+    pub needed: u32,
+}
+
+/// One of the player's achievements: done or not, each objective's count, when it was done (Unix time, 0 not yet),
+/// and whether its reward was taken.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Achievement {
+    pub id: u32,
+    pub completed: bool,
+    pub counts: [u32; 10],
+    pub completed_at: u32,
+    pub rewarded: bool,
+}
+
+/// A 50-byte achievement entry: ID, completed, ten counts, the time, rewarded.
+fn decode_achievement(entry: &[u8]) -> Achievement {
+    Achievement {
+        id: u32_at(entry, 0),
+        completed: entry[4] != 0,
+        counts: std::array::from_fn(|objective| u32_at(entry, 5 + objective * 4)),
+        completed_at: u32_at(entry, 45),
+        rewarded: entry[49] != 0,
+    }
+}
+
+/// Score, rank, points into it, points it needs.
+fn decode_totals(bytes: &[u8]) -> AchievementTotals {
+    AchievementTotals { score: u32_at(bytes, 0), level: u16_at(bytes, 4), points: u32_at(bytes, 6), needed: u32_at(bytes, 10) }
 }
 
 /// Someone in the player's guild.
@@ -1922,6 +2322,12 @@ pub struct InventoryItem {
     pub identified: bool,
     pub refine: u8,
     pub cards: [u32; 4],
+    /// Broken: it can't be worn until it's repaired.
+    pub broken: bool,
+    /// 0 not bound, 1 binds to the character once worn, 2 bound.
+    pub bind: u16,
+    /// A rental's end, Unix time in seconds (0: not a rental).
+    pub expires: u32,
 }
 
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
@@ -1969,6 +2375,7 @@ fn decode_normal_item(entry: &[u8]) -> InventoryItem {
         amount: u16_at(entry, 7),
         location: u32_at(entry, 9),
         cards: cards_at(entry, 13),
+        expires: u32_at(entry, 29),
         identified: entry[33] & 1 != 0,
         ..Default::default()
     }
@@ -1986,6 +2393,9 @@ fn decode_equip_item(entry: &[u8]) -> InventoryItem {
         cards: cards_at(entry, 15),
         refine: entry[65],
         identified: entry[67] & 1 != 0,
+        broken: entry[67] & 2 != 0,
+        bind: u16_at(entry, 35),
+        expires: u32_at(entry, 31),
     }
 }
 
@@ -2322,6 +2732,75 @@ impl MapSession {
         self.stream.write_all(&CZ_CLOSE_REFINING_UI.to_le_bytes())
     }
 
+    /// Hatches the egg at this inventory index (from `PetEggs`).
+    pub fn hatch(&mut self, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_hatch(index))
+    }
+
+    /// Dismisses the player's mercenary (MERCENARY_DISMISS); the server answers nothing but the unit vanishing.
+    pub fn mercenary_command(&mut self, command: u8) -> io::Result<()> {
+        let [low, high] = CZ_MER_COMMAND.to_le_bytes();
+        self.stream.write_all(&[low, high, command])
+    }
+
+    /// Sends the player's mercenary (or homunculus) to a cell.
+    pub fn move_npc(&mut self, id: u32, cell: [u16; 2]) -> io::Result<()> {
+        self.stream.write_all(&encode_move_npc(id, cell))
+    }
+
+    /// Sends the player's mercenary (or homunculus) at a target; `action` other than 0 keeps attacking.
+    pub fn act_npc(&mut self, id: u32, target: u32, action: u8) -> io::Result<()> {
+        self.stream.write_all(&encode_act_npc(id, target, action))
+    }
+
+    /// Brings the player's mercenary (or homunculus) back next to the player.
+    pub fn move_to_owner(&mut self, id: u32) -> io::Result<()> {
+        self.send_id(CZ_REQUEST_MOVETOOWNER, id)
+    }
+
+    /// One of the PET_* commands (PET_INFO and on) to the player's pet.
+    pub fn pet_command(&mut self, command: u8) -> io::Result<()> {
+        self.stream.write_all(&encode_pet_command(command))
+    }
+
+    pub fn rename_pet(&mut self, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_rename_pet(name))
+    }
+
+    /// Has the player's pet emote or talk; the server shows it to everyone around.
+    pub fn pet_act(&mut self, act: &PetAct) -> io::Result<()> {
+        self.stream.write_all(&encode_pet_act(act))
+    }
+
+    /// Tries to tame this monster (after `CaptureStart`).
+    pub fn try_capture(&mut self, monster: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_try_capture(monster))
+    }
+
+    /// Answers the material window: what's in with OK, or a cancel.
+    pub fn send_materials(&mut self, kind: u32, ok: bool, entries: &[(u16, u16)]) -> io::Result<()> {
+        self.stream.write_all(&encode_materials(kind, ok, entries))
+    }
+
+    /// Claims a completed achievement's reward.
+    pub fn claim_achievement(&mut self, id: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_id(CZ_REQ_ACH_REWARD, id))
+    }
+
+    /// Wears an achievement's title (0 takes it off).
+    pub fn change_title(&mut self, title: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_id(CZ_REQ_CHANGE_TITLE, title))
+    }
+
+    pub fn roulette(&mut self, request: RouletteRequest) -> io::Result<()> {
+        self.stream.write_all(&encode_roulette(request))
+    }
+
+    /// Takes off the general equipment (costumes, shadow gear and ammunition stay on).
+    pub fn take_off_all(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_REQ_TAKEOFF_EQUIP_ALL.to_le_bytes())
+    }
+
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
     pub fn card_list(&mut self, card: u16) -> io::Result<()> {
         self.stream.write_all(&encode_card_list(card))
@@ -2600,6 +3079,11 @@ impl MapSession {
         packet.extend_from_slice(&text);
         packet.push(0);
         self.stream.write_all(&packet)
+    }
+
+    /// Says something to the clan.
+    pub fn clan_chat(&mut self, name: &str, message: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_clan_chat(name, message))
     }
 
     /// Asks a character, by name, to be friends.
@@ -2978,10 +3462,117 @@ fn encode_refine(index: u16, ore: u32, blessings: bool) -> [u8; 9] {
     packet
 }
 
+/// CZ_SELECT_PETEGG: the egg's inventory index, as the list gave it.
+fn encode_hatch(index: u16) -> [u8; 4] {
+    let mut packet = [0u8; 4];
+    packet[..2].copy_from_slice(&CZ_SELECT_PETEGG.to_le_bytes());
+    packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_REQUEST_MOVENPC: the unit and the cell (rathena ignores the direction).
+fn encode_move_npc(id: u32, cell: [u16; 2]) -> [u8; 9] {
+    let mut packet = [0u8; 9];
+    packet[..2].copy_from_slice(&CZ_REQUEST_MOVENPC.to_le_bytes());
+    packet[2..6].copy_from_slice(&id.to_le_bytes());
+    packet[6..].copy_from_slice(&encode_position(cell, 0));
+    packet
+}
+
+/// CZ_REQUEST_ACTNPC: the unit, its target and the action.
+fn encode_act_npc(id: u32, target: u32, action: u8) -> [u8; 11] {
+    let mut packet = [0u8; 11];
+    packet[..2].copy_from_slice(&CZ_REQUEST_ACTNPC.to_le_bytes());
+    packet[2..6].copy_from_slice(&id.to_le_bytes());
+    packet[6..10].copy_from_slice(&target.to_le_bytes());
+    packet[10] = action;
+    packet
+}
+
+fn encode_pet_command(command: u8) -> [u8; 3] {
+    let [low, high] = CZ_COMMAND_PET.to_le_bytes();
+    [low, high, command]
+}
+
+/// CZ_RENAME_PET: at most 23 bytes of whole characters, NUL-padded.
+fn encode_rename_pet(name: &str) -> [u8; 26] {
+    let mut packet = [0u8; 26];
+    packet[..2].copy_from_slice(&CZ_RENAME_PET.to_le_bytes());
+    let mut bytes = Vec::new();
+    for character in name.chars() {
+        let encoded = encoding_rs::EUC_KR.encode(character.encode_utf8(&mut [0; 4])).0.into_owned();
+        if bytes.len() + encoded.len() > 23 {
+            break;
+        }
+        bytes.extend_from_slice(&encoded);
+    }
+    packet[2..2 + bytes.len()].copy_from_slice(&bytes);
+    packet
+}
+
+fn encode_pet_act(act: &PetAct) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_PET_ACT.to_le_bytes());
+    packet[2..].copy_from_slice(&act.value().to_le_bytes());
+    packet
+}
+
+/// CZ_TRYCAPTURE_MONSTER: the monster to tame.
+fn encode_try_capture(monster: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_TRYCAPTURE_MONSTER.to_le_bytes());
+    packet[2..].copy_from_slice(&monster.to_le_bytes());
+    packet
+}
+
+/// CZ_ITEMLISTWIN_RES: the window's kind as it came, OK (1) or cancel (0), and each item's inventory index and amount.
+fn encode_materials(kind: u32, ok: bool, entries: &[(u16, u16)]) -> Vec<u8> {
+    let mut packet = CZ_ITEMLISTWIN_RES.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((12 + entries.len() * 4) as u16).to_le_bytes());
+    packet.extend_from_slice(&kind.to_le_bytes());
+    packet.extend_from_slice(&u32::from(ok).to_le_bytes());
+    for (index, amount) in entries {
+        packet.extend_from_slice(&index.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+    }
+    packet
+}
+
+/// CZ_REQ_ACH_REWARD and CZ_REQ_CHANGE_TITLE: a header and an ID.
+fn encode_id(header: u16, id: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&header.to_le_bytes());
+    packet[2..].copy_from_slice(&id.to_le_bytes());
+    packet
+}
+
+/// The roulette's requests: open, the prizes, close, spin (just the header), and claim (a byte rathena doesn't read).
+fn encode_roulette(request: RouletteRequest) -> Vec<u8> {
+    let header = match request {
+        RouletteRequest::Open => CZ_REQ_OPEN_ROULETTE,
+        RouletteRequest::Prizes => CZ_REQ_ROULETTE_INFO,
+        RouletteRequest::Close => CZ_REQ_CLOSE_ROULETTE,
+        RouletteRequest::Spin => CZ_REQ_GENERATE_ROULETTE,
+        // ponytail: what the official client puts in the byte isn't knowable.
+        RouletteRequest::Claim => return [&CZ_RECV_ROULETTE_ITEM.to_le_bytes()[..], &[0]].concat(),
+    };
+    header.to_le_bytes().to_vec()
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
     [low, high, u8::from(allow)]
+}
+
+/// CZ_CLAN_CHAT: length, then `"<name> : <message>\0"`.
+fn encode_clan_chat(name: &str, message: &str) -> Vec<u8> {
+    let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
+    let mut packet = CZ_CLAN_CHAT.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((4 + text.len() + 1) as u16).to_le_bytes());
+    packet.extend_from_slice(&text);
+    packet.push(0);
+    packet
 }
 
 /// Packed cell position and direction (3 bytes), as rathena's WBUFPOS.
@@ -3174,6 +3765,9 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 kind: packet[32],
                 refine: packet[68],
                 worn: 0,
+                broken: packet[11] != 0,
+                bind: u16_at(38),
+                expires: u32_at(34),
             },
         },
         ZC_INVENTORY_START => MapEvent::InventoryStart { kind: packet[4] },
@@ -3398,6 +3992,89 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             materials: packet[7..].chunks_exact(9).map(|ore| (self::u32_at(ore, 0), ore[4], self::u32_at(ore, 5))).collect(),
         },
         ZC_ACK_ITEMREFINING => MapEvent::Refined { result: u16_at(2), index: u16_at(4), refine: u16_at(6) },
+        ZC_PETEGG_LIST => {
+            MapEvent::PetEggs(packet[4..usize::from(u16_at(2)).min(packet.len())].chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect())
+        }
+        ZC_CHANGESTATE_PET => MapEvent::PetState { kind: packet[2], id: u32_at(3), value: u32_at(7) as i32 },
+        // Name, renamed, level, hunger, intimacy, accessory, monster.
+        ZC_MER_INIT => MapEvent::MercenaryInfo(Mercenary {
+            id: u32_at(2),
+            atk: u16_at(6),
+            matk: u16_at(8),
+            hit: u16_at(10),
+            critical: u16_at(12),
+            def: u16_at(14),
+            mdef: u16_at(16),
+            flee: u16_at(18),
+            aspd: u16_at(20),
+            name: c_string(&packet[22..46]),
+            level: u16_at(46),
+            hp: u32_at(48),
+            max_hp: u32_at(52),
+            sp: u32_at(56),
+            max_sp: u32_at(60),
+            contract_end: u32_at(64),
+            loyalty: u16_at(68),
+            summons: u32_at(70),
+            kills: u32_at(74),
+            range: u16_at(78),
+        }),
+        // ZC_SKILLINFO_LIST's entries.
+        ZC_MER_SKILLINFO_LIST => MapEvent::MercenarySkills(packet[4..].chunks_exact(SKILL_SIZE).map(decode_skill).collect()),
+        ZC_MER_PAR_CHANGE => MapEvent::MercenaryChanged { kind: u16_at(2), value: u32_at(4) },
+        ZC_PROPERTY_PET => MapEvent::PetInfo(Pet {
+            name: c_string(&packet[2..26]),
+            renamed: packet[26] != 0,
+            level: u16_at(27),
+            hunger: u16_at(29),
+            intimacy: u16_at(31),
+            accessory: u16_at(33),
+            monster: u16_at(35),
+        }),
+        ZC_FEED_PET => MapEvent::PetFed { ok: packet[2] == 1, food: u32_at(3) },
+        ZC_PET_ACT => MapEvent::PetAct { id: u32_at(2), act: PetAct::decode(u32_at(6) as i32) },
+        // ID, group, name, title.
+        ZC_ACK_REQNAMEALL_NPC => MapEvent::UnitName { id: u32_at(2), name: c_string(&packet[10..34]) },
+        ZC_START_CAPTURE => MapEvent::CaptureStart,
+        ZC_TRYCAPTURE_MONSTER => MapEvent::CaptureResult(packet[2] == 1),
+        ZC_ITEMLISTWIN_OPEN => MapEvent::MaterialWindow(u32_at(2)),
+        ZC_ALL_ACH_LIST => MapEvent::Achievements {
+            totals: decode_totals(&packet[8..22]),
+            list: packet[22..usize::from(u16_at(2)).min(packet.len())].chunks_exact(50).map(decode_achievement).collect(),
+        },
+        // At login once with ID 0: the totals only (rathena zeroes the rest only in part).
+        ZC_ACH_UPDATE => MapEvent::AchievementUpdate {
+            totals: decode_totals(&packet[2..16]),
+            achievement: Some(decode_achievement(&packet[16..66])).filter(|achievement| achievement.id != 0),
+        },
+        ZC_REQ_ACH_REWARD_ACK => MapEvent::AchievementReward { ok: packet[2] == 1, id: u32_at(3) },
+        ZC_ACK_CHANGE_TITLE => MapEvent::TitleChanged { ok: packet[2] == 0, title: u32_at(3) },
+        ZC_SKILL_POSTDELAY => MapEvent::SkillCooldown { skill: u16_at(2), ms: u32_at(4) },
+        // Result, serial, the waiting prize's row and column (-1: none), bonus, gold, silver, bronze.
+        ZC_ACK_OPEN_ROULETTE => MapEvent::RouletteOpen {
+            prize: (packet[7] as i8 >= 0 && packet[8] as i8 >= 0).then_some((packet[7], packet[8])),
+            bonus: u32_at(9),
+            points: [13, 17, 21].map(|offset| u32_at(offset) as i32),
+        },
+        // Length, serial, then each prize: row, column, item, amount, 0.
+        ZC_ACK_ROULETTE_INFO => MapEvent::RoulettePrizes(
+            packet[8..]
+                .chunks_exact(12)
+                .map(|entry| RoulettePrize { row: entry[0], column: entry[2], item: self::u32_at(entry, 4), amount: self::u16_at(entry, 8) })
+                .collect(),
+        ),
+        ZC_ACK_GENERATE_ROULETTE => MapEvent::RouletteSpun {
+            result: packet[2],
+            row: u16_at(3) as u8,
+            column: u16_at(5) as u8,
+            bonus: u32_at(7),
+            points: [11, 15, 19].map(|offset| u32_at(offset) as i32),
+        },
+        ZC_RECV_ROULETTE_ITEM => MapEvent::RouletteClaimed { result: packet[2], bonus: u32_at(3) },
+        ZC_NOTIFY_BIND_ON_EQUIP => MapEvent::BoundOnEquip(u16_at(2)),
+        ZC_ACK_TAKEOFF_EQUIP_ALL => MapEvent::TookOffAll { refused: packet[2] != 0 },
+        ZC_CASH_TIME_COUNTER => MapEvent::RentalTime { item: u32_at(2), seconds: u32_at(6) },
+        ZC_CASH_ITEM_DELETE => MapEvent::RentalExpired { index: u16_at(2), item: u32_at(4) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3571,7 +4248,11 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_CHANGE_GUILD => MapEvent::GuildEmblemChanged { guild: u32_at(2), emblem: u32_at(6), account: u32_at(10) },
         // ID, name, party, guild, position, title.
         ZC_ACK_REQNAMEALL => {
-            MapEvent::NameTag(u32_at(2), NameTag { party: c_string(&packet[30..54]), guild: c_string(&packet[54..78]), position: c_string(&packet[78..102]) })
+            let title = (u32_at(102) as i32).max(0) as u32;
+            MapEvent::NameTag(
+                u32_at(2),
+                NameTag { party: c_string(&packet[30..54]), guild: c_string(&packet[54..78]), position: c_string(&packet[78..102]), title },
+            )
         }
         ZC_GUILD_NOTICE => MapEvent::GuildNotice { subject: c_string(&packet[2..62]), text: c_string(&packet[62..182]) },
         ZC_GUILD_CHAT => MapEvent::GuildChat(c_string(&packet[4..])),
@@ -3581,6 +4262,22 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_ACK_REQ_JOIN_GUILD => MapEvent::GuildInviteResult(packet[2]),
         ZC_ACK_LEAVE_GUILD => MapEvent::GuildLeft { character: u32_at(2), reason: c_string(&packet[6..46]), expelled: false },
         ZC_ACK_BAN_GUILD => MapEvent::GuildLeft { character: u32_at(42), reason: c_string(&packet[2..42]), expelled: true },
+        ZC_CLANINFO => {
+            let allies = usize::from(packet[72]);
+            let hostile = usize::from(packet[73]);
+            let mut names = packet[74..].chunks_exact(24).map(c_string);
+            MapEvent::ClanInfo {
+                id: u32_at(4),
+                name: c_string(&packet[8..32]),
+                master: c_string(&packet[32..56]),
+                map: c_string(&packet[56..72]),
+                allies: (&mut names).take(allies).collect(),
+                hostile: names.take(hostile).collect(),
+            }
+        }
+        ZC_NOTIFY_CLAN_CONNECTINFO => MapEvent::ClanOnlineCount { online: u16_at(2) as i16, max: u16_at(4) as i16 },
+        ZC_ACK_CLAN_LEAVE => MapEvent::ClanLeft,
+        ZC_NOTIFY_CLAN_CHAT => MapEvent::ClanChat(c_string(&packet[28..])),
         ZC_FRIENDS_LIST => MapEvent::Friends(
             packet[4..]
                 .chunks_exact(32)
@@ -3789,6 +4486,35 @@ mod tests {
         assert_eq!((character.id, character.hp, character.job, character.base_level), (150_001, 40, 4001, 99));
         assert_eq!((character.name.as_str(), character.map.as_str()), ("Tester", "prontera"));
         assert_eq!((character.stats, character.slot, character.sex), ([1, 2, 3, 4, 5, 6], 1, 1));
+        assert_eq!((character.moves, character.renames, character.name_changed), (0, 0, false));
+
+        // char_mmo_char_tobuf with two moves left and a rename granted.
+        info[166..170].copy_from_slice(&2i32.to_le_bytes());
+        info[170..174].copy_from_slice(&1i32.to_le_bytes());
+        info[140..142].copy_from_slice(&1u16.to_le_bytes());
+        let character = decode_character(&info);
+        assert_eq!((character.moves, character.renames, character.name_changed), (2, 1, true));
+    }
+
+    #[test]
+    fn moves_and_renames_characters() {
+        assert_eq!(encode_move_slot(1, 2, 2), [0xD4, 0x08, 1, 0, 2, 0, 2, 0]);
+        assert_eq!(packet_length(CH_REQ_CHANGE_CHARACTER_SLOT), Some(8));
+        let rename = encode_rename(150_002, "RenameTestA");
+        assert_eq!((rename.len(), &rename[..6]), (30, &[0xFC, 0x08, 0xF2, 0x49, 0x02, 0x00][..]));
+        assert_eq!(c_string(&rename[6..]), "RenameTestA");
+        assert_eq!(packet_length(CH_REQ_CHANGE_CHARNAME), Some(30));
+        // A 24-letter name keeps its terminator.
+        assert_eq!(encode_rename(1, &"x".repeat(30))[29], 0);
+
+        let mut moved = HC_ACK_CHANGE_CHARACTER_SLOT.to_le_bytes().to_vec();
+        moved.extend_from_slice(&[8, 0, 0, 0, 1, 0]);
+        assert!(matches!(decode_char_packet(&moved), Some(CharEvent::Moved { result: 0, moves: 1 })));
+        assert_eq!(packet_length(HC_ACK_CHANGE_CHARACTER_SLOT), Some(-1));
+        let mut renamed = HC_ACK_CHANGE_CHARNAME.to_le_bytes().to_vec();
+        renamed.extend_from_slice(&4u32.to_le_bytes());
+        assert!(matches!(decode_char_packet(&renamed), Some(CharEvent::Renamed(4))));
+        assert_eq!(packet_length(HC_ACK_CHANGE_CHARNAME), Some(6));
     }
 
     #[test]
@@ -4287,6 +5013,289 @@ mod tests {
     }
 
     #[test]
+    fn decodes_mercenaries() {
+        // clif_mercenary_info for Mina.
+        let mut init = vec![0u8; 80];
+        init[..2].copy_from_slice(&ZC_MER_INIT.to_le_bytes());
+        init[2..6].copy_from_slice(&110_038_127u32.to_le_bytes());
+        init[6..8].copy_from_slice(&300u16.to_le_bytes());
+        init[20..22].copy_from_slice(&700u16.to_le_bytes());
+        init[22..26].copy_from_slice(b"Mina");
+        init[46..48].copy_from_slice(&20u16.to_le_bytes());
+        init[48..52].copy_from_slice(&256u32.to_le_bytes());
+        init[52..56].copy_from_slice(&256u32.to_le_bytes());
+        init[64..68].copy_from_slice(&1_800_000_000u32.to_le_bytes());
+        init[68..70].copy_from_slice(&3u16.to_le_bytes());
+        init[70..74].copy_from_slice(&4u32.to_le_bytes());
+        init[74..78].copy_from_slice(&5u32.to_le_bytes());
+        init[78..80].copy_from_slice(&9u16.to_le_bytes());
+        let Some(MapEvent::MercenaryInfo(mut mercenary)) = decode_map_packet(&init) else { panic!() };
+        assert_eq!((mercenary.id, mercenary.name.as_str(), mercenary.level, mercenary.atk, mercenary.aspd), (110_038_127, "Mina", 20, 300, 700));
+        assert_eq!((mercenary.hp, mercenary.max_hp, mercenary.contract_end), (256, 256, 1_800_000_000));
+        assert_eq!((mercenary.loyalty, mercenary.summons, mercenary.kills, mercenary.range), (3, 4, 5, 9));
+        assert_eq!(packet_length(ZC_MER_INIT), Some(80));
+
+        let mut skills = ZC_MER_SKILLINFO_LIST.to_le_bytes().to_vec();
+        skills.extend_from_slice(&41u16.to_le_bytes());
+        for id in [8207u16, 8221] {
+            let mut entry = vec![0u8; SKILL_SIZE];
+            entry[..2].copy_from_slice(&id.to_le_bytes());
+            entry[6..8].copy_from_slice(&2u16.to_le_bytes());
+            skills.extend_from_slice(&entry);
+        }
+        let length = skills.len() as u16;
+        skills[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::MercenarySkills(list)) = decode_map_packet(&skills) else { panic!() };
+        assert_eq!(list.iter().map(|skill| (skill.id, skill.level)).collect::<Vec<_>>(), [(8207, 2), (8221, 2)]);
+        assert_eq!(packet_length(ZC_MER_SKILLINFO_LIST), Some(-1));
+
+        let change = [&ZC_MER_PAR_CHANGE.to_le_bytes()[..], &MERCENARY_HP.to_le_bytes(), &99u32.to_le_bytes()].concat();
+        let Some(MapEvent::MercenaryChanged { kind, value }) = decode_map_packet(&change) else { panic!() };
+        mercenary.set(kind, value);
+        mercenary.set(MERCENARY_KILLS, 6);
+        mercenary.set(MERCENARY_LOYALTY, 70_000);
+        assert_eq!((mercenary.hp, mercenary.kills, mercenary.loyalty), (99, 6, u16::MAX));
+
+        assert_eq!(encode_move_npc(7, [170, 360]), [0x32, 0x02, 7, 0, 0, 0, 170 >> 2, ((170 << 6) as u8) | (360 >> 4) as u8, (360 << 4) as u8]);
+        assert_eq!(encode_act_npc(7, 9, 1), [0x33, 0x02, 7, 0, 0, 0, 9, 0, 0, 0, 1]);
+        for (header, length) in [(CZ_MER_COMMAND, 3), (CZ_REQUEST_MOVENPC, 9), (CZ_REQUEST_ACTNPC, 11), (CZ_REQUEST_MOVETOOWNER, 6), (ZC_MER_PAR_CHANGE, 8)] {
+            assert_eq!(packet_length(header), Some(length), "{header:#06x}");
+        }
+    }
+
+    #[test]
+    fn decodes_pets() {
+        let Some(MapEvent::PetEggs(eggs)) = decode_map_packet(&[0xA6, 0x01, 8, 0, 3, 0, 9, 0]) else { panic!() };
+        assert_eq!(eggs, [3, 9]);
+        let state = [&ZC_CHANGESTATE_PET.to_le_bytes()[..], &[PET_ACCESSORY], &7u32.to_le_bytes(), &10013i32.to_le_bytes()].concat();
+        let Some(MapEvent::PetState { kind: PET_ACCESSORY, id: 7, value: 10013 }) = decode_map_packet(&state) else { panic!() };
+        let mut property = ZC_PROPERTY_PET.to_le_bytes().to_vec();
+        property.extend_from_slice(&name_field("Poring"));
+        property.push(1);
+        for value in [1u16, 100, 250, 10013, 1002] {
+            property.extend_from_slice(&value.to_le_bytes());
+        }
+        let Some(MapEvent::PetInfo(pet)) = decode_map_packet(&property) else { panic!() };
+        assert_eq!(pet, Pet { name: "Poring".into(), renamed: true, level: 1, hunger: 100, intimacy: 250, accessory: 10013, monster: 1002 });
+        let fed = [&ZC_FEED_PET.to_le_bytes()[..], &[1], &531u32.to_le_bytes()].concat();
+        let Some(MapEvent::PetFed { ok: true, food: 531 }) = decode_map_packet(&fed) else { panic!() };
+        let mut named = ZC_ACK_REQNAMEALL_NPC.to_le_bytes().to_vec();
+        named.extend_from_slice(&7u32.to_le_bytes());
+        named.extend_from_slice(&0u32.to_le_bytes());
+        named.extend_from_slice(&name_field("Pori"));
+        named.extend_from_slice(&[0; 24]);
+        let Some(MapEvent::UnitName { id: 7, name }) = decode_map_packet(&named) else { panic!() };
+        assert_eq!(name, "Pori");
+
+        // Below 100 an emotion; else the monster, the act and the hunger band.
+        let act = [&ZC_PET_ACT.to_le_bytes()[..], &7u32.to_le_bytes(), &90203i32.to_le_bytes()].concat();
+        let Some(MapEvent::PetAct { id: 7, act }) = decode_map_packet(&act) else { panic!() };
+        assert_eq!(act, PetAct::Talk { monster: 1002, act: 0, hunger: 3 });
+        assert_eq!(PetAct::decode(5), PetAct::Emotion(5));
+        assert_eq!(PetAct::Talk { monster: 1002, act: 9, hunger: 4 }.value(), 90294);
+
+        assert_eq!(encode_hatch(3), [0xA7, 0x01, 3, 0]);
+        assert_eq!(encode_pet_command(PET_RETURN), [0xA1, 0x01, 3]);
+        assert_eq!(encode_pet_act(&act), [0xA9, 0x01, 0x5B, 0x60, 0x01, 0]);
+        let rename = encode_rename_pet("Pori");
+        assert_eq!((&rename[..2], &rename[2..7]), (&[0xA5, 0x01][..], &b"Pori\0"[..]));
+        // Never past 23 bytes, nor half a character.
+        assert_eq!(encode_rename_pet(&"a".repeat(30))[25], 0);
+        assert_eq!(&encode_rename_pet(&format!("{}가", "a".repeat(22)))[24..], [0, 0]);
+        let ids = [
+            ZC_PETEGG_LIST,
+            CZ_SELECT_PETEGG,
+            ZC_CHANGESTATE_PET,
+            ZC_PROPERTY_PET,
+            ZC_FEED_PET,
+            CZ_COMMAND_PET,
+            CZ_RENAME_PET,
+            ZC_PET_ACT,
+            CZ_PET_ACT,
+            ZC_ACK_REQNAMEALL_NPC,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(-1), Some(4), Some(11), Some(37), Some(7), Some(3), Some(26), Some(10), Some(6), Some(58)]);
+    }
+
+    #[test]
+    fn decodes_taming() {
+        let Some(MapEvent::CaptureStart) = decode_map_packet(&[0x9E, 0x01]) else { panic!() };
+        let Some(MapEvent::CaptureResult(true)) = decode_map_packet(&[0xA0, 0x01, 1]) else { panic!() };
+        let Some(MapEvent::CaptureResult(false)) = decode_map_packet(&[0xA0, 0x01, 0]) else { panic!() };
+        assert_eq!(encode_try_capture(110_000_123), [0x9F, 0x01, 0xFB, 0x77, 0x8E, 0x06]);
+        assert_eq!([ZC_START_CAPTURE, CZ_TRYCAPTURE_MONSTER, ZC_TRYCAPTURE_MONSTER].map(packet_length), [Some(2), Some(6), Some(3)]);
+    }
+
+    #[test]
+    fn decodes_material_window() {
+        let Some(MapEvent::MaterialWindow(1)) = decode_map_packet(&[0xE3, 0x07, 1, 0, 0, 0]) else { panic!() };
+        assert_eq!(encode_materials(1, true, &[(5, 10), (7, 3)]), [0xE4, 0x07, 20, 0, 1, 0, 0, 0, 1, 0, 0, 0, 5, 0, 10, 0, 7, 0, 3, 0]);
+        assert_eq!(encode_materials(0, false, &[]), [0xE4, 0x07, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!([ZC_ITEMLISTWIN_OPEN, CZ_ITEMLISTWIN_RES].map(packet_length), [Some(6), Some(-1)]);
+    }
+
+    #[test]
+    fn decodes_achievements() {
+        let entry = |id: u32, completed: bool, count: u32, at: u32, rewarded: bool| {
+            let mut entry = id.to_le_bytes().to_vec();
+            entry.push(u8::from(completed));
+            entry.extend_from_slice(&count.to_le_bytes());
+            entry.extend_from_slice(&[0; 36]);
+            entry.extend_from_slice(&at.to_le_bytes());
+            entry.push(u8::from(rewarded));
+            entry
+        };
+        let totals = [&120u32.to_le_bytes()[..], &3u16.to_le_bytes(), &20u32.to_le_bytes(), &100u32.to_le_bytes()].concat();
+        let mut list = ZC_ALL_ACH_LIST.to_le_bytes().to_vec();
+        list.extend_from_slice(&122u16.to_le_bytes());
+        list.extend_from_slice(&2u32.to_le_bytes());
+        list.extend_from_slice(&totals);
+        list.extend_from_slice(&entry(200005, true, 1, 1_700_000_000, false));
+        list.extend_from_slice(&entry(120001, false, 7, 0, false));
+        let Some(MapEvent::Achievements { totals: listed, list }) = decode_map_packet(&list) else { panic!() };
+        assert_eq!(listed, AchievementTotals { score: 120, level: 3, points: 20, needed: 100 });
+        assert_eq!((list[0].id, list[0].completed, list[0].counts[0], list[0].completed_at, list[0].rewarded), (200005, true, 1, 1_700_000_000, false));
+        assert_eq!((list[1].id, list[1].completed, list[1].counts[0]), (120001, false, 7));
+
+        let update = [&ZC_ACH_UPDATE.to_le_bytes()[..], &totals, &entry(200005, true, 1, 5, true)].concat();
+        let Some(MapEvent::AchievementUpdate { achievement: Some(achievement), .. }) = decode_map_packet(&update) else { panic!() };
+        assert_eq!((achievement.id, achievement.rewarded), (200005, true));
+        // ID 0: the totals only.
+        let totals_only = [&ZC_ACH_UPDATE.to_le_bytes()[..], &totals, &entry(0, false, 0, 0, false)].concat();
+        let Some(MapEvent::AchievementUpdate { totals: updated, achievement: None }) = decode_map_packet(&totals_only) else { panic!() };
+        assert_eq!(updated.needed, 100);
+
+        let reward = [&ZC_REQ_ACH_REWARD_ACK.to_le_bytes()[..], &[1], &200005u32.to_le_bytes()].concat();
+        let Some(MapEvent::AchievementReward { ok: true, id: 200005 }) = decode_map_packet(&reward) else { panic!() };
+        let title = [&ZC_ACK_CHANGE_TITLE.to_le_bytes()[..], &[0], &1000u32.to_le_bytes()].concat();
+        let Some(MapEvent::TitleChanged { ok: true, title: 1000 }) = decode_map_packet(&title) else { panic!() };
+        let mut name = ZC_ACK_REQNAMEALL.to_le_bytes().to_vec();
+        name.extend_from_slice(&7u32.to_le_bytes());
+        name.extend_from_slice(&[0; 96]);
+        name.extend_from_slice(&1000i32.to_le_bytes());
+        let Some(MapEvent::NameTag(7, tag)) = decode_map_packet(&name) else { panic!() };
+        assert_eq!(tag.title, 1000);
+
+        assert_eq!(encode_id(CZ_REQ_ACH_REWARD, 200005), [0x25, 0x0A, 0x45, 0x0D, 0x03, 0]);
+        assert_eq!(encode_id(CZ_REQ_CHANGE_TITLE, 0), [0x2E, 0x0A, 0, 0, 0, 0]);
+        let ids = [ZC_ALL_ACH_LIST, ZC_ACH_UPDATE, CZ_REQ_ACH_REWARD, ZC_REQ_ACH_REWARD_ACK, CZ_REQ_CHANGE_TITLE, ZC_ACK_CHANGE_TITLE];
+        assert_eq!(ids.map(packet_length), [Some(-1), Some(66), Some(6), Some(7), Some(6), Some(7)]);
+    }
+
+    #[test]
+    fn decodes_cooldowns() {
+        let Some(MapEvent::SkillCooldown { skill: 8, ms: 10_000 }) = decode_map_packet(&[0x3D, 0x04, 8, 0, 0x10, 0x27, 0, 0]) else { panic!() };
+        let Some(MapEvent::SkillCooldown { skill: 8, ms: 0 }) = decode_map_packet(&[0x3D, 0x04, 8, 0, 0, 0, 0, 0]) else { panic!() };
+        assert_eq!(packet_length(ZC_SKILL_POSTDELAY), Some(8));
+    }
+
+    #[test]
+    fn decodes_the_roulette() {
+        let points = [&3i32.to_le_bytes()[..], &2i32.to_le_bytes(), &1i32.to_le_bytes()].concat();
+        let open = |row: i8, column: i8| {
+            [&ZC_ACK_OPEN_ROULETTE.to_le_bytes()[..], &[0], &0u32.to_le_bytes(), &[row as u8, column as u8], &5u32.to_le_bytes(), &points].concat()
+        };
+        let Some(MapEvent::RouletteOpen { prize: Some((2, 4)), bonus: 5, points: [3, 2, 1] }) = decode_map_packet(&open(2, 4)) else { panic!() };
+        let Some(MapEvent::RouletteOpen { prize: None, .. }) = decode_map_packet(&open(0, -1)) else { panic!() };
+        let Some(MapEvent::RouletteOpen { prize: None, .. }) = decode_map_packet(&open(-1, 0)) else { panic!() };
+
+        // Rows of 9 down to 3: 42 prizes.
+        let mut info = ZC_ACK_ROULETTE_INFO.to_le_bytes().to_vec();
+        info.extend_from_slice(&512u16.to_le_bytes());
+        info.extend_from_slice(&1u32.to_le_bytes());
+        for row in 0..7u16 {
+            for column in 0..9 - row {
+                let item = 500 + u32::from(row * 10 + column);
+                info.extend_from_slice(
+                    &[&row.to_le_bytes()[..], &column.to_le_bytes(), &item.to_le_bytes(), &1u16.to_le_bytes(), &0u16.to_le_bytes()].concat(),
+                );
+            }
+        }
+        let Some(MapEvent::RoulettePrizes(prizes)) = decode_map_packet(&info) else { panic!() };
+        assert_eq!(prizes.len(), 42);
+        assert_eq!(prizes[0], RoulettePrize { row: 0, column: 0, item: 500, amount: 1 });
+        assert_eq!((prizes[41].row, prizes[41].column, prizes[41].item), (6, 2, 562));
+
+        let spun = |result: u8| {
+            [&ZC_ACK_GENERATE_ROULETTE.to_le_bytes()[..], &[result], &0u16.to_le_bytes(), &4u16.to_le_bytes(), &5u32.to_le_bytes(), &points].concat()
+        };
+        let Some(MapEvent::RouletteSpun { result: 0, row: 0, column: 4, bonus: 5, points: [3, 2, 1] }) = decode_map_packet(&spun(0)) else { panic!() };
+        let Some(MapEvent::RouletteSpun { result: 2, .. }) = decode_map_packet(&spun(2)) else { panic!() };
+        let Some(MapEvent::RouletteSpun { result: 3, .. }) = decode_map_packet(&spun(3)) else { panic!() };
+        let claimed = [&ZC_RECV_ROULETTE_ITEM.to_le_bytes()[..], &[0], &7u32.to_le_bytes()].concat();
+        let Some(MapEvent::RouletteClaimed { result: 0, bonus: 7 }) = decode_map_packet(&claimed) else { panic!() };
+
+        assert_eq!(encode_roulette(RouletteRequest::Open), [0x19, 0x0A]);
+        assert_eq!(encode_roulette(RouletteRequest::Prizes), [0x1B, 0x0A]);
+        assert_eq!(encode_roulette(RouletteRequest::Close), [0x1D, 0x0A]);
+        assert_eq!(encode_roulette(RouletteRequest::Spin), [0x1F, 0x0A]);
+        assert_eq!(encode_roulette(RouletteRequest::Claim), [0x21, 0x0A, 0]);
+        // The open answer is 25 bytes at this version (the bonus item is 4 bytes), not packet_db's 23.
+        let ids = [
+            CZ_REQ_OPEN_ROULETTE,
+            ZC_ACK_OPEN_ROULETTE,
+            CZ_REQ_ROULETTE_INFO,
+            ZC_ACK_ROULETTE_INFO,
+            CZ_REQ_CLOSE_ROULETTE,
+            CZ_REQ_GENERATE_ROULETTE,
+            ZC_ACK_GENERATE_ROULETTE,
+            CZ_RECV_ROULETTE_ITEM,
+            ZC_RECV_ROULETTE_ITEM,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(2), Some(25), Some(2), Some(-1), Some(2), Some(2), Some(23), Some(3), Some(7)]);
+        assert_eq!(open(0, -1).len(), 25);
+    }
+
+    #[test]
+    fn decodes_equipment_states() {
+        // EQUIPITEM_INFO: bind at 35, flags at 67 (1 identified, 2 broken).
+        let mut entry = vec![0u8; EQUIP_ITEM_SIZE];
+        entry[..2].copy_from_slice(&5u16.to_le_bytes());
+        entry[2..6].copy_from_slice(&1201u32.to_le_bytes());
+        entry[35..37].copy_from_slice(&2u16.to_le_bytes());
+        entry[67] = 3;
+        let item = decode_equip_item(&entry);
+        assert_eq!((item.index, item.id, item.identified, item.broken, item.bind), (5, 1201, true, true, 2));
+        entry[67] = 1;
+        assert!(!decode_equip_item(&entry).broken);
+        // ZC_ITEM_PICKUP_ACK: broken at 11, bind at 38.
+        let mut pickup = vec![0u8; 70];
+        pickup[..2].copy_from_slice(&ZC_ITEM_PICKUP_ACK.to_le_bytes());
+        pickup[6..10].copy_from_slice(&2301u32.to_le_bytes());
+        pickup[11] = 1;
+        pickup[38..40].copy_from_slice(&1u16.to_le_bytes());
+        let Some(MapEvent::PickedUp { item, .. }) = decode_map_packet(&pickup) else { panic!() };
+        assert_eq!((item.id, item.broken, item.bind), (2301, true, 1));
+        let Some(MapEvent::BoundOnEquip(7)) = decode_map_packet(&[0xD3, 0x02, 7, 0]) else { panic!() };
+        let Some(MapEvent::TookOffAll { refused: false }) = decode_map_packet(&[0xAE, 0x0B, 0]) else { panic!() };
+        let Some(MapEvent::TookOffAll { refused: true }) = decode_map_packet(&[0xAE, 0x0B, 1]) else { panic!() };
+        assert_eq!(CZ_REQ_TAKEOFF_EQUIP_ALL.to_le_bytes(), [0xAD, 0x0B]);
+        let ids = [ZC_NOTIFY_BIND_ON_EQUIP, CZ_REQ_TAKEOFF_EQUIP_ALL, ZC_ACK_TAKEOFF_EQUIP_ALL, ZC_ITEM_PICKUP_ACK];
+        assert_eq!(ids.map(packet_length), [Some(4), Some(2), Some(3), Some(70)]);
+    }
+
+    #[test]
+    fn decodes_rentals() {
+        let time = [&ZC_CASH_TIME_COUNTER.to_le_bytes()[..], &5856u32.to_le_bytes(), &3599u32.to_le_bytes()].concat();
+        let Some(MapEvent::RentalTime { item: 5856, seconds: 3599 }) = decode_map_packet(&time) else { panic!() };
+        let gone = [&ZC_CASH_ITEM_DELETE.to_le_bytes()[..], &4u16.to_le_bytes(), &5856u32.to_le_bytes()].concat();
+        let Some(MapEvent::RentalExpired { index: 4, item: 5856 }) = decode_map_packet(&gone) else { panic!() };
+        // The end time: at 29 of a NORMALITEM_INFO entry, at 31 of an EQUIPITEM_INFO entry, at 34 of a pickup.
+        let mut normal = vec![0u8; NORMAL_ITEM_SIZE];
+        normal[29..33].copy_from_slice(&1_800_000_000u32.to_le_bytes());
+        assert_eq!(decode_normal_item(&normal).expires, 1_800_000_000);
+        let mut equip = vec![0u8; EQUIP_ITEM_SIZE];
+        equip[31..35].copy_from_slice(&1_800_000_001u32.to_le_bytes());
+        assert_eq!(decode_equip_item(&equip).expires, 1_800_000_001);
+        let mut pickup = vec![0u8; 70];
+        pickup[..2].copy_from_slice(&ZC_ITEM_PICKUP_ACK.to_le_bytes());
+        pickup[34..38].copy_from_slice(&1_800_000_002u32.to_le_bytes());
+        let Some(MapEvent::PickedUp { item, .. }) = decode_map_packet(&pickup) else { panic!() };
+        assert_eq!(item.expires, 1_800_000_002);
+        assert_eq!([ZC_CASH_TIME_COUNTER, ZC_CASH_ITEM_DELETE].map(packet_length), [Some(10), Some(8)]);
+    }
+
+    #[test]
     fn decodes_sounds_and_music() {
         let mut sound = ZC_SOUND.to_le_bytes().to_vec();
         let mut file = b"humming.wav".to_vec();
@@ -4509,6 +5518,53 @@ mod tests {
         login_pin[6..10].copy_from_slice(&2_000_001u32.to_le_bytes());
         login_pin[10..12].copy_from_slice(&1u16.to_le_bytes());
         let Some(CharEvent::Pin { seed: 0xCAFE_BABE, state: 1 }) = decode_char_packet(&login_pin) else { panic!() };
+    }
+
+    #[test]
+    fn decodes_clan() {
+        let chat = encode_clan_chat("Tester", "hello clan");
+        assert_eq!(&chat[..2], &CZ_CLAN_CHAT.to_le_bytes());
+        assert_eq!(u16::from_le_bytes([chat[2], chat[3]]) as usize, chat.len());
+        assert_eq!(&chat[4..], b"Tester : hello clan\0");
+
+        // ZC_CLANINFO: length, clan ID, name, master, map, ally count, hostile count, then 24-byte clan names.
+        let mut info = ZC_CLANINFO.to_le_bytes().to_vec();
+        info.extend_from_slice(&[0, 0]);
+        info.extend_from_slice(&2u32.to_le_bytes());
+        info.extend_from_slice(&name_field("Arcwand Clan"));
+        info.extend_from_slice(&name_field("Devon Aire"));
+        let mut map = [0u8; 16];
+        map[..10].copy_from_slice(b"geffen.gat");
+        info.extend_from_slice(&map);
+        info.extend_from_slice(&[1, 1]);
+        info.extend_from_slice(&name_field("Golden Mace Clan"));
+        info.extend_from_slice(&name_field("Crossbow Clan"));
+        let length = info.len() as u16;
+        info[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::ClanInfo { id, name, master, map, allies, hostile }) = decode_map_packet(&info) else { panic!() };
+        assert_eq!((id, name.as_str(), master.as_str(), map.as_str()), (2, "Arcwand Clan", "Devon Aire", "geffen.gat"));
+        assert_eq!(allies, ["Golden Mace Clan"]);
+        assert_eq!(hostile, ["Crossbow Clan"]);
+
+        let mut count = ZC_NOTIFY_CLAN_CONNECTINFO.to_le_bytes().to_vec();
+        count.extend_from_slice(&3i16.to_le_bytes());
+        count.extend_from_slice(&500i16.to_le_bytes());
+        let Some(MapEvent::ClanOnlineCount { online: 3, max: 500 }) = decode_map_packet(&count) else { panic!() };
+
+        let Some(MapEvent::ClanLeft) = decode_map_packet(&ZC_ACK_CLAN_LEAVE.to_le_bytes()) else { panic!() };
+
+        let mut incoming_chat = ZC_NOTIFY_CLAN_CHAT.to_le_bytes().to_vec();
+        incoming_chat.extend_from_slice(&[0, 0]);
+        incoming_chat.extend_from_slice(&[0u8; 24]);
+        incoming_chat.extend_from_slice(b"Tester : hello clan\0");
+        let length = incoming_chat.len() as u16;
+        incoming_chat[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::ClanChat(text)) = decode_map_packet(&incoming_chat) else { panic!() };
+        assert_eq!(text, "Tester : hello clan");
+
+        for (header, length) in [(ZC_NOTIFY_CLAN_CONNECTINFO, 6), (ZC_ACK_CLAN_LEAVE, 2), (ZC_CLANINFO, -1), (CZ_CLAN_CHAT, -1), (ZC_NOTIFY_CLAN_CHAT, -1)] {
+            assert_eq!(packet_length(header), Some(length));
+        }
     }
 
     /// Against a running rathena: `RUSTNAROK_CLIENT_TEST_ACCOUNT=user:password cargo test -- --ignored`.

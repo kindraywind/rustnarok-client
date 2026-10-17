@@ -437,7 +437,7 @@ pub struct Effects {
 }
 
 /// A whole number in `from..=to`.
-fn pick(from: u32, to: u32) -> u32 {
+pub fn pick(from: u32, to: u32) -> u32 {
     (random(from as f32, to as f32 + 1.0) as u32).min(to)
 }
 

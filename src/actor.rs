@@ -34,7 +34,8 @@ pub const READY: usize = 4;
 pub fn combat_actions(kind: u8) -> (usize, usize, usize) {
     match kind {
         // ponytail: players always use their first attack motion; the weapon decides it in the client.
-        0 => (5, 6, 8),
+        // Mercenaries (9) are laid out like players.
+        0 | 9 => (5, 6, 8),
         _ => (2, 3, 4),
     }
 }
@@ -502,6 +503,29 @@ impl SpriteSet {
     }
 
     /// An NPC or monster: one sprite named in the client's `JobNameTable`.
+    /// A mercenary (jobs 6017 to 6046): its body by the job name table's path under the human bodies (`여\활용병`), laid
+    /// out like a player's, and the weapon of its kind (the unit carries none).
+    pub fn mercenary(grf: &Grf, job: u16, name: &str) -> Option<Self> {
+        // ponytail: the weapons' glow sprites (`_검광`) are left out.
+        let weapon = match job {
+            6017..=6026 => "활용병_활",
+            6027..=6036 => "창용병_창",
+            6037..=6046 => "검용병_검",
+            _ => return None,
+        };
+        let load = |path: String, part: Part| -> Option<Layer> {
+            Some(Layer {
+                spr: Spr::parse(&grf.read(&format!("{path}.spr")).ok()?).ok()?,
+                act: Act::parse(&grf.read(&format!("{path}.act")).ok()?).ok()?,
+                palette: None,
+                part,
+            })
+        };
+        let body = load(format!("data\\sprite\\인간족\\몸통\\{name}"), Part::Body)?;
+        let weapon = load(format!("data\\sprite\\인간족\\용병\\{weapon}"), Part::Weapon);
+        Some(Self { layers: [Some(body), weapon].into_iter().flatten().collect(), player: true, textures: HashMap::new() })
+    }
+
     pub fn single(grf: &Grf, name: &str, monster: bool) -> Option<Self> {
         let folders = if monster { ["몬스터", "npc"] } else { ["npc", "몬스터"] };
         folders.iter().find_map(|folder| Self::at(grf, &format!("data\\sprite\\{folder}\\{name}")))
@@ -509,10 +533,15 @@ impl SpriteSet {
 
     /// One sprite by path without extension, e.g. `data\sprite\shadow`.
     pub fn at(grf: &Grf, path: &str) -> Option<Self> {
+        Self::with_act(grf, path, &format!("{path}.act"))
+    }
+
+    /// Like `at`, moving by another ACT (a pet's accessory changes how it moves).
+    pub fn with_act(grf: &Grf, path: &str, act: &str) -> Option<Self> {
         Some(Self {
             layers: vec![Layer {
                 spr: Spr::parse(&grf.read(&format!("{path}.spr")).ok()?).ok()?,
-                act: Act::parse(&grf.read(&format!("{path}.act")).ok()?).ok()?,
+                act: Act::parse(&grf.read(act).ok()?).ok()?,
                 palette: None,
                 part: Part::Body,
             }],
@@ -591,16 +620,7 @@ impl SpriteSet {
             } else {
                 // Single-action sprites (some weapons) repeat their one action.
                 let Some(frames) = layer.act.actions.get(index % layer.act.actions.len().max(1)).filter(|frames| !frames.is_empty()) else { continue };
-                let chosen = match (look, part) {
-                    (Some(look), Part::Robe) => look.min(frames.len() - 1),
-                    (Some(look), part) if part.on_head() => {
-                        let group = (frames.len() / 3).max(1);
-                        (animated(layer, group) + group * look) % frames.len()
-                    }
-                    _ if part.on_head() => frame_index % frames.len(),
-                    _ => animated(layer, frames.len()),
-                };
-                &frames[chosen]
+                &frames[layer_frame(frames.len(), look, frame_index, body_frames.len(), |count| animated(layer, count))]
             };
             let shift = if part.on_head() { sprite::head_shift(body_frame, frame) } else { [0, 0] };
             placed.extend(
@@ -657,6 +677,21 @@ fn animated(layer: &Layer, index: usize, count: usize, timing: Timing) -> usize 
             (elapsed_ms / frame_ms) as usize % count
         }
         Timing::Span(progress) => ((progress * count as f32) as usize).min(count - 1),
+    }
+}
+
+/// Which of a layer's `count` frames goes with the body's frame `body_frame` of `body_count`. Standing or sitting
+/// (`look`: the head direction) a layer's frames come in three groups, one per head direction, and play within the
+/// group (`own(n)`: which of n frames the layer's own clock is at), so balloons bob and wings flap while weapons and
+/// shields hold still. Otherwise a layer with as many frames as the body keeps step with it.
+fn layer_frame(count: usize, look: Option<usize>, body_frame: usize, body_count: usize, own: impl Fn(usize) -> usize) -> usize {
+    match look {
+        Some(look) => {
+            let group = (count / 3).max(1);
+            (own(group) + group * look) % count
+        }
+        None if count == body_count => body_frame,
+        None => own(count),
     }
 }
 
@@ -904,6 +939,22 @@ mod tests {
         let ready = layers(READY * 8);
         assert!(ready.contains(&5) && ready.contains(&6), "{ready:?}");
         assert!(layers(attack_action(0, 0, 1) * 8).contains(&5));
+        // An animated wing flaps while its wearer stands still.
+        let winged = SpriteSet::player(&grf, &Look { hair: 1, robe: 61, ..Default::default() }, &tables).unwrap();
+        assert_ne!(winged.place(0, 0, Timing::Loop(0.0)), winged.place(0, 0, Timing::Loop(100.0)));
+    }
+
+    #[test]
+    fn picks_each_layers_frame() {
+        // Standing with the head turned (look 1): a 3-frame hat or shield shows frame 1 whatever its clock says;
+        // a 24-frame balloon or wing plays frames 8 to 15.
+        assert_eq!(layer_frame(3, Some(1), 1, 3, |_| 0), 1);
+        assert_eq!(layer_frame(24, Some(1), 1, 3, |count| count - 1), 15);
+        assert_eq!(layer_frame(24, Some(2), 2, 3, |_| 3), 19);
+        // Walking or attacking: in step with the body, or on its own clock when the frame counts differ.
+        assert_eq!(layer_frame(8, None, 5, 8, |_| 0), 5);
+        assert_eq!(layer_frame(10, None, 4, 9, |count| count - 1), 9);
+        assert_eq!(layer_frame(1, None, 4, 5, |_| 0), 0);
     }
 
     #[test]

@@ -1,0 +1,20 @@
+{
+  "about": "Rental items (issue #109): the World Cup Hat of Passion Box (12767) rents its hat (5856) for an hour; the server's time warning prints and the hat's description starts with its time left. Leftover rentals warn in every later scenario: the scenario reset should delete the test characters' inventory rows with an expire_time.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 22 30"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 12767"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"click_on": {"inventory_item": 12767}, "count": 2}, {"wait_for": {"packet": "0x0298", "ms": 5000}}, {"wait": 500},
+    {"expect": {"chat": "will disappear in", "inventory_has": [{"id": 5856}]}},
+    {"expect": {"chat": "World Cup Hat of Passion"}},
+    {"click": [11, 225]}, {"wait": 300},
+    {"click_on": {"inventory_item": 5856}, "button": "right"}, {"wait": 500}, {"move": [1000, 750]},
+    {"expect": {"windows_open": ["ItemInfo"]}},
+    {"shot": "rental-hat", "crop": [0, 100, 700, 500], "threshold": 2},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"say": "@itemreset"}, {"wait": 800}
+  ]
+}

@@ -1,4 +1,5 @@
-//! The equipment window (Alt+Q): what the player wears on the client's slot bitmap, with the character in the middle.
+//! The equipment window (Alt+Q): what the player wears on the client's slot bitmap, with the character in the middle;
+//! and the titles the player's achievements gave, to wear one.
 
 use std::collections::HashMap;
 
@@ -33,10 +34,18 @@ const COLUMN_WIDTH: f32 = 115.0;
 const PREVIEW_FEET: [f32; 2] = [140.0, PANEL_TOP + 114.0];
 /// Where the client first opens it.
 const DEFAULT_POSITION: [f32; 2] = [480.0, 200.0];
-/// The general and the special (costume and shadow gear) tabs.
-const TAB_LABELS: [usize; 2] = [3158, 3159];
-const TAB_TEXT: [[f32; 2]; 2] = [[8.0, TITLE_HEIGHT + 3.0], [90.0, TITLE_HEIGHT + 3.0]];
-const TAB_WIDTH: [f32; 2] = [80.0, 80.0];
+/// The general and the special (costume and shadow gear) tabs, and the titles (the player's own window only).
+// ponytail: equipwin_bg3.bmp draws two tabs; the third's label goes beside them.
+const TAB_LABELS: [usize; 3] = [3158, 3159, 3160];
+const TAB_TEXT: [[f32; 2]; 3] = [[8.0, TITLE_HEIGHT + 3.0], [90.0, TITLE_HEIGHT + 3.0], [172.0, TITLE_HEIGHT + 3.0]];
+const TAB_WIDTH: [f32; 3] = [80.0, 80.0, 80.0];
+const TITLES_TAB: usize = 2;
+/// "Disable Title", first in the titles' list, and the list's rows.
+const NO_TITLE: usize = 2686;
+const TITLE_ROW: f32 = 18.0;
+/// Take Off All, in the footer's right corner, and its name.
+const TAKE_OFF: [f32; 2] = [40.0, 20.0];
+const TAKE_OFF_NAME: usize = 3955;
 const SHOW_EQUIPMENT_MESSAGE: usize = 1362;
 /// "%s's Equipment": another player's window.
 const OTHERS_TITLE: usize = 1361;
@@ -80,8 +89,9 @@ pub struct Assets {
     footer: Texture,
     /// The Show Equipment box: off, on.
     checkbox: [Texture; 2],
-    /// Swap equipment and take everything off.
+    /// Swap equipment and take everything off; Take Off All pointed at.
     buttons: [Texture; 2],
+    take_off_hover: Texture,
 }
 
 impl Assets {
@@ -96,6 +106,7 @@ impl Assets {
             footer: footer.map_or_else(|_| gpu.solid([0xF0; 4]), |footer| gpu.texture(&footer, false)),
             checkbox: ["0", "1"].map(|look| image(format!("{UI}checkbox_{look}.bmp"))),
             buttons: [image(format!("{basic}btn_e_change_a.bmp")), image(format!("{basic}btn_e_off_a.bmp"))],
+            take_off_hover: image(format!("{basic}btn_e_off_b.bmp")),
         }
     }
 }
@@ -108,6 +119,9 @@ pub enum Hit {
     Slot(u16),
     /// The Show Equipment box and its label.
     ShowBox,
+    /// A title to wear (0: none).
+    WearTitle(u32),
+    TakeOffAll,
     Window,
 }
 
@@ -119,12 +133,20 @@ pub struct Equipment {
     pub owner: Option<String>,
     /// Whether others may see what the player wears (the Show Equipment box), as the server last said.
     pub shown: bool,
+    /// The titles the player's achievements gave (ID, name), and the one worn (0: none).
+    pub titles: Vec<(u32, String)>,
+    pub title: u32,
 }
 
 impl Default for Equipment {
     fn default() -> Self {
-        Self { frame: Frame::new(DEFAULT_POSITION, WIDTH), tab: 0, clicks: Clicks::default(), owner: None, shown: false }
+        Self { frame: Frame::new(DEFAULT_POSITION, WIDTH), tab: 0, clicks: Clicks::default(), owner: None, shown: false, titles: Vec::new(), title: 0 }
     }
+}
+
+/// Take Off All's corner inside the window.
+fn take_off_at() -> [f32; 2] {
+    [WIDTH - 45.0, PANEL_TOP + PANEL_HEIGHT + 4.0]
 }
 
 /// A slot's top-left corner and size inside the window.
@@ -147,7 +169,11 @@ impl Equipment {
 
     /// The worn item in each slot of the current tab, with the slot's place.
     fn slots<'i>(&self, worn: &'i [InventoryItem]) -> impl Iterator<Item = (usize, usize, &'i InventoryItem)> {
-        SLOTS[self.tab].iter().filter_map(move |&(location, column, row)| Some((column, row, worn.iter().find(|item| item.worn & location != 0)?)))
+        SLOTS
+            .get(self.tab)
+            .into_iter()
+            .flatten()
+            .filter_map(move |&(location, column, row)| Some((column, row, worn.iter().find(|item| item.worn & location != 0)?)))
     }
 
     pub fn hit(&self, cursor: [f32; 2], items: &[InventoryItem]) -> Option<Hit> {
@@ -158,13 +184,24 @@ impl Equipment {
         // ponytail: the tab strip's hit areas are guessed from equipwin_bg3.bmp's divider.
         if local[1] < PANEL_TOP {
             return Some(
-                (0..2).find(|&tab| contains([TAB_TEXT[tab][0] - 4.0, TITLE_HEIGHT], [TAB_WIDTH[tab], TABS_HEIGHT], local)).map_or(Hit::Window, Hit::Tab),
+                (0..self.tabs())
+                    .find(|&tab| contains([TAB_TEXT[tab][0] - 4.0, TITLE_HEIGHT], [TAB_WIDTH[tab], TABS_HEIGHT], local))
+                    .map_or(Hit::Window, Hit::Tab),
             );
+        }
+        // The titles: "none" first, then each one.
+        if self.tab == TITLES_TAB && local[1] < PANEL_TOP + PANEL_HEIGHT {
+            let row = ((local[1] - PANEL_TOP - 4.0) / TITLE_ROW).max(0.0) as usize;
+            let picked = std::iter::once(0).chain(self.titles.iter().map(|(id, _)| *id)).nth(row);
+            return Some(picked.map_or(Hit::Window, Hit::WearTitle));
         }
         // ponytail: the box's label is taken to run 120px from the box.
         let footer_top = PANEL_TOP + PANEL_HEIGHT;
         if self.owner.is_none() && contains([6.0, footer_top + 6.0], [120.0, 14.0], local) {
             return Some(Hit::ShowBox);
+        }
+        if self.owner.is_none() && contains(take_off_at(), TAKE_OFF, local) {
+            return Some(Hit::TakeOffAll);
         }
         Some(
             self.slots(items)
@@ -183,9 +220,35 @@ impl Equipment {
             Hit::Tab(tab) => self.tab = tab,
             // Someone else's items stay on.
             Hit::Slot(index) if self.owner.is_none() => return self.clicks.double(index).then_some(index),
-            Hit::Slot(_) | Hit::ShowBox | Hit::Window => {}
+            Hit::Slot(_) | Hit::ShowBox | Hit::WearTitle(_) | Hit::TakeOffAll | Hit::Window => {}
         }
         None
+    }
+
+    /// How many tabs show: the titles only on the player's own window.
+    fn tabs(&self) -> usize {
+        if self.owner.is_none() { TAB_LABELS.len() } else { TITLES_TAB }
+    }
+
+    /// The tabs and the titles on screen, named for scripted clicks: `equipment_tab:<n>`, `title:<id>` (0: none).
+    pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized {
+            return Vec::new();
+        }
+        let place = |local: [f32; 2], size: [f32; 2]| {
+            let [x, y] = self.frame.at(local);
+            [x, y, size[0], size[1]]
+        };
+        let tabs = (0..self.tabs()).map(|tab| (format!("equipment_tab:{tab}"), place([TAB_TEXT[tab][0] - 4.0, TITLE_HEIGHT], [TAB_WIDTH[tab], TABS_HEIGHT])));
+        let mut boxes: Vec<_> = tabs.collect();
+        if self.owner.is_none() {
+            boxes.push(("take_off_all".to_owned(), place(take_off_at(), TAKE_OFF)));
+        }
+        if self.tab == TITLES_TAB {
+            let ids = std::iter::once(0).chain(self.titles.iter().map(|(id, _)| *id));
+            boxes.extend(ids.enumerate().map(|(row, id)| (format!("title:{id}"), place([0.0, PANEL_TOP + 4.0 + row as f32 * TITLE_ROW], [WIDTH, TITLE_ROW]))));
+        }
+        boxes
     }
 
     /// Where the character preview stands on screen, while it shows.
@@ -225,14 +288,24 @@ impl Equipment {
 
         // Tabs, the slot panel and the character standing on its shadow.
         layer.sprites.push((&assets.tabs, at([0.0, TITLE_HEIGHT]), assets.tabs.size));
-        for (tab, &label) in TAB_LABELS.iter().enumerate() {
+        for (tab, &label) in TAB_LABELS.iter().enumerate().take(self.tabs()) {
             // Kept inside its tab, however long the translation's title is.
             let title = window::fit(font, message(label), TAB_WIDTH[tab] - 6.0);
             layer.texts.push((title, at(TAB_TEXT[tab]), if tab == self.tab { [0, 0, 0] } else { GREY }));
         }
-        let panel = &assets.panels[self.tab];
-        layer.sprites.push((panel, at([0.0, PANEL_TOP]), panel.size));
+        match assets.panels.get(self.tab) {
+            Some(panel) => layer.sprites.push((panel, at([0.0, PANEL_TOP]), panel.size)),
+            None => layer.sprites.push((&chrome.white, at([0.0, PANEL_TOP]), [WIDTH, PANEL_HEIGHT])),
+        }
         layer.sprites.extend(preview);
+        // The titles: none, then each earned one; the worn one black, the others grey.
+        if self.tab == TITLES_TAB {
+            let rows = std::iter::once((0, message(NO_TITLE).to_owned())).chain(self.titles.iter().cloned());
+            for (row, (id, name)) in rows.enumerate().take((PANEL_HEIGHT / TITLE_ROW) as usize) {
+                let color = if id == self.title { [0, 0, 0] } else { GREY };
+                layer.texts.push((window::fit(font, &name, WIDTH - 20.0), at([10.0, PANEL_TOP + 6.0 + row as f32 * TITLE_ROW]), color));
+            }
+        }
 
         for (column, row, item) in self.slots(worn) {
             let (corner, size) = slot_area(column, row);
@@ -268,6 +341,28 @@ impl Equipment {
         layer.texts.push((message(SHOW_EQUIPMENT_MESSAGE).to_owned(), at([19.0, footer_top + 6.0]), [0, 0, 0]));
         let [swap, take_off] = &assets.buttons;
         layer.sprites.push((swap, at([WIDTH - 90.0, footer_top + 4.0]), swap.size));
-        layer.sprites.push((take_off, at([WIDTH - 45.0, footer_top + 4.0]), take_off.size));
+        // ponytail: _a and _b read as normal and pointed at; the button's look isn't otherwise knowable.
+        let pointed = contains(at(take_off_at()), TAKE_OFF, cursor);
+        layer.sprites.push((if pointed { &assets.take_off_hover } else { take_off }, at(take_off_at()), TAKE_OFF));
+        if pointed {
+            window::tooltip(tooltip, chrome, font, message(TAKE_OFF_NAME), offset(cursor, [12.0, 12.0]), [255; 3]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn takes_off_all_from_its_button() {
+        let mut window = Equipment::default();
+        window.frame.open = true;
+        let [x, y] = window.frame.at(take_off_at());
+        assert_eq!(window.hit([x + 20.0, y + 10.0], &[]), Some(Hit::TakeOffAll));
+        assert!(window.button_boxes().iter().any(|(name, _)| name == "take_off_all"));
+        // Someone else's window has no such button.
+        let other = Equipment::of("Someone".into());
+        assert_ne!(other.hit(other.frame.at(offset(take_off_at(), [20.0, 10.0])), &[]), Some(Hit::TakeOffAll));
     }
 }
