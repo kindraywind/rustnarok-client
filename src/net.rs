@@ -566,6 +566,12 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_REPAIRITEMLIST: u16 = 0x0B65;
+const CZ_REQ_ITEMREPAIR2: u16 = 0x0B66;
+const ZC_ACK_ITEMREPAIR: u16 = 0x01FE;
+const ZC_NOTIFY_WEAPONITEMLIST: u16 = 0x0221;
+const CZ_REQ_WEAPONREFINE: u16 = 0x0222;
+const ZC_ACK_WEAPONREFINE: u16 = 0x0223;
 const ZC_MAKABLEITEMLIST: u16 = 0x018D;
 const CZ_REQMAKINGITEM: u16 = 0x018E;
 const ZC_ACK_REQMAKINGITEM: u16 = 0x018F;
@@ -1151,6 +1157,20 @@ pub enum MapEvent {
     /// Something made, or not: even results succeeded, odd ones failed.
     Made {
         result: u16,
+        item: u32,
+    },
+    /// Repair Weapon's list: the target's broken items, indexed by rathena's own slots in the target's inventory.
+    RepairList(Vec<InventoryItem>),
+    /// An item repaired, or not.
+    Repaired {
+        index: u16,
+        ok: bool,
+    },
+    /// Upgrade Weapon's list: the caster's weapons it can refine.
+    UpgradeList(Vec<InventoryItem>),
+    /// Upgrade Weapon's result (0 refined, 1 failed, 2 skill too low, 3 ore missing) with the item it names.
+    Upgraded {
+        result: u32,
         item: u32,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
@@ -2164,6 +2184,16 @@ impl MapSession {
         self.stream.write_all(&encode_make_arrow(item))
     }
 
+    /// Answers Repair Weapon's list with an entry, or none.
+    pub fn repair(&mut self, item: Option<&InventoryItem>) -> io::Result<()> {
+        self.stream.write_all(&encode_repair(item))
+    }
+
+    /// Answers Upgrade Weapon's list with a weapon's inventory index, or 0 for none.
+    pub fn upgrade_weapon(&mut self, index: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_upgrade(index))
+    }
+
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
     pub fn card_list(&mut self, card: u16) -> io::Result<()> {
         self.stream.write_all(&encode_card_list(card))
@@ -2767,6 +2797,32 @@ fn encode_make_arrow(item: u32) -> [u8; 6] {
     packet
 }
 
+/// CZ_REQ_ITEMREPAIR2: the picked entry as it came (rathena reads its index); none sends index 0xFFFF, which
+/// repairs nothing and ends the list.
+fn encode_repair(item: Option<&InventoryItem>) -> [u8; 26] {
+    let mut packet = [0u8; 26];
+    packet[..2].copy_from_slice(&CZ_REQ_ITEMREPAIR2.to_le_bytes());
+    let Some(item) = item else {
+        packet[2..4].copy_from_slice(&u16::MAX.to_le_bytes());
+        return packet;
+    };
+    packet[2..4].copy_from_slice(&item.index.to_le_bytes());
+    packet[4..8].copy_from_slice(&item.id.to_le_bytes());
+    for (slot, card) in item.cards.iter().enumerate() {
+        packet[8 + slot * 4..12 + slot * 4].copy_from_slice(&card.to_le_bytes());
+    }
+    packet[24] = item.refine;
+    packet
+}
+
+/// CZ_REQ_WEAPONREFINE: the weapon's inventory index (0: none, which ends the list).
+fn encode_upgrade(index: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_REQ_WEAPONREFINE.to_le_bytes());
+    packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -3148,6 +3204,36 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_MAKINGITEM_LIST => MapEvent::CookList { kind: u16_at(4), items: packet[6..].chunks_exact(4).map(|id| self::u32_at(id, 0)).collect() },
         ZC_MAKINGARROW_LIST => MapEvent::ArrowList(packet[4..].chunks_exact(4).map(|id| self::u32_at(id, 0)).collect()),
         ZC_ACK_REQMAKINGITEM => MapEvent::Made { result: u16_at(2), item: u32_at(4) },
+        // REPAIRITEM_INFO2: index, item, cards, refine, grade.
+        ZC_REPAIRITEMLIST => MapEvent::RepairList(
+            packet[4..]
+                .chunks_exact(24)
+                .map(|entry| InventoryItem {
+                    index: self::u16_at(entry, 0),
+                    id: self::u32_at(entry, 2),
+                    cards: cards_at(entry, 6),
+                    refine: entry[22],
+                    identified: true,
+                    ..Default::default()
+                })
+                .collect(),
+        ),
+        ZC_ACK_ITEMREPAIR => MapEvent::Repaired { index: u16_at(2), ok: packet[4] == 0 },
+        // Index, item, refine, cards.
+        ZC_NOTIFY_WEAPONITEMLIST => MapEvent::UpgradeList(
+            packet[4..]
+                .chunks_exact(23)
+                .map(|entry| InventoryItem {
+                    index: self::u16_at(entry, 0),
+                    id: self::u32_at(entry, 2),
+                    refine: entry[6],
+                    cards: cards_at(entry, 7),
+                    identified: true,
+                    ..Default::default()
+                })
+                .collect(),
+        ),
+        ZC_ACK_WEAPONREFINE => MapEvent::Upgraded { result: u32_at(2), item: u32_at(6) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3965,6 +4051,38 @@ mod tests {
         assert_eq!(encode_make_arrow(713), [0xAE, 0x01, 0xC9, 0x02, 0, 0]);
         let ids = [ZC_MAKABLEITEMLIST, CZ_REQMAKINGITEM, ZC_ACK_REQMAKINGITEM, ZC_MAKINGITEM_LIST, CZ_REQ_MAKINGITEM, ZC_MAKINGARROW_LIST, CZ_REQ_MAKINGARROW];
         assert_eq!(ids.map(packet_length), [Some(-1), Some(18), Some(8), Some(-1), Some(8), Some(-1), Some(6)]);
+    }
+
+    #[test]
+    fn decodes_blacksmith_lists() {
+        let mut repair = ZC_REPAIRITEMLIST.to_le_bytes().to_vec();
+        repair.extend_from_slice(&28u16.to_le_bytes());
+        let mut entry = vec![0u8; 24];
+        entry[..2].copy_from_slice(&3u16.to_le_bytes());
+        entry[2..6].copy_from_slice(&1201u32.to_le_bytes());
+        entry[6..10].copy_from_slice(&4035u32.to_le_bytes());
+        entry[22] = 4;
+        repair.extend_from_slice(&entry);
+        let Some(MapEvent::RepairList(items)) = decode_map_packet(&repair) else { panic!() };
+        assert_eq!((items[0].index, items[0].id, items[0].cards[0], items[0].refine), (3, 1201, 4035, 4));
+        // The pick goes back as it came.
+        assert_eq!(encode_repair(Some(&items[0]))[2..], entry[..]);
+        assert_eq!(encode_repair(None)[..4], [0x66, 0x0B, 0xFF, 0xFF]);
+        let Some(MapEvent::Repaired { index: 5, ok: true }) = decode_map_packet(&[0xFE, 0x01, 5, 0, 0]) else { panic!() };
+
+        let mut upgrade = ZC_NOTIFY_WEAPONITEMLIST.to_le_bytes().to_vec();
+        upgrade.extend_from_slice(&27u16.to_le_bytes());
+        upgrade.extend_from_slice(&4u16.to_le_bytes());
+        upgrade.extend_from_slice(&1201u32.to_le_bytes());
+        upgrade.push(0);
+        upgrade.extend_from_slice(&[0; 16]);
+        let Some(MapEvent::UpgradeList(items)) = decode_map_packet(&upgrade) else { panic!() };
+        assert_eq!((items[0].index, items[0].id), (4, 1201));
+        assert_eq!(encode_upgrade(4), [0x22, 0x02, 4, 0, 0, 0]);
+        let upgraded = [&ZC_ACK_WEAPONREFINE.to_le_bytes()[..], &0u32.to_le_bytes(), &1201u32.to_le_bytes()].concat();
+        let Some(MapEvent::Upgraded { result: 0, item: 1201 }) = decode_map_packet(&upgraded) else { panic!() };
+        let ids = [ZC_REPAIRITEMLIST, CZ_REQ_ITEMREPAIR2, ZC_ACK_ITEMREPAIR, ZC_NOTIFY_WEAPONITEMLIST, CZ_REQ_WEAPONREFINE, ZC_ACK_WEAPONREFINE];
+        assert_eq!(ids.map(packet_length), [Some(-1), Some(26), Some(5), Some(-1), Some(6), Some(10)]);
     }
 
     #[test]
