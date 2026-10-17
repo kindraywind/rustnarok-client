@@ -595,6 +595,10 @@ const ZC_DELETEITEM_FROM_MCSTORE: u16 = 0x09E5;
 const ZC_ACK_OPENSTORE2: u16 = 0x0A28;
 const ZC_PC_PURCHASE_ITEMLIST_FROMMC: u16 = 0x0B3D;
 const ZC_PC_PURCHASE_MYITEMLIST: u16 = 0x0B40;
+const CZ_REQ_OPEN_BUYING_STORE: u16 = 0x0811;
+const CZ_REQ_CLOSE_BUYING_STORE: u16 = 0x0815;
+const CZ_REQ_CLICK_TO_BUYING_STORE: u16 = 0x0817;
+const CZ_REQ_TRADE_BUYING_STORE: u16 = 0x0819;
 const ZC_DELETE_ITEM_FROM_CART: u16 = 0x0125;
 const CZ_MOVE_ITEM_FROM_BODY_TO_CART: u16 = 0x0126;
 const CZ_MOVE_ITEM_FROM_CART_TO_BODY: u16 = 0x0127;
@@ -2532,6 +2536,25 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Opens our buying store (or, with `open` false, cancels setting one up): zeny limit, title, and (item ID, amount, price).
+    pub fn open_buying_store(&mut self, title: &str, limit: u32, open: bool, items: &[(u32, u16, u32)]) -> io::Result<()> {
+        self.stream.write_all(&encode_open_buying_store(title, limit, open, items))
+    }
+
+    pub fn close_buying_store(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_close_buying_store())
+    }
+
+    /// Asks what a buying store wants to buy.
+    pub fn click_buying_store(&mut self, owner: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_click_buying_store(owner))
+    }
+
+    /// Sells to a buying store: (inventory index, item ID, amount) triples.
+    pub fn sell_to_buying_store(&mut self, owner: u32, store_id: u32, items: &[(u16, u32, u16)]) -> io::Result<()> {
+        self.stream.write_all(&encode_sell_to_buying_store(owner, store_id, items))
+    }
+
     /// Takes a quest up again, or puts it aside.
     pub fn set_quest_active(&mut self, id: u32, active: bool) -> io::Result<()> {
         let mut packet = CZ_ACTIVE_QUEST.to_le_bytes().to_vec();
@@ -3122,6 +3145,50 @@ fn encode_try_capture(monster: u32) -> [u8; 6] {
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
     [low, high, u8::from(allow)]
+}
+
+/// CZ_REQ_OPEN_BUYING_STORE: zeny limit, 1 to open or 0 to cancel, 80-byte EUC-KR store name, then 10-byte (item, amount, price) rows.
+fn encode_open_buying_store(title: &str, limit: u32, open: bool, items: &[(u32, u16, u32)]) -> Vec<u8> {
+    let mut name = encoding_rs::EUC_KR.encode(title).0.into_owned();
+    name.resize(80, 0);
+    let mut packet = CZ_REQ_OPEN_BUYING_STORE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((89 + items.len() * 10) as u16).to_le_bytes());
+    packet.extend_from_slice(&limit.to_le_bytes());
+    packet.push(u8::from(open));
+    packet.extend_from_slice(&name);
+    for &(item_id, amount, price) in items {
+        packet.extend_from_slice(&item_id.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+        packet.extend_from_slice(&price.to_le_bytes());
+    }
+    packet
+}
+
+/// CZ_REQ_CLOSE_BUYING_STORE.
+fn encode_close_buying_store() -> [u8; 2] {
+    CZ_REQ_CLOSE_BUYING_STORE.to_le_bytes()
+}
+
+/// CZ_REQ_CLICK_TO_BUYING_STORE: owner's account ID.
+fn encode_click_buying_store(owner: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_REQ_CLICK_TO_BUYING_STORE.to_le_bytes());
+    packet[2..].copy_from_slice(&owner.to_le_bytes());
+    packet
+}
+
+/// CZ_REQ_TRADE_BUYING_STORE: owner's account ID, store ID, then 8-byte (inventory index, item ID, amount) rows.
+fn encode_sell_to_buying_store(owner: u32, store_id: u32, items: &[(u16, u32, u16)]) -> Vec<u8> {
+    let mut packet = CZ_REQ_TRADE_BUYING_STORE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((12 + items.len() * 8) as u16).to_le_bytes());
+    packet.extend_from_slice(&owner.to_le_bytes());
+    packet.extend_from_slice(&store_id.to_le_bytes());
+    for &(index, item_id, amount) in items {
+        packet.extend_from_slice(&index.to_le_bytes());
+        packet.extend_from_slice(&item_id.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+    }
+    packet
 }
 
 /// Packed cell position and direction (3 bytes), as rathena's WBUFPOS.
@@ -4709,6 +4776,43 @@ mod tests {
         let Some(MapEvent::WhisperList(names)) = decode_map_packet(&[0xD4, 0x00, 4, 0]) else { panic!() };
         assert!(names.is_empty());
         for (header, length) in [(ZC_USER_COUNT, 6), (ZC_SETTING_WHISPER_PC, 4), (ZC_SETTING_WHISPER_STATE, 4), (ZC_WHISPER_LIST, -1)] {
+            assert_eq!(packet_length(header), Some(length));
+        }
+    }
+
+    #[test]
+    fn encodes_buying_store_requests() {
+        let open = encode_open_buying_store("Buying Jellopy", 1000, true, &[(909, 5, 10)]);
+        assert_eq!(open.len(), 99);
+        assert_eq!(&open[..2], &[0x11, 0x08]);
+        assert_eq!(u16::from_le_bytes([open[2], open[3]]), 99);
+        assert_eq!(u32::from_le_bytes(open[4..8].try_into().unwrap()), 1000);
+        assert_eq!(open[8], 1);
+        assert_eq!(&open[9..24], b"Buying Jellopy\0");
+        assert_eq!(u32::from_le_bytes(open[89..93].try_into().unwrap()), 909);
+        assert_eq!(u16::from_le_bytes([open[93], open[94]]), 5);
+        assert_eq!(u32::from_le_bytes(open[95..99].try_into().unwrap()), 10);
+
+        let cancel = encode_open_buying_store("", 0, false, &[]);
+        assert_eq!(cancel.len(), 89);
+        assert_eq!(u16::from_le_bytes([cancel[2], cancel[3]]), 89);
+        assert_eq!(cancel[8], 0);
+
+        assert_eq!(encode_close_buying_store(), [0x15, 0x08]);
+        assert_eq!(encode_click_buying_store(2000001), [0x17, 0x08, 0x81, 0x84, 0x1E, 0x00]);
+
+        let sell = encode_sell_to_buying_store(2000001, 42, &[(4, 909, 2)]);
+        assert_eq!(sell.len(), 20);
+        assert_eq!(&sell[..4], &[0x19, 0x08, 20, 0]);
+        assert_eq!(u32::from_le_bytes(sell[4..8].try_into().unwrap()), 2000001);
+        assert_eq!(u32::from_le_bytes(sell[8..12].try_into().unwrap()), 42);
+        assert_eq!(u16::from_le_bytes([sell[12], sell[13]]), 4);
+        assert_eq!(u32::from_le_bytes(sell[14..18].try_into().unwrap()), 909);
+        assert_eq!(u16::from_le_bytes([sell[18], sell[19]]), 2);
+
+        for (header, length) in
+            [(CZ_REQ_OPEN_BUYING_STORE, -1), (CZ_REQ_CLOSE_BUYING_STORE, 2), (CZ_REQ_CLICK_TO_BUYING_STORE, 6), (CZ_REQ_TRADE_BUYING_STORE, -1)]
+        {
             assert_eq!(packet_length(header), Some(length));
         }
     }
