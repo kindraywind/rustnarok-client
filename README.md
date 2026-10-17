@@ -20,7 +20,8 @@ from the player's files when it runs.
 - **Characters**: players with heads, headgear, weapons, shields and garments; monsters, NPCs, warp portals; walking,
   sitting, emotions; HP/SP bars, names, chat bubbles, cast bars.
 - **Combat and skills**: attacking with reach checks, damage numbers of every kind, death; the skill window and
-  hotkeys, casting with targets, status icons, effects (STR animations, moving textures, cylinders).
+  hotkeys, casting with targets, status icons, effects (STR animations, moving textures and sprites, cylinders, sprite
+  animations, camera shakes), skills' units on the ground (Fire Wall, Safety Wall, Pneuma, warp portals, traps).
 - **Windows**: basic info with its menu, inventory, equipment, item descriptions with card slots, status (raising
   stats), skills, hotkey bar, chat with whispers, party, guild (info, members, notice), friends, storage, cart, NPC
   dialogs (menus, number and text input), NPC shops, trading, chat rooms, vending (own shop and others'), RODEX
@@ -142,7 +143,9 @@ PNG), `lua_dump`, `messages`, `job_name`, `act_sounds`, `str_dump`, `map_info`, 
 ## Not done yet
 
 - Calibration of window places against screenshots of the real client.
-- Effects: SPR, FUNC and RSM effect types; the graphics and hotkey settings windows behind the option menu.
+- Effects: those the client draws in code other than camera shakes (weather, auras, body flashes, songs), stone
+  spikes (Earth Spike, Heaven's Drive), missiles flying from the caster (Soul Strike, Fire Ball); Warp Portal's
+  destination menu; the graphics and hotkey settings windows behind the option menu.
 - Guild positions, skills, expulsion list and emblems; the status window's trait stats.
 - World map: dungeons, monster info, the other worlds. Quests: the recommended tab.
 - Mail: returning mail, selecting several; the fee shown before sending.

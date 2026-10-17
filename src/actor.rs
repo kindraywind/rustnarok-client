@@ -616,6 +616,16 @@ impl SpriteSet {
         self.index_ms(action * 8 + usize::from(direction % 8))
     }
 
+    /// How many actions the sprite has.
+    pub fn actions(&self) -> usize {
+        self.layers[0].act.actions.len()
+    }
+
+    /// How many frames the ACT's action `index` has.
+    pub fn frames(&self, index: usize) -> usize {
+        self.layers[0].act.actions.get(index).map_or(0, Vec::len)
+    }
+
     /// Like `action_ms`, by the ACT's own action number.
     pub fn index_ms(&self, index: usize) -> Option<f32> {
         let frames = self.layers[0].act.actions.get(index)?.len();

@@ -1,10 +1,15 @@
 # Which effect files the client plays for effect, skill and item IDs:
-# str <effect id> <file under data\texture\effect\ without .str> <texture folder or -> <follows the unit 1/0> [random from to]
+# str <effect id> <file under data\texture\effect\ without .str> <texture folder or -> <follows the unit 1/0> [random from to] [once]
+#   (once: plays once on a skill's ground unit, where the rest of the effect starts again until the unit goes)
 # misc <ZC_NOTIFY_EFFECT type> <effect id>; skill <skill id> <when> <effect id>; item <item id> <effect id>
-# part <effect id> <2D|3D> <name=value;...>: a texture moving from a start to an end over its duration
+# part <effect id> <2D|3D> <name=value;...>: a texture (or a sprite) moving from a start to an end over its duration
 # ring <effect id> <name=value;...>: a textured cylinder growing, turning and fading
+# spr <effect id> <sprite under data\sprite\이팩트\ without .spr> <follows the unit 1/0> <name=value;... or ->: a sprite's animation
+# func <effect id> quake <delay ms> <duration ms>: what the client does in code for the effect; quake shakes the camera
+# unit <skill unit type> <effect id>: what a skill's unit on the ground (ZC_SKILL_ENTRY, rathena's UNT_) shows while it's there
+# rsm <skill unit type> <model under data\model\ without .rsm>: the model standing on such a unit's cell (traps)
 str	10	maemor	-	1
-str	13	effect/safetywall	-	0
+str	13	safetywall	-	0
 str	23	stonecurse	-	1
 str	25	firewall%d	-	0	1	2
 str	28	freeze	-	1
@@ -128,7 +133,7 @@ str	273	연환	-	1
 str	305	p_success	-	1
 str	306	p_failed	-	1
 str	311	loud	-	1
-str	315	safetywall	-	1
+str	315	safetywall	-	1	once
 str	337	joblvup	-	1
 str	369	twohand	-	1
 str	371	angel	-	1
@@ -277,6 +282,7 @@ skill	11	hitEffectId	1
 skill	13	hitEffectId	1
 skill	13	beforeHitEffectId	15
 skill	14	hitEffectId	51
+skill	14	beforeHitEffectId	26
 skill	15	hitEffectId	28
 skill	16	effectId	23
 skill	17	hitEffectId	49
@@ -284,6 +290,7 @@ skill	17	beforeHitEffectId	24
 skill	18	hitEffectId	49
 skill	18	groundEffectId	25
 skill	19	hitEffectId	49
+skill	19	beforeHitEffectId	31
 skill	20	effectId	29
 skill	20	hitEffectId	52
 skill	21	effectId	30
@@ -1265,6 +1272,8 @@ part	21	3D	alphaMax=1;attachedEntity=true;blue=1;duration=1000;duplicate=10;fade
 part	22	3D	shadowTexture=true;alphaMax=0.5;attachedEntity=true;blendMode=8;duration=12200;duplicate=10;timeBetweenDupli=0;nbOfRotation=10;posx=-2;posz=4;playSprite=true;rotateLate=0.9;rotateLateDelta=-0.1;rotatePosX=3;rotatePosY=3;rotationClockwise=true;size=30;sizeDelta=10
 part	22	3D	spriteName=sight;alphaMax=123;alphaMaxDelta=3;attachedEntity=true;blendMode=8;duration=12200;duplicate=10;timeBetweenDupli=0;nbOfRotation=10;posx=-2;posz=4;playSprite=true;rotateLate=0.9;rotateLateDelta=-0.1;rotatePosX=3;rotatePosY=3;rotationClockwise=true;size=60;sizeDelta=20
 part	24	3D	alphaMax=0.2;alphaMaxDelta=0.2;attachedEntity=true;duration=250;delayOffset=160;delayOffsetDelta=-40;spriteName=fireball;playSprite=true;duplicate=5;timeBetweenDupli=0;toSrc=true;rotateToTarget=true;rotateWithCamera=true;zOffset=2;size=200;zIndex=1
+part	26	3D	alphaMax=1;angle=112.5;duration=500;file=effect/icearrow.tga;posxEnd=0;posxStartRandMiddle=5;posxStartRand=1;posyEnd=0;posyStartRandMiddle=2;posyStartRand=1;poszEnd=0;poszStart=20;size=50;zIndex=1;attachedEntity=true
+part	31	3D	alphaMax=1;blendMode=2;angle=112.5;duration=500;fileList=effect/불화살1.tga,effect/불화살2.tga,effect/불화살3.tga,effect/불화살4.tga,effect/불화살5.tga,effect/불화살6.tga;frameDelay=30;posxEnd=0;posxStartRandMiddle=5;posxStartRand=1;posyEnd=0;posyStartRandMiddle=2;posyStartRand=1;poszEnd=0;poszStart=20;sizeX=100;sizeY=50;zIndex=1;attachedEntity=true
 part	33	3D	shadowTexture=true;alphaMax=0.5;attachedEntity=true;blendMode=8;duration=12200;duplicate=8;timeBetweenDupli=0;nbOfRotation=8;posx=-2;rotateLate=0.7;rotateLateDelta=-0.1;rotatePosX=3;rotatePosY=3;rotationClockwise=true;size=0.4;sizeDelta=0.15
 part	33	3D	spriteName=particle2;alphaMax=0.07;alphaMaxDelta=0.07;attachedEntity=true;blendMode=2;red=0;green=1;blue=1;duration=12200;duplicate=10;timeBetweenDupli=0;nbOfRotation=8;posx=-2;posz=2;rotateLate=0.7;rotateLateDelta=-0.1;rotatePosX=3;rotatePosY=3;rotationClockwise=true;size=80;sizeDelta=30
 part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;delayLate=500;duplicate=7;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=6;poszStartRand=1;poszStartRandMiddle=1;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
@@ -1279,7 +1288,6 @@ part	42	3D	alphaMax=0.3;attachedEntity=false;blendMode=2;blue=1;duration=2500;fa
 part	43	3D	alphaMax=1;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;file=effect/dex_agi_up.bmp;poszEnd=3;poszStart=0.4;sizeEnd=100;sizeSmooth=true;sizeStart=100;sizeY=45;wav=effect/ef_incagidex;zIndex=10
 part	47	3D	absoluteSpriteName=data/sprite/이팩트/torch_01;attachedEntity=true;playSprite=true;duration=600;posz=0.8;posx=0.1;size=100;angle=270;rotateToTarget=true;repeat=true
 part	50	2D	overlay=true;duration=500;file=effect/firering.tga;sizeStart=10;sizeEnd=300;angle=0;toAngle=-360;rotate=true;fadeOut=true;posz=1;attachedEntity=true
-part	51	2D	alphaMax=1;angle=0;angleDelta=40;attachedEntity=false;duration=140;duplicates=9;fadeOut=true;file=effect/ice.tga;offsetxEnd=3;offsetxStart=0.5;size=100;timeBetweenDupli=0
 part	61	3D	alphaMax=1;attachedEntity=true;blue=1;duration=1000;duplicate=3;fadeIn=true;fadeOut=true;file=effect/pok1.tga;green=1;posxStartRand=3;posxStartRandMiddle=0;posyStartRand=3;posyStartRandMiddle=0;poszEndRand=2;poszEndRandMiddle=2;poszStart=0;red=1;size=100;sizeRand=17;zIndex=1
 part	62	3D	shadowTexture=true;alphaMax=0.5;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=0;posyEnd=-8;poszStart=2;poszEnd=2;sizeStart=60;sizeEnd=160;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
 part	62	3D	spriteName=sight;alphaMax=123;alphaMaxDelta=3;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=0;posyEnd=-8;poszStart=2;poszEnd=2;sizeStart=20;sizeEnd=260;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
@@ -1349,7 +1357,7 @@ part	328	3D	file=effect/asura6.tga;alphaMax=1;attachedEntity=true;duration=1200;
 part	328	3D	file=effect/asura6.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=120;sizeEnd=200;posx=6.0;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1700
 part	331	3D	duplicate=12;file=effect/pok1.tga;delay=500;timeBetweenDupli=10;alphaMax=0.8;fadeOut=true;fadeIn=true;zIndex=1;size=30;sizeRand=20;red=0.9;green=1;blue=0.9;blendMode=2;poszStartRand=1.5;poszStartRandMiddle=2;poszEndRandMiddle=5;poszEndRand=1;sparkling=true;sparkNumberRand=3,6;posxRand=0.6;posyRand=0.6;attachedEntity=true
 part	332	3D	duplicate=12;file=effect/pok1.tga;delay=500;timeBetweenDupli=10;alphaMax=0.8;fadeOut=true;fadeIn=true;zIndex=1;size=30;sizeRand=20;red=0.9;green=0.9;blue=1;blendMode=2;poszStartRand=1.5;poszStartRandMiddle=2;poszEndRandMiddle=5;poszEndRand=1;sparkling=true;sparkNumberRand=3,6;posxRand=0.6;posyRand=0.6;attachedEntity=true
-part	349	3D	file=effect/purpleslash.tga;alphaMax=0.4;duration=500;fadeIn=true;fadeOut=true;zIndex=10;toSrc=true;rotateWithCamera=true;rotateToTarget=true;angle=90;posz=2;sizeStart=100;sizeEnd=200;wav=effect/기공포;attachedEntity=true
+part	361	3D	file=effect/purpleslash.tga;alphaMax=0.4;duration=500;fadeIn=true;fadeOut=true;zIndex=10;toSrc=true;rotateWithCamera=true;rotateToTarget=true;angle=90;posz=2;sizeStart=100;sizeEnd=200;wav=effect/기공포;attachedEntity=true
 part	365	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;rotate=true;angle=0;toAngle=-611;poszStart=20;poszEnd=5;size=100;zIndex=1;file=effect/cross_old.bmp;wav=effect/프레셔
 part	365	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;delayOffset=501;fadeOut=true;angle=-611;posz=5;size=100;zIndex=1;file=effect/cross_old.bmp
 part	378	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;fromSrc=true;toSrc=true;rotateToTarget=true;red=0.8;green=0.8;blue=1.0;sizeStart=160.0;sizeEnd=190.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
@@ -1518,6 +1526,7 @@ ring	16	textureName=alpha_center;alphaMax=0.6;duration=1000;duplicate=10;timeBet
 ring	16	textureName=alpha_center;alphaMax=0.6;duration=1000;duplicate=8;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;rotate=true;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4;animation=2;zIndex=1.2;attachedEntity=true
 ring	17	alphaMax=0.7;animation=4;attachedEntity=true;bottomSize=4;duration=300;fade=true;height=1;rotate=true;textureName=ring_yellow;topSize=6
 ring	17	alphaMax=0.6;animation=4;attachedEntity=true;bottomSize=4;duration=300;fade=true;height=4;rotate=true;textureName=대폭발;topSize=1;wav=effect/ef_magnumbreak
+ring	26	alphaMax=0.7;animation=4;attachedEntity=false;bottomSize=3;duration=1000;delayLate=500;fade=true;height=0.1;rotate=true;textureName=ring_blue;topSize=5
 ring	34	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=8;bottomSize=0.8;duration=1000;fade=true;red=1;green=1;blue=1;height=35;rotate=true;textureName=ring_blue;topSize=0.7;wav=effect/ef_teleportation
 ring	35	alphaMax=0.6;animation=0;attachedEntity=true;blue=1;bottomSize=0.6;duration=25000;fade=true;green=0.7;height=15;red=0.7;rotate=true;textureName=alpha_down;topSize=0.6;wav=effect/ef_readyportal
 ring	54	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=900;fade=true;green=0.5;height=30;red=0.5;rotate=true;textureName=ring_blue;topSize=1
@@ -1651,6 +1660,129 @@ ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.3;
 ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.3;topSize=2.3;height=3.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=53.2;duration=20000;attachedEntity=true
 ring	885	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=200;duplicate=5;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;red=0.3;green=0.5;blue=1.0;attachedEntity=true
 ring	885	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=5;delayStart=200;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;red=0.3;green=0.5;blue=1.0;attachedEntity=true
+spr	39	성수뜨기	1	head=true
+spr	42	축복	1	head=true;frame=0;delayFrame=30;repeat=true;duration=1500;yOffset=-120
+spr	53	poisonhit	0	-
+spr	165	크리스마스	1	duration=1000
+spr	212	darkbreath	1	head=true
+spr	215	smoke	1	-
+spr	302	데몬스트레이션	0	-
+spr	363	vallentine	1	-
+spr	373	poisonhit	1	-
+spr	382	한복천사	1	head=true
+spr	453	스톱	1	-
+spr	509	05vallentine	1	-
+spr	519	fast	1	-
+spr	570	캐슬링	1	-
+spr	571	블러드러스트	1	-
+spr	576	item_thunder	1	-
+spr	577	item_cloud	1	-
+spr	578	item_curse	1	-
+spr	579	item_zzz	1	-
+spr	580	item_rain	1	-
+spr	583	m_ef01	1	-
+spr	584	m_ef02	1	-
+spr	585	m_ef03	1	-
+spr	586	m_ef04	1	-
+spr	587	m_ef05	1	-
+spr	588	m_ef06	1	-
+spr	589	m_ef07	1	-
+spr	604	cconfine	1	stopAtEnd=true
+spr	606	fvoice	0	-
+spr	607	wink	0	-
+spr	612	합격_	1	-
+spr	630	그림자베기	1	-
+spr	631	다다미 뒤집기	1	-
+spr	632	안개베기	1	-
+spr	633	일섬	1	-
+spr	634	화염진	1	repeat=true
+spr	637	데스페라도	1	-
+spr	638	라이트닝스피어	0	-
+spr	639	블라인드스피어	0	-
+spr	640	포이즌스피어	0	-
+spr	641	프리징스피어	0	-
+spr	642	플레어스피어	0	-
+spr	643	래피드샤워	1	-
+spr	644	매지컬불릿	1	-
+spr	645	스프레드	1	-
+spr	647	트래킹	1	-
+spr	648	트리플액션	1	-
+spr	666	어스퀘이크	1	-
+spr	682	폭죽_러브	1	-
+spr	683	폭죽_화이트데이	1	-
+spr	684	폭죽_발렌타인	1	-
+spr	685	폭죽_생일	1	-
+spr	686	폭죽_크리스마스	1	-
+spr	729	mashofa	0	-
+spr	1240	digital_space\digital_space	1	repeat=true
+func	79	quake	0	200
+func	92	quake	600	650
+func	102	quake	350	650
+func	142	quake	0	200
+func	183	quake	0	200
+func	220	quake	200	200
+func	303	quake	132	650
+func	365	quake	500	650
+func	380	quake	300	650
+func	387	quake	300	650
+func	512	quake	132	650
+func	537	quake	200	650
+func	563	quake	0	200
+func	666	quake	0	650
+func	668	quake	0	650
+func	732	quake	0	200
+unit	126	315
+unit	127	25
+unit	128	317
+unit	129	316
+unit	131	319
+unit	132	318
+unit	133	141
+unit	135	138
+unit	141	74
+unit	142	95
+unit	146	171
+unit	154	239
+unit	155	240
+unit	156	241
+unit	157	242
+unit	177	302
+unit	180	374
+unit	183	404
+unit	185	517
+unit	188	631
+unit	189	634
+unit	199	674
+unit	202	754
+unit	203	732
+unit	204	822
+unit	205	825
+unit	206	827
+unit	207	828
+unit	208	829
+unit	218	856
+unit	220	920
+unit	221	926
+unit	222	860
+rsm	143	외부소품\트랩03_3
+rsm	144	외부소품\트랩02
+rsm	145	외부소품\트랩01
+rsm	147	외부소품\트랩03
+rsm	148	외부소품\트랩03_6
+rsm	149	외부소품\트랩03_4
+rsm	150	외부소품\트랩03_5
+rsm	151	외부소품\트랩03_2
+rsm	152	외부소품\트랩04
+rsm	153	외부소품\트랩05
+rsm	210	event\3차트랩_변화01
+rsm	211	event\3차트랩_변수01
+rsm	212	event\3차트랩_변지01
+rsm	213	event\3차트랩_변풍01
+rsm	214	event\3차트랩_화01
+rsm	215	event\3차트랩_수01
+rsm	216	event\3차트랩_풍01
+rsm	217	event\3차트랩_지01
+rsm	229	event\3차트랩_가시01
 # wav <effect id> <file under data\wav\ without .wav> <delay ms> [random from to]: a sound the effect plays
 wav	1	effect\ef_hit2	0
 wav	2	effect\ef_hit3	0
@@ -1676,7 +1808,7 @@ wav	25	effect\ef_firewall	0
 wav	26	effect\ef_icearrow%d	0	1	3
 wav	28	effect\ef_frostdiver2	0
 wav	30	effect\magician_thunderstorm	0
-wav	31	effect\ef_firearrow1	0
+wav	31	effect\ef_firearrow%d	0	1	3
 wav	32	effect\ef_napalmbeat	0
 wav	33	effect\ef_ruwach	0
 wav	34	effect\ef_teleportation	0
@@ -1729,7 +1861,6 @@ wav	95	effect\wizard_quagmire	0
 wav	96	effect\wizard_fire_pillar_a	0
 wav	97	effect\wizard_fire_pillar_b	0
 wav	98	effect\black_adrenalinerush_b	0
-wav	98	effect\black_adrenalinerush_a	0
 wav	99	effect\hunter_flasher	0
 wav	100	effect\hunter_removetrap	0
 wav	101	effect\black_weapon_repair_a	480
@@ -1762,7 +1893,6 @@ wav	139	effect\hunter_sandman	0
 wav	140	effect\priest_resurrection	0
 wav	142	effect\wizard_earthspike	0
 wav	144	effect\knight_brandish_spear	0
-wav	144	effect\hunter_shockwavetrap	0
 wav	145	effect\hunter_shockwavetrap	0
 wav	149	_enemy_hit_normal1	0
 wav	150	_enemy_hit_normal1	0
@@ -1824,17 +1954,6 @@ wav	304	effect\ef_teleportation	0
 wav	305	effect\p_success	0
 wav	306	effect\p_failed	0
 wav	309	_heal_effect	0
-wav	309	effect\hyper_novice\hn_double_bowlingbash	0
-wav	309	effect\hyper_novice\hn_mega_sonic_blow	0
-wav	309	effect\hyper_novice\hn_shield_chain_rush	0
-wav	309	effect\hyper_novice\hn_spiral_pierce_max	0
-wav	309	effect\hyper_novice\hn_meteor_storm_buster	0
-wav	309	effect\hyper_novice\hn_jack_frost_nova	0
-wav	309	effect\hyper_novice\hn_ground_gravitation	0
-wav	309	effect\hyper_novice\hn_napalm_vulcan_strike	0
-wav	309	effect\hyper_novice\hn_breakinglimit	0
-wav	309	effect\hyper_novice\hn_rulebreak	0
-wav	309	effect\hyper_novice\hn_overcoming_crisis	0
 wav	311	effect\고성방가	0
 wav	312	_heal_effect	0
 wav	313	_heal_effect	0
@@ -1843,11 +1962,6 @@ wav	315	effect\ef_glasswall	0
 wav	316	effect\ef_readyportal	0
 wav	317	effect\ef_readyportal	0
 wav	317	effect\ef_portal	0
-wav	317	effect\t_벽튕김	0
-wav	317	effect\t_영혼	0
-wav	317	effect\플립	0
-wav	317	effect\ef_icearrow%d	0	1	3
-wav	317	effect\ef_firearrow%d	0	1	3
 wav	320	_heal_effect	0
 wav	325	_heal_effect	0
 wav	329	effect\ef_hit2	0
@@ -1902,24 +2016,9 @@ wav	471	effect\t_바람방출	0
 wav	472	effect\t_바람방출	0
 wav	473	effect\t_바람방출	0
 wav	493	effect\assasin_cloaking	0
-wav	493	effect\spirit_handler\sh_chul_ho_sonic_claw	0
-wav	493	effect\spirit_handler\sh_howling_of_chul_ho	0
-wav	493	effect\spirit_handler\sh_hogogong_strike	0
-wav	493	effect\spirit_handler\sh_ki_sul_water_spraying	0
-wav	493	effect\spirit_handler\sh_marine_festival_of_ki_sul	0
-wav	493	effect\spirit_handler\sh_sandy_festival_of_ki_sul	0
-wav	493	effect\spirit_handler\sh_ki_sul_rampage	0
-wav	493	effect\spirit_handler\sh_colors_of_hyun_rok	0
-wav	493	effect\spirit_handler\sh_hyun_roks_breeze	0
-wav	493	effect\spirit_handler\sh_hyun_rok_cannon	0
-wav	493	effect\spirit_handler\sh_temporary_communion	0
-wav	493	effect\spirit_handler\sh_blessing_of_mystical_creatures	0
-wav	493	effect\spirit_handler\sh_chul_ho_battering	0
-wav	493	effect\spirit_handler\sh_hyun_rok_spirit_power	0
 wav	496	effect\black_maximize_power_sword_bic	0
 wav	507	effect\mapae	0
 wav	508	effect\itempokjuk	0
-wav	517	effect\헤르모드의 지팡이	0
 wav	519	effect\fast	0
 wav	523	effect\priest_slowpoison	0
 wav	524	effect\priest_slowpoison	0
@@ -1946,17 +2045,6 @@ wav	579	_snore	0
 wav	587	dragon_breath	0
 wav	589	effect\t_보조마법	0
 wav	590	effect\priest_resurrection	0
-wav	598	effect\sky_emperor\ske_noon_blast	0
-wav	598	effect\sky_emperor\ske_sunset_blast	0
-wav	598	effect\sky_emperor\ske_midnight_kick	0
-wav	598	effect\sky_emperor\ske_dawn_break	0
-wav	598	effect\sky_emperor\ske_star_burst	0
-wav	598	effect\sky_emperor\ske_star_cannon	0
-wav	598	effect\sky_emperor\ske_all_in_the_sky	0
-wav	598	effect\sky_emperor\ske_enchanting_sky	0
-wav	598	effect\sky_emperor\ske_sky_sun	0
-wav	598	effect\sky_emperor\ske_sky_moon	0
-wav	598	effect\sky_emperor\ske_star_light_kick	0
 wav	604	effect\ef_hit6	0
 wav	606	amon_ra_die01	0
 wav	608	_heal_effect	0
@@ -1994,16 +2082,6 @@ wav	684	effect\itempokjuk	0
 wav	685	effect\itempokjuk	0
 wav	686	effect\itempokjuk	0
 wav	708	effect\wizard_stormgust	0
-wav	708	effect\soul_ascetic\soa_talisman_of_protection	0
-wav	708	effect\soul_ascetic\soa_talisman_of_warrior	0
-wav	708	effect\soul_ascetic\soa_soul_gathering	0
-wav	708	effect\soul_ascetic\soa_talisman_of_soul_stealing	0
-wav	708	effect\soul_ascetic\soa_talisman_of_blue_dragon	0
-wav	708	effect\soul_ascetic\soa_talisman_of_white_tiger	0
-wav	708	effect\soul_ascetic\soa_talisman_of_red_phoenix	0
-wav	708	effect\soul_ascetic\soa_talisman_of_black_tortoise	0
-wav	708	effect\soul_ascetic\soa_talisman_of_four_bearing_god	0
-wav	708	effect\soul_ascetic\soa_soul_of_heaven_and_earth	0
 wav	717	effect\wewish	0
 wav	718	effect\ab_judex	0
 wav	719	effect\ab_renovation	0
@@ -2032,23 +2110,6 @@ wav	856	effect\reverberation	0
 wav	857	effect\rainstorm	0
 wav	858	effect\안식의자장가	0
 wav	860	effect\나락의노래	0
-wav	860	effect\shinkiro_shiranui\ss_tokedasu	0
-wav	860	effect\shinkiro_shiranui\ss_shimiru	0
-wav	860	effect\shinkiro_shiranui\ss_akumukesu	0
-wav	860	effect\shinkiro_shiranui\ss_kagegari	0
-wav	860	effect\shinkiro_shiranui\ss_kagegissen	0
-wav	860	effect\shinkiro_shiranui\ss_fuumashouaku	0
-wav	860	effect\shinkiro_shiranui\ss_fuumakouchiku	0
-wav	860	effect\shinkiro_shiranui\ss_kunaiwaikyoku	0
-wav	860	effect\shinkiro_shiranui\ss_kunaikussetsu	0
-wav	860	effect\shinkiro_shiranui\ss_sekienhou	0
-wav	860	effect\shinkiro_shiranui\ss_reiketsuhou	0
-wav	860	effect\shinkiro_shiranui\ss_raidenpou	0
-wav	860	effect\shinkiro_shiranui\ss_kinryuuhou	0
-wav	860	effect\shinkiro_shiranui\ss_antenpou	0
-wav	860	effect\shinkiro_shiranui\ss_hitouakumu	0
-wav	860	effect\shinkiro_shiranui\ss_ankokuryuuakumu	0
-wav	860	effect\shinkiro_shiranui\ss_four_charm	0
 wav	861	effect\순환하는자연의소리	0
 wav	862	effect\ab_ancilla	0
 wav	866	effect\워그와함께춤을	0
@@ -2075,32 +2136,10 @@ wav	930	effect\프레셔	0
 wav	1042	effect\all_full_throttle	0
 wav	1043	effect\sr_flashcombo	0
 wav	1046	effect\so_elemental_shield	0
-wav	1046	effect\em_spell_enchanting	0
-wav	1046	effect\em_activity_burn	0
-wav	1046	effect\em_increasing_activity	0
-wav	1046	effect\em_diamond_storm	0
-wav	1046	effect\em_lightning_land	0
-wav	1046	effect\em_venom_swamp	0
-wav	1046	effect\em_conflagration	0
-wav	1046	effect\em_terra_drive	0
-wav	1046	effect\em_psychic_stream	0
 wav	1047	effect\ab_offertorium	0
 wav	1048	effect\wl_telekinesis_intense	0
 wav	1049	effect\gn_illusiondoping	0
 wav	1050	effect\nc_magma_eruption	0
-wav	1050	effect\mt_axe_stomp	0
-wav	1050	effect\mt_rush_quake	0
-wav	1050	effect\mt_a_machine	0
-wav	1050	effect\mt_d_machine	0
-wav	1050	effect\mt_summon_abr_battle_warior	0
-wav	1050	effect\mt_summon_abr_dual_cannon	0
-wav	1050	effect\mt_summon_abr_infinity	0
-wav	1050	effect\mt_spark_blaster	0
-wav	1050	effect\mt_triple_laser	0
-wav	1050	effect\mt_mighty_smash	0
-wav	1050	effect\mt_rush_strike	0
-wav	1050	effect\mt_powerful_swing	0
-wav	1050	effect\mt_energy_cannonade	0
 wav	1062	effect\RL_HAMMER_OF_GOD	0
 wav	1186	effect\drop_pink	0
 wav	1189	effect\drop_yellow	0
@@ -2108,202 +2147,3 @@ wav	1190	effect\drop_purple	0
 wav	1869	effect\drop_blue	0
 wav	1870	effect\drop_green	0
 wav	1871	effect\drop_red	0
-wav	1883	_hit_spear	0
-wav	1883	_enemy_hit_normal1	0
-wav	1883	effect\ef_hit2	0
-wav	1883	effect\ef_entry	0
-wav	1883	effect\풍차를향해돌격	0
-wav	1883	effect\스윙댄스	0
-wav	1883	effect\마법력 증폭	0
-wav	1883	effect\metalic	0
-wav	1883	effect\ab_ancilla	0
-wav	1883	effect\가시나무덫	0
-wav	1883	effect\bo_advance_protection	0
-wav	1883	effect\bo_acidified_zone_water	0
-wav	1883	effect\bo_acidified_zone_ground	0
-wav	1883	effect\bo_acidified_zone_wind	0
-wav	1883	effect\bo_acidified_zone_fire	0
-wav	1883	effect\bo_researchreport	0
-wav	1883	effect\bo_wooden_attack	0
-wav	1883	effect\bo_explosive_powder	0
-wav	1883	effect\bo_mayhemic_thorns	0
-wav	1883	effect\bo_mystery_powder	0
-wav	1883	effect\lg_banishingpoint	0
-wav	1883	effect\lg_cannonspear	0
-wav	1883	effect\lg_earthdrive	0
-wav	1883	effect\lg_exceedbreak	0
-wav	1883	effect\lg_hesperuslit	0
-wav	1883	effect\lg_kings_grace	0
-wav	1883	effect\lg_moonslasher	0
-wav	1883	effect\lg_overbrand	0
-wav	1883	effect\lg_piety	0
-wav	1883	effect\lg_pinpointattack	0
-wav	1883	effect\lg_rageburst	0
-wav	1883	effect\lg_rayofgenesis	0
-wav	1883	effect\lg_reflectdamage	0
-wav	1883	effect\lg_shieldspell	0
-wav	1883	effect\lg_trample	0
-wav	1883	effect\ig_guard_stance	0
-wav	1883	effect\ig_guardian_shield	0
-wav	1883	effect\ig_rebound_shield	0
-wav	1883	effect\ig_ultimate_sacrifice	0
-wav	1883	effect\ig_grand_judgement	0
-wav	1883	effect\ig_judgement_cross	0
-wav	1883	effect\ig_shield_shooting	0
-wav	1883	effect\ig_overslash	0
-wav	1883	effect\ig_cross_rain	0
-wav	1883	effect\ig_imperial_cross	0
-wav	1883	effect\ig_imperial_pressure	0
-wav	1883	effect\sr_crescentelbow	0
-wav	1883	effect\sr_cursedcircle	0
-wav	1883	effect\sr_dragoncombo	0
-wav	1883	effect\sr_fallenempire	0
-wav	1883	effect\sr_gateofhell	0
-wav	1883	effect\sr_howlingoflion	0
-wav	1883	effect\sr_knucklearrow	0
-wav	1883	effect\sr_lightningwalk	0
-wav	1883	effect\sr_powervelocity	0
-wav	1883	effect\sr_raisingdragon	0
-wav	1883	effect\sr_rampageblaster	0
-wav	1883	effect\sr_rideinlightning	0
-wav	1883	effect\sr_skynetblow	0
-wav	1883	effect\sr_tigercannon	0
-wav	1883	effect\sr_windmill	0
-wav	1883	effect\iq_oleum_sanctum	0
-wav	1883	effect\iq_massive_f_blaster	0
-wav	1883	effect\iq_exposion_blaster	0
-wav	1883	effect\iq_first_brand	0
-wav	1883	effect\iq_first_faith_power	0
-wav	1883	effect\iq_judge	0
-wav	1883	effect\iq_second_flame	0
-wav	1883	effect\iq_second_faith	0
-wav	1883	effect\iq_second_judgement	0
-wav	1883	effect\iq_third_punish	0
-wav	1883	effect\iq_third_flame_bomb	0
-wav	1883	effect\iq_third_consecration	0
-wav	1883	effect\iq_third_exor_flame	0
-wav	1883	effect\iq_blazing_flame_blast	0
-wav	1883	effect\wl_jackfrost	0
-wav	1883	effect\wl_siennaexecrate	0
-wav	1883	effect\ag_deadly_projection	0
-wav	1883	effect\ag_destructive_hurricane	0
-wav	1883	effect\ag_rain_of_crystal	0
-wav	1883	effect\ag_mystery_illusion	0
-wav	1883	effect\ag_violent_quake	0
-wav	1883	effect\ag_all_bloom	0
-wav	1883	effect\ag_crystal_impact	0
-wav	1883	effect\ag_tornado_storm	0
-wav	1883	effect\ag_climax	0
-wav	1883	effect\ag_rock_down	0
-wav	1883	effect\ag_storm_cannon	0
-wav	1883	effect\ag_frozen_slash	0
-wav	1883	effect\ag_energy_conversion	0
-wav	1883	effect\wm_frigg_song	0
-wav	1883	effect\ab_duplelight	0
-wav	1883	effect\cd_mediale_votum	0
-wav	1883	effect\cd_argutus_vita	0
-wav	1883	effect\cd_arbitrium	0
-wav	1883	effect\cd_presens_acies	0
-wav	1883	effect\cd_effligo	0
-wav	1883	effect\cd_competentia	0
-wav	1883	effect\cd_pneumaticus_procella	0
-wav	1883	effect\cd_dilectio_heal	0
-wav	1883	effect\cd_religio	0
-wav	1883	effect\cd_benedictum	0
-wav	1883	effect\cd_petitio	0
-wav	1883	effect\cd_framen	0
-wav	1883	effect\cd_divinus_flos	0
-wav	1883	wug_bite	0
-wav	1883	wug_strike	0
-wav	1883	wolf_stand	0
-wav	1883	dragon_breath	0
-wav	1883	effect\dk_servantweapon	0
-wav	1883	effect\dk_servant_w_sign	0
-wav	1883	effect\dk_servant_w_phantom	0
-wav	1883	effect\dk_servant_w_demol	0
-wav	1883	effect\dk_chargingpierce1	0
-wav	1883	effect\dk_chargingpierce2	0
-wav	1883	effect\dk_hackandslasher	0
-wav	1883	effect\dk_dragonic_aura1	0
-wav	1883	effect\dk_madness_crusher	0
-wav	1883	effect\dk_vigor	0
-wav	1883	effect\dk_stormslash1	0
-wav	1883	effect\dk_dragonic_breath	0
-wav	1883	effect\dk_dragonic_pierce	0
-wav	1883	effect\hallucinationwalk	0
-wav	1883	effect\shc_shadow_exceed	0
-wav	1883	effect\shc_dancing_knife	0
-wav	1883	effect\shc_savage_impact	0
-wav	1883	effect\shc_eternal_slash	0
-wav	1883	effect\shc_potent_venom	0
-wav	1883	effect\shc_shadow_stab	0
-wav	1883	effect\shc_impact_crater	0
-wav	1883	effect\shc_fatal_shadow_crow	0
-wav	1883	effect\shc_cross_slash	0
-wav	1883	effect\RL_S_STORM	0
-wav	1883	effect\ef_firewall	0
-wav	1883	effect\달빛세레나데	0
-wav	1883	effect\사운드오브디스트럭션	0
-wav	1883	effect\그레이트에코	0
-wav	1883	effect\사망의골짜기에서	0
-wav	1883	effect\tr_mystic_symphony	0
-wav	1883	effect\tr_kvasir_sonata	0
-wav	1883	effect\tr_rhythmshooting	0
-wav	1883	effect\tr_metalic_fury	0
-wav	1883	effect\tr_gef_nocturn	0
-wav	1883	effect\tr_roki_capriccio	0
-wav	1883	effect\tr_ain_rhapsody	0
-wav	1883	effect\tr_musical_interlude	0
-wav	1883	effect\tr_jawaii_serenade	0
-wav	1883	effect\tr_nipelheim_requiem	0
-wav	1883	effect\tr_pron_march	0
-wav	1883	effect\하모나이즈	0
-wav	1883	effect\메아리의노래	0
-wav	1883	effect\연인들을위한심포니	0
-wav	1883	effect\abc_abyss_dagger	0
-wav	1883	effect\abc_unlucky_rush	0
-wav	1883	effect\abc_chain_reaction_shot	0
-wav	1883	effect\abc_from_the_abyss	0
-wav	1883	effect\abc_abyss_slayer	0
-wav	1883	effect\abc_abyss_strike	0
-wav	1883	effect\abc_abyss_square	0
-wav	1883	effect\abc_frenzy_shot	0
-wav	1883	effect\abc_chasing_break	0
-wav	1883	effect\abc_chasing_shot	0
-wav	1883	effect\abc_abyss_flame	0
-wav	1883	effect\wh_wind_sign	0
-wav	1883	effect\wh_hawkrush	0
-wav	1883	effect\wh_calamitygale	0
-wav	1883	effect\wh_hawkboomerang	0
-wav	1883	effect\wh_galestorm	0
-wav	1883	effect\wh_crescive_bolt	0
-wav	1883	effect\wh_wild_walk	0
-wav	1883	effect\RL_C_MARKER	0
-wav	1883	effect\night_watch\nw_intensive_aim	0
-wav	1883	effect\night_watch\nw_only_one_bullet	0
-wav	1883	effect\night_watch\nw_spiral_shooting	0
-wav	1883	effect\night_watch\nw_magazine_for_one	0
-wav	1883	effect\night_watch\nw_wild_fire	0
-wav	1883	effect\night_watch\nw_basic_grenade	0
-wav	1883	effect\night_watch\nw_auto_firing_launcher	0
-wav	1883	effect\night_watch\nw_hidden_card	0
-wav	1883	effect\night_watch\nw_mission_bombard	0
-wav	1883	effect\night_watch\nw_midnight_fallen	0
-wav	1883	effect\	0
-wav	1883	effect\_stun	0
-wav	1883	effect\reproduce	0
-wav	1883	effect\rl_h_mine	0
-wav	1883	effect\rl_d_tail	0
-wav	1883	effect\rl_fire_rain	0
-wav	1883	effect\rl_slugshot	0
-wav	1883	ra_unlimit	0
-wav	1883	effect\su_scratch	0
-wav	1883	effect\su_scaroftarou	0
-wav	1883	effect\su_pickypeck	0
-wav	1883	effect\su_tunabelly	0
-wav	1883	effect\su_powerofflock	0
-wav	1883	effect\su_svg_spirit	0
-wav	1883	effect\su_hiss	0
-wav	1883	effect\su_nyanggrass	0
-wav	1883	effect\su_grooming	0
-wav	1883	effect\su_chattering	0
