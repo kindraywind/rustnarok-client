@@ -14,7 +14,8 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
   {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command)
   {"expect": {"chat": "Item created.", "inventory_items": 5, "hp_at_least": 40, "map": "iz_int01.gat",
               "windows_open": ["Inventory"], "windows_closed": ["Skills"], "units_at_least": {"monster": 10},
-              "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null}}}
+              "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null},
+              "identified": [1201], "unidentified": [1202]}}
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
 diff; `threshold` (percent, default 1) is how much change a shot takes before the report flags it.
@@ -89,6 +90,12 @@ def expect(wanted, state):
             failures += [f"window {w} open" for w in value if w in game.get("windows", [])]
         elif key == "ground_items_at_least" and len(game.get("ground_items", [])) < value:
             failures.append(f"{len(game.get('ground_items', []))} items on the ground < {value}")
+        elif key in ("identified", "unidentified"):
+            # Item ids carried, each wanted identified (or not).
+            for item_id in value:
+                found = [item for item in game.get("inventory", []) if item.get("id") == item_id]
+                if not found or any(item.get("identified") != (key == "identified") for item in found):
+                    failures.append(f"item {item_id} is not {key}: {found}")
         elif key == "hotkeys":
             # {"<slot>": <item or skill id>, or null for an empty slot}
             slots = game.get("hotkeys", [])
@@ -101,7 +108,7 @@ def expect(wanted, state):
                 have = sum(1 for unit in game.get("units", []) if unit.get("kind") == kind)
                 if have < count:
                     failures.append(f"{have} {kind} units < {count}")
-        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys"):
+        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified"):
             failures.append(f"unknown expectation {key}")
     return failures
 

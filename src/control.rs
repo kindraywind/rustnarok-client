@@ -761,6 +761,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "screen": screen(Owner::Player),
         },
         "windows": windows,
+        // What's carried: index, item, how many, identified, worn where (0: not worn).
+        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
         "dialog": dialog,

@@ -1,0 +1,142 @@
+{
+  "about": "Magnifier: double-clicking one with an unidentified Knife carried shows the list of what it can identify; picking the Knife identifies it (issue #18).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp iz_int01 18 26"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@item 611 1"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item2 1201 1 0 0 0 0 0 0 0"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "expect": {
+        "unidentified": [
+          1201
+        ]
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "inventory-with-magnifier",
+      "mask": [
+        [
+          860,
+          0,
+          164,
+          340
+        ]
+      ]
+    },
+    {
+      "click": [
+        59,
+        212
+      ],
+      "count": 2
+    },
+    {
+      "wait_for": {
+        "event": "IdentifyList",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        400,
+        500
+      ]
+    },
+    {
+      "shot": "identify-list",
+      "mask": [
+        [
+          860,
+          0,
+          164,
+          340
+        ]
+      ]
+    },
+    {
+      "click": [
+        75,
+        222
+      ]
+    },
+    {
+      "wait_for": {
+        "event": "Identified",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "identified": [
+          1201
+        ]
+      }
+    },
+    {
+      "click": [
+        13,
+        228
+      ]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "move": [
+        400,
+        500
+      ]
+    },
+    {
+      "shot": "identified",
+      "mask": [
+        [
+          860,
+          0,
+          164,
+          340
+        ]
+      ]
+    }
+  ]
+}

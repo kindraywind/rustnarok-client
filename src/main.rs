@@ -386,6 +386,10 @@ struct Game {
     whispered: VecDeque<(String, String)>,
     /// Names whose whispers we asked to block or allow, not yet answered (the answer doesn't name them).
     whisper_asked: VecDeque<String>,
+    /// A Magnifier's list is up: the server waits for a pick or a cancel.
+    identifying: bool,
+    /// A skill an item cast that needs aiming (the player may not know it).
+    item_skill: Option<net::Skill>,
     /// The deal under way; someone asking for one (name, character ID, level); whom we asked.
     trade: Option<trade::Trade>,
     trade_asked: Option<(String, u32, u16)>,
@@ -657,6 +661,8 @@ enum Choice {
     Befriend(u32),
     /// Invite them into the guild.
     GuildInvite(u32),
+    /// Identify this inventory item (a Magnifier's list).
+    Identify(u16),
 }
 
 /// A map about to load behind the loading screen.
@@ -826,6 +832,16 @@ impl Game {
         }
     }
 
+    /// An item casts a skill: on oneself at once, otherwise aimed as a known one would be.
+    fn cast_item_skill(&mut self, skill: net::Skill) {
+        if skill.kind & net::Skill::SELF != 0 {
+            let _ = self.session.use_skill(skill.id, skill.level, self.account_id);
+        } else if skill.kind & (net::Skill::ENEMY | net::Skill::GROUND | net::Skill::FRIEND) != 0 {
+            self.targeting = Some((skill.id, skill.level));
+            self.item_skill = Some(skill);
+        }
+    }
+
     /// Uses the aimed skill on what was clicked, walking into its range first.
     fn aim_skill(&mut self, target: SkillTarget) {
         let Some((id, level)) = self.targeting.take() else { return };
@@ -835,7 +851,7 @@ impl Game {
             SkillTarget::Cell(cell) => Some(cell),
         };
         let Some(goal) = goal else { return };
-        let range = self.skills.iter().find(|skill| skill.id == id).map_or(1, |skill| i32::from(skill.range).max(1));
+        let range = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).map_or(1, |skill| i32::from(skill.range).max(1));
         if world::in_reach(self.player.cell, goal, range) {
             self.pending = None;
             let _ = match target {
@@ -2319,6 +2335,14 @@ impl App {
                         let _ = game.session.add_friend(&actor.name.clone());
                     }
                 }
+                Some(Choice::Identify(index)) => {
+                    game.identifying = false;
+                    let _ = game.session.identify(Some(index));
+                }
+                // A Magnifier's list closed without a pick: say so, or the server keeps the player waiting for it.
+                None if std::mem::take(&mut game.identifying) => {
+                    let _ = game.session.identify(None);
+                }
                 None => {}
             },
             // The room maker's fields and buttons.
@@ -2733,6 +2757,9 @@ impl App {
             };
             if state == ElementState::Pressed {
                 game.menu = None;
+                if std::mem::take(&mut game.identifying) {
+                    let _ = game.session.identify(None);
+                }
                 game.right_press = Some((self.cursor, on_unit));
             } else if let Some((start, Some(id))) = game.right_press.take()
                 && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
@@ -3556,6 +3583,8 @@ impl App {
                     item_lines: 0,
                     whispered: VecDeque::new(),
                     whisper_asked: VecDeque::new(),
+                    identifying: false,
+                    item_skill: None,
                     trade: None,
                     trade_asked: None,
                     trade_with: String::new(),
@@ -4483,6 +4512,28 @@ impl App {
                     _ => format!("{to}{}", self.messages.get(WHISPER_FAILED + usize::from(result) - 1).cloned().unwrap_or_default()),
                 };
                 game.chat_line(line, WHISPER_COLOR);
+            }
+            MapEvent::ItemSkill(skill) => game.cast_item_skill(skill),
+            // ponytail: the list opens as the right-click menu at the pointer; the client's own appraisal window
+            // (a titled list with OK and Cancel) would replace it.
+            MapEvent::IdentifyList(indexes) => {
+                let entries: Vec<_> = indexes
+                    .iter()
+                    .filter_map(|&index| {
+                        game.inventory.get(index).map(|item| Some((inventory::item_name(&self.items, item.id, false, 0), Choice::Identify(index))))
+                    })
+                    .collect();
+                if entries.is_empty() {
+                    let _ = game.session.identify(None);
+                } else {
+                    game.identifying = true;
+                    game.menu = Some(menu::Menu::new(self.cursor, entries, &self.font));
+                }
+            }
+            MapEvent::Identified { index, ok } => {
+                if ok && let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index) {
+                    item.identified = true;
+                }
             }
             // Replies to the client's own chat commands.
             MapEvent::UserCount(count) => {

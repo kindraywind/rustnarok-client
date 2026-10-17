@@ -464,6 +464,10 @@ const ZC_ITEM_FALL_ENTRY: u16 = 0x0ADD;
 const ZC_ITEM_DISAPPEAR: u16 = 0x00A1;
 const CZ_ITEM_PICKUP: u16 = 0x0362;
 const CZ_ITEM_THROW: u16 = 0x0363;
+const ZC_AUTORUN_SKILL: u16 = 0x0147;
+const ZC_ITEMIDENTIFY_LIST: u16 = 0x0177;
+const CZ_REQ_ITEMIDENTIFY: u16 = 0x0178;
+const ZC_ACK_ITEMIDENTIFY: u16 = 0x0179;
 const ZC_ITEM_PICKUP_ACK: u16 = 0x0B41;
 const ZC_INVENTORY_START: u16 = 0x0B08;
 const ZC_INVENTORY_ITEMLIST_NORMAL: u16 = 0x0B09;
@@ -1213,6 +1217,15 @@ pub enum MapEvent {
     },
     /// How a whisper went: 0 sent, 1 nobody of that name online, 2 ignored by them, 3 they ignore everyone.
     WhisperResult(u8),
+    /// An item casts a skill the player may not know (a Magnifier's Item Appraisal, a scroll's bolt): cast it now.
+    ItemSkill(Skill),
+    /// The inventory indexes a Magnifier can identify; the server waits for a pick (or a cancel) before anything else.
+    IdentifyList(Vec<u16>),
+    /// How identifying went.
+    Identified {
+        index: u16,
+        ok: bool,
+    },
     /// How many players are online (/who).
     UserCount(u32),
     /// How blocking (`allow` false) or allowing one name's whispers went: 0 done, 1 failed, 2 the list is full.
@@ -2161,6 +2174,11 @@ impl MapSession {
         self.stream.write_all(&encode_drop_item(index, amount))
     }
 
+    /// Answers an `IdentifyList`: the item to identify, or none to cancel; the answer is `Identified`.
+    pub fn identify(&mut self, index: Option<u16>) -> io::Result<()> {
+        self.stream.write_all(&encode_identify(index))
+    }
+
     /// Asks how many players are online; the answer is `UserCount`.
     pub fn user_count(&mut self) -> io::Result<()> {
         self.stream.write_all(&CZ_REQ_USER_COUNT.to_le_bytes())
@@ -2213,6 +2231,12 @@ fn encode_whisper_setting(name: &str, allow: bool) -> Vec<u8> {
 fn encode_drop_item(index: u16, amount: u16) -> [u8; 6] {
     let [[h0, h1], [i0, i1], [a0, a1]] = [CZ_ITEM_THROW, index, amount].map(u16::to_le_bytes);
     [h0, h1, i0, i1, a0, a1]
+}
+
+/// CZ_REQ_ITEMIDENTIFY: the inventory index to identify; none cancels (an index rathena doesn't have).
+fn encode_identify(index: Option<u16>) -> [u8; 4] {
+    let [[h0, h1], [i0, i1]] = [CZ_REQ_ITEMIDENTIFY, index.unwrap_or(u16::MAX)].map(u16::to_le_bytes);
+    [h0, h1, i0, i1]
 }
 
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
@@ -2453,6 +2477,14 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         ZC_ACK_WHISPER => MapEvent::WhisperResult(packet[2]),
         ZC_USER_COUNT => MapEvent::UserCount(u32_at(2)),
+        // Skill, its inf, level, SP, range, the name (24 bytes), whether it can be raised.
+        ZC_AUTORUN_SKILL => {
+            MapEvent::ItemSkill(Skill { id: u16_at(2), kind: u32_at(4), level: u16_at(8), sp: u16_at(10), range: u16_at(12), upgradable: packet[38] != 0 })
+        }
+        ZC_ITEMIDENTIFY_LIST => MapEvent::IdentifyList(
+            packet[4..usize::from(u16_at(2)).min(packet.len())].chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect(),
+        ),
+        ZC_ACK_ITEMIDENTIFY => MapEvent::Identified { index: u16_at(2), ok: packet[4] == 0 },
         ZC_SETTING_WHISPER_PC => MapEvent::WhisperSetting { allow: packet[2] != 0, result: packet[3] },
         ZC_SETTING_WHISPER_STATE => MapEvent::WhisperAll { allow: packet[2] != 0, result: packet[3] },
         ZC_WHISPER_LIST => MapEvent::WhisperList(packet[4..usize::from(u16_at(2)).min(packet.len())].chunks_exact(24).map(c_string).collect()),
@@ -3051,6 +3083,24 @@ mod tests {
         assert_eq!(packet_length(ZC_ACK_READ_RODEX), Some(-1));
         assert_eq!(packet_length(ZC_ACK_ADD_ITEM_RODEX), Some(64));
         assert_eq!(packet_length(ZC_CHECKNAME), Some(34));
+    }
+
+    #[test]
+    fn identifies_with_a_magnifier() {
+        let mut autorun = vec![0x47, 0x01, 40, 0, 4, 0, 0, 0, 1, 0, 10, 0, 1, 0];
+        autorun.extend_from_slice(&[0; 24]);
+        autorun.push(0);
+        let Some(MapEvent::ItemSkill(skill)) = decode_map_packet(&autorun) else { panic!() };
+        assert_eq!((skill.id, skill.kind, skill.level, skill.sp, skill.range, skill.upgradable), (40, Skill::SELF, 1, 10, 1, false));
+        let Some(MapEvent::IdentifyList(indexes)) = decode_map_packet(&[0x77, 0x01, 8, 0, 3, 0, 9, 0]) else { panic!() };
+        assert_eq!(indexes, [3, 9]);
+        let Some(MapEvent::Identified { index: 9, ok: true }) = decode_map_packet(&[0x79, 0x01, 9, 0, 0]) else { panic!() };
+        let Some(MapEvent::Identified { ok: false, .. }) = decode_map_packet(&[0x79, 0x01, 9, 0, 1]) else { panic!() };
+        assert_eq!(encode_identify(Some(9)), [0x78, 0x01, 9, 0]);
+        assert_eq!(encode_identify(None), [0x78, 0x01, 0xFF, 0xFF]);
+        for (header, length) in [(ZC_AUTORUN_SKILL, 39), (ZC_ITEMIDENTIFY_LIST, -1), (CZ_REQ_ITEMIDENTIFY, 4), (ZC_ACK_ITEMIDENTIFY, 5)] {
+            assert_eq!(packet_length(header), Some(length));
+        }
     }
 
     #[test]
