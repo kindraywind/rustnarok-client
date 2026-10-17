@@ -1428,6 +1428,8 @@ pub enum MapEvent {
         on: bool,
         total_ms: u32,
         left_ms: u32,
+        /// The status's first value where the server sends one (a pushcart's type), else 0.
+        value: i32,
     },
     Disconnected(io::Error),
 }
@@ -2532,9 +2534,13 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_SKILL_DISAPPEAR => MapEvent::SkillUnitGone { id: u32_at(2) },
         ZC_ACK_TOUSESKILL => MapEvent::SkillFailed { skill: u16_at(2), detail: u32_at(4) as i32, ok: packet[12] != 0, cause: packet[13] },
         ZC_RECOVERY => MapEvent::Recovered { kind: u16_at(2), amount: u32_at(4) as i32 },
-        ZC_MSG_STATE_CHANGE3 => MapEvent::StatusIcon { kind: u16_at(2), id: u32_at(4), on: packet[8] != 0, total_ms: u32_at(9), left_ms: u32_at(13) },
-        ZC_MSG_STATE_CHANGE2 => MapEvent::StatusIcon { kind: u16_at(2), id: u32_at(4), on: packet[8] != 0, total_ms: u32_at(9), left_ms: u32_at(9) },
-        ZC_MSG_STATE_CHANGE => MapEvent::StatusIcon { kind: u16_at(2), id: u32_at(4), on: packet[8] != 0, total_ms: 0, left_ms: 0 },
+        ZC_MSG_STATE_CHANGE3 => {
+            MapEvent::StatusIcon { kind: u16_at(2), id: u32_at(4), on: packet[8] != 0, total_ms: u32_at(9), left_ms: u32_at(13), value: u32_at(17) as i32 }
+        }
+        ZC_MSG_STATE_CHANGE2 => {
+            MapEvent::StatusIcon { kind: u16_at(2), id: u32_at(4), on: packet[8] != 0, total_ms: u32_at(9), left_ms: u32_at(9), value: u32_at(13) as i32 }
+        }
+        ZC_MSG_STATE_CHANGE => MapEvent::StatusIcon { kind: u16_at(2), id: u32_at(4), on: packet[8] != 0, total_ms: 0, left_ms: 0, value: 0 },
         ZC_LONGLONGPAR_CHANGE => MapEvent::Status { id: u16_at(2), value: i64::from_le_bytes(packet[4..12].try_into().unwrap()) },
         ZC_HP_INFO => MapEvent::UnitHp { id: u32_at(2), hp: u32_at(6) as i32, max_hp: u32_at(10) as i32 },
         ZC_ATTACK_RANGE => MapEvent::AttackRange(u16_at(2)),
@@ -3388,6 +3394,17 @@ mod tests {
         assert_eq!(packet_length(ZC_ACK_READ_RODEX), Some(-1));
         assert_eq!(packet_length(ZC_ACK_ADD_ITEM_RODEX), Some(64));
         assert_eq!(packet_length(ZC_CHECKNAME), Some(34));
+    }
+
+    #[test]
+    fn reads_a_status_value() {
+        // ZC_MSG_STATE_CHANGE3: EFST_ON_PUSH_CART (673) on account 7, cart type 3.
+        let mut packet = vec![0x83, 0x09, 0xA1, 0x02, 7, 0, 0, 0, 1];
+        packet.extend_from_slice(&[0; 8]);
+        packet.extend_from_slice(&3u32.to_le_bytes());
+        packet.extend_from_slice(&[0; 8]);
+        assert_eq!(packet.len(), 29);
+        let Some(MapEvent::StatusIcon { kind: 673, id: 7, on: true, value: 3, .. }) = decode_map_packet(&packet) else { panic!() };
     }
 
     #[test]
