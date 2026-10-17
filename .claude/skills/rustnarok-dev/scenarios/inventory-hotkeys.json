@@ -3,15 +3,113 @@
   "account": "",
   "slot": 0,
   "steps": [
-    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
-    {"say": "@itemreset"}, {"wait": 800},
-    {"say": "@item 501 5"}, {"wait": 800},
-    {"key": "Alt+E"}, {"wait": 500},
-    {"shot": "inventory"},
-    {"drag": [[59, 212], [497, 17]]}, {"wait": 500},
-    {"shot": "hotkey-bar", "crop": [470, 0, 300, 40]},
-    {"say": "@heal -30 0"}, {"wait": 500},
-    {"key": "F1"}, {"wait": 300},
-    {"shot": "hotkey-used"}
+    {
+      "say": "@warp iz_int01 18 26"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@item 501 5"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "expect": {
+        "chat": "Item created."
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Inventory"
+        ]
+      }
+    },
+    {
+      "shot": "inventory",
+      "mask": [
+        [
+          860,
+          0,
+          164,
+          340
+        ]
+      ]
+    },
+    {
+      "drag": [
+        [
+          59,
+          212
+        ],
+        [
+          497,
+          17
+        ]
+      ]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "hotkey-bar",
+      "crop": [
+        470,
+        0,
+        300,
+        40
+      ]
+    },
+    {
+      "say": "@heal -30 0"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "key": "F1"
+    },
+    {
+      "wait_for": {
+        "event": "ItemUsed",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "hp_at_least": 40
+      }
+    },
+    {
+      "shot": "hotkey-used",
+      "mask": [
+        [
+          860,
+          0,
+          164,
+          340
+        ]
+      ]
+    }
   ]
 }

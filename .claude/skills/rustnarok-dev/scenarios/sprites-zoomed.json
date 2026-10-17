@@ -2,13 +2,45 @@
   "about": "Sprites up close: 25 Porings on prt_fild08 with the camera zoomed all the way in, where shadows used to cut holes in their own sprites (issue #10).",
   "account": "",
   "slot": 0,
-  "env": {"RUSTNAROK_CLIENT_CAMERA": "0,45,65"},
+  "env": {
+    "RUSTNAROK_CLIENT_CAMERA": "0,45,65"
+  },
   "steps": [
-    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
-    {"say": "@killmonster2"}, {"wait": 500},
-    {"say": "@monster 1002 25"}, {"wait": 2500},
-    {"shot": "porings-zoomed"},
-    {"wait": 1500},
-    {"shot": "porings-zoomed-later"}
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@monster 1002 25"
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "expect": {
+        "units_at_least": {
+          "monster": 20
+        }
+      }
+    },
+    {
+      "shot": "porings-zoomed",
+      "threshold": 30
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "shot": "porings-zoomed-later",
+      "threshold": 30
+    }
   ]
 }
