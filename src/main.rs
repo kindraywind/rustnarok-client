@@ -3647,6 +3647,7 @@ impl App {
                 game.ground.clear();
                 game.marks.clear();
                 game.signs.clear();
+                game.effects.clear();
                 game.player.stop_at(position.map(i32::from));
                 let _ = game.session.loaded();
             }
@@ -3751,7 +3752,10 @@ impl App {
                 }
             }
             MapEvent::Vanish { id, reason } => {
-                game.effects.forget(id);
+                // A body keeps what plays on it (the killing hit's effects) until it goes.
+                if reason != 1 {
+                    game.effects.forget(id);
+                }
                 // Reason 1: died. The body falls when the killing hit lands, then stays a moment.
                 let key = (id != game.account_id).then_some(id);
                 let lands = game.damages.iter().filter(|damage| damage.target == key).map(|damage| damage.start).fold(Instant::now(), Instant::max);
@@ -4534,7 +4538,19 @@ impl App {
                 game.skill_motion(act.source, skill, act.source_speed as f32, &self.skill_info);
                 if act.damage != 0 && !(act.source == act.target && act.kind == 6) {
                     game.show_hit(&act);
-                    skill_effects(game, skill, "hitEffectId", act.target);
+                    // Hit by hit: what comes at the target first (a bolt's arrows), then what shows as it lands.
+                    if let Some(gpu) = gpu {
+                        let now = Instant::now();
+                        let lands = now + Duration::from_millis(act.source_speed.max(0) as u64);
+                        for hit in 0..u32::from(act.hits.max(1)) {
+                            for effect in table.skill(skill, "beforeHitEffectId") {
+                                game.play_effect_from(gpu, grf, table, effect, act.target, now + MULTI_HIT_DELAY * hit);
+                            }
+                            for effect in table.skill(skill, "hitEffectId") {
+                                game.play_effect_from(gpu, grf, table, effect, act.target, lands + MULTI_HIT_DELAY * hit);
+                            }
+                        }
+                    }
                 }
                 skill_effects(game, skill, "effectId", act.target);
                 skill_effects(game, skill, "effectIdOnCaster", act.source);
@@ -4575,6 +4591,13 @@ impl App {
                 }
                 game.skill_motion(source, skill, 400.0, &self.skill_info);
             }
+            MapEvent::SkillUnit { id, kind, cell } => {
+                if let Some(gpu) = gpu {
+                    let at = game.world.cell_position(cell.map(f32::from));
+                    game.effects.play_unit(gpu, grf, table, kind, id, at, Instant::now());
+                }
+            }
+            MapEvent::SkillUnitGone { id } => game.effects.forget(id),
             MapEvent::SkillFailed { ok: true, .. } => {}
             MapEvent::SkillFailed { skill, detail, cause, .. } => {
                 game.casts.remove(&None);
@@ -4911,6 +4934,9 @@ impl App {
         }
         let player_feet = game.world.cell_position(player_cell);
         game.camera.target = player_feet;
+        if self.effects_on {
+            game.camera.target[1] += game.effects.quake(now);
+        }
         game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame));
         game.last_frame = now;
         let view = game.camera.view(SCREEN[0] / SCREEN[1]);
@@ -5614,7 +5640,7 @@ impl App {
         });
         sprites.extend(cursor_look.draw(gpu, pointer.0));
 
-        game.effects.retire(now);
+        game.effects.advance(gpu, now, yaw);
         // With /effect off, effects still play on, unseen, and their sounds come due without being heard.
         let effects_on = self.effects_on;
         if let Some(audio) = audio {

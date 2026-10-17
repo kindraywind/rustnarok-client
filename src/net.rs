@@ -494,6 +494,8 @@ const ZC_USESKILL_ACK: u16 = 0x0B1A;
 const ZC_NOTIFY_SKILL: u16 = 0x01DE;
 const ZC_USE_SKILL: u16 = 0x09CB;
 const ZC_NOTIFY_GROUNDSKILL: u16 = 0x0117;
+const ZC_SKILL_ENTRY: u16 = 0x09CA;
+const ZC_SKILL_DISAPPEAR: u16 = 0x0120;
 const ZC_ACK_TOUSESKILL: u16 = 0x0110;
 const ZC_RECOVERY: u16 = 0x0A27;
 const ZC_MSG_STATE_CHANGE: u16 = 0x0196;
@@ -1298,6 +1300,17 @@ pub enum MapEvent {
         source: u32,
         level: u16,
         cell: [u16; 2],
+    },
+    /// A skill's unit on a cell comes into sight (ZC_SKILL_ENTRY): a Fire Wall, a warp portal, a trap. `kind` is
+    /// rathena's UNT_ number.
+    SkillUnit {
+        id: u32,
+        kind: u32,
+        cell: [u16; 2],
+    },
+    /// A skill's unit is gone or out of sight (ZC_SKILL_DISAPPEAR).
+    SkillUnitGone {
+        id: u32,
     },
     /// The player's skill didn't go off (ZC_ACK_TOUSESKILL) unless `ok`: rathena's `useskill_fail_cause`, and a
     /// skill-specific detail (`btype`).
@@ -2347,6 +2360,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         },
         ZC_USE_SKILL => MapEvent::SkillUsed { skill: u16_at(2), amount: u32_at(4) as i32, target: u32_at(8), source: u32_at(12), ok: packet[16] != 0 },
         ZC_NOTIFY_GROUNDSKILL => MapEvent::GroundSkill { skill: u16_at(2), source: u32_at(4), level: u16_at(8), cell: [u16_at(10), u16_at(12)] },
+        ZC_SKILL_ENTRY => MapEvent::SkillUnit { id: u32_at(4), kind: u32_at(16), cell: [u16_at(12), u16_at(14)] },
+        ZC_SKILL_DISAPPEAR => MapEvent::SkillUnitGone { id: u32_at(2) },
         ZC_ACK_TOUSESKILL => MapEvent::SkillFailed { skill: u16_at(2), detail: u32_at(4) as i32, ok: packet[12] != 0, cause: packet[13] },
         ZC_RECOVERY => MapEvent::Recovered { kind: u16_at(2), amount: u32_at(4) as i32 },
         ZC_MSG_STATE_CHANGE3 => MapEvent::StatusIcon { kind: u16_at(2), id: u32_at(4), on: packet[8] != 0, total_ms: u32_at(9), left_ms: u32_at(13) },
@@ -2914,6 +2929,15 @@ mod tests {
         assert_eq!((act.source, act.target, act.source_speed, act.damage, act.hits, act.kind), (2_000_000, 110_000_001, 1_288, 42, 1, 10));
         assert_eq!(packet_length(ZC_NOTIFY_ACT), Some(34));
         assert_eq!(packet_length(ZC_HP_INFO), Some(14));
+    }
+
+    #[test]
+    fn decodes_skill_units() {
+        // Captured from rathena: a Fire Wall cell (UNT_FIREWALL) at 156,190, and its going.
+        let entry = [0xca, 0x09, 0x17, 0, 0x1a, 0x0d, 0, 0, 0x82, 0x84, 0x1e, 0, 0x9c, 0, 0xbe, 0, 0x7f, 0, 0, 0, 0, 0x01, 0x0a];
+        assert!(matches!(decode_map_packet(&entry), Some(MapEvent::SkillUnit { id: 3354, kind: 127, cell: [156, 190] })));
+        assert!(matches!(decode_map_packet(&[0x20, 0x01, 0x1a, 0x0d, 0, 0]), Some(MapEvent::SkillUnitGone { id: 3354 })));
+        assert_eq!((packet_length(ZC_SKILL_ENTRY), packet_length(ZC_SKILL_DISAPPEAR)), (Some(23), Some(6)));
     }
 
     #[test]

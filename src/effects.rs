@@ -1,12 +1,16 @@
-//! Effects played on the map: the client's STR animations, for the effect IDs the server, skills and items name.
+//! Effects played on the map, for the effect IDs the server, skills and items name: the client's STR animations,
+//! moving textures and sprites, cylinders, sprite animations, the models of skills' units on the ground (traps), and
+//! the camera shakes the client does in code.
 
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rustnarok_client::effect::Str;
 use rustnarok_client::grf::Grf;
+use rustnarok_client::model::Rsm;
 
+use crate::actor::{Placed, SpriteSet, Timing};
 use crate::render::{Gpu, Texture};
 use crate::world::{CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -21,15 +25,31 @@ struct Part {
     attached: bool,
     /// `%d` in the file name is a random number from this range.
     random: Option<(u32, u32)>,
+    /// Plays once on a skill's ground unit, where the rest starts again until the unit goes.
+    once: bool,
+}
+
+/// A sprite's animation (SPR effects): a sprite under data\sprite\이팩트\, whether it follows the unit, and how it
+/// plays as name=value parameters.
+struct SpritePart {
+    file: String,
+    attached: bool,
+    parameters: HashMap<String, String>,
 }
 
 /// Which effects things play (effects.txt).
 pub struct Table {
     parts: HashMap<u32, Vec<Part>>,
-    /// Textures moving over their duration, as name=value parameters (2D and 3D effects).
+    /// Textures or sprites moving over their duration, as name=value parameters (2D and 3D effects).
     floaters: HashMap<u32, Vec<HashMap<String, String>>>,
     /// Textured cylinders, the same way (CYLINDER effects).
     rings: HashMap<u32, Vec<HashMap<String, String>>>,
+    sprites: HashMap<u32, Vec<SpritePart>>,
+    /// Camera shakes, which the client does in code (FUNC effects): how long after the start, and for how long.
+    quakes: HashMap<u32, (Duration, Duration)>,
+    /// What skills' units on the ground show while they're there, by rathena's UNT_ number: an effect, a model.
+    units: HashMap<u32, u32>,
+    models: HashMap<u32, String>,
     misc: HashMap<u32, u32>,
     skills: HashMap<(u16, String), Vec<u32>>,
     items: HashMap<u32, u32>,
@@ -50,6 +70,10 @@ impl Table {
             parts: HashMap::new(),
             floaters: HashMap::new(),
             rings: HashMap::new(),
+            sprites: HashMap::new(),
+            quakes: HashMap::new(),
+            units: HashMap::new(),
+            models: HashMap::new(),
             misc: HashMap::new(),
             skills: HashMap::new(),
             items: HashMap::new(),
@@ -66,7 +90,27 @@ impl Table {
                     let Some(id) = number(1) else { continue };
                     let folder = if folder == "-" { String::new() } else { folder.to_owned() };
                     let random = number(5).zip(number(6));
-                    table.parts.entry(id).or_default().push(Part { file: file.to_owned(), folder, attached: attached == "1", random });
+                    let once = fields.last() == Some(&"once");
+                    table.parts.entry(id).or_default().push(Part { file: file.to_owned(), folder, attached: attached == "1", random, once });
+                }
+                ["spr", _, file, attached, text] => {
+                    let Some(id) = number(1) else { continue };
+                    table.sprites.entry(id).or_default().push(SpritePart { file: file.to_owned(), attached: attached == "1", parameters: parameters(text) });
+                }
+                ["func", _, "quake", ..] => {
+                    if let (Some(id), Some(delay), Some(length)) = (number(1), number(3), number(4)) {
+                        table.quakes.insert(id, (Duration::from_millis(delay.into()), Duration::from_millis(length.into())));
+                    }
+                }
+                ["unit", ..] => {
+                    if let (Some(kind), Some(id)) = (number(1), number(2)) {
+                        table.units.insert(kind, id);
+                    }
+                }
+                ["rsm", _, file] => {
+                    if let Some(kind) = number(1) {
+                        table.models.insert(kind, file.to_owned());
+                    }
                 }
                 ["wav", _, file, ..] => {
                     let Some(id) = number(1) else { continue };
@@ -123,11 +167,26 @@ struct Loaded {
     textures: Vec<Vec<Option<Texture>>>,
 }
 
-/// Where an effect plays: on a unit (None = the player), or at a place.
+/// Where an effect plays: on a unit (None = the player), at a place, or at a skill's ground unit until it goes.
 #[derive(Clone, Copy)]
 enum Anchor {
     Unit(Option<u32>),
     At(Vector),
+    Lasting(u32, Vector),
+}
+
+impl Anchor {
+    /// Where it is now; `position_of` gives a unit's feet.
+    fn place(self, position_of: &impl Fn(Option<u32>) -> Option<Vector>) -> Option<Vector> {
+        match self {
+            Anchor::Unit(unit) => position_of(unit),
+            Anchor::At(at) | Anchor::Lasting(_, at) => Some(at),
+        }
+    }
+
+    fn on(self, unit: u32) -> bool {
+        matches!(self, Anchor::Unit(Some(id)) | Anchor::Lasting(id, _) if id == unit)
+    }
 }
 
 /// What an effect is played on.
@@ -136,19 +195,77 @@ pub enum Target {
     /// A unit (None = the player): parts that follow units follow it.
     Unit(Option<u32>),
     Ground,
+    /// A skill's unit on the ground (Fire Wall, a warp portal): its parts start again until it goes.
+    Lasting(u32),
 }
 
 struct Playing {
     loaded: Rc<Loaded>,
     start: Instant,
     anchor: Anchor,
+    again: bool,
 }
 
-/// A texture moving from a start to an end (2D and 3D effects), its random choices made.
+/// A sprite playing one of its actions (SPR effects).
+struct Animation {
+    /// The sprite's path without extension.
+    sprite: String,
+    start: Instant,
+    /// When it goes, if it repeats for a while.
+    end: Option<Instant>,
+    anchor: Anchor,
+    /// Which action; else the one facing the camera.
+    action: Option<usize>,
+    /// Milliseconds a frame; else the sprite's own.
+    frame_ms: Option<f32>,
+    repeat: bool,
+    /// Stays on its last frame.
+    hold: bool,
+    /// Where it shows from the feet, in sprite pixels.
+    offset: [f32; 2],
+    /// Its images now, from `advance`.
+    placed: Vec<Placed>,
+}
+
+impl Animation {
+    fn new(part: &SpritePart, start: Instant, anchor: Anchor, lasting: bool) -> Self {
+        let number = |name: &str| part.parameters.get(name).and_then(|value| value.parse::<f32>().ok());
+        let flag = |name: &str| part.parameters.get(name).is_some_and(|value| value == "true");
+        let rise = if flag("head") { -100.0 } else { 0.0 };
+        let repeat = flag("repeat") || lasting;
+        Self {
+            sprite: format!("data\\sprite\\이팩트\\{}", part.file),
+            start,
+            end: number("duration").filter(|_| repeat).map(|ms| start + Duration::from_secs_f32(ms.max(0.0) / 1000.0)),
+            anchor,
+            action: number("frame").map(|action| action as usize),
+            frame_ms: number("delayFrame").map(|ms| ms.max(1.0)),
+            repeat,
+            hold: flag("stopAtEnd"),
+            offset: [number("xOffset").unwrap_or(0.0), number("yOffset").unwrap_or(rise)],
+            placed: Vec::new(),
+        }
+    }
+}
+
+/// A model standing on a skill's ground unit (traps): by texture, its triangles' corners.
+struct Model(Vec<(String, Vec<Corner>)>);
+
+/// Where a corner is from the model's feet, in world units, and its texture coordinates.
+type Corner = (Vector, [f32; 2]);
+
+/// A texture or sprite moving from a start to an end (2D and 3D effects), its random choices made.
 struct Floating {
     /// Textures under data\texture\, shown in turn `frame_ms` apart.
     textures: Vec<String>,
     frame_ms: f32,
+    /// Or a sprite (its path without extension), sized in percent, on its first frame or playing (`play_sprite`).
+    sprite: Option<String>,
+    play_sprite: bool,
+    /// The sprite's images now, from `advance`.
+    placed: Vec<Placed>,
+    /// Starts again when it ends.
+    again: bool,
     start: Instant,
     end: Instant,
     anchor: Anchor,
@@ -307,6 +424,14 @@ pub struct Effects {
     textures: HashMap<String, Option<Texture>>,
     floating: Vec<Floating>,
     rings: Vec<Ring>,
+    /// Sprites by path without extension, with their images decoded so far.
+    sprites: HashMap<String, Option<SpriteSet>>,
+    animations: Vec<Animation>,
+    models: HashMap<String, Option<Rc<Model>>>,
+    /// Models standing on skills' ground units: the model, the unit and where.
+    standing: Vec<(Rc<Model>, u32, Vector)>,
+    /// Camera shakes: from, until.
+    quakes: Vec<(Instant, Instant)>,
     /// Sounds waiting for their moment: when, the file (under data\wav\), and where.
     sounds: Vec<(Instant, String, Vector)>,
 }
@@ -335,9 +460,21 @@ impl Floating {
             let (from, to) = parameters.get(name)?.split_once(',')?;
             Some((from.trim().parse().ok()?, to.trim().parse().ok()?))
         };
-        let textures: Vec<String> = match parameters.get("fileList") {
+        // ponytail: missiles between the caster and the target (Soul Strike, Fire Ball) need the caster's place, which
+        // effects aren't given yet; skipped rather than drawn standing on the target.
+        if flag("toSrc") || flag("fromSrc") {
+            return None;
+        }
+        let textures: Vec<String> = match parameters.get("fileList").or_else(|| parameters.get("file")) {
             Some(list) => list.split(',').map(|file| format!("data\\texture\\{}", file.replace('/', "\\"))).collect(),
-            None => vec![format!("data\\texture\\{}", parameters.get("file")?.replace('/', "\\"))],
+            None => Vec::new(),
+        };
+        // Without textures, a sprite: under data\sprite\이팩트\ or anywhere.
+        let sprite = match (parameters.get("absoluteSpriteName"), parameters.get("spriteName")) {
+            _ if !textures.is_empty() => None,
+            (Some(path), _) => Some(path.replace('/', "\\")),
+            (None, Some(name)) => Some(format!("data\\sprite\\이팩트\\{name}")),
+            (None, None) => return None,
         };
         // Where it goes, axis by axis: fixed, random once, or random at each end around a middle.
         let axis = |name: &str| -> ([f32; 2], bool) {
@@ -399,6 +536,10 @@ impl Floating {
         Some(Self {
             textures,
             frame_ms: number("frameDelay").unwrap_or(10.0).max(1.0),
+            sprite,
+            play_sprite: flag("playSprite"),
+            placed: Vec::new(),
+            again: flag("repeat"),
             start,
             end: start + std::time::Duration::from_secs_f32(duration.max(1.0) / 1000.0),
             anchor,
@@ -431,40 +572,53 @@ impl Effects {
                 Some((from, to)) => sound.file.replace("%d", &pick(from, to).to_string()),
                 None => sound.file.clone(),
             };
-            self.sounds.push((now + std::time::Duration::from_millis(sound.delay_ms), format!("{file}.wav"), at));
+            self.sounds.push((now + Duration::from_millis(sound.delay_ms), format!("{file}.wav"), at));
         }
+        let anchor = |attached: bool| match target {
+            Target::Unit(unit) if attached => Anchor::Unit(unit),
+            Target::Lasting(unit) => Anchor::Lasting(unit, at),
+            _ => Anchor::At(at),
+        };
+        let lasting = matches!(target, Target::Lasting(_));
+        // On a ground unit everything starts again, but what says it doesn't.
+        let again = |parameters: &HashMap<String, String>| lasting && parameters.get("repeat").is_none_or(|value| value != "false");
+        let attached = |parameters: &HashMap<String, String>| parameters.get("attachedEntity").is_some_and(|value| value == "true");
         for parameters in table.floaters.get(&id).into_iter().flatten() {
-            let anchor = match target {
-                Target::Unit(unit) if parameters.get("attachedEntity").is_some_and(|value| value == "true") => Anchor::Unit(unit),
-                _ => Anchor::At(at),
-            };
             let copies = parameters.get("duplicate").and_then(|value| value.parse::<i32>().ok()).unwrap_or(1).clamp(1, 50) as u32;
             let gap = parameters.get("timeBetweenDupli").and_then(|value| value.parse::<f32>().ok()).unwrap_or(200.0).max(0.0);
             for copy in 0..copies {
-                let start = now + std::time::Duration::from_secs_f32(gap * copy as f32 / 1000.0);
-                let Some(floating) = Floating::new(parameters, copy, start, anchor) else { continue };
+                let start = now + Duration::from_secs_f32(gap * copy as f32 / 1000.0);
+                let Some(mut floating) = Floating::new(parameters, copy, start, anchor(attached(parameters))) else { continue };
+                floating.again |= again(parameters);
                 for path in &floating.textures {
                     self.textures.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                if let Some(path) = &floating.sprite {
+                    self.sprites.entry(path.clone()).or_insert_with(|| SpriteSet::at(grf, path));
                 }
                 self.floating.push(floating);
             }
         }
         for parameters in table.rings.get(&id).into_iter().flatten() {
-            let anchor = match target {
-                Target::Unit(unit) if parameters.get("attachedEntity").is_some_and(|value| value == "true") => Anchor::Unit(unit),
-                _ => Anchor::At(at),
-            };
             let copies = parameters.get("duplicate").and_then(|value| value.parse::<i32>().ok()).unwrap_or(1).clamp(1, 50) as u32;
             let gap = parameters.get("timeBetweenDupli").and_then(|value| value.parse::<f32>().ok()).unwrap_or(200.0).max(0.0);
             for copy in 0..copies {
-                let start = now + std::time::Duration::from_secs_f32(gap * copy as f32 / 1000.0);
-                let Some(ring) = Ring::new(parameters, start, anchor) else { continue };
+                let start = now + Duration::from_secs_f32(gap * copy as f32 / 1000.0);
+                let Some(mut ring) = Ring::new(parameters, start, anchor(attached(parameters))) else { continue };
+                ring.again |= again(parameters);
                 self.textures.entry(ring.texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &ring.texture, true).ok());
                 self.rings.push(ring);
             }
         }
-        let Some(parts) = table.parts.get(&id) else { return };
-        for part in parts {
+        for part in table.sprites.get(&id).into_iter().flatten() {
+            let animation = Animation::new(part, now, anchor(part.attached), lasting);
+            self.sprites.entry(animation.sprite.clone()).or_insert_with(|| SpriteSet::at(grf, &animation.sprite));
+            self.animations.push(animation);
+        }
+        if let Some(&(delay, length)) = table.quakes.get(&id) {
+            self.quakes.push((now + delay, now + delay + length));
+        }
+        for part in table.parts.get(&id).into_iter().flatten() {
             let file = match part.random {
                 Some((from, to)) => part.file.replace("%d", &pick(from, to).to_string()),
                 None => part.file.clone(),
@@ -472,13 +626,33 @@ impl Effects {
             let key = format!("{}|{file}", part.folder);
             let loaded = self.loaded.entry(key).or_insert_with(|| load(gpu, grf, &file, &part.folder)).clone();
             if let Some(loaded) = loaded {
-                let anchor = match target {
-                    Target::Unit(unit) if part.attached => Anchor::Unit(unit),
-                    _ => Anchor::At(at),
-                };
-                self.playing.push(Playing { loaded, start: now, anchor });
+                self.playing.push(Playing { loaded, start: now, anchor: anchor(part.attached), again: lasting && !part.once });
             }
         }
+    }
+
+    /// Shows what a skill's unit on the ground shows (`kind`: rathena's UNT_ number) until `forget(id)`.
+    pub fn play_unit(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, kind: u32, id: u32, at: Vector, now: Instant) {
+        // The server tells again of units coming back into sight.
+        self.forget(id);
+        if let Some(&effect) = table.units.get(&kind) {
+            self.play(gpu, grf, table, effect, Target::Lasting(id), at, now);
+        }
+        let Some(file) = table.models.get(&kind) else { return };
+        let model = self.models.entry(file.clone()).or_insert_with(|| load_model(grf, file).map(Rc::new)).clone();
+        if let Some(model) = model {
+            for (path, _) in &model.0 {
+                self.textures.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            self.standing.push((model, id, at));
+        }
+    }
+
+    /// How far the camera is shaken now, up or down.
+    pub fn quake(&self, now: Instant) -> f32 {
+        let Some((from, _)) = self.quakes.iter().find(|(from, until)| (*from..*until).contains(&now)) else { return 0.0 };
+        // ponytail: a 10 Hz bounce of a third of a cell, by eye; the client's own amplitude isn't measured.
+        if (now.duration_since(*from).as_millis() / 50).is_multiple_of(2) { CELL / 3.0 } else { -CELL / 3.0 }
     }
 
     /// The sounds whose moment came: the file (under data\wav\), and where.
@@ -488,8 +662,16 @@ impl Effects {
         due.into_iter().map(|(_, file, at)| (file, at)).collect()
     }
 
-    /// Effects that finished go.
-    pub fn retire(&mut self, now: Instant) {
+    /// Effects that finished go and those that repeat start again; sprites pick their images for `now`, seen through
+    /// a camera turned `yaw` radians.
+    pub fn advance(&mut self, gpu: &Gpu, now: Instant, yaw: f32) {
+        for floating in self.floating.iter_mut().filter(|floating| floating.again && floating.end <= now) {
+            let period = floating.end.duration_since(floating.start);
+            while floating.end <= now {
+                floating.start += period;
+                floating.end += period;
+            }
+        }
         self.floating.retain(|floating| now < floating.end);
         for ring in self.rings.iter_mut().filter(|ring| ring.again && ring.end <= now) {
             let period = ring.end.duration_since(ring.start);
@@ -499,52 +681,86 @@ impl Effects {
             }
         }
         self.rings.retain(|ring| now < ring.end);
-        self.playing.retain(|playing| {
+        self.playing.retain_mut(|playing| {
             let animation = &playing.loaded.animation;
-            now.duration_since(playing.start).as_secs_f32() * (animation.fps as f32) < animation.frames as f32
+            let length = Duration::from_secs_f32(animation.frames as f32 / animation.fps.max(1) as f32);
+            while playing.again && !length.is_zero() && now >= playing.start + length {
+                playing.start += length;
+            }
+            now < playing.start + length
         });
+        self.quakes.retain(|(_, until)| now < *until);
+
+        // ponytail: sprites face south as seen; the few effect sprites drawn in 8 directions would face their unit.
+        let facing = usize::from(crate::seen_direction(0, yaw));
+        let sprites = &mut self.sprites;
+        self.animations.retain_mut(|animation| {
+            let Some(Some(sprite)) = sprites.get_mut(&animation.sprite) else { return false };
+            let index = animation.action.unwrap_or(facing) % sprite.actions().max(1);
+            let frames = sprite.frames(index).max(1) as f32;
+            let frame_ms = animation.frame_ms.unwrap_or_else(|| sprite.index_ms(index).unwrap_or(100.0) / frames);
+            let pass = frames * frame_ms.max(1.0);
+            let elapsed = now.saturating_duration_since(animation.start).as_secs_f32() * 1000.0;
+            if animation.end.is_some_and(|end| now >= end) || (!animation.repeat && !animation.hold && elapsed >= pass) {
+                return false;
+            }
+            let progress = if animation.repeat { elapsed % pass / pass } else { (elapsed / pass).min(1.0) };
+            animation.placed = sprite.frame_at(gpu, index, 0, Timing::Span(progress));
+            true
+        });
+        for floating in &mut self.floating {
+            let Some(Some(sprite)) = floating.sprite.as_ref().and_then(|path| sprites.get_mut(path)) else { continue };
+            let index = facing % sprite.actions().max(1);
+            let elapsed = if floating.play_sprite { now.saturating_duration_since(floating.start).as_secs_f32() * 1000.0 } else { 0.0 };
+            floating.placed = sprite.frame_at(gpu, index, 0, Timing::Loop(elapsed));
+        }
+    }
+
+    /// Stops everything (another map, where the server tells again of what's in sight); what's loaded stays.
+    pub fn clear(&mut self) {
+        *self = Self {
+            loaded: std::mem::take(&mut self.loaded),
+            textures: std::mem::take(&mut self.textures),
+            sprites: std::mem::take(&mut self.sprites),
+            models: std::mem::take(&mut self.models),
+            ..Self::default()
+        };
     }
 
     /// Drops the effects playing on a unit that went away.
     pub fn forget(&mut self, unit: u32) {
-        let on = |anchor: &Anchor| matches!(anchor, Anchor::Unit(Some(id)) if *id == unit);
-        self.playing.retain(|playing| !on(&playing.anchor));
-        self.floating.retain(|floating| !on(&floating.anchor));
-        self.rings.retain(|ring| !on(&ring.anchor));
+        self.playing.retain(|playing| !playing.anchor.on(unit));
+        self.floating.retain(|floating| !floating.anchor.on(unit));
+        self.rings.retain(|ring| !ring.anchor.on(unit));
+        self.animations.retain(|animation| !animation.anchor.on(unit));
+        self.standing.retain(|(_, id, _)| *id != unit);
     }
 
-    /// The effect shapes showing now.
+    /// The effect shapes showing now: cylinders and models.
     pub fn meshes(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<EffectMesh<'_>> {
-        self.rings
-            .iter()
-            .filter(|ring| ring.start <= now)
-            .filter_map(|ring| {
-                let at = match ring.anchor {
-                    Anchor::Unit(unit) => position_of(unit)?,
-                    Anchor::At(at) => at,
-                };
-                let Some(Some(texture)) = self.textures.get(&ring.texture) else { return None };
-                Some((texture, ring.mesh(now, at), ring.additive))
+        let rings = self.rings.iter().filter(|ring| ring.start <= now).filter_map(|ring| {
+            let at = ring.anchor.place(&position_of)?;
+            let Some(Some(texture)) = self.textures.get(&ring.texture) else { return None };
+            Some((texture, ring.mesh(now, at), ring.additive))
+        });
+        let models = self.standing.iter().flat_map(|(model, _, at)| {
+            model.0.iter().filter_map(|(path, triangles)| {
+                let Some(Some(texture)) = self.textures.get(path) else { return None };
+                let place = |position: Vector| std::array::from_fn(|axis| at[axis] + position[axis]);
+                Some((texture, triangles.iter().map(|&(position, uv)| MeshVertex { position: place(position), uv, tint: [1.0; 4] }).collect(), false))
             })
-            .collect()
+        });
+        rings.chain(models).collect()
     }
 
     /// Every effect quad showing now; `position_of` gives a unit's feet (None = the player).
     pub fn quads(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<EffectQuad<'_>> {
         let mut quads = Vec::new();
         for floating in self.floating.iter().filter(|floating| floating.start <= now) {
-            let at = match floating.anchor {
-                Anchor::Unit(unit) => match position_of(unit) {
-                    Some(at) => at,
-                    None => continue,
-                },
-                Anchor::At(at) => at,
-            };
+            let Some(at) = floating.anchor.place(&position_of) else { continue };
             let length = floating.end.duration_since(floating.start).as_secs_f32();
             let elapsed = now.duration_since(floating.start).as_secs_f32();
             let steps = (elapsed / length * 100.0).min(100.0);
-            let frame = (elapsed * 1000.0 / floating.frame_ms) as usize % floating.textures.len();
-            let Some(Some(texture)) = self.textures.get(&floating.textures[frame]) else { continue };
             let [across, along, up] = std::array::from_fn(|axis| between(floating.position[axis], steps, floating.smooth[axis]));
             let anchor = [at[0] + across * crate::world::CELL, at[1] + up * crate::world::CELL, at[2] + along * crate::world::CELL];
             let quarter = length / 4.0;
@@ -558,21 +774,37 @@ impl Effects {
             let [width, height] = [0, 1].map(|dimension| between(floating.size[dimension], steps, floating.size_smooth));
             let angle = between(floating.angle, steps, false).to_radians();
             let (sin, cos) = angle.sin_cos();
+            let corner = |[x, y]: [f32; 2]| [x * cos - y * sin, x * sin + y * cos];
+            let [red, green, blue] = floating.color;
+            let color = [red, green, blue, alpha.clamp(0.0, 1.0)];
+            // A sprite's images, sized in percent about its feet.
+            if let Some(Some(Some(sprite))) = floating.sprite.as_ref().map(|path| self.sprites.get(path)) {
+                let scale = [width / 100.0, height / 100.0];
+                for &(key, [left, top], [w, h]) in &floating.placed {
+                    let corners = [[left, top], [left + w, top], [left + w, top + h], [left, top + h]].map(|[x, y]| corner([x * scale[0], y * scale[1]]));
+                    quads.push((sprite.texture(key), anchor, corners, color, floating.additive));
+                }
+                continue;
+            }
+            let frame = (elapsed * 1000.0 / floating.frame_ms) as usize % floating.textures.len().max(1);
+            let Some(Some(texture)) = floating.textures.get(frame).and_then(|path| self.textures.get(path)) else { continue };
             // A ray reaches out from the center; anything else is centered on it.
             let top = if floating.ray { -height } else { -height / 2.0 };
-            let corner = |[x, y]: [f32; 2]| [x * cos - y * sin, x * sin + y * cos];
             let corners = [[-width / 2.0, top], [width / 2.0, top], [width / 2.0, top + height], [-width / 2.0, top + height]].map(corner);
-            let [red, green, blue] = floating.color;
-            quads.push((texture, anchor, corners, [red, green, blue, alpha.clamp(0.0, 1.0)], floating.additive));
+            quads.push((texture, anchor, corners, color, floating.additive));
         }
-        for playing in &self.playing {
-            let (at, drop) = match playing.anchor {
-                Anchor::Unit(unit) => match position_of(unit) {
-                    Some(at) => (at, 0.0),
-                    None => continue,
-                },
-                Anchor::At(at) => (at, GROUND_DROP),
-            };
+        for animation in &self.animations {
+            let Some(at) = animation.anchor.place(&position_of) else { continue };
+            let Some(Some(sprite)) = self.sprites.get(&animation.sprite) else { continue };
+            let [x, y] = animation.offset;
+            for &(key, [left, top], [w, h]) in &animation.placed {
+                let corners = [[left + x, top + y], [left + w + x, top + y], [left + w + x, top + h + y], [left + x, top + h + y]];
+                quads.push((sprite.texture(key), at, corners, [1.0; 4], false));
+            }
+        }
+        for playing in self.playing.iter().filter(|playing| playing.start <= now) {
+            let Some(at) = playing.anchor.place(&position_of) else { continue };
+            let drop = if matches!(playing.anchor, Anchor::Unit(_)) { 0.0 } else { GROUND_DROP };
             let animation = &playing.loaded.animation;
             let frame = now.duration_since(playing.start).as_secs_f32() * animation.fps as f32;
             for (layer, textures) in animation.layers.iter().zip(&playing.loaded.textures) {
@@ -602,6 +834,17 @@ fn load(gpu: &Gpu, grf: &Grf, file: &str, folder: &str) -> Option<Rc<Loaded>> {
     Some(Rc::new(Loaded { animation, textures }))
 }
 
+/// A model under data\model\ (without .rsm), its triangles grouped by texture.
+fn load_model(grf: &Grf, file: &str) -> Option<Model> {
+    let rsm = Rsm::parse(&grf.read(&format!("data\\model\\{file}.rsm")).ok()?).ok()?;
+    let mut model = Model(rsm.textures.iter().map(|name| (format!("data\\texture\\{name}"), Vec::new())).collect());
+    for triangle in rsm.triangles() {
+        // Model space has y down.
+        model.0[triangle.texture].1.extend(triangle.positions.into_iter().zip(triangle.uvs).map(|([x, y, z], uv)| ([x, -y, z], uv)));
+    }
+    Some(model)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -624,5 +867,24 @@ mod tests {
         assert_eq!((part.file.as_str(), part.attached), ("angel", true));
         assert_eq!(table.item(501), Some(204));
         assert_eq!(table.skill(28, "effectId"), [312]);
+    }
+
+    #[test]
+    fn reads_sprites_quakes_and_ground_units() {
+        let table = Table::load();
+        // Blessing's angel: action 0 at 30 ms a frame for 1.5 s, above the head.
+        let blessing = &table.sprites[&42][0];
+        assert_eq!((blessing.file.as_str(), blessing.attached), ("축복", true));
+        let now = Instant::now();
+        let animation = Animation::new(blessing, now, Anchor::Unit(None), false);
+        assert_eq!((animation.action, animation.frame_ms, animation.repeat, animation.offset), (Some(0), Some(30.0), true, [0.0, -120.0]));
+        assert_eq!(animation.end, Some(now + Duration::from_millis(1500)));
+        // Earth Spike shakes the camera; Fire Bolt's arrows fall before each hit.
+        assert_eq!(table.quakes[&79], (Duration::ZERO, Duration::from_millis(200)));
+        assert_eq!(table.skill(19, "beforeHitEffectId"), [31]);
+        // Fire Wall, Safety Wall (its rise once), Pneuma and warp portals on the ground; Ankle Snare's model.
+        assert_eq!([127, 126, 133, 129, 128].map(|kind| table.units[&kind]), [25, 315, 141, 316, 317]);
+        assert!(table.parts[&315][0].once && !table.parts[&25][0].once);
+        assert_eq!(table.models[&145], "외부소품\\트랩01");
     }
 }
