@@ -1,5 +1,6 @@
 //! Dev-only remote control, for test automation: with `RUSTNAROK_CLIENT_CONTROL=<path>` the client listens on that Unix socket
-//! (owner only, no TCP port) for newline-delimited JSON commands and answers each with one line of JSON
+//! (owner only, no TCP port; on Windows, a localhost port that `path` names with a token, see `bind`) for
+//! newline-delimited JSON commands and answers each with one line of JSON
 //! (`{"ok": true, ...}` or `{"ok": false, "error": ...}`). Without the variable none of this runs. A driven client
 //! ignores the real mouse and keyboard, opens behind the window in use and draws on screen only while it has the focus
 //! (click it to watch); screenshots don't need that.
@@ -32,8 +33,11 @@
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Cursor, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(windows)]
+use std::net::{TcpListener as Listener, TcpStream as Stream};
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener as Listener, UnixStream as Stream};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -200,25 +204,54 @@ static SHOT: Mutex<Option<RgbaImage>> = Mutex::new(None);
 /// Opens the control socket when `RUSTNAROK_CLIENT_CONTROL` names one.
 pub fn listen(proxy: EventLoopProxy<NetEvent>) {
     let Some(path) = std::env::var_os("RUSTNAROK_CLIENT_CONTROL") else { return };
-    let _ = std::fs::remove_file(&path);
-    let listener = UnixListener::bind(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    // Whoever can connect plays the logged-in character.
-    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    let path = Path::new(&path);
+    let (listener, token) = bind(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     let _ = net::PACKET_HOOK.set(packet_seen);
     ON.store(true, Ordering::Relaxed);
     eprintln!("control socket at {}", path.display());
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            let proxy = proxy.clone();
-            std::thread::spawn(move || serve(stream, &proxy));
+            let (proxy, token) = (proxy.clone(), token.clone());
+            std::thread::spawn(move || serve(stream, &proxy, token.as_deref()));
         }
     });
 }
 
+/// Whoever can connect plays the logged-in character, so only the owner may: through a Unix socket only they can
+/// open...
+#[cfg(unix)]
+fn bind(path: &Path) -> std::io::Result<(Listener, Option<String>)> {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::remove_file(path);
+    let listener = Listener::bind(path)?;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    Ok((listener, None))
+}
+
+/// ...or, on Windows (no Unix sockets in Python there), a localhost port written to `path` as "127.0.0.1:port token": a
+/// connection's first line must be the token, which only those who can read `path` know and a web page's request to
+/// localhost can't send.
+#[cfg(windows)]
+fn bind(path: &Path) -> std::io::Result<(Listener, Option<String>)> {
+    use std::hash::BuildHasher;
+    let listener = Listener::bind("127.0.0.1:0")?;
+    // SipHash under the keys std seeds from the OS's random source.
+    let random = std::collections::hash_map::RandomState::new();
+    let token = format!("{:016x}{:016x}", random.hash_one(1), random.hash_one(2));
+    std::fs::write(path, format!("{} {token}", listener.local_addr()?))?;
+    Ok((listener, Some(token)))
+}
+
 /// Answers one connection's commands in order. `wait` and `trace` are answered here, the rest on the event loop.
-fn serve(stream: UnixStream, proxy: &EventLoopProxy<NetEvent>) {
+fn serve(stream: Stream, proxy: &EventLoopProxy<NetEvent>, token: Option<&str>) {
     let Ok(mut writer) = stream.try_clone() else { return };
-    for line in BufReader::new(stream).lines() {
+    let mut lines = BufReader::new(stream).lines();
+    if let Some(token) = token
+        && lines.next().and_then(Result::ok).as_deref() != Some(token)
+    {
+        return;
+    }
+    for line in lines {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
             continue;

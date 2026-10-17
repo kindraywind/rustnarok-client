@@ -1,0 +1,28 @@
+# Build, test and lint on each OS the client runs on. Game data never goes in the repository, so the tests that read
+# data.grf skip themselves here (Grf::for_tests).
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      # ALSA for the sound (cpal); fontconfig and a Hangul font for the text tests.
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config fontconfig fonts-nanum
+      # The nightly rust-toolchain.toml pins.
+      - name: Toolchain
+        run: rustup toolchain install --profile minimal -c clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - run: cargo test --release
+      - run: cargo clippy --release --all-targets -- -D warnings

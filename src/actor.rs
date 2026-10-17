@@ -911,7 +911,7 @@ mod tests {
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn standing_players_hold_their_head_still() {
-        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let Some(grf) = Grf::for_tests() else { return };
         let tables = rustnarok_client::lua::look_tables(&grf).unwrap();
         let novice = SpriteSet::player(&grf, &Look { hair: 1, ..Default::default() }, &tables).unwrap();
         for action in [IDLE, SIT] {
@@ -924,7 +924,7 @@ mod tests {
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn dresses_a_player() {
-        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let Some(grf) = Grf::for_tests() else { return };
         let tables = rustnarok_client::lua::look_tables(&grf).unwrap();
         let look = Look { hair: 1, weapon: 1, shield: 1, head_top: 16, head_mid: 12, head_bottom: 52, robe: 3, ..Default::default() };
         let novice = SpriteSet::player(&grf, &look, &tables).unwrap();

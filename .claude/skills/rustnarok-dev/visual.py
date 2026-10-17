@@ -373,7 +373,7 @@ def baseline(scenarios):
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=WORKTREE, capture_output=True, text=True).stdout.strip()
     subprocess.run(["cargo", "build", "--release", "-q"], cwd=WORKTREE, check=True)
     print(f"baseline: origin/main {head}")
-    return run(scenarios, os.path.join(WORKTREE, "target", "release", "rustnarok-client"), os.path.join(VISUAL, "main"))
+    return run(scenarios, os.path.join(WORKTREE, "target", "release", "rustnarok-client" + (".exe" if os.name == "nt" else "")), os.path.join(VISUAL, "main"))
 
 
 def diff(before, after, out):

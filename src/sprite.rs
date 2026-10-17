@@ -280,7 +280,7 @@ mod tests {
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn parses_novice_body_and_head() {
-        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let Some(grf) = Grf::for_tests() else { return };
         let path = "data\\sprite\\인간족\\몸통\\남\\초보자_남";
         let body = Spr::parse(&grf.read(&format!("{path}.spr")).unwrap()).unwrap();
         let body_act = Act::parse(&grf.read(&format!("{path}.act")).unwrap()).unwrap();

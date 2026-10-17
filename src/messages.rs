@@ -114,7 +114,7 @@ mod tests {
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn reads_the_client_messages() {
-        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let Some(grf) = Grf::for_tests() else { return };
         let messages = load(&grf).unwrap();
         assert_eq!(messages[INVENTORY], "소지아이템");
         assert_eq!(messages[ITEM_AMOUNT], "%s : %d 개");

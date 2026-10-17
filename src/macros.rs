@@ -1,5 +1,5 @@
 //! Chat macros: ten lines the player sets in the macro window (Alt+M) and sends with Alt+1 to Alt+0, as if typed and
-//! sent with Enter. Kept in `~/Library/Application Support/rustnarok-client/macros`, one a line.
+//! sent with Enter. Kept in the settings folder's `macros` (`settings_path`), one a line.
 
 use std::path::{Path, PathBuf};
 
@@ -18,7 +18,7 @@ const DEFAULTS: [&str; COUNT] = ["/!", "/?", "/ho", "/lv", "/swt", "/ic", "/an",
 const MOST: usize = 70;
 
 pub fn path() -> Option<PathBuf> {
-    Some(PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/rustnarok-client/macros"))
+    crate::settings_path("macros")
 }
 
 /// The ten lines from `path`: one a line in the file; the defaults without a file, and for lines it doesn't have.
