@@ -371,6 +371,11 @@ const DAMAGED_ARMOR: usize = 1303;
 const ITEM_DAMAGED: usize = 699;
 const BIND_ASKS: usize = 1327;
 const BOUND: usize = 1328;
+/// Rentals: " The [%s] item will disappear in %d minutes.", the same in seconds, and " [%s] item has been deleted
+/// from the Inventory.".
+const RENTAL_MINUTES: usize = 1256;
+const RENTAL_SECONDS: usize = 1270;
+const RENTAL_ENDED: usize = 1258;
 const COOLDOWN_LEFT: usize = 3230;
 /// The spark of a landed hit, and a warp portal's rings.
 const EF_HIT1: u32 = 0;
@@ -3642,7 +3647,8 @@ impl App {
             };
             if let Some(item) = described {
                 let damaged = item.broken.then(|| self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
-                let shown = iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged };
+                let shown =
+                    iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires };
                 let position = game.item_window.as_ref().map(|window| window.position);
                 let mut window = iteminfo::ItemWindow::new(shown);
                 if let Some(position) = position {
@@ -6463,6 +6469,21 @@ impl App {
                     _ => game.chat_line(message(372), CHAT_ERROR),
                 }
             }
+            // A rental ended: its warning, its time up and gone from the inventory (the take-off and delete that may follow
+            // find nothing then).
+            // ponytail: rathena's comment says minutes; under a minute it's said in seconds.
+            MapEvent::RentalTime { item, seconds } => {
+                let name = inventory::item_name(&self.items, item, true, 0);
+                let (id, count) = if seconds < 60 { (RENTAL_SECONDS, seconds) } else { (RENTAL_MINUTES, seconds / 60) };
+                game.chat_line(messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name, &count]).trim_start().to_owned(), CHAT_ITEM);
+            }
+            MapEvent::RentalExpired { index, item } => {
+                let name = inventory::item_name(&self.items, item, true, 0);
+                game.chat_line(messages::fill(self.messages.get(RENTAL_ENDED).map_or("", String::as_str), &[&name]).trim_start().to_owned(), CHAT_ITEM);
+                game.inventory.remove(index, u16::MAX);
+            }
+            // An item no longer carried (a rental that ended) comes off without a word.
+            MapEvent::Unequipped { index, failed: false, .. } if game.inventory.get(index).is_none() => {}
             MapEvent::Unequipped { index, failed: false, .. } => {
                 let name = game.inventory.get(index).map(|item| inventory::item_name(&self.items, item.id, item.identified, item.refine)).unwrap_or_default();
                 game.inventory.set_worn(index, 0);
@@ -7789,7 +7810,8 @@ impl App {
             amount.draw(&mut shop_layer, &assets.chrome, &assets.message, [&assets.ok, &assets.cancel], messages, pointer);
         }
         if let Some(window) = &game.item_window {
-            let lines = window.lines(items, &|text, width| wrap_colored(font, text, width));
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
+            let lines = window.lines(items, messages, now, &|text, width| wrap_colored(font, text, width));
             game.item_lines = lines.len();
             window.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
         }
