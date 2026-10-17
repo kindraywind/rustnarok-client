@@ -1,0 +1,18 @@
+{
+  "about": "A card and arrows stay in the inventory's etc tab after the server lists the inventory again (@refresh): rathena sends their places where a worn item's would be (issue #35). On main both vanish, so the click_on steps fail.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 4035 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@item 1750 50"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@refresh"}, {"settle": 1500},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"click": [11, 252]}, {"wait": 300},
+    {"click_on": {"inventory_item": 4035}}, {"wait": 200},
+    {"click_on": {"inventory_item": 1750}}, {"wait": 200},
+    {"move": [700, 600]}, {"wait": 200},
+    {"shot": "etc-after-refresh", "crop": [0, 160, 320, 160]}
+  ]
+}

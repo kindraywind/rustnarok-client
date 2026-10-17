@@ -6315,7 +6315,7 @@ impl ApplicationHandler<NetEvent> for App {
                             .inventory
                             .items
                             .iter()
-                            .filter(|item| item.location != 0 && item.worn == 0 && item.identified)
+                            .filter(|item| item.location != 0 && item.worn == 0 && item.identified && item.kind != net::ITEM_CARD)
                             .map(|item| (item.index, item.location))
                             .collect();
                         for (index, location) in wearable {
