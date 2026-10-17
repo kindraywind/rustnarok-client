@@ -489,6 +489,25 @@ impl Shop {
             }
         }
     }
+
+    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        let (deal, cancel) = self.deal_button(1);
+        let [deal, cancel] = [self.frames[1].at(deal), self.frames[1].at(cancel)];
+        vec![("shop_deal", [deal[0], deal[1], BUTTON[0], BUTTON[1]]), ("shop_cancel", [cancel[0], cancel[1], BUTTON[0], BUTTON[1]])]
+    }
+
+    pub fn row_boxes(&self) -> Vec<(u32, [f32; 4])> {
+        self.rows(0)
+            .into_iter()
+            .enumerate()
+            .skip(self.scroll[0])
+            .take(ROWS[0])
+            .map(|(place, (offer, _))| {
+                let top = self.frames[0].at([0.0, TITLE_HEIGHT + PADDING + (place - self.scroll[0]) as f32 * ROW]);
+                (self.offers[offer].item, [top[0], top[1], WIDTH, ROW])
+            })
+            .collect()
+    }
 }
 
 /// A number with thousands separated by commas, as the client shows prices.

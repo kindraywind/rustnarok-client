@@ -300,6 +300,33 @@ impl Setup {
             layer.sprites.push((&images[look], at(place), BUTTON));
         }
     }
+
+    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        let at = |local: [f32; 2]| self.frame.at(local);
+        let [ok, cancel] = Self::buttons();
+        let [ok, cancel] = [at(ok), at(cancel)];
+        let name = at([5.0, TITLE_HEIGHT + 3.0]);
+        let limit = at([140.0, TITLE_HEIGHT + NAME_FIELD + 3.0]);
+        vec![
+            ("buying_ok", [ok[0], ok[1], BUTTON[0], BUTTON[1]]),
+            ("buying_cancel", [cancel[0], cancel[1], BUTTON[0], BUTTON[1]]),
+            ("buying_name", [name[0], name[1], WIDTH - 10.0, 18.0]),
+            ("buying_limit", [limit[0], limit[1], WIDTH - 145.0, 18.0]),
+        ]
+    }
+
+    pub fn row_boxes(&self, inventory: &[InventoryItem]) -> Vec<(u32, [f32; 4])> {
+        candidates(inventory)
+            .into_iter()
+            .enumerate()
+            .skip(self.scroll)
+            .take(ROWS)
+            .map(|(place, item)| {
+                let top = self.frame.at([0.0, TITLE_HEIGHT + NAME_FIELD + LIMIT_FIELD + (place - self.scroll) as f32 * ROW]);
+                (item.id, [top[0], top[1], WIDTH, ROW])
+            })
+            .collect()
+    }
 }
 
 /// The owner's active buying store window: what it still wants to buy, its remaining zeny limit, and its close button.
@@ -372,6 +399,11 @@ impl MyStore {
         layer.sprites.push((&assets.footer, at([0.0, height - FOOTER]), [WIDTH, FOOTER]));
         let look = if self.hit(pointer.0) == Some(true) { 1 + usize::from(pointer.1) } else { 0 };
         layer.sprites.push((&assets.close[look], at(self.close_button()), BUTTON));
+    }
+
+    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        let close = self.frame.at(self.close_button());
+        vec![("buying_close", [close[0], close[1], BUTTON[0], BUTTON[1]])]
     }
 }
 

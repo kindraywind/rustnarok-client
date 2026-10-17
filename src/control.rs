@@ -732,6 +732,27 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.pick.iter().flat_map(|(list, _)| list.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
         .chain(game.pet.iter().flat_map(|pet| game.pet_window.button_boxes(pet)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.buying_setup
+                .iter()
+                .flat_map(|setup| setup.row_boxes(&game.inventory.items))
+                .map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})),
+        )
+        .chain(game.shop.iter().flat_map(crate::shop::Shop::row_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
+        .chain(
+            game.buying_setup
+                .iter()
+                .flat_map(crate::buying::Setup::button_boxes)
+                .chain(game.my_buying_store.iter().flat_map(crate::buying::MyStore::button_boxes))
+                .chain(game.shop.iter().flat_map(crate::shop::Shop::button_boxes))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(
+            game.sign_rects
+                .iter()
+                .filter(|(_, _, kind)| *kind == crate::chatroom::BUYING_STORE)
+                .map(|&(rect, ..)| json!({"kind": "button", "name": "buying_sign", "box": [rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]]})),
+        )
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
     let overlays = [
@@ -760,6 +781,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("GuildInvite", game.guild_invite.is_some()),
         ("VendSetup", game.vend_setup.is_some()),
         ("MyShop", game.my_shop.is_some()),
+        ("BuyingStoreSetup", game.buying_setup.is_some()),
+        ("MyBuyingStore", game.my_buying_store.is_some()),
         ("Mailbox", game.mail.list.frame.open),
         ("MailRead", game.mail.letter.is_some()),
         ("MailWrite", game.mail.compose.is_some()),
