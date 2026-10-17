@@ -566,6 +566,10 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_AUTOSPELLLIST: u16 = 0x0AFB;
+const CZ_SELECTAUTOSPELL: u16 = 0x01CE;
+const ZC_SKILL_SELECT_REQUEST: u16 = 0x0442;
+const CZ_SKILL_SELECT_RESPONSE: u16 = 0x0443;
 const ZC_REPAIRITEMLIST: u16 = 0x0B65;
 const CZ_REQ_ITEMREPAIR2: u16 = 0x0B66;
 const ZC_ACK_ITEMREPAIR: u16 = 0x01FE;
@@ -1172,6 +1176,13 @@ pub enum MapEvent {
     Upgraded {
         result: u32,
         item: u32,
+    },
+    /// Hindsight's spells to pick from.
+    SpellList(Vec<u32>),
+    /// Skills to pick from for a reason (1: Shadow Spell), which goes back with the answer.
+    SkillSelect {
+        why: u32,
+        skills: Vec<u16>,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
@@ -2194,6 +2205,14 @@ impl MapSession {
         self.stream.write_all(&encode_upgrade(index))
     }
 
+    pub fn select_autospell(&mut self, skill: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_autospell(skill))
+    }
+
+    pub fn select_skill(&mut self, why: u32, skill: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_skill_select(why, skill))
+    }
+
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
     pub fn card_list(&mut self, card: u16) -> io::Result<()> {
         self.stream.write_all(&encode_card_list(card))
@@ -2823,6 +2842,23 @@ fn encode_upgrade(index: u32) -> [u8; 6] {
     packet
 }
 
+/// CZ_SELECTAUTOSPELL: the spell Hindsight keeps ready (0: none, which lets the player go).
+fn encode_autospell(skill: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_SELECTAUTOSPELL.to_le_bytes());
+    packet[2..].copy_from_slice(&skill.to_le_bytes());
+    packet
+}
+
+/// CZ_SKILL_SELECT_RESPONSE: the reason as it came, and the skill (0: none).
+fn encode_skill_select(why: u32, skill: u16) -> [u8; 8] {
+    let mut packet = [0u8; 8];
+    packet[..2].copy_from_slice(&CZ_SKILL_SELECT_RESPONSE.to_le_bytes());
+    packet[2..6].copy_from_slice(&why.to_le_bytes());
+    packet[6..].copy_from_slice(&skill.to_le_bytes());
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -3234,6 +3270,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 .collect(),
         ),
         ZC_ACK_WEAPONREFINE => MapEvent::Upgraded { result: u32_at(2), item: u32_at(6) },
+        ZC_AUTOSPELLLIST => MapEvent::SpellList(packet[4..].chunks_exact(4).map(|skill| self::u32_at(skill, 0)).collect()),
+        ZC_SKILL_SELECT_REQUEST => MapEvent::SkillSelect { why: u32_at(4), skills: packet[8..].chunks_exact(2).map(|skill| self::u16_at(skill, 0)).collect() },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -4083,6 +4121,23 @@ mod tests {
         let Some(MapEvent::Upgraded { result: 0, item: 1201 }) = decode_map_packet(&upgraded) else { panic!() };
         let ids = [ZC_REPAIRITEMLIST, CZ_REQ_ITEMREPAIR2, ZC_ACK_ITEMREPAIR, ZC_NOTIFY_WEAPONITEMLIST, CZ_REQ_WEAPONREFINE, ZC_ACK_WEAPONREFINE];
         assert_eq!(ids.map(packet_length), [Some(-1), Some(26), Some(5), Some(-1), Some(6), Some(10)]);
+    }
+
+    #[test]
+    fn decodes_skill_pick_lists() {
+        let spells = [&ZC_AUTOSPELLLIST.to_le_bytes()[..], &12u16.to_le_bytes(), &19u32.to_le_bytes(), &14u32.to_le_bytes()].concat();
+        let Some(MapEvent::SpellList(skills)) = decode_map_packet(&spells) else { panic!() };
+        assert_eq!(skills, [19, 14]);
+        let select =
+            [&ZC_SKILL_SELECT_REQUEST.to_le_bytes()[..], &12u16.to_le_bytes(), &1u32.to_le_bytes(), &19u16.to_le_bytes(), &14u16.to_le_bytes()].concat();
+        let Some(MapEvent::SkillSelect { why: 1, skills }) = decode_map_packet(&select) else { panic!() };
+        assert_eq!(skills, [19, 14]);
+        assert_eq!(encode_autospell(19), [0xCE, 0x01, 19, 0, 0, 0]);
+        assert_eq!(encode_autospell(0), [0xCE, 0x01, 0, 0, 0, 0]);
+        assert_eq!(encode_skill_select(1, 19), [0x43, 0x04, 1, 0, 0, 0, 19, 0]);
+        assert_eq!(encode_skill_select(1, 0), [0x43, 0x04, 1, 0, 0, 0, 0, 0]);
+        let ids = [ZC_AUTOSPELLLIST, CZ_SELECTAUTOSPELL, ZC_SKILL_SELECT_REQUEST, CZ_SKILL_SELECT_RESPONSE];
+        assert_eq!(ids.map(packet_length), [Some(-1), Some(6), Some(-1), Some(8)]);
     }
 
     #[test]

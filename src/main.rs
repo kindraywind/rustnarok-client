@@ -153,6 +153,9 @@ const MADE: usize = 431;
 const NOT_MADE: usize = 430;
 /// Blacksmith services: the lists' titles, a repair done or not, and Upgrade Weapon's results (refined, failed,
 /// skill too low, ore missing) in rathena's colors for them.
+/// The spell lists' title.
+// ponytail: one title for both; the real client's isn't known.
+const SPELL_TITLE: usize = 697;
 const REPAIR_TITLE: usize = 812;
 const REPAIRED: usize = 813;
 const NOT_REPAIRED: usize = 814;
@@ -1415,6 +1418,9 @@ impl Game {
             (Picking::Arrow, Some(item)) => self.session.make_arrow(item.id),
             // Both lists end with an answer, a cancel too.
             (Picking::Repair, item) => self.session.repair(item),
+            // Both hold the player until answered; 0 starts nothing.
+            (Picking::Spell, skill) => self.session.select_autospell(skill.map_or(0, |skill| skill.id)),
+            (Picking::SkillSelect(why), skill) => self.session.select_skill(why, skill.map_or(0, |skill| skill.id as u16)),
             (Picking::Upgrade, item) => self.session.upgrade_weapon(item.map_or(0, |item| u32::from(item.index))),
         };
     }
@@ -1528,6 +1534,9 @@ enum Picking {
     /// What Repair Weapon mends, what Upgrade Weapon refines.
     Repair,
     Upgrade,
+    /// Hindsight's spell; a skill picked for a reason (Shadow Spell's), which goes back with it.
+    Spell,
+    SkillSelect(u32),
 }
 
 struct Dialog {
@@ -5036,6 +5045,19 @@ impl App {
             }
             // Blacksmith services: the target's broken items, the caster's weapons; an empty list opens nothing.
             // ponytail: the results in the chat; whether the real client uses a box isn't known.
+            // Skills to pick (Hindsight's spells, Shadow Spell's copies): the pick list with skill rows.
+            MapEvent::SpellList(skills) => {
+                let rows = skills.into_iter().map(|id| net::InventoryItem { id, identified: true, ..Default::default() }).collect();
+                let mut list = pick_list::PickList::new(SPELL_TITLE, rows);
+                list.skills = true;
+                game.pick = Some((list, Picking::Spell));
+            }
+            MapEvent::SkillSelect { why, skills } => {
+                let rows = skills.into_iter().map(|id| net::InventoryItem { id: u32::from(id), identified: true, ..Default::default() }).collect();
+                let mut list = pick_list::PickList::new(SPELL_TITLE, rows);
+                list.skills = true;
+                game.pick = Some((list, Picking::SkillSelect(why)));
+            }
             MapEvent::RepairList(items) | MapEvent::UpgradeList(items) if items.is_empty() => {}
             MapEvent::RepairList(items) => game.pick = Some((pick_list::PickList::new(REPAIR_TITLE, items), Picking::Repair)),
             MapEvent::UpgradeList(items) => game.pick = Some((pick_list::PickList::new(UPGRADE_TITLE, items), Picking::Upgrade)),
@@ -6137,7 +6159,7 @@ impl App {
         let status_paths =
             game.status_icons.iter().filter_map(|(kind, ..)| status_icon_files.get(kind).map(|(_, file)| format!("data\\texture\\effect\\{file}")));
         let shop_icons = game.shop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default();
-        let pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items)).unwrap_or_default();
+        let pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         if game.vend_setup.is_some() {
@@ -6358,7 +6380,7 @@ impl App {
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
         if let Some((list, _)) = &game.pick {
-            list.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, messages, font, pointer);
+            list.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, skill_info, messages, font, pointer);
         }
         if let Some(shop) = &game.shop {
             shop.draw(&mut shop_layer, &assets.chrome, &assets.shop, icons, items, messages, font, pointer);
