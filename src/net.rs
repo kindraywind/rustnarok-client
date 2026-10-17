@@ -421,6 +421,14 @@ const CZ_REQUEST_CHAT: u16 = 0x00F3;
 const CZ_WHISPER: u16 = 0x0096;
 const ZC_WHISPER: u16 = 0x09DE;
 const ZC_ACK_WHISPER: u16 = 0x09DF;
+const CZ_REQ_USER_COUNT: u16 = 0x00C1;
+const ZC_USER_COUNT: u16 = 0x00C2;
+const CZ_SETTING_WHISPER_PC: u16 = 0x00CF;
+const CZ_SETTING_WHISPER_STATE: u16 = 0x00D0;
+const ZC_SETTING_WHISPER_PC: u16 = 0x00D1;
+const ZC_SETTING_WHISPER_STATE: u16 = 0x00D2;
+const CZ_REQ_WHISPER_LIST: u16 = 0x00D3;
+const ZC_WHISPER_LIST: u16 = 0x00D4;
 const ZC_ACCEPT_ENTER: u16 = 0x02EB;
 const ZC_NOTIFY_VANISH: u16 = 0x0080;
 const ZC_NOTIFY_PLAYERMOVE: u16 = 0x0087;
@@ -1202,6 +1210,20 @@ pub enum MapEvent {
     },
     /// How a whisper went: 0 sent, 1 nobody of that name online, 2 ignored by them, 3 they ignore everyone.
     WhisperResult(u8),
+    /// How many players are online (/who).
+    UserCount(u32),
+    /// How blocking (`allow` false) or allowing one name's whispers went: 0 done, 1 failed, 2 the list is full.
+    WhisperSetting {
+        allow: bool,
+        result: u8,
+    },
+    /// The names whose whispers are blocked.
+    WhisperList(Vec<String>),
+    /// How blocking (`allow` false) or allowing everyone's whispers went: 0 done, else failed.
+    WhisperAll {
+        allow: bool,
+        result: u8,
+    },
     /// An NPC's illustration (`illust\<image>`): where (0 bottom left, 1 bottom middle, 2 bottom right, 3 and 4
     /// the middle of the screen; anything else, or no image, takes it away).
     Cutin {
@@ -2119,6 +2141,26 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Asks how many players are online; the answer is `UserCount`.
+    pub fn user_count(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_REQ_USER_COUNT.to_le_bytes())
+    }
+
+    /// Blocks (`allow` false) or allows whispers from `name`; the answer is `WhisperSetting`.
+    pub fn set_whisper(&mut self, name: &str, allow: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_whisper_setting(name, allow))
+    }
+
+    /// Asks for the names whose whispers are blocked; the answer is `WhisperList`.
+    pub fn whisper_list(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_REQ_WHISPER_LIST.to_le_bytes())
+    }
+
+    /// Blocks (`allow` false) or allows everyone's whispers; the answer is `WhisperAll`.
+    pub fn set_whisper_all(&mut self, allow: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_whisper_all(allow))
+    }
+
     pub fn chat(&mut self, name: &str, message: &str) -> io::Result<()> {
         let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
         let mut packet = CZ_REQUEST_CHAT.to_le_bytes().to_vec();
@@ -2133,6 +2175,24 @@ impl Drop for MapSession {
     fn drop(&mut self) {
         let _ = self.stream.shutdown(std::net::Shutdown::Both);
     }
+}
+
+/// CZ_SETTING_WHISPER_PC: the name (NUL-terminated, at most 23 bytes) and 0 to block, 1 to allow.
+fn encode_whisper_setting(name: &str, allow: bool) -> Vec<u8> {
+    let mut packet = CZ_SETTING_WHISPER_PC.to_le_bytes().to_vec();
+    let mut field = [0u8; 24];
+    let encoded = encoding_rs::EUC_KR.encode(name).0;
+    let length = encoded.len().min(field.len() - 1);
+    field[..length].copy_from_slice(&encoded[..length]);
+    packet.extend_from_slice(&field);
+    packet.push(u8::from(allow));
+    packet
+}
+
+/// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
+fn encode_whisper_all(allow: bool) -> [u8; 3] {
+    let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
+    [low, high, u8::from(allow)]
 }
 
 /// Packed cell position and direction (3 bytes), as rathena's WBUFPOS.
@@ -2364,6 +2424,10 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             MapEvent::Whisper { from: c_string(&packet[8..32]), text }
         }
         ZC_ACK_WHISPER => MapEvent::WhisperResult(packet[2]),
+        ZC_USER_COUNT => MapEvent::UserCount(u32_at(2)),
+        ZC_SETTING_WHISPER_PC => MapEvent::WhisperSetting { allow: packet[2] != 0, result: packet[3] },
+        ZC_SETTING_WHISPER_STATE => MapEvent::WhisperAll { allow: packet[2] != 0, result: packet[3] },
+        ZC_WHISPER_LIST => MapEvent::WhisperList(packet[4..usize::from(u16_at(2)).min(packet.len())].chunks_exact(24).map(c_string).collect()),
         ZC_OPENSTORE => MapEvent::VendSetup(u16_at(2)),
         ZC_ACK_OPENSTORE2 => MapEvent::VendOpened(packet[2]),
         // Each: price, index, amount, type, item, identified, damaged, cards, options, refine, grade.
@@ -2950,6 +3014,49 @@ mod tests {
         assert_eq!(packet_length(ZC_ACK_READ_RODEX), Some(-1));
         assert_eq!(packet_length(ZC_ACK_ADD_ITEM_RODEX), Some(64));
         assert_eq!(packet_length(ZC_CHECKNAME), Some(34));
+    }
+
+    #[test]
+    fn encodes_whisper_settings_and_who() {
+        assert_eq!(CZ_REQ_USER_COUNT.to_le_bytes(), [0xC1, 0x00]);
+        assert_eq!(CZ_REQ_WHISPER_LIST.to_le_bytes(), [0xD3, 0x00]);
+        let block = encode_whisper_setting("Poring", false);
+        assert_eq!(block.len(), 27);
+        assert_eq!(&block[..2], &[0xCF, 0x00]);
+        assert_eq!(&block[2..9], b"Poring\0");
+        assert_eq!(block[26], 0);
+        let allow = encode_whisper_setting("a-name-longer-than-twenty-three", true);
+        // Truncated to 23 bytes, keeping the terminating NUL.
+        assert_eq!((allow[2 + 22], allow[2 + 23], allow[26]), (b'n', 0, 1));
+        assert_eq!(encode_whisper_all(false), [0xD0, 0x00, 0]);
+        assert_eq!(encode_whisper_all(true), [0xD0, 0x00, 1]);
+        for (header, length) in [(CZ_REQ_USER_COUNT, 2), (CZ_SETTING_WHISPER_PC, 27), (CZ_SETTING_WHISPER_STATE, 3), (CZ_REQ_WHISPER_LIST, 2)] {
+            assert_eq!(packet_length(header), Some(length));
+        }
+    }
+
+    #[test]
+    fn decodes_who_and_whisper_settings() {
+        let Some(MapEvent::UserCount(1234)) = decode_map_packet(&[0xC2, 0x00, 0xD2, 0x04, 0, 0]) else { panic!() };
+        let Some(MapEvent::WhisperSetting { allow: false, result: 2 }) = decode_map_packet(&[0xD1, 0x00, 0, 2]) else { panic!() };
+        let Some(MapEvent::WhisperSetting { allow: true, result: 0 }) = decode_map_packet(&[0xD1, 0x00, 1, 0]) else { panic!() };
+        let Some(MapEvent::WhisperAll { allow: true, result: 1 }) = decode_map_packet(&[0xD2, 0x00, 1, 1]) else { panic!() };
+
+        let mut list = vec![0xD4, 0x00, 0, 0];
+        for name in ["Poring", "Lunatic"] {
+            let mut field = [0u8; 24];
+            field[..name.len()].copy_from_slice(name.as_bytes());
+            list.extend_from_slice(&field);
+        }
+        let length = list.len() as u16;
+        list[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::WhisperList(names)) = decode_map_packet(&list) else { panic!() };
+        assert_eq!(names, ["Poring", "Lunatic"]);
+        let Some(MapEvent::WhisperList(names)) = decode_map_packet(&[0xD4, 0x00, 4, 0]) else { panic!() };
+        assert!(names.is_empty());
+        for (header, length) in [(ZC_USER_COUNT, 6), (ZC_SETTING_WHISPER_PC, 4), (ZC_SETTING_WHISPER_STATE, 4), (ZC_WHISPER_LIST, -1)] {
+            assert_eq!(packet_length(header), Some(length));
+        }
     }
 
     /// Against a running rathena: `RUSTNAROK_CLIENT_TEST_ACCOUNT=user:password cargo test -- --ignored`.
