@@ -44,6 +44,7 @@ mod char_make;
 mod char_select;
 mod chat;
 mod chatroom;
+mod clan;
 mod control;
 mod cursor;
 mod effects;
@@ -235,6 +236,8 @@ const GUILD_CHOICE: usize = 382;
 const GUILD_INVITED: usize = 377;
 const GUILD_ONLINE: usize = 485;
 const GUILD_CHAT: [u8; 3] = [180, 255, 180];
+// ponytail: clan chat's color isn't in the data files; calibrate against the official client.
+const CLAN_CHAT: [u8; 3] = [180, 220, 255];
 /// Friends: "Register as a Friend", "(%s) wishes to be friends with you...", how adding went (821 + the result, but
 /// 819 and 820 for full lists), "%s has logged in/out".
 const FRIEND_CHOICE: usize = 358;
@@ -521,6 +524,9 @@ struct Game {
     guild_invite: Option<(u32, String)>,
     /// Dev switch RUSTNAROK_CLIENT_GUILD=window ran.
     guild_shown: bool,
+    /// The clan we're in, and its window.
+    clan: Option<clan::Clan>,
+    clan_window: clan::ClanWindow,
     /// Guild emblems by guild ID: the version last asked for, and the image that came.
     emblems: HashMap<u32, (u32, Option<Texture>)>,
     /// What shows with players' names (party, guild, position) by account ID, and the unit last pointed at: a
@@ -1114,6 +1120,17 @@ impl Game {
         }
         if let Some(name) = text.strip_prefix("/guild ") {
             let _ = self.session.make_guild(self.me.id, name.trim().trim_matches('"'));
+            return None;
+        }
+        // ponytail: /cl sends to the clan until the chat window has the send-to choice (messages 85, 86, 437, 2361).
+        if text == "/cl" {
+            return None;
+        }
+        if let Some(message) = text.strip_prefix("/cl ") {
+            let message = message.trim();
+            if !message.is_empty() {
+                let _ = self.session.clan_chat(&self.me.name, message);
+            }
             return None;
         }
         if to.is_empty() && (guild || text.starts_with('$')) {
@@ -1776,6 +1793,7 @@ struct Assets {
     pet: pet::Assets,
     item_window: iteminfo::Assets,
     guild: guild::Assets,
+    clan: clan::Assets,
     vend: vend::Assets,
     /// The cast bar's fill, the speech bubble's box and border, the aimed skill's box, and status icons' clocks
     /// (white, then orange in the last minute) by step.
@@ -1872,6 +1890,7 @@ impl Assets {
             pet: pet::Assets::load(gpu, grf),
             item_window: iteminfo::Assets::load(gpu, grf),
             guild: guild::Assets::load(gpu, grf),
+            clan: clan::Assets::load(gpu, grf),
             vend: vend::Assets::load(gpu, grf),
             cast_fill: gpu.solid([0x00, 0xFF, 0x00, 0xFF]),
             speech_fill: gpu.solid([0, 0, 0, 102]),
@@ -4146,6 +4165,8 @@ impl App {
                     guild_window: guild::GuildWindow::default(),
                     guild_invite: None,
                     guild_shown: false,
+                    clan: None,
+                    clan_window: clan::ClanWindow::default(),
                     emblems: HashMap::new(),
                     name_tags: HashMap::new(),
                     pointed: None,
@@ -5070,7 +5091,26 @@ impl App {
                     guild.members.retain(|member| member.character != character);
                 }
             }
-            MapEvent::ClanInfo { .. } | MapEvent::ClanOnlineCount { .. } | MapEvent::ClanLeft | MapEvent::ClanChat(_) => {}
+            // The clan: its info at login or on joining, how many are online, leaving, and its chat.
+            MapEvent::ClanInfo { id, name, master, map, allies, hostile } => {
+                let clan = game.clan.get_or_insert_with(clan::Clan::default);
+                clan.id = id;
+                clan.name = name;
+                clan.master = master;
+                clan.map = map;
+                clan.allies = allies;
+                clan.hostile = hostile;
+            }
+            MapEvent::ClanOnlineCount { online, max } => {
+                let clan = game.clan.get_or_insert_with(clan::Clan::default);
+                clan.online = online;
+                clan.max = max;
+            }
+            MapEvent::ClanLeft => {
+                game.clan = None;
+                game.clan_window.frame.open = false;
+            }
+            MapEvent::ClanChat(text) => game.chat_line(text, CLAN_CHAT),
             // Friends: the list, who's online (said in the chat), asking and answering.
             MapEvent::Friends(friends) => game.friends = friends,
             MapEvent::FriendOnline { account, character, online } => {

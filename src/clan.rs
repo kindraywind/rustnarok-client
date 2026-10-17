@@ -100,15 +100,7 @@ impl ClanWindow {
         Some(Hit::Window)
     }
 
-    pub fn draw<'a>(
-        &self,
-        layer: &mut Layer<'a>,
-        chrome: &'a Chrome,
-        assets: &'a Assets,
-        messages: &[String],
-        clan: &Clan,
-        pointer: [f32; 2],
-    ) {
+    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, messages: &[String], clan: &Clan, pointer: [f32; 2]) {
         if !self.frame.open {
             return;
         }
@@ -155,9 +147,6 @@ mod tests {
             allies: vec!["Golden Mace Clan".into()],
             hostile: vec!["Crossbow Clan".into()],
         };
-        assert_eq!(
-            info_values(&clan),
-            ["Arcwand Clan", "Devon Aire", "1 / 500", "geffen", "Golden Mace Clan", "Crossbow Clan"]
-        );
+        assert_eq!(info_values(&clan), ["Arcwand Clan", "Devon Aire", "1 / 500", "geffen", "Golden Mace Clan", "Crossbow Clan"]);
     }
 }
