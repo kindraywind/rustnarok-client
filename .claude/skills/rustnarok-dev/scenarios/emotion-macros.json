@@ -1,0 +1,200 @@
+{
+  "about": "The emotion list (Alt+L) and the chat macros (Alt+M, Alt+1 to Alt+0): an emotion clicked from the list shows; macro line 10 edited to a chat line is sent by Alt+0; Alt+1 sends the default /! (issue #61).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp iz_int01 18 26"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@allskill"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "key": "Alt+L"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "EmotionList"
+        ]
+      }
+    },
+    {
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "shot": "emotion-list",
+      "crop": [
+        330,
+        200,
+        364,
+        370
+      ]
+    },
+    {
+      "click": [
+        533,
+        249
+      ]
+    },
+    {
+      "wait_for": {
+        "event": "Emotion",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Alt+L"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "key": "Alt+M"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Macros"
+        ]
+      }
+    },
+    {
+      "click": [
+        515,
+        480
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "type": "hello macro"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "shot": "macro-window",
+      "crop": [
+        350,
+        260,
+        324,
+        240
+      ]
+    },
+    {
+      "key": "Alt+M"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Macros"
+        ]
+      }
+    },
+    {
+      "expect": {
+        "no_chat": "hello macro"
+      }
+    },
+    {
+      "key": "Alt+0"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "chat": "hello macro"
+      }
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "key": "Alt+1"
+    },
+    {
+      "wait_for": {
+        "event": "Emotion",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "after-alt1"
+    }
+  ]
+}

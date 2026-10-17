@@ -641,6 +641,63 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_OPEN_REFINING_UI: u16 = 0x0AA0;
+const CZ_REFINING_SELECT_ITEM: u16 = 0x0AA1;
+const ZC_REFINING_MATERIAL_LIST: u16 = 0x0AA2;
+const CZ_REQ_REFINING: u16 = 0x0AA3;
+const CZ_CLOSE_REFINING_UI: u16 = 0x0AA4;
+const ZC_ACK_ITEMREFINING: u16 = 0x0188;
+const ZC_AUTOSPELLLIST: u16 = 0x0AFB;
+const CZ_SELECTAUTOSPELL: u16 = 0x01CE;
+const ZC_SKILL_SELECT_REQUEST: u16 = 0x0442;
+const CZ_SKILL_SELECT_RESPONSE: u16 = 0x0443;
+const ZC_REPAIRITEMLIST: u16 = 0x0B65;
+const CZ_REQ_ITEMREPAIR2: u16 = 0x0B66;
+const ZC_ACK_ITEMREPAIR: u16 = 0x01FE;
+const ZC_NOTIFY_WEAPONITEMLIST: u16 = 0x0221;
+const CZ_REQ_WEAPONREFINE: u16 = 0x0222;
+const ZC_ACK_WEAPONREFINE: u16 = 0x0223;
+const ZC_MAKABLEITEMLIST: u16 = 0x018D;
+const CZ_REQMAKINGITEM: u16 = 0x018E;
+const ZC_ACK_REQMAKINGITEM: u16 = 0x018F;
+const ZC_MAKINGITEM_LIST: u16 = 0x025A;
+const CZ_REQ_MAKINGITEM: u16 = 0x025B;
+const ZC_MAKINGARROW_LIST: u16 = 0x01AD;
+const CZ_REQ_MAKINGARROW: u16 = 0x01AE;
+const ZC_NPC_MARKET_OPEN: u16 = 0x0B7A;
+const CZ_NPC_MARKET_PURCHASE: u16 = 0x09D6;
+const ZC_NPC_MARKET_PURCHASE_RESULT: u16 = 0x0B4E;
+/// The market window closed (rathena gives it no name).
+const CZ_NPC_MARKET_CLOSE: u16 = 0x09D8;
+const ZC_NPC_BARTER_MARKET_ITEMINFO: u16 = 0x0B78;
+const CZ_NPC_BARTER_MARKET_PURCHASE: u16 = 0x0B0F;
+const CZ_NPC_BARTER_MARKET_CLOSE: u16 = 0x0B12;
+const ZC_NPC_EXPANDED_BARTER_MARKET_ITEMINFO: u16 = 0x0B79;
+const CZ_NPC_EXPANDED_BARTER_MARKET_PURCHASE: u16 = 0x0B57;
+const CZ_NPC_EXPANDED_BARTER_MARKET_CLOSE: u16 = 0x0B58;
+/// A market's or barter's stock that doesn't run out.
+const UNLIMITED: u32 = u32::MAX;
+const CZ_REQ_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE: u16 = 0x0B14;
+const ZC_ACK_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE: u16 = 0x0B15;
+const CZ_REQ_EXTEND_BODYITEM_SIZE: u16 = 0x0B16;
+const ZC_ACK_EXTEND_BODYITEM_SIZE: u16 = 0x0B17;
+const CZ_CLOSE_MSGBOX_EXTEND_BODYITEM_SIZE: u16 = 0x0B19;
+const CZ_EQUIPWIN_MICROSCOPE: u16 = 0x02D6;
+const ZC_EQUIPWIN_MICROSCOPE: u16 = 0x0B37;
+const CZ_CONFIG: u16 = 0x02D8;
+const ZC_CONFIG: u16 = 0x02D9;
+const ZC_CONFIG_NOTIFY: u16 = 0x02DA;
+/// CZ_CONFIG's setting for the Show Equipment box (rathena's CONFIG_OPEN_EQUIPMENT_WINDOW).
+const CONFIG_OPEN_EQUIPMENT: u32 = 0;
+const CZ_REQ_OPEN_BANKING: u16 = 0x09B6;
+const ZC_ACK_OPEN_BANKING: u16 = 0x09B7;
+const CZ_REQ_BANKING_CHECK: u16 = 0x09AB;
+const ZC_BANKING_CHECK: u16 = 0x09A6;
+const CZ_REQ_BANKING_DEPOSIT: u16 = 0x09A7;
+const ZC_ACK_BANKING_DEPOSIT: u16 = 0x09A8;
+const CZ_REQ_BANKING_WITHDRAW: u16 = 0x09A9;
+const ZC_ACK_BANKING_WITHDRAW: u16 = 0x09AA;
+const CZ_REQ_CLOSE_BANKING: u16 = 0x09B8;
 const ZC_SPIRITS: u16 = 0x01D0;
 const CZ_REQ_ITEMCOMPOSITION_LIST: u16 = 0x017A;
 const ZC_ITEMCOMPOSITION_LIST: u16 = 0x017B;
@@ -1138,6 +1195,91 @@ pub enum MapEvent {
         id: u32,
         count: u16,
     },
+    /// The bank opens (rathena answers in its own words instead where banking is off).
+    BankOpened,
+    /// What the account keeps.
+    BankBalance(i64),
+    /// A deposit's or withdrawal's answer: rathena's reason (0 done), the balance and the zeny carried after.
+    BankMoved {
+        deposit: bool,
+        reason: u16,
+        balance: i64,
+        zeny: i32,
+    },
+    /// Another player's equipment, as asked for.
+    OtherEquipment(Equipped),
+    /// The Show Equipment box: the server's answer to a click, or the saved state at a map change.
+    ShowEquipment {
+        shown: bool,
+        answer: bool,
+    },
+    /// May the inventory grow: 0 ask (with the voucher it would use), 1 failed, 2 busy, 3 no voucher, 4 at the most.
+    ExpansionAsked {
+        result: u8,
+        voucher: u32,
+    },
+    /// The inventory grew (0), or why not (as above).
+    ExpansionDone(u8),
+    /// A market or barter opens with what it offers.
+    Market {
+        kind: MarketKind,
+        goods: Vec<Bartered>,
+    },
+    /// A market purchase: done, with what was bought (item, amount), or failed.
+    MarketBought {
+        ok: bool,
+        items: Vec<(u32, u16)>,
+    },
+    /// What can be made (Pharmacy, forging, rune stones...): the items' IDs.
+    MakeList(Vec<u32>),
+    /// A cooking kit's (or another) making list: its type and the items.
+    CookList {
+        kind: u16,
+        items: Vec<u32>,
+    },
+    /// Arrow Crafting's (or a converter's, a poison's) list: the items it can use.
+    ArrowList(Vec<u32>),
+    /// Something made, or not: even results succeeded, odd ones failed.
+    Made {
+        result: u16,
+        item: u32,
+    },
+    /// Repair Weapon's list: the target's broken items, indexed by rathena's own slots in the target's inventory.
+    RepairList(Vec<InventoryItem>),
+    /// An item repaired, or not.
+    Repaired {
+        index: u16,
+        ok: bool,
+    },
+    /// Upgrade Weapon's list: the caster's weapons it can refine.
+    UpgradeList(Vec<InventoryItem>),
+    /// Upgrade Weapon's result (0 refined, 1 failed, 2 skill too low, 3 ore missing) with the item it names.
+    Upgraded {
+        result: u32,
+        item: u32,
+    },
+    /// Hindsight's spells to pick from.
+    SpellList(Vec<u32>),
+    /// Skills to pick from for a reason (1: Shadow Spell), which goes back with the answer.
+    SkillSelect {
+        why: u32,
+        skills: Vec<u16>,
+    },
+    /// The refine window opens.
+    RefineOpen,
+    /// What an item in the refine window can be refined with: ores (item, chance %, zeny), and how many Blacksmith's
+    /// Blessings protect it (0: they can't).
+    RefineMaterials {
+        index: u16,
+        blessings: u8,
+        materials: Vec<(u32, u8, u32)>,
+    },
+    /// A refine: 0 done, 1 failed and broke, 2 failed and went down, 3 failed; the item's level after.
+    Refined {
+        result: u16,
+        index: u16,
+        refine: u16,
+    },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
         id: usize,
@@ -1553,6 +1695,27 @@ pub enum MapEvent {
     Disconnected(io::Error),
 }
 
+/// NPC shops beyond the plain one: a market (its stock runs out), a barter (items for items), an expanded barter
+/// (several items and zeny).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MarketKind {
+    Market,
+    Barter,
+    Expanded,
+}
+
+/// What a market or barter offers: the item, what it costs (zeny; items and how many), how many are left (None: no
+/// end), and the shop's own index for it (barters).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bartered {
+    pub item: u32,
+    pub kind: u8,
+    pub zeny: u32,
+    pub costs: Vec<(u32, u32)>,
+    pub stock: Option<u32>,
+    pub index: u32,
+}
+
 /// An item an NPC shop sells.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShopGoods {
@@ -1775,6 +1938,23 @@ fn u64_at(bytes: &[u8], offset: usize) -> u64 {
 
 fn cards_at(bytes: &[u8], offset: usize) -> [u32; 4] {
     std::array::from_fn(|card| u32_at(bytes, offset + card * 4))
+}
+
+/// Another player's looks and what they wear (ZC_EQUIPWIN_MICROSCOPE).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Equipped {
+    pub name: String,
+    pub job: u16,
+    pub hair: u16,
+    pub head_bottom: u16,
+    pub head_mid: u16,
+    pub head_top: u16,
+    pub robe: u16,
+    pub hair_color: u16,
+    pub clothes_color: u16,
+    pub sex: u8,
+    /// The worn items, each with its look (a weapon's or shield's sprite).
+    pub items: Vec<(InventoryItem, u16)>,
 }
 
 /// NORMALITEM_INFO: index, item, type, amount, where it can go, cards, rental end, flags (bit 0: identified).
@@ -2039,6 +2219,109 @@ impl MapSession {
 
     /// Public chat; the client sends "name : message".
     /// Shows an emotion over the player's head.
+    /// The bank's requests carry the player's own account: opening, the balance, closing.
+    pub fn open_bank(&mut self, account: u32) -> io::Result<()> {
+        self.send_id(CZ_REQ_OPEN_BANKING, account)
+    }
+
+    pub fn check_bank(&mut self, account: u32) -> io::Result<()> {
+        self.send_id(CZ_REQ_BANKING_CHECK, account)
+    }
+
+    pub fn close_bank(&mut self, account: u32) -> io::Result<()> {
+        self.send_id(CZ_REQ_CLOSE_BANKING, account)
+    }
+
+    /// Puts zeny in the bank, or takes it out.
+    pub fn move_zeny(&mut self, deposit: bool, account: u32, zeny: i32) -> io::Result<()> {
+        self.stream.write_all(&encode_bank_move(deposit, account, zeny))
+    }
+
+    /// Asks to see a player's equipment (by account ID); they must be on the same map.
+    pub fn view_equipment(&mut self, account: u32) -> io::Result<()> {
+        self.send_id(CZ_EQUIPWIN_MICROSCOPE, account)
+    }
+
+    /// The Show Equipment box: whether others may see what the player wears.
+    pub fn show_equipment(&mut self, shown: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_config(CONFIG_OPEN_EQUIPMENT, shown))
+    }
+
+    /// The inventory's expansion: may it grow, yes, no (the last needs no answer).
+    pub fn ask_expansion(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_REQ_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE.to_le_bytes())
+    }
+
+    pub fn answer_expansion(&mut self, yes: bool) -> io::Result<()> {
+        self.stream.write_all(&if yes { CZ_REQ_EXTEND_BODYITEM_SIZE } else { CZ_CLOSE_MSGBOX_EXTEND_BODYITEM_SIZE }.to_le_bytes())
+    }
+
+    pub fn market_buy(&mut self, items: &[(u32, u32)]) -> io::Result<()> {
+        self.stream.write_all(&encode_market_buy(items))
+    }
+
+    pub fn barter_buy(&mut self, items: &[(u32, u32, u16, u32)]) -> io::Result<()> {
+        self.stream.write_all(&encode_barter_buy(items))
+    }
+
+    pub fn expanded_barter_buy(&mut self, items: &[(u32, u32, u32)]) -> io::Result<()> {
+        self.stream.write_all(&encode_expanded_barter_buy(items))
+    }
+
+    /// A market's or barter's window closed: until the server hears it, it keeps the player busy.
+    pub fn close_market(&mut self, kind: MarketKind) -> io::Result<()> {
+        let header = match kind {
+            MarketKind::Market => CZ_NPC_MARKET_CLOSE,
+            MarketKind::Barter => CZ_NPC_BARTER_MARKET_CLOSE,
+            MarketKind::Expanded => CZ_NPC_EXPANDED_BARTER_MARKET_CLOSE,
+        };
+        self.stream.write_all(&header.to_le_bytes())
+    }
+
+    /// Answers a making list: the item, or 0 to give it up (rathena then forgets the list).
+    pub fn make(&mut self, item: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_make(item))
+    }
+
+    pub fn cook(&mut self, kind: u16, item: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_cook(kind, item))
+    }
+
+    pub fn make_arrow(&mut self, item: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_make_arrow(item))
+    }
+
+    /// Answers Repair Weapon's list with an entry, or none.
+    pub fn repair(&mut self, item: Option<&InventoryItem>) -> io::Result<()> {
+        self.stream.write_all(&encode_repair(item))
+    }
+
+    /// Answers Upgrade Weapon's list with a weapon's inventory index, or 0 for none.
+    pub fn upgrade_weapon(&mut self, index: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_upgrade(index))
+    }
+
+    pub fn select_autospell(&mut self, skill: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_autospell(skill))
+    }
+
+    pub fn select_skill(&mut self, why: u32, skill: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_skill_select(why, skill))
+    }
+
+    /// The refine window: put an item in (its ores come back), refine it, close the window.
+    pub fn refine_select(&mut self, index: u16) -> io::Result<()> {
+        self.stream.write_all(&[CZ_REFINING_SELECT_ITEM.to_le_bytes(), index.to_le_bytes()].concat())
+    }
+
+    pub fn refine(&mut self, index: u16, ore: u32, blessings: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_refine(index, ore, blessings))
+    }
+
+    pub fn close_refine(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_CLOSE_REFINING_UI.to_le_bytes())
+    }
+
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
     pub fn card_list(&mut self, card: u16) -> io::Result<()> {
         self.stream.write_all(&encode_card_list(card))
@@ -2523,6 +2806,178 @@ fn encode_insert_card(card: u16, equip: u16) -> [u8; 6] {
     [h0, h1, c0, c1, e0, e1]
 }
 
+/// CZ_REQ_BANKING_DEPOSIT or CZ_REQ_BANKING_WITHDRAW: the player's own account and the zeny.
+fn encode_bank_move(deposit: bool, account: u32, zeny: i32) -> [u8; 10] {
+    let mut packet = [0u8; 10];
+    packet[..2].copy_from_slice(&if deposit { CZ_REQ_BANKING_DEPOSIT } else { CZ_REQ_BANKING_WITHDRAW }.to_le_bytes());
+    packet[2..6].copy_from_slice(&account.to_le_bytes());
+    packet[6..].copy_from_slice(&zeny.to_le_bytes());
+    packet
+}
+
+/// CZ_CONFIG: a setting (rathena's e_config_type) on or off.
+fn encode_config(setting: u32, on: bool) -> [u8; 10] {
+    let mut packet = [0u8; 10];
+    packet[..2].copy_from_slice(&CZ_CONFIG.to_le_bytes());
+    packet[2..6].copy_from_slice(&setting.to_le_bytes());
+    packet[6..].copy_from_slice(&u32::from(on).to_le_bytes());
+    packet
+}
+
+/// A market's entry: item, type, price, stock, weight, where it's worn.
+fn decode_market_goods(entry: &[u8]) -> Bartered {
+    let stock = u32_at(entry, 9);
+    Bartered { item: u32_at(entry, 0), kind: entry[4], zeny: u32_at(entry, 5), costs: Vec::new(), stock: (stock != UNLIMITED).then_some(stock), index: 0 }
+}
+
+/// A barter's entry: item, type, stock, the item it costs and how many, weight, the shop's index, look, where worn.
+fn decode_barter_goods(entry: &[u8]) -> Bartered {
+    let stock = u32_at(entry, 5);
+    Bartered {
+        item: u32_at(entry, 0),
+        kind: entry[4],
+        zeny: 0,
+        costs: vec![(u32_at(entry, 9), u32_at(entry, 13))],
+        stock: (stock != UNLIMITED).then_some(stock),
+        index: u32_at(entry, 21),
+    }
+}
+
+/// An expanded barter's entries: each 32 bytes (item, type, stock, weight, the shop's index, zeny, look, where
+/// worn, how many costs), then its costs, 12 bytes each (item, refine, amount, type).
+fn decode_expanded_barter(mut rest: &[u8]) -> Vec<Bartered> {
+    let mut goods = Vec::new();
+    while rest.len() >= 32 {
+        let count = u32_at(rest, 28) as usize;
+        let Some(costs) = rest.get(32..32 + count * 12) else { break };
+        let stock = u32_at(rest, 6);
+        goods.push(Bartered {
+            item: u32_at(rest, 0),
+            kind: rest[4],
+            zeny: u32_at(rest, 18),
+            costs: costs.chunks_exact(12).map(|cost| (u32_at(cost, 0), u32_at(cost, 6))).collect(),
+            stock: (stock != UNLIMITED).then_some(stock),
+            index: u32_at(rest, 14),
+        });
+        rest = &rest[32 + count * 12..];
+    }
+    goods
+}
+
+/// CZ_NPC_MARKET_PURCHASE: (item, amount) pairs.
+fn encode_market_buy(items: &[(u32, u32)]) -> Vec<u8> {
+    let mut packet = CZ_NPC_MARKET_PURCHASE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((4 + items.len() * 8) as u16).to_le_bytes());
+    for &(item, amount) in items {
+        packet.extend_from_slice(&item.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+    }
+    packet
+}
+
+/// CZ_NPC_BARTER_MARKET_PURCHASE: (item, amount, inventory index of what it costs, the shop's index).
+fn encode_barter_buy(items: &[(u32, u32, u16, u32)]) -> Vec<u8> {
+    let mut packet = CZ_NPC_BARTER_MARKET_PURCHASE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((4 + items.len() * 14) as u16).to_le_bytes());
+    for &(item, amount, cost_index, shop_index) in items {
+        packet.extend_from_slice(&item.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+        packet.extend_from_slice(&cost_index.to_le_bytes());
+        packet.extend_from_slice(&shop_index.to_le_bytes());
+    }
+    packet
+}
+
+/// CZ_NPC_EXPANDED_BARTER_MARKET_PURCHASE: (item, the shop's index, amount).
+fn encode_expanded_barter_buy(items: &[(u32, u32, u32)]) -> Vec<u8> {
+    let mut packet = CZ_NPC_EXPANDED_BARTER_MARKET_PURCHASE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((4 + items.len() * 12) as u16).to_le_bytes());
+    for &(item, shop_index, amount) in items {
+        packet.extend_from_slice(&item.to_le_bytes());
+        packet.extend_from_slice(&shop_index.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+    }
+    packet
+}
+
+/// CZ_REQMAKINGITEM: the item to make (0: none, which ends the list) and three extra ingredients (none here).
+fn encode_make(item: u32) -> [u8; 18] {
+    let mut packet = [0u8; 18];
+    packet[..2].copy_from_slice(&CZ_REQMAKINGITEM.to_le_bytes());
+    packet[2..6].copy_from_slice(&item.to_le_bytes());
+    packet
+}
+
+/// CZ_REQ_MAKINGITEM: the list's type and the item (0: none).
+fn encode_cook(kind: u16, item: u32) -> [u8; 8] {
+    let mut packet = [0u8; 8];
+    packet[..2].copy_from_slice(&CZ_REQ_MAKINGITEM.to_le_bytes());
+    packet[2..4].copy_from_slice(&kind.to_le_bytes());
+    packet[4..].copy_from_slice(&item.to_le_bytes());
+    packet
+}
+
+/// CZ_REQ_MAKINGARROW: the item picked.
+fn encode_make_arrow(item: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_REQ_MAKINGARROW.to_le_bytes());
+    packet[2..].copy_from_slice(&item.to_le_bytes());
+    packet
+}
+
+/// CZ_REQ_ITEMREPAIR2: the picked entry as it came (rathena reads its index); none sends index 0xFFFF, which
+/// repairs nothing and ends the list.
+fn encode_repair(item: Option<&InventoryItem>) -> [u8; 26] {
+    let mut packet = [0u8; 26];
+    packet[..2].copy_from_slice(&CZ_REQ_ITEMREPAIR2.to_le_bytes());
+    let Some(item) = item else {
+        packet[2..4].copy_from_slice(&u16::MAX.to_le_bytes());
+        return packet;
+    };
+    packet[2..4].copy_from_slice(&item.index.to_le_bytes());
+    packet[4..8].copy_from_slice(&item.id.to_le_bytes());
+    for (slot, card) in item.cards.iter().enumerate() {
+        packet[8 + slot * 4..12 + slot * 4].copy_from_slice(&card.to_le_bytes());
+    }
+    packet[24] = item.refine;
+    packet
+}
+
+/// CZ_REQ_WEAPONREFINE: the weapon's inventory index (0: none, which ends the list).
+fn encode_upgrade(index: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_REQ_WEAPONREFINE.to_le_bytes());
+    packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_SELECTAUTOSPELL: the spell Hindsight keeps ready (0: none, which lets the player go).
+fn encode_autospell(skill: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_SELECTAUTOSPELL.to_le_bytes());
+    packet[2..].copy_from_slice(&skill.to_le_bytes());
+    packet
+}
+
+/// CZ_SKILL_SELECT_RESPONSE: the reason as it came, and the skill (0: none).
+fn encode_skill_select(why: u32, skill: u16) -> [u8; 8] {
+    let mut packet = [0u8; 8];
+    packet[..2].copy_from_slice(&CZ_SKILL_SELECT_RESPONSE.to_le_bytes());
+    packet[2..6].copy_from_slice(&why.to_le_bytes());
+    packet[6..].copy_from_slice(&skill.to_le_bytes());
+    packet
+}
+
+/// CZ_REQ_REFINING: the item, the ore, and whether Blacksmith's Blessings go with it.
+fn encode_refine(index: u16, ore: u32, blessings: bool) -> [u8; 9] {
+    let mut packet = [0u8; 9];
+    packet[..2].copy_from_slice(&CZ_REQ_REFINING.to_le_bytes());
+    packet[2..4].copy_from_slice(&index.to_le_bytes());
+    packet[4..8].copy_from_slice(&ore.to_le_bytes());
+    packet[8] = u8::from(blessings);
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -2865,6 +3320,84 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // The result byte is rathena's "failure".
         ZC_ACK_ITEMCOMPOSITION => MapEvent::CardInserted { equip: u16_at(2), card: u16_at(4), ok: packet[6] == 0 },
         ZC_SPIRITS => MapEvent::Spirits { id: u32_at(2), count: u16_at(6) },
+        ZC_ACK_OPEN_BANKING => MapEvent::BankOpened,
+        ZC_BANKING_CHECK => MapEvent::BankBalance(i64::from_le_bytes(packet[2..10].try_into().unwrap())),
+        ZC_ACK_BANKING_DEPOSIT | ZC_ACK_BANKING_WITHDRAW => MapEvent::BankMoved {
+            deposit: u16_at(0) == ZC_ACK_BANKING_DEPOSIT,
+            reason: u16_at(2),
+            balance: i64::from_le_bytes(packet[4..12].try_into().unwrap()),
+            zeny: u32_at(12) as i32,
+        },
+        ZC_EQUIPWIN_MICROSCOPE => MapEvent::OtherEquipment(Equipped {
+            name: c_string(&packet[4..28]),
+            job: u16_at(28),
+            hair: u16_at(30),
+            head_bottom: u16_at(32),
+            head_mid: u16_at(34),
+            head_top: u16_at(36),
+            robe: u16_at(38),
+            hair_color: u16_at(40),
+            clothes_color: u16_at(42),
+            sex: packet[46],
+            // EQUIPITEM_INFO, with the item's look at 37.
+            items: packet[47..].chunks_exact(EQUIP_ITEM_SIZE).map(|entry| (decode_equip_item(entry), u16::from_le_bytes([entry[37], entry[38]]))).collect(),
+        }),
+        // Other settings come in ZC_CONFIG too (calling, auto-feeding); only the box's is read.
+        ZC_CONFIG if u32_at(2) == CONFIG_OPEN_EQUIPMENT => MapEvent::ShowEquipment { shown: u32_at(6) != 0, answer: true },
+        ZC_CONFIG_NOTIFY => MapEvent::ShowEquipment { shown: packet[2] != 0, answer: false },
+        ZC_ACK_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE => MapEvent::ExpansionAsked { result: packet[2], voucher: u32_at(3) },
+        ZC_ACK_EXTEND_BODYITEM_SIZE => MapEvent::ExpansionDone(packet[2]),
+        ZC_NPC_MARKET_OPEN => MapEvent::Market { kind: MarketKind::Market, goods: packet[4..].chunks_exact(19).map(decode_market_goods).collect() },
+        ZC_NPC_MARKET_PURCHASE_RESULT => MapEvent::MarketBought {
+            ok: u16_at(4) == 0,
+            items: packet[6..].chunks_exact(10).map(|entry| (self::u32_at(entry, 0), self::u16_at(entry, 4))).collect(),
+        },
+        ZC_NPC_BARTER_MARKET_ITEMINFO => MapEvent::Market { kind: MarketKind::Barter, goods: packet[4..].chunks_exact(31).map(decode_barter_goods).collect() },
+        ZC_NPC_EXPANDED_BARTER_MARKET_ITEMINFO => MapEvent::Market { kind: MarketKind::Expanded, goods: decode_expanded_barter(&packet[8..]) },
+        // Each entry is the item and three materials rathena leaves at 0.
+        ZC_MAKABLEITEMLIST => MapEvent::MakeList(packet[4..].chunks_exact(16).map(|entry| self::u32_at(entry, 0)).collect()),
+        ZC_MAKINGITEM_LIST => MapEvent::CookList { kind: u16_at(4), items: packet[6..].chunks_exact(4).map(|id| self::u32_at(id, 0)).collect() },
+        ZC_MAKINGARROW_LIST => MapEvent::ArrowList(packet[4..].chunks_exact(4).map(|id| self::u32_at(id, 0)).collect()),
+        ZC_ACK_REQMAKINGITEM => MapEvent::Made { result: u16_at(2), item: u32_at(4) },
+        // REPAIRITEM_INFO2: index, item, cards, refine, grade.
+        ZC_REPAIRITEMLIST => MapEvent::RepairList(
+            packet[4..]
+                .chunks_exact(24)
+                .map(|entry| InventoryItem {
+                    index: self::u16_at(entry, 0),
+                    id: self::u32_at(entry, 2),
+                    cards: cards_at(entry, 6),
+                    refine: entry[22],
+                    identified: true,
+                    ..Default::default()
+                })
+                .collect(),
+        ),
+        ZC_ACK_ITEMREPAIR => MapEvent::Repaired { index: u16_at(2), ok: packet[4] == 0 },
+        // Index, item, refine, cards.
+        ZC_NOTIFY_WEAPONITEMLIST => MapEvent::UpgradeList(
+            packet[4..]
+                .chunks_exact(23)
+                .map(|entry| InventoryItem {
+                    index: self::u16_at(entry, 0),
+                    id: self::u32_at(entry, 2),
+                    refine: entry[6],
+                    cards: cards_at(entry, 7),
+                    identified: true,
+                    ..Default::default()
+                })
+                .collect(),
+        ),
+        ZC_ACK_WEAPONREFINE => MapEvent::Upgraded { result: u32_at(2), item: u32_at(6) },
+        ZC_AUTOSPELLLIST => MapEvent::SpellList(packet[4..].chunks_exact(4).map(|skill| self::u32_at(skill, 0)).collect()),
+        ZC_SKILL_SELECT_REQUEST => MapEvent::SkillSelect { why: u32_at(4), skills: packet[8..].chunks_exact(2).map(|skill| self::u16_at(skill, 0)).collect() },
+        ZC_OPEN_REFINING_UI => MapEvent::RefineOpen,
+        ZC_REFINING_MATERIAL_LIST => MapEvent::RefineMaterials {
+            index: u16_at(4),
+            blessings: packet[6],
+            materials: packet[7..].chunks_exact(9).map(|ore| (self::u32_at(ore, 0), ore[4], self::u32_at(ore, 5))).collect(),
+        },
+        ZC_ACK_ITEMREFINING => MapEvent::Refined { result: u16_at(2), index: u16_at(4), refine: u16_at(6) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3545,6 +4078,212 @@ mod tests {
         packet.extend_from_slice(&5u16.to_le_bytes());
         assert_eq!(Some(packet.len() as i32), packet_length(ZC_SPIRITS));
         let Some(MapEvent::Spirits { id: 2_000_002, count: 5 }) = decode_map_packet(&packet) else { panic!() };
+    }
+
+    #[test]
+    fn speaks_to_the_bank() {
+        assert_eq!(encode_bank_move(true, 2_000_002, 1000)[..2], CZ_REQ_BANKING_DEPOSIT.to_le_bytes());
+        assert_eq!(encode_bank_move(false, 2_000_002, 1000), [0xA9, 0x09, 0x82, 0x84, 0x1E, 0x00, 0xE8, 0x03, 0, 0]);
+        let Some(MapEvent::BankOpened) = decode_map_packet(&[0xB7, 0x09, 0, 0]) else { panic!() };
+        let mut check = ZC_BANKING_CHECK.to_le_bytes().to_vec();
+        check.extend_from_slice(&5_000_000_000i64.to_le_bytes());
+        check.extend_from_slice(&[0, 0]);
+        let Some(MapEvent::BankBalance(5_000_000_000)) = decode_map_packet(&check) else { panic!() };
+        let mut moved = ZC_ACK_BANKING_WITHDRAW.to_le_bytes().to_vec();
+        moved.extend_from_slice(&1u16.to_le_bytes());
+        moved.extend_from_slice(&1000i64.to_le_bytes());
+        moved.extend_from_slice(&4000i32.to_le_bytes());
+        let Some(MapEvent::BankMoved { deposit: false, reason: 1, balance: 1000, zeny: 4000 }) = decode_map_packet(&moved) else { panic!() };
+        let ids = [CZ_REQ_OPEN_BANKING, ZC_ACK_OPEN_BANKING, CZ_REQ_BANKING_CHECK, ZC_BANKING_CHECK, CZ_REQ_BANKING_DEPOSIT, ZC_ACK_BANKING_DEPOSIT];
+        assert_eq!(ids.map(packet_length), [Some(6), Some(4), Some(6), Some(12), Some(10), Some(16)]);
+        assert_eq!([CZ_REQ_BANKING_WITHDRAW, ZC_ACK_BANKING_WITHDRAW, CZ_REQ_CLOSE_BANKING].map(packet_length), [Some(10), Some(16), Some(6)]);
+    }
+
+    #[test]
+    fn decodes_others_equipment() {
+        let mut packet = ZC_EQUIPWIN_MICROSCOPE.to_le_bytes().to_vec();
+        packet.extend_from_slice(&[0, 0]);
+        let mut name = b"McpTester2".to_vec();
+        name.resize(24, 0);
+        packet.extend_from_slice(&name);
+        for look in [4u16, 13, 0, 0, 5, 0, 2, 1, 0] {
+            packet.extend_from_slice(&look.to_le_bytes());
+        }
+        packet.push(1);
+        // A Knife worn in the right hand (2, look 1), a Cotton Shirt on the body (16).
+        for (index, item, worn, look) in [(4u16, 1201u32, 2u32, 1u16), (5, 2301, 16, 0)] {
+            let mut entry = vec![0u8; EQUIP_ITEM_SIZE];
+            entry[..2].copy_from_slice(&index.to_le_bytes());
+            entry[2..6].copy_from_slice(&item.to_le_bytes());
+            entry[11..15].copy_from_slice(&worn.to_le_bytes());
+            entry[37..39].copy_from_slice(&look.to_le_bytes());
+            entry[67] = 1;
+            packet.extend_from_slice(&entry);
+        }
+        let length = packet.len() as u16;
+        packet[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::OtherEquipment(equipped)) = decode_map_packet(&packet) else { panic!() };
+        assert_eq!((equipped.name.as_str(), equipped.job, equipped.hair, equipped.head_top, equipped.hair_color, equipped.sex), ("McpTester2", 4, 13, 5, 2, 1));
+        let worn: Vec<_> = equipped.items.iter().map(|(item, look)| (item.id, item.worn, *look)).collect();
+        assert_eq!(worn, [(1201, 2, 1), (2301, 16, 0)]);
+
+        assert_eq!(encode_config(CONFIG_OPEN_EQUIPMENT, true), [0xD8, 0x02, 0, 0, 0, 0, 1, 0, 0, 0]);
+        let Some(MapEvent::ShowEquipment { shown: true, answer: true }) = decode_map_packet(&[0xD9, 0x02, 0, 0, 0, 0, 1, 0, 0, 0]) else { panic!() };
+        assert!(decode_map_packet(&[0xD9, 0x02, 1, 0, 0, 0, 1, 0, 0, 0]).is_none());
+        let Some(MapEvent::ShowEquipment { shown: false, answer: false }) = decode_map_packet(&[0xDA, 0x02, 0]) else { panic!() };
+        let ids = [CZ_EQUIPWIN_MICROSCOPE, ZC_EQUIPWIN_MICROSCOPE, CZ_CONFIG, ZC_CONFIG, ZC_CONFIG_NOTIFY];
+        assert_eq!(ids.map(packet_length), [Some(6), Some(-1), Some(10), Some(10), Some(3)]);
+    }
+
+    #[test]
+    fn decodes_inventory_expansion() {
+        let mut asked = ZC_ACK_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE.to_le_bytes().to_vec();
+        asked.push(0);
+        asked.extend_from_slice(&25793u32.to_le_bytes());
+        let Some(MapEvent::ExpansionAsked { result: 0, voucher: 25793 }) = decode_map_packet(&asked) else { panic!() };
+        let Some(MapEvent::ExpansionDone(4)) = decode_map_packet(&[0x17, 0x0B, 4]) else { panic!() };
+        let ids = [CZ_REQ_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE, ZC_ACK_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE, CZ_REQ_EXTEND_BODYITEM_SIZE, ZC_ACK_EXTEND_BODYITEM_SIZE];
+        assert_eq!(ids.map(packet_length), [Some(2), Some(7), Some(2), Some(3)]);
+        assert_eq!(packet_length(CZ_CLOSE_MSGBOX_EXTEND_BODYITEM_SIZE), Some(2));
+    }
+
+    #[test]
+    fn decodes_markets_and_barters() {
+        let header = |id: u16, body: &[u8]| {
+            let mut packet = id.to_le_bytes().to_vec();
+            packet.extend_from_slice(&((4 + body.len()) as u16).to_le_bytes());
+            packet.extend_from_slice(body);
+            packet
+        };
+        let words = |values: &[(u32, usize)]| values.iter().flat_map(|&(value, size)| value.to_le_bytes()[..size].to_vec()).collect::<Vec<u8>>();
+        // A market: Phracon, 200 z, 999,999 left; Emveretarcon, 1,000 z, no end.
+        let mut market = words(&[(1010, 4), (3, 1), (200, 4), (999_999, 4), (20, 2), (0, 4)]);
+        market.extend(words(&[(1011, 4), (3, 1), (1000, 4), (UNLIMITED, 4), (20, 2), (0, 4)]));
+        let Some(MapEvent::Market { kind: MarketKind::Market, goods }) = decode_map_packet(&header(ZC_NPC_MARKET_OPEN, &market)) else { panic!() };
+        assert_eq!(goods.iter().map(|goods| (goods.item, goods.zeny, goods.stock)).collect::<Vec<_>>(), [(1010, 200, Some(999_999)), (1011, 1000, None)]);
+        let mut result = words(&[(0, 2)]);
+        result.extend(words(&[(1010, 4), (2, 2), (200, 4)]));
+        let Some(MapEvent::MarketBought { ok: true, items }) = decode_map_packet(&header(ZC_NPC_MARKET_PURCHASE_RESULT, &result)) else { panic!() };
+        assert_eq!(items, [(1010, 2)]);
+        // A barter: a Shadowdecon for 20 Shadowdecon Ore.
+        let barter = words(&[(25729, 4), (3, 1), (UNLIMITED, 4), (25728, 4), (20, 4), (10, 4), (1, 4), (0, 2), (0, 4)]);
+        let Some(MapEvent::Market { kind: MarketKind::Barter, goods }) = decode_map_packet(&header(ZC_NPC_BARTER_MARKET_ITEMINFO, &barter)) else { panic!() };
+        assert_eq!((goods[0].item, goods[0].costs.clone(), goods[0].index, goods[0].stock), (25729, vec![(25728, 20)], 1, None));
+        // An expanded barter: Oridecon for 5 Oridecon Stones; Bradium for 3 Oridecon and 50,000 z.
+        let mut expanded = words(&[(2, 4)]);
+        expanded.extend(words(&[(984, 4), (3, 2), (UNLIMITED, 4), (10, 4), (1, 4), (0, 4), (0, 2), (0, 4), (1, 4)]));
+        expanded.extend(words(&[(756, 4), (0, 2), (5, 4), (3, 2)]));
+        expanded.extend(words(&[(6224, 4), (3, 2), (UNLIMITED, 4), (10, 4), (2, 4), (50_000, 4), (0, 2), (0, 4), (1, 4)]));
+        expanded.extend(words(&[(984, 4), (0, 2), (3, 4), (3, 2)]));
+        let Some(MapEvent::Market { kind: MarketKind::Expanded, goods }) = decode_map_packet(&header(ZC_NPC_EXPANDED_BARTER_MARKET_ITEMINFO, &expanded)) else {
+            panic!()
+        };
+        let read: Vec<_> = goods.iter().map(|goods| (goods.item, goods.zeny, goods.costs.clone(), goods.index)).collect();
+        assert_eq!(read, [(984, 0, vec![(756, 5)], 1), (6224, 50_000, vec![(984, 3)], 2)]);
+
+        assert_eq!(encode_market_buy(&[(1010, 2)]), [0xD6, 0x09, 12, 0, 0xF2, 0x03, 0, 0, 2, 0, 0, 0]);
+        assert_eq!(encode_barter_buy(&[(25729, 1, 5, 1)]).len(), 18);
+        assert_eq!(encode_expanded_barter_buy(&[(984, 1, 1)])[4..], [0xD8, 0x03, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+        let opens =
+            [ZC_NPC_MARKET_OPEN, ZC_NPC_MARKET_PURCHASE_RESULT, ZC_NPC_BARTER_MARKET_ITEMINFO, ZC_NPC_EXPANDED_BARTER_MARKET_ITEMINFO].map(packet_length);
+        assert_eq!(opens, [Some(-1); 4]);
+        let closes = [CZ_NPC_MARKET_CLOSE, CZ_NPC_BARTER_MARKET_CLOSE, CZ_NPC_EXPANDED_BARTER_MARKET_CLOSE].map(packet_length);
+        assert_eq!(closes, [Some(2); 3]);
+    }
+
+    #[test]
+    fn decodes_making_lists() {
+        let mut make = ZC_MAKABLEITEMLIST.to_le_bytes().to_vec();
+        make.extend_from_slice(&36u16.to_le_bytes());
+        for item in [501u32, 502] {
+            make.extend_from_slice(&item.to_le_bytes());
+            make.extend_from_slice(&[0; 12]);
+        }
+        let Some(MapEvent::MakeList(items)) = decode_map_packet(&make) else { panic!() };
+        assert_eq!(items, [501, 502]);
+        let cook = [&ZC_MAKINGITEM_LIST.to_le_bytes()[..], &10u16.to_le_bytes(), &1u16.to_le_bytes(), &12046u32.to_le_bytes()].concat();
+        let Some(MapEvent::CookList { kind: 1, items }) = decode_map_packet(&cook) else { panic!() };
+        assert_eq!(items, [12046]);
+        let arrows = [&ZC_MAKINGARROW_LIST.to_le_bytes()[..], &8u16.to_le_bytes(), &713u32.to_le_bytes()].concat();
+        let Some(MapEvent::ArrowList(items)) = decode_map_packet(&arrows) else { panic!() };
+        assert_eq!(items, [713]);
+        let made = [&ZC_ACK_REQMAKINGITEM.to_le_bytes()[..], &2u16.to_le_bytes(), &501u32.to_le_bytes()].concat();
+        let Some(MapEvent::Made { result: 2, item: 501 }) = decode_map_packet(&made) else { panic!() };
+        assert_eq!(encode_make(501)[..6], [0x8E, 0x01, 0xF5, 0x01, 0, 0]);
+        assert_eq!(encode_make(0), [0x8E, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(encode_cook(1, 12046), [0x5B, 0x02, 1, 0, 0x0E, 0x2F, 0, 0]);
+        assert_eq!(encode_make_arrow(713), [0xAE, 0x01, 0xC9, 0x02, 0, 0]);
+        let ids = [ZC_MAKABLEITEMLIST, CZ_REQMAKINGITEM, ZC_ACK_REQMAKINGITEM, ZC_MAKINGITEM_LIST, CZ_REQ_MAKINGITEM, ZC_MAKINGARROW_LIST, CZ_REQ_MAKINGARROW];
+        assert_eq!(ids.map(packet_length), [Some(-1), Some(18), Some(8), Some(-1), Some(8), Some(-1), Some(6)]);
+    }
+
+    #[test]
+    fn decodes_blacksmith_lists() {
+        let mut repair = ZC_REPAIRITEMLIST.to_le_bytes().to_vec();
+        repair.extend_from_slice(&28u16.to_le_bytes());
+        let mut entry = vec![0u8; 24];
+        entry[..2].copy_from_slice(&3u16.to_le_bytes());
+        entry[2..6].copy_from_slice(&1201u32.to_le_bytes());
+        entry[6..10].copy_from_slice(&4035u32.to_le_bytes());
+        entry[22] = 4;
+        repair.extend_from_slice(&entry);
+        let Some(MapEvent::RepairList(items)) = decode_map_packet(&repair) else { panic!() };
+        assert_eq!((items[0].index, items[0].id, items[0].cards[0], items[0].refine), (3, 1201, 4035, 4));
+        // The pick goes back as it came.
+        assert_eq!(encode_repair(Some(&items[0]))[2..], entry[..]);
+        assert_eq!(encode_repair(None)[..4], [0x66, 0x0B, 0xFF, 0xFF]);
+        let Some(MapEvent::Repaired { index: 5, ok: true }) = decode_map_packet(&[0xFE, 0x01, 5, 0, 0]) else { panic!() };
+
+        let mut upgrade = ZC_NOTIFY_WEAPONITEMLIST.to_le_bytes().to_vec();
+        upgrade.extend_from_slice(&27u16.to_le_bytes());
+        upgrade.extend_from_slice(&4u16.to_le_bytes());
+        upgrade.extend_from_slice(&1201u32.to_le_bytes());
+        upgrade.push(0);
+        upgrade.extend_from_slice(&[0; 16]);
+        let Some(MapEvent::UpgradeList(items)) = decode_map_packet(&upgrade) else { panic!() };
+        assert_eq!((items[0].index, items[0].id), (4, 1201));
+        assert_eq!(encode_upgrade(4), [0x22, 0x02, 4, 0, 0, 0]);
+        let upgraded = [&ZC_ACK_WEAPONREFINE.to_le_bytes()[..], &0u32.to_le_bytes(), &1201u32.to_le_bytes()].concat();
+        let Some(MapEvent::Upgraded { result: 0, item: 1201 }) = decode_map_packet(&upgraded) else { panic!() };
+        let ids = [ZC_REPAIRITEMLIST, CZ_REQ_ITEMREPAIR2, ZC_ACK_ITEMREPAIR, ZC_NOTIFY_WEAPONITEMLIST, CZ_REQ_WEAPONREFINE, ZC_ACK_WEAPONREFINE];
+        assert_eq!(ids.map(packet_length), [Some(-1), Some(26), Some(5), Some(-1), Some(6), Some(10)]);
+    }
+
+    #[test]
+    fn decodes_skill_pick_lists() {
+        let spells = [&ZC_AUTOSPELLLIST.to_le_bytes()[..], &12u16.to_le_bytes(), &19u32.to_le_bytes(), &14u32.to_le_bytes()].concat();
+        let Some(MapEvent::SpellList(skills)) = decode_map_packet(&spells) else { panic!() };
+        assert_eq!(skills, [19, 14]);
+        let select =
+            [&ZC_SKILL_SELECT_REQUEST.to_le_bytes()[..], &12u16.to_le_bytes(), &1u32.to_le_bytes(), &19u16.to_le_bytes(), &14u16.to_le_bytes()].concat();
+        let Some(MapEvent::SkillSelect { why: 1, skills }) = decode_map_packet(&select) else { panic!() };
+        assert_eq!(skills, [19, 14]);
+        assert_eq!(encode_autospell(19), [0xCE, 0x01, 19, 0, 0, 0]);
+        assert_eq!(encode_autospell(0), [0xCE, 0x01, 0, 0, 0, 0]);
+        assert_eq!(encode_skill_select(1, 19), [0x43, 0x04, 1, 0, 0, 0, 19, 0]);
+        assert_eq!(encode_skill_select(1, 0), [0x43, 0x04, 1, 0, 0, 0, 0, 0]);
+        let ids = [ZC_AUTOSPELLLIST, CZ_SELECTAUTOSPELL, ZC_SKILL_SELECT_REQUEST, CZ_SKILL_SELECT_RESPONSE];
+        assert_eq!(ids.map(packet_length), [Some(-1), Some(6), Some(-1), Some(8)]);
+    }
+
+    #[test]
+    fn decodes_the_refine_window() {
+        let Some(MapEvent::RefineOpen) = decode_map_packet(&[0xA0, 0x0A]) else { panic!() };
+        let mut list = ZC_REFINING_MATERIAL_LIST.to_le_bytes().to_vec();
+        list.extend_from_slice(&25u16.to_le_bytes());
+        list.extend_from_slice(&4u16.to_le_bytes());
+        list.push(0);
+        for (ore, chance, zeny) in [(1010u32, 100u8, 50u32), (6240, 100, 5000)] {
+            list.extend_from_slice(&ore.to_le_bytes());
+            list.push(chance);
+            list.extend_from_slice(&zeny.to_le_bytes());
+        }
+        let Some(MapEvent::RefineMaterials { index: 4, blessings: 0, materials }) = decode_map_packet(&list) else { panic!() };
+        assert_eq!(materials, [(1010, 100, 50), (6240, 100, 5000)]);
+        let Some(MapEvent::Refined { result: 0, index: 4, refine: 1 }) = decode_map_packet(&[0x88, 0x01, 0, 0, 4, 0, 1, 0]) else { panic!() };
+        assert_eq!(encode_refine(4, 1010, true), [0xA3, 0x0A, 4, 0, 0xF2, 0x03, 0, 0, 1]);
+        let ids = [ZC_OPEN_REFINING_UI, CZ_REFINING_SELECT_ITEM, ZC_REFINING_MATERIAL_LIST, CZ_REQ_REFINING, CZ_CLOSE_REFINING_UI, ZC_ACK_ITEMREFINING];
+        assert_eq!(ids.map(packet_length), [Some(2), Some(4), Some(-1), Some(9), Some(2), Some(8)]);
     }
 
     #[test]

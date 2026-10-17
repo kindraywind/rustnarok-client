@@ -93,6 +93,22 @@ const EMOTIONS: &[(usize, &[&str])] = &[
     (86, &[]),
 ];
 
+/// The emotion list's entries in order, by ET_* number, each with its label (a message number): the order of
+/// `EMOTION_ORDERLIST` and the `InsertEmotionListTable` calls in data.grf's
+/// `data\luafiles514\lua files\emotion\emotionlist.lub` (compiled Lua needing the official client, so copied here).
+pub fn list() -> Vec<(u8, usize)> {
+    let runs: [(&[u8], usize); 7] = [
+        (&[0, 1, 2, 3, 14, 4, 5, 6, 7, 8, 9], 544),
+        (&[11, 10, 12], 1501),
+        (&[15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33], 555),
+        (&[36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], 772),
+        (&[52, 53, 54, 55, 56, 57], 945),
+        (&[65, 68, 69], 1504),
+        (&[71, 72, 73, 74, 75, 76, 77, 78, 79, 80], 1508),
+    ];
+    runs.iter().flat_map(|(kinds, first)| kinds.iter().enumerate().map(move |(n, &kind)| (kind, first + n))).collect()
+}
+
 /// How long an emotion stays when its sprite doesn't say.
 pub const SHOWN_MS: f32 = 2500.0;
 
@@ -110,6 +126,16 @@ pub fn by_command(text: &str) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_the_emotions_in_the_datas_order() {
+        let list = list();
+        assert_eq!(list.len(), 64);
+        assert_eq!(&list[..5], &[(0, 544), (1, 545), (2, 546), (3, 547), (14, 548)]);
+        assert_eq!(list[11..14], [(11, 1501), (10, 1502), (12, 1503)]);
+        assert_eq!(list[63], (80, 1517));
+        assert!(list.iter().all(|&(kind, label)| sprite_action(kind).is_some() && label > 0));
+    }
 
     #[test]
     fn finds_emotions_by_command() {

@@ -1,0 +1,31 @@
+{
+  "about": "Another player's equipment (issue #57): the second account puts on a Cotton Shirt; the first asks through the right-click menu and sees it in a window under the second's name, with their figure. Then the first's Show Equipment box goes on and off through the server.",
+  "account": "",
+  "slot": 0,
+  "second": {"account": "2", "slot": 0},
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@recall {second}"}, {"as": "second", "settle": 2000},
+    {"as": "second", "say": "@itemreset"}, {"wait": 800},
+    {"as": "second", "say": "@item 2301 1"}, {"as": "second", "wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"as": "second", "key": "Alt+E"}, {"wait": 400},
+    {"as": "second", "click": [11, 225]}, {"wait": 300},
+    {"as": "second", "click_on": {"inventory_item": 2301}, "count": 2}, {"as": "second", "wait_for": {"event": "Equipped", "ms": 5000}},
+    {"as": "second", "key": "Alt+E"}, {"wait": 500},
+    {"click_on": {"unit": "{second}"}, "button": "right"}, {"wait": 400},
+    {"click_on": {"menu_item": "Equipment"}}, {"wait_for": {"packet": "0x0b37", "ms": 5000}},
+    {"wait": 300}, {"move": [900, 700]},
+    {"expect": {"windows_open": ["OtherEquipment"]}},
+    {"shot": "others-equipment", "crop": [490, 210, 300, 210]},
+    {"click": [771, 228]}, {"wait": 300},
+    {"expect": {"windows_closed": ["OtherEquipment"]}},
+    {"key": "Alt+Q"}, {"wait": 400},
+    {"click": [500, 380]}, {"wait_for": {"packet": "0x02d9", "ms": 5000}}, {"wait": 300},
+    {"expect": {"chat": "Equipment information open to the public."}},
+    {"move": [900, 700]},
+    {"shot": "show-equipment-on", "crop": [480, 360, 280, 34]},
+    {"click": [500, 380]}, {"wait_for": {"packet": "0x02d9", "ms": 5000}}, {"wait": 300},
+    {"expect": {"chat": "Equipment information not open to the public."}},
+    {"key": "Alt+Q"}
+  ]
+}

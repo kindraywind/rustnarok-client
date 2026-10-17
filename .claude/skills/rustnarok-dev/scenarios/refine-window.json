@@ -1,0 +1,28 @@
+{
+  "about": "The refine window (issue #38): @refineui opens it; a Knife dragged in lists its ores (Phracon 100%, 50 z); Phracon and Refine make it +1; closing it tells the server, so @refineui opens it again.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 1201 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@item 1010 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@zeny 1000"}, {"wait": 500},
+    {"say": "@refineui"}, {"wait_for": {"packet": "0x0aa0", "ms": 5000}}, {"wait": 300},
+    {"expect": {"windows_open": ["Refine", "Inventory"]}},
+    {"click": [11, 225]}, {"wait": 300},
+    {"drag_on": [{"inventory_item": 1201}, {"point": [400, 250]}]}, {"wait_for": {"event": "RefineMaterials", "ms": 5000}},
+    {"wait": 300}, {"move": [900, 700]},
+    {"shot": "refine-listed", "crop": [270, 110, 470, 440]},
+    {"click": [636, 179]}, {"wait": 300},
+    {"click": [685, 511]}, {"wait_for": {"event": "Refined", "ms": 5000}}, {"wait": 500},
+    {"move": [900, 700]},
+    {"expect": {"inventory_has": [{"id": 1201, "refine": 1}], "chat": "Upgrade success!"}},
+    {"shot": "refine-done", "crop": [270, 110, 470, 440]},
+    {"click": [726, 128]}, {"wait": 500},
+    {"expect": {"windows_closed": ["Refine"]}},
+    {"say": "@refineui"}, {"wait_for": {"packet": "0x0aa0", "ms": 5000}},
+    {"expect": {"windows_open": ["Refine"]}},
+    {"click": [726, 128]}, {"wait": 300}
+  ]
+}

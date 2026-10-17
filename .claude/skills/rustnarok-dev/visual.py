@@ -12,7 +12,7 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": 
   {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]]}  {"move": [x, y]}
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
     (targets by name from the control socket's `targets`: inventory_item (item id), pick_item (a pick list's row, item
-    id), hotkey (slot), skill (id),
+    id), menu_item (part of a right-click menu choice's label), hotkey (slot), skill (id),
     unit (name, from `units`), or {"point": [x, y]}; "offset": [dx, dy] shifts from the centre; a target not
     on screen fails the step)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
@@ -150,6 +150,10 @@ def locate(target):
                 return [round((x0 + x1) / 2) + dx, round((y0 + y1) / 2) + dy]
         return None
     for found in game.get("targets", []):
+        # A right-click menu's choice by (part of) its label.
+        if kind == "menu_item" and found.get("kind") == kind and value in found.get("label", ""):
+            x, y, w, h = found["box"]
+            return [round(x + w / 2) + dx, round(y + h / 2) + dy]
         key = {"inventory_item": "id", "pick_item": "id", "hotkey": "slot", "skill": "id"}.get(kind)
         if found.get("kind") == kind and found.get(key) == value:
             x, y, w, h = found["box"]
@@ -197,6 +201,8 @@ def expect(wanted, state):
             for want in value:
                 if not any(all(item.get(field) == wanted for field, wanted in want.items()) for item in carried):
                     failures.append(f"nothing carried like {want}")
+        elif key == "zeny" and game.get("player", {}).get("zeny") != value:
+            failures.append(f"zeny {game.get('player', {}).get('zeny')} != {value}")
         elif key == "spirits" and game.get("player", {}).get("spirits") != value:
             failures.append(f"spirits {game.get('player', {}).get('spirits')} != {value}")
         elif key == "units_at_least":
@@ -208,7 +214,7 @@ def expect(wanted, state):
             for field, want in value.items():
                 if state.get(field) != want:
                     failures.append(f"state.{field} {state.get(field)!r} != {want!r}")
-        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "state"):
+        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "state"):
             failures.append(f"unknown expectation {key}")
     return failures
 

@@ -202,6 +202,8 @@ pub enum Command {
     AllWhispers { allow: bool },
     /// /effect: effects off or on.
     Effect,
+    /// /emo, /emotion: the emotion list, open or closed.
+    EmotionList,
     /// /memo: where the player stands becomes a Warp Portal destination.
     Memo,
 }
@@ -218,6 +220,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/exall" => Command::AllWhispers { allow: false },
         "/inall" => Command::AllWhispers { allow: true },
         "/effect" => Command::Effect,
+        "/emo" | "/emotion" => Command::EmotionList,
         "/memo" => Command::Memo,
         _ => return None,
     })
@@ -243,6 +246,8 @@ mod tests {
         assert_eq!(command("/exall"), Some(Command::AllWhispers { allow: false }));
         assert_eq!(command("/inall"), Some(Command::AllWhispers { allow: true }));
         assert_eq!(command("/effect"), Some(Command::Effect));
+        assert_eq!(command("/emo"), Some(Command::EmotionList));
+        assert_eq!(command("/emotion"), Some(Command::EmotionList));
         for text in ["/in", "/whom", "hello /who", "/sit", "/ho"] {
             assert_eq!(command(text), None, "{text}");
         }

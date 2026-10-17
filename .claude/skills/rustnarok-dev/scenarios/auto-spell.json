@@ -1,0 +1,20 @@
+{
+  "about": "Hindsight (issue #41): a Sage's Auto Spell lists the bolts it can keep ready; picking Fire Bolt starts the status; cast again and cancelled, the list closes and the player is let go. Ends a Novice.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@job 16"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500}, {"say": "@heal"}, {"wait": 400},
+    {"say": "@useskill 279 10 self"}, {"wait_for": {"event": "SpellList", "ms": 8000}},
+    {"wait": 300}, {"move": [900, 700]},
+    {"expect": {"windows_open": ["PickList"]}},
+    {"shot": "spell-list", "crop": [362, 267, 300, 234]},
+    {"click_on": {"pick_item": 19}, "count": 2}, {"wait_for": {"event": "StatusIcon", "ms": 5000}}, {"wait": 300},
+    {"expect": {"windows_closed": ["PickList"]}},
+    {"say": "@heal"}, {"wait": 400},
+    {"say": "@useskill 279 10 self"}, {"wait_for": {"event": "SpellList", "ms": 8000}},
+    {"click": [616, 478]}, {"wait": 500},
+    {"expect": {"windows_closed": ["PickList"]}},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}

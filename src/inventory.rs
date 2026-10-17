@@ -31,7 +31,7 @@ const TABS: usize = 3;
 /// The first cell.
 const GRID: [f32; 2] = [TAB_COLUMN + MARGIN, TITLE_HEIGHT + 8.0];
 const ICON_OFFSET: f32 = 4.0;
-const BASE_SLOTS: usize = 100;
+pub const BASE_SLOTS: usize = 100;
 /// Where the client first opens it.
 const DEFAULT_POSITION: [f32; 2] = [0.0, 172.0];
 pub const UNIDENTIFIED: [u8; 3] = [0xAA, 0xAA, 0xAA];

@@ -720,18 +720,18 @@ fn game_state(app: &App, game: &Game) -> Value {
         .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
         .chain(game.skill_window.skill_boxes(&app.skill_trees, &jobs).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
-        .chain(
-            game.pick
-                .iter()
-                .flat_map(|(list, _)| list.row_boxes())
-                .map(|(index, area)| json!({"kind": "pick_item", "index": index, "id": item_of(index), "box": area})),
-        )
+        .chain(game.pick.iter().flat_map(|(list, _)| list.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
+        .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
     let overlays = [
         ("NpcDialog", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none())),
         ("WarpList", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some())),
         ("Shop", game.shop.is_some()),
+        ("Refine", game.refine.is_some()),
+        ("InventoryExpansion", game.expansion_asked.is_some()),
+        ("OtherEquipment", game.viewing.is_some()),
+        ("Bank", game.bank.is_some()),
         ("PickList", game.pick.is_some()),
         ("DealChoice", game.deal_choice.is_some()),
         ("Trade", game.trade.is_some()),
@@ -742,6 +742,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("ItemInfo", game.item_window.is_some()),
         ("ChatRoom", game.room.is_some()),
         ("RoomMake", game.room_make.is_some()),
+        ("EmotionList", game.emotion_list.is_some()),
+        ("Macros", game.macro_window.is_some()),
         ("PartyInvite", game.party_invite.is_some()),
         ("FriendAsked", game.friend_asked.is_some()),
         ("GuildInvite", game.guild_invite.is_some()),

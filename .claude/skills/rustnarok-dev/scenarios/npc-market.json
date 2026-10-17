@@ -1,0 +1,27 @@
+{
+  "about": "An NPC market (issue #49): Dietrich's basic smelting ores at prt_in; 2 Phracon bought, the stock drops, the window stays; closing it tells the server, so Dietrich talks again.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@zeny -2000000000"}, {"wait": 400}, {"say": "@zeny 10000"}, {"wait": 400},
+    {"say": "@warp prt_in 63 66"}, {"settle": 1500},
+    {"click_on": {"unit": "Dietrich#ns_prt"}}, {"wait_for": {"packet": "0x00b5", "ms": 5000}},
+    {"key": "Enter"}, {"wait": 600},
+    {"key": "Enter"}, {"wait": 600},
+    {"key": "Enter"}, {"wait_for": {"packet": "0x0b7a", "ms": 5000}},
+    {"wait": 300}, {"move": [900, 700]},
+    {"expect": {"windows_open": ["Shop"]}},
+    {"shot": "market-open", "crop": [90, 95, 590, 290]},
+    {"click": [240, 138], "count": 2}, {"wait": 400},
+    {"type": "2"}, {"key": "Enter"}, {"wait": 400},
+    {"click": [587, 364]}, {"wait_for": {"packet": "0x0b4e", "ms": 5000}}, {"wait": 400},
+    {"move": [900, 700]},
+    {"expect": {"chat": "The deal has successfully completed.", "identified": [1010], "zeny": 9600, "windows_open": ["Shop"]}},
+    {"shot": "market-bought", "crop": [90, 95, 590, 290]},
+    {"click": [633, 364]}, {"wait": 500},
+    {"expect": {"windows_closed": ["Shop"]}},
+    {"click_on": {"unit": "Dietrich#ns_prt"}}, {"wait_for": {"packet": "0x00b4", "ms": 5000}},
+    {"key": "Escape"}, {"wait": 300}
+  ]
+}

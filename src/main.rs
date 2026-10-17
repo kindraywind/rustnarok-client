@@ -39,6 +39,7 @@
 //! `RUSTNAROK_CLIENT_SCREENSHOT=out.png` (save a settled frame and quit; in the game after `RUSTNAROK_CLIENT_SHOT_DELAY` seconds, 2 by default).
 
 mod actor;
+mod bank;
 mod basic_info;
 mod char_make;
 mod char_select;
@@ -48,12 +49,14 @@ mod control;
 mod cursor;
 mod effects;
 mod emotion;
+mod emotion_list;
 mod equipment;
 mod escape;
 mod guild;
 mod hotkeys;
 mod inventory;
 mod iteminfo;
+mod macros;
 mod mail;
 mod menu;
 mod minimap;
@@ -62,6 +65,7 @@ mod party;
 mod pick_list;
 mod pin;
 mod quest;
+mod refine;
 mod render;
 mod shop;
 mod skills;
@@ -134,12 +138,37 @@ const REFINE_FAILED: usize = 3272;
 const MVP_ITEM: [usize; 2] = [143, 144];
 const MVP_EXP: [usize; 2] = [145, 146];
 const MVP_OVERWEIGHT: usize = 147;
+/// The bank's refusals: unavailable, not enough zeny carried, too much to hold, not enough in the bank.
+const BANK_DOWN: usize = 2454;
+const BANK_NO_ZENY: usize = 2456;
+const BANK_OVERFLOW: usize = 2459;
+const BANK_SHORT: usize = 2455;
 /// Pick lists' titles: a Magnifier's, a card's.
 const ITEM_APPRAISAL: usize = 521;
 const INSERT_CARD: usize = 522;
 /// A card put in, or not.
 const CARD_DONE: usize = 493;
 const CARD_FAILED: usize = 494;
+/// The refine window's lines: nothing to refine with; the results (done, broken, lowered, failed).
+const CANT_REFINE: usize = 2970;
+const REFINE_RESULTS: [(usize, [u8; 3]); 4] = [(2971, CHAT_ITEM), (3246, CHAT_ERROR), (1537, CHAT_ERROR), (2972, CHAT_ERROR)];
+/// Making lists' titles (things to make, Arrow Crafting's), nothing to make, and the results: made, not made.
+// ponytail: the titles per list and the result lines (428/429 exist too) are estimates.
+const MAKING_TITLE: usize = 425;
+const ARROW_TITLE: usize = 658;
+const NOTHING_TO_MAKE: usize = 424;
+const MADE: usize = 431;
+const NOT_MADE: usize = 430;
+/// Blacksmith services: the lists' titles, a repair done or not, and Upgrade Weapon's results (refined, failed,
+/// skill too low, ore missing) in rathena's colors for them.
+/// The spell lists' title.
+// ponytail: one title for both; the real client's isn't known.
+const SPELL_TITLE: usize = 697;
+const REPAIR_TITLE: usize = 812;
+const REPAIRED: usize = 813;
+const NOT_REPAIRED: usize = 814;
+const UPGRADE_TITLE: usize = 910;
+const UPGRADE_RESULTS: [(usize, [u8; 3]); 4] = [(911, [0, 255, 255]), (912, [0, 205, 205]), (913, [255, 200, 200]), (914, [255, 200, 200])];
 /// Warp Portal's and Teleport's list: Teleport's random spot, and the last row.
 const RANDOM_AREA: usize = 212;
 const WARP_CANCEL: usize = 218;
@@ -180,6 +209,10 @@ const TRADE_CANCELLED: usize = 74;
 const TRADE_HEAVY: usize = 73;
 /// "Request a deal with %s".
 const TRADE_CHOICE: usize = 87;
+/// "Check %s's Equipment Info"; the Show Equipment box's answers, on and off.
+const VIEW_CHOICE: usize = 1360;
+const EQUIPMENT_SHOWN: usize = 1359;
+const EQUIPMENT_HIDDEN: usize = 1358;
 /// Vending: "%s %d sold.", "Items are sold out.", and "There are items priced 0..." (a shop refused for it).
 const VEND_SOLD: usize = 231;
 const VEND_SOLD_OUT: usize = 311;
@@ -197,6 +230,15 @@ const GUILD_CHAT: [u8; 3] = [180, 255, 180];
 /// 819 and 820 for full lists), "%s has logged in/out".
 const FRIEND_CHOICE: usize = 358;
 const FRIEND_ASKS: usize = 818;
+/// Inventory expansion vouchers: [Event], [Limited], and the coupon.
+const VOUCHERS: [u32; 3] = [25791, 25792, 25793];
+/// What a voucher adds.
+const VOUCHER_SLOTS: usize = 10;
+/// The question (the voucher, the size now, the size after), and the results: done, failed, busy, no voucher, at
+/// the most.
+// ponytail: rathena sends numbers only; the lines are matched to them by their words.
+const EXPANSION_ASKS: usize = 3561;
+const EXPANSION_RESULTS: [usize; 5] = [3566, 3562, 3563, 3564, 3565];
 const FRIEND_ONLINE: usize = 1041;
 /// Parties: "Ask %s to join your party", made, " Party has sent you an invitation...", "You left the party", party
 /// chat colors (ours, others'), the prompts' titles.
@@ -442,6 +484,9 @@ struct Game {
     item_skill: Option<net::Skill>,
     /// The deal under way; someone asking for one (name, character ID, level); whom we asked.
     trade: Option<trade::Trade>,
+    refine: Option<refine::Refine>,
+    viewing: Option<Viewed>,
+    bank: Option<bank::Bank>,
     trade_asked: Option<(String, u32, u16)>,
     trade_with: String,
     /// The status window, and its height (its background's).
@@ -473,6 +518,8 @@ struct Game {
     /// The friend list, and someone asking to be friends (account, character, name).
     friends: Vec<net::Friend>,
     friend_asked: Option<(u32, u32, String)>,
+    /// The server asks whether to use this voucher to grow the inventory.
+    expansion_asked: Option<u32>,
     /// Each party member's minimap color.
     party_dots: HashMap<u32, Texture>,
     /// Chat rooms over their owners' heads (by owner), and where their signs were last drawn (room ID, password).
@@ -481,6 +528,11 @@ struct Game {
     /// The room we're in, and the window making one.
     room: Option<chatroom::Room>,
     room_make: Option<chatroom::Make>,
+    /// The emotion list (Alt+L), when open.
+    emotion_list: Option<emotion_list::List>,
+    /// The macro window (Alt+M), when open, and the ten lines Alt+1 to Alt+0 send.
+    macro_window: Option<macros::Window>,
+    macro_lines: [String; macros::COUNT],
     /// Dev switch RUSTNAROK_CLIENT_ROOM ran.
     room_tried: bool,
     /// The right-click menu, and where a right press began (and on whom).
@@ -717,6 +769,15 @@ enum Choice {
     Befriend(u32),
     /// Invite them into the guild.
     GuildInvite(u32),
+    /// See what they wear.
+    ViewEquipment(u32),
+}
+
+/// Another player's equipment window: the window, what they wear, and their figure for its preview.
+struct Viewed {
+    window: equipment::Equipment,
+    items: Vec<net::InventoryItem>,
+    sprites: Option<SpriteSet>,
 }
 
 /// A map about to load behind the loading screen.
@@ -1072,7 +1133,24 @@ impl Game {
                 self.chat_line(message(if *effects_on { EFFECTS_ON } else { EFFECTS_OFF }), CHAT_ITEM);
                 Ok(())
             }
+            chat::Command::EmotionList => {
+                self.toggle_emotion_list();
+                Ok(())
+            }
         };
+    }
+
+    fn toggle_emotion_list(&mut self) {
+        self.emotion_list = if self.emotion_list.is_some() { None } else { Some(emotion_list::List::default()) };
+    }
+
+    /// Opens the macro window, or closes it keeping what was typed.
+    fn toggle_macro_window(&mut self) {
+        if self.macro_window.take().is_none() {
+            self.macro_window = Some(macros::Window::default());
+        } else {
+            macros::save(macros::path().as_deref(), &self.macro_lines);
+        }
     }
 
     /// Whether the pointer is over the interface (a window, the chat, a dialog) rather than the world.
@@ -1093,6 +1171,8 @@ impl Game {
             || self.mail.hit(cursor).is_some()
             || self.quest_window.hit(cursor, &self.quests).is_some()
             || self.chat.contains(cursor)
+            || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
+            || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
     }
 
     /// Moves an item between the inventory and storage, asking how many when there's more than one.
@@ -1327,6 +1407,11 @@ impl Game {
     /// Uses an inventory item: consumables are used, equipment is put on.
     fn use_item(&mut self, index: u16) {
         let Some(item) = self.inventory.get(index) else { return };
+        // ponytail: a voucher asks to grow the inventory; how the real client lets the player ask isn't known.
+        if VOUCHERS.contains(&item.id) {
+            let _ = self.session.ask_expansion();
+            return;
+        }
         match item.kind {
             net::ITEM_HEALING | net::ITEM_USABLE | net::ITEM_CASH => {
                 let _ = self.session.use_item(index, self.account_id);
@@ -1343,15 +1428,33 @@ impl Game {
         }
     }
 
-    /// The answer to a pick list: an item's inventory index, or None to cancel.
-    fn answer_pick(&mut self, answer: Option<u16>) {
-        let Some((_, picking)) = self.pick.take() else { return };
-        let _ = match (picking, answer) {
-            (Picking::Card(card), Some(equip)) => self.session.insert_card(card, equip),
-            // rathena keeps nothing for a card's list.
-            (Picking::Card(_), None) => Ok(()),
+    /// Closes the shop's windows; a market or barter tells the server, which keeps the player busy until it hears.
+    fn close_shop(&mut self) {
+        if let Some(kind) = self.shop.take().and_then(|shop| shop.market) {
+            let _ = self.session.close_market(kind);
+        }
+    }
+
+    /// The answer to a pick list: the row picked, or None to cancel.
+    fn answer_pick(&mut self, answer: Option<usize>) {
+        let Some((list, picking)) = self.pick.take() else { return };
+        let picked = answer.and_then(|row| list.items.get(row));
+        let _ = match (picking, picked) {
+            (Picking::Card(card), Some(equip)) => self.session.insert_card(card, equip.index),
+            // rathena keeps nothing for a card's list, nor for Arrow Crafting's.
+            (Picking::Card(_) | Picking::Arrow, None) => Ok(()),
             // The server waits for the Magnifier's answer, a cancel too.
-            (Picking::Identify, index) => self.session.identify(index),
+            (Picking::Identify, item) => self.session.identify(item.map(|item| item.index)),
+            // A making list unanswered isn't sent again: a cancel answers item 0.
+            (Picking::Make, item) => self.session.make(item.map_or(0, |item| item.id)),
+            (Picking::Cook(kind), item) => self.session.cook(kind, item.map_or(0, |item| item.id)),
+            (Picking::Arrow, Some(item)) => self.session.make_arrow(item.id),
+            // Both lists end with an answer, a cancel too.
+            (Picking::Repair, item) => self.session.repair(item),
+            // Both hold the player until answered; 0 starts nothing.
+            (Picking::Spell, skill) => self.session.select_autospell(skill.map_or(0, |skill| skill.id)),
+            (Picking::SkillSelect(why), skill) => self.session.select_skill(why, skill.map_or(0, |skill| skill.id as u16)),
+            (Picking::Upgrade, item) => self.session.upgrade_weapon(item.map_or(0, |item| u32::from(item.index))),
         };
     }
 
@@ -1456,6 +1559,17 @@ enum Picking {
     Card(u16),
     /// What a Magnifier appraises.
     Identify,
+    /// What to make (CZ_REQMAKINGITEM), what to cook (CZ_REQ_MAKINGITEM with the list's type), what Arrow
+    /// Crafting uses (CZ_REQ_MAKINGARROW).
+    Make,
+    Cook(u16),
+    Arrow,
+    /// What Repair Weapon mends, what Upgrade Weapon refines.
+    Repair,
+    Upgrade,
+    /// Hindsight's spell; a skill picked for a reason (Shadow Spell's), which goes back with it.
+    Spell,
+    SkillSelect(u32),
 }
 
 struct Dialog {
@@ -1578,6 +1692,8 @@ struct Assets {
     pick_list: pick_list::Assets,
     storage: storage::Assets,
     trade: trade::Assets,
+    refine: refine::Assets,
+    bank: bank::Assets,
     context_menu: menu::Assets,
     party: party::Assets,
     chatroom: chatroom::Assets,
@@ -1672,6 +1788,8 @@ impl Assets {
             pick_list: pick_list::Assets::load(gpu, grf),
             storage: storage::Assets::load(gpu, grf),
             trade: trade::Assets::load(gpu, grf),
+            refine: refine::Assets::load(gpu, grf),
+            bank: bank::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
@@ -2187,6 +2305,9 @@ impl App {
                 }
                 None if game.storage.typing => game.storage.type_text(text),
                 None if game.room_make.is_some() => game.room_make.as_mut().unwrap().type_text(text),
+                None if game.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) => {
+                    game.macro_window.as_ref().unwrap().type_text(&mut game.macro_lines, text)
+                }
                 None if game.vend_setup.as_ref().is_some_and(|setup| setup.typing) => game.vend_setup.as_mut().unwrap().type_text(text),
                 None if game.mail.typing() => game.mail.type_text(text),
                 None if game.room.is_some() => game.room.as_mut().unwrap().input.push_str(text),
@@ -2316,6 +2437,9 @@ impl App {
             game.storage.typing = false;
             if let Some(trade) = &mut game.trade {
                 trade.typing = false;
+            }
+            if let Some(bank) = &mut game.bank {
+                bank.typing = false;
             }
         }
         match &mut self.scene {
@@ -2480,6 +2604,9 @@ impl App {
                     game.trade_with = game.units.get(&id).map(|actor| actor.name.clone()).unwrap_or_default();
                     let _ = game.session.request_trade(id);
                 }
+                Some(Choice::ViewEquipment(id)) => {
+                    let _ = game.session.view_equipment(id);
+                }
                 Some(Choice::Invite(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         let _ = game.session.invite_to_party(&actor.name.clone());
@@ -2498,6 +2625,24 @@ impl App {
                 None => {}
             },
             // The room maker's fields and buttons.
+            // The emotion list: a click shows that emotion.
+            Scene::Game(game) if game.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some()) => {
+                match game.emotion_list.as_ref().unwrap().hit(cursor) {
+                    Some(emotion_list::Hit::Title(TitleHit::Close)) => game.emotion_list = None,
+                    Some(emotion_list::Hit::Emotion(kind)) => {
+                        let _ = game.session.emote(kind);
+                    }
+                    _ => {}
+                }
+            }
+            // The macro window: a line's field takes the typing.
+            Scene::Game(game) if game.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                match game.macro_window.as_ref().unwrap().hit(cursor) {
+                    Some(macros::Hit::Title(TitleHit::Close)) => game.toggle_macro_window(),
+                    Some(macros::Hit::Line(line)) => game.macro_window.as_mut().unwrap().editing = Some(line),
+                    _ => game.macro_window.as_mut().unwrap().editing = None,
+                }
+            }
             Scene::Game(game) if game.room_make.as_ref().is_some_and(|make| make.hit(cursor).is_some()) => {
                 let make = game.room_make.as_mut().unwrap();
                 let hit = make.hit(cursor).unwrap();
@@ -2546,6 +2691,16 @@ impl App {
                     }
                 }
             }
+            // Growing the inventory: OK or cancel.
+            Scene::Game(game) if game.expansion_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.expansion_asked = None;
+                        let _ = game.session.answer_expansion(yes);
+                    }
+                }
+            }
             // Someone wants to be friends: OK or cancel.
             Scene::Game(game) if game.friend_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
@@ -2574,6 +2729,54 @@ impl App {
                         game.trade_asked = None;
                         let _ = game.session.answer_trade(accept);
                     }
+                }
+            }
+            Scene::Game(game) if game.bank.as_ref().is_some_and(|bank| bank.hit(cursor).is_some()) => {
+                let carried = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
+                let bank = game.bank.as_mut().unwrap();
+                let hit = bank.hit(cursor).unwrap();
+                let account = game.account_id;
+                match bank.click(hit, carried) {
+                    Some(bank::Action::Deposit(zeny)) => {
+                        let _ = game.session.move_zeny(true, account, zeny);
+                    }
+                    Some(bank::Action::Withdraw(zeny)) => {
+                        let _ = game.session.move_zeny(false, account, zeny);
+                    }
+                    Some(bank::Action::Refuse(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+                    Some(bank::Action::Close) => {
+                        let _ = game.session.close_bank(account);
+                        game.bank = None;
+                    }
+                    None => {}
+                }
+            }
+            Scene::Game(game) if game.viewing.as_ref().is_some_and(|viewed| viewed.window.hit(cursor, &viewed.items).is_some()) => {
+                let viewed = game.viewing.as_mut().unwrap();
+                match viewed.window.hit(cursor, &viewed.items).unwrap() {
+                    equipment::Hit::Title(TitleHit::Close) => game.viewing = None,
+                    hit => {
+                        viewed.window.click(hit);
+                    }
+                }
+            }
+            Scene::Game(game) if game.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
+                let carried = &game.inventory.items;
+                let count = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
+                let window = game.refine.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                match window.click(hit, count, zeny) {
+                    Some(refine::Action::Refine { index, ore, blessings }) => {
+                        let _ = game.session.refine(index, ore, blessings);
+                    }
+                    Some(refine::Action::Refuse(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+                    // Until the server hears it, it won't open the window again and holds the player.
+                    Some(refine::Action::Close) => {
+                        let _ = game.session.close_refine();
+                        game.refine = None;
+                    }
+                    None => {}
                 }
             }
             Scene::Game(game) if game.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some()) => {
@@ -2611,7 +2814,7 @@ impl App {
                     Some(shop::Action::Deal) => {
                         let _ = shop.send(&mut game.session);
                     }
-                    Some(shop::Action::Close) => game.shop = None,
+                    Some(shop::Action::Close) => game.close_shop(),
                     Some(shop::Action::Ask(row)) => game.amount = Some(window::Amount::new(Asked::Shop(row), None)),
                     None => {}
                 }
@@ -2657,6 +2860,10 @@ impl App {
                                     game.ask_guild_pages();
                                 }
                             }
+                            // The bank opens when the server says so: it answers in its own words where banking is off.
+                            Some("bank") => {
+                                let _ = game.session.open_bank(game.account_id);
+                            }
                             Some("mail") => {
                                 let action = game.mail.toggle();
                                 game.mail_action(action);
@@ -2678,6 +2885,10 @@ impl App {
                     }
                     Panel::Equipment => {
                         let hit = game.equipment.hit(cursor, &game.inventory.items).unwrap();
+                        // The box changes when the server answers.
+                        if hit == equipment::Hit::ShowBox {
+                            let _ = game.session.show_equipment(!game.equipment.shown);
+                        }
                         if let Some(index) = game.equipment.click(hit) {
                             let _ = game.session.take_off(index);
                         }
@@ -2947,6 +3158,8 @@ impl App {
                 {
                     choices.extend([None, Some((fill(PARTY_ASK), Choice::Invite(id)))]);
                 }
+                // ponytail: last, under a line; where the real client lists it isn't known.
+                choices.extend([None, Some((fill(VIEW_CHOICE), Choice::ViewEquipment(id)))]);
                 game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             }
             // A right click on an item (inventory, storage or what's worn) describes it.
@@ -3038,8 +3251,13 @@ impl App {
                 // An item let go over the storage goes in; a stored one let go over the inventory comes out.
                 let on_trade = game.trade.as_ref().is_some_and(|trade| trade.hit(self.cursor).is_some());
                 let on_mail = matches!(game.mail.hit(self.cursor), Some(mail::Hit::Compose(_)));
+                let on_refine = game.refine.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 match (item, game.window_at(self.cursor)) {
                     (Some((Dragged::Item(index), _, true)), _) if on_mail => game.move_item(Asked::Mail(index)),
+                    // Into the refine machine: the server lists what refines it.
+                    (Some((Dragged::Item(index), _, true)), _) if on_refine => {
+                        let _ = game.session.refine_select(index);
+                    }
                     (Some((Dragged::Item(index), _, true)), _) if on_trade => {
                         if let Some(id) = game.offer(index) {
                             game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
@@ -3232,6 +3450,38 @@ impl App {
         }
     }
 
+    /// Sends what's on the chat's input line, as Enter does: the client's sound commands (/music, /sound, /bv, /v),
+    /// else `Game::send_chat` (party with `party`, guild with `guild`).
+    fn send_chat_input(&mut self, party: bool, guild: bool) {
+        let Scene::Game(game) = &mut self.scene else { return };
+        if let Some(shown) = self.sound.command(game.chat.input.trim()) {
+            game.chat.input.clear();
+            if let Some(audio) = &mut self.audio {
+                audio.set(&self.sound);
+            }
+            self.sound.save();
+            if let Some(id) = shown {
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
+            }
+        } else if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.effects_on) {
+            game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+        }
+    }
+
+    /// Alt+1 to Alt+0: sends macro line `line` as if typed and sent with Enter, keeping what the player was typing.
+    fn send_macro(&mut self, line: usize) {
+        let Scene::Game(game) = &mut self.scene else { return };
+        let text = game.macro_lines[line].clone();
+        if text.trim().is_empty() {
+            return;
+        }
+        let typing = std::mem::replace(&mut game.chat.input, text);
+        self.send_chat_input(false, false);
+        if let Scene::Game(game) = &mut self.scene {
+            game.chat.input = typing;
+        }
+    }
+
     fn key(&mut self, event: &control::KeyPress) {
         if event.state != ElementState::Pressed {
             return;
@@ -3271,7 +3521,16 @@ impl App {
                 }
                 return;
             }
-            // Alt+1 to Alt+0: the first ten emotions.
+            // Alt+L: the emotion list; Alt+M: the macro window.
+            if event.physical_key == PhysicalKey::Code(KeyCode::KeyL) {
+                game.toggle_emotion_list();
+                return;
+            }
+            if event.physical_key == PhysicalKey::Code(KeyCode::KeyM) {
+                game.toggle_macro_window();
+                return;
+            }
+            // Alt+1 to Alt+0: the ten macro lines.
             let digits = [
                 KeyCode::Digit1,
                 KeyCode::Digit2,
@@ -3285,9 +3544,9 @@ impl App {
                 KeyCode::Digit0,
             ];
             if let PhysicalKey::Code(code) = event.physical_key
-                && let Some(kind) = digits.iter().position(|digit| *digit == code)
+                && let Some(line) = digits.iter().position(|digit| *digit == code)
             {
-                let _ = game.session.emote(kind as u8);
+                self.send_macro(line);
                 return;
             }
             // Alt+U: the quest window.
@@ -3420,6 +3679,11 @@ impl App {
                     _ => {}
                 }
             }
+            // The question holds the player busy until it's answered.
+            Scene::Game(game) if game.expansion_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.expansion_asked = None;
+                let _ = game.session.answer_expansion(*key == Key::Named(NamedKey::Enter));
+            }
             Scene::Game(game) if game.amount.is_some() => match key {
                 Key::Named(NamedKey::Enter) => game.answer_amount(true),
                 Key::Named(NamedKey::Escape) => game.answer_amount(false),
@@ -3445,6 +3709,18 @@ impl App {
                 Key::Named(NamedKey::Tab) => game.mail.enter(true),
                 _ => game.mail.type_text(event.text.as_deref().unwrap_or_default()),
             },
+            // A macro line being edited takes the typing; Enter or Esc ends it.
+            Scene::Game(game) if game.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) => {
+                let window = game.macro_window.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Escape | NamedKey::Enter) => {
+                        window.editing = None;
+                        macros::save(macros::path().as_deref(), &game.macro_lines);
+                    }
+                    Key::Named(NamedKey::Backspace) => window.backspace(&mut game.macro_lines),
+                    _ => window.type_text(&mut game.macro_lines, event.text.as_deref().unwrap_or_default()),
+                }
+            }
             Scene::Game(game) if game.room_make.is_some() => {
                 let make = game.room_make.as_mut().unwrap();
                 match key {
@@ -3475,6 +3751,16 @@ impl App {
                     _ => {}
                 }
             }
+            Scene::Game(game) if game.bank.as_ref().is_some_and(|bank| bank.typing) => {
+                let bank = game.bank.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Enter | NamedKey::Escape) => bank.typing = false,
+                    Key::Named(NamedKey::Backspace) => {
+                        bank.typed.pop();
+                    }
+                    _ => bank.type_text(event.text.as_deref().unwrap_or_default()),
+                }
+            }
             Scene::Game(game) if game.trade.as_ref().is_some_and(|trade| trade.typing) => {
                 let trade = game.trade.as_mut().unwrap();
                 match key {
@@ -3503,21 +3789,7 @@ impl App {
                 Key::Named(NamedKey::Tab) => game.chat.naming = !game.chat.naming,
                 Key::Named(NamedKey::Insert) => game.toggle_sit(),
                 Key::Named(NamedKey::Enter) if game.chat.naming => game.chat.naming = false,
-                Key::Named(NamedKey::Enter) => {
-                    // The sound commands (/music, /sound, /bv, /v) are the client's own.
-                    if let Some(shown) = self.sound.command(game.chat.input.trim()) {
-                        game.chat.input.clear();
-                        if let Some(audio) = &mut self.audio {
-                            audio.set(&self.sound);
-                        }
-                        self.sound.save();
-                        if let Some(id) = shown {
-                            game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
-                        }
-                    } else if let Some(id) = game.send_chat(self.modifiers.control_key(), self.modifiers.alt_key(), &self.messages, &mut self.effects_on) {
-                        game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
-                    }
-                }
+                Key::Named(NamedKey::Enter) => self.send_chat_input(self.modifiers.control_key(), self.modifiers.alt_key()),
                 Key::Named(NamedKey::Escape) if game.world_map.is_some() => game.world_map = None,
                 Key::Named(NamedKey::Escape) if game.pick.is_some() => game.answer_pick(None),
                 Key::Named(NamedKey::Escape) if game.targeting.is_some() => game.targeting = None,
@@ -3821,6 +4093,9 @@ impl App {
                     card_asked: None,
                     item_skill: None,
                     trade: None,
+                    refine: None,
+                    viewing: None,
+                    bank: None,
                     trade_asked: None,
                     trade_with: String::new(),
                     menu: None,
@@ -3843,6 +4118,7 @@ impl App {
                     party_dots: HashMap::new(),
                     friends: Vec::new(),
                     friend_asked: None,
+                    expansion_asked: None,
                     vend_setup: None,
                     my_shop: None,
                     mail: mail::Mail::default(),
@@ -3864,6 +4140,9 @@ impl App {
                     sign_rects: Vec::new(),
                     room: None,
                     room_make: None,
+                    emotion_list: None,
+                    macro_window: None,
+                    macro_lines: macros::load(macros::path().as_deref()),
                     room_tried: false,
                     windows: vec![
                         Panel::Hotkeys,
@@ -3985,6 +4264,13 @@ impl App {
 
         let Scene::Game(game) = &mut self.scene else { return };
         let (grf, job_names, look_tables) = (&self.grf, &self.job_names, &self.look_tables);
+        // Which kind of pick a making list is (read before the event is taken apart).
+        let event_kind = match &event {
+            MapEvent::MakeList(_) => Some(Picking::Make),
+            MapEvent::CookList { kind, .. } => Some(Picking::Cook(*kind)),
+            MapEvent::ArrowList(_) => Some(Picking::Arrow),
+            _ => None,
+        };
         let (gpu, table) = (self.gpu.as_ref(), &self.effect_table);
         // The effects a skill plays at a moment on a unit (`role` as in the client's skill effect table).
         let skill_effects = |game: &mut Game, skill: u16, role: &str, unit: u32| {
@@ -4051,6 +4337,97 @@ impl App {
                     actor.walk(path);
                 }
                 game.want_emblem(unit.guild, unit.emblem);
+            }
+            // The bank: open on the server's word, then ask the balance; refusals by rathena's reasons.
+            // ponytail: which message goes with which reason is read off their words.
+            MapEvent::BankOpened => {
+                game.bank = Some(bank::Bank::new());
+                let _ = game.session.check_bank(game.account_id);
+            }
+            MapEvent::BankBalance(balance) => {
+                if let Some(bank) = &mut game.bank {
+                    bank.balance = balance;
+                }
+            }
+            MapEvent::BankMoved { deposit, reason, balance, zeny } => {
+                if let Some(bank) = &mut game.bank {
+                    bank.balance = balance;
+                }
+                game.status.insert(net::STATUS_ZENY, i64::from(zeny));
+                let refusal = match (deposit, reason) {
+                    (_, 0) => None,
+                    (true, 2) => Some(BANK_NO_ZENY),
+                    (true, 3) => Some(BANK_OVERFLOW),
+                    (false, 1) => Some(BANK_SHORT),
+                    _ => Some(BANK_DOWN),
+                };
+                if let Some(id) = refusal {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
+            // Another player's equipment: their window with their figure, its weapon and shield from what they wear.
+            MapEvent::OtherEquipment(equipped) => {
+                let held = |location: u32| equipped.items.iter().find(|(item, _)| item.worn & location != 0).map_or(0, |(_, look)| u32::from(*look));
+                let look = Look {
+                    job: equipped.job,
+                    sex: equipped.sex,
+                    hair: equipped.hair,
+                    hair_color: equipped.hair_color,
+                    clothes_color: equipped.clothes_color,
+                    weapon: held(2),
+                    shield: held(32),
+                    head_top: equipped.head_top,
+                    head_mid: equipped.head_mid,
+                    head_bottom: equipped.head_bottom,
+                    robe: equipped.robe,
+                };
+                game.viewing = Some(Viewed {
+                    window: equipment::Equipment::of(equipped.name),
+                    items: equipped.items.into_iter().map(|(item, _)| item).collect(),
+                    sprites: SpriteSet::player(grf, &look, look_tables),
+                });
+            }
+            MapEvent::ShowEquipment { shown, answer } => {
+                game.equipment.shown = shown;
+                if answer {
+                    let id = if shown { EQUIPMENT_SHOWN } else { EQUIPMENT_HIDDEN };
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
+                }
+            }
+            MapEvent::ExpansionAsked { result: 0, voucher } => game.expansion_asked = Some(voucher),
+            // The results, done (0) or why not; the question's own result 0 is handled above.
+            MapEvent::ExpansionAsked { result, .. } | MapEvent::ExpansionDone(result) => {
+                let id = EXPANSION_RESULTS.get(usize::from(result)).copied().unwrap_or(EXPANSION_RESULTS[1]);
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
+            }
+            // The refine window opens with the inventory beside it.
+            MapEvent::RefineOpen => {
+                game.refine = Some(refine::Refine::new());
+                game.inventory.frame.open = true;
+                game.raise(Panel::Inventory);
+            }
+            MapEvent::RefineMaterials { index, blessings, materials } => {
+                if materials.is_empty() {
+                    game.chat_line(self.messages.get(CANT_REFINE).cloned().unwrap_or_default(), CHAT_ERROR);
+                } else if let Some(window) = &mut game.refine {
+                    window.listed(index, blessings, materials);
+                }
+            }
+            // Any refine (the window, Upgrade Weapon, @refine): the item's new level; a broken one leaves the window.
+            MapEvent::Refined { result, index, refine } => {
+                if result != 1
+                    && let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index)
+                {
+                    item.refine = refine as u8;
+                }
+                if let Some(window) = &mut game.refine {
+                    if result == 1 {
+                        window.clear();
+                    }
+                    if let Some(&(id, color)) = REFINE_RESULTS.get(usize::from(result)) {
+                        game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+                    }
+                }
             }
             MapEvent::Spirits { id, count } => {
                 let key = (id != game.account_id).then_some(id);
@@ -4125,7 +4502,9 @@ impl App {
                 }
                 game.player.revive();
                 // The NPC is left behind: its shop and its buy-or-sell question close (the server doesn't say so).
-                game.shop = None;
+                game.close_shop();
+                // rathena forgets the refine window on a map change.
+                game.refine = None;
                 game.deal_choice = None;
                 if map == game.map {
                     // A teleport on the same map: no loading, but the server takes the player off the map until
@@ -4411,6 +4790,7 @@ impl App {
                         kind: good.item.kind,
                         identified: good.item.identified,
                         refine: good.item.refine,
+                        ..Default::default()
                     })
                     .collect();
                 let mut store = shop::Shop::new(false, offers);
@@ -4911,6 +5291,55 @@ impl App {
                     game.pick = Some((pick_list::PickList::new(ITEM_APPRAISAL, items), Picking::Identify));
                 }
             }
+            // What to make, cook or craft: the pick list with the items by ID.
+            MapEvent::MakeList(items) | MapEvent::CookList { items, .. } | MapEvent::ArrowList(items) if items.is_empty() => {
+                game.chat_line(self.messages.get(NOTHING_TO_MAKE).cloned().unwrap_or_default(), CHAT_ERROR);
+                // An empty making list still waits for an answer.
+                let _ = match event_kind {
+                    Some(Picking::Make) => game.session.make(0),
+                    Some(Picking::Cook(kind)) => game.session.cook(kind, 0),
+                    _ => Ok(()),
+                };
+            }
+            MapEvent::MakeList(items) | MapEvent::CookList { items, .. } | MapEvent::ArrowList(items) => {
+                let picking = event_kind.unwrap_or(Picking::Arrow);
+                let rows = items.into_iter().map(|id| net::InventoryItem { id, identified: true, ..Default::default() }).collect();
+                let mut list = pick_list::PickList::new(if matches!(picking, Picking::Arrow) { ARROW_TITLE } else { MAKING_TITLE }, rows);
+                list.making = !matches!(picking, Picking::Arrow);
+                game.pick = Some((list, picking));
+            }
+            // Blacksmith services: the target's broken items, the caster's weapons; an empty list opens nothing.
+            // ponytail: the results in the chat; whether the real client uses a box isn't known.
+            // Skills to pick (Hindsight's spells, Shadow Spell's copies): the pick list with skill rows.
+            MapEvent::SpellList(skills) => {
+                let rows = skills.into_iter().map(|id| net::InventoryItem { id, identified: true, ..Default::default() }).collect();
+                let mut list = pick_list::PickList::new(SPELL_TITLE, rows);
+                list.skills = true;
+                game.pick = Some((list, Picking::Spell));
+            }
+            MapEvent::SkillSelect { why, skills } => {
+                let rows = skills.into_iter().map(|id| net::InventoryItem { id: u32::from(id), identified: true, ..Default::default() }).collect();
+                let mut list = pick_list::PickList::new(SPELL_TITLE, rows);
+                list.skills = true;
+                game.pick = Some((list, Picking::SkillSelect(why)));
+            }
+            MapEvent::RepairList(items) | MapEvent::UpgradeList(items) if items.is_empty() => {}
+            MapEvent::RepairList(items) => game.pick = Some((pick_list::PickList::new(REPAIR_TITLE, items), Picking::Repair)),
+            MapEvent::UpgradeList(items) => game.pick = Some((pick_list::PickList::new(UPGRADE_TITLE, items), Picking::Upgrade)),
+            MapEvent::Repaired { ok, .. } => {
+                let (id, color) = if ok { (REPAIRED, CHAT_ITEM) } else { (NOT_REPAIRED, CHAT_ERROR) };
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+            }
+            MapEvent::Upgraded { result, item } => {
+                let (id, color) = UPGRADE_RESULTS.get(result as usize).copied().unwrap_or(UPGRADE_RESULTS[1]);
+                let name = inventory::item_name(&self.items, item, true, 0);
+                game.chat_line(messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]), color);
+            }
+            MapEvent::Made { result, item } => {
+                let name = inventory::item_name(&self.items, item, true, 0);
+                let (id, color) = if result % 2 == 0 { (MADE, CHAT_ITEM) } else { (NOT_MADE, CHAT_ERROR) };
+                game.chat_line(messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]), color);
+            }
             MapEvent::CardList(indexes) => {
                 let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
                 if let Some(card) = game.card_asked.take()
@@ -5204,7 +5633,7 @@ impl App {
             MapEvent::ShopGoods(goods) => {
                 let offers = goods
                     .into_iter()
-                    .map(|goods| shop::Offer { item: goods.item, price: goods.discounted, index: 0, have: 0, kind: goods.kind, identified: true, refine: 0 })
+                    .map(|goods| shop::Offer { item: goods.item, price: goods.discounted, kind: goods.kind, identified: true, ..Default::default() })
                     .collect();
                 game.shop = Some(shop::Shop::new(false, offers));
                 game.auto_deal();
@@ -5214,11 +5643,77 @@ impl App {
                     .into_iter()
                     .filter_map(|(index, _, price)| {
                         let item = game.inventory.get(index)?;
-                        Some(shop::Offer { item: item.id, price, index, have: item.amount, kind: item.kind, identified: item.identified, refine: item.refine })
+                        Some(shop::Offer {
+                            item: item.id,
+                            price,
+                            index,
+                            have: item.amount,
+                            kind: item.kind,
+                            identified: item.identified,
+                            refine: item.refine,
+                            ..Default::default()
+                        })
                     })
                     .collect();
                 game.shop = Some(shop::Shop::new(true, offers));
                 game.auto_deal();
+            }
+            // Markets and barters: the plain shop's windows with stock and costs; they stay open after a purchase.
+            MapEvent::Market { kind, goods } => {
+                let offers = goods
+                    .into_iter()
+                    .map(|goods| {
+                        // The inventory index of what it costs: the field's name says so; rathena doesn't read it.
+                        let cost_index = goods
+                            .costs
+                            .first()
+                            .and_then(|&(item, _)| game.inventory.items.iter().find(|carried| carried.id == item))
+                            .map_or(0, |carried| carried.index);
+                        shop::Offer {
+                            item: goods.item,
+                            price: goods.zeny,
+                            kind: goods.kind,
+                            identified: true,
+                            stock: goods.stock,
+                            costs: goods.costs,
+                            shop_index: goods.index,
+                            cost_index,
+                            ..Default::default()
+                        }
+                    })
+                    .collect();
+                let mut store = shop::Shop::new(false, offers);
+                store.market = Some(kind);
+                game.shop = Some(store);
+            }
+            MapEvent::MarketBought { ok, items } => {
+                if ok && let Some(shop) = &mut game.shop {
+                    shop.bought(&items.iter().map(|&(item, amount)| (item, u32::from(amount))).collect::<Vec<_>>());
+                }
+                // ponytail: rathena sends 0 or 0xFFFF only; the lines are the plain shop's.
+                let (id, color) = if ok { (54, CHAT_ITEM) } else { (57, CHAT_ERROR) };
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+            }
+            // A barter's answer: its own lines (by their words), the window stays with what's left.
+            MapEvent::Bought(result)
+                if game.shop.as_ref().is_some_and(|shop| matches!(shop.market, Some(net::MarketKind::Barter | net::MarketKind::Expanded))) =>
+            {
+                let (id, color) = match result {
+                    0 => (3555, CHAT_ITEM),
+                    1 => (55, CHAT_ERROR),
+                    2 => (56, CHAT_ERROR),
+                    11 => (3554, CHAT_ERROR),
+                    13 => (3557, CHAT_ERROR),
+                    14 => (3556, CHAT_ERROR),
+                    _ => (57, CHAT_ERROR),
+                };
+                if result == 0
+                    && let Some(shop) = &mut game.shop
+                {
+                    let deal: Vec<_> = shop.deal.iter().map(|&(offer, amount)| (shop.offers[offer].item, amount)).collect();
+                    shop.bought(&deal);
+                }
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
             }
             MapEvent::Bought(result) | MapEvent::Sold(result) => {
                 // The client's words for how it went.
@@ -5476,6 +5971,11 @@ impl App {
         }
         // The equipment window shows the character standing, facing front.
         let preview_feet = game.equipment.preview_feet();
+        let viewed_feet = game.viewing.as_ref().and_then(|viewed| viewed.window.preview_feet());
+        let viewed_placements = match (viewed_feet, game.viewing.as_mut().and_then(|viewed| viewed.sprites.as_mut())) {
+            (Some(_), Some(sprites)) => sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
+            _ => Vec::new(),
+        };
         let preview_placements = match (preview_feet, &mut game.player.sprites) {
             (Some(_), Some(sprites)) => sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
             _ => Vec::new(),
@@ -5612,6 +6112,11 @@ impl App {
             placements.iter().map(move |(key, position, size)| (sprites.texture(*key), *feet, *position, *size, [1.0; 4]))
         }));
         billboards.extend(in_front);
+        // The emotion list's pictures, posed while the sprite can still decode them.
+        let emotion_icons = match (&game.emotion_list, &mut game.emotion_sprite) {
+            (Some(list), Some(sprite)) => list.icons(gpu, sprite),
+            _ => Vec::new(),
+        };
         // Emotions play once over heads.
         let mut shown = Vec::new();
         if let Some(sprite) = &mut game.emotion_sprite {
@@ -5710,6 +6215,12 @@ impl App {
             }
         }
 
+        let viewed_preview: Vec<Sprite> = match (viewed_feet, game.viewing.as_ref().and_then(|viewed| viewed.sprites.as_ref())) {
+            (Some(feet), Some(sprites)) => {
+                viewed_placements.iter().map(|(key, position, size)| (sprites.texture(*key), offset(feet, *position), *size)).collect()
+            }
+            _ => Vec::new(),
+        };
         let preview: Vec<Sprite> = match (preview_feet, &game.player.sprites) {
             (Some(feet), Some(sprites)) => {
                 preview_placements.iter().map(|(key, position, size)| (sprites.texture(*key), offset(feet, *position), *size)).collect()
@@ -5904,7 +6415,8 @@ impl App {
             .iter()
             .chain(game.cart.items.iter().filter(|_| game.cart.frame.open))
             .map(|item| (item.id, item.identified))
-            .chain(game.hotkeys.keys.iter().flatten().filter(|key| !key.skill).map(|key| (key.id, true)));
+            .chain(game.hotkeys.keys.iter().flatten().filter(|key| !key.skill).map(|key| (key.id, true)))
+            .chain(game.viewing.iter().flat_map(|viewed| viewed.items.iter()).map(|item| (item.id, item.identified)));
         for (id, identified) in shown_items {
             if let Some(info) = items.get(&id) {
                 let path = inventory::icon_path(info, identified);
@@ -5921,7 +6433,8 @@ impl App {
         let status_paths =
             game.status_icons.iter().filter_map(|(kind, ..)| status_icon_files.get(kind).map(|(_, file)| format!("data\\texture\\effect\\{file}")));
         let shop_icons = game.shop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default();
-        let pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items)).unwrap_or_default();
+        let mut pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
+        pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         if game.vend_setup.is_some() {
@@ -6142,7 +6655,7 @@ impl App {
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
         if let Some((list, _)) = &game.pick {
-            list.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, messages, font, pointer);
+            list.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, skill_info, messages, font, pointer);
         }
         if let Some(shop) = &game.shop {
             shop.draw(&mut shop_layer, &assets.chrome, &assets.shop, icons, items, messages, font, pointer);
@@ -6165,9 +6678,38 @@ impl App {
             shop.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
         }
         game.quest_window.draw(&mut shop_layer, &assets.chrome, &assets.quest, font, messages, &game.quests, quest_texts, pointer.0);
+        if let Some(list) = &game.emotion_list {
+            list.draw(&mut shop_layer, &assets.chrome, font, messages, game.emotion_sprite.as_ref(), &emotion_icons, pointer.0);
+        }
+        if let Some(window) = &game.macro_window {
+            window.draw(&mut shop_layer, &assets.chrome, font, messages, &game.macro_lines, pointer.0, caret);
+        }
         game.mail.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.mail, icons, items, font, messages, pc_job_names, pointer, caret);
         if let Some(make) = &game.room_make {
             make.draw(&mut shop_layer, &assets.chrome, &assets.chatroom, messages, pointer, caret);
+        }
+        if let Some(bank) = &game.bank {
+            let carried = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
+            bank.draw(&mut shop_layer, &assets.chrome, &assets.bank, messages, font, pointer, caret, carried);
+        }
+        if let Some(viewed) = &game.viewing {
+            let window = &viewed.window;
+            window.draw(
+                &mut shop_layer,
+                &mut tooltip,
+                &assets.chrome,
+                &assets.equipment,
+                icons,
+                items,
+                messages,
+                font,
+                pointer.0,
+                &viewed.items,
+                viewed_preview,
+            );
+        }
+        if let Some(window) = &game.refine {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.refine, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(trade) = &game.trade {
             trade.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);
@@ -6192,6 +6734,26 @@ impl App {
             let question = format!("({name}){}", message(GUILD_INVITED));
             for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
+        // Growing the inventory: which voucher, from how many slots to how many, in the message's colors.
+        if let Some(voucher) = game.expansion_asked {
+            let dialog = dialog_position(&assets.message);
+            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
+            let now = inventory::BASE_SLOTS + usize::from(game.inventory.expansion);
+            let name = inventory::item_name(items, voucher, true, 0);
+            let question = messages::fill(message(EXPANSION_ASKS), &[&name, &now, &(now + VOUCHER_SLOTS)]);
+            for (row, pieces) in wrap_colored(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
+                let mut x = dialog[0] + MESSAGE_TEXT[0];
+                for (color, piece) in pieces {
+                    let width = font.width(&piece);
+                    // The message's black is the box's text color.
+                    let color = if color == [0, 0, 0] { TEXT_COLOR } else { color };
+                    shop_layer.texts.push((piece, [x, dialog[1] + MESSAGE_TEXT[1] + row as f32 * font.line_height()], color));
+                    x += width;
+                }
             }
         }
         // Someone asks to be friends.
