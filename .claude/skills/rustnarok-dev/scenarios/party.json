@@ -1,0 +1,136 @@
+{
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0,
+    "env": {
+      "RUSTNAROK_CLIENT_PARTY": "accept,window"
+    }
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "type": "/leave"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "as": "second",
+      "type": "/leave"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "say": "@recall Rndevtwo"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "type": "/organize QAParty"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "click_on": {
+        "unit": "Rndevtwo"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "party-menu"
+    },
+    {
+      "click_on": {
+        "unit": "Rndevtwo",
+        "offset": [
+          20,
+          52
+        ]
+      }
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "expect": {
+        "chat": "Request for party accepted."
+      }
+    },
+    {
+      "as": "second",
+      "expect": {
+        "windows_open": [
+          "Party"
+        ]
+      }
+    },
+    {
+      "key": "Alt+Z"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "as": "second",
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "first-party"
+    },
+    {
+      "as": "second",
+      "shot": "second-party"
+    },
+    {
+      "as": "second",
+      "type": "/leave"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "type": "/leave"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    }
+  ],
+  "about": "Two players form a party: the first organizes it and invites through the right-click menu, the second accepts; both party windows list both members."
+}
