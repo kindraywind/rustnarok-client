@@ -101,6 +101,34 @@
       "threshold": 20
     },
     {
+      "click_on": {
+        "button": "skill"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "key": "Ctrl+R"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Mercenary",
+          "MercenarySkills"
+        ]
+      }
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    },
+    {
       "say": "@monster poring 1"
     },
     {
@@ -132,6 +160,12 @@
           "mercenary.following": false
         }
       }
+    },
+    {
+      "key": "Ctrl+R"
+    },
+    {
+      "wait": 300
     },
     {
       "click_on": {
