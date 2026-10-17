@@ -63,6 +63,7 @@ mod material;
 mod menu;
 mod mercenary;
 mod minimap;
+mod monster_info;
 mod options;
 mod party;
 mod pet;
@@ -376,6 +377,10 @@ const BOUND: usize = 1328;
 const RENTAL_MINUTES: usize = 1256;
 const RENTAL_SECONDS: usize = 1270;
 const RENTAL_ENDED: usize = 1258;
+/// The Convex Mirror: no boss here, the boss will show on the minimap; its status icon (EFST_CASH_BOSS_ALARM).
+const NO_BOSS: usize = 1223;
+const BOSS_SHOWN: usize = 1225;
+const BOSS_ALARM: u16 = 253;
 const COOLDOWN_LEFT: usize = 3230;
 /// The spark of a landed hit, and a warp portal's rings.
 const EF_HIT1: u32 = 0;
@@ -553,6 +558,9 @@ struct Game {
     materials: Option<material::Materials>,
     /// The Lucky Roulette's window.
     roulette: Option<roulette::Roulette>,
+    /// Sense's window, and the map's boss as the Convex Mirror shows it (name and cell).
+    monster_window: Option<monster_info::MonsterWindow>,
+    boss: Option<(String, [i32; 2])>,
     viewing: Option<Viewed>,
     bank: Option<bank::Bank>,
     trade_asked: Option<(String, u32, u16)>,
@@ -1348,6 +1356,7 @@ impl Game {
             || self.achievement_window.covers(cursor)
             || self.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || roulette::icon_hit(cursor)
+            || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.chat.contains(cursor)
             || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -3088,6 +3097,12 @@ impl App {
                     }
                 }
             }
+            // Sense's window: its close button.
+            Scene::Game(game) if game.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                if game.monster_window.as_ref().unwrap().hit(cursor) == Some(true) {
+                    game.monster_window = None;
+                }
+            }
             // The Lucky Roulette: START spins, Get Prize claims (neither while the wheel spins), close lets it go.
             Scene::Game(game) if game.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
                 let window = game.roulette.as_mut().unwrap();
@@ -3508,6 +3523,9 @@ impl App {
             if let Some(window) = &mut game.roulette {
                 window.frame.drag_to(self.cursor, roulette::HEIGHT);
             }
+            if let Some(window) = &mut game.monster_window {
+                window.frame.drag_to(self.cursor, monster_info::MonsterWindow::height());
+            }
             if let Some(window) = &mut game.audio_window
                 && window.drag_to(self.cursor, &mut self.sound)
                 && let Some(audio) = &mut self.audio
@@ -3782,7 +3800,8 @@ impl App {
                     | game.mail.drop_drag()
                     | game.quest_window.frame.drop_drag()
                     | game.achievement_window.frame.drop_drag()
-                    | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag());
+                    | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag());
                 // A slider let go keeps its volume for next time.
                 let slid = game.audio_window.as_mut().is_some_and(options::AudioWindow::drop_drag);
                 if slid {
@@ -3874,6 +3893,15 @@ impl App {
             && game.mail.hit(cursor).is_some()
         {
             game.mail.start_drag(cursor);
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(window) = &mut game.monster_window
+            && window.hit(cursor) == Some(false)
+        {
+            if window.frame.local(cursor, monster_info::MonsterWindow::height()).and_then(|local| window.frame.title_hit(local)) == Some(TitleHit::Title) {
+                window.frame.start_drag(cursor);
+            }
             return;
         }
         if let Scene::Game(game) = &mut self.scene
@@ -4367,6 +4395,7 @@ impl App {
                 Key::Named(NamedKey::Escape) if game.pick.is_some() => game.answer_pick(None),
                 Key::Named(NamedKey::Escape) if game.capturing => game.capturing = false,
                 Key::Named(NamedKey::Escape) if game.roulette.is_some() => game.close_roulette(),
+                Key::Named(NamedKey::Escape) if game.monster_window.is_some() => game.monster_window = None,
                 Key::Named(NamedKey::Escape) if game.targeting.is_some() => game.targeting = None,
                 Key::Named(NamedKey::Escape) if !game.chat.typing().is_empty() => game.chat.typing().clear(),
                 Key::Named(NamedKey::Escape) => game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: false }) },
@@ -4684,6 +4713,8 @@ impl App {
                     refine: None,
                     materials: None,
                     roulette: None,
+                    monster_window: None,
+                    boss: None,
                     viewing: None,
                     bank: None,
                     trade_asked: None,
@@ -5137,6 +5168,8 @@ impl App {
                 // rathena forgets the refine window on a map change; the material window and the roulette go too.
                 game.refine = None;
                 game.roulette = None;
+                // The mirror's status ends with the warp.
+                game.boss = None;
                 game.materials = None;
                 game.deal_choice = None;
                 if map == game.map {
@@ -6149,6 +6182,30 @@ impl App {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
             }
+            // Sense: the window, named after a unit on screen of that class (the packet has no name).
+            // ponytail: where the real client takes the name from isn't knowable.
+            MapEvent::MonsterInfo(info) => {
+                let name = game.units.values().find(|actor| actor.job == info.class).map(|actor| actor.name.clone()).unwrap_or_default();
+                game.monster_window = Some(monster_info::MonsterWindow::new(info, name));
+            }
+            // The Convex Mirror: none here; the boss found, moving; dead, back in a while.
+            // ponytail: the lines in the server lines' yellow.
+            MapEvent::BossInfo { kind, cell, hours, minutes, name } => {
+                let message = |id: usize| self.messages.get(id).map_or("", String::as_str);
+                match kind {
+                    0 => game.chat_line(message(NO_BOSS).to_owned(), CHAT_BROADCAST),
+                    2 => {
+                        game.chat_line(messages::fill(message(BOSS_SHOWN), &[&name]), CHAT_BROADCAST);
+                        game.boss = Some((name, cell));
+                    }
+                    1 => game.boss = Some((name, cell)),
+                    _ => {
+                        game.boss = None;
+                        let line = messages::fill(message(monster_info::boss_line(hours, minutes)), &[&name, &hours, &minutes]);
+                        game.chat_line(line, CHAT_BROADCAST);
+                    }
+                }
+            }
             MapEvent::IdentifyList(indexes) => {
                 let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
                 if items.is_empty() {
@@ -6424,6 +6481,10 @@ impl App {
                 }
             }
             MapEvent::StatusIcon { kind, id, on, left_ms, .. } => {
+                // The mirror's 10 minutes are over: the boss leaves the minimap.
+                if id == game.account_id && kind == BOSS_ALARM && !on {
+                    game.boss = None;
+                }
                 if id == game.account_id {
                     game.status_icons.retain(|(icon, ..)| *icon != kind);
                     if on && self.status_icon_files.contains_key(&kind) {
@@ -7431,7 +7492,8 @@ impl App {
             });
         }
         let dots: Vec<_> = members.iter().map(|(account, cell)| (*cell, &game.party_dots[account])).collect();
-        minimap::draw(&mut chat_layer, &assets.minimap, game.minimap.as_ref(), size, game.player.cell, game.player.direction, &marks, &dots);
+        let boss = game.boss.as_ref().map(|(_, cell)| *cell);
+        minimap::draw(&mut chat_layer, &assets.minimap, game.minimap.as_ref(), size, game.player.cell, game.player.direction, &marks, &dots, boss);
         // Status icons down the right, each with the clock of its time (orange in the last minute).
         let per_column = ((SCREEN[1] - STATUS_TOP) / STATUS_STEP[1]) as usize;
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
@@ -7690,6 +7752,9 @@ impl App {
         );
         // ponytail: the roulette's icon stands left of the minimap; where the real client puts it isn't known.
         roulette::draw_icon(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.roulette, font, messages, pointer.0);
+        if let Some(window) = &game.monster_window {
+            window.draw(&mut shop_layer, &assets.chrome, font, messages, pointer.0);
+        }
         if let Some(window) = &game.roulette {
             window.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.roulette, icons, items, font, messages, control::now(), pointer);
         }

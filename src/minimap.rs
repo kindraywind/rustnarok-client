@@ -17,6 +17,8 @@ pub struct Assets {
     arrows: Vec<Texture>,
     buttons: Vec<Texture>,
     black: Texture,
+    /// The map's boss, where the Convex Mirror shows it.
+    boss: Texture,
 }
 
 /// Turns an image a whole number of eighths around its center (nearest neighbor), keeping its size.
@@ -40,6 +42,7 @@ impl Assets {
             arrows: (0..8).map(|eighths| gpu.texture(&rotate(&arrow, eighths), false)).collect(),
             buttons: BUTTONS.iter().map(|name| gpu.load_texture(grf, &format!("{UI}minimap\\i_{name}_1.bmp"), false)).collect(),
             black: gpu.solid([0, 0, 0, 255]),
+            boss: gpu.load_texture(grf, &format!("{UI}minimap\\boss_1.bmp"), false),
         }
     }
 }
@@ -62,6 +65,7 @@ pub fn draw<'a>(
     direction: u8,
     marks: &[([i32; 2], &'a Texture)],
     party: &[([i32; 2], &'a Texture)],
+    boss: Option<[i32; 2]>,
 ) {
     let origin = [SCREEN[0] - MARGIN - SIZE, MARGIN];
     let Some(map) = map else { return };
@@ -82,6 +86,11 @@ pub fn draw<'a>(
         let [x, y] = project(cell).map(f32::round);
         layer.sprites.push((&assets.black, [x - 3.0, y - 3.0], [6.0, 6.0]));
         layer.sprites.push((color, [x - 2.0, y - 2.0], [4.0, 4.0]));
+    }
+    // ponytail: boss_1.bmp, centered on the boss; whether the real client blinks through boss_2 and boss_3 isn't known.
+    if let Some(boss) = boss {
+        let [x, y] = project(boss);
+        layer.sprites.push((&assets.boss, [(x - assets.boss.size[0] / 2.0).round(), (y - assets.boss.size[1] / 2.0).round()], assets.boss.size));
     }
     let point = project(cell);
     let arrow = &assets.arrows[usize::from((direction + 4) % 8)];

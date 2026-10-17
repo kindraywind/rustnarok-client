@@ -776,6 +776,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("Refine", game.refine.is_some()),
         ("Materials", game.materials.is_some()),
         ("Roulette", game.roulette.is_some()),
+        ("MonsterInfo", game.monster_window.is_some()),
         ("Achievements", game.achievement_window.frame.open),
         ("InventoryExpansion", game.expansion_asked.is_some()),
         ("PetAsked", game.pet_asked.is_some()),
@@ -865,6 +866,12 @@ fn game_state(app: &App, game: &Game) -> Value {
             let prize = window.shown_prize(now).map(|(row, column)| json!({"row": row, "column": column, "item": window.item_at((row, column))}));
             json!({"gold": gold, "silver": silver, "bronze": bronze, "bonus": window.bonus, "prizes": window.prizes.len(), "spinning": window.spinning(now), "prize": prize})
         }),
+        // Sense's window (null when closed), and the boss the Convex Mirror shows (null when none).
+        "monster_info": game.monster_window.as_ref().map(|window| {
+            let info = &window.info;
+            json!({"class": info.class, "level": info.level, "hp": info.hp, "size": info.size, "race": info.race, "element": info.element})
+        }),
+        "boss": game.boss.as_ref().map(|(name, cell)| json!({"name": name, "cell": cell})),
         // A taming item waiting for its monster.
         "capturing": game.capturing,
         "aimed_skill": game.targeting.map(|(id, level)| json!({"id": id, "level": level, "name": app.skill_info.get(&id).map(|info| info.name.as_str())})),

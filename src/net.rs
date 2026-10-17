@@ -615,6 +615,8 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_MONSTER_INFO: u16 = 0x018C;
+const ZC_BOSS_INFO: u16 = 0x0293;
 const ZC_CASH_TIME_COUNTER: u16 = 0x0298;
 const ZC_CASH_ITEM_DELETE: u16 = 0x0299;
 const ZC_NOTIFY_BIND_ON_EQUIP: u16 = 0x02D3;
@@ -1061,6 +1063,21 @@ impl PetAct {
             Self::Talk { monster, act, hunger } => (i32::from(monster) - 100) * 100 + i32::from(act) * 10 + i32::from(hunger),
         }
     }
+}
+
+/// What Sense tells of a monster: its class, level, size (0 small, 1 medium, 2 large), HP, DEF, race (0 formless to
+/// 9 dragon), MDEF, element (0 neutral to 9 undead) and the damage % water to undead attacks do to it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MonsterInfo {
+    pub class: u16,
+    pub level: u16,
+    pub size: u16,
+    pub hp: u32,
+    pub def: i16,
+    pub race: u16,
+    pub mdef: i16,
+    pub element: u16,
+    pub resists: [u8; 9],
 }
 
 /// What the client asks of the Lucky Roulette.
@@ -1548,6 +1565,17 @@ pub enum MapEvent {
     RentalExpired {
         index: u16,
         item: u32,
+    },
+    /// Sense's report on a monster.
+    MonsterInfo(MonsterInfo),
+    /// The Convex Mirror on the map's boss: 0 none here, 2 alive (first), 1 alive (moved), 3 dead (back in hours and
+    /// minutes).
+    BossInfo {
+        kind: u8,
+        cell: [i32; 2],
+        hours: u16,
+        minutes: u16,
+        name: String,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
@@ -4000,6 +4028,26 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_ACK_TAKEOFF_EQUIP_ALL => MapEvent::TookOffAll { refused: packet[2] != 0 },
         ZC_CASH_TIME_COUNTER => MapEvent::RentalTime { item: u32_at(2), seconds: u32_at(6) },
         ZC_CASH_ITEM_DELETE => MapEvent::RentalExpired { index: u16_at(2), item: u32_at(4) },
+        // Class, level, size, HP, DEF, race, MDEF, element, then the nine elements' damage %.
+        ZC_MONSTER_INFO => MapEvent::MonsterInfo(MonsterInfo {
+            class: u16_at(2),
+            level: u16_at(4),
+            size: u16_at(6),
+            hp: u32_at(8),
+            def: u16_at(12) as i16,
+            race: u16_at(14),
+            mdef: u16_at(16) as i16,
+            element: u16_at(18),
+            resists: packet[20..29].try_into().unwrap(),
+        }),
+        // Kind, x, y, hours, minutes, two unused, the name.
+        ZC_BOSS_INFO => MapEvent::BossInfo {
+            kind: packet[2],
+            cell: [u32_at(3) as i32, u32_at(7) as i32],
+            hours: u16_at(11),
+            minutes: u16_at(13),
+            name: c_string(&packet[19..70]),
+        },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -5218,6 +5266,40 @@ mod tests {
         let Some(MapEvent::PickedUp { item, .. }) = decode_map_packet(&pickup) else { panic!() };
         assert_eq!(item.expires, 1_800_000_002);
         assert_eq!([ZC_CASH_TIME_COUNTER, ZC_CASH_ITEM_DELETE].map(packet_length), [Some(10), Some(8)]);
+    }
+
+    #[test]
+    fn decodes_sense_and_the_mirror() {
+        let mut sense = ZC_MONSTER_INFO.to_le_bytes().to_vec();
+        for value in [1002u16, 1, 1] {
+            sense.extend_from_slice(&value.to_le_bytes());
+        }
+        sense.extend_from_slice(&55u32.to_le_bytes());
+        for value in [2u16, 3, 5, 1] {
+            sense.extend_from_slice(&value.to_le_bytes());
+        }
+        sense.extend_from_slice(&[25, 100, 90, 175, 100, 100, 100, 100, 100]);
+        let Some(MapEvent::MonsterInfo(info)) = decode_map_packet(&sense) else { panic!() };
+        assert_eq!(
+            info,
+            MonsterInfo { class: 1002, level: 1, size: 1, hp: 55, def: 2, race: 3, mdef: 5, element: 1, resists: [25, 100, 90, 175, 100, 100, 100, 100, 100] }
+        );
+        let boss = |kind: u8, name: &str| {
+            let mut packet =
+                [&ZC_BOSS_INFO.to_le_bytes()[..], &[kind], &120u32.to_le_bytes(), &80u32.to_le_bytes(), &1u16.to_le_bytes(), &5u16.to_le_bytes(), &[0; 4]]
+                    .concat();
+            let mut field = name.as_bytes().to_vec();
+            field.resize(51, 0);
+            packet.extend_from_slice(&field);
+            packet
+        };
+        let Some(MapEvent::BossInfo { kind: 2, cell: [120, 80], name, .. }) = decode_map_packet(&boss(2, "Orc Hero")) else { panic!() };
+        assert_eq!(name, "Orc Hero");
+        let Some(MapEvent::BossInfo { kind: 3, hours: 1, minutes: 5, .. }) = decode_map_packet(&boss(3, "Orc Hero")) else { panic!() };
+        let Some(MapEvent::BossInfo { kind: 0, name, .. }) = decode_map_packet(&boss(0, "")) else { panic!() };
+        assert!(name.is_empty());
+        assert_eq!([ZC_MONSTER_INFO, ZC_BOSS_INFO].map(packet_length), [Some(29), Some(70)]);
+        assert_eq!(boss(1, "").len(), 70);
     }
 
     #[test]
