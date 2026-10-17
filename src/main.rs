@@ -5070,6 +5070,7 @@ impl App {
                     guild.members.retain(|member| member.character != character);
                 }
             }
+            MapEvent::ClanInfo { .. } | MapEvent::ClanOnlineCount { .. } | MapEvent::ClanLeft | MapEvent::ClanChat(_) => {}
             // Friends: the list, who's online (said in the chat), asking and answering.
             MapEvent::Friends(friends) => game.friends = friends,
             MapEvent::FriendOnline { account, character, online } => {
