@@ -1,0 +1,83 @@
+{
+  "account": "",
+  "slot": 0,
+  "env": {
+    "RUSTNAROK_CLIENT_ROOM": "make:QA room"
+  },
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "say": "@recall Rndevtwo"
+    },
+    {
+      "as": "second",
+      "settle": 2500
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "as": "second",
+      "shot": "second-sees-room"
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "unit": "Rndev",
+        "offset": [
+          0,
+          -56
+        ]
+      }
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "as": "second",
+      "type": "hello room"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "expect": {
+        "windows_open": [
+          "ChatRoom"
+        ]
+      }
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "ChatRoom"
+        ]
+      }
+    },
+    {
+      "shot": "first-room"
+    },
+    {
+      "as": "second",
+      "shot": "second-room"
+    }
+  ],
+  "about": "Two players in a chat room: the first opens one (dev switch), the second joins by its sign and talks; both see the room."
+}
