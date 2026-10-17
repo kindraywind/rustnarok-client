@@ -143,7 +143,6 @@ const HC_DELETE_CHAR3: u16 = 0x082A;
 const CH_DELETE_CHAR3_CANCEL: u16 = 0x082B;
 const HC_DELETE_CHAR3_CANCEL: u16 = 0x082C;
 const CH_SECOND_PASSWD_ACK: u16 = 0x08B8;
-#[allow(dead_code)]
 const HC_SECOND_PASSWD_LOGIN: u16 = 0x08B9;
 const CH_MAKE_SECOND_PASSWD: u16 = 0x08BA;
 const CH_EDIT_SECOND_PASSWD: u16 = 0x08BE;
@@ -220,6 +219,12 @@ pub enum CharEvent {
     Made(Character),
     /// HC_REFUSE_MAKECHAR: 0 name taken, 1 underage, 2 symbols, 3 slot not available, 0xFF denied.
     MakeRefused(u8),
+    /// HC_SECOND_PASSWD_LOGIN (0x08B9): PIN state (0 OK/passed, 1 ask, 2/4 make, 3 expired/change, 5 disallowed, 8 wrong)
+    /// and the shuffle seed for the next reply.
+    Pin {
+        seed: u32,
+        state: u16,
+    },
     Disconnected(io::Error),
 }
 
@@ -439,7 +444,8 @@ fn decode_char_packet(packet: &[u8]) -> Option<CharEvent> {
         HC_DELETE_CHAR3_CANCEL => Some(CharEvent::DeleteCanceled { id: u32_at(packet, 2), result: u32_at(packet, 6) }),
         HC_ACCEPT_MAKECHAR => Some(CharEvent::Made(decode_character(&packet[2..]))),
         HC_REFUSE_MAKECHAR => Some(CharEvent::MakeRefused(packet[2])),
-        // Slot info, page count, PIN state and blocked characters aren't needed yet.
+        HC_SECOND_PASSWD_LOGIN => Some(CharEvent::Pin { seed: u32_at(packet, 2), state: u16_at(packet, 10) }),
+        // Slot info, page count and blocked characters aren't needed yet.
         _ => None,
     }
 }
@@ -3757,6 +3763,13 @@ mod tests {
         for (header, length) in [(CH_SECOND_PASSWD_ACK, 10), (HC_SECOND_PASSWD_LOGIN, 12), (CH_MAKE_SECOND_PASSWD, 10), (CH_EDIT_SECOND_PASSWD, 14)] {
             assert_eq!(packet_length(header), Some(length));
         }
+
+        let mut login_pin = [0u8; 12];
+        login_pin[..2].copy_from_slice(&HC_SECOND_PASSWD_LOGIN.to_le_bytes());
+        login_pin[2..6].copy_from_slice(&0xCAFE_BABEu32.to_le_bytes());
+        login_pin[6..10].copy_from_slice(&2_000_001u32.to_le_bytes());
+        login_pin[10..12].copy_from_slice(&1u16.to_le_bytes());
+        let Some(CharEvent::Pin { seed: 0xCAFE_BABE, state: 1 }) = decode_char_packet(&login_pin) else { panic!() };
     }
 
     /// Against a running rathena: `RUSTNAROK_CLIENT_TEST_ACCOUNT=user:password cargo test -- --ignored`.
@@ -3786,7 +3799,7 @@ mod tests {
         let (character_id, address) = loop {
             match receiver.recv_timeout(Duration::from_secs(10)).unwrap() {
                 CharEvent::ZoneServer { character_id, ip, port, .. } => break (character_id, (ip, port)),
-                CharEvent::Characters { .. } => continue,
+                CharEvent::Characters { .. } | CharEvent::Pin { .. } => continue,
                 other => panic!("{other:?}"),
             }
         };

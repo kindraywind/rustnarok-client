@@ -3596,6 +3596,7 @@ impl App {
                     Err(_) => self.message("맵 서버에 접속할 수 없습니다.", Scene::Login),
                 }
             }
+            NetEvent::Char(CharEvent::Pin { .. }) => {}
             NetEvent::Char(CharEvent::Refused(code)) => {
                 self.char_session = None;
                 self.message(format!("접속이 거부되었습니다. ({code})"), Scene::Login);
