@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.."
 cargo build --release
 app="${1:-.}/Ragnarok.app"
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp assets/icon.icns "$app/Contents/Resources/icon.icns"
 cp target/release/rustnarok-client "$app/Contents/MacOS/rustnarok-client"
 version=$(awk -F'"' '/^version/ { print $2; exit }' Cargo.toml)
 cat > "$app/Contents/Info.plist" <<PLIST
@@ -19,6 +20,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Ragnarok</string>
   <key>CFBundleIdentifier</key><string>local.rustnarok-client</string>
   <key>CFBundleExecutable</key><string>rustnarok-client</string>
+  <key>CFBundleIconFile</key><string>icon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$version</string>
