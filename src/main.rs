@@ -4619,7 +4619,8 @@ impl App {
         let (Some(gpu), Some(assets)) = (&mut self.gpu, &self.assets) else { return };
         let font = &self.font;
         // Covered scenes don't react to the pointer.
-        let interactive = matches!(self.scene, Scene::Connections { .. } | Scene::Login | Scene::ServerSelect { .. } | Scene::CharSelect(_) | Scene::CharMake(..));
+        let interactive =
+            matches!(self.scene, Scene::Connections { .. } | Scene::Login | Scene::ServerSelect { .. } | Scene::CharSelect(_) | Scene::CharMake(..));
         let base_pointer = if interactive { (self.cursor, self.mouse_down) } else { ([-1.0; 2], false) };
 
         // Character figures decode their textures first (mutably), then the frame borrows them.
@@ -5936,9 +5937,7 @@ fn main() {
     let worlds = rustnarok_client::lua::worlds(&grf).unwrap_or_default();
     let connections = rustnarok_client::clientinfo::load(&grf);
     // Several servers: the list comes first, as in the official client (dev logins take the first).
-    let picking = connections.len() > 1
-        && std::env::var_os("RUSTNAROK_CLIENT_SERVER").is_none()
-        && std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none();
+    let picking = connections.len() > 1 && std::env::var_os("RUSTNAROK_CLIENT_SERVER").is_none() && std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none();
     let quest_texts = quest::texts(&grf);
     let sound = sound::Settings::load();
     let mut app = App {
