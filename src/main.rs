@@ -625,6 +625,8 @@ enum Asked {
     Shop(usize),
     /// An inventory item, into storage.
     Store(u16),
+    /// An inventory item, onto the ground.
+    Drop(u16),
     /// A stored item, out.
     Take(u16),
     /// An inventory item, into the deal.
@@ -979,10 +981,32 @@ impl Game {
         };
     }
 
+    /// Whether the pointer is over the interface (a window, the chat, a dialog) rather than the world.
+    fn on_ui(&self, cursor: [f32; 2], items: &HashMap<u32, ItemInfo>) -> bool {
+        self.window_at(cursor).is_some()
+            || self.dialog.is_some()
+            || self.amount.is_some()
+            || self.escape.is_some()
+            || self.world_map.is_some()
+            || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.item_window.as_ref().is_some_and(|window| window.hit(cursor, items).is_some())
+            || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
+            || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
+            || self.room.as_ref().is_some_and(|room| room.hit(cursor).is_some())
+            || self.room_make.as_ref().is_some_and(|make| make.hit(cursor).is_some())
+            || self.vend_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.cart.items).is_some())
+            || self.my_shop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
+            || self.mail.hit(cursor).is_some()
+            || self.quest_window.hit(cursor, &self.quests).is_some()
+            || self.chat.contains(cursor)
+    }
+
     /// Moves an item between the inventory and storage, asking how many when there's more than one.
     fn move_item(&mut self, asked: Asked) {
         let amount = match asked {
-            Asked::Store(index) | Asked::Trade(index) | Asked::ToCart(index) | Asked::Mail(index) => self.inventory.get(index).map(|item| item.amount),
+            Asked::Store(index) | Asked::Drop(index) | Asked::Trade(index) | Asked::ToCart(index) | Asked::Mail(index) => {
+                self.inventory.get(index).map(|item| item.amount)
+            }
             Asked::FromCart(index) => self.cart.get(index).map(|item| item.amount),
             Asked::Take(index) => self.storage.get(index).map(|item| item.amount),
             Asked::Shop(_) | Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) | Asked::VendPrice(_) => None,
@@ -1027,6 +1051,10 @@ impl Game {
             Asked::Take(index) => {
                 let have = self.storage.get(index).map_or(0, |item| u32::from(item.amount));
                 self.session.take_from_storage(index, amount.min(have))
+            }
+            Asked::Drop(index) => {
+                let have = self.inventory.get(index).map_or(0, |item| item.amount);
+                self.session.drop_item(index, (amount.min(u32::from(have))) as u16)
             }
             Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) => Ok(()),
             Asked::VendPrice(index) => {
@@ -2803,6 +2831,8 @@ impl App {
                         }
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
+                    // Let go over the world: dropped at the player's feet, asking how many of a stack.
+                    (Some((Dragged::Item(index), _, true)), None) if !game.on_ui(self.cursor, &self.items) => game.move_item(Asked::Drop(index)),
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Cart)) => game.move_item(Asked::ToCart(index)),
                     (Some((Dragged::Carted(index), _, true)), Some(Panel::Inventory)) => game.move_item(Asked::FromCart(index)),
                     (Some((Dragged::Stored(index), _, true)), Some(Panel::Inventory)) => game.move_item(Asked::Take(index)),
@@ -5554,22 +5584,7 @@ impl App {
         let mut sprites = flatten(&composed);
 
         // The cursor shows what a click would do.
-        let on_window = game.window_at(pointer.0).is_some()
-            || game.dialog.is_some()
-            || game.amount.is_some()
-            || game.escape.is_some()
-            || game.world_map.is_some()
-            || game.audio_window.as_ref().is_some_and(|window| window.hit(pointer.0).is_some())
-            || game.item_window.as_ref().is_some_and(|window| window.hit(pointer.0, items).is_some())
-            || game.menu.as_ref().is_some_and(|menu| menu.hit(pointer.0).is_some())
-            || game.trade.as_ref().is_some_and(|trade| trade.hit(pointer.0).is_some())
-            || game.room.as_ref().is_some_and(|room| room.hit(pointer.0).is_some())
-            || game.room_make.as_ref().is_some_and(|make| make.hit(pointer.0).is_some())
-            || game.vend_setup.as_ref().is_some_and(|setup| setup.hit(pointer.0, &game.cart.items).is_some())
-            || game.my_shop.as_ref().is_some_and(|shop| shop.hit(pointer.0).is_some())
-            || game.mail.hit(pointer.0).is_some()
-            || game.quest_window.hit(pointer.0, &game.quests).is_some()
-            || game.chat.contains(pointer.0);
+        let on_window = game.on_ui(pointer.0, items);
         let ground = view
             .pick([pointer.0[0] / SCREEN[0], pointer.0[1] / SCREEN[1]], player_feet[1])
             .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32]);
