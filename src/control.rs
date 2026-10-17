@@ -850,6 +850,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         // Achievements: whether each is done and its reward taken; the title worn (0: none).
         "achievements": game.achievements.iter().map(|(id, achievement)| (id.to_string(), json!({"completed": achievement.completed, "rewarded": achievement.rewarded}))).collect::<serde_json::Map<_, _>>(),
         "title": game.equipment.title,
+        // Skills blocked after use: milliseconds left by skill ID, on the drawing's clock (still while a shot pauses it).
+        "cooldowns": game.cooldowns.blocked(crate::control::now()).map(|(skill, left)| (skill.to_string(), json!(left.as_millis() as u64))).collect::<serde_json::Map<_, _>>(),
         // A taming item waiting for its monster.
         "capturing": game.capturing,
         "aimed_skill": game.targeting.map(|(id, level)| json!({"id": id, "level": level, "name": app.skill_info.get(&id).map(|info| info.name.as_str())})),

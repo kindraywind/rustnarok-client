@@ -26,9 +26,10 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
               "identified": [1201], "unidentified": [1202], "inventory_has": [{"id": 1201, "cards": [4035, 0, 0, 0]}],
               "characters": {"1": "Name"} (at character select), "weather": [162] ([] for none),
               "state": {"pet.intimacy": 950, "pet": null, "scene": "char_select"},
-              "achievements": {"200005": "completed"}, "title": 1000}}  (state: values at dotted paths of the game state,
-              or of the whole control state when the game state has no such field; achievements: each one "completed"
-              or "rewarded"; title: the one worn)
+              "achievements": {"200005": "completed"}, "title": 1000, "state_at_least": {"cooldowns.8": 9000}}}
+    (state: values at dotted paths of the game state, or of the whole control state when the game state has no such
+    field; state_at_least: numbers there at least the ones given; achievements: each one "completed" or "rewarded";
+    title: the one worn)
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
 diff; `threshold` (percent, default 1) is how much change a shot takes before the report flags it.
@@ -209,15 +210,18 @@ def expect(wanted, state):
                 have = sum(1 for unit in game.get("units", []) if unit.get("kind") == kind)
                 if have < count:
                     failures.append(f"{have} {kind} units < {count}")
-        elif key == "state":
+        elif key in ("state", "state_at_least"):
             # Values at dotted paths of the game state, e.g. {"pet.intimacy": 950, "pet": null}; a path the game state
             # doesn't start with is read from the whole control state (e.g. "scene", or "selected" at character select).
+            # state_at_least: each a number at least the one given.
             for path, want in value.items():
                 have = game if path.split(".")[0] in game else state
                 for part in path.split("."):
                     have = have.get(part) if isinstance(have, dict) else None
-                if have != want:
+                if key == "state" and have != want:
                     failures.append(f"state {path} is {have!r}, not {want!r}")
+                elif key == "state_at_least" and not (isinstance(have, (int, float)) and have >= want):
+                    failures.append(f"state {path} is {have!r}, not at least {want!r}")
         elif key == "achievements":
             for achievement, want in value.items():
                 have = game.get("achievements", {}).get(achievement, {})
@@ -225,7 +229,7 @@ def expect(wanted, state):
                     failures.append(f"achievement {achievement} is not {want}: {have}")
         elif key == "title" and game.get("title") != value:
             failures.append(f"title {game.get('title')} != {value}")
-        elif key not in ("achievements", "title", "state", "chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
+        elif key not in ("achievements", "title", "state", "state_at_least", "chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
             failures.append(f"unknown expectation {key}")
     return failures
 
