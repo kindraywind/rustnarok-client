@@ -1,6 +1,7 @@
 #!/bin/bash
 # Build > verify for rustnarok-client: fmt, clippy, unit tests, and (when the local stack is up) the live login test.
-# Tests that fail only because data.grf is missing are counted apart, not as failures.
+# Tests that fail only because data.grf is missing are counted apart, not as failures, and so are the tests named in
+# RUSTNAROK_CLIENT_KNOWN_FAILURES (space-separated; for game data older or newer than the owner's, set locally).
 # Usage: verify.sh            (from anywhere inside the repo)
 # Live step: a rathena on 127.0.0.1:6900 and an accounts file (RUSTNAROK_CLIENT_ACCOUNTS, default
 # ~/.config/rustnarok/accounts.txt) with `username:`/`password:` lines whose slot 0 holds a character.
@@ -29,6 +30,8 @@ real=""
 for name in $(grep -E '^test .* FAILED$' "$OUT/test" | awk '{print $2}'); do
 	if grep -A1 "thread '$name'" "$OUT/test" | grep -q 'kind: NotFound'; then
 		grf=$((grf + 1))
+	elif [[ " ${RUSTNAROK_CLIENT_KNOWN_FAILURES:-} " == *" $name "* ]]; then
+		echo "known failure (RUSTNAROK_CLIENT_KNOWN_FAILURES): $name"
 	else
 		real="$real $name"
 	fi

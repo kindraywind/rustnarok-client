@@ -3775,7 +3775,12 @@ impl App {
                 }
                 game.player.revive();
                 if map == game.map {
+                    // A teleport on the same map: no loading, but the server takes the player off the map until
+                    // the load is acknowledged (it drops everything else till then) and sends what's in view again.
                     game.player.stop_at(position.map(i32::from));
+                    game.units.clear();
+                    game.ground.clear();
+                    let _ = game.session.loaded();
                 } else {
                     self.show_loading(LoadTarget::Change { map, position });
                 }

@@ -25,6 +25,8 @@ sys.path.insert(0, HERE)
 import drive  # noqa: E402
 
 REPO = drive.REPO
+# cargo for the builds, also when the shell hasn't loaded ~/.cargo/env.
+os.environ["PATH"] = os.path.expanduser("~/.cargo/bin") + os.pathsep + os.environ.get("PATH", "")
 # One folder per run: visual/<date>/<HHMMSS>/{main,branch,diff}.
 VISUAL = os.path.join(REPO, "docs", "personal", "visual", drive.TODAY, time.strftime("%H%M%S"))
 WORKTREE = os.path.join(REPO, "docs", "personal", "baseline-tree")
