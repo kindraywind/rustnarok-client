@@ -703,6 +703,8 @@ pub struct Actor {
     pub kind: u8,
     /// Job (class, or NPC/monster sprite) ID.
     pub job: u16,
+    /// A player's guild (0: none).
+    pub guild: u32,
     /// A player's looks, to rebuild its sprites when they change.
     pub look: Option<Look>,
     /// Script NPCs the client never draws.
@@ -735,6 +737,7 @@ impl Actor {
             name,
             kind: 0,
             job: 0,
+            guild: 0,
             look: None,
             hidden: false,
             sprites,
