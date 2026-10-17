@@ -730,6 +730,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("NpcDialog", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none())),
         ("WarpList", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some())),
         ("Shop", game.shop.is_some()),
+        ("Bank", game.bank.is_some()),
         ("PickList", game.pick.is_some()),
         ("DealChoice", game.deal_choice.is_some()),
         ("Trade", game.trade.is_some()),
