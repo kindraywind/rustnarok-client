@@ -271,6 +271,15 @@ const SPEECH_TIME: Duration = Duration::from_secs(5);
 const OVERHEAD: f32 = 90.0 / 35.0;
 /// Emotions sit this many sprite pixels above the feet, over the head.
 const EMOTION_HEIGHT: f32 = 70.0;
+/// Spirit spheres and coins: how far from the body they circle, how high, how fast (radians a second), and how
+/// much flatter the circle looks than it is.
+// ponytail: estimates; calibrate against the real client.
+const SPIRIT_RADIUS: f32 = 28.0;
+const SPIRIT_HEIGHT: f32 = 45.0;
+const SPIRIT_TURN: f32 = 1.5;
+const SPIRIT_TILT: f32 = 0.4;
+/// The sphere picture's ball is about 22px across in a 94px square.
+const SPHERE_SCALE: f32 = 0.5;
 const SPEECH_WIDTH: f32 = 250.0;
 const SPEECH_LINE: f32 = 17.0;
 /// Heal, Highness Heal and Coluceo Heal report how much they healed.
@@ -368,6 +377,10 @@ struct Game {
     /// The emotion sprite, and the emotions showing: by unit (None = the player), the sprite action and when.
     emotion_sprite: Option<SpriteSet>,
     emotions: HashMap<Option<u32>, (usize, Instant)>,
+    /// Spirit spheres or coins: by unit (None = the player), how many; the sphere's picture, the coin's sprite.
+    spirits: HashMap<Option<u32>, u16>,
+    sphere: Option<Texture>,
+    coin_sprite: Option<SpriteSet>,
     digits: Option<Digits>,
     /// The NPC conversation on screen.
     dialog: Option<Dialog>,
@@ -1748,6 +1761,12 @@ fn button_sprite(pointer: ([f32; 2], bool), position: [f32; 2], images: &ButtonI
         (false, _) => &images[0],
     };
     (image, position, image.size)
+}
+
+/// Jobs whose spirits are coins: Gunslinger, Rebellion, their baby forms, Night Watch; anyone else's are spheres.
+// ponytail: inferred from who has Coin Flip; the server doesn't say.
+fn coin_job(job: u16) -> bool {
+    matches!(job, 24 | 4215 | 4228 | 4229 | 4306)
 }
 
 /// First menu row shown, scrolled so the highlighted item stays visible.
@@ -3642,6 +3661,9 @@ impl App {
                     shadow: SpriteSet::at(&self.grf, "data\\sprite\\shadow"),
                     emotion_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\emotion"),
                     emotions: HashMap::new(),
+                    spirits: HashMap::new(),
+                    sphere: gpu.try_load_texture(&self.grf, "data\\texture\\effect\\기구.bmp", true).ok(),
+                    coin_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\동전"),
                     digits: Digits::load(gpu, &self.grf),
                     dialog: None,
                     hit_boxes: Vec::new(),
@@ -3804,6 +3826,7 @@ impl App {
                 game.world = world;
                 game.map = map;
                 game.units.clear();
+                game.spirits.clear();
                 game.ground.clear();
                 game.marks.clear();
                 game.signs.clear();
@@ -3916,7 +3939,18 @@ impl App {
                 }
                 game.want_emblem(unit.guild, unit.emblem);
             }
+            MapEvent::Spirits { id, count } => {
+                let key = (id != game.account_id).then_some(id);
+                if count > 0 {
+                    game.spirits.insert(key, count);
+                } else {
+                    game.spirits.remove(&key);
+                }
+            }
             MapEvent::Vanish { id, reason } => {
+                if id != game.account_id {
+                    game.spirits.remove(&Some(id));
+                }
                 // A body keeps what plays on it (the killing hit's effects) until it goes.
                 if reason != 1 {
                     game.effects.forget(id);
@@ -5414,6 +5448,38 @@ impl App {
                 game.item_sprites.get(items[&item.item].resource(item.identified)).and_then(Option::as_ref)
             }
         };
+        // Spirit spheres, or coins for the Gunslinger line, circling the body at chest height: the far half of the
+        // circle behind the body, the near half in front.
+        let turned = now.duration_since(game.entered).as_secs_f32();
+        let coin = game.coin_sprite.as_mut().map(|sprite| sprite.frame_at(gpu, 0, 0, Timing::Loop(turned * 1000.0))).unwrap_or_default();
+        let mut spirits: [Vec<Billboard>; 2] = [Vec::new(), Vec::new()];
+        for (unit, &count) in &game.spirits {
+            let (feet, job) = match unit {
+                None => (player_feet, game.me.job),
+                Some(id) => match (feet_of.get(id), game.units.get(id)) {
+                    (Some(feet), Some(actor)) => (*feet, actor.job),
+                    _ => continue,
+                },
+            };
+            for place in 0..count {
+                let angle = turned * SPIRIT_TURN + f32::from(place) * std::f32::consts::TAU / f32::from(count);
+                let center = [angle.cos() * SPIRIT_RADIUS, -SPIRIT_HEIGHT + angle.sin() * SPIRIT_RADIUS * SPIRIT_TILT];
+                let side = &mut spirits[usize::from(angle.sin() > 0.0)];
+                if coin_job(job) {
+                    if let Some(sprite) = &game.coin_sprite {
+                        side.extend(
+                            coin.iter()
+                                .map(|(key, position, size)| (sprite.texture(*key), feet, [center[0] + position[0], center[1] + position[1]], *size, [1.0; 4])),
+                        );
+                    }
+                } else if let Some(sphere) = &game.sphere {
+                    let size = sphere.size.map(|side| side * SPHERE_SCALE);
+                    side.push((sphere, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, [1.0; 4]));
+                }
+            }
+        }
+        let [behind, in_front] = spirits;
+        billboards.extend(behind);
         // Carts before the bodies, so the one pulling a cart draws over it.
         let cart_of = |owner: &Owner| match owner {
             Owner::Player => game.player.cart.as_ref(),
@@ -5428,6 +5494,7 @@ impl App {
             let sprites = sprites_of(owner).unwrap();
             placements.iter().map(move |(key, position, size)| (sprites.texture(*key), *feet, *position, *size, [1.0; 4]))
         }));
+        billboards.extend(in_front);
         // Emotions play once over heads.
         let mut shown = Vec::new();
         if let Some(sprite) = &mut game.emotion_sprite {
@@ -6624,6 +6691,12 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coins_for_the_gunslinger_line() {
+        assert!([24, 4215, 4228, 4229, 4306].into_iter().all(coin_job));
+        assert!(![15, 4016, 0].into_iter().any(coin_job));
+    }
 
     #[test]
     fn breaks_message_lines_where_the_client_padded() {
