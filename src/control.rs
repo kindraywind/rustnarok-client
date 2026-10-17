@@ -598,6 +598,7 @@ fn base64(bytes: &[u8]) -> String {
 
 fn scene_name(scene: &Scene) -> &'static str {
     match scene {
+        Scene::Connections { .. } => "connections",
         Scene::Login => "login",
         Scene::Waiting(_) => "waiting",
         Scene::ServerSelect { .. } => "server_select",
@@ -614,7 +615,7 @@ fn state(app: &App) -> Value {
     let mut state = json!({
         "ok": true,
         "scene": scene_name(&app.scene),
-        "server": std::env::var("RUSTNAROK_CLIENT_SERVER").unwrap_or_else(|_| crate::DEFAULT_SERVER.into()),
+        "server": app.login_server().0,
         "loading": app.loading.is_some(),
         "cursor": app.cursor,
         "paused": FROZEN.lock().unwrap().is_some(),

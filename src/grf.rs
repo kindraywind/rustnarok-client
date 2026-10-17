@@ -87,6 +87,13 @@ impl Grf {
         self.entries.keys().chain(self.overlay.keys().filter(|path| !self.entries.contains_key(*path))).map(String::as_str)
     }
 
+    /// Reads a loose file of the data folder, never the archive's copy: for what must come from the player's own
+    /// files.
+    pub fn read_loose(&self, path: &str) -> io::Result<Vec<u8>> {
+        let file = self.overlay.get(&normalize(path)).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, path.to_owned()))?;
+        std::fs::read(file)
+    }
+
     /// Reads a file by its client path, e.g. `data\texture\...`; case and slash direction don't matter.
     pub fn read(&self, path: &str) -> io::Result<Vec<u8>> {
         if let Some(file) = self.overlay.get(&normalize(path)) {

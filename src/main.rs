@@ -2,7 +2,8 @@
 //!
 //! README.md says what it does so far and how to set it up.
 //!
-//! Dev switches: `RUSTNAROK_CLIENT_GRF` (data.grf path), `RUSTNAROK_CLIENT_SERVER` (login server, default 127.0.0.1:6900),
+//! Dev switches: `RUSTNAROK_CLIENT_GRF` (data.grf path), `RUSTNAROK_CLIENT_SERVER` (login server, over the data folder's
+//! clientinfo.xml and the default 127.0.0.1:6900),
 //! `RUSTNAROK_CLIENT_LOGIN=user:password` (fill in and submit on start), `RUSTNAROK_CLIENT_AUTOSTART=<slot>` (then pick the first
 //! server and play that slot; any other value stops at character select), `RUSTNAROK_CLIENT_WALK=x,y` (walk there a second after entering the map),
 //! `RUSTNAROK_CLIENT_TALK=<name>[:<n>]` (talk to that NPC, pressing "next" or "close" up to n times), `RUSTNAROK_CLIENT_ATTACK=1` (attack the
@@ -1300,6 +1301,10 @@ impl DamageKind {
 }
 
 enum Scene {
+    /// The servers clientinfo.xml lists, before the login window when it lists more than one.
+    Connections {
+        selected: usize,
+    },
     Login,
     /// A request is in flight; the inner scene stays on screen without reacting.
     Waiting(Box<Scene>),
@@ -1758,6 +1763,9 @@ struct App {
     assets: Option<Assets>,
     scene: Scene,
     char_session: Option<CharSession>,
+    /// The login servers the data folder's clientinfo.xml lists, and the one picked.
+    connections: Vec<rustnarok_client::clientinfo::Connection>,
+    connection: usize,
     /// Which char server we picked (going back to character select reconnects to it), and leaving was agreed.
     char_server: usize,
     quitting: bool,
@@ -1818,10 +1826,28 @@ impl App {
         self.wait();
         let proxy = self.proxy.clone();
         let [id, password] = self.fields.clone();
-        let server = std::env::var("RUSTNAROK_CLIENT_SERVER").unwrap_or_else(|_| DEFAULT_SERVER.into());
+        let (server, version) = self.login_server();
         std::thread::spawn(move || {
-            let _ = proxy.send_event(NetEvent::Login(net::login(&server, &id, &password)));
+            let _ = proxy.send_event(NetEvent::Login(net::login(&server, version, &id, &password)));
         });
+    }
+
+    /// Where to log in, and the client version to say: RUSTNAROK_CLIENT_SERVER, else the connection picked from
+    /// clientinfo.xml, else the local default.
+    fn login_server(&self) -> (String, u32) {
+        let connection = self.connections.get(self.connection);
+        let version = connection.map_or(0, |connection| connection.version);
+        let server = std::env::var("RUSTNAROK_CLIENT_SERVER").ok().or_else(|| connection.map(|connection| connection.server()));
+        (server.unwrap_or_else(|| DEFAULT_SERVER.to_owned()), version)
+    }
+
+    /// Takes a connection: its loading pictures, if it names any, and on to the login window.
+    fn choose_connection(&mut self, picked: usize) {
+        self.connection = picked;
+        if let Some(pictures) = self.connections.get(picked).map(|connection| &connection.loading).filter(|pictures| !pictures.is_empty()) {
+            self.loading_images = pictures.iter().map(|picture| format!("{UI}{picture}")).collect();
+        }
+        self.scene = Scene::Login;
     }
 
     fn enter_char_server(&mut self) {
@@ -2050,6 +2076,19 @@ impl App {
                 } else if let Some(field) = LOGIN_FIELDS.iter().position(|&field| contains(offset(login, field), LOGIN_FIELD_SIZE, cursor)) {
                     self.focus = field;
                     self.blink_start = Instant::now();
+                }
+            }
+            // The server list: pick one, OK goes on to the login window, Cancel leaves the game.
+            Scene::Connections { selected } => {
+                let service = dialog_position(&assets.service);
+                let list = offset(service, SERVER_LIST);
+                if let Some(row) = (0..self.connections.len()).find(|&row| contains(offset(list, [0.0, row as f32 * SERVER_ROW[1]]), SERVER_ROW, cursor)) {
+                    *selected = row;
+                } else if hit(offset(service, LEFT_BUTTON), &assets.ok) {
+                    let picked = *selected;
+                    self.choose_connection(picked);
+                } else if hit(offset(service, RIGHT_BUTTON), &assets.cancel) {
+                    self.quitting = true;
                 }
             }
             Scene::ServerSelect { accepted, selected } => {
@@ -2986,6 +3025,16 @@ impl App {
                     }
                 }
             }
+            Scene::Connections { selected } => match key {
+                Key::Named(NamedKey::ArrowUp) => *selected = selected.saturating_sub(1),
+                Key::Named(NamedKey::ArrowDown) => *selected = (*selected + 1).min(self.connections.len().saturating_sub(1)),
+                Key::Named(NamedKey::Enter) => {
+                    let picked = *selected;
+                    self.choose_connection(picked);
+                }
+                Key::Named(NamedKey::Escape) => self.quitting = true,
+                _ => {}
+            },
             Scene::ServerSelect { accepted, selected } => match key {
                 Key::Named(NamedKey::ArrowUp) => *selected = selected.saturating_sub(1),
                 Key::Named(NamedKey::ArrowDown) => *selected = (*selected + 1).min(accepted.char_servers.len().saturating_sub(1)),
@@ -4570,7 +4619,7 @@ impl App {
         let (Some(gpu), Some(assets)) = (&mut self.gpu, &self.assets) else { return };
         let font = &self.font;
         // Covered scenes don't react to the pointer.
-        let interactive = matches!(self.scene, Scene::Login | Scene::ServerSelect { .. } | Scene::CharSelect(_) | Scene::CharMake(..));
+        let interactive = matches!(self.scene, Scene::Connections { .. } | Scene::Login | Scene::ServerSelect { .. } | Scene::CharSelect(_) | Scene::CharMake(..));
         let base_pointer = if interactive { (self.cursor, self.mouse_down) } else { ([-1.0; 2], false) };
 
         // Character figures decode their textures first (mutably), then the frame borrows them.
@@ -4613,6 +4662,17 @@ impl App {
                         caret = Some([position[0] + font.width(&shown[start..]).round(), position[1] + 1.0]);
                     }
                     base.texts.push((shown[start..].to_owned(), position, TEXT_COLOR));
+                }
+            }
+            Scene::Connections { selected } => {
+                let service = dialog_position(&assets.service);
+                let list = offset(service, SERVER_LIST);
+                base.sprites.push((&assets.service, service, assets.service.size));
+                base.sprites.push((&assets.selection, offset(list, [0.0, *selected as f32 * SERVER_ROW[1]]), SERVER_ROW));
+                base.sprites.push(button_sprite(base_pointer, offset(service, LEFT_BUTTON), &assets.ok));
+                base.sprites.push(button_sprite(base_pointer, offset(service, RIGHT_BUTTON), &assets.cancel));
+                for (row, connection) in self.connections.iter().enumerate() {
+                    base.texts.push((connection.display.clone(), offset(list, [4.0, row as f32 * SERVER_ROW[1] + 3.0]), TEXT_COLOR));
                 }
             }
             Scene::ServerSelect { accepted, selected } => {
@@ -5874,6 +5934,11 @@ fn main() {
     loading_images.sort();
     let music = sound::music_table(&grf);
     let worlds = rustnarok_client::lua::worlds(&grf).unwrap_or_default();
+    let connections = rustnarok_client::clientinfo::load(&grf);
+    // Several servers: the list comes first, as in the official client (dev logins take the first).
+    let picking = connections.len() > 1
+        && std::env::var_os("RUSTNAROK_CLIENT_SERVER").is_none()
+        && std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none();
     let quest_texts = quest::texts(&grf);
     let sound = sound::Settings::load();
     let mut app = App {
@@ -5907,7 +5972,9 @@ fn main() {
         proxy: event_loop.create_proxy(),
         gpu: None,
         assets: None,
-        scene: Scene::Login,
+        scene: if picking { Scene::Connections { selected: 0 } } else { Scene::Login },
+        connections,
+        connection: 0,
         char_session: None,
         char_server: 0,
         quitting: false,
@@ -5955,6 +6022,9 @@ fn main() {
         screenshot: std::env::var("RUSTNAROK_CLIENT_SCREENSHOT").ok(),
         scripted: false,
     };
+    if !picking && !app.connections.is_empty() {
+        app.choose_connection(0);
+    }
     app.play_music(None);
     event_loop.run_app(&mut app).expect("run");
 }

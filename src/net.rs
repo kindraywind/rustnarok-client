@@ -49,10 +49,12 @@ impl From<io::Error> for LoginError {
     }
 }
 
-pub fn login(address: &str, username: &str, password: &str) -> Result<LoginAccepted, LoginError> {
+/// Logs in at `address`, saying the client is `version` (clientinfo.xml's; rathena only checks it when
+/// `check_client_version` is on).
+pub fn login(address: &str, version: u32, username: &str, password: &str) -> Result<LoginAccepted, LoginError> {
     let mut stream = TcpStream::connect(address)?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    stream.write_all(&encode_login(username, password))?;
+    stream.write_all(&encode_login(version, username, password))?;
 
     let mut header = [0u8; 2];
     stream.read_exact(&mut header)?;
@@ -74,11 +76,10 @@ pub fn login(address: &str, username: &str, password: &str) -> Result<LoginAccep
     decode_reply(&packet)
 }
 
-fn encode_login(username: &str, password: &str) -> Vec<u8> {
+fn encode_login(version: u32, username: &str, password: &str) -> Vec<u8> {
     let mut packet = Vec::with_capacity(55);
     packet.extend_from_slice(&CA_LOGIN.to_le_bytes());
-    // Client version: rathena only checks it when `check_client_version` is enabled.
-    packet.extend_from_slice(&0u32.to_le_bytes());
+    packet.extend_from_slice(&version.to_le_bytes());
     for field in [username, password] {
         let mut bytes = [0u8; NAME_LENGTH];
         let length = field.len().min(NAME_LENGTH - 1);
@@ -2721,9 +2722,10 @@ mod tests {
 
     #[test]
     fn encodes_login_request() {
-        let packet = encode_login("tester", "a-password-longer-than-twenty-three");
+        let packet = encode_login(55, "tester", "a-password-longer-than-twenty-three");
         assert_eq!(packet.len(), 55);
         assert_eq!(&packet[..2], &[0x64, 0x00]);
+        assert_eq!(&packet[2..6], &55u32.to_le_bytes(), "clientinfo.xml's version");
         assert_eq!(&packet[6..13], b"tester\0");
         // Truncated to 23 bytes, keeping the terminating NUL.
         assert_eq!(packet[30 + 22], b'-');
@@ -2956,7 +2958,7 @@ mod tests {
     fn logs_into_local_rathena() {
         let account = std::env::var("RUSTNAROK_CLIENT_TEST_ACCOUNT").unwrap();
         let (user, password) = account.split_once(':').unwrap();
-        let accepted = login("127.0.0.1:6900", user, password).unwrap();
+        let accepted = login("127.0.0.1:6900", 0, user, password).unwrap();
         assert!(!accepted.char_servers.is_empty());
 
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -2998,6 +3000,6 @@ mod tests {
         assert!(!matches!(first, MapEvent::Disconnected(_)), "{first:?}");
         drop(map);
 
-        assert!(matches!(login("127.0.0.1:6900", user, "wrong password"), Err(LoginError::Refused(1))));
+        assert!(matches!(login("127.0.0.1:6900", 0, user, "wrong password"), Err(LoginError::Refused(1))));
     }
 }

@@ -17,7 +17,7 @@ fn main() {
     let account = std::env::var("RUSTNAROK_CLIENT_TEST_ACCOUNT").expect("RUSTNAROK_CLIENT_TEST_ACCOUNT=user:password");
     let (user, password) = account.split_once(':').unwrap();
 
-    let accepted = net::login("127.0.0.1:6900", user, password).unwrap();
+    let accepted = net::login("127.0.0.1:6900", 0, user, password).unwrap();
     let (sender, receiver) = mpsc::channel();
     let mut session = CharSession::connect(&accepted.char_servers[0], &accepted, move |event| {
         let _ = sender.send(event);

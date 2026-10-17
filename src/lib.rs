@@ -1,5 +1,6 @@
 //! Shared pieces of the client, also used by the dev examples.
 
+pub mod clientinfo;
 pub mod effect;
 pub mod grf;
 pub mod lua;

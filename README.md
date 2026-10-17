@@ -40,7 +40,12 @@ marked `ponytail:` in the code, to calibrate against screenshots of the real cli
 3. **English** (optional): a translation pack's `data` and `System` folders next to data.grf. Their loose files go
    before the archive. `RUSTNAROK_CLIENT_DATA=<folder>` says where they are, `none` turns them off.
 4. **Music** (optional): the official `BGM` folder (numbered mp3s) next to data.grf, or `RUSTNAROK_CLIENT_BGM=<folder>`.
-5. **Server**: by default the client logs into `127.0.0.1:6900`; `RUSTNAROK_CLIENT_SERVER=host:port` changes that.
+5. **Server**: as the official client does, it reads the server list from `data/clientinfo.xml` (else
+   `sclientinfo.xml`) in that data folder. Only a loose file counts, never the copy inside data.grf. With several
+   connections, a list to pick from comes before the login window. Each connection's `<version>` and `<loading>`
+   pictures are used. Without the file it logs into `127.0.0.1:6900`, and `RUSTNAROK_CLIENT_SERVER=host:port`
+   overrides both. To join a server on another machine, put its address in clientinfo.xml; the server must announce
+   an address the player can reach.
 
 `data.grf`, `data`, `System`, `SystemEN` and `BGM` are gitignored. In development they are symlinks to wherever the
 files live.
