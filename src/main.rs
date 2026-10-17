@@ -127,6 +127,10 @@ const ITEM_FROM_BOX: usize = 1628;
 const ITEM_FROM_NPC: usize = 1868;
 const REFINE_SUCCEEDED: usize = 3271;
 const REFINE_FAILED: usize = 3272;
+/// The MVP's reward lines: before and after the item's name, before and after the EXP, and the too-heavy one.
+const MVP_ITEM: [usize; 2] = [143, 144];
+const MVP_EXP: [usize; 2] = [145, 146];
+const MVP_OVERWEIGHT: usize = 147;
 /// Warp Portal's and Teleport's list: Teleport's random spot, and the last row.
 const RANDOM_AREA: usize = 212;
 const WARP_CANCEL: usize = 218;
@@ -275,6 +279,8 @@ const CLOCK_STEPS: usize = 32;
 /// The spark of a landed hit, and a warp portal's rings.
 const EF_HIT1: u32 = 0;
 const EF_WARPZONE2: u32 = 321;
+/// The MVP's banner (mvp.str).
+const EF_MVP: u32 = 68;
 /// The cast aura by the skill's element: neutral, water, earth, fire, wind, poison, holy, shadow, ghost, undead.
 const CAST_AURAS: [u32; 10] = [12, 54, 57, 55, 56, 59, 58, 454, 58, 454];
 /// "Select a target", under an aimed skill's name.
@@ -4111,6 +4117,23 @@ impl App {
                 let template = self.messages.get(if success { REFINE_SUCCEEDED } else { REFINE_FAILED }).map_or("", String::as_str);
                 game.chat_line(messages::fill(template, &[&player, &level, &inventory::item_name(&self.items, item, true, 0)]), CHAT_BROADCAST);
             }
+            // ponytail: the banner effect alone; the data also has a sprite, data\sprite\이팩트\mvp.spr, the real
+            // client may show with it.
+            MapEvent::Mvp(id) => {
+                if let Some(gpu) = gpu {
+                    game.play_effect(gpu, grf, table, EF_MVP, id);
+                }
+            }
+            // ponytail: the reward lines in the items' cyan; the real client's color is unknown.
+            MapEvent::MvpItem(item) => {
+                let [before, after] = MVP_ITEM.map(|id| self.messages.get(id).cloned().unwrap_or_default());
+                game.chat_line(format!("{before}{}{after}", inventory::item_name(&self.items, item, true, 0)), CHAT_ITEM);
+            }
+            MapEvent::MvpExp(exp) => {
+                let [before, after] = MVP_EXP.map(|id| self.messages.get(id).cloned().unwrap_or_default());
+                game.chat_line(format!("{before}{exp}{after}"), CHAT_ITEM);
+            }
+            MapEvent::MvpOverweight => game.chat_line(self.messages.get(MVP_OVERWEIGHT).cloned().unwrap_or_default(), CHAT_ERROR),
             MapEvent::Message { id, value, skill, color } => {
                 let template = self.messages.get(id).map_or("", String::as_str);
                 let text = match (value, skill) {

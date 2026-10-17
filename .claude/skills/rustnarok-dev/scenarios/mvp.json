@@ -1,0 +1,17 @@
+{
+  "about": "MVP: Kublin (1980), whose MVP reward always drops, hits the first account's Knight, @killmonster kills it; the MVP banner plays on the player and the reward line prints (issue #55). The character is a Novice again at the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"say": "@job 7"}, {"wait": 500}, {"say": "@vit 99"}, {"wait": 500}, {"say": "@heal"}, {"wait": 500},
+    {"say": "@monster 1980"}, {"wait_for": {"event": "Act", "ms": 15000}},
+    {"wait": 3000},
+    {"say": "@killmonster"}, {"wait_for": {"packet": "0x010c", "ms": 8000}},
+    {"wait": 800}, {"move": [900, 700]},
+    {"expect": {"chat": "Your reward item is"}},
+    {"shot": "mvp-banner", "crop": [380, 60, 300, 360], "threshold": 40},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}

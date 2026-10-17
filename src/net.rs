@@ -566,6 +566,10 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_MVP_GETTING_ITEM: u16 = 0x010A;
+const ZC_MVP_GETTING_SPECIAL_EXP: u16 = 0x010B;
+const ZC_MVP: u16 = 0x010C;
+const ZC_THROW_MVPITEM: u16 = 0x010D;
 const ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN: u16 = 0x07FD;
 const ZC_BROADCAST_ITEMREFINING_RESULT: u16 = 0x0ADA;
 const CZ_OPEN_MAILBOX2: u16 = 0x0AC0;
@@ -1035,6 +1039,12 @@ pub enum MapEvent {
         level: u8,
         success: bool,
     },
+    /// A boss's MVP: the player (account ID) who did the most against it.
+    Mvp(u32),
+    /// The MVP's reward: an item, or EXP; or a reward too heavy to take.
+    MvpItem(u32),
+    MvpExp(u32),
+    MvpOverweight,
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
         id: usize,
@@ -2733,6 +2743,10 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_BROADCAST_ITEMREFINING_RESULT => {
             MapEvent::RefineAnnounced { player: c_string(&packet[2..26]), item: u32_at(26), level: packet[30], success: packet[31] != 0 }
         }
+        ZC_MVP => MapEvent::Mvp(u32_at(2)),
+        ZC_MVP_GETTING_ITEM => MapEvent::MvpItem(u32_at(2)),
+        ZC_MVP_GETTING_SPECIAL_EXP => MapEvent::MvpExp(u32_at(2)),
+        ZC_THROW_MVPITEM => MapEvent::MvpOverweight,
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3394,6 +3408,16 @@ mod tests {
         assert_eq!(Some(refine.len() as i32), packet_length(ZC_BROADCAST_ITEMREFINING_RESULT));
         let Some(MapEvent::RefineAnnounced { player, item: 1201, level: 13, success: true }) = decode_map_packet(&refine) else { panic!() };
         assert_eq!(player, "Smi**");
+    }
+
+    #[test]
+    fn decodes_mvp() {
+        let packet = |id: u16, value: u32| [id.to_le_bytes().as_slice(), &value.to_le_bytes()].concat();
+        let Some(MapEvent::Mvp(2_000_002)) = decode_map_packet(&packet(ZC_MVP, 2_000_002)) else { panic!() };
+        let Some(MapEvent::MvpItem(6010)) = decode_map_packet(&packet(ZC_MVP_GETTING_ITEM, 6010)) else { panic!() };
+        let Some(MapEvent::MvpExp(90_000)) = decode_map_packet(&packet(ZC_MVP_GETTING_SPECIAL_EXP, 90_000)) else { panic!() };
+        let Some(MapEvent::MvpOverweight) = decode_map_packet(&ZC_THROW_MVPITEM.to_le_bytes()) else { panic!() };
+        assert_eq!([ZC_MVP, ZC_MVP_GETTING_ITEM, ZC_MVP_GETTING_SPECIAL_EXP, ZC_THROW_MVPITEM].map(packet_length), [Some(6), Some(6), Some(6), Some(2)]);
     }
 
     #[test]
