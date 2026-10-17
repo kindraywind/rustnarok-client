@@ -59,6 +59,7 @@ mod minimap;
 mod options;
 mod party;
 mod pick_list;
+mod pin;
 mod quest;
 mod render;
 mod shop;
