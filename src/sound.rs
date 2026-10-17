@@ -204,6 +204,11 @@ impl Audio {
         });
     }
 
+    /// The music playing (or loading), as a path.
+    pub fn music(&self) -> Option<PathBuf> {
+        self.mixer.lock().unwrap().music.clone()
+    }
+
     /// Plays an effect from data.grf (`data\wav\<name>`) at `volume`, 0 to 1.
     pub fn play(&mut self, grf: &Grf, name: &str, volume: f32) {
         if volume <= 0.0 {
@@ -274,6 +279,8 @@ pub fn music_table(grf: &Grf) -> HashMap<String, String> {
 pub fn music_path(file: &str) -> PathBuf {
     let folder = std::env::var("RUSTNAROK_CLIENT_BGM").unwrap_or_else(|_| "BGM".into());
     let name = file.rsplit(['\\', '/']).next().unwrap_or(file);
+    // Scripts may leave the extension off (rathena's playBGM "99").
+    let name = if name.contains('.') { name.to_owned() } else { format!("{name}.mp3") };
     Path::new(&folder).join(name)
 }
 
@@ -295,6 +302,13 @@ mod tests {
         let mut out = [0.0; 5];
         mixer.mix(&mut out, 1);
         assert_eq!(out, [0.0, 0.25, 0.5, 0.25, 0.0], "music goes round");
+    }
+
+    #[test]
+    fn names_music_files() {
+        let name = |file: &str| music_path(file).file_name().map(|name| name.to_string_lossy().into_owned());
+        assert_eq!(name("bgm\\01.mp3").as_deref(), Some("01.mp3"));
+        assert_eq!(name("99").as_deref(), Some("99.mp3"));
     }
 
     #[test]

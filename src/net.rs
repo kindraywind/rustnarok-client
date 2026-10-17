@@ -560,6 +560,8 @@ const ZC_MSG_COLOR: u16 = 0x09CD;
 const ZC_ACTION_FAILURE: u16 = 0x013B;
 const ZC_ACK_REMEMBER_WARPPOINT: u16 = 0x011E;
 const ZC_WARPLIST: u16 = 0x0ABE;
+const ZC_SOUND: u16 = 0x01D3;
+const ZC_PLAY_NPC_BGM: u16 = 0x07FE;
 const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
@@ -1026,6 +1028,14 @@ pub enum MapEvent {
     },
     /// Ammunition or weight trouble: 0 no ammunition, 1 and 2 too heavy, 3 ammunition equipped.
     ActionFailure(u16),
+    /// A sound a script plays (`data\wav\<file>`) from where a unit stands: act 0 once, 1 on repeat, 2 stops it.
+    Sound {
+        file: String,
+        act: u8,
+        unit: u32,
+    },
+    /// Music a script plays instead of the map's (a BGM file, maybe without ".mp3").
+    NpcMusic(String),
     /// Where Warp Portal or Teleport may take the player: map names with ".gat" (Teleport's first is "Random").
     WarpList {
         skill: u16,
@@ -2689,6 +2699,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_MSG_COLOR => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: Some([packet[4], packet[5], packet[6]]) },
         ZC_ACTION_FAILURE => MapEvent::ActionFailure(u16_at(2)),
         ZC_ACK_REMEMBER_WARPPOINT => MapEvent::MemoResult(packet[2]),
+        ZC_SOUND => MapEvent::Sound { file: c_string(&packet[2..26]), act: packet[26], unit: u32_at(31) },
+        ZC_PLAY_NPC_BGM => MapEvent::NpcMusic(c_string(&packet[2..26])),
         ZC_WARPLIST => MapEvent::WarpList { skill: u16_at(4), maps: packet[6..].chunks_exact(16).map(c_string).filter(|map| !map.is_empty()).collect() },
         ZC_NOTIFY_MAPINFO => MapEvent::MapForbids(u16_at(2)),
         // Each quest: ID, state (1 active), start and end times, hunts; each hunt 46 bytes, with how many it needs.
@@ -3291,6 +3303,28 @@ mod tests {
             assert_eq!(packet_length(id), Some(length), "{id:#06x}");
         }
         assert_eq!([ZC_ACTION_FAILURE, ZC_ACK_REMEMBER_WARPPOINT, ZC_NOTIFY_MAPINFO].map(packet_length), [Some(4), Some(3), Some(4)]);
+    }
+
+    #[test]
+    fn decodes_sounds_and_music() {
+        let mut sound = ZC_SOUND.to_le_bytes().to_vec();
+        let mut file = b"humming.wav".to_vec();
+        file.resize(24, 0);
+        sound.extend_from_slice(&file);
+        sound.push(0);
+        sound.extend_from_slice(&0u32.to_le_bytes());
+        sound.extend_from_slice(&110_000_123u32.to_le_bytes());
+        assert_eq!(Some(sound.len() as i32), packet_length(ZC_SOUND));
+        let Some(MapEvent::Sound { file, act: 0, unit: 110_000_123 }) = decode_map_packet(&sound) else { panic!() };
+        assert_eq!(file, "humming.wav");
+
+        let mut music = ZC_PLAY_NPC_BGM.to_le_bytes().to_vec();
+        let mut name = b"99".to_vec();
+        name.resize(24, 0);
+        music.extend_from_slice(&name);
+        assert_eq!(Some(music.len() as i32), packet_length(ZC_PLAY_NPC_BGM));
+        let Some(MapEvent::NpcMusic(name)) = decode_map_packet(&music) else { panic!() };
+        assert_eq!(name, "99");
     }
 
     #[test]

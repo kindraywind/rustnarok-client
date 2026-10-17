@@ -4103,6 +4103,22 @@ impl App {
                 let id = ACTION_FAILURES.get(usize::from(kind)).copied().unwrap_or(ACTION_FAILURES[0]);
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if kind == 3 { CHAT_ITEM } else { CHAT_ERROR });
             }
+            // What an NPC's script plays: a sound from where the unit stands, music until the map changes.
+            // ponytail: a repeated sound (act 1) plays once and a stop (act 2) is let go; rathena notes neither works.
+            MapEvent::Sound { file, act: 0 | 1, unit } => {
+                let me = game.player.cell;
+                let at = if unit == game.account_id { Some(me) } else { game.units.get(&unit).map(|actor| actor.cell) };
+                let distance = at.map_or(0, |[x, y]| (x - me[0]).abs().max((y - me[1]).abs()));
+                if let Some(audio) = &mut self.audio {
+                    audio.play(grf, &file, 1.0 - distance as f32 / HEARING_CELLS);
+                }
+            }
+            MapEvent::Sound { .. } => {}
+            MapEvent::NpcMusic(file) => {
+                if let Some(audio) = &mut self.audio {
+                    audio.play_music(Some(&sound::music_path(&file)));
+                }
+            }
             MapEvent::MemoResult(result) => {
                 let id = MEMO_RESULTS.get(usize::from(result)).copied().unwrap_or(MEMO_RESULTS[2]);
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });

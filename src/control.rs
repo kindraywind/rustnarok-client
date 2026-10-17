@@ -622,6 +622,8 @@ fn state(app: &App) -> Value {
     let mut state = json!({
         "ok": true,
         "scene": scene_name(&app.scene),
+        // The music file playing, with RUSTNAROK_CLIENT_SOUND=1 (a driven client is silent otherwise).
+        "music": app.audio.as_ref().and_then(|audio| audio.music()),
         "server": app.login_server().0,
         "loading": app.loading.is_some(),
         "cursor": app.cursor,
