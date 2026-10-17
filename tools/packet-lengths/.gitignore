@@ -1,0 +1,10 @@
+clif_packetdb.hpp
+clif_shuffle.hpp
+gen
+gen2_*
+gen3*
+*.txt
+pp_*
+raw_*.ii
+old_pairs.txt
+names_old.txt

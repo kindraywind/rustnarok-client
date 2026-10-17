@@ -1,0 +1,300 @@
+//! Dev-only MCP server that lets Claude Code drive a live roclient through its control socket (src/control.rs).
+//! Build with `cargo build --release`, then register it once with
+//! `claude mcp add roclient-dev -- <repo>/target/release/roclient-mcp`.
+//!
+//! It speaks JSON-RPC 2.0 over stdio (one message per line; logs go to stderr): `initialize`, `tools/list` and
+//! `tools/call`. `launch` starts the client next to this binary, in the repository it was built from; every other
+//! tool is a control command, sent with its arguments as they are.
+
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use serde_json::{Value, json};
+
+const INSTRUCTIONS: &str = "Drives a live roclient (the Ragnarok Online client in this repository) for testing. Call launch \
+first; it stays logged in across calls until quit. Coordinates are the client's 1024x768 pixels, the same as a screenshot \
+at scale 1. state lists units and ground items with their screen boxes to click. To catch a short effect, run the action \
+through wait's `do` with `pause: true`, then alternate clock step and screenshot.";
+
+fn tools() -> Value {
+    let point = json!({"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2});
+    let button = json!({"type": "string", "enum": ["left", "right"], "description": "left by default"});
+    let mods = json!({"type": "string", "description": "modifier keys held, e.g. \"Alt\" or \"Shift+Ctrl\""});
+    let tool = |name: &str, description: &str, properties: Value, required: &[&str]| json!({"name": name, "description": description, "inputSchema": {"type": "object", "properties": properties, "required": required}});
+    json!([
+        tool(
+            "launch",
+            "Start the client with its control socket and wait until it's ready: in the game with a slot, at character select with an account only, else at the login screen. Retries a refused login (servers keep an account online for a few seconds after a client leaves). If a client already answers, reports its state instead.",
+            json!({
+                "server": {"type": "string", "description": "the login server, host:port (ROCLIENT_SERVER, else 127.0.0.1:6900, by default)"},
+                "account_file": {"type": "string", "description": "a file with `username:` and `password:` lines; the password goes to the client only"},
+                "account": {"type": "string", "description": "which pair of lines: \"2\" for `username2:` and `password2:` (the first by default)"},
+                "slot": {"type": "integer", "description": "character slot to play"},
+                "timeout_s": {"type": "integer", "description": "how long to wait for the client (90 by default)"},
+            }),
+            &[],
+        ),
+        tool("quit", "Close the client.", json!({}), &[]),
+        tool(
+            "screenshot",
+            "The client's next frame as a PNG.",
+            json!({
+                "crop": {"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4, "description": "[x, y, width, height]"},
+                "scale": {"type": "number", "description": "resize factor, e.g. 0.5, or 2 to look closely"},
+            }),
+            &[],
+        ),
+        tool("move", "Move the pointer there (hover).", json!({"x": {"type": "number"}, "y": {"type": "number"}}), &["x", "y"]),
+        tool(
+            "click",
+            "Click there, through the client's own mouse handling.",
+            json!({"x": {"type": "number"}, "y": {"type": "number"}, "button": button, "mods": mods, "count": {"type": "integer", "description": "2 for a double click"}}),
+            &["x", "y"],
+        ),
+        tool(
+            "drag",
+            "Press at `from`, move to `to` and let go (windows, items onto hotkeys, the camera with the right button).",
+            json!({"from": point, "to": point, "button": button, "mods": mods}),
+            &["from", "to"]
+        ),
+        tool(
+            "key",
+            "Press a key: Enter, Escape, Tab, Backspace, Space, Up/Down/Left/Right, F1-F12 or one character, after modifiers like \"Alt+E\" (inventory), \"Alt+S\" (skills), \"Alt+Q\" (equipment).",
+            json!({"key": {"type": "string"}}),
+            &["key"],
+        ),
+        tool(
+            "type",
+            "Type text into the focused field (login, chat line, NPC input); Hangul comes in through the input method. Send with the Enter key.",
+            json!({"text": {"type": "string"}}),
+            &["text"]
+        ),
+        tool("say", "Say a chat line, or run a GM command like \"@monster poring\" or \"@heal\".", json!({"text": {"type": "string"}}), &["text"]),
+        tool(
+            "state",
+            "The scene; in the game the map, the player (cell, HP/SP, levels, zeny, screen box), open windows, the NPC dialog, the aimed skill, units and ground items nearest first (id, kind, name, cell, screen box [left, top, right, bottom]), counts, status icons and the last chat lines.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "wait",
+            "Sleep `ms`, or wait up to `ms` (10000 by default) for a packet or an event seen since the previous command, so a fast answer to that command isn't missed. Events are the client's MapEvent/CharEvent names (Act, SkillHit, SkillUsed, Casting, Chat, Unit, Vanish, Status, MapChange, Entered, Characters, ...) or LoginAccepted/LoginRefused.",
+            json!({
+                "ms": {"type": "integer"},
+                "packet": {"type": "string", "description": "packet ID in hex, e.g. \"0x08c8\""},
+                "event": {"type": "string"},
+                "fresh": {"type": "boolean", "description": "only count what comes after this call"},
+                "pause": {"type": "boolean", "description": "pause the animation clock the moment it comes"},
+                "do": {"type": "object", "description": "a command to run first, e.g. {\"cmd\": \"key\", \"key\": \"F1\"} or {\"cmd\": \"click\", \"x\": 500, \"y\": 400}"},
+            }),
+            &[],
+        ),
+        tool(
+            "clock",
+            "Pause or resume the animation clock, or step it `ms` (16 by default) further while paused, to screenshot short effects frame by frame. Resuming catches up with real time.",
+            json!({"action": {"type": "string", "enum": ["pause", "resume", "step"]}, "ms": {"type": "integer"}}),
+            &["action"],
+        ),
+        tool(
+            "trace",
+            "The last packets received from the char and map servers, in the ROCLIENT_TRACE format (time ms, id, length, first bytes).",
+            json!({"last": {"type": "integer", "description": "lines, 20 by default"}, "events": {"type": "boolean", "description": "also the client events they made (== lines), e.g. why a connection dropped"}}),
+            &[],
+        ),
+    ])
+}
+
+struct Server {
+    socket: PathBuf,
+    /// The client this server started.
+    child: Option<Child>,
+}
+
+impl Server {
+    /// One command, on a connection of its own.
+    fn request(&self, command: &Value) -> Result<Value, String> {
+        let stream = UnixStream::connect(&self.socket).map_err(|_| "no client is running; call launch first".to_owned())?;
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(120)));
+        (&stream).write_all(format!("{command}\n").as_bytes()).map_err(|error| error.to_string())?;
+        let mut line = String::new();
+        BufReader::new(&stream).read_line(&mut line).map_err(|error| format!("no answer: {error}"))?;
+        serde_json::from_str(&line).map_err(|error| format!("bad answer {line:?}: {error}"))
+    }
+
+    fn call(&mut self, name: &str, arguments: Value) -> Result<Value, String> {
+        match name {
+            "launch" => self.launch(&arguments).map(text),
+            "quit" => Ok(text(self.quit())),
+            _ => {
+                let mut command = if arguments.is_object() { arguments } else { json!({}) };
+                command["cmd"] = name.into();
+                let mut reply = self.request(&command)?;
+                if reply["ok"] != true {
+                    return Err(reply["error"].as_str().map_or_else(|| reply.to_string(), str::to_owned));
+                }
+                if let Some(png) = reply["png"].as_str() {
+                    return Ok(json!([{"type": "image", "data": png, "mimeType": "image/png"}]));
+                }
+                if let Some(trace) = reply["trace"].as_str() {
+                    return Ok(text(trace.to_owned()));
+                }
+                if let Some(fields) = reply.as_object_mut() {
+                    fields.remove("ok");
+                }
+                Ok(text(if reply == json!({}) { "ok".to_owned() } else { reply.to_string() }))
+            }
+        }
+    }
+
+    fn launch(&mut self, arguments: &Value) -> Result<String, String> {
+        if let Ok(state) = self.request(&json!({"cmd": "state"})) {
+            return Ok(format!("a client is already running: {state}"));
+        }
+        let account_file = arguments["account_file"].as_str();
+        let slot = arguments["slot"].as_u64();
+        let game = std::env::current_exe().map_err(|error| error.to_string())?.with_file_name("roclient");
+        let log_path = self.socket.with_extension("log");
+        let log = std::fs::File::create(&log_path).map_err(|error| format!("{}: {error}", log_path.display()))?;
+        let mut command = Command::new(&game);
+        // The client finds data.grf and the data folders in the repository.
+        command.current_dir(env!("CARGO_MANIFEST_DIR")).env("ROCLIENT_CONTROL", &self.socket);
+        if let Some(server) = arguments["server"].as_str() {
+            command.env("ROCLIENT_SERVER", server);
+        }
+        command.stdin(Stdio::null()).stdout(log.try_clone().map_err(|error| error.to_string())?).stderr(log);
+        if let Some(path) = account_file {
+            let which = arguments["account"].as_str().unwrap_or_default();
+            let contents = std::fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
+            let (user, password) = account(&contents, which).ok_or_else(|| format!("{path} has no `username{which}:` and `password{which}:` lines"))?;
+            command.env("ROCLIENT_LOGIN", format!("{user}:{password}"));
+            command.env("ROCLIENT_AUTOSTART", slot.map_or_else(|| "select".to_owned(), |slot| slot.to_string()));
+        }
+        self.child = Some(command.spawn().map_err(|error| format!("{}: {error}", game.display()))?);
+        let goal = match (account_file, slot) {
+            (None, _) => "login",
+            (Some(_), None) => "char_select",
+            (Some(_), Some(_)) => "game",
+        };
+        let deadline = Instant::now() + Duration::from_secs(arguments["timeout_s"].as_u64().unwrap_or(90));
+        let (mut state, mut retries) = (Value::Null, 0);
+        while Instant::now() < deadline {
+            if let Some(status) = self.child.as_mut().and_then(|child| child.try_wait().ok().flatten()) {
+                return Err(format!("the client exited ({status}); its output is in {}", log_path.display()));
+            }
+            std::thread::sleep(Duration::from_millis(300));
+            let Ok(now) = self.request(&json!({"cmd": "state"})) else { continue };
+            state = now;
+            match state["scene"].as_str() {
+                Some(scene) if scene == goal && state["loading"] == false => {
+                    let pid = self.child.as_ref().map_or(0, Child::id);
+                    return Ok(format!("client {pid} is up (output in {}): {state}", log_path.display()));
+                }
+                Some("message") => {
+                    // A login server that can't be reached won't be later.
+                    let trace = self.request(&json!({"cmd": "trace", "events": true, "last": 50})).unwrap_or_default();
+                    if let Some(refusal) = trace["trace"].as_str().and_then(|lines| lines.lines().rev().find(|line| line.contains("== LoginRefused(Io("))) {
+                        return Err(format!("can't reach the login server: {refusal}"));
+                    }
+                    // Refused, most likely because the server still has the account online: close the message and log
+                    // in again a little later.
+                    if account_file.is_none() || retries == 6 {
+                        return Err(format!("stopped at a message: {state}"));
+                    }
+                    retries += 1;
+                    eprintln!("roclient-mcp: login refused ({}), retrying", state["text"]);
+                    std::thread::sleep(Duration::from_secs(5));
+                    for key in ["Enter", "Enter"] {
+                        let _ = self.request(&json!({"cmd": "key", "key": key}));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Err(format!("not at {goal} in time; last state: {state}"))
+    }
+
+    fn quit(&mut self) -> String {
+        let answered = self.request(&json!({"cmd": "quit"})).is_ok();
+        if let Some(mut child) = self.child.take() {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if matches!(child.try_wait(), Ok(None)) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return "killed the client".into();
+            }
+        }
+        if answered { "the client quit".into() } else { "no client was running".into() }
+    }
+}
+
+/// The `username<which>:` and `password<which>:` lines of an account file.
+fn account(contents: &str, which: &str) -> Option<(String, String)> {
+    let field = |name: &str| contents.lines().find_map(|line| Some(line.trim().strip_prefix(name)?.strip_prefix(which)?.strip_prefix(':')?.trim().to_owned()));
+    Some((field("username")?, field("password")?)).filter(|(user, password)| !user.is_empty() && !password.is_empty())
+}
+
+fn text(text: String) -> Value {
+    json!([{"type": "text", "text": text}])
+}
+
+#[cfg(test)]
+#[test]
+fn picks_an_account_from_the_file() {
+    let file = "# note: not a username\nusername: one\npassword: p1\n\nusername2: two\npassword2: p2\n";
+    assert_eq!(account(file, ""), Some(("one".into(), "p1".into())));
+    assert_eq!(account(file, "2"), Some(("two".into(), "p2".into())));
+    assert_eq!(account(file, "3"), None);
+}
+
+fn main() {
+    // In the repository's target folder: a short, private path (socket paths have a length limit) that's ignored by git.
+    let target = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
+    let _ = std::fs::create_dir_all(&target);
+    let mut server = Server { socket: target.join("roclient-dev.sock"), child: None };
+    let mut stdout = std::io::stdout();
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else { break };
+        let message: Value = match serde_json::from_str(&line) {
+            Ok(message) => message,
+            Err(error) => {
+                eprintln!("roclient-mcp: not JSON ({error}): {line}");
+                continue;
+            }
+        };
+        // Notifications (no ID) need no answer.
+        let Some(id) = message.get("id").cloned() else { continue };
+        let params = &message["params"];
+        let result = match message["method"].as_str().unwrap_or_default() {
+            "initialize" => json!({
+                "protocolVersion": params["protocolVersion"].as_str().unwrap_or("2025-06-18"),
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "roclient-dev", "version": env!("CARGO_PKG_VERSION")},
+                "instructions": INSTRUCTIONS,
+            }),
+            "tools/list" => json!({"tools": tools()}),
+            "tools/call" => match server.call(params["name"].as_str().unwrap_or_default(), params["arguments"].clone()) {
+                Ok(content) => json!({"content": content, "isError": false}),
+                Err(error) => json!({"content": text(error), "isError": true}),
+            },
+            "ping" => json!({}),
+            method => {
+                let error = json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": format!("no method {method}")}});
+                let _ = writeln!(stdout, "{error}").and_then(|()| stdout.flush());
+                continue;
+            }
+        };
+        if writeln!(stdout, "{}", json!({"jsonrpc": "2.0", "id": id, "result": result})).and_then(|()| stdout.flush()).is_err() {
+            break;
+        }
+    }
+    // Claude Code went away: don't leave a logged-in client behind.
+    if server.child.is_some() {
+        eprintln!("roclient-mcp: {}", server.quit());
+    }
+}

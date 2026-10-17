@@ -1,0 +1,2309 @@
+# Which effect files the client plays for effect, skill and item IDs:
+# str <effect id> <file under data\texture\effect\ without .str> <texture folder or -> <follows the unit 1/0> [random from to]
+# misc <ZC_NOTIFY_EFFECT type> <effect id>; skill <skill id> <when> <effect id>; item <item id> <effect id>
+# part <effect id> <2D|3D> <name=value;...>: a texture moving from a start to an end over its duration
+# ring <effect id> <name=value;...>: a textured cylinder growing, turning and fading
+str	10	maemor	-	1
+str	13	effect/safetywall	-	0
+str	23	stonecurse	-	1
+str	25	firewall%d	-	0	1	2
+str	28	freeze	-	1
+str	29	lightning	-	1
+str	29	windhit%d	-	1	1	3
+str	30	thunderstorm	-	0
+str	40	cross	-	1
+str	41	angelus	-	1
+str	49	firehit%d	-	1	1	3
+str	52	windhit%d	-	1	1	3
+str	64	arrowshot	-	1
+str	65	invenom	-	1
+str	66	cure	-	1
+str	67	provoke	-	1
+str	68	mvp	-	1
+str	69	skidtrap	-	0
+str	70	brandish	-	0
+str	75	gloria	-	1
+str	76	magnificat	-	1
+str	77	resurrection	-	1
+str	78	recovery	-	1
+str	83	sanctuary	-	1
+str	84	impositio	-	1
+str	85	lexaeterna	-	1
+str	86	aspersio	-	1
+str	87	lexdivina	-	1
+str	88	suffragium	-	1
+str	89	stormgust	-	1
+str	90	lord	-	1
+str	91	benedictio	-	1
+str	92	meteor%d	-	1	1	4
+str	95	quagmire	-	0
+str	96	firepillar	-	0
+str	97	firepillarbomb	-	0
+str	101	repairweapon	-	1
+str	102	crashearth	-	0
+str	103	weaponperfection	-	1
+str	104	maximizepower	-	1
+str	106	blastmine	-	0
+str	107	claymore	-	0
+str	108	freezing	-	0
+str	109	bubble%d	-	0	1	4
+str	110	gaspush	-	0
+str	111	spring	-	0
+str	112	kyrie	-	1
+str	113	magnus	-	0
+str	124	venomdust	-	0
+str	126	poisonreact_1st	-	1
+str	127	poisonreact	-	1
+str	129	venomsplasher	-	1
+str	130	twohand	-	1
+str	131	autocounter	-	1
+str	133	freeze	-	1
+str	134	freezed	-	1
+str	135	icecrash	-	1
+str	136	slowp	-	0
+str	139	sandman	-	0
+str	141	pneuma%d	-	0	1	3
+str	143	sonicblow	-	1
+str	144	brandish2	-	1
+str	146	shockwavehit	-	1
+str	147	earthhit	-	1
+str	148	pierce	-	1
+str	149	bowling	-	1
+str	150	spearstab	-	1
+str	151	spearboomerang	-	1
+str	152	holyhit	-	1
+str	153	concentration	-	1
+str	154	bs_refinesuccess	-	1
+str	155	bs_refinefailed	-	1
+str	158	joblvup	-	1
+str	169	energycoat	-	1
+str	170	cartrevolution	-	1
+str	181	mentalbreak	-	1
+str	182	magical	-	1
+str	183	sui_explosion	-	1
+str	185	suicide	-	1
+str	186	yunta_1	-	1
+str	187	yunta_2	-	1
+str	188	yunta_3	-	1
+str	189	yunta_4	-	1
+str	190	yunta_5	-	1
+str	191	homing	-	1
+str	192	poison	-	1
+str	193	silence	-	1
+str	194	stun	-	1
+str	195	stonecurse	-	1
+str	197	sleep	-	1
+str	199	pong%d	-	0	1	3
+str	204	빨간포션	-	1
+str	205	주홍포션	-	1
+str	206	노란포션	-	1
+str	207	하얀포션	-	1
+str	208	파란포션	-	1
+str	209	초록포션	-	1
+str	210	fruit	-	1
+str	211	fruit_	-	1
+str	213	deffender	-	1
+str	214	keeping	-	1
+str	218	집중	-	1
+str	219	각성	-	1
+str	220	버서크	-	1
+str	234	spell	-	1
+str	235	디스펠	-	1
+str	244	매직로드	-	1
+str	245	holy_cross	-	1
+str	246	shield_charge	-	1
+str	248	providence	-	1
+str	250	twohand	-	1
+str	251	devotion	-	1
+str	255	enc_fire	-	1
+str	256	enc_ice	-	1
+str	257	enc_wind	-	1
+str	258	enc_earth	-	1
+str	268	steal_coin	-	1
+str	269	strip_weapon	-	1
+str	270	strip_shield	-	1
+str	271	strip_armor	-	1
+str	272	strip_helm	-	1
+str	273	연환	-	1
+str	305	p_success	-	1
+str	306	p_failed	-	1
+str	311	loud	-	1
+str	315	safetywall	-	1
+str	337	joblvup	-	1
+str	369	twohand	-	1
+str	371	angel	-	1
+str	372	devil	-	1
+str	390	melt	-	1
+str	391	cart	-	1
+str	392	sword	-	1
+str	406	소울번	-	1
+str	407	사람효과	-	1
+str	440	asum	-	1
+str	491	찹쌀떡	-	1
+str	492	ramadan	-	1
+str	507	mapae	-	1
+str	508	itempokjuk	-	1
+str	565	moonlight_1	-	1
+str	566	moonlight_2	-	1
+str	567	moonlight_3	-	1
+str	568	h_levelup	-	1
+str	569	defense	-	1
+str	593	food_str	-	1
+str	594	food_int	-	1
+str	595	food_vit	-	1
+str	596	food_agi	-	1
+str	597	food_dex	-	1
+str	598	food_luk	-	1
+str	603	firehit%d	-	1	1	3
+str	608	cook_suc	-	1
+str	609	cook_fail	-	1
+str	612	itempokjuk	-	1
+str	618	firehit	-	1	1	3
+str	619	freeze	-	1	1	3
+str	622	setsudan	-	1
+str	635	fire dragon	-	0
+str	636	icy	-	0
+str	646	트랙킹	-	1
+str	649	불스아이	-	1
+str	668	dragon_h	-	1
+str	669	wideb	-	1
+str	670	dfear	-	1
+str	677	cwound	-	1
+str	682	itempokjuk	-	1
+str	683	itempokjuk	-	1
+str	684	itempokjuk	-	1
+str	685	itempokjuk	-	1
+str	686	itempokjuk	-	1
+str	699	flower_leaf	-	1
+str	704	mobile_ef02	-	1
+str	705	mobile_ef01	-	1
+str	706	mobile_ef03	-	1
+str	708	storm_min	-	1
+str	709	pokjuk_jap	-	0
+str	717	angelus	-	1
+str	721	ado	-	1
+str	722	이그니션브레이크	-	1
+str	727	crimson_r	-	1
+str	728	hell_in	-	1
+str	731	dragon_h	-	1
+str	734	chainlight	-	1
+str	745	aimed	-	1
+str	746	arrowstorm	-	1
+str	747	laulamus	-	1
+str	748	lauagnus	-	1
+str	749	mil_shield	-	1
+str	750	concentration	-	1
+str	756	버서크	-	1
+str	795	powerswing	-	1
+str	813	enervation	-	1
+str	814	groomy	-	1
+str	815	ignorance	-	1
+str	816	laziness	-	1
+str	817	unlucky	-	1
+str	818	weakness	-	1
+str	920	firewall_per	-	1
+str	926	hunter_shockwave_blue	-	1
+str	959	poison_mist	-	1
+str	960	eraser_cutter	-	1
+str	964	lava_slide	-	1
+str	965	sonic_claw	-	1
+str	966	tinder	-	1
+str	967	mid_frenzy	-	1
+str	975	vash00	-	1
+str	987	rwc2011	-	1
+str	988	rwc2011_2	-	1
+str	1015	rune_success	-	1
+str	1016	rune_fail	-	1
+str	1017	changematerial_su	-	1
+str	1018	changematerial_fa	-	1
+str	1019	guardian	-	1
+str	1020	bubble%d_1	-	1	1	4
+str	1021	dust	-	1
+str	1029	dancingblade	-	1
+str	1031	invincibleoff2	-	1
+str	1033	devil	-	1
+str	1040	gc_darkcrow	-	1
+str	1042	all_full_throttle	-	1
+str	1043	sr_flashcombo	-	1
+str	1044	rk_luxanima	-	1
+str	1046	so_elemental_shield	-	1
+str	1047	ab_offertorium	-	1
+str	1048	wl_telekinesis_intense	-	1
+str	1049	gn_illusiondoping	-	1
+str	1050	nc_magma_eruption	-	1
+str	1055	chill	-	1
+str	1057	ab_offertorium_ring	-	1
+str	1062	stormgust	-	1
+str	1094	ach_complete/ppring3	ach_complete/	1
+str	1186	new_dropitem/dropitem_pink/dropitem_pink/dropitem_pink	new_dropitem/dropitem_pink/dropitem_pink/	0
+str	1186	new_dropitem/dropitem_pink/dropitem_pink_bottom/dropitem_pink_bottom	new_dropitem/dropitem_pink/dropitem_pink_bottom/	0
+str	1189	new_dropitem/dropitem_yellow/dropitem_yellow/dropitem_yellow	new_dropitem/dropitem_yellow/dropitem_yellow/	0
+str	1189	new_dropitem/dropitem_yellow/dropitem_yellow_bottom/dropitem_yellow_bottom	new_dropitem/dropitem_yellow/dropitem_yellow_bottom/	0
+str	1190	new_dropitem/dropitem_purple/dropitem_purple/dropitem_purple	new_dropitem/dropitem_purple/dropitem_purple/	0
+str	1190	new_dropitem/dropitem_purple/dropitem_purple_bottom/dropitem_purple_bottom	new_dropitem/dropitem_purple/dropitem_purple_bottom/	0
+str	1869	new_dropitem/dropitem_blue/dropitem_blue/dropitem_blue	new_dropitem/dropitem_blue/dropitem_blue/	0
+str	1869	new_dropitem/dropitem_blue/dropitem_blue_bottom/dropitem_blue_bottom	new_dropitem/dropitem_blue/dropitem_blue_bottom/	0
+str	1870	new_dropitem/dropitem_green/dropitem_green/dropitem_green	new_dropitem/dropitem_green/dropitem_green/	0
+str	1870	new_dropitem/dropitem_green/dropitem_green_bottom/dropitem_green_bottom	new_dropitem/dropitem_green/dropitem_green_bottom/	0
+str	1871	new_dropitem/dropitem_red/dropitem_red/dropitem_red	new_dropitem/dropitem_red/dropitem_red/	0
+str	1871	new_dropitem/dropitem_red/dropitem_red_bottom/dropitem_red_bottom	new_dropitem/dropitem_red/dropitem_red_bottom/	0
+str	1872	grade_enchant/new_success/new_success	grade_enchant/new_success/	0
+str	1873	grade_enchant/new_failed/new_failed	grade_enchant/new_failed/	0
+str	1874	grade_enchant/new_intro/new_intro	grade_enchant/new_intro/	0
+str	1875	ui_enchant/ui_intro_yellow/ui_intro_yellow	ui_enchant/ui_intro_yellow/	0
+str	1876	ui_enchant/ui_enchant_success/ui_enchant_success	ui_enchant/ui_enchant_success/	0
+str	1877	ui_enchant/ui_fail/ui_enchant_fail	ui_enchant/ui_fail/	0
+str	1878	ui_enchant/ui_intro_blue/ui_intro_blue	ui_enchant/ui_intro_blue/	0
+str	1879	ui_enchant/ui_levelup_success/ui_levelup_success	ui_enchant/ui_levelup_success/	0
+str	1880	ui_enchant/ui_fail/ui_levelup_fail	ui_enchant/ui_fail/	0
+str	1881	ui_enchant/ui_intro_green/ui_intro_green	ui_enchant/ui_intro_green/	0
+str	1882	ui_enchant/ui_reset_success/ui_reset_success	ui_enchant/ui_reset_success/	0
+str	1883	ui_enchant/ui_fail/ui_reset_fail	ui_enchant/ui_fail/	0
+misc	0	371
+misc	1	158
+misc	2	155
+misc	3	154
+misc	5	305
+misc	6	306
+misc	7	338
+misc	9	582
+skill	5	hitEffectId	1
+skill	5	beginCastEffectId	16
+skill	6	successEffectId	67
+skill	7	effectIdOnCaster	17
+skill	8	effectId	11
+skill	10	effectId	22
+skill	11	hitEffectId	1
+skill	13	hitEffectId	1
+skill	13	beforeHitEffectId	15
+skill	14	hitEffectId	51
+skill	15	hitEffectId	28
+skill	16	effectId	23
+skill	17	hitEffectId	49
+skill	17	beforeHitEffectId	24
+skill	18	hitEffectId	49
+skill	18	groundEffectId	25
+skill	19	hitEffectId	49
+skill	20	effectId	29
+skill	20	hitEffectId	52
+skill	21	effectId	30
+skill	21	hitEffectId	52
+skill	24	hitEffectId	1
+skill	25	groundEffectId	141
+skill	28	effectId	312
+skill	28	hitEffectId	320
+skill	29	effectId	37
+skill	30	effectId	38
+skill	31	effectId	39
+skill	32	effectId	40
+skill	33	effectId	41
+skill	34	effectId	42
+skill	35	effectId	66
+skill	42	effectId	10
+skill	45	effectId	153
+skill	46	hitEffectId	1
+skill	46	beginCastEffectId	16
+skill	47	hitEffectId	1
+skill	50	successEffectId	18
+skill	52	hitEffectId	20
+skill	53	effectId	21
+skill	54	effectId	77
+skill	54	effectId	140
+skill	56	effectIdOnCaster	148
+skill	56	hitEffectId	147
+skill	57	effectId	70
+skill	57	effectIdOnCaster	144
+skill	58	effectIdOnCaster	150
+skill	59	effectIdOnCaster	151
+skill	59	hitEffectId	80
+skill	60	effectId	130
+skill	61	effectId	131
+skill	62	effectIdOnCaster	149
+skill	62	hitEffectId	1
+skill	66	effectId	84
+skill	67	effectId	88
+skill	68	effectId	86
+skill	69	effectId	91
+skill	70	effectId	83
+skill	70	groundEffectId	319
+skill	71	effectId	136
+skill	72	effectId	78
+skill	73	effectId	112
+skill	74	effectId	76
+skill	75	effectId	75
+skill	76	effectId	87
+skill	77	hitEffectId	152
+skill	78	effectId	85
+skill	79	effectId	113
+skill	79	hitEffectId	152
+skill	79	groundEffectId	318
+skill	80	effectId	96
+skill	80	hitEffectId	97
+skill	80	groundEffectId	138
+skill	81	effectId	62
+skill	81	hitEffectId	49
+skill	83	effectId	92
+skill	83	hitEffectId	49
+skill	84	effectId	93
+skill	84	beforeHitEffectId	94
+skill	85	effectId	90
+skill	85	hitEffectId	52
+skill	87	groundEffectId	74
+skill	88	effectIdOnCaster	28
+skill	88	hitEffectId	51
+skill	89	effectId	89
+skill	89	hitEffectId	51
+skill	90	effectId	79
+skill	90	hitEffectId	147
+skill	91	effectId	142
+skill	91	hitEffectId	147
+skill	92	groundEffectId	95
+skill	108	effectId	101
+skill	110	effectId	102
+skill	111	effectId	98
+skill	112	effectId	103
+skill	113	effectId	128
+skill	114	effectId	104
+skill	115	effectId	69
+skill	118	effectId	145
+skill	118	hitEffectId	146
+skill	119	hitEffectId	139
+skill	120	hitEffectId	99
+skill	121	hitEffectId	108
+skill	122	hitEffectId	106
+skill	123	hitEffectId	107
+skill	124	effectId	100
+skill	129	effectId	115
+skill	130	effectId	119
+skill	131	effectId	111
+skill	135	effectId	120
+skill	136	effectId	143
+skill	136	effectIdOnCaster	121
+skill	136	hitEffectId	122
+skill	137	hitEffectId	132
+skill	138	effectId	20
+skill	139	effectId	126
+skill	139	hitEffectId	127
+skill	140	effectId	124
+skill	140	groundEffectId	171
+skill	141	effectId	129
+skill	142	effectId	309
+skill	149	effectId	310
+skill	152	beforeHitEffectId	308
+skill	153	hitEffectId	170
+skill	153	beginCastEffectId	170
+skill	155	effectId	311
+skill	156	effectId	152
+skill	157	effectId	169
+skill	158	effectIdOnCaster	148
+skill	159	effectId	181
+skill	162	effectId	174
+skill	163	effectId	177
+skill	164	effectId	173
+skill	165	effectId	175
+skill	166	effectId	179
+skill	167	effectId	178
+skill	168	effectId	172
+skill	170	effectIdOnCaster	16
+skill	172	effectId	191
+skill	173	effectId	183
+skill	175	effectId	185
+skill	176	effectId	192
+skill	178	effectId	193
+skill	179	effectId	194
+skill	180	effectId	195
+skill	181	effectId	196
+skill	182	effectId	197
+skill	184	hitEffectId	51
+skill	185	hitEffectId	147
+skill	186	hitEffectId	49
+skill	187	hitEffectId	52
+skill	188	hitEffectId	53
+skill	189	hitEffectId	152
+skill	190	effectId	184
+skill	190	hitEffectId	180
+skill	191	effectId	198
+skill	192	hitEffectId	182
+skill	194	successEffectId	67
+skill	199	effectIdOnCaster	216
+skill	200	effectIdOnCaster	217
+skill	201	effectId	214
+skill	202	effectId	212
+skill	205	effectId	213
+skill	211	successEffectId	268
+skill	211	successEffectId	274
+skill	212	hitEffectId	275
+skill	214	effectIdOnCaster	276
+skill	215	successEffectId	269
+skill	216	successEffectId	270
+skill	217	successEffectId	271
+skill	218	successEffectId	272
+skill	219	effectId	227
+skill	229	groundEffectId	302
+skill	230	beforeHitEffectId	298
+skill	231	effectId	299
+skill	234	effectId	300
+skill	235	effectId	300
+skill	236	effectId	300
+skill	237	effectId	300
+skill	249	effectId	336
+skill	250	effectId	246
+skill	251	effectId	249
+skill	252	effectId	252
+skill	253	effectId	245
+skill	254	effectId	226
+skill	255	effectId	251
+skill	256	effectId	248
+skill	257	effectId	222
+skill	258	effectId	250
+skill	263	effectId	329
+skill	264	effectId	166
+skill	266	effectId	267
+skill	267	effectId	265
+skill	267	hitEffectId	1
+skill	268	effectId	254
+skill	270	effectIdOnCaster	261
+skill	270	beginCastEffectId	12
+skill	272	effectId	262
+skill	272	effectId	273
+skill	272	effectIdOnCaster	263
+skill	273	effectId	330
+skill	276	successEffectId	244
+skill	277	successEffectId	234
+skill	280	successEffectId	255
+skill	281	successEffectId	256
+skill	282	successEffectId	257
+skill	283	successEffectId	258
+skill	285	effectIdOnCaster	225
+skill	285	groundEffectId	239
+skill	286	effectIdOnCaster	236
+skill	286	groundEffectId	240
+skill	287	effectIdOnCaster	237
+skill	287	groundEffectId	241
+skill	288	effectIdOnCaster	238
+skill	288	groundEffectId	242
+skill	289	successEffectId	235
+skill	306	effectId	278
+skill	307	effectId	279
+skill	308	effectId	280
+skill	309	effectId	281
+skill	310	effectId	282
+skill	311	effectId	283
+skill	312	effectId	284
+skill	313	effectId	285
+skill	318	beginCastEffectId	295
+skill	319	effectId	286
+skill	320	effectId	287
+skill	321	effectId	288
+skill	322	effectId	289
+skill	326	beginCastEffectId	296
+skill	327	effectId	291
+skill	328	effectId	292
+skill	329	effectId	293
+skill	330	effectId	294
+skill	337	effectId	494
+skill	338	effectId	450
+skill	340	effectId	451
+skill	341	effectId	93
+skill	341	hitEffectId	94
+skill	342	effectId	453
+skill	349	effectId	456
+skill	355	effectId	367
+skill	356	effectId	336
+skill	357	effectId	369
+skill	359	effectId	368
+skill	360	effectId	368
+skill	361	effectId	440
+skill	362	groundEffectId	374
+skill	365	effectId	380
+skill	366	beginCastEffectId	16
+skill	364	effectIdOnCaster	217
+skill	367	beforeHitEffectId	365
+skill	368	effectId	366
+skill	369	effectId	370
+skill	370	hitEffectId	376
+skill	371	effectId	377
+skill	371	effectIdOnCaster	263
+skill	372	effectId	512
+skill	373	effectId	383
+skill	373	effectIdOnCaster	378
+skill	374	effectId	384
+skill	374	successEffectId	385
+skill	375	effectId	406
+skill	378	effectId	493
+skill	379	beforeHitEffectId	361
+skill	380	effectId	386
+skill	381	effectId	387
+skill	382	hitEffectId	388
+skill	383	effectId	389
+skill	384	effectId	390
+skill	387	effectId	391
+skill	389	beginCastEffectId	501
+skill	390	effectId	392
+skill	394	effectId	393
+skill	395	effectId	394
+skill	396	effectId	395
+skill	396	hitEffectId	396
+skill	397	effectId	339
+skill	398	beginCastEffectId	399
+skill	399	beginCastEffectId	400
+skill	400	effectId	401
+skill	401	beginCastEffectId	402
+skill	401	beginCastEffectId	12
+skill	402	successEffectId	403
+skill	403	effectId	505
+skill	405	groundEffectId	404
+skill	406	effectIdOnCaster	409
+skill	408	effectId	408
+skill	411	effectId	443
+skill	411	groundEffectId	442
+skill	413	effectId	435
+skill	415	effectId	413
+skill	417	effectId	414
+skill	421	effectId	439
+skill	421	hitEffectId	457
+skill	426	effectIdOnCaster	445
+skill	426	groundEffectId	411
+skill	427	effectId	432
+skill	428	effectId	488
+skill	429	effectId	488
+skill	430	effectId	488
+skill	431	effectId	441
+skill	432	effectId	441
+skill	433	effectId	441
+skill	434	groundEffectId	487
+skill	444	effectId	433
+skill	446	effectId	220
+skill	446	beforeHitEffectId	541
+skill	462	effectId	590
+skill	463	effectId	543
+skill	464	effectId	546
+skill	465	effectId	419
+skill	467	effectId	547
+skill	468	effectId	555
+skill	469	effectId	553
+skill	469	successEffectId	425
+skill	470	effectId	589
+skill	470	successEffectId	420
+skill	471	effectId	427
+skill	472	effectId	254
+skill	472	effectId	261
+skill	475	effectId	496
+skill	476	successEffectId	495
+skill	479	effectId	300
+skill	479	effectId	500
+skill	482	effectId	521
+skill	483	effectId	223
+skill	483	groundEffectId	224
+skill	485	effectId	518
+skill	487	effectId	500
+skill	488	groundEffectId	517
+skill	489	successEffectId	500
+skill	490	effectId	537
+skill	494	effectId	424
+skill	494	effectId	503
+skill	496	effectId	497
+skill	497	effectId	498
+skill	498	effectId	499
+skill	502	effectId	648
+skill	503	effectId	649
+skill	504	effectId	625
+skill	505	effectId	626
+skill	506	effectId	456
+skill	507	effectId	644
+skill	512	effectId	646
+skill	512	hitEffectId	647
+skill	513	effectId	627
+skill	515	effectId	643
+skill	516	effectId	637
+skill	517	effectId	626
+skill	518	effectId	628
+skill	519	effectId	584
+skill	520	effectId	645
+skill	523	beforeHitEffectId	613
+skill	524	beforeHitEffectId	614
+skill	525	beforeHitEffectId	615
+skill	526	beforeHitEffectId	616
+skill	527	groundEffectId	631
+skill	528	effectId	632
+skill	530	effectId	630
+skill	532	effectId	617
+skill	534	effectId	618
+skill	535	groundEffectId	634
+skill	536	effectId	635
+skill	537	effectId	619
+skill	538	groundEffectId	620
+skill	539	effectId	636
+skill	540	effectId	621
+skill	541	effectId	622
+skill	544	effectId	633
+skill	653	effectIdOnCaster	666
+skill	654	hitEffectId	49
+skill	656	hitEffectId	52
+skill	659	effectId	668
+skill	661	effectIdOnCaster	409
+skill	664	effectIdOnCaster	89
+skill	665	effectIdOnCaster	669
+skill	670	groundEffectId	674
+skill	673	hitEffectId	677
+skill	698	effectId	717
+skill	706	effectId	1020
+skill	1002	effectId	599
+skill	1004	beforeHitEffectId	600
+skill	1005	effectId	602
+skill	1005	groundEffectId	604
+skill	1006	effectId	601
+skill	1008	effectId	256
+skill	1009	hitEffectId	1
+skill	1010	successEffectId	606
+skill	1011	successEffectId	607
+skill	1016	effectId	514
+skill	1017	effectId	258
+skill	1018	effectId	255
+skill	1019	effectId	257
+skill	2001	effectId	756
+skill	2002	effectId	832
+skill	2004	effectId	723
+skill	2006	effectIdOnCaster	722
+skill	2008	hitEffectId	587
+skill	2009	effectId	731
+skill	2011	effectId	749
+skill	2201	effectId	802
+skill	2203	effectId	726
+skill	2204	hitEffectId	28
+skill	2205	effectId	729
+skill	2206	effectId	803
+skill	2209	effectId	799
+skill	2211	effectId	727
+skill	2212	groundEffectId	728
+skill	2215	effectId	734
+skill	2216	groundEffectId	732
+skill	2217	effectId	804
+skill	2217	beginCastEffectId	805
+skill	2230	effectId	751
+skill	2021	effectId	788
+skill	2036	effectId	775
+skill	2038	effectId	718
+skill	2038	hitEffectId	152
+skill	2040	effectId	721
+skill	2043	effectId	313
+skill	2044	effectId	883
+skill	2044	groundEffectId	754
+skill	2046	effectId	755
+skill	2051	effectId	325
+skill	2051	hitEffectId	320
+skill	2052	effectId	753
+skill	2233	effectId	746
+skill	2236	effectId	745
+skill	2237	effectId	750
+skill	2247	effectId	744
+skill	2249	groundEffectId	739
+skill	2250	groundEffectId	740
+skill	2251	groundEffectId	741
+skill	2252	groundEffectId	742
+skill	2259	effectId	787
+skill	2270	effectId	794
+skill	2272	effectId	781
+skill	2279	effectId	795
+skill	2289	effectId	811
+skill	2292	effectId	813
+skill	2293	effectId	814
+skill	2294	effectId	815
+skill	2295	effectId	816
+skill	2296	effectId	817
+skill	2297	effectId	818
+skill	2298	effectId	820
+skill	2299	successEffectId	823
+skill	2299	groundEffectId	822
+skill	2300	groundEffectId	825
+skill	2301	groundEffectId	827
+skill	2302	groundEffectId	828
+skill	2303	groundEffectId	829
+skill	2310	beforeHitEffectId	906
+skill	2318	effectId	908
+skill	2319	effectId	909
+skill	2325	effectId	910
+skill	2328	effectId	888
+skill	2414	groundEffectId	856
+skill	2415	effectId	860
+skill	2417	effectId	863
+skill	2418	effectId	857
+skill	2419	groundEffectId	860
+skill	2420	groundEffectId	879
+skill	2422	effectId	858
+skill	2423	effectId	861
+skill	2424	effectId	862
+skill	2425	effectId	847
+skill	2427	effectIdOnCaster	865
+skill	2427	groundEffectId	868
+skill	2428	effectIdOnCaster	867
+skill	2428	groundEffectId	866
+skill	2430	effectIdOnCaster	871
+skill	2430	groundEffectId	870
+skill	2431	effectIdOnCaster	871
+skill	2431	groundEffectId	872
+skill	2432	effectIdOnCaster	873
+skill	2432	groundEffectId	874
+skill	2433	effectIdOnCaster	875
+skill	2433	groundEffectId	876
+skill	2434	groundEffectId	878
+skill	2443	groundEffectId	920
+skill	2444	groundEffectId	926
+skill	2447	effectId	928
+skill	2449	effectId	922
+skill	2452	effectId	929
+skill	2453	effectId	921
+skill	2454	beforeHitEffectId	930
+skill	2483	effectId	915
+skill	2485	effectId	916
+skill	2486	effectId	917
+skill	2487	effectId	918
+skill	2490	effectId	919
+skill	5001	effectId	1040
+skill	5003	effectId	1049
+skill	5005	effectId	1044
+skill	5006	effectId	1050
+skill	5008	effectId	1046
+skill	5009	effectId	1043
+skill	5011	effectId	1047
+skill	5012	effectId	1048
+skill	5014	effectId	1042
+skill	8004	effectId	505
+skill	8005	effectId	570
+skill	8006	effectId	569
+skill	8008	effectId	571
+skill	8010	effectId	564
+skill	8011	effectId	564
+skill	8016	effectId	183
+skill	8020	effectId	959
+skill	8024	effectId	960
+skill	8026	effectId	961
+skill	8028	effectId	965
+skill	8030	effectId	967
+skill	8036	effectId	966
+skill	8039	effectId	962
+skill	8041	effectId	964
+skill	8043	effectId	975
+item	501	204
+item	502	205
+item	503	206
+item	504	207
+item	505	208
+item	506	209
+item	507	204
+item	508	206
+item	509	207
+item	510	208
+item	511	209
+item	512	204
+item	513	204
+item	514	208
+item	515	204
+item	516	204
+item	517	210
+item	518	210
+item	519	210
+item	520	210
+item	521	210
+item	522	210
+item	523	210
+item	525	210
+item	526	210
+item	528	210
+item	529	210
+item	530	210
+item	531	210
+item	532	210
+item	533	211
+item	534	210
+item	535	210
+item	536	210
+item	537	210
+item	538	210
+item	539	210
+item	540	210
+item	541	210
+item	542	210
+item	543	210
+item	544	210
+item	545	204
+item	546	206
+item	547	207
+item	548	210
+item	549	204
+item	550	210
+item	551	210
+item	552	210
+item	553	210
+item	554	210
+item	555	210
+item	556	210
+item	557	204
+item	558	363
+item	559	363
+item	560	363
+item	561	363
+item	562	204
+item	563	204
+item	564	204
+item	565	204
+item	566	204
+item	567	204
+item	568	204
+item	569	204
+item	570	204
+item	571	204
+item	572	204
+item	573	363
+item	574	204
+item	575	204
+item	576	204
+item	577	204
+item	578	204
+item	579	204
+item	580	204
+item	581	204
+item	582	205
+item	583	204
+item	584	204
+item	585	204
+item	586	204
+item	587	204
+item	588	204
+item	589	204
+item	590	204
+item	591	204
+item	592	204
+item	593	204
+item	594	204
+item	595	204
+item	596	204
+item	597	204
+item	598	204
+item	599	205
+item	607	204
+item	608	204
+item	663	204
+item	669	204
+item	680	204
+item	685	204
+item	11500	206
+item	11501	207
+item	11502	208
+item	11503	207
+item	11504	208
+item	11505	204
+item	11506	205
+item	11507	204
+item	11508	204
+item	11509	204
+item	11510	204
+item	11511	204
+item	11512	204
+item	11513	204
+item	11514	204
+item	11515	204
+item	11516	204
+item	11517	204
+item	11518	208
+item	11519	204
+item	11520	204
+item	11521	204
+item	11522	204
+item	11523	206
+item	11524	207
+item	11525	204
+item	11526	204
+item	11527	204
+item	11528	204
+item	11529	204
+item	11530	204
+item	11531	204
+item	11532	204
+item	11533	204
+item	11534	204
+item	11535	363
+item	11536	204
+item	11537	204
+item	11538	204
+item	11539	204
+item	11540	204
+item	11541	204
+item	11542	204
+item	11543	204
+item	11544	204
+item	11545	204
+item	11546	204
+item	11547	204
+item	11548	207
+item	11549	208
+item	11550	204
+item	11551	204
+item	11552	204
+item	11553	204
+item	11554	204
+item	11555	204
+item	11557	207
+item	11558	207
+item	11565	207
+item	11566	206
+item	11567	204
+item	11568	204
+item	11569	205
+item	11570	204
+item	11571	209
+item	11572	208
+item	11573	207
+item	11574	206
+item	11577	204
+item	11578	204
+item	11580	204
+item	11581	204
+item	11582	204
+item	11583	363
+item	11584	363
+item	11585	363
+item	11586	363
+item	11587	363
+item	11588	204
+item	11589	204
+item	11590	204
+item	11592	204
+item	11593	208
+item	11594	206
+item	11595	209
+item	11596	204
+item	11597	204
+item	11598	204
+item	11599	204
+item	11600	204
+item	11602	204
+item	11605	204
+item	11701	204
+item	11702	204
+item	11703	204
+item	11704	204
+item	11705	204
+item	11706	204
+item	11707	204
+item	11708	204
+item	11709	204
+item	11710	204
+item	11711	204
+item	11712	204
+item	11713	204
+item	12021	204
+item	12022	204
+item	12041	593
+item	12042	593
+item	12043	593
+item	12044	593
+item	12045	593
+item	12046	204
+item	12047	204
+item	12048	204
+item	12049	594
+item	12050	594
+item	12051	204
+item	12052	204
+item	12053	204
+item	12054	595
+item	12055	595
+item	12056	204
+item	12057	204
+item	12058	204
+item	12059	596
+item	12060	596
+item	12061	204
+item	12062	363
+item	12063	204
+item	12064	597
+item	12065	597
+item	12066	204
+item	12067	204
+item	12068	204
+item	12069	598
+item	12070	598
+item	12071	593
+item	12072	593
+item	12073	593
+item	12074	593
+item	12075	593
+item	12076	594
+item	12077	594
+item	12078	594
+item	12079	594
+item	12080	594
+item	12081	595
+item	12082	595
+item	12083	595
+item	12084	595
+item	12085	595
+item	12086	596
+item	12087	596
+item	12088	596
+item	12089	596
+item	12090	596
+item	12091	597
+item	12092	597
+item	12093	597
+item	12094	597
+item	12095	597
+item	12096	598
+item	12097	598
+item	12098	598
+item	12099	598
+item	12100	598
+item	12101	204
+item	12102	204
+item	12131	204
+item	12133	204
+item	12188	204
+item	12192	204
+item	12195	204
+item	12196	204
+item	12197	204
+item	12202	204
+item	12203	204
+item	12204	204
+item	12205	204
+item	12206	204
+item	12207	204
+item	12226	204
+item	12227	204
+item	12228	204
+item	12229	204
+item	12230	204
+item	12231	204
+item	12233	204
+item	12234	204
+item	12245	204
+item	12257	204
+item	12271	204
+item	12274	204
+item	12275	204
+item	12292	204
+item	12293	204
+item	12322	363
+item	12331	204
+item	12332	204
+item	12335	204
+item	12336	204
+item	12337	204
+item	12428	207
+item	12436	204
+item	12601	204
+item	12624	204
+item	12704	204
+item	12709	204
+item	12711	204
+item	12717	204
+item	12718	204
+item	12719	204
+item	12720	204
+item	12721	204
+item	12722	204
+item	12723	204
+item	12724	204
+item	12734	204
+item	12735	204
+item	12736	204
+item	12737	204
+item	12738	204
+item	14522	204
+item	14523	204
+item	14524	204
+item	14551	204
+item	14552	204
+item	14553	204
+item	14554	594
+item	14555	594
+item	14556	594
+item	14557	595
+item	14558	595
+item	14559	595
+item	14560	596
+item	14561	596
+item	14562	596
+item	14563	597
+item	14564	597
+item	14565	597
+item	14566	598
+item	14567	598
+item	14568	598
+item	14575	204
+item	14576	204
+item	14577	204
+item	14578	204
+item	14579	204
+item	14580	204
+item	14672	204
+item	14673	204
+item	22555	363
+item	22556	363
+item	22557	363
+item	22567	204
+item	22568	204
+item	22624	204
+item	22657	204
+item	22659	204
+item	22658	204
+item	22686	204
+item	22770	204
+item	22771	204
+item	22772	204
+item	22773	204
+item	22774	204
+item	22775	204
+item	22776	204
+item	22985	204
+item	645	218
+item	656	219
+item	657	220
+item	12016	519
+item	12017	210
+item	12028	576
+item	12030	577
+item	12031	579
+item	12033	580
+item	12118	491
+item	12119	491
+item	12120	491
+item	12121	491
+item	12184	210
+item	12185	210
+item	12241	218
+item	12242	219
+item	12243	220
+item	12298	210
+item	12299	491
+item	12404	210
+item	12422	210
+item	12423	210
+item	12424	210
+item	12425	210
+item	12426	210
+item	12427	210
+item	12459	210
+item	12460	210
+item	12461	210
+item	12462	210
+item	12463	210
+item	12464	210
+item	12465	210
+item	12515	210
+item	12516	210
+item	12517	210
+item	12518	210
+item	12519	210
+item	12520	210
+item	12521	210
+item	12529	210
+item	12531	210
+item	12648	210
+item	12676	210
+item	12679	210
+item	12680	210
+item	12683	210
+item	12684	210
+item	12774	210
+item	12831	210
+item	14534	210
+item	14535	210
+item	14537	210
+item	14541	210
+item	14542	210
+item	14543	210
+item	14544	210
+item	14600	210
+item	14614	210
+item	16254	210
+item	16481	210
+item	17263	218
+item	17264	219
+item	17265	220
+item	22542	218
+item	22543	220
+item	22544	219
+item	22545	519
+item	22546	210
+item	12018	508
+item	12326	709
+item	12788	612
+item	14546	682
+item	14547	683
+item	14548	684
+item	14549	685
+item	14550	686
+item	662	507
+item	12262	507
+part	0	3D	duplicate=4;timeBetweenDupli=0;file=effect/pok3.tga;duration=300;alphaMax=0.8;alphaMin=0.3;fadeIn=true;fadeOut=true;poszStart=1;posxStart=0;posyStart=0;posxEndRand=2;posyEndRand=2;poszEndRand=2;zIndex=1;size=10;red=1;green=1;blue=1;sizeRand=20;sizeSmooth=true;attachedEntity=false;sparkling=true
+part	1	2D	alphaMax=12;angleRand=0,35;attachedEntity=false;duration=250;durationRand=200,350;fadeOut=true;fade=true;file=effect/lens1.tga;sizeEndX=1;sizeRandEndY=250,300;sizeRandStartX=25,40;sizeRandStartY=10,10;circlePattern=true;circleOuterSizeRand=5,6;circleInnerSize=2.2;overlay=true;zIndex=1;wav=effect/ef_hit2
+part	1	2D	alphaMax=12;angleRand=50,85;attachedEntity=false;duration=250;durationRand=200,350;fadeOut=true;fade=true;file=effect/lens2.tga;sizeEndX=1;sizeRandEndY=250,300;sizeRandStartX=25,40;sizeRandStartY=10,10;circlePattern=true;circleOuterSizeRand=5,6;circleInnerSize=2.2;overlay=true;zIndex=1
+part	1	2D	alphaMax=12;angleRand=100,135;attachedEntity=false;duration=250;durationRand=200,350;fadeOut=true;fade=true;file=effect/lens1.tga;sizeEndX=1;sizeRandEndY=250,300;sizeRandStartX=25,40;sizeRandStartY=10,10;circlePattern=true;circleOuterSizeRand=5,6;circleInnerSize=2.2;overlay=true;zIndex=1
+part	1	2D	alphaMax=12;angleRand=150,185;attachedEntity=false;duration=250;durationRand=200,350;fadeOut=true;fade=true;file=effect/lens2.tga;sizeEndX=1;sizeRandEndY=250,300;sizeRandStartX=25,40;sizeRandStartY=10,10;circlePattern=true;circleOuterSizeRand=5,6;circleInnerSize=2.2;overlay=true;zIndex=1
+part	1	2D	alphaMax=12;angleRand=200,235;attachedEntity=false;duration=250;durationRand=200,350;fadeOut=true;fade=true;file=effect/lens1.tga;sizeEndX=1;sizeRandEndY=250,300;sizeRandStartX=25,40;sizeRandStartY=10,10;circlePattern=true;circleOuterSizeRand=5,6;circleInnerSize=2.2;overlay=true;zIndex=1
+part	1	2D	alphaMax=12;angleRand=255,290;attachedEntity=false;duration=250;durationRand=200,350;fadeOut=true;fade=true;file=effect/lens2.tga;sizeEndX=1;sizeRandEndY=250,300;sizeRandStartX=25,40;sizeRandStartY=10,10;circlePattern=true;circleOuterSizeRand=5,6;circleInnerSize=2.2;overlay=true;zIndex=1
+part	1	2D	alphaMax=12;angleRand=300,335;attachedEntity=false;duration=250;durationRand=200,350;fadeOut=true;fade=true;file=effect/lens1.tga;sizeEndX=1;sizeRandEndY=250,300;sizeRandStartX=25,40;sizeRandStartY=10,10;circlePattern=true;circleOuterSizeRand=5,6;circleInnerSize=2.2;overlay=true;zIndex=1
+part	1	2D	alphaMax=12;angleRand=340,360;attachedEntity=false;duration=250;durationRand=200,350;fadeOut=true;fade=true;file=effect/lens2.tga;sizeEndX=1;sizeRandEndY=250,300;sizeRandStartX=25,40;sizeRandStartY=10,10;circlePattern=true;circleOuterSizeRand=5,6;circleInnerSize=2.2;overlay=true;zIndex=1
+part	4	3D	alphaMax=1;angle=90;attachedEntity=false;duration=400;fadeOut=true;file=effect/lens2.tga;posz=1;rotate=true;sizeEndY=200;sizeStartY=10;sizeX=15;toAngle=0;wav=effect/ef_hit5
+part	4	3D	alphaMax=1;angle=180;attachedEntity=false;duration=400;fadeOut=true;file=effect/lens2.tga;posz=1;rotate=true;sizeEndY=200;sizeStartY=10;sizeX=15;toAngle=90;wav=effect/ef_hit5
+part	5	2D	alphaMax=1;angle=90;attachedEntity=false;duration=400;fadeOut=true;file=effect/lens2.tga;posz=1;rotate=true;sizeEndY=150;sizeStartY=10;sizeX=10;toAngle=0;overlay=true;wav=effect/ef_hit6
+part	5	2D	alphaMax=1;angle=180;attachedEntity=false;duration=400;fadeOut=true;file=effect/lens2.tga;posz=1;rotate=true;sizeEndY=150;sizeStartY=10;sizeX=10;toAngle=90;overlay=true;wav=effect/ef_hit6
+part	7	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;duration=1000;delayOffset=400;duplicate=6;fadeIn=true;fadeOut=true;file=effect/pok3.tga;posxRand=1.5;posyRand=1.5;poszEndRand=3;poszEndRandMiddle=6;poszStart=0;size=9;sizeRand=2;sparkling=true;sparkNumber=2;timeBetweenDupli=80;zIndex=1
+part	7	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;duration=900;delayLate=200;duplicate=3;fadeIn=true;fadeOut=true;file=effect/pok3.tga;posxRand=1;posyRand=1;poszEnd=6;poszStartRand=1;poszStartRandMiddle=0;size=9;sizeRand=2;sparkling=true;sparkNumber=2;timeBetweenDupli=200;zIndex=1
+part	9	3D	alphaMax=0.8;attachedEntity=true;duration=1000;delayLate=500;duplicate=7;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=6;poszStartRand=1;poszStartRandMiddle=1;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
+part	9	3D	alphaMax=0.8;attachedEntity=true;duration=1000;delayOffset=400;duplicate=3;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=6;poszStartRand=1;poszStartRandMiddle=1;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
+part	11	3D	alphaMax=1;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;file=effect/endure.tga;posz=2;sizeEnd=70;sizeSmooth=true;sizeStart=200;wav=effect/ef_endure;zIndex=10
+part	14	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;duration=1000;delayOffset=400;duplicate=6;fadeIn=true;fadeOut=true;file=effect/pok3.tga;posxRand=1.5;posyRand=1.5;poszEndRand=3;poszEndRandMiddle=6;poszStart=0;size=9;sizeRand=2;sparkling=true;sparkNumber=2;red=0.1;green=0.5;blue=1;timeBetweenDupli=80;zIndex=1
+part	14	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;duration=900;delayLate=200;duplicate=3;fadeIn=true;fadeOut=true;file=effect/pok3.tga;posxRand=1;posyRand=1;poszEnd=6;poszStartRand=1;poszStartRandMiddle=0;size=9;sizeRand=2;sparkling=true;sparkNumber=2;red=0.1;green=0.5;blue=1;timeBetweenDupli=200;zIndex=1
+part	15	3D	alphaMax=1;attachedEntity=true;blue=1;duration=200;delayLate=250;duplicate=-1;fadeIn=true;fadeOut=true;file=effect/pok3.tga;toSrc=true;green=1;poszEnd=1;poszSmooth=true;poszStartRand=5;poszStartRandMiddle=6;red=1;size=50;timeBetweenDupli=150;wav=effect/ef_soulstrike;zIndex=1
+part	15	3D	duration=250;duplicate=5;timeBetweenDupli=20;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;toSrc=true;rotateToTarget=true;sizeStart=100.0;sizeEnd=500.0;zOffsetStart=3;arc=4.0;retreat=3.0;soulStrikePattern=true
+part	18	3D	alphaMax=1;attachedEntity=false;red=1;green=1;blue=0.85;duration=500;duplicate=7;timeBetweenDupli=0;fadeOut=true;file=effect/pok1.tga;posxEndRand=3.5;posyEndRand=3.5;poszEndRand=1;poszEndRandMiddle=3;sizeEnd=10;sizeStart=200;zIndex=10
+part	20	3D	alphaMax=1;attachedEntity=true;blue=1;duration=1000;duplicate=10;fadeIn=true;fadeOut=true;file=effect/pok1.tga;green=0.7;posxRand=1;posyRand=1;poszEnd=5;poszStart=0;red=1;size=100;sizeRand=20;zIndex=1
+part	21	3D	alphaMax=1;attachedEntity=true;blue=1;duration=1000;duplicate=10;fadeIn=true;fadeOut=true;file=effect/pok1.tga;green=1;posxRand=1;posyRand=1;poszEnd=5;poszStart=0;red=0.7;size=100;sizeRand=20;zIndex=1
+part	22	3D	shadowTexture=true;alphaMax=0.5;attachedEntity=true;blendMode=8;duration=12200;duplicate=10;timeBetweenDupli=0;nbOfRotation=10;posx=-2;posz=4;playSprite=true;rotateLate=0.9;rotateLateDelta=-0.1;rotatePosX=3;rotatePosY=3;rotationClockwise=true;size=30;sizeDelta=10
+part	22	3D	spriteName=sight;alphaMax=123;alphaMaxDelta=3;attachedEntity=true;blendMode=8;duration=12200;duplicate=10;timeBetweenDupli=0;nbOfRotation=10;posx=-2;posz=4;playSprite=true;rotateLate=0.9;rotateLateDelta=-0.1;rotatePosX=3;rotatePosY=3;rotationClockwise=true;size=60;sizeDelta=20
+part	24	3D	alphaMax=0.2;alphaMaxDelta=0.2;attachedEntity=true;duration=250;delayOffset=160;delayOffsetDelta=-40;spriteName=fireball;playSprite=true;duplicate=5;timeBetweenDupli=0;toSrc=true;rotateToTarget=true;rotateWithCamera=true;zOffset=2;size=200;zIndex=1
+part	33	3D	shadowTexture=true;alphaMax=0.5;attachedEntity=true;blendMode=8;duration=12200;duplicate=8;timeBetweenDupli=0;nbOfRotation=8;posx=-2;rotateLate=0.7;rotateLateDelta=-0.1;rotatePosX=3;rotatePosY=3;rotationClockwise=true;size=0.4;sizeDelta=0.15
+part	33	3D	spriteName=particle2;alphaMax=0.07;alphaMaxDelta=0.07;attachedEntity=true;blendMode=2;red=0;green=1;blue=1;duration=12200;duplicate=10;timeBetweenDupli=0;nbOfRotation=8;posx=-2;posz=2;rotateLate=0.7;rotateLateDelta=-0.1;rotatePosX=3;rotatePosY=3;rotationClockwise=true;size=80;sizeDelta=30
+part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;delayLate=500;duplicate=7;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=6;poszStartRand=1;poszStartRandMiddle=1;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
+part	37	3D	alphaMax=0.75;attachedEntity=true;duration=1000;delayOffset=400;duplicate=3;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=6;poszStartRand=1;poszStartRandMiddle=1;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
+part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;duplicate=10;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=6;poszStartRand=1;poszStartRandMiddle=1;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
+part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;file=effect/agi_up.bmp;poszEnd=3;poszStart=0.4;sizeEnd=100;sizeSmooth=true;sizeStart=100;sizeY=45;wav=effect/ef_incagility;overlay=true;zIndex=10
+part	38	3D	alphaMax=1;attachedEntity=true;duration=1000;duplicate=20;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=1;poszStartRand=1;poszStartRandMiddle=6;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
+part	38	3D	alphaMax=1;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;file=effect/slow.bmp;poszEnd=0.4;poszStart=2.8;sizeEnd=100;sizeSmooth=true;sizeStart=100;sizeY=45;wav=effect/ef_decagility;zIndex=10
+part	42	3D	alphaMax=1;attachedEntity=true;duration=1200;delayOffset=300;duplicate=6;fadeIn=true;fadeOut=true;posxRand=1.2;posyRand=1;poszEndRand=0.5;poszEndRandMiddle=1;poszStartRand=2;poszStartRandMiddle=5.5;size=50;sparkling=true;sparkNumber=2;spriteName=particle6;timeBetweenDupli=0;zIndex=1
+part	42	3D	alphaMax=1;attachedEntity=true;duration=1200;delayOffset=400;duplicate=6;fadeIn=true;fadeOut=true;posxRand=1.4;posyRand=1.1;poszEndRand=0.5;poszEndRandMiddle=1;poszStartRand=2;poszStartRandMiddle=5.5;size=50;spriteName=particle6;timeBetweenDupli=0;zIndex=1
+part	42	3D	alphaMax=0.3;attachedEntity=false;blendMode=2;blue=1;duration=2500;fadeIn=true;fadeOut=true;file=effect/pok2.tga;green=0.75;posx=0;posy=0;posz=0;red=0.1;size=140;wav=effect/ef_blessing;zIndex=10
+part	43	3D	alphaMax=1;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;file=effect/dex_agi_up.bmp;poszEnd=3;poszStart=0.4;sizeEnd=100;sizeSmooth=true;sizeStart=100;sizeY=45;wav=effect/ef_incagidex;zIndex=10
+part	47	3D	absoluteSpriteName=data/sprite/이팩트/torch_01;attachedEntity=true;playSprite=true;duration=600;posz=0.8;posx=0.1;size=100;angle=270;rotateToTarget=true;repeat=true
+part	50	2D	overlay=true;duration=500;file=effect/firering.tga;sizeStart=10;sizeEnd=300;angle=0;toAngle=-360;rotate=true;fadeOut=true;posz=1;attachedEntity=true
+part	51	2D	alphaMax=1;angle=0;angleDelta=40;attachedEntity=false;duration=140;duplicates=9;fadeOut=true;file=effect/ice.tga;offsetxEnd=3;offsetxStart=0.5;size=100;timeBetweenDupli=0
+part	61	3D	alphaMax=1;attachedEntity=true;blue=1;duration=1000;duplicate=3;fadeIn=true;fadeOut=true;file=effect/pok1.tga;green=1;posxStartRand=3;posxStartRandMiddle=0;posyStartRand=3;posyStartRandMiddle=0;poszEndRand=2;poszEndRandMiddle=2;poszStart=0;red=1;size=100;sizeRand=17;zIndex=1
+part	62	3D	shadowTexture=true;alphaMax=0.5;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=0;posyEnd=-8;poszStart=2;poszEnd=2;sizeStart=60;sizeEnd=160;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	spriteName=sight;alphaMax=123;alphaMaxDelta=3;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=0;posyEnd=-8;poszStart=2;poszEnd=2;sizeStart=20;sizeEnd=260;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	shadowTexture=true;alphaMax=0.5;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=5.66;posyEnd=-5.66;poszStart=2;poszEnd=2;sizeStart=60;sizeEnd=160;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	spriteName=sight;alphaMax=123;alphaMaxDelta=3;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=5.66;posyEnd=-5.66;poszStart=2;poszEnd=2;sizeStart=20;sizeEnd=260;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	shadowTexture=true;alphaMax=0.5;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=8;posyEnd=0;poszStart=2;poszEnd=2;sizeStart=60;sizeEnd=160;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	spriteName=sight;alphaMax=123;alphaMaxDelta=3;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=8;posyEnd=0;poszStart=2;poszEnd=2;sizeStart=20;sizeEnd=260;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	shadowTexture=true;alphaMax=0.5;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=5.66;posyEnd=5.66;poszStart=2;poszEnd=2;sizeStart=60;sizeEnd=160;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	spriteName=sight;alphaMax=123;alphaMaxDelta=3;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=5.66;posyEnd=5.66;poszStart=2;poszEnd=2;sizeStart=20;sizeEnd=260;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	shadowTexture=true;alphaMax=0.5;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=0;posyEnd=8;poszStart=2;poszEnd=2;sizeStart=60;sizeEnd=160;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	spriteName=sight;alphaMax=123;alphaMaxDelta=3;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=0;posyEnd=8;poszStart=2;poszEnd=2;sizeStart=20;sizeEnd=260;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	shadowTexture=true;alphaMax=0.5;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=-5.66;posyEnd=5.66;poszStart=2;poszEnd=2;sizeStart=60;sizeEnd=160;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	spriteName=sight;alphaMax=123;alphaMaxDelta=3;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=-5.66;posyEnd=5.66;poszStart=2;poszEnd=2;sizeStart=20;sizeEnd=260;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	shadowTexture=true;alphaMax=0.5;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=-8;posyEnd=0;poszStart=2;poszEnd=2;sizeStart=60;sizeEnd=160;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	spriteName=sight;alphaMax=123;alphaMaxDelta=3;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=-8;posyEnd=0;poszStart=2;poszEnd=2;sizeStart=20;sizeEnd=260;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	shadowTexture=true;alphaMax=0.5;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=-5.66;posyEnd=-5.66;poszStart=2;poszEnd=2;sizeStart=60;sizeEnd=160;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	62	3D	spriteName=sight;alphaMax=123;alphaMaxDelta=3;duplicate=4;timeBetweenDupli=100;sizeDelta=-60;duration=800;attachedEntity=false;posxStart=0;posyStart=0;posxEnd=-5.66;posyEnd=-5.66;poszStart=2;poszEnd=2;sizeStart=20;sizeEnd=260;playSprite=true;fadeIn=true;fadeOut=true;blendMode=8
+part	93	3D	file=effect/thunder_center.bmp;duration=200;size=35;toSrc=true;blendMode=2;overlay=true;alphaMax=0.66
+part	93	3D	fileList=effect/thunder_ball_a.bmp,effect/thunder_ball_b.bmp,effect/thunder_ball_c.bmp,effect/thunder_ball_d.bmp,effect/thunder_ball_e.bmp,effect/thunder_ball_f.bmp;frameDelay=10;duration=200;size=45;toSrc=true;overlay=true;blendMode=2
+part	94	3D	file=effect/thunder_pang.bmp;duration=100;sizeStart=0;sizeEnd=25;blendMode=2;rotateToTarget=true;fadeOut=true;overlay=true;attachedEntity=true
+part	94	3D	fileList=effect/thunder_plazma_blast_a.bmp,effect/thunder_plazma_blast_b.bmp,effect/thunder_ball_d.bmp,effect/thunder_ball_e.bmp,effect/thunder_ball_f.bmp;frameDelay=10;duration=300;size=75;blendMode=2;overlay=true;attachedEntity=true
+part	116	3D	duration=500;fileList=effect/water_out_a.bmp,effect/water_out_b.bmp,effect/water_out_c.bmp;fadeOut=true;posxRand=1.5;poszRand=1.5;posyStart=0;posyEnd=3;posySmooth=true;size=30.5;rotateWithCamera=true;blendMode=2;attachedEntity=true;wav=effect/wizard_waterball_chulung
+part	117	3D	duration=500;duplicate=20;timeBetweenDupli=50;absoluteSpriteName=data/sprite/이팩트/waterball;playSprite=true;fromSrc=true;rotateToTarget=true;fadeOut=true;size=50.0;zOffsetStart=5;zOffsetEnd=0;arc=7.5;retreat=5.0;wav=effect/wizard_waterball_chulung
+part	121	3D	blendMode=2;duration=400;alphaMax=1.0;fadeOut=true;sizeStart=100;sizeEnd=300;file=effect/ring2.bmp;Original=effect/alpha_center.tga;wav=effect/ef_stonecurse;zIndex=10;attachedEntity=true
+part	171	3D	spriteName=particle3;alphaMax=1;attachedEntity=true;duration=100;size=80;poszStart=0;poszEnd=0.5;repeat=true
+part	203	3D	fadeOut=true;duration=2000;delayLate=0;file=effect/super1.bmp;attachedEntity=true
+part	203	3D	fadeOut=true;duration=2000;delayLate=400;file=effect/super2.bmp;attachedEntity=true
+part	203	3D	fadeOut=true;duration=2000;delayLate=800;file=effect/super3.bmp;attachedEntity=true
+part	203	3D	fadeOut=true;duration=2000;delayLate=1200;file=effect/super4.bmp;attachedEntity=true
+part	203	3D	fadeOut=true;duration=2000;delayLate=1600;file=effect/super5.bmp;attachedEntity=true
+part	216	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;toSrc=true;rotateToTarget=true;red=1.0;green=0.4;blue=0.4;sizeStart=150.0;sizeEnd=180.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
+part	217	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;toSrc=true;rotateToTarget=true;red=0.4;green=0.4;blue=1.0;sizeStart=150.0;sizeEnd=180.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
+part	232	3D	alphaMax=0.5;angle=180;attachedEntity=true;blendMode=2;red=0.1;green=0.1;blue=0.9;duration=100;fadeIn=true;fadeOut=true;file=effect/alpha_center.tga;fromSrc=true;rotateToTarget=true;rotateWithCamera=true;sizeX=5;sizeY=50;zOffset=1;zIndex=1
+part	253	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;red=0.3;green=0.3;blue=1;duration=1500;duplicate=4;fadeIn=true;fadeOut=true;file=effect/pok3.tga;posxRand=1.2;posyRand=1.2;poszEndRand=1;poszEndRandMiddle=8;poszStart=0;size=9;sizeRand=2;sparkling=true;sparkNumber=2;timeBetweenDupli=10;zIndex=1
+part	253	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;red=0.3;green=0.3;blue=1;duration=1300;delayOffset=400;duplicate=20;fadeIn=true;fadeOut=true;file=effect/pok3.tga;posxRand=1.5;posyRand=1.5;poszEndRand=3;poszEndRandMiddle=6;poszStart=0;size=9;sizeRand=2;sparkling=true;sparkNumber=2;timeBetweenDupli=10;zIndex=1
+part	253	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;red=0.3;green=0.3;blue=1;duration=1100;delayLate=200;duplicate=10;fadeIn=true;fadeOut=true;file=effect/pok3.tga;posxRand=1;posyRand=1;poszEnd=6;poszStartRand=1;poszStartRandMiddle=0;size=9;sizeRand=2;timeBetweenDupli=50;zIndex=1
+part	262	3D	wav=effect/mon_폭기;duplicate=12;timeBetweenDupli=0;file=effect/alpha_center.tga;delayStart=250;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;overlay=true;rotateToTarget=true;rotateWithCamera=true
+part	265	3D	file=effect/blue_ivy.bmp;alphaMax=1;blendMode=2;duration=150;toSrc=true;rotateWithCamera=true;rotateToTarget=true;angle=90;zOffset=1;size=50;wav=effect/mon_탄지신통;attachedEntity=true
+part	266	3D	wav=effect/mon_아수라 패황권;duplicate=24;timeBetweenDupli=0;file=effect/lens1.tga;delayStart=100;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;overlay=true;rotateToTarget=true;rotateWithCamera=true
+part	274	2D	overlay=true;file=effect/coin_a.bmp;blendMode=2;alphaMax=0.8;duplicate=30;timeBetweenDupli=50;duration=1500;fadeOut=true;posxEndRand=10;posyEndRand=10;posz=2;size=20;rotateToTarget=true;attachedEntity=true
+part	276	3D	duplicate=20;timeBetweenDupli=0;file=effect/lens1.tga;delayStart=100;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;red=0.1;green=0.1;blue=1.0;overlay=true;rotateToTarget=true;rotateWithCamera=true
+part	298	3D	alphaMax=1;angle=180;attachedEntity=true;duration=300;fadeIn=true;fadeOut=true;file=유저인터페이스/item/염산병.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=0.5;size=30;zOffset=1;zIndex=1
+part	308	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=유저인터페이스/item/돌.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=0.5;size=20;zOffset=1;zIndex=1
+part	309	2D	alphaMax=0.2;blendMode=2;file=effect/pikapika2.bmp;fadeOut=true;duration=1000;size=100;posz=2;wav=_heal_effect
+part	312	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;blue=1;duration=1300;delayOffset=400;duplicate=15;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1.5;posyRand=1.5;poszEndRand=2;poszEndRandMiddle=6;poszStart=0;red=1;size=9;sizeRand=2;timeBetweenDupli=10;zIndex=1
+part	312	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;blue=1;duration=1100;delayLate=200;duplicate=7;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1;posyRand=1;poszEnd=5;poszStartRand=1;poszStartRandMiddle=0;red=1;size=9;sizeRand=2;timeBetweenDupli=50;zIndex=1
+part	313	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;blue=1;duration=1500;duplicate=4;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1.2;posyRand=1.2;poszEndRand=1;poszEndRandMiddle=8;poszStart=0;red=1;size=9;sizeRand=2;sparkling=true;sparkNumber=2;timeBetweenDupli=10;zIndex=1
+part	313	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;blue=1;duration=1300;delayOffset=400;duplicate=20;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1.5;posyRand=1.5;poszEndRand=3;poszEndRandMiddle=6;poszStart=0;red=1;size=9;sizeRand=2;sparkling=true;sparkNumber=2;timeBetweenDupli=10;zIndex=1
+part	313	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;blue=1;duration=1100;delayLate=200;duplicate=10;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1;posyRand=1;poszEnd=6;poszStartRand=1;poszStartRandMiddle=0;red=1;size=9;sizeRand=2;timeBetweenDupli=50;zIndex=1
+part	320	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;blue=1;duration=1000;delayOffset=400;duplicate=10;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1.5;posyRand=1.5;poszEndRand=3;poszEndRandMiddle=6;poszStart=0;red=1;size=9;sizeRand=2;sparkling=true;sparkNumber=2;timeBetweenDupli=10;zIndex=1
+part	320	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;blue=1;duration=900;delayLate=200;duplicate=5;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1;posyRand=1;poszEnd=6;poszStartRand=1;poszStartRandMiddle=0;red=1;size=9;sizeRand=2;sparkling=true;sparkNumber=2;timeBetweenDupli=50;zIndex=1
+part	321	3D	alphaMax=1.0;attachedEntity=true;blendMode=2;renderBeforeEntities=true;duration=1000;duplicate=5;timeBetweenDupli=300;fadeIn=true;fadeOut=true;file=effect/pok1.tga;red=0.9;green=1;blue=0.9;posxStartRand=3;posxStartRandMiddle=0;posyStartRand=3;posyStartRandMiddle=0;poszEndRand=2;poszEndRandMiddle=2;poszStart=0;repeat=true;size=50;zIndex=1
+part	325	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;blue=1;duration=1500;duplicate=7;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1.2;posyRand=1.2;poszEndRand=1;poszEndRandMiddle=8;poszStart=0;red=1;size=9;sizeRand=2;sparkling=true;sparkNumber=3;timeBetweenDupli=10;zIndex=1
+part	325	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;blue=1;duration=1300;delayOffset=400;duplicate=25;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1.5;posyRand=1.5;poszEndRand=3;poszEndRandMiddle=6;poszStart=0;red=1;size=10;sizeRand=5;sparkling=true;sparkNumber=3;timeBetweenDupli=10;zIndex=1
+part	325	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;blue=1;duration=1100;delayLate=200;duplicate=15;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1;posyRand=1;poszEnd=6;poszStartRand=1;poszStartRandMiddle=0;red=1;size=11;sizeRand=2;timeBetweenDupli=50;zIndex=1
+part	328	3D	file=effect/asura1.tga;alphaMax=1;attachedEntity=true;duration=1200;duplicate=3;timeBetweenDupli=150;alphaMaxDelta=-0.25;fadeIn=true;sizeStart=250;sizeEnd=120;sizeSmooth=true;posx=-6.0;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=0
+part	328	3D	file=effect/asura1.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=120;sizeEnd=200;posx=-6.0;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1200
+part	328	3D	file=effect/asura2.tga;alphaMax=1;attachedEntity=true;duration=1200;duplicate=3;timeBetweenDupli=150;alphaMaxDelta=-0.25;fadeIn=true;sizeStart=250;sizeEnd=120;sizeSmooth=true;posx=-3.6;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=100
+part	328	3D	file=effect/asura2.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=120;sizeEnd=200;posx=-3.6;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1300
+part	328	3D	file=effect/asura3.tga;alphaMax=1;attachedEntity=true;duration=1200;duplicate=3;timeBetweenDupli=150;alphaMaxDelta=-0.25;fadeIn=true;sizeStart=250;sizeEnd=120;sizeSmooth=true;posx=-1.2;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=200
+part	328	3D	file=effect/asura3.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=120;sizeEnd=200;posx=-1.2;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1400
+part	328	3D	file=effect/asura4.tga;alphaMax=1;attachedEntity=true;duration=1200;duplicate=3;timeBetweenDupli=150;alphaMaxDelta=-0.25;fadeIn=true;sizeStart=250;sizeEnd=120;sizeSmooth=true;posx=1.2;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=300
+part	328	3D	file=effect/asura4.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=120;sizeEnd=200;posx=1.2;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1500
+part	328	3D	file=effect/asura5.tga;alphaMax=1;attachedEntity=true;duration=1200;duplicate=3;timeBetweenDupli=150;alphaMaxDelta=-0.25;fadeIn=true;sizeStart=250;sizeEnd=120;sizeSmooth=true;posx=3.6;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=400
+part	328	3D	file=effect/asura5.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=120;sizeEnd=200;posx=3.6;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1600
+part	328	3D	file=effect/asura6.tga;alphaMax=1;attachedEntity=true;duration=1200;duplicate=3;timeBetweenDupli=150;alphaMaxDelta=-0.25;fadeIn=true;sizeStart=250;sizeEnd=120;sizeSmooth=true;posx=6.0;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=500
+part	328	3D	file=effect/asura6.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=120;sizeEnd=200;posx=6.0;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1700
+part	331	3D	duplicate=12;file=effect/pok1.tga;delay=500;timeBetweenDupli=10;alphaMax=0.8;fadeOut=true;fadeIn=true;zIndex=1;size=30;sizeRand=20;red=0.9;green=1;blue=0.9;blendMode=2;poszStartRand=1.5;poszStartRandMiddle=2;poszEndRandMiddle=5;poszEndRand=1;sparkling=true;sparkNumberRand=3,6;posxRand=0.6;posyRand=0.6;attachedEntity=true
+part	332	3D	duplicate=12;file=effect/pok1.tga;delay=500;timeBetweenDupli=10;alphaMax=0.8;fadeOut=true;fadeIn=true;zIndex=1;size=30;sizeRand=20;red=0.9;green=0.9;blue=1;blendMode=2;poszStartRand=1.5;poszStartRandMiddle=2;poszEndRandMiddle=5;poszEndRand=1;sparkling=true;sparkNumberRand=3,6;posxRand=0.6;posyRand=0.6;attachedEntity=true
+part	349	3D	file=effect/purpleslash.tga;alphaMax=0.4;duration=500;fadeIn=true;fadeOut=true;zIndex=10;toSrc=true;rotateWithCamera=true;rotateToTarget=true;angle=90;posz=2;sizeStart=100;sizeEnd=200;wav=effect/기공포;attachedEntity=true
+part	365	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;rotate=true;angle=0;toAngle=-611;poszStart=20;poszEnd=5;size=100;zIndex=1;file=effect/cross_old.bmp;wav=effect/프레셔
+part	365	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;delayOffset=501;fadeOut=true;angle=-611;posz=5;size=100;zIndex=1;file=effect/cross_old.bmp
+part	378	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;fromSrc=true;toSrc=true;rotateToTarget=true;red=0.8;green=0.8;blue=1.0;sizeStart=160.0;sizeEnd=190.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
+part	383	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;fromSrc=true;toSrc=true;rotateToTarget=true;red=0.7;green=1.0;blue=0.7;sizeStart=140.0;sizeEnd=170.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
+part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=-1;posxEnd=-5;posyStart=0;posyEnd=0;rotateWithCamera=true;angle=0
+part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=-0.7;posxEnd=-3.53;posyStart=-0.7;posyEnd=-3.53;rotateWithCamera=true;angle=-45
+part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=0;posxEnd=0;posyStart=-1;posyEnd=-5;rotateWithCamera=true;angle=-90
+part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=0.7;posxEnd=3.53;posyStart=-0.7;posyEnd=-3.53;rotateWithCamera=true;angle=-135
+part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=1;posxEnd=5;posyStart=0;posyEnd=0;rotateWithCamera=true;angle=-180
+part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=0.7;posxEnd=3.53;posyStart=0.7;posyEnd=3.53;rotateWithCamera=true;angle=-225
+part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=0;posxEnd=0;posyStart=1;posyEnd=5;rotateWithCamera=true;angle=-270
+part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=-0.7;posxEnd=-3.53;posyStart=0.7;posyEnd=3.53;rotateWithCamera=true;angle=-315
+part	451	3D	alphaMax=1;attachedEntity=true;blue=1;duration=200;delayLate=250;duplicate=-1;fadeIn=true;fadeOut=true;file=effect/pok3.tga;toSrc=true;green=1;poszEnd=1;poszSmooth=true;poszStartRand=5;poszStartRandMiddle=6;red=1;size=50;timeBetweenDupli=150;wav=effect/ef_soulstrike;zIndex=1
+part	451	3D	duration=250;duplicate=5;timeBetweenDupli=20;absoluteSpriteName=data/sprite/이팩트/particle5;playSprite=true;toSrc=true;rotateToTarget=true;sizeStart=100.0;sizeEnd=500.0;zOffsetStart=3;arc=4.0;retreat=4.0;soulStrikePattern=true
+part	452	3D	file=effect/pokjuk_d.bmp;duration=100;sizeStart=0;sizeEnd=25;blendMode=2;rotateToTarget=true;fadeOut=true;overlay=true;attachedEntity=true
+part	452	3D	fileList=effect/twirl_soft.bmp,effect/thunder_ball_b.bmp,effect/twirl_soft.bmp,effect/thunder_ball_c.bmp,effect/twirl_soft.bmp;frameDelay=10;duration=300;size=75;blendMode=2;overlay=true;attachedEntity=true
+part	467	3D	alphaMax=1;blendMode=2;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=300;zIndex=10;file=effect/hanmoon1.tga
+part	467	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/hanmoon1.tga
+part	467	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=350;zIndex=10;file=effect/hanmoon1.tga
+part	467	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=400;zIndex=10;file=effect/hanmoon1.tga
+part	467	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=450;zIndex=10;file=effect/hanmoon1.tga
+part	468	3D	alphaMax=1;blendMode=2;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=300;zIndex=10;file=effect/hanmoon2.tga
+part	468	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/hanmoon2.tga
+part	468	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=350;zIndex=10;file=effect/hanmoon2.tga
+part	468	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=400;zIndex=10;file=effect/hanmoon2.tga
+part	468	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=450;zIndex=10;file=effect/hanmoon2.tga
+part	469	3D	alphaMax=1;blendMode=2;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=300;zIndex=10;file=effect/hanmoon3.tga
+part	469	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/hanmoon3.tga
+part	469	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=350;zIndex=10;file=effect/hanmoon3.tga
+part	469	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=400;zIndex=10;file=effect/hanmoon3.tga
+part	469	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=450;zIndex=10;file=effect/hanmoon3.tga
+part	470	3D	alphaMax=1;blendMode=2;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=300;zIndex=10;file=effect/hanmoon4.tga
+part	470	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/hanmoon4.tga
+part	470	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=350;zIndex=10;file=effect/hanmoon4.tga
+part	470	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=400;zIndex=10;file=effect/hanmoon4.tga
+part	470	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=450;zIndex=10;file=effect/hanmoon4.tga
+part	471	3D	alphaMax=1;blendMode=2;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=300;zIndex=10;file=effect/hanmoon7.tga
+part	471	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/hanmoon7.tga
+part	471	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=350;zIndex=10;file=effect/hanmoon7.tga
+part	471	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=400;zIndex=10;file=effect/hanmoon7.tga
+part	471	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=450;zIndex=10;file=effect/hanmoon7.tga
+part	472	3D	alphaMax=1;blendMode=2;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=300;zIndex=10;file=effect/hanmoon5.tga
+part	472	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/hanmoon5.tga
+part	472	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=350;zIndex=10;file=effect/hanmoon5.tga
+part	472	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=400;zIndex=10;file=effect/hanmoon5.tga
+part	472	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=450;zIndex=10;file=effect/hanmoon5.tga
+part	473	3D	alphaMax=1;blendMode=2;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=300;zIndex=10;file=effect/hanmoon6.tga
+part	473	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/hanmoon6.tga
+part	473	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=350;zIndex=10;file=effect/hanmoon6.tga
+part	473	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=400;zIndex=10;file=effect/hanmoon6.tga
+part	473	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=450;zIndex=10;file=effect/hanmoon6.tga
+part	510	3D	file=effect/asura11.tga;alphaMax=1;attachedEntity=true;duration=1200;duplicate=3;timeBetweenDupli=150;alphaMaxDelta=-0.25;fadeIn=true;sizeStart=300;sizeEnd=150;sizeSmooth=true;posx=-8.0;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=0
+part	510	3D	file=effect/asura11.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=150;sizeEnd=250;posx=-8.0;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1200
+part	510	3D	file=effect/asura12.tga;alphaMax=1;attachedEntity=true;duration=1200;duplicate=3;timeBetweenDupli=150;alphaMaxDelta=-0.25;fadeIn=true;sizeStart=300;sizeEnd=150;sizeSmooth=true;posx=-4.8;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=100
+part	510	3D	file=effect/asura12.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=150;sizeEnd=250;posx=-4.8;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1300
+part	510	3D	file=effect/asura13.tga;alphaMax=1;attachedEntity=true;duration=1200;duplicate=3;timeBetweenDupli=150;alphaMaxDelta=-0.25;fadeIn=true;sizeStart=300;sizeEnd=150;sizeSmooth=true;posx=-1.6;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=200
+part	510	3D	file=effect/asura13.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=150;sizeEnd=250;posx=-1.6;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1400
+part	510	3D	file=effect/asura14.tga;alphaMax=1;attachedEntity=true;duration=1200;duplicate=3;timeBetweenDupli=150;alphaMaxDelta=-0.25;fadeIn=true;sizeStart=300;sizeEnd=150;sizeSmooth=true;posx=1.6;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=300
+part	510	3D	file=effect/asura14.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=150;sizeEnd=250;posx=1.6;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1500
+part	510	3D	file=effect/asura15.tga;alphaMax=1;attachedEntity=true;duration=1200;duplicate=3;timeBetweenDupli=150;alphaMaxDelta=-0.25;fadeIn=true;sizeStart=300;sizeEnd=150;sizeSmooth=true;posx=4.8;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=400
+part	510	3D	file=effect/asura15.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=150;sizeEnd=250;posx=4.8;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1600
+part	510	3D	file=effect/asura16.tga;alphaMax=1;attachedEntity=true;duration=1200;duplicate=3;timeBetweenDupli=150;alphaMaxDelta=-0.25;fadeIn=true;sizeStart=300;sizeEnd=150;sizeSmooth=true;posx=8.0;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=500
+part	510	3D	file=effect/asura16.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=150;sizeEnd=250;posx=8.0;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1700
+part	523	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot01.tga
+part	524	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot02.tga
+part	525	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot03.tga
+part	526	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot04.tga
+part	527	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot05.tga
+part	528	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot06.tga
+part	529	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot07.tga
+part	530	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot08.tga
+part	531	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot09.tga
+part	532	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot10.tga
+part	533	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot11.tga
+part	534	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot12.tga
+part	535	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot13.tga
+part	536	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot14.tga
+part	600	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=유저인터페이스/item/베넘나이프.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=1;size=30;zOffset=1;zIndex=1
+part	613	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=유저인터페이스/item/수리검.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=1;size=30;zOffset=1;zIndex=1
+part	614	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=유저인터페이스/item/쿠나이_독.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=1;size=30;zOffset=1;zIndex=1
+part	615	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=유저인터페이스/item/풍마_뇌우.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=1;size=30;zOffset=1;zIndex=1
+part	616	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=effect/coin_a.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=1;size=20;zOffset=1;zIndex=1
+part	758	3D	alphaMax=1;blendMode=1;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=200;zIndex=10;file=effect/회전카운터1.tga
+part	758	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/회전카운터1.tga
+part	758	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=240;zIndex=10;file=effect/회전카운터1.tga
+part	758	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=260;zIndex=10;file=effect/회전카운터1.tga
+part	758	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=280;zIndex=10;file=effect/회전카운터1.tga
+part	759	3D	alphaMax=1;blendMode=1;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=200;zIndex=10;file=effect/회전카운터2.tga
+part	759	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/회전카운터2.tga
+part	759	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=240;zIndex=10;file=effect/회전카운터2.tga
+part	759	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=260;zIndex=10;file=effect/회전카운터2.tga
+part	759	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=280;zIndex=10;file=effect/회전카운터2.tga
+part	760	3D	alphaMax=1;blendMode=1;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=200;zIndex=10;file=effect/회전카운터3.tga
+part	760	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/회전카운터3.tga
+part	760	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=240;zIndex=10;file=effect/회전카운터3.tga
+part	760	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=260;zIndex=10;file=effect/회전카운터3.tga
+part	760	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=280;zIndex=10;file=effect/회전카운터3.tga
+part	761	3D	alphaMax=1;blendMode=1;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=200;zIndex=10;file=effect/회전카운터4.tga
+part	761	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/회전카운터4.tga
+part	761	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=240;zIndex=10;file=effect/회전카운터4.tga
+part	761	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=260;zIndex=10;file=effect/회전카운터4.tga
+part	761	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=280;zIndex=10;file=effect/회전카운터4.tga
+part	762	3D	alphaMax=1;blendMode=1;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=200;zIndex=10;file=effect/회전카운터5.tga
+part	762	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/회전카운터5.tga
+part	762	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=240;zIndex=10;file=effect/회전카운터5.tga
+part	762	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=260;zIndex=10;file=effect/회전카운터5.tga
+part	762	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=280;zIndex=10;file=effect/회전카운터5.tga
+part	763	3D	alphaMax=1;blendMode=1;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=200;zIndex=10;file=effect/회전카운터6.tga
+part	763	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/회전카운터6.tga
+part	763	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=240;zIndex=10;file=effect/회전카운터6.tga
+part	763	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=260;zIndex=10;file=effect/회전카운터6.tga
+part	763	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=280;zIndex=10;file=effect/회전카운터6.tga
+part	764	3D	alphaMax=1;blendMode=1;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=200;zIndex=10;file=effect/회전카운터7.tga
+part	764	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/회전카운터7.tga
+part	764	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=240;zIndex=10;file=effect/회전카운터7.tga
+part	764	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=260;zIndex=10;file=effect/회전카운터7.tga
+part	764	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=280;zIndex=10;file=effect/회전카운터7.tga
+part	765	3D	alphaMax=1;blendMode=1;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=200;zIndex=10;file=effect/회전카운터8.tga
+part	765	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/회전카운터8.tga
+part	765	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=240;zIndex=10;file=effect/회전카운터8.tga
+part	765	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=260;zIndex=10;file=effect/회전카운터8.tga
+part	765	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=280;zIndex=10;file=effect/회전카운터8.tga
+part	766	3D	alphaMax=1;blendMode=1;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=200;zIndex=10;file=effect/회전카운터9.tga
+part	766	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/회전카운터9.tga
+part	766	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=240;zIndex=10;file=effect/회전카운터9.tga
+part	766	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=260;zIndex=10;file=effect/회전카운터9.tga
+part	766	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=280;zIndex=10;file=effect/회전카운터9.tga
+part	767	3D	alphaMax=1;blendMode=1;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=200;zIndex=10;file=effect/회전카운터10.tga
+part	767	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/회전카운터10.tga
+part	767	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=240;zIndex=10;file=effect/회전카운터10.tga
+part	767	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=260;zIndex=10;file=effect/회전카운터10.tga
+part	767	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=280;zIndex=10;file=effect/회전카운터10.tga
+part	856	3D	file=effect/melody_b.bmp;red=1;green=0.6;blue=0.6;alphaMax=0.6;attachedEntity=true;duration=100;size=50;posz=0.5;repeat=true
+part	860	3D	file=effect/melody_a.bmp;red=0.6;green=0.6;blue=1;alphaMax=0.6;attachedEntity=true;duration=100;size=50;posz=0.5;repeat=true
+part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.55;blue=0.55;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=850;zIndex=10;file=effect/priest_spell.bmp
+part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.6;blue=0.6;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=800;zIndex=10;file=effect/priest_spell.bmp
+part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.65;blue=0.65;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=750;zIndex=10;file=effect/priest_spell.bmp
+part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.7;blue=0.7;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=700;zIndex=10;file=effect/priest_spell.bmp
+part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.75;blue=0.75;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=650;zIndex=10;file=effect/priest_spell.bmp
+part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.8;blue=0.8;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=600;zIndex=10;file=effect/priest_spell.bmp
+part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.85;blue=0.85;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=550;zIndex=10;file=effect/priest_spell.bmp
+part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.9;blue=0.9;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=500;zIndex=10;file=effect/priest_spell.bmp
+part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.95;blue=0.95;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=450;zIndex=10;file=effect/priest_spell.bmp
+part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=400;zIndex=10;file=effect/priest_spell.bmp
+part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=30000;red=0.0001;green=1.0;blue=0.0001;size=400;posz=7;zIndex=1;wav=effect/ef_readyportal;file=effect/ef_epitree.tga
+part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=990;duplicate=15;timeBetweenDupli=2000;red=0.0001;green=1.0;blue=0.0001;sizeStart=380;sizeEnd=420;posz=7;zIndex=1;file=effect/ef_epitree.tga
+part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=990;duplicate=15;timeBetweenDupli=2000;delayOffset=1000;red=0.0001;green=1.0;blue=0.0001;sizeStart=420;sizeEnd=380;posz=7;zIndex=1;file=effect/ef_epitree.tga
+part	889	3D	wav=effect/mon_아수라 패황권;duplicate=24;timeBetweenDupli=0;file=effect/lens1.tga;delayStart=100;duration=250;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;red=0.1;green=0.1;blue=1.0;overlay=true;rotateToTarget=true;rotateWithCamera=true
+part	906	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;rotate=true;angle=0;toAngle=-611;poszStart=20;poszEnd=5;size=100;zIndex=1;file=effect/shield.bmp;wav=effect/프레셔
+part	906	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;delayOffset=501;fadeOut=true;angle=-611;posz=5;size=100;zIndex=1;file=effect/shield.bmp;delayWav=500;wav=effect/lg_shieldpress
+part	930	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;rotate=true;angle=0;toAngle=-611;poszStart=20;poszEnd=5;size=100;zIndex=1;file=effect/cross1.bmp;wav=effect/프레셔
+part	930	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;delayOffset=501;fadeOut=true;angle=-611;posz=5;size=100;zIndex=1;file=effect/cross1.bmp
+ring	2	textureName=lens2;angleX=-90;posZ=1;rotateWithCamera=true;bottomSize=0.37;topSize=1;height=4;animation=1;fade=true;duration=150;alphaMax=0.8;wav=effect/ef_hit3;attachedEntity=true
+ring	2	textureName=lens2;angleX=-90;posZ=1;rotateWithCamera=true;bottomSize=0.37;topSize=0.37;height=4;animation=1;fade=true;duration=150;alphaMax=0.8;wav=effect/ef_hit3;attachedEntity=true
+ring	3	textureName=lens2;angleX=-90;posZ=1;rotateWithCamera=true;bottomSize=0.15;topSize=1;height=4;animation=1;fade=true;duration=150;alphaMax=0.8;wav=effect/ef_hit4;attachedEntity=true
+ring	6	file=effect/ring_blue;alphaMax=0.62;animation=1;attachedEntity=false;blendMode=8;bottomSize=0.9;duration=500;fade=true;height=7.5;rotate=true;textureName=ring_blue;topSize=0.9;wav=effect/ef_portal
+ring	6	alphaMax=0.62;animation=1;attachedEntity=true;blendMode=8;bottomSize=0.85;duration=500;fade=true;height=8;rotate=true;textureName=ring_blue;topSize=0.85
+ring	6	alphaMax=0.8;animation=1;attachedEntity=true;blendMode=8;bottomSize=0.9;duration=500;fade=true;height=1;rotate=true;textureName=ring_blue;topSize=1.5
+ring	7	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;bottomSize=0.95;duration=2000;fade=true;height=10;textureName=alpha_down;topSize=0.95;wav=_heal_effect
+ring	8	alphaMax=0.8;animation=4;attachedEntity=true;bottomSize=10;duration=1000;duplicate=4;fade=true;height=0;posZ=0.1;textureName=ring_yellow;timeBetweenDupli=300;topSize=13
+ring	9	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;bottomSize=0.95;duration=2000;fade=true;height=10;textureName=alpha_down;topSize=0.95
+ring	12	alphaMax=0.8;blendMode=2;animation=2;attachedEntity=true;bottomSize=1;duration=1000;fade=true;height=4;rotate=false;textureName=ring_yellow;topSize=5;wav=effect/ef_beginspell
+ring	14	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;bottomSize=0.95;duration=2000;fade=true;height=10;rotate=true;red=0.1;green=0.5;blue=1;textureName=ring_blue;topSize=0.95;wav=_heal_effect
+ring	16	textureName=alpha_down;alphaMax=0.6;duration=1000;rotate=true;fade=true;angleX=-90;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.1;topSize=2;animation=2;zIndex=1;wav=effect/ef_bash;attachedEntity=true
+ring	16	textureName=alpha_center;alphaMax=0.6;duration=1000;duplicate=10;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;rotate=true;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=2.5;animation=2;zIndex=1.1;attachedEntity=true
+ring	16	textureName=alpha_center;alphaMax=0.6;duration=1000;duplicate=8;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;rotate=true;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4;animation=2;zIndex=1.2;attachedEntity=true
+ring	17	alphaMax=0.7;animation=4;attachedEntity=true;bottomSize=4;duration=300;fade=true;height=1;rotate=true;textureName=ring_yellow;topSize=6
+ring	17	alphaMax=0.6;animation=4;attachedEntity=true;bottomSize=4;duration=300;fade=true;height=4;rotate=true;textureName=대폭발;topSize=1;wav=effect/ef_magnumbreak
+ring	34	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=8;bottomSize=0.8;duration=1000;fade=true;red=1;green=1;blue=1;height=35;rotate=true;textureName=ring_blue;topSize=0.7;wav=effect/ef_teleportation
+ring	35	alphaMax=0.6;animation=0;attachedEntity=true;blue=1;bottomSize=0.6;duration=25000;fade=true;green=0.7;height=15;red=0.7;rotate=true;textureName=alpha_down;topSize=0.6;wav=effect/ef_readyportal
+ring	54	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=900;fade=true;green=0.5;height=30;red=0.5;rotate=true;textureName=ring_blue;topSize=1
+ring	54	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=900;fade=true;green=0.5;height=1;red=0.5;rotate=true;textureName=ring_blue;topSize=1.3
+ring	54	alphaMax=0.6;animation=2;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=900;fade=true;green=0.5;height=3;red=0.5;rotate=true;textureName=ring_blue;topSize=4;wav=effect/ef_beginspell
+ring	55	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.4;bottomSize=1;duration=900;fade=true;green=0.4;height=30;red=1;rotate=true;textureName=ring_red;topSize=1
+ring	55	alphaMax=0.7;animation=1;attachedEntity=true;blendMode=2;blue=0.4;bottomSize=1;duration=900;fade=true;green=0.4;height=2;red=1;rotate=true;textureName=ring_red;topSize=1.3
+ring	55	alphaMax=0.7;animation=2;attachedEntity=true;blendMode=2;blue=0.4;bottomSize=1;duration=900;fade=true;green=0.4;height=3;red=1;rotate=true;textureName=ring_red;topSize=4;wav=effect/ef_beginspell
+ring	56	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.6;bottomSize=1;duration=900;fade=true;green=1;height=30;red=0.6;rotate=true;textureName=ring_white;topSize=1
+ring	56	alphaMax=0.6;animation=1;attachedEntity=true;blendMode=2;blue=0.6;bottomSize=1;duration=900;fade=true;green=1;height=2;red=0.6;rotate=true;textureName=ring_white;topSize=1.3
+ring	56	alphaMax=0.6;animation=2;attachedEntity=true;blendMode=2;blue=0.6;bottomSize=1;duration=900;fade=true;green=1;height=3;red=0.6;rotate=true;textureName=ring_white;topSize=4;wav=effect/ef_beginspell
+ring	57	alphaMax=0.5;animation=1;attachedEntity=true;blendMode=0;blue=1;bottomSize=1;duration=900;fade=true;green=1;height=30;red=1;rotate=true;textureName=ring_yellow;topSize=1
+ring	57	alphaMax=1;animation=1;attachedEntity=true;blendMode=0;blue=1;bottomSize=1.1;duration=900;fade=true;green=1;height=3;red=1;rotate=true;textureName=ring_yellow;topSize=1.2
+ring	57	alphaMax=1;animation=2;attachedEntity=true;blendMode=0;blue=1;bottomSize=1;duration=900;fade=true;green=1;height=3;red=1;rotate=true;textureName=ring_yellow;topSize=4;wav=effect/ef_beginspell
+ring	58	alphaMax=0.8;animation=2;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=900;fade=true;green=1;height=4;red=1;rotate=true;textureName=ring_white;topSize=5;wav=effect/ef_beginspell
+ring	59	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.8;bottomSize=1;duration=900;fade=true;green=0.8;height=30;red=0.8;rotate=true;textureName=ring_purple;topSize=1
+ring	59	alphaMax=0.7;animation=1;attachedEntity=true;blendMode=2;blue=0.8;bottomSize=1;duration=900;fade=true;green=0.8;height=3;red=0.8;rotate=true;textureName=ring_purple;topSize=1.3
+ring	59	alphaMax=0.7;animation=2;attachedEntity=true;blendMode=2;blue=0.8;bottomSize=1;duration=900;fade=true;green=0.8;height=3;red=0.8;rotate=true;textureName=ring_purple;topSize=4;wav=effect/ef_beginspell
+ring	61	alphaMax=0.3;animation=3;attachedEntity=true;blendMode=2;blue=1;bottomSize=2;duration=2800;fade=true;green=0.5;height=1.1;red=0.5;rotate=true;textureName=ring_blue;topSize=3.3
+ring	61	alphaMax=0.3;animation=3;attachedEntity=true;blendMode=2;blue=1;bottomSize=1.9;duration=2800;fade=true;green=0.5;height=1.1;red=0.5;rotate=true;textureName=ring_blue;topSize=3.2
+ring	138	attachedEntity=false;topSize=2.0;bottomSize=1.0;textureName=magic_red;height=3;duration=5000;delayOffset=1000;rotate=true
+ring	138	attachedEntity=false;topSize=1.5;bottomSize=0.7;textureName=magic_red;height=5;duration=5000;delayOffset=1000;rotate=true
+ring	138	attachedEntity=false;topSize=1.0;bottomSize=0.5;textureName=magic_red;height=7;duration=5000;delayOffset=1000;rotate=true
+ring	222	alphaMax=0.6;animation=1;blendMode=8;bottomSize=1.5;topSize=1.5;duration=3000;fade=true;height=10;rotate=true;textureName=ring_black;attachedEntity=true
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-1
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-2
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-3
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-4
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=1
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=2
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=3
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=4
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=1
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=2
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=3
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=4
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=-1
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=-2
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=-3
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=-4
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=1;posY=1
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=1;posY=-1
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-1;posY=-1
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-1;posY=1
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=20;circleSides=5;topSize=3;bottomSize=3;duration=1000;fade=true;height=5;rotate=false;angleY=-180;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=3.5;posY=3.5
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=20;circleSides=5;topSize=3;bottomSize=3;duration=1000;fade=true;height=5;rotate=false;angleY=90;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=3.5;posY=-3.5
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=20;circleSides=5;topSize=3;bottomSize=3;duration=1000;fade=true;height=5;rotate=false;angleY=0;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-3.5;posY=-3.5
+ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=20;circleSides=5;topSize=3;bottomSize=3;duration=1000;fade=true;height=5;rotate=false;angleY=-90;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-3.5;posY=3.5
+ring	252	alphaMax=0.6;animation=1;blendMode=8;bottomSize=1.5;topSize=1.5;duration=3000;fade=true;height=10;rotate=true;textureName=ring_yellow;attachedEntity=true
+ring	253	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;red=0.3;green=0.3;blue=1;bottomSize=1.1;duration=1500;fade=true;height=15;rotate=true;textureName=ring_blue;topSize=1.1;wav=effect/흡기
+ring	253	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;red=0.3;green=0.3;blue=1;bottomSize=1;duration=1500;fade=true;height=13;rotate=true;textureName=ring_blue;topSize=1
+ring	253	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;red=0.3;green=0.3;blue=1;bottomSize=1.1;duration=1500;fade=true;height=2;rotate=true;textureName=ring_blue;topSize=3
+ring	261	alphaMax=0.5;blendMode=8;animation=4;duplicate=4;timeBetweenDupli=100;bottomSize=2;duration=1500;fade=true;height=2;rotate=true;textureName=ring_yellow;topSize=5;attachedEntity=true
+ring	263	alphaMax=0.3;blendMode=8;animation=4;duplicate=4;timeBetweenDupli=100;bottomSize=3;duration=1000;fade=true;height=2;rotate=true;textureName=ring_yellow;topSize=6;attachedEntity=true
+ring	304	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.3;duration=1500;fade=true;green=0.6;height=35;red=0.6;rotate=true;textureName=ring_blue;topSize=0.3;wav=effect/ef_teleportation
+ring	304	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.6;duration=1500;fade=true;green=0.6;height=25;red=0.6;rotate=true;textureName=ring_blue;topSize=0.8
+ring	304	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.8;duration=1500;fade=true;green=0.6;height=13;red=0.6;rotate=true;textureName=ring_blue;topSize=1
+ring	304	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=1500;fade=true;green=0.6;height=5;red=0.6;rotate=true;textureName=ring_blue;topSize=1.3
+ring	312	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=0.95;duration=1500;fade=true;green=1;height=8;red=0.7;rotate=true;textureName=ring_white;topSize=0.95;wav=_heal_effect
+ring	312	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1;duration=1500;fade=true;green=1;height=8;red=0.7;rotate=true;textureName=ring_white;topSize=1
+ring	313	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1.1;duration=1500;fade=true;green=1;height=15;red=0.7;rotate=true;textureName=ring_white;topSize=1.1;wav=_heal_effect
+ring	313	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1;duration=1500;fade=true;green=1;height=13;red=0.7;rotate=true;textureName=ring_white;topSize=1;wav=_heal_effect
+ring	313	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1.1;duration=1500;fade=true;green=1;height=2;red=0.7;rotate=true;textureName=ring_white;topSize=3
+ring	314	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.3;duration=1500;fade=true;green=0.5;height=35;red=0.5;rotate=true;textureName=ring_blue;topSize=0.3;wav=effect/ef_teleportation
+ring	314	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.4;duration=1500;fade=true;green=0.5;height=23;red=0.5;rotate=true;textureName=ring_blue;topSize=0.6
+ring	314	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.5;duration=1500;fade=true;green=0.5;height=5;red=0.5;rotate=true;textureName=ring_blue;topSize=0.7
+ring	315	alphaMax=0.4;animation=0;attachedEntity=true;blendMode=2;blue=0.5;bottomSize=0.6;duration=50000;fade=true;green=0.1;height=7;red=0.5;rotate=true;textureName=alpha_down;topSize=0.6
+ring	315	alphaMax=0.4;animation=0;attachedEntity=true;blendMode=2;blue=0.5;bottomSize=0.65;duration=50000;delayOffset=50;fade=true;green=0.1;height=6;red=0.5;rotate=true;textureName=alpha_down;topSize=0.65
+ring	315	alphaMax=0.4;animation=0;attachedEntity=true;blendMode=2;blue=0.5;bottomSize=0.7;duration=50000;delayOffset=100;fade=true;green=0.1;height=7;red=0.5;rotate=true;textureName=alpha_down;topSize=0.7
+ring	316	alphaMax=0.4;animation=4;attachedEntity=true;blendMode=2;renderBeforeEntities=true;blue=1;bottomSize=2.4;duration=500;fadeOut=true;green=0.6;height=0.1;posZ=0.1;red=0.6;rotate=true;textureName=ring_blue;repeat=true;repeatDelay=-300;topSize=3.9;wav=effect/ef_readyportal
+ring	317	alphaMax=0.4;animation=4;attachedEntity=true;blendMode=2;renderBeforeEntities=true;blue=1;bottomSize=2.4;duration=500;fadeOut=true;green=0.6;height=0.1;posZ=0.1;red=0.6;rotate=true;textureName=ring_blue;repeat=true;repeatDelay=-300;topSize=3.9;wav=effect/ef_readyportal
+ring	317	alphaMax=0.3;animation=0;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.6;duration=25000;fade=true;green=0.6;height=15;red=0.6;rotate=true;textureName=ring_blue;topSize=0.6;wav=effect/ef_portal
+ring	317	alphaMax=0.3;animation=0;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.8;duration=25000;fade=true;green=0.6;height=13;red=0.6;rotate=true;textureName=ring_blue;topSize=0.8
+ring	317	alphaMax=0.5;animation=0;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=25000;fade=true;green=0.6;height=1;posZ=2;red=0.6;rotate=true;totalCircleSides=20;circleSides=10;repeatTextureX=2;textureName=alpha1;topSize=1
+ring	318	alphaMax=0.2;animation=0;attachedEntity=true;blendMode=2;totalCircleSides=4;circleSides=4;bottomSize=0.7;duration=50000;fade=false;height=5;rotate=false;textureName=ring_red;topSize=0.7;angleY=45
+ring	318	alphaMax=0.1;animation=1;attachedEntity=true;blendMode=2;totalCircleSides=4;circleSides=4;bottomSize=0.7;duration=2000;fade=true;height=5;rotate=false;textureName=ring_red;topSize=0.7;angleY=45;repeat=true
+ring	319	alphaMax=0.3;animation=0;attachedEntity=true;blendMode=2;blue=0.5;totalCircleSides=4;circleSides=4;bottomSize=0.7;duration=50000;fade=false;green=0.9;height=2;red=0.5;rotate=false;textureName=magic_green;topSize=0.7;angleY=45
+ring	319	alphaMax=0.1;animation=1;attachedEntity=true;blendMode=2;blue=0.5;totalCircleSides=4;circleSides=4;bottomSize=0.7;duration=2000;fade=true;green=0.9;height=2;red=0.5;rotate=false;textureName=magic_green;topSize=0.7;angleY=45;repeat=true
+ring	320	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.95;duration=1000;fade=true;green=1;height=10;red=1;rotate=true;textureName=ring_white;topSize=0.95;wav=_heal_effect
+ring	320	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=1000;fade=true;green=1;height=9;red=1;rotate=true;textureName=ring_white;topSize=1
+ring	321	alphaMax=0.4;animation=3;renderBeforeEntities=true;attachedEntity=true;blendMode=2;bottomSize=2;duration=4000;duplicate=4;timeBetweenDupli=1000;fade=true;red=0.5;green=0.5;blue=1;height=1.1;repeat=true;rotate=false;textureName=ring_blue;topSize=3.3
+ring	321	alphaMax=0.4;animation=3;renderBeforeEntities=true;attachedEntity=true;blendMode=2;bottomSize=1.9;duration=4000;duplicate=4;timeBetweenDupli=1000;fade=true;red=0.5;green=0.5;blue=1;height=1.1;repeat=true;rotate=false;textureName=ring_blue;topSize=3.2
+ring	325	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1.1;duration=1500;fade=true;green=1;height=18;red=0.7;rotate=true;textureName=ring_white;topSize=1.1;wav=_heal_effect
+ring	325	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1;duration=1500;fade=true;green=1;height=15;red=0.7;rotate=true;textureName=ring_white;topSize=1;wav=_heal_effect
+ring	325	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1.1;duration=1500;fade=true;green=1;height=3;red=0.7;rotate=true;textureName=ring_white;topSize=3
+ring	328	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=4.5;height=-4;duration=800
+ring	328	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=2.5;height=-4;duration=800
+ring	336	textureName=guardk;blendMode=2;duration=600;fade=true;totalCircleSides=8;circleSides=5;repeatTextureX=5;angleY=112.5;bottomSize=1.5;topSize=1;height=0.7;posZ=2.14;alphaMax=0.6;red=0.91;green=1.0;blue=0.9;rotateWithSource=true;attachedEntity=true
+ring	336	textureName=guardk;blendMode=2;duration=600;fade=true;totalCircleSides=8;circleSides=5;repeatTextureX=5;angleY=112.5;bottomSize=1.5;topSize=1.5;height=1.14;posZ=1;alphaMax=0.6;red=0.91;green=1.0;blue=0.9;rotateWithSource=true;attachedEntity=true
+ring	336	textureName=guardk;blendMode=2;duration=600;fade=true;totalCircleSides=8;circleSides=5;repeatTextureX=5;angleY=112.5;bottomSize=1;topSize=1.5;height=0.7;posZ=0.3;alphaMax=0.6;red=0.91;green=1.0;blue=0.9;rotateWithSource=true;attachedEntity=true
+ring	344	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.3;duration=1500;fade=true;green=0.6;height=35;red=0.6;rotate=true;textureName=ring_blue;topSize=0.3;wav=effect/ef_portal
+ring	344	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.6;duration=1500;fade=true;green=0.6;height=25;red=0.6;rotate=true;textureName=ring_blue;topSize=0.8
+ring	344	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.8;duration=1500;fade=true;green=0.6;height=13;red=0.6;rotate=true;textureName=ring_blue;topSize=1
+ring	344	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=1500;fade=true;green=0.6;height=5;red=0.6;rotate=true;textureName=ring_blue;topSize=1.3
+ring	366	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=200;duplicate=5;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
+ring	366	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=5;delayStart=200;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;attachedEntity=true
+ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.45;topSize=2.45;height=2.0;alphaMax=32;blendMode=2;rotateWithCamera=true;duration=20000;attachedEntity=true
+ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.52;topSize=2.52;height=2.1;alphaMax=32;blendMode=2;rotateWithCamera=true;angleY=10;duration=20000;attachedEntity=true
+ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;topSize=2.6;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=26.6;duration=20000;attachedEntity=true
+ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;topSize=2.6;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=79.8;duration=20000;attachedEntity=true
+ring	377	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=50;duplicate=8;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
+ring	377	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=8;delayStart=50;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;attachedEntity=true
+ring	399	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=500;duplicate=6;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
+ring	399	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=6;delayStart=500;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;attachedEntity=true
+ring	400	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=500;duplicate=6;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
+ring	400	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=6;delayStart=500;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;attachedEntity=true
+ring	454	alphaMax=0.8;animation=2;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=900;fade=true;green=1;height=4;red=1;rotate=true;textureName=ring_black;topSize=5;wav=effect/ef_beginspell
+ring	510	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=4.5;height=-4;duration=800
+ring	510	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=2.5;height=-4;duration=800
+ring	628	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=6;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
+ring	628	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=6;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;attachedEntity=true
+ring	715	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.5;topSize=1.5;height=2.0;alphaMax=40;blendMode=2;rotateWithCamera=true;red=0.2;green=0.6;blue=1.0;duration=20000;attachedEntity=true
+ring	715	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.58;topSize=1.58;height=2.1;alphaMax=32;blendMode=2;rotateWithCamera=true;angleY=10;red=0.2;green=0.6;blue=1.0;duration=20000;attachedEntity=true
+ring	715	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.65;topSize=1.65;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=26.6;red=0.1;green=0.4;blue=1.0;duration=20000;attachedEntity=true
+ring	715	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.65;topSize=1.65;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=79.8;red=0.1;green=0.4;blue=1.0;duration=20000;attachedEntity=true
+ring	716	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.5;topSize=1.5;height=2.0;alphaMax=40;blendMode=2;rotateWithCamera=true;red=0.2;green=0.6;blue=1.0;duration=20000;attachedEntity=true
+ring	716	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.58;topSize=1.58;height=2.1;alphaMax=32;blendMode=2;rotateWithCamera=true;angleY=10;red=0.2;green=0.6;blue=1.0;duration=20000;attachedEntity=true
+ring	716	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.65;topSize=1.65;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=26.6;red=0.1;green=0.4;blue=1.0;duration=20000;attachedEntity=true
+ring	716	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.65;topSize=1.65;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=79.8;red=0.1;green=0.4;blue=1.0;duration=20000;attachedEntity=true
+ring	718	attachedEntity=false;topSize=0.5;bottomSize=0.4;textureName=ring_white;height=3.5;duration=1000;rotate=true
+ring	718	attachedEntity=false;topSize=0.75;bottomSize=0.45;textureName=ring_white;height=2.5;duration=1000;rotate=true
+ring	718	attachedEntity=false;topSize=1;bottomSize=0.5;textureName=ring_white;height=1.5;duration=1000;rotate=true
+ring	754	alphaMax=0.4;animation=4;attachedEntity=true;blendMode=2;red=0.6;green=1.0;blue=0.6;bottomSize=2.4;duration=500;duplicate=150;fadeOut=true;height=0.1;posZ=0.1;rotate=true;textureName=magic_green;timeBetweenDupli=200;topSize=3.9
+ring	754	alphaMax=0.4;animation=0;attachedEntity=true;blendMode=2;red=0.6;green=1.0;blue=0.6;bottomSize=0.6;duration=30000;fade=true;height=7;rotate=true;textureName=magic_green;topSize=0.6
+ring	754	alphaMax=0.4;animation=0;attachedEntity=true;blendMode=2;red=0.6;green=1.0;blue=0.6;bottomSize=0.8;duration=30000;fade=true;height=6;rotate=true;textureName=magic_green;topSize=0.8
+ring	754	alphaMax=0.5;animation=0;attachedEntity=true;blendMode=2;red=0.6;green=1.0;blue=0.6;bottomSize=1;duration=30000;fade=true;height=1;posZ=2;rotate=true;totalCircleSides=20;circleSides=10;repeatTextureX=2;textureName=alpha1;topSize=1
+ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.2;topSize=2.2;height=3.0;alphaMax=65;blendMode=2;rotateWithCamera=true;duration=20000;attachedEntity=true
+ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.25;topSize=2.25;height=3.1;alphaMax=65;blendMode=2;rotateWithCamera=true;angleY=10;duration=20000;attachedEntity=true
+ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.3;topSize=2.3;height=3.0;alphaMax=15;blendMode=2;rotateWithCamera=true;duration=20000;attachedEntity=true
+ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.3;topSize=2.3;height=3.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=53.2;duration=20000;attachedEntity=true
+ring	885	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=200;duplicate=5;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;red=0.3;green=0.5;blue=1.0;attachedEntity=true
+ring	885	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=5;delayStart=200;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;red=0.3;green=0.5;blue=1.0;attachedEntity=true
+# wav <effect id> <file under data\wav\ without .wav> <delay ms> [random from to]: a sound the effect plays
+wav	1	effect\ef_hit2	0
+wav	2	effect\ef_hit3	0
+wav	3	effect\ef_hit4	0
+wav	4	effect\ef_hit5	0
+wav	5	effect\ef_hit6	0
+wav	6	effect\ef_portal	0
+wav	7	_heal_effect	0
+wav	10	effect\ef_coin2	0
+wav	11	effect\ef_endure	0
+wav	12	effect\ef_beginspell	0
+wav	13	effect\ef_glasswall	0
+wav	14	_heal_effect	0
+wav	15	effect\ef_soulstrike	0
+wav	16	effect\ef_bash	0
+wav	17	effect\ef_magnumbreak	0
+wav	18	effect\ef_steal	0
+wav	20	effect\ef_detoxication	0
+wav	21	effect\ef_detoxication	0
+wav	22	effect\ef_sight	0
+wav	24	effect\ef_fireball	0
+wav	25	effect\ef_firewall	0
+wav	26	effect\ef_icearrow%d	0	1	3
+wav	28	effect\ef_frostdiver2	0
+wav	30	effect\magician_thunderstorm	0
+wav	31	effect\ef_firearrow1	0
+wav	32	effect\ef_napalmbeat	0
+wav	33	effect\ef_ruwach	0
+wav	34	effect\ef_teleportation	0
+wav	35	effect\ef_readyportal	0
+wav	37	effect\ef_incagility	0
+wav	38	effect\ef_decagility	0
+wav	39	effect\ef_aqua	0
+wav	40	effect\ef_signum	0
+wav	41	effect\ef_angelus	0
+wav	42	effect\ef_blessing	0
+wav	43	effect\ef_incagidex	0
+wav	49	effect\ef_firehit	0
+wav	51	_hit_fist%d	0	3	4
+wav	52	_hit_fist%d	0	1	3
+wav	53	effect\ef_poisonattack	0
+wav	54	effect\ef_beginspell	0
+wav	55	effect\ef_beginspell	0
+wav	56	effect\ef_beginspell	0
+wav	57	effect\ef_beginspell	0
+wav	58	effect\ef_beginspell	0
+wav	59	effect\ef_beginspell	0
+wav	62	effect\wizard_sightrasher	0
+wav	65	effect\thief_invenom	0
+wav	66	effect\acolyte_cure	0
+wav	67	effect\swordman_provoke	0
+wav	68	effect\st_mvp	0
+wav	69	effect\hunter_skidtrap	0
+wav	70	effect\knight_brandish_spear	0
+wav	74	effect\wizard_icewall	0
+wav	75	effect\priest_gloria	0
+wav	76	effect\priest_magnificat	0
+wav	77	effect\priest_resurrection	0
+wav	78	effect\priest_recovery	0
+wav	79	effect\wizard_earthspike	0
+wav	80	effect\ef_fireball	0
+wav	81	effect\ef_bash	0
+wav	82	effect\ef_bash	0
+wav	83	effect\priest_sanctuary	0
+wav	84	effect\priest_impositio	0
+wav	85	effect\priest_lexaeterna	0
+wav	86	effect\priest_aspersio	0
+wav	87	effect\priest_lexdivina	0
+wav	88	effect\priest_suffragium	0
+wav	89	effect\wizard_stormgust	0
+wav	90	effect\wizard_fire_ivy	0
+wav	91	effect\priest_benedictio	0
+wav	92	effect\wizard_meteor	0
+wav	93	effect\hunter_shockwavetrap	0
+wav	95	effect\wizard_quagmire	0
+wav	96	effect\wizard_fire_pillar_a	0
+wav	97	effect\wizard_fire_pillar_b	0
+wav	98	effect\black_adrenalinerush_b	0
+wav	98	effect\black_adrenalinerush_a	0
+wav	99	effect\hunter_flasher	0
+wav	100	effect\hunter_removetrap	0
+wav	101	effect\black_weapon_repair_a	480
+wav	101	effect\black_weapon_repair_a	1320
+wav	102	effect\black_hammerfall	0
+wav	103	effect\black_weapon_perfection	0
+wav	105	effect\hun_anklesnare	0
+wav	106	effect\hunter_blastmine	0
+wav	107	effect\hunter_claymoretrap	0
+wav	108	effect\hunter_freezingtrap	0
+wav	111	effect\hunter_springtrap	0
+wav	112	effect\priest_kyrie_eleison_a	0
+wav	113	effect\priest_magnus	0
+wav	115	effect\hunter_blitzbeat	0
+wav	116	effect\wizard_waterball_chulung	0
+wav	117	effect\wizard_waterball_chulung	0
+wav	119	effect\hunter_detecting	0
+wav	120	effect\assasin_cloaking	0
+wav	121	effect\ef_stonecurse	0
+wav	123	effect\ef_frostdiver	0
+wav	124	effect\assasin_poisonreact	0
+wav	126	effect\assasin_poisonreact	0
+wav	127	effect\assasin_poisonreact	0
+wav	128	effect\black_overthrust	0
+wav	129	effect\assasin_venomsplasher	0
+wav	130	effect\knight_twohandquicken	0
+wav	131	effect\knight_autocounter	0
+wav	136	effect\priest_slowpoison	0
+wav	139	effect\hunter_sandman	0
+wav	140	effect\priest_resurrection	0
+wav	142	effect\wizard_earthspike	0
+wav	144	effect\knight_brandish_spear	0
+wav	144	effect\hunter_shockwavetrap	0
+wav	145	effect\hunter_shockwavetrap	0
+wav	149	_enemy_hit_normal1	0
+wav	150	_enemy_hit_normal1	0
+wav	151	effect\knight_spear_boomerang	0
+wav	153	effect\ac_concentration	0
+wav	154	effect\bs_refinesuccess	0
+wav	155	effect\bs_refinefailed	0
+wav	170	effect\ef_magnumbreak	0
+wav	183	effect\ef_hit2	0
+wav	208	effect\흡기	0
+wav	210	_heal_effect	0
+wav	211	effect\흡기	0
+wav	218	effect\ac_concentration	0
+wav	219	effect\ac_concentration	0
+wav	220	effect\ac_concentration	0
+wav	226	effect\cru_grand cross	0
+wav	227	effect\rog_intimidate	0
+wav	234	effect\sage_spell breake	0
+wav	244	effect\sage_magic rod	0
+wav	245	effect\cru_holy cross	0
+wav	249	effect\cru_shield boomerang	0
+wav	250	effect\knight_twohandquicken	0
+wav	253	effect\흡기	0
+wav	254	effect\mon_금강불괴	0
+wav	255	_enemy_hit_wind1	0
+wav	256	_enemy_hit_wind1	0
+wav	257	effect\_enemy_hit_wind1	0
+wav	258	_enemy_hit_wind1	0
+wav	261	effect\mon_폭기	0
+wav	262	effect\mon_폭기	0
+wav	265	effect\mon_탄지신통	0
+wav	266	effect\mon_아수라 패황권	0
+wav	267	effect\mon_침투경	0
+wav	269	effect\t_벽튕김	0
+wav	270	effect\t_벽튕김	0
+wav	271	effect\t_벽튕김	0
+wav	272	effect\t_벽튕김	0
+wav	273	effect\mon_연환	0
+wav	274	effect\rog_steal coin	0
+wav	275	effect\rog_back stap	0
+wav	278	effect\자장가	0
+wav	279	effect\김서방돈	0
+wav	280	effect\영원의 혼돈	0
+wav	281	effect\전장의	0
+wav	282	effect\니벨룽겐의 반지	0
+wav	283	effect\로키	0
+wav	284	effect\심연속으로	0
+wav	285	effect\불사신	0
+wav	286	effect\달빛세레나데	0
+wav	287	effect\석양의 어쌔신	0
+wav	288	effect\브라기의 시	0
+wav	289	effect\이둔의 사과	0
+wav	291	effect\흥얼거림	0
+wav	292	effect\나를잊지말아요	0
+wav	293	effect\행운의	0
+wav	294	effect\당신을 위한 서비스	0
+wav	300	apocalips_attack	0
+wav	304	effect\ef_teleportation	0
+wav	305	effect\p_success	0
+wav	306	effect\p_failed	0
+wav	309	_heal_effect	0
+wav	309	effect\hyper_novice\hn_double_bowlingbash	0
+wav	309	effect\hyper_novice\hn_mega_sonic_blow	0
+wav	309	effect\hyper_novice\hn_shield_chain_rush	0
+wav	309	effect\hyper_novice\hn_spiral_pierce_max	0
+wav	309	effect\hyper_novice\hn_meteor_storm_buster	0
+wav	309	effect\hyper_novice\hn_jack_frost_nova	0
+wav	309	effect\hyper_novice\hn_ground_gravitation	0
+wav	309	effect\hyper_novice\hn_napalm_vulcan_strike	0
+wav	309	effect\hyper_novice\hn_breakinglimit	0
+wav	309	effect\hyper_novice\hn_rulebreak	0
+wav	309	effect\hyper_novice\hn_overcoming_crisis	0
+wav	311	effect\고성방가	0
+wav	312	_heal_effect	0
+wav	313	_heal_effect	0
+wav	314	effect\ef_teleportation	0
+wav	315	effect\ef_glasswall	0
+wav	316	effect\ef_readyportal	0
+wav	317	effect\ef_readyportal	0
+wav	317	effect\ef_portal	0
+wav	317	effect\t_벽튕김	0
+wav	317	effect\t_영혼	0
+wav	317	effect\플립	0
+wav	317	effect\ef_icearrow%d	0	1	3
+wav	317	effect\ef_firearrow%d	0	1	3
+wav	320	_heal_effect	0
+wav	325	_heal_effect	0
+wav	329	effect\ef_hit2	0
+wav	329	effect\ef_hit4	200
+wav	329	effect\ef_hit2	400
+wav	331	_heal_effect	0
+wav	332	effect\흡기	0
+wav	334	_blind	0
+wav	336	effect\kyrie_guard	0
+wav	339	permeter_attack	0
+wav	339	effect\ef_magnumbreak	300
+wav	344	effect\ef_portal	0
+wav	347	effect\wedding	0
+wav	361	effect\기공포	0
+wav	363	effect\vallentine	0
+wav	365	effect\프레셔	0
+wav	366	effect\bash3d	0
+wav	367	effect\오라 블레이드	0
+wav	368	effect\버서크	0
+wav	369	effect\knight_twohandquicken	0
+wav	370	effect\가스펠	0
+wav	371	levelup	0
+wav	376	effect\맹호경파산	0
+wav	377	effect\mon_폭기	0
+wav	380	effect\매직 크래쉬	0
+wav	384	effect\소울 체인지	0
+wav	386	effect\hunter_detecting	0
+wav	387	effect\hunter_blitzbeat	0
+wav	388	effect\샤프슈팅	0
+wav	389	effect\윈드워크	0
+wav	391	effect\ef_incagility	0
+wav	392	effect\kyrie_guard	0
+wav	393	effect\애로우 발칸	0
+wav	394	effect\달빛세레나데	0
+wav	399	effect\헤드 크러쉬	0
+wav	400	effect\비트 조인트	0
+wav	403	effect\swordman_provoke	0
+wav	409	effect\메테오 어썰트	0
+wav	426	effect\복호격	0
+wav	440	effect\아숨프티오	0
+wav	444	effect\t_효과음1	0
+wav	445	effect\t_회피2	0
+wav	451	effect\ef_soulstrike	0
+wav	454	effect\ef_beginspell	0
+wav	456	effect\mon_폭기	0
+wav	457	effect\t_날라차기	0
+wav	467	effect\t_바람방출	0
+wav	468	effect\t_바람방출	0
+wav	469	effect\t_바람방출	0
+wav	470	effect\t_바람방출	0
+wav	471	effect\t_바람방출	0
+wav	472	effect\t_바람방출	0
+wav	473	effect\t_바람방출	0
+wav	493	effect\assasin_cloaking	0
+wav	493	effect\spirit_handler\sh_chul_ho_sonic_claw	0
+wav	493	effect\spirit_handler\sh_howling_of_chul_ho	0
+wav	493	effect\spirit_handler\sh_hogogong_strike	0
+wav	493	effect\spirit_handler\sh_ki_sul_water_spraying	0
+wav	493	effect\spirit_handler\sh_marine_festival_of_ki_sul	0
+wav	493	effect\spirit_handler\sh_sandy_festival_of_ki_sul	0
+wav	493	effect\spirit_handler\sh_ki_sul_rampage	0
+wav	493	effect\spirit_handler\sh_colors_of_hyun_rok	0
+wav	493	effect\spirit_handler\sh_hyun_roks_breeze	0
+wav	493	effect\spirit_handler\sh_hyun_rok_cannon	0
+wav	493	effect\spirit_handler\sh_temporary_communion	0
+wav	493	effect\spirit_handler\sh_blessing_of_mystical_creatures	0
+wav	493	effect\spirit_handler\sh_chul_ho_battering	0
+wav	493	effect\spirit_handler\sh_hyun_rok_spirit_power	0
+wav	496	effect\black_maximize_power_sword_bic	0
+wav	507	effect\mapae	0
+wav	508	effect\itempokjuk	0
+wav	517	effect\헤르모드의 지팡이	0
+wav	519	effect\fast	0
+wav	523	effect\priest_slowpoison	0
+wav	524	effect\priest_slowpoison	0
+wav	525	effect\priest_slowpoison	0
+wav	526	effect\priest_slowpoison	0
+wav	527	effect\priest_slowpoison	0
+wav	528	effect\priest_slowpoison	0
+wav	529	effect\priest_slowpoison	0
+wav	530	effect\priest_slowpoison	0
+wav	531	effect\priest_slowpoison	0
+wav	532	effect\priest_slowpoison	0
+wav	533	effect\priest_slowpoison	0
+wav	534	effect\priest_slowpoison	0
+wav	535	effect\priest_slowpoison	0
+wav	536	effect\priest_slowpoison	0
+wav	543	effect\t_보조마법	0
+wav	547	effect\t_에너지방출	0
+wav	553	effect\t_날라차기	0
+wav	555	effect\t_에너지방출	0
+wav	565	effect\h_moonlight_1	0
+wav	566	effect\h_moonlight_2	0
+wav	567	effect\h_moonlight_3	0
+wav	579	_snore	0
+wav	587	dragon_breath	0
+wav	589	effect\t_보조마법	0
+wav	590	effect\priest_resurrection	0
+wav	598	effect\sky_emperor\ske_noon_blast	0
+wav	598	effect\sky_emperor\ske_sunset_blast	0
+wav	598	effect\sky_emperor\ske_midnight_kick	0
+wav	598	effect\sky_emperor\ske_dawn_break	0
+wav	598	effect\sky_emperor\ske_star_burst	0
+wav	598	effect\sky_emperor\ske_star_cannon	0
+wav	598	effect\sky_emperor\ske_all_in_the_sky	0
+wav	598	effect\sky_emperor\ske_enchanting_sky	0
+wav	598	effect\sky_emperor\ske_sky_sun	0
+wav	598	effect\sky_emperor\ske_sky_moon	0
+wav	598	effect\sky_emperor\ske_star_light_kick	0
+wav	604	effect\ef_hit6	0
+wav	606	amon_ra_die01	0
+wav	608	_heal_effect	0
+wav	609	caramel_die	0
+wav	612	effect\itempokjuk	0
+wav	613	effect\닌자_던지기	0
+wav	614	effect\닌자_던지기	0
+wav	615	effect\닌자_던지기	0
+wav	616	effect\닌자_던지기	0
+wav	618	effect\ef_firearrow%d	0	1	3
+wav	619	effect\ef_icearrow%d	0	1	3
+wav	621	effect\풍인	0
+wav	622	effect\ef_thunderstorm	0
+wav	627	effect\디스암	0
+wav	628	effect\bash3d5	0
+wav	630	effect\그림자베기	0
+wav	631	effect\다다미뒤집기	0
+wav	632	effect\안개베기	0
+wav	633	effect\일섬	0
+wav	634	effect\화염진	0
+wav	635	effect\폭염룡	0
+wav	636	effect\빙정락	0
+wav	637	effect\데스페라도	0
+wav	643	effect\래피드샤워	0
+wav	644	effect\매지컬블릿	0
+wav	648	effect\트리플액션	0
+wav	666	effect\earth_quake	0
+wav	668	effect\dragonfear	0
+wav	669	effect\wideb	0
+wav	670	effect\dragonfear	0
+wav	675	effect\kyrie_guard	0
+wav	682	effect\itempokjuk	0
+wav	683	effect\itempokjuk	0
+wav	684	effect\itempokjuk	0
+wav	685	effect\itempokjuk	0
+wav	686	effect\itempokjuk	0
+wav	708	effect\wizard_stormgust	0
+wav	708	effect\soul_ascetic\soa_talisman_of_protection	0
+wav	708	effect\soul_ascetic\soa_talisman_of_warrior	0
+wav	708	effect\soul_ascetic\soa_soul_gathering	0
+wav	708	effect\soul_ascetic\soa_talisman_of_soul_stealing	0
+wav	708	effect\soul_ascetic\soa_talisman_of_blue_dragon	0
+wav	708	effect\soul_ascetic\soa_talisman_of_white_tiger	0
+wav	708	effect\soul_ascetic\soa_talisman_of_red_phoenix	0
+wav	708	effect\soul_ascetic\soa_talisman_of_black_tortoise	0
+wav	708	effect\soul_ascetic\soa_talisman_of_four_bearing_god	0
+wav	708	effect\soul_ascetic\soa_soul_of_heaven_and_earth	0
+wav	717	effect\wewish	0
+wav	718	effect\ab_judex	0
+wav	719	effect\ab_renovation	0
+wav	721	effect\ab_adoramus	0
+wav	722	effect\wl_jackfrost	0
+wav	726	effect\t_에너지방출	0
+wav	727	effect\crimson_r	0
+wav	731	dragon_h	0
+wav	732	effect\wizard_earthspike	0
+wav	734	effect\chainlight	0
+wav	799	effect\wl_stasis	0
+wav	802	effect\wl_whiteimprison	0
+wav	803	effect\wl_recognizedspell	0
+wav	804	effect\wl_tetravortex	0
+wav	811	effect\bodypaint	0
+wav	816	effect\laziness	0
+wav	822	effect\dimension	0
+wav	823	effect\manhole	0
+wav	825	effect\dimension	0
+wav	827	effect\chaospanic	0
+wav	828	effect\maelstrom	0
+wav	829	effect\bloodylust	0
+wav	832	effect\기공포	0
+wav	847	effect\수줍은하루의우울	0
+wav	856	effect\reverberation	0
+wav	857	effect\rainstorm	0
+wav	858	effect\안식의자장가	0
+wav	860	effect\나락의노래	0
+wav	860	effect\shinkiro_shiranui\ss_tokedasu	0
+wav	860	effect\shinkiro_shiranui\ss_shimiru	0
+wav	860	effect\shinkiro_shiranui\ss_akumukesu	0
+wav	860	effect\shinkiro_shiranui\ss_kagegari	0
+wav	860	effect\shinkiro_shiranui\ss_kagegissen	0
+wav	860	effect\shinkiro_shiranui\ss_fuumashouaku	0
+wav	860	effect\shinkiro_shiranui\ss_fuumakouchiku	0
+wav	860	effect\shinkiro_shiranui\ss_kunaiwaikyoku	0
+wav	860	effect\shinkiro_shiranui\ss_kunaikussetsu	0
+wav	860	effect\shinkiro_shiranui\ss_sekienhou	0
+wav	860	effect\shinkiro_shiranui\ss_reiketsuhou	0
+wav	860	effect\shinkiro_shiranui\ss_raidenpou	0
+wav	860	effect\shinkiro_shiranui\ss_kinryuuhou	0
+wav	860	effect\shinkiro_shiranui\ss_antenpou	0
+wav	860	effect\shinkiro_shiranui\ss_hitouakumu	0
+wav	860	effect\shinkiro_shiranui\ss_ankokuryuuakumu	0
+wav	860	effect\shinkiro_shiranui\ss_four_charm	0
+wav	861	effect\순환하는자연의소리	0
+wav	862	effect\ab_ancilla	0
+wav	866	effect\워그와함께춤을	0
+wav	868	effect\마나의노래	0
+wav	870	effect\새터데이나이트피버	0
+wav	872	effect\레라드의이슬	0
+wav	874	effect\멜로디오브싱크	0
+wav	876	effect\비욘드오브워크라이	0
+wav	878	effect\언리미티드허밍보이스	0
+wav	879	effect\세이렌의목소리	0
+wav	883	effect\ef_readyportal	0
+wav	885	effect\bash3d	0
+wav	888	effect\sr_earthshaker	0
+wav	889	effect\mon_아수라 패황권	0
+wav	906	effect\프레셔	0
+wav	906	effect\lg_shieldpress	500
+wav	908	effect\lg_prestige	0
+wav	909	effect\lg_banding	0
+wav	910	effect\lg_inspiration	0
+wav	922	effect\s사이킥웨이브	0
+wav	928	effect\wl_jackfrost	0
+wav	929	effect\s워머	0
+wav	930	effect\프레셔	0
+wav	1042	effect\all_full_throttle	0
+wav	1043	effect\sr_flashcombo	0
+wav	1046	effect\so_elemental_shield	0
+wav	1046	effect\em_spell_enchanting	0
+wav	1046	effect\em_activity_burn	0
+wav	1046	effect\em_increasing_activity	0
+wav	1046	effect\em_diamond_storm	0
+wav	1046	effect\em_lightning_land	0
+wav	1046	effect\em_venom_swamp	0
+wav	1046	effect\em_conflagration	0
+wav	1046	effect\em_terra_drive	0
+wav	1046	effect\em_psychic_stream	0
+wav	1047	effect\ab_offertorium	0
+wav	1048	effect\wl_telekinesis_intense	0
+wav	1049	effect\gn_illusiondoping	0
+wav	1050	effect\nc_magma_eruption	0
+wav	1050	effect\mt_axe_stomp	0
+wav	1050	effect\mt_rush_quake	0
+wav	1050	effect\mt_a_machine	0
+wav	1050	effect\mt_d_machine	0
+wav	1050	effect\mt_summon_abr_battle_warior	0
+wav	1050	effect\mt_summon_abr_dual_cannon	0
+wav	1050	effect\mt_summon_abr_infinity	0
+wav	1050	effect\mt_spark_blaster	0
+wav	1050	effect\mt_triple_laser	0
+wav	1050	effect\mt_mighty_smash	0
+wav	1050	effect\mt_rush_strike	0
+wav	1050	effect\mt_powerful_swing	0
+wav	1050	effect\mt_energy_cannonade	0
+wav	1062	effect\RL_HAMMER_OF_GOD	0
+wav	1186	effect\drop_pink	0
+wav	1189	effect\drop_yellow	0
+wav	1190	effect\drop_purple	0
+wav	1869	effect\drop_blue	0
+wav	1870	effect\drop_green	0
+wav	1871	effect\drop_red	0
+wav	1883	_hit_spear	0
+wav	1883	_enemy_hit_normal1	0
+wav	1883	effect\ef_hit2	0
+wav	1883	effect\ef_entry	0
+wav	1883	effect\풍차를향해돌격	0
+wav	1883	effect\스윙댄스	0
+wav	1883	effect\마법력 증폭	0
+wav	1883	effect\metalic	0
+wav	1883	effect\ab_ancilla	0
+wav	1883	effect\가시나무덫	0
+wav	1883	effect\bo_advance_protection	0
+wav	1883	effect\bo_acidified_zone_water	0
+wav	1883	effect\bo_acidified_zone_ground	0
+wav	1883	effect\bo_acidified_zone_wind	0
+wav	1883	effect\bo_acidified_zone_fire	0
+wav	1883	effect\bo_researchreport	0
+wav	1883	effect\bo_wooden_attack	0
+wav	1883	effect\bo_explosive_powder	0
+wav	1883	effect\bo_mayhemic_thorns	0
+wav	1883	effect\bo_mystery_powder	0
+wav	1883	effect\lg_banishingpoint	0
+wav	1883	effect\lg_cannonspear	0
+wav	1883	effect\lg_earthdrive	0
+wav	1883	effect\lg_exceedbreak	0
+wav	1883	effect\lg_hesperuslit	0
+wav	1883	effect\lg_kings_grace	0
+wav	1883	effect\lg_moonslasher	0
+wav	1883	effect\lg_overbrand	0
+wav	1883	effect\lg_piety	0
+wav	1883	effect\lg_pinpointattack	0
+wav	1883	effect\lg_rageburst	0
+wav	1883	effect\lg_rayofgenesis	0
+wav	1883	effect\lg_reflectdamage	0
+wav	1883	effect\lg_shieldspell	0
+wav	1883	effect\lg_trample	0
+wav	1883	effect\ig_guard_stance	0
+wav	1883	effect\ig_guardian_shield	0
+wav	1883	effect\ig_rebound_shield	0
+wav	1883	effect\ig_ultimate_sacrifice	0
+wav	1883	effect\ig_grand_judgement	0
+wav	1883	effect\ig_judgement_cross	0
+wav	1883	effect\ig_shield_shooting	0
+wav	1883	effect\ig_overslash	0
+wav	1883	effect\ig_cross_rain	0
+wav	1883	effect\ig_imperial_cross	0
+wav	1883	effect\ig_imperial_pressure	0
+wav	1883	effect\sr_crescentelbow	0
+wav	1883	effect\sr_cursedcircle	0
+wav	1883	effect\sr_dragoncombo	0
+wav	1883	effect\sr_fallenempire	0
+wav	1883	effect\sr_gateofhell	0
+wav	1883	effect\sr_howlingoflion	0
+wav	1883	effect\sr_knucklearrow	0
+wav	1883	effect\sr_lightningwalk	0
+wav	1883	effect\sr_powervelocity	0
+wav	1883	effect\sr_raisingdragon	0
+wav	1883	effect\sr_rampageblaster	0
+wav	1883	effect\sr_rideinlightning	0
+wav	1883	effect\sr_skynetblow	0
+wav	1883	effect\sr_tigercannon	0
+wav	1883	effect\sr_windmill	0
+wav	1883	effect\iq_oleum_sanctum	0
+wav	1883	effect\iq_massive_f_blaster	0
+wav	1883	effect\iq_exposion_blaster	0
+wav	1883	effect\iq_first_brand	0
+wav	1883	effect\iq_first_faith_power	0
+wav	1883	effect\iq_judge	0
+wav	1883	effect\iq_second_flame	0
+wav	1883	effect\iq_second_faith	0
+wav	1883	effect\iq_second_judgement	0
+wav	1883	effect\iq_third_punish	0
+wav	1883	effect\iq_third_flame_bomb	0
+wav	1883	effect\iq_third_consecration	0
+wav	1883	effect\iq_third_exor_flame	0
+wav	1883	effect\iq_blazing_flame_blast	0
+wav	1883	effect\wl_jackfrost	0
+wav	1883	effect\wl_siennaexecrate	0
+wav	1883	effect\ag_deadly_projection	0
+wav	1883	effect\ag_destructive_hurricane	0
+wav	1883	effect\ag_rain_of_crystal	0
+wav	1883	effect\ag_mystery_illusion	0
+wav	1883	effect\ag_violent_quake	0
+wav	1883	effect\ag_all_bloom	0
+wav	1883	effect\ag_crystal_impact	0
+wav	1883	effect\ag_tornado_storm	0
+wav	1883	effect\ag_climax	0
+wav	1883	effect\ag_rock_down	0
+wav	1883	effect\ag_storm_cannon	0
+wav	1883	effect\ag_frozen_slash	0
+wav	1883	effect\ag_energy_conversion	0
+wav	1883	effect\wm_frigg_song	0
+wav	1883	effect\ab_duplelight	0
+wav	1883	effect\cd_mediale_votum	0
+wav	1883	effect\cd_argutus_vita	0
+wav	1883	effect\cd_arbitrium	0
+wav	1883	effect\cd_presens_acies	0
+wav	1883	effect\cd_effligo	0
+wav	1883	effect\cd_competentia	0
+wav	1883	effect\cd_pneumaticus_procella	0
+wav	1883	effect\cd_dilectio_heal	0
+wav	1883	effect\cd_religio	0
+wav	1883	effect\cd_benedictum	0
+wav	1883	effect\cd_petitio	0
+wav	1883	effect\cd_framen	0
+wav	1883	effect\cd_divinus_flos	0
+wav	1883	wug_bite	0
+wav	1883	wug_strike	0
+wav	1883	wolf_stand	0
+wav	1883	dragon_breath	0
+wav	1883	effect\dk_servantweapon	0
+wav	1883	effect\dk_servant_w_sign	0
+wav	1883	effect\dk_servant_w_phantom	0
+wav	1883	effect\dk_servant_w_demol	0
+wav	1883	effect\dk_chargingpierce1	0
+wav	1883	effect\dk_chargingpierce2	0
+wav	1883	effect\dk_hackandslasher	0
+wav	1883	effect\dk_dragonic_aura1	0
+wav	1883	effect\dk_madness_crusher	0
+wav	1883	effect\dk_vigor	0
+wav	1883	effect\dk_stormslash1	0
+wav	1883	effect\dk_dragonic_breath	0
+wav	1883	effect\dk_dragonic_pierce	0
+wav	1883	effect\hallucinationwalk	0
+wav	1883	effect\shc_shadow_exceed	0
+wav	1883	effect\shc_dancing_knife	0
+wav	1883	effect\shc_savage_impact	0
+wav	1883	effect\shc_eternal_slash	0
+wav	1883	effect\shc_potent_venom	0
+wav	1883	effect\shc_shadow_stab	0
+wav	1883	effect\shc_impact_crater	0
+wav	1883	effect\shc_fatal_shadow_crow	0
+wav	1883	effect\shc_cross_slash	0
+wav	1883	effect\RL_S_STORM	0
+wav	1883	effect\ef_firewall	0
+wav	1883	effect\달빛세레나데	0
+wav	1883	effect\사운드오브디스트럭션	0
+wav	1883	effect\그레이트에코	0
+wav	1883	effect\사망의골짜기에서	0
+wav	1883	effect\tr_mystic_symphony	0
+wav	1883	effect\tr_kvasir_sonata	0
+wav	1883	effect\tr_rhythmshooting	0
+wav	1883	effect\tr_metalic_fury	0
+wav	1883	effect\tr_gef_nocturn	0
+wav	1883	effect\tr_roki_capriccio	0
+wav	1883	effect\tr_ain_rhapsody	0
+wav	1883	effect\tr_musical_interlude	0
+wav	1883	effect\tr_jawaii_serenade	0
+wav	1883	effect\tr_nipelheim_requiem	0
+wav	1883	effect\tr_pron_march	0
+wav	1883	effect\하모나이즈	0
+wav	1883	effect\메아리의노래	0
+wav	1883	effect\연인들을위한심포니	0
+wav	1883	effect\abc_abyss_dagger	0
+wav	1883	effect\abc_unlucky_rush	0
+wav	1883	effect\abc_chain_reaction_shot	0
+wav	1883	effect\abc_from_the_abyss	0
+wav	1883	effect\abc_abyss_slayer	0
+wav	1883	effect\abc_abyss_strike	0
+wav	1883	effect\abc_abyss_square	0
+wav	1883	effect\abc_frenzy_shot	0
+wav	1883	effect\abc_chasing_break	0
+wav	1883	effect\abc_chasing_shot	0
+wav	1883	effect\abc_abyss_flame	0
+wav	1883	effect\wh_wind_sign	0
+wav	1883	effect\wh_hawkrush	0
+wav	1883	effect\wh_calamitygale	0
+wav	1883	effect\wh_hawkboomerang	0
+wav	1883	effect\wh_galestorm	0
+wav	1883	effect\wh_crescive_bolt	0
+wav	1883	effect\wh_wild_walk	0
+wav	1883	effect\RL_C_MARKER	0
+wav	1883	effect\night_watch\nw_intensive_aim	0
+wav	1883	effect\night_watch\nw_only_one_bullet	0
+wav	1883	effect\night_watch\nw_spiral_shooting	0
+wav	1883	effect\night_watch\nw_magazine_for_one	0
+wav	1883	effect\night_watch\nw_wild_fire	0
+wav	1883	effect\night_watch\nw_basic_grenade	0
+wav	1883	effect\night_watch\nw_auto_firing_launcher	0
+wav	1883	effect\night_watch\nw_hidden_card	0
+wav	1883	effect\night_watch\nw_mission_bombard	0
+wav	1883	effect\night_watch\nw_midnight_fallen	0
+wav	1883	effect\	0
+wav	1883	effect\_stun	0
+wav	1883	effect\reproduce	0
+wav	1883	effect\rl_h_mine	0
+wav	1883	effect\rl_d_tail	0
+wav	1883	effect\rl_fire_rain	0
+wav	1883	effect\rl_slugshot	0
+wav	1883	ra_unlimit	0
+wav	1883	effect\su_scratch	0
+wav	1883	effect\su_scaroftarou	0
+wav	1883	effect\su_pickypeck	0
+wav	1883	effect\su_tunabelly	0
+wav	1883	effect\su_powerofflock	0
+wav	1883	effect\su_svg_spirit	0
+wav	1883	effect\su_hiss	0
+wav	1883	effect\su_nyanggrass	0
+wav	1883	effect\su_grooming	0
+wav	1883	effect\su_chattering	0

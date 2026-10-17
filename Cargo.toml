@@ -1,0 +1,22 @@
+[package]
+name = "roclient"
+version = "0.1.0"
+edition = "2024"
+# Plain `cargo run` starts the client, not the dev MCP server in src/bin.
+default-run = "roclient"
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+cpal = "0.17"
+encoding_rs = "0.8"
+flate2 = "1"
+fontdue = "0.9.4"
+image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png", "tga"] }
+lunify = "1"
+mlua = { version = "0.11", features = ["lua51", "vendored"] }
+pollster = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "pcm", "wav"] }
+wgpu = "29"
+winit = "0.30"

@@ -1,0 +1,30 @@
+#!/bin/bash
+# Builds Ragnarok.app, the release client as a macOS app. Like the official client it sits beside data.grf (and the
+# data, System and BGM folders), and works in its own folder when started from Finder.
+# Usage: tools/bundle.sh [folder to put it in, the repository by default]
+set -euo pipefail
+cd "$(dirname "$0")/.."
+cargo build --release
+app="${1:-.}/Ragnarok.app"
+rm -rf "$app"
+mkdir -p "$app/Contents/MacOS"
+cp target/release/roclient "$app/Contents/MacOS/roclient"
+version=$(awk -F'"' '/^version/ { print $2; exit }' Cargo.toml)
+cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Ragnarok</string>
+  <key>CFBundleDisplayName</key><string>Ragnarok</string>
+  <key>CFBundleIdentifier</key><string>local.roclient</string>
+  <key>CFBundleExecutable</key><string>roclient</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$version</string>
+  <key>CFBundleVersion</key><string>$version</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+PLIST
+echo "$app"
