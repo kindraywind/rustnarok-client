@@ -509,10 +509,15 @@ impl SpriteSet {
 
     /// One sprite by path without extension, e.g. `data\sprite\shadow`.
     pub fn at(grf: &Grf, path: &str) -> Option<Self> {
+        Self::with_act(grf, path, &format!("{path}.act"))
+    }
+
+    /// Like `at`, moving by another ACT (a pet's accessory changes how it moves).
+    pub fn with_act(grf: &Grf, path: &str, act: &str) -> Option<Self> {
         Some(Self {
             layers: vec![Layer {
                 spr: Spr::parse(&grf.read(&format!("{path}.spr")).ok()?).ok()?,
-                act: Act::parse(&grf.read(&format!("{path}.act")).ok()?).ok()?,
+                act: Act::parse(&grf.read(act).ok()?).ok()?,
                 palette: None,
                 part: Part::Body,
             }],

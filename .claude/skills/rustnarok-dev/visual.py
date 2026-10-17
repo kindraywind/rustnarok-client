@@ -12,15 +12,18 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
   {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]]}  {"move": [x, y]}
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
     (targets by name from the control socket's `targets`: inventory_item (item id), pick_item (a pick list's row, item
-    id), menu_item (part of a right-click menu choice's label), hotkey (slot), skill (id),
-    unit (name, from `units`), or {"point": [x, y]}; "offset": [dx, dy] shifts from the centre; a target not
-    on screen fails the step)
+    id), menu_item (part of a right-click menu choice's label), button (a window button's name, e.g. "feed"),
+    hotkey (slot), skill (id), unit (name, from `units`), or {"point": [x, y]}; "offset": [dx, dy] shifts from the
+    centre; a target not on screen fails the step)
+  {"click_unit": {"kind": "pet", "name": "Poring"}, "button": "right", "mods": "shift"}  (the middle of the nearest
+    unit of that kind, and name if given, on screen)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
   {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command)
   {"expect": {"chat": "Item created.", "inventory_items": 5, "hp_at_least": 40, "map": "iz_int01.gat",
               "windows_open": ["Inventory"], "windows_closed": ["Skills"], "units_at_least": {"monster": 10},
               "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null},
-              "identified": [1201], "unidentified": [1202], "inventory_has": [{"id": 1201, "cards": [4035, 0, 0, 0]}]}}
+              "identified": [1201], "unidentified": [1202], "inventory_has": [{"id": 1201, "cards": [4035, 0, 0, 0]}],
+              "state": {"pet.intimacy": 950, "pet": null}}}  (state: values at dotted paths of the game state)
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
 diff; `threshold` (percent, default 1) is how much change a shot takes before the report flags it.
@@ -131,7 +134,7 @@ def locate(target):
         if kind == "menu_item" and found.get("kind") == kind and value in found.get("label", ""):
             x, y, w, h = found["box"]
             return [round(x + w / 2) + dx, round(y + h / 2) + dy]
-        key = {"inventory_item": "id", "pick_item": "id", "hotkey": "slot", "skill": "id"}.get(kind)
+        key = {"inventory_item": "id", "pick_item": "id", "button": "name", "hotkey": "slot", "skill": "id"}.get(kind)
         if found.get("kind") == kind and found.get(key) == value:
             x, y, w, h = found["box"]
             return [round(x + w / 2) + dx, round(y + h / 2) + dy]
@@ -187,7 +190,15 @@ def expect(wanted, state):
                 have = sum(1 for unit in game.get("units", []) if unit.get("kind") == kind)
                 if have < count:
                     failures.append(f"{have} {kind} units < {count}")
-        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny"):
+        elif key == "state":
+            # Values at dotted paths of the game state, e.g. {"pet.intimacy": 950, "pet": null}.
+            for path, want in value.items():
+                have = game
+                for part in path.split("."):
+                    have = have.get(part) if isinstance(have, dict) else None
+                if have != want:
+                    failures.append(f"state {path} is {have!r}, not {want!r}")
+        elif key not in ("state", "chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny"):
             failures.append(f"unknown expectation {key}")
     return failures
 
@@ -230,6 +241,19 @@ def step_on_client(action, shots_dir, name):
         if point is None:
             return [f"click_on {action['click_on']}: not on screen"]
         command = {"cmd": "click", "x": point[0], "y": point[1]}
+        for key in ("button", "count", "mods"):
+            if key in action:
+                command[key] = action[key]
+        return drive.send(command)
+    if "click_unit" in action:
+        # The nearest unit of a kind (and name, if given): the middle of its box on screen.
+        want = action["click_unit"]
+        units = drive.send({"cmd": "state"}).get("game", {}).get("units", [])
+        found = [unit for unit in units if unit.get("kind") == want["kind"] and want.get("name", unit.get("name")) == unit.get("name") and unit.get("screen")]
+        if not found:
+            return [f"click_unit {want}: not on screen"]
+        x0, y0, x1, y1 = found[0]["screen"]
+        command = {"cmd": "click", "x": round((x0 + x1) / 2), "y": round((y0 + y1) / 2)}
         for key in ("button", "count", "mods"):
             if key in action:
                 command[key] = action[key]

@@ -566,6 +566,16 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_PETEGG_LIST: u16 = 0x01A6;
+const CZ_SELECT_PETEGG: u16 = 0x01A7;
+const ZC_CHANGESTATE_PET: u16 = 0x01A4;
+const ZC_PROPERTY_PET: u16 = 0x01A2;
+const ZC_FEED_PET: u16 = 0x01A3;
+const CZ_COMMAND_PET: u16 = 0x01A1;
+const CZ_RENAME_PET: u16 = 0x01A5;
+const ZC_PET_ACT: u16 = 0x01AA;
+const CZ_PET_ACT: u16 = 0x01A9;
+const ZC_ACK_REQNAMEALL_NPC: u16 = 0x0ADF;
 const ZC_OPEN_REFINING_UI: u16 = 0x0AA0;
 const CZ_REFINING_SELECT_ITEM: u16 = 0x0AA1;
 const ZC_REFINING_MATERIAL_LIST: u16 = 0x0AA2;
@@ -839,6 +849,62 @@ pub struct Unit {
     /// A player's guild and its emblem's version (0 for none).
     pub guild: u32,
     pub emblem: u32,
+}
+
+/// What ZC_CHANGESTATE_PET says: the pet is ours, its intimacy (0–1000), hunger (0–100), accessory (item ID),
+/// a performance (1–3, 4 special), or the egg list is done.
+pub const PET_OWNED: u8 = 0;
+pub const PET_INTIMACY: u8 = 1;
+pub const PET_HUNGER: u8 = 2;
+pub const PET_ACCESSORY: u8 = 3;
+pub const PET_PERFORMANCE: u8 = 4;
+pub const PET_EGGS_DONE: u8 = 6;
+/// CZ_COMMAND_PET's commands.
+pub const PET_INFO: u8 = 0;
+pub const PET_FEED: u8 = 1;
+pub const PET_PERFORM: u8 = 2;
+pub const PET_RETURN: u8 = 3;
+pub const PET_UNEQUIP: u8 = 4;
+
+/// The player's pet as ZC_PROPERTY_PET has it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Pet {
+    pub name: String,
+    /// Renamed once already: it can't be again.
+    pub renamed: bool,
+    pub level: u16,
+    /// 0–100.
+    pub hunger: u16,
+    /// 0–1000.
+    pub intimacy: u16,
+    /// The accessory's item ID (0: none).
+    pub accessory: u16,
+    /// The monster it is.
+    pub monster: u16,
+}
+
+/// What a pet does (ZC_PET_ACT, CZ_PET_ACT): below 100 an emotion (ZC_EMOTION's numbers), else a line of its
+/// talk table, sent as (monster − 100) × 100 + act × 10 + hunger band.
+#[derive(Debug, PartialEq)]
+pub enum PetAct {
+    Emotion(u8),
+    Talk { monster: u16, act: u8, hunger: u8 },
+}
+
+impl PetAct {
+    pub fn decode(value: i32) -> Self {
+        if value < 100 {
+            return Self::Emotion(value.max(0) as u8);
+        }
+        Self::Talk { monster: (value / 100 + 100) as u16, act: (value / 10 % 10) as u8, hunger: (value % 10) as u8 }
+    }
+
+    pub fn value(&self) -> i32 {
+        match *self {
+            Self::Emotion(kind) => i32::from(kind),
+            Self::Talk { monster, act, hunger } => (i32::from(monster) - 100) * 100 + i32::from(act) * 10 + i32::from(hunger),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1204,6 +1270,31 @@ pub enum MapEvent {
         result: u16,
         index: u16,
         refine: u16,
+    },
+    /// Eggs that can hatch, by inventory index.
+    PetEggs(Vec<u16>),
+    /// A pet's state changed: `kind` is one of the PET_* states above.
+    PetState {
+        kind: u8,
+        id: u32,
+        value: i32,
+    },
+    /// What the player's pet is like now.
+    PetInfo(Pet),
+    /// The pet was fed (or there was no food), and its food.
+    PetFed {
+        ok: bool,
+        food: u32,
+    },
+    /// A pet emotes or talks.
+    PetAct {
+        id: u32,
+        act: PetAct,
+    },
+    /// A unit's new name (a renamed pet).
+    UnitName {
+        id: u32,
+        name: String,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
@@ -2247,6 +2338,25 @@ impl MapSession {
         self.stream.write_all(&CZ_CLOSE_REFINING_UI.to_le_bytes())
     }
 
+    /// Hatches the egg at this inventory index (from `PetEggs`).
+    pub fn hatch(&mut self, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_hatch(index))
+    }
+
+    /// One of the PET_* commands (PET_INFO and on) to the player's pet.
+    pub fn pet_command(&mut self, command: u8) -> io::Result<()> {
+        self.stream.write_all(&encode_pet_command(command))
+    }
+
+    pub fn rename_pet(&mut self, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_rename_pet(name))
+    }
+
+    /// Has the player's pet emote or talk; the server shows it to everyone around.
+    pub fn pet_act(&mut self, act: &PetAct) -> io::Result<()> {
+        self.stream.write_all(&encode_pet_act(act))
+    }
+
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
     pub fn card_list(&mut self, card: u16) -> io::Result<()> {
         self.stream.write_all(&encode_card_list(card))
@@ -2903,6 +3013,42 @@ fn encode_refine(index: u16, ore: u32, blessings: bool) -> [u8; 9] {
     packet
 }
 
+/// CZ_SELECT_PETEGG: the egg's inventory index, as the list gave it.
+fn encode_hatch(index: u16) -> [u8; 4] {
+    let mut packet = [0u8; 4];
+    packet[..2].copy_from_slice(&CZ_SELECT_PETEGG.to_le_bytes());
+    packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+fn encode_pet_command(command: u8) -> [u8; 3] {
+    let [low, high] = CZ_COMMAND_PET.to_le_bytes();
+    [low, high, command]
+}
+
+/// CZ_RENAME_PET: at most 23 bytes of whole characters, NUL-padded.
+fn encode_rename_pet(name: &str) -> [u8; 26] {
+    let mut packet = [0u8; 26];
+    packet[..2].copy_from_slice(&CZ_RENAME_PET.to_le_bytes());
+    let mut bytes = Vec::new();
+    for character in name.chars() {
+        let encoded = encoding_rs::EUC_KR.encode(character.encode_utf8(&mut [0; 4])).0.into_owned();
+        if bytes.len() + encoded.len() > 23 {
+            break;
+        }
+        bytes.extend_from_slice(&encoded);
+    }
+    packet[2..2 + bytes.len()].copy_from_slice(&bytes);
+    packet
+}
+
+fn encode_pet_act(act: &PetAct) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_PET_ACT.to_le_bytes());
+    packet[2..].copy_from_slice(&act.value().to_le_bytes());
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -3323,6 +3469,24 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             materials: packet[7..].chunks_exact(9).map(|ore| (self::u32_at(ore, 0), ore[4], self::u32_at(ore, 5))).collect(),
         },
         ZC_ACK_ITEMREFINING => MapEvent::Refined { result: u16_at(2), index: u16_at(4), refine: u16_at(6) },
+        ZC_PETEGG_LIST => {
+            MapEvent::PetEggs(packet[4..usize::from(u16_at(2)).min(packet.len())].chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect())
+        }
+        ZC_CHANGESTATE_PET => MapEvent::PetState { kind: packet[2], id: u32_at(3), value: u32_at(7) as i32 },
+        // Name, renamed, level, hunger, intimacy, accessory, monster.
+        ZC_PROPERTY_PET => MapEvent::PetInfo(Pet {
+            name: c_string(&packet[2..26]),
+            renamed: packet[26] != 0,
+            level: u16_at(27),
+            hunger: u16_at(29),
+            intimacy: u16_at(31),
+            accessory: u16_at(33),
+            monster: u16_at(35),
+        }),
+        ZC_FEED_PET => MapEvent::PetFed { ok: packet[2] == 1, food: u32_at(3) },
+        ZC_PET_ACT => MapEvent::PetAct { id: u32_at(2), act: PetAct::decode(u32_at(6) as i32) },
+        // ID, group, name, title.
+        ZC_ACK_REQNAMEALL_NPC => MapEvent::UnitName { id: u32_at(2), name: c_string(&packet[10..34]) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -4209,6 +4373,60 @@ mod tests {
         assert_eq!(encode_refine(4, 1010, true), [0xA3, 0x0A, 4, 0, 0xF2, 0x03, 0, 0, 1]);
         let ids = [ZC_OPEN_REFINING_UI, CZ_REFINING_SELECT_ITEM, ZC_REFINING_MATERIAL_LIST, CZ_REQ_REFINING, CZ_CLOSE_REFINING_UI, ZC_ACK_ITEMREFINING];
         assert_eq!(ids.map(packet_length), [Some(2), Some(4), Some(-1), Some(9), Some(2), Some(8)]);
+    }
+
+    #[test]
+    fn decodes_pets() {
+        let Some(MapEvent::PetEggs(eggs)) = decode_map_packet(&[0xA6, 0x01, 8, 0, 3, 0, 9, 0]) else { panic!() };
+        assert_eq!(eggs, [3, 9]);
+        let state = [&ZC_CHANGESTATE_PET.to_le_bytes()[..], &[PET_ACCESSORY], &7u32.to_le_bytes(), &10013i32.to_le_bytes()].concat();
+        let Some(MapEvent::PetState { kind: PET_ACCESSORY, id: 7, value: 10013 }) = decode_map_packet(&state) else { panic!() };
+        let mut property = ZC_PROPERTY_PET.to_le_bytes().to_vec();
+        property.extend_from_slice(&name_field("Poring"));
+        property.push(1);
+        for value in [1u16, 100, 250, 10013, 1002] {
+            property.extend_from_slice(&value.to_le_bytes());
+        }
+        let Some(MapEvent::PetInfo(pet)) = decode_map_packet(&property) else { panic!() };
+        assert_eq!(pet, Pet { name: "Poring".into(), renamed: true, level: 1, hunger: 100, intimacy: 250, accessory: 10013, monster: 1002 });
+        let fed = [&ZC_FEED_PET.to_le_bytes()[..], &[1], &531u32.to_le_bytes()].concat();
+        let Some(MapEvent::PetFed { ok: true, food: 531 }) = decode_map_packet(&fed) else { panic!() };
+        let mut named = ZC_ACK_REQNAMEALL_NPC.to_le_bytes().to_vec();
+        named.extend_from_slice(&7u32.to_le_bytes());
+        named.extend_from_slice(&0u32.to_le_bytes());
+        named.extend_from_slice(&name_field("Pori"));
+        named.extend_from_slice(&[0; 24]);
+        let Some(MapEvent::UnitName { id: 7, name }) = decode_map_packet(&named) else { panic!() };
+        assert_eq!(name, "Pori");
+
+        // Below 100 an emotion; else the monster, the act and the hunger band.
+        let act = [&ZC_PET_ACT.to_le_bytes()[..], &7u32.to_le_bytes(), &90203i32.to_le_bytes()].concat();
+        let Some(MapEvent::PetAct { id: 7, act }) = decode_map_packet(&act) else { panic!() };
+        assert_eq!(act, PetAct::Talk { monster: 1002, act: 0, hunger: 3 });
+        assert_eq!(PetAct::decode(5), PetAct::Emotion(5));
+        assert_eq!(PetAct::Talk { monster: 1002, act: 9, hunger: 4 }.value(), 90294);
+
+        assert_eq!(encode_hatch(3), [0xA7, 0x01, 3, 0]);
+        assert_eq!(encode_pet_command(PET_RETURN), [0xA1, 0x01, 3]);
+        assert_eq!(encode_pet_act(&act), [0xA9, 0x01, 0x5B, 0x60, 0x01, 0]);
+        let rename = encode_rename_pet("Pori");
+        assert_eq!((&rename[..2], &rename[2..7]), (&[0xA5, 0x01][..], &b"Pori\0"[..]));
+        // Never past 23 bytes, nor half a character.
+        assert_eq!(encode_rename_pet(&"a".repeat(30))[25], 0);
+        assert_eq!(&encode_rename_pet(&format!("{}가", "a".repeat(22)))[24..], [0, 0]);
+        let ids = [
+            ZC_PETEGG_LIST,
+            CZ_SELECT_PETEGG,
+            ZC_CHANGESTATE_PET,
+            ZC_PROPERTY_PET,
+            ZC_FEED_PET,
+            CZ_COMMAND_PET,
+            CZ_RENAME_PET,
+            ZC_PET_ACT,
+            CZ_PET_ACT,
+            ZC_ACK_REQNAMEALL_NPC,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(-1), Some(4), Some(11), Some(37), Some(7), Some(3), Some(26), Some(10), Some(6), Some(58)]);
     }
 
     #[test]

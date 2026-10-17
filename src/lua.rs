@@ -9,6 +9,7 @@ use crate::grf::Grf;
 
 const NPC_IDENTITY: &str = "data\\luafiles514\\lua files\\datainfo\\npcidentity.lub";
 const JOB_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\jobname.lub";
+const PET_INFO: &str = "data\\luafiles514\\lua files\\datainfo\\petinfo.lub";
 const ITEM_INFO: &str = "data\\luafiles514\\lua files\\datainfo\\iteminfo.lub";
 const TRANSLATED_ITEM_INFO: &str = "system\\luafiles514\\iteminfo.lua";
 const ACCESSORY_ID: &str = "data\\luafiles514\\lua files\\datainfo\\accessoryid.lub";
@@ -38,6 +39,12 @@ const WORLD_VIEW: [&str; 4] = [
 fn run(grf: &Grf, files: &[&str]) -> io::Result<Lua> {
     // Data tables only need these; no file or OS access for files that may come from a translation pack.
     let lua = Lua::new_with(mlua::StdLib::TABLE | mlua::StdLib::STRING | mlua::StdLib::MATH, mlua::LuaOptions::default()).map_err(lua_error)?;
+    exec(&lua, grf, files)?;
+    Ok(lua)
+}
+
+/// Runs more client Lua files in `lua`.
+fn exec(lua: &Lua, grf: &Grf, files: &[&str]) -> io::Result<()> {
     for file in files {
         let bytes = grf.read(file)?;
         let bytes = match lunify::unify(&bytes, &lunify::Format::default(), &lunify::Settings::default()) {
@@ -48,7 +55,7 @@ fn run(grf: &Grf, files: &[&str]) -> io::Result<Lua> {
         };
         lua.load(&bytes).set_name(*file).exec().map_err(|error| io::Error::other(format!("{file}: {error}")))?;
     }
-    Ok(lua)
+    Ok(())
 }
 
 /// Dev aid: runs `files`, evaluates `expression` and lists the result (tables nested up to `depth`, `limit` entries
@@ -119,6 +126,26 @@ pub fn job_names(grf: &Grf) -> io::Result<HashMap<u16, String>> {
     let lua = run(grf, &[NPC_IDENTITY, JOB_NAME])?;
     let table: mlua::Table = lua.globals().get("JobNameTable").map_err(lua_error)?;
     names(&table)
+}
+
+/// The pet tables (petinfo.lub), by monster ID or (accessories) item ID.
+#[derive(Debug, Default)]
+pub struct PetTables {
+    /// Its talk table's name, e.g. 1002 → "poring".
+    pub names: HashMap<u16, String>,
+    /// Its picture in `유저인터페이스\illust\`, e.g. "펫_포링.bmp".
+    pub illustrations: HashMap<u16, String>,
+    /// The ACT an accessory moves its pet by, e.g. 10013 → "poring_책가방.act".
+    pub accessory_acts: HashMap<u16, String>,
+}
+
+pub fn pet_tables(grf: &Grf) -> io::Result<PetTables> {
+    let lua = run(grf, &[NPC_IDENTITY])?;
+    // A translated petinfo may name monsters this npcidentity doesn't know: they all go under one unused key.
+    lua.load("setmetatable(jobtbl, { __index = function() return -1 end })").exec().map_err(lua_error)?;
+    exec(&lua, grf, &[PET_INFO])?;
+    let table = |name: &str| names(&lua.globals().get::<mlua::Table>(name).map_err(lua_error)?);
+    Ok(PetTables { names: table("PetNameTable")?, illustrations: table("PetIllustNameTable")?, accessory_acts: table("PetAccActNameTable")? })
 }
 
 /// Job names the client shows players (`PCJobNameTable`), e.g. 0 → "Novice".
