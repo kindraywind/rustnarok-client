@@ -205,6 +205,15 @@ const GUILD_CHAT: [u8; 3] = [180, 255, 180];
 /// 819 and 820 for full lists), "%s has logged in/out".
 const FRIEND_CHOICE: usize = 358;
 const FRIEND_ASKS: usize = 818;
+/// Inventory expansion vouchers: [Event], [Limited], and the coupon.
+const VOUCHERS: [u32; 3] = [25791, 25792, 25793];
+/// What a voucher adds.
+const VOUCHER_SLOTS: usize = 10;
+/// The question (the voucher, the size now, the size after), and the results: done, failed, busy, no voucher, at
+/// the most.
+// ponytail: rathena sends numbers only; the lines are matched to them by their words.
+const EXPANSION_ASKS: usize = 3561;
+const EXPANSION_RESULTS: [usize; 5] = [3566, 3562, 3563, 3564, 3565];
 const FRIEND_ONLINE: usize = 1041;
 /// Parties: "Ask %s to join your party", made, " Party has sent you an invitation...", "You left the party", party
 /// chat colors (ours, others'), the prompts' titles.
@@ -483,6 +492,8 @@ struct Game {
     /// The friend list, and someone asking to be friends (account, character, name).
     friends: Vec<net::Friend>,
     friend_asked: Option<(u32, u32, String)>,
+    /// The server asks whether to use this voucher to grow the inventory.
+    expansion_asked: Option<u32>,
     /// Each party member's minimap color.
     party_dots: HashMap<u32, Texture>,
     /// Chat rooms over their owners' heads (by owner), and where their signs were last drawn (room ID, password).
@@ -1346,6 +1357,11 @@ impl Game {
     /// Uses an inventory item: consumables are used, equipment is put on.
     fn use_item(&mut self, index: u16) {
         let Some(item) = self.inventory.get(index) else { return };
+        // ponytail: a voucher asks to grow the inventory; how the real client lets the player ask isn't known.
+        if VOUCHERS.contains(&item.id) {
+            let _ = self.session.ask_expansion();
+            return;
+        }
         match item.kind {
             net::ITEM_HEALING | net::ITEM_USABLE | net::ITEM_CASH => {
                 let _ = self.session.use_item(index, self.account_id);
@@ -2525,6 +2541,16 @@ impl App {
                     }
                 }
             }
+            // Growing the inventory: OK or cancel.
+            Scene::Game(game) if game.expansion_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.expansion_asked = None;
+                        let _ = game.session.answer_expansion(yes);
+                    }
+                }
+            }
             // Someone wants to be friends: OK or cancel.
             Scene::Game(game) if game.friend_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
@@ -3419,6 +3445,11 @@ impl App {
                     _ => {}
                 }
             }
+            // The question holds the player busy until it's answered.
+            Scene::Game(game) if game.expansion_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.expansion_asked = None;
+                let _ = game.session.answer_expansion(*key == Key::Named(NamedKey::Enter));
+            }
             Scene::Game(game) if game.amount.is_some() => match key {
                 Key::Named(NamedKey::Enter) => game.answer_amount(true),
                 Key::Named(NamedKey::Escape) => game.answer_amount(false),
@@ -3810,6 +3841,7 @@ impl App {
                     party_dots: HashMap::new(),
                     friends: Vec::new(),
                     friend_asked: None,
+                    expansion_asked: None,
                     vend_setup: None,
                     my_shop: None,
                     mail: mail::Mail::default(),
@@ -4074,6 +4106,12 @@ impl App {
                     let id = if shown { EQUIPMENT_SHOWN } else { EQUIPMENT_HIDDEN };
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
                 }
+            }
+            MapEvent::ExpansionAsked { result: 0, voucher } => game.expansion_asked = Some(voucher),
+            // The results, done (0) or why not; the question's own result 0 is handled above.
+            MapEvent::ExpansionAsked { result, .. } | MapEvent::ExpansionDone(result) => {
+                let id = EXPANSION_RESULTS.get(usize::from(result)).copied().unwrap_or(EXPANSION_RESULTS[1]);
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
             }
             MapEvent::Spirits { id, count } => {
                 let key = (id != game.account_id).then_some(id);
@@ -6243,6 +6281,26 @@ impl App {
             let question = format!("({name}){}", message(GUILD_INVITED));
             for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
+        // Growing the inventory: which voucher, from how many slots to how many, in the message's colors.
+        if let Some(voucher) = game.expansion_asked {
+            let dialog = dialog_position(&assets.message);
+            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
+            let now = inventory::BASE_SLOTS + usize::from(game.inventory.expansion);
+            let name = inventory::item_name(items, voucher, true, 0);
+            let question = messages::fill(message(EXPANSION_ASKS), &[&name, &now, &(now + VOUCHER_SLOTS)]);
+            for (row, pieces) in wrap_colored(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
+                let mut x = dialog[0] + MESSAGE_TEXT[0];
+                for (color, piece) in pieces {
+                    let width = font.width(&piece);
+                    // The message's black is the box's text color.
+                    let color = if color == [0, 0, 0] { TEXT_COLOR } else { color };
+                    shop_layer.texts.push((piece, [x, dialog[1] + MESSAGE_TEXT[1] + row as f32 * font.line_height()], color));
+                    x += width;
+                }
             }
         }
         // Someone asks to be friends.
