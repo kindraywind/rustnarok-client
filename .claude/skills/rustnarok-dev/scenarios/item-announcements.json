@@ -11,6 +11,6 @@
     {"click_on": {"inventory_item": 22829}, "count": 2}, {"wait_for": {"packet": "0x07fd", "ms": 5000}},
     {"key": "Alt+E"}, {"move": [700, 300]}, {"wait": 500},
     {"expect": {"chat": "** has opened ["}},
-    {"shot": "item-news", "crop": [0, 540, 610, 228]}
+    {"shot": "item-news", "crop": [0, 540, 610, 228], "threshold": 5}
   ]
 }
