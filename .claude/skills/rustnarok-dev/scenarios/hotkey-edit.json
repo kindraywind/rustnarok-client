@@ -1,0 +1,24 @@
+{
+  "about": "Hotkey bar: a potion moved from slot 1 to slot 4, Heal dragged off the bar (issue #13). On main, state has no hotkeys, so the before evidence is the screenshots.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@job 4"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 501 5"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"drag": [[59, 212], [497, 17]]}, {"wait": 400},
+    {"key": "Alt+E"}, {"key": "Alt+S"}, {"wait": 400},
+    {"drag": [[367, 185], [526, 17]]}, {"wait": 400},
+    {"key": "Alt+S"}, {"wait": 300}, {"move": [700, 600]},
+    {"expect": {"hotkeys": {"0": 501, "1": 28}}},
+    {"shot": "bar-before", "crop": [470, 0, 300, 40]},
+    {"drag": [[497, 17], [584, 17]]}, {"wait": 400}, {"move": [700, 600]},
+    {"expect": {"hotkeys": {"0": null, "3": 501}}},
+    {"shot": "bar-moved", "crop": [470, 0, 300, 40]},
+    {"drag": [[526, 17], [700, 500]]}, {"wait": 400}, {"move": [700, 600]},
+    {"expect": {"hotkeys": {"1": null, "3": 501}}},
+    {"shot": "bar-removed", "crop": [470, 0, 300, 40]}
+  ]
+}

@@ -78,7 +78,9 @@ warp: commands sent while a map loads are lost), keys, clicks, drags, and named 
 **Make each scenario prove itself**: `expect` steps check the game state (chat lines, HP, map, open windows, units)
 and `wait_for` waits on a packet or event (`ItemUsed`, `PickedUp`) instead of a sleep. A failed one fails the
 scenario and `visual.py` exits non-zero — otherwise a scenario that silently did nothing still makes screenshots.
-`mask` keeps animated rectangles (water, portals) out of the diff; `threshold` sets how much change a shot may take
+Set `RUSTNAROK_CLIENT_SCENARIO_RESET` to a shell command that puts your server's test characters back in a known
+state (it runs before every scenario): what one scenario saves on the server (the hotkey bar, say) otherwise leaks
+into the next. `mask` keeps animated rectangles (water, portals) out of the diff; `threshold` sets how much change a shot may take
 before the report flags it. `python3 -I $V suite` checks every scenario and writes `report.md` beside the sheets. Each starts
 a fresh client and pauses the clock for every shot. Add one for the feature you touch, and keep it: the set grows into
 the game's visual regression suite.
@@ -98,4 +100,9 @@ land. Put the sheets for the changed shots in the PR.
 3. Branch off a fresh `origin/main`, build, run `verify.sh` until `VERIFY: PASS`.
 4. QA in the client: the fix, then try to break it (edges, Esc, resizing, other windows open, the second account).
    Screenshot before and after.
-5. Open the PR with what changed, what was verified and how, and the screenshots attached in the description.
+5. Open the PR answering the three questions, each with evidence:
+   1. **Was there a real issue, and did we solve it?** It reproduced on main (a failing scenario expectation or a
+      before-screenshot) and the root cause is named. If it can't be reproduced, say so; don't claim a fix.
+   2. **How was the fix verified?** `verify.sh` and the issue's scenario passing on the branch, after-screenshots.
+   3. **How do we know nothing regressed?** `visual.py suite` on the branch against main: every scenario's
+      expectations pass, and any changed shot outside the fix is explained.

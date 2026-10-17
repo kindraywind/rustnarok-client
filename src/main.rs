@@ -696,6 +696,8 @@ enum Dragged {
     Stored(u16),
     /// A cart item, by cart index.
     Carted(u16),
+    /// What a hotkey slot holds, by slot.
+    Hotkey(usize),
 }
 
 /// What a sprite on the map belongs to.
@@ -2813,11 +2815,32 @@ impl App {
                             id: u32::from(id),
                             count: game.skill_window.use_level(id, skill.level) as i16,
                         }),
-                        Dragged::Stored(_) | Dragged::Carted(_) => None,
+                        Dragged::Stored(_) | Dragged::Carted(_) | Dragged::Hotkey(_) => None,
                     };
                     if let Some(key) = key {
                         game.hotkeys.keys[slot] = Some(key);
                         let _ = game.session.set_hotkey(0, slot as u16, Some(key));
+                    }
+                }
+                // A hotkey moved along the bar trades places with what's there; let go off the bar, it's taken off.
+                if let Some((Dragged::Hotkey(from), _, true)) = item {
+                    let to = match game.hotkeys.hit(self.cursor) {
+                        Some(hotkeys::Hit::Slot(to)) => Some(to),
+                        Some(_) => Some(from),
+                        None => None,
+                    };
+                    match to {
+                        Some(to) if to != from => {
+                            game.hotkeys.keys.swap(from, to);
+                            for slot in [from, to] {
+                                let _ = game.session.set_hotkey(0, slot as u16, game.hotkeys.keys[slot]);
+                            }
+                        }
+                        Some(_) => {}
+                        None => {
+                            game.hotkeys.keys[from] = None;
+                            let _ = game.session.set_hotkey(0, from as u16, None);
+                        }
                     }
                 }
                 // An item let go over the storage goes in; a stored one let go over the inventory comes out.
@@ -2957,6 +2980,11 @@ impl App {
             game.raise(id);
             if let (Panel::Inventory, Some(inventory::Hit::Item(index))) = (id, game.inventory.hit(cursor)) {
                 game.dragging = Some((Dragged::Item(index), cursor, false));
+            }
+            if let (Panel::Hotkeys, Some(hotkeys::Hit::Slot(slot))) = (id, game.hotkeys.hit(cursor))
+                && game.hotkeys.keys.get(slot).is_some_and(Option::is_some)
+            {
+                game.dragging = Some((Dragged::Hotkey(slot), cursor, false));
             }
             if let (Panel::Cart, Some(inventory::Hit::Item(index))) = (id, game.cart.hit(cursor)) {
                 game.dragging = Some((Dragged::Carted(index), cursor, false));
@@ -5465,6 +5493,11 @@ impl App {
             Some((Dragged::Carted(index), _, true)) => {
                 game.cart.get(index).and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)))
             }
+            Some((Dragged::Hotkey(slot), _, true)) => match game.hotkeys.keys.get(slot).copied().flatten() {
+                Some(net::Hotkey { skill: true, id, .. }) => u16::try_from(id).ok().and_then(|id| skill_info.get(&id)).map(skills::icon_path),
+                Some(net::Hotkey { id, .. }) => items.get(&id).map(|info| inventory::icon_path(info, true)),
+                None => None,
+            },
             _ => None,
         };
         if let Some(Some(icon)) = dragged_icon.and_then(|path| icons.get(&path)) {
