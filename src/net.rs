@@ -633,6 +633,30 @@ const ZC_PROPERTY_PET: u16 = 0x01A2;
 const ZC_FEED_PET: u16 = 0x01A3;
 const CZ_COMMAND_PET: u16 = 0x01A1;
 const CZ_RENAME_PET: u16 = 0x01A5;
+const ZC_MER_INIT: u16 = 0x029B;
+const ZC_MER_SKILLINFO_LIST: u16 = 0x029D;
+const ZC_MER_PAR_CHANGE: u16 = 0x02A2;
+const CZ_MER_COMMAND: u16 = 0x029F;
+const CZ_REQUEST_MOVENPC: u16 = 0x0232;
+const CZ_REQUEST_ACTNPC: u16 = 0x0233;
+const CZ_REQUEST_MOVETOOWNER: u16 = 0x0234;
+/// CZ_MER_COMMAND's dismiss.
+pub const MERCENARY_DISMISS: u8 = 2;
+/// ZC_MER_PAR_CHANGE's kinds (rathena's SP_ numbers).
+pub const MERCENARY_HP: u16 = 5;
+pub const MERCENARY_MAX_HP: u16 = 6;
+pub const MERCENARY_SP: u16 = 7;
+pub const MERCENARY_MAX_SP: u16 = 8;
+pub const MERCENARY_ATK: u16 = 41;
+pub const MERCENARY_MATK: u16 = 43;
+pub const MERCENARY_DEF: u16 = 45;
+pub const MERCENARY_MDEF: u16 = 47;
+pub const MERCENARY_HIT: u16 = 49;
+pub const MERCENARY_CRITICAL: u16 = 52;
+pub const MERCENARY_ASPD: u16 = 53;
+pub const MERCENARY_FLEE: u16 = 165;
+pub const MERCENARY_KILLS: u16 = 189;
+pub const MERCENARY_LOYALTY: u16 = 190;
 const ZC_PET_ACT: u16 = 0x01AA;
 const CZ_PET_ACT: u16 = 0x01A9;
 const ZC_ACK_REQNAMEALL_NPC: u16 = 0x0ADF;
@@ -946,6 +970,58 @@ pub struct Pet {
     pub accessory: u16,
     /// The monster it is.
     pub monster: u16,
+}
+
+/// The player's mercenary as ZC_MER_INIT has it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Mercenary {
+    /// Its unit's ID.
+    pub id: u32,
+    pub atk: u16,
+    pub matk: u16,
+    pub hit: u16,
+    pub critical: u16,
+    pub def: u16,
+    pub mdef: u16,
+    pub flee: u16,
+    /// Attack motion, as the status window's ASPD value.
+    pub aspd: u16,
+    pub name: String,
+    pub level: u16,
+    pub hp: u32,
+    pub max_hp: u32,
+    pub sp: u32,
+    pub max_sp: u32,
+    /// When the contract ends, in Unix seconds.
+    pub contract_end: u32,
+    pub loyalty: u16,
+    pub summons: u32,
+    pub kills: u32,
+    pub range: u16,
+}
+
+impl Mercenary {
+    /// A ZC_MER_PAR_CHANGE value.
+    pub fn set(&mut self, kind: u16, value: u32) {
+        let short = value.min(u32::from(u16::MAX)) as u16;
+        match kind {
+            MERCENARY_HP => self.hp = value,
+            MERCENARY_MAX_HP => self.max_hp = value,
+            MERCENARY_SP => self.sp = value,
+            MERCENARY_MAX_SP => self.max_sp = value,
+            MERCENARY_ATK => self.atk = short,
+            MERCENARY_MATK => self.matk = short,
+            MERCENARY_DEF => self.def = short,
+            MERCENARY_MDEF => self.mdef = short,
+            MERCENARY_HIT => self.hit = short,
+            MERCENARY_CRITICAL => self.critical = short,
+            MERCENARY_ASPD => self.aspd = short,
+            MERCENARY_FLEE => self.flee = short,
+            MERCENARY_KILLS => self.kills = value,
+            MERCENARY_LOYALTY => self.loyalty = short,
+            _ => {}
+        }
+    }
 }
 
 /// What a pet does (ZC_PET_ACT, CZ_PET_ACT): below 100 an emotion (ZC_EMOTION's numbers), else a line of its
@@ -1346,6 +1422,15 @@ pub enum MapEvent {
     },
     /// What the player's pet is like now.
     PetInfo(Pet),
+    /// The player's mercenary: hired, or on a map load.
+    MercenaryInfo(Mercenary),
+    /// The mercenary's skills.
+    MercenarySkills(Vec<Skill>),
+    /// One of the mercenary's values changed (a MERCENARY_* kind).
+    MercenaryChanged {
+        kind: u16,
+        value: u32,
+    },
     /// The pet was fed (or there was no food), and its food.
     PetFed {
         ok: bool,
@@ -2490,6 +2575,27 @@ impl MapSession {
         self.stream.write_all(&encode_hatch(index))
     }
 
+    /// Dismisses the player's mercenary (MERCENARY_DISMISS); the server answers nothing but the unit vanishing.
+    pub fn mercenary_command(&mut self, command: u8) -> io::Result<()> {
+        let [low, high] = CZ_MER_COMMAND.to_le_bytes();
+        self.stream.write_all(&[low, high, command])
+    }
+
+    /// Sends the player's mercenary (or homunculus) to a cell.
+    pub fn move_npc(&mut self, id: u32, cell: [u16; 2]) -> io::Result<()> {
+        self.stream.write_all(&encode_move_npc(id, cell))
+    }
+
+    /// Sends the player's mercenary (or homunculus) at a target; `action` other than 0 keeps attacking.
+    pub fn act_npc(&mut self, id: u32, target: u32, action: u8) -> io::Result<()> {
+        self.stream.write_all(&encode_act_npc(id, target, action))
+    }
+
+    /// Brings the player's mercenary (or homunculus) back next to the player.
+    pub fn move_to_owner(&mut self, id: u32) -> io::Result<()> {
+        self.send_id(CZ_REQUEST_MOVETOOWNER, id)
+    }
+
     /// One of the PET_* commands (PET_INFO and on) to the player's pet.
     pub fn pet_command(&mut self, command: u8) -> io::Result<()> {
         self.stream.write_all(&encode_pet_command(command))
@@ -3193,6 +3299,25 @@ fn encode_hatch(index: u16) -> [u8; 4] {
     packet
 }
 
+/// CZ_REQUEST_MOVENPC: the unit and the cell (rathena ignores the direction).
+fn encode_move_npc(id: u32, cell: [u16; 2]) -> [u8; 9] {
+    let mut packet = [0u8; 9];
+    packet[..2].copy_from_slice(&CZ_REQUEST_MOVENPC.to_le_bytes());
+    packet[2..6].copy_from_slice(&id.to_le_bytes());
+    packet[6..].copy_from_slice(&encode_position(cell, 0));
+    packet
+}
+
+/// CZ_REQUEST_ACTNPC: the unit, its target and the action.
+fn encode_act_npc(id: u32, target: u32, action: u8) -> [u8; 11] {
+    let mut packet = [0u8; 11];
+    packet[..2].copy_from_slice(&CZ_REQUEST_ACTNPC.to_le_bytes());
+    packet[2..6].copy_from_slice(&id.to_le_bytes());
+    packet[6..10].copy_from_slice(&target.to_le_bytes());
+    packet[10] = action;
+    packet
+}
+
 fn encode_pet_command(command: u8) -> [u8; 3] {
     let [low, high] = CZ_COMMAND_PET.to_le_bytes();
     [low, high, command]
@@ -3685,6 +3810,31 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         ZC_CHANGESTATE_PET => MapEvent::PetState { kind: packet[2], id: u32_at(3), value: u32_at(7) as i32 },
         // Name, renamed, level, hunger, intimacy, accessory, monster.
+        ZC_MER_INIT => MapEvent::MercenaryInfo(Mercenary {
+            id: u32_at(2),
+            atk: u16_at(6),
+            matk: u16_at(8),
+            hit: u16_at(10),
+            critical: u16_at(12),
+            def: u16_at(14),
+            mdef: u16_at(16),
+            flee: u16_at(18),
+            aspd: u16_at(20),
+            name: c_string(&packet[22..46]),
+            level: u16_at(46),
+            hp: u32_at(48),
+            max_hp: u32_at(52),
+            sp: u32_at(56),
+            max_sp: u32_at(60),
+            contract_end: u32_at(64),
+            loyalty: u16_at(68),
+            summons: u32_at(70),
+            kills: u32_at(74),
+            range: u16_at(78),
+        }),
+        // ZC_SKILLINFO_LIST's entries.
+        ZC_MER_SKILLINFO_LIST => MapEvent::MercenarySkills(packet[4..].chunks_exact(SKILL_SIZE).map(decode_skill).collect()),
+        ZC_MER_PAR_CHANGE => MapEvent::MercenaryChanged { kind: u16_at(2), value: u32_at(4) },
         ZC_PROPERTY_PET => MapEvent::PetInfo(Pet {
             name: c_string(&packet[2..26]),
             renamed: packet[26] != 0,
@@ -4647,6 +4797,57 @@ mod tests {
         assert_eq!(encode_refine(4, 1010, true), [0xA3, 0x0A, 4, 0, 0xF2, 0x03, 0, 0, 1]);
         let ids = [ZC_OPEN_REFINING_UI, CZ_REFINING_SELECT_ITEM, ZC_REFINING_MATERIAL_LIST, CZ_REQ_REFINING, CZ_CLOSE_REFINING_UI, ZC_ACK_ITEMREFINING];
         assert_eq!(ids.map(packet_length), [Some(2), Some(4), Some(-1), Some(9), Some(2), Some(8)]);
+    }
+
+    #[test]
+    fn decodes_mercenaries() {
+        // clif_mercenary_info for Mina.
+        let mut init = vec![0u8; 80];
+        init[..2].copy_from_slice(&ZC_MER_INIT.to_le_bytes());
+        init[2..6].copy_from_slice(&110_038_127u32.to_le_bytes());
+        init[6..8].copy_from_slice(&300u16.to_le_bytes());
+        init[20..22].copy_from_slice(&700u16.to_le_bytes());
+        init[22..26].copy_from_slice(b"Mina");
+        init[46..48].copy_from_slice(&20u16.to_le_bytes());
+        init[48..52].copy_from_slice(&256u32.to_le_bytes());
+        init[52..56].copy_from_slice(&256u32.to_le_bytes());
+        init[64..68].copy_from_slice(&1_800_000_000u32.to_le_bytes());
+        init[68..70].copy_from_slice(&3u16.to_le_bytes());
+        init[70..74].copy_from_slice(&4u32.to_le_bytes());
+        init[74..78].copy_from_slice(&5u32.to_le_bytes());
+        init[78..80].copy_from_slice(&9u16.to_le_bytes());
+        let Some(MapEvent::MercenaryInfo(mut mercenary)) = decode_map_packet(&init) else { panic!() };
+        assert_eq!((mercenary.id, mercenary.name.as_str(), mercenary.level, mercenary.atk, mercenary.aspd), (110_038_127, "Mina", 20, 300, 700));
+        assert_eq!((mercenary.hp, mercenary.max_hp, mercenary.contract_end), (256, 256, 1_800_000_000));
+        assert_eq!((mercenary.loyalty, mercenary.summons, mercenary.kills, mercenary.range), (3, 4, 5, 9));
+        assert_eq!(packet_length(ZC_MER_INIT), Some(80));
+
+        let mut skills = ZC_MER_SKILLINFO_LIST.to_le_bytes().to_vec();
+        skills.extend_from_slice(&41u16.to_le_bytes());
+        for id in [8207u16, 8221] {
+            let mut entry = vec![0u8; SKILL_SIZE];
+            entry[..2].copy_from_slice(&id.to_le_bytes());
+            entry[6..8].copy_from_slice(&2u16.to_le_bytes());
+            skills.extend_from_slice(&entry);
+        }
+        let length = skills.len() as u16;
+        skills[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::MercenarySkills(list)) = decode_map_packet(&skills) else { panic!() };
+        assert_eq!(list.iter().map(|skill| (skill.id, skill.level)).collect::<Vec<_>>(), [(8207, 2), (8221, 2)]);
+        assert_eq!(packet_length(ZC_MER_SKILLINFO_LIST), Some(-1));
+
+        let change = [&ZC_MER_PAR_CHANGE.to_le_bytes()[..], &MERCENARY_HP.to_le_bytes(), &99u32.to_le_bytes()].concat();
+        let Some(MapEvent::MercenaryChanged { kind, value }) = decode_map_packet(&change) else { panic!() };
+        mercenary.set(kind, value);
+        mercenary.set(MERCENARY_KILLS, 6);
+        mercenary.set(MERCENARY_LOYALTY, 70_000);
+        assert_eq!((mercenary.hp, mercenary.kills, mercenary.loyalty), (99, 6, u16::MAX));
+
+        assert_eq!(encode_move_npc(7, [170, 360]), [0x32, 0x02, 7, 0, 0, 0, 170 >> 2, ((170 << 6) as u8) | (360 >> 4) as u8, (360 << 4) as u8]);
+        assert_eq!(encode_act_npc(7, 9, 1), [0x33, 0x02, 7, 0, 0, 0, 9, 0, 0, 0, 1]);
+        for (header, length) in [(CZ_MER_COMMAND, 3), (CZ_REQUEST_MOVENPC, 9), (CZ_REQUEST_ACTNPC, 11), (CZ_REQUEST_MOVETOOWNER, 6), (ZC_MER_PAR_CHANGE, 8)] {
+            assert_eq!(packet_length(header), Some(length), "{header:#06x}");
+        }
     }
 
     #[test]

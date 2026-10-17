@@ -731,6 +731,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         Panel::Clan => game.clan.is_some() && game.clan_window.frame.open,
         Panel::Cart => game.cart.cart.is_some() && game.cart.frame.open,
         Panel::Pet => game.pet.is_some() && game.pet_window.frame.open,
+        Panel::Mercenary => game.mercenary.is_some() && game.mercenary_window.frame.open,
+        Panel::MercenarySkills => game.mercenary.is_some() && game.mercenary_skill_list.frame.open,
     };
     let jobs = app.skill_trees.lineage(game.me.job);
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
@@ -750,6 +752,15 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .into_iter()
                 .chain(game.equipment.button_boxes())
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(
+            game.mercenary.iter().flat_map(|_| game.mercenary_window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(
+            game.mercenary
+                .iter()
+                .flat_map(|_| game.mercenary_skill_list.skill_boxes(&game.mercenary_skills))
+                .map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})),
         )
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
@@ -844,6 +855,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "aimed_skill": game.targeting.map(|(id, level)| json!({"id": id, "level": level, "name": app.skill_info.get(&id).map(|info| info.name.as_str())})),
         "units": units,
         // The player's pet as the server last told it, or null.
+        "mercenary": game.mercenary.as_ref().map(|hired| json!({"id": hired.id, "name": hired.name, "level": hired.level, "hp": hired.hp, "loyalty": hired.loyalty, "summons": hired.summons, "kills": hired.kills, "following": game.steering.following, "order": game.steering.order.map(|order| format!("{order:?}"))})),
         "pet": game.pet.as_ref().map(|pet| json!({"id": game.pet_id, "name": pet.name, "level": pet.level, "hunger": pet.hunger, "intimacy": pet.intimacy, "accessory": pet.accessory, "renamed": pet.renamed})),
         "ground_items": ground,
         "inventory_items": game.inventory.items.len(),

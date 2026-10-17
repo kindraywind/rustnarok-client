@@ -34,7 +34,8 @@ pub const READY: usize = 4;
 pub fn combat_actions(kind: u8) -> (usize, usize, usize) {
     match kind {
         // ponytail: players always use their first attack motion; the weapon decides it in the client.
-        0 => (5, 6, 8),
+        // Mercenaries (9) are laid out like players.
+        0 | 9 => (5, 6, 8),
         _ => (2, 3, 4),
     }
 }
@@ -502,6 +503,29 @@ impl SpriteSet {
     }
 
     /// An NPC or monster: one sprite named in the client's `JobNameTable`.
+    /// A mercenary (jobs 6017 to 6046): its body by the job name table's path under the human bodies (`여\활용병`), laid
+    /// out like a player's, and the weapon of its kind (the unit carries none).
+    pub fn mercenary(grf: &Grf, job: u16, name: &str) -> Option<Self> {
+        // ponytail: the weapons' glow sprites (`_검광`) are left out.
+        let weapon = match job {
+            6017..=6026 => "활용병_활",
+            6027..=6036 => "창용병_창",
+            6037..=6046 => "검용병_검",
+            _ => return None,
+        };
+        let load = |path: String, part: Part| -> Option<Layer> {
+            Some(Layer {
+                spr: Spr::parse(&grf.read(&format!("{path}.spr")).ok()?).ok()?,
+                act: Act::parse(&grf.read(&format!("{path}.act")).ok()?).ok()?,
+                palette: None,
+                part,
+            })
+        };
+        let body = load(format!("data\\sprite\\인간족\\몸통\\{name}"), Part::Body)?;
+        let weapon = load(format!("data\\sprite\\인간족\\용병\\{weapon}"), Part::Weapon);
+        Some(Self { layers: [Some(body), weapon].into_iter().flatten().collect(), player: true, textures: HashMap::new() })
+    }
+
     pub fn single(grf: &Grf, name: &str, monster: bool) -> Option<Self> {
         let folders = if monster { ["몬스터", "npc"] } else { ["npc", "몬스터"] };
         folders.iter().find_map(|folder| Self::at(grf, &format!("data\\sprite\\{folder}\\{name}")))
