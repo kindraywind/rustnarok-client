@@ -12,7 +12,8 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
   {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]]}  {"move": [x, y]}
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
     (targets by name from the control socket's `targets`: inventory_item (item id), hotkey (slot), skill (id),
-    or {"point": [x, y]}; a target not on screen fails the step)
+    unit (name, from `units`), or {"point": [x, y]}; "offset": [dx, dy] shifts from the centre; a target not
+    on screen fails the step)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
   {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command)
   {"expect": {"chat": "Item created.", "inventory_items": 5, "hp_at_least": 40, "map": "iz_int01.gat",
@@ -23,6 +24,8 @@ A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shot
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
 diff; `threshold` (percent, default 1) is how much change a shot takes before the report flags it.
 `settle` waits until the map has loaded again, then the given ms (GM commands sent while it loads are lost).
+Two players: "second": {"account": "2", "slot": 0, "env": {...}} starts a second client; a step with
+"as": "second" (a shot too) acts on it. The first account should be a GM (`@recall` brings the second over).
 Each scenario starts a fresh client; the clock is paused for every shot so frames repeat.
 Everything lands under docs/personal/visual/<date>/<HHMMSS>/ (gitignored): game images never go in the repository.
 """
@@ -55,15 +58,10 @@ def wait_for_game(timeout=60):
     raise RuntimeError(f"not in the game after {timeout}s: {json.dumps(state)[:300]}")
 
 
-def launch(binary, scenario):
-    # Scenarios start from the same server state: RUSTNAROK_CLIENT_SCENARIO_RESET is a shell command (each developer's
-    # own, for their server) run before every launch, e.g. clearing the test characters' saved hotkey bars.
-    reset = os.environ.get("RUSTNAROK_CLIENT_SCENARIO_RESET")
-    if reset:
-        subprocess.run(reset, shell=True, check=True)
-    env_extra = scenario.get("env", {})
+def launch_one(binary, player):
+    """One client in the game as `player` ({"account", "slot", "env"}), on the client `drive.use` points at."""
     for attempt in range(6):
-        drive.launch(scenario.get("account", ""), str(scenario.get("slot", "0")), binary=binary, env_extra=env_extra, quiet=True)
+        drive.launch(player.get("account", ""), str(player.get("slot", "0")), binary=binary, env_extra=player.get("env", {}), quiet=True)
         try:
             return wait_for_game()
         except RuntimeError:
@@ -72,17 +70,52 @@ def launch(binary, scenario):
     raise RuntimeError("could not get into the game")
 
 
+def launch(binary, scenario):
+    # Scenarios start from the same server state: RUSTNAROK_CLIENT_SCENARIO_RESET is a shell command (each developer's
+    # own, for their server) run before every launch, e.g. clearing the test characters' saved hotkey bars.
+    reset = os.environ.get("RUSTNAROK_CLIENT_SCENARIO_RESET")
+    if reset:
+        subprocess.run(reset, shell=True, check=True)
+    drive.use("first")
+    state = launch_one(binary, scenario)
+    # A second player, for anything between two: its steps say "as": "second".
+    if "second" in scenario:
+        drive.use("second")
+        try:
+            launch_one(binary, scenario["second"])
+        finally:
+            drive.use("first")
+    return state
+
+
+def quit_all(scenario):
+    for client in ["second", "first"] if "second" in scenario else ["first"]:
+        drive.use(client)
+        drive.quit_quietly()
+    drive.use("first")
+
+
 def locate(target):
     """A target's screen point: {"inventory_item": <item id>}, {"hotkey": <slot>}, {"skill": <id>} (the centre of its
     box in the control socket's `targets`), or {"point": [x, y]}. None when it isn't on screen."""
     if "point" in target:
         return target["point"]
+    target = dict(target)
+    dx, dy = target.pop("offset", [0, 0])
     (kind, value), = target.items()
-    for found in drive.send({"cmd": "state"}).get("game", {}).get("targets", []):
+    game = drive.send({"cmd": "state"}).get("game", {})
+    if kind == "unit":
+        # A unit by name (its sprite's box on screen); "offset" from its centre, e.g. into the menu it opens.
+        for unit in game.get("units", []):
+            if unit.get("name") == value and unit.get("screen"):
+                x0, y0, x1, y1 = unit["screen"]
+                return [round((x0 + x1) / 2) + dx, round((y0 + y1) / 2) + dy]
+        return None
+    for found in game.get("targets", []):
         key = {"inventory_item": "id", "hotkey": "slot", "skill": "id"}.get(kind)
         if found.get("kind") == kind and found.get(key) == value:
             x, y, w, h = found["box"]
-            return [round(x + w / 2), round(y + h / 2)]
+            return [round(x + w / 2) + dx, round(y + h / 2) + dy]
     return None
 
 
@@ -131,6 +164,15 @@ def expect(wanted, state):
 
 
 def step(action, shots_dir, name):
+    """One step, on the client it names ("as": "second") or the first."""
+    drive.use(action.get("as", "first"))
+    try:
+        return step_on_client({key: value for key, value in action.items() if key != "as"}, shots_dir, name)
+    finally:
+        drive.use("first")
+
+
+def step_on_client(action, shots_dir, name):
     if "say" in action:
         return drive.send({"cmd": "say", "text": action["say"]})
     if "wait" in action:
@@ -212,7 +254,7 @@ def run(scenarios, binary, out):
                     failures += [f"step {number}: {message}" for message in failed]
                     print(f"  {name}: FAIL step {number}: {'; '.join(failed)}")
         finally:
-            drive.quit_quietly()
+            quit_all(scenario)
             time.sleep(2)
         results[name] = failures
         print(f"  {name}: {'PASS' if not failures else f'FAIL ({len(failures)})'}")
