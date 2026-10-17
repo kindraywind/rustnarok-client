@@ -44,6 +44,7 @@ mod char_make;
 mod char_select;
 mod chat;
 mod chatroom;
+mod clan;
 mod control;
 mod cursor;
 mod effects;
@@ -237,6 +238,8 @@ const GUILD_CHOICE: usize = 382;
 const GUILD_INVITED: usize = 377;
 const GUILD_ONLINE: usize = 485;
 const GUILD_CHAT: [u8; 3] = [180, 255, 180];
+// ponytail: clan chat's color isn't in the data files; calibrate against the official client.
+const CLAN_CHAT: [u8; 3] = [180, 220, 255];
 /// Friends: "Register as a Friend", "(%s) wishes to be friends with you...", how adding went (821 + the result, but
 /// 819 and 820 for full lists), "%s has logged in/out".
 const FRIEND_CHOICE: usize = 358;
@@ -545,6 +548,9 @@ struct Game {
     guild_invite: Option<(u32, String)>,
     /// Dev switch RUSTNAROK_CLIENT_GUILD=window ran.
     guild_shown: bool,
+    /// The clan we're in, and its window.
+    clan: Option<clan::Clan>,
+    clan_window: clan::ClanWindow,
     /// Guild emblems by guild ID: the version last asked for, and the image that came.
     emblems: HashMap<u32, (u32, Option<Texture>)>,
     /// What shows with players' names (party, guild, position) by account ID, and the unit last pointed at: a
@@ -777,6 +783,7 @@ enum Panel {
     Party,
     Status,
     Guild,
+    Clan,
     Cart,
     Pet,
 }
@@ -997,6 +1004,7 @@ impl Game {
             Panel::Party => self.party_window.frame.open && self.party_window.hit(cursor, self.party.as_ref(), &self.friends, self.account_id).is_some(),
             Panel::Status => self.status_window.frame.open && self.status_window.frame.local(cursor, self.status_height).is_some(),
             Panel::Guild => self.guild.is_some() && self.guild_window.frame.local(cursor, self.guild_window.height()).is_some(),
+            Panel::Clan => self.clan.is_some() && self.clan_window.frame.local(cursor, self.clan_window.height()).is_some(),
             Panel::Cart => self.cart.cart.is_some() && self.cart.hit(cursor).is_some(),
             Panel::Pet => self.pet.as_ref().is_some_and(|pet| self.pet_window.hit(cursor, pet).is_some()),
         })
@@ -1142,6 +1150,17 @@ impl Game {
         }
         if let Some(name) = text.strip_prefix("/guild ") {
             let _ = self.session.make_guild(self.me.id, name.trim().trim_matches('"'));
+            return None;
+        }
+        // ponytail: /cl sends to the clan until the chat window has the send-to choice (messages 85, 86, 437, 2361).
+        if text == "/cl" {
+            return None;
+        }
+        if let Some(message) = text.strip_prefix("/cl ") {
+            let message = message.trim();
+            if !message.is_empty() {
+                let _ = self.session.clan_chat(&self.me.name, message);
+            }
             return None;
         }
         if to.is_empty() && (guild || text.starts_with('$')) {
@@ -1819,6 +1838,7 @@ struct Assets {
     pet: pet::Assets,
     item_window: iteminfo::Assets,
     guild: guild::Assets,
+    clan: clan::Assets,
     vend: vend::Assets,
     /// The cast bar's fill, the speech bubble's box and border, the aimed skill's box, and status icons' clocks
     /// (white, then orange in the last minute) by step.
@@ -1916,6 +1936,7 @@ impl Assets {
             pet: pet::Assets::load(gpu, grf),
             item_window: iteminfo::Assets::load(gpu, grf),
             guild: guild::Assets::load(gpu, grf),
+            clan: clan::Assets::load(gpu, grf),
             vend: vend::Assets::load(gpu, grf),
             cast_fill: gpu.solid([0x00, 0xFF, 0x00, 0xFF]),
             speech_fill: gpu.solid([0, 0, 0, 102]),
@@ -3047,6 +3068,11 @@ impl App {
                         }
                         _ => {}
                     },
+                    Panel::Clan => {
+                        if let Some(clan::Hit::Title(title)) = game.clan.as_ref().and_then(|_| game.clan_window.hit(cursor)) {
+                            game.clan_window.frame.click_title(title);
+                        }
+                    }
                     Panel::Pet => match game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) {
                         Some(pet::Hit::Title(title)) => game.pet_window.frame.click_title(title),
                         Some(pet::Hit::Rename) => game.amount = Some(window::Amount::name(Asked::PetName, PET_NAME_RULE)),
@@ -3239,6 +3265,8 @@ impl App {
             game.status_window.frame.drag_to(self.cursor, status_height);
             let guild_height = game.guild_window.height();
             game.guild_window.frame.drag_to(self.cursor, guild_height);
+            let clan_height = game.clan_window.height();
+            game.clan_window.frame.drag_to(self.cursor, clan_height);
             let cart_height = game.cart.height();
             game.cart.frame.drag_to(self.cursor, cart_height);
             game.pet_window.frame.drag_to(self.cursor, pet::PetWindow::height());
@@ -3457,6 +3485,7 @@ impl App {
                     | game.party_window.frame.drop_drag()
                     | game.status_window.frame.drop_drag()
                     | game.guild_window.frame.drop_drag()
+                    | game.clan_window.frame.drop_drag()
                     | game.cart.frame.drop_drag()
                     | game.pet_window.frame.drop_drag()
                     | game.storage.frame.drop_drag()
@@ -3607,6 +3636,9 @@ impl App {
                 Panel::Guild if game.guild.as_ref().and_then(|guild| game.guild_window.hit(cursor, guild)) == Some(guild::Hit::Title(TitleHit::Title)) => {
                     game.guild_window.frame.start_drag(cursor)
                 }
+                Panel::Clan if game.clan.is_some() && game.clan_window.hit(cursor) == Some(clan::Hit::Title(TitleHit::Title)) => {
+                    game.clan_window.frame.start_drag(cursor)
+                }
                 Panel::Cart if game.cart.hit(cursor) == Some(inventory::Hit::Title(TitleHit::Title)) => game.cart.frame.start_drag(cursor),
                 Panel::Pet if game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) == Some(pet::Hit::Title(TitleHit::Title)) => {
                     game.pet_window.frame.start_drag(cursor)
@@ -3669,6 +3701,19 @@ impl App {
             && let Some(gpu) = &self.gpu
         {
             gpu.window.set_fullscreen(gpu.window.fullscreen().is_none().then_some(winit::window::Fullscreen::Borderless(None)));
+            return;
+        }
+        // Ctrl+G opens or closes the clan window while in a clan.
+        if let Scene::Game(game) = &mut self.scene
+            && self.modifiers.control_key()
+            && !self.modifiers.alt_key()
+            && !self.modifiers.super_key()
+            && event.physical_key == PhysicalKey::Code(KeyCode::KeyG)
+        {
+            if game.clan.is_some() {
+                game.clan_window.frame.toggle();
+                game.raise(Panel::Clan);
+            }
             return;
         }
         // Alt+E and Alt+Q open the inventory and the equipment anywhere in the game (by physical key: Option+letter
@@ -4319,6 +4364,8 @@ impl App {
                     guild_window: guild::GuildWindow::default(),
                     guild_invite: None,
                     guild_shown: false,
+                    clan: None,
+                    clan_window: clan::ClanWindow::default(),
                     emblems: HashMap::new(),
                     name_tags: HashMap::new(),
                     pointed: None,
@@ -4340,6 +4387,7 @@ impl App {
                         Panel::Party,
                         Panel::Status,
                         Panel::Guild,
+                        Panel::Clan,
                         Panel::Cart,
                         Panel::Pet,
                     ],
@@ -5253,6 +5301,28 @@ impl App {
                     guild.members.retain(|member| member.character != character);
                 }
             }
+            // The clan: its info at login or on joining, how many are online, leaving, and its chat.
+            MapEvent::ClanInfo { id, name, master, map, allies, hostile } => {
+                let clan = game.clan.get_or_insert_with(clan::Clan::default);
+                clan.id = id;
+                clan.name = name;
+                clan.master = master;
+                clan.map = map;
+                clan.allies = allies;
+                clan.hostile = hostile;
+            }
+            // rathena sends the info (0x098A) before the first count; a count without a clan is ignored.
+            MapEvent::ClanOnlineCount { online, max } => {
+                if let Some(clan) = &mut game.clan {
+                    clan.online = online;
+                    clan.max = max;
+                }
+            }
+            MapEvent::ClanLeft => {
+                game.clan = None;
+                game.clan_window.frame.open = false;
+            }
+            MapEvent::ClanChat(text) => game.chat_line(text, CLAN_CHAT),
             // Friends: the list, who's online (said in the chat), asking and answering.
             MapEvent::Friends(friends) => game.friends = friends,
             MapEvent::FriendOnline { account, character, online } => {
@@ -6920,6 +6990,11 @@ impl App {
                             emblem,
                             pointer,
                         );
+                    }
+                }
+                Panel::Clan => {
+                    if let Some(clan) = &game.clan {
+                        game.clan_window.draw(&mut layer, &assets.chrome, &assets.clan, messages, clan, pointer.0);
                     }
                 }
                 Panel::Party => {

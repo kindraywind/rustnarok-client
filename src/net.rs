@@ -752,6 +752,11 @@ const ZC_BAN_LIST: u16 = 0x0B7C;
 const CZ_REQ_GUILD_EMBLEM_IMG: u16 = 0x0151;
 const ZC_GUILD_EMBLEM_IMG: u16 = 0x0152;
 const ZC_CHANGE_GUILD: u16 = 0x0B47;
+const ZC_NOTIFY_CLAN_CONNECTINFO: u16 = 0x0988;
+const ZC_ACK_CLAN_LEAVE: u16 = 0x0989;
+const ZC_CLANINFO: u16 = 0x098A;
+const CZ_CLAN_CHAT: u16 = 0x098D;
+const ZC_NOTIFY_CLAN_CHAT: u16 = 0x098E;
 const CZ_REQNAME: u16 = 0x0368;
 const ZC_ACK_REQNAMEALL: u16 = 0x0A30;
 const CZ_ADD_FRIENDS: u16 = 0x0202;
@@ -1513,6 +1518,24 @@ pub enum MapEvent {
         reason: String,
         expelled: bool,
     },
+    /// The character's clan, at login or upon joining (`ZC_CLANINFO`).
+    ClanInfo {
+        id: u32,
+        name: String,
+        master: String,
+        map: String,
+        allies: Vec<String>,
+        hostile: Vec<String>,
+    },
+    /// Members online and the clan's capacity (`ZC_NOTIFY_CLAN_CONNECTINFO`).
+    ClanOnlineCount {
+        online: i16,
+        max: i16,
+    },
+    /// The character left their clan (`ZC_ACK_CLAN_LEAVE`).
+    ClanLeft,
+    /// A line of clan chat (`ZC_NOTIFY_CLAN_CHAT`).
+    ClanChat(String),
     /// The friend list, at login (everyone offline until told otherwise).
     Friends(Vec<Friend>),
     /// A friend logged in or out.
@@ -2707,6 +2730,11 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Says something to the clan.
+    pub fn clan_chat(&mut self, name: &str, message: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_clan_chat(name, message))
+    }
+
     /// Asks a character, by name, to be friends.
     pub fn add_friend(&mut self, name: &str) -> io::Result<()> {
         let mut packet = CZ_ADD_FRIENDS.to_le_bytes().to_vec();
@@ -3144,6 +3172,16 @@ fn encode_materials(kind: u32, ok: bool, entries: &[(u16, u16)]) -> Vec<u8> {
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
     [low, high, u8::from(allow)]
+}
+
+/// CZ_CLAN_CHAT: length, then `"<name> : <message>\0"`.
+fn encode_clan_chat(name: &str, message: &str) -> Vec<u8> {
+    let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
+    let mut packet = CZ_CLAN_CHAT.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((4 + text.len() + 1) as u16).to_le_bytes());
+    packet.extend_from_slice(&text);
+    packet.push(0);
+    packet
 }
 
 /// Packed cell position and direction (3 bytes), as rathena's WBUFPOS.
@@ -3764,6 +3802,22 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_ACK_REQ_JOIN_GUILD => MapEvent::GuildInviteResult(packet[2]),
         ZC_ACK_LEAVE_GUILD => MapEvent::GuildLeft { character: u32_at(2), reason: c_string(&packet[6..46]), expelled: false },
         ZC_ACK_BAN_GUILD => MapEvent::GuildLeft { character: u32_at(42), reason: c_string(&packet[2..42]), expelled: true },
+        ZC_CLANINFO => {
+            let allies = usize::from(packet[72]);
+            let hostile = usize::from(packet[73]);
+            let mut names = packet[74..].chunks_exact(24).map(c_string);
+            MapEvent::ClanInfo {
+                id: u32_at(4),
+                name: c_string(&packet[8..32]),
+                master: c_string(&packet[32..56]),
+                map: c_string(&packet[56..72]),
+                allies: (&mut names).take(allies).collect(),
+                hostile: names.take(hostile).collect(),
+            }
+        }
+        ZC_NOTIFY_CLAN_CONNECTINFO => MapEvent::ClanOnlineCount { online: u16_at(2) as i16, max: u16_at(4) as i16 },
+        ZC_ACK_CLAN_LEAVE => MapEvent::ClanLeft,
+        ZC_NOTIFY_CLAN_CHAT => MapEvent::ClanChat(c_string(&packet[28..])),
         ZC_FRIENDS_LIST => MapEvent::Friends(
             packet[4..]
                 .chunks_exact(32)
@@ -4740,6 +4794,53 @@ mod tests {
         let Some(MapEvent::WhisperList(names)) = decode_map_packet(&[0xD4, 0x00, 4, 0]) else { panic!() };
         assert!(names.is_empty());
         for (header, length) in [(ZC_USER_COUNT, 6), (ZC_SETTING_WHISPER_PC, 4), (ZC_SETTING_WHISPER_STATE, 4), (ZC_WHISPER_LIST, -1)] {
+            assert_eq!(packet_length(header), Some(length));
+        }
+    }
+
+    #[test]
+    fn decodes_clan() {
+        let chat = encode_clan_chat("Tester", "hello clan");
+        assert_eq!(&chat[..2], &CZ_CLAN_CHAT.to_le_bytes());
+        assert_eq!(u16::from_le_bytes([chat[2], chat[3]]) as usize, chat.len());
+        assert_eq!(&chat[4..], b"Tester : hello clan\0");
+
+        // ZC_CLANINFO: length, clan ID, name, master, map, ally count, hostile count, then 24-byte clan names.
+        let mut info = ZC_CLANINFO.to_le_bytes().to_vec();
+        info.extend_from_slice(&[0, 0]);
+        info.extend_from_slice(&2u32.to_le_bytes());
+        info.extend_from_slice(&name_field("Arcwand Clan"));
+        info.extend_from_slice(&name_field("Devon Aire"));
+        let mut map = [0u8; 16];
+        map[..10].copy_from_slice(b"geffen.gat");
+        info.extend_from_slice(&map);
+        info.extend_from_slice(&[1, 1]);
+        info.extend_from_slice(&name_field("Golden Mace Clan"));
+        info.extend_from_slice(&name_field("Crossbow Clan"));
+        let length = info.len() as u16;
+        info[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::ClanInfo { id, name, master, map, allies, hostile }) = decode_map_packet(&info) else { panic!() };
+        assert_eq!((id, name.as_str(), master.as_str(), map.as_str()), (2, "Arcwand Clan", "Devon Aire", "geffen.gat"));
+        assert_eq!(allies, ["Golden Mace Clan"]);
+        assert_eq!(hostile, ["Crossbow Clan"]);
+
+        let mut count = ZC_NOTIFY_CLAN_CONNECTINFO.to_le_bytes().to_vec();
+        count.extend_from_slice(&3i16.to_le_bytes());
+        count.extend_from_slice(&500i16.to_le_bytes());
+        let Some(MapEvent::ClanOnlineCount { online: 3, max: 500 }) = decode_map_packet(&count) else { panic!() };
+
+        let Some(MapEvent::ClanLeft) = decode_map_packet(&ZC_ACK_CLAN_LEAVE.to_le_bytes()) else { panic!() };
+
+        let mut incoming_chat = ZC_NOTIFY_CLAN_CHAT.to_le_bytes().to_vec();
+        incoming_chat.extend_from_slice(&[0, 0]);
+        incoming_chat.extend_from_slice(&[0u8; 24]);
+        incoming_chat.extend_from_slice(b"Tester : hello clan\0");
+        let length = incoming_chat.len() as u16;
+        incoming_chat[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::ClanChat(text)) = decode_map_packet(&incoming_chat) else { panic!() };
+        assert_eq!(text, "Tester : hello clan");
+
+        for (header, length) in [(ZC_NOTIFY_CLAN_CONNECTINFO, 6), (ZC_ACK_CLAN_LEAVE, 2), (ZC_CLANINFO, -1), (CZ_CLAN_CHAT, -1), (ZC_NOTIFY_CLAN_CHAT, -1)] {
             assert_eq!(packet_length(header), Some(length));
         }
     }

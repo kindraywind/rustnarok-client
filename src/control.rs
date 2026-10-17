@@ -717,6 +717,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         Panel::Party => game.party_window.frame.open,
         Panel::Status => game.status_window.frame.open,
         Panel::Guild => game.guild.is_some() && game.guild_window.frame.open,
+        Panel::Clan => game.clan.is_some() && game.clan_window.frame.open,
         Panel::Cart => game.cart.cart.is_some() && game.cart.frame.open,
         Panel::Pet => game.pet.is_some() && game.pet_window.frame.open,
     };
