@@ -74,7 +74,12 @@ pixels in red). `run`, `baseline` and `diff` do the steps one at a time. Output 
 `docs/personal/visual/<date>/<HHMMSS>/{main,branch,diff}/`, gitignored, with each shot's game state beside it.
 
 Scenarios are JSON in `scenarios/` (the format is at the top of `visual.py`): GM commands, waits (`settle` after a
-warp: commands sent while a map loads are lost), keys, clicks, drags, and named shots, optionally cropped. Each starts
+warp: commands sent while a map loads are lost), keys, clicks, drags, and named shots, optionally cropped.
+**Make each scenario prove itself**: `expect` steps check the game state (chat lines, HP, map, open windows, units)
+and `wait_for` waits on a packet or event (`ItemUsed`, `PickedUp`) instead of a sleep. A failed one fails the
+scenario and `visual.py` exits non-zero — otherwise a scenario that silently did nothing still makes screenshots.
+`mask` keeps animated rectangles (water, portals) out of the diff; `threshold` sets how much change a shot may take
+before the report flags it. `python3 -I $V suite` checks every scenario and writes `report.md` beside the sheets. Each starts
 a fresh client and pauses the clock for every shot. Add one for the feature you touch, and keep it: the set grows into
 the game's visual regression suite.
 
