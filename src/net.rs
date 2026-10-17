@@ -615,6 +615,9 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_NOTIFY_BIND_ON_EQUIP: u16 = 0x02D3;
+const CZ_REQ_TAKEOFF_EQUIP_ALL: u16 = 0x0BAD;
+const ZC_ACK_TAKEOFF_EQUIP_ALL: u16 = 0x0BAE;
 const CZ_REQ_OPEN_ROULETTE: u16 = 0x0A19;
 const ZC_ACK_OPEN_ROULETTE: u16 = 0x0A1A;
 const CZ_REQ_ROULETTE_INFO: u16 = 0x0A1B;
@@ -1528,6 +1531,12 @@ pub enum MapEvent {
         result: u8,
         bonus: u32,
     },
+    /// A bind-on-equip item (inventory index) was put on: it's bound to the character now.
+    BoundOnEquip(u16),
+    /// Take Off All was done, or refused (the player can't act).
+    TookOffAll {
+        refused: bool,
+    },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
         id: usize,
@@ -2226,6 +2235,10 @@ pub struct InventoryItem {
     pub identified: bool,
     pub refine: u8,
     pub cards: [u32; 4],
+    /// Broken: it can't be worn until it's repaired.
+    pub broken: bool,
+    /// 0 not bound, 1 binds to the character once worn, 2 bound.
+    pub bind: u16,
 }
 
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
@@ -2290,6 +2303,8 @@ fn decode_equip_item(entry: &[u8]) -> InventoryItem {
         cards: cards_at(entry, 15),
         refine: entry[65],
         identified: entry[67] & 1 != 0,
+        broken: entry[67] & 2 != 0,
+        bind: u16_at(entry, 35),
     }
 }
 
@@ -2688,6 +2703,11 @@ impl MapSession {
 
     pub fn roulette(&mut self, request: RouletteRequest) -> io::Result<()> {
         self.stream.write_all(&encode_roulette(request))
+    }
+
+    /// Takes off the general equipment (costumes, shadow gear and ammunition stay on).
+    pub fn take_off_all(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_REQ_TAKEOFF_EQUIP_ALL.to_le_bytes())
     }
 
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
@@ -3654,6 +3674,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 kind: packet[32],
                 refine: packet[68],
                 worn: 0,
+                broken: packet[11] != 0,
+                bind: u16_at(38),
             },
         },
         ZC_INVENTORY_START => MapEvent::InventoryStart { kind: packet[4] },
@@ -3957,6 +3979,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             points: [11, 15, 19].map(|offset| u32_at(offset) as i32),
         },
         ZC_RECV_ROULETTE_ITEM => MapEvent::RouletteClaimed { result: packet[2], bonus: u32_at(3) },
+        ZC_NOTIFY_BIND_ON_EQUIP => MapEvent::BoundOnEquip(u16_at(2)),
+        ZC_ACK_TAKEOFF_EQUIP_ALL => MapEvent::TookOffAll { refused: packet[2] != 0 },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -5126,6 +5150,34 @@ mod tests {
         ];
         assert_eq!(ids.map(packet_length), [Some(2), Some(25), Some(2), Some(-1), Some(2), Some(2), Some(23), Some(3), Some(7)]);
         assert_eq!(open(0, -1).len(), 25);
+    }
+
+    #[test]
+    fn decodes_equipment_states() {
+        // EQUIPITEM_INFO: bind at 35, flags at 67 (1 identified, 2 broken).
+        let mut entry = vec![0u8; EQUIP_ITEM_SIZE];
+        entry[..2].copy_from_slice(&5u16.to_le_bytes());
+        entry[2..6].copy_from_slice(&1201u32.to_le_bytes());
+        entry[35..37].copy_from_slice(&2u16.to_le_bytes());
+        entry[67] = 3;
+        let item = decode_equip_item(&entry);
+        assert_eq!((item.index, item.id, item.identified, item.broken, item.bind), (5, 1201, true, true, 2));
+        entry[67] = 1;
+        assert!(!decode_equip_item(&entry).broken);
+        // ZC_ITEM_PICKUP_ACK: broken at 11, bind at 38.
+        let mut pickup = vec![0u8; 70];
+        pickup[..2].copy_from_slice(&ZC_ITEM_PICKUP_ACK.to_le_bytes());
+        pickup[6..10].copy_from_slice(&2301u32.to_le_bytes());
+        pickup[11] = 1;
+        pickup[38..40].copy_from_slice(&1u16.to_le_bytes());
+        let Some(MapEvent::PickedUp { item, .. }) = decode_map_packet(&pickup) else { panic!() };
+        assert_eq!((item.id, item.broken, item.bind), (2301, true, 1));
+        let Some(MapEvent::BoundOnEquip(7)) = decode_map_packet(&[0xD3, 0x02, 7, 0]) else { panic!() };
+        let Some(MapEvent::TookOffAll { refused: false }) = decode_map_packet(&[0xAE, 0x0B, 0]) else { panic!() };
+        let Some(MapEvent::TookOffAll { refused: true }) = decode_map_packet(&[0xAE, 0x0B, 1]) else { panic!() };
+        assert_eq!(CZ_REQ_TAKEOFF_EQUIP_ALL.to_le_bytes(), [0xAD, 0x0B]);
+        let ids = [ZC_NOTIFY_BIND_ON_EQUIP, CZ_REQ_TAKEOFF_EQUIP_ALL, ZC_ACK_TAKEOFF_EQUIP_ALL, ZC_ITEM_PICKUP_ACK];
+        assert_eq!(ids.map(packet_length), [Some(4), Some(2), Some(3), Some(70)]);
     }
 
     #[test]
