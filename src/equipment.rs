@@ -38,6 +38,11 @@ const TAB_LABELS: [usize; 2] = [3158, 3159];
 const TAB_TEXT: [[f32; 2]; 2] = [[8.0, TITLE_HEIGHT + 3.0], [90.0, TITLE_HEIGHT + 3.0]];
 const TAB_WIDTH: [f32; 2] = [80.0, 80.0];
 const SHOW_EQUIPMENT_MESSAGE: usize = 1362;
+/// "%s's Equipment": another player's window.
+const OTHERS_TITLE: usize = 1361;
+/// Where another player's window opens.
+// ponytail: beside the player's own; the real client's place isn't known.
+const OTHERS_POSITION: [f32; 2] = [500.0, 220.0];
 const TITLE_MESSAGE: usize = 104;
 const GREY: [u8; 3] = [0x80, 0x80, 0x80];
 
@@ -73,7 +78,8 @@ pub struct Assets {
     panels: [Texture; 2],
     tabs: Texture,
     footer: Texture,
-    checkbox: Texture,
+    /// The Show Equipment box: off, on.
+    checkbox: [Texture; 2],
     /// Swap equipment and take everything off.
     buttons: [Texture; 2],
 }
@@ -88,7 +94,7 @@ impl Assets {
             panels: [image(format!("{basic}equipwin_bg.bmp")), image(format!("{basic}equipwin_special.bmp"))],
             tabs: image(format!("{basic}equipwin_bg3.bmp")),
             footer: footer.map_or_else(|_| gpu.solid([0xF0; 4]), |footer| gpu.texture(&footer, false)),
-            checkbox: image(format!("{UI}checkbox_0.bmp")),
+            checkbox: ["0", "1"].map(|look| image(format!("{UI}checkbox_{look}.bmp"))),
             buttons: [image(format!("{basic}btn_e_change_a.bmp")), image(format!("{basic}btn_e_off_a.bmp"))],
         }
     }
@@ -100,6 +106,8 @@ pub enum Hit {
     Tab(usize),
     /// A worn item, by inventory index.
     Slot(u16),
+    /// The Show Equipment box and its label.
+    ShowBox,
     Window,
 }
 
@@ -107,11 +115,15 @@ pub struct Equipment {
     pub frame: Frame,
     tab: usize,
     clicks: Clicks,
+    /// Another player's window: their name (for the title; no footer). None for the player's own.
+    pub owner: Option<String>,
+    /// Whether others may see what the player wears (the Show Equipment box), as the server last said.
+    pub shown: bool,
 }
 
 impl Default for Equipment {
     fn default() -> Self {
-        Self { frame: Frame::new(DEFAULT_POSITION, WIDTH), tab: 0, clicks: Clicks::default() }
+        Self { frame: Frame::new(DEFAULT_POSITION, WIDTH), tab: 0, clicks: Clicks::default(), owner: None, shown: false }
     }
 }
 
@@ -122,6 +134,13 @@ fn slot_area(column: usize, row: usize) -> ([f32; 2], [f32; 2]) {
 }
 
 impl Equipment {
+    /// Another player's equipment, open.
+    pub fn of(name: String) -> Self {
+        let mut frame = Frame::new(OTHERS_POSITION, WIDTH);
+        frame.open = true;
+        Self { frame, owner: Some(name), ..Self::default() }
+    }
+
     pub fn height(&self) -> f32 {
         HEIGHT
     }
@@ -142,6 +161,11 @@ impl Equipment {
                 (0..2).find(|&tab| contains([TAB_TEXT[tab][0] - 4.0, TITLE_HEIGHT], [TAB_WIDTH[tab], TABS_HEIGHT], local)).map_or(Hit::Window, Hit::Tab),
             );
         }
+        // ponytail: the box's label is taken to run 120px from the box.
+        let footer_top = PANEL_TOP + PANEL_HEIGHT;
+        if self.owner.is_none() && contains([6.0, footer_top + 6.0], [120.0, 14.0], local) {
+            return Some(Hit::ShowBox);
+        }
         Some(
             self.slots(items)
                 .find(|&(column, row, _)| {
@@ -157,8 +181,9 @@ impl Equipment {
         match hit {
             Hit::Title(hit) => self.frame.click_title(hit),
             Hit::Tab(tab) => self.tab = tab,
-            Hit::Slot(index) => return self.clicks.double(index).then_some(index),
-            Hit::Window => {}
+            // Someone else's items stay on.
+            Hit::Slot(index) if self.owner.is_none() => return self.clicks.double(index).then_some(index),
+            Hit::Slot(_) | Hit::ShowBox | Hit::Window => {}
         }
         None
     }
@@ -189,7 +214,11 @@ impl Equipment {
         }
         let at = |local: [f32; 2]| self.frame.at(local);
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
-        self.frame.draw_title(layer, chrome, message(TITLE_MESSAGE), cursor);
+        let title = match &self.owner {
+            Some(name) => rustnarok_client::messages::fill(message(OTHERS_TITLE), &[name]),
+            None => message(TITLE_MESSAGE).to_owned(),
+        };
+        self.frame.draw_title(layer, chrome, &title, cursor);
         if self.frame.minimized {
             return;
         }
@@ -227,10 +256,15 @@ impl Equipment {
             }
         }
 
-        // Footer: the "show my equipment" box and the two buttons.
+        // Footer: the "show my equipment" box and the two buttons, on the player's own window.
+        // ponytail: someone else's window shows the footer empty; what the real client shows there isn't known.
         let footer_top = PANEL_TOP + PANEL_HEIGHT;
         layer.sprites.push((&assets.footer, at([0.0, footer_top]), assets.footer.size));
-        layer.sprites.push((&assets.checkbox, at([6.0, footer_top + 8.0]), assets.checkbox.size));
+        if self.owner.is_some() {
+            return;
+        }
+        let checkbox = &assets.checkbox[usize::from(self.shown)];
+        layer.sprites.push((checkbox, at([6.0, footer_top + 8.0]), checkbox.size));
         layer.texts.push((message(SHOW_EQUIPMENT_MESSAGE).to_owned(), at([19.0, footer_top + 6.0]), [0, 0, 0]));
         let [swap, take_off] = &assets.buttons;
         layer.sprites.push((swap, at([WIDTH - 90.0, footer_top + 4.0]), swap.size));

@@ -566,6 +566,13 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const CZ_EQUIPWIN_MICROSCOPE: u16 = 0x02D6;
+const ZC_EQUIPWIN_MICROSCOPE: u16 = 0x0B37;
+const CZ_CONFIG: u16 = 0x02D8;
+const ZC_CONFIG: u16 = 0x02D9;
+const ZC_CONFIG_NOTIFY: u16 = 0x02DA;
+/// CZ_CONFIG's setting for the Show Equipment box (rathena's CONFIG_OPEN_EQUIPMENT_WINDOW).
+const CONFIG_OPEN_EQUIPMENT: u32 = 0;
 const CZ_REQ_OPEN_BANKING: u16 = 0x09B6;
 const ZC_ACK_OPEN_BANKING: u16 = 0x09B7;
 const CZ_REQ_BANKING_CHECK: u16 = 0x09AB;
@@ -1082,6 +1089,13 @@ pub enum MapEvent {
         reason: u16,
         balance: i64,
         zeny: i32,
+    },
+    /// Another player's equipment, as asked for.
+    OtherEquipment(Equipped),
+    /// The Show Equipment box: the server's answer to a click, or the saved state at a map change.
+    ShowEquipment {
+        shown: bool,
+        answer: bool,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
@@ -1722,6 +1736,23 @@ fn cards_at(bytes: &[u8], offset: usize) -> [u32; 4] {
     std::array::from_fn(|card| u32_at(bytes, offset + card * 4))
 }
 
+/// Another player's looks and what they wear (ZC_EQUIPWIN_MICROSCOPE).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Equipped {
+    pub name: String,
+    pub job: u16,
+    pub hair: u16,
+    pub head_bottom: u16,
+    pub head_mid: u16,
+    pub head_top: u16,
+    pub robe: u16,
+    pub hair_color: u16,
+    pub clothes_color: u16,
+    pub sex: u8,
+    /// The worn items, each with its look (a weapon's or shield's sprite).
+    pub items: Vec<(InventoryItem, u16)>,
+}
+
 /// NORMALITEM_INFO: index, item, type, amount, where it can go, cards, rental end, flags (bit 0: identified).
 /// rathena fills "WearState" with the item's places (`id->equip`): a card's is what it goes into, ammunition's
 /// the ammunition place, worn or not. None of these is worn as equipment is.
@@ -2000,6 +2031,16 @@ impl MapSession {
     /// Puts zeny in the bank, or takes it out.
     pub fn move_zeny(&mut self, deposit: bool, account: u32, zeny: i32) -> io::Result<()> {
         self.stream.write_all(&encode_bank_move(deposit, account, zeny))
+    }
+
+    /// Asks to see a player's equipment (by account ID); they must be on the same map.
+    pub fn view_equipment(&mut self, account: u32) -> io::Result<()> {
+        self.send_id(CZ_EQUIPWIN_MICROSCOPE, account)
+    }
+
+    /// The Show Equipment box: whether others may see what the player wears.
+    pub fn show_equipment(&mut self, shown: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_config(CONFIG_OPEN_EQUIPMENT, shown))
     }
 
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).
@@ -2495,6 +2536,15 @@ fn encode_bank_move(deposit: bool, account: u32, zeny: i32) -> [u8; 10] {
     packet
 }
 
+/// CZ_CONFIG: a setting (rathena's e_config_type) on or off.
+fn encode_config(setting: u32, on: bool) -> [u8; 10] {
+    let mut packet = [0u8; 10];
+    packet[..2].copy_from_slice(&CZ_CONFIG.to_le_bytes());
+    packet[2..6].copy_from_slice(&setting.to_le_bytes());
+    packet[6..].copy_from_slice(&u32::from(on).to_le_bytes());
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -2845,6 +2895,23 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             balance: i64::from_le_bytes(packet[4..12].try_into().unwrap()),
             zeny: u32_at(12) as i32,
         },
+        ZC_EQUIPWIN_MICROSCOPE => MapEvent::OtherEquipment(Equipped {
+            name: c_string(&packet[4..28]),
+            job: u16_at(28),
+            hair: u16_at(30),
+            head_bottom: u16_at(32),
+            head_mid: u16_at(34),
+            head_top: u16_at(36),
+            robe: u16_at(38),
+            hair_color: u16_at(40),
+            clothes_color: u16_at(42),
+            sex: packet[46],
+            // EQUIPITEM_INFO, with the item's look at 37.
+            items: packet[47..].chunks_exact(EQUIP_ITEM_SIZE).map(|entry| (decode_equip_item(entry), u16::from_le_bytes([entry[37], entry[38]]))).collect(),
+        }),
+        // Other settings come in ZC_CONFIG too (calling, auto-feeding); only the box's is read.
+        ZC_CONFIG if u32_at(2) == CONFIG_OPEN_EQUIPMENT => MapEvent::ShowEquipment { shown: u32_at(6) != 0, answer: true },
+        ZC_CONFIG_NOTIFY => MapEvent::ShowEquipment { shown: packet[2] != 0, answer: false },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3544,6 +3611,42 @@ mod tests {
         let ids = [CZ_REQ_OPEN_BANKING, ZC_ACK_OPEN_BANKING, CZ_REQ_BANKING_CHECK, ZC_BANKING_CHECK, CZ_REQ_BANKING_DEPOSIT, ZC_ACK_BANKING_DEPOSIT];
         assert_eq!(ids.map(packet_length), [Some(6), Some(4), Some(6), Some(12), Some(10), Some(16)]);
         assert_eq!([CZ_REQ_BANKING_WITHDRAW, ZC_ACK_BANKING_WITHDRAW, CZ_REQ_CLOSE_BANKING].map(packet_length), [Some(10), Some(16), Some(6)]);
+    }
+
+    #[test]
+    fn decodes_others_equipment() {
+        let mut packet = ZC_EQUIPWIN_MICROSCOPE.to_le_bytes().to_vec();
+        packet.extend_from_slice(&[0, 0]);
+        let mut name = b"McpTester2".to_vec();
+        name.resize(24, 0);
+        packet.extend_from_slice(&name);
+        for look in [4u16, 13, 0, 0, 5, 0, 2, 1, 0] {
+            packet.extend_from_slice(&look.to_le_bytes());
+        }
+        packet.push(1);
+        // A Knife worn in the right hand (2, look 1), a Cotton Shirt on the body (16).
+        for (index, item, worn, look) in [(4u16, 1201u32, 2u32, 1u16), (5, 2301, 16, 0)] {
+            let mut entry = vec![0u8; EQUIP_ITEM_SIZE];
+            entry[..2].copy_from_slice(&index.to_le_bytes());
+            entry[2..6].copy_from_slice(&item.to_le_bytes());
+            entry[11..15].copy_from_slice(&worn.to_le_bytes());
+            entry[37..39].copy_from_slice(&look.to_le_bytes());
+            entry[67] = 1;
+            packet.extend_from_slice(&entry);
+        }
+        let length = packet.len() as u16;
+        packet[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::OtherEquipment(equipped)) = decode_map_packet(&packet) else { panic!() };
+        assert_eq!((equipped.name.as_str(), equipped.job, equipped.hair, equipped.head_top, equipped.hair_color, equipped.sex), ("McpTester2", 4, 13, 5, 2, 1));
+        let worn: Vec<_> = equipped.items.iter().map(|(item, look)| (item.id, item.worn, *look)).collect();
+        assert_eq!(worn, [(1201, 2, 1), (2301, 16, 0)]);
+
+        assert_eq!(encode_config(CONFIG_OPEN_EQUIPMENT, true), [0xD8, 0x02, 0, 0, 0, 0, 1, 0, 0, 0]);
+        let Some(MapEvent::ShowEquipment { shown: true, answer: true }) = decode_map_packet(&[0xD9, 0x02, 0, 0, 0, 0, 1, 0, 0, 0]) else { panic!() };
+        assert!(decode_map_packet(&[0xD9, 0x02, 1, 0, 0, 0, 1, 0, 0, 0]).is_none());
+        let Some(MapEvent::ShowEquipment { shown: false, answer: false }) = decode_map_packet(&[0xDA, 0x02, 0]) else { panic!() };
+        let ids = [CZ_EQUIPWIN_MICROSCOPE, ZC_EQUIPWIN_MICROSCOPE, CZ_CONFIG, ZC_CONFIG, ZC_CONFIG_NOTIFY];
+        assert_eq!(ids.map(packet_length), [Some(6), Some(-1), Some(10), Some(10), Some(3)]);
     }
 
     #[test]
