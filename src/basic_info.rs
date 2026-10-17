@@ -75,8 +75,9 @@ pub struct Assets {
     toggles: [Texture; 2],
     menu: Texture,
     icons: Vec<Option<Texture>>,
-    /// The mail button while unread mail waits.
+    /// The mail button while unread mail waits, and the achievement button while a reward waits.
     mail_new: Option<Texture>,
+    achievement_new: Option<Texture>,
 }
 
 impl Assets {
@@ -93,6 +94,7 @@ impl Assets {
             menu: image(format!("{menu}bg_menu.tga")),
             icons: MENU.iter().map(|name| gpu.try_load_texture(grf, &format!("{menu}bt_{name}.bmp"), false).ok()).collect(),
             mail_new: gpu.try_load_texture(grf, &format!("{menu}bt_mail_new.bmp"), false).ok(),
+            achievement_new: gpu.try_load_texture(grf, &format!("{menu}bt_achievement_new.bmp"), false).ok(),
         }
     }
 }
@@ -126,6 +128,7 @@ pub struct Info<'a> {
     pub job: &'a str,
     pub status: &'a HashMap<u16, i64>,
     pub unread_mail: bool,
+    pub reward_waiting: bool,
 }
 
 impl BasicInfo {
@@ -241,7 +244,11 @@ impl BasicInfo {
         if self.menu_open {
             layer.sprites.push((&assets.menu, at([0.0, MENU_TOP]), assets.menu.size));
             for (button, icon) in assets.icons.iter().enumerate() {
-                let icon = if MENU[button] == "mail" && info.unread_mail { assets.mail_new.as_ref().or(icon.as_ref()) } else { icon.as_ref() };
+                let icon = match MENU[button] {
+                    "mail" if info.unread_mail => assets.mail_new.as_ref().or(icon.as_ref()),
+                    "achievement" if info.reward_waiting => assets.achievement_new.as_ref().or(icon.as_ref()),
+                    _ => icon.as_ref(),
+                };
                 if let Some(icon) = icon {
                     let place =
                         [MENU_ICON[0] + (button % MENU_COLUMNS) as f32 * MENU_CELL, MENU_TOP + MENU_ICON[1] + (button / MENU_COLUMNS) as f32 * MENU_CELL];

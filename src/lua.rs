@@ -10,6 +10,9 @@ use crate::grf::Grf;
 const NPC_IDENTITY: &str = "data\\luafiles514\\lua files\\datainfo\\npcidentity.lub";
 const JOB_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\jobname.lub";
 const PET_INFO: &str = "data\\luafiles514\\lua files\\datainfo\\petinfo.lub";
+const TITLE_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\titletable.lub";
+/// Not in data.grf: the translation's System folder has it.
+const ACHIEVEMENTS: &str = "system\\achievements.lub";
 const ITEM_INFO: &str = "data\\luafiles514\\lua files\\datainfo\\iteminfo.lub";
 const TRANSLATED_ITEM_INFO: &str = "system\\luafiles514\\iteminfo.lua";
 const ACCESSORY_ID: &str = "data\\luafiles514\\lua files\\datainfo\\accessoryid.lub";
@@ -37,25 +40,33 @@ const WORLD_VIEW: [&str; 4] = [
 
 /// Runs client Lua files in order; precompiled ones are converted from the client's 32-bit bytecode first.
 fn run(grf: &Grf, files: &[&str]) -> io::Result<Lua> {
-    // Data tables only need these; no file or OS access for files that may come from a translation pack.
-    let lua = Lua::new_with(mlua::StdLib::TABLE | mlua::StdLib::STRING | mlua::StdLib::MATH, mlua::LuaOptions::default()).map_err(lua_error)?;
+    let lua = new_lua()?;
     exec(&lua, grf, files)?;
     Ok(lua)
+}
+
+fn new_lua() -> io::Result<Lua> {
+    // Data tables only need these; no file or OS access for files that may come from a translation pack.
+    Lua::new_with(mlua::StdLib::TABLE | mlua::StdLib::STRING | mlua::StdLib::MATH, mlua::LuaOptions::default()).map_err(lua_error)
 }
 
 /// Runs more client Lua files in `lua`.
 fn exec(lua: &Lua, grf: &Grf, files: &[&str]) -> io::Result<()> {
     for file in files {
-        let bytes = grf.read(file)?;
-        let bytes = match lunify::unify(&bytes, &lunify::Format::default(), &lunify::Settings::default()) {
-            Ok(converted) => converted,
-            // Not bytecode: plain Lua source.
-            Err(lunify::LunifyError::IncorrectSignature) => bytes,
-            Err(error) => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{file}: {error:?}"))),
-        };
-        lua.load(&bytes).set_name(*file).exec().map_err(|error| io::Error::other(format!("{file}: {error}")))?;
+        exec_bytes(lua, file, grf.read(file)?)?;
     }
     Ok(())
+}
+
+/// Runs one file's bytes, bytecode or plain source.
+fn exec_bytes(lua: &Lua, file: &str, bytes: Vec<u8>) -> io::Result<()> {
+    let bytes = match lunify::unify(&bytes, &lunify::Format::default(), &lunify::Settings::default()) {
+        Ok(converted) => converted,
+        // Not bytecode: plain Lua source.
+        Err(lunify::LunifyError::IncorrectSignature) => bytes,
+        Err(error) => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{file}: {error:?}"))),
+    };
+    lua.load(&bytes).set_name(file).exec().map_err(|error| io::Error::other(format!("{file}: {error}")))
 }
 
 /// Dev aid: runs `files`, evaluates `expression` and lists the result (tables nested up to `depth`, `limit` entries
@@ -146,6 +157,77 @@ pub fn pet_tables(grf: &Grf) -> io::Result<PetTables> {
     exec(&lua, grf, &[PET_INFO])?;
     let table = |name: &str| names(&lua.globals().get::<mlua::Table>(name).map_err(lua_error)?);
     Ok(PetTables { names: table("PetNameTable")?, illustrations: table("PetIllustNameTable")?, accessory_acts: table("PetAccActNameTable")? })
+}
+
+/// An achievement as the client's table (achievements.lub) describes it.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct AchievementInfo {
+    /// The objectives have targets the server's counts go toward; otherwise they're a checklist.
+    pub counted: bool,
+    /// Its icon's name: `achievement_re\icon_<group>.bmp`, lowercase.
+    pub group: String,
+    /// Its tab and sub-tab.
+    pub major: u8,
+    pub minor: u8,
+    pub title: String,
+    pub summary: String,
+    pub details: String,
+    /// Each objective's text and target (0 for a checklist's).
+    pub objectives: Vec<(String, u32)>,
+    /// The reward: an item, a title and a buff (0 for none of each).
+    pub reward_item: u32,
+    pub reward_title: u32,
+    pub reward_buff: u32,
+    pub score: u32,
+}
+
+/// The achievements by ID, from the System folder's achievements.lub.
+pub fn achievements(grf: &Grf) -> io::Result<HashMap<u32, AchievementInfo>> {
+    achievement_table(grf.read(ACHIEVEMENTS)?)
+}
+
+/// Reads `achievement_tbl` from the file's source; its `main()` (which calls the official client's functions) isn't run.
+pub fn achievement_table(source: Vec<u8>) -> io::Result<HashMap<u32, AchievementInfo>> {
+    let lua = new_lua()?;
+    exec_bytes(&lua, ACHIEVEMENTS, source)?;
+    let table: mlua::Table = lua.globals().get("achievement_tbl").map_err(lua_error)?;
+    let text = |table: &mlua::Table, key: &str| table.get::<Option<mlua::String>>(key).ok().flatten().map(|text| decode(&text)).unwrap_or_default();
+    let number = |table: &mlua::Table, key: &str| table.get::<Option<u32>>(key).ok().flatten().unwrap_or(0);
+    let mut achievements = HashMap::new();
+    for pair in table.pairs::<u32, mlua::Table>() {
+        let (id, entry) = pair.map_err(lua_error)?;
+        let content: Option<mlua::Table> = entry.get("content").ok().flatten();
+        let reward: Option<mlua::Table> = entry.get("reward").ok().flatten();
+        let mut objectives = Vec::new();
+        if let Ok(Some(resource)) = entry.get::<Option<mlua::Table>>("resource") {
+            for index in 1..=resource.raw_len() {
+                if let Ok(objective) = resource.get::<mlua::Table>(index) {
+                    objectives.push((text(&objective, "text"), number(&objective, "count")));
+                }
+            }
+        }
+        let info = AchievementInfo {
+            counted: number(&entry, "UI_Type") == 1,
+            group: text(&entry, "group").to_lowercase(),
+            major: number(&entry, "major") as u8,
+            minor: number(&entry, "minor") as u8,
+            title: text(&entry, "title"),
+            summary: content.as_ref().map(|content| text(content, "summary")).unwrap_or_default(),
+            details: content.as_ref().map(|content| text(content, "details")).unwrap_or_default(),
+            objectives,
+            reward_item: reward.as_ref().map_or(0, |reward| number(reward, "item")),
+            reward_title: reward.as_ref().map_or(0, |reward| number(reward, "title")),
+            reward_buff: reward.as_ref().map_or(0, |reward| number(reward, "buff")),
+            score: number(&entry, "score"),
+        };
+        achievements.insert(id, info);
+    }
+    Ok(achievements)
+}
+
+/// The titles achievements give (`title_tbl`), e.g. 1000 → "Junction of life".
+pub fn titles(grf: &Grf) -> io::Result<HashMap<u32, String>> {
+    names(&run(grf, &[TITLE_TABLE])?.globals().get::<mlua::Table>("title_tbl").map_err(lua_error)?)
 }
 
 /// Job names the client shows players (`PCJobNameTable`), e.g. 0 → "Novice".
@@ -404,6 +486,38 @@ pub fn worlds(grf: &Grf) -> io::Result<(Vec<World>, [[u8; 4]; 2])> {
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
+
+    #[test]
+    fn reads_achievements() {
+        let source = r#"
+            achievement_tbl = {
+                [200000] = {
+                    UI_Type = 0, group = "GOAL_LEVEL", major = 1, minor = 0,
+                    title = "Acquire the first aura!",
+                    content = { summary = "Achieve Base Level 99!", details = "Achieve Base Level 99." },
+                    resource = { [1] = { text = "Base Level 99" } },
+                    reward = { title = 1000, buff = 10, item = 12549 },
+                    score = 50
+                },
+                [120001] = {
+                    UI_Type = 1, group = "ADVENTURE", major = 2, minor = 3, title = "Hunter",
+                    resource = { [1] = { text = "Porings", count = 10 }, [2] = { text = "Lunatics", count = 5 } },
+                    reward = {}, score = 10
+                }
+            }
+            function main() return CallTheClient() end
+        "#;
+        let table = super::achievement_table(source.as_bytes().to_vec()).unwrap();
+        let aura = &table[&200000];
+        assert_eq!((aura.counted, aura.group.as_str(), aura.major, aura.minor), (false, "goal_level", 1, 0));
+        assert_eq!((aura.title.as_str(), aura.summary.as_str()), ("Acquire the first aura!", "Achieve Base Level 99!"));
+        assert_eq!((aura.reward_item, aura.reward_title, aura.reward_buff, aura.score), (12549, 1000, 10, 50));
+        assert_eq!(aura.objectives, [("Base Level 99".to_owned(), 0)]);
+        let hunter = &table[&120001];
+        assert!(hunter.counted);
+        assert_eq!(hunter.objectives, [("Porings".to_owned(), 10), ("Lunatics".to_owned(), 5)]);
+        assert_eq!((hunter.reward_title, hunter.details.as_str()), (0, ""));
+    }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]

@@ -81,6 +81,12 @@ pub enum Command {
     Key {
         key: String,
     },
+    /// The wheel at a point: `rows` notches, positive toward the player (scrolls down).
+    Wheel {
+        x: f32,
+        y: f32,
+        rows: i32,
+    },
     Type {
         text: String,
     },
@@ -389,6 +395,11 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
                 point(app, to);
                 press(app, event_loop, button, ElementState::Released);
             });
+            Ok(Value::Null)
+        }
+        Command::Wheel { x, y, rows } => {
+            point(app, [x, y]);
+            app.wheel(rows);
             Ok(Value::Null)
         }
         Command::Key { key } => {
@@ -733,6 +744,13 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.pick.iter().flat_map(|(list, _)| list.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
         .chain(game.pet.iter().flat_map(|pet| game.pet_window.button_boxes(pet)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.achievement_window
+                .button_boxes(&app.achievement_info, &game.achievements)
+                .into_iter()
+                .chain(game.equipment.button_boxes())
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
     let overlays = [
@@ -741,6 +759,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("Shop", game.shop.is_some()),
         ("Refine", game.refine.is_some()),
         ("Materials", game.materials.is_some()),
+        ("Achievements", game.achievement_window.frame.open),
         ("InventoryExpansion", game.expansion_asked.is_some()),
         ("PetAsked", game.pet_asked.is_some()),
         ("OtherEquipment", game.viewing.is_some()),
@@ -817,6 +836,9 @@ fn game_state(app: &App, game: &Game) -> Value {
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
         "dialog": dialog,
+        // Achievements: whether each is done and its reward taken; the title worn (0: none).
+        "achievements": game.achievements.iter().map(|(id, achievement)| (id.to_string(), json!({"completed": achievement.completed, "rewarded": achievement.rewarded}))).collect::<serde_json::Map<_, _>>(),
+        "title": game.equipment.title,
         // A taming item waiting for its monster.
         "capturing": game.capturing,
         "aimed_skill": game.targeting.map(|(id, level)| json!({"id": id, "level": level, "name": app.skill_info.get(&id).map(|info| info.name.as_str())})),
@@ -838,6 +860,7 @@ mod tests {
     #[test]
     fn parses_commands() {
         let parse = |line: &str| serde_json::from_str::<Command>(line);
+        assert_eq!(parse(r#"{"cmd":"wheel","x":390,"y":360,"rows":-2}"#).unwrap(), Command::Wheel { x: 390.0, y: 360.0, rows: -2 });
         assert_eq!(
             parse(r#"{"cmd":"click","x":512,"y":300.5,"button":"right"}"#).unwrap(),
             Command::Click { x: 512.0, y: 300.5, button: Button::Right, mods: String::new(), count: None }
