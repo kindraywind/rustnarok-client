@@ -10,3 +10,4 @@
 # Claude Code: a developer's own skills and settings stay out of git.
 /.claude/skills/local-*/
 /.claude/settings.local.json
+__pycache__/

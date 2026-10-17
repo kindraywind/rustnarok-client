@@ -1,0 +1,17 @@
+{
+  "about": "Items: the inventory window, a potion dragged onto the hotkey bar, using it there (issues #6, #7).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 501 5"}, {"wait": 800},
+    {"key": "Alt+E"}, {"wait": 500},
+    {"shot": "inventory"},
+    {"drag": [[59, 212], [497, 17]]}, {"wait": 500},
+    {"shot": "hotkey-bar", "crop": [470, 0, 300, 40]},
+    {"say": "@heal -30 0"}, {"wait": 500},
+    {"key": "F1"}, {"wait": 300},
+    {"shot": "hotkey-used"}
+  ]
+}

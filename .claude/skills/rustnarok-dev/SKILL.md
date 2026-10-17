@@ -58,8 +58,35 @@ python3 -I $D quit
 Coordinates are the client's logical 1024×768. A driven client ignores the real mouse and keyboard. A GM account
 (`group_id` 99 in rathena's `login` table) can spawn what a test needs (`@monster`, `@item`, `@warp`).
 
+## Visual verification: before and after
+
+This is a game: what the player sees is the product. Unit tests and packet checks don't show a window drawn in the
+wrong place, so every visible change is checked in the running client against `origin/main`.
+
+```bash
+V=.claude/skills/rustnarok-dev/visual.py
+python3 -I $V check .claude/skills/rustnarok-dev/scenarios/inventory-hotkeys.json
+```
+
+`check` builds `origin/main` in a git worktree (`docs/personal/baseline-tree`), plays the scenarios with it, plays
+them again with this tree, and writes per shot the share of pixels changed and a before | after | diff sheet (changed
+pixels in red). `run`, `baseline` and `diff` do the steps one at a time. Output goes to
+`docs/personal/visual/<date>/<HHMMSS>/{main,branch,diff}/`, gitignored, with each shot's game state beside it.
+
+Scenarios are JSON in `scenarios/` (the format is at the top of `visual.py`): GM commands, waits (`settle` after a
+warp: commands sent while a map loads are lost), keys, clicks, drags, and named shots, optionally cropped. Each starts
+a fresh client and pauses the clock for every shot. Add one for the feature you touch, and keep it: the set grows into
+the game's visual regression suite.
+
+Animated things (water, warp portals, effects) differ between two runs of the same code: about 0.6% on an interior
+map. Crop shots to what the change touches when that noise gets in the way. Read the sheets: an unexpected change elsewhere is a regression; no change where you meant one is a fix that didn't
+land. Put the sheets for the changed shots in the PR.
+
 ## Issue to PR
 
+0. **Pick it up visibly**: assign yourself, react 👀 on the issue
+   (`gh api -X POST repos/kindraywind/rustnarok-client/issues/<n>/reactions -f content=eyes`) and comment that you've
+   taken it. Comment again as it moves — what you found, the plan, the PR — in the issue's language.
 1. Reproduce it in the running client and screenshot it. **A UI bug report needs a screenshot.** Attach it to the
    issue on GitHub (drag it into the comment box); never commit it.
 2. Check the protocol facts against rathena before planning; plan before writing code.

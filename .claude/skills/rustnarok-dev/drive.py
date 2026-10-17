@@ -21,7 +21,8 @@ import time
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 SOCK = os.path.join(REPO, "qa.sock")
-SHOTS = os.path.join(REPO, "docs", "personal", "shots")
+TODAY = time.strftime("%Y-%m-%d")
+SHOTS = os.path.join(REPO, "docs", "personal", "shots", TODAY)
 LOG = os.path.join(REPO, "docs", "personal", "client.log")
 ACCOUNTS = os.environ.get("RUSTNAROK_CLIENT_ACCOUNTS", os.path.expanduser("~/.config/rustnarok/accounts.txt"))
 
@@ -49,9 +50,10 @@ def send(command, timeout=60):
     return json.loads(data)
 
 
-def launch(n="", slot="0"):
+def launch(n="", slot="0", binary=None, env_extra=None, quiet=False):
     user, password = account(n)
     env = dict(os.environ)
+    env.update(env_extra or {})
     env.update(
         RUSTNAROK_CLIENT_CONTROL=SOCK,
         RUSTNAROK_CLIENT_SERVER=os.environ.get("RUSTNAROK_CLIENT_SERVER", "127.0.0.1:6900"),
@@ -62,30 +64,42 @@ def launch(n="", slot="0"):
         os.remove(SOCK)
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
     log = open(LOG, "w")
-    subprocess.Popen([os.path.join(REPO, "target", "release", "rustnarok-client")], cwd=REPO, env=env, stdout=log, stderr=log)
+    subprocess.Popen([binary or os.path.join(REPO, "target", "release", "rustnarok-client")], cwd=REPO, env=env, stdout=log, stderr=log)
     for _ in range(120):
         if os.path.exists(SOCK):
             try:
-                print(json.dumps(send({"cmd": "state"}), ensure_ascii=False)[:300])
-                return
+                state = send({"cmd": "state"})
+                if not quiet:
+                    print(json.dumps(state, ensure_ascii=False)[:300])
+                return state
             except OSError:
                 pass
         time.sleep(0.5)
     sys.exit("no control socket; see " + LOG)
 
 
-def shot(name, crop=None):
+def quit_quietly():
+    try:
+        send({"cmd": "quit"}, timeout=5)
+    except (OSError, ValueError):
+        pass
+
+
+def shot(name, crop=None, out=None):
     command = {"cmd": "screenshot"}
     if crop:
         command["crop"] = [int(v) for v in crop]
     reply = send(command)
     if not reply.get("ok"):
         sys.exit(json.dumps(reply))
-    os.makedirs(SHOTS, exist_ok=True)
-    path = os.path.join(SHOTS, name + ".png")
+    # Manual shots: shots/<date>/<HHMMSS>_<name>.png; a caller's own folder (a visual run) keeps the name.
+    if out is None:
+        out, name = SHOTS, time.strftime("%H%M%S_") + name
+    os.makedirs(out, exist_ok=True)
+    path = os.path.join(out, name + ".png")
     with open(path, "wb") as f:
         f.write(base64.b64decode(reply["png"]))
-    print(path)
+    return path
 
 
 if __name__ == "__main__":
@@ -97,7 +111,7 @@ if __name__ == "__main__":
         reply.pop("png", None)
         print(json.dumps(reply, ensure_ascii=False))
     elif what == "shot":
-        shot(args[0], args[1:5] or None)
+        print(shot(args[0], args[1:5] or None))
     elif what == "state":
         print(json.dumps(send({"cmd": "state"}), ensure_ascii=False, indent=1))
     elif what == "quit":
