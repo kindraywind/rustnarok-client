@@ -37,7 +37,6 @@ pub const AMOUNT_TOO_HIGH: usize = 1728;
 pub const DUPLICATE_ITEM: usize = 1729;
 pub const NO_LIMIT: usize = 1730;
 pub const LIMIT_OVER_ZENY: usize = 1731;
-pub const ROW_FORMAT: usize = 1732;
 pub const LIMIT_FORMAT: usize = 1735;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -94,6 +93,8 @@ pub fn candidates(inventory: &[InventoryItem]) -> Vec<&InventoryItem> {
     inventory.iter().filter(|item| item.worn == 0 && item.identified).collect()
 }
 
+pub type Validated = Result<(u32, Vec<(u32, u16, u32)>), Option<(usize, Option<u32>)>>;
+
 impl Setup {
     pub fn new(slots: u8) -> Self {
         let mut frame = Frame::new(POSITION, WIDTH);
@@ -143,7 +144,7 @@ impl Setup {
 
     /// Checks the setup before sending 0x0811: returns `Ok((limit, items))` where each item is `(item_id, amount, price)`,
     /// `Err(None)` when the store name is blank (don't send), or `Err(Some((message_id, item_id)))` on a validation error.
-    pub fn validate(&self, inventory: &[InventoryItem], zeny: u32) -> Result<(u32, Vec<(u32, u16, u32)>), Option<(usize, Option<u32>)>> {
+    pub fn validate(&self, inventory: &[InventoryItem], zeny: u32) -> Validated {
         if self.wanted.is_empty() {
             return Err(Some((NO_ITEM, None)));
         }

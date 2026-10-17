@@ -532,6 +532,9 @@ struct Game {
     /// Setting up our shop, and our open shop.
     vend_setup: Option<vend::Setup>,
     my_shop: Option<vend::MyShop>,
+    /// Setting up our buying store, and our open buying store.
+    buying_setup: Option<buying::Setup>,
+    my_buying_store: Option<buying::MyStore>,
     /// RODEX: the mailbox, a mail read and one written.
     mail: mail::Mail,
     /// The cart (shown like the inventory, once the server says there is one).
@@ -791,6 +794,9 @@ enum Asked {
     Trade(u16),
     /// The price of a cart item going on sale.
     VendPrice(u16),
+    /// The price, then the quantity, of an inventory item for a buying store: `(index, item_id)`.
+    BuyingPrice(u16, u32),
+    BuyingAmount(u16),
     /// An inventory item into the cart, and a cart item out.
     ToCart(u16),
     FromCart(u16),
@@ -950,8 +956,15 @@ impl Game {
         }
     }
 
+    fn store_open(&self) -> bool {
+        self.my_shop.is_some() || self.my_buying_store.is_some()
+    }
+
     /// Attacks `target`, walking into reach first: the server only swings from within range.
     fn attack_from(&mut self, target: u32, from: [i32; 2], goal: [i32; 2]) {
+        if self.store_open() {
+            return;
+        }
         if world::in_reach(from, goal, self.attack_range) {
             self.pending = None;
             let _ = self.session.act(target, net::ACT_ATTACK_REPEAT);
@@ -965,6 +978,9 @@ impl Game {
 
     /// Picks up an item, walking over first when it's out of reach.
     fn pick_up(&mut self, id: u32) {
+        if self.store_open() {
+            return;
+        }
         let Some(item) = self.ground.get(&id) else { return };
         let at = item.at;
         self.player.face(at);
@@ -1001,6 +1017,9 @@ impl Game {
 
     /// Starts using a skill: skills on oneself go off at once, the others wait for a target.
     fn use_skill(&mut self, id: u16, level: u16) {
+        if self.store_open() {
+            return;
+        }
         let Some(skill) = self.skills.iter().find(|skill| skill.id == id) else { return };
         let level = level.clamp(1, skill.level.max(1));
         if skill.kind & net::Skill::SELF != 0 {
@@ -1012,6 +1031,9 @@ impl Game {
 
     /// An item casts a skill: on oneself at once, otherwise aimed as a known one would be.
     fn cast_item_skill(&mut self, skill: net::Skill) {
+        if self.store_open() {
+            return;
+        }
         if skill.kind & net::Skill::SELF != 0 {
             let _ = self.session.use_skill(skill.id, skill.level, self.account_id);
         } else if skill.kind & (net::Skill::ENEMY | net::Skill::GROUND | net::Skill::FRIEND) != 0 {
@@ -1022,6 +1044,9 @@ impl Game {
 
     /// Uses the aimed skill on what was clicked, walking into its range first.
     fn aim_skill(&mut self, target: SkillTarget) {
+        if self.store_open() {
+            return;
+        }
         let Some((id, level)) = self.targeting.take() else { return };
         let goal = match target {
             SkillTarget::Unit(unit) if unit == self.account_id => Some(self.player.cell),
@@ -1225,6 +1250,8 @@ impl Game {
             || self.room_make.as_ref().is_some_and(|make| make.hit(cursor).is_some())
             || self.vend_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.cart.items).is_some())
             || self.my_shop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
+            || self.buying_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.inventory.items).is_some())
+            || self.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some())
             || self.mail.hit(cursor).is_some()
             || self.quest_window.hit(cursor, &self.quests).is_some()
             || self.chat.contains(cursor)
@@ -1240,7 +1267,14 @@ impl Game {
             }
             Asked::FromCart(index) => self.cart.get(index).map(|item| item.amount),
             Asked::Take(index) => self.storage.get(index).map(|item| item.amount),
-            Asked::Shop(_) | Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) | Asked::VendPrice(_) | Asked::PetName => None,
+            Asked::Shop(_)
+            | Asked::PartyName
+            | Asked::Invite
+            | Asked::RoomPassword(_)
+            | Asked::VendPrice(_)
+            | Asked::BuyingPrice(..)
+            | Asked::BuyingAmount(_)
+            | Asked::PetName => None,
         };
         match amount {
             Some(1) => self.give(asked, 1),
@@ -1263,6 +1297,19 @@ impl Game {
                 Ok(())
             }
             Asked::PartyName | Asked::Invite | Asked::PetName => Ok(()),
+            Asked::BuyingPrice(index, item_id) => {
+                if let Some(setup) = &mut self.buying_setup {
+                    setup.set_price(index, item_id, amount.value());
+                    self.amount = Some(window::Amount::new(Asked::BuyingAmount(index), None));
+                }
+                Ok(())
+            }
+            Asked::BuyingAmount(index) => {
+                if let Some(setup) = &mut self.buying_setup {
+                    setup.set_amount(index, amount.value().min(u32::from(u16::MAX)) as u16);
+                }
+                Ok(())
+            }
             what if amount.value() > 0 => {
                 self.give(what, amount.value());
                 Ok(())
@@ -1292,7 +1339,7 @@ impl Game {
                 let have = self.inventory.get(index).map_or(0, |item| item.amount);
                 self.session.drop_item(index, (amount.min(u32::from(have))) as u16)
             }
-            Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) | Asked::PetName => Ok(()),
+            Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) | Asked::PetName | Asked::BuyingPrice(..) | Asked::BuyingAmount(_) => Ok(()),
             Asked::VendPrice(index) => {
                 if let Some(setup) = &mut self.vend_setup {
                     setup.prices.insert(index, amount);
@@ -1468,6 +1515,9 @@ impl Game {
 
     /// Uses an inventory item: consumables are used, equipment is put on.
     fn use_item(&mut self, index: u16) {
+        if self.store_open() {
+            return;
+        }
         let Some(item) = self.inventory.get(index) else { return };
         // ponytail: a voucher asks to grow the inventory; how the real client lets the player ask isn't known.
         if VOUCHERS.contains(&item.id) {
@@ -2386,6 +2436,7 @@ impl App {
                     game.macro_window.as_ref().unwrap().type_text(&mut game.macro_lines, text)
                 }
                 None if game.vend_setup.as_ref().is_some_and(|setup| setup.typing) => game.vend_setup.as_mut().unwrap().type_text(text),
+                None if game.buying_setup.as_ref().is_some_and(|setup| setup.focus.is_some()) => game.buying_setup.as_mut().unwrap().type_text(text),
                 None if game.mail.typing() => game.mail.type_text(text),
                 None if game.room.is_some() => game.room.as_mut().unwrap().input.push_str(text),
                 None => game.chat.typing().extend(typed),
@@ -2684,6 +2735,47 @@ impl App {
                 if game.my_shop.as_ref().unwrap().hit(cursor) == Some(true) {
                     let _ = game.session.close_shop();
                     game.my_shop = None;
+                    game.signs.remove(&game.account_id);
+                }
+            }
+            // Setting up a buying store: its name, zeny limit, wanted items, OK or cancel.
+            Scene::Game(game) if game.buying_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &game.inventory.items).is_some()) => {
+                let setup = game.buying_setup.as_mut().unwrap();
+                let hit = setup.hit(cursor, &game.inventory.items).unwrap();
+                match setup.click(hit, &game.inventory.items) {
+                    Some(buying::Action::Price(index, item_id)) => {
+                        game.amount = Some(window::Amount::price(Asked::BuyingPrice(index, item_id)));
+                    }
+                    Some(buying::Action::Open) => {
+                        let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
+                        match setup.validate(&game.inventory.items, zeny) {
+                            Ok((limit, items)) => {
+                                let name = setup.name.clone();
+                                let _ = game.session.open_buying_store(&name, limit, true, &items);
+                            }
+                            Err(Some((msg_id, Some(item_id)))) => {
+                                let item_name = inventory::item_name(&self.items, item_id, true, 0);
+                                let line = rustnarok_client::messages::fill(self.messages.get(msg_id).map_or("", String::as_str), &[&item_name]);
+                                game.chat_line(line, CHAT_ERROR);
+                            }
+                            Err(Some((msg_id, None))) => {
+                                game.chat_line(self.messages.get(msg_id).cloned().unwrap_or_default(), CHAT_ERROR);
+                            }
+                            Err(None) => {}
+                        }
+                    }
+                    Some(buying::Action::Cancel) => {
+                        let _ = game.session.open_buying_store("", 0, false, &[]);
+                        game.buying_setup = None;
+                    }
+                    None => {}
+                }
+            }
+            // Our open buying store: closing it closes the store and drops the sign.
+            Scene::Game(game) if game.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some()) => {
+                if game.my_buying_store.as_ref().unwrap().hit(cursor) == Some(true) {
+                    let _ = game.session.close_buying_store();
+                    game.my_buying_store = None;
                     game.signs.remove(&game.account_id);
                 }
             }
@@ -3141,6 +3233,9 @@ impl App {
                 }
             }
             Scene::Game(game) => {
+                if game.store_open() {
+                    return;
+                }
                 // Whatever is under the cursor (nearest first): talk to NPCs, attack monsters, pick items up.
                 match hovered(&game.hit_boxes, cursor) {
                     Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
@@ -3220,6 +3315,13 @@ impl App {
             if let Some(room) = &mut game.room {
                 let height = room.height();
                 room.frame.drag_to(self.cursor, height);
+            }
+            if let Some(setup) = &mut game.buying_setup {
+                setup.frame.drag_to(self.cursor, buying::Setup::height());
+            }
+            if let Some(store) = &mut game.my_buying_store {
+                let height = store.height();
+                store.frame.drag_to(self.cursor, height);
             }
             game.mail.drag_to(self.cursor);
             game.quest_window.frame.drag_to(self.cursor, 466.0);
@@ -3842,6 +3944,20 @@ impl App {
                     _ => setup.type_text(event.text.as_deref().unwrap_or_default()),
                 }
             }
+            Scene::Game(game) if game.buying_setup.as_ref().is_some_and(|setup| setup.focus.is_some()) && game.amount.is_none() => {
+                let setup = game.buying_setup.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Enter | NamedKey::Escape) => setup.focus = None,
+                    Key::Named(NamedKey::Tab) => {
+                        setup.focus = match setup.focus {
+                            Some(buying::Focus::Name) => Some(buying::Focus::Limit),
+                            _ => Some(buying::Focus::Name),
+                        };
+                    }
+                    Key::Named(NamedKey::Backspace) => setup.backspace(),
+                    _ => setup.type_text(event.text.as_deref().unwrap_or_default()),
+                }
+            }
             Scene::Game(game) if game.mail.typing() && game.amount.is_none() => match key {
                 Key::Named(NamedKey::Escape) => game.mail.stop_typing(),
                 Key::Named(NamedKey::Backspace) => game.mail.backspace(),
@@ -4275,6 +4391,8 @@ impl App {
                     pet_asked: None,
                     vend_setup: None,
                     my_shop: None,
+                    buying_setup: None,
+                    my_buying_store: None,
                     mail: mail::Mail::default(),
                     cart: {
                         let mut cart = inventory::Inventory::new(false);
@@ -4377,6 +4495,12 @@ impl App {
                 game.ground.clear();
                 game.marks.clear();
                 game.signs.clear();
+                if let Some(shop) = &game.my_shop {
+                    game.signs.insert(game.account_id, chatroom::Sign::shop(game.account_id, shop.name.clone()));
+                }
+                if let Some(store) = &game.my_buying_store {
+                    game.signs.insert(game.account_id, chatroom::Sign::buying_store(game.account_id, store.name.clone()));
+                }
                 game.effects.clear();
                 game.capturing = false;
                 // The server announces the pet again on load.
@@ -4968,6 +5092,47 @@ impl App {
                 if let Some(id) = id {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                     game.shop = None;
+                }
+            }
+            MapEvent::OpenBuyingStore { slots } => {
+                game.buying_setup = Some(buying::Setup::new(slots));
+            }
+            MapEvent::BuyingStoreOpenFailed { result, .. } => {
+                let id = match result {
+                    1 => Some(1741),
+                    2 => Some(1742),
+                    8 => Some(1797),
+                    _ => None,
+                };
+                if let Some(id) = id {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
+            MapEvent::MyBuyingStore { limit, items, .. } => {
+                let name = game.buying_setup.take().map(|setup| setup.name).unwrap_or_default();
+                game.signs.insert(game.account_id, chatroom::Sign::buying_store(game.account_id, name.clone()));
+                game.my_buying_store = Some(buying::MyStore::new(name, limit, items));
+            }
+            MapEvent::BuyingStoreUpdate { item_id, amount, zeny, limit_left, .. } => {
+                if let Some(store) = &mut game.my_buying_store {
+                    store.bought(item_id, amount, limit_left);
+                }
+                // ponytail: 1736 reads like the owner's line for a purchase; which line the official client prints isn't knowable from rathena.
+                let name = inventory::item_name(&self.items, item_id, true, 0);
+                let paid = shop::group(u64::from(zeny));
+                let line = rustnarok_client::messages::fill(self.messages.get(1736).map_or("", String::as_str), &[&name, &paid, &amount]);
+                game.chat_line(line, CHAT_ITEM);
+            }
+            MapEvent::BuyingStoreBuyerFailed { result } => {
+                game.my_buying_store = None;
+                game.signs.remove(&game.account_id);
+                let id = match result {
+                    3 => Some(1743),
+                    4 => Some(1744),
+                    _ => None,
+                };
+                if let Some(id) = id {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
                 }
             }
             MapEvent::CartCount { most, weight, max_weight, .. } => game.cart.cart = Some((most, [weight, max_weight])),
@@ -6001,16 +6166,11 @@ impl App {
                 game.attack_range = i32::from(range);
                 game.attack_from(target, cell.map(i32::from), target_cell.map(i32::from));
             }
-            MapEvent::OpenBuyingStore { .. }
-            | MapEvent::BuyingStoreOpenFailed { .. }
-            | MapEvent::MyBuyingStore { .. }
-            | MapEvent::BuyingStoreSign { .. }
+            MapEvent::BuyingStoreSign { .. }
             | MapEvent::BuyingStoreSignGone { .. }
             | MapEvent::BuyingStoreItems { .. }
-            | MapEvent::BuyingStoreBuyerFailed { .. }
             | MapEvent::BuyingStoreSold { .. }
-            | MapEvent::BuyingStoreSellerFailed { .. }
-            | MapEvent::BuyingStoreUpdate { .. } => {}
+            | MapEvent::BuyingStoreSellerFailed { .. } => {}
             MapEvent::Entered { .. } => unreachable!("handled above"),
             MapEvent::Disconnected(_) => self.message(self.messages.get(DISCONNECTED_MESSAGE).cloned().unwrap_or_default(), Scene::Login),
         }
@@ -6730,6 +6890,12 @@ impl App {
         if let Some(shop) = &game.my_shop {
             trade_icons.extend(vend::icons(items, shop.goods.iter().map(|good| (good.item.id, good.item.identified))));
         }
+        if game.buying_setup.is_some() {
+            trade_icons.extend(vend::icons(items, game.inventory.items.iter().map(|item| (item.id, item.identified))));
+        }
+        if let Some(store) = &game.my_buying_store {
+            trade_icons.extend(vend::icons(items, store.items.iter().map(|item| (item.item_id, true))));
+        }
         trade_icons.extend(game.mail.icons(items));
         for path in skill_icons.chain(status_paths).chain(shop_icons).chain(pick_icons).chain(game.storage.icons(items)).chain(trade_icons) {
             icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, false).ok());
@@ -6973,6 +7139,12 @@ impl App {
         }
         if let Some(shop) = &game.my_shop {
             shop.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
+        }
+        if let Some(setup) = &game.buying_setup {
+            setup.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, &game.inventory.items, font, messages, pointer, caret);
+        }
+        if let Some(store) = &game.my_buying_store {
+            store.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
         }
         game.quest_window.draw(&mut shop_layer, &assets.chrome, &assets.quest, font, messages, &game.quests, quest_texts, pointer.0);
         if let Some(list) = &game.emotion_list {
@@ -7294,10 +7466,15 @@ impl ApplicationHandler<NetEvent> for App {
                     let on_pick = game.pick.as_ref().is_some_and(|(list, _)| list.covers(self.cursor));
                     let on_item = game.item_window.as_ref().is_some_and(|window| window.hit(self.cursor, &self.items).is_some());
                     let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.cart.items).is_some());
+                    let on_buying_setup = game.buying_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.inventory.items).is_some());
                     match game.window_at(self.cursor) {
                         _ if on_setup => {
                             let count = game.cart.items.len();
                             game.vend_setup.as_mut().unwrap().scroll_by(rows, count);
+                        }
+                        _ if on_buying_setup => {
+                            let inv = &game.inventory.items;
+                            game.buying_setup.as_mut().unwrap().scroll_by(rows, inv);
                         }
                         _ if on_item => {
                             let lines = game.item_lines;
