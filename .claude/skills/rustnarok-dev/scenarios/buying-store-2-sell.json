@@ -1,0 +1,20 @@
+{
+  "about": "Selling into an open buying store (issue #48): warp to prt_fild08 172 360 with 5 Jellopy, click the buying-store sign, see the seller's window, sell 2 Jellopy, and verify the sale chat line and window closing.",
+  "account": "2",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 172 360"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 600},
+    {"say": "@item 909 5"}, {"wait": 600},
+    {"click_on": {"button": "buying_sign"}},
+    {"wait_for": {"packet": "0x0818", "ms": 5000}}, {"wait": 400},
+    {"move": [900, 700]},
+    {"expect": {"windows_open": ["Shop"]}},
+    {"shot": "buying-store-seller"},
+    {"click_on": {"pick_item": 909}, "count": 2}, {"wait": 300},
+    {"type": "2"}, {"key": "Enter"}, {"wait": 300},
+    {"click_on": {"button": "shop_deal"}},
+    {"wait_for": {"packet": "0x081c", "ms": 5000}}, {"wait": 400},
+    {"expect": {"chat": "You have sold Jellopy", "windows_closed": ["Shop"]}}
+  ]
+}

@@ -26,7 +26,7 @@ from the player's files when it runs.
 - **Windows**: basic info with its menu, inventory, equipment, item descriptions with card slots, status
   (raising stats), skills, hotkey bar, chat with whispers, party, guild (info with its emblem, members,
   positions, skills, expel list, notice), friends, storage, cart, NPC dialogs (menus, number and text input),
-  NPC shops, trading, chat rooms, vending (own shop and others'), RODEX mail, quests, the option menu (Esc) and
+  NPC shops, trading, chat rooms, vending (own shop and others'), buying stores (own store and selling into others'), RODEX mail, quests, the option menu (Esc) and
   audio settings, the right-click menu.
 - **Sound**: each map's music, sprites' own sounds (attacks, flinches, deaths), effect sounds, volume settings.
 - **macOS**: Retina-sharp text, resizable window, fullscreen (Ctrl+Cmd+F), an `.app` bundle.
@@ -93,7 +93,7 @@ The binary (`src/main.rs` and its modules) is the game: `render` (wgpu: sprites,
 (the 3D world pass and camera), `actor` (units, their animation and sounds), `effects` (the effect player and its
 table `effects.txt`), `sound` (music and effects over cpal), `control` (the test-driver socket), and one module per
 window: `basic_info`, `inventory`, `equipment`, `iteminfo`, `status`, `skills`, `hotkeys`, `chat`, `party`, `guild`,
-`storage`, `shop`, `trade`, `chatroom`, `vend`, `mail`, `quest`, `escape`, `options`, `menu`, `minimap`, `worldmap`,
+`storage`, `shop`, `trade`, `chatroom`, `vend`, `buying`, `mail`, `quest`, `escape`, `options`, `menu`, `minimap`, `worldmap`,
 `char_select`, `char_make`.
 
 `main.rs` holds the scenes (login, character select, game), the game state, input, the server's events and
