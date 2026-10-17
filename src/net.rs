@@ -939,6 +939,8 @@ pub struct Unit {
     /// A player's guild and its emblem's version (0 for none).
     pub guild: u32,
     pub emblem: u32,
+    /// HP and max HP, when the server tells them (rathena does for a hurt monster).
+    pub hp: Option<[i32; 2]>,
 }
 
 /// What ZC_CHANGESTATE_PET says: the pet is ours, its intimacy (0–1000), hunger (0–100), accessory (item ID),
@@ -3461,6 +3463,8 @@ fn decode_unit(packet: &[u8], layout: &UnitLayout, position: ([u16; 2], u8)) -> 
         // GUID and GEmblemVer follow the robe.
         guild: u32_at(packet, layout.robe + 2),
         emblem: u32::from(u16_at(layout.robe + 6)),
+        // maxHP and HP follow the level and the font; -1 when not told.
+        hp: Some([u32_at(packet, layout.level + 8) as i32, u32_at(packet, layout.level + 4) as i32]).filter(|[hp, max]| *hp >= 0 && *max > 0),
     }
 }
 
@@ -4377,6 +4381,16 @@ mod tests {
         stand[53..55].copy_from_slice(&3u16.to_le_bytes());
         let Some(MapEvent::Unit(unit)) = decode_map_packet(&stand) else { panic!() };
         assert_eq!((unit.guild, unit.emblem), (7, 3));
+        assert_eq!(unit.hp, None);
+
+        // A hurt monster comes with its HP after the level and font; -1 when not told.
+        stand[73..77].copy_from_slice(&50u32.to_le_bytes());
+        stand[77..81].copy_from_slice(&20u32.to_le_bytes());
+        let Some(MapEvent::Unit(unit)) = decode_map_packet(&stand) else { panic!() };
+        assert_eq!(unit.hp, Some([20, 50]));
+        stand[73..81].fill(0xFF);
+        let Some(MapEvent::Unit(unit)) = decode_map_packet(&stand) else { panic!() };
+        assert_eq!(unit.hp, None);
     }
 
     #[test]

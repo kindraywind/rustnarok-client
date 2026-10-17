@@ -1,0 +1,114 @@
+{
+  "about": "Over and under heads: a chat line wrapped in its balloon over the player, a skill's name there, the player's HP/SP bar under the feet, and a hurt Red Mushroom's bar with its name under it.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild07 282 71"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@cleanmap"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "Hello there, this line is long enough to wrap in a balloon"
+    },
+    {
+      "wait_for": {
+        "event": "Chat",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "overhead-chat",
+      "crop": [
+        312,
+        140,
+        400,
+        340
+      ]
+    },
+    {
+      "say": "@useskill 142 1 {first}"
+    },
+    {
+      "wait_for": {
+        "event": "SkillUsed",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "overhead-skill",
+      "crop": [
+        312,
+        140,
+        400,
+        340
+      ]
+    },
+    {
+      "say": "@monster 1085 1"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "click_on": {
+        "unit": "Red Mushroom"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "Act",
+        "ms": 6000
+      }
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "move": {
+        "unit": "Red Mushroom"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "units_at_least": {
+          "monster": 1
+        }
+      }
+    },
+    {
+      "shot": "overhead-bars",
+      "crop": [
+        312,
+        140,
+        400,
+        340
+      ]
+    },
+    {
+      "say": "@killmonster2"
+    }
+  ]
+}
