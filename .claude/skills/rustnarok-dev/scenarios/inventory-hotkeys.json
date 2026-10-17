@@ -10,6 +10,12 @@
       "settle": 1500
     },
     {
+      "say": "@heal"
+    },
+    {
+      "wait": 500
+    },
+    {
       "say": "@itemreset"
     },
     {

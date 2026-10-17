@@ -1,0 +1,132 @@
+{
+  "about": "An NPC shop left open while the player dies and respawns on another map closes (issue #23).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 134 220"
+    },
+    {
+      "settle": 2000
+    },
+    {
+      "expect": {
+        "map": "prt_in.gat"
+      }
+    },
+    {
+      "click": [
+        187,
+        317
+      ]
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "DealChoice"
+        ]
+      }
+    },
+    {
+      "click": [
+        536,
+        537
+      ]
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Shop"
+        ]
+      }
+    },
+    {
+      "move": [
+        700,
+        650
+      ]
+    },
+    {
+      "shot": "shop-open",
+      "mask": [
+        [
+          600,
+          0,
+          424,
+          768
+        ],
+        [
+          860,
+          0,
+          164,
+          340
+        ],
+        [
+          0,
+          40,
+          220,
+          40
+        ]
+      ]
+    },
+    {
+      "say": "@die"
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "click": [
+        511,
+        355
+      ]
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "map": "iz_int01.gat",
+        "windows_closed": [
+          "Shop",
+          "DealChoice"
+        ]
+      }
+    },
+    {
+      "move": [
+        700,
+        650
+      ]
+    },
+    {
+      "shot": "after-respawn",
+      "mask": [
+        [
+          600,
+          0,
+          424,
+          768
+        ],
+        [
+          860,
+          0,
+          164,
+          340
+        ],
+        [
+          0,
+          40,
+          220,
+          40
+        ]
+      ]
+    }
+  ]
+}
