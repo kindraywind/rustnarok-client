@@ -61,6 +61,7 @@ mod options;
 mod party;
 mod pick_list;
 mod quest;
+mod refine;
 mod render;
 mod shop;
 mod skills;
@@ -144,6 +145,9 @@ const INSERT_CARD: usize = 522;
 /// A card put in, or not.
 const CARD_DONE: usize = 493;
 const CARD_FAILED: usize = 494;
+/// The refine window's lines: nothing to refine with; the results (done, broken, lowered, failed).
+const CANT_REFINE: usize = 2970;
+const REFINE_RESULTS: [(usize, [u8; 3]); 4] = [(2971, CHAT_ITEM), (3246, CHAT_ERROR), (1537, CHAT_ERROR), (2972, CHAT_ERROR)];
 /// Making lists' titles (things to make, Arrow Crafting's), nothing to make, and the results: made, not made.
 // ponytail: the titles per list and the result lines (428/429 exist too) are estimates.
 const MAKING_TITLE: usize = 425;
@@ -476,6 +480,7 @@ struct Game {
     item_skill: Option<net::Skill>,
     /// The deal under way; someone asking for one (name, character ID, level); whom we asked.
     trade: Option<trade::Trade>,
+    refine: Option<refine::Refine>,
     viewing: Option<Viewed>,
     bank: Option<bank::Bank>,
     trade_asked: Option<(String, u32, u16)>,
@@ -1658,6 +1663,7 @@ struct Assets {
     pick_list: pick_list::Assets,
     storage: storage::Assets,
     trade: trade::Assets,
+    refine: refine::Assets,
     bank: bank::Assets,
     context_menu: menu::Assets,
     party: party::Assets,
@@ -1752,6 +1758,7 @@ impl Assets {
             pick_list: pick_list::Assets::load(gpu, grf),
             storage: storage::Assets::load(gpu, grf),
             trade: trade::Assets::load(gpu, grf),
+            refine: refine::Assets::load(gpu, grf),
             bank: bank::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
             party: party::Assets::load(gpu, grf),
@@ -2656,6 +2663,25 @@ impl App {
                     }
                 }
             }
+            Scene::Game(game) if game.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
+                let carried = &game.inventory.items;
+                let count = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
+                let window = game.refine.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                match window.click(hit, count, zeny) {
+                    Some(refine::Action::Refine { index, ore, blessings }) => {
+                        let _ = game.session.refine(index, ore, blessings);
+                    }
+                    Some(refine::Action::Refuse(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+                    // Until the server hears it, it won't open the window again and holds the player.
+                    Some(refine::Action::Close) => {
+                        let _ = game.session.close_refine();
+                        game.refine = None;
+                    }
+                    None => {}
+                }
+            }
             Scene::Game(game) if game.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some()) => {
                 let trade = game.trade.as_mut().unwrap();
                 let hit = trade.hit(cursor).unwrap();
@@ -3128,8 +3154,13 @@ impl App {
                 // An item let go over the storage goes in; a stored one let go over the inventory comes out.
                 let on_trade = game.trade.as_ref().is_some_and(|trade| trade.hit(self.cursor).is_some());
                 let on_mail = matches!(game.mail.hit(self.cursor), Some(mail::Hit::Compose(_)));
+                let on_refine = game.refine.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 match (item, game.window_at(self.cursor)) {
                     (Some((Dragged::Item(index), _, true)), _) if on_mail => game.move_item(Asked::Mail(index)),
+                    // Into the refine machine: the server lists what refines it.
+                    (Some((Dragged::Item(index), _, true)), _) if on_refine => {
+                        let _ = game.session.refine_select(index);
+                    }
                     (Some((Dragged::Item(index), _, true)), _) if on_trade => {
                         if let Some(id) = game.offer(index) {
                             game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
@@ -3863,6 +3894,7 @@ impl App {
                     card_asked: None,
                     item_skill: None,
                     trade: None,
+                    refine: None,
                     viewing: None,
                     bank: None,
                     trade_asked: None,
@@ -4166,6 +4198,35 @@ impl App {
                 let id = EXPANSION_RESULTS.get(usize::from(result)).copied().unwrap_or(EXPANSION_RESULTS[1]);
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
             }
+            // The refine window opens with the inventory beside it.
+            MapEvent::RefineOpen => {
+                game.refine = Some(refine::Refine::new());
+                game.inventory.frame.open = true;
+                game.raise(Panel::Inventory);
+            }
+            MapEvent::RefineMaterials { index, blessings, materials } => {
+                if materials.is_empty() {
+                    game.chat_line(self.messages.get(CANT_REFINE).cloned().unwrap_or_default(), CHAT_ERROR);
+                } else if let Some(window) = &mut game.refine {
+                    window.listed(index, blessings, materials);
+                }
+            }
+            // Any refine (the window, Upgrade Weapon, @refine): the item's new level; a broken one leaves the window.
+            MapEvent::Refined { result, index, refine } => {
+                if result != 1
+                    && let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index)
+                {
+                    item.refine = refine as u8;
+                }
+                if let Some(window) = &mut game.refine {
+                    if result == 1 {
+                        window.clear();
+                    }
+                    if let Some(&(id, color)) = REFINE_RESULTS.get(usize::from(result)) {
+                        game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+                    }
+                }
+            }
             MapEvent::Spirits { id, count } => {
                 let key = (id != game.account_id).then_some(id);
                 if count > 0 {
@@ -4240,6 +4301,8 @@ impl App {
                 game.player.revive();
                 // The NPC is left behind: its shop and its buy-or-sell question close (the server doesn't say so).
                 game.close_shop();
+                // rathena forgets the refine window on a map change.
+                game.refine = None;
                 game.deal_choice = None;
                 if map == game.map {
                     // A teleport on the same map: no loading, but the server takes the player off the map until
@@ -6159,7 +6222,8 @@ impl App {
         let status_paths =
             game.status_icons.iter().filter_map(|(kind, ..)| status_icon_files.get(kind).map(|(_, file)| format!("data\\texture\\effect\\{file}")));
         let shop_icons = game.shop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default();
-        let pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
+        let mut pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
+        pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         if game.vend_setup.is_some() {
@@ -6426,6 +6490,9 @@ impl App {
                 &viewed.items,
                 viewed_preview,
             );
+        }
+        if let Some(window) = &game.refine {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.refine, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(trade) = &game.trade {
             trade.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);
