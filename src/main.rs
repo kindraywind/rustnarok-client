@@ -5128,10 +5128,12 @@ impl App {
                 clan.allies = allies;
                 clan.hostile = hostile;
             }
+            // rathena sends the info (0x098A) before the first count; a count without a clan is ignored.
             MapEvent::ClanOnlineCount { online, max } => {
-                let clan = game.clan.get_or_insert_with(clan::Clan::default);
-                clan.online = online;
-                clan.max = max;
+                if let Some(clan) = &mut game.clan {
+                    clan.online = online;
+                    clan.max = max;
+                }
             }
             MapEvent::ClanLeft => {
                 game.clan = None;

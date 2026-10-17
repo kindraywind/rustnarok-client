@@ -12,8 +12,8 @@ const TITLE: usize = 2355;
 const EMBLEM_LABEL: usize = 2358;
 /// Info labels: name, master, members, territory, ally, hostile.
 // ponytail: which label sits where is an estimate; 2356 "Clan Level" and 2364 "Castles Owned" have nothing from
-// rathena to show, and 333 names the territory row like the guild window.
-const LABELS: [usize; 6] = [2357, 2362, 2363, 333, 2359, 2360];
+// rathena to show, and no message names the clan's map; it shows without a label until one is found.
+const LABELS: [Option<usize>; 6] = [Some(2357), Some(2362), Some(2363), None, Some(2359), Some(2360)];
 
 // ponytail: 380x225 modeled on the guild window's info page, with the clan illustration on the left and the emblem
 // and rows to its right; calibrate against the real client.
@@ -126,7 +126,11 @@ impl ClanWindow {
         }
         for (row, (label, value)) in LABELS.iter().zip(info_values(clan)).enumerate() {
             let y = TITLE_HEIGHT + 40.0 + row as f32 * LINE;
-            layer.texts.push((format!("{} : {value}", message(*label)), at([INFO_LEFT, y]), [0, 0, 0]));
+            let text = match *label {
+                Some(id) => format!("{} : {value}", message(id)),
+                None => value,
+            };
+            layer.texts.push((text, at([INFO_LEFT, y]), [0, 0, 0]));
         }
     }
 }
