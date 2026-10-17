@@ -4903,7 +4903,7 @@ impl App {
             }
             let (action, timing) = actor.animation(now);
             let (direction, head_direction) = (actor.direction, actor.head_direction);
-            // NPC names show under them; players' and monsters' only on hover in the client (later).
+            // NPC names show under them; players' and monsters' on hover (below).
             if !actor.hidden && (actor.kind == NPC || actor.sprites.is_none()) {
                 labels.push((actor.name.clone(), feet));
             }
@@ -5077,6 +5077,13 @@ impl App {
             _ => Vec::new(),
         };
 
+        // A monster or another player under the pointer shows its name at its feet (NPCs show theirs always).
+        if let Some(Owner::Unit(id)) = hovered(&game.hit_boxes, pointer.0)
+            && let Some(actor) = game.units.get(&id).filter(|actor| !actor.hidden && actor.kind != NPC && actor.sprites.is_some())
+            && let Some(&feet) = feet_of.get(&id)
+        {
+            labels.push((actor.name.clone(), feet));
+        }
         // The item under the pointer shows its name and amount.
         if let Some(Owner::Item(id)) = hovered(&game.hit_boxes, pointer.0)
             && let Some(item) = game.ground.get(&id)
