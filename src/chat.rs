@@ -184,3 +184,63 @@ impl Chat {
         }
     }
 }
+
+/// The chat commands the client answers itself (the sound, party and emotion ones are elsewhere).
+#[derive(Debug, PartialEq)]
+pub enum Command {
+    /// /h, /help: the help lines.
+    Help,
+    /// /w, /who, /player: how many are online.
+    Who,
+    /// /where: the map and the player's cell.
+    Where,
+    /// /ex or /in and a name: block or allow that one's whispers.
+    Whispers { name: String, allow: bool },
+    /// /ex alone: the names blocked.
+    BlockList,
+    /// /exall, /inall: block or allow everyone's whispers.
+    AllWhispers { allow: bool },
+    /// /effect: effects off or on.
+    Effect,
+}
+
+/// The command typed, if `text` is one; a name is the rest of the line, quotes taken off.
+pub fn command(text: &str) -> Option<Command> {
+    let (command, name) = text.split_once(' ').map_or((text, ""), |(command, rest)| (command, rest.trim().trim_matches('"')));
+    Some(match command {
+        "/h" | "/help" => Command::Help,
+        "/w" | "/who" | "/player" => Command::Who,
+        "/where" => Command::Where,
+        "/ex" if name.is_empty() => Command::BlockList,
+        "/ex" | "/in" if !name.is_empty() => Command::Whispers { name: name.to_owned(), allow: command == "/in" },
+        "/exall" => Command::AllWhispers { allow: false },
+        "/inall" => Command::AllWhispers { allow: true },
+        "/effect" => Command::Effect,
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_clients_commands() {
+        for text in ["/h", "/help"] {
+            assert_eq!(command(text), Some(Command::Help));
+        }
+        for text in ["/w", "/who", "/player"] {
+            assert_eq!(command(text), Some(Command::Who));
+        }
+        assert_eq!(command("/where"), Some(Command::Where));
+        assert_eq!(command("/ex"), Some(Command::BlockList));
+        assert_eq!(command("/ex Poring"), Some(Command::Whispers { name: "Poring".into(), allow: false }));
+        assert_eq!(command("/in \"Big Poring\" "), Some(Command::Whispers { name: "Big Poring".into(), allow: true }));
+        assert_eq!(command("/exall"), Some(Command::AllWhispers { allow: false }));
+        assert_eq!(command("/inall"), Some(Command::AllWhispers { allow: true }));
+        assert_eq!(command("/effect"), Some(Command::Effect));
+        for text in ["/in", "/whom", "hello /who", "/sit", "/ho"] {
+            assert_eq!(command(text), None, "{text}");
+        }
+    }
+}

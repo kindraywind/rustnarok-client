@@ -119,6 +119,21 @@ const WHISPER_COLOR: [u8; 3] = [0xFF, 0xFF, 0x00];
 const WHISPER_FAILED: usize = 148;
 /// "Please wait 10 seconds before trying to log out."
 const LOGOUT_WAIT: usize = 502;
+/// /help: its heading, then the help lines.
+const HELP_TITLE: usize = 22;
+const HELP_LINES: std::ops::RangeInclusive<usize> = 33..=46;
+/// /who: how many are online (%d).
+const USER_COUNT: usize = 178;
+/// /ex alone: no one blocked. After a name, how blocking it went (193 + the result) or allowing it (196 + the result).
+const BLOCKED_NONE: usize = 192;
+const BLOCK_RESULTS: usize = 193;
+const ALLOW_RESULTS: usize = 196;
+/// /exall done or failed (58, 59), /inall (60, 61).
+const BLOCK_ALL_RESULTS: usize = 58;
+const ALLOW_ALL_RESULTS: usize = 60;
+/// /effect: effects on, effects off.
+const EFFECTS_ON: usize = 23;
+const EFFECTS_OFF: usize = 24;
 /// Deals: "requests a deal", no one of that name, "can't overlap items", "no more than 10 kinds", how asking went
 /// (70 + the result), how it ended (75 done, 76 failed, 74 cancelled), too heavy.
 const TRADE_ASKS: usize = 93;
@@ -369,6 +384,8 @@ struct Game {
     item_lines: usize,
     /// Whispers sent and not yet answered: to whom, and what.
     whispered: VecDeque<(String, String)>,
+    /// Names whose whispers we asked to block or allow, not yet answered (the answer doesn't name them).
+    whisper_asked: VecDeque<String>,
     /// The deal under way; someone asking for one (name, character ID, level); whom we asked.
     trade: Option<trade::Trade>,
     trade_asked: Option<(String, u32, u16)>,
@@ -868,10 +885,14 @@ impl Game {
 
     /// Sends what's typed: whispered when the name box has a name, to the party with a leading % (or `party`, Ctrl
     /// held). Returns a message to show when it can't.
-    fn send_chat(&mut self, party: bool, guild: bool) -> Option<usize> {
+    fn send_chat(&mut self, party: bool, guild: bool, messages: &[String], effects_on: &mut bool) -> Option<usize> {
         let text = std::mem::take(&mut self.chat.input);
         let (text, to) = (text.trim(), self.chat.whisper.trim().to_owned());
         if text.is_empty() {
+            return None;
+        }
+        if let Some(command) = chat::command(text) {
+            self.client_command(command, messages, effects_on);
             return None;
         }
         // /sit sits down or stands up; /! /? /ho and the rest show an emotion.
@@ -922,6 +943,40 @@ impl Game {
             self.whispered.push_back((to, text.to_owned()));
         }
         None
+    }
+
+    /// Answers a chat command the client handles itself; replies from the server come back as map events.
+    fn client_command(&mut self, command: chat::Command, messages: &[String], effects_on: &mut bool) {
+        let message = |id: usize| messages.get(id).cloned().unwrap_or_default();
+        let _ = match command {
+            chat::Command::Help => {
+                for id in std::iter::once(HELP_TITLE).chain(HELP_LINES) {
+                    self.chat_line(message(id), CHAT_ITEM);
+                }
+                Ok(())
+            }
+            chat::Command::Who => self.session.user_count(),
+            chat::Command::Where => {
+                // ponytail: the map and the cell, plainly; match the official client's wording from a screenshot.
+                let [x, y] = self.player.cell;
+                self.chat_line(format!("{} {x} {y}", map_key(&self.map)), CHAT_ITEM);
+                Ok(())
+            }
+            chat::Command::Whispers { name, allow } => {
+                let sent = self.session.set_whisper(&name, allow);
+                if sent.is_ok() {
+                    self.whisper_asked.push_back(name);
+                }
+                sent
+            }
+            chat::Command::BlockList => self.session.whisper_list(),
+            chat::Command::AllWhispers { allow } => self.session.set_whisper_all(allow),
+            chat::Command::Effect => {
+                *effects_on = !*effects_on;
+                self.chat_line(message(if *effects_on { EFFECTS_ON } else { EFFECTS_OFF }), CHAT_ITEM);
+                Ok(())
+            }
+        };
     }
 
     /// Moves an item between the inventory and storage, asking how many when there's more than one.
@@ -1753,6 +1808,8 @@ struct App {
     audio: Option<sound::Audio>,
     sound: sound::Settings,
     music: HashMap<String, String>,
+    /// /effect: effects are drawn and heard; off, they still play, unseen and silent. Kept until the client quits.
+    effects_on: bool,
     cursor_look: cursor::Cursor,
     /// The client's loading pictures, and the loading screen while it's up.
     loading_images: Vec<String>,
@@ -3184,7 +3241,7 @@ impl App {
                         if let Some(id) = shown {
                             game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
                         }
-                    } else if let Some(id) = game.send_chat(self.modifiers.control_key(), self.modifiers.alt_key()) {
+                    } else if let Some(id) = game.send_chat(self.modifiers.control_key(), self.modifiers.alt_key(), &self.messages, &mut self.effects_on) {
                         game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                     }
                 }
@@ -3438,6 +3495,7 @@ impl App {
                     item_window: None,
                     item_lines: 0,
                     whispered: VecDeque::new(),
+                    whisper_asked: VecDeque::new(),
                     trade: None,
                     trade_asked: None,
                     trade_with: String::new(),
@@ -4356,6 +4414,25 @@ impl App {
                     _ => format!("{to}{}", self.messages.get(WHISPER_FAILED + usize::from(result) - 1).cloned().unwrap_or_default()),
                 };
                 game.chat_line(line, WHISPER_COLOR);
+            }
+            // Replies to the client's own chat commands.
+            MapEvent::UserCount(count) => {
+                game.chat_line(rustnarok_client::messages::fill(self.messages.get(USER_COUNT).map_or("", String::as_str), &[&count]), CHAT_ITEM);
+            }
+            MapEvent::WhisperSetting { allow, result } => {
+                let name = game.whisper_asked.pop_front().unwrap_or_default();
+                let id = if allow { ALLOW_RESULTS } else { BLOCK_RESULTS } + usize::from(result.min(2));
+                game.chat_line(format!("{name}{}", self.messages.get(id).cloned().unwrap_or_default()), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
+            }
+            MapEvent::WhisperList(names) if names.is_empty() => game.chat_line(self.messages.get(BLOCKED_NONE).cloned().unwrap_or_default(), CHAT_ITEM),
+            MapEvent::WhisperList(names) => {
+                for name in names {
+                    game.chat_line(name, CHAT_ITEM);
+                }
+            }
+            MapEvent::WhisperAll { allow, result } => {
+                let id = if allow { ALLOW_ALL_RESULTS } else { BLOCK_ALL_RESULTS } + usize::from(result != 0);
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
             }
             MapEvent::Cutin { image, place } => {
                 let path = format!("{UI}illust\\{image}{}", if image.contains('.') { "" } else { ".bmp" });
@@ -5508,8 +5585,10 @@ impl App {
         sprites.extend(cursor_look.draw(gpu, pointer.0));
 
         game.effects.retire(now);
+        // With /effect off, effects still play on, unseen, and their sounds come due without being heard.
+        let effects_on = self.effects_on;
         if let Some(audio) = audio {
-            for (file, at) in game.effects.due_sounds(now) {
+            for (file, at) in game.effects.due_sounds(now).into_iter().filter(|_| effects_on) {
                 let distance = (at[0] - player_feet[0]).abs().max((at[2] - player_feet[2]).abs()) / world::CELL;
                 audio.play(grf, &file, 1.0 - distance / HEARING_CELLS);
             }
@@ -5518,8 +5597,8 @@ impl App {
             None => Some(player_feet),
             Some(id) => feet_of.get(&id).copied(),
         };
-        let effect_quads = game.effects.quads(now, feet_of_unit);
-        let effect_meshes = game.effects.meshes(now, feet_of_unit);
+        let (effect_quads, effect_meshes) =
+            if effects_on { (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit)) } else { (Vec::new(), Vec::new()) };
         let frame = WorldFrame {
             world: &game.world,
             view: &view,
@@ -5731,7 +5810,7 @@ impl ApplicationHandler<NetEvent> for App {
                     if let Some(texts) = game.auto_say.take_if(|_| game.entered.elapsed().as_secs_f32() >= say_at) {
                         for text in texts.split('|') {
                             game.chat.input = text.to_owned();
-                            let _ = game.send_chat(false, false);
+                            let _ = game.send_chat(false, false, &self.messages, &mut self.effects_on);
                         }
                     }
                     // Dev switch RUSTNAROK_CLIENT_GUILD=window: the guild window, once the guild is known.
@@ -5775,7 +5854,7 @@ impl ApplicationHandler<NetEvent> for App {
                             let (to, text) = whisper.split_once('|').unwrap_or((whisper, "hi"));
                             game.chat.whisper = to.to_owned();
                             game.chat.input = text.to_owned();
-                            let _ = game.send_chat(false, false);
+                            let _ = game.send_chat(false, false, &self.messages, &mut self.effects_on);
                         }
                     }
                 }
@@ -5964,6 +6043,7 @@ fn main() {
         .flatten(),
         sound,
         music,
+        effects_on: true,
         cursor_look,
         loading_images,
         loading: None,
