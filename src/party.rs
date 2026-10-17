@@ -48,7 +48,12 @@ pub struct Member {
 pub struct Party {
     pub name: String,
     pub members: Vec<Member>,
+    /// EXP shared evenly (else each takes their own).
     pub exp_shared: bool,
+    /// Items picked up go to the party (else to whoever picks them up).
+    pub pickup_shared: bool,
+    /// Items are shared out among the members (else the one who gets them keeps them).
+    pub item_shared: bool,
 }
 
 impl Party {
@@ -66,6 +71,33 @@ impl Party {
 
     pub fn leader(&self) -> Option<u32> {
         self.members.iter().find(|member| member.info.leader).map(|member| member.info.account)
+    }
+
+    pub fn settings(&self) -> Settings {
+        Settings { exp_even: self.exp_shared, pickup: self.pickup_shared, share: self.item_shared }
+    }
+
+    /// Whether the player (`me`) may hand the party to the member `account`: the leader, to another online member.
+    pub fn offers_leader(&self, me: u32, account: u32) -> bool {
+        self.leader() == Some(me) && account != me && self.members.iter().any(|member| member.info.account == account && member.info.online)
+    }
+}
+
+/// The party's three settings, as the setup window shows them.
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+pub struct Settings {
+    pub exp_even: bool,
+    pub pickup: bool,
+    pub share: bool,
+}
+
+impl Settings {
+    fn get(self, row: usize) -> bool {
+        [self.exp_even, self.pickup, self.share][row]
+    }
+
+    fn set(&mut self, row: usize, on: bool) {
+        *[&mut self.exp_even, &mut self.pickup, &mut self.share][row] = on;
     }
 }
 
@@ -152,6 +184,151 @@ impl Assets {
     }
 }
 
+// ponytail: the setup window's size and place (by the party window) are estimates.
+const SETUP_WIDTH: f32 = 230.0;
+const SETUP_ROW: f32 = 40.0;
+const SETUP_TOP: f32 = TITLE_HEIGHT + 8.0;
+const SETUP_NOTE: f32 = SETUP_TOP + 3.0 * SETUP_ROW;
+const SETUP_HEIGHT: f32 = SETUP_NOTE + 46.0;
+/// The two choices' left edges.
+const CHOICES: [f32; 2] = [20.0, 120.0];
+const SETUP_BUTTON: [f32; 2] = [42.0, 20.0];
+const SETUP_TITLE: usize = 291;
+/// Each row's label, its first choice (on) and its second (off).
+const SETUP_ROWS: [(usize, usize, usize); 3] = [(292, 288, 287), (293, 290, 289), (738, 740, 739)];
+/// The choices' names for the test driver, in the same order.
+const SETUP_NAMES: [[&str; 2]; 3] = [["exp_even", "exp_each"], ["pickup_party", "pickup_each"], ["share_shared", "share_individual"]];
+const LEADER_ONLY: usize = 294;
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum SetupHit {
+    Title(TitleHit),
+    /// A row (0 EXP, 1 pickup, 2 distribution) and which choice: true the first (on).
+    Choice(usize, bool),
+    Ok,
+    Cancel,
+    Window,
+}
+
+/// What a click in the setup window comes to.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum SetupAction {
+    Close,
+    /// Send these settings, and close.
+    Send(Settings),
+}
+
+/// The party setup window (the Setup button): the three settings, changeable by the leader only.
+pub struct Setup {
+    pub frame: Frame,
+    pub settings: Settings,
+    start: Settings,
+    leader: bool,
+}
+
+impl Setup {
+    pub fn new(party: &Party, leader: bool, beside: [f32; 2]) -> Self {
+        let mut frame = Frame::new([(beside[0] - SETUP_WIDTH - 4.0).max(0.0), beside[1]], SETUP_WIDTH);
+        frame.open = true;
+        Self { frame, settings: party.settings(), start: party.settings(), leader }
+    }
+
+    fn choice_at(row: usize, first: bool) -> [f32; 2] {
+        [CHOICES[usize::from(!first)], SETUP_TOP + row as f32 * SETUP_ROW + 18.0]
+    }
+
+    fn ok_at() -> [f32; 2] {
+        [SETUP_WIDTH - 2.0 * SETUP_BUTTON[0] - 14.0, SETUP_HEIGHT - SETUP_BUTTON[1] - 4.0]
+    }
+
+    fn cancel_at() -> [f32; 2] {
+        [SETUP_WIDTH - SETUP_BUTTON[0] - 8.0, SETUP_HEIGHT - SETUP_BUTTON[1] - 4.0]
+    }
+
+    pub fn hit(&self, cursor: [f32; 2]) -> Option<SetupHit> {
+        let local = self.frame.local(cursor, SETUP_HEIGHT)?;
+        if let Some(hit) = self.frame.title_hit(local) {
+            return Some(SetupHit::Title(hit));
+        }
+        for row in 0..3 {
+            for first in [true, false] {
+                if contains(Self::choice_at(row, first), [90.0, 16.0], local) {
+                    return Some(SetupHit::Choice(row, first));
+                }
+            }
+        }
+        if contains(Self::ok_at(), SETUP_BUTTON, local) {
+            return Some(SetupHit::Ok);
+        }
+        if contains(Self::cancel_at(), SETUP_BUTTON, local) {
+            return Some(SetupHit::Cancel);
+        }
+        Some(SetupHit::Window)
+    }
+
+    /// A choice moves only for the leader; OK sends what changed.
+    pub fn click(&mut self, hit: SetupHit) -> Option<SetupAction> {
+        match hit {
+            SetupHit::Choice(row, first) if self.leader => self.settings.set(row, first),
+            SetupHit::Title(TitleHit::Close) | SetupHit::Cancel => return Some(SetupAction::Close),
+            SetupHit::Ok if self.leader && self.settings != self.start => return Some(SetupAction::Send(self.settings)),
+            SetupHit::Ok => return Some(SetupAction::Close),
+            _ => {}
+        }
+        None
+    }
+
+    /// The choices and buttons on screen (for the test driver).
+    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        let place = |at: [f32; 2], size: [f32; 2]| {
+            let [x, y] = self.frame.at(at);
+            [x, y, size[0], size[1]]
+        };
+        let mut boxes: Vec<_> = (0..3)
+            .flat_map(|row| [true, false].map(|first| (SETUP_NAMES[row][usize::from(!first)], place(Self::choice_at(row, first), [90.0, 16.0]))))
+            .collect();
+        boxes.push(("ok", place(Self::ok_at(), SETUP_BUTTON)));
+        boxes.push(("cancel", place(Self::cancel_at(), SETUP_BUTTON)));
+        boxes
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        (ok, cancel): (&'a [Texture; 3], &'a [Texture; 3]),
+        messages: &[String],
+        pointer: ([f32; 2], bool),
+    ) {
+        let message = |id: usize| messages.get(id).map_or("", String::as_str).trim_end();
+        let at = |local: [f32; 2]| self.frame.at(local);
+        self.frame.draw_title(layer, chrome, message(SETUP_TITLE), pointer.0);
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [SETUP_WIDTH, SETUP_HEIGHT - TITLE_HEIGHT]));
+        for x in [0.0, SETUP_WIDTH - 1.0] {
+            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, SETUP_HEIGHT - TITLE_HEIGHT]));
+        }
+        layer.sprites.push((&chrome.border, at([0.0, SETUP_HEIGHT - 1.0]), [SETUP_WIDTH, 1.0]));
+        for (row, &(label, on, off)) in SETUP_ROWS.iter().enumerate() {
+            layer.texts.push((message(label).to_owned(), at([10.0, SETUP_TOP + row as f32 * SETUP_ROW]), [0, 0, 0]));
+            for (first, words) in [(true, on), (false, off)] {
+                let corner = Self::choice_at(row, first);
+                let radio = &assets.radio[usize::from(self.settings.get(row) == first)];
+                layer.sprites.push((radio, at([corner[0], corner[1] + 2.0]), radio.size));
+                layer.texts.push((message(words).to_owned(), at([corner[0] + radio.size[0] + 4.0, corner[1]]), [0, 0, 0]));
+            }
+        }
+        if !self.leader {
+            layer.texts.push((message(LEADER_ONLY).to_owned(), at([10.0, SETUP_NOTE]), [0xC0, 0x30, 0x30]));
+        }
+        let hit = self.hit(pointer.0);
+        let look = |target: SetupHit| usize::from(hit == Some(target)) + usize::from(hit == Some(target) && pointer.1);
+        layer.sprites.push((&ok[look(SetupHit::Ok)], at(Self::ok_at()), SETUP_BUTTON));
+        layer.sprites.push((&cancel[look(SetupHit::Cancel)], at(Self::cancel_at()), SETUP_BUTTON));
+    }
+}
+
 pub struct PartyWindow {
     pub frame: Frame,
     /// The friends tab is open (else the party's); the friend picked.
@@ -186,6 +363,30 @@ impl PartyWindow {
             Some(party) if party.leader() == Some(me) => vec![Button::Setup, Button::Invite, Button::Leave],
             Some(_) => vec![Button::Setup, Button::Leave],
         }
+    }
+
+    /// The buttons (`setup`, `invite`, `leave`, ...) and each member's row (`member:<name>`) on screen, for the test
+    /// driver.
+    pub fn button_boxes(&self, party: Option<&Party>, friends: &[Friend], me: u32) -> Vec<(String, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized {
+            return Vec::new();
+        }
+        let bar_top = TITLE_HEIGHT + self.list_height(party, friends);
+        let place = |local: [f32; 2], size: [f32; 2]| {
+            let [x, y] = self.frame.at(local);
+            [x, y, size[0], size[1]]
+        };
+        let buttons = self
+            .buttons(party, me)
+            .into_iter()
+            .enumerate()
+            .map(|(index, button)| (format!("{button:?}").to_lowercase(), place([index as f32 * BUTTON[0], bar_top], BUTTON)));
+        let members = party.filter(|_| !self.friends).map_or(&[][..], |party| &party.members);
+        let rows = members
+            .iter()
+            .enumerate()
+            .map(|(row, member)| (format!("member:{}", member.info.name), place([0.0, TITLE_HEIGHT + row as f32 * ROW], [WIDTH, ROW])));
+        buttons.chain(rows).collect()
     }
 
     pub fn hit(&self, cursor: [f32; 2], party: Option<&Party>, friends: &[Friend], me: u32) -> Option<Hit> {
@@ -354,5 +555,58 @@ mod tests {
         assert_eq!(window.buttons(None, 2), [Button::Create]);
         window.friends = true;
         assert_eq!(window.buttons(None, 2), [Button::Whisper, Button::Delete]);
+    }
+
+    #[test]
+    fn sets_up_the_party() {
+        let mut party = Party { name: "P".into(), pickup_shared: true, ..Default::default() };
+        party.upsert(member(1, true));
+        party.upsert(member(2, false));
+        let mut setup = Setup::new(&party, true, [770.0, 180.0]);
+        let at = |setup: &Setup, name: &str| {
+            let [x, y, w, h] = setup.button_boxes().into_iter().find(|(found, _)| *found == name).unwrap().1;
+            [x + w / 2.0, y + h / 2.0]
+        };
+        // Each choice, OK and Cancel by their boxes.
+        for (name, hit) in [
+            ("exp_even", SetupHit::Choice(0, true)),
+            ("exp_each", SetupHit::Choice(0, false)),
+            ("pickup_party", SetupHit::Choice(1, true)),
+            ("pickup_each", SetupHit::Choice(1, false)),
+            ("share_shared", SetupHit::Choice(2, true)),
+            ("share_individual", SetupHit::Choice(2, false)),
+            ("ok", SetupHit::Ok),
+            ("cancel", SetupHit::Cancel),
+        ] {
+            assert_eq!(setup.hit(at(&setup, name)), Some(hit), "{name}");
+        }
+        // Nothing changed: OK only closes.
+        assert_eq!(setup.click(SetupHit::Ok), Some(SetupAction::Close));
+        assert_eq!(setup.click(SetupHit::Choice(2, true)), None);
+        assert_eq!(setup.click(SetupHit::Ok), Some(SetupAction::Send(Settings { exp_even: false, pickup: true, share: true })));
+        assert_eq!(setup.click(SetupHit::Cancel), Some(SetupAction::Close));
+
+        // A member can't move them.
+        let mut member_setup = Setup::new(&party, false, [770.0, 180.0]);
+        member_setup.click(SetupHit::Choice(0, true));
+        assert_eq!(member_setup.settings, party.settings());
+        assert_eq!(member_setup.click(SetupHit::Ok), Some(SetupAction::Close));
+    }
+
+    #[test]
+    fn offers_the_leader_menu_to_the_leader_only() {
+        let mut party = Party::default();
+        party.upsert(member(1, true));
+        party.upsert(member(2, false));
+        party.upsert(PartyMember { online: false, ..member(3, false) });
+        assert!(party.offers_leader(1, 2));
+        assert!(!party.offers_leader(1, 1), "not to the leader's own row");
+        assert!(!party.offers_leader(2, 1), "not from a member");
+        assert!(!party.offers_leader(1, 3), "not to someone offline");
+        assert!(!party.offers_leader(1, 9), "not to a stranger");
+        let mut window = PartyWindow::default();
+        window.frame.open = true;
+        let names: Vec<String> = window.button_boxes(Some(&party), &[], 1).into_iter().map(|(name, _)| name).collect();
+        assert_eq!(names, ["setup", "invite", "leave", "member:M1", "member:M2", "member:M3"]);
     }
 }

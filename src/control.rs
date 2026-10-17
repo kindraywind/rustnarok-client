@@ -772,6 +772,16 @@ fn game_state(app: &App, game: &Game) -> Value {
     };
     let jobs = app.skill_trees.lineage(game.me.job);
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
+    // The leader question's OK and Cancel, in the message box.
+    let leader_question: Vec<(&str, [f32; 4])> = match (&app.assets, game.leader_asked) {
+        (Some(assets), Some(_)) => {
+            let dialog = crate::dialog_position(&assets.message);
+            [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)]
+                .map(|(name, place, images)| (name, [dialog[0] + place[0], dialog[1] + place[1], images[0].size[0], images[0].size[1]]))
+                .to_vec()
+        }
+        _ => Vec::new(),
+    };
     let targets: Vec<Value> = game
         .inventory
         .item_boxes()
@@ -792,6 +802,15 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(
+            game.party_window
+                .button_boxes(game.party.as_ref(), &game.friends, game.account_id)
+                .into_iter()
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(game.inventory.tab_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.party_setup.iter().flat_map(|setup| setup.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(leader_question.into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
             game.mercenary.iter().flat_map(|_| game.mercenary_window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(
@@ -808,6 +827,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("Shop", game.shop.is_some()),
         ("Refine", game.refine.is_some()),
         ("Materials", game.materials.is_some()),
+        ("PartySetup", game.party_setup.is_some()),
+        ("LeaderAsked", game.leader_asked.is_some()),
         ("Roulette", game.roulette.is_some()),
         ("MonsterInfo", game.monster_window.is_some()),
         ("Achievements", game.achievement_window.frame.open),
@@ -913,6 +934,18 @@ fn game_state(app: &App, game: &Game) -> Value {
         "aimed_skill": game.targeting.map(|(id, level)| json!({"id": id, "level": level, "name": app.skill_info.get(&id).map(|info| info.name.as_str())})),
         "units": units,
         // The player's pet as the server last told it, or null.
+        "party": game.party.as_ref().map(|party| {
+            let leader = party.members.iter().find(|member| member.info.leader).map(|member| member.info.name.clone());
+            json!({
+                "name": party.name,
+                "leader": leader,
+                "members": party.members.iter().map(|member| member.info.name.clone()).collect::<Vec<_>>(),
+                "exp_shared": party.exp_shared,
+                "pickup_shared": party.pickup_shared,
+                "item_shared": party.item_shared,
+            })
+        }),
+        "refusing_party": game.refusing_party,
         "mercenary": game.mercenary.as_ref().map(|hired| json!({"id": hired.id, "name": hired.name, "level": hired.level, "hp": hired.hp, "loyalty": hired.loyalty, "summons": hired.summons, "kills": hired.kills, "following": game.steering.following, "order": game.steering.order.map(|order| format!("{order:?}"))})),
         "pet": game.pet.as_ref().map(|pet| json!({"id": game.pet_id, "name": pet.name, "level": pet.level, "hunger": pet.hunger, "intimacy": pet.intimacy, "accessory": pet.accessory, "renamed": pet.renamed})),
         "ground_items": ground,

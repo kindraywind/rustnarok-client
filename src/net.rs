@@ -861,6 +861,11 @@ const ZC_NOTIFY_CHAT_PARTY: u16 = 0x0109;
 const ZC_NOTIFY_POSITION_TO_GROUPM: u16 = 0x0107;
 const ZC_NOTIFY_HP_TO_GROUPM: u16 = 0x080E;
 const ZC_REQ_GROUPINFO_CHANGE_V2: u16 = 0x07D8;
+const CZ_GROUPINFO_CHANGE_V2: u16 = 0x07D7;
+const CZ_CHANGE_GROUP_MASTER: u16 = 0x07DA;
+const ZC_ITEM_PICKUP_PARTY: u16 = 0x0B67;
+const CZ_PARTY_CONFIG: u16 = 0x02C8;
+const ZC_PARTY_CONFIG: u16 = 0x02C9;
 const ZC_CHANGE_GROUP_MASTER: u16 = 0x07FC;
 const ZC_GROUP_ISALIVE: u16 = 0x0AB2;
 const ZC_NOTIFY_MEMBERINFO_TO_GROUPM: u16 = 0x0ABD;
@@ -1843,11 +1848,20 @@ pub enum MapEvent {
         account: u32,
         text: String,
     },
-    /// A member's place on the minimap.
+    /// A member's place on the minimap; none when they left the map.
     PartyPosition {
         account: u32,
-        cell: [u16; 2],
+        cell: Option<[u16; 2]>,
     },
+    /// A member (by account) picked up an item.
+    PartyPickup {
+        account: u32,
+        item: u32,
+        identified: bool,
+        refine: u8,
+    },
+    /// Whether the player refuses party invitations.
+    PartyRefusing(bool),
     PartyHp {
         account: u32,
         hp: i32,
@@ -3125,6 +3139,22 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Refuses (or accepts again) party invitations; the answer is `PartyRefusing`.
+    pub fn refuse_parties(&mut self, refuse: bool) -> io::Result<()> {
+        let [low, high] = CZ_PARTY_CONFIG.to_le_bytes();
+        self.stream.write_all(&[low, high, u8::from(refuse)])
+    }
+
+    /// The leader's party settings: even EXP share, items to the party on pickup, items shared out.
+    pub fn party_options(&mut self, exp_even: bool, pickup: bool, share: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_party_options(exp_even, pickup, share))
+    }
+
+    /// Hands the party to another member (the leader only).
+    pub fn change_party_leader(&mut self, account: u32) -> io::Result<()> {
+        self.send_id(CZ_CHANGE_GROUP_MASTER, account)
+    }
+
     /// Invites a character, by name, into the party.
     pub fn invite_to_party(&mut self, name: &str) -> io::Result<()> {
         let mut packet = CZ_PARTY_JOIN_REQ.to_le_bytes().to_vec();
@@ -3486,6 +3516,16 @@ fn encode_hatch(index: u16) -> [u8; 4] {
     let mut packet = [0u8; 4];
     packet[..2].copy_from_slice(&CZ_SELECT_PETEGG.to_le_bytes());
     packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_GROUPINFO_CHANGE_V2: EXP (0 each takes, 1 even) u32, then the pickup and distribution flags.
+fn encode_party_options(exp_even: bool, pickup: bool, share: bool) -> [u8; 8] {
+    let mut packet = [0u8; 8];
+    packet[..2].copy_from_slice(&CZ_GROUPINFO_CHANGE_V2.to_le_bytes());
+    packet[2..6].copy_from_slice(&u32::from(exp_even).to_le_bytes());
+    packet[6] = u8::from(pickup);
+    packet[7] = u8::from(share);
     packet
 }
 
@@ -4437,7 +4477,13 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_PARTY_JOIN_REQ => MapEvent::PartyInvite { party: u32_at(2), name: c_string(&packet[6..30]) },
         ZC_PARTY_JOIN_REQ_ACK => MapEvent::PartyInviteResult { name: c_string(&packet[2..26]), result: u32_at(26) },
         ZC_NOTIFY_CHAT_PARTY => MapEvent::PartyChat { account: u32_at(4), text: c_string(&packet[8..]) },
-        ZC_NOTIFY_POSITION_TO_GROUPM => MapEvent::PartyPosition { account: u32_at(2), cell: [u16_at(6), u16_at(8)] },
+        // clif_party_xy_remove sends -1, -1: the member left the map.
+        ZC_NOTIFY_POSITION_TO_GROUPM => {
+            let cell = [u16_at(6), u16_at(8)];
+            MapEvent::PartyPosition { account: u32_at(2), cell: (cell != [u16::MAX; 2]).then_some(cell) }
+        }
+        ZC_ITEM_PICKUP_PARTY => MapEvent::PartyPickup { account: u32_at(2), item: u32_at(6), identified: packet[10] != 0, refine: packet[31] },
+        ZC_PARTY_CONFIG => MapEvent::PartyRefusing(packet[2] != 0),
         ZC_NOTIFY_HP_TO_GROUPM => MapEvent::PartyHp { account: u32_at(2), hp: u32_at(6) as i32, max: u32_at(10) as i32 },
         ZC_REQ_GROUPINFO_CHANGE_V2 => MapEvent::PartyOptions { exp: u32_at(2), pickup: packet[6] != 0, share: packet[7] != 0 },
         ZC_CHANGE_GROUP_MASTER => MapEvent::PartyLeader { old: u32_at(2), new: u32_at(6) },
@@ -5088,6 +5134,38 @@ mod tests {
         assert_eq!(encode_refine(4, 1010, true), [0xA3, 0x0A, 4, 0, 0xF2, 0x03, 0, 0, 1]);
         let ids = [ZC_OPEN_REFINING_UI, CZ_REFINING_SELECT_ITEM, ZC_REFINING_MATERIAL_LIST, CZ_REQ_REFINING, CZ_CLOSE_REFINING_UI, ZC_ACK_ITEMREFINING];
         assert_eq!(ids.map(packet_length), [Some(2), Some(4), Some(-1), Some(9), Some(2), Some(8)]);
+    }
+
+    #[test]
+    fn decodes_party_extras() {
+        // clif_party_show_picker: a Knife +4, identified, picked up by account 2000001.
+        let mut pickup = vec![0u8; 33];
+        pickup[..2].copy_from_slice(&ZC_ITEM_PICKUP_PARTY.to_le_bytes());
+        pickup[2..6].copy_from_slice(&2_000_001u32.to_le_bytes());
+        pickup[6..10].copy_from_slice(&1201u32.to_le_bytes());
+        pickup[10] = 1;
+        pickup[30] = 5;
+        pickup[31] = 4;
+        assert!(matches!(decode_map_packet(&pickup), Some(MapEvent::PartyPickup { account: 2_000_001, item: 1201, identified: true, refine: 4 })));
+        assert_eq!(packet_length(ZC_ITEM_PICKUP_PARTY), Some(33));
+        assert!(matches!(decode_map_packet(&[0xC9, 0x02, 1]), Some(MapEvent::PartyRefusing(true))));
+        assert!(matches!(decode_map_packet(&[0xC9, 0x02, 0]), Some(MapEvent::PartyRefusing(false))));
+
+        // clif_party_option: all three, and the refused EXP share (2).
+        let options = |exp: u32, pickup: u8, share: u8| [&ZC_REQ_GROUPINFO_CHANGE_V2.to_le_bytes()[..], &exp.to_le_bytes(), &[pickup, share]].concat();
+        assert!(matches!(decode_map_packet(&options(1, 1, 0)), Some(MapEvent::PartyOptions { exp: 1, pickup: true, share: false })));
+        assert!(matches!(decode_map_packet(&options(2, 0, 1)), Some(MapEvent::PartyOptions { exp: 2, pickup: false, share: true })));
+
+        // clif_party_xy_remove: -1, -1.
+        let position = |x: i16, y: i16| [&ZC_NOTIFY_POSITION_TO_GROUPM.to_le_bytes()[..], &7u32.to_le_bytes(), &x.to_le_bytes(), &y.to_le_bytes()].concat();
+        assert!(matches!(decode_map_packet(&position(-1, -1)), Some(MapEvent::PartyPosition { account: 7, cell: None })));
+        assert!(matches!(decode_map_packet(&position(156, 180)), Some(MapEvent::PartyPosition { account: 7, cell: Some([156, 180]) })));
+
+        assert_eq!(encode_party_options(true, false, true), [0xD7, 0x07, 1, 0, 0, 0, 0, 1]);
+        assert_eq!(encode_party_options(false, true, false), [0xD7, 0x07, 0, 0, 0, 0, 1, 0]);
+        for (header, length) in [(CZ_PARTY_CONFIG, 3), (ZC_PARTY_CONFIG, 3), (CZ_GROUPINFO_CHANGE_V2, 8), (CZ_CHANGE_GROUP_MASTER, 6)] {
+            assert_eq!(packet_length(header), Some(length), "{header:#06x}");
+        }
     }
 
     #[test]
