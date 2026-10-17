@@ -48,7 +48,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, NativeKeyCode, PhysicalKey, SmolStr};
 
 use crate::render::{Gpu, Sprite, WorldPass};
-use crate::{App, DialogButton, Game, MONSTER, NPC, NetEvent, Owner, PLAYER, Panel, Scene, inventory};
+use crate::{App, DialogButton, Game, HOMUNCULUS, MERCENARY, MONSTER, NPC, NetEvent, Owner, PET, PLAYER, Panel, Scene, inventory};
 
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(tag = "cmd", rename_all = "snake_case", deny_unknown_fields)]
@@ -670,6 +670,9 @@ fn game_state(app: &App, game: &Game) -> Value {
                 PLAYER => json!("player"),
                 MONSTER => json!("monster"),
                 NPC => json!("npc"),
+                PET => json!("pet"),
+                HOMUNCULUS => json!("homunculus"),
+                MERCENARY => json!("mercenary"),
                 other => json!(other),
             };
             let spirits = game.spirits.get(&Some(id)).copied().unwrap_or(0);
@@ -708,6 +711,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         Panel::Status => game.status_window.frame.open,
         Panel::Guild => game.guild.is_some() && game.guild_window.frame.open,
         Panel::Cart => game.cart.cart.is_some() && game.cart.frame.open,
+        Panel::Pet => game.pet.is_some() && game.pet_window.frame.open,
     };
     let jobs = app.skill_trees.lineage(game.me.job);
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
@@ -720,6 +724,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.skill_window.skill_boxes(&app.skill_trees, &jobs).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
         .chain(game.pick.iter().flat_map(|(list, _)| list.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
+        .chain(game.pet.iter().flat_map(|pet| game.pet_window.button_boxes(pet)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
     let overlays = [
@@ -728,6 +733,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("Shop", game.shop.is_some()),
         ("Refine", game.refine.is_some()),
         ("InventoryExpansion", game.expansion_asked.is_some()),
+        ("PetAsked", game.pet_asked.is_some()),
         ("OtherEquipment", game.viewing.is_some()),
         ("Bank", game.bank.is_some()),
         ("PickList", game.pick.is_some()),
@@ -792,8 +798,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "screen": screen(Owner::Player),
         },
         "windows": windows,
-        // What a test can click by name instead of by pixels: inventory items (index and item), hotkey slots and
-        // skill boxes, each with its box on screen.
+        // What a test can click by name instead of by pixels: inventory items (index and item), hotkey slots, skill
+        // boxes, pick list rows, menu choices and window buttons (by name), each with its box on screen.
         "targets": targets,
         // What's carried: index, item, how many, identified, worn where (0: not worn).
         "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "cards": item.cards})).collect::<Vec<_>>(),
@@ -802,6 +808,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "dialog": dialog,
         "aimed_skill": game.targeting.map(|(id, level)| json!({"id": id, "level": level, "name": app.skill_info.get(&id).map(|info| info.name.as_str())})),
         "units": units,
+        // The player's pet as the server last told it, or null.
+        "pet": game.pet.as_ref().map(|pet| json!({"id": game.pet_id, "name": pet.name, "level": pet.level, "hunger": pet.hunger, "intimacy": pet.intimacy, "accessory": pet.accessory, "renamed": pet.renamed})),
         "ground_items": ground,
         "inventory_items": game.inventory.items.len(),
         "skills": game.skills.len(),

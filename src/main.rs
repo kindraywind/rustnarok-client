@@ -61,6 +61,7 @@ mod menu;
 mod minimap;
 mod options;
 mod party;
+mod pet;
 mod pick_list;
 mod quest;
 mod refine;
@@ -209,6 +210,16 @@ const TRADE_HEAVY: usize = 73;
 const TRADE_CHOICE: usize = 87;
 /// "Check %s's Equipment Info"; the Show Equipment box's answers, on and off.
 const VIEW_CHOICE: usize = 1360;
+/// Pets: the egg list's title, the menu (status, feed, performance, back to the egg, accessory off, by command), the
+/// questions (feeding; the name, then renaming once), no food, and neglect.
+// ponytail: the menu's order is a guess; the strings sit together like one.
+const PET_EGGS: usize = 599;
+const PET_CHOICES: [(usize, u8); 5] = [(596, net::PET_INFO), (592, net::PET_FEED), (593, net::PET_PERFORM), (594, net::PET_RETURN), (595, net::PET_UNEQUIP)];
+const PET_FEED_ASKS: usize = 601;
+const PET_NAME_RULE: usize = 682;
+const PET_RENAME_ASKS: usize = 683;
+const PET_NO_FOOD: usize = 591;
+const PET_NEGLECTED: usize = 1188;
 const EQUIPMENT_SHOWN: usize = 1359;
 const EQUIPMENT_HIDDEN: usize = 1358;
 /// Vending: "%s %d sold.", "Items are sold out.", and "There are items priced 0..." (a shop refused for it).
@@ -359,6 +370,9 @@ const CORPSE_TIME: Duration = Duration::from_millis(1500);
 const PLAYER: u8 = 0;
 const MONSTER: u8 = 5;
 const NPC: u8 = 6;
+const PET: u8 = 7;
+const HOMUNCULUS: u8 = 8;
+const MERCENARY: u8 = 9;
 /// JT_HIDDEN_NPC, JT_HIDDEN_WARP_NPC: invisible script NPCs.
 const HIDDEN_JOBS: [u16; 2] = [111, 139];
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
@@ -518,6 +532,12 @@ struct Game {
     friend_asked: Option<(u32, u32, String)>,
     /// The server asks whether to use this voucher to grow the inventory.
     expansion_asked: Option<u32>,
+    /// The player's pet: its unit (once the server says it's ours), what it's like, its window, and a question about
+    /// it waiting for OK.
+    pet_id: Option<u32>,
+    pet: Option<net::Pet>,
+    pet_window: pet::PetWindow,
+    pet_asked: Option<PetAsked>,
     /// Each party member's minimap color.
     party_dots: HashMap<u32, Texture>,
     /// Chat rooms over their owners' heads (by owner), and where their signs were last drawn (room ID, password).
@@ -651,6 +671,12 @@ fn seen_direction(direction: u8, yaw: f32) -> u8 {
     (i32::from(direction) - (yaw.to_degrees() / 45.0).round() as i32).rem_euclid(8) as u8
 }
 
+/// A pet: its monster's sprite, moving by its accessory's ACT when it wears one the data has.
+fn pet_sprites(grf: &Grf, name: &str, act: Option<&String>) -> Option<SpriteSet> {
+    let worn = act.and_then(|act| SpriteSet::with_act(grf, &format!("data\\sprite\\몬스터\\{name}"), &format!("data\\sprite\\몬스터\\{act}")));
+    worn.or_else(|| SpriteSet::single(grf, name, true))
+}
+
 fn character_look(character: &Character) -> Look {
     Look {
         job: character.job,
@@ -726,6 +752,7 @@ enum Panel {
     Status,
     Guild,
     Cart,
+    Pet,
 }
 
 /// What the box asking how many is for.
@@ -754,6 +781,8 @@ enum Asked {
     RoomPassword(u32),
     /// An inventory item, into the mail being written.
     Mail(u16),
+    /// The pet's new name.
+    PetName,
 }
 
 /// What the right-click menu offers.
@@ -769,6 +798,14 @@ enum Choice {
     GuildInvite(u32),
     /// See what they wear.
     ViewEquipment(u32),
+    /// A command to the player's pet (net::PET_INFO and on).
+    Pet(u8),
+}
+
+/// A pet question waiting for OK: feed it, or rename it (to this).
+enum PetAsked {
+    Feed,
+    Rename(String),
 }
 
 /// Another player's equipment window: the window, what they wear, and their figure for its preview.
@@ -933,6 +970,7 @@ impl Game {
             Panel::Status => self.status_window.frame.open && self.status_window.frame.local(cursor, self.status_height).is_some(),
             Panel::Guild => self.guild.is_some() && self.guild_window.frame.local(cursor, self.guild_window.height()).is_some(),
             Panel::Cart => self.cart.cart.is_some() && self.cart.hit(cursor).is_some(),
+            Panel::Pet => self.pet.as_ref().is_some_and(|pet| self.pet_window.hit(cursor, pet).is_some()),
         })
     }
 
@@ -1181,7 +1219,7 @@ impl Game {
             }
             Asked::FromCart(index) => self.cart.get(index).map(|item| item.amount),
             Asked::Take(index) => self.storage.get(index).map(|item| item.amount),
-            Asked::Shop(_) | Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) | Asked::VendPrice(_) => None,
+            Asked::Shop(_) | Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) | Asked::VendPrice(_) | Asked::PetName => None,
         };
         match amount {
             Some(1) => self.give(asked, 1),
@@ -1198,7 +1236,12 @@ impl Game {
             Asked::PartyName if !name.is_empty() => self.session.make_party(name, false, false),
             Asked::Invite if !name.is_empty() => self.session.invite_to_party(name),
             Asked::RoomPassword(id) => self.session.enter_chat_room(id, name),
-            Asked::PartyName | Asked::Invite => Ok(()),
+            // A name for the pet asks once more: it can be renamed only once.
+            Asked::PetName if !name.is_empty() => {
+                self.pet_asked = Some(PetAsked::Rename(name.to_owned()));
+                Ok(())
+            }
+            Asked::PartyName | Asked::Invite | Asked::PetName => Ok(()),
             what if amount.value() > 0 => {
                 self.give(what, amount.value());
                 Ok(())
@@ -1228,7 +1271,7 @@ impl Game {
                 let have = self.inventory.get(index).map_or(0, |item| item.amount);
                 self.session.drop_item(index, (amount.min(u32::from(have))) as u16)
             }
-            Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) => Ok(()),
+            Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) | Asked::PetName => Ok(()),
             Asked::VendPrice(index) => {
                 if let Some(setup) = &mut self.vend_setup {
                     setup.prices.insert(index, amount);
@@ -1414,6 +1457,8 @@ impl Game {
             net::ITEM_HEALING | net::ITEM_USABLE | net::ITEM_CASH => {
                 let _ = self.session.use_item(index, self.account_id);
             }
+            // An egg (armor worn nowhere) hatches from the egg list only.
+            net::ITEM_ARMOR if item.location == 0 => {}
             net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR | net::ITEM_PET_ARMOR | net::ITEM_AMMO if item.identified => {
                 let _ = self.session.wear(index, item.location);
             }
@@ -1453,6 +1498,34 @@ impl Game {
             (Picking::Spell, skill) => self.session.select_autospell(skill.map_or(0, |skill| skill.id)),
             (Picking::SkillSelect(why), skill) => self.session.select_skill(why, skill.map_or(0, |skill| skill.id as u16)),
             (Picking::Upgrade, item) => self.session.upgrade_weapon(item.map_or(0, |item| u32::from(item.index))),
+            // An egg list left unanswered is let go (rathena drops it on the next skill).
+            (Picking::Hatch, Some(egg)) => self.session.hatch(egg.index),
+            (Picking::Hatch, None) => Ok(()),
+        };
+    }
+
+    /// Opens the pet window (or brings it up) with fresh news of the pet.
+    fn open_pet_window(&mut self) {
+        self.pet_window.frame.open = true;
+        self.raise(Panel::Pet);
+        let _ = self.session.pet_command(net::PET_INFO);
+    }
+
+    /// A command to the pet; sent back to its egg, it's gone and its window closes.
+    fn pet_command(&mut self, command: u8) {
+        let _ = self.session.pet_command(command);
+        if command == net::PET_RETURN {
+            (self.pet_id, self.pet) = (None, None);
+            self.pet_window.frame.open = false;
+        }
+    }
+
+    /// Answers the pet question: OK feeds it, or renames it.
+    fn answer_pet(&mut self, yes: bool) {
+        let _ = match self.pet_asked.take() {
+            Some(PetAsked::Feed) if yes => self.session.pet_command(net::PET_FEED),
+            Some(PetAsked::Rename(name)) if yes => self.session.rename_pet(&name),
+            _ => Ok(()),
         };
     }
 
@@ -1568,6 +1641,8 @@ enum Picking {
     /// Hindsight's spell; a skill picked for a reason (Shadow Spell's), which goes back with it.
     Spell,
     SkillSelect(u32),
+    /// The egg to hatch.
+    Hatch,
 }
 
 struct Dialog {
@@ -1698,6 +1773,7 @@ struct Assets {
     options: options::Assets,
     quest: quest::Assets,
     status: status::Assets,
+    pet: pet::Assets,
     item_window: iteminfo::Assets,
     guild: guild::Assets,
     vend: vend::Assets,
@@ -1793,6 +1869,7 @@ impl Assets {
             options: options::Assets::load(gpu, grf),
             quest: quest::Assets::load(gpu, grf),
             status: status::Assets::load(gpu, grf),
+            pet: pet::Assets::load(gpu, grf),
             item_window: iteminfo::Assets::load(gpu, grf),
             guild: guild::Assets::load(gpu, grf),
             vend: vend::Assets::load(gpu, grf),
@@ -2056,6 +2133,8 @@ struct App {
     grf: Grf,
     /// NPC and monster sprite names by job ID, from the client's Lua tables.
     job_names: HashMap<u16, String>,
+    /// Pets' tables and what they say.
+    pets: pet::Data,
     /// Item names and resources by item ID, and the client's numbered messages.
     items: HashMap<u32, ItemInfo>,
     messages: Vec<String>,
@@ -2567,6 +2646,10 @@ impl App {
                         let _ = game.session.invite_to_guild(&actor.name.clone());
                     }
                 }
+                // Feeding asks first; the status opens the pet window.
+                Some(Choice::Pet(net::PET_FEED)) => game.pet_asked = Some(PetAsked::Feed),
+                Some(Choice::Pet(net::PET_INFO)) => game.open_pet_window(),
+                Some(Choice::Pet(command)) => game.pet_command(command),
                 Some(Choice::Befriend(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         let _ = game.session.add_friend(&actor.name.clone());
@@ -2648,6 +2731,15 @@ impl App {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
                         game.expansion_asked = None;
                         let _ = game.session.answer_expansion(yes);
+                    }
+                }
+            }
+            // A pet question: OK feeds it or renames it.
+            Scene::Game(game) if game.pet_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.answer_pet(yes);
                     }
                 }
             }
@@ -2861,6 +2953,12 @@ impl App {
                         }
                         _ => {}
                     },
+                    Panel::Pet => match game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) {
+                        Some(pet::Hit::Title(title)) => game.pet_window.frame.click_title(title),
+                        Some(pet::Hit::Rename) => game.amount = Some(window::Amount::name(Asked::PetName, PET_NAME_RULE)),
+                        Some(pet::Hit::Feed) => game.pet_asked = Some(PetAsked::Feed),
+                        _ => {}
+                    },
                     Panel::Status => {
                         let hit = game.status_window.hit(cursor, &assets.status, &game.status);
                         if let Some(stat) = hit.and_then(|hit| game.status_window.click(hit)) {
@@ -3039,6 +3137,7 @@ impl App {
             game.guild_window.frame.drag_to(self.cursor, guild_height);
             let cart_height = game.cart.height();
             game.cart.frame.drag_to(self.cursor, cart_height);
+            game.pet_window.frame.drag_to(self.cursor, pet::PetWindow::height());
             if let Some(window) = &mut game.item_window {
                 window.drag_to(self.cursor);
             }
@@ -3078,10 +3177,12 @@ impl App {
                 },
                 _ => None,
             };
-            // A right click (not a drag) on another player opens the menu of what can be done with them.
+            // A right click (not a drag) on another player (or our pet) opens the menu of what can be done with them.
             let on_unit = match hovered(&game.hit_boxes, self.cursor) {
                 _ if game.window_at(self.cursor).is_some() || game.chat.contains(self.cursor) => None,
                 Some(Owner::Unit(id)) if game.units.get(&id).is_some_and(|actor| actor.kind == PLAYER) => Some(id),
+                // And on our pet, its commands.
+                Some(Owner::Unit(id)) if game.pet_id == Some(id) => Some(id),
                 _ => None,
             };
             if state == ElementState::Pressed {
@@ -3092,24 +3193,32 @@ impl App {
                 && let Some(actor) = game.units.get(&id)
             {
                 let fill = |id: usize| rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&actor.name]);
-                let mut choices = vec![Some((fill(TRADE_CHOICE), Choice::Trade(id)))];
-                // The guild's master can invite.
-                if game.guild.as_ref().is_some_and(|guild| guild.master && guild.members.iter().all(|member| member.account != id)) {
-                    choices.push(Some((fill(GUILD_CHOICE), Choice::GuildInvite(id))));
+                let mut choices = Vec::new();
+                // Our pet: its commands, the accessory's while it wears one.
+                if Some(id) == game.pet_id {
+                    let accessory = game.pet.as_ref().is_some_and(|pet| pet.accessory != 0);
+                    let commands = PET_CHOICES.into_iter().filter(|&(_, command)| command != net::PET_UNEQUIP || accessory);
+                    choices.extend(commands.map(|(label, command)| Some((fill(label), Choice::Pet(command)))));
+                } else {
+                    choices.push(Some((fill(TRADE_CHOICE), Choice::Trade(id))));
+                    // The guild's master can invite.
+                    if game.guild.as_ref().is_some_and(|guild| guild.master && guild.members.iter().all(|member| member.account != id)) {
+                        choices.push(Some((fill(GUILD_CHOICE), Choice::GuildInvite(id))));
+                    }
+                    // Not yet a friend: offer it, under a line.
+                    if game.friends.iter().all(|friend| friend.account != id) {
+                        choices.extend([None, Some((fill(FRIEND_CHOICE), Choice::Befriend(id)))]);
+                    }
+                    // The party's leader can invite players not in it.
+                    if let Some(party) = &game.party
+                        && party.leader() == Some(game.account_id)
+                        && party.members.iter().all(|member| member.info.account != id)
+                    {
+                        choices.extend([None, Some((fill(PARTY_ASK), Choice::Invite(id)))]);
+                    }
+                    // ponytail: last, under a line; where the real client lists it isn't known.
+                    choices.extend([None, Some((fill(VIEW_CHOICE), Choice::ViewEquipment(id)))]);
                 }
-                // Not yet a friend: offer it, under a line.
-                if game.friends.iter().all(|friend| friend.account != id) {
-                    choices.extend([None, Some((fill(FRIEND_CHOICE), Choice::Befriend(id)))]);
-                }
-                // The party's leader can invite players not in it.
-                if let Some(party) = &game.party
-                    && party.leader() == Some(game.account_id)
-                    && party.members.iter().all(|member| member.info.account != id)
-                {
-                    choices.extend([None, Some((fill(PARTY_ASK), Choice::Invite(id)))]);
-                }
-                // ponytail: last, under a line; where the real client lists it isn't known.
-                choices.extend([None, Some((fill(VIEW_CHOICE), Choice::ViewEquipment(id)))]);
                 game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             }
             // A right click on an item (inventory, storage or what's worn) describes it.
@@ -3237,6 +3346,7 @@ impl App {
                     | game.status_window.frame.drop_drag()
                     | game.guild_window.frame.drop_drag()
                     | game.cart.frame.drop_drag()
+                    | game.pet_window.frame.drop_drag()
                     | game.storage.frame.drop_drag()
                     | game.inventory.frame.drop_drag()
                     | game.equipment.frame.drop_drag()
@@ -3386,6 +3496,9 @@ impl App {
                     game.guild_window.frame.start_drag(cursor)
                 }
                 Panel::Cart if game.cart.hit(cursor) == Some(inventory::Hit::Title(TitleHit::Title)) => game.cart.frame.start_drag(cursor),
+                Panel::Pet if game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) == Some(pet::Hit::Title(TitleHit::Title)) => {
+                    game.pet_window.frame.start_drag(cursor)
+                }
                 Panel::Equipment if game.equipment.hit(cursor, &game.inventory.items) == Some(equipment::Hit::Title(TitleHit::Title)) => {
                     game.equipment.frame.start_drag(cursor)
                 }
@@ -3460,6 +3573,8 @@ impl App {
                 PhysicalKey::Code(KeyCode::KeyA) => Some((Panel::Status, &mut game.status_window.frame)),
                 PhysicalKey::Code(KeyCode::KeyG) => Some((Panel::Guild, &mut game.guild_window.frame)),
                 PhysicalKey::Code(KeyCode::KeyW) if game.cart.cart.is_some() => Some((Panel::Cart, &mut game.cart.frame)),
+                // Alt+J, the game's own key for the pet window, while there's a pet.
+                PhysicalKey::Code(KeyCode::KeyJ) if game.pet.is_some() => Some((Panel::Pet, &mut game.pet_window.frame)),
                 _ => None,
             };
             if let Some((id, frame)) = window {
@@ -3468,6 +3583,10 @@ impl App {
                 // The guild window asks for what it shows.
                 if id == Panel::Guild && game.guild_window.frame.open {
                     game.ask_guild_pages();
+                }
+                // The pet window asks for fresh news of the pet.
+                if id == Panel::Pet && game.pet_window.frame.open {
+                    let _ = game.session.pet_command(net::PET_INFO);
                 }
                 return;
             }
@@ -3614,6 +3733,9 @@ impl App {
             Scene::Game(game) if game.expansion_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.expansion_asked = None;
                 let _ = game.session.answer_expansion(*key == Key::Named(NamedKey::Enter));
+            }
+            Scene::Game(game) if game.pet_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.answer_pet(*key == Key::Named(NamedKey::Enter));
             }
             Scene::Game(game) if game.amount.is_some() => match key {
                 Key::Named(NamedKey::Enter) => game.answer_amount(true),
@@ -4006,6 +4128,10 @@ impl App {
                     friends: Vec::new(),
                     friend_asked: None,
                     expansion_asked: None,
+                    pet_id: None,
+                    pet: None,
+                    pet_window: pet::PetWindow::default(),
+                    pet_asked: None,
                     vend_setup: None,
                     my_shop: None,
                     mail: mail::Mail::default(),
@@ -4042,6 +4168,7 @@ impl App {
                         Panel::Status,
                         Panel::Guild,
                         Panel::Cart,
+                        Panel::Pet,
                     ],
                     damages: Vec::new(),
                     status,
@@ -4110,6 +4237,8 @@ impl App {
                 game.marks.clear();
                 game.signs.clear();
                 game.effects.clear();
+                // The server announces the pet again on load.
+                (game.pet_id, game.pet) = (None, None);
                 game.player.stop_at(position.map(i32::from));
                 let _ = game.session.loaded();
             }
@@ -4150,7 +4279,7 @@ impl App {
         }
 
         let Scene::Game(game) = &mut self.scene else { return };
-        let (grf, job_names, look_tables) = (&self.grf, &self.job_names, &self.look_tables);
+        let (grf, job_names, look_tables, pets) = (&self.grf, &self.job_names, &self.look_tables, &self.pets);
         // Which kind of pick a making list is (read before the event is taken apart).
         let event_kind = match &event {
             MapEvent::MakeList(_) => Some(Picking::Make),
@@ -4170,6 +4299,7 @@ impl App {
         let new_actor = |unit: &net::Unit| {
             let sprites = match unit.kind {
                 PLAYER => SpriteSet::player(grf, &unit_look(unit), look_tables),
+                PET => job_names.get(&unit.job).and_then(|name| pet_sprites(grf, name, pets.tables.accessory_acts.get(&unit.head_bottom))),
                 // Hidden NPCs (script triggers) have no sprite in the client either.
                 _ if HIDDEN_JOBS.contains(&unit.job) => None,
                 _ => job_names.get(&unit.job).and_then(|name| SpriteSet::single(grf, name, unit.kind == MONSTER)),
@@ -5170,6 +5300,94 @@ impl App {
                 game.chat_line(line, WHISPER_COLOR);
             }
             MapEvent::ItemSkill(skill) => game.cast_item_skill(skill),
+            // Eggs to hatch: the pick list; an empty one shows nothing.
+            MapEvent::PetEggs(indexes) => {
+                let eggs: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
+                if !eggs.is_empty() {
+                    game.pick = Some((pick_list::PickList::new(PET_EGGS, eggs), Picking::Hatch));
+                }
+            }
+            MapEvent::PetState { kind: net::PET_OWNED, id, .. } => game.pet_id = Some(id),
+            MapEvent::PetState { kind: net::PET_EGGS_DONE, .. } => {
+                if matches!(game.pick, Some((_, Picking::Hatch))) {
+                    game.pick = None;
+                }
+            }
+            // ponytail: neglect is told when intimacy falls while the pet starves; when the real client tells it isn't known.
+            MapEvent::PetState { kind: net::PET_INTIMACY, value, .. } => {
+                if game.pet.as_ref().is_some_and(|pet| pet.hunger == 0 && value < i32::from(pet.intimacy)) {
+                    game.chat_line(self.messages.get(PET_NEGLECTED).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+                if let Some(pet) = &mut game.pet {
+                    pet.intimacy = value as u16;
+                }
+            }
+            MapEvent::PetState { kind: net::PET_HUNGER, value, .. } => {
+                if let Some(pet) = &mut game.pet {
+                    pet.hunger = value as u16;
+                }
+            }
+            // An accessory on or off: the pet moves by another ACT.
+            MapEvent::PetState { kind: net::PET_ACCESSORY, id, value } => {
+                if let Some(pet) = game.pet.as_mut().filter(|_| game.pet_id == Some(id)) {
+                    pet.accessory = value as u16;
+                }
+                if let Some(actor) = game.units.get_mut(&id)
+                    && let Some(name) = job_names.get(&actor.job)
+                {
+                    actor.sprites = pet_sprites(grf, name, pets.tables.accessory_acts.get(&(value as u16)));
+                }
+            }
+            // ponytail: a performance plays action 4 + its number once (pets' sprites have more actions than plain
+            // monsters'); which action the real client plays isn't known. Our pet says something about it.
+            MapEvent::PetState { kind: net::PET_PERFORMANCE, id, value } => {
+                let action = 4 + value.clamp(0, 4) as usize;
+                if let Some(actor) = game.units.get_mut(&id)
+                    && let Some(duration) =
+                        actor.sprites.as_ref().filter(|sprites| sprites.frames(action * 8) > 0).and_then(|sprites| sprites.action_ms(action, actor.direction))
+                {
+                    actor.play(action, Instant::now(), duration, false);
+                }
+                if let Some(pet) = game.pet.as_ref().filter(|_| game.pet_id == Some(id)) {
+                    let act = if value == 4 { pet::ACT_PERFORMED_SPECIAL } else { pet::ACT_PERFORMED + value.clamp(1, 3) as u8 - 1 };
+                    let _ = game.session.pet_act(&net::PetAct::Talk { monster: pet.monster, act, hunger: pet::hunger_band(pet.hunger) });
+                }
+            }
+            MapEvent::PetState { .. } => {}
+            MapEvent::PetInfo(pet) => {
+                // Its picture, loaded when it's another monster's.
+                if game.pet_window.picture.as_ref().is_none_or(|(monster, _)| *monster != pet.monster) {
+                    let path = pets.tables.illustrations.get(&pet.monster).map(|name| format!("{UI}illust\\{name}"));
+                    let picture = gpu.zip(path).and_then(|(gpu, path)| gpu.try_load_texture(grf, &path, false).ok());
+                    game.pet_window.picture = Some((pet.monster, picture));
+                }
+                game.pet = Some(pet);
+            }
+            MapEvent::PetFed { ok: false, food } => {
+                let name = inventory::item_name(&self.items, food, true, 0);
+                game.chat_line(messages::fill(self.messages.get(PET_NO_FOOD).map_or("", String::as_str), &[&name]), CHAT_ERROR);
+            }
+            // Fed (its hunger came just before): it says so.
+            MapEvent::PetFed { ok: true, .. } => {
+                if let Some(pet) = &game.pet {
+                    let _ = game.session.pet_act(&net::PetAct::Talk { monster: pet.monster, act: pet::ACT_FEEDING, hunger: pet::hunger_band(pet.hunger) });
+                }
+            }
+            MapEvent::PetAct { id, act: net::PetAct::Emotion(kind) } => {
+                if let Some(action) = emotion::sprite_action(kind) {
+                    game.emotions.insert(Some(id), (action, Instant::now()));
+                }
+            }
+            MapEvent::PetAct { id, act: net::PetAct::Talk { monster, act, hunger } } => {
+                if let Some(line) = pets.line(monster, act, hunger) {
+                    game.say(Some(id), line, CHAT_WHITE);
+                }
+            }
+            MapEvent::UnitName { id, name } => {
+                if let Some(actor) = game.units.get_mut(&id) {
+                    actor.name = name;
+                }
+            }
             MapEvent::IdentifyList(indexes) => {
                 let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
                 if items.is_empty() {
@@ -6446,6 +6664,11 @@ impl App {
                     game.cart.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.inventory, icons, items, messages, font, pointer.0)
                 }
                 Panel::Cart => {}
+                Panel::Pet => {
+                    if let Some(pet) = &game.pet {
+                        game.pet_window.draw(&mut layer, &assets.chrome, &assets.pet, font, messages, pet, pointer);
+                    }
+                }
                 Panel::Status => {
                     let guild = game.guild.as_ref().map_or("", |guild| guild.name.as_str());
                     game.status_window.draw(&mut layer, &assets.chrome, &assets.status, font, messages, &game.status, guild, pointer);
@@ -6619,15 +6842,23 @@ impl App {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }
-        // Growing the inventory: which voucher, from how many slots to how many, in the message's colors.
-        if let Some(voucher) = game.expansion_asked {
+        // Growing the inventory (which voucher, from how many slots to how many) or a pet question, in the message's
+        // colors.
+        let colored_question = match (game.expansion_asked, &game.pet_asked) {
+            (Some(voucher), _) => {
+                let now = inventory::BASE_SLOTS + usize::from(game.inventory.expansion);
+                let name = inventory::item_name(items, voucher, true, 0);
+                Some(messages::fill(message(EXPANSION_ASKS), &[&name, &now, &(now + VOUCHER_SLOTS)]))
+            }
+            (None, Some(PetAsked::Feed)) => Some(message(PET_FEED_ASKS).to_owned()),
+            (None, Some(PetAsked::Rename(name))) => Some(messages::fill(message(PET_RENAME_ASKS), &[name])),
+            (None, None) => None,
+        };
+        if let Some(question) = colored_question {
             let dialog = dialog_position(&assets.message);
             shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
-            let now = inventory::BASE_SLOTS + usize::from(game.inventory.expansion);
-            let name = inventory::item_name(items, voucher, true, 0);
-            let question = messages::fill(message(EXPANSION_ASKS), &[&name, &now, &(now + VOUCHER_SLOTS)]);
             for (row, pieces) in wrap_colored(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
                 let mut x = dialog[0] + MESSAGE_TEXT[0];
                 for (color, piece) in pieces {
@@ -7124,6 +7355,7 @@ fn main() {
     );
     let event_loop = event_loop.build().expect("event loop");
     control::listen(event_loop.create_proxy());
+    let pets = pet::Data::load(&grf);
     let job_names = lua::job_names(&grf).unwrap_or_else(|error| {
         eprintln!("no NPC/monster sprite names: {error}");
         HashMap::new()
@@ -7164,6 +7396,7 @@ fn main() {
     let mut app = App {
         grf,
         job_names,
+        pets,
         items,
         messages,
         icons: HashMap::new(),
