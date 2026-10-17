@@ -480,7 +480,9 @@ impl CameraGoal {
 
     /// Dragging turns the view; with Shift it tilts, with Ctrl it zooms.
     fn drag(&mut self, cursor: [f32; 2], modifiers: ModifiersState) {
-        let Some(last) = self.dragging.replace(cursor) else { return };
+        // Only while the right button is down: `replace` would start a drag on any move.
+        let Some(last) = self.dragging else { return };
+        self.dragging = Some(cursor);
         let [dx, dy] = [cursor[0] - last[0], cursor[1] - last[1]];
         if modifiers.shift_key() {
             let [low, high] = if self.indoor { PITCH_RANGE_INDOOR } else { PITCH_RANGE };
@@ -5964,5 +5966,17 @@ mod tests {
         let navi = "Let me mark the ^B9062F<NAVI>[Tool Shop]<INFO>prontera,134,221,0,000,0</INFO></NAVI>^000000 for you.";
         assert_eq!(show_links(navi), "Let me mark the ^B9062F^C00000[Tool Shop]^B9062F^000000 for you.");
         assert_eq!(show_links("a <ITEM>Apple<INFO>512</INFO></ITEM> < b"), "a ^0070C0Apple^000000 < b");
+    }
+
+    #[test]
+    fn turns_the_camera_only_while_the_right_button_is_down() {
+        let mut goal = CameraGoal::new(false);
+        let none = ModifiersState::empty();
+        goal.drag([100.0, 100.0], none);
+        goal.drag([200.0, 100.0], none);
+        assert_eq!((goal.yaw, goal.dragging), (0.0, None));
+        goal.press([200.0, 100.0], none);
+        goal.drag([300.0, 100.0], none);
+        assert!(goal.yaw > 0.0);
     }
 }
