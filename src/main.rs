@@ -363,6 +363,19 @@ const STATUS_STEP: [f32; 2] = [45.0, 36.0];
 const CLOCK_STEPS: usize = 32;
 /// A skill still blocked: "There is a Delay after using a Skill.", and the words after a cooldown's seconds left.
 const SKILL_DELAY: usize = 219;
+/// Equipment: a break ("[%s]'s %s has been damaged.", Weapon, Armor), the item's damaged line, and binding (the
+/// question before, the line after).
+const DAMAGED: usize = 1301;
+const DAMAGED_WEAPON: usize = 1302;
+const DAMAGED_ARMOR: usize = 1303;
+const ITEM_DAMAGED: usize = 699;
+const BIND_ASKS: usize = 1327;
+const BOUND: usize = 1328;
+/// Rentals: " The [%s] item will disappear in %d minutes.", the same in seconds, and " [%s] item has been deleted
+/// from the Inventory.".
+const RENTAL_MINUTES: usize = 1256;
+const RENTAL_SECONDS: usize = 1270;
+const RENTAL_ENDED: usize = 1258;
 const COOLDOWN_LEFT: usize = 3230;
 /// The spark of a landed hit, and a warp portal's rings.
 const EF_HIT1: u32 = 0;
@@ -578,6 +591,10 @@ struct Game {
     friend_asked: Option<(u32, u32, String)>,
     /// The server asks whether to use this voucher to grow the inventory.
     expansion_asked: Option<u32>,
+    /// A bind-on-equip item (inventory index) waiting for OK to be worn; the broken items' indexes before the
+    /// inventory came again (None: there was none yet, at login).
+    bind_asked: Option<u16>,
+    broken_before: Option<Vec<u16>>,
     /// The player's pet: its unit (once the server says it's ours), what it's like, its window, and a question about
     /// it waiting for OK.
     pet_id: Option<u32>,
@@ -1592,6 +1609,8 @@ impl Game {
             }
             // An egg (armor worn nowhere) hatches from the egg list only.
             net::ITEM_ARMOR if item.location == 0 => {}
+            // An item that binds once worn asks first.
+            net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR if item.identified && item.bind == 1 => self.bind_asked = Some(index),
             net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR | net::ITEM_PET_ARMOR | net::ITEM_AMMO if item.identified => {
                 let _ = self.session.wear(index, item.location);
             }
@@ -1635,6 +1654,14 @@ impl Game {
             (Picking::Hatch, Some(egg)) => self.session.hatch(egg.index),
             (Picking::Hatch, None) => Ok(()),
         };
+    }
+
+    /// Answers the bind question: OK wears the item.
+    fn answer_bind(&mut self, yes: bool) {
+        let Some(index) = self.bind_asked.take().filter(|_| yes) else { return };
+        if let Some(location) = self.inventory.get(index).map(|item| item.location) {
+            let _ = self.session.wear(index, location);
+        }
     }
 
     /// Closes the roulette's window; the server answers nothing.
@@ -2979,6 +3006,15 @@ impl App {
                     }
                 }
             }
+            // Wearing an item that binds: OK wears it.
+            Scene::Game(game) if game.bind_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.answer_bind(yes);
+                    }
+                }
+            }
             // Growing the inventory: OK or cancel.
             Scene::Game(game) if game.expansion_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
@@ -3228,6 +3264,9 @@ impl App {
                         // The title changes when the server answers.
                         if let equipment::Hit::WearTitle(title) = hit {
                             let _ = game.session.change_title(title);
+                        }
+                        if hit == equipment::Hit::TakeOffAll {
+                            let _ = game.session.take_off_all();
                         }
                         if let Some(index) = game.equipment.click(hit) {
                             let _ = game.session.take_off(index);
@@ -3621,7 +3660,9 @@ impl App {
                 _ => None,
             };
             if let Some(item) = described {
-                let shown = iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards };
+                let damaged = item.broken.then(|| self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
+                let shown =
+                    iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires };
                 let position = game.item_window.as_ref().map(|window| window.position);
                 let mut window = iteminfo::ItemWindow::new(shown);
                 if let Some(position) = position {
@@ -4218,6 +4259,9 @@ impl App {
                 }
             }
             // The question holds the player busy until it's answered.
+            Scene::Game(game) if game.bind_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.answer_bind(*key == Key::Named(NamedKey::Enter));
+            }
             Scene::Game(game) if game.expansion_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.expansion_asked = None;
                 let _ = game.session.answer_expansion(*key == Key::Named(NamedKey::Enter));
@@ -4681,6 +4725,8 @@ impl App {
                     friends: Vec::new(),
                     friend_asked: None,
                     expansion_asked: None,
+                    bind_asked: None,
+                    broken_before: None,
                     pet_id: None,
                     pet: None,
                     pet_window: pet::PetWindow::default(),
@@ -5207,8 +5253,38 @@ impl App {
                     _ => game.chat_line(message(messages::CANT_CARRY), CHAT_ERROR),
                 }
             }
-            MapEvent::InventoryStart { kind: 0 } => game.inventory.clear(),
-            MapEvent::InventoryItems { kind: 0, items } => game.inventory.extend(items),
+            // The inventory again: what broke since says so; the out pet's egg (marked broken) stays hidden.
+            MapEvent::InventoryStart { kind: 0 } => {
+                let had = !game.inventory.items.is_empty();
+                game.broken_before = had.then(|| game.inventory.items.iter().filter(|item| item.broken).map(|item| item.index).collect());
+                game.inventory.clear();
+            }
+            MapEvent::InventoryItems { kind: 0, items } => {
+                // ponytail: rathena never sends ZC_EQUIPITEM_DAMAGED, so the client notices a break in the resent list.
+                if let Some(before) = &game.broken_before {
+                    let message = |id: usize| self.messages.get(id).map_or("", String::as_str);
+                    let lines: Vec<String> = inventory::newly_broken(before, &items)
+                        .into_iter()
+                        .map(|item| {
+                            let place = message(if item.kind == net::ITEM_WEAPON { DAMAGED_WEAPON } else { DAMAGED_ARMOR });
+                            messages::fill(message(DAMAGED), &[&game.me.name, &place])
+                        })
+                        .collect();
+                    for line in lines {
+                        game.chat_line(line, CHAT_ERROR);
+                    }
+                }
+                game.inventory.extend(items.into_iter().filter(|item| !inventory::hidden_egg(item)).collect());
+            }
+            MapEvent::BoundOnEquip(index) => {
+                if let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index) {
+                    item.bind = 2;
+                    let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
+                    game.chat_line(messages::fill(self.messages.get(BOUND).map_or("", String::as_str), &[&name]), CHAT_ITEM);
+                }
+            }
+            // ponytail: no line fits a refusal; it says nothing.
+            MapEvent::TookOffAll { .. } => {}
             // The storage opens with the inventory beside it.
             MapEvent::InventoryStart { kind: 2 } => {
                 game.storage.open();
@@ -6408,6 +6484,21 @@ impl App {
                     _ => game.chat_line(message(372), CHAT_ERROR),
                 }
             }
+            // A rental ended: its warning, its time up and gone from the inventory (the take-off and delete that may follow
+            // find nothing then).
+            // ponytail: rathena's comment says minutes; under a minute it's said in seconds.
+            MapEvent::RentalTime { item, seconds } => {
+                let name = inventory::item_name(&self.items, item, true, 0);
+                let (id, count) = if seconds < 60 { (RENTAL_SECONDS, seconds) } else { (RENTAL_MINUTES, seconds / 60) };
+                game.chat_line(messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name, &count]).trim_start().to_owned(), CHAT_ITEM);
+            }
+            MapEvent::RentalExpired { index, item } => {
+                let name = inventory::item_name(&self.items, item, true, 0);
+                game.chat_line(messages::fill(self.messages.get(RENTAL_ENDED).map_or("", String::as_str), &[&name]).trim_start().to_owned(), CHAT_ITEM);
+                game.inventory.remove(index, u16::MAX);
+            }
+            // An item no longer carried (a rental that ended) comes off without a word.
+            MapEvent::Unequipped { index, failed: false, .. } if game.inventory.get(index).is_none() => {}
             MapEvent::Unequipped { index, failed: false, .. } => {
                 let name = game.inventory.get(index).map(|item| inventory::item_name(&self.items, item.id, item.identified, item.refine)).unwrap_or_default();
                 game.inventory.set_worn(index, 0);
@@ -7682,6 +7773,7 @@ impl App {
         // colors.
         let colored_question = match (game.expansion_asked, &game.pet_asked) {
             _ if game.dismiss_asked => Some(message(mercenary::DISMISS_QUESTION).to_owned()),
+            _ if game.bind_asked.is_some() => Some(message(BIND_ASKS).to_owned()),
             (Some(voucher), _) => {
                 let now = inventory::BASE_SLOTS + usize::from(game.inventory.expansion);
                 let name = inventory::item_name(items, voucher, true, 0);
@@ -7733,7 +7825,8 @@ impl App {
             amount.draw(&mut shop_layer, &assets.chrome, &assets.message, [&assets.ok, &assets.cancel], messages, pointer);
         }
         if let Some(window) = &game.item_window {
-            let lines = window.lines(items, &|text, width| wrap_colored(font, text, width));
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
+            let lines = window.lines(items, messages, now, &|text, width| wrap_colored(font, text, width));
             game.item_lines = lines.len();
             window.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
         }
