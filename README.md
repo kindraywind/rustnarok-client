@@ -1,8 +1,8 @@
 # rustnarok-client
 
-A native Ragnarok Online client for macOS, written from scratch in Rust. The aim is a client players can't tell
-apart from the official one: the same windows, layouts, fonts, sounds and behavior, drawn from the player's own
-game data at runtime. It speaks the protocol of the 2022-04-06 main client (PACKETVER 20220406) and is developed
+A native Ragnarok Online client for macOS, written from scratch in Rust. The aim is to match the official client or
+improve on it: its windows, layouts, fonts, sounds and behavior at least as good as the original, drawn from the
+player's own game data at runtime. It speaks the protocol of the 2022-04-06 main client (PACKETVER 20220406) and is developed
 against a local rathena server (see [Server](#server)).
 
 The crate, binary and dev switches are named `roclient`.
