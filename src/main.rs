@@ -40,6 +40,7 @@
 mod actor;
 mod bank;
 mod basic_info;
+mod buying;
 mod char_make;
 mod char_select;
 mod chat;

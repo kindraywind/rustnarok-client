@@ -219,13 +219,18 @@ pub struct Amount<T> {
 }
 
 impl<T> Amount<T> {
-    const DIGITS: usize = 5;
+    const DIGITS: usize = 9;
     /// A name's 23 bytes, about as many characters.
     const NAME: usize = 23;
 
     /// Asks how many ("Input Number"), with `start` already typed in.
     pub fn new(what: T, start: Option<u32>) -> Self {
         Self { what, typed: start.map(|amount| amount.to_string()).unwrap_or_default(), message: 1259, digits: true }
+    }
+
+    /// Asks for a price ("Price: "), digits only.
+    pub fn price(what: T) -> Self {
+        Self { what, typed: String::new(), message: 1721, digits: true }
     }
 
     /// Asks for a name, under that message.
