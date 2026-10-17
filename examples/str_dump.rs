@@ -2,9 +2,9 @@
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let grf = roclient::grf::Grf::open(&args[1]).unwrap();
+    let grf = rustnarok_client::grf::Grf::open(&args[1]).unwrap();
     let bytes = grf.read(&format!("data\\texture\\effect\\{}.str", args[2])).unwrap();
-    let effect = roclient::effect::Str::parse(&bytes).unwrap();
+    let effect = rustnarok_client::effect::Str::parse(&bytes).unwrap();
     println!("{} fps, {} frames, {} layers", effect.fps, effect.frames, effect.layers.len());
     for (index, layer) in effect.layers.iter().enumerate() {
         println!("layer {index}: {:?}", layer.textures);

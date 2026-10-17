@@ -2,39 +2,39 @@
 //!
 //! README.md says what it does so far and how to set it up.
 //!
-//! Dev switches: `ROCLIENT_GRF` (data.grf path), `ROCLIENT_SERVER` (login server, default 127.0.0.1:6900),
-//! `ROCLIENT_LOGIN=user:password` (fill in and submit on start), `ROCLIENT_AUTOSTART=<slot>` (then pick the first
-//! server and play that slot; any other value stops at character select), `ROCLIENT_WALK=x,y` (walk there a second after entering the map),
-//! `ROCLIENT_TALK=<name>[:<n>]` (talk to that NPC, pressing "next" or "close" up to n times), `ROCLIENT_ATTACK=1` (attack the
-//! nearest monster in view), `ROCLIENT_SAY=<text>[|<text>...]` (type each into the chat a second after entering, e.g.
-//! GM commands or /organize; `ROCLIENT_SAY_AT` seconds in instead),
-//! `ROCLIENT_PICKUP=1` (pick up the nearest item once one lies around), `ROCLIENT_INVENTORY=1` (open the inventory),
-//! `ROCLIENT_CURSOR=x,y` (where the pointer starts, to see hover labels in screenshots),
-//! `ROCLIENT_CAMERA=yaw,pitch,zoom` (start the camera turned, in degrees and zoom units),
-//! `ROCLIENT_WEAR=1` (put on every piece of equipment carried, once the inventory is in), `ROCLIENT_EQUIPMENT=1` (open
-//! the equipment window), `ROCLIENT_SHOT_LOADING=1` (screenshot the loading screen instead of the game),
-//! `ROCLIENT_SKILLS=1` (open the skill window), `ROCLIENT_SKILL=<id>:<level>` (use a skill 3 seconds in, on oneself
-//! if it needs a target), `ROCLIENT_HOTKEYS=<slot>[,<slot>...]` (press those hotkeys, one a second from 3 seconds in),
-//! `ROCLIENT_DEAL=buy|sell[:<row>:<amount>]` (answer a shop's question at once, and make that deal),
-//! `ROCLIENT_MENU=<n>[,<n>...]` (pick those NPC menu items, counting from 1, as menus come up),
-//! `ROCLIENT_STORE=put|take:<item>:<amount>` (once storage opens, move that much of an item in or out),
-//! `ROCLIENT_TRADE=ask:<name>|accept` (ask that player for a deal, or take the first one asked),
-//! `ROCLIENT_TRADE_GIVE=<item>:<amount>[,...][,z<zeny>]` (once a deal opens, put those in, lock and exchange),
-//! `ROCLIENT_ROOM=window|make:<title>` (open the chat room maker with that title, or make the room),
-//! `ROCLIENT_STATUS=1` (open the status window), `ROCLIENT_CART=1` (open the cart),
-//! `ROCLIENT_VEND=<name>:<price>` (when the vending skill goes off, sell the whole cart at that price),
-//! `ROCLIENT_FRIEND=accept` (befriend whoever asks), `ROCLIENT_GUILD=accept,window` (join the first guild that invites, open the guild window),
-//! `ROCLIENT_PARTY=accept,window,friends` (join the first party that invites, open the party window),
-//! `ROCLIENT_WHISPER=<name>|<text>[;...]` (whisper those a second in, through the chat's name box),
-//! `ROCLIENT_CONTROL=<socket>` (take commands from a test driver on that Unix socket; see control.rs),
-//! `ROCLIENT_CLICKS=[r]x,y[>x,y][;...]` (click, or drag, one a second from `ROCLIENT_CLICKS_AT` seconds in, 4 by
+//! Dev switches: `RUSTNAROK_CLIENT_GRF` (data.grf path), `RUSTNAROK_CLIENT_SERVER` (login server, default 127.0.0.1:6900),
+//! `RUSTNAROK_CLIENT_LOGIN=user:password` (fill in and submit on start), `RUSTNAROK_CLIENT_AUTOSTART=<slot>` (then pick the first
+//! server and play that slot; any other value stops at character select), `RUSTNAROK_CLIENT_WALK=x,y` (walk there a second after entering the map),
+//! `RUSTNAROK_CLIENT_TALK=<name>[:<n>]` (talk to that NPC, pressing "next" or "close" up to n times), `RUSTNAROK_CLIENT_ATTACK=1` (attack the
+//! nearest monster in view), `RUSTNAROK_CLIENT_SAY=<text>[|<text>...]` (type each into the chat a second after entering, e.g.
+//! GM commands or /organize; `RUSTNAROK_CLIENT_SAY_AT` seconds in instead),
+//! `RUSTNAROK_CLIENT_PICKUP=1` (pick up the nearest item once one lies around), `RUSTNAROK_CLIENT_INVENTORY=1` (open the inventory),
+//! `RUSTNAROK_CLIENT_CURSOR=x,y` (where the pointer starts, to see hover labels in screenshots),
+//! `RUSTNAROK_CLIENT_CAMERA=yaw,pitch,zoom` (start the camera turned, in degrees and zoom units),
+//! `RUSTNAROK_CLIENT_WEAR=1` (put on every piece of equipment carried, once the inventory is in), `RUSTNAROK_CLIENT_EQUIPMENT=1` (open
+//! the equipment window), `RUSTNAROK_CLIENT_SHOT_LOADING=1` (screenshot the loading screen instead of the game),
+//! `RUSTNAROK_CLIENT_SKILLS=1` (open the skill window), `RUSTNAROK_CLIENT_SKILL=<id>:<level>` (use a skill 3 seconds in, on oneself
+//! if it needs a target), `RUSTNAROK_CLIENT_HOTKEYS=<slot>[,<slot>...]` (press those hotkeys, one a second from 3 seconds in),
+//! `RUSTNAROK_CLIENT_DEAL=buy|sell[:<row>:<amount>]` (answer a shop's question at once, and make that deal),
+//! `RUSTNAROK_CLIENT_MENU=<n>[,<n>...]` (pick those NPC menu items, counting from 1, as menus come up),
+//! `RUSTNAROK_CLIENT_STORE=put|take:<item>:<amount>` (once storage opens, move that much of an item in or out),
+//! `RUSTNAROK_CLIENT_TRADE=ask:<name>|accept` (ask that player for a deal, or take the first one asked),
+//! `RUSTNAROK_CLIENT_TRADE_GIVE=<item>:<amount>[,...][,z<zeny>]` (once a deal opens, put those in, lock and exchange),
+//! `RUSTNAROK_CLIENT_ROOM=window|make:<title>` (open the chat room maker with that title, or make the room),
+//! `RUSTNAROK_CLIENT_STATUS=1` (open the status window), `RUSTNAROK_CLIENT_CART=1` (open the cart),
+//! `RUSTNAROK_CLIENT_VEND=<name>:<price>` (when the vending skill goes off, sell the whole cart at that price),
+//! `RUSTNAROK_CLIENT_FRIEND=accept` (befriend whoever asks), `RUSTNAROK_CLIENT_GUILD=accept,window` (join the first guild that invites, open the guild window),
+//! `RUSTNAROK_CLIENT_PARTY=accept,window,friends` (join the first party that invites, open the party window),
+//! `RUSTNAROK_CLIENT_WHISPER=<name>|<text>[;...]` (whisper those a second in, through the chat's name box),
+//! `RUSTNAROK_CLIENT_CONTROL=<socket>` (take commands from a test driver on that Unix socket; see control.rs),
+//! `RUSTNAROK_CLIENT_CLICKS=[r]x,y[>x,y][;...]` (click, or drag, one a second from `RUSTNAROK_CLIENT_CLICKS_AT` seconds in, 4 by
 //! default; `r` for the right button),
-//! `ROCLIENT_MAKE=<slot>[:<name>]` (open character creation on that slot; with a name, make it),
-//! `ROCLIENT_DELETE=<slot>:<reserve|cancel|ask|prompt|birthdate>` (reserve, cancel, show the questions of, or complete
+//! `RUSTNAROK_CLIENT_MAKE=<slot>[:<name>]` (open character creation on that slot; with a name, make it),
+//! `RUSTNAROK_CLIENT_DELETE=<slot>:<reserve|cancel|ask|prompt|birthdate>` (reserve, cancel, show the questions of, or complete
 //! that slot's deletion; `-` is an empty birthdate),
-//! `ROCLIENT_DATA=<folder>` (where the loose `data` and `System` folders that go before data.grf are; `.` by default,
+//! `RUSTNAROK_CLIENT_DATA=<folder>` (where the loose `data` and `System` folders that go before data.grf are; `.` by default,
 //! `none` for the archive alone),
-//! `ROCLIENT_SCREENSHOT=out.png` (save a settled frame and quit; in the game after `ROCLIENT_SHOT_DELAY` seconds, 2 by default).
+//! `RUSTNAROK_CLIENT_SCREENSHOT=out.png` (save a settled frame and quit; in the game after `RUSTNAROK_CLIENT_SHOT_DELAY` seconds, 2 by default).
 
 mod actor;
 mod basic_info;
@@ -80,12 +80,12 @@ use equipment::Equipment;
 use image::{Rgba, RgbaImage};
 use inventory::Inventory;
 use render::{Gpu, Sprite, Texture};
-use roclient::grf::Grf;
-use roclient::lua::{self, ItemInfo, LookTables, SkillInfo, SkillTrees};
-use roclient::messages;
-use roclient::net::{self, CharEvent, CharSession, Character, LoginAccepted, LoginError, MapEvent, MapSession, MapTicket, NAME_LENGTH};
-use roclient::text;
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::lua::{self, ItemInfo, LookTables, SkillInfo, SkillTrees};
+use rustnarok_client::messages;
+use rustnarok_client::net::{self, CharEvent, CharSession, Character, LoginAccepted, LoginError, MapEvent, MapSession, MapTicket, NAME_LENGTH};
+use rustnarok_client::text;
+use rustnarok_client::text::Font;
 use window::TitleHit;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -390,7 +390,7 @@ struct Game {
     guild: Option<guild::Guild>,
     guild_window: guild::GuildWindow,
     guild_invite: Option<(u32, String)>,
-    /// Dev switch ROCLIENT_GUILD=window ran.
+    /// Dev switch RUSTNAROK_CLIENT_GUILD=window ran.
     guild_shown: bool,
     /// The friend list, and someone asking to be friends (account, character, name).
     friends: Vec<net::Friend>,
@@ -403,7 +403,7 @@ struct Game {
     /// The room we're in, and the window making one.
     room: Option<chatroom::Room>,
     room_make: Option<chatroom::Make>,
-    /// Dev switch ROCLIENT_ROOM ran.
+    /// Dev switch RUSTNAROK_CLIENT_ROOM ran.
     room_tried: bool,
     /// The right-click menu, and where a right press began (and on whom).
     menu: Option<menu::Menu<Choice>>,
@@ -579,7 +579,7 @@ fn change_look(look: &mut Look, kind: u8, value: u32, extra: u32) -> bool {
 /// An NPC's mark on the minimap: (NPC, mark ID), cell, image, and until when (None while the NPC keeps it).
 type Mark = ((u32, u8), [i32; 2], Texture, Option<Instant>);
 
-/// A scripted input (ROCLIENT_CLICKS): when, right button, where, and where to drag to.
+/// A scripted input (RUSTNAROK_CLIENT_CLICKS): when, right button, where, and where to drag to.
 type ScriptedInput = (Duration, bool, [f32; 2], Option<[f32; 2]>);
 
 fn map_key(map: &str) -> String {
@@ -1065,9 +1065,9 @@ impl Game {
         let _ = self.session.lock_trade();
     }
 
-    /// Dev switch `ROCLIENT_TRADE_GIVE`: once a deal opens, puts those in and locks.
+    /// Dev switch `RUSTNAROK_CLIENT_TRADE_GIVE`: once a deal opens, puts those in and locks.
     fn auto_trade(&mut self) {
-        let Ok(give) = std::env::var("ROCLIENT_TRADE_GIVE") else { return };
+        let Ok(give) = std::env::var("RUSTNAROK_CLIENT_TRADE_GIVE") else { return };
         let mut zeny = 0;
         for part in give.split(',') {
             if let Some(amount) = part.strip_prefix('z') {
@@ -1092,7 +1092,7 @@ impl Game {
         found.is_some()
     }
 
-    /// Dev switch `ROCLIENT_STORE=put|take:<item>:<amount>`, once storage has opened.
+    /// Dev switch `RUSTNAROK_CLIENT_STORE=put|take:<item>:<amount>`, once storage has opened.
     fn auto_store(&mut self) {
         let Some(order) = self.auto_store.take() else { return };
         let mut parts = order.split(':');
@@ -1109,9 +1109,9 @@ impl Game {
         }
     }
 
-    /// Dev switch `ROCLIENT_DEAL=buy|sell:<row>:<amount>`: puts a row of the shop in the deal and makes it.
+    /// Dev switch `RUSTNAROK_CLIENT_DEAL=buy|sell:<row>:<amount>`: puts a row of the shop in the deal and makes it.
     fn auto_deal(&mut self) {
-        let Ok(deal) = std::env::var("ROCLIENT_DEAL") else { return };
+        let Ok(deal) = std::env::var("RUSTNAROK_CLIENT_DEAL") else { return };
         let mut parts = deal.split(':').skip(1).map(str::parse::<u32>);
         let (Some(Ok(row)), Some(Ok(amount)), Some(shop)) = (parts.next(), parts.next(), self.shop.as_mut()) else { return };
         if (row as usize) < shop.offers.len() {
@@ -1513,7 +1513,7 @@ fn login_position(window: &Texture) -> [f32; 2] {
 
 /// Where the saved login ID is kept.
 fn saved_id_path() -> Option<std::path::PathBuf> {
-    Some(std::path::PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/roclient/saved_id"))
+    Some(std::path::PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/rustnarok-client/saved_id"))
 }
 
 fn saved_id() -> Option<String> {
@@ -1735,7 +1735,7 @@ struct App {
     pc_job_names: HashMap<u16, String>,
     /// Maps' display names, and the world maps with their box colors.
     map_names: HashMap<String, String>,
-    worlds: (Vec<roclient::lua::World>, [[u8; 4]; 2]),
+    worlds: (Vec<rustnarok_client::lua::World>, [[u8; 4]; 2]),
     /// Skill names and icons, the skill window's layout, and status icon files (the client's Lua tables).
     skill_info: HashMap<u16, SkillInfo>,
     skill_trees: SkillTrees,
@@ -1775,13 +1775,13 @@ struct App {
     focus: usize,
     cursor: [f32; 2],
     mouse_down: bool,
-    /// Dev switch ROCLIENT_CLICKS: when (after entering the map), where, and where to drag to, last first.
+    /// Dev switch RUSTNAROK_CLIENT_CLICKS: when (after entering the map), where, and where to drag to, last first.
     auto_input: Vec<ScriptedInput>,
     blink_start: Instant,
     drawn_blink_phase: u128,
     started: Instant,
     screenshot: Option<String>,
-    /// The character select's dev switches (ROCLIENT_MAKE, ROCLIENT_DELETE) ran.
+    /// The character select's dev switches (RUSTNAROK_CLIENT_MAKE, RUSTNAROK_CLIENT_DELETE) ran.
     scripted: bool,
 }
 
@@ -1818,7 +1818,7 @@ impl App {
         self.wait();
         let proxy = self.proxy.clone();
         let [id, password] = self.fields.clone();
-        let server = std::env::var("ROCLIENT_SERVER").unwrap_or_else(|_| DEFAULT_SERVER.into());
+        let server = std::env::var("RUSTNAROK_CLIENT_SERVER").unwrap_or_else(|_| DEFAULT_SERVER.into());
         std::thread::spawn(move || {
             let _ = proxy.send_event(NetEvent::Login(net::login(&server, &id, &password)));
         });
@@ -1917,14 +1917,14 @@ impl App {
         }
     }
 
-    /// ROCLIENT_MAKE and ROCLIENT_DELETE, once the first character list is in.
+    /// RUSTNAROK_CLIENT_MAKE and RUSTNAROK_CLIENT_DELETE, once the first character list is in.
     fn run_select_switches(&mut self) {
         let slot_and = |name: &str| {
             let value = std::env::var(name).ok()?;
             let (slot, rest) = value.split_once(':').unwrap_or((&value, ""));
             Some((slot.parse::<usize>().ok()?, rest.to_owned()))
         };
-        if let Some((slot, name)) = slot_and("ROCLIENT_MAKE") {
+        if let Some((slot, name)) = slot_and("RUSTNAROK_CLIENT_MAKE") {
             if let Scene::CharSelect(select) = &mut self.scene {
                 select.selected = slot;
             }
@@ -1936,7 +1936,7 @@ impl App {
                 self.make_action(char_make::Action::Make);
             }
         }
-        if let Some((slot, step)) = slot_and("ROCLIENT_DELETE") {
+        if let Some((slot, step)) = slot_and("RUSTNAROK_CLIENT_DELETE") {
             let Scene::CharSelect(select) = &mut self.scene else { return };
             select.selected = slot;
             let Some(id) = select.selected_character().map(|character| character.id) else { return };
@@ -2611,7 +2611,7 @@ impl App {
                 && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
                 && let Some(actor) = game.units.get(&id)
             {
-                let fill = |id: usize| roclient::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&actor.name]);
+                let fill = |id: usize| rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&actor.name]);
                 let mut choices = vec![Some((fill(TRADE_CHOICE), Choice::Trade(id)))];
                 // The guild's master can invite.
                 if game.guild.as_ref().is_some_and(|guild| guild.master && guild.members.iter().all(|member| member.account != id)) {
@@ -2743,8 +2743,8 @@ impl App {
         }
     }
 
-    /// Dev switch `ROCLIENT_CLICKS=x,y[>x,y][;...]`: clicks, or drags to the second point, one a second from
-    /// `ROCLIENT_CLICKS_AT` seconds (4 by default) after entering the map.
+    /// Dev switch `RUSTNAROK_CLIENT_CLICKS=x,y[>x,y][;...]`: clicks, or drags to the second point, one a second from
+    /// `RUSTNAROK_CLIENT_CLICKS_AT` seconds (4 by default) after entering the map.
     fn auto_input(&mut self, event_loop: &ActiveEventLoop) {
         let Scene::Game(game) = &self.scene else { return };
         let elapsed = game.entered.elapsed();
@@ -3175,12 +3175,12 @@ impl App {
     fn net_event(&mut self, event: NetEvent) {
         match event {
             NetEvent::Login(Ok(accepted)) => {
-                // Dev runs (ROCLIENT_LOGIN) leave the saved ID alone.
-                if std::env::var_os("ROCLIENT_LOGIN").is_none() {
+                // Dev runs (RUSTNAROK_CLIENT_LOGIN) leave the saved ID alone.
+                if std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none() {
                     remember_id(self.save_id.then_some(self.fields[0].as_str()));
                 }
                 self.scene = Scene::ServerSelect { accepted, selected: 0 };
-                if std::env::var_os("ROCLIENT_AUTOSTART").is_some() {
+                if std::env::var_os("RUSTNAROK_CLIENT_AUTOSTART").is_some() {
                     self.enter_char_server();
                 }
             }
@@ -3198,7 +3198,7 @@ impl App {
                 if let Scene::CharSelect(previous) = self.scene.base() {
                     select.selected = previous.selected;
                 }
-                let autostart = std::env::var("ROCLIENT_AUTOSTART").ok().and_then(|slot| slot.parse::<usize>().ok());
+                let autostart = std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok().and_then(|slot| slot.parse::<usize>().ok());
                 if let Some(slot) = autostart {
                     select.selected = slot;
                 }
@@ -3311,7 +3311,7 @@ impl App {
                 let mut player = Actor::new(me.name.clone(), sprites, position.map(i32::from), direction, 150);
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
                 let mut camera_goal = CameraGoal::new(self.indoor.contains(&map_key(&map)));
-                if let Some([yaw, pitch, zoom]) = std::env::var("ROCLIENT_CAMERA").ok().and_then(|camera| {
+                if let Some([yaw, pitch, zoom]) = std::env::var("RUSTNAROK_CLIENT_CAMERA").ok().and_then(|camera| {
                     let values: Vec<f32> = camera.split(',').filter_map(|value| value.parse().ok()).collect();
                     <[f32; 3]>::try_from(values).ok()
                 }) {
@@ -3355,10 +3355,10 @@ impl App {
                     hit_boxes: Vec::new(),
                     ground: HashMap::new(),
                     item_sprites: HashMap::new(),
-                    inventory: Inventory::new(std::env::var_os("ROCLIENT_INVENTORY").is_some()),
+                    inventory: Inventory::new(std::env::var_os("RUSTNAROK_CLIENT_INVENTORY").is_some()),
                     equipment: {
                         let mut equipment = Equipment::default();
-                        equipment.frame.open = std::env::var_os("ROCLIENT_EQUIPMENT").is_some();
+                        equipment.frame.open = std::env::var_os("RUSTNAROK_CLIENT_EQUIPMENT").is_some();
                         equipment
                     },
                     basic_info: BasicInfo::default(),
@@ -3367,7 +3367,7 @@ impl App {
                     skills: Vec::new(),
                     skill_window: {
                         let mut window = skills::SkillWindow::default();
-                        window.frame.open = std::env::var_os("ROCLIENT_SKILLS").is_some();
+                        window.frame.open = std::env::var_os("RUSTNAROK_CLIENT_SKILLS").is_some();
                         window
                     },
                     targeting: None,
@@ -3397,13 +3397,13 @@ impl App {
                     party: None,
                     status_window: {
                         let mut window = status::StatusWindow::default();
-                        window.frame.open = std::env::var_os("ROCLIENT_STATUS").is_some();
+                        window.frame.open = std::env::var_os("RUSTNAROK_CLIENT_STATUS").is_some();
                         window
                     },
                     status_height: 0.0,
                     party_window: {
                         let mut window = party::PartyWindow::default();
-                        let order = std::env::var("ROCLIENT_PARTY").unwrap_or_default();
+                        let order = std::env::var("RUSTNAROK_CLIENT_PARTY").unwrap_or_default();
                         window.friends = order.split(',').any(|part| part == "friends");
                         window.frame.open = window.friends || order.split(',').any(|part| part == "window");
                         window
@@ -3419,7 +3419,7 @@ impl App {
                         let mut cart = inventory::Inventory::new(false);
                         cart.title = CART_TITLE;
                         cart.frame.position = CART_POSITION;
-                        cart.frame.open = std::env::var_os("ROCLIENT_CART").is_some();
+                        cart.frame.open = std::env::var_os("RUSTNAROK_CLIENT_CART").is_some();
                         cart
                     },
                     guild: None,
@@ -3446,28 +3446,33 @@ impl App {
                     damages: Vec::new(),
                     status,
                     unit_hp: HashMap::new(),
-                    auto_talk: std::env::var("ROCLIENT_TALK").ok().map(|talk| talk.split(':').next().unwrap_or_default().to_owned()),
-                    auto_next: std::env::var("ROCLIENT_TALK").ok().and_then(|talk| talk.split(':').nth(1)?.parse().ok()).unwrap_or(0),
-                    auto_menu: std::env::var("ROCLIENT_MENU").unwrap_or_default().split(',').rev().filter_map(|choice| choice.trim().parse().ok()).collect(),
-                    auto_store: std::env::var("ROCLIENT_STORE").ok(),
-                    auto_attack: std::env::var_os("ROCLIENT_ATTACK").is_some(),
-                    auto_pick_up: std::env::var_os("ROCLIENT_PICKUP").is_some(),
-                    auto_wear: std::env::var_os("ROCLIENT_WEAR").is_some(),
-                    auto_keys: std::env::var("ROCLIENT_HOTKEYS")
+                    auto_talk: std::env::var("RUSTNAROK_CLIENT_TALK").ok().map(|talk| talk.split(':').next().unwrap_or_default().to_owned()),
+                    auto_next: std::env::var("RUSTNAROK_CLIENT_TALK").ok().and_then(|talk| talk.split(':').nth(1)?.parse().ok()).unwrap_or(0),
+                    auto_menu: std::env::var("RUSTNAROK_CLIENT_MENU")
+                        .unwrap_or_default()
+                        .split(',')
+                        .rev()
+                        .filter_map(|choice| choice.trim().parse().ok())
+                        .collect(),
+                    auto_store: std::env::var("RUSTNAROK_CLIENT_STORE").ok(),
+                    auto_attack: std::env::var_os("RUSTNAROK_CLIENT_ATTACK").is_some(),
+                    auto_pick_up: std::env::var_os("RUSTNAROK_CLIENT_PICKUP").is_some(),
+                    auto_wear: std::env::var_os("RUSTNAROK_CLIENT_WEAR").is_some(),
+                    auto_keys: std::env::var("RUSTNAROK_CLIENT_HOTKEYS")
                         .unwrap_or_default()
                         .split(',')
                         .filter_map(|slot| slot.trim().parse().ok())
                         .enumerate()
                         .map(|(order, slot)| (Duration::from_secs(3 + order as u64), slot))
                         .collect(),
-                    auto_skill: std::env::var("ROCLIENT_SKILL").ok().and_then(|skill| {
+                    auto_skill: std::env::var("RUSTNAROK_CLIENT_SKILL").ok().and_then(|skill| {
                         let (id, level) = skill.split_once(':')?;
                         Some((id.parse().ok()?, level.parse().ok()?))
                     }),
                     attack_range: 1,
                     pending: None,
-                    auto_say: std::env::var("ROCLIENT_SAY").ok(),
-                    auto_walk: std::env::var("ROCLIENT_WALK").ok().and_then(|cell| {
+                    auto_say: std::env::var("RUSTNAROK_CLIENT_SAY").ok(),
+                    auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
                         let (x, y) = cell.split_once(',')?;
                         Some([x.parse().ok()?, y.parse().ok()?])
                     }),
@@ -3525,9 +3530,9 @@ impl App {
         layer.texts.push((percent.to_owned(), [((SCREEN[0] - self.font.width(percent)) / 2.0).floor(), corner[1] + 1.0], [255, 255, 0]));
         let composed = compose(gpu, &self.font, vec![layer]);
         let sprites = flatten(&composed);
-        // Screenshots wait for the game itself, unless ROCLIENT_SHOT_LOADING asks for this screen.
+        // Screenshots wait for the game itself, unless RUSTNAROK_CLIENT_SHOT_LOADING asks for this screen.
         match &self.screenshot {
-            Some(path) if std::env::var_os("ROCLIENT_SHOT_LOADING").is_some() => {
+            Some(path) if std::env::var_os("RUSTNAROK_CLIENT_SHOT_LOADING").is_some() => {
                 gpu.capture(None, &sprites, path);
                 event_loop.exit();
             }
@@ -3802,9 +3807,10 @@ impl App {
             // Vending: setting up, our shop, others' signs and goods.
             MapEvent::VendSetup(most) => {
                 let mut setup = vend::Setup::new(most);
-                // Dev switch ROCLIENT_VEND=<name>:<price>: everything in the cart at that price, and open.
-                if let Some((name, price)) =
-                    std::env::var("ROCLIENT_VEND").ok().and_then(|vend| vend.split_once(':').map(|(name, price)| (name.to_owned(), price.parse().unwrap_or(1))))
+                // Dev switch RUSTNAROK_CLIENT_VEND=<name>:<price>: everything in the cart at that price, and open.
+                if let Some((name, price)) = std::env::var("RUSTNAROK_CLIENT_VEND")
+                    .ok()
+                    .and_then(|vend| vend.split_once(':').map(|(name, price)| (name.to_owned(), price.parse().unwrap_or(1))))
                 {
                     setup.type_text(&name);
                     for item in game.cart.items.iter().take(usize::from(most)) {
@@ -3832,7 +3838,7 @@ impl App {
                 shop.sold(index, amount);
                 let sold_out = shop.goods.is_empty();
                 if let Some(name) = name {
-                    game.chat_line(roclient::messages::fill(self.messages.get(VEND_SOLD).map_or("", String::as_str), &[&name, &amount]), CHAT_ITEM);
+                    game.chat_line(rustnarok_client::messages::fill(self.messages.get(VEND_SOLD).map_or("", String::as_str), &[&name, &amount]), CHAT_ITEM);
                 }
                 if sold_out {
                     game.chat_line(self.messages.get(VEND_SOLD_OUT).cloned().unwrap_or_default(), CHAT_ITEM);
@@ -3979,7 +3985,7 @@ impl App {
             MapEvent::ChatRoomJoined { users, name } => {
                 if let Some(room) = &mut game.room {
                     room.sign.users = users;
-                    room.lines.push((roclient::messages::fill(self.messages.get(179).map_or("", String::as_str), &[&name]), chatroom::JOIN_LINE));
+                    room.lines.push((rustnarok_client::messages::fill(self.messages.get(179).map_or("", String::as_str), &[&name]), chatroom::JOIN_LINE));
                     room.members.push((name, false));
                 }
             }
@@ -3992,7 +3998,7 @@ impl App {
                 } else if let Some(room) = &mut game.room {
                     room.sign.users = users;
                     room.members.retain(|(member, _)| *member != name);
-                    let line = roclient::messages::fill(self.messages.get(if kicked { 181 } else { 180 }).map_or("", String::as_str), &[&name]);
+                    let line = rustnarok_client::messages::fill(self.messages.get(if kicked { 181 } else { 180 }).map_or("", String::as_str), &[&name]);
                     room.lines.push((line, chatroom::LEAVE_LINE));
                 }
             }
@@ -4040,7 +4046,7 @@ impl App {
                 if let Some(member) = member {
                     member.online = online;
                     let name = member.name.clone();
-                    let text = roclient::messages::fill(self.messages.get(GUILD_ONLINE + usize::from(!online)).map_or("", String::as_str), &[&name]);
+                    let text = rustnarok_client::messages::fill(self.messages.get(GUILD_ONLINE + usize::from(!online)).map_or("", String::as_str), &[&name]);
                     game.chat_line(text, GUILD_CHAT);
                 }
             }
@@ -4055,7 +4061,7 @@ impl App {
             }
             MapEvent::GuildInvite { id, name } => {
                 // Dev switch: join.
-                if std::env::var("ROCLIENT_GUILD").is_ok_and(|answer| answer.split(',').any(|part| part == "accept")) {
+                if std::env::var("RUSTNAROK_CLIENT_GUILD").is_ok_and(|answer| answer.split(',').any(|part| part == "accept")) {
                     let _ = game.session.answer_guild(id, true);
                 } else {
                     game.guild_invite = Some((id, name));
@@ -4078,13 +4084,14 @@ impl App {
             MapEvent::FriendOnline { account, character, online } => {
                 if let Some(friend) = game.friends.iter_mut().find(|friend| friend.account == account && friend.character == character) {
                     friend.online = online;
-                    let text = roclient::messages::fill(self.messages.get(FRIEND_ONLINE + usize::from(!online)).map_or("", String::as_str), &[&friend.name]);
+                    let text =
+                        rustnarok_client::messages::fill(self.messages.get(FRIEND_ONLINE + usize::from(!online)).map_or("", String::as_str), &[&friend.name]);
                     game.chat_line(text, CHAT_ITEM);
                 }
             }
             MapEvent::FriendAsked { account, character, name } => {
                 // Dev switch: say yes.
-                if std::env::var("ROCLIENT_FRIEND").is_ok_and(|answer| answer == "accept") {
+                if std::env::var("RUSTNAROK_CLIENT_FRIEND").is_ok_and(|answer| answer == "accept") {
                     let _ = game.session.answer_friend(account, character, true);
                 } else {
                     game.friend_asked = Some((account, character, name));
@@ -4097,7 +4104,7 @@ impl App {
                     2 => 819,
                     _ => 820,
                 };
-                let text = roclient::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&friend.name]);
+                let text = rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&friend.name]);
                 game.chat_line(text, if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
                 if result == 0 && game.friends.iter().all(|known| known.character != friend.character) {
                     game.friends.push(friend);
@@ -4160,7 +4167,7 @@ impl App {
             MapEvent::PartyInvite { party, name } => {
                 game.party_invite = Some((party, name));
                 // Dev switch: join.
-                if std::env::var("ROCLIENT_PARTY").is_ok_and(|order| order.split(',').any(|part| part == "accept")) {
+                if std::env::var("RUSTNAROK_CLIENT_PARTY").is_ok_and(|order| order.split(',').any(|part| part == "accept")) {
                     game.party_invite = None;
                     let _ = game.session.answer_party(party, true);
                 }
@@ -4178,7 +4185,7 @@ impl App {
                     8 => 1388,
                     _ => 1871,
                 };
-                let text = roclient::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]);
+                let text = rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]);
                 game.chat_line(text, if result == 2 { CHAT_ITEM } else { CHAT_ERROR });
             }
             MapEvent::PartyChat { account, text } => game.chat_line(text, if account == game.account_id { PARTY_CHAT_OURS } else { PARTY_CHAT }),
@@ -4223,7 +4230,7 @@ impl App {
                 game.trade_with = name.clone();
                 game.trade_asked = Some((name, id, level));
                 // Dev switch: take it.
-                if std::env::var("ROCLIENT_TRADE").is_ok_and(|trade| trade == "accept") {
+                if std::env::var("RUSTNAROK_CLIENT_TRADE").is_ok_and(|trade| trade == "accept") {
                     game.trade_asked = None;
                     let _ = game.session.answer_trade(true);
                 }
@@ -4276,7 +4283,7 @@ impl App {
                 if let Some(trade) = &mut game.trade {
                     trade.locked[usize::from(partner)] = true;
                     // Dev switch: exchange once both are in.
-                    if trade.locked == [true; 2] && std::env::var_os("ROCLIENT_TRADE_GIVE").is_some() {
+                    if trade.locked == [true; 2] && std::env::var_os("RUSTNAROK_CLIENT_TRADE_GIVE").is_some() {
                         let _ = game.session.finish_trade();
                     }
                 }
@@ -4499,7 +4506,7 @@ impl App {
                 game.dialog = None;
                 game.deal_choice = Some(npc);
                 // Dev switch: answer at once.
-                if let Ok(deal) = std::env::var("ROCLIENT_DEAL") {
+                if let Ok(deal) = std::env::var("RUSTNAROK_CLIENT_DEAL") {
                     game.deal_choice = None;
                     let _ = game.session.choose_deal(npc, deal.starts_with("sell"));
                 }
@@ -4667,8 +4674,8 @@ impl App {
         self.cursor_look.set(cursor::Kind::Default);
         sprites.extend(self.cursor_look.draw(gpu, self.cursor));
 
-        // With ROCLIENT_AUTOSTART=<slot> the shot waits for the game; any other value stops at character select.
-        let autostart = std::env::var("ROCLIENT_AUTOSTART").ok();
+        // With RUSTNAROK_CLIENT_AUTOSTART=<slot> the shot waits for the game; any other value stops at character select.
+        let autostart = std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok();
         let playing_slot = autostart.as_deref().is_some_and(|value| value.parse::<usize>().is_ok());
         let settled = !matches!(self.scene, Scene::Waiting(_))
             && match autostart {
@@ -5460,7 +5467,7 @@ impl App {
             meshes: &effect_meshes,
             time: now.duration_since(game.entered).as_secs_f32(),
         };
-        let shot_delay = std::env::var("ROCLIENT_SHOT_DELAY").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(2.0);
+        let shot_delay = std::env::var("RUSTNAROK_CLIENT_SHOT_DELAY").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(2.0);
         match &self.screenshot {
             Some(path) if game.entered.elapsed().as_secs_f32() > shot_delay => {
                 gpu.capture(Some(&frame), &sprites, path);
@@ -5524,7 +5531,7 @@ impl ApplicationHandler<NetEvent> for App {
         self.assets = Some(Assets::load(&gpu, &self.grf, &self.font, &self.messages));
         self.gpu = Some(gpu);
 
-        if let Some((id, password)) = std::env::var("ROCLIENT_LOGIN").ok().as_deref().and_then(|login| login.split_once(':')) {
+        if let Some((id, password)) = std::env::var("RUSTNAROK_CLIENT_LOGIN").ok().as_deref().and_then(|login| login.split_once(':')) {
             self.fields = [id.into(), password.into()];
             self.submit_login();
         }
@@ -5553,8 +5560,8 @@ impl ApplicationHandler<NetEvent> for App {
             WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } | WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. }
                 if control::driven() => {}
             WindowEvent::ModifiersChanged(_) | WindowEvent::KeyboardInput { .. } | WindowEvent::Ime(_) if control::driven() => {}
-            // ROCLIENT_CURSOR pins the pointer for screenshots.
-            WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } if std::env::var_os("ROCLIENT_CURSOR").is_some() => {}
+            // RUSTNAROK_CLIENT_CURSOR pins the pointer for screenshots.
+            WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } if std::env::var_os("RUSTNAROK_CLIENT_CURSOR").is_some() => {}
             // Screen pixels to the canvas, through its place in the window (black bars in fullscreen).
             WindowEvent::CursorMoved { position, .. } => {
                 let [left, top, width, height] = render::viewport([gpu.config.width, gpu.config.height]);
@@ -5659,30 +5666,31 @@ impl ApplicationHandler<NetEvent> for App {
                         let _ = game.session.walk(cell);
                     }
                     // Through the chat line, so the client's commands (/organize, %) work too.
-                    let say_at = std::env::var("ROCLIENT_SAY_AT").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(1.0);
+                    let say_at = std::env::var("RUSTNAROK_CLIENT_SAY_AT").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(1.0);
                     if let Some(texts) = game.auto_say.take_if(|_| game.entered.elapsed().as_secs_f32() >= say_at) {
                         for text in texts.split('|') {
                             game.chat.input = text.to_owned();
                             let _ = game.send_chat(false, false);
                         }
                     }
-                    // Dev switch ROCLIENT_GUILD=window: the guild window, once the guild is known.
+                    // Dev switch RUSTNAROK_CLIENT_GUILD=window: the guild window, once the guild is known.
                     if game.guild.is_some()
                         && !game.guild_window.frame.open
                         && game.entered.elapsed() > Duration::from_secs(3)
-                        && std::env::var("ROCLIENT_GUILD").is_ok_and(|order| order.split(',').any(|part| part == "window"))
+                        && std::env::var("RUSTNAROK_CLIENT_GUILD").is_ok_and(|order| order.split(',').any(|part| part == "window"))
                         && !std::mem::replace(&mut game.guild_shown, true)
                     {
                         game.guild_window.frame.open = true;
                         game.raise(Panel::Guild);
                         game.ask_guild_pages();
                     }
-                    // Dev switch ROCLIENT_ROOM=window:<title> (the room maker, typed in) or make:<title> (and OK).
+                    // Dev switch RUSTNAROK_CLIENT_ROOM=window:<title> (the room maker, typed in) or make:<title> (and OK).
                     if game.entered.elapsed() > Duration::from_secs(2)
                         && game.room.is_none()
                         && game.room_make.is_none()
-                        && let Some((how, title)) =
-                            std::env::var("ROCLIENT_ROOM").ok().and_then(|room| room.split_once(':').map(|(how, title)| (how.to_owned(), title.to_owned())))
+                        && let Some((how, title)) = std::env::var("RUSTNAROK_CLIENT_ROOM")
+                            .ok()
+                            .and_then(|room| room.split_once(':').map(|(how, title)| (how.to_owned(), title.to_owned())))
                         && !game.signs.values().any(|sign| sign.title == title)
                         && !std::mem::replace(&mut game.room_tried, true)
                     {
@@ -5693,14 +5701,15 @@ impl ApplicationHandler<NetEvent> for App {
                             game.make_room();
                         }
                     }
-                    if let Some(name) = std::env::var("ROCLIENT_TRADE").ok().and_then(|trade| trade.strip_prefix("ask:").map(str::to_owned))
+                    if let Some(name) = std::env::var("RUSTNAROK_CLIENT_TRADE").ok().and_then(|trade| trade.strip_prefix("ask:").map(str::to_owned))
                         && game.trade_with.is_empty()
                         && game.trade.is_none()
                         && game.entered.elapsed() > Duration::from_secs(3)
                     {
                         game.ask_trade(&name);
                     }
-                    if let Some(whispers) = std::env::var("ROCLIENT_WHISPER").ok().filter(|_| game.whispered.is_empty() && game.chat.whisper.is_empty()) {
+                    if let Some(whispers) = std::env::var("RUSTNAROK_CLIENT_WHISPER").ok().filter(|_| game.whispered.is_empty() && game.chat.whisper.is_empty())
+                    {
                         for whisper in whispers.split(';') {
                             let (to, text) = whisper.split_once('|').unwrap_or((whisper, "hi"));
                             game.chat.whisper = to.to_owned();
@@ -5815,10 +5824,10 @@ fn main() {
     {
         let _ = std::env::set_current_dir(folder);
     }
-    let grf_path = std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into());
+    let grf_path = std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into());
     let mut grf = Grf::open(&grf_path).unwrap_or_else(|error| panic!("{grf_path}: {error}"));
     // Like the official client, loose files in the data folder (here, a translation) go before the archive.
-    let overlay = std::env::var("ROCLIENT_DATA").unwrap_or_else(|_| ".".into());
+    let overlay = std::env::var("RUSTNAROK_CLIENT_DATA").unwrap_or_else(|_| ".".into());
     if overlay != "none" {
         let found = grf.add_overlay(std::path::Path::new(&overlay));
         if found > 0 {
@@ -5827,7 +5836,10 @@ fn main() {
     }
     let mut event_loop = EventLoop::<NetEvent>::with_user_event();
     // A client driven over the control socket opens without taking the keyboard from the app in use.
-    winit::platform::macos::EventLoopBuilderExtMacOS::with_activate_ignoring_other_apps(&mut event_loop, std::env::var_os("ROCLIENT_CONTROL").is_none());
+    winit::platform::macos::EventLoopBuilderExtMacOS::with_activate_ignoring_other_apps(
+        &mut event_loop,
+        std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_none(),
+    );
     let event_loop = event_loop.build().expect("event loop");
     control::listen(event_loop.create_proxy());
     let job_names = lua::job_names(&grf).unwrap_or_else(|error| {
@@ -5842,9 +5854,9 @@ fn main() {
         eprintln!("no client messages: {error}");
         Vec::new()
     });
-    let indoor = roclient::map::indoor_maps(&grf).unwrap_or_default();
+    let indoor = rustnarok_client::map::indoor_maps(&grf).unwrap_or_default();
     let pc_job_names = lua::pc_job_names(&grf).unwrap_or_default();
-    let map_names = roclient::map::map_names(&grf).unwrap_or_default();
+    let map_names = rustnarok_client::map::map_names(&grf).unwrap_or_default();
     let skill_info = lua::skill_info(&grf).unwrap_or_else(|error| {
         eprintln!("no skill names: {error}");
         HashMap::new()
@@ -5861,7 +5873,7 @@ fn main() {
         grf.paths().filter(|path| path.starts_with(&format!("{UI}loading")) && path.ends_with(".jpg")).map(str::to_owned).collect();
     loading_images.sort();
     let music = sound::music_table(&grf);
-    let worlds = roclient::lua::worlds(&grf).unwrap_or_default();
+    let worlds = rustnarok_client::lua::worlds(&grf).unwrap_or_default();
     let quest_texts = quest::texts(&grf);
     let sound = sound::Settings::load();
     let mut app = App {
@@ -5881,9 +5893,9 @@ fn main() {
         skill_trees,
         status_icon_files,
         effect_table: effects::Table::load(),
-        // Driven or screenshot runs stay quiet unless ROCLIENT_SOUND=1.
-        audio: (std::env::var("ROCLIENT_SOUND").is_ok_and(|sound| sound == "1")
-            || std::env::var_os("ROCLIENT_SCREENSHOT").is_none() && std::env::var_os("ROCLIENT_CONTROL").is_none())
+        // Driven or screenshot runs stay quiet unless RUSTNAROK_CLIENT_SOUND=1.
+        audio: (std::env::var("RUSTNAROK_CLIENT_SOUND").is_ok_and(|sound| sound == "1")
+            || std::env::var_os("RUSTNAROK_CLIENT_SCREENSHOT").is_none() && std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_none())
         .then(|| sound::Audio::new(&sound))
         .flatten(),
         sound,
@@ -5906,7 +5918,7 @@ fn main() {
         fields: [saved_id().unwrap_or_default(), String::new()],
         save_id: saved_id().is_some(),
         focus: usize::from(saved_id().is_some()),
-        cursor: std::env::var("ROCLIENT_CURSOR")
+        cursor: std::env::var("RUSTNAROK_CLIENT_CURSOR")
             .ok()
             .and_then(|cursor| {
                 let (x, y) = cursor.split_once(',')?;
@@ -5915,12 +5927,12 @@ fn main() {
             .unwrap_or([-1.0; 2]),
         mouse_down: false,
         auto_input: {
-            let start = std::env::var("ROCLIENT_CLICKS_AT").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(4);
+            let start = std::env::var("RUSTNAROK_CLIENT_CLICKS_AT").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(4);
             let point = |text: &str| -> Option<[f32; 2]> {
                 let (x, y) = text.trim().split_once(',')?;
                 Some([x.trim().parse().ok()?, y.trim().parse().ok()?])
             };
-            let steps = std::env::var("ROCLIENT_CLICKS").unwrap_or_default();
+            let steps = std::env::var("RUSTNAROK_CLIENT_CLICKS").unwrap_or_default();
             let steps: Vec<_> = steps
                 .split(';')
                 .filter(|step| !step.trim().is_empty())
@@ -5940,7 +5952,7 @@ fn main() {
         blink_start: Instant::now(),
         drawn_blink_phase: u128::MAX,
         started: Instant::now(),
-        screenshot: std::env::var("ROCLIENT_SCREENSHOT").ok(),
+        screenshot: std::env::var("RUSTNAROK_CLIENT_SCREENSHOT").ok(),
         scripted: false,
     };
     app.play_music(None);

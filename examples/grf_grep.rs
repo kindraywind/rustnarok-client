@@ -3,7 +3,7 @@
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let grf = roclient::grf::Grf::open(&args[1]).unwrap();
+    let grf = rustnarok_client::grf::Grf::open(&args[1]).unwrap();
     let needle = args[2].as_bytes();
     let filter = args.get(3).map(|filter| filter.to_lowercase());
     for path in grf.paths().filter(|path| filter.as_ref().is_none_or(|filter| path.contains(filter.as_str()))) {

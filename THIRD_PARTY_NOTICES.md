@@ -1,6 +1,6 @@
 # Third-party notices
 
-roclient's own code is written for this project. One file carries code from elsewhere, under these licenses.
+rustnarok-client's own code is written for this project. One file carries code from elsewhere, under these licenses.
 
 ## src/grf/mixcrypt.rs — GRF "mixcrypt" decryption
 

@@ -1,7 +1,7 @@
 //! The game's option menu (Esc): back to character select, leave the game, or return to it; after dying it also
 //! offers going back to the save point.
 
-use roclient::grf::Grf;
+use rustnarok_client::grf::Grf;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame};

@@ -2,10 +2,10 @@
 
 use std::collections::HashMap;
 
-use roclient::grf::Grf;
-use roclient::lua::{ItemInfo, SkillInfo};
-use roclient::net::{Hotkey, InventoryItem};
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::lua::{ItemInfo, SkillInfo};
+use rustnarok_client::net::{Hotkey, InventoryItem};
+use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame};

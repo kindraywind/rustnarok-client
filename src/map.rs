@@ -300,10 +300,10 @@ pub fn map_names(grf: &Grf) -> io::Result<HashMap<String, String>> {
 mod tests {
     use super::*;
 
-    /// Needs the official data.grf, at `ROCLIENT_GRF` or `./data.grf`.
+    /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn parses_prontera() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
         let rsw = Rsw::parse(&grf.read("data\\prontera.rsw").unwrap()).unwrap();
         assert_eq!(rsw.ground_file, "prontera.gnd");
         assert_eq!(rsw.altitude_file, "prontera.gat");

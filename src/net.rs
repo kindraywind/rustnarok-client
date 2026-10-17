@@ -340,9 +340,9 @@ fn read_packet(reader: &mut impl Read) -> io::Result<Vec<u8>> {
     let received = packet.len();
     packet.resize(size.max(received), 0);
     reader.read_exact(&mut packet[received..])?;
-    if std::env::var_os("ROCLIENT_TRACE").is_some() {
+    if std::env::var_os("RUSTNAROK_CLIENT_TRACE").is_some() {
         let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() % 100_000;
-        let shown = if std::env::var("ROCLIENT_TRACE").is_ok_and(|trace| trace == "full") { packet.len() } else { packet.len().min(32) };
+        let shown = if std::env::var("RUSTNAROK_CLIENT_TRACE").is_ok_and(|trace| trace == "full") { packet.len() } else { packet.len().min(32) };
         eprintln!("{ms:05} <- {id:#06x} {} {:02x?}", packet.len(), &packet[..shown]);
     }
     if let Some(hook) = PACKET_HOOK.get() {
@@ -2950,11 +2950,11 @@ mod tests {
         assert_eq!(packet_length(ZC_CHECKNAME), Some(34));
     }
 
-    /// Against a running rathena: `ROCLIENT_TEST_ACCOUNT=user:password cargo test -- --ignored`.
+    /// Against a running rathena: `RUSTNAROK_CLIENT_TEST_ACCOUNT=user:password cargo test -- --ignored`.
     #[test]
     #[ignore]
     fn logs_into_local_rathena() {
-        let account = std::env::var("ROCLIENT_TEST_ACCOUNT").unwrap();
+        let account = std::env::var("RUSTNAROK_CLIENT_TEST_ACCOUNT").unwrap();
         let (user, password) = account.split_once(':').unwrap();
         let accepted = login("127.0.0.1:6900", user, password).unwrap();
         assert!(!accepted.char_servers.is_empty());
@@ -2970,8 +2970,8 @@ mod tests {
         };
         assert!(characters.iter().all(|character| !character.name.is_empty()));
 
-        // Play the test character (ROCLIENT_TEST_SLOT, default 1) and enter its map.
-        let slot = std::env::var("ROCLIENT_TEST_SLOT").map_or(1, |slot| slot.parse().unwrap());
+        // Play the test character (RUSTNAROK_CLIENT_TEST_SLOT, default 1) and enter its map.
+        let slot = std::env::var("RUSTNAROK_CLIENT_TEST_SLOT").map_or(1, |slot| slot.parse().unwrap());
         let mut session = _session;
         session.select(slot).unwrap();
         let (character_id, address) = loop {

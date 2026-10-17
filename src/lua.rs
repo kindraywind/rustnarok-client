@@ -378,10 +378,10 @@ pub fn worlds(grf: &Grf) -> io::Result<(Vec<World>, [[u8; 4]; 2])> {
 mod tests {
     use crate::grf::Grf;
 
-    /// Needs the official data.grf, at `ROCLIENT_GRF` or `./data.grf`.
+    /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn reads_the_world_maps() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
         let (worlds, colors) = super::worlds(&grf).unwrap();
         let midgard = &worlds[0];
         assert_eq!(midgard.image, "worldmap.jpg");
@@ -390,10 +390,10 @@ mod tests {
         assert_eq!(colors, [[85, 85, 255, 102], [149, 15, 15, 70]]);
     }
 
-    /// Needs the official data.grf, at `ROCLIENT_GRF` or `./data.grf`.
+    /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn reads_item_names_and_resources() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
         let started = std::time::Instant::now();
         let items = super::item_info(&grf).unwrap();
         eprintln!("{} items in {:?}", items.len(), started.elapsed());
@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn reads_skill_tables() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
         let skills = super::skill_info(&grf).unwrap();
         let heal = &skills[&28];
         assert_eq!((heal.resource.as_str(), heal.name.as_str(), heal.max_level), ("AL_HEAL", "힐", 10));
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn reads_job_names() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
         let names = super::pc_job_names(&grf).unwrap();
         assert_eq!(names.get(&0).map(String::as_str), Some("Novice"));
         assert_eq!(names.get(&4008).map(String::as_str), Some("Lord Knight"));
@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn reads_look_tables() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
         let tables = super::look_tables(&grf).unwrap();
         assert_eq!(tables.headgears.get(&1).map(String::as_str), Some("_고글"));
         assert_eq!(tables.weapons.get(&1).map(String::as_str), Some("_단검"));
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn reads_npc_and_monster_sprite_names() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
         let names = super::job_names(&grf).unwrap();
         assert!(names.len() > 1000, "{} names", names.len());
         // Warp portals and Poring are the classic examples.

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use roclient::grf::Grf;
+use rustnarok_client::grf::Grf;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::formats::FormatOptions;
@@ -45,7 +45,7 @@ impl Default for Settings {
 
 impl Settings {
     fn path() -> Option<PathBuf> {
-        Some(PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/roclient/sound"))
+        Some(PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/rustnarok-client/sound"))
     }
 
     pub fn load() -> Self {
@@ -155,9 +155,9 @@ pub struct Audio {
 }
 
 impl Audio {
-    /// The default output device, or None when there's none (or `ROCLIENT_SOUND=0`).
+    /// The default output device, or None when there's none (or `RUSTNAROK_CLIENT_SOUND=0`).
     pub fn new(settings: &Settings) -> Option<Self> {
-        if std::env::var("ROCLIENT_SOUND").is_ok_and(|sound| sound == "0") {
+        if std::env::var("RUSTNAROK_CLIENT_SOUND").is_ok_and(|sound| sound == "0") {
             return None;
         }
         let device = cpal::default_host().default_output_device()?;
@@ -270,9 +270,9 @@ pub fn music_table(grf: &Grf) -> HashMap<String, String> {
         .collect()
 }
 
-/// Where a music file named in mp3nametable.txt (`bgm\08.mp3`) is: `ROCLIENT_BGM` (a folder) or `BGM` beside the client.
+/// Where a music file named in mp3nametable.txt (`bgm\08.mp3`) is: `RUSTNAROK_CLIENT_BGM` (a folder) or `BGM` beside the client.
 pub fn music_path(file: &str) -> PathBuf {
-    let folder = std::env::var("ROCLIENT_BGM").unwrap_or_else(|_| "BGM".into());
+    let folder = std::env::var("RUSTNAROK_CLIENT_BGM").unwrap_or_else(|_| "BGM".into());
     let name = file.rsplit(['\\', '/']).next().unwrap_or(file);
     Path::new(&folder).join(name)
 }
@@ -308,10 +308,10 @@ mod tests {
         assert_eq!(settings.gains(), [0.0, 1.0]);
     }
 
-    /// Needs the official data.grf, at `ROCLIENT_GRF` or `./data.grf` (and the music in `BGM`, if it's there).
+    /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf` (and the music in `BGM`, if it's there).
     #[test]
     fn decodes_the_clients_sounds() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
         let attack = decode(grf.read("data\\wav\\poring_attack.wav").unwrap(), "wav").unwrap();
         assert!(attack.samples.len() > 2_000, "{}", attack.samples.len());
         let music = music_table(&grf);

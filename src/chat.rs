@@ -1,7 +1,7 @@
 //! The chat window at the bottom of the screen: message tabs, the log and the input line.
 
-use roclient::grf::Grf;
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::{Layer, SCREEN, UI, contains};

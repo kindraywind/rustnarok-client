@@ -2,10 +2,11 @@
 
 A native Ragnarok Online client for macOS, written from scratch in Rust. The aim is to match the official client or
 improve on it: its windows, layouts, fonts, sounds and behavior at least as good as the original, drawn from the
-player's own game data at runtime. It speaks the protocol of the 2022-04-06 main client (PACKETVER 20220406) and is developed
-against a local rathena server (see [Server](#server)).
+player's own game data at runtime. It speaks the protocol of the 2022-04-06 main client (PACKETVER 20220406) and is
+developed against a local rathena server (see [Server](#server)).
 
-The crate, binary and dev switches are named `roclient`.
+The crate and binary are `rustnarok-client` (the library `rustnarok_client`), and the dev switches start with
+`RUSTNAROK_CLIENT_`.
 
 Nothing from the game is in this repository: no data.grf, no images, sounds or translations. The client reads them
 from the player's files when it runs.
@@ -35,11 +36,11 @@ marked `ponytail:` in the code, to calibrate against screenshots of the real cli
 
 1. **Rust**: install rustup; `rust-toolchain.toml` pins the nightly the code builds with.
 2. **Game data**: put an official kRO `data.grf` (2024 data is what's tested) in the repository folder, or point
-   `ROCLIENT_GRF` at one.
+   `RUSTNAROK_CLIENT_GRF` at one.
 3. **English** (optional): a translation pack's `data` and `System` folders next to data.grf. Their loose files go
-   before the archive. `ROCLIENT_DATA=<folder>` says where they are, `none` turns them off.
-4. **Music** (optional): the official `BGM` folder (numbered mp3s) next to data.grf, or `ROCLIENT_BGM=<folder>`.
-5. **Server**: by default the client logs into `127.0.0.1:6900`; `ROCLIENT_SERVER=host:port` changes that.
+   before the archive. `RUSTNAROK_CLIENT_DATA=<folder>` says where they are, `none` turns them off.
+4. **Music** (optional): the official `BGM` folder (numbered mp3s) next to data.grf, or `RUSTNAROK_CLIENT_BGM=<folder>`.
+5. **Server**: by default the client logs into `127.0.0.1:6900`; `RUSTNAROK_CLIENT_SERVER=host:port` changes that.
 
 `data.grf`, `data`, `System`, `SystemEN` and `BGM` are gitignored. In development they are symlinks to wherever the
 files live.
@@ -103,22 +104,22 @@ Regenerate it whenever the server changes.
 cargo test --release
 ```
 
-Some tests read the official data.grf (`ROCLIENT_GRF`, or `./data.grf`). One test logs into a running server and is
-ignored by default; it runs with `ROCLIENT_TEST_ACCOUNT=user:password cargo test -- --ignored`.
+Some tests read the official data.grf (`RUSTNAROK_CLIENT_GRF`, or `./data.grf`). One test logs into a running server and is
+ignored by default; it runs with `RUSTNAROK_CLIENT_TEST_ACCOUNT=user:password cargo test -- --ignored`.
 
 ### Seeing what the client draws
 
-- `ROCLIENT_SCREENSHOT=out.png` renders headlessly, saves a settled frame and quits; in the game after
-  `ROCLIENT_SHOT_DELAY` seconds.
-- `ROCLIENT_CONTROL=<socket>` lets a test driver play the client over a Unix socket: screenshots, clicks, keys,
+- `RUSTNAROK_CLIENT_SCREENSHOT=out.png` renders headlessly, saves a settled frame and quits; in the game after
+  `RUSTNAROK_CLIENT_SHOT_DELAY` seconds.
+- `RUSTNAROK_CLIENT_CONTROL=<socket>` lets a test driver play the client over a Unix socket: screenshots, clicks, keys,
   typing, the game state with units' screen boxes, waiting for packets, pausing the clock. The commands are listed
   at the top of `src/control.rs`. A driven client ignores the real mouse and keyboard and stays silent.
-- `src/bin/roclient-mcp.rs` offers those commands as MCP tools, so an AI assistant can launch and play the client
-  (`claude mcp add roclient-dev -- <repo>/target/release/roclient-mcp`).
-- `ROCLIENT_TRACE=1` prints received packets; `=full` dumps them whole.
+- `src/bin/rustnarok-client-mcp.rs` offers those commands as MCP tools, so an AI assistant can launch and play the client
+  (`claude mcp add rustnarok-client-dev -- <repo>/target/release/rustnarok-client-mcp`).
+- `RUSTNAROK_CLIENT_TRACE=1` prints received packets; `=full` dumps them whole.
 
-The top of `src/main.rs` lists the other dev switches: logging in and picking a slot (`ROCLIENT_LOGIN`,
-`ROCLIENT_AUTOSTART`), scripted chat and GM commands (`ROCLIENT_SAY`), clicks (`ROCLIENT_CLICKS`), walking, talking,
+The top of `src/main.rs` lists the other dev switches: logging in and picking a slot (`RUSTNAROK_CLIENT_LOGIN`,
+`RUSTNAROK_CLIENT_AUTOSTART`), scripted chat and GM commands (`RUSTNAROK_CLIENT_SAY`), clicks (`RUSTNAROK_CLIENT_CLICKS`), walking, talking,
 fighting, shops, storage, trades, parties, guilds and more.
 
 The examples are tools for reading the game data: `grf_list`, `grf_extract`, `grf_grep`, `grf_sheet` (images to one

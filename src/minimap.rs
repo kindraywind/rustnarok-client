@@ -1,7 +1,7 @@
 //! The minimap at the top right: the map's overview picture, the player's arrow and coordinates.
 
 use image::{Rgba, RgbaImage};
-use roclient::grf::Grf;
+use rustnarok_client::grf::Grf;
 
 use crate::render::{self, Gpu, Texture};
 use crate::{Layer, SCREEN, UI};

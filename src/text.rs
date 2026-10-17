@@ -11,12 +11,12 @@ const FALLBACK_FONT: &str = "/System/Library/Fonts/Supplemental/AppleGothic.ttf"
 /// Set to false (thresholded coverage) once a hinted bitmap-friendly font like Gulim is in use.
 const ANTIALIAS: bool = true;
 
-/// The font (`ROCLIENT_FONT`, Tahoma by default), then the fallback.
+/// The font (`RUSTNAROK_CLIENT_FONT`, Tahoma by default), then the fallback.
 pub struct Font(Vec<fontdue::Font>);
 
 impl Font {
     pub fn load() -> Self {
-        let path = std::env::var("ROCLIENT_FONT").unwrap_or_else(|_| DEFAULT_FONT.into());
+        let path = std::env::var("RUSTNAROK_CLIENT_FONT").unwrap_or_else(|_| DEFAULT_FONT.into());
         let fonts: Vec<_> = [path.as_str(), FALLBACK_FONT]
             .into_iter()
             .filter_map(|path| fontdue::Font::from_bytes(std::fs::read(path).ok()?, fontdue::FontSettings::default()).ok())

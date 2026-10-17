@@ -1,7 +1,7 @@
 //! Dev tool: `cargo run --example messages -- <data.grf> <from> [to]` prints the client's messages in that ID range;
 //! `... -- <data.grf> find <text>` prints every message containing the text.
 
-use roclient::{grf, messages};
+use rustnarok_client::{grf, messages};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

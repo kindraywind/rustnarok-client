@@ -1,8 +1,8 @@
 //! The option menu's audio settings (Esc, then Sound): music (BGM) and effects (SFX), each on or off, with a slider
 //! for its volume.
 
-use roclient::grf::Grf;
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::sound::{MAX_VOLUME, Settings};

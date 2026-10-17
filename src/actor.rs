@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use roclient::grf::Grf;
-use roclient::lua::LookTables;
-use roclient::sprite::{self, Act, Palette, Spr};
+use rustnarok_client::grf::Grf;
+use rustnarok_client::lua::LookTables;
+use rustnarok_client::sprite::{self, Act, Palette, Spr};
 
 use crate::render::{Gpu, Texture};
 use crate::world;
@@ -846,11 +846,11 @@ impl Actor {
 mod tests {
     use super::*;
 
-    /// Needs the official data.grf, at `ROCLIENT_GRF` or `./data.grf`.
+    /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn standing_players_hold_their_head_still() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
-        let tables = roclient::lua::look_tables(&grf).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let tables = rustnarok_client::lua::look_tables(&grf).unwrap();
         let novice = SpriteSet::player(&grf, &Look { hair: 1, ..Default::default() }, &tables).unwrap();
         for action in [IDLE, SIT] {
             let at = |ms: f32, head_direction: u16| novice.place(action * 8, head_direction, Timing::Loop(ms));
@@ -859,11 +859,11 @@ mod tests {
         }
     }
 
-    /// Needs the official data.grf, at `ROCLIENT_GRF` or `./data.grf`.
+    /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn dresses_a_player() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
-        let tables = roclient::lua::look_tables(&grf).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let tables = rustnarok_client::lua::look_tables(&grf).unwrap();
         let look = Look { hair: 1, weapon: 1, shield: 1, head_top: 16, head_mid: 12, head_bottom: 52, robe: 3, ..Default::default() };
         let novice = SpriteSet::player(&grf, &look, &tables).unwrap();
         let parts: Vec<Part> = novice.layers.iter().map(|layer| layer.part).collect();

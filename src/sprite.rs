@@ -277,10 +277,10 @@ mod tests {
     use super::*;
     use crate::grf::Grf;
 
-    /// Needs the official data.grf, at `ROCLIENT_GRF` or `./data.grf`.
+    /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn parses_novice_body_and_head() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
         let path = "data\\sprite\\인간족\\몸통\\남\\초보자_남";
         let body = Spr::parse(&grf.read(&format!("{path}.spr")).unwrap()).unwrap();
         let body_act = Act::parse(&grf.read(&format!("{path}.act")).unwrap()).unwrap();

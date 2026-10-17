@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use roclient::grf::Grf;
-use roclient::map::Rsw;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::map::Rsw;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

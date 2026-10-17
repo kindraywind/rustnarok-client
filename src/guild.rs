@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 
-use roclient::grf::Grf;
-use roclient::net::{GuildInfo, GuildMember};
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::net::{GuildInfo, GuildMember};
+use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};

@@ -8,9 +8,9 @@ use std::io;
 use std::ops::Range;
 
 use image::{Rgba, RgbaImage};
-use roclient::grf::Grf;
-use roclient::map::{Gat, Gnd, Rsw};
-use roclient::model::{self, Rsm};
+use rustnarok_client::grf::Grf;
+use rustnarok_client::map::{Gat, Gnd, Rsw};
+use rustnarok_client::model::{self, Rsm};
 use wgpu::util::DeviceExt;
 
 use crate::render::{Gpu, Texture, WorldPass};

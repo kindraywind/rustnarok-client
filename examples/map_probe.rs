@@ -1,10 +1,10 @@
 //! Dev tool: logs in, plays a character and prints what the map server sends.
-//! `ROCLIENT_TEST_ACCOUNT=user:password cargo run --example map_probe -- [slot] [seconds] [walk x,y]`
+//! `RUSTNAROK_CLIENT_TEST_ACCOUNT=user:password cargo run --example map_probe -- [slot] [seconds] [walk x,y]`
 
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use roclient::net::{self, CharEvent, CharSession, MapEvent, MapSession, MapTicket};
+use rustnarok_client::net::{self, CharEvent, CharSession, MapEvent, MapSession, MapTicket};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -14,7 +14,7 @@ fn main() {
         let (x, y) = cell.split_once(',').unwrap();
         [x.parse().unwrap(), y.parse().unwrap()]
     });
-    let account = std::env::var("ROCLIENT_TEST_ACCOUNT").expect("ROCLIENT_TEST_ACCOUNT=user:password");
+    let account = std::env::var("RUSTNAROK_CLIENT_TEST_ACCOUNT").expect("RUSTNAROK_CLIENT_TEST_ACCOUNT=user:password");
     let (user, password) = account.split_once(':').unwrap();
 
     let accepted = net::login("127.0.0.1:6900", user, password).unwrap();

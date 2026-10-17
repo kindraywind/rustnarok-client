@@ -111,10 +111,10 @@ mod tests {
         assert_eq!(fill("100%%", &[]), "100%");
     }
 
-    /// Needs the official data.grf, at `ROCLIENT_GRF` or `./data.grf`.
+    /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn reads_the_client_messages() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
         let messages = load(&grf).unwrap();
         assert_eq!(messages[INVENTORY], "소지아이템");
         assert_eq!(messages[ITEM_AMOUNT], "%s : %d 개");

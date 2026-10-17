@@ -1,8 +1,8 @@
 //! Chat rooms: the sign over a room owner's head (title and how full), the room window once inside (talk on the left,
 //! who's there on the right), and the window that makes one (Alt+C).
 
-use roclient::grf::Grf;
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};

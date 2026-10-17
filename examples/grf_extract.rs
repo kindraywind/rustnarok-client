@@ -1,6 +1,6 @@
 //! Dev tool: `cargo run --example grf_extract -- <data.grf> <path in grf> <output file>`.
 
-use roclient::grf;
+use rustnarok_client::grf;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
-use roclient::grf::Grf;
-use roclient::lua::World;
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::lua::World;
+use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome};

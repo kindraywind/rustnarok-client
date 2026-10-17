@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use image::RgbaImage;
-use roclient::grf::Grf;
-use roclient::text::{self, Font};
+use rustnarok_client::grf::Grf;
+use rustnarok_client::text::{self, Font};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 

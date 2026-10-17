@@ -1,9 +1,9 @@
 //! Character creation of 2018+ clients (make_character_ver2): race, gender, hairstyle and hair color with the
 //! character turning on its pedestal, and the name; behind it, the client's blurred picture of the select screen.
 
-use roclient::grf::Grf;
-use roclient::lua::LookTables;
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::lua::LookTables;
+use rustnarok_client::text::Font;
 
 use crate::actor::{Look, Placed, SpriteSet, Timing};
 use crate::render::{Gpu, Texture};

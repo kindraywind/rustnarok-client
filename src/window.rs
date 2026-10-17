@@ -1,7 +1,7 @@
 //! What the client's windows share: the title bar with its buttons, dragging, minimizing and tooltips.
 
-use roclient::grf::Grf;
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::{Layer, SCREEN, UI, contains, offset};

@@ -296,10 +296,10 @@ mod tests {
         assert_eq!(moved, [3.0, 4.0, 5.0]);
     }
 
-    /// Needs the official data.grf, at `ROCLIENT_GRF` or `./data.grf`.
+    /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn bakes_prontera_models() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
         let rsw = Rsw::parse(&grf.read("data\\prontera.rsw").unwrap()).unwrap();
         let mut files: Vec<&str> = rsw.models.iter().map(|model| model.file.as_str()).collect();
         files.sort();

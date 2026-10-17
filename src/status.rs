@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
-use roclient::grf::Grf;
-use roclient::net::{STATUS_ATK, STATUS_BONUS, STATUS_POINTS, STATUS_STR, STATUS_STR_COST};
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::net::{STATUS_ATK, STATUS_BONUS, STATUS_POINTS, STATUS_STR, STATUS_STR_COST};
+use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};

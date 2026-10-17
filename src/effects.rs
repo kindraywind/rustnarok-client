@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
-use roclient::effect::Str;
-use roclient::grf::Grf;
+use rustnarok_client::effect::Str;
+use rustnarok_client::grf::Grf;
 
 use crate::render::{Gpu, Texture};
 use crate::world::{CELL, EffectMesh, EffectQuad, MeshVertex, Vector};

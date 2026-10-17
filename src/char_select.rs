@@ -4,10 +4,10 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use roclient::grf::Grf;
-use roclient::messages;
-use roclient::net::Character;
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::messages;
+use rustnarok_client::net::Character;
+use rustnarok_client::text::Font;
 
 use crate::actor::{self, Placed, SpriteSet, Timing};
 use crate::render::{Gpu, Texture};

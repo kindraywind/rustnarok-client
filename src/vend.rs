@@ -3,10 +3,10 @@
 
 use std::collections::HashMap;
 
-use roclient::grf::Grf;
-use roclient::lua::ItemInfo;
-use roclient::net::{InventoryItem, VendItem};
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::lua::ItemInfo;
+use rustnarok_client::net::{InventoryItem, VendItem};
+use rustnarok_client::text::Font;
 
 use crate::inventory;
 use crate::render::{Gpu, Texture};

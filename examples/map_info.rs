@@ -1,8 +1,8 @@
 //! Dev tool: a map's RSW water and light settings, and the walkable cell nearest its center.
 //! `cargo run --example map_info -- <data.grf> <map>`
 
-use roclient::grf::Grf;
-use roclient::map::{Gat, Rsw};
+use rustnarok_client::grf::Grf;
+use rustnarok_client::map::{Gat, Rsw};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

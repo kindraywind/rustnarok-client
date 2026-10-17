@@ -3,7 +3,7 @@
 //! box its visible pixels fill (left, top, right, bottom).
 
 use image::{Rgba, RgbaImage, imageops};
-use roclient::grf;
+use rustnarok_client::grf;
 
 const GAP: u32 = 6;
 const SHEET_WIDTH: u32 = 1400;

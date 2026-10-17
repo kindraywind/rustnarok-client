@@ -3,11 +3,11 @@
 
 use std::collections::HashMap;
 
-use roclient::grf::Grf;
-use roclient::lua::{SkillInfo, SkillTrees};
-use roclient::messages;
-use roclient::net::Skill;
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::lua::{SkillInfo, SkillTrees};
+use rustnarok_client::messages;
+use rustnarok_client::net::Skill;
+use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};

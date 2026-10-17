@@ -1,7 +1,7 @@
 //! The client's right-click menu: a white box of choices by the pointer, the hovered one in blue, groups split by grey
 //! lines.
 
-use roclient::text::Font;
+use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::{Layer, SCREEN, contains, offset};

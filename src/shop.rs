@@ -3,10 +3,10 @@
 
 use std::collections::HashMap;
 
-use roclient::grf::Grf;
-use roclient::lua::ItemInfo;
-use roclient::net::{ITEM_ARMOR, ITEM_PET_ARMOR, ITEM_PET_EGG, ITEM_WEAPON, MapSession};
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::lua::ItemInfo;
+use rustnarok_client::net::{ITEM_ARMOR, ITEM_PET_ARMOR, ITEM_PET_EGG, ITEM_WEAPON, MapSession};
+use rustnarok_client::text::Font;
 
 use crate::inventory;
 use crate::render::{Gpu, Texture};
@@ -308,7 +308,7 @@ impl Shop {
             let footer = height - FOOTER;
             layer.sprites.push((&assets.bar, frame.at([0.0, footer]), [WIDTH, FOOTER]));
             if window == 1 {
-                let total = roclient::messages::fill(message(TOTAL_MESSAGE), &[&group(self.total())]);
+                let total = rustnarok_client::messages::fill(message(TOTAL_MESSAGE), &[&group(self.total())]);
                 layer.texts.push((total, frame.at([10.0, footer + 7.0]), [0, 0, 0]));
                 let (deal, cancel) = self.deal_button(1);
                 let deal_images = &assets.buttons[usize::from(self.selling)];

@@ -1,6 +1,6 @@
-//! Dev-only MCP server that lets Claude Code drive a live roclient through its control socket (src/control.rs).
+//! Dev-only MCP server that lets Claude Code drive a live rustnarok-client through its control socket (src/control.rs).
 //! Build with `cargo build --release`, then register it once with
-//! `claude mcp add roclient-dev -- <repo>/target/release/roclient-mcp`.
+//! `claude mcp add rustnarok-client-dev -- <repo>/target/release/rustnarok-client-mcp`.
 //!
 //! It speaks JSON-RPC 2.0 over stdio (one message per line; logs go to stderr): `initialize`, `tools/list` and
 //! `tools/call`. `launch` starts the client next to this binary, in the repository it was built from; every other
@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-const INSTRUCTIONS: &str = "Drives a live roclient (the Ragnarok Online client in this repository) for testing. Call launch \
+const INSTRUCTIONS: &str = "Drives a live rustnarok-client (the Ragnarok Online client in this repository) for testing. Call launch \
 first; it stays logged in across calls until quit. Coordinates are the client's 1024x768 pixels, the same as a screenshot \
 at scale 1. state lists units and ground items with their screen boxes to click. To catch a short effect, run the action \
 through wait's `do` with `pause: true`, then alternate clock step and screenshot.";
@@ -29,7 +29,7 @@ fn tools() -> Value {
             "launch",
             "Start the client with its control socket and wait until it's ready: in the game with a slot, at character select with an account only, else at the login screen. Retries a refused login (servers keep an account online for a few seconds after a client leaves). If a client already answers, reports its state instead.",
             json!({
-                "server": {"type": "string", "description": "the login server, host:port (ROCLIENT_SERVER, else 127.0.0.1:6900, by default)"},
+                "server": {"type": "string", "description": "the login server, host:port (RUSTNAROK_CLIENT_SERVER, else 127.0.0.1:6900, by default)"},
                 "account_file": {"type": "string", "description": "a file with `username:` and `password:` lines; the password goes to the client only"},
                 "account": {"type": "string", "description": "which pair of lines: \"2\" for `username2:` and `password2:` (the first by default)"},
                 "slot": {"type": "integer", "description": "character slot to play"},
@@ -100,7 +100,7 @@ fn tools() -> Value {
         ),
         tool(
             "trace",
-            "The last packets received from the char and map servers, in the ROCLIENT_TRACE format (time ms, id, length, first bytes).",
+            "The last packets received from the char and map servers, in the RUSTNAROK_CLIENT_TRACE format (time ms, id, length, first bytes).",
             json!({"last": {"type": "integer", "description": "lines, 20 by default"}, "events": {"type": "boolean", "description": "also the client events they made (== lines), e.g. why a connection dropped"}}),
             &[],
         ),
@@ -155,22 +155,22 @@ impl Server {
         }
         let account_file = arguments["account_file"].as_str();
         let slot = arguments["slot"].as_u64();
-        let game = std::env::current_exe().map_err(|error| error.to_string())?.with_file_name("roclient");
+        let game = std::env::current_exe().map_err(|error| error.to_string())?.with_file_name("rustnarok-client");
         let log_path = self.socket.with_extension("log");
         let log = std::fs::File::create(&log_path).map_err(|error| format!("{}: {error}", log_path.display()))?;
         let mut command = Command::new(&game);
         // The client finds data.grf and the data folders in the repository.
-        command.current_dir(env!("CARGO_MANIFEST_DIR")).env("ROCLIENT_CONTROL", &self.socket);
+        command.current_dir(env!("CARGO_MANIFEST_DIR")).env("RUSTNAROK_CLIENT_CONTROL", &self.socket);
         if let Some(server) = arguments["server"].as_str() {
-            command.env("ROCLIENT_SERVER", server);
+            command.env("RUSTNAROK_CLIENT_SERVER", server);
         }
         command.stdin(Stdio::null()).stdout(log.try_clone().map_err(|error| error.to_string())?).stderr(log);
         if let Some(path) = account_file {
             let which = arguments["account"].as_str().unwrap_or_default();
             let contents = std::fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
             let (user, password) = account(&contents, which).ok_or_else(|| format!("{path} has no `username{which}:` and `password{which}:` lines"))?;
-            command.env("ROCLIENT_LOGIN", format!("{user}:{password}"));
-            command.env("ROCLIENT_AUTOSTART", slot.map_or_else(|| "select".to_owned(), |slot| slot.to_string()));
+            command.env("RUSTNAROK_CLIENT_LOGIN", format!("{user}:{password}"));
+            command.env("RUSTNAROK_CLIENT_AUTOSTART", slot.map_or_else(|| "select".to_owned(), |slot| slot.to_string()));
         }
         self.child = Some(command.spawn().map_err(|error| format!("{}: {error}", game.display()))?);
         let goal = match (account_file, slot) {
@@ -204,7 +204,7 @@ impl Server {
                         return Err(format!("stopped at a message: {state}"));
                     }
                     retries += 1;
-                    eprintln!("roclient-mcp: login refused ({}), retrying", state["text"]);
+                    eprintln!("rustnarok-client-mcp: login refused ({}), retrying", state["text"]);
                     std::thread::sleep(Duration::from_secs(5));
                     for key in ["Enter", "Enter"] {
                         let _ = self.request(&json!({"cmd": "key", "key": key}));
@@ -256,14 +256,14 @@ fn main() {
     // In the repository's target folder: a short, private path (socket paths have a length limit) that's ignored by git.
     let target = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
     let _ = std::fs::create_dir_all(&target);
-    let mut server = Server { socket: target.join("roclient-dev.sock"), child: None };
+    let mut server = Server { socket: target.join("rustnarok-client-dev.sock"), child: None };
     let mut stdout = std::io::stdout();
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
         let message: Value = match serde_json::from_str(&line) {
             Ok(message) => message,
             Err(error) => {
-                eprintln!("roclient-mcp: not JSON ({error}): {line}");
+                eprintln!("rustnarok-client-mcp: not JSON ({error}): {line}");
                 continue;
             }
         };
@@ -274,7 +274,7 @@ fn main() {
             "initialize" => json!({
                 "protocolVersion": params["protocolVersion"].as_str().unwrap_or("2025-06-18"),
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "roclient-dev", "version": env!("CARGO_PKG_VERSION")},
+                "serverInfo": {"name": "rustnarok-client-dev", "version": env!("CARGO_PKG_VERSION")},
                 "instructions": INSTRUCTIONS,
             }),
             "tools/list" => json!({"tools": tools()}),
@@ -295,6 +295,6 @@ fn main() {
     }
     // Claude Code went away: don't leave a logged-in client behind.
     if server.child.is_some() {
-        eprintln!("roclient-mcp: {}", server.quit());
+        eprintln!("rustnarok-client-mcp: {}", server.quit());
     }
 }

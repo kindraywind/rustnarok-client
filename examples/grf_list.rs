@@ -1,6 +1,6 @@
 //! Dev tool: `cargo run --example grf_list -- <data.grf> <text>` lists the files whose path contains `text`.
 
-use roclient::grf;
+use rustnarok_client::grf;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

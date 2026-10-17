@@ -1,8 +1,8 @@
 //! Dev tool: `cargo run --example act_sounds -- <data.grf> <act path>...` prints each ACT's sounds and which action
 //! frames (action number, frame) play them.
 
-use roclient::grf::Grf;
-use roclient::sprite::Act;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::sprite::Act;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

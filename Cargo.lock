@@ -1801,26 +1801,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
-name = "roclient"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "cpal",
- "encoding_rs",
- "flate2",
- "fontdue",
- "image",
- "lunify",
- "mlua",
- "pollster",
- "serde",
- "serde_json",
- "symphonia",
- "wgpu",
- "winit",
-]
-
-[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1865,6 +1845,26 @@ dependencies = [
  "libc",
  "linux-raw-sys 0.12.1",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "rustnarok-client"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "cpal",
+ "encoding_rs",
+ "flate2",
+ "fontdue",
+ "image",
+ "lunify",
+ "mlua",
+ "pollster",
+ "serde",
+ "serde_json",
+ "symphonia",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]

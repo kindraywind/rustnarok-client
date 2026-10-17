@@ -1,11 +1,11 @@
 //! Dev tool: sprite name and files for job IDs. `cargo run --example job_name -- <data.grf> <id>...`
 
-use roclient::grf::Grf;
+use rustnarok_client::grf::Grf;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let grf = Grf::open(&args[1]).unwrap();
-    let names = roclient::lua::job_names(&grf).unwrap();
+    let names = rustnarok_client::lua::job_names(&grf).unwrap();
     for id in &args[2..] {
         let name = names.get(&id.parse().unwrap());
         let found: Vec<String> = ["npc", "몬스터"]

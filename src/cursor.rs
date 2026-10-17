@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use roclient::grf::Grf;
+use rustnarok_client::grf::Grf;
 
 use crate::actor::{SpriteSet, Timing};
 use crate::render::{Gpu, Sprite};

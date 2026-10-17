@@ -2,9 +2,9 @@
 //! friend's name; the buttons to make a party, invite, leave or set it up (or to talk to or drop a friend); and the
 //! count at the bottom, with the tab picked.
 
-use roclient::grf::Grf;
-use roclient::net::{Friend, PartyMember};
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::net::{Friend, PartyMember};
+use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};

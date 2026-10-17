@@ -4,11 +4,11 @@
 
 use std::collections::HashMap;
 
-use roclient::grf::Grf;
-use roclient::lua::ItemInfo;
-use roclient::messages::fill;
-use roclient::net::{InventoryItem, MAIL_ITEM, MAIL_NPC, MAIL_ZENY, MailHeader, MapEvent};
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::lua::ItemInfo;
+use rustnarok_client::messages::fill;
+use rustnarok_client::net::{InventoryItem, MAIL_ITEM, MAIL_NPC, MAIL_ZENY, MailHeader, MapEvent};
+use rustnarok_client::text::Font;
 
 use crate::inventory;
 use crate::render::{Gpu, Texture};

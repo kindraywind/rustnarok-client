@@ -153,10 +153,10 @@ fn invalid(message: &str) -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    /// Needs the official data.grf, at `ROCLIENT_GRF` or `./data.grf`.
+    /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn reads_plain_and_encrypted_files() {
-        let grf = super::Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = super::Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
 
         // flags 1: plain zlib.
         let plain = grf.read("data/texture/유저인터페이스/login_interface/bg_login.tga").unwrap();

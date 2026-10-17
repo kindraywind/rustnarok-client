@@ -186,10 +186,10 @@ mod tests {
     use super::*;
     use crate::grf::Grf;
 
-    /// Needs the official data.grf, at `ROCLIENT_GRF` or `./data.grf`.
+    /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn plays_the_level_up_angel() {
-        let grf = Grf::open(std::env::var("ROCLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
         let angel = Str::parse(&grf.read("data\\texture\\effect\\angel.str").unwrap()).unwrap();
         assert!(angel.fps > 0 && angel.frames > 10, "{} fps, {} frames", angel.fps, angel.frames);
         assert!(!angel.layers.is_empty());

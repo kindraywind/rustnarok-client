@@ -1,15 +1,15 @@
-//! Dev-only remote control, for test automation: with `ROCLIENT_CONTROL=<path>` the client listens on that Unix socket
+//! Dev-only remote control, for test automation: with `RUSTNAROK_CLIENT_CONTROL=<path>` the client listens on that Unix socket
 //! (owner only, no TCP port) for newline-delimited JSON commands and answers each with one line of JSON
 //! (`{"ok": true, ...}` or `{"ok": false, "error": ...}`). Without the variable none of this runs. A driven client
 //! ignores the real mouse and keyboard, opens behind the window in use and draws on screen only while it has the focus
 //! (click it to watch); screenshots don't need that.
 //!
-//! The `roclient-mcp` binary (src/bin/roclient-mcp.rs) offers these commands to Claude Code as MCP tools. Build with
+//! The `rustnarok-client-mcp` binary (src/bin/rustnarok-client-mcp.rs) offers these commands to Claude Code as MCP tools. Build with
 //! `cargo build --release`, then register it once with
-//! `claude mcp add roclient-dev -- <repo>/target/release/roclient-mcp`.
+//! `claude mcp add rustnarok-client-dev -- <repo>/target/release/rustnarok-client-mcp`.
 //!
 //! Commands by `cmd`, in the client's logical 1024x768 pixels:
-//! - `screenshot` `{crop?: [x, y, width, height], scale?}`: the next frame through the `ROCLIENT_SCREENSHOT` capture,
+//! - `screenshot` `{crop?: [x, y, width, height], scale?}`: the next frame through the `RUSTNAROK_CLIENT_SCREENSHOT` capture,
 //!   as base64 PNG (`png`).
 //! - `move` `{x, y}`, `click` `{x, y, button?: "left"|"right", mods?: "Alt+Shift", count?}`, `drag` `{from: [x, y],
 //!   to: [x, y], button?, mods?}`: the pointer and buttons, through the same code as the mouse.
@@ -25,7 +25,7 @@
 //!   default) for one seen since the previous command, so a quick answer isn't missed between two calls. `fresh`
 //!   only counts new ones; `do` is a command to run first (and implies `fresh`); `pause` stops the clock on arrival.
 //! - `clock` `{action: "pause"|"resume"|"step", ms?}`: the animation clock; a step freezes it `ms` (16) further on.
-//! - `trace` `{last?, events?}`: the last packets received (20), as `ROCLIENT_TRACE` prints them; with `events`, the
+//! - `trace` `{last?, events?}`: the last packets received (20), as `RUSTNAROK_CLIENT_TRACE` prints them; with `events`, the
 //!   events they made in between (`==` lines, with what they say: a disconnection's reason, say).
 //! - `quit`.
 
@@ -39,7 +39,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use image::RgbaImage;
 use image::imageops::FilterType;
-use roclient::net;
+use rustnarok_client::net;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use winit::event::{ElementState, KeyEvent};
@@ -190,9 +190,9 @@ static FROZEN: Mutex<Option<Instant>> = Mutex::new(None);
 static WANT_SHOT: AtomicBool = AtomicBool::new(false);
 static SHOT: Mutex<Option<RgbaImage>> = Mutex::new(None);
 
-/// Opens the control socket when `ROCLIENT_CONTROL` names one.
+/// Opens the control socket when `RUSTNAROK_CLIENT_CONTROL` names one.
 pub fn listen(proxy: EventLoopProxy<NetEvent>) {
-    let Some(path) = std::env::var_os("ROCLIENT_CONTROL") else { return };
+    let Some(path) = std::env::var_os("RUSTNAROK_CLIENT_CONTROL") else { return };
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     // Whoever can connect plays the logged-in character.
@@ -303,13 +303,13 @@ fn record(seen: Seen, text: String) {
     SEEN.notify_all();
 }
 
-/// Every packet from the char and map servers (on their reader threads), in the `ROCLIENT_TRACE` format.
+/// Every packet from the char and map servers (on their reader threads), in the `RUSTNAROK_CLIENT_TRACE` format.
 fn packet_seen(packet: &[u8]) {
     let id = u16::from_le_bytes([packet[0], packet[1]]);
     record(Seen::Packet(id), format!("{:05} <- {id:#06x} {} {:02x?}", trace_ms(), packet.len(), &packet[..packet.len().min(32)]));
 }
 
-/// The `ROCLIENT_TRACE` timestamp: wall-clock milliseconds, the last five digits.
+/// The `RUSTNAROK_CLIENT_TRACE` timestamp: wall-clock milliseconds, the last five digits.
 fn trace_ms() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() % 100_000
 }
@@ -345,7 +345,7 @@ pub fn now() -> Instant {
     FROZEN.lock().unwrap().unwrap_or_else(Instant::now)
 }
 
-/// Every drawn frame passes here: a screenshot asked for is taken of it, the way `ROCLIENT_SCREENSHOT` captures.
+/// Every drawn frame passes here: a screenshot asked for is taken of it, the way `RUSTNAROK_CLIENT_SCREENSHOT` captures.
 pub fn on_draw(gpu: &Gpu, world: Option<&dyn WorldPass>, sprites: &[Sprite]) {
     if WANT_SHOT.swap(false, Ordering::Relaxed) {
         *SHOT.lock().unwrap() = Some(gpu.snapshot(world, sprites));
@@ -614,7 +614,7 @@ fn state(app: &App) -> Value {
     let mut state = json!({
         "ok": true,
         "scene": scene_name(&app.scene),
-        "server": std::env::var("ROCLIENT_SERVER").unwrap_or_else(|_| crate::DEFAULT_SERVER.into()),
+        "server": std::env::var("RUSTNAROK_CLIENT_SERVER").unwrap_or_else(|_| crate::DEFAULT_SERVER.into()),
         "loading": app.loading.is_some(),
         "cursor": app.cursor,
         "paused": FROZEN.lock().unwrap().is_some(),

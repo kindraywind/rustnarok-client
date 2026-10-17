@@ -2,11 +2,11 @@
 
 use std::collections::HashMap;
 
-use roclient::grf::Grf;
-use roclient::lua::ItemInfo;
-use roclient::messages;
-use roclient::net::{self, InventoryItem};
-use roclient::text::Font;
+use rustnarok_client::grf::Grf;
+use rustnarok_client::lua::ItemInfo;
+use rustnarok_client::messages;
+use rustnarok_client::net::{self, InventoryItem};
+use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};
