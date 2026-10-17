@@ -10,6 +10,9 @@
 A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} with steps such as
   {"say": "@warp prontera 156 180"}  {"settle": 1500}  {"wait": 1500}  {"key": "Alt+E"}  {"type": "hello"}
   {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]]}  {"move": [x, y]}
+  {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
+    (targets by name from the control socket's `targets`: inventory_item (item id), hotkey (slot), skill (id),
+    or {"point": [x, y]}; a target not on screen fails the step)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
   {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command)
   {"expect": {"chat": "Item created.", "inventory_items": 5, "hp_at_least": 40, "map": "iz_int01.gat",
@@ -67,6 +70,20 @@ def launch(binary, scenario):
             drive.quit_quietly()
             time.sleep(10)  # the server still holds the last session
     raise RuntimeError("could not get into the game")
+
+
+def locate(target):
+    """A target's screen point: {"inventory_item": <item id>}, {"hotkey": <slot>}, {"skill": <id>} (the centre of its
+    box in the control socket's `targets`), or {"point": [x, y]}. None when it isn't on screen."""
+    if "point" in target:
+        return target["point"]
+    (kind, value), = target.items()
+    for found in drive.send({"cmd": "state"}).get("game", {}).get("targets", []):
+        key = {"inventory_item": "id", "hotkey": "slot", "skill": "id"}.get(kind)
+        if found.get("kind") == kind and found.get(key) == value:
+            x, y, w, h = found["box"]
+            return [round(x + w / 2), round(y + h / 2)]
+    return None
 
 
 def expect(wanted, state):
@@ -137,6 +154,20 @@ def step(action, shots_dir, name):
             if key in action:
                 command[key] = action[key]
         return drive.send(command)
+    if "click_on" in action:
+        point = locate(action["click_on"])
+        if point is None:
+            return [f"click_on {action['click_on']}: not on screen"]
+        command = {"cmd": "click", "x": point[0], "y": point[1]}
+        for key in ("button", "count", "mods"):
+            if key in action:
+                command[key] = action[key]
+        return drive.send(command)
+    if "drag_on" in action:
+        start, end = (locate(target) for target in action["drag_on"])
+        if start is None or end is None:
+            return [f"drag_on {action['drag_on']}: not on screen"]
+        return drive.send({"cmd": "drag", "from": start, "to": end})
     if "drag" in action:
         start, end = action["drag"]
         return drive.send({"cmd": "drag", "from": start, "to": end})

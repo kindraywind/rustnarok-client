@@ -215,6 +215,20 @@ impl SkillWindow {
         None
     }
 
+    /// The open tab's skill boxes on screen: skill and box.
+    pub fn skill_boxes(&self, trees: &SkillTrees, jobs: &[u16]) -> Vec<(u16, [f32; 4])> {
+        if !self.frame.open {
+            return Vec::new();
+        }
+        self.tree(trees, jobs)
+            .iter()
+            .map(|&(place, id)| {
+                let corner = self.frame.at(box_corner(place));
+                (id, [corner[0], corner[1], BOX, BOX])
+            })
+            .collect()
+    }
+
     /// The icons the open tab shows, to load before drawing.
     pub fn icons(&self, trees: &SkillTrees, jobs: &[u16], info: &HashMap<u16, SkillInfo>) -> Vec<String> {
         if !self.frame.open {

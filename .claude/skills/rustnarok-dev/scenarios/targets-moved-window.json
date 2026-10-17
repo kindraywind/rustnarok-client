@@ -1,0 +1,18 @@
+{
+  "about": "Named targets follow their windows: the inventory dragged across the screen, then a potion dragged by name onto hotkey 6 (issue #15). Also the Insert key (sit).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@heal"}, {"wait": 300},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 501 3"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 500},
+    {"drag": [[120, 180], [620, 420]]}, {"wait": 400},
+    {"drag_on": [{"inventory_item": 501}, {"hotkey": 5}]}, {"wait": 400},
+    {"expect": {"hotkeys": {"5": 501}}},
+    {"key": "Insert"}, {"wait": 800},
+    {"move": [900, 650]},
+    {"shot": "moved-inventory", "mask": [[860, 0, 164, 340]]}
+  ]
+}
