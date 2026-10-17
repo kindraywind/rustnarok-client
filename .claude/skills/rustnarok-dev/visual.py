@@ -14,7 +14,7 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
   {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command)
   {"expect": {"chat": "Item created.", "inventory_items": 5, "hp_at_least": 40, "map": "iz_int01.gat",
               "windows_open": ["Inventory"], "windows_closed": ["Skills"], "units_at_least": {"monster": 10},
-              "ground_items_at_least": 1}}
+              "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null}}}
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
 diff; `threshold` (percent, default 1) is how much change a shot takes before the report flags it.
@@ -52,6 +52,11 @@ def wait_for_game(timeout=60):
 
 
 def launch(binary, scenario):
+    # Scenarios start from the same server state: RUSTNAROK_CLIENT_SCENARIO_RESET is a shell command (each developer's
+    # own, for their server) run before every launch, e.g. clearing the test characters' saved hotkey bars.
+    reset = os.environ.get("RUSTNAROK_CLIENT_SCENARIO_RESET")
+    if reset:
+        subprocess.run(reset, shell=True, check=True)
     env_extra = scenario.get("env", {})
     for attempt in range(6):
         drive.launch(scenario.get("account", ""), str(scenario.get("slot", "0")), binary=binary, env_extra=env_extra, quiet=True)
@@ -84,12 +89,19 @@ def expect(wanted, state):
             failures += [f"window {w} open" for w in value if w in game.get("windows", [])]
         elif key == "ground_items_at_least" and len(game.get("ground_items", [])) < value:
             failures.append(f"{len(game.get('ground_items', []))} items on the ground < {value}")
+        elif key == "hotkeys":
+            # {"<slot>": <item or skill id>, or null for an empty slot}
+            slots = game.get("hotkeys", [])
+            for slot, want in value.items():
+                have = slots[int(slot)] if int(slot) < len(slots) else None
+                if (have or {}).get("id") != want if want is not None else have is not None:
+                    failures.append(f"hotkey {slot} holds {have}, not {want}")
         elif key == "units_at_least":
             for kind, count in value.items():
                 have = sum(1 for unit in game.get("units", []) if unit.get("kind") == kind)
                 if have < count:
                     failures.append(f"{have} {kind} units < {count}")
-        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least"):
+        elif key not in ("chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys"):
             failures.append(f"unknown expectation {key}")
     return failures
 
