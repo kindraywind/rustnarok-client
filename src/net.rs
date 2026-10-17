@@ -559,6 +559,9 @@ const ZC_MSG_SKILL: u16 = 0x07E6;
 const ZC_MSG_COLOR: u16 = 0x09CD;
 const ZC_ACTION_FAILURE: u16 = 0x013B;
 const ZC_ACK_REMEMBER_WARPPOINT: u16 = 0x011E;
+const ZC_WARPLIST: u16 = 0x0ABE;
+const CZ_SELECT_WARPPOINT: u16 = 0x011B;
+const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
 const CZ_OPEN_MAILBOX2: u16 = 0x0AC0;
@@ -1023,6 +1026,11 @@ pub enum MapEvent {
     },
     /// Ammunition or weight trouble: 0 no ammunition, 1 and 2 too heavy, 3 ammunition equipped.
     ActionFailure(u16),
+    /// Where Warp Portal or Teleport may take the player: map names with ".gat" (Teleport's first is "Random").
+    WarpList {
+        skill: u16,
+        maps: Vec<String>,
+    },
     /// Saving a memo point: 0 saved, 1 Warp Portal's level is too low, 2 it isn't learned.
     MemoResult(u8),
     /// What this map doesn't allow: 0 teleporting, 1 memo points, 2 skills, 3 items.
@@ -1897,6 +1905,16 @@ impl MapSession {
 
     /// Public chat; the client sends "name : message".
     /// Shows an emotion over the player's head.
+    /// Where Warp Portal or Teleport goes: a map from the list as it came, or "cancel".
+    pub fn select_warp_point(&mut self, skill: u16, map: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_select_warp_point(skill, map))
+    }
+
+    /// /memo: saves where the player stands as a Warp Portal destination.
+    pub fn remember_warp_point(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_REMEMBER_WARPPOINT.to_le_bytes())
+    }
+
     pub fn emote(&mut self, kind: u8) -> io::Result<()> {
         let mut packet = CZ_REQ_EMOTION.to_le_bytes().to_vec();
         packet.push(kind);
@@ -2340,6 +2358,16 @@ fn encode_identify(index: Option<u16>) -> [u8; 4] {
     [h0, h1, i0, i1]
 }
 
+/// CZ_SELECT_WARPPOINT: the skill that asked and a map (16 bytes, NUL-padded).
+fn encode_select_warp_point(skill: u16, map: &str) -> [u8; 20] {
+    let mut packet = [0u8; 20];
+    packet[..2].copy_from_slice(&CZ_SELECT_WARPPOINT.to_le_bytes());
+    packet[2..4].copy_from_slice(&skill.to_le_bytes());
+    let length = map.len().min(15);
+    packet[4..4 + length].copy_from_slice(&map.as_bytes()[..length]);
+    packet
+}
+
 /// CZ_SETTING_WHISPER_STATE: 0 to block everyone, 1 to allow everyone.
 fn encode_whisper_all(allow: bool) -> [u8; 3] {
     let [low, high] = CZ_SETTING_WHISPER_STATE.to_le_bytes();
@@ -2661,6 +2689,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_MSG_COLOR => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: Some([packet[4], packet[5], packet[6]]) },
         ZC_ACTION_FAILURE => MapEvent::ActionFailure(u16_at(2)),
         ZC_ACK_REMEMBER_WARPPOINT => MapEvent::MemoResult(packet[2]),
+        ZC_WARPLIST => MapEvent::WarpList { skill: u16_at(4), maps: packet[6..].chunks_exact(16).map(c_string).filter(|map| !map.is_empty()).collect() },
         ZC_NOTIFY_MAPINFO => MapEvent::MapForbids(u16_at(2)),
         // Each quest: ID, state (1 active), start and end times, hunts; each hunt 46 bytes, with how many it needs.
         ZC_ALL_QUEST_LIST3 => {
@@ -3265,6 +3294,23 @@ mod tests {
     }
 
     #[test]
+    fn decodes_warp_list() {
+        // Teleport level 2: "Random" and the save point, as rathena names them (16 bytes each, ".gat" added).
+        let mut list = ZC_WARPLIST.to_le_bytes().to_vec();
+        list.extend_from_slice(&38u16.to_le_bytes());
+        list.extend_from_slice(&26u16.to_le_bytes());
+        for map in ["Random.gat", "prontera.gat"] {
+            let mut field = map.as_bytes().to_vec();
+            field.resize(16, 0);
+            list.extend_from_slice(&field);
+        }
+        assert_eq!(list.len(), 38);
+        let Some(MapEvent::WarpList { skill: 26, maps }) = decode_map_packet(&list) else { panic!() };
+        assert_eq!(maps, ["Random.gat", "prontera.gat"]);
+        assert_eq!([ZC_WARPLIST, CZ_SELECT_WARPPOINT, CZ_REMEMBER_WARPPOINT].map(packet_length), [Some(-1), Some(20), Some(2)]);
+    }
+
+    #[test]
     fn decodes_mail() {
         // The list as clif_Mail_refreshinbox writes it: length, a byte, then per mail its box, ID, read, flags,
         // sender, seconds left, title length and title.
@@ -3323,6 +3369,9 @@ mod tests {
         let Some(MapEvent::Identified { ok: false, .. }) = decode_map_packet(&[0x79, 0x01, 9, 0, 1]) else { panic!() };
         assert_eq!(encode_identify(Some(9)), [0x78, 0x01, 9, 0]);
         assert_eq!(encode_identify(None), [0x78, 0x01, 0xFF, 0xFF]);
+        let warp = encode_select_warp_point(27, "prontera.gat");
+        assert_eq!((&warp[..4], &warp[4..16], &warp[16..]), (&[0x1B, 0x01, 27, 0][..], &b"prontera.gat"[..], &[0u8; 4][..]));
+        assert_eq!(&encode_select_warp_point(26, "cancel")[4..11], b"cancel\0");
         for (header, length) in [(ZC_AUTORUN_SKILL, 39), (ZC_ITEMIDENTIFY_LIST, -1), (CZ_REQ_ITEMIDENTIFY, 4), (ZC_ACK_ITEMIDENTIFY, 5)] {
             assert_eq!(packet_length(header), Some(length));
         }

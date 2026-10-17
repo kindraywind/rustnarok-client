@@ -718,7 +718,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
     let overlays = [
-        ("NpcDialog", game.dialog.is_some()),
+        ("NpcDialog", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none())),
+        ("WarpList", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some())),
         ("Shop", game.shop.is_some()),
         ("DealChoice", game.deal_choice.is_some()),
         ("Trade", game.trade.is_some()),

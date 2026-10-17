@@ -121,6 +121,9 @@ const CHAT_SKILL_MESSAGE: [u8; 3] = [0xCD, 0xCD, 0xFF];
 const ACTION_FAILURES: [usize; 4] = [242, 243, 244, 245];
 /// Saving a memo point: saved, Warp Portal's level too low, not learned.
 const MEMO_RESULTS: [usize; 3] = [217, 214, 216];
+/// Warp Portal's and Teleport's list: Teleport's random spot, and the last row.
+const RANDOM_AREA: usize = 212;
+const WARP_CANCEL: usize = 218;
 /// What a map doesn't allow: teleporting, memo points, the skill, the item.
 const MAP_FORBIDS: [usize; 4] = [500, 501, 1334, 1335];
 /// How far (in cells) others' sounds carry, fading on the way.
@@ -745,7 +748,7 @@ struct FloorItem {
 impl Game {
     fn dialog_for(&mut self, npc: u32) -> &mut Dialog {
         if self.dialog.as_ref().is_none_or(|dialog| dialog.npc != npc) {
-            self.dialog = Some(Dialog { npc, lines: Vec::new(), button: DialogButton::None, menu: None, input: None });
+            self.dialog = Some(Dialog { npc, lines: Vec::new(), button: DialogButton::None, menu: None, input: None, warp: None });
         }
         self.dialog.as_mut().unwrap()
     }
@@ -772,6 +775,12 @@ impl Game {
     fn choose(&mut self, cancel: bool) {
         let Some(dialog) = &mut self.dialog else { return };
         let Some((_, selected)) = dialog.menu.take() else { return };
+        // Warp Portal and Teleport: the map as it came; the row after the maps (Cancel) and Esc cancel.
+        if let Some((skill, maps)) = dialog.warp.take() {
+            let _ = self.session.select_warp_point(skill, maps.get(selected).filter(|_| !cancel).map_or("cancel", String::as_str));
+            self.dialog = None;
+            return;
+        }
         let _ = self.session.choose(dialog.npc, if cancel { 255 } else { selected as u8 + 1 });
         if cancel {
             self.dialog = None;
@@ -1008,6 +1017,7 @@ impl Game {
                 Ok(())
             }
             chat::Command::Who => self.session.user_count(),
+            chat::Command::Memo => self.session.remember_warp_point(),
             chat::Command::Where => {
                 // ponytail: the map and the cell, plainly; match the official client's wording from a screenshot.
                 let [x, y] = self.player.cell;
@@ -1396,6 +1406,8 @@ struct Dialog {
     menu: Option<(Vec<String>, usize)>,
     /// Waiting for a number (or text when the flag is set).
     input: Option<(bool, String)>,
+    /// Warp Portal's or Teleport's list rather than an NPC's: the skill and the maps as the server named them.
+    warp: Option<(u16, Vec<String>)>,
 }
 
 /// A number over a unit: who (None = the player), how much, when it shows, how it looks, and the flinch it causes.
@@ -3953,6 +3965,16 @@ impl App {
                 game.dialog_for(npc).menu = Some((items, 0));
             }
             MapEvent::NpcInput { npc, text } => game.dialog_for(npc).input = Some((text, String::new())),
+            // Where Warp Portal or Teleport goes, in the NPC menu's box: "Random Area" for Teleport's random spot, the
+            // maps by their file names, then Cancel.
+            MapEvent::WarpList { skill, maps } => {
+                let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
+                let mut items: Vec<String> =
+                    maps.iter().map(|map| if map.trim_end_matches(".gat") == "Random" { message(RANDOM_AREA) } else { map.clone() }).collect();
+                items.push(message(WARP_CANCEL));
+                game.dialog =
+                    Some(Dialog { npc: 0, lines: Vec::new(), button: DialogButton::None, menu: Some((items, 0)), input: None, warp: Some((skill, maps)) });
+            }
             MapEvent::Act(act) => {
                 // A landed hit on a monster sparks (EF_HIT1).
                 let monster = game.units.get(&act.target).is_some_and(|actor| actor.kind == MONSTER);
@@ -5483,24 +5505,27 @@ impl App {
         // NPC windows on top.
         let mut overlay = Layer::default();
         if let Some(dialog) = &game.dialog {
-            let position = npc_box_position();
-            overlay.sprites.push((&assets.dialog, position, assets.dialog.size));
-            let mut lines: Vec<Vec<([u8; 3], String)>> = dialog.lines.iter().flat_map(|line| wrap_colored(font, line, DIALOG_TEXT_WIDTH)).collect();
-            if let Some((text, value)) = &dialog.input {
-                lines.push(vec![([0, 0, 0], format!("{}: {value}_", if *text { "입력" } else { "수량" }))]);
-            }
-            let shown = lines.len().saturating_sub(DIALOG_LINES);
-            for (row, pieces) in lines[shown..].iter().enumerate() {
-                let mut x = position[0] + DIALOG_TEXT[0];
-                for (color, piece) in pieces {
-                    overlay.texts.push((piece.clone(), [x, position[1] + DIALOG_TEXT[1] + row as f32 * DIALOG_LINE], *color));
-                    x += font.width(piece);
+            // A warp list is the menu alone.
+            if dialog.warp.is_none() {
+                let position = npc_box_position();
+                overlay.sprites.push((&assets.dialog, position, assets.dialog.size));
+                let mut lines: Vec<Vec<([u8; 3], String)>> = dialog.lines.iter().flat_map(|line| wrap_colored(font, line, DIALOG_TEXT_WIDTH)).collect();
+                if let Some((text, value)) = &dialog.input {
+                    lines.push(vec![([0, 0, 0], format!("{}: {value}_", if *text { "입력" } else { "수량" }))]);
                 }
-            }
-            match dialog.button {
-                DialogButton::Next => overlay.sprites.push(button_sprite(pointer, offset(position, DIALOG_BUTTON), &assets.next)),
-                DialogButton::Close => overlay.sprites.push(button_sprite(pointer, offset(position, DIALOG_BUTTON), &assets.close)),
-                DialogButton::None => {}
+                let shown = lines.len().saturating_sub(DIALOG_LINES);
+                for (row, pieces) in lines[shown..].iter().enumerate() {
+                    let mut x = position[0] + DIALOG_TEXT[0];
+                    for (color, piece) in pieces {
+                        overlay.texts.push((piece.clone(), [x, position[1] + DIALOG_TEXT[1] + row as f32 * DIALOG_LINE], *color));
+                        x += font.width(piece);
+                    }
+                }
+                match dialog.button {
+                    DialogButton::Next => overlay.sprites.push(button_sprite(pointer, offset(position, DIALOG_BUTTON), &assets.next)),
+                    DialogButton::Close => overlay.sprites.push(button_sprite(pointer, offset(position, DIALOG_BUTTON), &assets.close)),
+                    DialogButton::None => {}
+                }
             }
             if let Some((items, selected)) = &dialog.menu {
                 let menu = menu_position();
