@@ -615,6 +615,8 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_CASH_TIME_COUNTER: u16 = 0x0298;
+const ZC_CASH_ITEM_DELETE: u16 = 0x0299;
 const ZC_NOTIFY_BIND_ON_EQUIP: u16 = 0x02D3;
 const CZ_REQ_TAKEOFF_EQUIP_ALL: u16 = 0x0BAD;
 const ZC_ACK_TAKEOFF_EQUIP_ALL: u16 = 0x0BAE;
@@ -1537,6 +1539,16 @@ pub enum MapEvent {
     TookOffAll {
         refused: bool,
     },
+    /// A rental (by item ID) has this many seconds left.
+    RentalTime {
+        item: u32,
+        seconds: u32,
+    },
+    /// The rental at an inventory index has ended.
+    RentalExpired {
+        index: u16,
+        item: u32,
+    },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
         id: usize,
@@ -2239,6 +2251,8 @@ pub struct InventoryItem {
     pub broken: bool,
     /// 0 not bound, 1 binds to the character once worn, 2 bound.
     pub bind: u16,
+    /// A rental's end, Unix time in seconds (0: not a rental).
+    pub expires: u32,
 }
 
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
@@ -2286,6 +2300,7 @@ fn decode_normal_item(entry: &[u8]) -> InventoryItem {
         amount: u16_at(entry, 7),
         location: u32_at(entry, 9),
         cards: cards_at(entry, 13),
+        expires: u32_at(entry, 29),
         identified: entry[33] & 1 != 0,
         ..Default::default()
     }
@@ -2305,6 +2320,7 @@ fn decode_equip_item(entry: &[u8]) -> InventoryItem {
         identified: entry[67] & 1 != 0,
         broken: entry[67] & 2 != 0,
         bind: u16_at(entry, 35),
+        expires: u32_at(entry, 31),
     }
 }
 
@@ -3676,6 +3692,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 worn: 0,
                 broken: packet[11] != 0,
                 bind: u16_at(38),
+                expires: u32_at(34),
             },
         },
         ZC_INVENTORY_START => MapEvent::InventoryStart { kind: packet[4] },
@@ -3981,6 +3998,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_RECV_ROULETTE_ITEM => MapEvent::RouletteClaimed { result: packet[2], bonus: u32_at(3) },
         ZC_NOTIFY_BIND_ON_EQUIP => MapEvent::BoundOnEquip(u16_at(2)),
         ZC_ACK_TAKEOFF_EQUIP_ALL => MapEvent::TookOffAll { refused: packet[2] != 0 },
+        ZC_CASH_TIME_COUNTER => MapEvent::RentalTime { item: u32_at(2), seconds: u32_at(6) },
+        ZC_CASH_ITEM_DELETE => MapEvent::RentalExpired { index: u16_at(2), item: u32_at(4) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -5178,6 +5197,27 @@ mod tests {
         assert_eq!(CZ_REQ_TAKEOFF_EQUIP_ALL.to_le_bytes(), [0xAD, 0x0B]);
         let ids = [ZC_NOTIFY_BIND_ON_EQUIP, CZ_REQ_TAKEOFF_EQUIP_ALL, ZC_ACK_TAKEOFF_EQUIP_ALL, ZC_ITEM_PICKUP_ACK];
         assert_eq!(ids.map(packet_length), [Some(4), Some(2), Some(3), Some(70)]);
+    }
+
+    #[test]
+    fn decodes_rentals() {
+        let time = [&ZC_CASH_TIME_COUNTER.to_le_bytes()[..], &5856u32.to_le_bytes(), &3599u32.to_le_bytes()].concat();
+        let Some(MapEvent::RentalTime { item: 5856, seconds: 3599 }) = decode_map_packet(&time) else { panic!() };
+        let gone = [&ZC_CASH_ITEM_DELETE.to_le_bytes()[..], &4u16.to_le_bytes(), &5856u32.to_le_bytes()].concat();
+        let Some(MapEvent::RentalExpired { index: 4, item: 5856 }) = decode_map_packet(&gone) else { panic!() };
+        // The end time: at 29 of a NORMALITEM_INFO entry, at 31 of an EQUIPITEM_INFO entry, at 34 of a pickup.
+        let mut normal = vec![0u8; NORMAL_ITEM_SIZE];
+        normal[29..33].copy_from_slice(&1_800_000_000u32.to_le_bytes());
+        assert_eq!(decode_normal_item(&normal).expires, 1_800_000_000);
+        let mut equip = vec![0u8; EQUIP_ITEM_SIZE];
+        equip[31..35].copy_from_slice(&1_800_000_001u32.to_le_bytes());
+        assert_eq!(decode_equip_item(&equip).expires, 1_800_000_001);
+        let mut pickup = vec![0u8; 70];
+        pickup[..2].copy_from_slice(&ZC_ITEM_PICKUP_ACK.to_le_bytes());
+        pickup[34..38].copy_from_slice(&1_800_000_002u32.to_le_bytes());
+        let Some(MapEvent::PickedUp { item, .. }) = decode_map_packet(&pickup) else { panic!() };
+        assert_eq!(item.expires, 1_800_000_002);
+        assert_eq!([ZC_CASH_TIME_COUNTER, ZC_CASH_ITEM_DELETE].map(packet_length), [Some(10), Some(8)]);
     }
 
     #[test]
