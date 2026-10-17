@@ -4967,6 +4967,7 @@ impl App {
                 }
             }
         }
+        let shadows = billboards.len();
         let sprites_of = |owner: &Owner| match owner {
             Owner::Player => game.player.sprites.as_ref(),
             Owner::Unit(id) => game.units[id].sprites.as_ref(),
@@ -5617,6 +5618,7 @@ impl App {
             world: &game.world,
             view: &view,
             billboards: &billboards,
+            shadows,
             effects: &effect_quads,
             meshes: &effect_meshes,
             time: now.duration_since(game.entered).as_secs_f32(),
