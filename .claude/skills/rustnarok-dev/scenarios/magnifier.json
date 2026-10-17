@@ -58,10 +58,9 @@
       ]
     },
     {
-      "click": [
-        59,
-        212
-      ],
+      "click_on": {
+        "inventory_item": 611
+      },
       "count": 2
     },
     {

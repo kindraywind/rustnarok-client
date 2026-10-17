@@ -13,7 +13,8 @@
 //!   as base64 PNG (`png`).
 //! - `move` `{x, y}`, `click` `{x, y, button?: "left"|"right", mods?: "Alt+Shift", count?}`, `drag` `{from: [x, y],
 //!   to: [x, y], button?, mods?}`: the pointer and buttons, through the same code as the mouse.
-//! - `key` `{key}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Up"/"Down"/"Left"/"Right", "F1"–"F12" or one
+//! - `key` `{key}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End", "PageUp",
+//!   "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12" or one
 //!   character, after modifiers like "Alt+" or "Ctrl+".
 //! - `type` `{text}`: into the focused field; non-ASCII runs (Hangul) come in as the input method's commit.
 //! - `say` `{text}`: a chat line or a GM command.
@@ -495,6 +496,12 @@ fn parse_key(name: &str) -> Result<(ModifiersState, KeyPress), String> {
         "enter" | "return" => (NamedKey::Enter, KeyCode::Enter),
         "escape" | "esc" => (NamedKey::Escape, KeyCode::Escape),
         "tab" => (NamedKey::Tab, KeyCode::Tab),
+        "insert" => (NamedKey::Insert, KeyCode::Insert),
+        "delete" => (NamedKey::Delete, KeyCode::Delete),
+        "home" => (NamedKey::Home, KeyCode::Home),
+        "end" => (NamedKey::End, KeyCode::End),
+        "pageup" => (NamedKey::PageUp, KeyCode::PageUp),
+        "pagedown" => (NamedKey::PageDown, KeyCode::PageDown),
         "backspace" => (NamedKey::Backspace, KeyCode::Backspace),
         "space" => (NamedKey::Space, KeyCode::Space),
         "up" | "arrowup" => (NamedKey::ArrowUp, KeyCode::ArrowUp),
@@ -699,6 +706,16 @@ fn game_state(app: &App, game: &Game) -> Value {
         Panel::Guild => game.guild.is_some() && game.guild_window.frame.open,
         Panel::Cart => game.cart.cart.is_some() && game.cart.frame.open,
     };
+    let jobs = app.skill_trees.lineage(game.me.job);
+    let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
+    let targets: Vec<Value> = game
+        .inventory
+        .item_boxes()
+        .into_iter()
+        .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
+        .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
+        .chain(game.skill_window.skill_boxes(&app.skill_trees, &jobs).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
+        .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
     let overlays = [
         ("NpcDialog", game.dialog.is_some()),
@@ -761,6 +778,9 @@ fn game_state(app: &App, game: &Game) -> Value {
             "screen": screen(Owner::Player),
         },
         "windows": windows,
+        // What a test can click by name instead of by pixels: inventory items (index and item), hotkey slots and
+        // skill boxes, each with its box on screen.
+        "targets": targets,
         // What's carried: index, item, how many, identified, worn where (0: not worn).
         "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).

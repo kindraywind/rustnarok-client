@@ -222,6 +222,22 @@ impl Inventory {
         HEIGHT
     }
 
+    /// The listed items' cells on screen (the open tab, the rows scrolled to): inventory index and box.
+    pub fn item_boxes(&self) -> Vec<(u16, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized {
+            return Vec::new();
+        }
+        self.listed()
+            .skip(self.scroll * COLUMNS)
+            .take(ROWS * COLUMNS)
+            .enumerate()
+            .map(|(cell, item)| {
+                let corner = self.frame.at([GRID[0] + (cell % COLUMNS) as f32 * CELL, GRID[1] + (cell / COLUMNS) as f32 * CELL]);
+                (item.index, [corner[0], corner[1], CELL, CELL])
+            })
+            .collect()
+    }
+
     pub fn scroll_by(&mut self, rows: i32) {
         let total_rows = self.listed().count().div_ceil(COLUMNS);
         self.scroll = (self.scroll as i32 + rows).clamp(0, total_rows.saturating_sub(ROWS) as i32) as usize;

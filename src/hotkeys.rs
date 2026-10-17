@@ -146,6 +146,21 @@ impl Hotkeys {
     }
 }
 
+impl Hotkeys {
+    /// The shown slots on screen: slot number and box.
+    pub fn slot_boxes(&self) -> Vec<(usize, [f32; 4])> {
+        if !self.frame.open {
+            return Vec::new();
+        }
+        (0..self.rows * PER_ROW)
+            .map(|slot| {
+                let corner = self.frame.at(slot_corner(slot));
+                (slot, [corner[0], corner[1], SLOT[0], SLOT[1]])
+            })
+            .collect()
+    }
+}
+
 /// A number at a slot's bottom right: black on a white shadow.
 fn count_text(layer: &mut Layer<'_>, font: &Font, corner: [f32; 2], text: &str) {
     let place = [corner[0] + SLOT[0] - 1.0 - font.width(text), corner[1] + 12.0];

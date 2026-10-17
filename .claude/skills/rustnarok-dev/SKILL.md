@@ -75,6 +75,9 @@ pixels in red). `run`, `baseline` and `diff` do the steps one at a time. Output 
 
 Scenarios are JSON in `scenarios/` (the format is at the top of `visual.py`): GM commands, waits (`settle` after a
 warp: commands sent while a map loads are lost), keys, clicks, drags, and named shots, optionally cropped.
+**Click by name, not by pixels**: `click_on` / `drag_on` take `{"inventory_item": <id>}`, `{"hotkey": <slot>}`,
+`{"skill": <id>}` from the control socket's `targets`, so a scenario survives windows moving and inventories
+reordering; keep raw coordinates for the world and for things not yet in `targets`.
 **Make each scenario prove itself**: `expect` steps check the game state (chat lines, HP, map, open windows, units)
 and `wait_for` waits on a packet or event (`ItemUsed`, `PickedUp`) instead of a sleep. A failed one fails the
 scenario and `visual.py` exits non-zero — otherwise a scenario that silently did nothing still makes screenshots.
