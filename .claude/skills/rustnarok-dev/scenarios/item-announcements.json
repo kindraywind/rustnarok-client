@@ -1,0 +1,16 @@
+{
+  "about": "Item news: opening a Sealed Card Album announces the card to everyone (ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN, issue #43); the chat grown to nine lines shows it.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"click": [593, 760]}, {"click": [593, 760]}, {"wait": 300},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 22829 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"click_on": {"inventory_item": 22829}, "count": 2}, {"wait_for": {"packet": "0x07fd", "ms": 5000}},
+    {"key": "Alt+E"}, {"move": [700, 300]}, {"wait": 500},
+    {"expect": {"chat": "** has opened ["}},
+    {"shot": "item-news", "crop": [0, 540, 610, 228]}
+  ]
+}

@@ -121,6 +121,12 @@ const CHAT_SKILL_MESSAGE: [u8; 3] = [0xCD, 0xCD, 0xFF];
 const ACTION_FAILURES: [usize; 4] = [242, 243, 244, 245];
 /// Saving a memo point: saved, Warp Portal's level too low, not learned.
 const MEMO_RESULTS: [usize; 3] = [217, 214, 216];
+/// Item news for everyone: a box's or a monster's special item, an NPC's, a high refine that took or didn't. rathena's
+/// notes name the lines after the first two; these are the ones whose words fit.
+const ITEM_FROM_BOX: usize = 1628;
+const ITEM_FROM_NPC: usize = 1868;
+const REFINE_SUCCEEDED: usize = 3271;
+const REFINE_FAILED: usize = 3272;
 /// Warp Portal's and Teleport's list: Teleport's random spot, and the last row.
 const RANDOM_AREA: usize = 212;
 const WARP_CANCEL: usize = 218;
@@ -4089,6 +4095,22 @@ impl App {
             }
             // Announcements, and the client's own messages by number.
             MapEvent::Broadcast { text, color, blue } => game.chat_line(text, color.unwrap_or(if blue { CHAT_BROADCAST_BLUE } else { CHAT_BROADCAST })),
+            // ponytail: in the announcements' yellow; a monster's drop says the box's line with the monster's name, as
+            // rathena's notes have it, unchecked against the real client.
+            MapEvent::ItemObtained { item, player, box_item, monster } => {
+                let name = |id: u32| inventory::item_name(&self.items, id, true, 0);
+                let template = |id: usize| self.messages.get(id).map_or("", String::as_str);
+                let text = match (box_item, monster) {
+                    (Some(container), _) => messages::fill(template(ITEM_FROM_BOX), &[&player, &name(container), &name(item)]),
+                    (_, Some(monster)) => messages::fill(template(ITEM_FROM_BOX), &[&player, &monster, &name(item)]),
+                    _ => messages::fill(template(ITEM_FROM_NPC), &[&player, &name(item)]),
+                };
+                game.chat_line(text, CHAT_BROADCAST);
+            }
+            MapEvent::RefineAnnounced { player, item, level, success } => {
+                let template = self.messages.get(if success { REFINE_SUCCEEDED } else { REFINE_FAILED }).map_or("", String::as_str);
+                game.chat_line(messages::fill(template, &[&player, &level, &inventory::item_name(&self.items, item, true, 0)]), CHAT_BROADCAST);
+            }
             MapEvent::Message { id, value, skill, color } => {
                 let template = self.messages.get(id).map_or("", String::as_str);
                 let text = match (value, skill) {

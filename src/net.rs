@@ -566,6 +566,8 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN: u16 = 0x07FD;
+const ZC_BROADCAST_ITEMREFINING_RESULT: u16 = 0x0ADA;
 const CZ_OPEN_MAILBOX2: u16 = 0x0AC0;
 const CZ_REQ_REFRESH_MAIL_LIST2: u16 = 0x0AC1;
 const CZ_CLOSE_MAILBOX: u16 = 0x09E9;
@@ -1018,6 +1020,20 @@ pub enum MapEvent {
         text: String,
         color: Option<[u8; 3]>,
         blue: bool,
+    },
+    /// Someone got a special item: out of a box (its item), from a monster (its name), or from an NPC (neither).
+    ItemObtained {
+        item: u32,
+        player: String,
+        box_item: Option<u32>,
+        monster: Option<String>,
+    },
+    /// Someone's refine at a high level: the new level, or the one before a failure.
+    RefineAnnounced {
+        player: String,
+        item: u32,
+        level: u8,
+        success: bool,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
@@ -2701,6 +2717,22 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         // The color is 0xRRGGBB, little-endian.
         ZC_BROADCAST2 => MapEvent::Broadcast { text: c_string(&packet[16..]), color: Some([packet[6], packet[5], packet[4]]), blue: false },
+        // The player's name and what it came from each come after their length: a box's item ID (4), a monster's
+        // name (24), nothing for an NPC.
+        ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN => {
+            let name_end = (10 + usize::from(packet[9])).min(packet.len());
+            let source_length = packet.get(name_end).map_or(0, |&length| usize::from(length));
+            let source = packet.get(name_end + 1..(name_end + 1 + source_length).min(packet.len())).unwrap_or_default();
+            let (box_item, monster) = match packet[4] {
+                0 => (source.get(..4).map(|id| u32::from_le_bytes(id.try_into().unwrap())), None),
+                1 => (None, Some(c_string(source))),
+                _ => (None, None),
+            };
+            MapEvent::ItemObtained { item: u32_at(5), player: c_string(&packet[10..name_end]), box_item, monster }
+        }
+        ZC_BROADCAST_ITEMREFINING_RESULT => {
+            MapEvent::RefineAnnounced { player: c_string(&packet[2..26]), item: u32_at(26), level: packet[30], success: packet[31] != 0 }
+        }
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -3318,6 +3350,50 @@ mod tests {
             assert_eq!(packet_length(id), Some(length), "{id:#06x}");
         }
         assert_eq!([ZC_ACTION_FAILURE, ZC_ACK_REMEMBER_WARPPOINT, ZC_NOTIFY_MAPINFO].map(packet_length), [Some(4), Some(3), Some(4)]);
+    }
+
+    #[test]
+    fn decodes_item_announcements() {
+        let head = |kind: u8, item: u32| {
+            let mut packet = ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN.to_le_bytes().to_vec();
+            packet.extend_from_slice(&[0, 0, kind]);
+            packet.extend_from_slice(&item.to_le_bytes());
+            packet.push(24);
+            let mut name = b"Pori**".to_vec();
+            name.resize(24, 0);
+            packet.extend_from_slice(&name);
+            packet
+        };
+        // Out of a box: the box's item ID after its length.
+        let mut boxed = head(0, 4407);
+        boxed.push(4);
+        boxed.extend_from_slice(&22829u32.to_le_bytes());
+        assert_eq!(boxed.len(), 39);
+        let Some(MapEvent::ItemObtained { item: 4407, player, box_item: Some(22829), monster: None }) = decode_map_packet(&boxed) else { panic!() };
+        assert_eq!(player, "Pori**");
+        // From a monster: its name; rathena's length counts one byte more than it sends.
+        let mut dropped = head(1, 4407);
+        dropped.push(24);
+        let mut monster = b"Poring".to_vec();
+        monster.resize(25, 0);
+        dropped.extend_from_slice(&monster);
+        assert_eq!(dropped.len(), 60);
+        let Some(MapEvent::ItemObtained { box_item: None, monster: Some(monster), .. }) = decode_map_packet(&dropped) else { panic!() };
+        assert_eq!(monster, "Poring");
+        let mut npc = head(2, 4407);
+        npc.extend_from_slice(&[0, 0]);
+        assert_eq!(npc.len(), 36);
+        let Some(MapEvent::ItemObtained { box_item: None, monster: None, .. }) = decode_map_packet(&npc) else { panic!() };
+
+        let mut refine = ZC_BROADCAST_ITEMREFINING_RESULT.to_le_bytes().to_vec();
+        let mut name = b"Smi**".to_vec();
+        name.resize(24, 0);
+        refine.extend_from_slice(&name);
+        refine.extend_from_slice(&1201u32.to_le_bytes());
+        refine.extend_from_slice(&[13, 1]);
+        assert_eq!(Some(refine.len() as i32), packet_length(ZC_BROADCAST_ITEMREFINING_RESULT));
+        let Some(MapEvent::RefineAnnounced { player, item: 1201, level: 13, success: true }) = decode_map_packet(&refine) else { panic!() };
+        assert_eq!(player, "Smi**");
     }
 
     #[test]
