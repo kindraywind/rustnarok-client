@@ -1658,14 +1658,17 @@ fn cards_at(bytes: &[u8], offset: usize) -> [u32; 4] {
     std::array::from_fn(|card| u32_at(bytes, offset + card * 4))
 }
 
-/// NORMALITEM_INFO: index, item, type, amount, worn, cards, rental end, flags (bit 0: identified).
+/// NORMALITEM_INFO: index, item, type, amount, where it can go, cards, rental end, flags (bit 0: identified).
+/// rathena fills "WearState" with the item's places (`id->equip`): a card's is what it goes into, ammunition's
+/// the ammunition place, worn or not. None of these is worn as equipment is.
+// ponytail: worn ammunition (ZC_EQUIP_ARROW) stays in the inventory; the 2018 equipment window has no place for it.
 fn decode_normal_item(entry: &[u8]) -> InventoryItem {
     InventoryItem {
         index: u16_at(entry, 0),
         id: u32_at(entry, 2),
         kind: entry[6],
         amount: u16_at(entry, 7),
-        worn: u32_at(entry, 9),
+        location: u32_at(entry, 9),
         cards: cards_at(entry, 13),
         identified: entry[33] & 1 != 0,
         ..Default::default()
@@ -3206,17 +3209,23 @@ mod tests {
         assert_eq!(item, GroundItem { id: 0x460, item: 909, identified: true, cell: [252, 88], sub: [6, 12], amount: 1, falling: true });
         assert_eq!(packet_length(ZC_ITEM_FALL_ENTRY), Some(jellopy.len() as i32));
 
-        let mut list = vec![0u8; 5 + 2 * NORMAL_ITEM_SIZE];
+        // A weapon card (4035) comes with its place, the weapon (2), where a worn item's would be.
+        let mut list = vec![0u8; 5 + 3 * NORMAL_ITEM_SIZE];
         list[..2].copy_from_slice(&ZC_INVENTORY_ITEMLIST_NORMAL.to_le_bytes());
-        for (slot, (index, id, amount)) in [(2u16, 501u32, 7u16), (3, 909, 12)].into_iter().enumerate() {
+        for (slot, (index, id, amount, places)) in [(2u16, 501u32, 7u16, 0u32), (3, 909, 12, 0), (4, 4035, 1, 2)].into_iter().enumerate() {
             let entry = &mut list[5 + slot * NORMAL_ITEM_SIZE..][..NORMAL_ITEM_SIZE];
             entry[..2].copy_from_slice(&index.to_le_bytes());
             entry[2..6].copy_from_slice(&id.to_le_bytes());
             entry[7..9].copy_from_slice(&amount.to_le_bytes());
+            entry[9..13].copy_from_slice(&places.to_le_bytes());
             entry[33] = 1;
         }
         let Some(MapEvent::InventoryItems { kind: 0, items }) = decode_map_packet(&list) else { panic!() };
-        assert_eq!(items.iter().map(|item| (item.index, item.id, item.amount, item.identified)).collect::<Vec<_>>(), [(2, 501, 7, true), (3, 909, 12, true)]);
+        assert_eq!(
+            items.iter().map(|item| (item.index, item.id, item.amount, item.identified)).collect::<Vec<_>>(),
+            [(2, 501, 7, true), (3, 909, 12, true), (4, 4035, 1, true)]
+        );
+        assert_eq!((items[2].worn, items[2].location), (0, 2));
 
         let mut pickup = vec![0u8; 70];
         pickup[..2].copy_from_slice(&ZC_ITEM_PICKUP_ACK.to_le_bytes());
