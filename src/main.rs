@@ -112,6 +112,17 @@ const CHAT_WHITE: [u8; 3] = [255, 255, 255];
 const CHAT_SELF: [u8; 3] = [0x00, 0xFF, 0x00];
 const CHAT_ITEM: [u8; 3] = [0x00, 0xFF, 0xFF];
 const CHAT_ERROR: [u8; 3] = [0xFF, 0x00, 0x00];
+// ponytail: the two announcement shades are guesses; calibrate them against the real client.
+const CHAT_BROADCAST: [u8; 3] = [0xFF, 0xFF, 0x00];
+const CHAT_BROADCAST_BLUE: [u8; 3] = [0x00, 0xC0, 0xFF];
+/// Messages that come with a skill's name, "[Name] message" (rathena's notes give 0xCDCDFF).
+const CHAT_SKILL_MESSAGE: [u8; 3] = [0xCD, 0xCD, 0xFF];
+/// Out of ammunition, too heavy, ammunition equipped (ZC_ACTION_FAILURE).
+const ACTION_FAILURES: [usize; 4] = [242, 243, 244, 245];
+/// Saving a memo point: saved, Warp Portal's level too low, not learned.
+const MEMO_RESULTS: [usize; 3] = [217, 214, 216];
+/// What a map doesn't allow: teleporting, memo points, the skill, the item.
+const MAP_FORBIDS: [usize; 4] = [500, 501, 1334, 1335];
 /// How far (in cells) others' sounds carry, fading on the way.
 const HEARING_CELLS: f32 = 20.0;
 const WHISPER_COLOR: [u8; 3] = [0xFF, 0xFF, 0x00];
@@ -3896,12 +3907,12 @@ impl App {
                 }
             }
             // In a chat room, talk goes to its window.
-            MapEvent::Chat { id, message } if game.room.is_some() => {
+            MapEvent::Chat { id, message, .. } if game.room.is_some() => {
                 game.room.as_mut().unwrap().lines.push((message, if id.is_none() { chatroom::OWN_LINE } else { [0, 0, 0] }));
             }
-            MapEvent::Chat { id, message } => {
-                game.say(id, message.clone(), CHAT_WHITE);
-                game.chat_line(message, if id.is_none() { CHAT_SELF } else { CHAT_WHITE });
+            MapEvent::Chat { id, message, color } => {
+                game.say(id, message.clone(), color.unwrap_or(CHAT_WHITE));
+                game.chat_line(message, color.unwrap_or(if id.is_none() { CHAT_SELF } else { CHAT_WHITE }));
             }
             MapEvent::MapChange { map, position } => {
                 // Back at the save point: up again.
@@ -4052,6 +4063,31 @@ impl App {
                 }
                 if let Some((id, error)) = game.mail.event(event) {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if error { CHAT_ERROR } else { CHAT_ITEM });
+                }
+            }
+            // Announcements, and the client's own messages by number.
+            MapEvent::Broadcast { text, color, blue } => game.chat_line(text, color.unwrap_or(if blue { CHAT_BROADCAST_BLUE } else { CHAT_BROADCAST })),
+            MapEvent::Message { id, value, skill, color } => {
+                let template = self.messages.get(id).map_or("", String::as_str);
+                let text = match (value, skill) {
+                    (Some(value), _) => messages::fill(template, &[&value]),
+                    (_, Some(skill)) => format!("[{}] {template}", self.skill_info.get(&skill).map_or_else(|| skill.to_string(), |info| info.name.clone())),
+                    _ => template.to_owned(),
+                };
+                // ponytail: plain ones in red, as nearly all of them are refusals; calibrate against the real client.
+                game.chat_line(text, color.unwrap_or(if skill.is_some() { CHAT_SKILL_MESSAGE } else { CHAT_ERROR }));
+            }
+            MapEvent::ActionFailure(kind) => {
+                let id = ACTION_FAILURES.get(usize::from(kind)).copied().unwrap_or(ACTION_FAILURES[0]);
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if kind == 3 { CHAT_ITEM } else { CHAT_ERROR });
+            }
+            MapEvent::MemoResult(result) => {
+                let id = MEMO_RESULTS.get(usize::from(result)).copied().unwrap_or(MEMO_RESULTS[2]);
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
+            }
+            MapEvent::MapForbids(kind) => {
+                if let Some(&id) = MAP_FORBIDS.get(usize::from(kind)) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
             }
             // Vending: setting up, our shop, others' signs and goods.

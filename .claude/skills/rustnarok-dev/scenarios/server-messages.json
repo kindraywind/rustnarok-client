@@ -1,0 +1,25 @@
+{
+  "about": "Server messages in the chat window, grown to nine lines: announcements (@kami yellow, @kamib blue, @kamic in its own color), colored talk (@cash answers with ZC_NPC_CHAT), and a Fly Wing refused on a no-teleport map (ZC_NOTIFY_MAPINFO).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_in 128 40"}, {"settle": 1500},
+    {"click": [593, 760]}, {"click": [593, 760]}, {"wait": 300},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@kami Hello from the server"}, {"wait_for": {"packet": "0x009a", "ms": 5000}},
+    {"say": "@kamib A blue announcement"}, {"wait_for": {"packet": "0x009a", "ms": 5000}},
+    {"say": "@kamic FF8000 An orange announcement"}, {"wait_for": {"packet": "0x01c3", "ms": 5000}},
+    {"say": "@cash 10"}, {"wait_for": {"packet": "0x02c1", "ms": 5000}},
+    {"expect": {"chat": "Hello from the server"}},
+    {"expect": {"chat": "A blue announcement"}},
+    {"expect": {"chat": "An orange announcement"}},
+    {"expect": {"no_chat": "blueA blue"}},
+    {"say": "@item 601 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"click": [59, 212], "count": 2}, {"wait_for": {"packet": "0x0189", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 300}, {"move": [700, 300]},
+    {"expect": {"chat": "Unavailable Area to Teleport"}},
+    {"shot": "chat", "crop": [0, 540, 610, 228]},
+    {"say": "@cash -10"}, {"wait": 500}
+  ]
+}

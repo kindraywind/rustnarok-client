@@ -551,6 +551,16 @@ const CZ_MOVE_ITEM_FROM_BODY_TO_CART: u16 = 0x0126;
 const CZ_MOVE_ITEM_FROM_CART_TO_BODY: u16 = 0x0127;
 const ZC_ADD_ITEM_TO_CART: u16 = 0x0B45;
 const ZC_NOTIFY_UNREADMAIL: u16 = 0x09E7;
+const ZC_BROADCAST: u16 = 0x009A;
+const ZC_BROADCAST2: u16 = 0x01C3;
+const ZC_MSG: u16 = 0x0291;
+const ZC_MSG_VALUE: u16 = 0x07E2;
+const ZC_MSG_SKILL: u16 = 0x07E6;
+const ZC_MSG_COLOR: u16 = 0x09CD;
+const ZC_ACTION_FAILURE: u16 = 0x013B;
+const ZC_ACK_REMEMBER_WARPPOINT: u16 = 0x011E;
+const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
+const ZC_NPC_CHAT: u16 = 0x02C1;
 const CZ_OPEN_MAILBOX2: u16 = 0x0AC0;
 const CZ_REQ_REFRESH_MAIL_LIST2: u16 = 0x0AC1;
 const CZ_CLOSE_MAILBOX: u16 = 0x09E9;
@@ -791,10 +801,11 @@ pub enum MapEvent {
         direction: u8,
         head_direction: u16,
     },
-    /// Chat from another unit, or our own (id None).
+    /// Chat from another unit, or our own (id None); ZC_NPC_CHAT's comes in a color.
     Chat {
         id: Option<u32>,
         message: String,
+        color: Option<[u8; 3]>,
     },
     MapChange {
         map: String,
@@ -997,6 +1008,25 @@ pub enum MapEvent {
         amount: u16,
         result: u8,
     },
+    /// An announcement: plain ones yellow (or blue when the server asks), ZC_BROADCAST2 in its own color.
+    Broadcast {
+        text: String,
+        color: Option<[u8; 3]>,
+        blue: bool,
+    },
+    /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
+    Message {
+        id: usize,
+        value: Option<i32>,
+        skill: Option<u16>,
+        color: Option<[u8; 3]>,
+    },
+    /// Ammunition or weight trouble: 0 no ammunition, 1 and 2 too heavy, 3 ammunition equipped.
+    ActionFailure(u16),
+    /// Saving a memo point: 0 saved, 1 Warp Portal's level is too low, 2 it isn't learned.
+    MemoResult(u8),
+    /// What this map doesn't allow: 0 teleporting, 1 memo points, 2 skills, 3 items.
+    MapForbids(u16),
     /// Whether unread mail waits (ZC_NOTIFY_UNREADMAIL).
     MailUnread(bool),
     /// The mailbox, newest first.
@@ -2404,8 +2434,10 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         ZC_STOPMOVE => MapEvent::Stop { id: u32_at(2), position: [u16_at(6), u16_at(8)] },
         ZC_CHANGE_DIRECTION => MapEvent::Turn { id: u32_at(2), direction: packet[8], head_direction: u16_at(6) },
-        ZC_NOTIFY_CHAT => MapEvent::Chat { id: Some(u32_at(4)), message: c_string(&packet[8..]) },
-        ZC_NOTIFY_PLAYERCHAT => MapEvent::Chat { id: None, message: c_string(&packet[4..]) },
+        ZC_NOTIFY_CHAT => MapEvent::Chat { id: Some(u32_at(4)), message: c_string(&packet[8..]), color: None },
+        ZC_NOTIFY_PLAYERCHAT => MapEvent::Chat { id: None, message: c_string(&packet[4..]), color: None },
+        // The color is 0xBBGGRR, little-endian.
+        ZC_NPC_CHAT => MapEvent::Chat { id: Some(u32_at(4)), message: c_string(&packet[12..]), color: Some([packet[8], packet[9], packet[10]]) },
         ZC_NPCACK_MAPMOVE => MapEvent::MapChange { map: c_string(&packet[2..18]), position: [u16_at(18), u16_at(20)] },
         ZC_SAY_DIALOG => MapEvent::NpcSay { npc: u32_at(4), text: c_string(&packet[8..]) },
         ZC_WAIT_DIALOG => MapEvent::NpcNext { npc: u32_at(2) },
@@ -2613,6 +2645,23 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         },
         ZC_PC_PURCHASE_RESULT_FROMMC => MapEvent::VendBought { index: u16_at(2), amount: u16_at(4), result: packet[6] },
         ZC_NOTIFY_UNREADMAIL => MapEvent::MailUnread(packet[2] != 0),
+        // "blue" (and "ssss" for the War of Emperium) at the start are color hints, not words.
+        ZC_BROADCAST => {
+            let text = c_string(&packet[4..]);
+            let blue = text.starts_with("blue");
+            let text = text.strip_prefix("blue").or_else(|| text.strip_prefix("ssss")).unwrap_or(&text).to_owned();
+            MapEvent::Broadcast { text, color: None, blue }
+        }
+        // The color is 0xRRGGBB, little-endian.
+        ZC_BROADCAST2 => MapEvent::Broadcast { text: c_string(&packet[16..]), color: Some([packet[6], packet[5], packet[4]]), blue: false },
+        ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
+        ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
+        ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
+        // 0xBBGGRR, like ZC_NPC_CHAT's.
+        ZC_MSG_COLOR => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: Some([packet[4], packet[5], packet[6]]) },
+        ZC_ACTION_FAILURE => MapEvent::ActionFailure(u16_at(2)),
+        ZC_ACK_REMEMBER_WARPPOINT => MapEvent::MemoResult(packet[2]),
+        ZC_NOTIFY_MAPINFO => MapEvent::MapForbids(u16_at(2)),
         // Each quest: ID, state (1 active), start and end times, hunts; each hunt 46 bytes, with how many it needs.
         ZC_ALL_QUEST_LIST3 => {
             let mut quests = Vec::new();
@@ -3167,6 +3216,52 @@ mod tests {
         update.extend_from_slice(&3u16.to_le_bytes());
         let Some(MapEvent::QuestHunts(hunts)) = decode_map_packet(&update) else { panic!() };
         assert_eq!(hunts, [(7_001_000, 3, 10)]);
+    }
+
+    #[test]
+    fn decodes_announcements_and_messages() {
+        let mut blue = ZC_BROADCAST.to_le_bytes().to_vec();
+        blue.extend_from_slice(&[0, 0]);
+        blue.extend_from_slice(b"blueHello all\0");
+        let length = blue.len() as u16;
+        blue[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::Broadcast { text, color: None, blue: true }) = decode_map_packet(&blue) else { panic!() };
+        assert_eq!(text, "Hello all");
+
+        let mut colored = ZC_BROADCAST2.to_le_bytes().to_vec();
+        colored.extend_from_slice(&[0, 0]);
+        colored.extend_from_slice(&0x00FF_8000u32.to_le_bytes());
+        colored.extend_from_slice(&[0; 8]);
+        colored.extend_from_slice(b"Event!\0");
+        let length = colored.len() as u16;
+        colored[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::Broadcast { text, color: Some(color), .. }) = decode_map_packet(&colored) else { panic!() };
+        assert_eq!((text.as_str(), color), ("Event!", [0xFF, 0x80, 0x00]));
+
+        let mut value = ZC_MSG_VALUE.to_le_bytes().to_vec();
+        value.extend_from_slice(&178u16.to_le_bytes());
+        value.extend_from_slice(&42i32.to_le_bytes());
+        let Some(MapEvent::Message { id: 178, value: Some(42), skill: None, color: None }) = decode_map_packet(&value) else { panic!() };
+
+        // rathena's red, 0xFF0000 turned to 0x0000FF.
+        let mut red = ZC_MSG_COLOR.to_le_bytes().to_vec();
+        red.extend_from_slice(&1923u16.to_le_bytes());
+        red.extend_from_slice(&0x0000_00FFu32.to_le_bytes());
+        let Some(MapEvent::Message { id: 1923, color: Some([0xFF, 0, 0]), .. }) = decode_map_packet(&red) else { panic!() };
+
+        let mut talk = ZC_NPC_CHAT.to_le_bytes().to_vec();
+        talk.extend_from_slice(&[0, 0]);
+        talk.extend_from_slice(&110_000_007u32.to_le_bytes());
+        talk.extend_from_slice(&0x0000_FF00u32.to_le_bytes());
+        talk.extend_from_slice(b"Grr\0");
+        let length = talk.len() as u16;
+        talk[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::Chat { id: Some(110_000_007), message, color: Some([0, 0xFF, 0]) }) = decode_map_packet(&talk) else { panic!() };
+        assert_eq!(message, "Grr");
+        for (id, length) in [(ZC_BROADCAST, -1), (ZC_BROADCAST2, -1), (ZC_MSG, 4), (ZC_MSG_VALUE, 8), (ZC_MSG_SKILL, 8), (ZC_MSG_COLOR, 8), (ZC_NPC_CHAT, -1)] {
+            assert_eq!(packet_length(id), Some(length), "{id:#06x}");
+        }
+        assert_eq!([ZC_ACTION_FAILURE, ZC_ACK_REMEMBER_WARPPOINT, ZC_NOTIFY_MAPINFO].map(packet_length), [Some(4), Some(3), Some(4)]);
     }
 
     #[test]
