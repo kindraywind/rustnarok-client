@@ -1642,15 +1642,18 @@ struct CompanionDraw {
     warg: bool,
     feet: [f32; 3],
     placed: Vec<actor::Placed>,
+    /// Its shadow's size (a body's is 1; none for the falcon).
+    shadow: f32,
 }
 
+/// A falcon or warg to draw: its direction rounds the camera's angle, as a standing player's does.
 fn push_companion(companion: &mut actor::Companion, warg: bool, owner: Owner, gpu: &Gpu, world: &World, yaw: f32, now: Instant, out: &mut Vec<CompanionDraw>) {
     let lift = if warg { 0.0 } else { actor::FALCON_HEIGHT };
-    let placed = companion.frame(gpu, seen_direction(actor::rot_of(companion.direction), yaw, false), now, !warg);
+    let placed = companion.frame(gpu, seen_direction(companion.rot, yaw, true), now);
     if placed.is_empty() {
         return;
     }
-    out.push(CompanionDraw { owner, warg, feet: companion_feet(world, companion.at, lift), placed });
+    out.push(CompanionDraw { owner, warg, feet: companion_feet(world, companion.at, lift), placed, shadow: companion.shadow });
 }
 
 /// A pet: its monster's sprite, moving by its accessory's ACT when it wears one the data has.
@@ -13294,7 +13297,7 @@ impl App {
         // Move everyone, follow the player, then decode the sprite frames (mutably) before borrowing them.
         let walking = game.player.moving();
         let player_cell = game.player.update(now);
-        game.player.step_companions(actor::world_xz(player_cell), walking);
+        game.player.step_companions(actor::world_xz(player_cell), now);
         if walking
             && !game.player.moving()
             && let Some((_, arrived)) = &mut game.pending
@@ -13403,9 +13406,8 @@ impl App {
         // Talkie Boxes saying their words stand where their traps were.
         let mut feet_of = game.talkie_spots.clone();
         for (&id, actor) in &mut game.units {
-            let walking = actor.moving();
             let cell = actor.update(now);
-            actor.step_companions(actor::world_xz(cell), walking);
+            actor.step_companions(actor::world_xz(cell), now);
             // Hidden players aren't drawn at all: no sprite, shadow, name or bar, nothing to click.
             if actor::seen(actor.hide_option, false) != actor::Seen::Whole {
                 continue;
@@ -13580,9 +13582,9 @@ impl App {
                         .map(|(key, position, size, angle)| (shadow.texture(*key), *feet, *position, *size, [1.0; 4], *angle, DepthLayer::default())),
                 );
             }
-            // The warg's shadow is twice a body's. The falcon, up in the air, casts none.
-            for draw in companion_draws.iter().filter(|draw| draw.warg) {
-                let scale = actor::WARG_SHADOW;
+            // The warg's shadow is twice a body's (a baby's a body's). The falcon, up in the air, casts none.
+            for draw in companion_draws.iter().filter(|draw| draw.shadow > 0.0) {
+                let scale = draw.shadow;
                 billboards.extend(shadow_placements.iter().map(|(key, position, size, angle)| {
                     (
                         shadow.texture(*key),
