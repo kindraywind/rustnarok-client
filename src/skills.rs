@@ -181,26 +181,18 @@ impl Cooldowns {
     }
 }
 
-/// What the hotkey bar and the skill window need to show cooldowns: the blocks, the clock's pictures by step, the
-/// time, and the words after the seconds left (message 3230, " seconds left before it become usable again.").
+/// What the hotkey bar and the skill window need to show cooldowns: the blocks, the fan's pictures by step, the time.
 pub struct Cooling<'a> {
     pub cooldowns: &'a Cooldowns,
-    pub clocks: &'a [Texture],
+    pub fan: &'a [Texture],
     pub now: Instant,
-    pub note: &'a str,
 }
 
 impl<'a> Cooling<'a> {
-    /// Draws the clock over a blocked skill's icon, veiling the part of its time still left; returns the line saying
-    /// how long that is.
-    // ponytail: the status icons' clock over the icon and the line under the name; how the real client shows a
-    // cooldown isn't known.
-    pub fn draw(&self, layer: &mut Layer<'a>, skill: u16, corner: [f32; 2], size: [f32; 2]) -> Option<String> {
-        let left = 1.0 - self.cooldowns.share(skill, self.now)?;
-        let last = self.clocks.len().checked_sub(1)?;
-        layer.sprites.push((&self.clocks[((left * last as f32).ceil() as usize).min(last)], corner, size));
-        let seconds = self.cooldowns.left(skill, self.now)?.as_secs_f32().ceil() as u32;
-        Some(format!("{seconds}{}", self.note))
+    /// Draws the fan over a blocked skill's icon: dark where its time is still left, clearing clockwise from 12.
+    pub fn draw(&self, layer: &mut Layer<'a>, skill: u16, corner: [f32; 2], size: [f32; 2]) {
+        let (Some(passed), Some(last)) = (self.cooldowns.share(skill, self.now), self.fan.len().checked_sub(1)) else { return };
+        layer.sprites.push((&self.fan[((passed * last as f32) as usize).min(last)], corner, size));
     }
 }
 
@@ -416,7 +408,9 @@ impl SkillWindow {
             // A learned skill's box shows the level it's used at.
             let shown = if level > 0 { self.use_level(id, level) } else { 0 };
             draw_box(layer, assets, icons, font, at(corner), skill_info, &name, shown);
-            let cooldown = if level > 0 { cooling.draw(layer, id, at(offset(corner, [2.0, 2.0])), [24.0, 24.0]) } else { None };
+            if level > 0 {
+                cooling.draw(layer, id, at(offset(corner, [2.0, 2.0])), [24.0, 24.0]);
+            }
             if known.is_some_and(steppable) {
                 for (arrow, at) in assets.arrows.iter().zip(ARROWS) {
                     layer.sprites.push((arrow, self.frame.at(offset(corner, at)), arrow.size));
@@ -432,9 +426,6 @@ impl SkillWindow {
             if hit == Some(Hit::Skill(id)) {
                 let max = skill_info.map_or(0, |info| info.max_level);
                 window::tooltip(tooltip, chrome, font, &format!("{name} Lv {level}/{max}"), offset(pointer.0, [12.0, 12.0]), [255; 3]);
-                if let Some(cooldown) = &cooldown {
-                    window::tooltip(tooltip, chrome, font, cooldown, offset(pointer.0, [12.0, 35.0]), [255; 3]);
-                }
             }
         }
 

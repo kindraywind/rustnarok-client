@@ -180,8 +180,6 @@ const TEXT_COLOR: [u8; 3] = [0, 0, 0];
 const FRAME_TIME: Duration = Duration::from_millis(16);
 /// The client pings the map server so idle connections aren't dropped.
 const KEEPALIVE: Duration = Duration::from_secs(10);
-/// Waits this long after the walk to a target ends before attacking; the server may still have the player a cell back.
-const ATTACK_SETTLE: Duration = Duration::from_millis(50);
 /// Chat colors: others, our own, item messages, errors.
 const CHAT_WHITE: [u8; 3] = [255, 255, 255];
 const CHAT_SELF: [u8; 3] = [0x00, 0xFF, 0x00];
@@ -611,7 +609,9 @@ const STATUS_ICON: f32 = status_tip::ICON;
 /// Steps of the clock drawn over a status icon.
 const CLOCK_STEPS: usize = 32;
 /// A skill still blocked: "There is a Delay after using a Skill.", and the words after a cooldown's seconds left.
-const SKILL_DELAY: usize = 219;
+const COOLDOWN_REFUSED: usize = 1460;
+/// A skill goes once less than this of its cooldown is left.
+const COOLDOWN_GRACE: Duration = Duration::from_millis(100);
 /// The Talkie Box (a Hunter's trap holding a message), and the box asking for its message.
 // ponytail: 436 "Please type a message for the Talkie Box"; 435 may be the official one.
 const TALKIE_BOX: u16 = 125;
@@ -645,7 +645,6 @@ const SWITCH_REMOVED: usize = 3144;
 const NO_BOSS: usize = 1223;
 const BOSS_SHOWN: usize = 1225;
 const BOSS_ALARM: u16 = 253;
-const COOLDOWN_LEFT: usize = 3230;
 /// The spark of a landed hit, and a warp portal's rings.
 const EF_HIT1: u32 = 0;
 const EF_WARPZONE2: u32 = 321;
@@ -898,8 +897,8 @@ struct Game {
     last_walk_try: Option<Instant>,
     /// A walk asked for during the player's own swing, sent when the swing ends.
     walk_after_swing: Option<[i32; 2]>,
-    /// Skills used at a level picked (the rest go at the learned level when aimed).
-    separate_levels: std::collections::HashSet<u16>,
+    /// The client's skill table: names, levels to pick, ranges by level.
+    skill_info: HashMap<u16, SkillInfo>,
     press_mark: Option<(Instant, [f32; 2], bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
@@ -945,7 +944,8 @@ struct Game {
     talkie_spots: HashMap<u32, world::Vector>,
     /// Skills blocked after use, and the line one still blocked prints when used.
     cooldowns: skills::Cooldowns,
-    skill_delay_line: String,
+    /// "Cannot use [%s] due to cooldown delay."
+    cooldown_line: String,
     /// A skill waiting for its target: ID and level.
     targeting: Option<(u16, u16)>,
     /// A taming item waiting for its monster; the slot machine, and the result it plays (action, since when).
@@ -2192,10 +2192,45 @@ impl Game {
                     _ => {}
                 }
             }
-            Some((Pending::Skill { id, level, target }, _)) if self.pending_walk.is_none() => {
-                self.pending = None;
-                self.targeting = Some((id, level));
-                self.aim_skill(target);
+            // A skill: sent the moment it's in reach (walking or not), or once the walk there ended; out of reach, a walk
+            // toward a cell in range on the way to where the target is going, again whenever that changes. It waits
+            // while the player swings, casts or sits; a target out of sight ends it.
+            Some((Pending::Skill { id, level, target }, arrived)) => {
+                let clock = control::now();
+                if self.player.swinging(clock) || self.casts.contains_key(&None) || self.player.sitting {
+                    return;
+                }
+                let toward = match target {
+                    SkillTarget::Unit(unit) if unit == self.account_id => Some((self.player.position(clock), self.player.cell)),
+                    SkillTarget::Unit(unit) => {
+                        self.units.get(&unit).filter(|actor| actor.remove_at.is_none()).map(|actor| (actor.position(clock), actor.destination()))
+                    }
+                    SkillTarget::Cell(cell) => Some((cell.map(|value| value as f32), cell)),
+                };
+                let Some((at, goal)) = toward else {
+                    self.pending = None;
+                    return;
+                };
+                let range = self.skill_range(id, level);
+                let walked = arrived.is_some() && !self.player.moving();
+                if skill_in_reach(self.player.position(clock), at, range) || walked {
+                    self.pending = None;
+                    self.pending_walk = None;
+                    self.send_skill(id, level, target);
+                } else if self.pending_walk.is_none_or(|(toward, _)| toward != goal) && may_move(self.last_move, now) {
+                    let reach = range.max(1.0) as i32;
+                    match world::find_path(&self.world.gat, self.player.cell, goal)
+                        .and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, reach)))
+                    {
+                        Some(stop) => {
+                            self.last_move = Some(now);
+                            self.pending_walk = Some((goal, now));
+                            self.pending = Some((Pending::Skill { id, level, target }, None));
+                            let _ = self.session.walk(stop.map(|value| value as u16));
+                        }
+                        None => self.pending = None,
+                    }
+                }
             }
             _ => {}
         }
@@ -2379,26 +2414,23 @@ impl Game {
     /// does nothing; an aimed skill without a level to pick goes at the learned level.
     fn use_skill(&mut self, id: u16, level: u16) {
         self.targeting = None;
-        // ponytail: a blocked skill says so and sends nothing (the server drops it without a word unless @showdelay is
-        // on); whether the real client asks the server anyway isn't known.
-        if self.cooldowns.left(id, control::now()).is_some() {
-            self.chat_line(self.skill_delay_line.clone(), CHAT_ERROR);
-            return;
-        }
-        let Some(skill) = self.skills.iter().find(|skill| skill.id == id) else { return self.use_companion_skill(id, level) };
+        let Some(&net::Skill { kind, level: learned, .. }) = self.skills.iter().find(|skill| skill.id == id) else {
+            return self.use_companion_skill(id, level);
+        };
         // With a store open only the mercenary's skills go.
         if self.store_open() {
             return;
         }
-        if level == 0 || level > skill.level {
+        if level == 0 || level > learned {
             return;
         }
-        match skill.kind {
-            net::Skill::SELF => {
+        match kind {
+            net::Skill::SELF if self.cooled_down(id) => {
                 let _ = self.session.use_skill(id, level, self.account_id);
             }
+            net::Skill::SELF => {}
             net::Skill::ENEMY | net::Skill::GROUND | net::Skill::FRIEND => {
-                self.targeting = Some((id, if self.separate_levels.contains(&id) { level } else { skill.level }));
+                self.targeting = Some((id, if self.skill_info.get(&id).is_some_and(|info| info.separate_level) { level } else { learned }));
             }
             // ponytail: trap skills (32) aim at ground skill units in the game; not made yet.
             _ => {}
@@ -2440,33 +2472,40 @@ impl Game {
         if self.store_open() {
             return;
         }
-        let goal = match target {
-            SkillTarget::Unit(unit) if unit == self.account_id => Some(self.player.cell),
-            SkillTarget::Unit(unit) => self.units.get(&unit).map(|actor| actor.cell),
-            SkillTarget::Cell(cell) => Some(cell),
-        };
-        let Some(goal) = goal else { return };
-        let range = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).map_or(1, |skill| i32::from(skill.range).max(1));
-        if world::in_reach(self.player.cell, goal, range) {
-            self.pending = None;
-            self.skill_sent = Some((id, level, target));
-            let _ = match target {
-                SkillTarget::Unit(unit) => self.session.use_skill(id, level, unit),
-                SkillTarget::Cell(cell) => self.send_skill_at(id, level, cell.map(|value| value as u16)),
-            };
-        } else if let Some(stop) =
-            world::find_path(&self.world.gat, self.player.cell, goal).and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, range)))
-        {
-            // Within the move limit the walk waits: `pending_step` aims again on a later frame.
-            let now = Instant::now();
-            self.pending = Some((Pending::Skill { id, level, target }, None));
-            self.pending_walk = None;
-            if may_move(self.last_move, now) {
-                self.last_move = Some(now);
-                self.pending_walk = Some((stop, now));
-                let _ = self.session.walk(stop.map(|value| value as u16));
-            }
+        // Out of reach it walks there first: `pending_step` checks every frame.
+        self.pending = Some((Pending::Skill { id, level, target }, None));
+        self.pending_walk = None;
+        self.pending_step(Instant::now());
+    }
+
+    /// Whether a skill's cooldown is over (or under 100 ms is left); if not, says so.
+    fn cooled_down(&mut self, id: u16) -> bool {
+        if self.cooldowns.left(id, control::now()).is_none_or(|left| left < COOLDOWN_GRACE) {
+            return true;
         }
+        let name = self.skill_info.get(&id).map_or_else(|| id.to_string(), |info| info.name.clone());
+        self.chat_line(rustnarok_client::messages::fill(&self.cooldown_line, &[&name]), CHAT_ERROR);
+        false
+    }
+
+    /// The range in cells of skill `id` at `level`: its range for that level, plus what the skill list adds at the
+    /// learned level.
+    fn skill_range(&self, id: u16, level: u16) -> f32 {
+        let known = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id);
+        let per_level = self.skill_info.get(&id).map_or(&[][..], |info| &info.attack_range);
+        skill_range(per_level, level, known.map_or(level, |skill| skill.level), known.map_or(1, |skill| skill.range))
+    }
+
+    /// Sends a skill walked into range (refused while its cooldown runs).
+    fn send_skill(&mut self, id: u16, level: u16, target: SkillTarget) {
+        if !self.cooled_down(id) {
+            return;
+        }
+        self.skill_sent = Some((id, level, target));
+        let _ = match target {
+            SkillTarget::Unit(unit) => self.session.use_skill(id, level, unit),
+            SkillTarget::Cell(cell) => self.send_skill_at(id, level, cell.map(|value| value as u16)),
+        };
     }
 
     /// Plays an effect on a unit (by server ID; the player's own works too) where it stands.
@@ -4373,6 +4412,8 @@ struct Assets {
     speech_fill: Texture,
     speech_border: Texture,
     clocks: [Vec<Texture>; 2],
+    /// The cooldown fan by step, `cooldown_fan`.
+    fan: Vec<Texture>,
     connect: ButtonImages,
     ok: ButtonImages,
     cancel: ButtonImages,
@@ -4400,6 +4441,16 @@ struct Assets {
 }
 
 /// A status icon's clock: the part of the 32px square swept clockwise from 12 o'clock by `share` of a turn.
+/// A cooldown's fan over a 32 px icon after `passed` of it (0 to 1): black at alpha 170 from that angle clockwise round
+/// to 12 o'clock, so it clears clockwise from 12.
+fn cooldown_fan(passed: f32) -> RgbaImage {
+    RgbaImage::from_fn(32, 32, |x, y| {
+        let [dx, dy] = [x as f32 + 0.5 - 16.0, y as f32 + 0.5 - 16.0];
+        let turned = (dx.atan2(-dy) / std::f32::consts::TAU).rem_euclid(1.0);
+        if turned >= passed { Rgba([0, 0, 0, 170]) } else { Rgba([0; 4]) }
+    })
+}
+
 fn clock(share: f32, color: [u8; 4]) -> RgbaImage {
     RgbaImage::from_fn(32, 32, |x, y| {
         let [dx, dy] = [x as f32 + 0.5 - 16.0, y as f32 + 0.5 - 16.0];
@@ -4494,6 +4545,7 @@ impl Assets {
             speech_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
             clocks: [[255, 255, 255, 166], [255, 150, 50, 166]]
                 .map(|color| (0..=CLOCK_STEPS).map(|step| gpu.texture(&clock(step as f32 / CLOCK_STEPS as f32, color), false)).collect()),
+            fan: (0..=CLOCK_STEPS).map(|step| gpu.texture(&cooldown_fan(step as f32 / CLOCK_STEPS as f32), false)).collect(),
             connect: ["normal", "over", "press"].map(|state| image(format!("{login}bt_start_{state}.bmp"))),
             ok: button(UI, "btn_ok"),
             cancel: button(UI, "btn_cancel"),
@@ -4754,6 +4806,21 @@ enum AimAt {
     Me,
     Monster,
     Player,
+}
+
+/// A skill's range in cells at `level`: its range by level (1 where the table has none) plus what the skill list adds
+/// to it at the learned level; the list's range when the table has nothing.
+fn skill_range(per_level: &[u16], level: u16, learned: u16, listed: u16) -> f32 {
+    if per_level.is_empty() {
+        return f32::from(listed.max(1));
+    }
+    let at = |level: u16| per_level.get(usize::from(level.max(1)) - 1).map_or(1.0, |&range| f32::from(range));
+    at(level) + f32::from(listed) - at(learned)
+}
+
+/// Whether a skill reaches from `from` to `to` (cells, drawn positions): within range × 5 + 5.5 world units.
+fn skill_in_reach(from: [f32; 2], to: [f32; 2], range: f32) -> bool {
+    f32::hypot(to[0] - from[0], to[1] - from[1]) * world::CELL <= range * world::CELL + 5.5
 }
 
 /// Whether a press while aiming takes the unit: a monster with Shift up and another player with Shift down, the other
@@ -9176,7 +9243,7 @@ impl App {
                     cooldowns: skills::Cooldowns::default(),
                     talkie_text: None,
                     talkie_spots: HashMap::new(),
-                    skill_delay_line: self.messages.get(SKILL_DELAY).cloned().unwrap_or_default(),
+                    cooldown_line: self.messages.get(COOLDOWN_REFUSED).cloned().unwrap_or_default(),
                     effects: effects::Effects::default(),
                     deal_choice: None,
                     shop: None,
@@ -9414,7 +9481,7 @@ impl App {
                     walk_held: false,
                     last_walk_try: None,
                     walk_after_swing: None,
-                    separate_levels: self.skill_info.iter().filter(|(_, info)| info.separate_level).map(|(&id, _)| id).collect(),
+                    skill_info: self.skill_info.clone(),
                     press_mark: None,
                     auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
                         let (x, y) = cell.split_once(',')?;
@@ -13648,7 +13715,7 @@ impl App {
         }
         let mut layers = vec![weather_layer, base, announce_layer, cutin_layer, chat_layer];
         let mut preview = Some(preview);
-        let cooling = skills::Cooling { cooldowns: &game.cooldowns, clocks: &assets.clocks[0], now: control::now(), note: message(COOLDOWN_LEFT) };
+        let cooling = skills::Cooling { cooldowns: &game.cooldowns, fan: &assets.fan, now: control::now() };
         for &id in &game.windows {
             let mut layer = Layer::default();
             match id {
@@ -14663,14 +14730,6 @@ impl ApplicationHandler<NetEvent> for App {
                         }
                     }
                 }
-                // A skill walked into range goes off once the walk has settled.
-                if let Some((Pending::Skill { id, level, target }, Some(arrived))) = game.pending
-                    && arrived.elapsed() >= ATTACK_SETTLE
-                {
-                    game.pending = None;
-                    game.targeting = Some((id, level));
-                    game.aim_skill(target);
-                }
                 if let Some(gpu) = &self.gpu {
                     gpu.window.request_redraw();
                 }
@@ -15435,6 +15494,27 @@ mod tests {
         assert_eq!(companion_mark(Some((1, 9)), 1, 9, false), (None, true));
         assert_eq!(companion_mark(Some((1, 8)), 1, 9, false), (Some((1, 9)), false));
         assert_eq!(companion_mark(None, 1, 9, true), (None, true));
+    }
+
+    #[test]
+    fn skills_reach_by_level_and_world_distance() {
+        // Fire Bolt's table: 9 at every level. A list that says 10 at the learned level adds 1 at any level.
+        assert_eq!(skill_range(&[9; 10], 3, 10, 10), 10.0);
+        assert_eq!(skill_range(&[1, 2, 3], 1, 3, 3), 1.0, "a range that grows by level, used at level 1");
+        assert_eq!(skill_range(&[], 5, 5, 0), 1.0, "nothing known: 1");
+        assert_eq!(skill_range(&[], 5, 5, 9), 9.0);
+        // range x 5 + 5.5 world units: 9 cells reach 10.1 cells away, not 10.2.
+        assert!(skill_in_reach([0.0, 0.0], [10.1, 0.0], 9.0) && !skill_in_reach([0.0, 0.0], [10.2, 0.0], 9.0));
+        assert!(skill_in_reach([0.0, 0.0], [1.0, 1.0], 1.0));
+    }
+
+    #[test]
+    fn the_cooldown_fan_clears_clockwise_from_twelve() {
+        let dark = |image: &RgbaImage, x: u32, y: u32| image.get_pixel(x, y)[3] == 170;
+        // A quarter in: 12 to 3 o'clock is clear, the rest dark.
+        let fan = cooldown_fan(0.25);
+        assert!(!dark(&fan, 20, 4) && !dark(&fan, 28, 12) && dark(&fan, 28, 20) && dark(&fan, 12, 28) && dark(&fan, 4, 12) && dark(&fan, 12, 4));
+        assert!(dark(&cooldown_fan(0.0), 20, 4) && !dark(&cooldown_fan(1.0), 4, 12));
     }
 
     #[test]

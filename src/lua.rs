@@ -693,6 +693,8 @@ pub struct SkillInfo {
     pub max_level: u16,
     /// The level to use can be picked (`bSeperateLv`): the skill window's arrows, the wheel while aiming.
     pub separate_level: bool,
+    /// Its range in cells by level (`AttackRange`), from level 1.
+    pub attack_range: Vec<u16>,
 }
 
 /// The quests' titles, descriptions and summaries (`QuestInfoList`), from the translation's System folder.
@@ -763,6 +765,7 @@ pub fn skill_info(grf: &Grf) -> io::Result<HashMap<u16, SkillInfo>> {
             name: text(entry.get("SkillName")),
             max_level: entry.get("MaxLv").unwrap_or(0),
             separate_level: entry.get("bSeperateLv").unwrap_or(false),
+            attack_range: entry.get::<mlua::Table>("AttackRange").map(|ranges| ranges.sequence_values::<u16>().flatten().collect()).unwrap_or_default(),
         };
         if let Ok(id) = u16::try_from(id) {
             skills.insert(id, info);

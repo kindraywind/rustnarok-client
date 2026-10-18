@@ -1824,6 +1824,11 @@ impl Actor {
         self.path.clear();
     }
 
+    /// The cell its walk ends on (the one it's on when it isn't walking).
+    pub fn destination(&self) -> [i32; 2] {
+        self.path.last().map_or(self.cell, |&(cell, _)| cell)
+    }
+
     pub fn moving(&self) -> bool {
         !self.path.is_empty()
     }
