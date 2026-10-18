@@ -896,8 +896,10 @@ fn game_state(app: &App, game: &Game) -> Value {
             json!({"kind": "button", "name": name, "box": [x, y, button[0].size[0], button[0].size[1]]})
         })
     });
-    // Hidden players are left out: the client doesn't show them.
-    let mut units: Vec<_> = game.units.iter().filter(|(_, actor)| crate::actor::seen(actor.hide_option, false) == crate::actor::Seen::Whole).collect();
+    // Hidden players are left out, unless Clairvoyance draws them as silhouettes.
+    let clairvoyance = game.status_icons.iter().any(|(id, ..)| *id == crate::actor::CLAIRVOYANCE);
+    let mut units: Vec<_> =
+        game.units.iter().filter(|(_, actor)| crate::actor::seen(actor.hide_option, false, clairvoyance) != crate::actor::Seen::Nothing).collect();
     units.sort_by_key(|(_, actor)| distance(actor.cell));
     let units: Vec<Value> = units
         .into_iter()

@@ -1,5 +1,5 @@
 {
-  "about": "A mercenary (issue #47): a Bowman Scroll hires Mina, who shows with her bow and follows; the window (Ctrl+R) and the skill list; Alt+Shift+click sends her at a Poring (Alt+click twice would too); Ctrl+T stops her following; Dismiss asks, then lets her go. RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's mercenary (rathena's `mercenary` table) and zero its `mercenary_owner` row, or a mercenary from an earlier run is already there and the scroll does nothing.",
+  "about": "A mercenary (issue #47): a Bowman Scroll hires Mina, who shows with her bow and follows; the window (Ctrl+R) and the skill list; Alt+Shift+click sends her at a Poring (Alt+click twice would too); Ctrl+T stops her following; Dismiss asks, then lets her go. Then a Spearman Scroll hires a lancer (job 6027) and sends her at a Poring so the weapon glow is in the attack (issue #310). RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's mercenary (rathena's `mercenary` table) and zero its `mercenary_owner` row, or a mercenary from an earlier run is already there and the scroll does nothing.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -200,6 +200,91 @@
           "MercenarySkills"
         ]
       }
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@item 12173"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "inventory_item": 12173
+      },
+      "count": 2
+    },
+    {
+      "wait_for": {
+        "packet": "0x029b",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "units_at_least": {
+          "mercenary": 1
+        },
+        "state": {
+          "units.0.kind": "mercenary",
+          "units.0.job": 6027
+        }
+      }
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@monster poring 1"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "click_unit": {
+        "kind": "monster",
+        "name": "Poring"
+      },
+      "mods": "Alt+Shift"
+    },
+    {
+      "wait_for": {
+        "event": "Act",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 250
+    },
+    {
+      "shot": "mercenary-glow",
+      "crop": [
+        300,
+        150,
+        424,
+        400
+      ],
+      "threshold": 25
     },
     {
       "say": "@killmonster2"

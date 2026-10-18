@@ -1,0 +1,227 @@
+{
+  "about": "Small sprite pieces (issue #310): @option 0 0 2048 puts the orc face on us. The second player, a Thief, uses Hiding and disappears; our NPC (npc/clairvoyance.txt) starts status 184 and the hidden player shows beside us. The option, the status and the second's job are put back, and the NPC is unloaded. Chase Walk's footprints are not in this scenario.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/clairvoyance.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/clairvoyance.txt"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@option 0 0 2048"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "orcish-face",
+      "crop": [
+        400,
+        180,
+        224,
+        320
+      ],
+      "threshold": 15
+    },
+    {
+      "say": "@option 0 0 0"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "as": "second",
+      "say": "@warp prt_fild08 172 360"
+    },
+    {
+      "as": "second",
+      "settle": 1500
+    },
+    {
+      "as": "second",
+      "say": "@job 6"
+    },
+    {
+      "as": "second",
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@allskill"
+    },
+    {
+      "as": "second",
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@blvl 49"
+    },
+    {
+      "as": "second",
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@heal"
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "units.0.name": "{second}"
+        }
+      }
+    },
+    {
+      "as": "second",
+      "say": "@useskill 51 1 self"
+    },
+    {
+      "as": "second",
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state": {
+          "units.0.kind": "npc"
+        }
+      }
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokClairvoyance"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "on"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state": {
+          "units.0.name": "{second}",
+          "status_icons.0.id": 184
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "clairvoyance-silhouette",
+      "crop": [
+        360,
+        200,
+        320,
+        300
+      ],
+      "threshold": 20
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "as": "second",
+      "say": "@useskill 51 1 self"
+    },
+    {
+      "as": "second",
+      "wait": 800
+    },
+    {
+      "as": "second",
+      "say": "@blvl -49"
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "say": "@skreset"
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "say": "@job 0"
+    },
+    {
+      "as": "second",
+      "wait": 500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/clairvoyance.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}
