@@ -434,6 +434,8 @@ pub struct MeshVertex {
 
 pub struct World {
     pub gat: Gat,
+    /// The map's ambient sound sources.
+    pub ambient: crate::ambient::Ambient,
     textures: Vec<Texture>,
     lightmap: Texture,
     vertices: wgpu::Buffer,
@@ -644,7 +646,11 @@ impl World {
             (buffer, frames, water.animation_speed.max(1))
         });
 
+        // Sound sources sit, like models, relative to the map's center.
+        let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
+        let ambient = crate::ambient::Ambient::new(rsw.sounds.iter().map(|source| crate::ambient::Source::placed(source, half)).collect());
         Ok(Self {
+            ambient,
             gat,
             textures,
             lightmap,
