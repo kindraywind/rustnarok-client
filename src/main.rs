@@ -7418,8 +7418,8 @@ impl App {
                                     game.use_skill(id, level);
                                 }
                             }
-                            // The level goes in pending, with what it needs first; a prerequisite the points can't
-                            // reach is named in red.
+                            // A click (let go, not dragged off): a level goes in pending, with what it needs first; a
+                            // prerequisite the points can't reach is named in red.
                             Some(skills::Action::LevelUp(id)) => {
                                 if let Err(short) = game.skill_window.raise(&sheet, id) {
                                     let name = skill_info.get(&short).map_or_else(|| short.to_string(), |info| info.name.clone());
@@ -7701,8 +7701,8 @@ impl App {
             game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             return;
         }
-        // A right click on a skill, in the skill window or on the hotkey bar: its description (the same skill again on
-        // the bar closes it).
+        // A right click on a skill, in the skill window or on the hotkey bar: its description (the same skill again
+        // closes it).
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Released
             && let Some((start, None)) = game.right_press
@@ -7714,10 +7714,13 @@ impl App {
                     let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
                     let sheet =
                         skills::Sheet { trees: &self.skill_trees, jobs: &jobs, skills: &game.skills, info: &game.skill_info, points: game.skill_points() };
-                    match game.skill_window.hit(cursor, &sheet) {
-                        Some(skills::Hit::Skill(id)) => Some((id, None)),
+                    // The skill's prerequisites stay lit until another right click.
+                    let skill = match game.skill_window.hit(cursor, &sheet) {
+                        Some(skills::Hit::Skill(id)) => Some(id),
                         _ => None,
-                    }
+                    };
+                    game.skill_window.pin(skill);
+                    skill.map(|id| (id, None))
                 }
                 Some(Panel::Hotkeys) => match game.hotkeys.hit(cursor) {
                     Some(hotkeys::Hit::Slot(slot)) => game.hotkeys.keys.get(slot).copied().flatten().filter(|key| key.skill).and_then(|key| {
@@ -7730,7 +7733,7 @@ impl App {
             };
             if let Some((id, row)) = opened {
                 game.right_press = None;
-                if row.is_some() && game.skill_description.as_ref().is_some_and(|window| window.skill == id) {
+                if game.skill_description.as_ref().is_some_and(|window| window.skill == id) {
                     game.skill_description = None;
                 } else {
                     let lines = self.skill_descriptions.get(&id).cloned().unwrap_or_default();

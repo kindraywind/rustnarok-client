@@ -948,10 +948,10 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.skill_window.skill_boxes(&sheet).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
         .chain(
             game.skill_window
-                .raise_boxes(&sheet)
+                .tab_boxes(&sheet)
                 .into_iter()
-                .map(|(id, area)| (format!("raise:{id}"), area))
-                .chain(game.skill_window.tab_boxes(&sheet).into_iter().map(|(job, area)| (format!("skill_tab:{job}"), area)))
+                .map(|(job, area)| (format!("skill_tab:{job}"), area))
+                .chain(game.skill_window.arrow_boxes(&sheet))
                 .chain(game.skill_window.button_boxes().into_iter().map(|(name, area)| (name.to_owned(), area)))
                 .filter(|(_, area)| on_top(Panel::Skills, area))
                 .chain(game.status_window.raise_boxes(&game.status).into_iter().filter(|(_, area)| on_top(Panel::Status, area)))

@@ -37,71 +37,64 @@
     {
       "shot": "skill-window",
       "crop": [
-        200,
-        120,
-        460,
-        425
+        230,
+        70,
+        580,
+        420
       ]
     },
     {
-      "click": [
-        346,
-        192
-      ]
+      "click_on": {
+        "button": "skill_less:28"
+      }
     },
     {
       "wait": 150
     },
     {
-      "click": [
-        346,
-        192
-      ]
+      "click_on": {
+        "button": "skill_less:28"
+      }
     },
     {
       "wait": 150
     },
     {
-      "click": [
-        346,
-        192
-      ]
+      "click_on": {
+        "button": "skill_less:28"
+      }
     },
     {
       "wait": 150
     },
     {
-      "click": [
-        346,
-        192
-      ]
+      "click_on": {
+        "button": "skill_less:28"
+      }
     },
     {
       "wait": 150
     },
     {
-      "click": [
-        346,
-        192
-      ]
+      "click_on": {
+        "button": "skill_less:28"
+      }
     },
     {
       "wait": 150
     },
     {
-      "click": [
-        346,
-        192
-      ]
+      "click_on": {
+        "button": "skill_less:28"
+      }
     },
     {
       "wait": 150
     },
     {
-      "click": [
-        346,
-        192
-      ]
+      "click_on": {
+        "button": "skill_less:28"
+      }
     },
     {
       "wait": 300
@@ -115,10 +108,10 @@
     {
       "shot": "skill-heal-picked",
       "crop": [
-        200,
-        120,
-        460,
-        425
+        230,
+        70,
+        580,
+        420
       ]
     },
     {

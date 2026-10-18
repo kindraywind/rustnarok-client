@@ -37,17 +37,17 @@ const LEVEL_Y: f32 = 70.0;
 const NAME_WIDTH: f32 = 48.0;
 const LEARNED_NAME: [u8; 3] = [102, 102, 102];
 const UNLEARNED_NAME: [u8; 3] = [120, 120, 120];
-/// Levels put in but not sent: "+N" in blue at (102 + 68c, 44 + 56r).
+/// Levels put in but not sent: "+N" in red at (102 + 68c, 44 + 56r).
 const PENDING_X: f32 = 102.0;
 const BLUE: [u8; 3] = [0, 0, 255];
 const RED: [u8; 3] = [255, 0, 0];
-// ponytail: the level up button under the pending count, right of the icon; place it against the real client.
-/// The level up button by an icon, and how much around it a click takes.
-const RAISE_AT: [f32; 2] = [PENDING_X - ICON_AT[0], 12.0];
-const RAISE: [f32; 2] = [24.0, 24.0];
-// ponytail: the level arrows at the icon's left, up over down.
-const ARROWS: [[f32; 2]; 2] = [[-12.0, 0.0], [-12.0, 12.0]];
+/// The arrows that pick the level to use, on the level line: left at x 56 + 68c, right at 111 + 68c.
+const ARROWS: [[f32; 2]; 2] = [[56.0 - ICON_AT[0], LEVEL_Y - ICON_AT[1]], [111.0 - ICON_AT[0], LEVEL_Y - ICON_AT[1]]];
 const ARROW: [f32; 2] = [11.0, 11.0];
+/// A use level other than the learned one.
+const USE_LEVEL: [u8; 3] = [255, 60, 127];
+/// The level a prerequisite needs, beside its icon, black outlined in white.
+const NEED_AT: [f32; 2] = [26.0, 14.0];
 /// Tabs down the left, 17 px thick.
 // ponytail: 80 px a tab from under the title, the name a letter a line.
 const TAB: [f32; 2] = [17.0, 80.0];
@@ -58,10 +58,10 @@ const APPLY_AT: [f32; 2] = [WIDTH - 100.0, HEIGHT - 27.0];
 const RESET_AT: [f32; 2] = [WIDTH - 50.0, HEIGHT - 27.0];
 const POINTS_AT: [f32; 2] = [80.0, HEIGHT - 23.0];
 const BAR_HEIGHT: f32 = 32.0;
-/// Hovering a skill: its prerequisites' boxes, and the box of one that can be raised.
-const NEEDED_FILL: [u8; 3] = [204, 192, 255];
-const NEEDED_LINE: [u8; 3] = [193, 182, 255];
-const RAISABLE_FILL: [u8; 3] = [240, 196, 175];
+/// The boxes of the hovered (or pinned) skill's prerequisites, pink; of a skill that can be raised, light blue.
+const NEEDED_FILL: [u8; 3] = [255, 192, 204];
+const NEEDED_LINE: [u8; 3] = [255, 182, 193];
+const RAISABLE_FILL: [u8; 3] = [175, 196, 240];
 /// The wheel scrolls this many rows a notch.
 const WHEEL_ROWS: usize = 3;
 const TITLE_MESSAGE: usize = 283;
@@ -85,7 +85,7 @@ pub struct Assets {
     bar: [Texture; 3],
     /// Whitens skills not learned.
     veil: Texture,
-    /// The arrows that pick the level to use: up, down.
+    /// The arrows that pick the level to use: less, more.
     arrows: [Texture; 2],
     /// Apply and Reset: normal, hovered, pressed.
     apply: [Texture; 3],
@@ -105,7 +105,7 @@ impl Assets {
             up: ["skill_up_a", "skill_up_b", "skill_up_c"].map(image),
             bar: ["skill_botbar_left", "skill_botbar_mid", "skill_botbar_right"].map(image),
             veil: gpu.solid([255, 255, 255, 150]),
-            arrows: ["arw_up", "arw_down"].map(image),
+            arrows: ["arw_left", "arw_right"].map(image),
             apply: ["btn_apply", "btn_apply_a", "btn_apply_b"].map(root),
             reset: ["btn_reset", "btn_reset_a", "btn_reset_b"].map(root),
             fills: [solid([255; 3]), solid(NEEDED_FILL), solid(RAISABLE_FILL)],
@@ -119,8 +119,7 @@ pub enum Hit {
     Title(TitleHit),
     Tab(usize),
     Skill(u16),
-    LevelUp(u16),
-    /// An arrow at a skill's box: one level more (`up`) or less to use, up to `learned`.
+    /// An arrow on a skill's level line: one level more (`up`) or less to use, up to `learned`.
     Step {
         id: u16,
         up: bool,
@@ -136,7 +135,7 @@ pub enum Hit {
 pub enum Action {
     /// Use the skill at its level (a double click).
     Use(u16),
-    /// Put a level into the skill, with what it needs first.
+    /// Put a level into the skill, with what it needs first (a click, let go on it).
     LevelUp(u16),
     /// Send the pending levels (after asking).
     Apply,
@@ -152,17 +151,22 @@ pub struct SkillWindow {
     chosen: HashMap<u16, u16>,
     /// Levels put in but not sent, in order (a skill once a level, what it needs before it).
     pending: Vec<u16>,
+    /// The skill whose prerequisites stay lit (a right click), instead of the hovered one's.
+    pinned: Option<u16>,
 }
 
 impl Default for SkillWindow {
     fn default() -> Self {
-        Self { frame: Frame::new(DEFAULT_POSITION, WIDTH), tab: usize::MAX, scroll: 0, clicks: Clicks::default(), chosen: HashMap::new(), pending: Vec::new() }
+        Self {
+            frame: Frame::new(DEFAULT_POSITION, WIDTH),
+            tab: usize::MAX,
+            scroll: 0,
+            clicks: Clicks::default(),
+            chosen: HashMap::new(),
+            pending: Vec::new(),
+            pinned: None,
+        }
     }
-}
-
-/// Whether a skill gets level arrows: learned past level 1, and used rather than passive.
-fn steppable(skill: &Skill) -> bool {
-    skill.level > 1 && skill.kind != 0
 }
 
 /// The tab for skills no tree of the line holds (a Wedding Ring's, an adopted family's, cards'), after the line's.
@@ -362,12 +366,43 @@ impl Sheet<'_> {
         self.jobs.iter().filter(|&&job| job != ETC).filter_map(|job| self.trees.trees.get(job)).any(|tree| tree.iter().any(|&(_, each)| each == id))
     }
 
+    /// How far points can take a skill here: 0 outside the line; the learned level when the server lists it as not
+    /// upgradable; 0 when the server leaves it out though nothing it needs is missing (a quest skill).
     fn max(&self, id: u16) -> u16 {
-        if self.in_line(id) { self.info.get(&id).map_or(0, |info| info.max_level) } else { 0 }
+        if !self.in_line(id) {
+            return 0;
+        }
+        match self.skills.iter().find(|skill| skill.id == id) {
+            Some(skill) if !skill.upgradable => skill.level,
+            None if self.needs(id).iter().all(|&(need, at)| self.learned(need) >= at) => 0,
+            _ => self.info.get(&id).map_or(0, |info| info.max_level),
+        }
     }
 
     fn needs(&self, id: u16) -> Vec<(u16, u16)> {
         self.info.get(&id).map(|info| info.needs_for(self.job()).to_vec()).unwrap_or_default()
+    }
+
+    /// Every skill `id` needs, however far back, each with the level it needs (the highest asked).
+    fn chain(&self, id: u16) -> HashMap<u16, u16> {
+        let mut chain = HashMap::new();
+        let mut todo = vec![(id, 0)];
+        while let Some((skill, depth)) = todo.pop() {
+            for (need, at) in self.needs(skill) {
+                let level = chain.entry(need).or_insert(0);
+                *level = at.max(*level);
+                if depth < 16 {
+                    todo.push((need, depth + 1));
+                }
+            }
+        }
+        chain
+    }
+
+    /// The learned level when the skill's level to use can be picked (the level arrows show).
+    fn steppable(&self, id: u16) -> Option<u16> {
+        let learned = self.learned(id);
+        (learned > 0 && self.info.get(&id).is_some_and(|info| info.separate_level)).then_some(learned)
     }
 }
 
@@ -406,14 +441,17 @@ impl SkillWindow {
         sheet.learned(id) + self.pending_levels(id)
     }
 
-    /// Whether the level up button shows by a skill: points left and the skill below its maximum.
+    /// Whether a skill can be raised now: points left, below its maximum, and what it needs in place.
     fn raisable(&self, sheet: &Sheet, id: u16) -> bool {
-        self.points_left(sheet) > 0 && self.level(sheet, id) < sheet.max(id)
+        self.points_left(sheet) > 0 && self.level(sheet, id) < sheet.max(id) && sheet.needs(id).iter().all(|&(need, at)| self.level(sheet, need) >= at)
     }
 
     /// Puts one more level into `id`, and every level of a prerequisite it still lacks, as far as the points go.
-    /// Err: the skill the points can't raise (nothing is added).
+    /// Nothing without points or past the maximum. Err: the skill the points can't raise (nothing is added).
     pub fn raise(&mut self, sheet: &Sheet, id: u16) -> Result<(), u16> {
+        if self.points_left(sheet) <= 0 || self.level(sheet, id) >= sheet.max(id) {
+            return Ok(());
+        }
         let levels = plan(id, |skill| self.level(sheet, skill), |skill| sheet.max(skill), |skill| sheet.needs(skill), self.points_left(sheet))?;
         self.pending.extend(levels);
         Ok(())
@@ -488,14 +526,11 @@ impl SkillWindow {
             }
         }
         for (id, corner) in self.shown(sheet) {
-            if self.raisable(sheet, id) && contains(offset(corner, RAISE_AT), RAISE, local) {
-                return Some(Hit::LevelUp(id));
-            }
             if self.pending.is_empty()
-                && let Some(skill) = sheet.skills.iter().find(|skill| skill.id == id).filter(|skill| steppable(skill))
+                && let Some(learned) = sheet.steppable(id)
                 && let Some(arrow) = ARROWS.iter().position(|&at| contains(offset(corner, at), ARROW, local))
             {
-                return Some(Hit::Step { id, up: arrow == 0, learned: skill.level });
+                return Some(Hit::Step { id, up: arrow == 1, learned });
             }
             if contains(offset(corner, [-1.0, -1.0]), [ICON + 2.0, ICON + 2.0], local) {
                 return Some(Hit::Skill(id));
@@ -511,8 +546,7 @@ impl SkillWindow {
                 self.tab = tab;
                 self.scroll = 0;
             }
-            Hit::Skill(id) => return self.clicks.double(id).then_some(Action::Use(id)),
-            Hit::LevelUp(id) => return Some(Action::LevelUp(id)),
+            Hit::Skill(id) => return Some(if self.clicks.double(id) { Action::Use(id) } else { Action::LevelUp(id) }),
             Hit::Step { id, up, learned } => {
                 let level = self.use_level(id, learned);
                 let level = if up { level + 1 } else { level.saturating_sub(1) };
@@ -523,6 +557,11 @@ impl SkillWindow {
             Hit::Window => {}
         }
         None
+    }
+
+    /// A right click: on a skill, keeps its prerequisites lit (again on it: lets go); elsewhere, lets go.
+    pub fn pin(&mut self, skill: Option<u16>) {
+        self.pinned = if skill == self.pinned { None } else { skill };
     }
 
     /// Whether a skill can be dragged out: not while levels are pending.
@@ -544,17 +583,19 @@ impl SkillWindow {
             .collect()
     }
 
-    /// The open tab's level up buttons on screen (for the test driver): skill and box.
-    pub fn raise_boxes(&self, sheet: &Sheet) -> Vec<(u16, [f32; 4])> {
-        if !self.frame.open || self.frame.minimized {
+    /// The level arrows on screen (for the test driver): `skill_less:<id>` and `skill_more:<id>` with their boxes.
+    pub fn arrow_boxes(&self, sheet: &Sheet) -> Vec<(String, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized || !self.pending.is_empty() {
             return Vec::new();
         }
         self.shown(sheet)
             .into_iter()
-            .filter(|&(id, _)| self.raisable(sheet, id))
-            .map(|(id, corner)| {
-                let [x, y] = self.frame.at(offset(corner, RAISE_AT));
-                (id, [x, y, RAISE[0], RAISE[1]])
+            .filter(|&(id, _)| sheet.steppable(id).is_some())
+            .flat_map(|(id, corner)| {
+                ["less", "more"].into_iter().zip(ARROWS).map(move |(name, place)| {
+                    let [x, y] = self.frame.at(offset(corner, place));
+                    (format!("skill_{name}:{id}"), [x, y, ARROW[0], ARROW[1]])
+                })
             })
             .collect()
     }
@@ -646,37 +687,44 @@ impl SkillWindow {
             }
         }
 
+        // Every cell's empty box, under the skills.
+        for cell in 0..COLUMNS * ROWS {
+            if let Some(corner) = icon_corner(cell, 0) {
+                layer.sprites.push((&assets.slot, at(corner), assets.slot.size));
+            }
+        }
         let hovered = match hit {
-            Some(Hit::Skill(id) | Hit::LevelUp(id)) => Some(id),
+            Some(Hit::Skill(id)) => Some(id),
             _ => None,
         };
-        let needed: Vec<u16> = hovered.map(|id| sheet.needs(id).into_iter().map(|(need, _)| need).collect()).unwrap_or_default();
-        let points_left = self.points_left(sheet);
+        // The pinned skill's prerequisites, else the hovered one's: each with the level it needs.
+        let chain = self.pinned.or(hovered).map(|id| sheet.chain(id)).unwrap_or_default();
         for (id, corner) in self.shown(sheet) {
             let learned = sheet.learned(id);
             let skill_info = sheet.info.get(&id);
-            // The box: a prerequisite of the hovered skill in violet, the hovered one that can be raised in orange.
-            let fill = if needed.contains(&id) {
-                1
-            } else if hovered == Some(id) && self.raisable(sheet, id) {
-                2
-            } else {
-                0
+            let needed = chain.get(&id).copied();
+            let raisable = self.raisable(sheet, id);
+            // The box: pink in the chain, light blue when it can be raised, else white.
+            let (line, fill) = match (needed, raisable) {
+                (Some(_), _) => (Some(&assets.needed_line), 1),
+                (None, true) => (Some(&assets.fills[2]), 2),
+                (None, false) => (None, 0),
             };
-            if fill == 1 {
-                layer.sprites.push((&assets.needed_line, at(offset(corner, [-2.0, -2.0])), [ICON + 4.0, ICON + 4.0]));
+            if let Some(line) = line {
+                layer.sprites.push((line, at(offset(corner, [-2.0, -2.0])), [ICON + 4.0, ICON + 4.0]));
             }
             layer.sprites.push((&assets.fills[fill], at(offset(corner, [-1.0, -1.0])), [ICON + 2.0, ICON + 2.0]));
             if let Some(Some(icon)) = skill_info.map(icon_path).and_then(|path| icons.get(&path)) {
                 layer.sprites.push((icon, at(corner), [ICON, ICON]));
-                if learned == 0 {
+                // ponytail: whitened rather than greyed; the renderer has no grey mode.
+                if learned == 0 && fill == 0 {
                     layer.sprites.push((&assets.veil, at(corner), [ICON, ICON]));
                 }
             }
             if learned > 0 {
                 cooling.draw(layer, id, at(corner), [ICON, ICON]);
             }
-            // The name above, the level below, both centred on the icon.
+            // The name above, the level below (learned skills only), both centred on the icon.
             let name = skill_info.map_or_else(|| id.to_string(), |info| info.name.clone());
             let shown = window::fit(font, &name, NAME_WIDTH);
             let middle = corner[0] + ICON / 2.0;
@@ -686,24 +734,34 @@ impl SkillWindow {
                 at([(middle - font.width(&shown) / 2.0).floor(), top + NAME_Y]),
                 if learned > 0 { LEARNED_NAME } else { UNLEARNED_NAME },
             ));
-            let level = if learned > 0 { self.use_level(id, learned) } else { 0 };
-            let level = level.to_string();
-            layer.texts.push((level.clone(), at([(middle - font.width(&level) / 2.0).floor(), top + LEVEL_Y]), [0, 0, 0]));
+            if learned > 0 {
+                // A level to pick: "use / learned", the use level coloured when it isn't the learned one.
+                let (first, rest) = match sheet.steppable(id) {
+                    Some(learned) => (self.use_level(id, learned), format!(" / {learned}")),
+                    None => (learned, String::new()),
+                };
+                let first_text = first.to_string();
+                let left = (middle - (font.width(&first_text) + font.width(&rest)) / 2.0).floor();
+                let color = if first == learned { [0, 0, 0] } else { USE_LEVEL };
+                layer.texts.push((rest, at([left + font.width(&first_text), top + LEVEL_Y]), [0, 0, 0]));
+                layer.texts.push((first_text, at([left, top + LEVEL_Y]), color));
+            }
             let pending = self.pending_levels(id);
             if pending > 0 {
-                layer.texts.push((format!("+{pending}"), at([corner[0] - ICON_AT[0] + PENDING_X, corner[1]]), BLUE));
+                layer.texts.push((format!("+{pending}"), at([corner[0] - ICON_AT[0] + PENDING_X, corner[1]]), RED));
             }
-            if self.pending.is_empty() && sheet.skills.iter().any(|skill| skill.id == id && steppable(skill)) {
+            if self.pending.is_empty() && sheet.steppable(id).is_some() {
                 for (arrow, place) in assets.arrows.iter().zip(ARROWS) {
                     layer.sprites.push((arrow, at(offset(corner, place)), arrow.size));
                 }
             }
-            if self.raisable(sheet, id) {
-                let state = match hit {
-                    Some(Hit::LevelUp(target)) if target == id => 1 + usize::from(pointer.1),
-                    _ => 0,
-                };
-                layer.sprites.push((&assets.up[state], at(offset(corner, RAISE_AT)), assets.up[state].size));
+            if let Some(level) = needed {
+                let text = level.to_string();
+                let place = at(offset(corner, NEED_AT));
+                for nudge in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+                    layer.texts.push((text.clone(), offset(place, nudge), [255; 3]));
+                }
+                layer.texts.push((text, place, [0, 0, 0]));
             }
             if hovered == Some(id) {
                 window::tooltip(tooltip, chrome, font, &name, offset(pointer.0, [-10.0, -20.0]), [255; 3]);
@@ -726,7 +784,7 @@ impl SkillWindow {
         if self.pending.is_empty() {
             put(layer, sheet.points.to_string(), [0, 0, 0]);
         } else {
-            put(layer, points_left.to_string(), BLUE);
+            put(layer, self.points_left(sheet).to_string(), BLUE);
             put(layer, format!("({})", self.pending.len()), RED);
             put(layer, format!(" / {}", sheet.points), [0, 0, 0]);
         }
@@ -835,10 +893,13 @@ mod tests {
         window.click(Hit::Step { id: 34, up: false, learned: 5 });
         assert_eq!(window.use_level(34, 2), 2);
         assert_eq!(window.use_level(29, 3), 3);
-        let passive = Skill { id: 1, kind: 0, level: 9, sp: 0, range: 0, upgradable: false };
-        let heal = Skill { id: 28, kind: Skill::FRIEND, level: 10, sp: 13, range: 9, upgradable: false };
-        assert!(!steppable(&passive) && steppable(&heal));
-        assert!(!steppable(&Skill { level: 1, ..heal }));
+        // Arrows for a learned skill whose level can be picked, even at level 1.
+        let trees = SkillTrees::default();
+        let skill = |id, level| Skill { id, kind: Skill::FRIEND, level, sp: 13, range: 9, upgradable: false };
+        let skills = [skill(1, 9), skill(28, 1)];
+        let skill_info = HashMap::from([(1, info(9, Vec::new())), (28, SkillInfo { separate_level: true, ..info(10, Vec::new()) })]);
+        let sheet = Sheet { trees: &trees, jobs: &[], skills: &skills, info: &skill_info, points: 0 };
+        assert_eq!((sheet.steppable(1), sheet.steppable(28), sheet.steppable(29)), (None, Some(1), None));
     }
 
     #[test]
@@ -866,17 +927,23 @@ mod tests {
         // A Swordman (1): Bash (5) in place 1 needs nothing; Magnum Break (7) in place 2 needs Bash 5.
         let trees = SkillTrees { trees: HashMap::from([(0, vec![(0, 1)]), (1, vec![(1, 5), (2, 7)])]), parents: HashMap::from([(1, 0)]) };
         let jobs = [0, 1];
-        let skills = [Skill { id: 1, kind: 0, level: 9, sp: 0, range: 0, upgradable: false }];
+        // The server lists Bash, not yet learned; Magnum Break waits on it.
+        let skills = [
+            Skill { id: 1, kind: 0, level: 9, sp: 0, range: 0, upgradable: false },
+            Skill { id: 5, kind: Skill::ENEMY, level: 0, sp: 8, range: 1, upgradable: true },
+        ];
         let skill_info = HashMap::from([(1, info(9, Vec::new())), (5, info(10, Vec::new())), (7, info(10, vec![(5, 5)]))]);
         let sheet = Sheet { trees: &trees, jobs: &jobs, skills: &skills, info: &skill_info, points: 7 };
         let mut window = SkillWindow::default();
         window.frame.open = true;
-        // "+" by Magnum Break: five of Bash first, then it; two points left. Nothing goes out yet.
+        // Magnum Break needs Bash first: only Bash can be raised on its own.
+        assert!(window.raisable(&sheet, 5) && !window.raisable(&sheet, 7));
+        // Raising Magnum Break: five of Bash first, then it; one point left. Nothing goes out yet.
         assert_eq!(window.raise(&sheet, 7), Ok(()));
         assert_eq!((window.pending_levels(5), window.pending_levels(7), window.points_left(&sheet)), (5, 1, 1));
-        // Basic Skill is at its maximum: no "+"; Bash still has one.
-        let raisable: Vec<u16> = window.raise_boxes(&sheet).into_iter().map(|(id, _)| id).collect();
-        assert_eq!(raisable, [5, 7]);
+        // Basic Skill is at its maximum; Bash and Magnum Break can still go up.
+        assert!(!window.raisable(&sheet, 1) && window.raisable(&sheet, 5) && window.raisable(&sheet, 7));
+        assert_eq!(window.raise(&sheet, 1), Ok(()), "past the maximum: nothing, and no complaint");
         // Apply and Reset show while something is pending; the levels go out prerequisites first.
         assert_eq!(window.button_boxes().len(), 2);
         let center = |area: [f32; 4]| [area[0] + area[2] / 2.0, area[1] + area[3] / 2.0];
@@ -894,7 +961,48 @@ mod tests {
     }
 
     #[test]
-    fn names_the_tabs_and_level_up_buttons_a_click_takes() {
+    fn raises_a_skill_a_click_is_on_and_uses_it_on_a_double_click() {
+        let mut window = SkillWindow::default();
+        assert_eq!(window.click(Hit::Skill(19)), Some(Action::LevelUp(19)));
+        assert_eq!(window.click(Hit::Skill(19)), Some(Action::Use(19)));
+        assert_eq!(window.click(Hit::Skill(14)), Some(Action::LevelUp(14)));
+    }
+
+    #[test]
+    fn leaves_out_skills_points_dont_learn() {
+        // A Novice: the server lists Basic Skill (1) but not First Aid (142), a quest skill that needs nothing.
+        let trees = SkillTrees { trees: HashMap::from([(0, vec![(0, 1), (1, 142)])]), parents: HashMap::new() };
+        let skills = [Skill { id: 1, kind: 0, level: 0, sp: 0, range: 0, upgradable: true }];
+        let skill_info = HashMap::from([(1, info(9, Vec::new())), (142, info(1, Vec::new()))]);
+        let sheet = Sheet { trees: &trees, jobs: &[0], skills: &skills, info: &skill_info, points: 3 };
+        let window = SkillWindow::default();
+        assert!(window.raisable(&sheet, 1) && !window.raisable(&sheet, 142));
+        // Listed but not upgradable (a skill the job can't take further): it stays where it is.
+        let held = [Skill { level: 4, upgradable: false, ..skills[0] }];
+        assert_eq!(Sheet { skills: &held, ..sheet }.max(1), 4);
+    }
+
+    #[test]
+    fn lights_the_whole_chain_a_skill_needs() {
+        // Comet (2213) needs Hell Inferno (2212) 3, which needs Crimson Rock (2211) 2, which needs Summon Fire Ball (2208) 1.
+        let trees = SkillTrees::default();
+        let skill_info = HashMap::from([(2213, info(5, vec![(2212, 3)])), (2212, info(5, vec![(2211, 2)])), (2211, info(5, vec![(2208, 1)]))]);
+        let sheet = Sheet { trees: &trees, jobs: &[], skills: &[], info: &skill_info, points: 0 };
+        assert_eq!(sheet.chain(2213), HashMap::from([(2212, 3), (2211, 2), (2208, 1)]));
+        assert!(sheet.chain(2208).is_empty());
+        // A right click keeps a chain lit; again on it, or off any skill, lets go.
+        let mut window = SkillWindow::default();
+        window.pin(Some(2213));
+        assert_eq!(window.pinned, Some(2213));
+        window.pin(Some(2213));
+        assert_eq!(window.pinned, None);
+        window.pin(Some(2212));
+        window.pin(None);
+        assert_eq!(window.pinned, None);
+    }
+
+    #[test]
+    fn names_the_tabs_a_click_takes() {
         // Novice (0) then Mage (2): Basic Skill in place 0, Fire Bolt and Cold Bolt beside it.
         let trees = SkillTrees { trees: HashMap::from([(0, vec![(0, 1)]), (2, vec![(1, 19), (3, 14)])]), parents: HashMap::new() };
         let jobs = [0, 2];
@@ -903,14 +1011,14 @@ mod tests {
         let skill_info = HashMap::from([(1, info(9, Vec::new())), (19, info(10, Vec::new())), (14, info(10, Vec::new()))]);
         let sheet = Sheet { trees: &trees, jobs: &jobs, skills: &skills, info: &skill_info, points: 5 };
         let mut window = SkillWindow::default();
-        assert!(window.raise_boxes(&sheet).is_empty() && window.tab_boxes(&sheet).is_empty());
+        assert!(window.skill_boxes(&sheet).is_empty() && window.tab_boxes(&sheet).is_empty());
         window.frame.open = true;
         let center = |area: [f32; 4]| [area[0] + area[2] / 2.0, area[1] + area[3] / 2.0];
         // Only Fire Bolt can still rise, and its box is the one the click test takes.
-        let boxes = window.raise_boxes(&sheet);
-        assert_eq!(boxes.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [19]);
-        assert_eq!(window.hit(center(boxes[0].1), &sheet), Some(Hit::LevelUp(19)));
-        assert!(window.raise_boxes(&Sheet { points: 0, ..sheet }).is_empty());
+        assert_eq!([1, 19, 14].map(|id| window.raisable(&sheet, id)), [false, true, false]);
+        assert!(!window.raisable(&Sheet { points: 0, ..sheet }, 19));
+        let fire_bolt = window.skill_boxes(&sheet).into_iter().find(|(id, _)| *id == 19).unwrap();
+        assert_eq!(window.hit(center(fire_bolt.1), &sheet), Some(Hit::Skill(19)));
         // One tab for Novice and Mage, named by both jobs.
         let tabs = window.tab_boxes(&sheet);
         assert_eq!(tabs.iter().map(|(job, _)| *job).collect::<Vec<_>>(), [0, 2]);
