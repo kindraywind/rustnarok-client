@@ -19,6 +19,10 @@ const ROW: f32 = 32.0;
 const ROWS: [usize; 2] = [8, 3];
 /// The goods on the inventory's spot, the deal beside and under it.
 const POSITIONS: [[f32; 2]; 2] = [[0.0, 120.0], [280.0, 280.0]];
+/// A market's goods: where the icon and name go, and how wide the name may be.
+const MARKET_ICON: f32 = 34.0;
+const MARKET_NAME: f32 = 70.0;
+const MARKET_NAME_WIDTH: f32 = 120.0;
 /// Where prices end, from the right edge.
 const PRICE_RIGHT: f32 = 18.0;
 const PADDING: f32 = 5.0;
@@ -531,41 +535,32 @@ impl Shop {
                 if self.selected[window] == Some(place) {
                     layer.sprites.push((&assets.selected, frame.at([LEFT, top]), [WIDTH - LEFT - 1.0, ROW]));
                 }
+                // A market's goods sit further right, the name wider.
+                let market_goods = window == 0 && self.market == Some(MarketKind::Market);
+                let (icon_x, name_x) = if market_goods { (MARKET_ICON, MARKET_NAME) } else { (LEFT + 4.0, LEFT + 32.0) };
                 let icon = items.get(&offer.item).and_then(|info| icons.get(&inventory::icon_path(info, offer.identified))).and_then(Option::as_ref);
                 if let Some(icon) = icon {
-                    layer.sprites.push((icon, frame.at([LEFT + 4.0, top + 4.0]), icon.size));
+                    layer.sprites.push((icon, frame.at([icon_x, top + 4.0]), icon.size));
                 }
-                // How many: carried (selling) on the icon, or in the deal.
-                let count = amount.or(if self.buying_store.is_some() && window == 0 {
-                    offer.stock
-                } else if (self.selling || self.vendor.is_some()) && window == 0 {
-                    Some(u32::from(offer.have))
-                } else {
-                    None
-                });
-                if let Some(count) = count {
+                if let Some(count) = self.icon_count(window, offer, amount) {
                     let text = count.to_string();
-                    let place = frame.at([LEFT + 18.0, top + 18.0]);
+                    // From 1000 up the number starts at the icon's left.
+                    let place = frame.at([icon_x + if count < 1000 { 14.0 } else { 0.0 }, top + 18.0]);
                     layer.texts.push((text.clone(), offset(place, [-1.0, -1.0]), [255; 3]));
                     layer.texts.push((text, place, [0, 0, 0]));
                 }
                 let name = inventory::item_name(items, offer.item, offer.identified, offer.refine);
-                // ponytail: a barter's costs and a market's stock go on a second line, in grey; where the real
-                // client shows them isn't known.
+                // ponytail: a barter's costs go on a second line, in grey; where the real client shows them isn't known.
                 if barter {
                     layer.texts.push((window::fit(font, &name, WIDTH - LEFT - 40.0), frame.at([LEFT + 32.0, top + 3.0]), [0, 0, 0]));
                     let costs = self.costs_text(items, messages, &[(offer_index, amount.unwrap_or(1))]);
                     layer.texts.push((window::fit(font, &costs, WIDTH - LEFT - 40.0), frame.at([LEFT + 32.0, top + 17.0]), GREY));
                     continue;
                 }
-                let (name_top, price_top) = if offer.stock.is_some() { (3.0, 3.0) } else { (10.0, 10.0) };
                 let (price, name_width) = price_text(offer.listed, offer.price);
-                layer.texts.push((window::fit(font, &name, name_width), frame.at([LEFT + 32.0, top + name_top]), [0, 0, 0]));
-                layer.texts.push((price.clone(), frame.at([WIDTH - PRICE_RIGHT - font.width(&price), top + price_top]), [0, 0, 0]));
-                if let (Some(stock), 0) = (offer.stock, window) {
-                    let left = group(u64::from(stock));
-                    layer.texts.push((left.clone(), frame.at([WIDTH - 4.0 - font.width(&left), top + 17.0]), GREY));
-                }
+                let name_width = if market_goods { MARKET_NAME_WIDTH } else { name_width };
+                layer.texts.push((window::fit(font, &name, name_width), frame.at([name_x, top + 10.0]), [0, 0, 0]));
+                layer.texts.push((price.clone(), frame.at([WIDTH - PRICE_RIGHT - font.width(&price), top + 10.0]), [0, 0, 0]));
             }
             // Footer: the deal's total and buttons.
             let footer = height - FOOTER;
@@ -589,6 +584,21 @@ impl Shop {
                 layer.sprites.push((&assets.buttons[2][look(Hit::Cancel)], frame.at(cancel), BUTTON));
             }
         }
+    }
+
+    /// The number on a row's icon: how many are in the deal, carried (selling, a vendor's shop) or left (a market or
+    /// buying store); none for 0.
+    fn icon_count(&self, window: usize, offer: &Offer, amount: Option<u32>) -> Option<u32> {
+        let count = amount.or(if window != 0 {
+            None
+        } else if self.buying_store.is_some() || self.market == Some(MarketKind::Market) {
+            offer.stock
+        } else if self.selling || self.vendor.is_some() {
+            Some(u32::from(offer.have))
+        } else {
+            None
+        });
+        count.filter(|&count| count > 0)
     }
 
     pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
@@ -667,6 +677,10 @@ mod tests {
         assert_eq!(market.deal, [(0, 3)]);
         market.bought(&[(1010, 2)]);
         assert_eq!((market.offers[0].stock, market.deal.is_empty()), (Some(1), true));
+        // What's left shows on the goods' icon, the amount on the deal's, and nothing once it's sold out.
+        let left = market.offers[0].clone();
+        assert_eq!((market.icon_count(0, &left, None), market.icon_count(1, &left, Some(1))), (Some(1), Some(1)));
+        assert_eq!(market.icon_count(0, &Offer { stock: Some(0), ..left }, None), None);
     }
 
     #[test]
