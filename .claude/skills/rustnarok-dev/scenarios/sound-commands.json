@@ -20,7 +20,10 @@
       }
     },
     {
-      "say": "/bgm"
+      "type": "/bgm"
+    },
+    {
+      "key": "Enter"
     },
     {
       "wait": 300
@@ -34,7 +37,10 @@
       }
     },
     {
-      "say": "/bgm"
+      "type": "/bgm"
+    },
+    {
+      "key": "Enter"
     },
     {
       "wait": 300
@@ -48,7 +54,10 @@
       }
     },
     {
-      "say": "/bgm"
+      "type": "/bgm"
+    },
+    {
+      "key": "Enter"
     },
     {
       "wait": 300
@@ -67,7 +76,10 @@
       }
     },
     {
-      "say": "/bgm"
+      "type": "/bgm"
+    },
+    {
+      "key": "Enter"
     },
     {
       "wait": 300
