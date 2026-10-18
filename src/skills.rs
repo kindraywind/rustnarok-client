@@ -252,9 +252,10 @@ impl SkillWindow {
         self.chosen.get(&id).map_or(learned, |&level| level.clamp(1, learned.max(1)))
     }
 
-    /// The tab shown: the player's own job's unless another was picked.
+    /// The tab shown: the player's own job's (the line's last, before Etc) unless another was picked.
     fn tab(&self, jobs: &[u16]) -> usize {
-        self.tab.min(jobs.len().saturating_sub(1))
+        let own = jobs.iter().rposition(|&job| job != ETC).unwrap_or(0);
+        if self.tab == usize::MAX { own } else { self.tab.min(jobs.len().saturating_sub(1)) }
     }
 
     /// The skills in the open tab, by place; the `ETC` tab's in ID order.
@@ -464,8 +465,11 @@ mod tests {
         let married = [skill(336), skill(1), skill(334), skill(5)];
         assert_eq!(extra_skills(&married, &trees, &[0, 1]), [334, 336]);
         assert_eq!(tabs(&trees, 1, &married), [0, 1, ETC]);
-        // The tab lays them out in ID order.
+        // Unpicked, the window opens on the job's own tab, not Etc (#245).
         let mut window = SkillWindow::default();
+        assert_eq!(window.tab(&[0, 1, ETC]), 1);
+        assert_eq!(window.tab(&[0, 1]), 1);
+        // The tab lays them out in ID order.
         window.frame.open = true;
         window.tab = 2;
         let jobs = tabs(&trees, 1, &married);
