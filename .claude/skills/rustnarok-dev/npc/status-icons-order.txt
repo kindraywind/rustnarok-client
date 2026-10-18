@@ -1,0 +1,21 @@
+// Status icon order (issue #315): whisper npc:RustnarokIcons "a" or "b" to start Blessing (icon priority 0), Eternal
+// Chaos (1) and Promote Health Research (2) in two different orders, "clear" to end them. Loaded and unloaded by
+// scenarios/status-icon-order.json.
+-	script	RustnarokIcons	-1,{
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "a") {
+		sc_start SC_PROMOTE_HEALTH_RESERCH, 600000, 1;
+		sc_start SC_ETERNALCHAOS, 600000, 1;
+		sc_start SC_BLESSING, 600000, 10;
+	} else if (@whispervar0$ == "b") {
+		sc_start SC_BLESSING, 600000, 10;
+		sc_start SC_ETERNALCHAOS, 600000, 1;
+		sc_start SC_PROMOTE_HEALTH_RESERCH, 600000, 1;
+	} else if (@whispervar0$ == "clear") {
+		sc_end SC_BLESSING;
+		sc_end SC_ETERNALCHAOS;
+		sc_end SC_PROMOTE_HEALTH_RESERCH;
+	}
+	end;
+}
