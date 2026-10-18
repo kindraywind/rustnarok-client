@@ -531,6 +531,8 @@ pub struct SkillInfo {
     pub resource: String,
     pub name: String,
     pub max_level: u16,
+    /// The level to use can be picked (`bSeperateLv`): the skill window's arrows, the wheel while aiming.
+    pub separate_level: bool,
 }
 
 pub fn skill_info(grf: &Grf) -> io::Result<HashMap<u16, SkillInfo>> {
@@ -540,7 +542,12 @@ pub fn skill_info(grf: &Grf) -> io::Result<HashMap<u16, SkillInfo>> {
     for pair in list.pairs::<i64, mlua::Table>() {
         let Ok((id, entry)) = pair else { continue };
         let text = |value: mlua::Result<mlua::String>| value.map(|text| decode(&text)).unwrap_or_default();
-        let info = SkillInfo { resource: text(entry.get(1)), name: text(entry.get("SkillName")), max_level: entry.get("MaxLv").unwrap_or(0) };
+        let info = SkillInfo {
+            resource: text(entry.get(1)),
+            name: text(entry.get("SkillName")),
+            max_level: entry.get("MaxLv").unwrap_or(0),
+            separate_level: entry.get("bSeperateLv").unwrap_or(false),
+        };
         if let Ok(id) = u16::try_from(id) {
             skills.insert(id, info);
         }

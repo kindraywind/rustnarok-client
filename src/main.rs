@@ -808,6 +808,8 @@ struct Game {
     no_shift: bool,
     /// /noctrl: a click on a monster keeps attacking without Ctrl (saved; on unless turned off).
     no_ctrl: bool,
+    /// The last skill sent by aiming: ID, level and target.
+    skill_sent: Option<(u16, u16, SkillTarget)>,
     /// The attack asked for with the mouse, and when the last attack packet went out; riding a mount that can't
     /// attack.
     attack: Option<Attack>,
@@ -1430,6 +1432,19 @@ impl Game {
         self.my_shop.is_some() || self.my_buying_store.is_some()
     }
 
+    /// What a press would aim the skill being aimed at: the cell under the pointer for ground skills (units there
+    /// don't count), the unit under it (or the player) for the others.
+    fn aim_target(&self, cursor: [f32; 2], players_first: bool) -> Option<SkillTarget> {
+        let (id, _) = self.targeting?;
+        let ground = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).is_some_and(|skill| skill.kind & net::Skill::GROUND != 0);
+        let unit = match hovered_unit(&self.hit_boxes, cursor, players_first) {
+            Some(Owner::Unit(unit)) => Some(unit),
+            Some(Owner::Player) => Some(self.account_id),
+            _ => None,
+        };
+        aim_use(ground, unit, if ground { self.ground_cell(cursor) } else { None })
+    }
+
     /// Talks to an NPC, turned to face it; only standing still or sitting (walking or attacking, nothing).
     /// rathena answers when it's too far.
     fn talk_to(&mut self, id: u32) {
@@ -1553,6 +1568,7 @@ impl Game {
         let range = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).map_or(1, |skill| i32::from(skill.range).max(1));
         if world::in_reach(self.player.cell, goal, range) {
             self.pending = None;
+            self.skill_sent = Some((id, level, target));
             let _ = match target {
                 SkillTarget::Unit(unit) => self.session.use_skill(id, level, unit),
                 SkillTarget::Cell(cell) => self.send_skill_at(id, level, cell.map(|value| value as u16)),
@@ -2958,6 +2974,21 @@ fn attack_refused(weight: i64, max_weight: i64, riding: bool) -> Option<usize> {
     } else {
         None
     }
+}
+
+/// What a press while aiming uses the skill on: for a ground skill the cell under the pointer (a unit there doesn't
+/// count), for the others the unit under it. None: the press lets go of the aim.
+fn aim_use(ground: bool, unit: Option<u32>, cell: Option<[i32; 2]>) -> Option<SkillTarget> {
+    if ground { cell.map(SkillTarget::Cell) } else { unit.map(SkillTarget::Unit) }
+}
+
+/// The level a wheel turn picks while aiming (rows > 0 is down, lowering it): 1 to the learned level, and only for
+/// skills whose level can be picked.
+fn aim_level(level: u16, learned: u16, rows: i32, separate: bool) -> u16 {
+    if !separate {
+        return level;
+    }
+    (i32::from(level) - rows).clamp(1, i32::from(learned.max(1))) as u16
 }
 
 /// Talking needs the player standing still (or sitting): not walking, not attacking.
@@ -4658,28 +4689,6 @@ impl App {
                     let _ = game.session.try_capture(id);
                 }
             }
-            Scene::Game(game) if game.targeting.is_some() => {
-                // An aimed skill goes to the unit under the pointer, or the cell for ground skills.
-                let (id, _) = game.targeting.unwrap();
-                let ground = game.skills.iter().find(|skill| skill.id == id).is_some_and(|skill| skill.kind & net::Skill::GROUND != 0);
-                let unit = match hovered_unit(&game.hit_boxes, cursor, game.players_first(shift)) {
-                    Some(Owner::Unit(unit)) => Some((unit, game.units.get(&unit).map(|actor| actor.cell))),
-                    Some(Owner::Player) => Some((game.account_id, Some(game.player.cell))),
-                    _ => None,
-                };
-                let height = game.world.cell_position(game.player.cell.map(|value| value as f32))[1];
-                let view = game.camera.view(SCREEN[0] / SCREEN[1]);
-                let cell = view
-                    .pick([cursor[0] / SCREEN[0], cursor[1] / SCREEN[1]], height)
-                    .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32]);
-                match (ground, unit, cell) {
-                    (true, Some((_, Some(at))), _) => game.aim_skill(SkillTarget::Cell(at)),
-                    (true, _, Some(cell)) => game.aim_skill(SkillTarget::Cell(cell)),
-                    (false, Some((unit, _)), _) => game.aim_skill(SkillTarget::Unit(unit)),
-                    // Clicking nothing keeps aiming.
-                    _ => {}
-                }
-            }
             Scene::Game(game) => {
                 if game.store_open() {
                     return;
@@ -4843,6 +4852,10 @@ impl App {
         }
         if let Scene::Game(game) = &mut self.scene {
             let assets = self.assets.as_ref();
+            // A right press lets go of a skill being aimed.
+            if state == ElementState::Pressed {
+                game.targeting = None;
+            }
             // A right press on an NPC talks too.
             if state == ElementState::Pressed
                 && let Some(assets) = assets
@@ -5010,6 +5023,13 @@ impl App {
                 }
                 Some(_) => {}
                 None if game.chat.contains(self.cursor) => game.chat.scroll_by(rows),
+                // Aiming, the wheel picks the level (up raises it) instead of zooming.
+                None if game.targeting.is_some() => {
+                    let (id, level) = game.targeting.unwrap();
+                    let separate = self.skill_info.get(&id).is_some_and(|info| info.separate_level);
+                    let learned = game.skills.iter().find(|skill| skill.id == id).map_or(level, |skill| skill.level);
+                    game.targeting = Some((id, aim_level(level, learned, rows, separate)));
+                }
                 None => game.camera_goal.wheel(-rows as f32),
             }
         }
@@ -5211,6 +5231,25 @@ impl App {
     /// A mouse press: grabs a window by its title bar.
     fn press(&mut self) {
         let cursor = self.cursor;
+        // Aiming a skill: the press on its target uses it; any other press lets go of the aim. On the world that's
+        // all it does (no walk); on a window the window gets the press too.
+        if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
+            && game.targeting.is_some()
+        {
+            let on_ui = game.on_ui(cursor, &self.items, assets.message.size);
+            match (on_ui, game.aim_target(cursor, game.players_first(self.modifiers.shift_key()))) {
+                (false, Some(target)) => {
+                    game.aim_skill(target);
+                    return;
+                }
+                (on_ui, _) => {
+                    game.targeting = None;
+                    if !on_ui {
+                        return;
+                    }
+                }
+            }
+        }
         // A press on the ground walks there at once, and holding the button keeps following the pointer. Shift turns
         // to face it, Ctrl does nothing, and sitting only turns. A second press within DOUBLE_PRESS with the pointer
         // still is ignored. Units and items are the click's (on release).
@@ -6383,6 +6422,7 @@ impl App {
                     dress_figure: None,
                     head_emblems: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
+                    skill_sent: None,
                     no_ctrl: settings_path("noctrl").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
                     attack: None,
                     last_attack: None,
@@ -11052,6 +11092,17 @@ mod tests {
         assert_eq!(share_left(start, length, start), 1.0);
         assert_eq!(share_left(start, length, start + Duration::from_millis(200)), 0.75);
         assert_eq!(share_left(start, length, start + Duration::from_secs(2)), 0.0);
+    }
+
+    #[test]
+    fn aims_where_the_pointer_is() {
+        // Ground skills ignore the unit under the pointer; unit skills need one, and a press without lets go.
+        assert!(matches!(aim_use(true, Some(9), Some([3, 4])), Some(SkillTarget::Cell([3, 4]))));
+        assert!(matches!(aim_use(false, Some(9), Some([3, 4])), Some(SkillTarget::Unit(9))));
+        assert!(aim_use(false, None, Some([3, 4])).is_none() && aim_use(true, Some(9), None).is_none());
+        // The wheel: up raises, down lowers, 1 to the learned level; not for a skill without a level to pick.
+        assert_eq!([aim_level(10, 10, 2, true), aim_level(8, 10, -1, true), aim_level(10, 10, -1, true), aim_level(1, 10, 3, true)], [8, 9, 10, 1]);
+        assert_eq!(aim_level(5, 10, 2, false), 5);
     }
 
     #[test]

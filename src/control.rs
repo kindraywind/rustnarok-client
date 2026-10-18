@@ -1059,6 +1059,12 @@ fn game_state(app: &App, game: &Game) -> Value {
             // The attack asked for with the mouse (null: none), kept up or only while held.
             "attack": game.attack.map(|attack| json!({"target": attack.target, "continuous": attack.continuous})),
             "no_ctrl": game.no_ctrl,
+            // The skill being aimed (null: none), and the last one sent by aiming, at a cell or a unit.
+            "aiming": game.targeting.map(|(skill, level)| json!({"skill": skill, "level": level})),
+            "skill_sent": game.skill_sent.map(|(skill, level, target)| match target {
+                crate::SkillTarget::Cell(cell) => json!({"skill": skill, "level": level, "cell": cell}),
+                crate::SkillTarget::Unit(unit) => json!({"skill": skill, "level": level, "unit": unit}),
+            }),
             // The last cell a mouse walk went to, and how many have gone out.
             "walk_goal": game.walk_goal,
             "walks": game.walks,
