@@ -1,0 +1,25 @@
+{
+  "about": "The four Windhawk traps' models (issue #208): Deep Blind, Solid, Swift and Flame Trap (units 0x5174-0x5177, RSM 2.3 models under effect\\) stand on their cells. The first player, a Windhawk, sets each on the second's cell as the second steps around it (the traps reach one cell; a warp would clear the caster's own). Ends a Novice at base level 1 without the traps.",
+  "account": "",
+  "slot": 0,
+  "second": {"account": "2", "slot": 0},
+  "steps": [
+    {"say": "@warp prontera 149 160"}, {"settle": 1500},
+    {"say": "@job 4257"}, {"wait": 500}, {"say": "@blvl 199"}, {"wait": 500},
+    {"say": "@allskill"}, {"wait": 500}, {"say": "@item 7940 20"}, {"wait": 500}, {"say": "@heal"}, {"wait": 500},
+    {"as": "second", "say": "@warp prontera 148 160"}, {"as": "second", "settle": 1500}, {"wait": 500},
+    {"say": "@useskill 5331 1 {second}"}, {"wait": 1500},
+    {"as": "second", "say": "@warp prontera 150 160"}, {"as": "second", "settle": 1000}, {"wait": 500},
+    {"say": "@useskill 5332 1 {second}"}, {"wait": 1500},
+    {"as": "second", "say": "@warp prontera 148 161"}, {"as": "second", "settle": 1000}, {"wait": 500},
+    {"say": "@useskill 5333 1 {second}"}, {"wait": 1500},
+    {"as": "second", "say": "@warp prontera 150 161"}, {"as": "second", "settle": 1000}, {"wait": 500},
+    {"say": "@useskill 5335 1 {second}"}, {"wait": 1500},
+    {"as": "second", "say": "@warp prontera 156 180"}, {"as": "second", "settle": 1000}, {"wait": 500},
+    {"move": [1000, 740]},
+    {"expect": {"state": {"standing_models": [20852, 20853, 20854, 20855]}}},
+    {"shot": "trap-models", "crop": [262, 120, 500, 400], "threshold": 5},
+    {"say": "@itemreset"}, {"wait": 300}, {"say": "@blvl -300"}, {"wait": 500}, {"say": "@job 0"}, {"wait": 500},
+    {"say": "@warp prontera 156 180"}, {"settle": 1000}
+  ]
+}

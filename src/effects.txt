@@ -7,7 +7,7 @@
 # spr <effect id> <sprite under data\sprite\이팩트\ without .spr> <follows the unit 1/0> <name=value;... or ->: a sprite's animation
 # func <effect id> quake <delay ms> <duration ms>: what the client does in code for the effect; quake shakes the camera
 # unit <skill unit type> <effect id> [once]: what a skill's unit on the ground (ZC_SKILL_ENTRY, rathena's UNT_) shows while it's there (once: played once and kept, not started again)
-# rsm <skill unit type> <model under data\model\ without .rsm>: the model standing on such a unit's cell (traps)
+# rsm <skill unit type> <model under data\model\ without .rsm, or an .rsm2 with its extension>: the model standing on such a unit's cell (traps)
 # wav <effect id> <file under data\wav\ without .wav> <delay ms> [random from to]: a sound the effect plays
 # hit <skill> <hit effect 1> <hit effect 2>: what a damaging skill shows on its target at each hit (-1 none); skills not listed fall back to the skill lines
 # caster <skill> <effect>: what a damaging skill shows on its caster as the packet comes (-1 none); skills not listed show 16
@@ -1749,6 +1749,10 @@ rsm	149	외부소품\트랩03_4
 rsm	150	외부소품\트랩03_5
 rsm	151	외부소품\트랩03_2
 rsm	152	외부소품\트랩04
+rsm	20852	effect\deepblindtrap\deep_trap.rsm2
+rsm	20853	effect\solidtrap\sol_trap.rsm2
+rsm	20854	effect\swifttrap\swi_trap.rsm2
+rsm	20855	effect\flametrap\fla_trap.rsm2
 rsm	153	외부소품\트랩05
 rsm	210	event\3차트랩_변화01
 rsm	211	event\3차트랩_변수01
