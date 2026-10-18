@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use image::RgbaImage;
 use rustnarok_client::grf::Grf;
@@ -1140,10 +1140,6 @@ enum Pace {
 pub struct Digits {
     digits: Vec<Texture>,
     pub miss: Texture,
-    /// The burst behind a critical hit's number, and "Lucky" on its background (msg.spr frames 3, 5 and 4).
-    pub critical: Texture,
-    pub lucky: Texture,
-    pub lucky_background: Texture,
 }
 
 impl Digits {
@@ -1152,7 +1148,7 @@ impl Digits {
         let digits = (0..10).map(|digit| Some(gpu.texture(&spr.image(0, digit, None)?, false))).collect::<Option<_>>()?;
         let messages = Spr::parse(&grf.read("data\\sprite\\이팩트\\msg.spr").ok()?).ok()?;
         let frame = |index: usize| messages.image(0, index, None).or_else(|| messages.image(1, index, None)).map(|image| gpu.texture(&image, false));
-        Some(Self { digits, miss: frame(0)?, critical: frame(3)?, lucky: frame(5)?, lucky_background: frame(4)? })
+        Some(Self { digits, miss: frame(0)? })
     }
 
     /// The digits of `number` centered on the anchor: texture, top-left offset and size in sprite pixels. Each digit is
@@ -1213,6 +1209,46 @@ pub fn hit_number(ticks: f32, critical: bool) -> NumberMotion {
         scale: (5.0 - 0.24 * ticks).max(if critical { 1.3 } else { 1.2 }),
         alpha: ((250.0 - 3.4 * ticks) / 255.0).clamp(0.0, 1.0),
     }
+}
+
+/// How long, in 24 ms ticks: a heal's number, a multi-hit's total, a MISS.
+pub const HEAL_NUMBER_TICKS: f32 = 120.0;
+pub const TOTAL_NUMBER_TICKS: f32 = 120.0;
+pub const MISS_TICKS: f32 = 80.0;
+/// The message sprite's (`이팩트\msg`) critical burst and Lucky actions; Lucky plays once (28 frames of 24 ms).
+pub const BURST_ACTION: usize = 2;
+pub const LUCKY_ACTION: usize = 3;
+pub const LUCKY_MS: f32 = 672.0;
+/// Lucky shows this many world units over the feet.
+pub const LUCKY_HEIGHT: f32 = 20.0;
+
+/// A heal's number: from 12 units over the feet, rising slowly, shrinking from 5 times its size to 1, fading.
+pub fn heal_number(ticks: f32) -> NumberMotion {
+    NumberMotion { height: 12.0 + 0.18 * ticks, drift: 0.0, scale: (5.0 - 0.24 * ticks).max(1.0), alpha: ((250.0 - 2.0 * ticks) / 255.0).clamp(0.0, 1.0) }
+}
+
+/// A multi-hit's running total: high over the target at 27 units, rising slowly, popping from half its size to 3
+/// times, then fading after tick 90.
+// ponytail: the game grows it by 0.18·t every drawn frame (so faster at higher frame rates); here every 24 ms tick.
+pub fn total_number(ticks: f32) -> NumberMotion {
+    let ticks_whole = ticks.floor();
+    NumberMotion {
+        height: 27.0 + 0.1 * ticks,
+        drift: 0.0,
+        scale: (0.5 + 0.09 * ticks_whole * (ticks_whole + 1.0)).min(3.0),
+        alpha: ((250.0 - 8.0 * (ticks - 90.0).max(0.0)) / 255.0).clamp(0.0, 1.0),
+    }
+}
+
+/// MISS: over the attacker, from 12 units over its feet, rising quickly at its own size, fading.
+pub fn miss_number(ticks: f32) -> NumberMotion {
+    NumberMotion { height: 12.0 + 0.54 * ticks, drift: 0.0, scale: 1.0, alpha: ((250.0 - 3.0 * ticks) / 255.0).clamp(0.0, 1.0) }
+}
+
+/// The burst behind a critical hit's number: on the number's path, shrinking from 3 times its size to 1, fading; its
+/// frames go by every two ticks and hold on the last.
+pub fn burst(ticks: f32) -> NumberMotion {
+    NumberMotion { scale: (3.0 - 0.144 * ticks).max(1.0), alpha: ((255.0 - 3.45 * ticks) / 255.0).clamp(0.0, 1.0), ..hit_number(ticks, true) }
 }
 
 /// Which way (x east, z north: each 1 or -1) a hit's number drifts from a unit facing `rot` (`angle_of`'s degrees):
@@ -1461,6 +1497,8 @@ pub struct Actor {
     pub sitting: bool,
     /// When a dying unit is removed.
     pub remove_at: Option<Instant>,
+    /// Fading out: from when, over how many milliseconds (a corpse, a unit walking out of sight).
+    pub fade: Option<(Instant, f32)>,
     /// A dead player: lying there until revived (players aren't removed when they die).
     pub dead: bool,
     /// Hiding, cloaking or chase-walking (the unit's option has UNSEEN_OPTIONS).
@@ -1511,6 +1549,7 @@ impl Actor {
             ready: false,
             sitting: false,
             remove_at: None,
+            fade: None,
             dead: false,
             cloaked: false,
             hide_option: 0,
@@ -1553,6 +1592,22 @@ impl Actor {
     }
 
     /// Plays `action` once at its ACT pace times `scale` (attack, flinch), or holds its last frame (death).
+    /// How opaque it's drawn: 1 until a fade starts, then down to 0 over the fade.
+    pub fn alpha(&self, now: Instant) -> f32 {
+        self.fade.map_or(1.0, |(from, ms)| (1.0 - now.saturating_duration_since(from).as_secs_f32() * 1000.0 / ms).clamp(0.0, 1.0))
+    }
+
+    /// Fading now (a corpse, a unit out of sight): it casts no shadow.
+    pub fn fading(&self, now: Instant) -> bool {
+        self.fade.is_some_and(|(from, _)| now >= from)
+    }
+
+    /// Fades out from `from` over `ms`, then goes.
+    pub fn fade_out(&mut self, from: Instant, ms: f32) {
+        self.fade = Some((from, ms));
+        self.remove_at = Some(from + Duration::from_micros((f64::from(ms) * 1000.0).round() as u64));
+    }
+
     pub fn play_at_pace(&mut self, action: usize, start: Instant, scale: f32, hold: bool) {
         self.shot = Some(Shot { action, started: start, pace: Pace::Act(scale.max(0.01)), hold });
     }
@@ -1744,6 +1799,26 @@ mod tests {
         assert_eq!((start.scale, top.scale, hit_number(30.0, true).scale), (5.0, 1.2, 1.3));
         assert!(close(start.alpha, 250.0 / 255.0) && close(end.alpha, 12.0 / 255.0));
         assert_eq!(hit_number(80.0, false).alpha, 0.0);
+    }
+
+    #[test]
+    fn moves_misses_heals_totals_and_bursts() {
+        let close = |a: f32, b: f32| (a - b).abs() < 0.01;
+        // MISS rises 0.54 a tick from 12 units at its own size, gone after 80 ticks.
+        let miss = miss_number(40.0);
+        assert!(close(miss.height, 33.6) && miss.scale == 1.0 && close(miss.alpha, 130.0 / 255.0));
+        assert_eq!(miss_number(MISS_TICKS + 4.0).alpha, 0.0);
+        // A heal rises slowly from 12 units, 5 times its size down to 1.
+        let [heal_start, heal_late] = [0.0, 100.0].map(heal_number);
+        assert!(close(heal_start.height, 12.0) && heal_start.scale == 5.0 && heal_late.scale == 1.0 && close(heal_late.height, 30.0));
+        // A total pops from half its size to 3 times within a few ticks, holds, then fades after tick 90.
+        assert_eq!([0.0, 2.0, 5.0, 60.0].map(|ticks| total_number(ticks).scale), [0.5, 1.04, 3.0, 3.0]);
+        assert!(close(total_number(60.0).alpha, 250.0 / 255.0) && close(total_number(100.0).alpha, 170.0 / 255.0));
+        assert!(close(total_number(0.0).height, 27.0) && total_number(0.0).drift == 0.0);
+        // A critical's burst rides its number, shrinking from 3 times to 1.
+        let burst_now = burst(10.0);
+        assert_eq!((burst_now.height, burst_now.drift), (hit_number(10.0, true).height, hit_number(10.0, true).drift));
+        assert!(close(burst_now.scale, 1.56) && burst(20.0).scale == 1.0);
     }
 
     #[test]

@@ -718,6 +718,8 @@ const CZ_UPGRADE_SKILLLEVEL: u16 = 0x0112;
 const CZ_USE_SKILL: u16 = 0x0438;
 const CZ_USE_SKILL_TOGROUND: u16 = 0x0366;
 const ZC_USESKILL_ACK: u16 = 0x0B1A;
+/// A unit's cast was cut off (rathena's clif_skillcastcancel).
+const ZC_DISPEL: u16 = 0x01B9;
 const ZC_NOTIFY_SKILL: u16 = 0x01DE;
 const ZC_USE_SKILL: u16 = 0x09CB;
 const ZC_NOTIFY_GROUNDSKILL: u16 = 0x0117;
@@ -2845,6 +2847,8 @@ pub enum MapEvent {
     /// A skill learned or changed (level, SP, range, whether it can go up).
     SkillChanged(Skill),
     SkillRemoved(u16),
+    /// A unit's cast was cut off before the skill went (ZC_DISPEL).
+    CastCancelled(u32),
     /// A unit starts a skill (ZC_USESKILL_ACK) at a unit or a cell, casting for `cast_ms` first.
     Casting {
         source: u32,
@@ -2986,7 +2990,7 @@ pub struct GroundItem {
     pub item: u32,
     pub identified: bool,
     pub cell: [u16; 2],
-    /// Where in the cell, in twelfths.
+    /// Where in the cell, in sixteenths from its low corner.
     pub sub: [u8; 2],
     pub amount: u16,
     /// Just dropped: it falls into place.
@@ -5272,6 +5276,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             MapEvent::SkillChanged(Skill { id: u16_at(2), kind: u32_at(4), level: u16_at(8), sp: u16_at(10), range: u16_at(12), upgradable: packet[14] != 0 })
         }
         ZC_SKILLINFO_DELETE => MapEvent::SkillRemoved(u16_at(2)),
+        ZC_DISPEL => MapEvent::CastCancelled(u32_at(2)),
         ZC_USESKILL_ACK => MapEvent::Casting {
             source: u32_at(2),
             target: u32_at(6),
@@ -6323,6 +6328,14 @@ mod tests {
         // A knight on a Peco: effectstate is the option.
         info[36..40].copy_from_slice(&0x20u32.to_le_bytes());
         assert_eq!(decode_character(&info).option, 0x20);
+    }
+
+    #[test]
+    fn reads_a_cancelled_cast() {
+        let mut packet = ZC_DISPEL.to_le_bytes().to_vec();
+        packet.extend(150_004u32.to_le_bytes());
+        assert_eq!(packet.len(), packet_length(ZC_DISPEL).unwrap() as usize);
+        assert!(matches!(decode_map_packet(&packet), Some(MapEvent::CastCancelled(150_004))));
     }
 
     #[test]

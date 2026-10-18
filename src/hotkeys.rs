@@ -58,7 +58,7 @@ pub enum Hit {
     /// One row fewer, one more.
     Minus,
     Plus,
-    /// The bar switch (the second bar isn't there yet: it does nothing).
+    /// The bar switch: hotbar 1 or 2.
     Switch,
     Slot(usize),
     Window,
@@ -66,8 +66,12 @@ pub enum Hit {
 
 pub struct Hotkeys {
     pub frame: Frame,
-    /// Every slot of the server's first tab (four rows of nine and two spare).
+    /// Every slot of the bar showing (four rows of nine and two spare): the server's tab `tab`.
     pub keys: Vec<Option<Hotkey>>,
+    /// The other bar's slots.
+    other: Vec<Option<Hotkey>>,
+    /// The bar showing: the server's tab 0 (hotbar 1) or 1 (hotbar 2).
+    tab: u16,
     /// How many rows show.
     rows: usize,
     /// Which row is drawn first. Ctrl+F12 walks this.
@@ -78,7 +82,7 @@ impl Default for Hotkeys {
     fn default() -> Self {
         let mut frame = Frame::new(DEFAULT_POSITION, WIDTH);
         frame.open = true;
-        Self { frame, keys: vec![None; ROWS * PER_ROW], rows: DEFAULT_ROWS, first: 0 }
+        Self { frame, keys: vec![None; ROWS * PER_ROW], other: vec![None; ROWS * PER_ROW], tab: 0, rows: DEFAULT_ROWS, first: 0 }
     }
 }
 
@@ -111,6 +115,25 @@ impl Hotkeys {
         )
     }
 
+    /// The server's tab of the bar showing: 0 for hotbar 1, 1 for hotbar 2.
+    pub fn tab(&self) -> u16 {
+        self.tab
+    }
+
+    /// The bar switch: hotbar 1 and 2 trade places.
+    pub fn switch(&mut self) {
+        std::mem::swap(&mut self.keys, &mut self.other);
+        self.tab ^= 1;
+    }
+
+    /// The server's list for tab `tab` (0 or 1): the bar showing or the other one.
+    pub fn set_tab(&mut self, tab: u16, keys: Vec<Option<Hotkey>>) {
+        let bar = if tab == self.tab { &mut self.keys } else { &mut self.other };
+        for (slot, key) in bar.iter_mut().zip(keys) {
+            *slot = key;
+        }
+    }
+
     /// Ctrl+F12: the next row of the four is the one drawn first.
     pub fn rotate(&mut self) {
         self.first = (self.first + 1) % ROWS;
@@ -126,7 +149,8 @@ impl Hotkeys {
         match hit {
             Hit::Minus => self.rows = self.rows.saturating_sub(1).max(1),
             Hit::Plus => self.rows = (self.rows + 1).min(ROWS),
-            Hit::Switch | Hit::Slot(_) | Hit::Window => {}
+            Hit::Switch => self.switch(),
+            Hit::Slot(_) | Hit::Window => {}
         }
     }
 
@@ -154,7 +178,7 @@ impl Hotkeys {
             let number = ((self.first + row) % ROWS + 1).to_string();
             layer.texts.push((number, self.frame.at([ROW_NUMBER[0], top + ROW_NUMBER[1]]), ROW_NUMBER_COLOR));
         }
-        layer.sprites.push((&assets.switch[0], self.frame.at(SWITCH), SWITCH_SIZE));
+        layer.sprites.push((&assets.switch[usize::from(self.tab)], self.frame.at(SWITCH), SWITCH_SIZE));
         let [minus, plus] = self.step_buttons();
         layer.sprites.push((&assets.minus, self.frame.at(minus), STEP_BUTTON));
         layer.sprites.push((&assets.plus, self.frame.at(plus), STEP_BUTTON));
@@ -206,10 +230,10 @@ impl Hotkeys {
             return Vec::new();
         }
         let [minus, plus] = self.step_buttons();
-        [("hotkey_minus", minus), ("hotkey_plus", plus)]
-            .map(|(name, local)| {
+        [("hotkey_minus", minus, STEP_BUTTON), ("hotkey_plus", plus, STEP_BUTTON), ("hotkey_switch", SWITCH, SWITCH_SIZE)]
+            .map(|(name, local, size)| {
                 let [x, y] = self.frame.at(local);
-                (name, [x, y, STEP_BUTTON[0], STEP_BUTTON[1]])
+                (name, [x, y, size[0], size[1]])
             })
             .to_vec()
     }
@@ -282,5 +306,22 @@ mod tests {
             bar.click(Hit::Minus);
         }
         assert_eq!(bar.rows, 1, "one at least");
+    }
+
+    #[test]
+    fn switches_between_the_two_bars() {
+        let key = |id: u32| Some(Hotkey { skill: true, id, count: 1 });
+        let mut bar = Hotkeys::default();
+        // The server's two tabs: the first shows.
+        bar.set_tab(1, vec![key(2)]);
+        bar.set_tab(0, vec![key(1)]);
+        assert_eq!((bar.tab(), bar.keys[0]), (0, key(1)));
+        // The switch shows hotbar 2, and a list for it lands on the bar showing.
+        bar.click(Hit::Switch);
+        assert_eq!((bar.tab(), bar.keys[0]), (1, key(2)));
+        bar.set_tab(1, vec![key(3)]);
+        assert_eq!(bar.keys[0], key(3));
+        bar.switch();
+        assert_eq!((bar.tab(), bar.keys[0], bar.keys.len()), (0, key(1), ROWS * PER_ROW));
     }
 }
