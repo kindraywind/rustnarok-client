@@ -1009,6 +1009,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .chain(game.chat.settings.iter().flat_map(crate::chat::Settings::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.chat.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.room.iter().flat_map(|room| room.button_boxes(&game.me.name)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1321,6 +1322,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         "chat_corner": game.chat.corner_moved(),
         "chat_input": game.chat.input,
         "chat_line_open": game.chat_mode.chat_line_open(),
+        // The chat room the player is in: its title and who owns it.
+        "room": game.room.as_ref().map(|room| json!({
+            "title": room.sign.title,
+            "owner": room.members.iter().find(|(_, owner)| *owner).map(|(name, _)| name.clone()),
+            "members": room.members.len(),
+        })),
         // The navigation under way: where to, and how long the trail on this map is.
         "navigation": game.navigation.as_ref().map(|active| json!({
             "map": active.target.map,

@@ -578,6 +578,9 @@ const NAVI_ARROW_RISE: f32 = 12.0;
 const NAVI_SERVICES: u8 = 111;
 /// How many cells toward where it heads the arrow looks.
 const NAVI_ARROW_LOOK: f32 = 3.0;
+/// The room owner's menu: "Give Master Authority", "Kick Character Out".
+const ROOM_HAND_OVER: usize = 128;
+const ROOM_KICK: usize = 127;
 /// Words over a head stay this long.
 const SPEECH_TIME: Duration = Duration::from_secs(5);
 /// Spirit spheres and coins: how far from the body they circle, how high, how fast (radians a second), and how
@@ -1720,6 +1723,9 @@ enum Choice {
     Pet(u8),
     /// Hand the party to this member (by account).
     Leader(u32),
+    /// The room's owner hands the room to this member, or kicks them out (by their row in the member list).
+    RoomOwner(usize),
+    RoomKick(usize),
     /// A tracked quest: its details in the quest window, or put it aside.
     QuestInfo(u32),
     QuestAside(u32),
@@ -2797,7 +2803,7 @@ impl Game {
             || self.item_window.as_ref().is_some_and(|window| window.hit(cursor, items).is_some())
             || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
             || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
-            || self.room.as_ref().is_some_and(|room| room.hit(cursor).is_some())
+            || self.room.as_ref().is_some_and(|room| room.hit(cursor, &self.me.name).is_some())
             || self.room_make.as_ref().is_some_and(|make| make.hit(cursor).is_some())
             || self.vend_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.cart.items).is_some())
             || self.my_shop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
@@ -3054,7 +3060,13 @@ impl Game {
         if let Some(make) = &self.room_make
             && !make.title.trim().is_empty()
         {
-            let _ = self.session.make_chat_room(make.title.trim(), make.limit(), make.public, &make.password);
+            if make.editing {
+                // The server's ZC_CHANGE_CHATROOM brings the changed sign.
+                let _ = self.session.change_chat_room(make.title.trim(), make.limit(), make.public, &make.password);
+                self.room_make = None;
+            } else {
+                let _ = self.session.make_chat_room(make.title.trim(), make.limit(), make.public, &make.password);
+            }
         }
     }
 
@@ -5900,6 +5912,16 @@ impl App {
                 Some(Choice::Pet(net::PET_INFO)) => game.open_pet_window(),
                 Some(Choice::Pet(command)) => game.pet_command(command),
                 Some(Choice::Leader(account)) => game.leader_asked = Some(account),
+                Some(Choice::RoomOwner(row)) => {
+                    if let Some(name) = game.room.as_ref().and_then(|room| room.member_choices(row, &game.me.name)) {
+                        let _ = game.session.hand_over_chat_room(&name);
+                    }
+                }
+                Some(Choice::RoomKick(row)) => {
+                    if let Some(name) = game.room.as_ref().and_then(|room| room.member_choices(row, &game.me.name)) {
+                        let _ = game.session.kick_from_chat_room(&name);
+                    }
+                }
                 Some(Choice::QuestInfo(id)) => {
                     game.quest_window.frame.open = true;
                     game.quest_window.tab = 0;
@@ -5951,13 +5973,15 @@ impl App {
                 }
             }
             // The room we're in: closing it leaves.
-            Scene::Game(game) if game.room.as_ref().is_some_and(|room| room.hit(cursor).is_some()) => {
+            Scene::Game(game) if game.room.as_ref().is_some_and(|room| room.hit(cursor, &game.me.name).is_some()) => {
                 let room = game.room.as_mut().unwrap();
-                match room.hit(cursor) {
+                match room.hit(cursor, &game.me.name) {
                     Some(chatroom::RoomHit::Title(TitleHit::Close)) => {
                         let _ = game.session.leave_chat_room();
                     }
                     Some(chatroom::RoomHit::Title(title)) => room.frame.click_title(title),
+                    // The owner's Room Setup: the make window, filled from the room.
+                    Some(chatroom::RoomHit::Setup) => game.room_make = Some(chatroom::Make::from_sign(&room.sign)),
                     _ => {}
                 }
             }
@@ -7042,6 +7066,21 @@ impl App {
         {
             select.open_menu(self.cursor, &self.font, &self.messages);
         }
+        // The room owner's right click on another member's name: hand the room over, or kick them out.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+            && let Some((start, None)) = game.right_press
+            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+            && let Some(room) = &game.room
+            && let Some(chatroom::RoomHit::Member(row)) = room.hit(self.cursor, &game.me.name)
+            && room.member_choices(row, &game.me.name).is_some()
+        {
+            game.right_press = None;
+            let label = |message: usize| self.messages.get(message).cloned().unwrap_or_default();
+            let choices = vec![Some((label(ROOM_HAND_OVER), Choice::RoomOwner(row))), Some((label(ROOM_KICK), Choice::RoomKick(row)))];
+            game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
+            return;
+        }
         // The leader's right click (not a drag) on another member's row in the party window: hand the party over.
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Released
@@ -7737,7 +7776,7 @@ impl App {
         // The chat room's window is over the others too.
         if let Scene::Game(game) = &mut self.scene
             && let Some(room) = &mut game.room
-            && let Some(hit) = room.hit(cursor)
+            && let Some(hit) = room.hit(cursor, &game.me.name)
         {
             if hit == chatroom::RoomHit::Title(TitleHit::Title) {
                 room.frame.start_drag(cursor);
@@ -13685,7 +13724,7 @@ impl App {
             shop_layer.texts.push((message(DEAL_MESSAGE).to_owned(), offset(dialog, MESSAGE_TEXT), TEXT_COLOR));
         }
         if let Some(room) = &game.room {
-            room.draw(&mut shop_layer, &assets.chrome, font, pointer.0, caret);
+            room.draw(&mut shop_layer, &assets.chrome, font, messages, &game.me.name, pointer.0, caret);
         }
         if let Some(setup) = &game.vend_setup {
             setup.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, &game.cart.items, font, messages, pointer, caret);
