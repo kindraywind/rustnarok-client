@@ -1334,23 +1334,42 @@ pub fn number_drift(rot: f32, from_server: bool) -> [f32; 2] {
     }
 }
 
-/// The falcon's sprite name (`몬스터\매`, then `npc\매`).
-const FALCON_SPRITE: &str = "매";
-/// The warg's sprite name (`몬스터\워그`, then `npc\워그`).
-const WARG_SPRITE: &str = "워그";
-
 /// How far the cart's rope lets it lag: one cell.
 pub const CART_ROPE: f32 = world::CELL;
 /// Cart frames a world unit rolled.
 const CART_FRAMES: f32 = 0.92;
 /// The falcon flies this far above the ground.
 pub const FALCON_HEIGHT: f32 = 25.0;
-// ponytail: two cells, longer than the cart's one-cell rope.
-pub const FALCON_REACH: f32 = CART_ROPE * 2.0;
-/// The warg keeps about three cells out.
-pub const WARG_REACH: f32 = world::CELL * 3.0;
-/// The warg's shadow, twice a body's.
+/// The falcon and warg move by rules per game tick, 1/60 s.
+const TICK: f32 = 1.0 / 60.0;
+// ponytail: a new falcon starts two cells behind its hunter, a new warg three behind its ranger.
+const FALCON_START: f32 = world::CELL * 2.0;
+const WARG_START: f32 = world::CELL * 3.0;
+/// A new falcon closes 1/25 of the way a tick until it first comes within 25. Then it flies 1 a tick while farther
+/// than 12, closes 1/20 of the way while farther than 3, and hovers within that.
+const FALCON_ARRIVED: f32 = 25.0;
+const FALCON_FAR: f32 = 12.0;
+const FALCON_NEAR: f32 = 3.0;
+/// The frame the falcon shows while it's arriving.
+const FALCON_ARRIVING_FRAME: usize = 8;
+/// The warg waits until its owner is farther than 15, then runs 0.7 a tick; within 15.7 it's put at 14.9.
+const WARG_WAIT: f32 = 15.0;
+const WARG_RUN: f32 = 0.7;
+const WARG_CATCH: f32 = 15.7;
+const WARG_STOP: f32 = 14.9;
+/// The warg's shadow, twice a body's; the baby warg's a body's.
 pub const WARG_SHADOW: f32 = 2.0;
+const BABY_WARG_SHADOW: f32 = 1.0;
+/// The warg's hurt and dead actions (a monster's).
+const WARG_HURT: usize = 3;
+const WARG_DEAD: usize = 4;
+/// A player's flinch and dead actions.
+const PLAYER_FLINCH: usize = 6;
+const PLAYER_DEAD: usize = 8;
+/// Baby Hunters and Rangers, whose falcon is the baby one; Baby Rangers' warg too; and the Windhawks.
+const BABY_FALCON_JOBS: [u16; 3] = [4034, 4098, 4111];
+const BABY_WARG_JOBS: [u16; 2] = [4098, 4111];
+const WINDHAWK_JOBS: [u16; 2] = [4257, 4278];
 
 /// The MVP tomb, which casts no shadow.
 const MVP_TOMB: u16 = 565;
@@ -1395,37 +1414,78 @@ fn place_behind(leader: [f32; 2], direction: u8, reach: f32) -> [f32; 2] {
     [leader[0] - dx / length * reach, leader[1] - dz / length * reach]
 }
 
-/// The 8-way facing of a move in world XZ, or none when it barely moved.
-fn move_direction(from: [f32; 2], to: [f32; 2]) -> Option<u8> {
-    let dx = to[0] - from[0];
-    let dz = to[1] - from[1];
-    if dx * dx + dz * dz < 0.05 * 0.05 {
-        return None;
+/// What a share `fraction` taken each tick comes to over `ticks` ticks.
+fn per_ticks(fraction: f32, ticks: f32) -> f32 {
+    1.0 - (1.0 - fraction).powf(ticks)
+}
+
+/// `fraction` of the way from `from` to `to`.
+fn toward(from: [f32; 2], to: [f32; 2], fraction: f32) -> [f32; 2] {
+    [from[0] + (to[0] - from[0]) * fraction, from[1] + (to[1] - from[1]) * fraction]
+}
+
+/// `distance` from `from` toward `to`, not past it.
+fn advance(from: [f32; 2], to: [f32; 2], distance: f32) -> [f32; 2] {
+    let apart = f32::hypot(to[0] - from[0], to[1] - from[1]);
+    if apart <= distance || apart < 1e-4 { to } else { toward(from, to, distance / apart) }
+}
+
+/// The falcon's step over `ticks` ticks toward its `owner`: where it gets to, and whether it's still arriving.
+fn falcon_step(from: [f32; 2], owner: [f32; 2], arriving: bool, ticks: f32) -> ([f32; 2], bool) {
+    let distance = f32::hypot(owner[0] - from[0], owner[1] - from[1]);
+    if arriving && distance > FALCON_ARRIVED {
+        return (toward(from, owner, per_ticks(1.0 / 25.0, ticks)), true);
     }
-    // atan2's 0 is east; facing 6 is east, and the index falls as the turn goes clockwise.
-    let eighth = (dz.atan2(dx) / std::f32::consts::FRAC_PI_4).round() as i32;
-    Some((6 - eighth).rem_euclid(8) as u8)
+    let at = if distance > FALCON_FAR {
+        advance(from, owner, ticks)
+    } else if distance > FALCON_NEAR {
+        toward(from, owner, per_ticks(1.0 / 20.0, ticks))
+    } else {
+        from
+    };
+    (at, false)
 }
 
-struct FollowStep {
-    at: [f32; 2],
-    direction: u8,
-    moving: bool,
-}
-
-/// The falcon's rope, longer than the cart's. It faces the way it moved.
-fn falcon_step(from: [f32; 2], facing: u8, leader: [f32; 2]) -> FollowStep {
-    let at = rope_step(from, leader, FALCON_REACH);
-    match move_direction(from, at) {
-        Some(direction) => FollowStep { at, direction, moving: true },
-        None => FollowStep { at, direction: facing, moving: false },
+/// The warg's step over `ticks` ticks toward its `owner`: where it gets to, and whether it ran.
+fn warg_step(from: [f32; 2], owner: [f32; 2], ticks: f32) -> ([f32; 2], bool) {
+    if f32::hypot(owner[0] - from[0], owner[1] - from[1]) <= WARG_WAIT {
+        return (from, false);
     }
+    let at = advance(from, owner, WARG_RUN * ticks);
+    let left = f32::hypot(at[0] - owner[0], at[1] - owner[1]);
+    if left < WARG_CATCH && left > 1e-4 {
+        return (toward(owner, at, WARG_STOP / left), true);
+    }
+    (at, true)
 }
 
-/// The warg's rope, about three cells. It runs while the player is moving.
-fn warg_step(from: [f32; 2], facing: u8, leader: [f32; 2], player_moving: bool) -> FollowStep {
-    let at = rope_step(from, leader, WARG_REACH);
-    FollowStep { at, direction: move_direction(from, at).unwrap_or(facing), moving: player_moving }
+/// The exact way (degrees, as `Actor::rot`) from `from` to its owner; `rot` when it's right on them.
+fn facing(from: [f32; 2], owner: [f32; 2], rot: f32) -> f32 {
+    let [dx, dz] = [owner[0] - from[0], owner[1] - from[1]];
+    if f32::hypot(dx, dz) < 1e-3 { rot } else { dx.atan2(-dz).to_degrees().rem_euclid(360.0) }
+}
+
+// ponytail: the data's other falcons (매2, OWL, demon_pungus, explosion, lude) aren't picked by anything known.
+/// The falcon's or warg's sprite for an owner of `job`, as (sprite path, ACT path) to try in order, and its shadow.
+fn companion_sprites(warg: bool, job: u16) -> (Vec<(String, String)>, f32) {
+    let pair = |path: &str, act: &str| (format!("data\\sprite\\{path}"), format!("data\\sprite\\{act}.act"));
+    let same = |path: &str| pair(path, path);
+    let mut tries = Vec::new();
+    let mut shadow = if warg { WARG_SHADOW } else { 0.0 };
+    match (warg, job) {
+        // ponytail: the Windhawk wolf's shadow is the warg's.
+        (false, job) if WINDHAWK_JOBS.contains(&job) => tries.push(same("이팩트\\windhawk_hawk")),
+        (true, job) if WINDHAWK_JOBS.contains(&job) => tries.push(same("이팩트\\windhawk_wolf")),
+        (false, job) if BABY_FALCON_JOBS.contains(&job) => tries.push(pair("이팩트\\매", "이팩트\\베이비매")),
+        (true, job) if BABY_WARG_JOBS.contains(&job) => {
+            tries.push(pair("몬스터\\워그", "몬스터\\베이비워그"));
+            shadow = BABY_WARG_SHADOW;
+        }
+        _ => {}
+    }
+    let name = if warg { "워그" } else { "매" };
+    tries.extend(["이팩트", "몬스터", "npc"].map(|folder| same(&format!("{folder}\\{name}"))));
+    (tries, shadow)
 }
 
 fn falcon_out(option: u32) -> bool {
@@ -1479,28 +1539,55 @@ impl Cart {
 
 pub struct Companion {
     pub at: [f32; 2],
-    pub direction: u8,
+    /// The exact way it faces, in degrees (as `Actor::rot`): always toward its owner.
+    pub rot: f32,
+    /// It moved in its last step (the falcon flying in, the warg running).
     pub moving: bool,
+    /// The falcon on its way in from where it appeared, until it first comes within 25.
+    arriving: bool,
+    /// What it plays and since when.
+    action: (usize, Instant),
+    /// When it last stepped: the rules run per tick over the time since.
+    stepped: Instant,
+    /// Its shadow, a body's being 1 (the falcon, up in the air, has none).
+    pub shadow: f32,
     sprites: Option<SpriteSet>,
-    started: Instant,
 }
 
 impl Companion {
-    fn spawn(grf: &Grf, name: &str, at: [f32; 2], direction: u8) -> Self {
-        // Kind 5: monster folders, `몬스터` then `npc`.
-        Self { at, direction, moving: false, sprites: SpriteSet::single(grf, name, 5), started: Instant::now() }
+    fn spawn(grf: &Grf, warg: bool, job: u16, at: [f32; 2], owner: [f32; 2]) -> Self {
+        let (tries, shadow) = companion_sprites(warg, job);
+        let sprites = tries.iter().find_map(|(path, act)| SpriteSet::with_act(grf, path, act));
+        let now = Instant::now();
+        let action = if warg { IDLE } else { WALK };
+        Self { at, rot: facing(at, owner, 0.0), moving: false, arriving: !warg, action: (action, now), stepped: now, shadow, sprites }
     }
 
     pub fn sprites(&self) -> Option<&SpriteSet> {
         self.sprites.as_ref()
     }
 
-    /// The falcon keeps the walk cycle (its flap). The warg walks only while it is running.
-    pub fn frame(&mut self, gpu: &Gpu, direction: u8, now: Instant, flying: bool) -> Vec<Placed> {
+    /// Plays `action` from now, unless it already is.
+    fn play(&mut self, action: usize, now: Instant) {
+        if self.action.0 != action {
+            self.action = (action, now);
+        }
+    }
+
+    /// The falcon flaps (its walk), holding one frame while it arrives. The warg runs, stands, flinches once or lies
+    /// dead.
+    pub fn frame(&mut self, gpu: &Gpu, direction: u8, now: Instant) -> Vec<Placed> {
         let Some(sprites) = &mut self.sprites else { return Vec::new() };
-        let action = if (flying || self.moving) && sprites.actions() > WALK { WALK } else { IDLE };
-        let ms = now.saturating_duration_since(self.started).as_secs_f32() * 1000.0;
-        sprites.frame(gpu, action, direction, 0, Timing::Loop(ms))
+        let (action, since) = self.action;
+        let action = if action < sprites.actions() / 8 { action } else { IDLE };
+        let ms = now.saturating_duration_since(since).as_secs_f32() * 1000.0;
+        let count = sprites.frames(action * 8 + usize::from(direction % 8));
+        let timing = match action {
+            _ if self.arriving && count > FALCON_ARRIVING_FRAME => Timing::Span((FALCON_ARRIVING_FRAME as f32 + 0.5) / count as f32),
+            WARG_HURT | WARG_DEAD => Timing::Once(ms, 1.0),
+            _ => Timing::Loop(ms),
+        };
+        sprites.frame(gpu, action, direction, 0, timing)
     }
 }
 
@@ -1960,31 +2047,45 @@ impl Actor {
             return;
         }
         let leader = world_xz(self.cell.map(|value| value as f32));
+        let job = self.look.as_ref().map_or(self.job, |look| look.job);
         if falcon_out(option) && self.falcon.is_none() {
-            self.falcon = Some(Companion::spawn(grf, FALCON_SPRITE, place_behind(leader, self.direction, FALCON_REACH), self.direction));
+            self.falcon = Some(Companion::spawn(grf, false, job, place_behind(leader, self.direction, FALCON_START), leader));
         } else if !falcon_out(option) {
             self.falcon = None;
         }
         if warg_out(option) && self.warg.is_none() {
-            self.warg = Some(Companion::spawn(grf, WARG_SPRITE, place_behind(leader, self.direction, WARG_REACH), self.direction));
+            self.warg = Some(Companion::spawn(grf, true, job, place_behind(leader, self.direction, WARG_START), leader));
         } else if !warg_out(option) {
             self.warg = None;
         }
     }
 
-    /// One rope step for the cart, falcon and warg. `moving` is the player walking this frame, which is when the warg
-    /// runs.
-    pub fn step_companions(&mut self, leader: [f32; 2], moving: bool) {
+    /// The cart's rope step, and the falcon's and warg's steps for the ticks since their last, turned toward the player.
+    /// The warg flinches when the player does and lies down when the player dies.
+    pub fn step_companions(&mut self, leader: [f32; 2], now: Instant) {
         if let Some(cart) = &mut self.cart {
             cart.step(leader, self.direction);
         }
+        let owner_action = self.animation(now).0;
         if let Some(falcon) = &mut self.falcon {
-            let step = falcon_step(falcon.at, falcon.direction, leader);
-            (falcon.at, falcon.direction, falcon.moving) = (step.at, step.direction, step.moving);
+            let ticks = now.saturating_duration_since(falcon.stepped).as_secs_f32() / TICK;
+            let (at, arriving) = falcon_step(falcon.at, leader, falcon.arriving, ticks);
+            falcon.moving = f32::hypot(at[0] - falcon.at[0], at[1] - falcon.at[1]) > 1e-3;
+            (falcon.at, falcon.arriving, falcon.stepped) = (at, arriving, now);
+            falcon.rot = facing(at, leader, falcon.rot);
         }
         if let Some(warg) = &mut self.warg {
-            let step = warg_step(warg.at, warg.direction, leader, moving);
-            (warg.at, warg.direction, warg.moving) = (step.at, step.direction, step.moving);
+            let ticks = now.saturating_duration_since(warg.stepped).as_secs_f32() / TICK;
+            let (at, ran) = warg_step(warg.at, leader, ticks);
+            (warg.at, warg.moving, warg.stepped) = (at, ran, now);
+            warg.rot = facing(at, leader, warg.rot);
+            let action = match owner_action {
+                PLAYER_DEAD => WARG_DEAD,
+                PLAYER_FLINCH => WARG_HURT,
+                _ if ran => WALK,
+                _ => IDLE,
+            };
+            warg.play(action, now);
         }
     }
 }
@@ -2415,11 +2516,6 @@ mod tests {
         assert!((a[0] - b[0]).abs() < 1e-3 && (a[1] - b[1]).abs() < 1e-3, "{a:?} != {b:?}");
     }
 
-    fn apart(a: [f32; 2], b: [f32; 2]) -> f32 {
-        let (dx, dz) = (a[0] - b[0], a[1] - b[1]);
-        (dx * dx + dz * dz).sqrt()
-    }
-
     #[test]
     fn casts_shadows_by_sprite_job() {
         let factors = HashMap::from([(14, 1.5), (4048, 1.0), (1002, 0.5), (45, 0.0)]);
@@ -2450,71 +2546,64 @@ mod tests {
         assert!(!warg_out(OPTION_WUGRIDER) && !warg_out(0));
         assert_eq!(FALCON_HEIGHT, 25.0);
         assert_eq!(WARG_SHADOW, 2.0);
-        assert_eq!(FALCON_REACH, CART_ROPE * 2.0);
-        assert_eq!(WARG_REACH, world::CELL * 3.0);
     }
 
     #[test]
-    fn falcon_follows_on_a_longer_rope() {
-        let leader = [100.0, 200.0];
-        // Closer than the rope: it stays, and keeps its facing.
-        let stay = falcon_step([100.0, 205.0], 4, leader);
-        assert_near(stay.at, [100.0, 205.0]);
-        assert_eq!((stay.direction, stay.moving), (4, false));
-        // Farther: pulled in until exactly the reach, facing the way it moved (south).
-        let pulled = falcon_step([100.0, 200.0 + FALCON_REACH + 12.0], 4, leader);
-        assert_near(pulled.at, [100.0, 200.0 + FALCON_REACH]);
-        assert_eq!((pulled.direction, pulled.moving), (0, true));
-        assert!((apart(pulled.at, leader) - FALCON_REACH).abs() < 1e-3);
-        // Spawned behind a south-facing player, the next step leaves it there.
-        let behind = place_behind(leader, 0, FALCON_REACH);
-        assert_near(behind, [100.0, 200.0 + FALCON_REACH]);
-        let held = falcon_step(behind, 0, leader);
-        assert_near(held.at, behind);
-        assert!(!held.moving);
-        // A diagonal pull lands on the rope and faces the way it moved.
-        let diagonal = falcon_step([100.0 + 40.0, 200.0 + 40.0], 0, leader);
-        assert!((apart(diagonal.at, leader) - FALCON_REACH).abs() < 1e-3);
-        assert_eq!(diagonal.direction, 1);
+    fn falcon_arrives_then_hovers_at_its_hunter() {
+        let owner = [0.0, 0.0];
+        let at = |distance: f32| [distance, 0.0];
+        // Arriving from 30: a 25th of the way a tick, still arriving; at 60 fps a frame is one tick.
+        assert_eq!(falcon_step(at(30.0), owner, true, 1.0), (at(30.0 - 30.0 / 25.0), true));
+        // Within 25 it has arrived; at 20 it flies 1 a tick, scaled by the time (2.5 ticks).
+        let (step, arriving) = falcon_step(at(20.0), owner, true, 2.5);
+        assert!(!arriving);
+        assert_near(step, at(17.5));
+        // At 8 it closes a 20th of the way a tick; over two ticks 1 − (19/20)².
+        assert_near(falcon_step(at(8.0), owner, false, 2.0).0, at(8.0 * (19.0f32 / 20.0).powi(2)));
+        // At 2 it stays; and 1 a tick never takes it past its hunter.
+        assert_eq!(falcon_step(at(2.0), owner, false, 1.0), (at(2.0), false));
+        assert_near(falcon_step(at(13.0), owner, false, 30.0).0, owner);
     }
 
     #[test]
-    fn warg_stays_three_cells_out_and_runs_with_the_player() {
-        let leader = [0.0, 0.0];
-        // Inside three cells it stays. It runs because the player is moving, and stands when the player does.
-        let close = warg_step([10.0, 0.0], 6, leader, true);
-        assert_near(close.at, [10.0, 0.0]);
-        assert!(close.moving && close.direction == 6);
-        let idle = warg_step([10.0, 0.0], 6, leader, false);
-        assert_near(idle.at, [10.0, 0.0]);
-        assert!(!idle.moving);
-        // Past three cells the rope pulls it back to exactly that, facing the way it moved.
-        let far = warg_step([WARG_REACH + 8.0, 0.0], 2, leader, true);
-        assert_near(far.at, [WARG_REACH, 0.0]);
-        assert_eq!((far.direction, far.moving), (2, true));
-        assert!((apart(far.at, leader) - 3.0 * world::CELL).abs() < 1e-3);
-        // Standing still still closes the rope, without the run.
-        let stopped = warg_step([WARG_REACH + 8.0, 0.0], 2, leader, false);
-        assert_near(stopped.at, [WARG_REACH, 0.0]);
-        assert!(!stopped.moving);
-        // Behind an east-facing player is three cells west.
-        assert_near(place_behind(leader, 6, WARG_REACH), [-WARG_REACH, 0.0]);
+    fn warg_waits_then_runs_after_its_ranger() {
+        let owner = [0.0, 0.0];
+        // At 20: runs 0.7 a tick.
+        let (at, ran) = warg_step([20.0, 0.0], owner, 2.0);
+        assert!(ran);
+        assert_near(at, [18.6, 0.0]);
+        // At 15.5, a tick takes it within 15.7: put at 14.9.
+        let (at, ran) = warg_step([15.5, 0.0], owner, 1.0);
+        assert!(ran);
+        assert_near(at, [14.9, 0.0]);
+        // At 10 it waits.
+        assert_eq!(warg_step([10.0, 0.0], owner, 5.0), ([10.0, 0.0], false));
     }
 
     #[test]
-    fn faces_each_way_it_moves() {
-        let face = |step: [f32; 2]| move_direction([0.0, 0.0], step).unwrap();
-        assert_eq!(face([0.0, -10.0]), 0);
-        assert_eq!(face([-10.0, -10.0]), 1);
-        assert_eq!(face([-10.0, 0.0]), 2);
-        assert_eq!(face([-10.0, 10.0]), 3);
-        assert_eq!(face([0.0, 10.0]), 4);
-        assert_eq!(face([10.0, 10.0]), 5);
-        assert_eq!(face([10.0, 0.0]), 6);
-        assert_eq!(face([10.0, -10.0]), 7);
-        // A little north of east is still east.
-        assert_eq!(face([10.0, 1.0]), 6);
-        assert_eq!(move_direction([3.0, 3.0], [3.0, 3.0]), None);
+    fn companions_face_their_owner() {
+        // South of its owner it faces north (180); east of it, west (270); right on it, it keeps its way.
+        assert!((facing([0.0, -10.0], [0.0, 0.0], 0.0) - 180.0).abs() < 1e-3);
+        assert!((facing([10.0, 0.0], [0.0, 0.0], 0.0) - 270.0).abs() < 1e-3);
+        assert_eq!(facing([1.0, 1.0], [1.0, 1.0], 45.0), 45.0);
+        // The camera turned 10° doesn't change the way it shows; 30° does.
+        assert_eq!(view_direction(180.0, 0.0, true), view_direction(180.0, 10.0, true));
+        assert_ne!(view_direction(180.0, 0.0, true), view_direction(180.0, 30.0, true));
+    }
+
+    #[test]
+    fn picks_the_companions_sprite_by_job() {
+        let first = |warg, job| companion_sprites(warg, job).0[0].1.clone();
+        assert_eq!(first(false, 11), "data\\sprite\\이팩트\\매.act");
+        assert_eq!(first(false, 4034), "data\\sprite\\이팩트\\베이비매.act");
+        assert_eq!(companion_sprites(false, 4034).0[0].0, "data\\sprite\\이팩트\\매", "the grown-up falcon's picture");
+        assert_eq!(first(false, 4257), "data\\sprite\\이팩트\\windhawk_hawk.act");
+        assert_eq!(first(true, 4068), "data\\sprite\\이팩트\\워그.act");
+        assert_eq!(first(true, 4098), "data\\sprite\\몬스터\\베이비워그.act");
+        assert_eq!(first(true, 4278), "data\\sprite\\이팩트\\windhawk_wolf.act");
+        // A baby's falls back to the grown-up's; shadows: the warg's 2, a baby's 1, the falcon none.
+        assert!(companion_sprites(true, 4098).0.iter().any(|(path, _)| path == "data\\sprite\\몬스터\\워그"));
+        assert_eq!([companion_sprites(true, 4068).1, companion_sprites(true, 4111).1, companion_sprites(false, 11).1], [2.0, 1.0, 0.0]);
     }
 
     #[test]
