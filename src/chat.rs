@@ -3,6 +3,7 @@
 use rustnarok_client::grf::Grf;
 use rustnarok_client::text::Font;
 
+use crate::links::{self, ItemLink};
 use crate::render::{Gpu, Texture};
 use crate::{Layer, SCREEN, UI, contains};
 
@@ -64,6 +65,8 @@ pub struct Assets {
     darker: Texture,
     white: Texture,
     tab_border: Texture,
+    /// Item links' underline.
+    link: Texture,
 }
 
 impl Assets {
@@ -80,6 +83,7 @@ impl Assets {
             darker: gpu.solid(DARKER),
             white: gpu.solid([255; 4]),
             tab_border: gpu.solid(TAB_BORDER),
+            link: gpu.solid([crate::links::COLOR[0], crate::links::COLOR[1], crate::links::COLOR[2], 0xFF]),
         }
     }
 }
@@ -205,9 +209,22 @@ impl Chat {
     }
 
     /// The window; the input bar only while the line is `open`.
-    pub fn draw<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, messages: &[String], open: bool, caret: bool) {
+    /// The window, and the boxes of the item links in its log with their items. `name_of` names an item a link carries
+    /// without words.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        assets: &'a Assets,
+        font: &Font,
+        messages: &[String],
+        open: bool,
+        caret: bool,
+        name_of: &dyn Fn(&ItemLink) -> String,
+    ) -> Vec<([f32; 4], ItemLink)> {
+        let mut link_boxes = Vec::new();
         if self.hidden {
-            return;
+            return link_boxes;
         }
         let top = self.top();
         if self.step() > 0 {
@@ -240,13 +257,25 @@ impl Chat {
             let start = end.saturating_sub(shown);
             let first_row = shown - (end - start);
             for (row, (line, color)) in self.lines[start..end].iter().enumerate() {
-                let [x, y] = line_at(first_row + row);
-                layer.texts.push((line.clone(), [x + 1.0, top + y + 1.0], [0, 0, 0]));
-                layer.texts.push((line.clone(), [x, top + y], *color));
+                let [mut x, y] = line_at(first_row + row);
+                let y = top + y;
+                // Item links in their colour, underlined.
+                for (piece, item) in links::pieces(&links::mark(line, name_of)) {
+                    let width = font.width(&piece);
+                    let color = if item.is_some() { links::COLOR } else { *color };
+                    layer.texts.push((piece.clone(), [x + 1.0, y + 1.0], [0, 0, 0]));
+                    layer.texts.push((piece, [x, y], color));
+                    if let Some(item) = item {
+                        let under = y + font.line_height() - 1.0;
+                        layer.sprites.push((&assets.link, [x, under], [width, 1.0]));
+                        link_boxes.push(([x, y, width, font.line_height()], item));
+                    }
+                    x += width;
+                }
             }
         }
         if !open {
-            return;
+            return link_boxes;
         }
 
         // The input bar with what's being typed and the caret.
@@ -268,6 +297,7 @@ impl Chat {
             let end = if self.naming { NAME_BOX.0[0] + font.width(&name) } else { MESSAGE_BOX.0[0] + font.width(&typed) };
             layer.sprites.push((&assets.darker, [end + 1.0, text_top + 1.0], [1.0, font.line_height() - 2.0]));
         }
+        link_boxes
     }
 }
 
