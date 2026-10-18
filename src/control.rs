@@ -863,7 +863,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 MERCENARY => json!("mercenary"),
                 other => json!(other),
             };
-            let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "combo_ms": combo_ms(Some(id)), "held": crate::locked_with(&game.locks, id)});
+            let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "position": actor.position(now()), "combo_ms": combo_ms(Some(id)), "held": crate::locked_with(&game.locks, id)});
             let (action, frame) = animation(actor);
             unit["action"] = action.into();
             unit["frame"] = frame.into();

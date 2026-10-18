@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
 use std::sync::LazyLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// rathena's NAME_LENGTH: 23 characters plus the terminating NUL.
 pub const NAME_LENGTH: usize = 24;
@@ -650,6 +650,7 @@ const ZC_WHISPER_LIST: u16 = 0x00D4;
 const ZC_ACCEPT_ENTER: u16 = 0x02EB;
 const ZC_NOTIFY_VANISH: u16 = 0x0080;
 const ZC_NOTIFY_PLAYERMOVE: u16 = 0x0087;
+const ZC_NOTIFY_TIME: u16 = 0x007F;
 const ZC_STOPMOVE: u16 = 0x0088;
 const ZC_HIGHJUMP: u16 = 0x01FF;
 const ZC_FASTMOVE: u16 = 0x08D2;
@@ -1602,7 +1603,11 @@ pub enum MapEvent {
     Entered {
         position: [u16; 2],
         direction: u8,
+        /// The server's tick, and when it came.
+        clock: (u32, Instant),
     },
+    /// The server's tick, answering ours, and when it came.
+    ServerTime(u32, Instant),
     /// A unit is standing in view (appeared or was already there).
     Unit(Unit),
     /// A unit walking in view; its `position` is where the walk starts.
@@ -1610,6 +1615,8 @@ pub enum MapEvent {
         unit: Unit,
         to: [u16; 2],
         start_time: u32,
+        /// Where in its start cell it is, in sixteenths (8: the centre).
+        sub: [u8; 2],
     },
     Vanish {
         id: u32,
@@ -5219,14 +5226,16 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
     Some(match u16_at(0) {
         ZC_ACCEPT_ENTER => {
             let (position, direction) = decode_position(&packet[6..9]);
-            MapEvent::Entered { position, direction: sprite_direction(direction) }
+            MapEvent::Entered { position, direction: sprite_direction(direction), clock: (u32_at(2), Instant::now()) }
         }
         ZC_NOTIFY_STANDENTRY => MapEvent::Unit(decode_unit(packet, &STAND_LAYOUT, decode_entry_position(&packet[63..66]))),
         ZC_NOTIFY_NEWENTRY => MapEvent::Unit(decode_unit(packet, &NEW_LAYOUT, decode_entry_position(&packet[63..66]))),
         ZC_NOTIFY_MOVEENTRY => {
             let (from, to) = decode_move(&packet[67..73]);
-            MapEvent::UnitWalk { unit: decode_unit(packet, &MOVE_LAYOUT, (from, 0)), to, start_time: u32_at(37) }
+            let sub = [packet[72] >> 4, packet[72] & 0x0F];
+            MapEvent::UnitWalk { unit: decode_unit(packet, &MOVE_LAYOUT, (from, 0)), to, start_time: u32_at(37), sub }
         }
+        ZC_NOTIFY_TIME => MapEvent::ServerTime(u32_at(2), Instant::now()),
         ZC_NOTIFY_VANISH => MapEvent::Vanish { id: u32_at(2), reason: packet[6] },
         ZC_NOTIFY_PLAYERMOVE => {
             let (from, to) = decode_move(&packet[6..12]);

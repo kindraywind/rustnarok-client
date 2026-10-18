@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use image::RgbaImage;
 use rustnarok_client::grf::Grf;
@@ -1303,6 +1303,39 @@ pub fn view_direction(rot: f32, yaw: f32, round: bool) -> u8 {
     direction % 8
 }
 
+/// Other units show this long after the server moves them.
+pub const REMOTE_DELAY: Duration = Duration::from_millis(72);
+/// A walk heard of after it ended replays at 13/10 the speed.
+const LATE_PACE: f32 = 10.0 / 13.0;
+
+/// When a walk at `speed` ms a cell from `start` (in cells) at `begin` reaches each cell of `path`: the first after
+/// its straight-line distance, then `speed` a straight step and `speed`·1.414 a diagonal one (rathena counts
+/// speed·14/10), all `pace` times as long.
+fn arrivals(start: [f32; 2], begin: Instant, path: &[[i32; 2]], speed: f32, pace: f32) -> Vec<([i32; 2], Instant)> {
+    let (mut from, mut at) = (start, begin);
+    path.iter()
+        .enumerate()
+        .map(|(index, &cell)| {
+            let to = cell.map(|value| value as f32);
+            let ms = match index {
+                0 => (speed * f32::hypot(to[0] - from[0], to[1] - from[1])).trunc(),
+                _ if to[0] != from[0] && to[1] != from[1] => (speed * 1.414).trunc(),
+                _ => speed,
+            };
+            at += Duration::from_secs_f32(ms * pace / 1000.0);
+            from = to;
+            (cell, at)
+        })
+        .collect()
+}
+
+/// When a server tick comes here, by a tick the server told and when that came.
+pub fn local_time((tick, at): (u32, Instant), server_tick: u32) -> Instant {
+    let ms = server_tick.wrapping_sub(tick) as i32;
+    let apart = Duration::from_millis(u64::from(ms.unsigned_abs()));
+    if ms >= 0 { at + apart } else { at.checked_sub(apart).unwrap_or(at) }
+}
+
 /// Something on the map that moves cell by cell.
 pub struct Actor {
     pub name: String,
@@ -1318,9 +1351,11 @@ pub struct Actor {
     pub hidden: bool,
     pub sprites: Option<SpriteSet>,
     pub cell: [i32; 2],
-    path: Vec<[i32; 2]>,
-    step_started: Instant,
-    /// Milliseconds per straight step (diagonals take √2 as long).
+    /// The cells ahead and when the unit reaches each.
+    path: Vec<([i32; 2], Instant)>,
+    /// Where (in cells, exactly: a walk can start off a cell's centre) and when the step under way began.
+    leg: ([f32; 2], Instant),
+    /// Milliseconds per straight step (the server's speed).
     pub step_ms: f32,
     /// World units walked in finished steps since the unit appeared.
     distance: f32,
@@ -1375,7 +1410,7 @@ impl Actor {
             sprites,
             cell,
             path: Vec::new(),
-            step_started: now,
+            leg: (cell.map(|value| value as f32), now),
             step_ms: f32::from(speed.max(1)),
             distance: 0.0,
             direction,
@@ -1439,11 +1474,24 @@ impl Actor {
 
     /// World units walked since the unit appeared, the step under way included.
     fn walked(&self, now: Instant) -> f32 {
-        let Some(&next) = self.path.first() else { return self.distance };
-        let step = [next[0] - self.cell[0], next[1] - self.cell[1]];
-        let length = if step[0] != 0 && step[1] != 0 { std::f32::consts::SQRT_2 } else { 1.0 };
-        let progress = now.saturating_duration_since(self.step_started).as_secs_f32() * 1000.0 / (self.step_ms * length);
-        self.distance + progress.min(1.0) * length * world::CELL
+        let Some(&(next, _)) = self.path.first() else { return self.distance };
+        let from = self.leg.0;
+        self.distance + self.progress(now) * f32::hypot(next[0] as f32 - from[0], next[1] as f32 - from[1]) * world::CELL
+    }
+
+    /// How far through the step under way the unit is, 0 to 1.
+    fn progress(&self, now: Instant) -> f32 {
+        let Some(&(_, arrives)) = self.path.first() else { return 1.0 };
+        let began = self.leg.1;
+        let span = arrives.saturating_duration_since(began).as_secs_f32().max(1e-6);
+        (now.saturating_duration_since(began).as_secs_f32() / span).min(1.0)
+    }
+
+    /// Where the unit is at `now`, in cells: between two while walking.
+    pub fn position(&self, now: Instant) -> [f32; 2] {
+        let Some(&(next, _)) = self.path.first() else { return self.cell.map(|value| value as f32) };
+        let (from, progress) = (self.leg.0, self.progress(now));
+        [from[0] + (next[0] as f32 - from[0]) * progress, from[1] + (next[1] as f32 - from[1]) * progress]
     }
 
     /// Turns to face a cell: the nearest of the eight directions, and its exact angle.
@@ -1461,21 +1509,44 @@ impl Actor {
         self.rot = rot_of(direction);
     }
 
+    /// Walks `path` from the cell it's on (or on from the step under way).
     pub fn walk(&mut self, path: Vec<[i32; 2]>) {
+        let now = Instant::now();
+        self.start_walking(now);
+        if self.path.is_empty() {
+            self.leg = (self.cell.map(|value| value as f32), now);
+        }
+        self.path = arrivals(self.leg.0, self.leg.1, &path, self.step_ms, 1.0);
+    }
+
+    /// Walks `path` as the server has it: from `from` and its sixteenths of a cell `sub` (8: the centre), beginning at
+    /// `begin`. A walk that would be over already plays from now at 13/10 the speed.
+    pub fn walk_from(&mut self, from: [i32; 2], sub: [u8; 2], path: Vec<[i32; 2]>, begin: Instant, now: Instant) {
+        self.start_walking(now);
+        self.cell = from;
+        let start = [0, 1].map(|axis| from[axis] as f32 + (f32::from(sub[axis]) - 8.0) / 16.0);
+        let mut steps = arrivals(start, begin, &path, self.step_ms, 1.0);
+        let mut begin = begin;
+        if steps.last().is_some_and(|&(_, arrives)| arrives <= now) {
+            steps = arrivals(start, now, &path, self.step_ms, LATE_PACE);
+            begin = now;
+        }
+        self.leg = (start, begin);
+        self.path = steps;
+    }
+
+    fn start_walking(&mut self, now: Instant) {
         self.ready = false;
         self.sitting = false;
         // Walking looks straight ahead again.
         self.head_direction = 0;
-        let now = Instant::now();
         // Walking interrupts an attack or flinch, not a death.
         if self.shot.as_ref().is_some_and(|shot| !shot.hold) {
             self.shot = None;
         }
         if self.path.is_empty() {
-            self.step_started = now;
             self.animation_started = now;
         }
-        self.path = path;
     }
 
     pub fn stop_at(&mut self, cell: [i32; 2]) {
@@ -1492,24 +1563,23 @@ impl Actor {
 
     /// Advances along the path; returns the (fractional) cell the actor is at now.
     pub fn update(&mut self, now: Instant) -> [f32; 2] {
-        while let Some(&next) = self.path.first() {
+        while let Some(&(next, arrives)) = self.path.first() {
             let step = [next[0] - self.cell[0], next[1] - self.cell[1]];
-            let duration = self.step_ms * if step[0] != 0 && step[1] != 0 { std::f32::consts::SQRT_2 } else { 1.0 };
-            let progress = now.saturating_duration_since(self.step_started).as_secs_f32() * 1000.0 / duration;
             self.direction = world::direction(step);
             self.rot = angle_of(step);
-            if progress < 1.0 {
-                return [self.cell[0] as f32 + step[0] as f32 * progress, self.cell[1] as f32 + step[1] as f32 * progress];
+            if now < arrives {
+                break;
             }
+            let from = self.leg.0;
+            self.distance += f32::hypot(next[0] as f32 - from[0], next[1] as f32 - from[1]) * world::CELL;
             self.cell = next;
-            self.distance += if step[0] != 0 && step[1] != 0 { std::f32::consts::SQRT_2 } else { 1.0 } * world::CELL;
             self.path.remove(0);
-            self.step_started += std::time::Duration::from_secs_f32(duration / 1000.0);
+            self.leg = (next.map(|value| value as f32), arrives);
             if self.path.is_empty() {
                 self.animation_started = now;
             }
         }
-        self.cell.map(|value| value as f32)
+        self.position(now)
     }
 
     /// Current animation and how far into it: a one-shot action while it plays, else idle or walk.
@@ -1777,10 +1847,8 @@ mod tests {
     fn walks_cell_by_cell_at_its_speed() {
         let mut actor = Actor::new("a".into(), None, [10, 10], 0, 100);
         let start = Instant::now();
-        actor.step_started = start;
-        actor.walk(vec![[11, 10], [12, 11]]);
-        actor.step_started = start;
-        let at = |ms: u64| start + std::time::Duration::from_millis(ms);
+        actor.walk_from([10, 10], [8, 8], vec![[11, 10], [12, 11]], start, start);
+        let at = |ms: u64| start + Duration::from_millis(ms);
         assert_eq!(actor.update(at(50)), [10.5, 10.0]);
         assert_eq!(actor.direction, 6);
         // The diagonal step takes ~141 ms after the first 100.
@@ -1789,6 +1857,31 @@ mod tests {
         assert_eq!(actor.direction, 5);
         assert_eq!(actor.update(at(400)), [12.0, 11.0]);
         assert!(!actor.moving());
+    }
+
+    #[test]
+    fn walks_in_step_with_the_server() {
+        let start = Instant::now();
+        let ms = |at: Instant| at.duration_since(start).as_secs_f32() * 1000.0;
+        // From a quarter cell east of the centre: the first cell after 0.75 cells, then a diagonal, then a straight.
+        let path = [[11, 10], [12, 11], [13, 11]];
+        let times: Vec<f32> = arrivals([10.25, 10.0], start, &path, 150.0, 1.0).into_iter().map(|(_, at)| ms(at)).collect();
+        assert!(times.iter().zip([112.0, 324.0, 474.0]).all(|(a, b)| (a - b).abs() < 0.01), "{times:?}");
+        let mut actor = Actor::new("a".into(), None, [10, 10], 0, 150);
+        actor.walk_from([10, 10], [12, 8], path.to_vec(), start, start);
+        assert_near(actor.update(start), [10.25, 10.0]);
+        assert_near(actor.update(start + Duration::from_millis(56)), [10.625, 10.0]);
+        // Heard of after it ended: replayed from now at 13/10 the speed.
+        let now = start + Duration::from_secs(10);
+        actor.walk_from([10, 10], [12, 8], path.to_vec(), start, now);
+        assert_near(actor.update(now), [10.25, 10.0]);
+        let first = 112.0 * 10.0 / 13.0;
+        assert_near(actor.update(now + Duration::from_secs_f32(first / 1000.0)), [11.0, 10.0]);
+        assert!(actor.moving());
+        // The server's ticks placed on our clock, across the counter wrapping too.
+        assert_eq!(local_time((1000, start), 1500), start + Duration::from_millis(500));
+        assert_eq!(local_time((1000, now), 900), now - Duration::from_millis(100));
+        assert_eq!(local_time((u32::MAX - 10, start), 5), start + Duration::from_millis(16));
     }
 
     fn assert_near(a: [f32; 2], b: [f32; 2]) {
