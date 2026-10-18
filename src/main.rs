@@ -9336,12 +9336,9 @@ impl App {
                 }
             }
             MapEvent::PlayerMove { from, to, .. } => {
-                let player = &mut game.player;
-                if !player.moving() {
-                    player.cell = from.map(i32::from);
-                }
-                if let Some(path) = world::find_path(&game.world.gat, player.cell, to.map(i32::from)) {
-                    player.walk(path);
+                let from = from.map(i32::from);
+                if let Some(path) = world::find_path(&game.world.gat, from, to.map(i32::from)) {
+                    game.player.walk_on(from, path, control::now());
                 }
             }
             MapEvent::Stop { id, position } | MapEvent::Slide { id, position } => {
