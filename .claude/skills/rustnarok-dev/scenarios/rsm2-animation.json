@@ -1,0 +1,16 @@
+{
+  "about": "RSM 2 models play their tracks (issue #439): on jor_back2 (170, 148), visited hidden, over 100 RSM 2 instances move, each on its clock (the RSW's anim type and speed, the file's frames and fps). Two shots 0.7 s apart show them in different poses.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@hide"}, {"wait": 300},
+    {"say": "@warp jor_back2 170 148"}, {"settle": 4000},
+    {"expect": {"map": "jor_back2.gat", "state_at_least": {"rsm2_moving": 100}}},
+    {"move": [1000, 740]},
+    {"shot": "moving-a", "threshold": 100},
+    {"wait": 700},
+    {"shot": "moving-b", "threshold": 100},
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@hide"}, {"wait": 300}, {"say": "@heal"}
+  ]
+}

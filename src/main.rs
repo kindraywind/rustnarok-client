@@ -13972,6 +13972,8 @@ impl App {
         let players_first = game.players_first(self.modifiers.shift_key());
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
 
+        // The map's moving RSM 2 models, posed for now.
+        game.world.animate(gpu, now);
         // The map's ambient sounds, each on its cycle.
         if let Some(audio) = audio.as_mut() {
             let at = actor::world_xz(game.player.position(now));

@@ -129,8 +129,99 @@ pub struct Node {
     pub vertices: Vec<Vector>,
     pub uvs: Vec<[f32; 2]>,
     pub faces: Vec<Face>,
-    /// First rotation keyframe, which replaces the static rotation (animation isn't played yet).
+    /// First rotation keyframe, which replaces the static rotation (RSM 1 isn't played yet).
     pub keyframe_rotation: Option<[f32; 4]>,
+    /// RSM 2's tracks, by frame: scale, rotation, position, and the texture coordinate tracks.
+    pub tracks: Tracks,
+}
+
+/// An RSM 2 node's animation.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Tracks {
+    pub scale: Vec<(i32, Vector)>,
+    pub rotation: Vec<(i32, [f32; 4])>,
+    pub position: Vec<(i32, Vector)>,
+    pub uv: Vec<UvTrack>,
+}
+
+/// A texture of a node (by its place in the node's list), what moves on it, and its keys by frame.
+pub type UvTrack = (usize, i32, Vec<(i32, f32)>);
+
+impl Tracks {
+    fn moves(&self) -> bool {
+        self.scale.len() > 1 || self.rotation.len() > 1 || self.position.len() > 1 || !self.uv.is_empty()
+    }
+}
+
+/// The value of a track at `frame`: the keys before the first and after the last hold, between them a blend.
+fn sample<T: Copy>(keys: &[(i32, T)], frame: f32, blend: impl Fn(T, T, f32) -> T) -> Option<T> {
+    let (first, last) = (keys.first()?, keys.last()?);
+    if frame <= first.0 as f32 {
+        return Some(first.1);
+    }
+    if frame >= last.0 as f32 {
+        return Some(last.1);
+    }
+    let next = keys.iter().position(|(at, _)| *at as f32 > frame)?;
+    let (from, to) = (keys[next - 1], keys[next]);
+    let span = (to.0 - from.0).max(1) as f32;
+    Some(blend(from.1, to.1, (frame - from.0 as f32) / span))
+}
+
+fn lerp(a: Vector, b: Vector, t: f32) -> Vector {
+    std::array::from_fn(|axis| a[axis] + (b[axis] - a[axis]) * t)
+}
+
+/// The shorter arc between two rotations.
+fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    let mut dot: f32 = (0..4).map(|i| a[i] * b[i]).sum();
+    let b = if dot < 0.0 {
+        dot = -dot;
+        b.map(|value| -value)
+    } else {
+        b
+    };
+    if dot > 0.9995 {
+        let mixed: [f32; 4] = std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t);
+        let length = mixed.iter().map(|value| value * value).sum::<f32>().sqrt().max(f32::EPSILON);
+        return mixed.map(|value| value / length);
+    }
+    let angle = dot.clamp(-1.0, 1.0).acos();
+    let (wa, wb) = (((1.0 - t) * angle).sin() / angle.sin(), (t * angle).sin() / angle.sin());
+    std::array::from_fn(|i| a[i] * wa + b[i] * wb)
+}
+
+/// A texture coordinate under a UV track's value.
+// ponytail: what each kind moves is read from the data's use (kind 1, the most common, scrolls v), not documented:
+// 0 shifts u, 1 shifts v, 2 scales u, 3 scales v, 4 turns the coordinate about the texture's centre (radians).
+fn moved_uv([u, v]: [f32; 2], kind: i32, value: f32) -> [f32; 2] {
+    match kind {
+        0 => [u + value, v],
+        1 => [u, v + value],
+        2 => [u * value, v],
+        3 => [u, v * value],
+        4 => {
+            let (sin, cos) = value.sin_cos();
+            let (x, y) = (u - 0.5, v - 0.5);
+            [x * cos - y * sin + 0.5, x * sin + y * cos + 0.5]
+        }
+        _ => [u, v],
+    }
+}
+
+/// The frame an RSM 2 instance shows `elapsed_ms` after its clock started, and whether its loop starts over now:
+/// t = elapsed × speed (whole), a length of frames × 1 000 / fps ms; type 2 starts again from 0 at the length, type 1
+/// holds at length − 1, any other stays at 0. Tracks are read at t × fps / 1 000.
+pub fn clock(elapsed_ms: u64, speed: f32, anim_type: i32, frames: i32, fps: f32) -> (f32, bool) {
+    let t = (elapsed_ms as f64 * f64::from(speed)).trunc();
+    let length = (f64::from(frames.max(0)) * 1000.0 / f64::from(fps.max(f32::EPSILON))).floor();
+    let (t, again) = match anim_type {
+        2 if t >= length => (0.0, true),
+        2 => (t, false),
+        1 => (t.min((length - 1.0).max(0.0)), false),
+        _ => (0.0, false),
+    };
+    ((t * f64::from(fps) / 1000.0) as f32, again)
 }
 
 pub struct Rsm {
@@ -139,6 +230,9 @@ pub struct Rsm {
     pub textures: Vec<String>,
     pub root: String,
     pub nodes: Vec<Node>,
+    /// RSM 2's animation: its length in frames, and frames a second.
+    pub frames: i32,
+    pub fps: f32,
 }
 
 /// A model triangle in model space (Y down, bottom center at the origin), with its texture name index.
@@ -229,9 +323,10 @@ impl Rsm {
                 uvs,
                 faces,
                 keyframe_rotation,
+                tracks: Tracks::default(),
             });
         }
-        Ok(Self { version, textures, root, nodes })
+        Ok(Self { version, textures, root, nodes, frames: 0, fps: 0.0 })
     }
 
     /// RSM 2.2 and 2.3 (`.rsm2`). Strings carry their length; 2.2 lists the textures once and nodes point into the
@@ -244,10 +339,10 @@ impl Rsm {
         if version < (2, 2) {
             return Err(io::Error::new(io::ErrorKind::Unsupported, format!("RSM {}.{} isn't supported yet", version.0, version.1)));
         }
-        reader.i32()?; // animation length
+        let frames = reader.i32()?;
         reader.i32()?; // shade type
         reader.take(1)?; // alpha
-        reader.f32()?; // frames per second
+        let fps = reader.f32()?;
         let mut textures: Vec<String> = Vec::new();
         if version == (2, 2) {
             for _ in 0..reader.count()? {
@@ -298,36 +393,34 @@ impl Rsm {
                 faces.push(Face { vertices, uvs, texture });
             }
             // Keys: a frame, then the scale or the position and a word, or the rotation as a quaternion.
-            let mut scale = None;
+            let mut tracks = Tracks::default();
             for _ in 0..reader.count()? {
-                reader.i32()?;
-                let key = reader.vector()?;
+                let frame = reader.i32()?;
+                tracks.scale.push((frame, reader.vector()?));
                 reader.take(4)?;
-                scale.get_or_insert(key);
             }
-            let mut keyframe_rotation = None;
             for _ in 0..reader.count()? {
-                reader.i32()?; // frame
-                let rotation = [reader.f32()?, reader.f32()?, reader.f32()?, reader.f32()?];
-                keyframe_rotation.get_or_insert(rotation);
+                let frame = reader.i32()?;
+                tracks.rotation.push((frame, [reader.f32()?, reader.f32()?, reader.f32()?, reader.f32()?]));
             }
-            let mut position = None;
             for _ in 0..reader.count()? {
-                reader.i32()?;
-                let key = reader.vector()?;
+                let frame = reader.i32()?;
+                tracks.position.push((frame, reader.vector()?));
                 reader.take(4)?;
-                position.get_or_insert(key);
             }
             if version >= (2, 3) {
                 for _ in 0..reader.count()? {
-                    reader.i32()?; // texture
+                    let texture = reader.count()?;
                     for _ in 0..reader.count()? {
-                        reader.i32()?; // what it animates
-                        let keys = reader.count()?;
-                        reader.take(keys * 8)?;
+                        let kind = reader.i32()?;
+                        let keys = (0..reader.count()?).map(|_| Ok((reader.i32()?, reader.f32()?))).collect::<io::Result<_>>()?;
+                        tracks.uv.push((texture, kind, keys));
                     }
                 }
             }
+            let scale = tracks.scale.first().map(|&(_, scale)| scale);
+            let keyframe_rotation = tracks.rotation.first().map(|&(_, rotation)| rotation);
+            let position = tracks.position.first().map(|&(_, position)| position);
             nodes.push(Node {
                 name,
                 parent,
@@ -343,21 +436,36 @@ impl Rsm {
                 uvs,
                 faces,
                 keyframe_rotation,
+                tracks,
             });
         }
         let root = roots.into_iter().next().unwrap_or_default();
-        Ok(Self { version, textures, root, nodes })
+        Ok(Self { version, textures, root, nodes, frames, fps })
     }
 
     /// All triangles in model space (y down), with the model's bottom center at the origin for RSM 1; RSM 2 keeps the
     /// file's own origin and is turned the right way up (its y flipped).
     pub fn triangles(&self) -> Vec<Triangle> {
+        self.posed(None)
+    }
+
+    /// RSM 2: whether anything in it moves.
+    pub fn animated(&self) -> bool {
+        self.version >= (2, 0) && self.nodes.iter().any(|node| node.tracks.moves())
+    }
+
+    /// RSM 2's triangles at a (fractional) frame of its tracks.
+    pub fn triangles_at(&self, frame: f32) -> Vec<Triangle> {
+        self.posed(Some(frame))
+    }
+
+    fn posed(&self, frame: Option<f32>) -> Vec<Triangle> {
         let mut triangles = Vec::new();
         let Some(root) = self.nodes.iter().position(|node| node.name == self.root).or((!self.nodes.is_empty()).then_some(0)) else {
             return triangles;
         };
         let mut visited = vec![false; self.nodes.len()];
-        self.collect(root, &IDENTITY, &mut visited, &mut triangles);
+        self.collect(root, &IDENTITY, frame, &mut visited, &mut triangles);
         if self.version >= (2, 0) {
             for position in triangles.iter_mut().flat_map(|triangle| triangle.positions.iter_mut()) {
                 position[1] = -position[1];
@@ -381,28 +489,47 @@ impl Rsm {
         triangles
     }
 
-    fn collect(&self, index: usize, parent: &Matrix, visited: &mut [bool], triangles: &mut Vec<Triangle>) {
+    fn collect(&self, index: usize, parent: &Matrix, frame: Option<f32>, visited: &mut [bool], triangles: &mut Vec<Triangle>) {
         visited[index] = true;
         let node = &self.nodes[index];
-        let rotation_matrix = match node.keyframe_rotation {
+        // RSM 2 at a frame: its tracks where they have keys; past its last rotation key a node holds that key.
+        let tracks = frame.map(|frame| {
+            let scale = sample(&node.tracks.scale, frame, lerp);
+            let rotation = sample(&node.tracks.rotation, frame, slerp);
+            let position = sample(&node.tracks.position, frame, lerp);
+            (scale, rotation, position)
+        });
+        let keyframe_rotation = tracks.and_then(|(_, rotation, _)| rotation).or(node.keyframe_rotation);
+        let rotation_matrix = match keyframe_rotation {
             Some(rotation) => quaternion(rotation),
             None => rotation(node.rotation_axis, node.rotation_angle),
         };
+        let node_scale = tracks.and_then(|(scale, ..)| scale).unwrap_or(node.scale);
+        let node_place = tracks.and_then(|(.., position)| position).unwrap_or(node.translation2);
         // Children inherit translation2 · rotation · scale; translation1 · offset only moves this node's vertices.
-        let inherited = multiply(parent, &multiply(&translation(node.translation2), &multiply(&rotation_matrix, &scaling(node.scale))));
+        let inherited = multiply(parent, &multiply(&translation(node_place), &multiply(&rotation_matrix, &scaling(node_scale))));
         let local = multiply(&inherited, &multiply(&translation(node.translation1), &node.offset));
 
         for face in &node.faces {
             let Some(texture) = node.textures.get(usize::from(face.texture)).copied() else { continue };
             let positions = face.vertices.map(|vertex| node.vertices.get(usize::from(vertex)).map(|&point| transform(&local, point)));
-            let uvs = face.uvs.map(|uv| node.uvs.get(usize::from(uv)).copied().unwrap_or_default());
+            let mut uvs = face.uvs.map(|uv| node.uvs.get(usize::from(uv)).copied().unwrap_or_default());
+            if let Some(frame) = frame {
+                for (track_texture, kind, keys) in &node.tracks.uv {
+                    if *track_texture == usize::from(face.texture)
+                        && let Some(value) = sample(keys, frame, |a, b, t| a + (b - a) * t)
+                    {
+                        uvs = uvs.map(|uv| moved_uv(uv, *kind, value));
+                    }
+                }
+            }
             if let [Some(a), Some(b), Some(c)] = positions {
                 triangles.push(Triangle { texture, positions: [a, b, c], uvs });
             }
         }
         for child in 0..self.nodes.len() {
             if !visited[child] && self.nodes[child].parent == node.name && self.nodes[child].name != node.name {
-                self.collect(child, &inherited, visited, triangles);
+                self.collect(child, &inherited, frame, visited, triangles);
             }
         }
     }
@@ -466,6 +593,51 @@ mod tests {
         }
         bytes.extend([0; 4]);
         bytes
+    }
+
+    #[test]
+    fn plays_rsm_2_on_its_clock() {
+        // 100 frames at 30 fps: 3 333 ms. Type 2 starts again at the length; type 1 holds at length - 1; 0 stays.
+        assert_eq!(clock(0, 1.0, 2, 100, 30.0), (0.0, false));
+        assert_eq!(clock(1000, 1.0, 2, 100, 30.0), (30.0, false));
+        assert_eq!(clock(3333, 1.0, 2, 100, 30.0), (0.0, true));
+        assert!(!clock(3332, 1.0, 2, 100, 30.0).1);
+        assert_eq!(clock(9000, 1.0, 1, 100, 30.0), (3332.0 * 30.0 / 1000.0, false));
+        assert_eq!(clock(9000, 1.0, 0, 100, 30.0), (0.0, false));
+        // The speed scales the time, whole milliseconds: 250 ms at 1.5 is 375 ms, frame 11.25.
+        assert_eq!(clock(250, 1.5, 2, 100, 30.0), (11.25, false));
+    }
+
+    #[test]
+    fn samples_tracks_and_holds_the_last_rotation() {
+        let keys = [(0, [0.0, 0.0, 0.0]), (10, [10.0, 0.0, 0.0])];
+        assert_eq!(sample(&keys, 2.5, lerp), Some([2.5, 0.0, 0.0]));
+        assert_eq!((sample(&keys, -5.0, lerp), sample(&keys, 50.0, lerp)), (Some([0.0; 3]), Some([10.0, 0.0, 0.0])));
+        let half_turn = [0.0, 1.0, 0.0, 0.0];
+        let rotations = [(0, [0.0, 0.0, 0.0, 1.0]), (10, half_turn)];
+        // Past its last key a rotation holds it.
+        assert_eq!(sample(&rotations, 99.0, slerp), Some(half_turn));
+        let middle = sample(&rotations, 5.0, slerp).unwrap();
+        let expected = (std::f32::consts::FRAC_PI_4).sin();
+        assert!((middle[1] - expected).abs() < 1e-5 && (middle[3] - expected).abs() < 1e-5, "{middle:?}");
+        assert_eq!(sample::<f32>(&[], 1.0, |a, _, _| a), None);
+        // UV tracks: shifts, scales and a turn about the centre.
+        assert_eq!([0, 1, 2, 3].map(|kind| moved_uv([0.5, 0.25], kind, 2.0)), [[2.5, 0.25], [0.5, 2.25], [1.0, 0.25], [0.5, 0.5]]);
+        let [u, v] = moved_uv([1.0, 0.5], 4, std::f32::consts::FRAC_PI_2);
+        assert!((u - 0.5).abs() < 1e-5 && (v - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn poses_rsm_2_by_its_tracks() {
+        let mut rsm = Rsm::parse(&rsm_2((2, 3))).unwrap();
+        assert!(!rsm.animated());
+        rsm.nodes[0].tracks.position = vec![(0, [0.0; 3]), (10, [10.0, 0.0, 0.0])];
+        assert!(rsm.animated());
+        // Halfway the node has moved 5 along x (y flipped as always).
+        assert_eq!(rsm.triangles_at(5.0)[0].positions[0], [6.0, -2.0, 3.0]);
+        assert_eq!(rsm.triangles_at(0.0)[0].positions[0], [1.0, -2.0, 3.0]);
+        rsm.nodes[0].tracks.uv = vec![(0, 1, vec![(0, 0.0), (10, 1.0)])];
+        assert_eq!(rsm.triangles_at(5.0)[0].uvs[1], [1.0, 0.5]);
     }
 
     #[test]

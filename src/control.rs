@@ -1486,6 +1486,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     });
     // The RSM 2 model instances standing on the map.
     state["rsm2_models"] = game.world.rsm_2_models.into();
+    state["rsm2_moving"] = game.world.rsm_2_moving().into();
     // The skill units on the ground standing as models (their UNT_ numbers).
     state["standing_models"] = game.effects.standing_kinds().into();
     state["cutin_window"] = cutin_window.into();
