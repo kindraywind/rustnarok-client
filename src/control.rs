@@ -1394,6 +1394,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "block_names": game.block_list.as_ref().map(|list| list.names().to_vec()).unwrap_or_default(),
         "whisper_open": json!({"friends": game.whisper_open.friends, "strangers": game.whisper_open.strangers}),
         "chat_line_open": game.chat_mode.chat_line_open(),
+        // Battle mode's icon: null out of battle mode, else whether the line is open.
+        "chat_mode_icon": game.chat_mode.icon(),
         // The basic info window: where it is, and whether it's minimised.
         "basic_info": json!({"position": game.basic_info.frame.position, "minimized": game.basic_info.frame.minimized}),
         // The chat room the player is in: its title and who owns it.
