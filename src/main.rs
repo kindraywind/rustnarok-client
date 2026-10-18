@@ -678,12 +678,16 @@ struct Game {
     units: HashMap<u32, Actor>,
     camera: Camera,
     camera_goal: CameraGoal,
-    /// The map's overview picture, for the minimap.
-    minimap: Option<Texture>,
-    /// Ctrl+Tab walks this: shown, translucent, hidden.
+    /// The map's overview picture, for the minimap, and the part of it showing (with what it was cut for).
+    minimap: Option<image::RgbaImage>,
+    minimap_crop: Option<((u32, u32, u32, minimap::View), Texture)>,
+    /// Ctrl+Tab walks this: opaque, see-through, hidden.
     minimap_view: minimap::View,
-    /// The overview at half alpha, built the first time the map goes translucent.
-    minimap_faded: Option<Texture>,
+    /// The minimap's zoom (1 to 4), kept with the settings.
+    minimap_zoom: f32,
+    /// Guild members' cells on this map; party members' minimap colours by their place in the party.
+    guild_places: HashMap<u32, [i32; 2]>,
+    party_colors: Vec<Texture>,
     /// Alt+End hides the player's HP and SP bars. Monsters keep theirs.
     show_bars: bool,
     last_frame: Instant,
@@ -967,8 +971,6 @@ struct Game {
     homunculus_steering: mercenary::Steering,
     homunculus_rename: Option<String>,
     homunculus_hunger: Option<u16>,
-    /// Each party member's minimap color.
-    party_dots: HashMap<u32, Texture>,
     /// Chat rooms over their owners' heads (by owner), and where their signs were last drawn (room ID, password).
     signs: HashMap<u32, chatroom::Sign>,
     sign_rects: Vec<([f32; 4], u32, u8)>,
@@ -2348,6 +2350,7 @@ impl Game {
             || self.skill_description.as_ref().is_some_and(|window| window.contains(cursor))
             || self.level_ups.hit(cursor).is_some()
             || (self.quest_icon && quest_notice::on_icon(cursor))
+            || minimap::button_at(cursor).is_some()
             || (self.quest_window.tracker && !quest_tracker::tracked(&self.quests).is_empty() && quest_tracker::covers(cursor))
             || (asking && contains(dialog_position_of(message), message, cursor))
             || self.dialog.is_some()
@@ -5373,6 +5376,23 @@ impl App {
                     _ => {}
                 }
             }
+            // The minimap's bottom row: zoom in and out (kept with the settings), the world map.
+            // ponytail: object and view-on have nothing to do yet; mini opens the world map until there's a big minimap.
+            Scene::Game(game) if game.window_at(cursor).is_none() && minimap::button_at(cursor).is_some() => match minimap::button_at(cursor) {
+                Some(button @ ("plus" | "minus")) => {
+                    game.minimap_zoom = if button == "plus" { minimap::zoom_in(game.minimap_zoom) } else { minimap::zoom_out(game.minimap_zoom) };
+                    if let Some(path) = settings_path("minimap_zoom") {
+                        let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, game.minimap_zoom.to_string()));
+                    }
+                }
+                Some("mini") => {
+                    game.world_map = match (game.world_map.take(), &self.gpu) {
+                        (None, Some(gpu)) => worldmap::WorldMap::open(gpu, &self.grf, &self.worlds.0, self.worlds.1, &map_key(&game.map)),
+                        _ => None,
+                    };
+                }
+                _ => {}
+            },
             // The new-quest icon: the quest window.
             Scene::Game(game) if game.quest_icon && quest_notice::on_icon(cursor) && game.window_at(cursor).is_none() => {
                 game.quest_window.frame.open = true;
@@ -7227,16 +7247,8 @@ impl App {
             return true;
         }
         if fired == shortcuts::Action::Minimap {
-            let (view, map, missing) = {
-                let Scene::Game(game) = &mut self.scene else { return true };
+            if let Scene::Game(game) = &mut self.scene {
                 game.minimap_view = game.minimap_view.next();
-                (game.minimap_view, game.map.clone(), game.minimap_faded.is_none())
-            };
-            if view == minimap::View::Translucent && missing {
-                let faded = self.gpu.as_ref().and_then(|gpu| minimap::faded(gpu, &self.grf, &map));
-                if let Scene::Game(game) = &mut self.scene {
-                    game.minimap_faded = faded;
-                }
             }
             return true;
         }
@@ -8021,7 +8033,7 @@ impl App {
                 let camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
                 let camera = camera_goal.camera(world.cell_position(position.map(f32::from)));
                 let now = Instant::now();
-                let minimap = minimap::load_map(gpu, &self.grf, &map);
+                let minimap = minimap::load_map(&self.grf, &map);
                 // Until the server sends updates, the character list's values.
                 let status = HashMap::from([
                     (net::STATUS_HP, me.hp),
@@ -8045,8 +8057,14 @@ impl App {
                     camera,
                     camera_goal,
                     minimap,
-                    minimap_view: minimap::View::Shown,
-                    minimap_faded: None,
+                    minimap_crop: None,
+                    minimap_view: minimap::View::default(),
+                    minimap_zoom: settings_path("minimap_zoom")
+                        .and_then(|path| std::fs::read_to_string(path).ok())
+                        .and_then(|text| text.trim().parse::<f32>().ok())
+                        .map_or(1.0, |zoom| zoom.clamp(1.0, minimap::MOST_ZOOM)),
+                    guild_places: HashMap::new(),
+                    party_colors: Vec::new(),
                     show_bars: true,
                     last_frame: now,
                     chat: chat::Chat::default(),
@@ -8161,7 +8179,6 @@ impl App {
                     party_invite: None,
                     partner: None,
                     adopt_asked: None,
-                    party_dots: HashMap::new(),
                     friends: Vec::new(),
                     friend_asked: None,
                     expansion_asked: None,
@@ -8351,8 +8368,9 @@ impl App {
                 let indoor = self.indoor.contains(&map_key(&map));
                 game.camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
                 game.camera = game.camera_goal.camera(world.cell_position(position.map(f32::from)));
-                game.minimap = minimap::load_map(gpu, &self.grf, &map);
-                game.minimap_faded = None;
+                game.minimap = minimap::load_map(&self.grf, &map);
+                game.minimap_crop = None;
+                game.guild_places.clear();
                 game.world = world;
                 game.map = map;
                 game.units.clear();
@@ -9245,6 +9263,12 @@ impl App {
                 game.chat_line(format!("{before}{exp}{after}"), CHAT_ITEM);
             }
             MapEvent::OverweightPercent(percent) => game.overweight = percent,
+            MapEvent::GuildMemberPlace { account, cell: Some(cell) } => {
+                game.guild_places.insert(account, cell);
+            }
+            MapEvent::GuildMemberPlace { account, cell: None } => {
+                game.guild_places.remove(&account);
+            }
             MapEvent::MvpOverweight => game.chat_line(self.messages.get(MVP_OVERWEIGHT).cloned().unwrap_or_default(), CHAT_ERROR),
             MapEvent::HomunculusState { state: net::HOMUNCULUS_OWNED, id, .. } => game.homunculus_id = Some(id),
             MapEvent::HomunculusState { state: net::HOMUNCULUS_INTIMACY, value, .. } => {
@@ -12059,35 +12083,46 @@ impl App {
         game.banners.current(control::now());
         game.level_ups
             .seen(game.status_window.frame.open && !game.status_window.frame.minimized, game.skill_window.frame.open && !game.skill_window.frame.minimized);
-        let blink_on = game.entered.elapsed().as_millis() % 1000 > 500;
+        // ponytail: the marks blink together, half of each second since entering the map, not each from its own time.
+        let blink_on = minimap::blink_on(game.entered.elapsed().as_millis());
         let marks: Vec<_> = game.marks.iter().filter(|_| blink_on).map(|(_, cell, color, _)| (*cell, color)).collect();
-        // Party members on this map, each in a color of their own, picked at random.
+        // Party members on this map, coloured by their place in the party list.
+        if game.party_colors.is_empty() {
+            game.party_colors = (0..16).map(|place| gpu.solid(minimap::party_color(place))).collect();
+        }
         let here = game.map.trim_end_matches(".gat").to_owned();
         let members: Vec<_> = game
             .party
             .iter()
-            .flat_map(|party| party.members.iter())
-            .filter(|member| member.info.account != game.account_id && member.info.online && member.info.map.trim_end_matches(".gat") == here)
-            .filter_map(|member| Some((member.info.account, member.cell?)))
+            .flat_map(|party| party.members.iter().enumerate())
+            .filter(|(_, member)| member.info.account != game.account_id && member.info.online && member.info.map.trim_end_matches(".gat") == here)
+            .filter_map(|(place, member)| Some((place, member.info.account, member.cell?)))
             .collect();
-        for (account, _) in &members {
-            game.party_dots.entry(*account).or_insert_with(|| {
-                let [r, g, b, ..] = account.wrapping_mul(2_654_435_761).to_le_bytes();
-                gpu.solid([r, g, b, 255])
-            });
-        }
         // On a battleground, teammates in our camp's color.
-        let mut dots: Vec<_> = members.iter().map(|(account, cell)| (*cell, &game.party_dots[account])).collect();
+        let mut dots: Vec<_> = members.iter().map(|&(place, _, cell)| (cell, &game.party_colors[place.min(15)])).collect();
         if let Some((team_dot, _)) = &game.camp_looks {
             dots.extend(game.battle.dots.values().map(|&[x, y]| ([i32::from(x), i32::from(y)], team_dot)));
         }
+        // Guild members not in the party.
+        let in_party = |account: &u32| members.iter().any(|(_, member, _)| member == account);
+        let guild: Vec<[i32; 2]> =
+            game.guild_places.iter().filter(|(account, _)| !in_party(account) && **account != game.account_id).map(|(_, cell)| *cell).collect();
         let boss = game.boss.as_ref().map(|(_, cell)| *cell);
-        let overview = match game.minimap_view {
-            minimap::View::Hidden => None,
-            minimap::View::Translucent => game.minimap_faded.as_ref().or(game.minimap.as_ref()),
-            minimap::View::Shown => game.minimap.as_ref(),
+        // The overview's window, cut again only when the zoom, the window or the view changed.
+        let overview = match (&game.minimap, game.minimap_view) {
+            (_, minimap::View::Hidden) | (None, _) => None,
+            (Some(image), view) => {
+                let window = minimap::window(minimap::share(game.player.cell, size), game.minimap_zoom);
+                let key = minimap::crop_key(image, window, game.minimap_zoom, view);
+                if game.minimap_crop.as_ref().is_none_or(|(cut, _)| *cut != key) {
+                    let part = minimap::crop(image, window, game.minimap_zoom, view.alpha());
+                    game.minimap_crop = Some((key, gpu.texture(&part, true)));
+                }
+                game.minimap_crop.as_ref().map(|(_, texture)| texture)
+            }
         };
-        minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.player.cell, game.player.direction, &marks, &dots, boss);
+        let markers = minimap::Markers { cell: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss };
+        minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.minimap_zoom, &markers);
         // Status icons down the right, each with the clock of its time (orange in the last minute).
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
             let (_, file) = status_icon_files.get(kind)?;

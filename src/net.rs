@@ -792,6 +792,7 @@ const ZC_BROADCAST: u16 = 0x009A;
 const ZC_MAPPROPERTY_R2: u16 = 0x099B;
 const CZ_BLOCKING_PLAY_CANCEL: u16 = 0x0447;
 const ZC_NOTIFY_MAPPROPERTY2: u16 = 0x01D6;
+const ZC_NOTIFY_POSITION_TO_GUILDM: u16 = 0x01EB;
 const ZC_WEIGHT_INFO: u16 = 0x0ADE;
 const ZC_CONGRATULATION: u16 = 0x01EA;
 const ZC_COUPLENAME: u16 = 0x01E6;
@@ -2061,6 +2062,11 @@ pub enum MapEvent {
     MvpItem(u32),
     MvpExp(u32),
     MvpOverweight,
+    /// A guild member's cell on this map, for the minimap; none when they left it (ZC_NOTIFY_POSITION_TO_GUILDM).
+    GuildMemberPlace {
+        account: u32,
+        cell: Option<[i32; 2]>,
+    },
     /// The weight at which the player counts as overweight, in percent of the limit (ZC_WEIGHT_INFO).
     OverweightPercent(u32),
     /// The carried equipment a card can go into (inventory indexes).
@@ -5564,6 +5570,10 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_MVP_GETTING_ITEM => MapEvent::MvpItem(u32_at(2)),
         ZC_MVP_GETTING_SPECIAL_EXP => MapEvent::MvpExp(u32_at(2)),
         ZC_THROW_MVPITEM => MapEvent::MvpOverweight,
+        ZC_NOTIFY_POSITION_TO_GUILDM => {
+            let cell = [i32::from(u16_at(6) as i16), i32::from(u16_at(8) as i16)];
+            MapEvent::GuildMemberPlace { account: u32_at(2), cell: (cell[0] >= 0 && cell[1] >= 0).then_some(cell) }
+        }
         ZC_WEIGHT_INFO => MapEvent::OverweightPercent(u32_at(2)),
         ZC_ITEMCOMPOSITION_LIST => MapEvent::CardList(packet[4..].chunks_exact(2).map(|index| u16::from_le_bytes([index[0], index[1]])).collect()),
         // The result byte is rathena's "failure".
@@ -6678,6 +6688,11 @@ mod tests {
         let Some(MapEvent::MvpItem(6010)) = decode_map_packet(&packet(ZC_MVP_GETTING_ITEM, 6010)) else { panic!() };
         let Some(MapEvent::MvpExp(90_000)) = decode_map_packet(&packet(ZC_MVP_GETTING_SPECIAL_EXP, 90_000)) else { panic!() };
         let Some(MapEvent::MvpOverweight) = decode_map_packet(&ZC_THROW_MVPITEM.to_le_bytes()) else { panic!() };
+        assert!(matches!(
+            decode_map_packet(&[0xEB, 0x01, 1, 0, 0, 0, 156, 0, 180, 0]),
+            Some(MapEvent::GuildMemberPlace { account: 1, cell: Some([156, 180]) })
+        ));
+        assert!(matches!(decode_map_packet(&[0xEB, 0x01, 1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF]), Some(MapEvent::GuildMemberPlace { cell: None, .. })));
         assert!(matches!(decode_map_packet(&[0xDE, 0x0A, 50, 0, 0, 0]), Some(MapEvent::OverweightPercent(50))));
         assert_eq!([ZC_MVP, ZC_MVP_GETTING_ITEM, ZC_MVP_GETTING_SPECIAL_EXP, ZC_THROW_MVPITEM].map(packet_length), [Some(6), Some(6), Some(6), Some(2)]);
     }
