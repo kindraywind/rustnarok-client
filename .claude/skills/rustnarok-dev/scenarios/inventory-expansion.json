@@ -7,6 +7,8 @@
     {"say": "@itemreset"}, {"wait": 800},
     {"say": "@item 25793 2"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"key": "Alt+E"}, {"wait": 400},
+    {"move": [274, 180]}, {"wait": 150},
+    {"expect": {"state": {"cursor": "Clickable"}}},
     {"click": [11, 252]}, {"wait": 300},
     {"click_on": {"inventory_item": 25793}, "count": 2}, {"wait_for": {"packet": "0x0b15", "ms": 5000}},
     {"wait": 300}, {"move": [900, 700]},

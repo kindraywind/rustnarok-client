@@ -1499,6 +1499,58 @@ impl Game {
         })
     }
 
+    /// The frame of a window with a title bar.
+    fn titled_frame(&self, panel: Panel) -> Option<&window::Frame> {
+        Some(match panel {
+            Panel::Hotkeys | Panel::BasicInfo => return None,
+            Panel::Inventory => &self.inventory.frame,
+            Panel::Equipment => &self.equipment.frame,
+            Panel::Skills => &self.skill_window.frame,
+            Panel::Storage => &self.storage.frame,
+            Panel::Party => &self.party_window.frame,
+            Panel::Status => &self.status_window.frame,
+            Panel::Guild => &self.guild_window.frame,
+            Panel::Clan => &self.clan_window.frame,
+            Panel::Cart => &self.cart.frame,
+            Panel::Pet => &self.pet_window.frame,
+            Panel::Mercenary => &self.mercenary_window.frame,
+            Panel::MercenarySkills => &self.mercenary_skill_list.frame,
+            Panel::Homunculus => &self.homunculus_window.frame,
+            Panel::HomunculusSkills => &self.homunculus_skill_list.frame,
+        })
+    }
+
+    /// Whether the pointer is on a window's control: a title bar's close or minimize button, the equipment window's
+    /// buttons, a pick list's OK or Cancel.
+    // ponytail: tabs, scroll arrows, resize corners and the minimap aren't told apart yet.
+    fn on_control(&self, cursor: [f32; 2]) -> bool {
+        let inside = |area: [f32; 4]| contains([area[0], area[1]], [area[2], area[3]], cursor);
+        let title = self
+            .window_at(cursor)
+            .and_then(|panel| self.titled_frame(panel))
+            .and_then(|frame| frame.title_hit([cursor[0] - frame.position[0], cursor[1] - frame.position[1]]));
+        matches!(title, Some(TitleHit::Close | TitleHit::Minimize))
+            || self.equipment.button_boxes().into_iter().any(|(_, area)| inside(area))
+            || self.pick.as_ref().is_some_and(|(list, _)| list.button_boxes().into_iter().any(|(_, area)| inside(area)))
+    }
+
+    /// Whether the skill being aimed can be used on what's under the pointer: the ground for a ground skill (where it
+    /// can be walked), a unit of the kind it's for.
+    fn aim_valid(&self, cursor: [f32; 2], players_first: bool) -> bool {
+        let Some((id, _)) = self.targeting else { return false };
+        let flags = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).map_or(0, |skill| skill.kind);
+        match self.aim_target(cursor, players_first) {
+            Some(SkillTarget::Cell(cell)) => self.world.gat.walkable(cell),
+            Some(SkillTarget::Unit(unit)) if unit == self.account_id => aim_fits(flags, AimAt::Me),
+            Some(SkillTarget::Unit(unit)) => match self.units.get(&unit).map(|actor| actor.kind) {
+                Some(MONSTER) => aim_fits(flags, AimAt::Monster),
+                Some(PLAYER) => aim_fits(flags, AimAt::Player),
+                _ => false,
+            },
+            None => false,
+        }
+    }
+
     fn skill_points(&self) -> i64 {
         self.status.get(&net::STATUS_SKILL_POINT).copied().unwrap_or(0)
     }
@@ -2973,6 +3025,26 @@ fn attack_refused(weight: i64, max_weight: i64, riding: bool) -> Option<usize> {
         Some(RIDING_NO_ATTACK)
     } else {
         None
+    }
+}
+
+/// What an aimed skill could land on: the player, a monster, another player.
+#[derive(Clone, Copy)]
+enum AimAt {
+    Me,
+    Monster,
+    Player,
+}
+
+/// Whether a skill (its target flags, `net::Skill::*`) can be used on that: enemy skills on monsters (and players,
+/// where the map lets them), friend skills on players and oneself, self skills on oneself.
+// ponytail: an enemy skill counts as fitting any player; whether the map allows the hit isn't checked here.
+fn aim_fits(flags: u32, at: AimAt) -> bool {
+    let has = |flag: u32| flags & flag != 0;
+    match at {
+        AimAt::Me => has(net::Skill::SELF) || has(net::Skill::FRIEND),
+        AimAt::Monster => has(net::Skill::ENEMY),
+        AimAt::Player => has(net::Skill::FRIEND) || has(net::Skill::ENEMY),
     }
 }
 
@@ -10384,9 +10456,9 @@ impl App {
         } else if pointer.1 && game.attack.is_some_and(|attack| attack.held) {
             cursor::Kind::Attack
         } else if (game.targeting.is_some() || game.capturing) && !on_window {
-            cursor::Kind::Target
+            if game.aim_valid(pointer.0, players_first) { cursor::Kind::TargetValid } else { cursor::Kind::Target }
         } else if on_window {
-            cursor::Kind::Default
+            if game.on_control(pointer.0) { cursor::Kind::Clickable } else { cursor::Kind::Default }
         } else {
             match hovered(&game.hit_boxes, pointer.0, players_first) {
                 Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
@@ -10414,6 +10486,7 @@ impl App {
             let middle = [SCREEN[0] / 2.0, SCREEN[1] / 2.0];
             sprites.extend(slot_frame.into_iter().map(|(key, offset, size)| (sprite.texture(key), [middle[0] + offset[0], middle[1] + offset[1]], size)));
         }
+        cursor_look.press(pointer.1);
         sprites.extend(cursor_look.draw(gpu, pointer.0));
 
         game.effects.advance(gpu, now, yaw);
@@ -11092,6 +11165,14 @@ mod tests {
         assert_eq!(share_left(start, length, start), 1.0);
         assert_eq!(share_left(start, length, start + Duration::from_millis(200)), 0.75);
         assert_eq!(share_left(start, length, start + Duration::from_secs(2)), 0.0);
+    }
+
+    #[test]
+    fn tells_a_fitting_target() {
+        let (enemy, friend, me) = (net::Skill::ENEMY, net::Skill::FRIEND, net::Skill::SELF);
+        assert!(aim_fits(enemy, AimAt::Monster) && !aim_fits(enemy, AimAt::Me));
+        assert!(aim_fits(friend, AimAt::Me) && aim_fits(friend, AimAt::Player) && !aim_fits(friend, AimAt::Monster));
+        assert!(aim_fits(me, AimAt::Me) && !aim_fits(me, AimAt::Player));
     }
 
     #[test]

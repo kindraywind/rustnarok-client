@@ -773,6 +773,11 @@ impl SpriteSet {
     }
 
     /// Like `action_ms`, by the ACT's own action number.
+    /// How many frames an action (by index) has.
+    pub fn frame_count(&self, index: usize) -> Option<usize> {
+        self.layers.first()?.act.actions.get(index).map(Vec::len)
+    }
+
     pub fn index_ms(&self, index: usize) -> Option<f32> {
         let frames = self.layers[0].act.actions.get(index)?.len();
         let delay = self.layers[0].act.delays.get(index).copied().unwrap_or(4.0).max(1.0);
