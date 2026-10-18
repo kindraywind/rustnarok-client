@@ -328,8 +328,8 @@ const PARTY_ASK: usize = 88;
 const PARTY_MADE: usize = 77;
 const PARTY_INVITED: usize = 94;
 const PARTY_LEFT: usize = 84;
-const PARTY_CHAT_OURS: [u8; 3] = [200, 200, 100];
-const PARTY_CHAT: [u8; 3] = [230, 215, 200];
+const PARTY_CHAT_OURS: [u8; 3] = chat::PARTY_OURS;
+const PARTY_CHAT: [u8; 3] = chat::PARTY;
 /// "%s has acquired %s.", a member's pickup.
 const PARTY_PICKUP: usize = 1276;
 /// "Costume equipments are not visible on this map."
@@ -12062,8 +12062,9 @@ impl App {
         }
         let mut tooltip = Layer::default();
         let mut chat_layer = Layer::default();
-        let caret = game.chat_mode.chat_line_open() && (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
-        game.chat.draw(&mut chat_layer, &assets.chat, font, messages, caret);
+        let open = game.chat_mode.chat_line_open();
+        let caret = open && (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+        game.chat.draw(&mut chat_layer, &assets.chat, font, messages, open, caret);
         let size = [game.world.gat.width as u32, game.world.gat.height as u32];
         // NPC marks blink, shown half of each second.
         game.marks.retain(|(.., until)| until.is_none_or(|until| until > now));
