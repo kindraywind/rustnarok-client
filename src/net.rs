@@ -143,6 +143,59 @@ pub fn encode_member_move(account: u32, character: u32, position: u32) -> Vec<u8
     packet
 }
 
+/// A battleground's name as rathena keeps it (`name.resize(NAME_LENGTH)`): 23 bytes and a NUL in 24.
+fn queue_name_field(name: &str) -> Vec<u8> {
+    let mut field = encoding_rs::EUC_KR.encode(name).0.into_owned();
+    field.truncate(NAME_LENGTH - 1);
+    field.resize(NAME_LENGTH, 0);
+    field
+}
+
+/// The name as rathena's replies carry it, to match them against the list.
+pub fn queue_name(name: &str) -> String {
+    c_string(&queue_name_field(name))
+}
+
+/// CZ_REQ_ENTRY_QUEUE_APPLY: how, and the battleground.
+pub fn encode_queue_apply(kind: u16, name: &str) -> Vec<u8> {
+    let mut packet = CZ_REQ_ENTRY_QUEUE_APPLY.to_le_bytes().to_vec();
+    packet.extend_from_slice(&kind.to_le_bytes());
+    packet.extend_from_slice(&queue_name_field(name));
+    packet
+}
+
+/// CZ_REQ_ENTRY_QUEUE_CANCEL and CZ_REQ_ENTRY_QUEUE_RANKING: the battleground's name.
+fn encode_queue_name(command: u16, name: &str) -> Vec<u8> {
+    let mut packet = command.to_le_bytes().to_vec();
+    packet.extend_from_slice(&queue_name_field(name));
+    packet
+}
+
+/// CZ_REPLY_LOBBY_ADMISSION: 1 enters, 2 declines; the names (rathena reads only the answer).
+pub fn encode_lobby_reply(accept: bool, name: &str) -> Vec<u8> {
+    let mut packet = CZ_REPLY_LOBBY_ADMISSION.to_le_bytes().to_vec();
+    packet.push(if accept { 1 } else { 2 });
+    packet.extend_from_slice(&queue_name_field(name));
+    packet.extend_from_slice(&queue_name_field(name));
+    packet
+}
+
+/// CZ_REQ_JOIN_BABY: the player to adopt.
+pub fn encode_adopt_request(account: u32) -> Vec<u8> {
+    let mut packet = CZ_REQ_JOIN_BABY.to_le_bytes().to_vec();
+    packet.extend_from_slice(&account.to_le_bytes());
+    packet
+}
+
+/// CZ_JOIN_BABY: the parents' accounts as ZC_REQ_BABY gave them, and 1 yes or 0 no.
+pub fn encode_adopt_answer(parent: u32, partner: u32, accept: bool) -> Vec<u8> {
+    let mut packet = CZ_JOIN_BABY.to_le_bytes().to_vec();
+    for value in [parent, partner, u32::from(accept)] {
+        packet.extend_from_slice(&value.to_le_bytes());
+    }
+    packet
+}
+
 /// CZ_BATTLEFIELD_CHAT: the line as the guild chat writes it, "Name : message" and a NUL.
 pub fn encode_battle_chat(name: &str, message: &str) -> Vec<u8> {
     let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
@@ -734,12 +787,33 @@ const ZC_BROADCAST: u16 = 0x009A;
 const ZC_MAPPROPERTY_R2: u16 = 0x099B;
 const CZ_BLOCKING_PLAY_CANCEL: u16 = 0x0447;
 const ZC_NOTIFY_MAPPROPERTY2: u16 = 0x01D6;
+const ZC_CONGRATULATION: u16 = 0x01EA;
+const ZC_COUPLENAME: u16 = 0x01E6;
+const ZC_DIVORCE: u16 = 0x0205;
+const ZC_REQ_BABY: u16 = 0x01F6;
+const ZC_BABYMSG: u16 = 0x0216;
+const CZ_REQ_JOIN_BABY: u16 = 0x01F9;
+const CZ_JOIN_BABY: u16 = 0x01F7;
 const ZC_BATTLEFIELD_NOTIFY_HP2: u16 = 0x0A0E;
 const ZC_BATTLEFIELD_NOTIFY_POSITION: u16 = 0x02DF;
 const ZC_BATTLEFIELD_NOTIFY_CAMPINFO: u16 = 0x02DD;
 const ZC_BATTLEFIELD_NOTIFY_POINT: u16 = 0x02DE;
 const ZC_BATTLEFIELD_CHAT: u16 = 0x02DC;
 const CZ_BATTLEFIELD_CHAT: u16 = 0x02DB;
+const CZ_REQ_ENTRY_QUEUE_APPLY: u16 = 0x08D7;
+const ZC_ACK_ENTRY_QUEUE_APPLY: u16 = 0x08D8;
+const ZC_NOTIFY_ENTRY_QUEUE_APPLY: u16 = 0x08D9;
+const CZ_REQ_ENTRY_QUEUE_CANCEL: u16 = 0x08DA;
+const ZC_ACK_ENTRY_QUEUE_CANCEL: u16 = 0x08DB;
+const ZC_NOTIFY_LOBBY_ADMISSION: u16 = 0x08DF;
+const CZ_REPLY_LOBBY_ADMISSION: u16 = 0x08E0;
+const ZC_REPLY_ACK_LOBBY_ADMISSION: u16 = 0x08E1;
+const CZ_REQ_ENTRY_QUEUE_RANKING: u16 = 0x090A;
+const ZC_ENTRY_QUEUE_INIT: u16 = 0x090E;
+/// How one applies to a battleground's queue: alone, as a party, as a guild.
+pub const QUEUE_ALONE: u16 = 1;
+pub const QUEUE_PARTY: u16 = 2;
+pub const QUEUE_GUILD: u16 = 4;
 const ZC_DRESSROOM_OPEN: u16 = 0x0A02;
 const CZ_REQ_RANKING: u16 = 0x097C;
 const ZC_UPDATE_RANKING_POINT: u16 = 0x097E;
@@ -1223,6 +1297,7 @@ pub struct Unit {
     pub head_direction: u16,
     pub sex: u8,
     pub position: [u16; 2],
+    /// A sprite direction (`sprite_direction`).
     pub direction: u8,
     pub level: u16,
     pub name: String,
@@ -1554,7 +1629,7 @@ pub enum MapEvent {
         target: u32,
         on: bool,
     },
-    /// A unit turned its body or (players) its head.
+    /// A unit turned its body (a sprite direction) or (players) its head.
     Turn {
         id: u32,
         direction: u8,
@@ -1874,6 +1949,20 @@ pub enum MapEvent {
     },
     /// The map's type (rathena's `e_map_type`; it only sends 19, a battleground).
     MapType(u16),
+    /// The wedding effect on a unit (ZC_CONGRATULATION).
+    Congratulation(u32),
+    /// Someone nearby called their partner: the partner's name, empty when offline (ZC_COUPLENAME).
+    PartnerName(String),
+    /// Divorced from this partner (ZC_DIVORCE).
+    Divorced(String),
+    /// A parent (account) asks, with their partner (account), to adopt the player (ZC_REQ_BABY).
+    AdoptAsked {
+        parent: u32,
+        partner: u32,
+        name: String,
+    },
+    /// Asking to adopt, refused (ZC_BABYMSG): 0 a child already, 1 under level 70, 2 the one asked is married.
+    AdoptRefused(u32),
     /// A teammate's HP on a battleground (ZC_BATTLEFIELD_NOTIFY_HP2).
     BattleHp {
         account: u32,
@@ -1890,6 +1979,32 @@ pub enum MapEvent {
         account: u32,
         camp: u16,
     },
+    /// Applying to a battleground's queue, answered (ZC_ACK_ENTRY_QUEUE_APPLY): rathena's `e_bg_queue_apply_ack`.
+    BattleQueue {
+        result: u8,
+        name: String,
+    },
+    /// How many are queued for it (ZC_NOTIFY_ENTRY_QUEUE_APPLY).
+    QueueNumber {
+        name: String,
+        number: u32,
+    },
+    /// Leaving the queue, answered (ZC_ACK_ENTRY_QUEUE_CANCEL): 1 left, 0 wasn't in it.
+    QueueLeft {
+        result: u8,
+        name: String,
+    },
+    /// Both teams are full: enter? (ZC_NOTIFY_LOBBY_ADMISSION)
+    QueueReady {
+        name: String,
+    },
+    /// Entering, answered (ZC_REPLY_ACK_LOBBY_ADMISSION).
+    QueueAccepted {
+        result: u8,
+        name: String,
+    },
+    /// Forget the queue: declined, expired, or gone in (ZC_ENTRY_QUEUE_INIT).
+    QueueReset,
     /// Camp A's points and camp B's (ZC_BATTLEFIELD_NOTIFY_POINT).
     BattleScore([u16; 2]),
     /// A line of the team's chat, whole ("Name : hello"), and who said it (account 0: the server).
@@ -4006,6 +4121,35 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Applies to a battleground's queue (`QUEUE_ALONE`, `QUEUE_PARTY`, `QUEUE_GUILD`).
+    pub fn apply_to_queue(&mut self, kind: u16, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_queue_apply(kind, name))
+    }
+
+    pub fn leave_queue(&mut self, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_queue_name(CZ_REQ_ENTRY_QUEUE_CANCEL, name))
+    }
+
+    /// How many are queued for it (answered with ZC_NOTIFY_ENTRY_QUEUE_APPLY).
+    pub fn ask_queue_number(&mut self, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_queue_name(CZ_REQ_ENTRY_QUEUE_RANKING, name))
+    }
+
+    /// Enters the battle, or not.
+    pub fn answer_lobby(&mut self, accept: bool, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_lobby_reply(accept, name))
+    }
+
+    /// Asks a party member (account) to be adopted by the player and their partner.
+    pub fn ask_adoption(&mut self, account: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_adopt_request(account))
+    }
+
+    /// Answers a request to be adopted, with the two accounts it gave.
+    pub fn answer_adoption(&mut self, parent: u32, partner: u32, accept: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_adopt_answer(parent, partner, accept))
+    }
+
     /// Says something to the battleground team.
     pub fn battle_chat(&mut self, name: &str, message: &str) -> io::Result<()> {
         self.stream.write_all(&encode_battle_chat(name, message))
@@ -4915,9 +5059,21 @@ pub fn encode_position([x, y]: [u16; 2], direction: u8) -> [u8; 3] {
     [(x >> 2) as u8, ((x << 6) | ((y >> 4) & 0x3F)) as u8, ((y << 4) | u16::from(direction & 0x0F)) as u8]
 }
 
+/// A server direction (0 north, counter-clockwise: 2 west, 4 south) as a sprite direction (0 facing the camera,
+/// clockwise: 2 west, 4 away). The same sum turns a sprite direction back into a server one.
+pub fn sprite_direction(direction: u8) -> u8 {
+    4u8.wrapping_sub(direction) & 7
+}
+
 pub fn decode_position(bytes: &[u8]) -> ([u16; 2], u8) {
     let [a, b, c] = [bytes[0], bytes[1], bytes[2]].map(u16::from);
     ([(a << 2) | (b >> 6), ((b & 0x3F) << 4) | (c >> 4)], (c & 0x0F) as u8)
+}
+
+/// A standing unit's cell and its sprite direction.
+fn decode_entry_position(bytes: &[u8]) -> ([u16; 2], u8) {
+    let (position, direction) = decode_position(bytes);
+    (position, sprite_direction(direction))
 }
 
 /// Packed walk (6 bytes): start and destination cells, as rathena's WBUFPOS2.
@@ -4994,10 +5150,10 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
     Some(match u16_at(0) {
         ZC_ACCEPT_ENTER => {
             let (position, direction) = decode_position(&packet[6..9]);
-            MapEvent::Entered { position, direction }
+            MapEvent::Entered { position, direction: sprite_direction(direction) }
         }
-        ZC_NOTIFY_STANDENTRY => MapEvent::Unit(decode_unit(packet, &STAND_LAYOUT, decode_position(&packet[63..66]))),
-        ZC_NOTIFY_NEWENTRY => MapEvent::Unit(decode_unit(packet, &NEW_LAYOUT, decode_position(&packet[63..66]))),
+        ZC_NOTIFY_STANDENTRY => MapEvent::Unit(decode_unit(packet, &STAND_LAYOUT, decode_entry_position(&packet[63..66]))),
+        ZC_NOTIFY_NEWENTRY => MapEvent::Unit(decode_unit(packet, &NEW_LAYOUT, decode_entry_position(&packet[63..66]))),
         ZC_NOTIFY_MOVEENTRY => {
             let (from, to) = decode_move(&packet[67..73]);
             MapEvent::UnitWalk { unit: decode_unit(packet, &MOVE_LAYOUT, (from, 0)), to, start_time: u32_at(37) }
@@ -5011,7 +5167,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_HIGHJUMP | ZC_FASTMOVE => MapEvent::Slide { id: u32_at(2), position: [u16_at(6), u16_at(8)] },
         ZC_COMBODELAY => MapEvent::ComboWindow { id: u32_at(2), ms: u32_at(6) },
         ZC_BLADESTOP => MapEvent::BladeStop { source: u32_at(2), target: u32_at(6), on: u32_at(10) != 0 },
-        ZC_CHANGE_DIRECTION => MapEvent::Turn { id: u32_at(2), direction: packet[8], head_direction: u16_at(6) },
+        ZC_CHANGE_DIRECTION => MapEvent::Turn { id: u32_at(2), direction: sprite_direction(packet[8]), head_direction: u16_at(6) },
         ZC_NOTIFY_CHAT => MapEvent::Chat { id: Some(u32_at(4)), message: c_string(&packet[8..]), color: None },
         ZC_NOTIFY_PLAYERCHAT => MapEvent::Chat { id: None, message: c_string(&packet[4..]), color: None },
         // The color is 0xBBGGRR, little-endian.
@@ -5254,6 +5410,11 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // "blue" (and "ssss" for the War of Emperium) at the start are color hints, not words.
         ZC_MAPPROPERTY_R2 => MapEvent::MapProperty { property: u16_at(2), flags: u32_at(4) },
         ZC_NOTIFY_MAPPROPERTY2 => MapEvent::MapType(u16_at(2)),
+        ZC_CONGRATULATION => MapEvent::Congratulation(u32_at(2)),
+        ZC_COUPLENAME => MapEvent::PartnerName(c_string(&packet[2..26])),
+        ZC_DIVORCE => MapEvent::Divorced(c_string(&packet[2..26])),
+        ZC_REQ_BABY => MapEvent::AdoptAsked { parent: u32_at(2), partner: u32_at(6), name: c_string(&packet[10..34]) },
+        ZC_BABYMSG => MapEvent::AdoptRefused(u32_at(2)),
         ZC_BATTLEFIELD_NOTIFY_HP2 => MapEvent::BattleHp { account: u32_at(2), hp: u32_at(6) as i32, max: u32_at(10) as i32 },
         // Someone leaving comes with x = y = 0xFFFF.
         ZC_BATTLEFIELD_NOTIFY_POSITION => {
@@ -5262,6 +5423,12 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         ZC_BATTLEFIELD_NOTIFY_CAMPINFO => MapEvent::BattleCamp { account: u32_at(2), camp: u16_at(30) },
         ZC_BATTLEFIELD_NOTIFY_POINT => MapEvent::BattleScore([u16_at(2), u16_at(4)]),
+        ZC_ACK_ENTRY_QUEUE_APPLY => MapEvent::BattleQueue { result: packet[2], name: c_string(&packet[3..27]) },
+        ZC_NOTIFY_ENTRY_QUEUE_APPLY => MapEvent::QueueNumber { name: c_string(&packet[2..26]), number: u32_at(26) },
+        ZC_ACK_ENTRY_QUEUE_CANCEL => MapEvent::QueueLeft { result: packet[2], name: c_string(&packet[3..27]) },
+        ZC_NOTIFY_LOBBY_ADMISSION => MapEvent::QueueReady { name: c_string(&packet[2..26]) },
+        ZC_REPLY_ACK_LOBBY_ADMISSION => MapEvent::QueueAccepted { result: packet[2], name: c_string(&packet[3..27]) },
+        ZC_ENTRY_QUEUE_INIT => MapEvent::QueueReset,
         ZC_BATTLEFIELD_CHAT => MapEvent::BattleChat { account: u32_at(4), text: c_string(packet.get(32..).unwrap_or_default()) },
         // The view at 2 rathena always sends 0 and calls ignored.
         ZC_DRESSROOM_OPEN => MapEvent::DressRoom,
@@ -6105,6 +6272,15 @@ mod tests {
         renamed.extend_from_slice(&4u32.to_le_bytes());
         assert!(matches!(decode_char_packet(&renamed), Some(CharEvent::Renamed(4))));
         assert_eq!(packet_length(HC_ACK_CHANGE_CHARNAME), Some(6));
+    }
+
+    #[test]
+    fn turns_server_directions_into_sprite_directions() {
+        // North shows the back, west and east stay, south faces the camera.
+        assert_eq!((0..8).map(sprite_direction).collect::<Vec<_>>(), [4, 3, 2, 1, 0, 7, 6, 5]);
+        assert!((0..8).all(|direction| sprite_direction(sprite_direction(direction)) == direction));
+        // A standing unit's entry packet carries rathena's direction; the unit faces the sprite's way.
+        assert_eq!(decode_entry_position(&encode_position([156, 191], 4)), ([156, 191], 0));
     }
 
     #[test]
@@ -7584,6 +7760,76 @@ mod tests {
         assert_eq!(&request[..20], &[0x61, 0x01, 44, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0]);
         assert_eq!(&request[20..], &name_field("Officer")[..]);
         assert_eq!(encode_member_move(7, 8, 19), [0x55, 0x01, 16, 0, 7, 0, 0, 0, 8, 0, 0, 0, 19, 0, 0, 0]);
+    }
+
+    #[test]
+    fn decodes_the_battleground_queue() {
+        let named = |command: u16, result: Option<u8>, name: &str, tail: &[u8]| {
+            let mut packet = command.to_le_bytes().to_vec();
+            packet.extend(result);
+            packet.extend_from_slice(&name_field(name));
+            packet.extend_from_slice(tail);
+            packet
+        };
+        let kvm = "KVM (Level 80 and up)";
+        assert!(
+            matches!(decode_map_packet(&named(ZC_ACK_ENTRY_QUEUE_APPLY, Some(1), kvm, &[])), Some(MapEvent::BattleQueue { result: 1, name }) if name == kvm)
+        );
+        assert!(matches!(
+            decode_map_packet(&named(ZC_NOTIFY_ENTRY_QUEUE_APPLY, None, kvm, &3u32.to_le_bytes())),
+            Some(MapEvent::QueueNumber { name, number: 3 }) if name == kvm
+        ));
+        assert!(matches!(decode_map_packet(&named(ZC_ACK_ENTRY_QUEUE_CANCEL, Some(1), kvm, &[])), Some(MapEvent::QueueLeft { result: 1, .. })));
+        assert!(
+            matches!(decode_map_packet(&named(ZC_NOTIFY_LOBBY_ADMISSION, None, kvm, &name_field(kvm))), Some(MapEvent::QueueReady { name }) if name == kvm)
+        );
+        assert!(matches!(
+            decode_map_packet(&named(ZC_REPLY_ACK_LOBBY_ADMISSION, Some(1), "bat_c01", &name_field("bat_c01"))),
+            Some(MapEvent::QueueAccepted { result: 1, name }) if name == "bat_c01"
+        ));
+        assert!(matches!(decode_map_packet(&[0x0E, 0x09]), Some(MapEvent::QueueReset)));
+        for (command, length) in
+            [(ZC_ACK_ENTRY_QUEUE_APPLY, 27), (ZC_NOTIFY_ENTRY_QUEUE_APPLY, 30), (ZC_NOTIFY_LOBBY_ADMISSION, 50), (ZC_REPLY_ACK_LOBBY_ADMISSION, 51)]
+        {
+            assert_eq!(packet_length(command), Some(length));
+        }
+
+        // A 24-character name keeps 23 bytes and a NUL, as rathena cuts it.
+        let apply = encode_queue_apply(QUEUE_ALONE, "KVM (Level 59 and below)");
+        assert_eq!((apply.len(), &apply[..4]), (28, &[0xD7, 0x08, 1, 0][..]));
+        assert_eq!(&apply[4..], &name_field("KVM (Level 59 and below")[..]);
+        assert_eq!(queue_name("KVM (Level 59 and below)"), "KVM (Level 59 and below");
+        assert_eq!(encode_queue_name(CZ_REQ_ENTRY_QUEUE_CANCEL, kvm)[..2], [0xDA, 0x08]);
+        assert_eq!(encode_queue_name(CZ_REQ_ENTRY_QUEUE_RANKING, kvm).len(), 26);
+        let reply = encode_lobby_reply(false, kvm);
+        assert_eq!((reply.len(), reply[2]), (51, 2));
+    }
+
+    #[test]
+    fn decodes_marriage_and_adoption() {
+        assert!(matches!(decode_map_packet(&[0xEA, 0x01, 0x81, 0x84, 0x1E, 0x00]), Some(MapEvent::Congratulation(2_000_001))));
+        let named = |command: u16, name: &str| {
+            let mut packet = command.to_le_bytes().to_vec();
+            packet.extend_from_slice(&name_field(name));
+            packet
+        };
+        assert!(matches!(decode_map_packet(&named(ZC_COUPLENAME, "LaneA2")), Some(MapEvent::PartnerName(name)) if name == "LaneA2"));
+        assert!(matches!(decode_map_packet(&named(ZC_COUPLENAME, "")), Some(MapEvent::PartnerName(name)) if name.is_empty()));
+        assert!(matches!(decode_map_packet(&named(ZC_DIVORCE, "LaneA2")), Some(MapEvent::Divorced(name)) if name == "LaneA2"));
+        let mut asked = ZC_REQ_BABY.to_le_bytes().to_vec();
+        asked.extend_from_slice(&2_000_003u32.to_le_bytes());
+        asked.extend_from_slice(&2_000_004u32.to_le_bytes());
+        asked.extend_from_slice(&name_field("LaneA1"));
+        assert!(matches!(
+            decode_map_packet(&asked),
+            Some(MapEvent::AdoptAsked { parent: 2_000_003, partner: 2_000_004, name }) if name == "LaneA1"
+        ));
+        assert!(matches!(decode_map_packet(&[0x16, 0x02, 1, 0, 0, 0]), Some(MapEvent::AdoptRefused(1))));
+        assert_eq!(packet_length(ZC_BABYMSG), Some(6));
+
+        assert_eq!(encode_adopt_request(2_000_000), [0xF9, 0x01, 0x80, 0x84, 0x1E, 0x00]);
+        assert_eq!(encode_adopt_answer(7, 8, true), [0xF7, 0x01, 7, 0, 0, 0, 8, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(encode_adopt_answer(7, 8, false)[10..], [0, 0, 0, 0]);
     }
 
     #[test]

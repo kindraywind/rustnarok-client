@@ -1,0 +1,206 @@
+{
+  "about": "Marriage (issue #104): @marry weds the first (a GM) and the second: both see the wedding effect (ZC_CONGRATULATION) and get a Wedding Ring (2634, the test characters are men). Wearing the ring brings its skills, which show in the skill window's last tab (Etc); I Miss You (336) used from there names the partner (ZC_COUPLENAME). @divorce prints the line on both and forgets the partner; rathena takes the rings. The scenario reset clears partner_id, any ring and achievement 220006 in case a run stops halfway.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@divorce"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "say": "@marry {second}"
+    },
+    {
+      "wait_for": {
+        "packet": "0x01ea",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x01ea",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "They are married",
+        "inventory_has": [
+          {
+            "id": 2634
+          }
+        ]
+      }
+    },
+    {
+      "as": "second",
+      "expect": {
+        "inventory_has": [
+          {
+            "id": 2634
+          }
+        ]
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "wedding"
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "tab:equip"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "inventory_item": 2634
+      },
+      "count": 2
+    },
+    {
+      "wait_for": {
+        "packet": "0x010f",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "skill_tab:65535"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "wedding-skills"
+    },
+    {
+      "click_on": {
+        "skill": 336
+      },
+      "count": 2
+    },
+    {
+      "wait_for": {
+        "packet": "0x01e6",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "partner": "{second}"
+        }
+      }
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@divorce"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0205",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x0205",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "have divorced from each other",
+        "state": {
+          "partner": null
+        }
+      }
+    },
+    {
+      "as": "second",
+      "expect": {
+        "chat": "have divorced from each other",
+        "state": {
+          "partner": null
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "divorce"
+    }
+  ]
+}

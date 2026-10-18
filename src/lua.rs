@@ -67,6 +67,59 @@ const WORLD_VIEW: [&str; 4] = [
     "data\\luafiles514\\lua files\\worldviewdata\\worldviewdata_table.lub",
 ];
 
+/// The battlegrounds the queue window lists (`EntryQueueList`); a translation's copy in the data folder has rathena's
+/// names.
+const ENTRY_QUEUE: &str = "data\\luafiles514\\lua files\\entryqueue\\entryqueuelist.lub";
+
+/// A battleground the queue window lists.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Battleground {
+    /// Sent to the server; rathena's `Name` in battleground_db.
+    pub name: String,
+    pub display: String,
+    /// Team sizes: ours and theirs.
+    pub sizes: [u16; 2],
+    /// Applying alone, as a party, as a guild.
+    pub applies: [bool; 3],
+    /// Who may enter: 1 up to a level, 2 from a level, 3 a range; the levels.
+    pub condition: (u8, [u32; 2]),
+    /// What a win, a draw and a loss bring.
+    pub rewards: [String; 3],
+    pub goal: String,
+    /// Its picture (battle_field\bat_a01.bmp).
+    pub picture: String,
+}
+
+pub fn entry_queue(grf: &Grf) -> io::Result<Vec<Battleground>> {
+    battlegrounds(&run(grf, &[ENTRY_QUEUE])?)
+}
+
+/// `EntryQueueList` in order.
+fn battlegrounds(lua: &Lua) -> io::Result<Vec<Battleground>> {
+    let list: mlua::Table = lua.globals().get("EntryQueueList").map_err(lua_error)?;
+    let mut entries: Vec<(i64, Battleground)> = Vec::new();
+    for pair in list.pairs::<i64, mlua::Table>() {
+        let (index, entry) = pair.map_err(lua_error)?;
+        let text = |key: &str| entry.get::<mlua::String>(key).map(|text| decode(&text)).unwrap_or_default();
+        let number = |key: &str| entry.get::<u32>(key).unwrap_or(0);
+        entries.push((
+            index,
+            Battleground {
+                name: text("BattleFieldName"),
+                display: text("DisplayBattleFieldName"),
+                sizes: [number("AllianceNum") as u16, number("EnemyNum") as u16],
+                applies: [number("PrivateApply") == 1, number("PartyApply") == 1, number("GuildApply") == 1],
+                condition: (number("EnterCondType") as u8, [number("EnterCondValue1"), number("EnterCondValue2")]),
+                rewards: [text("RewardWin"), text("RewardDraw"), text("RewardLose")],
+                goal: text("VictoryCond"),
+                picture: text("MiniMapFile"),
+            },
+        ));
+    }
+    entries.sort_by_key(|(index, _)| *index);
+    Ok(entries.into_iter().map(|(_, battleground)| battleground).collect())
+}
+
 /// Runs client Lua files in order; precompiled ones are converted from the client's 32-bit bytecode first.
 fn run(grf: &Grf, files: &[&str]) -> io::Result<Lua> {
     let lua = new_lua()?;
@@ -1219,9 +1272,92 @@ fn read_reform(entry: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> Option<Ref
     })
 }
 
+/// `data\luafiles514\lua files\hotkey_v2.lub`: the game's shortcut defaults.
+const HOTKEY_V2: &str = "data\\luafiles514\\lua files\\hotkey_v2.lub";
+
+/// One row of `HOTKEY_<n>` or `USERKEY_<n>`: the action name and the virtual-key codes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HotkeyRow {
+    /// 1 hotbar, 2 interface, 3 macros and flags, 4 the second hotbar.
+    pub table: u8,
+    pub index: u16,
+    pub exe: String,
+    /// Missing, or 0, when the row is unbound.
+    pub key1: Option<u16>,
+    pub key2: u16,
+    /// A row from `USERKEY_<n>`, which replaces the default at the same table and index.
+    pub user: bool,
+}
+
+/// The shortcut tables in `grf`'s hotkey_v2.lub.
+pub fn hotkey_defaults(grf: &Grf) -> io::Result<Vec<HotkeyRow>> {
+    hotkey_bytes(&grf.read(HOTKEY_V2)?)
+}
+
+/// Shortcut rows from a Lua source in the same shape as hotkey_v2.lub or UserKeys.lua.
+pub fn hotkey_rows(source: &str) -> io::Result<Vec<HotkeyRow>> {
+    hotkey_bytes(source.as_bytes())
+}
+
+/// `MsgStrID.MSI_HK_…` in older tables is the name itself, so a missing message table still yields the EXE string.
+const MSGSTRID: &str = "MsgStrID = setmetatable({}, { __index = function(_, name) return name end })";
+
+fn hotkey_bytes(bytes: &[u8]) -> io::Result<Vec<HotkeyRow>> {
+    let lua = new_lua()?;
+    lua.load(MSGSTRID).exec().map_err(lua_error)?;
+    exec_bytes(&lua, HOTKEY_V2, bytes.to_vec())?;
+    let mut rows = Vec::new();
+    for table in 1..=4 {
+        rows.extend(hotkey_table(&lua, &format!("HOTKEY_{table}"), table, false)?);
+        rows.extend(hotkey_table(&lua, &format!("USERKEY_{table}"), table, true)?);
+    }
+    Ok(rows)
+}
+
+fn hotkey_table(lua: &Lua, name: &str, table: u8, user: bool) -> io::Result<Vec<HotkeyRow>> {
+    let Ok(entries) = lua.globals().get::<mlua::Table>(name) else { return Ok(Vec::new()) };
+    let mut rows = Vec::new();
+    for pair in entries.pairs::<mlua::Value, mlua::Value>() {
+        let (key, value) = pair.map_err(lua_error)?;
+        let (Some(index), mlua::Value::Table(entry)) = (number(&key).and_then(|index| u16::try_from(index).ok()), value) else { continue };
+        let Some(exe) = entry.get::<mlua::String>("EXE").ok().map(|text| decode(&text)).filter(|exe| !exe.is_empty() && exe != "NULL") else {
+            continue;
+        };
+        // ponytail: KEY1 0 is unbound, the same as leaving it out (the save file omits a 0).
+        let key1 = field_number(&entry, "KEY1").and_then(|code| u16::try_from(code).ok()).filter(|code| *code > 0);
+        let key2 = field_number(&entry, "KEY2").and_then(|code| u16::try_from(code).ok()).unwrap_or(0);
+        rows.push(HotkeyRow { table, index, exe, key1, key2, user });
+    }
+    rows.sort_by_key(|row| row.index);
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
+
+    #[test]
+    fn reads_the_battleground_list() {
+        let lua = super::new_lua().unwrap();
+        lua.load(
+            r#"EntryQueueList = {
+                [2] = { BattleFieldName = "KVM (Level 80 and up)", DisplayBattleFieldName = "KVM", AllianceNum = 5, EnemyNum = 5,
+                    PrivateApply = 1, PartyApply = 1, GuildApply = 0, EnterCondType = 2, EnterCondValue1 = 80, EnterCondValue2 = 0,
+                    RewardWin = "5 Badges", RewardDraw = "2", RewardLose = "1", VictoryCond = "More kills", MiniMapFile = "bat_c01.bmp" },
+                [1] = { BattleFieldName = "Tierra Gorge", AllianceNum = 6, EnemyNum = 6, EnterCondType = 3, EnterCondValue1 = 60,
+                    EnterCondValue2 = 79 },
+            }
+            function ReadEntryQueueList() for k, v in pairs(EntryQueueList) do AddEntryQueue(k, v) end end"#,
+        )
+        .exec()
+        .unwrap();
+        let list = super::battlegrounds(&lua).unwrap();
+        assert_eq!(list.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(), ["Tierra Gorge", "KVM (Level 80 and up)"]);
+        let kvm = &list[1];
+        assert_eq!((kvm.sizes, kvm.applies, kvm.condition), ([5, 5], [true, true, false], (2, [80, 0])));
+        assert_eq!((kvm.rewards[0].as_str(), kvm.goal.as_str(), kvm.picture.as_str()), ("5 Badges", "More kills", "bat_c01.bmp"));
+        assert_eq!(list[0].condition, (3, [60, 79]));
+    }
 
     #[test]
     fn finds_the_achievement_table_under_either_name() {

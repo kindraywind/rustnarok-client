@@ -189,6 +189,8 @@ impl ShortcutSettings {
         }
     }
 
+    /// Which hotbar slot `key` presses. The window's tests use this; the shortcut layer fires the keys itself.
+    #[allow(dead_code)]
     pub fn slot_for(&self, key: ShortcutKey) -> Option<usize> {
         self.slots.iter().position(|binding| *binding == Some(key))
     }

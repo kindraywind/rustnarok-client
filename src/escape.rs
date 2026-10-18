@@ -104,6 +104,12 @@ pub enum WindowId {
     FriendAsked,
     TradeAsked,
     DealChoice,
+    /// The battleground list.
+    BattleQueue,
+    /// Asked to adopt a baby.
+    AdoptAsked,
+    /// A queue question: applying, leaving, or the battle lobby.
+    QueueAsked,
 }
 
 impl WindowId {
@@ -182,6 +188,9 @@ impl WindowId {
             Self::FriendAsked => "FriendAsked",
             Self::TradeAsked => "TradeAsked",
             Self::DealChoice => "DealChoice",
+            Self::BattleQueue => "BattleQueue",
+            Self::AdoptAsked => "AdoptAsked",
+            Self::QueueAsked => "QueueAsked",
         }
     }
 }

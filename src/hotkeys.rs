@@ -55,13 +55,15 @@ pub struct Hotkeys {
     pub keys: Vec<Option<Hotkey>>,
     /// How many rows show.
     rows: usize,
+    /// Which row is drawn first. Ctrl+F12 walks this.
+    first: usize,
 }
 
 impl Default for Hotkeys {
     fn default() -> Self {
         let mut frame = Frame::new(DEFAULT_POSITION, WIDTH);
         frame.open = true;
-        Self { frame, keys: vec![None; ROWS * PER_ROW], rows: 1 }
+        Self { frame, keys: vec![None; ROWS * PER_ROW], rows: 1, first: 0 }
     }
 }
 
@@ -79,7 +81,18 @@ impl Hotkeys {
         if contains([WIDTH - 14.0, self.height() - 14.0], [13.0, 13.0], local) {
             return Some(Hit::Resize);
         }
-        Some((0..self.rows * PER_ROW).find(|&slot| contains(slot_corner(slot), SLOT, local)).map_or(Hit::Window, Hit::Slot))
+        Some((0..self.rows * PER_ROW).find(|&slot| contains(slot_corner(slot), SLOT, local)).map(|slot| Hit::Slot(self.key_index(slot))).unwrap_or(Hit::Window))
+    }
+
+    /// Ctrl+F12: the next row of the four is the one drawn first.
+    pub fn rotate(&mut self) {
+        self.first = (self.first + 1) % ROWS;
+    }
+
+    /// The key index under a visible slot, once `first` has rotated the rows.
+    fn key_index(&self, visible: usize) -> usize {
+        let row = (self.first + visible / PER_ROW) % ROWS;
+        row * PER_ROW + visible % PER_ROW
     }
 
     pub fn click(&mut self, hit: Hit) {
@@ -111,15 +124,16 @@ impl Hotkeys {
         for row in 0..self.rows {
             let top = row as f32 * ROW_HEIGHT;
             layer.sprites.push((&assets.background, self.frame.at([0.0, top]), assets.background.size));
-            let number = (row + 1).to_string();
+            let number = ((self.first + row) % ROWS + 1).to_string();
             layer.texts.push((number, self.frame.at([ROW_NUMBER[0], top + ROW_NUMBER[1] - 4.0]), [0, 0, 0]));
         }
         layer.sprites.push((&assets.close, self.frame.at(CLOSE), assets.close.size));
         layer.sprites.push((&assets.resize, self.frame.at([WIDTH - 14.0, self.height() - 14.0]), assets.resize.size));
-        for (slot, key) in self.keys.iter().enumerate().take(self.rows * PER_ROW) {
-            let corner = self.frame.at(slot_corner(slot));
+        for visible in 0..self.rows * PER_ROW {
+            let key = self.keys.get(self.key_index(visible)).and_then(|key| *key);
+            let corner = self.frame.at(slot_corner(visible));
             // A skill: its icon, the name on hover.
-            if let Some(Hotkey { skill: true, id, count }) = key
+            if let Some(Hotkey { skill: true, id, count }) = key.as_ref()
                 && let Some(info) = u16::try_from(*id).ok().and_then(|id| skills.get(&id))
             {
                 if let Some(Some(icon)) = icons.get(&crate::skills::icon_path(info)) {
@@ -137,12 +151,12 @@ impl Hotkeys {
                 continue;
             }
             let Some(Hotkey { skill: false, id, .. }) = key else { continue };
-            let Some(info) = items.get(id) else { continue };
+            let Some(info) = items.get(&id) else { continue };
             if let Some(Some(icon)) = icons.get(&inventory::icon_path(info, true)) {
                 layer.sprites.push((icon, corner, icon.size));
             }
             // How many are carried, bottom right.
-            let amount: u32 = inventory.iter().filter(|item| item.id == *id && item.worn == 0).map(|item| u32::from(item.amount)).sum();
+            let amount: u32 = inventory.iter().filter(|item| item.id == id && item.worn == 0).map(|item| u32::from(item.amount)).sum();
             count_text(layer, font, corner, &amount.to_string());
             if contains(corner, SLOT, cursor) {
                 window::tooltip(tooltip, chrome, font, info.name(true), [corner[0], corner[1] + SLOT[1] + 2.0], [255; 3]);
@@ -158,9 +172,9 @@ impl Hotkeys {
             return Vec::new();
         }
         (0..self.rows * PER_ROW)
-            .map(|slot| {
-                let corner = self.frame.at(slot_corner(slot));
-                (slot, [corner[0], corner[1], SLOT[0], SLOT[1]])
+            .map(|visible| {
+                let corner = self.frame.at(slot_corner(visible));
+                (self.key_index(visible), [corner[0], corner[1], SLOT[0], SLOT[1]])
             })
             .collect()
     }

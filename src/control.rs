@@ -14,9 +14,10 @@
 //!   as base64 PNG (`png`).
 //! - `move` `{x, y}`, `click` `{x, y, button?: "left"|"right", mods?: "Alt+Shift", count?}`, `drag` `{from: [x, y],
 //!   to: [x, y], button?, mods?}`: the pointer and buttons, through the same code as the mouse.
-//! - `key` `{key}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End", "PageUp",
-//!   "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12" or one
-//!   character, after modifiers like "Alt+" or "Ctrl+".
+//! - `key` `{key, repeat?, hold?}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End",
+//!   "PageUp", "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12", "PrintScreen" or one
+//!   character, after modifiers like "Alt+" or "Ctrl+". `repeat` is an auto-repeat; shortcuts ignore it. `hold` is
+//!   milliseconds to keep the key down, auto-repeating after the first press.
 //! - `type` `{text}`: into the focused field; non-ASCII runs (Hangul) come in as the input method's commit.
 //! - `say` `{text}`: a chat line or a GM command.
 //! - `state`: the scene and the login server; at character select the characters, selected slot and `pin` ("ask",
@@ -98,6 +99,12 @@ pub enum Command {
     },
     Key {
         key: String,
+        /// An auto-repeat of a held key. Shortcuts ignore it; typing still takes it.
+        #[serde(default)]
+        repeat: bool,
+        /// Hold the key this many milliseconds, sending auto-repeats. One command, so a following `wait` still sees what the first press caused.
+        #[serde(default)]
+        hold: Option<u64>,
     },
     /// The wheel at a point: `rows` notches, positive toward the player (scrolls down).
     Wheel {
@@ -177,7 +184,7 @@ pub struct KeyPress {
     pub logical_key: Key,
     pub physical_key: PhysicalKey,
     pub text: Option<String>,
-    /// The key is auto-repeating. Esc ignores those.
+    /// An auto-repeated key-down. Shortcuts and Esc ignore it; typing still takes it.
     pub repeat: bool,
 }
 
@@ -470,9 +477,20 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             app.wheel(rows);
             Ok(Value::Null)
         }
-        Command::Key { key } => {
-            let (held, key) = parse_key(&key)?;
-            hold(app, held, |app| app.key(&key));
+        Command::Key { key, repeat, hold: held_ms } => {
+            let (mods, mut key) = parse_key(&key)?;
+            key.repeat = repeat;
+            hold(app, mods, |app| {
+                app.key(&key);
+                let Some(ms) = held_ms.filter(|ms| *ms > 0) else { return };
+                // Auto-repeats while the key stays down. Shortcuts fire on the first press only.
+                key.repeat = true;
+                let end = Instant::now() + Duration::from_millis(ms);
+                while Instant::now() < end {
+                    std::thread::sleep(Duration::from_millis(50));
+                    app.key(&key);
+                }
+            });
             Ok(Value::Null)
         }
         Command::Type { text } => {
@@ -581,6 +599,7 @@ fn parse_key(name: &str) -> Result<(ModifiersState, KeyPress), String> {
         "end" => (NamedKey::End, KeyCode::End),
         "pageup" => (NamedKey::PageUp, KeyCode::PageUp),
         "pagedown" => (NamedKey::PageDown, KeyCode::PageDown),
+        "printscreen" | "print" | "snapshot" => (NamedKey::PrintScreen, KeyCode::PrintScreen),
         "backspace" => (NamedKey::Backspace, KeyCode::Backspace),
         "space" => (NamedKey::Space, KeyCode::Space),
         "up" | "arrowup" => (NamedKey::ArrowUp, KeyCode::ArrowUp),
@@ -770,7 +789,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         game.combos.get(&unit).map_or(0, |(start, length)| length.saturating_sub(crate::control::now().saturating_duration_since(*start)).as_millis() as u64)
     };
     // The message box's OK and Cancel while a question is up.
-    let question = game.guild_asked.is_some() || game.guild_invite.is_some() || game.cashshop_buy_asked || game.save_asked;
+    let question = game.guild_asked.is_some()
+        || game.guild_invite.is_some()
+        || game.cashshop_buy_asked
+        || game.save_asked
+        || game.adopt_asked.is_some()
+        || game.queue_asked.is_some();
     let question_buttons = app.assets.as_ref().filter(|_| question).into_iter().flat_map(|assets| {
         let dialog = crate::dialog_position(&assets.message);
         [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)].map(|(name, place, button)| {
@@ -821,7 +845,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             json!({"id": id, "item": item.item, "name": name, "amount": item.amount, "cell": item.at, "screen": screen(Owner::Item(id)), "area": area(Owner::Item(id))})
         })
         .collect();
-    let jobs = app.skill_trees.lineage(game.me.job);
+    let jobs = crate::skills::tabs(&app.skill_trees, game.me.job, &game.skills);
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
     // The leader question's OK and Cancel, in the message box.
     let leader_question: Vec<(&str, [f32; 4])> = match (&app.assets, game.leader_asked) {
@@ -841,7 +865,9 @@ fn game_state(app: &App, game: &Game) -> Value {
         .into_iter()
         .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
-        .chain(game.skill_window.skill_boxes(&app.skill_trees, &jobs).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
+        .chain(
+            game.skill_window.skill_boxes(&app.skill_trees, &jobs, &game.skills).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})),
+        )
         .chain(
             game.skill_window
                 .raise_boxes(&app.skill_trees, &jobs, &game.skills, game.skill_points())
@@ -853,6 +879,16 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.basic_info.menu_boxes().into_iter().map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
+        .chain(game.basic_info.toggle_box().map(|area| json!({"kind": "button", "name": "menu", "box": area})))
+        .chain(
+            game.queue_window
+                .frame
+                .open
+                .then(|| game.queue_window.button_boxes(&app.battlegrounds, game.queued.is_some()))
+                .into_iter()
+                .flatten()
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::item_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
@@ -1030,6 +1066,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "grade": item.grade, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires, "switch": item.switch})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
+        // Bound shortcuts: action name to the chord ("Alt+V", "F1"). Unbound rows are left out.
+        "shortcuts": app.keybinds.labels(),
         "dialog": dialog,
         // Achievements: whether each is done and its reward taken; the title worn (0: none).
         "achievements": game.achievements.iter().map(|(id, achievement)| (id.to_string(), json!({"completed": achievement.completed, "rewarded": achievement.rewarded}))).collect::<serde_json::Map<_, _>>(),
@@ -1151,6 +1189,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         "results": catalog.rows.len(),
         "rows": catalog.rows.iter().map(|row| json!({"item": row.item, "shop": row.shop, "account": row.account, "price": row.price, "amount": row.amount})).collect::<Vec<_>>(),
     })));
+    // The battleground queued for, how many wait, and whether entering is being asked.
+    state["battle_queue"] = json!(
+        game.queued
+            .as_ref()
+            .map(|(name, number)| { json!({"name": name, "number": number, "asked": matches!(game.queue_asked, Some(crate::QueueAsked::Lobby(..)))}) })
+    );
     // On a battleground (its map type, or our camp known): the camp, the score, teammates with a dot and an HP bar.
     let battle = &game.battle;
     let on_battleground = game.map_type == Some(crate::battleground::MAP_TYPE) || battle.camp(game.account_id).is_some();
@@ -1165,6 +1209,10 @@ fn game_state(app: &App, game: &Game) -> Value {
             "battle_chat": battle.chat,
         })
     }));
+    // The partner's name, as the last I Miss You told it.
+    state["partner"] = json!(game.partner);
+    // The pickup popup's line while it shows.
+    state["pickup_popup"] = json!(game.pickup_popup.as_ref().map(|popup| popup.text.clone()));
     orbs(&mut state["player"], None);
     state
 }
@@ -1239,7 +1287,7 @@ mod tests {
                 sent: None,
                 fresh: false,
                 pause: true,
-                first: Some(Box::new(Command::Key { key: "F1".into() }))
+                first: Some(Box::new(Command::Key { key: "F1".into(), repeat: false, hold: None }))
             }
         );
         assert!(matches!(parse(r#"{"cmd":"wait","packet":2248,"ms":500}"#), Ok(Command::Wait { packet: Some(0x08c8), ms: Some(500), .. })));
