@@ -1167,6 +1167,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             // Where it's drawn, in cells: between two while walking.
             "position": game.player.position(self::now()),
             "direction": game.player.direction,
+            // The head against the body: 0 straight, 1 and 2 turned to either side.
+            "head_direction": game.player.head_direction,
             "moving": game.player.moving(),
             // The falcon (25 above the ground) and the warg (on the ground), or null. Riding leaves the warg null.
             "falcon": companion_state(game.player.falcon.as_ref(), crate::actor::FALCON_HEIGHT),
