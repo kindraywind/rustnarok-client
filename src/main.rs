@@ -385,7 +385,6 @@ const ALLY_CHOICE: usize = 399;
 const ANTAGONIST_CHOICE: usize = 403;
 /// "(guild) Guild is asking for an Alliance with them. Do you accept?", "Are you sure that you want to delete it?"
 const ALLY_ASKS: usize = 393;
-const DELETE_ASKS: usize = 356;
 /// "Are you sure that you want to leave?", and the lines when someone leaves: "You left the guild.", "%s has left the
 /// guild.", "Withdrawal Reason: %s". The member menu's "Leave Guild".
 const LEAVE_ASKS: usize = 357;
@@ -393,6 +392,8 @@ const LEFT_GUILD: usize = 489;
 const MEMBER_LEFT: usize = 364;
 const LEFT_BECAUSE: usize = 365;
 const LEAVE_CHOICE: usize = 508;
+/// The master's menu on an ally or antagonist: "Delete".
+const RELATION_DELETE: usize = 351;
 /// A tracked quest's menu: "Quest information", "Delete".
 const QUEST_INFO_CHOICE: usize = 1622;
 const QUEST_DELETE_CHOICE: usize = 351;
@@ -1870,6 +1871,8 @@ enum Choice {
     GuildMove(usize, u32),
     /// Leave the guild (asks first).
     GuildLeave,
+    /// The master ends the relation with this guild (antagonist or not), without asking.
+    EndRelation(u32, bool),
 }
 
 /// A battleground queue question waiting for OK: applying (how, for which), leaving the queue, or entering the
@@ -4629,8 +4632,6 @@ enum DialogButton {
 enum GuildAsked {
     /// Another guild (its name) asks for an alliance, through the player who asked (account ID).
     Ally { id: u32, guild: String },
-    /// End the relation with this guild.
-    End { id: u32, antagonist: bool },
     /// Leave the guild.
     Leave,
 }
@@ -6586,6 +6587,9 @@ impl App {
                 Some(Choice::QuestAside(id)) => {
                     let _ = game.session.set_quest_active(id, false);
                 }
+                Some(Choice::EndRelation(id, antagonist)) => {
+                    let _ = game.session.end_relation(id, antagonist);
+                }
                 Some(Choice::GuildMove(row, position)) => {
                     if let Some(member) = game.guild.as_ref().and_then(|guild| guild.members.get(row)) {
                         let _ = game.session.move_member(member.account, member.character, position);
@@ -6677,8 +6681,6 @@ impl App {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
                         let _ = match game.guild_asked.take().unwrap() {
                             GuildAsked::Ally { id, .. } => game.session.answer_alliance(id, yes),
-                            GuildAsked::End { id, antagonist } if yes => game.session.end_relation(id, antagonist),
-                            GuildAsked::End { .. } => Ok(()),
                             GuildAsked::Leave if yes => match &game.guild {
                                 Some(guild) => game.session.leave_guild(guild.id, game.account_id, game.me.id, ""),
                                 None => Ok(()),
@@ -7397,7 +7399,7 @@ impl App {
                         Some(guild::Hit::LevelUp(skill)) => {
                             let _ = game.session.skill_up(skill);
                         }
-                        Some(guild::Hit::Relation(id, antagonist)) => game.guild_asked = Some(GuildAsked::End { id, antagonist }),
+                        Some(guild::Hit::Relation(id, antagonist)) => game.guild_window.selected = Some((id, antagonist)),
                         // The master's positions page: a box switches its permission; the title and tax are asked for.
                         Some(guild::Hit::Permission(id, permission)) => {
                             if let Some(guild) = &game.guild {
@@ -7868,6 +7870,21 @@ impl App {
                 game.menu = Some(menu::Menu::new(self.cursor, entries, &self.font));
                 return;
             }
+        }
+        // The master's right click on an ally or antagonist: delete it.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+            && let Some((start, None)) = game.right_press
+            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+            && game.window_at(self.cursor) == Some(Panel::Guild)
+            && let Some(guild) = &game.guild
+            && guild.master
+            && let Some(guild::Hit::Relation(id, antagonist)) = game.guild_window.hit(self.cursor, guild)
+        {
+            game.right_press = None;
+            let label = self.messages.get(RELATION_DELETE).cloned().unwrap_or_default();
+            game.menu = Some(menu::Menu::new(self.cursor, vec![Some((label, Choice::EndRelation(id, antagonist)))], &self.font));
+            return;
         }
         if let Scene::Game(game) = &mut self.scene {
             let assets = self.assets.as_ref();
@@ -11652,8 +11669,8 @@ impl App {
             }
             MapEvent::AllyAsked { id, guild } => game.guild_asked = Some(GuildAsked::Ally { id, guild }),
             MapEvent::AllyResult(result) | MapEvent::AntagonistResult(result) => {
-                let (line, good) = if matches!(event, MapEvent::AllyResult(_)) { guild::ally_result(result) } else { guild::antagonist_result(result) };
-                game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), if good { CHAT_ITEM } else { CHAT_ERROR });
+                let (line, color) = if matches!(event, MapEvent::AllyResult(_)) { guild::ally_result(result) } else { guild::antagonist_result(result) };
+                game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), color);
             }
             MapEvent::GuildRelationEnded { id, antagonist } => {
                 if let Some(guild) = &mut game.guild {
@@ -14786,11 +14803,10 @@ impl App {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }
-        // A guild invites us, asks for an alliance, or the master is about to end a relation.
+        // A guild invites us, asks for an alliance, or the player is about to leave.
         let guild_question = match (&game.guild_invite, &game.guild_asked) {
             (Some((_, name)), _) => Some(format!("({name}){}", message(GUILD_INVITED))),
             (_, Some(GuildAsked::Ally { guild, .. })) => Some(format!("({guild}){}", message(ALLY_ASKS))),
-            (_, Some(GuildAsked::End { .. })) => Some(message(DELETE_ASKS).to_owned()),
             (_, Some(GuildAsked::Leave)) => Some(message(LEAVE_ASKS).to_owned()),
             _ => None,
         };
