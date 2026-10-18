@@ -103,7 +103,6 @@ impl Party {
     pub fn settings(&self) -> Settings {
         Settings { exp_even: self.exp_shared, pickup: self.pickup_shared, share: self.item_shared }
     }
-
 }
 
 /// The party's three settings, as the setup window shows them.
@@ -341,9 +340,8 @@ pub fn member_menu(me: u32, account: u32, leader: bool, small: bool) -> Vec<Memb
 
 /// Skills that go on a member's row with Shift held (or /noshift on).
 const SUPPORT_SKILLS: [u16; 60] = [
-    28, 29, 30, 34, 35, 53, 54, 66, 67, 68, 71, 72, 73, 77, 78, 138, 139, 231, 234, 235, 236, 237, 255, 280, 281, 282, 283, 286, 289, 374, 402, 463,
-    464, 465, 466, 467, 468, 469, 470, 471, 472, 479, 1015, 2001, 2020, 2026, 2027, 2050, 2051, 2052, 2053, 2341, 2344, 2345, 2346, 2347, 2348, 2451,
-    2515, 8221,
+    28, 29, 30, 34, 35, 53, 54, 66, 67, 68, 71, 72, 73, 77, 78, 138, 139, 231, 234, 235, 236, 237, 255, 280, 281, 282, 283, 286, 289, 374, 402, 463, 464, 465,
+    466, 467, 468, 469, 470, 471, 472, 479, 1015, 2001, 2020, 2026, 2027, 2050, 2051, 2052, 2053, 2341, 2344, 2345, 2346, 2347, 2348, 2451, 2515, 8221,
 ];
 
 /// Whether a press on a member's row (or small window) casts the skill being aimed on them: a Heal-like skill
@@ -420,9 +418,9 @@ impl Assets {
                 Button::Delete,
                 Button::FriendSetup,
             ]
-                .into_iter()
-                .map(|button| (button, ["", "_a", "_b"].map(|look| image(format!("{basic}{}{look}.bmp", button.image())))))
-                .collect(),
+            .into_iter()
+            .map(|button| (button, ["", "_a", "_b"].map(|look| image(format!("{basic}{}{look}.bmp", button.image())))))
+            .collect(),
             radio: ["radiobtn_off", "radiobtn_on"].map(|name| image(format!("{UI}{name}.bmp"))),
             // Border, background, healthy and low.
             hp: [[0x11, 0x11, 0x11, 0xFF], [0x33, 0x33, 0x33, 0xFF], [0x10, 0xEF, 0x21, 0xFF], [0xFF, 0x00, 0x00, 0xFF]].map(|color| gpu.solid(color)),
@@ -791,12 +789,8 @@ impl PartyWindow {
             let [x, y] = self.frame.at(local);
             [x, y, size[0], size[1]]
         };
-        let mut boxes: Vec<(String, [f32; 4])> = self
-            .buttons(party)
-            .into_iter()
-            .enumerate()
-            .map(|(index, button)| (button.name().to_owned(), place(self.button_at(index), BUTTON)))
-            .collect();
+        let mut boxes: Vec<(String, [f32; 4])> =
+            self.buttons(party).into_iter().enumerate().map(|(index, button)| (button.name().to_owned(), place(self.button_at(index), BUTTON))).collect();
         let members = party.filter(|_| !self.friends).map_or(&[][..], |party| &party.members);
         let width = self.size()[0];
         boxes.extend(

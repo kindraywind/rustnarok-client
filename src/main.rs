@@ -9247,8 +9247,7 @@ impl App {
                 }
                 let option_windows = game.graphics_window.as_mut().is_some_and(options::GraphicsWindow::drop_drag)
                     | game.shortcuts_window.as_mut().is_some_and(options::ShortcutsWindow::drop_drag);
-                let member_held =
-                    game.member_windows.release(game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends).is_none(), self.cursor);
+                let member_held = game.member_windows.release(game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends).is_none(), self.cursor);
                 let windows = trade_moved
                     | slid
                     | option_windows
@@ -9753,7 +9752,8 @@ impl App {
                         let double = game.row_press.is_some_and(|(at, whose)| whose == account && now.saturating_duration_since(at) < DOUBLE_PRESS);
                         game.row_press = (!double).then_some((now, account));
                         if double && account != game.account_id {
-                            let name = game.party.as_ref().and_then(|party| party.members.iter().find(|m| m.info.account == account)).map(|m| m.info.name.clone());
+                            let name =
+                                game.party.as_ref().and_then(|party| party.members.iter().find(|m| m.info.account == account)).map(|m| m.info.name.clone());
                             if let Some(name) = name {
                                 game.whisper_member(&name);
                             }
@@ -9762,9 +9762,7 @@ impl App {
                         }
                     }
                 }
-                Panel::Party
-                    if game.party_window.hit(cursor, game.party.as_ref(), &game.friends) == Some(party::Hit::Title(TitleHit::Title)) =>
-                {
+                Panel::Party if game.party_window.hit(cursor, game.party.as_ref(), &game.friends) == Some(party::Hit::Title(TitleHit::Title)) => {
                     game.party_window.frame.start_drag(cursor)
                 }
                 Panel::Status
