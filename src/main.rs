@@ -617,6 +617,9 @@ const PITCH_RESET: f32 = 50.0;
 const YAW_INDOOR: f32 = 45.0;
 const YAW_RANGE_INDOOR: [f32; 2] = [25.0, 65.0];
 const CAMERA_DOUBLE_CLICK: Duration = Duration::from_millis(500);
+/// /camera's lines: on, off.
+const CAMERA_ON: usize = 319;
+const CAMERA_OFF: usize = 320;
 
 /// How far the camera tilts: outdoors 50 to 65 degrees (25 to 65 with Ctrl), indoors fixed at 60 (35 to 55 with
 /// Ctrl).
@@ -871,6 +874,9 @@ struct Game {
     no_shift: bool,
     /// /noctrl: a click on a monster keeps attacking without Ctrl (saved; on unless turned off).
     no_ctrl: bool,
+    /// /camera: the camera sticks to the player (saved; off unless turned on); the earthquake's shake this frame.
+    camera_snap: bool,
+    quake_flip: bool,
     /// The last skill sent by aiming: ID, level and target.
     skill_sent: Option<(u16, u16, SkillTarget)>,
     /// The attack asked for with the mouse, and when the last attack packet went out; riding a mount that can't
@@ -990,10 +996,19 @@ struct CameraGoal {
     /// The parts of a tilt and a zoom step dragged but not yet whole.
     carry: [f32; 2],
     last_wheel: Option<Instant>,
+    /// The map's own camera table, which then sets the limits (and no double click resets).
+    limits: Option<rustnarok_client::map::Viewpoint>,
 }
 
 impl CameraGoal {
+    #[cfg(test)]
     fn new(indoor: bool) -> Self {
+        Self::arrive(indoor, None, [PITCH, ZOOM * UNITS_PER_ZOOM])
+    }
+
+    /// The goal on arriving on a map: the map's own table's start, or the tilt and distance the player left on this
+    /// kind of map (within its limits); turned 0 outdoors, YAW_INDOOR indoors.
+    fn arrive(indoor: bool, limits: Option<rustnarok_client::map::Viewpoint>, saved: [f32; 2]) -> Self {
         let mut goal = Self {
             yaw: if indoor { YAW_INDOOR } else { 0.0 },
             pitch: PITCH,
@@ -1003,7 +1018,21 @@ impl CameraGoal {
             last_press: None,
             carry: [0.0; 2],
             last_wheel: None,
+            limits,
         };
+        match limits {
+            Some(table) => {
+                goal.yaw = table.yaw_in.clamp(table.yaw[0], table.yaw[1]);
+                goal.pitch = table.pitch_in.clamp(table.pitch[0], table.pitch[1]);
+                goal.set_distance(table.distance_in);
+            }
+            None => {
+                // The widest tilt each kind of map allows (with Ctrl, and indoors fixed 60 too).
+                let [low, high] = if indoor { [35.0, 60.0] } else { [25.0, 65.0] };
+                goal.pitch = saved[0].clamp(low, high);
+                goal.set_distance(saved[1]);
+            }
+        }
         // RUSTNAROK_CLIENT_CAMERA holds on every map, warps included.
         if let Some([yaw, pitch, zoom]) = std::env::var("RUSTNAROK_CLIENT_CAMERA").ok().and_then(|camera| {
             let values: Vec<f32> = camera.split(',').filter_map(|value| value.parse().ok()).collect();
@@ -1016,7 +1045,7 @@ impl CameraGoal {
 
     /// The camera already in place, for a fresh map.
     fn camera(&self, target: world::Vector) -> Camera {
-        Camera { target, distance: self.zoom * UNITS_PER_ZOOM, pitch: self.pitch.to_radians(), yaw: self.yaw.to_radians() }
+        Camera { target, distance: self.zoom * UNITS_PER_ZOOM, pitch: self.pitch.to_radians(), yaw: self.yaw.to_radians(), ground: f32::MIN }
     }
 
     /// The distance to the player in world units.
@@ -1026,14 +1055,19 @@ impl CameraGoal {
 
     /// Moves the camera to `distance` world units, within the map's range.
     fn set_distance(&mut self, distance: f32) {
-        let [near, far] = if self.indoor { DISTANCE_RANGE_INDOOR } else { DISTANCE_RANGE };
+        let [near, far] = self.limits.map_or(if self.indoor { DISTANCE_RANGE_INDOOR } else { DISTANCE_RANGE }, |table| table.distance);
         self.zoom = distance.clamp(near, far) / UNITS_PER_ZOOM;
+    }
+
+    /// How far the camera tilts now: the map's table, or `pitch_range`.
+    fn pitch_limits(&self, ctrl: bool) -> [f32; 2] {
+        self.limits.map_or(pitch_range(self.indoor, ctrl), |table| table.pitch)
     }
 
     /// Right button down. A second press within CAMERA_DOUBLE_CLICK with the pointer not moved at all resets: the
     /// distance with Ctrl, the tilt with Shift, otherwise (outdoors only) the turn, to the nearest whole circle.
     fn press(&mut self, cursor: [f32; 2], now: Instant, ctrl: bool, shift: bool) {
-        if self.last_press.is_some_and(|(at, moved)| !moved && now.saturating_duration_since(at) < CAMERA_DOUBLE_CLICK) {
+        if self.limits.is_none() && self.last_press.is_some_and(|(at, moved)| !moved && now.saturating_duration_since(at) < CAMERA_DOUBLE_CLICK) {
             if ctrl {
                 self.zoom = ZOOM;
             }
@@ -1078,12 +1112,14 @@ impl CameraGoal {
         };
         if !shift {
             self.yaw += dx;
-            if self.indoor {
+            if let Some(table) = self.limits {
+                self.yaw = self.yaw.clamp(table.yaw[0], table.yaw[1]);
+            } else if self.indoor {
                 self.yaw = self.yaw.clamp(YAW_RANGE_INDOOR[0], YAW_RANGE_INDOOR[1]);
             }
         }
         if shift {
-            let [low, high] = pitch_range(self.indoor, ctrl);
+            let [low, high] = self.pitch_limits(ctrl);
             self.pitch = (self.pitch + steps(&mut self.carry[0])).clamp(low, high);
         }
         if ctrl {
@@ -1101,25 +1137,87 @@ impl CameraGoal {
         self.last_wheel = Some(now);
         let toward = rows.signum() as f32;
         if shift {
-            let [low, high] = pitch_range(self.indoor, ctrl);
+            let [low, high] = self.pitch_limits(ctrl);
             self.pitch = (self.pitch + toward * WHEEL_TILT).clamp(low, high);
         } else {
             self.set_distance(self.distance() - toward * WHEEL_STEP);
         }
     }
 
-    /// Moves the camera part of the way to the goal; turning past half a circle wraps both around.
-    fn ease(&mut self, camera: &mut Camera, elapsed: Duration) {
-        let step = (elapsed.as_secs_f32() * 1000.0 * 0.006 * 2.0).min(1.0);
-        let mut yaw = camera.yaw.to_degrees();
-        if self.yaw > 180.0 && yaw > 180.0 {
-            (self.yaw, yaw) = (self.yaw - 360.0, yaw - 360.0);
-        } else if self.yaw < -180.0 && yaw < -180.0 {
-            (self.yaw, yaw) = (self.yaw + 360.0, yaw + 360.0);
-        }
-        camera.yaw = (yaw + (self.yaw - yaw) * step).to_radians();
+    /// Moves the camera FOLLOW of the way per 60th of a second to the goal and its look-at point to the player's feet
+    /// (`snap`: at once); it turns the short way round.
+    fn ease(&self, camera: &mut Camera, elapsed: Duration, feet: world::Vector, snap: bool) {
+        let step = follow_step(elapsed);
+        camera.target = if snap { feet } else { [0, 1, 2].map(|axis| camera.target[axis] + (feet[axis] - camera.target[axis]) * step) };
+        let yaw = camera.yaw.to_degrees();
+        let turn = (self.yaw - yaw + 180.0).rem_euclid(360.0) - 180.0;
+        camera.yaw = (yaw + turn * step).to_radians();
         camera.pitch += (self.pitch.to_radians() - camera.pitch) * step;
-        camera.distance += (self.zoom * UNITS_PER_ZOOM - camera.distance) * step;
+        camera.distance += (self.distance() - camera.distance) * step;
+    }
+}
+
+/// The camera moves this share of the way each 60th of a second.
+const FOLLOW: f32 = 0.1;
+/// A view changed is written this long after it last changed.
+const VIEW_SAVE_AFTER: Duration = Duration::from_millis(500);
+
+/// How much of the way the camera moves in `elapsed`: FOLLOW per 60th of a second, the same at any frame rate.
+fn follow_step(elapsed: Duration) -> f32 {
+    1.0 - (1.0 - FOLLOW).powf(elapsed.as_secs_f32() * 60.0)
+}
+
+/// The tilt and distance the player left the camera at, outdoors and indoors: kept between maps, and (for a client
+/// the harness doesn't drive) saved.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SavedView {
+    views: [[f32; 2]; 2],
+    changed: Option<Instant>,
+}
+
+impl Default for SavedView {
+    fn default() -> Self {
+        Self { views: [[PITCH, ZOOM * UNITS_PER_ZOOM]; 2], changed: None }
+    }
+}
+
+impl SavedView {
+    /// From the saved text: outdoor tilt and distance, then indoor; anything missing stays the default.
+    fn parse(text: &str) -> Self {
+        let mut saved = Self::default();
+        let values: Vec<f32> = text.split_whitespace().filter_map(|value| value.parse().ok()).collect();
+        if let [outdoor_pitch, outdoor_distance, indoor_pitch, indoor_distance] = values[..] {
+            saved.views = [[outdoor_pitch, outdoor_distance], [indoor_pitch, indoor_distance]];
+        }
+        saved
+    }
+
+    fn text(&self) -> String {
+        let [[a, b], [c, d]] = self.views;
+        format!("{a} {b} {c} {d}")
+    }
+
+    fn of(&self, indoor: bool) -> [f32; 2] {
+        self.views[usize::from(indoor)]
+    }
+
+    /// Follows the goal: a changed tilt or distance is kept (not on a map with its own table), and written once it
+    /// has held still VIEW_SAVE_AFTER, when `save`.
+    fn follow(&mut self, goal: &CameraGoal, now: Instant, save: bool) {
+        if goal.limits.is_none() {
+            let view = [goal.pitch, goal.distance()];
+            let slot = &mut self.views[usize::from(goal.indoor)];
+            if *slot != view {
+                *slot = view;
+                self.changed = Some(now);
+            }
+        }
+        if self.changed.is_some_and(|at| now.saturating_duration_since(at) >= VIEW_SAVE_AFTER) {
+            self.changed = None;
+            if save && let Some(path) = settings_path("camera") {
+                let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, self.text()));
+            }
+        }
     }
 }
 
@@ -1979,6 +2077,16 @@ impl Game {
             }
             chat::Command::DressRoom => {
                 self.open_dressroom();
+                Ok(())
+            }
+            // ponytail: the client's lines for /camera speak of zooming; they're used for on and off.
+            chat::Command::Camera => {
+                self.camera_snap = !self.camera_snap;
+                if let Some(path) = settings_path("camerasnap") {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.camera_snap { "1" } else { "0" }));
+                }
+                let line = messages.get(if self.camera_snap { CAMERA_ON } else { CAMERA_OFF }).cloned().unwrap_or_default();
+                self.chat_line(line, CHAT_ITEM);
                 Ok(())
             }
             chat::Command::NoCtrl => {
@@ -3695,6 +3803,10 @@ struct App {
     modifiers: ModifiersState,
     /// Maps with the indoor camera.
     indoor: HashSet<String>,
+    /// Maps with their own camera table; the view the player left; whether it's written (not when driven).
+    viewpoints: HashMap<String, rustnarok_client::map::Viewpoint>,
+    saved_view: SavedView,
+    save_view: bool,
     look_tables: LookTables,
     /// Job names shown to players.
     pc_job_names: HashMap<u16, String>,
@@ -6960,7 +7072,8 @@ impl App {
                 let sprites = SpriteSet::player(&self.grf, &look, &self.look_tables);
                 let mut player = Actor::new(me.name.clone(), sprites, position.map(i32::from), direction, 150);
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
-                let camera_goal = CameraGoal::new(self.indoor.contains(&map_key(&map)));
+                let indoor = self.indoor.contains(&map_key(&map));
+                let camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
                 let camera = camera_goal.camera(world.cell_position(position.map(f32::from)));
                 let now = Instant::now();
                 let minimap = minimap::load_map(gpu, &self.grf, &map);
@@ -7130,6 +7243,8 @@ impl App {
                     skill_sent: None,
                     right_moved: false,
                     companion_mark: None,
+                    camera_snap: settings_path("camerasnap").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
+                    quake_flip: false,
                     no_ctrl: settings_path("noctrl").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
                     attack: None,
                     last_attack: None,
@@ -7276,7 +7391,8 @@ impl App {
         let (Scene::Game(game), Some(gpu)) = (&mut self.scene, &self.gpu) else { return };
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
-                game.camera_goal = CameraGoal::new(self.indoor.contains(&map_key(&map)));
+                let indoor = self.indoor.contains(&map_key(&map));
+                game.camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
                 game.camera = game.camera_goal.camera(world.cell_position(position.map(f32::from)));
                 game.minimap = minimap::load_map(gpu, &self.grf, &map);
                 game.minimap_faded = None;
@@ -10094,11 +10210,20 @@ impl App {
             *arrived = Some(now);
         }
         let player_feet = game.world.cell_position(player_cell);
-        game.camera.target = player_feet;
-        if self.graphics.effects_on {
-            game.camera.target[1] += game.effects.quake(now);
+        game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame), player_feet, game.camera_snap);
+        // An earthquake shakes the view sideways and in and out, the other way each frame.
+        let quake = if self.graphics.effects_on { game.effects.quake(now) } else { 0.0 };
+        if quake > 0.0 {
+            game.quake_flip = !game.quake_flip;
+            let shake = if game.quake_flip { quake } else { -quake };
+            game.camera.target[0] += game.camera.yaw.cos() * shake;
+            game.camera.target[2] -= game.camera.yaw.sin() * shake;
+            game.camera.distance += shake;
         }
-        game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame));
+        // The eye stays above the ground under it.
+        let horizontal = game.camera.distance * game.camera.pitch.cos();
+        let eye = [game.camera.target[0] - horizontal * game.camera.yaw.sin(), game.camera.target[2] - horizontal * game.camera.yaw.cos()];
+        game.camera.ground = -game.world.gat.height(eye.map(|axis| (axis / world::CELL).floor() as i32));
         game.last_frame = now;
         let view = game.camera.view(SCREEN[0] / SCREEN[1]);
         let yaw = game.camera.yaw;
@@ -11649,6 +11774,8 @@ impl ApplicationHandler<NetEvent> for App {
                     game.last_keepalive = Instant::now();
                     let _ = game.session.tick(tick);
                 }
+                // The view the player leaves is kept for the next map of its kind.
+                self.saved_view.follow(&game.camera_goal, Instant::now(), self.save_view);
                 // The held button follows the pointer: another walk each time MOVE_GAP has passed since the last
                 // try, not over a window, nor while an attack or a pickup is on its way.
                 let now = Instant::now();
@@ -11900,6 +12027,13 @@ fn main() {
         Vec::new()
     });
     let indoor = rustnarok_client::map::indoor_maps(&grf).unwrap_or_default();
+    let viewpoints = rustnarok_client::map::viewpoints(&grf).unwrap_or_default();
+    // A client the harness drives starts from the default view and keeps it to itself.
+    let driven = std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_some();
+    let saved_view = settings_path("camera")
+        .filter(|_| !driven)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map_or_else(SavedView::default, |text| SavedView::parse(&text));
     let pc_job_names = lua::pc_job_names(&grf).unwrap_or_default();
     let map_names = rustnarok_client::map::map_names(&grf).unwrap_or_default();
     let skill_info = lua::skill_info(&grf).unwrap_or_else(|error| {
@@ -11953,6 +12087,9 @@ fn main() {
         icons: HashMap::new(),
         modifiers: ModifiersState::empty(),
         indoor,
+        viewpoints,
+        saved_view,
+        save_view: !driven,
         look_tables,
         pc_job_names,
         map_names,
@@ -12169,6 +12306,42 @@ mod tests {
         assert_eq!(share_left(start, length, start), 1.0);
         assert_eq!(share_left(start, length, start + Duration::from_millis(200)), 0.75);
         assert_eq!(share_left(start, length, start + Duration::from_secs(2)), 0.0);
+    }
+
+    #[test]
+    fn glides_and_keeps_the_view() {
+        // A tenth of the way a 60th of a second, the same at any frame rate.
+        assert!((follow_step(Duration::from_secs_f32(1.0 / 60.0)) - 0.1).abs() < 1e-4);
+        assert!((follow_step(Duration::from_secs_f32(2.0 / 60.0)) - 0.19).abs() < 1e-4);
+        // The view left on each kind of map, within that kind's limits.
+        let outdoors = CameraGoal::arrive(false, None, [80.0, 500.0]);
+        assert_eq!((outdoors.pitch, outdoors.distance(), outdoors.yaw), (65.0, 400.0, 0.0));
+        let indoors = CameraGoal::arrive(true, None, [20.0, 400.0]);
+        assert_eq!((indoors.pitch, indoors.distance(), indoors.yaw), (35.0, 300.0, YAW_INDOOR));
+        // A map's own table starts it, and holds it.
+        let table = rustnarok_client::map::Viewpoint {
+            distance: [210.0, 260.0],
+            distance_in: 250.0,
+            yaw: [45.0, 65.0],
+            yaw_in: 50.0,
+            pitch: [35.0, 45.0],
+            pitch_in: 40.0,
+        };
+        let mut own = CameraGoal::arrive(false, Some(table), [80.0, 500.0]);
+        assert_eq!((own.pitch, own.distance(), own.yaw), (40.0, 250.0, 50.0));
+        own.steer(100.0, 0.0, false, false, false);
+        assert_eq!(own.yaw, 65.0);
+        // Saved views: read back, followed per kind of map.
+        let mut saved = SavedView::parse("50 350 45 280");
+        assert_eq!((saved.of(false), saved.of(true)), ([50.0, 350.0], [45.0, 280.0]));
+        assert_eq!(SavedView::parse(&saved.text()), SavedView { changed: None, ..saved });
+        assert_eq!(SavedView::parse("junk"), SavedView::default());
+        let now = Instant::now();
+        saved.follow(&outdoors, now, false);
+        assert_eq!((saved.of(false), saved.of(true)), ([65.0, 400.0], [45.0, 280.0]));
+        assert!(saved.changed.is_some());
+        saved.follow(&outdoors, now + VIEW_SAVE_AFTER, false);
+        assert!(saved.changed.is_none());
     }
 
     #[test]

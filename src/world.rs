@@ -22,7 +22,14 @@ pub const CELL: f32 = 5.0;
 const SPRITE_SCALE: f32 = CELL / 35.0;
 const FIELD_OF_VIEW: f32 = 15.0;
 const NEAR: f32 = 10.0;
-const FAR: f32 = 4000.0;
+const FAR: f32 = 1500.0;
+/// How far above the ground under it the eye stays.
+const EYE_CLEARANCE: f32 = 2.0;
+
+/// The eye's height, kept above the ground under it.
+pub fn above_ground(eye: f32, ground: f32) -> f32 {
+    eye.max(ground + EYE_CLEARANCE)
+}
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 pub type Vector = [f32; 3];
@@ -63,6 +70,8 @@ pub struct Camera {
     pub pitch: f32,
     /// Radians; 0 looks north.
     pub yaw: f32,
+    /// The ground's height under the eye (f32::MIN: not known).
+    pub ground: f32,
 }
 
 /// A frame's camera: view-projection plus the basis billboards and picking need.
@@ -78,8 +87,11 @@ pub struct View {
 impl Camera {
     pub fn view(&self, aspect: f32) -> View {
         let horizontal = self.distance * self.pitch.cos();
-        let eye =
-            [self.target[0] - horizontal * self.yaw.sin(), self.target[1] + self.distance * self.pitch.sin(), self.target[2] - horizontal * self.yaw.cos()];
+        let eye = [
+            self.target[0] - horizontal * self.yaw.sin(),
+            above_ground(self.target[1] + self.distance * self.pitch.sin(), self.ground),
+            self.target[2] - horizontal * self.yaw.cos(),
+        ];
         // Left-handed: right = up x forward, depth along forward.
         let forward = normalize(subtract(self.target, eye));
         let right = normalize(cross([0.0, 1.0, 0.0], forward));
@@ -1013,7 +1025,7 @@ mod tests {
 
     #[test]
     fn camera_projects_its_target_to_the_center() {
-        let camera = Camera { target: [100.0, 0.0, 100.0], distance: 200.0, pitch: 0.8, yaw: 0.0 };
+        let camera = Camera { target: [100.0, 0.0, 100.0], distance: 200.0, pitch: 0.8, yaw: 0.0, ground: f32::MIN };
         let view = camera.view(4.0 / 3.0);
         let center = view.project(camera.target).unwrap();
         assert!((center[0] - 0.5).abs() < 1e-4 && (center[1] - 0.5).abs() < 1e-4, "{center:?}");

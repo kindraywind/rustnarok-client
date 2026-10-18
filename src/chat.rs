@@ -234,6 +234,8 @@ pub enum Command {
     PvpInfo,
     /// /noshift: a click on a player attacks without Shift, on or off.
     NoShift,
+    /// /camera: the camera sticks to the player instead of gliding after them, on or off.
+    Camera,
     /// /noctrl, /nc: a click on a monster keeps attacking without Ctrl, on or off.
     NoCtrl,
     /// /battlechat: typed lines go to the battleground team, on or off.
@@ -262,6 +264,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/pvpinfo" => Command::PvpInfo,
         "/noshift" => Command::NoShift,
         "/noctrl" | "/nc" => Command::NoCtrl,
+        "/camera" => Command::Camera,
         "/battlechat" => Command::BattleChat,
         "/dressroom" => Command::DressRoom,
         "/blacksmith" => Command::Ranking(0),

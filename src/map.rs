@@ -296,9 +296,65 @@ pub fn map_names(grf: &Grf) -> io::Result<HashMap<String, String>> {
         .collect())
 }
 
+/// A map's own camera (data\viewpointtable.txt): the distance (world units), turn and tilt (degrees above the
+/// horizon) it keeps within, and where each starts on arriving.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Viewpoint {
+    pub distance: [f32; 2],
+    pub distance_in: f32,
+    pub yaw: [f32; 2],
+    pub yaw_in: f32,
+    pub pitch: [f32; 2],
+    pub pitch_in: f32,
+}
+
+/// The maps with their own camera, by map name (lowercase, no extension).
+pub fn viewpoints(grf: &Grf) -> io::Result<HashMap<String, Viewpoint>> {
+    let bytes = grf.read("data\\viewpointtable.txt")?;
+    Ok(parse_viewpoints(&encoding_rs::EUC_KR.decode_without_bom_handling(&bytes).0))
+}
+
+/// Rows `map.rsw#range#scope#range_IN#rotationFrom#rotationTo#rotation_IN#altitudeFrom#altitudeTo#altitude_IN#`: the
+/// distance from range to range + scope, altitudes as negative degrees.
+pub fn parse_viewpoints(text: &str) -> HashMap<String, Viewpoint> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("//"))
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split('#').map(str::trim).collect();
+            let name = fields.first()?.trim_end_matches(".rsw").to_lowercase();
+            let numbers = fields.get(1..10)?.iter().map(|field| field.parse().ok()).collect::<Option<Vec<f32>>>()?;
+            let [range, scope, range_in, from, to, yaw_in, altitude_from, altitude_to, altitude_in] = <[f32; 9]>::try_from(numbers).ok()?;
+            let pitch = [-altitude_from, -altitude_to];
+            let viewpoint = Viewpoint {
+                distance: [range, range + scope],
+                distance_in: range_in,
+                yaw: [from.min(to), from.max(to)],
+                yaw_in,
+                pitch: [pitch[0].min(pitch[1]), pitch[0].max(pitch[1])],
+                pitch_in: -altitude_in,
+            };
+            Some((name, viewpoint))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_viewpoint_table() {
+        let text = "// range 230, scope 170\n//ex_map02.rsw#\t250#\t250#\t500#\t0#\t90#\t45#\t-40#\t-65#\t-65#\n\
+                    ecl_hub01.rsw#\t210#\t50#\t250#\t\t45#\t\t65#\t\t50#\t\t-35#\t\t-45#\t\t-40#\nbroken.rsw#1#2#\n";
+        let table = parse_viewpoints(text);
+        assert_eq!(table.len(), 1);
+        let hub = table["ecl_hub01"];
+        assert_eq!(
+            (hub.distance, hub.distance_in, hub.yaw, hub.yaw_in, hub.pitch, hub.pitch_in),
+            ([210.0, 260.0], 250.0, [45.0, 65.0], 50.0, [35.0, 45.0], 40.0)
+        );
+    }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
