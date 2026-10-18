@@ -1,0 +1,188 @@
+{
+  "about": "Guild Skill tab (issue #518): the master of a new guild (raised 5 levels for skill points) sees the guild skills in one column with level up buttons at x 78 and \"SkillPoint : n\"; levelling Guild Extension's Approval shows \"Lv : 1\" and \"Passive\"; the right click's \"View Skill Info\" opens the description; Close closes the window.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@breakguild"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@guild SkillTest"
+    },
+    {
+      "wait_for": {
+        "event": "GuildMade",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@guildlvup 5"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "key": "Alt+G"
+    },
+    {
+      "wait_for": {
+        "packet": "0x014c",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [
+        404,
+        148
+      ]
+    },
+    {
+      "wait_for": {
+        "packet": "0x0162",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "state": {
+          "guild.skills.10000": 0
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "guild-skills",
+      "crop": [
+        180,
+        120,
+        400,
+        317
+      ]
+    },
+    {
+      "click_on": {
+        "button": "skill_up:10000"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0162",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "state": {
+          "guild.skills.10000": 1
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "skill:10000"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "guild-skills-learned",
+      "crop": [
+        180,
+        120,
+        400,
+        317
+      ]
+    },
+    {
+      "click_on": {
+        "button": "skill:10000"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Menu"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "menu_item": "View Skill Info"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "SkillDescription"
+        ]
+      }
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "skill_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Guild"
+        ]
+      }
+    },
+    {
+      "say": "@breakguild"
+    },
+    {
+      "wait": 1500
+    }
+  ]
+}

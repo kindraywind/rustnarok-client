@@ -2114,6 +2114,8 @@ enum Choice {
     Adopt(u32),
     /// The member menu on the guild's members page: an entry, for a member (by place in the member list).
     GuildMember(guild::MemberChoice, usize),
+    /// A guild skill's description.
+    GuildSkillInfo(u16),
     /// The master ends the relation with this guild (antagonist or not), without asking.
     EndRelation(u32, bool),
     /// Whisper this player: their name in the chat's name box.

@@ -1375,6 +1375,8 @@ fn game_state(app: &App, game: &Game) -> Value {
                 "antagonists": names(true),
                 "positions": positions,
                 "members": members,
+                "skill_points": guild.skill_points,
+                "skills": guild.skills.iter().map(|skill| (skill.id.to_string(), json!(skill.level))).collect::<serde_json::Map<String, Value>>(),
             })
         }),
         // The tags under the names of players in view (and the player's own), where known.
