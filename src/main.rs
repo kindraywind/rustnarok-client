@@ -599,13 +599,7 @@ const NOT_TAMED: usize = 1575;
 const BAR_WIDTH: f32 = 60.0;
 const BAR_COLORS: [[u8; 4]; 5] = [[0x14, 0x19, 0x9B, 255], [0x44, 0x44, 0x44, 255], [0x16, 0xEA, 0x25, 255], [0xEA, 0x16, 0x16, 255], [0x1D, 0x65, 0xDB, 255]];
 const MONSTER_BAR_COLORS: [[u8; 4]; 4] = [[0x10, 0x18, 0x9C, 255], [0x42, 0x41, 0x42, 255], [0xFF, 0x00, 0xE7, 255], [0xFF, 0xFF, 0x00, 255]];
-/// Heal numbers rise and shrink over this long.
-const DAMAGE_DURATION: f32 = 1.5;
-/// A hit's number: 70 ticks of 24 ms.
-const HIT_DURATION: f32 = actor::HIT_NUMBER_TICKS * 0.024;
-const MISS_DURATION: f32 = 0.8;
-/// A multi-hit's total stays this long; the hits come this far apart.
-const COMBO_DURATION: f32 = 3.0;
+/// A multi-hit's hits come this far apart.
 const MULTI_HIT_DELAY: Duration = Duration::from_millis(200);
 /// How long a dead unit stays on the ground.
 const CORPSE_TIME: Duration = Duration::from_millis(1500);
@@ -723,6 +717,8 @@ struct Game {
     charm: Option<Texture>,
     coin_sprite: Option<SpriteSet>,
     digits: Option<Digits>,
+    /// The message sprite: a critical hit's burst and Lucky (`actor::BURST_ACTION`, `LUCKY_ACTION`).
+    message_sprite: Option<SpriteSet>,
     /// The NPC conversation on screen.
     dialog: Option<Dialog>,
     /// Last frame's clickable units and items.
@@ -3589,6 +3585,14 @@ impl Game {
         let kind = match act.kind {
             11 => DamageKind::Lucky,
             10 | 13 => DamageKind::Critical,
+            _ if amount <= 0 => {
+                // MISS shows over the attacker: white when it's a monster or an NPC, red otherwise.
+                let attacker = if act.source == me { Some(&self.player) } else { self.units.get(&act.source) };
+                let red = attacker.is_none_or(|actor| !(actor::is_monster_job(actor.job) || actor::is_npc_job(actor.job)));
+                let over = (act.source != me).then_some(act.source);
+                self.damages.push(Damage { target: over, amount, start: lands, kind: DamageKind::Miss { red }, flinch: None, drift });
+                return;
+            }
             _ => DamageKind::Hit { taken: on_player, sp: act.sp },
         };
         let hits = if amount > 0 { i32::from(act.hits.max(1)) } else { 1 };
@@ -3596,8 +3600,7 @@ impl Game {
             let start = lands + MULTI_HIT_DELAY * hit as u32;
             self.damages.push(Damage { target, amount: amount / hits, start, kind, flinch, drift });
             if hits > 1 && !on_player {
-                let combo = DamageKind::Combo { last: hit + 1 == hits };
-                self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: combo, flinch: None, drift });
+                self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: DamageKind::Combo, flinch: None, drift });
             }
         }
     }
@@ -3676,21 +3679,24 @@ enum DamageKind {
     Critical,
     /// "Lucky": the hit was dodged.
     Lucky,
+    /// MISS over the attacker: white from a monster or NPC, red from anyone else.
+    Miss { red: bool },
     /// Green HP or blue SP, rising slowly.
     Heal { sp: bool },
-    /// The running total of a multi-hit, high above in yellow; the last one stays longer.
-    Combo { last: bool },
+    /// The running total of a multi-hit, high above in yellow; each new one replaces the last.
+    Combo,
 }
 
 impl DamageKind {
-    fn duration(self, amount: i32) -> f32 {
-        match self {
-            DamageKind::Lucky => MISS_DURATION,
-            DamageKind::Hit { .. } if amount <= 0 => MISS_DURATION,
-            DamageKind::Combo { .. } => COMBO_DURATION,
-            DamageKind::Hit { .. } | DamageKind::Critical => HIT_DURATION,
-            _ => DAMAGE_DURATION,
-        }
+    fn duration(self, _amount: i32) -> f32 {
+        let ticks = match self {
+            DamageKind::Lucky => return actor::LUCKY_MS / 1000.0,
+            DamageKind::Miss { .. } => actor::MISS_TICKS,
+            DamageKind::Combo => actor::TOTAL_NUMBER_TICKS,
+            DamageKind::Heal { .. } => actor::HEAL_NUMBER_TICKS,
+            DamageKind::Hit { .. } | DamageKind::Critical => actor::HIT_NUMBER_TICKS,
+        };
+        ticks * 0.024
     }
 }
 
@@ -8120,6 +8126,7 @@ impl App {
                     charm: render::load_image(&self.grf, "data\\texture\\effect\\charm.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
                     coin_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\동전"),
                     digits: Digits::load(gpu, &self.grf),
+                    message_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\msg"),
                     dialog: None,
                     hit_boxes: Vec::new(),
                     ground: HashMap::new(),
@@ -11528,6 +11535,27 @@ impl App {
             }
         }
 
+        // The message sprite's frames for critical bursts and Lucky, posed while the sprite can still decode them.
+        let message_frames: Vec<Vec<actor::Placed>> = match &mut game.message_sprite {
+            Some(sprite) => game
+                .damages
+                .iter()
+                .map(|damage| {
+                    let elapsed = now.saturating_duration_since(damage.start).as_secs_f32();
+                    match damage.kind {
+                        _ if damage.start > now => Vec::new(),
+                        DamageKind::Critical => {
+                            let frames = sprite.frames(actor::BURST_ACTION).max(1) as f32;
+                            sprite.frame_at(gpu, actor::BURST_ACTION, 0, Timing::Span((elapsed / 0.024 / 2.0).floor() / frames))
+                        }
+                        DamageKind::Lucky => sprite.frame_at(gpu, actor::LUCKY_ACTION, 0, Timing::Once(elapsed * 1000.0, 1.0)),
+                        _ => Vec::new(),
+                    }
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+
         // Shadows first, so characters standing at the same depth draw over them.
         let shadow_placements = game.shadow.as_mut().map(|shadow| shadow.frame(gpu, 0, 0, 0, Timing::Loop(0.0))).unwrap_or_default();
         let mut billboards: Vec<Billboard> = Vec::new();
@@ -11749,78 +11777,72 @@ impl App {
             }
         }
 
-        // Numbers over units, moving as the client's do: hits drift diagonally on an arc, shrinking and fading; misses
-        // and lucky dodges rise straight up; heals hold, then rise; a multi-hit's total pops up high (the newest only).
+        // Numbers over units: hits arc and drift away from where the target faces, shrinking and fading; MISS rises
+        // over the attacker; heals rise slowly; a multi-hit's total pops up high (the newest only); a critical's burst
+        // follows its number; Lucky plays once over the dodger.
         if let Some(digits) = &game.digits {
             let mut newest_combo: HashMap<Option<u32>, Instant> = HashMap::new();
-            for damage in game.damages.iter().filter(|damage| damage.start <= now && matches!(damage.kind, DamageKind::Combo { .. })) {
+            for damage in game.damages.iter().filter(|damage| damage.start <= now && damage.kind == DamageKind::Combo) {
                 let newest = newest_combo.entry(damage.target).or_insert(damage.start);
                 *newest = (*newest).max(damage.start);
             }
-            for damage in game.damages.iter().filter(|damage| damage.start <= now) {
+            let message_sprite = game.message_sprite.as_ref();
+            for (index, damage) in game.damages.iter().enumerate().filter(|(_, damage)| damage.start <= now) {
                 let Some(feet) = damage.target.map_or(Some(player_feet), |id| feet_of.get(&id).copied()) else { continue };
-                let progress = now.duration_since(damage.start).as_secs_f32() / damage.kind.duration(damage.amount);
-                if progress >= 1.0 {
+                let elapsed = now.duration_since(damage.start).as_secs_f32();
+                let posed = message_frames.get(index).map(Vec::as_slice).unwrap_or_default();
+                if elapsed >= damage.kind.duration(damage.amount) {
                     continue;
                 }
-                let alpha = 1.0 - progress;
-                let at = |rise: f32, drift: f32| [feet[0] + drift * world::CELL, feet[1] + rise * world::CELL, feet[2] - drift * world::CELL];
-                let centered = |texture: &Texture, scale: f32| {
-                    let size = texture.size.map(|value| value * scale);
-                    ([-size[0] / 2.0, -size[1] / 2.0], size)
+                let ticks = elapsed / 0.024;
+                let at = |motion: &actor::NumberMotion| {
+                    let [east, north] = damage.drift.map(|sign| sign * motion.drift);
+                    [feet[0] + east, feet[1] + motion.height, feet[2] + north]
                 };
-                let rising: &[&Texture] = match damage.kind {
-                    DamageKind::Lucky => &[&digits.lucky_background, &digits.lucky],
-                    DamageKind::Hit { .. } if damage.amount <= 0 => &[&digits.miss],
-                    _ => &[],
+                let number = |motion: actor::NumberMotion, color: [f32; 3]| {
+                    let tint = [color[0], color[1], color[2], motion.alpha];
+                    let anchor = at(&motion);
+                    digits.place(damage.amount, motion.scale).into_iter().map(move |(texture, position, size)| (texture, anchor, position, size, tint, 0.0))
                 };
-                for texture in rising {
-                    // Half the sprite pixel scale.
-                    let (position, size) = centered(texture, 0.5);
-                    billboards.push((texture, at(3.5 + progress * 7.0, 0.0), position, size, [1.0, 1.0, 1.0, alpha], 0.0));
-                }
                 match damage.kind {
-                    _ if !rising.is_empty() => {}
-                    DamageKind::Hit { .. } | DamageKind::Critical | DamageKind::Lucky => {
-                        let ticks = now.duration_since(damage.start).as_secs_f32() / 0.024;
-                        let motion = actor::hit_number(ticks, damage.kind == DamageKind::Critical);
-                        let [east, north] = damage.drift.map(|sign| sign * motion.drift);
-                        let anchor = [feet[0] + east, feet[1] + motion.height, feet[2] + north];
-                        let alpha = motion.alpha;
-                        let tint = match damage.kind {
-                            DamageKind::Critical => {
-                                let (position, size) = centered(&digits.critical, 0.6 * motion.scale);
-                                billboards.push((&digits.critical, anchor, [position[0], position[1] - 6.0], size, [0.66, 0.66, 0.66, alpha], 0.0));
-                                [1.0, 1.0, 0.0, alpha]
-                            }
-                            DamageKind::Hit { sp: true, .. } => [0x1E as f32 / 255.0, 0x90 as f32 / 255.0, 1.0, alpha],
-                            DamageKind::Hit { taken: true, .. } => [1.0, 0.0, 0.0, alpha],
-                            _ => [1.0, 1.0, 1.0, alpha],
+                    DamageKind::Hit { taken, sp } => {
+                        let color = if sp {
+                            [0x1E as f32 / 255.0, 0x90 as f32 / 255.0, 1.0]
+                        } else if taken {
+                            [1.0, 0.0, 0.0]
+                        } else {
+                            [1.0; 3]
                         };
-                        billboards.extend(
-                            digits.place(damage.amount, motion.scale).into_iter().map(|(texture, position, size)| (texture, anchor, position, size, tint, 0.0)),
-                        );
+                        billboards.extend(number(actor::hit_number(ticks, false), color));
                     }
-                    DamageKind::Heal { sp } => {
-                        let scale = ((1.0 - progress * 2.0) * 3.0).max(0.8);
-                        let anchor = at(2.0 + if progress < 0.4 { 0.0 } else { (progress - 0.4) * 5.0 }, 0.0);
-                        let tint = if sp { [0.13, 0.19, 0.75, alpha] } else { [0.0, 1.0, 0.0, alpha] };
-                        billboards.extend(
-                            digits.place(damage.amount, scale).into_iter().map(|(texture, position, size)| (texture, anchor, position, size, tint, 0.0)),
-                        );
-                    }
-                    DamageKind::Combo { last } => {
-                        if newest_combo.get(&damage.target) != Some(&damage.start) || (!last && progress > 0.15) {
-                            continue;
+                    DamageKind::Critical => {
+                        if let Some(sprite) = message_sprite {
+                            let motion = actor::burst(ticks);
+                            let tint = [0xAA as f32 / 255.0, 0xAA as f32 / 255.0, 0xAA as f32 / 255.0, motion.alpha];
+                            let anchor = at(&motion);
+                            billboards.extend(posed.iter().map(|&(key, position, size, angle)| {
+                                (sprite.texture(key), anchor, position.map(|value| value * motion.scale), size.map(|value| value * motion.scale), tint, angle)
+                            }));
                         }
-                        let scale = progress.min(0.05) * 70.0;
-                        let anchor = at(7.0 + progress, 0.0);
-                        billboards.extend(
-                            digits
-                                .place(damage.amount, scale)
-                                .into_iter()
-                                .map(|(texture, position, size)| (texture, anchor, position, size, [0.9, 0.9, 0.15, alpha], 0.0)),
-                        );
+                        billboards.extend(number(actor::hit_number(ticks, true), [1.0, 1.0, 0.0]));
+                    }
+                    DamageKind::Miss { red } => {
+                        let motion = actor::miss_number(ticks);
+                        let size = digits.miss.size.map(|value| value * motion.scale);
+                        let color = if red { [1.0, 0.0, 0.0, motion.alpha] } else { [1.0, 1.0, 1.0, motion.alpha] };
+                        billboards.push((&digits.miss, at(&motion), [-size[0] / 2.0, -size[1] / 2.0], size, color, 0.0));
+                    }
+                    DamageKind::Lucky => {
+                        if let Some(sprite) = message_sprite {
+                            let anchor = [feet[0], feet[1] + actor::LUCKY_HEIGHT, feet[2]];
+                            billboards.extend(posed.iter().map(|&(key, position, size, angle)| (sprite.texture(key), anchor, position, size, [1.0; 4], angle)));
+                        }
+                    }
+                    DamageKind::Heal { sp } => billboards.extend(number(actor::heal_number(ticks), if sp { [0.0, 0.0, 1.0] } else { [0.0, 1.0, 0.0] })),
+                    DamageKind::Combo => {
+                        if newest_combo.get(&damage.target) == Some(&damage.start) {
+                            billboards.extend(number(actor::total_number(ticks), [1.0, 1.0, 0.0]));
+                        }
                     }
                 }
             }
