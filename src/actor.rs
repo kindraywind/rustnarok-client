@@ -1754,6 +1754,14 @@ struct Blend {
     end: Instant,
 }
 
+/// How opaque a unit spawned in view is this long after: 68/255, then 8 more every 1/60 s, opaque after 24 steps
+/// (400 ms).
+// ponytail: the steps counted to the nearest 60th of a second.
+pub fn spawn_alpha(since: Duration) -> f32 {
+    let steps = (since.as_secs_f32() * 60.0).round();
+    (68.0 + 8.0 * steps).min(255.0) / 255.0
+}
+
 /// Something on the map that moves cell by cell.
 pub struct Actor {
     pub name: String,
@@ -1800,6 +1808,8 @@ pub struct Actor {
     pub remove_at: Option<Instant>,
     /// Fading out: from when, over how many milliseconds (a corpse, a unit walking out of sight).
     pub fade: Option<(Instant, f32)>,
+    /// Spawned in view: fading in since then (`spawn_alpha`).
+    pub fade_in: Option<Instant>,
     /// A dead player: lying there until revived (players aren't removed when they die).
     pub dead: bool,
     /// Hiding, cloaking or chase-walking (the unit's option has UNSEEN_OPTIONS).
@@ -1882,6 +1892,7 @@ impl Actor {
             sitting: false,
             remove_at: None,
             fade: None,
+            fade_in: None,
             dead: false,
             cloaked: false,
             hide_option: 0,
@@ -1955,9 +1966,15 @@ impl Actor {
     }
 
     /// Plays `action` once at its ACT pace times `scale` (attack, flinch), or holds its last frame (death).
-    /// How opaque it's drawn: 1 until a fade starts, then down to 0 over the fade.
+    /// How opaque it's drawn: fading in after a spawn; 1 until a fade out starts, then down to 0 over the fade.
     pub fn alpha(&self, now: Instant) -> f32 {
-        self.fade.map_or(1.0, |(from, ms)| (1.0 - now.saturating_duration_since(from).as_secs_f32() * 1000.0 / ms).clamp(0.0, 1.0))
+        let out = self.fade.map_or(1.0, |(from, ms)| (1.0 - now.saturating_duration_since(from).as_secs_f32() * 1000.0 / ms).clamp(0.0, 1.0));
+        out.min(self.fade_in.map_or(1.0, |from| spawn_alpha(now.saturating_duration_since(from))))
+    }
+
+    /// Casts no shadow: fading out, or not yet opaque after a spawn.
+    pub fn shadowless(&self, now: Instant) -> bool {
+        self.fading(now) || self.fade_in.is_some_and(|from| spawn_alpha(now.saturating_duration_since(from)) < 1.0)
     }
 
     /// Fading now (a corpse, a unit out of sight): it casts no shadow.

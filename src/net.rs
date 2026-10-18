@@ -1435,8 +1435,10 @@ pub struct Unit {
     pub direction: u8,
     pub level: u16,
     pub name: String,
-    /// Sitting when it came into view.
-    pub sitting: bool,
+    /// A stand entry's state byte (1 dead, 2 sitting; it counts for players only); none on other entries.
+    pub posture: Option<u8>,
+    /// Spawned in view (ZC_NOTIFY_NEWENTRY) rather than already there or walking in.
+    pub spawned: bool,
     /// rathena's opt1 (OPT1_*): stone, freeze, and the rest.
     pub body_state: u16,
     /// rathena's opt2 (OPT2_*): poison, curse, and the rest.
@@ -5377,7 +5379,8 @@ fn decode_unit(packet: &[u8], layout: &UnitLayout, position: ([u16; 2], u8)) -> 
         direction: position.1,
         level: u16_at(layout.level),
         name: c_string(&packet[layout.name..(layout.name + 24).min(packet.len())]),
-        sitting: layout.state.is_some_and(|state| packet.get(state) == Some(&2)),
+        posture: layout.state.and_then(|state| packet.get(state).copied()),
+        spawned: false,
         // bodyState and healthState sit in front of effectState on every entry packet.
         body_state: u16_at(15),
         health_state: u16_at(17),
@@ -5406,7 +5409,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             MapEvent::Entered { position, direction: sprite_direction(direction), clock: (u32_at(2), Instant::now()) }
         }
         ZC_NOTIFY_STANDENTRY => MapEvent::Unit(decode_unit(packet, &STAND_LAYOUT, decode_entry_position(&packet[63..66]))),
-        ZC_NOTIFY_NEWENTRY => MapEvent::Unit(decode_unit(packet, &NEW_LAYOUT, decode_entry_position(&packet[63..66]))),
+        ZC_NOTIFY_NEWENTRY => MapEvent::Unit(Unit { spawned: true, ..decode_unit(packet, &NEW_LAYOUT, decode_entry_position(&packet[63..66])) }),
         ZC_NOTIFY_MOVEENTRY => {
             let (from, to) = decode_move(&packet[67..73]);
             let sub = [packet[72] >> 4, packet[72] & 0x0F];
@@ -6744,6 +6747,14 @@ mod tests {
         assert_eq!((unit.guild, unit.emblem), (7, 3));
         assert_eq!((unit.body_state, unit.health_state), (2, 2));
         assert_eq!(unit.hp, None);
+        // Its state byte; a stand entry isn't a spawn, a new entry is and has no state byte.
+        stand[68] = 1;
+        let Some(MapEvent::Unit(unit)) = decode_map_packet(&stand) else { panic!() };
+        assert_eq!((unit.posture, unit.spawned), (Some(1), false));
+        let mut new = stand.clone();
+        new[..2].copy_from_slice(&ZC_NOTIFY_NEWENTRY.to_le_bytes());
+        let Some(MapEvent::Unit(unit)) = decode_map_packet(&new) else { panic!() };
+        assert_eq!((unit.posture, unit.spawned), (None, true));
 
         // A hurt monster comes with its HP after the level and font; -1 when not told.
         stand[73..77].copy_from_slice(&50u32.to_le_bytes());

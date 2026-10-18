@@ -925,6 +925,11 @@ fn game_state(app: &App, game: &Game) -> Value {
             if actor.dead {
                 unit["dead"] = true.into();
             }
+            if actor.sitting {
+                unit["sitting"] = true.into();
+            }
+            // How opaque it's drawn, 0 to 255 (fading in after a spawn, out when leaving).
+            unit["alpha"] = (actor.alpha(now()) * 255.0).round().into();
             unit["tint"] = json!(crate::actor::status_tint(actor.body_state, actor.health_state));
             unit["marks"] = json!(crate::head_marks::marks(actor.body_state, actor.health_state).iter().map(|mark| format!("{mark:?}")).collect::<Vec<_>>());
             unit
