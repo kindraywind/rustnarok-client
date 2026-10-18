@@ -11,7 +11,7 @@ use rustnarok_client::text::Font;
 use crate::mercenary::draw_values;
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, UI, contains, messages, offset, screen, skills};
+use crate::{Layer, UI, contains, messages, skills};
 
 const TITLE: usize = 936;
 const SKILLS_TITLE: usize = 937;
@@ -364,88 +364,216 @@ impl Window {
     }
 }
 
-// ponytail: the skill list as the guild window's skill page: a grid of boxes, four to a row, level up buttons on
-// the boxes and the points on a line below.
-const SKILL_COLUMNS: usize = 4;
-const SKILL_SIDE: f32 = 8.0;
-const SKILL_WIDTH: f32 = SKILL_SIDE * 2.0 + SKILL_COLUMNS as f32 * skills::CELL[0];
-const POINTS_LINE: f32 = 22.0;
-const RAISE: [f32; 2] = [24.0, 24.0];
+/// The homunculus's and the mercenary's skill lists: one column of 32-px rows with the level and SP, a band on the
+/// selected row, Use and Close at the bottom, a corner grip for the height. Places from the list's corner, title
+/// bar included.
+const LIST_WIDTH: f32 = 280.0;
+const LIST_POSITION: [f32; 2] = [360.0, 200.0];
+/// Heights: 120 + 32k, up to 280; 216 at first.
+const LEAST_HEIGHT: f32 = 120.0;
+const MOST_STEPS: usize = 5;
+const FIRST_HEIGHT: f32 = 216.0;
+const LIST_ROW: f32 = 32.0;
+/// In row r (y = 32r): the icon, its level up button, the band, the name, "Lv : n", "Sp : n".
+const ROW_ICON: [f32; 2] = [44.0, 21.0];
+const ROW_UP: [f32; 2] = [78.0, 21.0];
+const ROW_BAND: [f32; 4] = [104.0, 19.0, 164.0, 28.0];
+const ROW_NAME: [f32; 2] = [112.0, 22.0];
+const ROW_LEVEL: [f32; 2] = [113.0, 34.0];
+const ROW_SP: [f32; 2] = [212.0, 34.0];
+const ICON_SIZE: f32 = 24.0;
+// ponytail: the name stops at the band's right edge.
+const NAME_END: f32 = 268.0;
+const UNLEARNED: [u8; 3] = [0x78, 0x78, 0x78];
+/// The band: learned, not learned, at 0 SP.
+const BANDS: [[u8; 4]; 3] = [[0x70, 0x9F, 0xED, 0xFF], [0xB4, 0xB4, 0xB4, 0xFF], [0x70, 0xD7, 0xED, 0xFF]];
+const PASSIVE: usize = 286;
+const TITLE_SHADOW: [f32; 2] = [17.0, 4.0];
+const TITLE_AT: [f32; 2] = [16.0, 3.0];
+/// From the bottom right: Use, Close; "Skill Point: n" from the bottom left.
+const USE_FROM: [f32; 2] = [107.0, 24.0];
+const CLOSE_FROM: [f32; 2] = [61.0, 24.0];
+const POINTS_AT: [f32; 2] = [16.0, 20.0];
+
+pub struct SkillAssets {
+    bands: [Texture; 3],
+    /// Normal, hovered, pressed.
+    use_button: [Texture; 3],
+    close: [Texture; 3],
+    resize: Texture,
+}
+
+impl SkillAssets {
+    pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
+        let button = |name: &str| ["", "_a", "_b"].map(|suffix| gpu.load_texture(grf, &format!("{UI}btn_{name}{suffix}.bmp"), false));
+        Self {
+            bands: BANDS.map(|color| gpu.solid(color)),
+            use_button: button("use"),
+            close: button("close"),
+            resize: gpu.load_texture(grf, &format!("{UI}btn_resize.bmp"), false),
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum SkillHit {
-    Title(TitleHit),
-    Skill(u16),
+    /// The title bar (it drags), its close button.
+    Title,
+    Close,
+    /// A row, by its place among all the skills.
+    Row(usize),
     Raise(u16),
+    Use,
+    Resize,
     Window,
 }
 
 pub struct SkillList {
     pub frame: Frame,
-}
-
-impl Default for SkillList {
-    fn default() -> Self {
-        Self { frame: Frame::new([((screen()[0] - SKILL_WIDTH) / 2.0).floor() - 120.0, 190.0], SKILL_WIDTH) }
-    }
+    /// Its title (`messages`), and whether it has skill points to show (the homunculus's).
+    title: usize,
+    points_line: bool,
+    height: f32,
+    grip: window::Grip,
+    scroll: usize,
+    /// The selected skill.
+    pub selected: Option<u16>,
 }
 
 impl SkillList {
-    pub fn height(count: usize) -> f32 {
-        TITLE_HEIGHT + 6.0 + count.div_ceil(SKILL_COLUMNS).max(1) as f32 * skills::CELL[1] + POINTS_LINE
+    pub fn homunculus() -> Self {
+        Self::new(SKILLS_TITLE, true)
     }
 
-    fn corner(index: usize) -> [f32; 2] {
-        let [column, row] = [index % SKILL_COLUMNS, index / SKILL_COLUMNS];
-        [SKILL_SIDE + column as f32 * skills::CELL[0] + (skills::CELL[0] - skills::BOX) / 2.0, TITLE_HEIGHT + 6.0 + row as f32 * skills::CELL[1]]
+    pub fn mercenary() -> Self {
+        Self::new(crate::mercenary::SKILLS_TITLE, false)
+    }
+
+    fn new(title: usize, points_line: bool) -> Self {
+        let frame = Frame::new(LIST_POSITION, LIST_WIDTH);
+        Self { frame, title, points_line, height: FIRST_HEIGHT, grip: window::Grip::default(), scroll: 0, selected: None }
+    }
+
+    pub fn height(&self) -> f32 {
+        self.height
+    }
+
+    /// Sets the height (kept or asked by the grip): 120 to 280 in 32-px steps.
+    pub fn set_height(&mut self, asked: f32) {
+        self.height = LEAST_HEIGHT + LIST_ROW * window::steps(asked, LEAST_HEIGHT, LIST_ROW, MOST_STEPS) as f32;
+    }
+
+    /// How many rows show: (h − 38) / 32.
+    pub fn rows(&self) -> usize {
+        ((self.height - 38.0) / LIST_ROW) as usize
+    }
+
+    /// Skills shown, with their place among all and their row's top.
+    fn shown<'s>(&self, skills: &'s [Skill]) -> impl Iterator<Item = (usize, &'s Skill, f32)> {
+        let scroll = self.scroll;
+        skills.iter().enumerate().skip(scroll).take(self.rows()).map(move |(index, skill)| (index, skill, (index - scroll) as f32 * LIST_ROW))
+    }
+
+    fn use_at(&self) -> [f32; 2] {
+        [LIST_WIDTH - USE_FROM[0], self.height - USE_FROM[1]]
+    }
+
+    fn close_at(&self) -> [f32; 2] {
+        [LIST_WIDTH - CLOSE_FROM[0], self.height - CLOSE_FROM[1]]
     }
 
     pub fn hit(&self, cursor: [f32; 2], skills: &[Skill], points: u16) -> Option<SkillHit> {
-        let local = self.frame.local(cursor, Self::height(skills.len()))?;
-        if let Some(hit) = self.frame.title_hit(local) {
-            return Some(SkillHit::Title(hit));
+        let local = self.frame.local(cursor, self.height)?;
+        match self.frame.title_hit(local) {
+            Some(TitleHit::Close) => return Some(SkillHit::Close),
+            Some(_) => return Some(SkillHit::Title),
+            None => {}
         }
-        for (index, skill) in skills.iter().enumerate() {
-            let corner = Self::corner(index);
-            if points > 0 && skill.upgradable && contains(offset(corner, skills::UP), RAISE, local) {
+        if window::on_grip([LIST_WIDTH, self.height], local) {
+            return Some(SkillHit::Resize);
+        }
+        if contains(self.use_at(), BUTTON, local) {
+            return Some(SkillHit::Use);
+        }
+        if contains(self.close_at(), BUTTON, local) {
+            return Some(SkillHit::Close);
+        }
+        for (index, skill, y) in self.shown(skills) {
+            if points > 0 && skill.upgradable && contains([ROW_UP[0], ROW_UP[1] + y], [ICON_SIZE; 2], local) {
                 return Some(SkillHit::Raise(skill.id));
             }
-            if contains(corner, [skills::BOX; 2], local) {
-                return Some(SkillHit::Skill(skill.id));
+            if contains([0.0, ROW_BAND[1] + y], [LIST_WIDTH, LIST_ROW], local) {
+                return Some(SkillHit::Row(index));
             }
         }
         Some(SkillHit::Window)
     }
 
-    /// Each skill's box on screen (for the test driver).
+    /// A press on the grip holds it; whether it did.
+    pub fn start_resize(&mut self, cursor: [f32; 2]) {
+        self.grip.start(cursor, [LIST_WIDTH, self.height]);
+    }
+
+    /// The title bar held moves the list; the grip held sets its height.
+    pub fn drag_to(&mut self, cursor: [f32; 2], count: usize) {
+        if let Some([_, asked]) = self.grip.asked(cursor) {
+            self.set_height(asked);
+            self.scroll = self.scroll.min(count.saturating_sub(self.rows()));
+        }
+        self.frame.drag_to(cursor, self.height);
+    }
+
+    pub fn drop_drag(&mut self) -> bool {
+        self.grip.stop() | self.frame.drop_drag()
+    }
+
+    /// The wheel: a row a notch, while there are more skills than rows.
+    pub fn scroll_by(&mut self, rows: i32, count: usize) {
+        let most = count.saturating_sub(self.rows());
+        self.scroll = (self.scroll as i32 + rows).clamp(0, most as i32) as usize;
+    }
+
+    /// Each shown skill's row on screen (for the test driver).
     pub fn skill_boxes(&self, skills: &[Skill]) -> Vec<(u16, [f32; 4])> {
-        if !self.frame.open || self.frame.minimized {
+        if !self.frame.open {
             return Vec::new();
         }
-        skills
-            .iter()
-            .enumerate()
-            .map(|(index, skill)| {
-                let [x, y] = self.frame.at(Self::corner(index));
-                (skill.id, [x, y, skills::BOX, skills::BOX])
+        self.shown(skills)
+            .map(|(_, skill, y)| {
+                let [x, top] = self.frame.at([ROW_BAND[0], ROW_BAND[1] + y]);
+                (skill.id, [x, top, ROW_BAND[2], ROW_BAND[3]])
             })
             .collect()
     }
 
     /// The level up buttons on screen: only with points to spend, on skills that can rise.
     pub fn raise_boxes(&self, skills: &[Skill], points: u16) -> Vec<(u16, [f32; 4])> {
-        if !self.frame.open || self.frame.minimized || points == 0 {
+        if !self.frame.open || points == 0 {
             return Vec::new();
         }
-        skills
-            .iter()
-            .enumerate()
-            .filter(|(_, skill)| skill.upgradable)
-            .map(|(index, skill)| {
-                let [x, y] = self.frame.at(offset(Self::corner(index), skills::UP));
-                (skill.id, [x, y, RAISE[0], RAISE[1]])
+        self.shown(skills)
+            .filter(|(_, skill, _)| skill.upgradable)
+            .map(|(_, skill, y)| {
+                let [x, top] = self.frame.at([ROW_UP[0], ROW_UP[1] + y]);
+                (skill.id, [x, top, ICON_SIZE, ICON_SIZE])
             })
             .collect()
+    }
+
+    /// Use, Close and the grip on screen (for the test driver), named after the list (`name`).
+    pub fn button_boxes(&self, name: &str) -> Vec<(String, [f32; 4])> {
+        if !self.frame.open {
+            return Vec::new();
+        }
+        let place = |at: [f32; 2], size: [f32; 2]| {
+            let [x, y] = self.frame.at(at);
+            [x, y, size[0], size[1]]
+        };
+        vec![
+            (format!("{name}_use"), place(self.use_at(), BUTTON)),
+            (format!("{name}_close"), place(self.close_at(), BUTTON)),
+            (format!("{name}_resize"), place([LIST_WIDTH - window::GRIP, self.height - window::GRIP], [window::GRIP; 2])),
+        ]
     }
 
     pub fn icons(skills: &[Skill], info: &HashMap<u16, SkillInfo>) -> Vec<String> {
@@ -457,6 +585,7 @@ impl SkillList {
         &'a self,
         layer: &mut Layer<'a>,
         chrome: &'a Chrome,
+        assets: &'a SkillAssets,
         skill_assets: &'a skills::Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         font: &Font,
@@ -470,31 +599,64 @@ impl SkillList {
             return;
         }
         let frame = &self.frame;
+        let at = |local: [f32; 2]| frame.at(local);
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
-        frame.draw_title(layer, chrome, message(SKILLS_TITLE), pointer.0);
-        if frame.minimized {
-            return;
-        }
-        let height = Self::height(skills.len()) - TITLE_HEIGHT;
-        layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [SKILL_WIDTH, height]));
-        layer.sprites.push((&chrome.border, frame.at([0.0, TITLE_HEIGHT]), [1.0, height]));
-        layer.sprites.push((&chrome.border, frame.at([SKILL_WIDTH - 1.0, TITLE_HEIGHT]), [1.0, height]));
-        layer.sprites.push((&chrome.border, frame.at([0.0, TITLE_HEIGHT + height - 1.0]), [SKILL_WIDTH, 1.0]));
         let hit = self.hit(pointer.0, skills, points);
-        for (index, skill) in skills.iter().enumerate() {
-            let corner = Self::corner(index);
-            let info = info.get(&skill.id);
-            let name = info.map_or_else(|| skill.id.to_string(), |info| info.name.clone());
-            skills::draw_box(layer, skill_assets, icons, font, frame.at(corner), info, &name, skill.level);
+        let look = |target: SkillHit| {
+            let hovered = hit == Some(target);
+            usize::from(hovered) + usize::from(hovered && pointer.1)
+        };
+        // The title bar with its close button alone, white below.
+        chrome.draw_title_bar(layer, at([0.0, 0.0]), LIST_WIDTH);
+        let close = chrome.button(2, contains(at(frame.close_button()), [11.0, 11.0], pointer.0));
+        layer.sprites.push((close, at(frame.close_button()), close.size));
+        layer.texts.push((message(self.title).to_owned(), at(TITLE_SHADOW), [255; 3]));
+        layer.texts.push((message(self.title).to_owned(), at(TITLE_AT), TEXT));
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [LIST_WIDTH, self.height - TITLE_HEIGHT]));
+        layer.sprites.push((&chrome.border, at([0.0, TITLE_HEIGHT]), [1.0, self.height - TITLE_HEIGHT]));
+        layer.sprites.push((&chrome.border, at([LIST_WIDTH - 1.0, TITLE_HEIGHT]), [1.0, self.height - TITLE_HEIGHT]));
+        layer.sprites.push((&chrome.border, at([0.0, self.height - 1.0]), [LIST_WIDTH, 1.0]));
+        for (_, skill, y) in self.shown(skills) {
+            let learned = skill.level > 0;
+            if self.selected == Some(skill.id) {
+                let [x, top, w, h] = ROW_BAND;
+                layer.sprites.push((&assets.bands[band(skill)], at([x, top + y]), [w, h]));
+            }
+            let skill_info = info.get(&skill.id);
+            if let Some(Some(icon)) = skill_info.map(skills::icon_path).and_then(|path| icons.get(&path)) {
+                layer.sprites.push((icon, at([ROW_ICON[0], ROW_ICON[1] + y]), [ICON_SIZE; 2]));
+            }
             if points > 0 && skill.upgradable {
-                let state = if hit == Some(SkillHit::Raise(skill.id)) { 1 + usize::from(pointer.1) } else { 0 };
-                let up = &skill_assets.up[state];
-                layer.sprites.push((up, frame.at(offset(corner, skills::UP)), up.size));
+                let up = &skill_assets.up[look(SkillHit::Raise(skill.id))];
+                layer.sprites.push((up, at([ROW_UP[0], ROW_UP[1] + y]), [ICON_SIZE; 2]));
+            }
+            let name = skill_info.map_or_else(|| skill.id.to_string(), |info| info.name.clone());
+            let name = window::fit(font, &name, NAME_END - ROW_NAME[0]);
+            layer.texts.push((name, at([ROW_NAME[0], ROW_NAME[1] + y]), if learned { TEXT } else { UNLEARNED }));
+            if learned {
+                layer.texts.push((format!("Lv : {}", skill.level), at([ROW_LEVEL[0], ROW_LEVEL[1] + y]), TEXT));
+                let sp = if skill.kind == 0 { message(PASSIVE).to_owned() } else { format!("Sp : {}", skill.sp) };
+                layer.texts.push((sp, at([ROW_SP[0], ROW_SP[1] + y]), TEXT));
             }
         }
-        let line = messages::fill(message(SKILL_POINTS), &[&points]);
-        let top = Self::height(skills.len()) - POINTS_LINE + ((POINTS_LINE - font.line_height()) / 2.0).floor();
-        layer.texts.push((line, frame.at([SKILL_SIDE, top]), TEXT));
+        if self.points_line {
+            let line = messages::fill(message(SKILL_POINTS), &[&points]);
+            layer.texts.push((line, at([POINTS_AT[0], self.height - POINTS_AT[1]]), TEXT));
+        }
+        layer.sprites.push((&assets.use_button[look(SkillHit::Use)], at(self.use_at()), BUTTON));
+        layer.sprites.push((&assets.close[look(SkillHit::Close)], at(self.close_at()), BUTTON));
+        layer.sprites.push((&assets.resize, at([LIST_WIDTH - window::GRIP, self.height - window::GRIP]), assets.resize.size));
+    }
+}
+
+/// The selected row's band: blue, grey while not learned, light blue at 0 SP.
+fn band(skill: &Skill) -> usize {
+    if skill.level == 0 {
+        1
+    } else if skill.sp == 0 {
+        2
+    } else {
+        0
     }
 }
 
@@ -517,7 +679,7 @@ mod tests {
     }
 
     fn open_list() -> SkillList {
-        let mut list = SkillList::default();
+        let mut list = SkillList::homunculus();
         list.frame.open = true;
         list
     }
@@ -576,33 +738,45 @@ mod tests {
     }
 
     #[test]
-    fn hits_the_skill_list() {
-        let list = open_list();
-        let skills = [skill(8001, 3, true), skill(8002, 1, false), skill(8003, 1, true)];
+    fn lists_skills_in_rows() {
+        let mut list = open_list();
+        // 216 tall: 5 rows; the grip goes 120 to 280 in 32-px steps.
+        assert_eq!((list.height(), list.rows()), (216.0, 5));
+        for (asked, height, rows) in [(100.0, 120.0, 2), (151.0, 120.0, 2), (152.0, 152.0, 3), (300.0, 280.0, 7)] {
+            list.set_height(asked);
+            assert_eq!((list.height(), list.rows()), (height, rows), "{asked}");
+        }
+        list.set_height(216.0);
+        let skills = [skill(8001, 3, true), skill(8002, 1, false), skill(8003, 0, true), skill(8004, 1, false)];
+        // Rows at (360, 200): the band at (104, 19 + 32r).
         let boxes = list.skill_boxes(&skills);
-        assert_eq!(boxes.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [8001, 8002, 8003]);
-        for (id, rect) in &boxes {
-            assert_eq!(list.hit(centre(*rect), &skills, 0), Some(SkillHit::Skill(*id)));
-        }
-        let raises = list.raise_boxes(&skills, 2);
-        assert_eq!(raises.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [8001, 8003]);
-        for (id, rect) in &raises {
-            assert_eq!(list.hit(centre(*rect), &skills, 2), Some(SkillHit::Raise(*id)));
-        }
-    }
-
-    #[test]
-    fn raises_need_points() {
-        let list = open_list();
-        let skills = [skill(8001, 3, true), skill(8002, 1, false)];
+        assert_eq!(boxes.iter().map(|(id, [x, y, ..])| (*id, [*x, *y])).collect::<Vec<_>>()[..2], [(8001, [464.0, 219.0]), (8002, [464.0, 251.0])]);
+        assert_eq!(list.hit(centre(boxes[2].1), &skills, 0), Some(SkillHit::Row(2)));
+        // Level up buttons at x 78 only with points, on the skills that can go up.
         assert!(list.raise_boxes(&skills, 0).is_empty());
-        assert!(list.raise_boxes(&[skill(8002, 1, false)], 5).is_empty());
+        let raises = list.raise_boxes(&skills, 1);
+        assert_eq!(raises.iter().map(|(id, [x, ..])| (*id, *x)).collect::<Vec<_>>(), [(8001, 438.0), (8003, 438.0)]);
+        assert_eq!(list.hit(centre(raises[0].1), &skills, 1), Some(SkillHit::Raise(8001)));
+        // Use and Close at the bottom right; the title bar has the close button alone.
+        let buttons = list.button_boxes("homunculus_skills");
+        assert_eq!(buttons.iter().map(|(_, [x, y, ..])| [*x, *y]).collect::<Vec<_>>()[..2], [[533.0, 392.0], [579.0, 392.0]]);
+        assert_eq!(list.hit(centre(buttons[0].1), &skills, 0), Some(SkillHit::Use));
+        assert_eq!(list.hit(centre(buttons[1].1), &skills, 0), Some(SkillHit::Close));
+        assert_eq!(list.hit(centre(buttons[2].1), &skills, 0), Some(SkillHit::Resize));
+        assert_eq!(list.hit([630.0, 208.0], &skills, 0), Some(SkillHit::Close));
+        assert_eq!(list.hit([600.0, 208.0], &skills, 0), Some(SkillHit::Title));
+        assert_eq!(list.hit([-100.0, -100.0], &skills, 1), None);
     }
 
     #[test]
-    fn a_click_outside_the_list_hits_nothing() {
-        let list = open_list();
-        let skills = [skill(8001, 3, true)];
-        assert_eq!(list.hit([-100.0, -100.0], &skills, 1), None);
+    fn bands_and_scrolls() {
+        // Blue, grey while not learned, light blue at 0 SP.
+        let mut learned = skill(8001, 3, true);
+        learned.sp = 10;
+        assert_eq!([band(&learned), band(&skill(8003, 0, true)), band(&skill(8002, 1, false))], [0, 1, 2]);
+        let mut list = open_list();
+        let skills: Vec<Skill> = (0..7).map(|n| skill(8001 + n, 1, false)).collect();
+        list.scroll_by(5, skills.len());
+        assert_eq!(list.skill_boxes(&skills)[0].0, 8003, "two more than it shows");
     }
 }

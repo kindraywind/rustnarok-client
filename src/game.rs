@@ -579,7 +579,7 @@ impl Game {
             Panel::Cart => self.cart.cart.is_some() && self.cart.hit(cursor).is_some(),
             Panel::Pet => self.pet.is_some() && self.pet_window.hit(cursor).is_some(),
             Panel::Mercenary => self.mercenary.is_some() && self.mercenary_window.hit(cursor).is_some(),
-            Panel::MercenarySkills => self.mercenary.is_some() && self.mercenary_skill_list.hit(cursor, &self.mercenary_skills).is_some(),
+            Panel::MercenarySkills => self.mercenary.is_some() && self.mercenary_skill_list.hit(cursor, &self.mercenary_skills, 0).is_some(),
             Panel::Homunculus => self.homunculus.is_some() && self.homunculus_window.hit(cursor).is_some(),
             Panel::HomunculusSkills => self
                 .homunculus
@@ -660,6 +660,7 @@ impl Game {
         places += &format!("{STORAGE_CATEGORIES} 0 {} 0\n", self.storage.mask);
         places += &format!("{VEND_SIZE} {} {} 0\n{SKILL_LIST_SIZE} 0 {} 0\n", self.vend_size.width, self.vend_size.rows, self.skill_window.list_rows());
         places += &format!("{ITEM_PLACE} {} {} 0\n{CARD_PLACE} {} {} 0\n", self.item_place[0], self.item_place[1], self.card_place[0], self.card_place[1]);
+        places += &format!("{COMPANION_SKILLS_SIZE} {} {} 0\n", self.homunculus_skill_list.height(), self.mercenary_skill_list.height());
         let quest = self.quest_window.frame.position;
         places += &format!("{QUEST_PLACE} {} {} 0\n", quest[0], quest[1]);
         if places != self.saved_places {
@@ -739,6 +740,10 @@ impl Game {
         }
         if let Some(&([width, rows], _)) = saved.get(VEND_SIZE) {
             self.vend_size = vend::GridSize::clamped(width, rows as usize);
+        }
+        if let Some(&([homunculus, mercenary], _)) = saved.get(COMPANION_SKILLS_SIZE) {
+            self.homunculus_skill_list.set_height(homunculus);
+            self.mercenary_skill_list.set_height(mercenary);
         }
         if let Some(&(place, _)) = saved.get(ITEM_PLACE) {
             self.item_place = iteminfo::restored_place(place, screen());

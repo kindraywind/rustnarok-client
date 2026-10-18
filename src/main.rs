@@ -1524,7 +1524,7 @@ struct Game {
     away_prompt: Option<whisper::AwayPrompt>,
     mercenary_skills: Vec<net::Skill>,
     mercenary_window: mercenary::Window,
-    mercenary_skill_list: mercenary::SkillList,
+    mercenary_skill_list: homunculus::SkillList,
     steering: mercenary::Steering,
     dismiss_asked: bool,
     /// The player's homunculus: its unit (once the server says it's ours), what it's like, its skills, its windows,
@@ -2785,6 +2785,7 @@ struct Assets {
     battle_queue: battle_queue::Assets,
     mercenary: mercenary::Assets,
     homunculus: homunculus::Assets,
+    companion_skills: homunculus::SkillAssets,
     party: party::Assets,
     chatroom: chatroom::Assets,
     reputation: reputation::Assets,
@@ -2914,6 +2915,7 @@ impl Assets {
             battle_queue: battle_queue::Assets::load(gpu, grf, &lua::entry_queue(grf).unwrap_or_default()),
             mercenary: mercenary::Assets::load(gpu, grf),
             homunculus: homunculus::Assets::load(gpu, grf),
+            companion_skills: homunculus::SkillAssets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
             reputation: reputation::Assets::load(gpu, grf),
@@ -3123,6 +3125,8 @@ const SHOP_DEAL_SIZE: &str = "shop_deal_size";
 const PARTY_MODE: &str = "party_mode";
 const VEND_SIZE: &str = "vend_size";
 const SKILL_LIST_SIZE: &str = "skill_list_size";
+/// The homunculus's and the mercenary's skill lists' heights.
+const COMPANION_SKILLS_SIZE: &str = "companion_skills_size";
 const ITEM_PLACE: &str = "item_info";
 const QUEST_PLACE: &str = "quest";
 const CARD_PLACE: &str = "card_info";

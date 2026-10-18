@@ -1253,6 +1253,13 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(id, area)| json!({"kind": "button", "name": format!("raise:{id}"), "box": area})),
         )
         .chain(
+            game.homunculus
+                .iter()
+                .flat_map(|_| game.homunculus_skill_list.button_boxes("homunculus_skills"))
+                .chain(game.mercenary.iter().flat_map(|_| game.mercenary_skill_list.button_boxes("mercenary_skills")))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(
             game.stylist
                 .iter()
                 .flat_map(|window| {
