@@ -136,7 +136,7 @@ impl Cursor {
         // The table's origins assume 2D sprite drawing, which lifts every layer half a cell (17.5px).
         let anchor = [position[0] - hot_spot[0] + origin[0], position[1] - hot_spot[1] + origin[1] - HALF_CELL];
         let sprites = &*sprites;
-        placed.into_iter().map(|(key, offset, size)| (sprites.texture(key), [anchor[0] + offset[0], anchor[1] + offset[1]], size)).collect()
+        placed.into_iter().map(|(key, offset, size, _)| (sprites.texture(key), [anchor[0] + offset[0], anchor[1] + offset[1]], size)).collect()
     }
 }
 

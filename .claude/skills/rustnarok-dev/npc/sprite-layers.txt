@@ -1,0 +1,4 @@
+prontera,151,184,4	script	Layers 1	1150,{ end; }
+prontera,154,184,4	script	Layers 2	2917,{ end; }
+prontera,157,184,4	script	Layers 3	3074,{ end; }
+prontera,160,184,4	script	Layers 4	20926,{ end; }

@@ -20,6 +20,9 @@ pub const CELL: f32 = 5.0;
 // Camera and sprite scale as tuned against the official client (vFov 15, zoom 125 = 62.5 cells).
 /// World units per sprite pixel (about 35 sprite pixels per cell).
 const SPRITE_SCALE: f32 = CELL / 35.0;
+/// The logical screen's height in pixels (`SCREEN` in main.rs): the field of view is vertical, so a screen pixel is
+/// this fraction of the view's height at any aspect.
+const SCREEN_HEIGHT: f32 = 768.0;
 const FIELD_OF_VIEW: f32 = 15.0;
 const NEAR: f32 = 10.0;
 const FAR: f32 = 1500.0;
@@ -145,7 +148,7 @@ struct GroundVertex {
     color: [f32; 4],
 }
 
-const SPRITE_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x4];
+const SPRITE_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x4, 4 => Float32x2];
 const MESH_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x4];
 
 #[repr(C)]
@@ -155,6 +158,8 @@ struct SpriteVertex {
     offset: [f32; 2],
     uv: [f32; 2],
     tint: [f32; 4],
+    /// Screen pixels to move the corner by, after projecting.
+    pixel: [f32; 2],
 }
 
 #[repr(C)]
@@ -167,6 +172,8 @@ struct Globals {
     camera_right: [f32; 4],
     /// w: world units per sprite pixel.
     camera_up: [f32; 4],
+    /// One screen pixel's width and height in clip space.
+    pixel: [f32; 4],
 }
 
 const SHADER: &str = r"
@@ -177,6 +184,7 @@ struct Globals {
     diffuse: vec4<f32>,
     camera_right: vec4<f32>,
     camera_up: vec4<f32>,
+    pixel: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var image: texture_2d<f32>;
@@ -233,14 +241,16 @@ struct SpriteOutput { @builtin(position) position: vec4<f32>, @location(0) uv: v
 struct SpriteFragment { @location(0) color: vec4<f32>, @builtin(frag_depth) depth: f32 };
 
 @vertex fn sprite_vs(@location(0) feet: vec3<f32>, @location(1) offset: vec2<f32>, @location(2) uv: vec2<f32>,
-                     @location(3) tint: vec4<f32>) -> SpriteOutput {
-    return sprite_vertex(feet, offset, uv, tint);
+                     @location(3) tint: vec4<f32>, @location(4) pixel: vec2<f32>) -> SpriteOutput {
+    return sprite_vertex(feet, offset, uv, tint, pixel);
 }
 
-fn sprite_vertex(feet: vec3<f32>, offset: vec2<f32>, uv: vec2<f32>, tint: vec4<f32>) -> SpriteOutput {
+fn sprite_vertex(feet: vec3<f32>, offset: vec2<f32>, uv: vec2<f32>, tint: vec4<f32>, pixel: vec2<f32>) -> SpriteOutput {
     let scale = globals.camera_up.w;
     let world = feet + globals.camera_right.xyz * offset.x * scale - globals.camera_up.xyz * offset.y * scale;
     var clip = globals.view_projection * vec4(world, 1.0);
+    clip.x += pixel.x * globals.pixel.x * clip.w;
+    clip.y -= pixel.y * globals.pixel.y * clip.w;
     // The whole sprite takes its feet's depth, pulled slightly forward so it stands on the ground.
     let feet_clip = globals.view_projection * vec4(feet, 1.0);
     let depth = feet_clip.z / feet_clip.w - 0.0005;
@@ -279,16 +289,28 @@ struct MeshOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec
 // Effects stand in front of what they play on, pulled toward the camera.
 @vertex fn effect_vs(@location(0) feet: vec3<f32>, @location(1) offset: vec2<f32>, @location(2) uv: vec2<f32>,
                      @location(3) tint: vec4<f32>) -> SpriteOutput {
-    var out = sprite_vertex(feet, offset, uv, tint);
+    var out = sprite_vertex(feet, offset, uv, tint, vec2(0.0));
     out.position.z = max(out.position.z - 0.01 * out.position.w, 0.0);
     out.depth = max(out.depth - 0.01, 0.0);
     return out;
 }
 ";
 
+/// A sprite corner (`uv` 0 or 1 each way): its offset from the feet in sprite pixels, and how many screen pixels it
+/// moves after projecting. The image turns clockwise on screen about its middle; its right and bottom edges reach one
+/// screen pixel further, and the whole quad sits half a pixel right and down of the ground under it.
+pub fn sprite_corner([x, y]: [f32; 2], [w, h]: [f32; 2], angle: f32, [u, v]: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+    let (sin, cos) = angle.to_radians().sin_cos();
+    let turn = |[dx, dy]: [f32; 2]| [dx * cos - dy * sin, dx * sin + dy * cos];
+    let [dx, dy] = turn([(u - 0.5) * w, (v - 0.5) * h]);
+    let [px, py] = turn([u - 0.5, v - 0.5]);
+    ([x + w / 2.0 + dx, y + h / 2.0 + dy], [1.0 + px, 1.0 + py])
+}
+
 /// A sprite image in the world: texture, feet position, top-left offset from the feet and size in sprite pixels
-/// (negative width = mirrored), and a color to multiply it by (damage colors, fading).
-pub type Billboard<'a> = (&'a Texture, Vector, [f32; 2], [f32; 2], [f32; 4]);
+/// (negative width = mirrored), a color to multiply it by (damage colors, fading), and degrees to turn it clockwise
+/// about its middle.
+pub type Billboard<'a> = (&'a Texture, Vector, [f32; 2], [f32; 2], [f32; 4], f32);
 
 /// An effect's quad: texture, where it plays, its corners' offsets in sprite pixels (top left, top right, bottom right,
 /// bottom left; y down), a color to multiply it by, and whether it adds to what's behind instead of covering it.
@@ -462,7 +484,7 @@ impl World {
             wgpu::VertexBufferLayout {
                 array_stride: size_of::<SpriteVertex>() as u64,
                 step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x4],
+                attributes: &SPRITE_ATTRIBUTES,
             },
             Some(wgpu::BlendState::ALPHA_BLENDING),
             true,
@@ -579,6 +601,7 @@ impl WorldPass for WorldFrame<'_> {
             diffuse: [diffuse[0], diffuse[1], diffuse[2], 1.0],
             camera_right: [self.view.right[0], self.view.right[1], self.view.right[2], 0.0],
             camera_up: [self.view.up[0], self.view.up[1], self.view.up[2], SPRITE_SCALE],
+            pixel: [2.0 / (SCREEN_HEIGHT * self.view.aspect), 2.0 / SCREEN_HEIGHT, 0.0, 0.0],
         };
         gpu.queue.write_buffer(&world.globals, 0, bytemuck::bytes_of(&globals));
 
@@ -601,8 +624,11 @@ impl WorldPass for WorldFrame<'_> {
         let sprite_vertices: Vec<SpriteVertex> = self
             .billboards
             .iter()
-            .flat_map(|&(_, feet, [x, y], [w, h], tint)| {
-                let corner = |dx: f32, dy: f32| SpriteVertex { feet, offset: [x + dx * w, y + dy * h], uv: [dx, dy], tint };
+            .flat_map(|&(_, feet, offset, size, tint, angle)| {
+                let corner = |u: f32, v: f32| {
+                    let (offset, pixel) = sprite_corner(offset, size, angle, [u, v]);
+                    SpriteVertex { feet, offset, uv: [u, v], tint, pixel }
+                };
                 [corner(0., 0.), corner(1., 0.), corner(0., 1.), corner(0., 1.), corner(1., 0.), corner(1., 1.)]
             })
             .collect();
@@ -610,7 +636,7 @@ impl WorldPass for WorldFrame<'_> {
             .effects
             .iter()
             .flat_map(|&(_, feet, corners, tint, _)| {
-                let corner = |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint };
+                let corner = |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint, pixel: [0.0; 2] };
                 let [top_left, top_right, bottom_right, bottom_left] =
                     [corner(0, [0.0, 0.0]), corner(1, [1.0, 0.0]), corner(2, [1.0, 1.0]), corner(3, [0.0, 1.0])];
                 [top_left, top_right, bottom_left, bottom_left, top_right, bottom_right]
@@ -989,6 +1015,21 @@ mod tests {
         let nothing = |_: [i32; 2]| false;
         assert_eq!(walk_goal([18, 5], [0, 5], nothing), None);
         assert_eq!(walk_goal([3, 3], [3, 3], open), None);
+    }
+
+    #[test]
+    fn turns_sprite_corners_and_nudges_them_by_screen_pixels() {
+        let close = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 1e-4 && (a[1] - b[1]).abs() < 1e-4;
+        // Unturned: corners where the layer says; the right and bottom edges one pixel further, all half a pixel down
+        // and right.
+        assert_eq!(sprite_corner([-5.0, -4.0], [10.0, 8.0], 0.0, [0.0, 0.0]), ([-5.0, -4.0], [0.5, 0.5]));
+        assert_eq!(sprite_corner([-5.0, -4.0], [10.0, 8.0], 0.0, [1.0, 1.0]), ([5.0, 4.0], [1.5, 1.5]));
+        // Mirrored (negative width): the image's left edge is on the right.
+        assert_eq!(sprite_corner([5.0, -4.0], [-10.0, 8.0], 0.0, [1.0, 0.0]), ([-5.0, -4.0], [1.5, 0.5]));
+        // A quarter turn clockwise about the middle: the top-left corner goes to the top right.
+        let (offset, pixel) = sprite_corner([-5.0, -5.0], [10.0, 10.0], 90.0, [0.0, 0.0]);
+        assert!(close(offset, [5.0, -5.0]), "{offset:?}");
+        assert!(close(pixel, [1.5, 0.5]), "{pixel:?}");
     }
 
     #[test]
