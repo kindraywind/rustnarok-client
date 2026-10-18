@@ -1177,8 +1177,12 @@ struct Game {
     storage: storage::Storage,
     /// An NPC's illustration and where it goes.
     cutin: Option<cutin::Cutin>,
-    /// NPC marks on the minimap: whose (NPC and mark), the cell, its color and until when (None: until taken away).
-    marks: Vec<Mark>,
+    /// Compass marks on the minimap, by mark id: the cell, its color, until when (None: until taken away) and when set.
+    marks: Vec<(u8, Mark)>,
+    /// NPCs' quest marks (ZC_QUEST_NOTIFY_EFFECT): the NPC, its cell and the mark's colour.
+    quest_marks: Vec<(u32, [i32; 2], u16)>,
+    /// Where the store picked in the Universal Catalog stands.
+    store_mark: Option<[i32; 2]>,
     /// The box asking how many, and what for.
     amount: Option<window::Amount<Asked>>,
     /// The option menu (Esc, or on dying).
@@ -1935,9 +1939,7 @@ fn change_look(look: &mut Look, kind: u8, value: u32, extra: u32) -> bool {
 
 /// A map name as the indoor table lists it.
 /// An NPC's mark on the minimap: (NPC, mark ID), cell, image, until when (None while the NPC keeps it), and when it was set.
-type Mark = ((u32, u8), [i32; 2], Texture, Option<Instant>, Instant);
-/// The Universal Catalog's mark, apart from the NPCs'.
-const CATALOG_MARK: (u32, u8) = (u32::MAX, 0);
+type Mark = ([i32; 2], Texture, Option<Instant>, Instant);
 
 /// A scripted input (RUSTNAROK_CLIENT_CLICKS): when, right button, where, and where to drag to.
 type ScriptedInput = (Duration, bool, [f32; 2], Option<[f32; 2]>);
@@ -2372,7 +2374,7 @@ impl Game {
     fn close_catalog(&mut self) {
         if self.catalog.take().is_some() {
             let _ = self.session.close_store_search();
-            self.marks.retain(|(key, ..)| *key != CATALOG_MARK);
+            self.store_mark = None;
         }
     }
 
@@ -11052,6 +11054,8 @@ impl App {
                     storage: storage::Storage::default(),
                     cutin: None,
                     marks: Vec::new(),
+                    quest_marks: Vec::new(),
+                    store_mark: None,
                     amount: None,
                     escape: None,
                     audio_window: None,
@@ -11369,6 +11373,9 @@ impl App {
                 game.spirits.clear();
                 game.ground.clear();
                 game.marks.clear();
+                // rathena sends the quest marks again on arrival.
+                game.quest_marks.clear();
+                game.store_mark = None;
                 game.signs.clear();
                 // The server ends the search on leaving the map.
                 game.catalog = None;
@@ -13757,23 +13764,20 @@ impl App {
             MapEvent::CatalogFailed(reason) => {
                 game.chat_line(self.messages.get(catalog::failure_message(reason)).cloned().unwrap_or_default(), CHAT_ERROR);
             }
-            // Where the store picked stands: a yellow mark on the minimap (none: it's gone).
+            // Where the store picked stands: the store mark on the minimap (none: it's gone).
             MapEvent::CatalogMark(cell) => {
-                game.marks.retain(|(key, ..)| *key != CATALOG_MARK);
                 if let Some(catalog) = &mut game.catalog {
                     catalog.mark = cell;
                 }
-                if let (Some(cell), Some(gpu)) = (cell, gpu) {
-                    game.marks.push((CATALOG_MARK, cell.map(i32::from), gpu.solid([0xFF, 0xFF, 0x00, 255]), None, control::now()));
-                }
+                game.store_mark = cell.map(|cell| cell.map(i32::from));
             }
-            MapEvent::Mark { npc, kind, cell, id, color } => {
-                game.marks.retain(|(key, ..)| *key != (npc, id));
-                if kind != 2
-                    && let Some(gpu) = gpu
-                {
+            MapEvent::QuestMark { npc, cell, effect, color } => minimap::set_quest_mark(&mut game.quest_marks, npc, cell.map(i32::from), effect, color),
+            // A compass mark, by its id whichever NPC sent it.
+            MapEvent::Mark { kind, cell, id, color, .. } => {
+                if let Some(gpu) = gpu {
                     let until = (kind == 0).then(|| control::now() + Duration::from_secs(15));
-                    game.marks.push(((npc, id), cell.map(i32::from), gpu.solid([color[0], color[1], color[2], 255]), until, control::now()));
+                    let mark = (cell.map(i32::from), gpu.solid([color[0], color[1], color[2], 255]), until, control::now());
+                    minimap::set_compass_mark(&mut game.marks, id, kind, mark);
                 }
             }
             MapEvent::InventoryExpansion(slots) => game.inventory.expansion = slots,
@@ -15709,7 +15713,7 @@ impl App {
         }
         let size = [game.world.gat.width as u32, game.world.gat.height as u32];
         // NPC marks last until they're taken down. Each blinks from the moment it was set.
-        game.marks.retain(|(_, _, _, until, _)| until.is_none_or(|until| until > now));
+        game.marks.retain(|(_, (_, _, until, _))| until.is_none_or(|until| until > now));
         // The pickup popup's five seconds; an open inventory has been seen.
         if game.pickup_popup.as_ref().is_some_and(|popup| !popup.alive(control::now())) {
             game.pickup_popup = None;
@@ -15728,8 +15732,8 @@ impl App {
         let marks: Vec<_> = game
             .marks
             .iter()
-            .filter(|(_, _, _, _, set)| minimap::mark_visible(0, now.saturating_duration_since(*set).as_millis()))
-            .map(|(_, cell, color, _, _)| (*cell, color))
+            .filter(|(_, (_, _, _, set))| minimap::mark_visible(0, now.saturating_duration_since(*set).as_millis()))
+            .map(|(_, (cell, color, _, _))| (*cell, color))
             .collect();
         // Party members on this map, in their colours (their places in the list when they were added).
         if game.party_colors.is_empty() {
@@ -15768,7 +15772,18 @@ impl App {
         };
         let trail = game.navigation.as_ref().map_or(&[][..], |active| active.trail.as_slice());
         let goal = navi_next.map(|cell| cell.map(i32::from));
-        let markers = minimap::Markers { cell: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss, trail, goal };
+        let markers = minimap::Markers {
+            cell: game.player.cell,
+            yaw,
+            marks: &marks,
+            quests: &game.quest_marks.iter().map(|&(_, cell, color)| (cell, color)).collect::<Vec<_>>(),
+            store: game.store_mark,
+            party: &dots,
+            guild: &guild,
+            boss,
+            trail,
+            goal,
+        };
         if game.minimap_shown() {
             minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.minimap_zoom, &markers, minimap::Pointer { at: pointer.0, down: pointer.1 });
         }

@@ -954,6 +954,7 @@ const ZC_OPEN_SEARCH_STORE_INFO: u16 = 0x083A;
 const CZ_CLOSE_SEARCH_STORE_INFO: u16 = 0x083B;
 const CZ_SSILIST_ITEM_CLICK: u16 = 0x083C;
 const ZC_SSILIST_ITEM_CLICK_ACK: u16 = 0x083D;
+const ZC_QUEST_NOTIFY_EFFECT: u16 = 0x0446;
 const ZC_SEARCH_STORE_INFO_ACK: u16 = 0x0B64;
 /// One result of ZC_SEARCH_STORE_INFO_ACK.
 const CATALOG_ROW_SIZE: usize = 142;
@@ -2984,6 +2985,14 @@ pub enum MapEvent {
         place: u8,
     },
     /// An NPC marks a cell on the minimap: `kind` 0 for 15 seconds, 1 until taken away, 2 takes it away.
+    /// An NPC's quest mark (ZC_QUEST_NOTIFY_EFFECT): where it stands, the effect (9999 QTYPE_NONE: none) and the mark's
+    /// colour (0 none, 1 yellow, 2 green, 3 purple).
+    QuestMark {
+        npc: u32,
+        cell: [u16; 2],
+        effect: u16,
+        color: u16,
+    },
     Mark {
         npc: u32,
         kind: u32,
@@ -5793,6 +5802,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 .collect(),
         },
         ZC_SEARCH_STORE_INFO_FAILED => MapEvent::CatalogFailed(packet[2]),
+        ZC_QUEST_NOTIFY_EFFECT => MapEvent::QuestMark { npc: u32_at(2), cell: [u16_at(6), u16_at(8)], effect: u16_at(10), color: u16_at(12) },
         ZC_SSILIST_ITEM_CLICK_ACK => {
             let cell = [u16_at(2) as i16, u16_at(4) as i16];
             MapEvent::CatalogMark((cell != [-1, -1]).then_some(cell))
@@ -7601,6 +7611,17 @@ mod tests {
         let mark = |x: i16, y: i16| [&ZC_SSILIST_ITEM_CLICK_ACK.to_le_bytes()[..], &x.to_le_bytes(), &y.to_le_bytes()].concat();
         assert!(matches!(decode_map_packet(&mark(170, 330)), Some(MapEvent::CatalogMark(Some([170, 330])))));
         assert!(matches!(decode_map_packet(&mark(-1, -1)), Some(MapEvent::CatalogMark(None))));
+        // 0446 <npc id>.L <x>.W <y>.W <effect>.W <color>.W
+        let quest = [
+            &ZC_QUEST_NOTIFY_EFFECT.to_le_bytes()[..],
+            &110_00042u32.to_le_bytes(),
+            &150u16.to_le_bytes(),
+            &170u16.to_le_bytes(),
+            &9999u16.to_le_bytes(),
+            &2u16.to_le_bytes(),
+        ]
+        .concat();
+        assert!(matches!(decode_map_packet(&quest), Some(MapEvent::QuestMark { npc: 110_00042, cell: [150, 170], effect: 9999, color: 2 })));
         // Max price before min, two items, no cards: 23 bytes.
         let search = encode_store_search(false, 2000, 100, &[909, 910], &[]);
         assert_eq!(search.len(), 23);
