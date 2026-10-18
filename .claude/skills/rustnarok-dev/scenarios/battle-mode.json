@@ -1,0 +1,31 @@
+{
+  "about": "Battle mode on the chat line (issue #353). With fresh settings it starts off, with no icon. /bm turns it on with the line open and the icon showing it so. Enter on the empty box closes the line, and Enter opens it again. \"hi\" + Enter sends and the line stays open; Enter again closes it. Esc on \"abc\" closes the line and Enter reopens it with \"abc\" still there. A click on the log doesn't open the line; a click on the icon does.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500}, {"move": [600, 300]},
+    {"expect": {"state": {"chat_mode_icon": null, "chat_line_open": true}}},
+    {"type": "/bm"}, {"key": "Enter"}, {"wait": 500},
+    {"expect": {"state": {"chat_mode_icon": true, "chat_line_open": true}}},
+    {"shot": "bm-on", "crop": [0, 640, 620, 128], "threshold": 5},
+    {"key": "Enter"}, {"wait": 300},
+    {"expect": {"state": {"chat_mode_icon": false, "chat_line_open": false}}},
+    {"shot": "bm-closed", "crop": [0, 640, 620, 128], "threshold": 5},
+    {"key": "Enter"}, {"wait": 300},
+    {"type": "hi"}, {"key": "Enter"}, {"wait": 500},
+    {"expect": {"chat": "{first} : hi", "state": {"chat_line_open": true, "chat_input": ""}}},
+    {"key": "Enter"}, {"wait": 300},
+    {"expect": {"state": {"chat_line_open": false}}},
+    {"key": "Enter"}, {"type": "abc"}, {"key": "Escape"}, {"wait": 300},
+    {"expect": {"state": {"chat_line_open": false, "chat_input": "abc"}}},
+    {"key": "Enter"}, {"wait": 300},
+    {"expect": {"state": {"chat_line_open": true, "chat_input": "abc"}}},
+    {"key": "Escape"}, {"wait": 300},
+    {"click": [300, 700]}, {"wait": 300},
+    {"expect": {"state": {"chat_line_open": false}}},
+    {"click_on": {"button": "chat_mode"}}, {"wait": 300},
+    {"expect": {"state": {"chat_line_open": true, "chat_mode_icon": true}}},
+    {"key": "Ctrl+A"}, {"key": "Backspace"}, {"type": "/bm"}, {"key": "Enter"}, {"wait": 300},
+    {"expect": {"state": {"chat_mode_icon": null}}}
+  ]
+}

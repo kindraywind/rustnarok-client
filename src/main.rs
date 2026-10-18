@@ -3061,10 +3061,13 @@ impl Game {
                 self.chat_line(message(id), CHAT_ITEM);
                 Ok(())
             }
+            // On leaves the line open with an empty box; off opens it. The window shows either way.
             chat::Command::BattleMode => {
                 let id = self.chat_mode.toggle();
                 self.chat_mode.save();
-                self.chat_line(message(id), CHAT_ITEM);
+                self.chat.hidden = false;
+                self.chat.mode_icon = self.chat_mode.icon();
+                self.chat_line(message(id), [255, 255, 100]);
                 Ok(())
             }
             chat::Command::DressRoom => {
@@ -7769,12 +7772,15 @@ impl App {
                     chat::SettingsHit::Window => {}
                 }
             }
+            // A click on the chat window: the battle-mode icon opens or closes the line (the focus stays); the rest
+            // focuses the boxes but doesn't open the line.
             Scene::Game(game) if game.chat.on_list(cursor) || game.chat.blocks(cursor) => {
-                if let Some(id) = game.chat.click(cursor) {
+                if game.chat.hit(cursor) == Some(chat::Hit::ModeIcon) {
+                    game.chat_mode.toggle_line();
+                    game.chat.mode_icon = game.chat_mode.icon();
+                } else if let Some(id) = game.chat.click(cursor) {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
-                // ponytail: a click on the chat bar opens the battle-mode line; Enter is the key the spec names.
-                game.chat_mode.open_line();
             }
             Scene::Game(game) if game.dialog.is_some() => {
                 // NPC windows take the click; the map doesn't react while talking.
@@ -9772,13 +9778,17 @@ impl App {
             },
             Scene::Game(game) => {
                 let kind = battle_key(key);
-                let take = game.chat_mode.take_key(kind, game.chat.input.trim().is_empty(), game.chat.naming);
+                // Only a box with nothing in it is empty: spaces are text.
+                let take = game.chat_mode.take_key(kind, game.chat.input.is_empty(), game.chat.naming);
                 match take {
-                    battle_mode::Take::Opened => game.chat.naming = false,
-                    // A blank line is not a message. Drop the spaces so the next Enter opens an empty line.
+                    battle_mode::Take::Opened => game.chat.reopened(),
                     battle_mode::Take::Closed => game.chat.close_battle_line(),
                     battle_mode::Take::Shortcut | battle_mode::Take::Type => {
                         let typing = take == battle_mode::Take::Type;
+                        // A key on the closed line that no shortcut took empties what Esc left in the box.
+                        if !typing && !matches!(key, Key::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)) {
+                            game.chat.drop_stale();
+                        }
                         // shortcuts::action already ran. A letter it fired never reaches here. An unbound letter
                         // while the line is closed is not typed either.
                         if typing || !matches!(kind, battle_mode::KeyKind::Char(_)) {
@@ -14560,6 +14570,7 @@ impl App {
         game.basic_info.save_if_changed();
         game.chat.save_if_changed();
         game.chat.layout(&|text| font.width(text));
+        game.chat.mode_icon = game.chat_mode.icon();
         game.chat_links = game.chat.draw(&mut chat_layer, &assets.chat, font, messages, open, caret, &name_of);
         // The input bar buttons' tooltips, over the pointer.
         if let Some(text) = game.chat.tooltip(pointer.0).and_then(|id| messages.get(id)) {

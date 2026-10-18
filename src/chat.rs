@@ -48,6 +48,8 @@ pub const WRAP_WIDTH: f32 = 576.0;
 /// The scrollbar at the log's right: its width and its arrows' height.
 const SCROLLBAR: f32 = 13.0;
 const ARROW: f32 = 10.0;
+/// Battle mode's line icon (chatmode_on / chatmode_off), 16 px left of the filter button; a press counts at y 1 to 13.
+const MODE_ICON: ([f32; 2], [f32; 2]) = ([554.0, 4.0], [14.0, 9.0]);
 /// The invisible strip along the top that resizes the window, and the tallest it goes.
 const RESIZE: ([f32; 2], [f32; 2]) = ([3.0, 16.0], [574.0, 6.0]);
 const TOP_ROW: f32 = 20.0;
@@ -311,6 +313,8 @@ pub struct Assets {
     picked: Texture,
     /// The selection behind typed text.
     selection: Texture,
+    /// Battle mode's icon: the line open, closed.
+    mode_icon: [Texture; 2],
 }
 
 impl Assets {
@@ -343,6 +347,7 @@ impl Assets {
             picked: gpu.solid([0x73, 0x9C, 0xEF, 0xFF]),
             // ponytail: the selection's colour is a choice.
             selection: gpu.solid([0xA8, 0xC8, 0xF0, 0xFF]),
+            mode_icon: [image("chatmode_on"), image("chatmode_off")],
         }
     }
 }
@@ -360,6 +365,8 @@ pub enum Hit {
     TopRow,
     /// The strip along the top edge that resizes the window.
     Resize,
+    /// Battle mode's icon: opens or closes the line.
+    ModeIcon,
     /// The log's scrollbar: its arrows, and the track above or below the thumb.
     ScrollUp,
     ScrollDown,
@@ -407,6 +414,10 @@ pub struct Chat {
     pub settings: Option<Settings>,
     /// Alt+F10 hides the window. Typing still goes to the line.
     pub hidden: bool,
+    /// Battle mode's icon, while battle mode is on: whether the line is open.
+    pub mode_icon: Option<bool>,
+    /// Esc closed the line with text in it: the next key no shortcut takes empties the box.
+    stale: bool,
     /// What was last kept of the window's place.
     saved: String,
 }
@@ -448,6 +459,8 @@ impl Chat {
             send_to: SendTo::default(),
             settings: None,
             hidden: false,
+            mode_icon: None,
+            stale: false,
             saved: String::new(),
         }
     }
@@ -558,6 +571,9 @@ impl Chat {
                 Hit::Message
             });
         }
+        if self.step() > 0 && self.mode_icon.is_some() && on(MODE_ICON.0, MODE_ICON.1) && (1.0..=13.0).contains(&local[1]) {
+            return Some(Hit::ModeIcon);
+        }
         if self.step() > 0 && on(RESIZE.0, RESIZE.1) {
             return Some(Hit::Resize);
         }
@@ -617,6 +633,7 @@ impl Chat {
                 ("chat_options", area(FUNCTION_BUTTONS[2], small)),
                 ("chat_lock", area(LOCK_BUTTON, small)),
                 ("chat_strip", area([0.0, TOP_ROW + 4.0], [LOG_BOX[0] - 1.0, 12.0])),
+                ("chat_mode", area(MODE_ICON.0, MODE_ICON.1)),
                 ("chat_resize", area([RESIZE.0[0] + 300.0, RESIZE.0[1]], [100.0, RESIZE.1[1]])),
                 ("chat_scroll_up", area(self.scrollbar_corner(), [SCROLLBAR, ARROW])),
                 ("chat_scroll_down", area([self.scrollbar_corner()[0], LOG_BOX[1] + self.log_height() - ARROW], [SCROLLBAR, ARROW])),
@@ -1019,11 +1036,25 @@ impl Chat {
         self.list_open = false;
     }
 
-    /// Closes the battle-mode line (#179): the typed text goes, the line closes.
+    /// Closes the battle-mode line: the typed text stays in the box until a key no shortcut takes.
     pub fn close_battle_line(&mut self) {
-        self.input.clear();
         self.preedit.clear();
         self.naming = false;
+        self.stale = !self.input.is_empty();
+    }
+
+    /// The line opened again: what was typed is kept.
+    pub fn reopened(&mut self) {
+        self.stale = false;
+        self.naming = false;
+    }
+
+    /// A key reached the closed line and no shortcut took it: text left by Esc goes.
+    pub fn drop_stale(&mut self) {
+        if std::mem::take(&mut self.stale) {
+            self.input.clear();
+            self.carets[0].reset();
+        }
     }
 
     /// The window, and the boxes of the links in its log with their targets; the input bar only while the line is
@@ -1066,6 +1097,10 @@ impl Chat {
             }
             let lock = &assets.lock[usize::from(!self.locked)];
             layer.sprites.push((lock, at(LOCK_BUTTON), lock.size));
+            if let Some(open) = self.mode_icon {
+                let icon = &assets.mode_icon[usize::from(!open)];
+                layer.sprites.push((icon, at(MODE_ICON.0), MODE_ICON.1));
+            }
 
             // The log: translucent black between white edges, newest line at the bottom.
             let corner = at(LOG_BOX);
@@ -1585,6 +1620,30 @@ mod tests {
         chat.recall(false);
         chat.recall(false);
         assert_eq!(chat.whisper, "");
+    }
+
+    #[test]
+    fn shows_the_battle_mode_icon_and_keeps_text_esc_left() {
+        let mut chat = fresh();
+        let icon = |chat: &Chat, local: [f32; 2]| chat.hit([local[0], top(chat) + local[1]]);
+        assert_eq!(MODE_ICON, ([554.0, 4.0], [14.0, 9.0]));
+        // Out of battle mode there is nothing there; in it, the icon takes presses at y 4 to 13.
+        assert_ne!(icon(&chat, [560.0, 8.0]), Some(Hit::ModeIcon));
+        chat.mode_icon = Some(true);
+        assert_eq!(icon(&chat, [560.0, 8.0]), Some(Hit::ModeIcon));
+        assert_ne!(icon(&chat, [560.0, 14.0]), Some(Hit::ModeIcon));
+        assert!(chat.button_boxes().iter().any(|(name, _)| *name == "chat_mode"));
+        // Not while the log is down to the input bar.
+        chat.size = 0;
+        assert_eq!(chat.hit([560.0, top(&chat) + 8.0]), Some(Hit::Message));
+        // Esc keeps "abc"; opening again keeps it; a key on the closed line empties it.
+        chat.input = "abc".into();
+        chat.close_battle_line();
+        chat.reopened();
+        assert_eq!(chat.input, "abc");
+        chat.close_battle_line();
+        chat.drop_stale();
+        assert_eq!(chat.input, "");
     }
 
     #[test]

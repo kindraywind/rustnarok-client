@@ -1,5 +1,5 @@
 {
-  "about": "The chat window (issue #215): F10 steps through the input bar alone and logs 96, 138, 180, 222 and 264 tall, bottom edge in place; log lines 14 apart from x 7, 110-wide tabs with the stick, battle-option and option buttons right after them. Battle mode (/bm) closes the line and the input bar goes with it.",
+  "about": "The chat window (issue #215): F10 steps through the input bar alone and logs 96, 138, 180, 222 and 264 tall, bottom edge in place; log lines 14 apart from x 7, 110-wide tabs with the stick, battle-option and option buttons right after them. Battle mode (/bm) leaves the line open; Enter on the empty line closes it and the input bar goes with it (issue #353).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -202,7 +202,22 @@
     {
       "expect": {
         "state": {
-          "chat_line_open": false
+          "chat_line_open": true,
+          "chat_mode_icon": true
+        }
+      }
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_line_open": false,
+          "chat_mode_icon": false
         }
       }
     },

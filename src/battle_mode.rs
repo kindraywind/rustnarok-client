@@ -1,8 +1,9 @@
 //! Battle mode (`ChangeChatMode`, `/bm`): the chat line stays closed and letter keys are shortcuts.
 //!
-//! Off, the line is always open and letters type. On, it starts closed. Enter opens it when no other
-//! window wants the key; Enter on an empty line closes it; Esc closes it. While it is closed, keys go
-//! to the shortcut layer.
+//! Off, the line is always open and letters type. Turned on, the line stays open with an empty box. Enter opens a
+//! closed line when no other window wants the key; Enter on a line with nothing in it (spaces are text) closes it;
+//! Esc closes it and keeps the text. While it is closed, keys go to the shortcut layer. The chat window's icon opens
+//! and closes it too.
 
 use std::path::{Path, PathBuf};
 
@@ -39,22 +40,28 @@ impl Mode {
         self.line_open = false;
     }
 
-    /// Turns battle mode on or off. On starts closed; off leaves the line open. The message to print.
+    /// Turns battle mode on or off; either way the line is open (the next Enter on an empty box closes it). The
+    /// message to print.
     pub fn toggle(&mut self) -> usize {
         self.on = !self.on;
-        self.line_open = false;
+        self.line_open = true;
         if self.on { ON_MESSAGE } else { OFF_MESSAGE }
     }
 
-    /// A click on the input bar opens the line. Enter is the key the commands use.
-    pub fn open_line(&mut self) {
+    /// The chat window's icon: opens or closes the line, in battle mode.
+    pub fn toggle_line(&mut self) {
         if self.on {
-            self.line_open = true;
+            self.line_open = !self.line_open;
         }
     }
 
-    /// Routes a key that no other window took.
-    /// `naming`: Enter is in the whisper-name box, so it leaves that box instead of closing the line.
+    /// The icon to show: None out of battle mode, else whether the line is open.
+    pub fn icon(self) -> Option<bool> {
+        self.on.then_some(self.line_open)
+    }
+
+    /// Routes a key that no other window took. `line_empty`: the box holds nothing at all (spaces are text).
+    /// `naming`: Enter is in the whisper-name box, so it sends from there instead of closing the line.
     pub fn take_key(&mut self, key: KeyKind, line_empty: bool, naming: bool) -> Take {
         if !self.on {
             return Take::Type;
@@ -183,7 +190,7 @@ fn press(mode: &mut Mode, key: KeyKind, line_empty: bool, naming: bool, window_w
 /// Applies `press` to the draft on the chat line. Only `Typed` letters are appended, so a fired shortcut cannot land there too.
 #[cfg(test)]
 fn apply_draft(mode: &mut Mode, draft: &mut String, key: KeyKind, naming: bool, window_wants: bool, bindings: &Bindings) -> Delivery {
-    let delivery = press(mode, key, draft.trim().is_empty(), naming, window_wants, bindings);
+    let delivery = press(mode, key, draft.is_empty(), naming, window_wants, bindings);
     if let (Delivery::Typed, KeyKind::Char(character)) = (delivery, key) {
         draft.push(character);
     }
@@ -199,6 +206,14 @@ mod tests {
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("rustnarok-chatmode-{}-{name}", std::process::id()))
+    }
+
+    /// Battle mode on with the line closed.
+    fn closed() -> Mode {
+        let mut mode = Mode::default();
+        mode.toggle();
+        mode.close_line();
+        mode
     }
 
     fn q_bindings() -> Bindings {
@@ -222,20 +237,37 @@ mod tests {
     }
 
     #[test]
-    fn toggle_uses_the_spec_messages_and_starts_closed() {
+    fn toggle_uses_the_spec_messages_and_leaves_the_line_open() {
         let mut mode = Mode::default();
+        assert_eq!(mode.icon(), None);
         assert_eq!(mode.toggle(), ON_MESSAGE);
-        assert!(mode.enabled());
-        assert!(!mode.chat_line_open());
+        assert!(mode.enabled() && mode.battle_line_open());
+        assert_eq!(mode.icon(), Some(true));
+        // The next Enter on the empty box closes it.
+        assert_eq!(mode.take_key(KeyKind::Enter, true, false), Take::Closed);
+        assert_eq!(mode.icon(), Some(false));
         assert_eq!(mode.toggle(), OFF_MESSAGE);
         assert!(!mode.enabled());
         assert!(mode.chat_line_open());
+        assert_eq!(mode.icon(), None);
+    }
+
+    #[test]
+    fn the_icon_opens_and_closes_the_line() {
+        let mut mode = closed();
+        mode.toggle_line();
+        assert!(mode.battle_line_open());
+        mode.toggle_line();
+        assert!(!mode.chat_line_open());
+        // Out of battle mode it does nothing: the line is always open.
+        let mut off = Mode::default();
+        off.toggle_line();
+        assert!(off.chat_line_open());
     }
 
     #[test]
     fn open_type_send_then_empty_enter_closes() {
-        let mut mode = Mode::default();
-        mode.toggle();
+        let mut mode = closed();
         let bindings = q_bindings();
         let mut draft = String::new();
         // Q is bound: it fires and does not type.
@@ -257,8 +289,7 @@ mod tests {
 
     #[test]
     fn a_bound_letter_does_not_also_type() {
-        let mut mode = Mode::default();
-        mode.toggle();
+        let mut mode = closed();
         let bindings = q_bindings();
         let mut draft = String::new();
         let delivery = apply_draft(&mut mode, &mut draft, KeyKind::Char('Q'), false, false, &bindings);
@@ -272,8 +303,7 @@ mod tests {
 
     #[test]
     fn an_unbound_letter_or_digit_does_nothing_while_closed() {
-        let mut mode = Mode::default();
-        mode.toggle();
+        let mut mode = closed();
         let mut bindings = Bindings::default();
         bindings.bind('2', 10);
         let mut draft = String::new();
@@ -285,8 +315,7 @@ mod tests {
 
     #[test]
     fn enter_does_not_open_when_another_window_wants_it() {
-        let mut mode = Mode::default();
-        mode.toggle();
+        let mut mode = closed();
         let bindings = Bindings::default();
         assert_eq!(press(&mut mode, KeyKind::Enter, true, false, true, &bindings), Delivery::Window);
         assert!(!mode.chat_line_open());
@@ -298,8 +327,9 @@ mod tests {
         assert!(mode.chat_line_open());
         assert!(!mode.battle_line_open());
         mode.toggle();
+        mode.close_line();
         assert!(!mode.battle_line_open());
-        mode.open_line();
+        mode.toggle_line();
         assert!(mode.battle_line_open());
         mode.close_line();
         assert!(!mode.battle_line_open());
@@ -308,17 +338,16 @@ mod tests {
 
     #[test]
     fn escape_closes_an_open_line_and_leaves_the_draft() {
-        let mut mode = Mode::default();
-        mode.toggle();
+        let mut mode = closed();
         let bindings = Bindings::default();
         let draft = String::from("hi");
-        mode.open_line();
+        mode.toggle_line();
         assert!(mode.chat_line_open());
         assert_eq!(press(&mut mode, KeyKind::Escape, false, false, false, &bindings), Delivery::Closed);
         assert!(!mode.chat_line_open());
         assert_eq!(draft, "hi");
         // A window that wants Esc keeps the line open. The next Esc closes it.
-        mode.open_line();
+        mode.toggle_line();
         assert_eq!(press(&mut mode, KeyKind::Escape, false, false, true, &bindings), Delivery::Window);
         assert!(mode.chat_line_open());
         assert_eq!(mode.take_key(KeyKind::Escape, false, false), Take::Closed);
@@ -333,19 +362,20 @@ mod tests {
     fn enter_in_the_name_box_does_not_close_an_empty_line() {
         let mut mode = Mode::default();
         mode.toggle();
-        mode.open_line();
         let bindings = Bindings::default();
         assert_eq!(press(&mut mode, KeyKind::Enter, true, true, false, &bindings), Delivery::Typed);
         assert!(mode.chat_line_open());
     }
 
     #[test]
-    fn a_blank_line_counts_as_empty() {
+    fn spaces_are_text_and_sending_keeps_the_line_open() {
         let mut mode = Mode::default();
         mode.toggle();
-        mode.open_line();
         let bindings = Bindings::default();
         let mut draft = String::from("  ");
+        assert_eq!(apply_draft(&mut mode, &mut draft, KeyKind::Enter, false, false, &bindings), Delivery::Typed);
+        assert!(mode.chat_line_open(), "sent, and the line stays open");
+        draft.clear();
         assert_eq!(apply_draft(&mut mode, &mut draft, KeyKind::Enter, false, false, &bindings), Delivery::Closed);
         assert!(!mode.chat_line_open());
     }
@@ -359,6 +389,7 @@ mod tests {
         let mut mode = Mode::default();
         mode.toggle();
         mode.save_to(&path);
+        // A login starts with the line closed.
         let loaded = Mode::load_from(&path);
         assert!(loaded.enabled());
         assert!(!loaded.chat_line_open());
