@@ -192,13 +192,30 @@ pub fn encode_room_kick(name: &str) -> Vec<u8> {
     packet
 }
 
-pub fn encode_position_change(position: &GuildPosition, title: &str) -> Vec<u8> {
+/// CZ_REG_CHANGE_GUILD_POSITIONINFO with every edited position: 4 + 40 bytes each (id, mode, the ranking as received,
+/// tax, the title in 24).
+pub fn encode_position_changes(positions: &[(GuildPosition, String)]) -> Vec<u8> {
     let mut packet = CZ_REG_CHANGE_GUILD_POSITIONINFO.to_le_bytes().to_vec();
-    packet.extend_from_slice(&44u16.to_le_bytes());
-    for value in [position.id, position.mode, position.id, position.tax] {
-        packet.extend_from_slice(&value.to_le_bytes());
+    packet.extend_from_slice(&((4 + 40 * positions.len()) as u16).to_le_bytes());
+    for (position, title) in positions {
+        for value in [position.id, position.mode, position.rank, position.tax] {
+            packet.extend_from_slice(&value.to_le_bytes());
+        }
+        packet.extend_from_slice(&name_field(title));
     }
-    packet.extend_from_slice(&name_field(title));
+    packet
+}
+
+/// CZ_GUILD_NOTICE: the guild, the subject in 60 bytes and the text in 120, each at most one byte short (the NUL).
+pub fn encode_guild_notice(guild: u32, subject: &str, text: &str) -> Vec<u8> {
+    let mut packet = CZ_GUILD_NOTICE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&guild.to_le_bytes());
+    for (value, size) in [(subject, 60), (text, 120)] {
+        let mut field = encode_text(value);
+        field.truncate(size - 1);
+        field.resize(size, 0);
+        packet.extend_from_slice(&field);
+    }
     packet
 }
 
@@ -1276,6 +1293,7 @@ const CZ_ACTIVE_QUEST: u16 = 0x02B6;
 const CZ_REQ_GUILD_MENU: u16 = 0x014F;
 const CZ_REQ_LEAVE_GUILD: u16 = 0x0159;
 const CZ_REG_CHANGE_GUILD_POSITIONINFO: u16 = 0x0161;
+const CZ_GUILD_NOTICE: u16 = 0x016E;
 const ZC_ACK_CHANGE_GUILD_POSITIONINFO: u16 = 0x0174;
 const CZ_REQ_CHANGE_MEMBERPOS: u16 = 0x0155;
 const CZ_REQ_BAN_GUILD: u16 = 0x015B;
@@ -1959,6 +1977,8 @@ pub struct GuildInfo {
 pub struct GuildPosition {
     pub id: u32,
     pub mode: u32,
+    /// The ranking as the server sends it (rathena: 0 to 19).
+    pub rank: u32,
     pub tax: u32,
 }
 
