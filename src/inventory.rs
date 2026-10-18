@@ -126,7 +126,7 @@ impl Default for Inventory {
             expansion: 0,
             title: messages::INVENTORY,
             cart: None,
-            frame: Frame::new(DEFAULT_POSITION, WIDTH),
+            frame: Frame::new(DEFAULT_POSITION, WIDTH).collapsing(),
             tab: 0,
             scroll: 0,
             clicks: Clicks::default(),

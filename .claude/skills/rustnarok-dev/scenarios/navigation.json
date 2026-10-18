@@ -1,0 +1,232 @@
+{
+  "about": "Navigation (issue #276) from prt_fild08: our NPC's navigateto \"prontera\",150,150,NAV_ALL,0 (0: show the window) opens the navigation window, puts an arrow over the player's head toward the warp to Prontera and a trail to it on the minimap; the window's stop row ends it. A <NAVI> link in the other NPC's text starts the same route when clicked. Typing Izlude in the window's field lists it, and picking it routes there. Warping onto the target ends the navigation. The script is unloaded at the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild08 190 340"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/navigation.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/navigation.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "click_on": {
+        "unit": "Navi Guide"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x08e2",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Navigation"
+        ],
+        "state": {
+          "navigation.map": "prontera",
+          "navigation.cell": [
+            150,
+            150
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "navigation.trail": 5
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "navigate-to-prontera",
+      "threshold": 10
+    },
+    {
+      "click_on": {
+        "button": "navi_stop"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "navigation": null
+        }
+      }
+    },
+    {
+      "click_on": {
+        "unit": "Navi Sign"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x00b4",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "navi-link",
+      "threshold": 10
+    },
+    {
+      "click_on": {
+        "navi_link": "prontera"
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "navigation.map": "prontera",
+          "navigation.cell": [
+            150,
+            150
+          ]
+        }
+      }
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click_on": {
+        "button": "navi_stop"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "navi_field"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "type": "Izlude"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click_on": {
+        "button": "navi_result_0"
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "navigation.map": "izlude",
+          "navigation.cell": null
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "search-izlude",
+      "threshold": 10
+    },
+    {
+      "click_on": {
+        "button": "navi_stop"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "unit": "Navi Guide"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x08e2",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@warp prontera 150 151"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "navigation": null
+        }
+      }
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/navigation.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

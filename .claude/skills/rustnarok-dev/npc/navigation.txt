@@ -1,0 +1,10 @@
+// Navigation (issue #276): one NPC starts a navigation to Prontera 150,150 (navigateto), another's text links the same
+// place (<NAVI>). Loaded and unloaded by scenarios/navigation.json.
+prt_fild08,193,343,4	script	Navi Guide	4_M_01,{
+	navigateto "prontera", 150, 150, NAV_ALL, 0;
+	end;
+}
+prt_fild08,187,343,4	script	Navi Sign	4_M_01,{
+	mes "Prontera is <NAVI>[this way]<INFO>prontera,150,150,0,000,0</INFO></NAVI>.";
+	close;
+}

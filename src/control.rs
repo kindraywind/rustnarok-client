@@ -13,7 +13,8 @@
 //! - `screenshot` `{crop?: [x, y, width, height], scale?}`: the next frame through the `RUSTNAROK_CLIENT_SCREENSHOT` capture,
 //!   as base64 PNG (`png`).
 //! - `move` `{x, y}`, `click` `{x, y, button?: "left"|"right", mods?: "Alt+Shift", count?}`, `drag` `{from: [x, y],
-//!   to: [x, y], button?, mods?}`: the pointer and buttons, through the same code as the mouse.
+//!   to: [x, y], button?, mods?, held?}` (`held`: the button stays down until `release` `{button?}`): the pointer and
+//!   buttons, through the same code as the mouse.
 //! - `key` `{key, repeat?, hold?}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End",
 //!   "PageUp", "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12", "PrintScreen", "ScrollLock" or one
 //!   character, after modifiers like "Alt+" or "Ctrl+". `repeat` is an auto-repeat; shortcuts ignore it. `hold` is
@@ -97,6 +98,14 @@ pub enum Command {
         button: Button,
         #[serde(default)]
         mods: String,
+        /// Leave the button down at `to` (let go with `release`), to look at something mid-drag.
+        #[serde(default)]
+        held: bool,
+    },
+    /// Lets go of a button held by a `drag` with `held`.
+    Release {
+        #[serde(default)]
+        button: Button,
     },
     Key {
         key: String,
@@ -448,9 +457,9 @@ pub fn now() -> Instant {
 }
 
 /// Every drawn frame passes here: a screenshot asked for is taken of it, the way `RUSTNAROK_CLIENT_SCREENSHOT` captures.
-pub fn on_draw(gpu: &Gpu, world: Option<&dyn WorldPass>, sprites: &[Sprite]) {
+pub fn on_draw(gpu: &Gpu, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32]) {
     if WANT_SHOT.swap(false, Ordering::Relaxed) {
-        *SHOT.lock().unwrap() = Some(gpu.snapshot(world, sprites));
+        *SHOT.lock().unwrap() = Some(gpu.snapshot(world, sprites, alphas));
     }
 }
 
@@ -494,14 +503,20 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             });
             Ok(Value::Null)
         }
-        Command::Drag { from, to, button, mods } => {
+        Command::Drag { from, to, button, mods, held: keep_down } => {
             let held = modifiers(&mods)?;
             hold(app, held, |app| {
                 point(app, from);
                 press(app, event_loop, button, ElementState::Pressed);
                 point(app, to);
-                press(app, event_loop, button, ElementState::Released);
+                if !keep_down {
+                    press(app, event_loop, button, ElementState::Released);
+                }
             });
+            Ok(Value::Null)
+        }
+        Command::Release { button } => {
+            press(app, event_loop, button, ElementState::Released);
             Ok(Value::Null)
         }
         Command::Wheel { x, y, rows } => {
@@ -977,7 +992,13 @@ fn game_state(app: &App, game: &Game) -> Value {
             let name = if kind == crate::chatroom::BUYING_STORE { "buying_sign" } else { "room_sign" };
             json!({"kind": "button", "name": name, "box": [rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]]})
         }))
-        .chain(game.dialog_links.iter().chain(&game.chat_links).map(|(area, item)| json!({"kind": "item_link", "id": item.id, "box": area})))
+        .chain(game.dialog_links.iter().chain(&game.chat_links).map(|(area, target)| match target {
+            crate::links::Target::Item(item) => json!({"kind": "item_link", "id": item.id, "box": area}),
+            crate::links::Target::Navi { map, .. } => json!({"kind": "navi_link", "map": map, "box": area}),
+        }))
+        .chain(
+            game.navi_window.iter().flat_map(crate::navigation::Window::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1115,6 +1136,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             }),
             // The last cell a mouse walk went to, and how many have gone out.
             "walk_goal": game.walk_goal,
+            // The cell drawn under the pointer (null past the map's edge).
+            "ground_cell": game.ground_cell(app.cursor),
             "walks": game.walks,
             "combo_ms": combo_ms(None),
             // How many units Blade Stop or Cursed Circle locks the player with.
@@ -1237,6 +1260,9 @@ fn game_state(app: &App, game: &Game) -> Value {
             json!({"hair": look.hair, "hair_color": look.hair_color, "clothes_color": look.clothes_color, "stage": room.stage, "direction": room.direction})
         }),
         "head_emblems": game.head_emblems.iter().map(|(name, guild, area)| json!({"name": name, "guild": guild, "box": area})).collect::<Vec<_>>(),
+        // The bars under units: by whose ("player", "homunculus", "mercenary", "elemental", "pet", else the unit ID), the
+        // box and each row's fill (null when its maximum isn't known).
+        "bars": game.bars_drawn.iter().map(|(whose, area, fills)| (whose.clone(), json!({"box": area, "fills": fills}))).collect::<serde_json::Map<_, _>>(),
         "map_property": game.map_property.map(|(property, flags)| json!({"type": property, "flags": flags})),
         "map_type": game.map_type,
         // The PvP counter as it shows (rank, players), or null.
@@ -1261,6 +1287,13 @@ fn game_state(app: &App, game: &Game) -> Value {
         "cursor": format!("{:?}", app.cursor_look.kind()),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
         "chat_line_open": game.chat_mode.chat_line_open(),
+        // The navigation under way: where to, and how long the trail on this map is.
+        "navigation": game.navigation.as_ref().map(|active| json!({
+            "map": active.target.map,
+            "cell": active.target.cell,
+            "monster": active.target.monster,
+            "trail": active.trail.len(),
+        })),
         // Reputation points by reputation type.
         "reputation": game.reputation.iter().map(|(kind, points)| (kind.to_string(), json!(points))).collect::<serde_json::Map<_, _>>(),
         // The item information window's item, if it's open.

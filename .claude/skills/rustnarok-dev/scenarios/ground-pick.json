@@ -1,0 +1,20 @@
+{
+  "about": "The cell under the pointer on slopes (issue #292): the ray from the eye meets the ground itself, not a flat plane at the player's height. On gef_fild07 the cell four north of us is 18 units higher; then, from up there, the cell four south (toward the camera) is 18 lower. The pointer on each drawn cell picks that cell (state ground_cell), and a click walks there.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp gef_fild07 61 229"}, {"settle": 1500},
+    {"move": {"cell": [61, 233]}}, {"wait": 300},
+    {"expect": {"state": {"player.ground_cell": [61, 233]}}},
+    {"shot": "ground-pick-up", "crop": [262, 134, 500, 440], "threshold": 5},
+    {"click_on": {"cell": [61, 233]}}, {"wait": 2500},
+    {"expect": {"state": {"player.walk_goal": [61, 233], "player.cell": [61, 233]}}},
+    {"say": "@warp gef_fild07 61 233"}, {"settle": 1500},
+    {"move": {"cell": [61, 229]}}, {"wait": 300},
+    {"expect": {"state": {"player.ground_cell": [61, 229]}}},
+    {"shot": "ground-pick-down", "crop": [262, 134, 500, 440], "threshold": 5},
+    {"click_on": {"cell": [61, 229]}}, {"wait": 2500},
+    {"expect": {"state": {"player.walk_goal": [61, 229], "player.cell": [61, 229]}}},
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500}
+  ]
+}

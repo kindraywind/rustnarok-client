@@ -85,6 +85,7 @@ mod menu;
 mod mercenary;
 mod minimap;
 mod monster_info;
+mod navigation;
 mod options;
 mod overhead;
 mod party;
@@ -563,6 +564,12 @@ const MENU_SELECTION: [u8; 4] = [0xCD, 0xE0, 0xFF, 0xFF];
 const SKILL_ACTION: usize = 12;
 /// How far over the ground the magic square under a ground cast floats, so the ground doesn't cover it.
 const CAST_SQUARE_LIFT: f32 = 0.2;
+/// The navigation arrow sits this far over the head; routes the player starts may use every service.
+// ponytail: the client's arrow height and its services for a route picked by hand are estimates.
+const NAVI_ARROW_RISE: f32 = 12.0;
+const NAVI_SERVICES: u8 = 111;
+/// How many cells toward where it heads the arrow looks.
+const NAVI_ARROW_LOOK: f32 = 3.0;
 /// Words over a head stay this long.
 const SPEECH_TIME: Duration = Duration::from_secs(5);
 /// Spirit spheres and coins: how far from the body they circle, how high, how fast (radians a second), and how
@@ -641,9 +648,17 @@ const SLOT_MISSED: usize = 3;
 const SLOT_HOLD_MS: f32 = 1500.0;
 const TAMED: usize = 1574;
 const NOT_TAMED: usize = 1575;
-/// HP/SP bars under characters: border, background, HP, low HP (under a quarter), SP; and monsters' HP bars.
-const BAR_WIDTH: f32 = 60.0;
-const BAR_COLORS: [[u8; 4]; 5] = [[0x14, 0x19, 0x9B, 255], [0x44, 0x44, 0x44, 255], [0x16, 0xEA, 0x25, 255], [0xEA, 0x16, 0x16, 255], [0x1D, 0x65, 0xDB, 255]];
+/// HP/SP bars under characters: border, background, HP, low HP (under a quarter), SP, hunger, a 4th job's third row;
+/// and monsters' HP bars.
+const BAR_COLORS: [[u8; 4]; 7] = [
+    [0x14, 0x19, 0x9B, 255],
+    [0x44, 0x44, 0x44, 255],
+    [0x16, 0xEA, 0x25, 255],
+    [0xEA, 0x16, 0x16, 255],
+    [0x1D, 0x65, 0xDB, 255],
+    [0xFF, 0xE4, 0xE1, 255],
+    [0xFF, 0xC0, 0x60, 255],
+];
 const MONSTER_BAR_COLORS: [[u8; 4]; 4] = [[0x10, 0x18, 0x9C, 255], [0x42, 0x41, 0x42, 255], [0xFF, 0x00, 0xE7, 255], [0xFF, 0xFF, 0x00, 255]];
 /// A multi-hit's hits come this far apart.
 const MULTI_HIT_DELAY: Duration = Duration::from_millis(200);
@@ -744,6 +759,8 @@ enum NetEvent {
 
 /// On a map: the connection, the world and everyone in view.
 struct Game {
+    /// The windows' places as last saved (see `save_places`).
+    saved_places: String,
     session: MapSession,
     world: World,
     map: String,
@@ -970,6 +987,9 @@ struct Game {
     /// Reputation points by reputation type, as the server last sent them, and the reputation window while it's open.
     reputation: HashMap<u64, i64>,
     reputation_window: Option<reputation::Window>,
+    /// The navigation under way, and the navigation window while it's open.
+    navigation: Option<navigation::Active>,
+    navi_window: Option<navigation::Window>,
     /// What was just picked up, for five seconds; and whether anything was since the inventory was last open.
     pickup_popup: Option<pickup::Popup>,
     new_items: bool,
@@ -992,6 +1012,9 @@ struct Game {
     dress_figure: Option<SpriteSet>,
     /// The emblems drawn over heads this frame: whose, their guild, the box (for the test driver).
     head_emblems: Vec<(String, u32, [f32; 4])>,
+    /// The bars drawn under units this frame: whose ("player", a summon's kind, else the unit ID), the box, each row's
+    /// fill (for the test driver).
+    bars_drawn: Vec<(String, [f32; 4], Vec<Option<f32>>)>,
     /// /noshift: a click on a player attacks without Shift (saved).
     no_shift: bool,
     /// /noctrl: a click on a monster keeps attacking without Ctrl (saved; on unless turned off).
@@ -1055,13 +1078,15 @@ struct Game {
     homunculus_steering: mercenary::Steering,
     homunculus_rename: Option<String>,
     homunculus_hunger: Option<u16>,
+    /// The player's elemental: its unit, HP, max HP, SP and max SP.
+    elemental: Option<(u32, [u32; 4])>,
     /// Chat rooms over their owners' heads (by owner), and where their signs were last drawn (room ID, password).
     signs: HashMap<u32, chatroom::Sign>,
     sign_rects: Vec<([f32; 4], u32, u8)>,
     /// Item links as last drawn, their boxes and items: in the chat log (under the windows) and in the NPC window
     /// (over them).
-    chat_links: Vec<([f32; 4], links::ItemLink)>,
-    dialog_links: Vec<([f32; 4], links::ItemLink)>,
+    chat_links: Vec<([f32; 4], links::Target)>,
+    dialog_links: Vec<([f32; 4], links::Target)>,
     /// The room we're in, and the window making one.
     room: Option<chatroom::Room>,
     room_make: Option<chatroom::Make>,
@@ -1867,10 +1892,8 @@ impl Game {
 
     /// The cell under a point on screen, on the plane at the player's height.
     fn ground_cell(&self, cursor: [f32; 2]) -> Option<[i32; 2]> {
-        let height = self.world.cell_position(self.player.cell.map(|value| value as f32))[1];
         let view = self.camera.view(screen()[0] / screen()[1]);
-        view.pick([cursor[0] / screen()[0], cursor[1] / screen()[1]], height)
-            .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32])
+        view.pick_ground([cursor[0] / screen()[0], cursor[1] / screen()[1]], &self.world.gat)
     }
 
     /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`: not blocked, nobody standing there, a
@@ -1995,6 +2018,72 @@ impl Game {
         })
     }
 
+    /// How see-through a window is drawn: half while it's held.
+    fn panel_faded(&self, panel: Panel) -> f32 {
+        match panel {
+            Panel::Hotkeys => self.hotkeys.frame.faded(),
+            Panel::BasicInfo => self.basic_info.frame.faded(),
+            _ => self.titled_frame(panel).map_or(0.0, window::Frame::faded),
+        }
+    }
+
+    /// Every window's frame, by name, for saving where each was left.
+    fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 16] {
+        [
+            ("hotkeys", &mut self.hotkeys.frame),
+            ("basic_info", &mut self.basic_info.frame),
+            ("inventory", &mut self.inventory.frame),
+            ("equipment", &mut self.equipment.frame),
+            ("skills", &mut self.skill_window.frame),
+            ("storage", &mut self.storage.frame),
+            ("party", &mut self.party_window.frame),
+            ("status", &mut self.status_window.frame),
+            ("guild", &mut self.guild_window.frame),
+            ("clan", &mut self.clan_window.frame),
+            ("cart", &mut self.cart.frame),
+            ("pet", &mut self.pet_window.frame),
+            ("mercenary", &mut self.mercenary_window.frame),
+            ("mercenary_skills", &mut self.mercenary_skill_list.frame),
+            ("homunculus", &mut self.homunculus_window.frame),
+            ("homunculus_skills", &mut self.homunculus_skill_list.frame),
+        ]
+    }
+
+    /// Writes where the windows are and which are collapsed, when that changed and none is being dragged. A client
+    /// driven over the control socket (scenarios) neither saves nor restores them, so each run starts the same.
+    fn save_places(&mut self) {
+        if control::driven() {
+            return;
+        }
+        let frames = self.panel_frames();
+        if frames.iter().any(|(_, frame)| frame.dragging()) {
+            return;
+        }
+        let places = window_places(frames.iter().map(|(name, frame)| (*name, frame.position, frame.minimized)));
+        if places != self.saved_places {
+            if let Some(path) = settings_path("windows") {
+                let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, &places));
+            }
+            self.saved_places = places;
+        }
+    }
+
+    /// Puts the windows where they were left last time.
+    fn restore_places(&mut self) {
+        if control::driven() {
+            return;
+        }
+        let Some(text) = settings_path("windows").and_then(|path| std::fs::read_to_string(path).ok()) else { return };
+        let saved = parse_window_places(&text);
+        for (name, frame) in self.panel_frames() {
+            if let Some(&(position, minimized)) = saved.get(name) {
+                frame.position = window::dragged_to(position, [0.0, 0.0]);
+                frame.minimized = minimized;
+            }
+        }
+        self.saved_places = text;
+    }
+
     /// The frame of a window with a title bar.
     fn titled_frame(&self, panel: Panel) -> Option<&window::Frame> {
         Some(match panel {
@@ -2019,6 +2108,11 @@ impl Game {
     /// Whether the pointer is on a window's control: a title bar's close or minimize button, the equipment window's
     /// buttons, a pick list's OK or Cancel.
     // ponytail: tabs, scroll arrows, resize corners and the minimap aren't told apart yet.
+    /// Opens the navigation window, or closes it.
+    fn toggle_navigation(&mut self) {
+        self.navi_window = if self.navi_window.is_some() { None } else { Some(navigation::Window::new()) };
+    }
+
     /// Opens the reputation window, or closes it.
     fn toggle_reputation(&mut self, tables: &reputation::Tables) {
         self.reputation_window = match self.reputation_window.take() {
@@ -2028,7 +2122,7 @@ impl Game {
     }
 
     /// The item link under the pointer: the NPC window's, else the chat log's where no window covers it.
-    fn link_at(&self, cursor: [f32; 2]) -> Option<&links::ItemLink> {
+    fn link_at(&self, cursor: [f32; 2]) -> Option<&links::Target> {
         links::at(&self.dialog_links, cursor).or_else(|| self.window_at(cursor).is_none().then(|| links::at(&self.chat_links, cursor)).flatten())
     }
 
@@ -2311,6 +2405,11 @@ impl Game {
                 self.open_dressroom();
                 Ok(())
             }
+            chat::Command::Navigation => {
+                self.toggle_navigation();
+                self.sync_esc();
+                Ok(())
+            }
             // ponytail: the client's lines for /camera speak of zooming; they're used for on and off.
             chat::Command::Camera => {
                 self.camera_snap = !self.camera_snap;
@@ -2515,6 +2614,7 @@ impl Game {
             || self.viewing.as_ref().is_some_and(|viewed| viewed.window.hit(cursor, &viewed.items).is_some())
             || self.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some()
             || self.reputation_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
+            || self.navi_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
             || self.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some()
             || self.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
@@ -2956,6 +3056,7 @@ impl Game {
         push(DressRoom, self.dressroom.is_some());
         push(Ranking, self.ranking.is_some());
         push(Reputation, self.reputation_window.is_some());
+        push(Navigation, self.navi_window.is_some());
         push(Catalog, self.catalog.is_some());
         push(SkillDescription, self.skill_description.is_some());
         push(Roulette, self.roulette.is_some());
@@ -3241,6 +3342,7 @@ impl Game {
             }
             Ranking => self.ranking = None,
             Reputation => self.reputation_window = None,
+            Navigation => self.navi_window = None,
             Catalog => self.close_catalog(),
             SkillDescription => self.skill_description = None,
             Roulette => self.close_roulette(),
@@ -3936,8 +4038,11 @@ struct Assets {
     party: party::Assets,
     chatroom: chatroom::Assets,
     reputation: reputation::Assets,
+    /// The navigation arrows, by direction (south, south-west, … south-east).
+    navi_arrows: Vec<Texture>,
     /// Item links' underline in the NPC window.
     link_line: Texture,
+    navi_line: Texture,
     /// The magic square under a ground cast.
     magic_target: Option<Texture>,
     escape: escape::Assets,
@@ -3971,7 +4076,7 @@ struct Assets {
     next: ButtonImages,
     close: ButtonImages,
     menu_selection: Texture,
-    bars: [Texture; 5],
+    bars: [Texture; 7],
     monster_bars: [Texture; 4],
     chrome: window::Chrome,
     inventory: inventory::Assets,
@@ -4059,7 +4164,9 @@ impl Assets {
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
             reputation: reputation::Assets::load(gpu, grf),
+            navi_arrows: (0..8).map(|turn| image(format!("{UI}navigation_interface\\navi_grid_{turn}.tga"))).collect(),
             link_line: gpu.solid([links::COLOR[0], links::COLOR[1], links::COLOR[2], 0xFF]),
+            navi_line: gpu.solid([links::NAVI_COLOR[0], links::NAVI_COLOR[1], links::NAVI_COLOR[2], 0xFF]),
             magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
@@ -4167,6 +4274,23 @@ fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
 
 /// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
 /// folder elsewhere.
+/// The windows' places as saved: a line per window, its name, x, y and 1 when collapsed.
+fn window_places<'a>(frames: impl Iterator<Item = (&'a str, [f32; 2], bool)>) -> String {
+    frames.map(|(name, [x, y], minimized)| format!("{name} {x} {y} {}\n", u8::from(minimized))).collect()
+}
+
+/// Reads `window_places`' lines back; a line it can't read is skipped.
+fn parse_window_places(text: &str) -> HashMap<&str, ([f32; 2], bool)> {
+    text.lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let name = words.next()?;
+            let [x, y] = [words.next()?.parse().ok()?, words.next()?.parse().ok()?];
+            Some((name, ([x, y], words.next()? == "1")))
+        })
+        .collect()
+}
+
 /// Whether /zoom is on (saved; off unless turned on).
 fn zoom_out_saved() -> bool {
     settings_path("zoomout").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1")
@@ -4522,8 +4646,8 @@ fn message_lines(font: &text::Font, text: &str, width: f32) -> Vec<String> {
 /// shows them: the name alone in the link's color, then the color before it again.
 // ponytail: no underline and no clicking (navigation, item info) yet.
 fn show_links(text: &str) -> String {
-    // Item links are marked runs by now (links::mark); these are the rest.
-    const LINKS: [(&str, &str); 2] = [("NAVI", "C00000"), ("URL", "0070C0")];
+    // Item and navigation links are marked runs by now (links::mark); URLs are only coloured.
+    const LINKS: [(&str, &str); 1] = [("URL", "0070C0")];
     let mut shown = String::new();
     let mut rest = text;
     'scan: while let Some(open) = rest.find('<') {
@@ -4568,7 +4692,7 @@ fn wrap_linked(font: &text::Font, text: &str, width: f32) -> links::LinkedLines 
             }
             for (color, piece) in pieces {
                 line_width += font.width(&piece);
-                let color = if item.is_some() { links::COLOR } else { color };
+                let color = item.as_ref().map_or(color, links::Target::color);
                 wrapped.last_mut().unwrap().push((color, piece, item.clone()));
             }
         }
@@ -4670,6 +4794,8 @@ fn login_error_message(error: &LoginError) -> usize {
 struct Layer<'a> {
     sprites: Vec<Sprite<'a>>,
     texts: Vec<(String, [f32; 2], [u8; 3])>,
+    /// How see-through it is drawn, 0 (opaque) to 1: a window being dragged.
+    faded: f32,
 }
 
 impl Layer<'_> {
@@ -4737,6 +4863,8 @@ struct App {
     skill_trees: SkillTrees,
     /// The client's reputation groups and reputations.
     reputation_tables: reputation::Tables,
+    /// The client's navigation tables: maps, the ways between them, NPCs and monsters.
+    navi_tables: lua::NaviTables,
     status_icon_files: HashMap<u16, (u8, String)>,
     /// What each status icon says when pointed at.
     state_infos: HashMap<u16, lua::StateInfo>,
@@ -4837,6 +4965,11 @@ impl App {
         let proxy = self.proxy.clone();
         let [id, password] = self.fields.clone();
         let (server, version) = self.login_server();
+        // The connection's langtype (RUSTNAROK_CLIENT_LANGTYPE overrides it) picks the code page of chat and names.
+        let langtype = std::env::var("RUSTNAROK_CLIENT_LANGTYPE").ok().and_then(|langtype| langtype.parse().ok());
+        net::set_codepage(rustnarok_client::clientinfo::codepage(
+            langtype.unwrap_or_else(|| self.connections.get(self.connection).map_or(0, |connection| connection.langtype)),
+        ));
         std::thread::spawn(move || {
             let _ = proxy.send_event(NetEvent::Login(net::login(&server, version, &id, &password)));
         });
@@ -4990,6 +5123,11 @@ impl App {
                     }
                 }
                 None if game.storage.typing => game.storage.type_text(text),
+                None if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
+                    let window = game.navi_window.as_mut().unwrap();
+                    window.text.push_str(text);
+                    window.search(&self.navi_tables);
+                }
                 None if game.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) => game.catalog.as_mut().unwrap().type_text(text),
                 None if game.room_make.is_some() => game.room_make.as_mut().unwrap().type_text(text),
                 None if game.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) => {
@@ -5216,17 +5354,24 @@ impl App {
                     self.make_action(action);
                 }
             }
-            // An item link in the chat log or the NPC window: the item's information.
-            Scene::Game(game) if game.link_at(cursor).is_some() => {
-                let item = game.link_at(cursor).cloned().unwrap();
-                let shown = iteminfo::Shown { item: item.id, identified: true, refine: item.refine, cards: item.cards, damaged: None, expires: 0 };
-                let position = game.item_window.as_ref().map(|window| window.position);
-                let mut window = iteminfo::ItemWindow::new(shown);
-                if let Some(position) = position {
-                    window.position = position;
+            // A link in the chat log or the NPC window: an item's information, or a navigation to the place.
+            Scene::Game(game) if game.link_at(cursor).is_some() => match game.link_at(cursor).cloned().unwrap() {
+                links::Target::Item(item) => {
+                    let shown = iteminfo::Shown { item: item.id, identified: true, refine: item.refine, cards: item.cards, damaged: None, expires: 0 };
+                    let position = game.item_window.as_ref().map(|window| window.position);
+                    let mut window = iteminfo::ItemWindow::new(shown);
+                    if let Some(position) = position {
+                        window.position = position;
+                    }
+                    game.item_window = Some(window);
                 }
-                game.item_window = Some(window);
-            }
+                links::Target::Navi { map, cell } => {
+                    let map = navigation::map_key(&map);
+                    let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
+                    let target = navigation::Target { cell: (cell != [0, 0]).then_some(cell), monster: None, name, map };
+                    game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
+                }
+            },
             Scene::Game(game) if game.deal_choice.is_some() => {
                 let npc = game.deal_choice.unwrap();
                 let dialog = dialog_position(&assets.message);
@@ -5683,6 +5828,25 @@ impl App {
                     Some(ranking::Hit::Title(TitleHit::Close)) => game.ranking = None,
                     Some(ranking::Hit::Title(title)) => game.ranking.as_mut().unwrap().frame.click_title(title),
                     _ => {}
+                }
+            }
+            // The navigation window: its field, a result to go to, stopping.
+            Scene::Game(game) if game.navi_window.as_ref().and_then(|window| window.hit(cursor)).is_some() => {
+                let window = game.navi_window.as_mut().unwrap();
+                match window.hit(cursor).unwrap() {
+                    navigation::Hit::Title(TitleHit::Close) => game.navi_window = None,
+                    navigation::Hit::Title(title) => window.frame.click_title(title),
+                    navigation::Hit::Field => window.typing = true,
+                    navigation::Hit::Result(index) => {
+                        let target = window.results[index].clone();
+                        window.typing = false;
+                        game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
+                    }
+                    navigation::Hit::Stop => {
+                        window.typing = false;
+                        game.navigation = None;
+                    }
+                    navigation::Hit::Window => window.typing = false,
                 }
             }
             // The reputation window: its title bar.
@@ -6168,8 +6332,10 @@ impl App {
                                 game.toggle_reputation(&self.reputation_tables);
                                 game.sync_esc();
                             }
-                            // ponytail: navigation has no window yet; its button does nothing.
-                            Some("navigation") => {}
+                            Some("navigation") => {
+                                game.toggle_navigation();
+                                game.sync_esc();
+                            }
                             Some("map") => {
                                 game.world_map = match (game.world_map.take(), &self.gpu) {
                                     (None, Some(gpu)) => worldmap::WorldMap::open(gpu, &self.grf, &self.worlds.0, self.worlds.1, &map_key(&game.map)),
@@ -7971,6 +8137,18 @@ impl App {
                     _ => trade.type_text(event.text.as_deref().unwrap_or_default()),
                 }
             }
+            // The navigation window's search field: each change searches again.
+            Scene::Game(game) if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
+                let window = game.navi_window.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Enter | NamedKey::Escape) => window.typing = false,
+                    Key::Named(NamedKey::Backspace) => {
+                        window.text.pop();
+                    }
+                    _ => window.text.push_str(event.text.as_deref().unwrap_or_default()),
+                }
+                window.search(&self.navi_tables);
+            }
             Scene::Game(game) if game.storage.typing => match key {
                 Key::Named(NamedKey::Enter) => game.storage.typing = false,
                 Key::Named(NamedKey::Escape) => {
@@ -8309,6 +8487,7 @@ impl App {
                     (net::STATUS_ZENY, i64::from(me.zeny)),
                 ]);
                 self.scene = Scene::Game(Box::new(Game {
+                    saved_places: String::new(),
                     session,
                     world,
                     map,
@@ -8468,6 +8647,8 @@ impl App {
                     ranking: None,
                     reputation: HashMap::new(),
                     reputation_window: None,
+                    navigation: None,
+                    navi_window: None,
                     catalog: None,
                     skill_description: None,
                     pickup_popup: None,
@@ -8480,6 +8661,7 @@ impl App {
                     names_asked: HashSet::new(),
                     dress_figure: None,
                     head_emblems: Vec::new(),
+                    bars_drawn: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     skill_sent: None,
                     right_moved: false,
@@ -8514,6 +8696,7 @@ impl App {
                     dismiss_asked: false,
                     homunculus: None,
                     homunculus_id: None,
+                    elemental: None,
                     homunculus_skills: Vec::new(),
                     homunculus_window: homunculus::Window::default(),
                     homunculus_skill_list: homunculus::SkillList::default(),
@@ -8612,6 +8795,9 @@ impl App {
                         Some([x.parse().ok()?, y.parse().ok()?])
                     }),
                 }));
+                if let Scene::Game(game) = &mut self.scene {
+                    game.restore_places();
+                }
                 for event in std::mem::take(&mut self.early_events) {
                     self.map_event(event);
                 }
@@ -8684,14 +8870,14 @@ impl App {
         let percent = "0%";
         layer.texts.push((percent.to_owned(), [((screen()[0] - self.font.width(percent)) / 2.0).floor(), corner[1] + 1.0], [255, 255, 0]));
         let composed = compose(gpu, &self.font, vec![layer]);
-        let sprites = flatten(&composed);
+        let (sprites, alphas) = flatten(&composed);
         // Screenshots wait for the game itself, unless RUSTNAROK_CLIENT_SHOT_LOADING asks for this screen.
         match &self.screenshot {
             Some(path) if std::env::var_os("RUSTNAROK_CLIENT_SHOT_LOADING").is_some() => {
-                gpu.capture(None, &sprites, path);
+                gpu.capture(None, &sprites, &alphas, path);
                 event_loop.exit();
             }
-            _ => gpu.draw(None, &sprites),
+            _ => gpu.draw(None, &sprites, &alphas),
         }
         loading.shown = true;
     }
@@ -9605,6 +9791,14 @@ impl App {
             }
             MapEvent::HomunculusFed { ok: true, .. } => {}
             MapEvent::MercenaryInfo(hired) => game.mercenary = Some(hired),
+            MapEvent::ElementalInfo { id, values } => game.elemental = Some((id, values)),
+            MapEvent::ElementalChanged { kind, value } => {
+                if let Some((_, values)) = &mut game.elemental
+                    && let Some(slot) = kind.checked_sub(net::MERCENARY_HP).and_then(|at| values.get_mut(usize::from(at)))
+                {
+                    *slot = value;
+                }
+            }
             MapEvent::MercenarySkills(list) => game.mercenary_skills = list,
             MapEvent::MercenaryChanged { kind, value } => {
                 if let Some(hired) = &mut game.mercenary {
@@ -11023,6 +11217,17 @@ impl App {
                 }
                 game.sync_esc();
             }
+            // The server starts a navigation: to a cell (kind 0), a map (1) or a monster's map (3).
+            MapEvent::Navigate { kind, services, hide_window, map, cell, monster } => {
+                let map = navigation::map_key(&map);
+                let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
+                let target = navigation::Target { cell: (kind == 0).then_some(cell), monster: (kind == 3).then_some(monster), name, map };
+                game.navigation = Some(navigation::Active::new(target, services));
+                if !hide_window && game.navi_window.is_none() {
+                    game.toggle_navigation();
+                    game.sync_esc();
+                }
+            }
             MapEvent::CastCancelled(source) => {
                 let caster = (source != game.account_id).then_some(source);
                 game.casts.remove(&caster);
@@ -11502,7 +11707,7 @@ impl App {
             select.draw_menu(&mut card_menu, &assets.context_menu, font, self.cursor);
         }
         let composed = compose(gpu, font, vec![base, card_menu, overlay]);
-        let mut sprites = flatten(&composed);
+        let (mut sprites, alphas) = flatten(&composed);
         if let Some(position) = caret {
             sprites.push((&assets.black, position, [1.0, font.line_height() - 2.0]));
         }
@@ -11521,10 +11726,10 @@ impl App {
             };
         match &self.screenshot {
             Some(path) if settled => {
-                gpu.capture(None, &sprites, path);
+                gpu.capture(None, &sprites, &alphas, path);
                 event_loop.exit();
             }
-            _ => gpu.draw(None, &sprites),
+            _ => gpu.draw(None, &sprites, &alphas),
         }
         self.drawn_blink_phase = blink_phase;
     }
@@ -11559,6 +11764,8 @@ impl App {
             game.follow_player(id, true, now);
         }
 
+        // Where the windows were left is kept for next time.
+        game.save_places();
         // Fireworks weather sets off fireworks around the player.
         for [dx, dy] in game.weather.fireworks_due(now) {
             let cell = [game.player.cell[0] + dx, game.player.cell[1] + dy].map(|value| value.max(0) as u16);
@@ -12320,34 +12527,61 @@ impl App {
                 game.head_emblems.push((actor.name.clone(), actor.guild, [left, top, right, bottom]));
             }
         }
-        let ratio = |value: Option<&i64>, maximum: Option<&i64>| match (value, maximum) {
-            (Some(&value), Some(&maximum)) if maximum > 0 => Some((value as f32 / maximum as f32).clamp(0.0, 1.0)),
-            _ => None,
-        };
-        let hp = ratio(game.status.get(&net::STATUS_HP), game.status.get(&net::STATUS_MAX_HP));
-        let sp = ratio(game.status.get(&net::STATUS_SP), game.status.get(&net::STATUS_MAX_SP));
-        let [border, background, green, red, blue] = &assets.bars;
+        let status = |id| game.status.get(&id).copied().unwrap_or(0);
+        let [border, background, green, red, blue, hunger, third] = &assets.bars;
+        // Each bar: whose, where, its rows (value, maximum, color, low color), its border and background.
         let mut bars = Vec::new();
         if game.show_bars {
-            bars.push((player_feet, hp, sp, [border, background, green, red]));
+            let mut rows =
+                vec![(status(net::STATUS_HP), status(net::STATUS_MAX_HP), green, red), (status(net::STATUS_SP), status(net::STATUS_MAX_SP), blue, blue)];
+            // ponytail: a 4th job's third row taken as its AP.
+            if basic_info::fourth_job(game.me.job) {
+                rows.push((status(net::STATUS_AP), status(net::STATUS_MAX_AP), third, third));
+            }
+            bars.push(("player".to_string(), player_feet, rows, [border, background]));
+        }
+        // The player's own summons while in sight: HP, SP, and a homunculus's or pet's hunger.
+        // ponytail: hunger fills over a maximum of 100.
+        let pair = |value: u32, max: u32| (i64::from(value), i64::from(max));
+        let hp_sp = |[hp, max_hp, sp, max_sp]: [u32; 4]| {
+            let ((hp, max_hp), (sp, max_sp)) = (pair(hp, max_hp), pair(sp, max_sp));
+            vec![(hp, max_hp, green, red), (sp, max_sp, blue, blue)]
+        };
+        let mut summons = Vec::new();
+        if let (Some(id), Some(homunculus)) = (game.homunculus_id, &game.homunculus) {
+            let mut rows = hp_sp([homunculus.hp, homunculus.max_hp, homunculus.sp, homunculus.max_sp]);
+            rows.push((i64::from(homunculus.hunger), 100, hunger, red));
+            summons.push(("homunculus", id, rows));
+        }
+        if let Some(hired) = &game.mercenary {
+            summons.push(("mercenary", hired.id, hp_sp([hired.hp, hired.max_hp, hired.sp, hired.max_sp])));
+        }
+        if let Some((id, values)) = game.elemental {
+            summons.push(("elemental", id, hp_sp(values)));
+        }
+        if let (Some(id), Some(pet)) = (game.pet_id, &game.pet) {
+            summons.push(("pet", id, vec![(i64::from(pet.hunger), 100, hunger, red)]));
+        }
+        for (kind, id, rows) in summons {
+            if let Some(&feet) = feet_of.get(&id) {
+                bars.push((kind.to_string(), feet, rows, [border, background]));
+            }
         }
         // Monsters' bars in their own colors; a dying unit's bar shows empty until it's gone.
         bars.extend(game.unit_hp.iter().filter_map(|(id, &(hp, max))| {
             let actor = game.units.get(id)?;
             let hp = if actor.remove_at.is_some() { 0 } else { hp };
-            let colors = if actor.kind == MONSTER { assets.monster_bars.each_ref() } else { [border, background, green, red] };
-            Some((*feet_of.get(id)?, (max > 0).then(|| (hp as f32 / max as f32).clamp(0.0, 1.0)), None, colors))
+            let [border, background, fill, low] = if actor.kind == MONSTER { assets.monster_bars.each_ref() } else { [border, background, green, red] };
+            Some((id.to_string(), *feet_of.get(id)?, vec![(i64::from(hp), i64::from(max), fill, low)], [border, background]))
         }));
-        for (feet, hp, sp, [border, background, fill, low]) in bars {
-            let (Some(hp), Some(point)) = (hp, sprite_point(feet, overhead::BAR_BELOW)) else { continue };
-            let [x, y] = [point[0].trunc() - BAR_WIDTH / 2.0, point[1].trunc()];
-            let height = if sp.is_some() { 9.0 } else { 5.0 };
-            base.sprites.push((border, [x, y], [BAR_WIDTH, height]));
-            base.sprites.push((background, [x + 1.0, y + 1.0], [BAR_WIDTH - 2.0, height - 2.0]));
-            base.sprites.push((if hp < 0.25 { low } else { fill }, [x + 1.0, y + 1.0], [((BAR_WIDTH - 2.0) * hp).floor(), 3.0]));
-            if let Some(sp) = sp {
-                base.sprites.push((border, [x, y + 4.0], [BAR_WIDTH, 1.0]));
-                base.sprites.push((blue, [x + 1.0, y + 5.0], [((BAR_WIDTH - 2.0) * sp).floor(), 3.0]));
+        game.bars_drawn.clear();
+        for (whose, feet, rows, [border, background]) in bars {
+            let Some(point) = sprite_point(feet, overhead::BAR_BELOW) else { continue };
+            let [x, y] = [point[0].trunc() - overhead::BAR_WIDTH / 2.0, point[1].trunc()];
+            let rects = overhead::gage(&rows, border, background);
+            game.bars_drawn.push((whose, [x, y, rects[0].1[2], rects[0].1[3]], rows.iter().map(|&(value, max, ..)| overhead::bar_fill(value, max)).collect()));
+            for (texture, [left, top, width, height]) in rects {
+                base.sprites.push((texture, [x + left, y + top], [width, height]));
             }
         }
 
@@ -12391,6 +12625,27 @@ impl App {
                 [left + 1.0, top + 1.0],
                 [((overhead::CAST_BAR[0] - 2.0) * share_left(start, length, now)).round(), overhead::CAST_BAR[1] - 2.0],
             ));
+        }
+        // Navigation: there is the end of it; else the trail to where it heads on this map, and the arrow over the head.
+        let here = navigation::map_key(&game.map);
+        if game.navigation.as_ref().is_some_and(|active| navigation::arrived(&here, game.player.cell, &active.target)) {
+            game.navigation = None;
+        }
+        let navi_next = game.navigation.as_ref().and_then(|active| navigation::next_cell(&self.navi_tables, &here, &active.target, active.services));
+        if let Some(active) = &mut game.navigation {
+            let gat = &game.world.gat;
+            active.update_trail(&here, game.player.cell, navi_next, |from, to| world::find_path(gat, from, to));
+        }
+        if let Some(next) = navi_next {
+            // A point a few cells toward it, so a far goal off the screen still turns the arrow.
+            let toward = [f32::from(next[0]) - game.player.cell[0] as f32, f32::from(next[1]) - game.player.cell[1] as f32];
+            let length = toward[0].hypot(toward[1]).max(1.0);
+            let near = [0, 1].map(|axis| game.player.cell[axis] as f32 + toward[axis] / length * NAVI_ARROW_LOOK.min(length));
+            let goal = game.world.cell_position(near);
+            if let (Some(from), Some(to), Some([x, y])) = (sprite_point(player_feet, 0.0), sprite_point(goal, 0.0), head(&None)) {
+                let arrow = &assets.navi_arrows[navigation::arrow([to[0] - from[0], to[1] - from[1]])];
+                base.sprites.push((arrow, [x - arrow.size[0] / 2.0, y - NAVI_ARROW_RISE - arrow.size[1]], arrow.size));
+            }
         }
         // Chat room signs over their owners' heads, like speech (not the room we're in).
         game.sign_rects.clear();
@@ -12447,7 +12702,8 @@ impl App {
                         overlay.texts.push((piece.clone(), [x, y], *color));
                         // Item links underlined, and clickable.
                         if let Some(item) = item {
-                            overlay.sprites.push((&assets.link_line, [x, y + font.line_height() - 1.0], [width, 1.0]));
+                            let line = if item.item().is_some() { &assets.link_line } else { &assets.navi_line };
+                            overlay.sprites.push((line, [x, y + font.line_height() - 1.0], [width, 1.0]));
                             dialog_links.push(([x, y, width, font.line_height()], item.clone()));
                         }
                         x += width;
@@ -12601,7 +12857,9 @@ impl App {
                 game.minimap_crop.as_ref().map(|(_, texture)| texture)
             }
         };
-        let markers = minimap::Markers { cell: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss };
+        let trail = game.navigation.as_ref().map_or(&[][..], |active| active.trail.as_slice());
+        let goal = navi_next.map(|cell| cell.map(i32::from));
+        let markers = minimap::Markers { cell: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss, trail, goal };
         minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.minimap_zoom, &markers);
         // Status icons down the right, each with the clock of its time (orange in the last minute).
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
@@ -12850,6 +13108,7 @@ impl App {
                     (card_names, &game.char_names),
                 ),
             }
+            layer.faded = game.panel_faded(id);
             layers.push(layer);
         }
         // A dragged item's or skill's icon follows the pointer.
@@ -13179,6 +13438,10 @@ impl App {
         if let Some(board) = &game.ranking {
             board.draw(&mut shop_layer, &assets.chrome, font, messages, &game.char_names, pointer.0);
         }
+        if let Some(window) = &game.navi_window {
+            let caret = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+            window.draw(&mut shop_layer, &assets.chrome, font, messages, game.navigation.as_ref().map(|active| &active.target), pointer.0, caret);
+        }
         if let Some(window) = &game.reputation_window {
             window.draw(&mut shop_layer, &assets.chrome, &assets.reputation, font, messages, &self.reputation_tables, &game.reputation, pointer.0);
         }
@@ -13210,13 +13473,11 @@ impl App {
         game.dialog_links = dialog_links;
         layers.extend([catalog_layer, shop_layer, overlay, menu_layer, tooltip, world_layer]);
         let composed = compose(gpu, font, layers);
-        let mut sprites = flatten(&composed);
+        let (mut sprites, alphas) = flatten(&composed);
 
         // The cursor shows what a click would do.
         let on_window = game.on_ui(pointer.0, items, assets.message.size);
-        let ground = view
-            .pick([pointer.0[0] / screen()[0], pointer.0[1] / screen()[1]], player_feet[1])
-            .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32]);
+        let ground = view.pick_ground([pointer.0[0] / screen()[0], pointer.0[1] / screen()[1]], &game.world.gat);
         cursor_look.set(if game.camera_goal.dragging.is_some() {
             cursor::Kind::Rotate
         } else if pointer.1 && game.attack.is_some_and(|attack| attack.held) {
@@ -13239,9 +13500,10 @@ impl App {
                     _ => cursor::Kind::Default,
                 },
                 Some(Owner::Item(_)) => cursor::Kind::Pick,
+                // Past the map's edge counts as somewhere that can't be walked.
                 _ => match ground {
-                    Some(cell) if !game.world.gat.walkable(cell) => cursor::Kind::NoWalk,
-                    _ => cursor::Kind::Default,
+                    Some(cell) if game.world.gat.walkable(cell) => cursor::Kind::Default,
+                    _ => cursor::Kind::NoWalk,
                 },
             }
         });
@@ -13305,7 +13567,7 @@ impl App {
         };
         if let Some(path) = self.print_screen.take() {
             let _ = path.parent().map(std::fs::create_dir_all);
-            let shot = image::DynamicImage::ImageRgba8(gpu.snapshot(Some(&frame), &sprites)).to_rgb8();
+            let shot = image::DynamicImage::ImageRgba8(gpu.snapshot(Some(&frame), &sprites, &alphas)).to_rgb8();
             if shot.save(&path).is_ok() {
                 self.shot_saved = path.file_name().map(|name| name.to_string_lossy().into_owned());
             }
@@ -13313,16 +13575,16 @@ impl App {
         let shot_delay = std::env::var("RUSTNAROK_CLIENT_SHOT_DELAY").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(2.0);
         match &self.screenshot {
             Some(path) if game.entered.elapsed().as_secs_f32() > shot_delay => {
-                gpu.capture(Some(&frame), &sprites, path);
+                gpu.capture(Some(&frame), &sprites, &alphas, path);
                 event_loop.exit();
             }
-            _ => gpu.draw(Some(&frame), &sprites),
+            _ => gpu.draw(Some(&frame), &sprites, &alphas),
         }
     }
 }
 
 /// A layer with its text rasterized.
-type Composed<'a> = (Vec<Sprite<'a>>, Vec<(Texture, [f32; 2])>);
+type Composed<'a> = (Vec<Sprite<'a>>, Vec<(Texture, [f32; 2])>, f32);
 
 /// Rasterizes each layer's text.
 fn compose<'a>(gpu: &Gpu, font: &Font, layers: Vec<Layer<'a>>) -> Vec<Composed<'a>> {
@@ -13330,17 +13592,22 @@ fn compose<'a>(gpu: &Gpu, font: &Font, layers: Vec<Layer<'a>>) -> Vec<Composed<'
         .into_iter()
         .map(|layer| {
             let texts = layer.texts.iter().map(|(text, position, color)| (gpu.text(font, text, *color), *position)).collect();
-            (layer.sprites, texts)
+            (layer.sprites, texts, layer.faded)
         })
         .collect()
 }
 
-/// Everything to draw, in order: each layer's sprites, then its text, over the layers before it.
-fn flatten<'a>(composed: &'a [Composed<'a>]) -> Vec<Sprite<'a>> {
-    composed
-        .iter()
-        .flat_map(|(sprites, texts)| sprites.iter().copied().chain(texts.iter().map(|(texture, position)| (texture, *position, texture.size))))
-        .collect()
+/// Everything to draw, in order: each layer's sprites, then its text, over the layers before it; and how opaque each is.
+fn flatten<'a>(composed: &'a [Composed<'a>]) -> (Vec<Sprite<'a>>, Vec<f32>) {
+    let mut sprites = Vec::new();
+    let mut alphas = Vec::new();
+    for (layer, texts, faded) in composed {
+        let before = sprites.len();
+        sprites.extend(layer.iter().copied().chain(texts.iter().map(|(texture, position)| (texture, *position, texture.size))));
+        alphas.resize(sprites.len(), 1.0);
+        alphas[before..].fill(1.0 - faded);
+    }
+    (sprites, alphas)
 }
 
 /// The unit or item the pointer is on (see `picking::pick`), the player aside (only skills aim at oneself).
@@ -13758,6 +14025,7 @@ fn main() {
     });
     let skill_trees = lua::skill_trees(&grf).unwrap_or_default();
     let reputation_tables = reputation::Tables::load(&grf);
+    let navi_tables = lua::navigation(&grf).unwrap_or_default();
     let status_icon_files = lua::status_icons(&grf).unwrap_or_default();
     let state_infos = lua::state_info(&grf).unwrap_or_else(|error| {
         eprintln!("no status icon descriptions: {error}");
@@ -13822,6 +14090,7 @@ fn main() {
         skill_descriptions,
         skill_trees,
         reputation_tables,
+        navi_tables,
         status_icon_files,
         state_infos,
         effect_table: effects::Table::load(),
@@ -13931,6 +14200,15 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saves_where_the_windows_were_left() {
+        let saved = window_places([("inventory", [0.0, 120.0], false), ("status", [185.5, 300.0], true)].into_iter());
+        assert_eq!(saved, "inventory 0 120 0\nstatus 185.5 300 1\n");
+        let read = parse_window_places(&saved);
+        assert_eq!((read["inventory"], read["status"]), (([0.0, 120.0], false), ([185.5, 300.0], true)));
+        assert!(parse_window_places("broken line\nskills 1 2 0").contains_key("skills"));
+    }
 
     #[test]
     fn colours_names_by_who_they_are() {
@@ -14110,7 +14388,7 @@ mod tests {
         assert_eq!(quick_target(false, false, false), None);
         // Our Shift-click's link reads back as a link to the item.
         let (shown, runs) = links::split(&links::mark(&item_link(512, "Apple"), &|_| String::new()));
-        assert_eq!((shown.as_str(), runs[0].1.id), ("Apple", 512));
+        assert_eq!((shown.as_str(), runs[0].1.item().map(|item| item.id)), ("Apple", Some(512)));
     }
 
     #[test]
@@ -14318,7 +14596,7 @@ mod tests {
     #[test]
     fn keeps_wrapped_links_clickable() {
         let font = Font::load();
-        let apple = links::ItemLink { id: 512, ..links::ItemLink::default() };
+        let apple = links::Target::Item(links::ItemLink { id: 512, ..links::ItemLink::default() });
         let text = format!("^0000FFTake {} home^000000", links::marked("Big Red Apple", &apple));
         // Narrow enough that the link breaks: both of its lines are the link, in its colour; the colour before it
         // comes back after it.
@@ -14335,14 +14613,17 @@ mod tests {
         assert_eq!(lines.last().unwrap().last().map(|(color, piece, _)| (*color, piece.trim())), Some(([0, 0, 0xFF], "home")));
         // The click test over a link wrapped onto two lines: either box finds the item, the gap beside them nothing.
         let boxes = [([10.0, 20.0, 40.0, 14.0], apple.clone()), ([0.0, 34.0, 25.0, 14.0], apple.clone())];
-        let at = |cursor: [f32; 2]| links::at(&boxes, cursor).map(|item| item.id);
+        let at = |cursor: [f32; 2]| links::at(&boxes, cursor).and_then(links::Target::item).map(|item| item.id);
         assert_eq!([at([30.0, 25.0]), at([5.0, 40.0]), at([30.0, 40.0]), at([50.0, 25.0])], [Some(512), Some(512), None, None]);
     }
 
     #[test]
     fn shows_npc_links_by_name() {
         let navi = "Let me mark the ^B9062F<NAVI>[Tool Shop]<INFO>prontera,134,221,0,000,0</INFO></NAVI>^000000 for you.";
-        assert_eq!(show_links(navi), "Let me mark the ^B9062F^C00000[Tool Shop]^B9062F^000000 for you.");
+        // The place is a link to navigate to; the colour codes around it stay for the wrapping to read.
+        let (shown, runs) = links::split(&show_links(&links::mark(navi, &|_| String::new())));
+        assert_eq!(shown, "Let me mark the ^B9062F[Tool Shop]^000000 for you.");
+        assert_eq!(runs.iter().map(|(_, target)| target.clone()).collect::<Vec<_>>(), [links::Target::Navi { map: "prontera".into(), cell: [134, 221] }]);
         let marked = show_links(&links::mark("a <ITEM>Apple<INFO>512</INFO></ITEM> < b", &|_| String::new()));
         assert_eq!(links::split(&marked).0, "a Apple < b");
     }
