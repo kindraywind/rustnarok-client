@@ -43,6 +43,7 @@ mod actor;
 mod bank;
 mod basic_info;
 mod buying;
+mod cashshop;
 mod char_make;
 mod char_select;
 mod chat;
@@ -7420,6 +7421,7 @@ impl App {
                 game.attack_range = i32::from(range);
                 game.attack_from(target, cell.map(i32::from), target_cell.map(i32::from));
             }
+            MapEvent::CashShopOpen { .. } | MapEvent::CashShopList { .. } | MapEvent::CashShopBuyResult { .. } => {}
             MapEvent::Entered { .. } => unreachable!("handled above"),
             MapEvent::Disconnected(_) => self.message(self.messages.get(DISCONNECTED_MESSAGE).cloned().unwrap_or_default(), Scene::Login),
         }

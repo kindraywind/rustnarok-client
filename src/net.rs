@@ -718,6 +718,13 @@ const ZC_MONSTER_INFO: u16 = 0x018C;
 const ZC_BOSS_INFO: u16 = 0x0293;
 const ZC_CASH_TIME_COUNTER: u16 = 0x0298;
 const ZC_CASH_ITEM_DELETE: u16 = 0x0299;
+const CZ_SE_CASHSHOP_OPEN2: u16 = 0x0B6D;
+const ZC_SE_CASHSHOP_OPEN: u16 = 0x0B6E;
+const CZ_CASHSHOP_LIST: u16 = 0x08C9;
+const ZC_ACK_SCHEDULER_CASHITEM: u16 = 0x08CA;
+const CZ_SE_PC_BUY_CASHITEM_LIST: u16 = 0x0848;
+const ZC_SE_PC_BUY_CASHITEM_RESULT: u16 = 0x0849;
+const CZ_CASHSHOP_CLOSE: u16 = 0x084A;
 const ZC_NOTIFY_BIND_ON_EQUIP: u16 = 0x02D3;
 const CZ_REQ_TAKEOFF_EQUIP_ALL: u16 = 0x0BAD;
 const ZC_ACK_TAKEOFF_EQUIP_ALL: u16 = 0x0BAE;
@@ -1602,6 +1609,21 @@ pub enum MapEvent {
         reason: u16,
         balance: i64,
         zeny: i32,
+    },
+    CashShopOpen {
+        cash: u32,
+        free: u32,
+        tab: u32,
+    },
+    CashShopList {
+        tab: i16,
+        items: Vec<(u32, u32)>,
+    },
+    CashShopBuyResult {
+        item: u32,
+        result: u16,
+        cash: u32,
+        free: u32,
     },
     /// Another player's equipment, as asked for.
     OtherEquipment(Equipped),
@@ -3630,6 +3652,22 @@ fn encode_bank_move(deposit: bool, account: u32, zeny: i32) -> [u8; 10] {
     packet
 }
 
+fn encode_cashshop_open(_tab: u32) -> Vec<u8> {
+    Vec::new()
+}
+
+fn encode_cashshop_list_request() -> Vec<u8> {
+    Vec::new()
+}
+
+fn encode_cashshop_buy(_free: u32, _items: &[(u32, u32, u16)]) -> Vec<u8> {
+    Vec::new()
+}
+
+fn encode_cashshop_close() -> Vec<u8> {
+    Vec::new()
+}
+
 /// CZ_CONFIG: a setting (rathena's e_config_type) on or off.
 fn encode_config(setting: u32, on: bool) -> [u8; 10] {
     let mut packet = [0u8; 10];
@@ -5348,6 +5386,48 @@ mod tests {
         let ids = [CZ_REQ_OPEN_BANKING, ZC_ACK_OPEN_BANKING, CZ_REQ_BANKING_CHECK, ZC_BANKING_CHECK, CZ_REQ_BANKING_DEPOSIT, ZC_ACK_BANKING_DEPOSIT];
         assert_eq!(ids.map(packet_length), [Some(6), Some(4), Some(6), Some(12), Some(10), Some(16)]);
         assert_eq!([CZ_REQ_BANKING_WITHDRAW, ZC_ACK_BANKING_WITHDRAW, CZ_REQ_CLOSE_BANKING].map(packet_length), [Some(10), Some(16), Some(6)]);
+    }
+
+    #[test]
+    fn decodes_cash_shop() {
+        assert_eq!(encode_cashshop_open(0), [0x6D, 0x0B, 0, 0, 0, 0]);
+        assert_eq!(&encode_cashshop_open(3)[2..6], &3u32.to_le_bytes());
+        assert_eq!(encode_cashshop_list_request(), [0xC9, 0x08]);
+
+        let buy = encode_cashshop_buy(25, &[(501, 2, 3), (1201, 99, 8)]);
+        assert_eq!(buy, [0x48, 0x08, 30, 0, 2, 0, 25, 0, 0, 0, 0xF5, 0x01, 0, 0, 2, 0, 0, 0, 3, 0, 0xB1, 0x04, 0, 0, 99, 0, 0, 0, 8, 0,]);
+        assert_eq!(encode_cashshop_buy(0, &[]), [0x48, 0x08, 10, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(encode_cashshop_close(), [0x4A, 0x08]);
+
+        let open = [&ZC_SE_CASHSHOP_OPEN.to_le_bytes()[..], &1000u32.to_le_bytes(), &75u32.to_le_bytes(), &3u32.to_le_bytes()].concat();
+        let Some(MapEvent::CashShopOpen { cash: 1000, free: 75, tab: 3 }) = decode_map_packet(&open) else { panic!() };
+
+        let mut list = ZC_ACK_SCHEDULER_CASHITEM.to_le_bytes().to_vec();
+        list.extend_from_slice(&24u16.to_le_bytes());
+        list.extend_from_slice(&2i16.to_le_bytes());
+        list.extend_from_slice(&4i16.to_le_bytes());
+        list.extend_from_slice(&501u32.to_le_bytes());
+        list.extend_from_slice(&10u32.to_le_bytes());
+        list.extend_from_slice(&1201u32.to_le_bytes());
+        list.extend_from_slice(&250u32.to_le_bytes());
+        let Some(MapEvent::CashShopList { tab: 4, items }) = decode_map_packet(&list) else { panic!() };
+        assert_eq!(items, [(501, 10), (1201, 250)]);
+        assert!(decode_map_packet(&list[..list.len() - 1]).is_none());
+
+        let bought =
+            [&ZC_SE_PC_BUY_CASHITEM_RESULT.to_le_bytes()[..], &501u32.to_le_bytes(), &0u16.to_le_bytes(), &990u32.to_le_bytes(), &65u32.to_le_bytes()].concat();
+        let Some(MapEvent::CashShopBuyResult { item: 501, result: 0, cash: 990, free: 65 }) = decode_map_packet(&bought) else { panic!() };
+
+        let ids = [
+            CZ_SE_CASHSHOP_OPEN2,
+            ZC_SE_CASHSHOP_OPEN,
+            CZ_CASHSHOP_LIST,
+            ZC_ACK_SCHEDULER_CASHITEM,
+            CZ_SE_PC_BUY_CASHITEM_LIST,
+            ZC_SE_PC_BUY_CASHITEM_RESULT,
+            CZ_CASHSHOP_CLOSE,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(6), Some(14), Some(2), Some(-1), Some(-1), Some(16), Some(2)]);
     }
 
     #[test]
