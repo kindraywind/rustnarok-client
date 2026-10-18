@@ -1036,6 +1036,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .chain(question_buttons)
         .chain(["plus", "minus", "mini"].map(|name| json!({"kind": "button", "name": format!("minimap_{name}"), "box": crate::minimap::button_box(name)})))
+        .chain(game.minimap_window.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.hotkeys.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.level_ups.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.skill_description.iter().map(|window| json!({"kind": "button", "name": "skill_description_close", "box": window.close_box()})))
@@ -1361,8 +1362,18 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The new-quest icon up, and the progress banners showing.
     state["quest_icon"] = json!(game.quest_icon);
     state["quest_banners"] = json!(game.banners.texts());
-    // The minimap: opaque, see-through or hidden, and its zoom.
-    state["minimap"] = json!({"mode": game.minimap_view.name(), "zoom": game.minimap_zoom});
+    // The minimap: opaque, see-through or hidden, its zoom, and whether the navigation route is on.
+    state["minimap"] = json!({"mode": game.minimap_view.name(), "zoom": game.minimap_zoom, "route": game.navigation_route});
+    // The big minimap and the memos recorded on this map.
+    state["minimap_window"] = json!({
+        "open": game.minimap_window.frame.open,
+        "x": game.minimap_window.frame.position[0],
+        "y": game.minimap_window.frame.position[1],
+        "memos": game.minimap_window.memos.iter().map(|memo| json!({"x": memo.cell[0], "y": memo.cell[1], "name": memo.name})).collect::<Vec<_>>(),
+        "quests": game.minimap_window.show_quests,
+        "boss": game.minimap_window.show_boss,
+        "recording": game.minimap_window.recording,
+    });
     // The level up buttons up in the bottom corners.
     state["level_ups"] = json!({"base": game.level_ups.base, "job": game.level_ups.job});
     // The status icon tooltip's lines while one shows.
