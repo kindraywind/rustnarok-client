@@ -125,6 +125,27 @@ impl Chat {
         if self.naming { &mut self.whisper } else { &mut self.input }
     }
 
+    /// The battle-mode chat line (#179). The always-on line is not that line, so this stays closed until #179
+    /// opens it. Esc checks it first.
+    pub fn battle_line_open(&self) -> bool {
+        false
+    }
+
+    /// The whisper-name list next to the battle-mode line (#179). Closed until that list exists.
+    pub fn whisper_list_open(&self) -> bool {
+        false
+    }
+
+    /// Closes the whisper-name list (#179).
+    pub fn close_whisper_list(&mut self) {}
+
+    /// Closes the battle-mode line (#179): the typed text goes, the line closes.
+    pub fn close_battle_line(&mut self) {
+        self.input.clear();
+        self.preedit.clear();
+        self.naming = false;
+    }
+
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, messages: &[String], caret: bool) {
         let top = self.top();
         // Tabs: the general log is the open one.

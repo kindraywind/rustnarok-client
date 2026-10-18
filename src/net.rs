@@ -1078,6 +1078,13 @@ const CZ_ACK_REQ_ADD_FRIENDS: u16 = 0x0208;
 const ZC_ADD_FRIENDS_LIST: u16 = 0x0209;
 const ZC_DELETE_FRIENDS: u16 = 0x020A;
 const CZ_RESTART: u16 = 0x00B2;
+/// CZ_STANDING_RESURRECTION. rathena `clif_parse_AutoRevive` reads packet 0x0292, length 2, and calls `pc_revive_item`.
+const CZ_STANDING_RESURRECTION: u16 = 0x0292;
+
+/// CZ_STANDING_RESURRECTION: the 2-byte header 0x0292 and nothing after it.
+pub fn encode_standing_resurrection() -> [u8; 2] {
+    CZ_STANDING_RESURRECTION.to_le_bytes()
+}
 const CZ_REQ_EMOTION: u16 = 0x00BF;
 const ZC_EMOTION: u16 = 0x00C0;
 const CZ_STATUS_CHANGE: u16 = 0x00BB;
@@ -3708,6 +3715,11 @@ impl MapSession {
         let mut packet = CZ_RESTART.to_le_bytes().to_vec();
         packet.push(u8::from(char_select));
         self.stream.write_all(&packet)
+    }
+
+    /// Stand up where the player died (Token of Siegfried and the like). CZ_STANDING_RESURRECTION, header only.
+    pub fn standing_resurrection(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_standing_resurrection())
     }
 
     /// Asks to leave the game.
@@ -8074,5 +8086,12 @@ mod tests {
         drop(map);
 
         assert!(matches!(login("127.0.0.1:6900", 0, user, "wrong password"), Err(LoginError::Refused(1))));
+    }
+
+    #[test]
+    fn encodes_standing_resurrection() {
+        // rathena parseable_packet(0x0292, 2, clif_parse_AutoRevive, 0): header only.
+        assert_eq!(encode_standing_resurrection(), [0x92, 0x02]);
+        assert_eq!(packet_length(0x0292), Some(2));
     }
 }
