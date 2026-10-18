@@ -81,10 +81,9 @@
       "wait": 2000
     },
     {
-      "click": [
-        511,
-        355
-      ]
+      "click_on": {
+        "button": "save_point"
+      }
     },
     {
       "settle": 1500

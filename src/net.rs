@@ -1192,6 +1192,8 @@ const CZ_NPC_MARKET_PURCHASE: u16 = 0x09D6;
 const ZC_NPC_MARKET_PURCHASE_RESULT: u16 = 0x0B4E;
 /// The market window closed (rathena gives it no name).
 const CZ_NPC_MARKET_CLOSE: u16 = 0x09D8;
+/// CZ_NPC_TRADE_QUIT: an NPC shop's lists closed without a deal (rathena keeps the player busy with it until then).
+const CZ_NPC_TRADE_QUIT: u16 = 0x09D4;
 const ZC_NPC_BARTER_MARKET_ITEMINFO: u16 = 0x0B78;
 const CZ_NPC_BARTER_MARKET_PURCHASE: u16 = 0x0B0F;
 const CZ_NPC_BARTER_MARKET_CLOSE: u16 = 0x0B12;

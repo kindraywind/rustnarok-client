@@ -821,8 +821,8 @@ fn decodes_markets_and_barters() {
     assert_eq!(encode_expanded_barter_buy(&[(984, 1, 1)])[4..], [0xD8, 0x03, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
     let opens = [ZC_NPC_MARKET_OPEN, ZC_NPC_MARKET_PURCHASE_RESULT, ZC_NPC_BARTER_MARKET_ITEMINFO, ZC_NPC_EXPANDED_BARTER_MARKET_ITEMINFO].map(packet_length);
     assert_eq!(opens, [Some(-1); 4]);
-    let closes = [CZ_NPC_MARKET_CLOSE, CZ_NPC_BARTER_MARKET_CLOSE, CZ_NPC_EXPANDED_BARTER_MARKET_CLOSE].map(packet_length);
-    assert_eq!(closes, [Some(2); 3]);
+    let closes = [CZ_NPC_MARKET_CLOSE, CZ_NPC_BARTER_MARKET_CLOSE, CZ_NPC_EXPANDED_BARTER_MARKET_CLOSE, CZ_NPC_TRADE_QUIT].map(packet_length);
+    assert_eq!(closes, [Some(2); 4]);
 }
 
 #[test]

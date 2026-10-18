@@ -2863,10 +2863,13 @@ impl Game {
     }
 
     /// Closes the shop's windows; a market or barter tells the server, which keeps the player busy until it hears.
+    /// The shop's windows close without a deal: a market or barter says so, and so does an NPC shop.
     pub(crate) fn close_shop(&mut self) {
-        if let Some(kind) = self.shop.take().and_then(|shop| shop.market) {
-            let _ = self.session.close_market(kind);
-        }
+        let _ = match self.shop.take() {
+            Some(shop) if shop.plain() => self.session.quit_npc_trade(),
+            Some(shop) => shop.market.map_or(Ok(()), |kind| self.session.close_market(kind)),
+            None => Ok(()),
+        };
     }
 
     pub(crate) fn close_cashshop(&mut self) {
