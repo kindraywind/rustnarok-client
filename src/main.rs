@@ -432,16 +432,17 @@ const HIDDEN_JOBS: [u16; 2] = [111, 139];
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
 const WARP_JOB: u16 = 45;
 
-// The camera as tuned against the official client: zoom 125 (62.5 cells) and 50 degrees up by default.
-// ponytail: the zoom-out limit (5x) is a guess; calibrate against the real client.
-const ZOOM: f32 = 125.0;
+// The camera by default: 300 world units (60 cells) from the player, 45 degrees up, with world.rs's 15 degree field
+// of view. Zooming and tilting go further either way than the defaults need.
+// ponytail: the zoom-out limit (5x) is a guess; narrow it if the far view breaks.
+const ZOOM: f32 = 120.0;
 const ZOOM_MIN: f32 = 65.0;
 const ZOOM_MAX: f32 = 325.0;
 const ZOOM_MAX_INDOOR: f32 = 162.5;
 const ZOOM_STEP: f32 = 15.0;
 /// World units per zoom unit.
 const UNITS_PER_ZOOM: f32 = 2.5;
-const PITCH: f32 = 50.0;
+const PITCH: f32 = 45.0;
 const PITCH_RANGE: [f32; 2] = [10.0, 90.0];
 const PITCH_RANGE_INDOOR: [f32; 2] = [40.0, 60.0];
 const YAW_RANGE: [f32; 2] = [-360.0, 360.0];
