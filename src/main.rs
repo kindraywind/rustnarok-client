@@ -46,6 +46,7 @@ mod actor;
 mod announce;
 mod bank;
 mod basic_info;
+mod battle_mode;
 mod battle_queue;
 mod battleground;
 mod buying;
@@ -887,6 +888,8 @@ struct Game {
     attack: Option<Attack>,
     last_attack: Option<Instant>,
     riding: bool,
+    /// ChangeChatMode (/bm): the chat line stays closed and letter keys are shortcuts.
+    chat_mode: battle_mode::Mode,
     /// The map's property and flags (net::MAP_*), and its type, as the server last sent them.
     map_property: Option<(u16, u32)>,
     map_type: Option<u16>,
@@ -2104,6 +2107,12 @@ impl Game {
                 self.chat_line(message(id), CHAT_ITEM);
                 Ok(())
             }
+            chat::Command::BattleMode => {
+                let id = self.chat_mode.toggle();
+                self.chat_mode.save();
+                self.chat_line(message(id), CHAT_ITEM);
+                Ok(())
+            }
             chat::Command::DressRoom => {
                 self.open_dressroom();
                 Ok(())
@@ -2187,7 +2196,7 @@ impl Game {
         }
     }
 
-    /// A text box has the caret. The chat line always does, and so does a window's field while it is typed in.
+    /// A text box has the caret. The chat line does while it is open, and so does a window's field while it is typed in.
     fn text_box_focused(&self) -> bool {
         self.dialog.as_ref().is_some_and(|dialog| dialog.input.is_some())
             || self.amount.is_some()
@@ -2202,8 +2211,8 @@ impl Game {
             || self.trade.as_ref().is_some_and(|trade| trade.typing)
             || self.storage.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
-            || self.chat.input.is_empty()
-            || !self.chat.input.is_empty()
+            // Battle mode off: the line is always open, so letters stay out of the shortcut layer.
+            || self.chat_mode.chat_line_open()
     }
 
     /// F11 closes the player's windows. A talk with an NPC stays until the server ends it.
@@ -3856,6 +3865,21 @@ fn shortcut_to_bind(key: options::ShortcutKey) -> Option<shortcuts::ShortcutKey>
     }
 }
 
+fn battle_key(key: &Key) -> battle_mode::KeyKind {
+    match key {
+        Key::Named(NamedKey::Enter) => battle_mode::KeyKind::Enter,
+        Key::Named(NamedKey::Escape) => battle_mode::KeyKind::Escape,
+        Key::Character(text) => {
+            let mut characters = text.chars();
+            match (characters.next(), characters.next()) {
+                (Some(character), None) if character.is_ascii_alphanumeric() => battle_mode::KeyKind::Char(character.to_ascii_lowercase()),
+                _ => battle_mode::KeyKind::Other,
+            }
+        }
+        _ => battle_mode::KeyKind::Other,
+    }
+}
+
 fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
     let number = match key {
         Key::Named(NamedKey::F1) => 1,
@@ -4634,6 +4658,7 @@ impl App {
     /// The syllable the input method is composing, shown where text is typed.
     fn compose(&mut self, text: String) {
         match &mut self.scene {
+            Scene::Game(game) if game.dialog.is_none() && !game.storage.typing && !game.chat_mode.chat_line_open() => game.chat.preedit.clear(),
             Scene::Game(game) if game.dialog.is_none() && !game.storage.typing => game.chat.preedit = text,
             Scene::CharMake(make, _) => make.preedit = text,
             _ => {}
@@ -4661,6 +4686,7 @@ impl App {
                 None if game.buying_setup.as_ref().is_some_and(|setup| setup.focus.is_some()) => game.buying_setup.as_mut().unwrap().type_text(text),
                 None if game.mail.typing() => game.mail.type_text(text),
                 None if game.room.is_some() => game.room.as_mut().unwrap().input.push_str(text),
+                None if !game.chat_mode.chat_line_open() => {}
                 None => game.chat.typing().extend(typed),
             },
             Scene::CharMake(make, _) => make.type_text(text),
@@ -5918,7 +5944,11 @@ impl App {
                     }
                 }
             }
-            Scene::Game(game) if game.chat.blocks(cursor) => game.chat.click(cursor),
+            Scene::Game(game) if game.chat.blocks(cursor) => {
+                game.chat.click(cursor);
+                // ponytail: a click on the chat bar opens the battle-mode line; Enter is the key the spec names.
+                game.chat_mode.open_line();
+            }
             Scene::Game(game) if game.dialog.is_some() => {
                 // NPC windows take the click; the map doesn't react while talking.
                 let dialog = game.dialog.as_mut().unwrap();
@@ -6929,7 +6959,8 @@ impl App {
         let Scene::Game(game) = &mut self.scene else { return };
         game.sync_esc();
         let view = escape::EscView {
-            battle_line: game.chat.battle_line_open(),
+            // The always-on line is not this. An open battle-mode line is the first Esc.
+            battle_line: game.chat_mode.battle_line_open(),
             whisper_list: game.chat.whisper_list_open(),
             focused: game.focused_text(),
             question: game.question_open(),
@@ -6939,7 +6970,10 @@ impl App {
         let Scene::Game(game) = &mut self.scene else { return };
         match act {
             Some(escape::EscAct::CloseWhisperList) => game.chat.close_whisper_list(),
-            Some(escape::EscAct::CloseBattleChat) => game.chat.close_battle_line(),
+            Some(escape::EscAct::CloseBattleChat) => {
+                game.chat.close_battle_line();
+                game.chat_mode.close_line();
+            }
             Some(escape::EscAct::Cancel(id) | escape::EscAct::Close(id)) => game.close_esc(id),
             Some(escape::EscAct::ShopCancel) => game.close_esc(escape::WindowId::Shop),
             Some(escape::EscAct::AnswerNo) => game.answer_no(&self.messages),
@@ -7464,30 +7498,38 @@ impl App {
                 }
             }
             Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Escape)) => game.deal_choice = None,
-            // Typing always goes to the chat line, as in the client; Enter sends it, whispered when the name box has
-            // a name. Tab moves between the name box and the message.
-            Scene::Game(game) => match key {
-                Key::Named(NamedKey::Tab) => game.chat.naming = !game.chat.naming,
-                Key::Named(NamedKey::Insert) => game.toggle_sit(),
-                Key::Named(NamedKey::Enter) if game.chat.naming => game.chat.naming = false,
-                Key::Named(NamedKey::Enter) => self.send_chat_input(self.modifiers.control_key(), self.modifiers.alt_key()),
-                Key::Named(NamedKey::Escape) if game.world_map.is_some() => game.world_map = None,
-                Key::Named(NamedKey::Escape) if game.pick.is_some() => game.answer_pick(None),
-                Key::Named(NamedKey::Escape) if game.capturing => game.capturing = false,
-                Key::Named(NamedKey::Escape) if game.cashshop.is_some() => game.close_cashshop(),
-                Key::Named(NamedKey::Escape) if game.roulette.is_some() => game.close_roulette(),
-                Key::Named(NamedKey::Escape) if game.monster_window.is_some() => game.monster_window = None,
-                Key::Named(NamedKey::Escape) if game.targeting.is_some() => game.targeting = None,
-                Key::Named(NamedKey::Escape) if !game.chat.typing().is_empty() => game.chat.typing().clear(),
-                Key::Named(NamedKey::Escape) => game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: false }) },
-                Key::Named(NamedKey::Backspace) => {
-                    game.chat.typing().pop();
+            // Earlier arms are windows that want the key. Esc is game_escape, which closes an open battle-mode
+            // line first. Here the chat line has the key. Off: the line is always open and letters type. On: Enter
+            // opens it, Enter on an empty line closes it, and a closed line sends letters and digits to shortcuts.
+            Scene::Game(game) => {
+                let kind = battle_key(key);
+                let take = game.chat_mode.take_key(kind, game.chat.input.trim().is_empty(), game.chat.naming);
+                match take {
+                    battle_mode::Take::Opened => game.chat.naming = false,
+                    // ponytail: Enter on an empty line leaves the draft (it is blank). Esc clears it in close_battle_line.
+                    battle_mode::Take::Closed => game.chat.preedit.clear(),
+                    battle_mode::Take::Shortcut | battle_mode::Take::Type => {
+                        let typing = take == battle_mode::Take::Type;
+                        // shortcuts::action already ran. A letter it fired never reaches here. An unbound letter
+                        // while the line is closed is not typed either.
+                        if typing || !matches!(kind, battle_mode::KeyKind::Char(_)) {
+                            match key {
+                                Key::Named(NamedKey::Tab) if typing => game.chat.naming = !game.chat.naming,
+                                Key::Named(NamedKey::Insert) => game.toggle_sit(),
+                                Key::Named(NamedKey::Enter) if typing && game.chat.naming => game.chat.naming = false,
+                                Key::Named(NamedKey::Enter) if typing => self.send_chat_input(self.modifiers.control_key(), self.modifiers.alt_key()),
+                                Key::Named(NamedKey::Backspace) if typing => {
+                                    game.chat.typing().pop();
+                                }
+                                _ if typing && !self.modifiers.alt_key() && !self.modifiers.super_key() && !self.modifiers.control_key() => {
+                                    game.chat.typing().extend(event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                 }
-                _ if !self.modifiers.alt_key() && !self.modifiers.super_key() && !self.modifiers.control_key() => {
-                    game.chat.typing().extend(event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()));
-                }
-                _ => {}
-            },
+            }
             Scene::Message(..) => {
                 if matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) {
                     self.close_message();
@@ -7925,6 +7967,7 @@ impl App {
                     attack: None,
                     last_attack: None,
                     riding: false,
+                    chat_mode: battle_mode::Mode::load(),
                     map_type: None,
                     battle: battleground::Battle::default(),
                     queue_window: battle_queue::QueueWindow::default(),
@@ -11616,7 +11659,7 @@ impl App {
         }
         let mut tooltip = Layer::default();
         let mut chat_layer = Layer::default();
-        let caret = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+        let caret = game.chat_mode.chat_line_open() && (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
         game.chat.draw(&mut chat_layer, &assets.chat, font, messages, caret);
         let size = [game.world.gat.width as u32, game.world.gat.height as u32];
         // NPC marks blink, shown half of each second.

@@ -372,7 +372,7 @@ fn reaches(event: &KeyEvent<'_>) -> bool {
     if event.ctrl {
         return !event_keys(event).iter().any(|key| matches!(key, ShortcutKey::Char('a' | 'c' | 'v' | 'x')));
     }
-    // ponytail: the chat line always has the caret, so Print Screen is let through or the snapshot key never fires.
+    // ponytail: Print Screen is let through while a text box has the caret, or the snapshot key never fires.
     matches!(
         event.key,
         Key::Named(
@@ -1018,6 +1018,20 @@ mod tests {
         // Older data: its window table holds what this client takes for macros, and nothing opens the inventory.
         let older = Shortcuts { bindings: Shortcuts::builtin().bindings.into_iter().filter(|binding| binding.action != Action::Inventory).collect() };
         assert!(!older.knows_the_tables());
+    }
+
+    #[test]
+    fn q_on_hotbar_row_2_slot_1_fires_only_when_the_line_is_closed() {
+        // UserKeys binds Q (VK 81) to HOTKEY_1 index 9, which is hotbar row 2 slot 1. That row has no default key.
+        // Battle mode leaves the line closed, so text_focus is false and Q fires. An open line keeps the letter.
+        let mut shortcuts = Shortcuts::builtin();
+        let rows = lua::hotkey_rows(r#"USERKEY_1 = { [9] = { EXE = "MSI_HK_SKILLBAR2_1", KEY1 = 81 } }"#).unwrap();
+        shortcuts.apply_user(&rows);
+        let queue = Key::Character(SmolStr::new("q"));
+        assert_eq!(fire(&shortcuts, &queue, false, false, false, false, false), Some(Action::Hotbar { bar: 1, slot: 9 }));
+        assert_eq!(fire(&shortcuts, &queue, false, false, false, false, true), None);
+        let unbound = Shortcuts::builtin();
+        assert_eq!(fire(&unbound, &queue, false, false, false, false, false), None);
     }
 
     #[test]
