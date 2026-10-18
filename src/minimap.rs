@@ -130,6 +130,21 @@ pub fn button_box(name: &str) -> [f32; 4] {
     [screen()[0] - from_right, ROW, BUTTON, BUTTON]
 }
 
+/// The window, 128×140 at (W − 145, 17): a press anywhere on it is the minimap's, never the world's.
+pub fn window_box() -> [f32; 4] {
+    [screen()[0] - 145.0, 17.0, 128.0, 140.0]
+}
+
+pub fn covers(cursor: [f32; 2]) -> bool {
+    let [x, y, w, h] = window_box();
+    contains([x, y], [w, h], cursor)
+}
+
+/// Whether the minimap is there at all: not on an indoor map, not hidden.
+pub fn shown(view: View, indoor: bool) -> bool {
+    !indoor && view != View::Hidden
+}
+
 /// The bottom row's button under the pointer.
 pub fn button_at(cursor: [f32; 2]) -> Option<&'static str> {
     BUTTONS.into_iter().find(|(_, from_right)| contains([screen()[0] - from_right, ROW], [BUTTON, BUTTON], cursor)).map(|(name, _)| name)
@@ -247,6 +262,11 @@ impl View {
         }
     }
 
+    /// The mode the next run starts in: opaque stays, see-through and hidden come back see-through.
+    pub fn kept(self) -> Self {
+        if self == Self::Shown { Self::Shown } else { Self::Translucent }
+    }
+
     /// The text `save_view` writes. Anything else is left unread.
     pub fn parse(text: &str) -> Option<Self> {
         match text.trim() {
@@ -258,15 +278,15 @@ impl View {
     }
 }
 
-/// The see-through mode last saved (`minimap_view`, next to `minimap_zoom`), or see-through when there is none.
+/// The mode last saved (`minimap_view`, next to `minimap_zoom`), as `View::kept`; see-through when there is none.
 pub fn saved_view() -> View {
-    crate::settings_path("minimap_view").and_then(|path| std::fs::read_to_string(path).ok()).and_then(|text| View::parse(&text)).unwrap_or_default()
+    crate::settings_path("minimap_view").and_then(|path| std::fs::read_to_string(path).ok()).and_then(|text| View::parse(&text)).unwrap_or_default().kept()
 }
 
-/// Keeps the see-through mode with the settings, as the game keeps `M_MINIMAPARGB`.
+/// Keeps the mode with the settings, as the game keeps `M_MINIMAPARGB`: hidden is never saved.
 pub fn save_view(view: View) {
     if let Some(path) = crate::settings_path("minimap_view") {
-        let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, view.name()));
+        let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, view.kept().name()));
     }
 }
 
@@ -290,14 +310,16 @@ pub struct Markers<'a> {
     pub goal: Option<[i32; 2]>,
 }
 
-/// Draws the minimap: the overview's window (already cropped, `overview`), then the markers through it, then the
-/// bottom row; nothing of the map while hidden. A button uses its hover image under `pointer` and its pressed image
-/// while the button is held there.
+/// Draws the minimap: the overview's window (already cropped, `overview`; none when the map has no picture), then the
+/// markers through it, then the bottom row. Indoors or hidden it isn't drawn at all (`shown`). A button uses its hover
+/// image under `pointer` and its pressed image while the button is held there.
 pub fn draw<'a>(layer: &mut Layer<'a>, assets: &'a Assets, overview: Option<&'a Texture>, size: [u32; 2], zoom: f32, markers: &Markers<'a>, pointer: Pointer) {
     let player = share(markers.cell, size);
     let window = window(player, zoom);
     if let Some(overview) = overview {
         layer.sprites.push((overview, origin(), [SIZE, SIZE]));
+    }
+    {
         let at = |cell: [i32; 2]| on_screen(share(cell, size), window, zoom).map(|point| point.map(f32::round));
         // A navigation's trail, a dot every few cells, and a disc where it heads.
         // ponytail: the client's own route look on the minimap isn't known; red dots.
@@ -420,6 +442,14 @@ mod tests {
         assert_eq!(View::parse(View::Shown.name()), Some(View::Shown));
         assert_eq!(View::parse(View::Translucent.name()), Some(View::Translucent));
         assert_eq!(View::parse("nope"), None);
+        // Opaque is kept; see-through and hidden come back see-through, and hidden is never written.
+        assert_eq!([View::Shown, View::Translucent, View::Hidden].map(View::kept), [View::Shown, View::Translucent, View::Translucent]);
+        assert_eq!(View::default(), View::Translucent);
+        assert!(shown(View::Shown, false) && shown(View::Translucent, false));
+        assert!(!shown(View::Hidden, false) && !shown(View::Shown, true));
+        let [x, y, ..] = window_box();
+        assert_eq!([x, y], [screen()[0] - 145.0, 17.0]);
+        assert!(covers([x + 1.0, y + 1.0]) && covers([x + 127.0, y + 139.0]) && !covers([x + 129.0, y + 50.0]) && !covers([x + 5.0, y + 141.0]));
         let path = std::env::temp_dir().join(format!("rustnarok-minimap-view-{}", std::process::id()));
         std::fs::write(&path, View::Hidden.name()).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();

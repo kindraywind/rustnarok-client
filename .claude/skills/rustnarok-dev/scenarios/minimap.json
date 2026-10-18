@@ -1,5 +1,5 @@
 {
-  "about": "Minimap (issue #214): see-through by default; the plus button zooms up to 4 around the player; Ctrl+Tab goes hidden, opaque, then see-through again; minus zooms back out to 1 (the zoom is kept with the settings).",
+  "about": "Minimap (issue #214): see-through by default; the plus button zooms up to 4 around the player; Ctrl+Tab goes hidden (no picture, buttons or coordinates, issue #537), opaque, then see-through again; minus zooms back out to 1 (the zoom is kept with the settings).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -98,7 +98,8 @@
     {
       "expect": {
         "state": {
-          "minimap.mode": "hidden"
+          "minimap.mode": "hidden",
+          "minimap.shown": false
         }
       }
     },

@@ -1,0 +1,30 @@
+{
+  "about": "Small minimap rules (issue #537): opaque, a press on its picture or between its buttons doesn't walk; View On opens the world map (which covers the screen, the minimap too), and Ctrl+Tab does nothing while it is open; indoors (prt_in) there is no minimap and Ctrl+Tab does nothing; back in prontera it is there in its old mode.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"key": "Ctrl+Tab"}, {"key": "Ctrl+Tab"}, {"wait": 200},
+    {"expect": {"state": {"minimap.mode": "opaque", "minimap.shown": true}}},
+    {"click": [960, 60]}, {"wait": 800},
+    {"click": [920, 150]}, {"wait": 800},
+    {"expect": {"state": {"player.cell": [156, 180]}}},
+    {"click_on": {"button": "minimap_viewon"}}, {"wait": 600},
+    {"expect": {"windows_open": ["WorldMap"]}},
+    {"key": "Ctrl+Tab"}, {"wait": 200},
+    {"expect": {"state": {"minimap.mode": "opaque"}}},
+    {"move": [600, 500]},
+    {"key": "Escape"}, {"wait": 400},
+    {"expect": {"windows_closed": ["WorldMap"]}},
+    {"say": "@warp prt_in 60 100"}, {"settle": 2000},
+    {"expect": {"state": {"minimap.shown": false, "minimap.mode": "opaque"}}},
+    {"key": "Ctrl+Tab"}, {"wait": 200},
+    {"expect": {"state": {"minimap.mode": "opaque"}}},
+    {"move": [600, 500]},
+    {"shot": "minimap-indoors", "crop": [870, 10, 154, 160]},
+    {"say": "@warp prontera 156 180"}, {"settle": 2000},
+    {"expect": {"state": {"minimap.shown": true, "minimap.mode": "opaque"}}},
+    {"move": [600, 500]},
+    {"shot": "minimap-back-outdoors", "crop": [870, 10, 154, 160]}
+  ]
+}

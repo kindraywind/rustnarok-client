@@ -3063,6 +3063,11 @@ impl Game {
         self.raise(Panel::Party);
     }
 
+    /// Whether the small minimap is there: outdoors and not hidden.
+    fn minimap_shown(&self) -> bool {
+        minimap::shown(self.minimap_view, self.camera_goal.indoor)
+    }
+
     fn toggle_navigation(&mut self) {
         self.navi_window = if self.navi_window.is_some() { None } else { Some(navigation::Window::new()) };
     }
@@ -3866,7 +3871,7 @@ impl Game {
             || self.skill_description.as_ref().is_some_and(|window| window.contains(cursor))
             || self.level_ups.hit(cursor).is_some()
             || (self.quest_icon && quest_notice::on_icon(cursor))
-            || minimap::button_at(cursor).is_some()
+            || (self.minimap_shown() && minimap::covers(cursor))
             || self.minimap_window.covers(cursor)
             || (asking && contains(dialog_position_of(message), message, cursor))
             || self.on_npc_window(cursor)
@@ -5911,6 +5916,15 @@ fn zoom_out_saved() -> bool {
 /// Opens or closes the big minimap. With no overview picture, says `no_picture` and leaves it closed.
 /// ponytail: said when opening is asked and the map has no overview, and when a warp closes an open window
 /// because the new map has none. A picture that fails to decode counts as none.
+/// The world map opens, or closes when open (its shortcut, and the minimap's View On).
+fn toggle_world_map(game: &mut Game, gpu: Option<&render::Gpu>, grf: &Grf, worlds: &(Vec<rustnarok_client::lua::World>, [[u8; 4]; 2])) {
+    let map = map_key(&game.map);
+    game.world_map = match (game.world_map.take(), gpu) {
+        (None, Some(gpu)) => worldmap::WorldMap::open(gpu, grf, &worlds.0, worlds.1, &map),
+        _ => None,
+    };
+}
+
 fn toggle_big_minimap(game: &mut Game, gpu: &render::Gpu, no_picture: String) {
     let map = map_key(&game.map);
     let image = game.minimap.clone();
@@ -7605,7 +7619,8 @@ impl App {
                 }
             }
             // The minimap's bottom row: zoom (kept with the settings), the big map, the route flag.
-            Scene::Game(game) if game.window_at(cursor).is_none() && minimap::button_at(cursor).is_some() => match minimap::button_at(cursor) {
+            // A click elsewhere on the minimap does nothing.
+            Scene::Game(game) if game.window_at(cursor).is_none() && game.minimap_shown() && minimap::covers(cursor) => match minimap::button_at(cursor) {
                 Some(button @ ("plus" | "minus")) => {
                     game.minimap_zoom = if button == "plus" { minimap::zoom_in(game.minimap_zoom) } else { minimap::zoom_out(game.minimap_zoom) };
                     if let Some(path) = settings_path("minimap_zoom") {
@@ -7620,8 +7635,8 @@ impl App {
                 }
                 // ponytail: #276 draws the navigation route when this is on. The route itself is not drawn here.
                 Some("object") => game.navigation_route = !game.navigation_route,
-                // ponytail: viewon shows the camera's view wedge on the minimap. That wedge isn't drawn.
-                Some("viewon") => {}
+                // View On: the world map, open or closed, as its shortcut does.
+                Some("viewon") => toggle_world_map(game, self.gpu.as_ref(), &self.grf, &self.worlds),
                 _ => {}
             },
             // The new-quest icon: the quest window.
@@ -9980,16 +9995,23 @@ impl App {
             self.request_screenshot();
             return true;
         }
+        // Ctrl+Tab: nothing indoors or while the world map is open.
         if fired == shortcuts::Action::Minimap {
-            if let Scene::Game(game) = &mut self.scene {
+            if let Scene::Game(game) = &mut self.scene
+                && !game.camera_goal.indoor
+                && game.world_map.is_none()
+            {
                 game.minimap_view = game.minimap_view.next();
                 minimap::save_view(game.minimap_view);
             }
             return true;
         }
+        // The big minimap: nothing indoors.
         if fired == shortcuts::Action::MinimapWindow {
             let no_picture = self.messages.get(minimap_window::NO_PICTURE).cloned().unwrap_or_default();
-            if let (Scene::Game(game), Some(gpu)) = (&mut self.scene, &self.gpu) {
+            if let (Scene::Game(game), Some(gpu)) = (&mut self.scene, &self.gpu)
+                && !game.camera_goal.indoor
+            {
                 toggle_big_minimap(game, gpu, no_picture);
             }
             return true;
@@ -10032,13 +10054,7 @@ impl App {
                 game.raise(Panel::Cart);
             }
             shortcuts::Action::Cart => {}
-            shortcuts::Action::WorldMap => {
-                let map = map_key(&game.map);
-                game.world_map = match (game.world_map.take(), &self.gpu) {
-                    (None, Some(gpu)) => worldmap::WorldMap::open(gpu, &self.grf, &self.worlds.0, self.worlds.1, &map),
-                    _ => None,
-                };
-            }
+            shortcuts::Action::WorldMap => toggle_world_map(game, self.gpu.as_ref(), &self.grf, &self.worlds),
             shortcuts::Action::Inventory => {
                 game.inventory.frame.toggle();
                 game.raise(Panel::Inventory);
@@ -15753,7 +15769,9 @@ impl App {
         let trail = game.navigation.as_ref().map_or(&[][..], |active| active.trail.as_slice());
         let goal = navi_next.map(|cell| cell.map(i32::from));
         let markers = minimap::Markers { cell: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss, trail, goal };
-        minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.minimap_zoom, &markers, minimap::Pointer { at: pointer.0, down: pointer.1 });
+        if game.minimap_shown() {
+            minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.minimap_zoom, &markers, minimap::Pointer { at: pointer.0, down: pointer.1 });
+        }
         if !game.minimap_window.covers(pointer.0)
             && game.window_at(pointer.0).is_none()
             && let Some(name) = minimap::button_at(pointer.0)
