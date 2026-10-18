@@ -921,10 +921,11 @@ fn game_state(app: &App, game: &Game) -> Value {
         })
         .collect();
     let jobs = crate::skills::tabs(&app.skill_trees, game.me.job, &game.skills);
+    let sheet = crate::skills::Sheet { trees: &app.skill_trees, jobs: &jobs, skills: &game.skills, info: &game.skill_info, points: game.skill_points() };
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
     // The leader question's OK and Cancel, in the message box.
-    let leader_question: Vec<(&str, [f32; 4])> = match (&app.assets, game.leader_asked) {
-        (Some(assets), Some(_)) => {
+    let leader_question: Vec<(&str, [f32; 4])> = match (&app.assets, game.leader_asked.is_some() || game.apply_asked) {
+        (Some(assets), true) => {
             let dialog = crate::dialog_position(&assets.message);
             [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)]
                 .map(|(name, place, images)| (name, [dialog[0] + place[0], dialog[1] + place[1], images[0].size[0], images[0].size[1]]))
@@ -944,15 +945,14 @@ fn game_state(app: &App, game: &Game) -> Value {
             game.item_window.iter().flat_map(|window| window.button_boxes(&app.items)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
-        .chain(
-            game.skill_window.skill_boxes(&app.skill_trees, &jobs, &game.skills).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})),
-        )
+        .chain(game.skill_window.skill_boxes(&sheet).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
         .chain(
             game.skill_window
-                .raise_boxes(&app.skill_trees, &jobs, &game.skills, game.skill_points())
+                .tab_boxes(&sheet)
                 .into_iter()
-                .map(|(id, area)| (format!("raise:{id}"), area))
-                .chain(game.skill_window.tab_boxes(&jobs).into_iter().map(|(job, area)| (format!("skill_tab:{job}"), area)))
+                .map(|(job, area)| (format!("skill_tab:{job}"), area))
+                .chain(game.skill_window.arrow_boxes(&sheet))
+                .chain(game.skill_window.button_boxes().into_iter().map(|(name, area)| (name.to_owned(), area)))
                 .filter(|(_, area)| on_top(Panel::Skills, area))
                 .chain(game.status_window.raise_boxes(&game.status).into_iter().filter(|(_, area)| on_top(Panel::Status, area)))
                 .chain(
@@ -1178,6 +1178,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             }),
             // The last cell a mouse walk went to, and how many have gone out.
             "walk_goal": game.walk_goal,
+            // Skill levels put in the skill window but not sent, in the order they'd go.
+            "skill_pending": game.skill_window.pending(),
             // Where the cursor is drawn (the middle of what it snapped to, else the pointer).
             "cursor_at": game.cursor_at,
             "cursor_snapped": game.cursor_at != app.cursor,

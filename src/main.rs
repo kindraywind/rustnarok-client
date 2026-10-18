@@ -1297,6 +1297,8 @@ struct Game {
     esc_order: Vec<escape::WindowId>,
     /// The save-point question (messages[1548]) is up.
     save_asked: bool,
+    /// The skill window's Apply asks first (`skills::APPLY_QUESTION`).
+    apply_asked: bool,
     damages: Vec<Damage>,
     /// The player's own status values (HP, SP, ...) by rathena SP_* ID.
     status: HashMap<u16, i64>,
@@ -3735,6 +3737,7 @@ impl Game {
         push(Capturing, self.capturing);
         push(Amount, self.amount.is_some());
         push(SaveAsked, self.save_asked);
+        push(SkillApplyAsked, self.apply_asked);
         push(BindAsked, self.bind_asked.is_some());
         push(ExpansionAsked, self.expansion_asked.is_some());
         push(LeaderAsked, self.leader_asked.is_some());
@@ -3839,6 +3842,7 @@ impl Game {
     /// A question is up. An NPC's menu (and the warp list) isn't one: Esc leaves those alone.
     fn question_open(&self) -> bool {
         self.save_asked
+            || self.apply_asked
             || self.bind_asked.is_some()
             || self.expansion_asked.is_some()
             || self.leader_asked.is_some()
@@ -3857,10 +3861,24 @@ impl Game {
             || self.queue_asked.is_some()
     }
 
+    /// The Apply question's answer: yes sends each pending level, what it needs first; no keeps them pending.
+    fn answer_apply(&mut self, yes: bool) {
+        self.apply_asked = false;
+        if yes {
+            for skill in self.skill_window.take_pending() {
+                let _ = self.session.skill_up(skill);
+            }
+        }
+    }
+
     /// Answers the open question with No.
     fn answer_no(&mut self, messages: &[String]) {
         if self.save_asked {
             self.save_asked = false;
+            return;
+        }
+        if self.apply_asked {
+            self.apply_asked = false;
             return;
         }
         if self.amount.is_some() {
@@ -4070,6 +4088,7 @@ impl Game {
             Capturing => self.capturing = false,
             Amount => self.answer_amount(false, &[]),
             SaveAsked => self.save_asked = false,
+            SkillApplyAsked => self.apply_asked = false,
             BindAsked => self.answer_bind(false),
             ExpansionAsked => {
                 self.expansion_asked = None;
@@ -6243,6 +6262,15 @@ impl App {
                     game.world_map = None;
                 }
             }
+            // The skill window's Apply asks first: OK sends the pending levels; Cancel keeps them pending.
+            Scene::Game(game) if game.apply_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.answer_apply(yes);
+                    }
+                }
+            }
             // Save point asks first. OK goes; Cancel stays.
             Scene::Game(game) if game.save_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
@@ -7431,7 +7459,9 @@ impl App {
                     Panel::Skills => {
                         let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
                         let points = game.skill_points();
-                        let hit = game.skill_window.hit(cursor, &self.skill_trees, &jobs, &game.skills, points);
+                        let skill_info = game.skill_info.clone();
+                        let sheet = skills::Sheet { trees: &self.skill_trees, jobs: &jobs, skills: &game.skills.clone(), info: &skill_info, points };
+                        let hit = game.skill_window.hit(cursor, &sheet);
                         match hit.and_then(|hit| game.skill_window.click(hit)) {
                             Some(skills::Action::Use(id)) => {
                                 let learned = game.skills.iter().find(|skill| skill.id == id).map_or(0, |skill| skill.level);
@@ -7440,9 +7470,16 @@ impl App {
                                     game.use_skill(id, level);
                                 }
                             }
+                            // A click (let go, not dragged off): a level goes in pending, with what it needs first; a
+                            // prerequisite the points can't reach is named in red.
                             Some(skills::Action::LevelUp(id)) => {
-                                let _ = game.session.skill_up(id);
+                                if let Err(short) = game.skill_window.raise(&sheet, id) {
+                                    let name = skill_info.get(&short).map_or_else(|| short.to_string(), |info| info.name.clone());
+                                    let line = rustnarok_client::messages::fill(self.messages.get(skills::CANNOT_LEARN).map_or("", String::as_str), &[&name]);
+                                    game.chat_line(line, CHAT_ERROR);
+                                }
                             }
+                            Some(skills::Action::Apply) => game.apply_asked = true,
                             None => {}
                         }
                     }
@@ -7716,8 +7753,8 @@ impl App {
             game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             return;
         }
-        // A right click on a skill, in the skill window or on the hotkey bar: its description (the same skill again on
-        // the bar closes it).
+        // A right click on a skill, in the skill window or on the hotkey bar: its description (the same skill again
+        // closes it).
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Released
             && let Some((start, None)) = game.right_press
@@ -7727,10 +7764,15 @@ impl App {
             let opened = match game.window_at(cursor) {
                 Some(Panel::Skills) => {
                     let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
-                    match game.skill_window.hit(cursor, &self.skill_trees, &jobs, &game.skills, game.skill_points()) {
-                        Some(skills::Hit::Skill(id)) => Some((id, None)),
+                    let sheet =
+                        skills::Sheet { trees: &self.skill_trees, jobs: &jobs, skills: &game.skills, info: &game.skill_info, points: game.skill_points() };
+                    // The skill's prerequisites stay lit until another right click.
+                    let skill = match game.skill_window.hit(cursor, &sheet) {
+                        Some(skills::Hit::Skill(id)) => Some(id),
                         _ => None,
-                    }
+                    };
+                    game.skill_window.pin(skill);
+                    skill.map(|id| (id, None))
                 }
                 Some(Panel::Hotkeys) => match game.hotkeys.hit(cursor) {
                     Some(hotkeys::Hit::Slot(slot)) => game.hotkeys.keys.get(slot).copied().flatten().filter(|key| key.skill).and_then(|key| {
@@ -7743,7 +7785,7 @@ impl App {
             };
             if let Some((id, row)) = opened {
                 game.right_press = None;
-                if row.is_some() && game.skill_description.as_ref().is_some_and(|window| window.skill == id) {
+                if game.skill_description.as_ref().is_some_and(|window| window.skill == id) {
                     game.skill_description = None;
                 } else {
                     let lines = self.skill_descriptions.get(&id).cloned().unwrap_or_default();
@@ -8000,6 +8042,12 @@ impl App {
                 _ if game.achievement_window.covers(self.cursor) => game.achievement_window.scroll_by(rows, &self.achievement_info),
                 Some(Panel::Inventory) => game.inventory.scroll_by(rows),
                 Some(Panel::Cart) => game.cart.scroll_by(rows),
+                Some(Panel::Skills) => {
+                    let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
+                    let sheet =
+                        skills::Sheet { trees: &self.skill_trees, jobs: &jobs, skills: &game.skills, info: &game.skill_info, points: game.skill_points() };
+                    game.skill_window.scroll_by(&sheet, rows);
+                }
                 Some(Panel::Guild) => {
                     if let Some(guild) = &game.guild {
                         game.guild_window.scroll_by(rows, guild);
@@ -8621,8 +8669,12 @@ impl App {
             }
             if id == Panel::Skills {
                 let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
-                match game.skill_window.hit(cursor, &self.skill_trees, &jobs, &game.skills, game.skill_points()) {
-                    Some(skills::Hit::Skill(skill)) if game.skills.iter().any(|known| known.id == skill && known.level > 0 && known.kind != 0) => {
+                let sheet = skills::Sheet { trees: &self.skill_trees, jobs: &jobs, skills: &game.skills, info: &game.skill_info, points: game.skill_points() };
+                match game.skill_window.hit(cursor, &sheet) {
+                    // Not while levels are pending.
+                    Some(skills::Hit::Skill(skill))
+                        if game.skill_window.draggable() && game.skills.iter().any(|known| known.id == skill && known.level > 0 && known.kind != 0) =>
+                    {
                         game.dragging = Some((Dragged::Skill(skill), cursor, false));
                     }
                     Some(skills::Hit::Title(TitleHit::Title)) => game.skill_window.frame.start_drag(cursor),
@@ -9148,6 +9200,22 @@ impl App {
             Scene::Game(game) if game.expansion_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.expansion_asked = None;
                 let _ = game.session.answer_expansion(*key == Key::Named(NamedKey::Enter));
+            }
+            Scene::Game(game) if game.apply_asked && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.answer_apply(*key == Key::Named(NamedKey::Enter));
+            }
+            // Tab over the skill window: its next tab, round to the first.
+            // ponytail: with the pointer over the window; the game's own focus rule isn't known.
+            Scene::Game(game) if *key == Key::Named(NamedKey::Tab) && game.window_at(self.cursor) == Some(Panel::Skills) => {
+                let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
+                let sheet = skills::Sheet {
+                    trees: &self.skill_trees,
+                    jobs: &jobs,
+                    skills: &game.skills.clone(),
+                    info: &game.skill_info.clone(),
+                    points: game.skill_points(),
+                };
+                game.skill_window.next_tab(&sheet);
             }
             Scene::Game(game) if game.leader_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 let account = game.leader_asked.take().unwrap();
@@ -9945,6 +10013,7 @@ impl App {
                     room_tried: false,
                     esc_order: Vec::new(),
                     save_asked: false,
+                    apply_asked: false,
                     windows: vec![
                         Panel::Hotkeys,
                         Panel::BasicInfo,
@@ -14038,9 +14107,11 @@ impl App {
             }
         }
         let jobs = skills::tabs(skill_trees, game.me.job, &game.skills);
+        let points = game.skill_points();
+        let sheet = skills::Sheet { trees: skill_trees, jobs: &jobs, skills: &game.skills, info: skill_info, points };
         let skill_icons = game
             .skill_window
-            .icons(skill_trees, &jobs, &game.skills, skill_info)
+            .icons(&sheet)
             .into_iter()
             .chain(game.guild.as_ref().map(|guild| game.guild_window.icons(guild, skill_info)).unwrap_or_default())
             .chain(mercenary::SkillList::icons(&game.mercenary_skills, skill_info))
@@ -14283,20 +14354,9 @@ impl App {
                     pointer.0,
                     &cooling,
                 ),
-                Panel::Skills => game.skill_window.draw(
-                    &mut layer,
-                    &mut tooltip,
-                    &assets.chrome,
-                    &assets.skills,
-                    icons,
-                    font,
-                    messages,
-                    (skill_trees, &jobs, skill_info, pc_job_names),
-                    &game.skills,
-                    game.skill_points(),
-                    pointer,
-                    &cooling,
-                ),
+                Panel::Skills => {
+                    game.skill_window.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.skills, icons, font, messages, &sheet, pointer, &cooling)
+                }
                 Panel::BasicInfo => {
                     let info = basic_info::Info {
                         name: &game.me.name,
@@ -14771,6 +14831,16 @@ impl App {
         for window in &compared {
             let lines = window.lines(items, messages, unix_now, &|text, width| wrap_colored(font, text, width));
             window.draw(&mut tooltip, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
+        }
+        if game.apply_asked {
+            let dialog = dialog_position(&assets.message);
+            let question = messages.get(skills::APPLY_QUESTION).map_or("", String::as_str);
+            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
+            for (row, line) in message_lines(font, question, MESSAGE_WIDTH).into_iter().enumerate() {
+                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
         }
         if game.save_asked {
             let dialog = dialog_position(&assets.message);

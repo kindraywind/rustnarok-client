@@ -98,6 +98,8 @@ pub enum WindowId {
     /// Questions. Esc answers them No before it would close a window (rule 3); they are still listed so `windows` shows them.
     Amount,
     SaveAsked,
+    /// The skill window's Apply question.
+    SkillApplyAsked,
     BindAsked,
     ExpansionAsked,
     LeaderAsked,
@@ -194,6 +196,7 @@ impl WindowId {
             Self::Capturing => "Capturing",
             Self::Amount => "Amount",
             Self::SaveAsked => "SaveAsked",
+            Self::SkillApplyAsked => "SkillApplyAsked",
             Self::BindAsked => "BindAsked",
             Self::ExpansionAsked => "InventoryExpansion",
             Self::LeaderAsked => "LeaderAsked",

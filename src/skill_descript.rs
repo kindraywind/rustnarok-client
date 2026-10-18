@@ -69,7 +69,10 @@ pub fn at_hotbar(pointer_x: f32, row: [f32; 2], height: f32) -> [f32; 2] {
 /// Opened from the skill window: right of the pointer, kept on screen.
 // ponytail: "the control's screen position + the mouse + (24, 0)" read as the pointer + (24, 0).
 pub fn at_window(pointer: [f32; 2], height: f32) -> [f32; 2] {
-    [(pointer[0] + 24.0).clamp(0.0, screen()[0] - WIDTH), pointer[1].clamp(0.0, (screen()[1] - height).max(0.0))]
+    // 24 px right of the pointer, or left of it when it wouldn't fit.
+    let right = pointer[0] + 24.0;
+    let x = if right + WIDTH <= screen()[0] { right } else { (pointer[0] - 24.0 - WIDTH).max(0.0) };
+    [x, pointer[1].clamp(0.0, (screen()[1] - height).max(0.0))]
 }
 
 pub struct Assets {
@@ -176,5 +179,7 @@ mod tests {
         assert_eq!(at_hotbar(100.0, [10.0, 42.0], 190.0), [100.0, 42.0]);
         assert_eq!(at_hotbar(900.0, [700.0, 732.0], 190.0), [screen()[0] - WIDTH, 510.0]);
         assert_eq!(at_window([300.0, 200.0], 190.0), [324.0, 200.0]);
+        // Flipped left of the pointer when it wouldn't fit on the right.
+        assert_eq!(at_window([screen()[0] - 50.0, 200.0], 190.0), [screen()[0] - 74.0 - WIDTH, 200.0]);
     }
 }
