@@ -9245,8 +9245,8 @@ impl App {
                 PLAYER => SpriteSet::player(grf, &unit_look(unit), look_tables),
                 PET => job_names.get(&unit.job).and_then(|name| pet_sprites(grf, name, pets.tables.accessory_acts.get(&unit.head_bottom))),
                 MERCENARY if (6017..=6046).contains(&unit.job) => job_names.get(&unit.job).and_then(|name| SpriteSet::mercenary(grf, unit.job, name)),
-                // Hidden NPCs (script triggers) have no sprite in the client either.
-                _ if HIDDEN_JOBS.contains(&unit.job) => None,
+                // Hidden NPCs (script triggers) have no sprite in the client either; a warp portal is only its rings.
+                _ if HIDDEN_JOBS.contains(&unit.job) || unit.job == WARP_JOB => None,
                 _ => job_names.get(&unit.job).and_then(|name| SpriteSet::single(grf, name, unit.kind)),
             };
             let mut actor = Actor::new(unit.name.clone(), sprites, unit.position.map(i32::from), unit.direction, unit.speed);
