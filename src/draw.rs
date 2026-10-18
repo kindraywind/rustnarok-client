@@ -1448,6 +1448,10 @@ impl App {
             game.new_items = false;
         }
         game.inventory.note_open();
+        // What the equipment window's dismount and Cart Items buttons go by.
+        game.equipment.option = game.player.hide_option;
+        game.equipment.job = game.me.job;
+        game.equipment.cart = game.cart.cart.is_some();
         if game.quest_window.frame.open {
             game.quest_icon = false;
         }

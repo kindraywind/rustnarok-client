@@ -758,6 +758,11 @@ fn decodes_others_equipment() {
     assert_eq!(name, "Guild Storage");
     let Some(MapEvent::InventoryStart { kind: 2, name }) = start(b"\0") else { panic!() };
     assert!(name.is_empty());
+    // The View Costume box: {5, 0x3C00} hides costumes, {5, 0} shows them; the answer's non-zero means hidden.
+    assert_eq!(encode_config_value(CONFIG_HIDE_COSTUMES, HIDE_COSTUMES), [0xD8, 0x02, 5, 0, 0, 0, 0x00, 0x3C, 0, 0]);
+    assert_eq!(encode_config_value(CONFIG_HIDE_COSTUMES, 0), [0xD8, 0x02, 5, 0, 0, 0, 0, 0, 0, 0]);
+    let Some(MapEvent::CostumesShown(false)) = decode_map_packet(&[0xD9, 0x02, 5, 0, 0, 0, 1, 0, 0, 0]) else { panic!() };
+    assert_eq!(encode_uninstall(6), [0x35, 0x0B, 6]);
     let Some(MapEvent::ShowEquipment { shown: true, answer: true }) = decode_map_packet(&[0xD9, 0x02, 0, 0, 0, 0, 1, 0, 0, 0]) else { panic!() };
     assert!(decode_map_packet(&[0xD9, 0x02, 1, 0, 0, 0, 1, 0, 0, 0]).is_none());
     let Some(MapEvent::ShowEquipment { shown: false, answer: false }) = decode_map_packet(&[0xDA, 0x02, 0]) else { panic!() };

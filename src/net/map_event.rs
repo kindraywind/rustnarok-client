@@ -557,6 +557,8 @@ pub enum MapEvent {
         shown: bool,
         answer: bool,
     },
+    /// The View Costume box: whether costumes show, as the server answered.
+    CostumesShown(bool),
     /// May the inventory grow: 0 ask (with the voucher it would use), 1 failed, 2 busy, 3 no voucher, 4 at the most.
     ExpansionAsked {
         result: u8,

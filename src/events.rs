@@ -961,6 +961,7 @@ impl App {
                     sprites: SpriteSet::player(grf, &look, look_tables),
                 });
             }
+            MapEvent::CostumesShown(shown) => game.equipment.costumes_shown = shown,
             MapEvent::ShowEquipment { shown, answer } => {
                 game.equipment.shown = shown;
                 if answer {
