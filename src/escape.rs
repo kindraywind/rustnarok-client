@@ -113,7 +113,6 @@ pub enum WindowId {
     GuildInvite,
     PartyInvite,
     FriendAsked,
-    TradeAsked,
     DealChoice,
     /// The battleground list.
     BattleQueue,
@@ -211,7 +210,6 @@ impl WindowId {
             Self::GuildInvite => "GuildInvite",
             Self::PartyInvite => "PartyInvite",
             Self::FriendAsked => "FriendAsked",
-            Self::TradeAsked => "TradeAsked",
             Self::DealChoice => "DealChoice",
             Self::BattleQueue => "BattleQueue",
             Self::AdoptAsked => "AdoptAsked",
