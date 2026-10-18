@@ -5,12 +5,13 @@
 use rustnarok_client::net::{MAP_BATTLEFIELD, MAP_GVG, MAP_NO_LOCK_ON, MAP_PVP, MAP_SIEGE};
 
 /// Where the player stands and with whom: the map's flags, the online members of our party (accounts), our guild
-/// (0: none) and its allies.
+/// (0: none) and its allies, and our battleground camp.
 pub struct Side {
     pub flags: u32,
     pub party: Vec<u32>,
     pub guild: u32,
     pub allies: Vec<u32>,
+    pub camp: Option<u16>,
 }
 
 /// Another player as these rules need them.
@@ -18,6 +19,7 @@ pub struct Other {
     pub account: u32,
     pub guild: u32,
     pub dead: bool,
+    pub camp: Option<u16>,
 }
 
 /// A siege map: guild emblems over heads, guildmates and allies spared (battlegrounds go by camp, not here).
@@ -44,7 +46,12 @@ impl Side {
         } else if self.flags & MAP_GVG != 0 {
             enemy |= self.guild == 0 || other.guild != self.guild;
         }
-        if siege(self.flags) {
+        if self.flags & MAP_BATTLEFIELD != 0
+            && let Some(ours) = self.camp
+        {
+            // A battleground goes by camp: the other camp's players; ours by Shift only with a skill for players.
+            enemy = other.camp.is_some_and(|camp| camp != ours) || (aiming && wants);
+        } else if siege(self.flags) {
             // Guildmates and allies never, whatever came before; a skill for players still reaches them by Shift.
             enemy = !self.friend(other.guild) || (aiming && wants);
         } else if self.flags & MAP_NO_LOCK_ON != 0 {
@@ -100,14 +107,15 @@ mod tests {
     const GVG: u32 = 0x061E;
     const CASTLE: u32 = 0x060E;
     const WOE: u32 = 0x061E;
+    const BATTLEGROUND: u32 = MAP_BATTLEFIELD | MAP_NO_LOCK_ON;
 
     fn other(account: u32, guild: u32) -> Other {
-        Other { account, guild, dead: false }
+        Other { account, guild, dead: false, camp: None }
     }
 
     #[test]
     fn finds_enemies_by_the_maps_rules() {
-        let side = |flags| Side { flags, party: vec![7], guild: 10, allies: vec![30] };
+        let side = |flags| Side { flags, party: vec![7], guild: 10, allies: vec![30], camp: None };
         let stranger = other(5, 20);
         let party_member = other(7, 20);
         let guildmate = other(8, 10);
@@ -128,11 +136,17 @@ mod tests {
         assert!(!side(GVG).attack_cursor(&guildmate, true, false), "Shift doesn't make a guildmate an enemy");
         assert!(side(GVG).attack_cursor(&guildmate, true, true), "a skill aimed at players still reaches them");
         // Without a guild, everyone on a GvG map is outside ours.
-        let alone = Side { flags: GVG, party: Vec::new(), guild: 0, allies: Vec::new() };
+        let alone = Side { flags: GVG, party: Vec::new(), guild: 0, allies: Vec::new(), camp: None };
         assert!(alone.attack_cursor(&none, false, false));
         // A castle outside WoE shows the cursor on other guilds (the click won't attack); during WoE the same.
         assert!(side(CASTLE).attack_cursor(&stranger, false, false));
         assert!(side(WOE).attack_cursor(&stranger, false, false));
+        // A battleground (bat_c03's flags): the other camp, not ours, whatever the guild.
+        let battle = Side { flags: BATTLEGROUND, party: Vec::new(), guild: 10, allies: Vec::new(), camp: Some(1) };
+        let camp = |account, guild, camp| Other { camp: Some(camp), ..other(account, guild) };
+        assert!(battle.attack_cursor(&camp(5, 10, 2), false, false));
+        assert!(!battle.attack_cursor(&camp(6, 20, 1), false, false));
+        assert!(!battle.attack_cursor(&other(6, 20), false, false), "a camp not known yet");
         // The dead never.
         assert!(!side(PVP).attack_cursor(&Other { dead: true, ..other(5, 20) }, false, false));
     }
