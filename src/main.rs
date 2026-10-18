@@ -90,6 +90,7 @@ mod picking;
 mod pickup;
 mod pin;
 mod quest;
+mod quest_notice;
 mod quest_tracker;
 mod ranking;
 mod refine;
@@ -868,6 +869,9 @@ struct Game {
     new_items: bool,
     /// The level up buttons in the bottom corners.
     level_ups: level_up::LevelUps,
+    /// A new quest's icon (until the quest window opens), and hunts' progress banners.
+    quest_icon: bool,
+    banners: quest_notice::Banners,
     /// A skill's description, while it shows.
     skill_description: Option<skill_descript::SkillDescription>,
     /// The Universal Catalog's store search while it's open.
@@ -2300,6 +2304,7 @@ impl Game {
             || self.queue_window.covers(cursor)
             || self.skill_description.as_ref().is_some_and(|window| window.contains(cursor))
             || self.level_ups.hit(cursor).is_some()
+            || (self.quest_icon && quest_notice::on_icon(cursor))
             || (self.quest_window.tracker && !quest_tracker::tracked(&self.quests).is_empty() && quest_tracker::covers(cursor))
             || (asking && contains(dialog_position_of(message), message, cursor))
             || self.dialog.is_some()
@@ -3702,6 +3707,7 @@ struct Assets {
     skill_descript: skill_descript::Assets,
     pickup: pickup::Assets,
     level_up: level_up::Assets,
+    quest_notice: quest_notice::Assets,
     battle_queue: battle_queue::Assets,
     mercenary: mercenary::Assets,
     homunculus: homunculus::Assets,
@@ -3819,6 +3825,7 @@ impl Assets {
             skill_descript: skill_descript::Assets::load(gpu),
             pickup: pickup::Assets::load(gpu, grf),
             level_up: level_up::Assets::load(gpu, grf),
+            quest_notice: quest_notice::Assets::load(gpu, grf),
             battle_queue: battle_queue::Assets::load(gpu, grf, &lua::entry_queue(grf).unwrap_or_default()),
             mercenary: mercenary::Assets::load(gpu, grf),
             homunculus: homunculus::Assets::load(gpu, grf),
@@ -5318,6 +5325,14 @@ impl App {
                     }
                     _ => {}
                 }
+            }
+            // The new-quest icon: the quest window.
+            Scene::Game(game) if game.quest_icon && quest_notice::on_icon(cursor) && game.window_at(cursor).is_none() => {
+                game.quest_window.frame.open = true;
+                game.quest_window.frame.minimized = false;
+                game.quest_window.tab = 0;
+                game.quest_icon = false;
+                game.sync_esc();
             }
             // A level up button: the status window (base level) or the skill window (job level), restored if minimised.
             Scene::Game(game) if game.level_ups.hit(cursor).is_some() && game.window_at(cursor).is_none() => {
@@ -8081,6 +8096,8 @@ impl App {
                     pickup_popup: None,
                     new_items: false,
                     level_ups: level_up::LevelUps::default(),
+                    quest_icon: false,
+                    banners: quest_notice::Banners::default(),
                     char_names: HashMap::new(),
                     names_asked: HashSet::new(),
                     dress_figure: None,
@@ -9003,11 +9020,19 @@ impl App {
             MapEvent::InventoryItems { kind: 1, items } => game.cart.extend(items),
             MapEvent::InventoryStart { .. } | MapEvent::InventoryItems { .. } => {}
             MapEvent::Quests(quests) => game.quests = quests,
+            // A new quest: its line and icon; one already known is refreshed in place.
             MapEvent::QuestAdded(quest) => {
-                game.quests.retain(|known| known.id != quest.id);
-                game.quests.push(quest);
+                if quest_notice::add(&mut game.quests, quest) {
+                    game.chat_line(self.messages.get(quest_notice::RECEIVED).cloned().unwrap_or_default(), quest_notice::YELLOW);
+                    game.quest_icon = true;
+                }
             }
             MapEvent::QuestRemoved(id) => {
+                if game.quests.iter().any(|quest| quest.id == id) {
+                    let title = self.quest_texts.get(&id).map_or_else(|| id.to_string(), |text| text.title.clone());
+                    let line = messages::fill(self.messages.get(quest_notice::DELETED).map_or("", String::as_str), &[&title]);
+                    game.chat_line(line, quest_notice::YELLOW);
+                }
                 game.quests.retain(|quest| quest.id != id);
                 if game.quest_window.picked == Some(id) {
                     game.quest_window.picked = None;
@@ -9016,6 +9041,20 @@ impl App {
             MapEvent::QuestActive { id, active } => {
                 if let Some(quest) = game.quests.iter_mut().find(|quest| quest.id == id) {
                     quest.active = active;
+                }
+            }
+            // A counted kill: the counts, a progress line each and its banner.
+            MapEvent::QuestProgress(hunts) => {
+                let now = control::now();
+                for (id, count, needed) in hunts {
+                    let Some(quest) = game.quests.iter_mut().find(|quest| quest.hunts.iter().any(|hunt| hunt.id == id)) else { continue };
+                    let quest_id = quest.id;
+                    let hunt = quest.hunts.iter_mut().find(|hunt| hunt.id == id).unwrap();
+                    (hunt.count, hunt.needed) = (count, needed);
+                    let hunt = hunt.clone();
+                    let title = self.quest_texts.get(&quest_id).map_or_else(|| quest_id.to_string(), |text| text.title.clone());
+                    game.chat_line(quest_notice::progress_line(&self.messages, &title, &hunt), quest_notice::YELLOW);
+                    game.banners.show(quest_notice::banner_line(&self.messages, &hunt), now);
                 }
             }
             MapEvent::QuestHunts(hunts) => {
@@ -11800,6 +11839,10 @@ impl App {
         if game.inventory.frame.open {
             game.new_items = false;
         }
+        if game.quest_window.frame.open {
+            game.quest_icon = false;
+        }
+        game.banners.current(control::now());
         game.level_ups
             .seen(game.status_window.frame.open && !game.status_window.frame.minimized, game.skill_window.frame.open && !game.skill_window.frame.minimized);
         let blink_on = game.entered.elapsed().as_millis() % 1000 > 500;
@@ -11903,6 +11946,11 @@ impl App {
         let mut announce_layer = Layer::default();
         game.announcements.draw(&mut announce_layer);
         game.level_ups.draw(&mut announce_layer, &assets.level_up, pointer);
+        // ponytail: the new-quest icon covers the base level button when both are up.
+        if game.quest_icon {
+            quest_notice::draw_icon(&mut announce_layer, &assets.quest_notice, pointer);
+        }
+        game.banners.draw(&mut announce_layer, &assets.quest_notice, font);
         // The pickup popup takes no clicks.
         if let Some(popup) = &game.pickup_popup {
             let icon = icons.get(&popup.icon).and_then(Option::as_ref);

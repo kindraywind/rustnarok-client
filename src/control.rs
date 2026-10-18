@@ -1273,6 +1273,9 @@ fn game_state(app: &App, game: &Game) -> Value {
     let blocks = if game.quest_window.tracker { crate::quest_tracker::blocks(&game.quests, &app.quest_texts, &app.messages) } else { Vec::new() };
     state["quest_tracker"] =
         json!(blocks.iter().map(|block| json!({"id": block.id, "title": block.title, "summary": block.summary, "hunts": block.hunts})).collect::<Vec<_>>());
+    // The new-quest icon up, and the progress banners showing.
+    state["quest_icon"] = json!(game.quest_icon);
+    state["quest_banners"] = json!(game.banners.texts());
     // The level up buttons up in the bottom corners.
     state["level_ups"] = json!({"base": game.level_ups.base, "job": game.level_ups.job});
     // The status icon tooltip's lines while one shows.

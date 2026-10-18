@@ -2499,6 +2499,8 @@ pub enum MapEvent {
     },
     /// Hunts' counts: objective ID, how many so far, how many in all.
     QuestHunts(Vec<(u32, u16, u16)>),
+    /// Hunts that progressed with a kill (ZC_UPDATE_MISSION_HUNT_EX), as `QuestHunts`.
+    QuestProgress(Vec<(u32, u16, u16)>),
     /// The cart: how many kinds it holds and can, its weight and most weight.
     CartCount {
         count: u16,
@@ -5883,7 +5885,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             MapEvent::QuestHunts(packet[4..].chunks_exact(12).map(|hunt| (self::u32_at(hunt, 0), self::u16_at(hunt, 10), self::u16_at(hunt, 8))).collect())
         }
         ZC_UPDATE_MISSION_HUNT_EX => {
-            MapEvent::QuestHunts(packet[6..].chunks_exact(12).map(|hunt| (self::u32_at(hunt, 4), self::u16_at(hunt, 10), self::u16_at(hunt, 8))).collect())
+            MapEvent::QuestProgress(packet[6..].chunks_exact(12).map(|hunt| (self::u32_at(hunt, 4), self::u16_at(hunt, 10), self::u16_at(hunt, 8))).collect())
         }
         ZC_DEL_QUEST => MapEvent::QuestRemoved(u32_at(2)),
         ZC_ACTIVE_QUEST => MapEvent::QuestActive { id: u32_at(2), active: packet[6] != 0 },
@@ -6535,7 +6537,7 @@ mod tests {
         }
         update.extend_from_slice(&10u16.to_le_bytes());
         update.extend_from_slice(&3u16.to_le_bytes());
-        let Some(MapEvent::QuestHunts(hunts)) = decode_map_packet(&update) else { panic!() };
+        let Some(MapEvent::QuestProgress(hunts)) = decode_map_packet(&update) else { panic!() };
         assert_eq!(hunts, [(7_001_000, 3, 10)]);
     }
 
