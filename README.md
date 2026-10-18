@@ -239,8 +239,9 @@ The binary (`src/main.rs` and its modules) is the game: `render` (wgpu: sprites,
 table `effects.txt`), `sound` (music and effects over cpal), `control` (the test-driver socket), and one module per
 window, from `basic_info`, `inventory` and `buying` to `pet`, `pin`, `refine` and `worldmap`.
 
-`main.rs` holds the scenes (login, character select, game), the game state, input, the server's events and
-drawing. The UI draws in a canvas 768 high and as wide as the window's shape (at least 1024), scaled to the window.
+`main.rs` holds the scenes (login, character select, game), the game state and the app; the app's input is in
+`input.rs`, the servers' events in `events.rs`, drawing in `draw.rs`, and the game's own actions in `game.rs`. The UI
+draws in a canvas 768 high and as wide as the window's shape (at least 1024), scaled to the window.
 
 </details>
 
