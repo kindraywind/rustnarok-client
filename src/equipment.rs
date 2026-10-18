@@ -301,6 +301,17 @@ impl Equipment {
         None
     }
 
+    /// The special tab (costumes and shadow gear), not the swap view.
+    pub fn showing_costume(&self) -> bool {
+        self.tab == 1 && !self.swapping
+    }
+
+    /// Opens the special tab.
+    pub fn show_costume(&mut self) {
+        self.swapping = false;
+        self.tab = 1;
+    }
+
     /// How many tabs show: the titles only on the player's own window, out of the swap view.
     fn tabs(&self) -> usize {
         if self.owner.is_none() && !self.swapping { TAB_LABELS.len() } else { TITLES_TAB }
