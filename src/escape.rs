@@ -64,6 +64,8 @@ pub enum WindowId {
     Catalog,
     /// A skill's description (a right click on a skill).
     SkillDescription,
+    /// The skill delays beside a description.
+    SkillDelay,
     Roulette,
     MonsterInfo,
     Achievements,
@@ -165,6 +167,7 @@ impl WindowId {
             Self::Navigation => "Navigation",
             Self::Catalog => "Catalog",
             Self::SkillDescription => "SkillDescription",
+            Self::SkillDelay => "SkillDelay",
             Self::Roulette => "Roulette",
             Self::MonsterInfo => "MonsterInfo",
             Self::Achievements => "Achievements",

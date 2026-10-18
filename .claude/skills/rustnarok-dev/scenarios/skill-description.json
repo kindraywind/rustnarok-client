@@ -1,5 +1,5 @@
 {
-  "about": "Skill descriptions (issue #223): a Swordman gets its skills (@allskill) and puts it on the hotbar. A right click on Bash in the skill window opens its description (the data's SKILL_DESCRIPT, in its colours); a right click on it on the hotbar closes it, another opens it by the bar; its ESC button closes it. The character goes back to a Novice with no skills at the end.",
+  "about": "Skill descriptions (issues #223, #323): a Swordman gets its skills (@allskill) and puts Bash and Endure on the hotbar. A right click on Bash in the skill window opens its description (the data's SKILL_DESCRIPT, in its colours) without a close button; a right click on it on the hotbar closes it, another opens it under the bar with one. Endure is used (a 10 s cooldown) and its description's delay button opens the skill delays beside it, listing Endure's; Esc closes the delays first, the close button the rest. The character goes back to a Novice with no skills at the end.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -55,6 +55,19 @@
       "wait": 400
     },
     {
+      "drag_on": [
+        {
+          "skill": 8
+        },
+        {
+          "hotkey": 1
+        }
+      ]
+    },
+    {
+      "wait": 400
+    },
+    {
       "click_on": {
         "skill": 5
       },
@@ -69,7 +82,8 @@
           "SkillDescription"
         ],
         "state": {
-          "skill_description.skill": 5
+          "skill_description.skill": 5,
+          "skill_description.closable": false
         }
       }
     },
@@ -122,6 +136,103 @@
     },
     {
       "shot": "skill-description-hotbar"
+    },
+    {
+      "expect": {
+        "state": {
+          "skill_description.closable": true
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "skill_description_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "SkillDescription"
+        ]
+      }
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "wait_for": {
+        "packet": "0x043d",
+        "do": {
+          "cmd": "key",
+          "key": "F2"
+        }
+      }
+    },
+    {
+      "click_on": {
+        "hotkey": 1
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "skill_description.skill": 8
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "skill_delay"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "SkillDescription",
+          "SkillDelay"
+        ],
+        "state": {
+          "skill_description.delays": true
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "skill-delay"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "SkillDescription"
+        ],
+        "windows_closed": [
+          "SkillDelay"
+        ]
+      }
     },
     {
       "click_on": {

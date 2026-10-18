@@ -1080,7 +1080,13 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.minimap_window.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.hotkeys.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.level_ups.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
-        .chain(game.skill_description.iter().map(|window| json!({"kind": "button", "name": "skill_description_close", "box": window.close_box()})))
+        .chain(
+            game.skill_description
+                .iter()
+                .filter_map(|window| window.close_box())
+                .map(|area| json!({"kind": "button", "name": "skill_description_close", "box": area})),
+        )
+        .chain(game.skill_description.iter().filter_map(|window| window.delay_box()).map(|area| json!({"kind": "button", "name": "skill_delay", "box": area})))
         .chain(
             game.mercenary
                 .iter()
@@ -1451,7 +1457,11 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The pickup popup's line while it shows.
     state["pickup_popup"] = json!(game.pickup_popup.as_ref().map(|popup| popup.text.clone()));
     // A skill's description while it shows: which skill, and its lines.
-    state["skill_description"] = json!(game.skill_description.as_ref().map(|window| json!({"skill": window.skill, "lines": window.text()})));
+    state["skill_description"] = json!(
+        game.skill_description
+            .as_ref()
+            .map(|window| json!({"skill": window.skill, "lines": window.text(), "closable": window.close_box().is_some(), "delays": window.delays}))
+    );
     // The quest tracker as drawn: each quest's title, summary and hunt lines (none while it's off).
     let blocks = if game.quest_window.tracker {
         crate::quest_tracker::blocks(&game.quests, &app.quest_texts, &game.quest_window.hidden, &app.messages)
