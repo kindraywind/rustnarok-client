@@ -10835,9 +10835,12 @@ impl App {
                     Some(amount) => {
                         let line = messages::fill(&message(messages::GOT_ITEM), &[&name(true), &amount]);
                         // The popup: the name without its slot count, how many came, the icon.
-                        let text = format!("{}{}", name(false), messages::fill(&message(pickup::OBTAINED), &[&amount]));
+                        let (short, maker) = inventory::full_name_maker(&self.items, &self.card_names, &self.messages, &game.char_names, &item, false);
+                        let text = format!("{short}{}", messages::fill(&message(pickup::OBTAINED), &[&amount]));
                         let icon = self.items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)).unwrap_or_default();
-                        game.pickup_popup = Some(pickup::Popup::new(text, icon, self.font.width(&line), control::now()));
+                        let mut popup = pickup::Popup::new(text, icon, self.font.width(&line), control::now());
+                        popup.maker = maker;
+                        game.pickup_popup = Some(popup);
                         game.new_items = true;
                         game.chat_line(line, CHAT_ITEM);
                         game.inventory.add(net::InventoryItem { amount, ..item });
@@ -14189,8 +14192,7 @@ impl App {
         game.basic_info.fourth = basic_info::fourth_job(game.me.job);
         game.basic_info.doram = basic_info::doram(game.me.job);
         game.banners.current(control::now());
-        game.level_ups
-            .seen(game.status_window.frame.open && !game.status_window.frame.minimized, game.skill_window.frame.open && !game.skill_window.frame.minimized);
+        game.level_ups.seen(level_up::opened(&game.status_window.frame), level_up::opened(&game.skill_window.frame));
         let marks: Vec<_> = game
             .marks
             .iter()

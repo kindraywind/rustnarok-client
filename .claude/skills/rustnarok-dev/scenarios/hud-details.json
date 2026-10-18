@@ -1,0 +1,71 @@
+{
+  "about": "Small HUD details (issue #324): a forged Knife (@produce) shows its smith's name in blue in the pickup popup, the rest black with a light shadow; the pointer over a hotbar slot fills a box under it. Items are reset at the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "say": "@produce 1201 0 0"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "forged-popup",
+      "crop": [
+        300,
+        80,
+        424,
+        120
+      ],
+      "threshold": 5
+    },
+    {
+      "move": {
+        "hotkey": 2
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hotbar-hover",
+      "crop": [
+        230,
+        0,
+        300,
+        70
+      ],
+      "threshold": 5
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

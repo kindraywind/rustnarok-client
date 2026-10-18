@@ -21,6 +21,9 @@ const SLOT_STEP: f32 = 29.0;
 const FIRST_SLOT: [f32; 2] = [16.0, 4.0];
 /// The hover box sits a pixel lower than the icon.
 const HOVER_DROP: f32 = 1.0;
+/// The box filled under the slot pointed at.
+// ponytail: its colour (the skin's) is ours.
+const HOVER_COLOR: [u8; 4] = [0x82, 0xAA, 0xE6, 0xA0];
 const ROW_NUMBER: [f32; 2] = [6.0, 13.0];
 const ROW_NUMBER_COLOR: [u8; 3] = [74, 74, 47];
 /// The bar switch (hotbar 1 or 2), and the minus and plus buttons by the last row.
@@ -38,6 +41,8 @@ pub struct Assets {
     plus: Texture,
     /// Refine grade marks, D to A.
     grades: [Texture; 4],
+    /// The box under the slot the pointer is on.
+    hover: Texture,
 }
 
 impl Assets {
@@ -45,6 +50,7 @@ impl Assets {
         let image = |path: String| gpu.try_load_texture(grf, &path, false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
         Self {
             frame: image(format!("{UI}shortcut\\shortcut_frame.bmp")),
+            hover: gpu.solid(HOVER_COLOR),
             switch: ["shortcut_1_bts", "shortcut_2_bts"].map(|name| image(format!("{UI}{name}.bmp"))),
             minus: image(format!("{UI}shortcut\\btn_minus_normal.bmp")),
             plus: image(format!("{UI}shortcut\\btn_plus_normal.bmp")),
@@ -195,6 +201,11 @@ impl Hotkeys {
         for visible in 0..self.rows * PER_ROW {
             let key = self.keys.get(self.key_index(visible)).and_then(|key| *key);
             let corner = self.frame.at(slot_corner(visible));
+            // The slot under the pointer: a box under its icon.
+            let hover = self.frame.at(hover_corner(visible));
+            if contains(hover, SLOT, cursor) {
+                layer.sprites.push((&assets.hover, hover, SLOT));
+            }
             // A skill: its icon, the name on hover.
             if let Some(Hotkey { skill: true, id, count }) = key.as_ref()
                 && let Some(info) = u16::try_from(*id).ok().and_then(|id| skills.get(&id))
@@ -296,6 +307,13 @@ pub fn drop_on(keys: &[Option<Hotkey>], key: Hotkey, to: usize) -> Vec<(usize, O
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn puts_the_hover_box_under_the_slot() {
+        // Column c, row r: (16 + 29c, 5 + 33r), 24 square.
+        assert_eq!((hover_corner(0), hover_corner(3), hover_corner(PER_ROW + 2)), ([16.0, 5.0], [103.0, 5.0], [74.0, 38.0]));
+        assert_eq!(SLOT, [24.0, 24.0]);
+    }
 
     #[test]
     fn a_key_moves_along_its_row_and_copies_to_another() {
