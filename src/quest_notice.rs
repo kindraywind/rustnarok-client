@@ -9,7 +9,7 @@ use rustnarok_client::net::{Hunt, Quest};
 use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
-use crate::{Layer, SCREEN, UI, contains, overhead};
+use crate::{Layer, UI, contains, overhead, screen};
 
 /// "You have received a new quest.", "[%s] quest - defeating [%s] progress (%d/%d).", "[%s] quest was deleted."
 pub const RECEIVED: usize = 1374;
@@ -20,7 +20,9 @@ const COMPLETE: usize = 2030;
 pub const YELLOW: [u8; 3] = [255, 255, 0];
 const BANNER_LIFE: Duration = Duration::from_secs(2);
 /// The banner's strip, 130/480 of the way down.
-const BANNER_TOP: f32 = SCREEN[1] * 130.0 / 480.0;
+fn banner_top() -> f32 {
+    screen()[1] * 130.0 / 480.0
+}
 const BANNER_STEP: f32 = 22.0;
 const ICON: [f32; 2] = [43.0, 43.0];
 
@@ -75,7 +77,7 @@ impl Banners {
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, font: &Font) {
         for (row, (text, _)) in self.0.iter().enumerate() {
             let size = [font.width(text) + 16.0, 20.0];
-            let corner = [((SCREEN[0] - size[0]) / 2.0).floor(), BANNER_TOP + row as f32 * BANNER_STEP];
+            let corner = [((screen()[0] - size[0]) / 2.0).floor(), banner_top() + row as f32 * BANNER_STEP];
             layer.sprites.push((&assets.banner, corner, size));
             for (edge, piece) in overhead::border(size) {
                 layer.sprites.push((&assets.banner_edge, [corner[0] + edge[0], corner[1] + edge[1]], piece));
@@ -89,7 +91,7 @@ impl Banners {
 
 /// The new-quest icon's corner: the bottom right, where the base level button also sits.
 pub fn icon_corner() -> [f32; 2] {
-    [SCREEN[0] - ICON[0], SCREEN[1] - ICON[1]]
+    [screen()[0] - ICON[0], screen()[1] - ICON[1]]
 }
 
 pub fn on_icon(cursor: [f32; 2]) -> bool {

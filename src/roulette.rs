@@ -11,7 +11,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, BUTTON_SIZE, Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN, UI, contains, inventory, offset};
+use crate::{Layer, UI, contains, inventory, offset, screen};
 
 const TITLE: usize = 2641;
 const START_TIP: usize = 2684;
@@ -128,7 +128,7 @@ pub struct Roulette {
 
 impl Roulette {
     pub fn new() -> Self {
-        let mut frame = Frame::new([((SCREEN[0] - SIZE[0]) / 2.0).floor(), ((SCREEN[1] - HEIGHT) / 2.0).floor()], SIZE[0]);
+        let mut frame = Frame::new([((screen()[0] - SIZE[0]) / 2.0).floor(), ((screen()[1] - HEIGHT) / 2.0).floor()], SIZE[0]);
         frame.open = true;
         Self { frame, prizes: Vec::new(), points: [0; 3], bonus: 0, prize: None, spin: None }
     }

@@ -5,7 +5,7 @@ use rustnarok_client::net::MonsterInfo;
 use rustnarok_client::text::Font;
 
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN};
+use crate::{Layer, screen};
 
 const TITLE: usize = 406;
 /// Name, Level, HP, Size, Race, DEF, MDEF, Element.
@@ -58,7 +58,7 @@ pub struct MonsterWindow {
 
 impl MonsterWindow {
     pub fn new(info: MonsterInfo, name: String) -> Self {
-        let mut frame = Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor(), 140.0], WIDTH);
+        let mut frame = Frame::new([((screen()[0] - WIDTH) / 2.0).floor(), 140.0], WIDTH);
         frame.open = true;
         Self { frame, info, name }
     }

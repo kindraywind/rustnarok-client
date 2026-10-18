@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
 use std::sync::LazyLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// rathena's NAME_LENGTH: 23 characters plus the terminating NUL.
 pub const NAME_LENGTH: usize = 24;
@@ -650,6 +650,7 @@ const ZC_WHISPER_LIST: u16 = 0x00D4;
 const ZC_ACCEPT_ENTER: u16 = 0x02EB;
 const ZC_NOTIFY_VANISH: u16 = 0x0080;
 const ZC_NOTIFY_PLAYERMOVE: u16 = 0x0087;
+const ZC_NOTIFY_TIME: u16 = 0x007F;
 const ZC_STOPMOVE: u16 = 0x0088;
 const ZC_HIGHJUMP: u16 = 0x01FF;
 const ZC_FASTMOVE: u16 = 0x08D2;
@@ -720,6 +721,9 @@ const CZ_USE_SKILL_TOGROUND: u16 = 0x0366;
 const ZC_USESKILL_ACK: u16 = 0x0B1A;
 /// A unit's cast was cut off (rathena's clif_skillcastcancel).
 const ZC_DISPEL: u16 = 0x01B9;
+/// Reputation points by reputation type, and the server opening the reputation window (rathena's clif_reputation_*).
+const ZC_REPUTE_INFO: u16 = 0x0B8D;
+const ZC_REPUTE_OPEN: u16 = 0x0B8E;
 const ZC_NOTIFY_SKILL: u16 = 0x01DE;
 const ZC_USE_SKILL: u16 = 0x09CB;
 const ZC_NOTIFY_GROUNDSKILL: u16 = 0x0117;
@@ -1604,7 +1608,11 @@ pub enum MapEvent {
     Entered {
         position: [u16; 2],
         direction: u8,
+        /// The server's tick, and when it came.
+        clock: (u32, Instant),
     },
+    /// The server's tick, answering ours, and when it came.
+    ServerTime(u32, Instant),
     /// A unit is standing in view (appeared or was already there).
     Unit(Unit),
     /// A unit walking in view; its `position` is where the walk starts.
@@ -1612,6 +1620,8 @@ pub enum MapEvent {
         unit: Unit,
         to: [u16; 2],
         start_time: u32,
+        /// Where in its start cell it is, in sixteenths (8: the centre).
+        sub: [u8; 2],
     },
     Vanish {
         id: u32,
@@ -2847,6 +2857,13 @@ pub enum MapEvent {
     /// A skill learned or changed (level, SP, range, whether it can go up).
     SkillChanged(Skill),
     SkillRemoved(u16),
+    /// Reputation points, by reputation type (ZC_REPUTE_INFO): all of them on entering the map, one when it changes.
+    Reputation(Vec<(u64, i64)>),
+    /// The server opens the reputation window (ZC_REPUTE_OPEN) at a group and a reputation (0: none).
+    ReputationOpen {
+        group: u64,
+        repute: u32,
+    },
     /// A unit's cast was cut off before the skill went (ZC_DISPEL).
     CastCancelled(u32),
     /// A unit starts a skill (ZC_USESKILL_ACK) at a unit or a cell, casting for `cast_ms` first.
@@ -5225,14 +5242,16 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
     Some(match u16_at(0) {
         ZC_ACCEPT_ENTER => {
             let (position, direction) = decode_position(&packet[6..9]);
-            MapEvent::Entered { position, direction: sprite_direction(direction) }
+            MapEvent::Entered { position, direction: sprite_direction(direction), clock: (u32_at(2), Instant::now()) }
         }
         ZC_NOTIFY_STANDENTRY => MapEvent::Unit(decode_unit(packet, &STAND_LAYOUT, decode_entry_position(&packet[63..66]))),
         ZC_NOTIFY_NEWENTRY => MapEvent::Unit(decode_unit(packet, &NEW_LAYOUT, decode_entry_position(&packet[63..66]))),
         ZC_NOTIFY_MOVEENTRY => {
             let (from, to) = decode_move(&packet[67..73]);
-            MapEvent::UnitWalk { unit: decode_unit(packet, &MOVE_LAYOUT, (from, 0)), to, start_time: u32_at(37) }
+            let sub = [packet[72] >> 4, packet[72] & 0x0F];
+            MapEvent::UnitWalk { unit: decode_unit(packet, &MOVE_LAYOUT, (from, 0)), to, start_time: u32_at(37), sub }
         }
+        ZC_NOTIFY_TIME => MapEvent::ServerTime(u32_at(2), Instant::now()),
         ZC_NOTIFY_VANISH => MapEvent::Vanish { id: u32_at(2), reason: packet[6] },
         ZC_NOTIFY_PLAYERMOVE => {
             let (from, to) = decode_move(&packet[6..12]);
@@ -5277,6 +5296,16 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         ZC_SKILLINFO_DELETE => MapEvent::SkillRemoved(u16_at(2)),
         ZC_DISPEL => MapEvent::CastCancelled(u32_at(2)),
+        // A success byte, then 16 bytes an entry: the type (u64) and the points (i64).
+        ZC_REPUTE_INFO => MapEvent::Reputation(
+            packet
+                .get(5..)
+                .unwrap_or_default()
+                .chunks_exact(16)
+                .map(|entry| (u64::from_le_bytes(entry[..8].try_into().unwrap()), i64::from_le_bytes(entry[8..].try_into().unwrap())))
+                .collect(),
+        ),
+        ZC_REPUTE_OPEN => MapEvent::ReputationOpen { group: u64::from_le_bytes(packet[2..10].try_into().unwrap()), repute: u32_at(10) },
         ZC_USESKILL_ACK => MapEvent::Casting {
             source: u32_at(2),
             target: u32_at(6),
@@ -6328,6 +6357,26 @@ mod tests {
         // A knight on a Peco: effectstate is the option.
         info[36..40].copy_from_slice(&0x20u32.to_le_bytes());
         assert_eq!(decode_character(&info).option, 0x20);
+    }
+
+    #[test]
+    fn reads_reputation() {
+        let mut packet = ZC_REPUTE_INFO.to_le_bytes().to_vec();
+        packet.extend(0u16.to_le_bytes());
+        packet.push(1);
+        for (kind, points) in [(1u64, 700i64), (3, -250)] {
+            packet.extend(kind.to_le_bytes());
+            packet.extend(points.to_le_bytes());
+        }
+        let length = packet.len() as u16;
+        packet[2..4].copy_from_slice(&length.to_le_bytes());
+        assert!(matches!(decode_map_packet(&packet), Some(MapEvent::Reputation(entries)) if entries == [(1, 700), (3, -250)]));
+        let mut open = ZC_REPUTE_OPEN.to_le_bytes().to_vec();
+        open.extend(2u64.to_le_bytes());
+        open.extend(3u32.to_le_bytes());
+        open.extend(0u32.to_le_bytes());
+        assert_eq!(open.len(), packet_length(ZC_REPUTE_OPEN).unwrap() as usize);
+        assert!(matches!(decode_map_packet(&open), Some(MapEvent::ReputationOpen { group: 2, repute: 3 })));
     }
 
     #[test]

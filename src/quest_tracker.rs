@@ -7,10 +7,12 @@ use rustnarok_client::net::{Hunt, Quest};
 use rustnarok_client::text::Font;
 
 use crate::quest::QuestText;
-use crate::{Layer, SCREEN, contains};
+use crate::{Layer, contains, screen};
 
 /// The tracker's area: 250 by 400 at (W - 320, 150); no frame, no title. Clicks go through it to the world.
-pub const CORNER: [f32; 2] = [SCREEN[0] - 320.0, 150.0];
+pub fn corner() -> [f32; 2] {
+    [screen()[0] - 320.0, 150.0]
+}
 /// At most this many quests.
 const MOST: usize = 5;
 /// "Complete", for a hunt done.
@@ -127,11 +129,11 @@ pub fn blocks(quests: &[Quest], texts: &HashMap<u32, QuestText>, messages: &[Str
 
 /// The quest whose title is under the pointer.
 pub fn title_at(blocks: &[Block], font: &Font, cursor: [f32; 2]) -> Option<u32> {
-    blocks.iter().find(|block| contains([CORNER[0], CORNER[1] + block.top], [font.width(&block.title).max(1.0), 14.0], cursor)).map(|block| block.id)
+    blocks.iter().find(|block| contains([corner()[0], corner()[1] + block.top], [font.width(&block.title).max(1.0), 14.0], cursor)).map(|block| block.id)
 }
 
 pub fn draw(layer: &mut Layer<'_>, blocks: &[Block]) {
-    let at = |x: f32, y: f32| [CORNER[0] + x, CORNER[1] + y];
+    let at = |x: f32, y: f32| [corner()[0] + x, corner()[1] + y];
     let mut shadowed = |text: &str, place: [f32; 2], color: [u8; 3]| {
         layer.texts.push((text.to_owned(), [place[0] + 1.0, place[1] + 1.0], SHADOW));
         layer.texts.push((text.to_owned(), place, color));

@@ -68,6 +68,8 @@ pub enum Action {
     SwitchHotkeys,
     Tip,
     Costume,
+    /// The reputation window.
+    Reputation,
     PartyBoard,
     Hunting,
     Macro(u8),
@@ -636,6 +638,9 @@ fn exe_action(exe: &str, table: u8, index: u16) -> Action {
     if name.contains("GUILD") {
         return Action::Guild;
     }
+    if name.contains("REPUT") {
+        return Action::Reputation;
+    }
     if name.contains("QUEST") {
         return Action::Quests;
     }
@@ -699,6 +704,7 @@ pub fn action_name(action: Action) -> String {
         Action::SwitchHotkeys => "switch_hotkeys",
         Action::Tip => "tip",
         Action::Costume => "costume",
+        Action::Reputation => "reputation",
         Action::PartyBoard => "party_board",
         Action::Hunting => "hunting",
         Action::Macro(line) => return format!("macro_{}", line + 1),

@@ -6,7 +6,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN, UI, contains, offset};
+use crate::{Layer, UI, contains, offset, screen};
 
 // ponytail: places are estimates; calibrate against the real client.
 /// The board over an owner's head, and where its text starts inside.
@@ -263,7 +263,7 @@ impl Default for Make {
 
 impl Make {
     fn corner() -> [f32; 2] {
-        [((SCREEN[0] - MAKE_SIZE[0]) / 2.0).floor(), ((SCREEN[1] - MAKE_SIZE[1]) / 2.0).floor()]
+        [((screen()[0] - MAKE_SIZE[0]) / 2.0).floor(), ((screen()[1] - MAKE_SIZE[1]) / 2.0).floor()]
     }
 
     pub fn limit(&self) -> u16 {

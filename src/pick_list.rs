@@ -11,7 +11,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN, UI, contains};
+use crate::{Layer, UI, contains, screen};
 use crate::{inventory, skills};
 
 // ponytail: the shop's look (280px, 32px rows), five rows, in the middle of the screen; calibrate against the real
@@ -82,7 +82,7 @@ pub struct PickList {
 impl PickList {
     pub fn new(title: usize, items: Vec<InventoryItem>) -> Self {
         let height = TITLE_HEIGHT + PADDING * 2.0 + ROWS as f32 * ROW + FOOTER;
-        let mut frame = Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor(), ((SCREEN[1] - height) / 2.0).floor()], WIDTH);
+        let mut frame = Frame::new([((screen()[0] - WIDTH) / 2.0).floor(), ((screen()[1] - height) / 2.0).floor()], WIDTH);
         frame.open = true;
         Self { frame, title, items, making: false, skills: false, merging: false, picked: Vec::new(), selected: None, scroll: 0, clicks: Clicks::default() }
     }

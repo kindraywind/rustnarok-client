@@ -8,7 +8,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN, UI, contains};
+use crate::{Layer, UI, contains, screen};
 
 const TITLE: usize = 584;
 const NAME: usize = 282;
@@ -75,7 +75,7 @@ pub struct PetWindow {
 
 impl Default for PetWindow {
     fn default() -> Self {
-        Self { frame: Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor(), 160.0], WIDTH), picture: None }
+        Self { frame: Frame::new([((screen()[0] - WIDTH) / 2.0).floor(), 160.0], WIDTH), picture: None }
     }
 }
 

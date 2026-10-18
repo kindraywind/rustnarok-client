@@ -12,7 +12,7 @@ use rustnarok_client::text::Font;
 use crate::render::{Gpu, Texture};
 use crate::skills;
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN, UI, contains, offset};
+use crate::{Layer, UI, contains, offset, screen};
 
 const TITLE_ARCHER: usize = 1181;
 const TITLE_SWORDMAN: usize = 1182;
@@ -146,7 +146,7 @@ pub struct Window {
 
 impl Default for Window {
     fn default() -> Self {
-        Self { frame: Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor() + 160.0, 150.0], WIDTH) }
+        Self { frame: Frame::new([((screen()[0] - WIDTH) / 2.0).floor() + 160.0, 150.0], WIDTH) }
     }
 }
 
@@ -275,7 +275,7 @@ pub struct SkillList {
 
 impl Default for SkillList {
     fn default() -> Self {
-        Self { frame: Frame::new([((SCREEN[0] - SKILL_WIDTH) / 2.0).floor() - 160.0, 150.0], SKILL_WIDTH) }
+        Self { frame: Frame::new([((screen()[0] - SKILL_WIDTH) / 2.0).floor() - 160.0, 150.0], SKILL_WIDTH) }
     }
 }
 

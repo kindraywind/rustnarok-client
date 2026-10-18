@@ -7,7 +7,7 @@ use rustnarok_client::grf::Grf;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame};
-use crate::{Layer, SCREEN, UI, contains};
+use crate::{Layer, UI, contains, screen};
 
 const WIDTH: f32 = 280.0;
 const BUTTON: [f32; 2] = [221.0, 20.0];
@@ -59,6 +59,7 @@ pub enum WindowId {
     PartySetup,
     DressRoom,
     Ranking,
+    Reputation,
     Catalog,
     /// A skill's description (a right click on a skill).
     SkillDescription,
@@ -146,6 +147,7 @@ impl WindowId {
             Self::PartySetup => "PartySetup",
             Self::DressRoom => "DressRoom",
             Self::Ranking => "Ranking",
+            Self::Reputation => "Reputation",
             Self::Catalog => "Catalog",
             Self::SkillDescription => "SkillDescription",
             Self::Roulette => "Roulette",
@@ -368,11 +370,11 @@ impl Menu {
     }
 
     fn corner(&self) -> [f32; 2] {
-        menu_origin(SCREEN)
+        menu_origin(screen())
     }
 
     pub fn button_corner(&self, row: usize) -> [f32; 2] {
-        self.button_corner_at(row, SCREEN)
+        self.button_corner_at(row, screen())
     }
 
     pub fn button_corner_at(&self, row: usize, screen: [f32; 2]) -> [f32; 2] {

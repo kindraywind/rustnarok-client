@@ -5,7 +5,7 @@ use rustnarok_client::text::Font;
 
 use crate::links::{self, ItemLink};
 use crate::render::{Gpu, Texture};
-use crate::{Layer, SCREEN, UI, contains};
+use crate::{Layer, UI, contains, screen};
 
 /// F10's steps: the input bar alone, then logs of 3, 6, 9, 12 and 15 lines.
 const STEPS: [usize; 6] = [0, 1, 4, 7, 10, 13];
@@ -131,11 +131,11 @@ impl Chat {
 
     /// The top of the window; its bottom stays at the screen's.
     fn top(&self) -> f32 {
-        SCREEN[1] - self.height()
+        screen()[1] - self.height()
     }
 
     fn bar_top(&self) -> f32 {
-        SCREEN[1] - INPUT_HEIGHT
+        screen()[1] - INPUT_HEIGHT
     }
 
     pub fn contains(&self, cursor: [f32; 2]) -> bool {
@@ -383,11 +383,11 @@ mod tests {
     #[test]
     fn lets_presses_through_the_log() {
         let chat = Chat::default();
-        let log_top = SCREEN[1] - 96.0 + LOG_BOX[1];
+        let log_top = screen()[1] - 96.0 + LOG_BOX[1];
         // The log's lines: the window has them, the world too.
         assert!(chat.contains([300.0, log_top + 10.0]) && !chat.blocks([300.0, log_top + 10.0]));
         // The input bar and the tabs are the window's alone.
-        assert!(chat.blocks([300.0, SCREEN[1] - 10.0]) && chat.blocks([20.0, chat.top() + 5.0]));
+        assert!(chat.blocks([300.0, screen()[1] - 10.0]) && chat.blocks([20.0, chat.top() + 5.0]));
         assert!(!chat.contains([700.0, log_top + 10.0]) && !chat.blocks([700.0, log_top + 10.0]));
     }
 
@@ -403,12 +403,12 @@ mod tests {
         assert_eq!(heights.iter().map(|&(height, ..)| height).collect::<Vec<_>>(), tall);
         assert_eq!(heights.iter().map(|&(_, rows, _)| rows).collect::<Vec<_>>(), [3, 6, 9, 12, 15, 0, 3]);
         // The bottom edge stays put.
-        assert!(heights.iter().all(|&(height, _, top)| top + height == SCREEN[1]));
+        assert!(heights.iter().all(|&(height, _, top)| top + height == screen()[1]));
         // The input bar alone: no log to let presses through.
         let mut alone = Chat::default();
         (0..5).for_each(|_| alone.cycle_size());
         assert_eq!(alone.height(), 24.0);
-        assert!(alone.blocks([300.0, SCREEN[1] - 10.0]) && !alone.contains([300.0, SCREEN[1] - 30.0]));
+        assert!(alone.blocks([300.0, screen()[1] - 10.0]) && !alone.contains([300.0, screen()[1] - 30.0]));
     }
 
     #[test]
@@ -430,11 +430,11 @@ mod tests {
         assert_eq!(FUNCTION_BUTTONS, [[224.0, 4.0], [239.0, 5.0], [254.0, 5.0]]);
         // The boxes take the caret, the size button the size.
         let mut chat = Chat::default();
-        chat.click([50.0, SCREEN[1] - 12.0]);
+        chat.click([50.0, screen()[1] - 12.0]);
         assert!(chat.naming);
-        chat.click([300.0, SCREEN[1] - 12.0]);
+        chat.click([300.0, screen()[1] - 12.0]);
         assert!(!chat.naming);
-        chat.click([590.0, SCREEN[1] - 12.0]);
+        chat.click([590.0, screen()[1] - 12.0]);
         assert_eq!(chat.height(), 138.0);
     }
 
