@@ -29,7 +29,7 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": 
               "characters": {"1": "Name"} (at character select), "weather": [162] ([] for none),
               "state": {"pet.intimacy": 950, "pet": null, "scene": "char_select", "pin": "ask"},
               "achievements": {"200005": "completed"}, "title": 1000, "state_at_least": {"cooldowns.8": 9000}}}
-    (state: values at dotted paths of the game state, or of the whole control state when the game state has no such
+    (state: values at dotted paths of the game state (a number picks a list's element: "head_emblems.0.name"), or of the whole control state when the game state has no such
     field — e.g. "pin" ("ask"/"new"/"change"/"none") at character select; state_at_least: numbers there at least the
     ones given; achievements: each one "completed" or "rewarded"; title: the one worn)
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
@@ -250,7 +250,13 @@ def expect(wanted, state):
             for path, want in value.items():
                 have = game if path.split(".")[0] in game else state
                 for part in path.split("."):
-                    have = have.get(part) if isinstance(have, dict) else None
+                    if isinstance(have, dict):
+                        have = have.get(part)
+                    elif isinstance(have, list) and part.isdigit():
+                        # A number on a list: that element, e.g. "head_emblems.0.name".
+                        have = have[int(part)] if int(part) < len(have) else None
+                    else:
+                        have = None
                 if key == "state" and have != want:
                     failures.append(f"state {path} is {have!r}, not {want!r}")
                 elif key == "state_at_least" and not (isinstance(have, (int, float)) and have >= want):

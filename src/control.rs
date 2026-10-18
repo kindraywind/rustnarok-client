@@ -1079,6 +1079,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             let look = room.look(&crate::character_look(&game.me), &game.dress_lists);
             json!({"hair": look.hair, "hair_color": look.hair_color, "clothes_color": look.clothes_color, "stage": room.stage, "direction": room.direction})
         }),
+        "head_emblems": game.head_emblems.iter().map(|(name, guild, area)| json!({"name": name, "guild": guild, "box": area})).collect::<Vec<_>>(),
         "map_property": game.map_property.map(|(property, flags)| json!({"type": property, "flags": flags})),
         "map_type": game.map_type,
         // The PvP counter as it shows (rank, players), or null.
