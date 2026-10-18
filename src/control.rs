@@ -1157,6 +1157,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             },
             "menu": dialog.menu.as_ref().map(|(items, selected)| json!({"items": items, "selected": selected})),
             "input": dialog.input.as_ref().map(|(text, typed)| json!({"text": text, "typed": typed})),
+            "position": game.say.frame.position,
+            "scroll": game.say.scroll,
         })
     });
     let now = Instant::now();

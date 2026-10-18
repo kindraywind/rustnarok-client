@@ -1,0 +1,29 @@
+{
+  "about": "The NPC say window (issue #445): 280x180 at (200, 100), text wrapped character by character at 215 px on a grey panel, no auto-scroll; the wheel scrolls 30 px, the window drags by its frame, the old page stays after Next until the next one comes, and a clear empties the text but keeps the window. The NPC (npc/say.txt) is loaded with @loadnpc and unloaded at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/say.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/say.txt"}, {"wait": 1000},
+    {"click_unit": {"kind": "npc", "name": "Say Clerk"}}, {"wait": 1000},
+    {"expect": {"windows_open": ["NpcDialog"], "state": {"dialog.position": [200.0, 100.0], "dialog.scroll": 0.0, "dialog.button": "next"}}},
+    {"shot": "npc-say-page", "crop": [190, 90, 300, 200], "threshold": 5},
+    {"wheel": [330, 180, 1]}, {"wait": 300},
+    {"expect": {"state": {"dialog.scroll": 30.0}}},
+    {"shot": "npc-say-scrolled", "crop": [190, 90, 300, 200], "threshold": 5},
+    {"drag": [[250, 266], [350, 306]]}, {"wait": 300},
+    {"expect": {"state": {"dialog.position": [300.0, 140.0]}}},
+    {"key": "Enter"}, {"wait": 500},
+    {"expect": {"state": {"dialog.button": "none", "dialog.lines.0": "[Say Clerk]"}}},
+    {"shot": "npc-say-after-next", "crop": [290, 130, 300, 200], "threshold": 5},
+    {"wait": 1000},
+    {"expect": {"state": {"dialog.lines": ["Page two."], "dialog.scroll": 0.0}}},
+    {"wait": 1000},
+    {"expect": {"state": {"dialog.lines": ["After the clear."], "dialog.button": "close"}}},
+    {"shot": "npc-say-cleared", "crop": [290, 130, 300, 200], "threshold": 5},
+    {"key": "Enter"}, {"wait": 500},
+    {"expect": {"windows_closed": ["NpcDialog"]}},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/say.txt"}, {"wait": 500}
+  ]
+}

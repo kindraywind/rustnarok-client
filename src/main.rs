@@ -90,6 +90,7 @@ mod minimap;
 mod minimap_window;
 mod monster_info;
 mod navigation;
+mod npc_say;
 mod options;
 mod overhead;
 mod party;
@@ -633,13 +634,6 @@ const DELETE_QUESTION: usize = 19;
 const BIRTHDATE_MESSAGE: usize = 1815;
 
 /// NPC dialogs are drawn as shapes, like the client draws them.
-const DIALOG_SIZE: [u32; 2] = [276, 176];
-const DIALOG_CONTENT: [u32; 4] = [8, 8, 272, 148];
-const DIALOG_TEXT: [f32; 2] = [13.0, 13.0];
-const DIALOG_TEXT_WIDTH: f32 = 254.0;
-const DIALOG_LINE: f32 = 18.0;
-const DIALOG_LINES: usize = 7;
-const DIALOG_BUTTON: [f32; 2] = [226.0, 151.0];
 const MENU_SIZE: [u32; 2] = [276, 116];
 const MENU_CONTENT: [u32; 4] = [8, 10, 268, 90];
 const MENU_ROW: [f32; 2] = [260.0, 20.0];
@@ -1037,6 +1031,8 @@ struct Game {
     message_sprite: Option<SpriteSet>,
     /// The NPC conversation on screen.
     dialog: Option<Dialog>,
+    /// The NPC say window's place, scroll and button throttle.
+    say: npc_say::SayWindow,
     /// Last frame's clickable units and items.
     hit_boxes: Vec<picking::Target<Owner>>,
     /// Items lying around, by ground ID.
@@ -2107,19 +2103,24 @@ struct FloorItem {
 impl Game {
     fn dialog_for(&mut self, npc: u32) -> &mut Dialog {
         if self.dialog.as_ref().is_none_or(|dialog| dialog.npc != npc) {
-            self.dialog = Some(Dialog { npc, lines: Vec::new(), button: DialogButton::None, menu: None, input: None, warp: None });
+            self.dialog = Some(Dialog { npc, lines: Vec::new(), wipe: false, button: DialogButton::None, menu: None, input: None, warp: None });
+            self.say.restart();
         }
         self.dialog.as_mut().unwrap()
     }
 
-    /// The dialog's next/close button.
-    fn press_dialog_button(&mut self) {
+    /// The dialog's next/close button, `clicked` or pressed by key: Next and a clicked Close wait out the throttle.
+    fn press_dialog_button(&mut self, clicked: bool) {
         let Some(dialog) = &mut self.dialog else { return };
+        let throttled = dialog.button == DialogButton::Next || clicked;
+        if dialog.button == DialogButton::None || (throttled && !self.say.throttle.pass(Instant::now())) {
+            return;
+        }
         match dialog.button {
             DialogButton::Next => {
                 let _ = self.session.next(dialog.npc);
-                // The next page replaces the text.
-                dialog.lines.clear();
+                // The text stays until the next page replaces it.
+                dialog.wipe = true;
                 dialog.button = DialogButton::None;
             }
             DialogButton::Close => {
@@ -2509,7 +2510,7 @@ impl Game {
     }
 
     /// Every window's frame, by name, for saving where each was left. `minimap` is the game's MINIMAPWNDINFO.
-    fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 17] {
+    fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 18] {
         [
             ("hotkeys", &mut self.hotkeys.frame),
             ("basic_info", &mut self.basic_info.frame),
@@ -2528,6 +2529,7 @@ impl Game {
             ("homunculus", &mut self.homunculus_window.frame),
             ("homunculus_skills", &mut self.homunculus_skill_list.frame),
             ("minimap", &mut self.minimap_window.frame),
+            ("npc_say", &mut self.say.frame),
         ]
     }
 
@@ -4872,6 +4874,8 @@ enum Picking {
 struct Dialog {
     npc: u32,
     lines: Vec<String>,
+    /// Next was pressed: the text stays until the next page wipes it.
+    wipe: bool,
     button: DialogButton,
     /// Menu items and the highlighted one.
     menu: Option<(Vec<String>, usize)>,
@@ -5060,7 +5064,7 @@ struct Assets {
     white: Texture,
     grey: Texture,
     selection: Texture,
-    dialog: Texture,
+    say: npc_say::Assets,
     menu: Texture,
     next: ButtonImages,
     close: ButtonImages,
@@ -5193,7 +5197,7 @@ impl Assets {
             white: gpu.solid([255; 4]),
             grey: gpu.solid([0x9C, 0x9C, 0x9C, 0xFF]),
             selection: gpu.solid(SELECTION_COLOR),
-            dialog: gpu.texture(&dialog_frame(DIALOG_SIZE, DIALOG_CONTENT, [0xEF, 0xF4, 0xF0]), false),
+            say: npc_say::Assets::load(gpu),
             menu: gpu.texture(&dialog_frame(MENU_SIZE, MENU_CONTENT, [0xF9, 0xF9, 0xF9]), false),
             next: button(UI, "btn_next"),
             close: button(UI, "btn_close"),
@@ -5752,11 +5756,6 @@ fn menu_first_row(selected: usize, count: usize) -> usize {
     selected.saturating_sub(MENU_ROWS - 1).min(count.saturating_sub(MENU_ROWS))
 }
 
-/// Where the client opens NPC windows.
-fn npc_box_position() -> [f32; 2] {
-    [(screen()[0] / 3.0).max(20.0).floor(), (screen()[1] / 2.0 - 200.0).max(100.0).floor()]
-}
-
 fn menu_position() -> [f32; 2] {
     [(screen()[0] / 3.0).max(20.0).floor(), (screen()[1] / 2.0 + 76.0).max(376.0).floor()]
 }
@@ -5810,11 +5809,17 @@ fn wrap_colored(font: &text::Font, text: &str, width: f32) -> iteminfo::ColoredL
 
 /// Colour-coded text wrapped to `width`, item links in their colour and each piece with the link it's part of.
 fn wrap_linked(font: &text::Font, text: &str, width: f32) -> links::LinkedLines {
+    wrap_linked_by(font, text, width, false)
+}
+
+/// `wrap_linked`, breaking between words or (`by_char`, as NPC text does) wherever the next character would pass
+/// `width`.
+fn wrap_linked_by(font: &text::Font, text: &str, width: f32, by_char: bool) -> links::LinkedLines {
     let mut wrapped: links::LinkedLines = vec![Vec::new()];
     let mut line_width = 0.0;
     let mut color = [0, 0, 0];
     for (part, item) in links::pieces(text) {
-        for (row, pieces) in wrap_plain(font, &part, width, line_width, &mut color).into_iter().enumerate() {
+        for (row, pieces) in wrap_plain(font, &part, width, line_width, &mut color, by_char).into_iter().enumerate() {
             if row > 0 {
                 wrapped.push(Vec::new());
                 line_width = 0.0;
@@ -5829,10 +5834,10 @@ fn wrap_linked(font: &text::Font, text: &str, width: f32) -> links::LinkedLines 
     wrapped
 }
 
-/// Colour-coded text wrapped to `width`, its first line already `used` wide and `color` in force (left as the text
-/// leaves it).
-fn wrap_plain(font: &text::Font, text: &str, width: f32, used: f32, color: &mut [u8; 3]) -> iteminfo::ColoredLines {
-    let mut lines = vec![Vec::new()];
+/// Colour-coded text wrapped to `width` between words or `by_char`, its first line already `used` wide and `color` in
+/// force (left as the text leaves it).
+fn wrap_plain(font: &text::Font, text: &str, width: f32, used: f32, color: &mut [u8; 3], by_char: bool) -> iteminfo::ColoredLines {
+    let mut lines: iteminfo::ColoredLines = vec![Vec::new()];
     let mut line_width = used;
     let mut rest = text;
     while !rest.is_empty() {
@@ -5844,17 +5849,22 @@ fn wrap_plain(font: &text::Font, text: &str, width: f32, used: f32, color: &mut 
             rest = &code[6..];
             continue;
         }
-        // Next word (with its leading space) up to the next space or color code.
+        // Next word (with its leading space) up to the next space or color code, or the next character.
         let first = rest.chars().next().map_or(1, char::len_utf8);
-        let end = rest[first..].find([' ', '^']).map_or(rest.len(), |index| index + first);
+        let end = if by_char { first } else { rest[first..].find([' ', '^']).map_or(rest.len(), |index| index + first) };
         let word = &rest[..end];
         let word_width = font.width(word);
         if line_width + word_width > width && line_width > 0.0 {
             lines.push(Vec::new());
             line_width = 0.0;
         }
-        let word = if line_width == 0.0 { word.trim_start() } else { word };
-        lines.last_mut().unwrap().push((*color, word.to_owned()));
+        let word = if line_width == 0.0 && !by_char { word.trim_start() } else { word };
+        let line = lines.last_mut().unwrap();
+        // Characters of one colour make one piece.
+        match line.last_mut() {
+            Some((last, piece)) if by_char && last == color => piece.push_str(word),
+            _ => line.push((*color, word.to_owned())),
+        }
         line_width += font.width(word);
         rest = &rest[end..];
     }
@@ -7835,21 +7845,23 @@ impl App {
             Scene::Game(game) if game.dialog.is_some() => {
                 // NPC windows take the click; the map doesn't react while talking.
                 let dialog = game.dialog.as_mut().unwrap();
-                if dialog.button != DialogButton::None && hit(offset(npc_box_position(), DIALOG_BUTTON), &assets.next) {
-                    game.press_dialog_button();
+                if dialog.button != DialogButton::None && dialog.warp.is_none() && game.say.on_button(cursor) {
+                    game.press_dialog_button(true);
                 } else if let Some((items, selected)) = &mut dialog.menu {
                     let menu = menu_position();
                     let first = menu_first_row(*selected, items.len());
                     let list = offset(menu, [MENU_CONTENT[0] as f32, MENU_CONTENT[1] as f32]);
                     let row = (0..MENU_ROWS.min(items.len())).find(|&row| contains(offset(list, [0.0, row as f32 * MENU_ROW[1]]), MENU_ROW, cursor));
                     if let Some(row) = row {
-                        // Clicking the highlighted item again picks it.
+                        // Clicking the highlighted item again picks it (as OK does, throttled with Next).
                         if *selected == first + row {
-                            game.choose(false);
+                            if game.say.throttle.pass(Instant::now()) {
+                                game.choose(false);
+                            }
                         } else {
                             *selected = first + row;
                         }
-                    } else if hit(offset(menu, MENU_OK), &assets.ok) {
+                    } else if hit(offset(menu, MENU_OK), &assets.ok) && game.say.throttle.pass(Instant::now()) {
                         game.choose(false);
                     } else if hit(offset(menu, MENU_CANCEL), &assets.cancel) {
                         game.choose(true);
@@ -7966,6 +7978,7 @@ impl App {
             game.mail.drag_to(self.cursor);
             game.quest_window.frame.drag_to(self.cursor, 466.0);
             game.minimap_window.frame.drag_to(self.cursor, minimap_window::HEIGHT);
+            game.say.frame.drag_to(self.cursor, npc_say::SIZE[1]);
             game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
             if let Some(window) = &mut game.roulette {
                 window.frame.drag_to(self.cursor, roulette::HEIGHT);
@@ -8386,6 +8399,9 @@ impl App {
                 }
                 _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
                 _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
+                _ if game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()) && game.say.contains(self.cursor) => {
+                    game.say.scroll_by(rows as f32 * npc_say::SCROLL_STEP);
+                }
                 _ if game.enchant.as_ref().is_some_and(|window| window.hit(self.cursor).is_some()) => {
                     let index = game.enchant.as_ref().and_then(|window| window.item);
                     let item = index.and_then(|index| game.inventory.items.iter().find(|item| item.index == index)).cloned();
@@ -8659,7 +8675,8 @@ impl App {
                     | game.talks.drop_drag()
                     | game.friend_setup.as_mut().is_some_and(|setup| setup.frame.drop_drag())
                     | game.block_list.as_mut().is_some_and(|list| list.frame.drop_drag())
-                    | game.minimap_window.frame.drop_drag();
+                    | game.minimap_window.frame.drop_drag()
+                    | game.say.frame.drop_drag();
                 windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
             }
             _ => false,
@@ -8862,6 +8879,19 @@ impl App {
         {
             if hit == iteminfo::Hit::Grip {
                 window.start_drag(cursor);
+            }
+            return;
+        }
+        // The NPC say window goes by any part but its button, links and scrollbar.
+        if let Scene::Game(game) = &mut self.scene
+            && game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none())
+            && game.say.contains(cursor)
+        {
+            let on_button = game.dialog.as_ref().is_some_and(|dialog| dialog.button != DialogButton::None) && game.say.on_button(cursor);
+            if game.say.scrollbar_box().is_some_and(|[x, y, width, height]| contains([x, y], [width, height], cursor)) {
+                game.say.press_scrollbar(cursor);
+            } else if !on_button && links::at(&game.dialog_links, cursor).is_none() {
+                game.say.frame.start_drag(cursor);
             }
             return;
         }
@@ -9576,7 +9606,12 @@ impl App {
                     (Key::Named(NamedKey::ArrowUp), _, Some((_, selected))) => *selected = selected.saturating_sub(1),
                     (Key::Named(NamedKey::ArrowDown), _, Some((items, selected))) => *selected = (*selected + 1).min(items.len().saturating_sub(1)),
                     (Key::Named(NamedKey::Enter), _, Some(_)) => game.choose(false),
-                    (Key::Named(NamedKey::Enter), None, None) => game.press_dialog_button(),
+                    // Without a menu Up and Down scroll the text, and Enter (or Space with the chat line closed)
+                    // presses Next or Close.
+                    (Key::Named(NamedKey::ArrowUp), None, None) => game.say.scroll_by(-npc_say::SCROLL_STEP),
+                    (Key::Named(NamedKey::ArrowDown), None, None) => game.say.scroll_by(npc_say::SCROLL_STEP),
+                    (Key::Named(NamedKey::Enter), None, None) => game.press_dialog_button(false),
+                    (Key::Named(NamedKey::Space), None, None) if !game.chat_mode.chat_line_open() => game.press_dialog_button(false),
                     _ => {}
                 }
             }
@@ -10211,6 +10246,7 @@ impl App {
                     digits: Digits::load(gpu, &self.grf),
                     message_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\msg"),
                     dialog: None,
+                    say: npc_say::SayWindow::default(),
                     hit_boxes: Vec::new(),
                     ground: HashMap::new(),
                     item_sprites: HashMap::new(),
@@ -11171,9 +11207,17 @@ impl App {
                 }
                 game.hold_locked();
             }
+            // Each text starts a line, and so does each LF in it; the first after Next wipes the old page.
             MapEvent::NpcSay { npc, text } => {
                 let name_of = |item: &links::ItemLink| inventory::item_name(&self.items, item.id, true, item.refine);
-                game.dialog_for(npc).lines.push(show_links(&links::mark(&text, &name_of)));
+                let text = show_links(&links::mark(&npc_say::unescape(&text), &name_of));
+                let dialog = game.dialog_for(npc);
+                if std::mem::take(&mut dialog.wipe) {
+                    dialog.lines.clear();
+                    game.say.restart();
+                }
+                let dialog = game.dialog.as_mut().unwrap();
+                dialog.lines.extend(text.split('\n').map(|line| line.replace('\r', "")));
             }
             MapEvent::NpcNext { npc } => game.dialog_for(npc).button = DialogButton::Next,
             // A script may end in `close` without having said anything (rathena's item scripts do): no box for
@@ -11182,10 +11226,12 @@ impl App {
                 let _ = game.session.close_dialog(npc);
             }
             MapEvent::NpcClose { npc } => game.dialog_for(npc).button = DialogButton::Close,
+            // The text goes and the view is back at the top; the window, its button, the menu and the cut-in stay.
             MapEvent::NpcClear { npc } => {
-                if game.dialog.as_ref().is_some_and(|dialog| dialog.npc == npc) {
-                    game.dialog = None;
-                    game.cutin = None;
+                if let Some(dialog) = game.dialog.as_mut().filter(|dialog| dialog.npc == npc) {
+                    dialog.lines.clear();
+                    dialog.wipe = false;
+                    game.say.restart();
                 }
             }
             MapEvent::NpcMenu { npc, items } => {
@@ -11200,8 +11246,15 @@ impl App {
                 let mut items: Vec<String> =
                     maps.iter().map(|map| if map.trim_end_matches(".gat") == "Random" { message(RANDOM_AREA) } else { map.clone() }).collect();
                 items.push(message(WARP_CANCEL));
-                game.dialog =
-                    Some(Dialog { npc: 0, lines: Vec::new(), button: DialogButton::None, menu: Some((items, 0)), input: None, warp: Some((skill, maps)) });
+                game.dialog = Some(Dialog {
+                    npc: 0,
+                    lines: Vec::new(),
+                    wipe: false,
+                    button: DialogButton::None,
+                    menu: Some((items, 0)),
+                    input: None,
+                    warp: Some((skill, maps)),
+                });
             }
             MapEvent::Act(act) => {
                 // A landed hit sparks on whatever it hit, each hit as it lands.
@@ -14579,16 +14632,16 @@ impl App {
         if let Some(dialog) = &game.dialog {
             // A warp list is the menu alone.
             if dialog.warp.is_none() {
-                let position = npc_box_position();
-                overlay.sprites.push((&assets.dialog, position, assets.dialog.size));
-                let mut lines: links::LinkedLines = dialog.lines.iter().flat_map(|line| wrap_linked(font, line, DIALOG_TEXT_WIDTH)).collect();
+                let mut lines: links::LinkedLines = dialog.lines.iter().flat_map(|line| wrap_linked_by(font, line, npc_say::WRAP_WIDTH, true)).collect();
                 if let Some((text, value)) = &dialog.input {
                     lines.push(vec![([0, 0, 0], format!("{}: {value}_", if *text { "입력" } else { "수량" }), None)]);
                 }
-                let shown = lines.len().saturating_sub(DIALOG_LINES);
-                for (row, pieces) in lines[shown..].iter().enumerate() {
-                    let mut x = position[0] + DIALOG_TEXT[0];
-                    let y = position[1] + DIALOG_TEXT[1] + row as f32 * DIALOG_LINE;
+                let pitch = font.line_height() + npc_say::LINE_GAP;
+                game.say.text_height = lines.len() as f32 * pitch;
+                game.say.scroll_by(0.0);
+                game.say.draw(&mut overlay, &assets.chrome, &assets.pickup, &assets.say);
+                for (row, pieces) in lines.iter().enumerate() {
+                    let Some([mut x, y]) = game.say.line_at(row, pitch, font.line_height()) else { continue };
                     for (color, piece, item) in pieces {
                         let width = font.width(piece);
                         overlay.texts.push((piece.clone(), [x, y], *color));
@@ -14601,9 +14654,10 @@ impl App {
                         x += width;
                     }
                 }
+                let [x, y, _, _] = game.say.button_box();
                 match dialog.button {
-                    DialogButton::Next => overlay.sprites.push(button_sprite(pointer, offset(position, DIALOG_BUTTON), &assets.next)),
-                    DialogButton::Close => overlay.sprites.push(button_sprite(pointer, offset(position, DIALOG_BUTTON), &assets.close)),
+                    DialogButton::Next => overlay.sprites.push(button_sprite(pointer, [x, y], &assets.next)),
+                    DialogButton::Close => overlay.sprites.push(button_sprite(pointer, [x, y], &assets.close)),
                     DialogButton::None => {}
                 }
             }
@@ -15907,7 +15961,7 @@ impl ApplicationHandler<NetEvent> for App {
                     }
                     if game.auto_next > 0 && game.dialog.as_ref().is_some_and(|dialog| dialog.button != DialogButton::None) {
                         game.auto_next -= 1;
-                        game.press_dialog_button();
+                        game.press_dialog_button(false);
                     }
                     if let Some(dialog) = &mut game.dialog
                         && let Some((items, selected)) = &mut dialog.menu
@@ -16956,6 +17010,20 @@ mod tests {
             message_lines(&font, question, MESSAGE_WIDTH),
             ["한 번 삭제된 캐릭터 및 관련 정보는", "다시 복구되지 않습니다.", "캐릭터를 삭제하시겠습니까?"]
         );
+    }
+
+    #[test]
+    fn breaks_npc_text_mid_word() {
+        let font = Font::load();
+        // Room for "Hello wor": the word breaks there, its colour carried onto the next line.
+        let width = font.width("Hello wor") + 0.5;
+        let lines = wrap_linked_by(&font, "^0000FFHello world^000000 again", width, true);
+        let text: Vec<Vec<([u8; 3], &str)>> = lines.iter().map(|pieces| pieces.iter().map(|(color, piece, _)| (*color, piece.as_str())).collect()).collect();
+        assert_eq!(text[0], [([0, 0, 0xFF], "Hello wor")]);
+        assert_eq!(text[1][0], ([0, 0, 0xFF], "ld"));
+        assert_eq!(text[1][1].0, [0, 0, 0]);
+        // Between words it would have moved "world" down whole.
+        assert_eq!(wrap_linked(&font, "Hello world", width)[0].iter().map(|(_, piece, _)| piece.as_str()).collect::<String>(), "Hello");
     }
 
     #[test]
