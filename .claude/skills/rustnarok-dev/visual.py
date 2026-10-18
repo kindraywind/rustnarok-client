@@ -7,7 +7,7 @@
   visual.py check <scenario.json>...                                baseline, this tree, then diff: the PR's pictures
   visual.py suite                                                   check every scenario in scenarios/, one report
 
-A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} with steps such as
+A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": {...}, "steps": [...]} with steps such as
   {"say": "@warp prontera 156 180"}  {"settle": 1500}  {"wait": 1500}  {"key": "Alt+E"}  {"type": "hello"}
   {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]]}  {"move": [x, y]} (or a target)
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
@@ -26,11 +26,11 @@ A scenario is JSON: {"account": "", "slot": "0", "env": {...}, "steps": [...]} w
               "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null},
               "identified": [1201], "unidentified": [1202], "inventory_has": [{"id": 1201, "cards": [4035, 0, 0, 0]}],
               "characters": {"1": "Name"} (at character select), "weather": [162] ([] for none),
-              "state": {"pet.intimacy": 950, "pet": null, "scene": "char_select"},
+              "state": {"pet.intimacy": 950, "pet": null, "scene": "char_select", "pin": "ask"},
               "achievements": {"200005": "completed"}, "title": 1000, "state_at_least": {"cooldowns.8": 9000}}}
     (state: values at dotted paths of the game state, or of the whole control state when the game state has no such
-    field; state_at_least: numbers there at least the ones given; achievements: each one "completed" or "rewarded";
-    title: the one worn)
+    field — e.g. "pin" ("ask"/"new"/"change"/"none") at character select; state_at_least: numbers there at least the
+    ones given; achievements: each one "completed" or "rewarded"; title: the one worn)
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
 diff; `threshold` (percent, default 1) is how much change a shot takes before the report flags it.
@@ -70,16 +70,39 @@ def wait_for_game(timeout=60):
     raise RuntimeError(f"not in the game after {timeout}s: {json.dumps(state)[:300]}")
 
 
+def wait_for_char_select(timeout=60):
+    """Until the client is at character select (and any initial 0x08b9 PIN state packet has arrived)."""
+    deadline = time.time() + timeout
+    state = {}
+    while time.time() < deadline:
+        state = drive.send({"cmd": "state"})
+        if state.get("scene") == "char_select":
+            drive.send({"cmd": "wait", "packet": "0x08b9", "ms": 1000})
+            time.sleep(0.05)
+            return drive.send({"cmd": "state"})
+        time.sleep(0.5)
+    raise RuntimeError(f"not at char_select after {timeout}s: {json.dumps(state)[:300]}")
+
+
 def launch_one(binary, player):
-    """One client in the game as `player` ({"account", "slot", "env"}), on the client `drive.use` points at."""
+    """One client as `player` ({"account", "slot", "start", "env"}), on the client `drive.use` points at."""
+    at_select = player.get("start") == "char_select"
+    slot = "select" if at_select else str(player.get("slot", "0"))
     for attempt in range(6):
-        drive.launch(player.get("account", ""), str(player.get("slot", "0")), binary=binary, env_extra=player.get("env", {}), quiet=True)
+        drive.launch(player.get("account", ""), slot, binary=binary, env_extra=player.get("env", {}), quiet=True)
         try:
-            return wait_for_game()
+            return wait_for_char_select() if at_select else wait_for_game()
         except RuntimeError:
             drive.quit_quietly()
             time.sleep(10)  # the server still holds the last session
-    raise RuntimeError("could not get into the game")
+    raise RuntimeError("could not launch client")
+
+
+def player_name(state):
+    if "game" in state:
+        return state["game"]["player"]["name"]
+    chars = state.get("characters") or []
+    return chars[0].get("name", "") if chars else ""
 
 
 def launch(binary, scenario):
@@ -89,12 +112,12 @@ def launch(binary, scenario):
     if reset:
         subprocess.run(reset, shell=True, check=True)
     drive.use("first")
-    names = {"first": launch_one(binary, scenario)["game"]["player"]["name"]}
+    names = {"first": player_name(launch_one(binary, scenario))}
     # A second player, for anything between two: its steps say "as": "second".
     if "second" in scenario:
         drive.use("second")
         try:
-            names["second"] = launch_one(binary, scenario["second"])["game"]["player"]["name"]
+            names["second"] = player_name(launch_one(binary, scenario["second"]))
         finally:
             drive.use("first")
     return names
@@ -215,7 +238,7 @@ def expect(wanted, state):
                     failures.append(f"{have} {kind} units < {count}")
         elif key in ("state", "state_at_least"):
             # Values at dotted paths of the game state, e.g. {"pet.intimacy": 950, "pet": null}; a path the game state
-            # doesn't start with is read from the whole control state (e.g. "scene", or "selected" at character select).
+            # doesn't start with is read from the whole control state (e.g. "scene", "pin", or "selected" at character select).
             # state_at_least: each a number at least the one given.
             for path, want in value.items():
                 have = game if path.split(".")[0] in game else state

@@ -142,6 +142,10 @@ const CH_DELETE_CHAR3: u16 = 0x0829;
 const HC_DELETE_CHAR3: u16 = 0x082A;
 const CH_DELETE_CHAR3_CANCEL: u16 = 0x082B;
 const HC_DELETE_CHAR3_CANCEL: u16 = 0x082C;
+const CH_SECOND_PASSWD_ACK: u16 = 0x08B8;
+const HC_SECOND_PASSWD_LOGIN: u16 = 0x08B9;
+const CH_MAKE_SECOND_PASSWD: u16 = 0x08BA;
+const CH_EDIT_SECOND_PASSWD: u16 = 0x08BE;
 const CH_REQ_CHANGE_CHARACTER_SLOT: u16 = 0x08D4;
 const HC_ACK_CHANGE_CHARACTER_SLOT: u16 = 0x0B70;
 const CH_REQ_CHANGE_CHARNAME: u16 = 0x08FC;
@@ -235,12 +239,19 @@ pub enum CharEvent {
     Made(Character),
     /// HC_REFUSE_MAKECHAR: 0 name taken, 1 underage, 2 symbols, 3 slot not available, 0xFF denied.
     MakeRefused(u8),
+    /// HC_SECOND_PASSWD_LOGIN (0x08B9): PIN state (0 OK/passed, 1 ask, 2/4 make, 3 expired/change, 5 disallowed, 8 wrong)
+    /// and the shuffle seed for the next reply.
+    Pin {
+        seed: u32,
+        state: u16,
+    },
     Disconnected(io::Error),
 }
 
 /// A char server connection; events arrive on a reader thread until the connection closes.
 pub struct CharSession {
     stream: TcpStream,
+    account_id: u32,
 }
 
 impl CharSession {
@@ -268,7 +279,7 @@ impl CharSession {
             .unwrap_err();
             on_event(CharEvent::Disconnected(error));
         });
-        Ok(Self { stream })
+        Ok(Self { stream, account_id: login.account_id })
     }
 
     /// Asks to play the character in `slot`; the answer is a `ZoneServer` or `Refused` event.
@@ -312,6 +323,21 @@ impl CharSession {
         self.stream.write_all(&packet)
     }
 
+    /// Sends the 4-digit PIN for state 1 (CH_SECOND_PASSWD_ACK 0x08B8); the answer is a `Pin` event.
+    pub fn check_pin(&mut self, seed: u32, pin: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_pin_check(self.account_id, seed, pin))
+    }
+
+    /// Sets the account's first 4-digit PIN for states 2 and 4 (CH_MAKE_SECOND_PASSWD 0x08BA).
+    pub fn make_pin(&mut self, seed: u32, pin: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_pin_new(self.account_id, seed, pin))
+    }
+
+    /// Changes the 4-digit PIN (CH_EDIT_SECOND_PASSWD 0x08BE).
+    pub fn change_pin(&mut self, seed: u32, old_pin: &str, new_pin: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_pin_change(self.account_id, seed, old_pin, new_pin))
+    }
+
     /// Moves the character in slot `from` to `to` (swapping with one there); the answer is a `Moved` event.
     pub fn move_slot(&mut self, from: u16, to: u16, moves: u16) -> io::Result<()> {
         self.stream.write_all(&encode_move_slot(from, to, moves))
@@ -350,6 +376,54 @@ impl Drop for CharSession {
     fn drop(&mut self) {
         let _ = self.stream.shutdown(std::net::Shutdown::Both);
     }
+}
+
+/// Builds rathena's 10-digit PIN pad permutation for `seed` (`char_pincode_decrypt` in `src/char/char.cpp`):
+/// button `k` shows digit `tab[k]`, and pressing it sends `'0' + k`.
+pub fn pin_table(mut seed: u32) -> [u8; 10] {
+    let mut tab = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    for i in 1..10u32 {
+        seed = 0x0088_1234u32.wrapping_add(seed.wrapping_mul(0x3498));
+        let pos = (seed % (i + 1)) as usize;
+        tab.swap(i as usize, pos);
+    }
+    tab
+}
+
+/// Encodes a 4-digit ASCII PIN with `seed` into the 4 button-index ASCII bytes sent to the char server.
+pub fn encode_pin(seed: u32, digits: &str) -> [u8; 4] {
+    let tab = pin_table(seed);
+    let mut out = [0u8; 4];
+    for (slot, byte) in out.iter_mut().zip(digits.bytes()) {
+        let index = tab.iter().position(|&digit| digit == byte.wrapping_sub(b'0')).unwrap_or(0);
+        *slot = b'0' + index as u8;
+    }
+    out
+}
+
+fn encode_pin_check(account_id: u32, seed: u32, pin: &str) -> [u8; 10] {
+    let mut packet = [0u8; 10];
+    packet[..2].copy_from_slice(&CH_SECOND_PASSWD_ACK.to_le_bytes());
+    packet[2..6].copy_from_slice(&account_id.to_le_bytes());
+    packet[6..10].copy_from_slice(&encode_pin(seed, pin));
+    packet
+}
+
+fn encode_pin_new(account_id: u32, seed: u32, pin: &str) -> [u8; 10] {
+    let mut packet = [0u8; 10];
+    packet[..2].copy_from_slice(&CH_MAKE_SECOND_PASSWD.to_le_bytes());
+    packet[2..6].copy_from_slice(&account_id.to_le_bytes());
+    packet[6..10].copy_from_slice(&encode_pin(seed, pin));
+    packet
+}
+
+fn encode_pin_change(account_id: u32, seed: u32, old_pin: &str, new_pin: &str) -> [u8; 14] {
+    let mut packet = [0u8; 14];
+    packet[..2].copy_from_slice(&CH_EDIT_SECOND_PASSWD.to_le_bytes());
+    packet[2..6].copy_from_slice(&account_id.to_le_bytes());
+    packet[6..10].copy_from_slice(&encode_pin(seed, old_pin));
+    packet[10..14].copy_from_slice(&encode_pin(seed, new_pin));
+    packet
 }
 
 /// Packet lengths for PACKETVER 20220406, generated from rathena (see tools/packet-lengths); -1 is variable.
@@ -416,9 +490,10 @@ fn decode_char_packet(packet: &[u8]) -> Option<CharEvent> {
         HC_DELETE_CHAR3_CANCEL => Some(CharEvent::DeleteCanceled { id: u32_at(packet, 2), result: u32_at(packet, 6) }),
         HC_ACCEPT_MAKECHAR => Some(CharEvent::Made(decode_character(&packet[2..]))),
         HC_REFUSE_MAKECHAR => Some(CharEvent::MakeRefused(packet[2])),
+        HC_SECOND_PASSWD_LOGIN => Some(CharEvent::Pin { seed: u32_at(packet, 2), state: u16_at(packet, 10) }),
         HC_ACK_CHANGE_CHARACTER_SLOT => Some(CharEvent::Moved { result: u16_at(packet, 4), moves: u16_at(packet, 6) }),
         HC_ACK_CHANGE_CHARNAME => Some(CharEvent::Renamed(u32_at(packet, 2))),
-        // Slot info, page count, PIN state and blocked characters aren't needed yet.
+        // Slot info, page count and blocked characters aren't needed yet.
         _ => None,
     }
 }
@@ -5694,6 +5769,56 @@ mod tests {
     }
 
     #[test]
+    fn encodes_and_decrypts_pin() {
+        // rathena's char_pincode_decrypt (src/char/char.cpp): builds the same multiplier/seed table and replaces each
+        // sent button index '0' + k with '0' + tab[k].
+        fn rathena_decrypt(mut seed: u32, encoded: [u8; 4]) -> [u8; 4] {
+            let mut tab = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+            for i in 1..10u32 {
+                seed = 0x0088_1234u32.wrapping_add(seed.wrapping_mul(0x3498));
+                let pos = (seed % (i + 1)) as usize;
+                tab.swap(i as usize, pos);
+            }
+            encoded.map(|byte| b'0' + tab[usize::from(byte - b'0')])
+        }
+
+        for seed in [0, 1, 0x1234_5678, 0xDEAD_BEEF, u32::MAX] {
+            for pin in ["0000", "1357", "9876", "2468", "0192"] {
+                let encoded = encode_pin(seed, pin);
+                assert_eq!(&rathena_decrypt(seed, encoded), pin.as_bytes());
+            }
+        }
+
+        let seed = 0x1234_5678;
+        let check = encode_pin_check(2_000_001, seed, "1357");
+        assert_eq!(u16_at(&check, 0), 0x08B8);
+        assert_eq!(u32_at(&check, 2), 2_000_001);
+        assert_eq!(&rathena_decrypt(seed, check[6..10].try_into().unwrap()), b"1357");
+
+        let make = encode_pin_new(2_000_001, seed, "2468");
+        assert_eq!(u16_at(&make, 0), 0x08BA);
+        assert_eq!(u32_at(&make, 2), 2_000_001);
+        assert_eq!(&rathena_decrypt(seed, make[6..10].try_into().unwrap()), b"2468");
+
+        let change = encode_pin_change(2_000_001, seed, "1357", "2468");
+        assert_eq!(u16_at(&change, 0), 0x08BE);
+        assert_eq!(u32_at(&change, 2), 2_000_001);
+        assert_eq!(&rathena_decrypt(seed, change[6..10].try_into().unwrap()), b"1357");
+        assert_eq!(&rathena_decrypt(seed, change[10..14].try_into().unwrap()), b"2468");
+
+        for (header, length) in [(CH_SECOND_PASSWD_ACK, 10), (HC_SECOND_PASSWD_LOGIN, 12), (CH_MAKE_SECOND_PASSWD, 10), (CH_EDIT_SECOND_PASSWD, 14)] {
+            assert_eq!(packet_length(header), Some(length));
+        }
+
+        let mut login_pin = [0u8; 12];
+        login_pin[..2].copy_from_slice(&HC_SECOND_PASSWD_LOGIN.to_le_bytes());
+        login_pin[2..6].copy_from_slice(&0xCAFE_BABEu32.to_le_bytes());
+        login_pin[6..10].copy_from_slice(&2_000_001u32.to_le_bytes());
+        login_pin[10..12].copy_from_slice(&1u16.to_le_bytes());
+        let Some(CharEvent::Pin { seed: 0xCAFE_BABE, state: 1 }) = decode_char_packet(&login_pin) else { panic!() };
+    }
+
+    #[test]
     fn decodes_clan() {
         let chat = encode_clan_chat("Tester", "hello clan");
         assert_eq!(&chat[..2], &CZ_CLAN_CHAT.to_le_bytes());
@@ -5767,7 +5892,7 @@ mod tests {
         let (character_id, address) = loop {
             match receiver.recv_timeout(Duration::from_secs(10)).unwrap() {
                 CharEvent::ZoneServer { character_id, ip, port, .. } => break (character_id, (ip, port)),
-                CharEvent::Characters { .. } => continue,
+                CharEvent::Characters { .. } | CharEvent::Pin { .. } => continue,
                 other => panic!("{other:?}"),
             }
         };

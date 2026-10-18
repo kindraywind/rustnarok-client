@@ -5,7 +5,8 @@
 //! Dev switches: `RUSTNAROK_CLIENT_GRF` (data.grf path), `RUSTNAROK_CLIENT_SERVER` (login server, over the data folder's
 //! clientinfo.xml and the default 127.0.0.1:6900),
 //! `RUSTNAROK_CLIENT_LOGIN=user:password` (fill in and submit on start), `RUSTNAROK_CLIENT_AUTOSTART=<slot>` (then pick the first
-//! server and play that slot; any other value stops at character select), `RUSTNAROK_CLIENT_WALK=x,y` (walk there a second after entering the map),
+//! server and play that slot; any other value stops at character select), `RUSTNAROK_CLIENT_PIN=<4 digits>` (enter that PIN when
+//! the char server asks), `RUSTNAROK_CLIENT_WALK=x,y` (walk there a second after entering the map),
 //! `RUSTNAROK_CLIENT_TALK=<name>[:<n>]` (talk to that NPC, pressing "next" or "close" up to n times), `RUSTNAROK_CLIENT_ATTACK=1` (attack the
 //! nearest monster in view), `RUSTNAROK_CLIENT_SAY=<text>[|<text>...]` (type each into the chat a second after entering, e.g.
 //! GM commands or /organize; `RUSTNAROK_CLIENT_SAY_AT` seconds in instead),
@@ -70,6 +71,7 @@ mod party;
 mod pet;
 mod pick_list;
 mod picking;
+mod pin;
 mod quest;
 mod refine;
 mod render;
@@ -2051,6 +2053,7 @@ struct Assets {
     message: Texture,
     char_select: char_select::Assets,
     char_make: char_make::Assets,
+    pin: pin::Assets,
     skills: skills::Assets,
     shop: shop::Assets,
     pick_list: pick_list::Assets,
@@ -2154,6 +2157,7 @@ impl Assets {
             message: image(format!("{UI}win_msgbox.bmp")),
             char_select: char_select::Assets::load(gpu, grf, font, messages),
             char_make: char_make::Assets::load(gpu, grf),
+            pin: pin::Assets::load(gpu, grf),
             skills: skills::Assets::load(gpu, grf),
             shop: shop::Assets::load(gpu, grf),
             pick_list: pick_list::Assets::load(gpu, grf),
@@ -2605,6 +2609,9 @@ impl App {
 
     fn start_game(&mut self) {
         let Scene::CharSelect(select) = &self.scene else { return };
+        if !select.unlocked() {
+            return;
+        }
         let Some(character) = select.selected_character().cloned() else { return };
         match self.char_session.as_mut().map(|session| session.select(character.slot)) {
             Some(Ok(())) => {
@@ -2628,6 +2635,9 @@ impl App {
     /// Does what a click or key on the character select asked for.
     fn select_action(&mut self, action: char_select::Action) {
         use char_select::Action;
+        if !matches!(action, Action::Close) && matches!(&self.scene, Scene::CharSelect(select) if !select.unlocked()) {
+            return;
+        }
         let sent = match action {
             Action::Start => return self.start_game(),
             Action::Make(slot) => {
@@ -2655,6 +2665,37 @@ impl App {
         match sent {
             Some(Ok(())) => self.wait(),
             _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
+        }
+    }
+
+    /// Runs autostart (`RUSTNAROK_CLIENT_AUTOSTART=<slot>`) and `RUSTNAROK_CLIENT_MAKE`/`DELETE` once PIN state 0 is in.
+    fn finish_char_select_entry(&mut self) {
+        let first = !std::mem::replace(&mut self.scripted, true);
+        if !first {
+            return;
+        }
+        if std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok().and_then(|slot| slot.parse::<usize>().ok()).is_some() {
+            self.start_game();
+        }
+        self.run_select_switches();
+    }
+
+    fn apply_pin_action(&mut self, action: pin::PinAction) {
+        let sent = match action {
+            pin::PinAction::None => return,
+            pin::PinAction::Check { seed, pin } => self.char_session.as_mut().map(|session| session.check_pin(seed, &pin)),
+            pin::PinAction::Make { seed, pin } => self.char_session.as_mut().map(|session| session.make_pin(seed, &pin)),
+            pin::PinAction::Change { seed, old_pin, new_pin } => self.char_session.as_mut().map(|session| session.change_pin(seed, &old_pin, &new_pin)),
+            pin::PinAction::Message(id) => {
+                let text = self.message_text(id);
+                let back = std::mem::replace(&mut self.scene, Scene::Login);
+                self.message(text, back);
+                return;
+            }
+            pin::PinAction::Close => return self.back_to_login(),
+        };
+        if !matches!(sent, Some(Ok(()))) {
+            self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login);
         }
     }
 
@@ -2883,9 +2924,18 @@ impl App {
                 }
             }
             Scene::CharSelect(select) => {
-                let action = if select.menu.is_some() { select.click_menu(cursor) } else { select.hit(cursor).and_then(|hit| select.click(hit)) };
-                if let Some(action) = action {
-                    self.select_action(action);
+                if let Some(pad) = &mut select.pin_pad {
+                    if let Some(button) = pad.hit(cursor) {
+                        let action = pad.press(button);
+                        self.apply_pin_action(action);
+                    }
+                } else if select.unlocked() {
+                    let action = if select.menu.is_some() { select.click_menu(cursor) } else { select.hit(cursor).and_then(|hit| select.click(hit)) };
+                    if let Some(action) = action {
+                        self.select_action(action);
+                    }
+                } else if select.hit(cursor) == Some(char_select::Hit::Close) {
+                    self.select_action(char_select::Action::Close);
                 }
             }
             Scene::CharMake(make, _) => {
@@ -3681,9 +3731,10 @@ impl App {
             }
             return;
         }
-        // On the character select, a card's menu of moving and renaming.
+        // On the character select, a card's menu of moving and renaming (only once the PIN check has passed).
         if let Scene::CharSelect(select) = &mut self.scene
             && state == ElementState::Pressed
+            && select.unlocked()
         {
             select.open_menu(self.cursor, &self.font, &self.messages);
         }
@@ -4333,6 +4384,25 @@ impl App {
                 Key::Named(NamedKey::Escape) => self.scene = Scene::Login,
                 _ => {}
             },
+            Scene::CharSelect(select) if select.pin_pad.is_some() => {
+                let pad = select.pin_pad.as_mut().unwrap();
+                // ponytail: the official pad is mouse-only (message 1906); also accept digit keys so scenarios can `type` a PIN.
+                let action = match key {
+                    Key::Named(NamedKey::Backspace) => {
+                        pad.backspace();
+                        pin::PinAction::None
+                    }
+                    Key::Named(NamedKey::Enter) => pad.press(pin::PinButton::Ok),
+                    Key::Named(NamedKey::Escape) => pad.press(pin::PinButton::Cancel),
+                    _ => event
+                        .text
+                        .as_deref()
+                        .and_then(|text| text.chars().next())
+                        .filter(char::is_ascii_digit)
+                        .map_or(pin::PinAction::None, |digit| pad.push_digit(digit)),
+                };
+                self.apply_pin_action(action);
+            }
             Scene::CharSelect(select) => match key {
                 Key::Named(NamedKey::ArrowLeft) => select.step(-1),
                 Key::Named(NamedKey::ArrowRight) => select.step(1),
@@ -4571,9 +4641,10 @@ impl App {
             NetEvent::Char(CharEvent::Characters { slots, characters }) => {
                 let figures = characters.iter().map(|character| SpriteSet::player(&self.grf, &character_look(character), &self.look_tables)).collect();
                 let mut select = char_select::Select::new(characters, figures, usize::from(slots));
-                // A list sent again (after a deletion) keeps the cursor where it was.
+                // A list sent again (after a deletion) keeps the cursor and PIN verification where they were.
                 if let Scene::CharSelect(previous) = self.scene.base() {
                     select.selected = previous.selected;
+                    select.pin_verified = previous.pin_verified;
                 } else if let Some(slot) = self.played_slot.take() {
                     // Back from the game: the character just played.
                     select.selected = slot;
@@ -4585,17 +4656,15 @@ impl App {
                 {
                     select.selected = slot;
                 }
+                let verified = select.pin_verified;
                 match &mut self.scene {
                     // After a rename its message stays up over the new list.
                     Scene::Message(_, back) if matches!(**back, Scene::CharSelect(_)) => **back = Scene::CharSelect(Box::new(select)),
                     scene => *scene = Scene::CharSelect(Box::new(select)),
                 }
-                let first = !std::mem::replace(&mut self.scripted, true);
-                if autostart.is_some() && first {
-                    self.start_game();
-                }
-                if first {
-                    self.run_select_switches();
+                // Autostart and MAKE/DELETE wait for PIN state 0 (`finish_char_select_entry`).
+                if verified {
+                    self.finish_char_select_entry();
                 }
             }
             NetEvent::Char(CharEvent::DeleteReserved { id, result, seconds }) => {
@@ -4707,6 +4776,52 @@ impl App {
                         self.early_events.clear();
                     }
                     Err(_) => self.message("맵 서버에 접속할 수 없습니다.", Scene::Login),
+                }
+            }
+            NetEvent::Char(CharEvent::Pin { seed, state }) => {
+                self.settle();
+                let Scene::CharSelect(select) = self.scene.base_mut() else { return };
+                let outcome = pin::PinPad::apply_server(&mut select.pin_pad, seed, state);
+                match outcome {
+                    pin::PinServerOutcome::Passed { message } => {
+                        select.pin_verified = true;
+                        self.finish_char_select_entry();
+                        if let Some(id) = message
+                            && matches!(self.scene, Scene::CharSelect(_))
+                        {
+                            let text = self.message_text(id);
+                            let back = std::mem::replace(&mut self.scene, Scene::Login);
+                            self.message(text, back);
+                        }
+                    }
+                    pin::PinServerOutcome::Prompt => {
+                        select.pin_verified = false;
+                        if state == 1 && !select.auto_pin_tried {
+                            select.auto_pin_tried = true;
+                            if let Ok(auto_pin) = std::env::var("RUSTNAROK_CLIENT_PIN")
+                                && auto_pin.len() == 4
+                                && auto_pin.bytes().all(|byte| byte.is_ascii_digit())
+                                && let Some(pad) = &mut select.pin_pad
+                            {
+                                let mut action = pin::PinAction::None;
+                                for digit in auto_pin.chars() {
+                                    action = pad.push_digit(digit);
+                                }
+                                self.apply_pin_action(action);
+                            }
+                        }
+                    }
+                    pin::PinServerOutcome::Message { id, tries_left } => {
+                        select.pin_verified = false;
+                        let text = messages::fill(&self.message_text(id), &[&tries_left]);
+                        let back = std::mem::replace(&mut self.scene, Scene::Login);
+                        self.message(text, back);
+                    }
+                    pin::PinServerOutcome::LockedOut(id) => {
+                        self.char_session = None;
+                        let text = self.message_text(id);
+                        self.message(text, Scene::Login);
+                    }
                 }
             }
             NetEvent::Char(CharEvent::Refused(code)) => {
@@ -6979,7 +7094,11 @@ impl App {
                 }
             }
             Scene::CharSelect(select) => {
-                select.draw(&mut base, &assets.char_select, font, &self.messages, &self.pc_job_names, &self.map_names, &self.icons, base_pointer, &poses)
+                let select_pointer = if select.pin_pad.is_some() { ([-1.0; 2], false) } else { base_pointer };
+                select.draw(&mut base, &assets.char_select, font, &self.messages, &self.pc_job_names, &self.map_names, &self.icons, select_pointer, &poses);
+                if let Some(pad) = &select.pin_pad {
+                    pad.draw(&mut base, &assets.chrome, &assets.pin, font, &self.messages, base_pointer);
+                }
             }
             Scene::CharMake(make, _) => {
                 let caret = matches!(self.scene, Scene::CharMake(..)) && blink_phase.is_multiple_of(2);

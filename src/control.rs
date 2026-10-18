@@ -19,7 +19,8 @@
 //!   character, after modifiers like "Alt+" or "Ctrl+".
 //! - `type` `{text}`: into the focused field; non-ASCII runs (Hangul) come in as the input method's commit.
 //! - `say` `{text}`: a chat line or a GM command.
-//! - `state`: the scene and the login server; in the game the map, the player, open windows, the NPC dialog, the aimed
+//! - `state`: the scene and the login server; at character select the characters, selected slot and `pin` ("ask",
+//!   "new", "change" or "none"); in the game the map, the player, open windows, the NPC dialog, the aimed
 //!   skill, units and ground items (with their sprites' screen boxes and the areas a click picks them in), counts and
 //!   status icons. Everything comes from what the client itself knows, whatever server it plays on.
 //! - `wait` `{ms?, packet?, event?, fresh?, pause?, do?}`: sleeps `ms`; with a `packet` id ("0x08c8") or an `event`
@@ -693,6 +694,7 @@ fn state(app: &App) -> Value {
                 .map(|character| json!({"slot": character.slot, "name": character.name, "job": character.job, "level": character.base_level, "map": character.map}))
                 .collect();
             state["selected"] = select.selected.into();
+            state["pin"] = select.pin_pad.as_ref().map_or("none", |pad| pad.kind()).into();
             state["moving"] = select.moving.into();
             state["targets"] = select
                 .card_boxes()
@@ -962,5 +964,15 @@ mod tests {
         assert!(parse_key("Hyper+Q").is_err() && parse_key("F13").is_err());
 
         assert_eq!([base64(b"Man"), base64(b"Ma"), base64(b"M")], ["TWFu", "TWE=", "TQ=="]);
+
+        use crate::pin::{PinPad, PinStep};
+        let pin_kind = |step: PinStep| PinPad::new(0, step, false).kind();
+        assert_eq!(pin_kind(PinStep::Ask), "ask");
+        assert_eq!(pin_kind(PinStep::NewFirst), "new");
+        assert_eq!(pin_kind(PinStep::NewConfirm { first: "1357".into() }), "new");
+        assert_eq!(pin_kind(PinStep::ChangeOld), "change");
+        assert_eq!(pin_kind(PinStep::ChangeNewFirst { old: "1357".into() }), "change");
+        assert_eq!(pin_kind(PinStep::ChangeNewConfirm { old: "1357".into(), first: "2468".into() }), "change");
+        assert_eq!(None::<PinPad>.as_ref().map_or("none", |pad| pad.kind()), "none");
     }
 }

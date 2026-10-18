@@ -60,7 +60,7 @@ against `main`.
 
 | Area | What's there |
 |---|---|
-| 🔐 **Login to map** | The 2018+ login window (saved ID), server select, character select with sprites, moving and renaming characters, character creation (doram included) and deletion with its birthdate check, the loading screen. |
+| 🔐 **Login to map** | The 2018+ login window (saved ID), server select, character select with sprites and the 4-digit PIN pad, moving and renaming characters, character creation (doram included) and deletion with its birthdate check, the loading screen. |
 | 🌍 **The world** | GND ground with lightmaps, RSW models (RSM 1.x), water, GAT walkability, weather (snow, cherry blossoms, leaves, clouds, fog, fireworks), the camera (right drag turns, wheel zooms), cursors, the minimap with NPC marks and party members, the world map. |
 | 🧙 **Characters** | Players with heads, headgear, weapons, shields and garments; monsters, NPCs, pets and warp portals; walking, sitting, emotions, spirit spheres and coins, pushcarts; HP/SP bars, names with party, guild, position and emblem on pointing, chat bubbles, cast bars, the MVP banner. |
 | ⚔️ **Combat and skills** | Attacking with reach checks, damage numbers of every kind, death; the skill window and hotkeys, casting with targets, status icons, effects (STR animations, moving textures and sprites, cylinders, sprite animations, camera shakes), skills' units on the ground (Fire Wall, Safety Wall, Pneuma, warp portals, traps), Warp Portal's destination list, Auto Spell and Shadow Spell. |
@@ -156,7 +156,7 @@ client's Lua tables run in a sandboxed Lua 5.1: item, skill, job, look, pet and 
 The binary (`src/main.rs` and its modules) is the game: `render` (wgpu: sprites, text, the canvas viewport), `world`
 (the 3D world pass and camera), `actor` (units, their animation and sounds), `effects` (the effect player and its
 table `effects.txt`), `sound` (music and effects over cpal), `control` (the test-driver socket), and one module per
-window, from `basic_info` and `inventory` to `pet`, `refine` and `worldmap`.
+window, from `basic_info` and `inventory` to `pet`, `pin`, `refine` and `worldmap`.
 
 `main.rs` holds the scenes (login, character select, game), the game state, input, the server's events and
 drawing. The UI draws in a fixed 1024×768 canvas, scaled to the window.
@@ -204,8 +204,9 @@ before/after/diff sheets of every screenshot.
 <summary><b>More dev switches and tools</b></summary>
 
 The top of `src/main.rs` lists the other dev switches: logging in and picking a slot (`RUSTNAROK_CLIENT_LOGIN`,
-`RUSTNAROK_CLIENT_AUTOSTART`), scripted chat and GM commands (`RUSTNAROK_CLIENT_SAY`), clicks
-(`RUSTNAROK_CLIENT_CLICKS`), walking, talking, fighting, shops, storage, trades, parties, guilds and more.
+`RUSTNAROK_CLIENT_AUTOSTART`), entering a PIN (`RUSTNAROK_CLIENT_PIN`), scripted chat and GM commands
+(`RUSTNAROK_CLIENT_SAY`), clicks (`RUSTNAROK_CLIENT_CLICKS`), walking, talking, fighting, shops, storage, trades,
+parties, guilds and more.
 
 The examples are tools for reading the game data: `grf_list`, `grf_extract`, `grf_grep`, `grf_sheet` (images to one
 PNG), `lua_dump`, `messages`, `job_name`, `act_sounds`, `str_dump`, `map_info`, `rsm_versions`, `map_probe`.
