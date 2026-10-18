@@ -1146,8 +1146,9 @@ struct Game {
     auto_skill: Option<(u16, u16)>,
     /// The player's attack reach in cells.
     attack_range: i32,
-    /// What to do once the walk toward it ends (and when it ended).
+    /// What to do once the walk toward it ends (and when it ended), and where its walk went and when (None: none yet).
     pending: Option<(Pending, Option<Instant>)>,
+    pending_walk: Option<([i32; 2], Instant)>,
 }
 
 /// Where the camera eases toward, steered with the right mouse button and the wheel.
@@ -2011,20 +2012,52 @@ impl Game {
         let _ = self.session.talk(id);
     }
 
-    /// Picks up an item, walking over first when it's out of reach.
-    fn pick_up(&mut self, id: u32) {
+    /// Picks up an item, facing it: at once from the next cell, else walking there with the pickup pending.
+    fn pick_up(&mut self, id: u32, now: Instant) {
         if self.store_open() {
             return;
         }
-        let Some(item) = self.ground.get(&id) else { return };
-        let at = item.at;
+        let Some(at) = self.ground.get(&id).map(|item| item.at) else { return };
         self.player.face(at);
-        if !within_pickup(self.player.cell, at) {
-            self.pending = Some((Pending::PickUp(id), None));
-            let _ = self.session.walk(at.map(|value| value as u16));
-        } else {
-            self.pending = None;
-            let _ = self.session.pick_up(id);
+        // Another press on the item while walking to it keeps that walk.
+        if !(self.player.moving() && self.pending.is_some_and(|(pending, _)| pending == Pending::PickUp(id))) {
+            self.pending_walk = None;
+        }
+        self.pending = Some((Pending::PickUp(id), None));
+        self.pending_step(now);
+    }
+
+    /// A pickup or skill waiting on a walk, each frame. A pickup goes out as soon as the player's cell is next to the
+    /// item, still walking; a walk the move limit held back is asked for again.
+    fn pending_step(&mut self, now: Instant) {
+        match self.pending {
+            Some((Pending::PickUp(id), arrived)) => {
+                let Some(at) = self.ground.get(&id).map(|item| item.at) else {
+                    self.pending = None;
+                    return;
+                };
+                match pickup_step(self.player.cell, at, self.pending_walk.map(|(cell, _)| cell)) {
+                    PickStep::PickUp => {
+                        self.pending = None;
+                        self.player.face(at);
+                        let _ = self.session.pick_up(id);
+                    }
+                    PickStep::Walk if may_move(self.last_move, now) => {
+                        self.last_move = Some(now);
+                        self.pending_walk = Some((at, now));
+                        let _ = self.session.walk(at.map(|value| value as u16));
+                    }
+                    // Stopped out of reach after walking there: it can't be reached.
+                    PickStep::Wait if arrived.zip(self.pending_walk).is_some_and(|(stopped, (_, sent))| stopped > sent) => self.pending = None,
+                    _ => {}
+                }
+            }
+            Some((Pending::Skill { id, level, target }, _)) if self.pending_walk.is_none() => {
+                self.pending = None;
+                self.targeting = Some((id, level));
+                self.aim_skill(target);
+            }
+            _ => {}
         }
     }
 
@@ -2266,8 +2299,15 @@ impl Game {
         } else if let Some(stop) =
             world::find_path(&self.world.gat, self.player.cell, goal).and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, range)))
         {
+            // Within the move limit the walk waits: `pending_step` aims again on a later frame.
+            let now = Instant::now();
             self.pending = Some((Pending::Skill { id, level, target }, None));
-            let _ = self.session.walk(stop.map(|value| value as u16));
+            self.pending_walk = None;
+            if may_move(self.last_move, now) {
+                self.last_move = Some(now);
+                self.pending_walk = Some((stop, now));
+                let _ = self.session.walk(stop.map(|value| value as u16));
+            }
         }
     }
 
@@ -4534,6 +4574,26 @@ fn within_pickup(from: [i32; 2], at: [i32; 2]) -> bool {
     (at[0] - from[0]).abs().max((at[1] - from[1]).abs()) <= 1
 }
 
+/// What a pending pickup does this frame.
+#[derive(Debug, PartialEq)]
+enum PickStep {
+    PickUp,
+    Walk,
+    Wait,
+}
+
+/// A pending pickup: picked up once the player's cell is next to the item, walking or not; out of reach, a walk
+/// there unless the last one already went there.
+fn pickup_step(player: [i32; 2], item: [i32; 2], walked_to: Option<[i32; 2]>) -> PickStep {
+    if within_pickup(player, item) {
+        PickStep::PickUp
+    } else if walked_to != Some(item) {
+        PickStep::Walk
+    } else {
+        PickStep::Wait
+    }
+}
+
 /// The cursor over an NPC: a warp portal's, or talking.
 fn npc_cursor(job: u16) -> cursor::Kind {
     if job == WARP_JOB { cursor::Kind::Warp } else { cursor::Kind::Talk }
@@ -4602,6 +4662,12 @@ const DOUBLE_PRESS: Duration = Duration::from_millis(500);
 
 fn may_move(last: Option<Instant>, now: Instant) -> bool {
     last.is_none_or(|last| now.saturating_duration_since(last) >= MOVE_GAP)
+}
+
+/// Whether the held button walks toward the pointer now: held, nothing pending (an item being picked up), and
+/// MOVE_GAP since the last try.
+fn follows_pointer(held: bool, pending: bool, last_try: Option<Instant>, now: Instant) -> bool {
+    held && !pending && last_try.is_none_or(|last| now.saturating_duration_since(last) > MOVE_GAP)
 }
 
 /// Whether a press now, after the last one (when, and whether the pointer moved since), is a double press.
@@ -7370,7 +7436,12 @@ impl App {
                     }
                 }
                 WorldClick::Talk(id) => game.talk_to(id),
-                WorldClick::PickUp(id) if !game.player.sitting => game.pick_up(id),
+                // Held, the button follows the pointer again once the item is picked up.
+                WorldClick::PickUp(id) if !game.player.sitting => {
+                    game.pick_up(id, now);
+                    game.walk_held = true;
+                    game.last_walk_try = Some(now);
+                }
                 WorldClick::Warp(cell) if !ctrl => {
                     game.walk_toward(cell, now);
                     game.walk_held = true;
@@ -8877,6 +8948,7 @@ impl App {
                     }),
                     attack_range: 1,
                     pending: None,
+                    pending_walk: None,
                     auto_say: std::env::var("RUSTNAROK_CLIENT_SAY").ok(),
                     last_move: None,
                     walk_goal: None,
@@ -13874,9 +13946,8 @@ impl ApplicationHandler<NetEvent> for App {
                 // try, not over a window, nor while an attack or a pickup is on its way.
                 let now = Instant::now();
                 game.attack_step(now);
-                if game.walk_held
-                    && game.pending.is_none()
-                    && game.last_walk_try.is_none_or(|last| now.saturating_duration_since(last) > MOVE_GAP)
+                game.pending_step(now);
+                if follows_pointer(game.walk_held, game.pending.is_some(), game.last_walk_try, now)
                     && let Some(assets) = &self.assets
                     && !game.on_ui(self.cursor, &self.items, assets.message.size)
                     && let Some(cell) = game.ground_cell(self.cursor)
@@ -13978,7 +14049,7 @@ impl ApplicationHandler<NetEvent> for App {
                         && let Some((&id, _)) = game.ground.iter().min_by_key(|(_, item)| distance(item.at))
                     {
                         game.auto_pick_up = false;
-                        game.pick_up(id);
+                        game.pick_up(id, now);
                     }
                     if game.entered.elapsed() >= Duration::from_secs(3)
                         && !game.skills.is_empty()
@@ -14008,17 +14079,13 @@ impl ApplicationHandler<NetEvent> for App {
                         }
                     }
                 }
-                if let Some((pending, Some(arrived))) = game.pending
+                // A skill walked into range goes off once the walk has settled.
+                if let Some((Pending::Skill { id, level, target }, Some(arrived))) = game.pending
                     && arrived.elapsed() >= ATTACK_SETTLE
                 {
                     game.pending = None;
-                    match pending {
-                        Pending::PickUp(id) => game.pick_up(id),
-                        Pending::Skill { id, level, target } => {
-                            game.targeting = Some((id, level));
-                            game.aim_skill(target);
-                        }
-                    }
+                    game.targeting = Some((id, level));
+                    game.aim_skill(target);
                 }
                 if let Some(gpu) = &self.gpu {
                     gpu.window.request_redraw();
@@ -14710,6 +14777,34 @@ mod tests {
             [attack_refused(900, 1000, false), attack_refused(899, 1000, false), attack_refused(0, 1000, true)],
             [Some(OVERWEIGHT), None, Some(RIDING_NO_ATTACK)]
         );
+    }
+
+    #[test]
+    fn picks_up_on_the_way() {
+        // Four cells away and walking there: nothing until the player's cell is next to the item.
+        assert_eq!(pickup_step([10, 10], [14, 10], None), PickStep::Walk);
+        assert_eq!(pickup_step([11, 10], [14, 10], Some([14, 10])), PickStep::Wait);
+        assert_eq!(pickup_step([12, 11], [14, 10], Some([14, 10])), PickStep::Wait);
+        assert_eq!(pickup_step([13, 11], [14, 10], Some([14, 10])), PickStep::PickUp);
+        assert_eq!(pickup_step([14, 10], [14, 10], None), PickStep::PickUp);
+        // A walk the move limit held back is asked for again on a later frame, once.
+        let start = Instant::now();
+        let (mut walked, mut last) = (None, Some(start));
+        let mut walks = Vec::new();
+        for ms in [100, 200, 299, 300, 350, 700] {
+            let now = start + Duration::from_millis(ms);
+            if pickup_step([10, 10], [14, 10], walked) == PickStep::Walk && may_move(last, now) {
+                (walked, last) = (Some([14, 10]), Some(now));
+                walks.push(ms);
+            }
+        }
+        assert_eq!(walks, [300]);
+        // The held button follows the pointer only once nothing is pending, MOVE_GAP after its last try.
+        assert!(!follows_pointer(true, true, None, start));
+        assert!(follows_pointer(true, false, None, start));
+        assert!(!follows_pointer(true, false, Some(start), start + Duration::from_millis(300)));
+        assert!(follows_pointer(true, false, Some(start), start + Duration::from_millis(301)));
+        assert!(!follows_pointer(false, false, None, start));
     }
 
     #[test]
