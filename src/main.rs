@@ -3042,8 +3042,7 @@ impl Game {
                 push(id, self.panel_open(panel));
             }
         }
-        push(NpcDialog, self.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()));
-        push(WarpList, self.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some()));
+        // An NPC's window and the warp list aren't Esc's to close: they end with their own buttons.
         push(Shop, self.shop.is_some());
         push(Refine, self.refine.is_some());
         push(GradeEnchant, self.grade.is_some());
@@ -3130,6 +3129,9 @@ impl Game {
         if matches!(self.queue_asked, Some(QueueAsked::Lobby(..))) {
             names.push("BattleLobby".into());
         }
+        if let Some(dialog) = &self.dialog {
+            names.push(if dialog.warp.is_some() { "WarpList" } else { "NpcDialog" }.into());
+        }
         names
     }
 
@@ -3178,7 +3180,7 @@ impl Game {
         None
     }
 
-    /// A question (or an NPC menu waiting for a choice) is up.
+    /// A question is up. An NPC's menu (and the warp list) isn't one: Esc leaves those alone.
     fn question_open(&self) -> bool {
         self.save_asked
             || self.bind_asked.is_some()
@@ -3195,17 +3197,12 @@ impl Game {
             || self.trade_asked.is_some()
             || self.deal_choice.is_some()
             || self.amount.is_some()
-            || self.dialog.as_ref().is_some_and(|dialog| dialog.menu.is_some())
             || self.adopt_asked.is_some()
             || self.queue_asked.is_some()
     }
 
-    /// Answers the open question with No. An NPC menu is cancelled.
+    /// Answers the open question with No.
     fn answer_no(&mut self, messages: &[String]) {
-        if self.dialog.as_ref().is_some_and(|dialog| dialog.menu.is_some()) {
-            self.choose(true);
-            return;
-        }
         if self.save_asked {
             self.save_asked = false;
             return;
@@ -7609,6 +7606,7 @@ impl App {
             battle_line: game.chat_mode.battle_line_open(),
             whisper_list: game.chat.whisper_list_open(),
             focused: game.focused_text(),
+            conversation: game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()),
             question: game.question_open(),
             newest: game.esc_order.first().copied(),
         };
@@ -7991,7 +7989,6 @@ impl App {
                     (Key::Named(NamedKey::ArrowUp), _, Some((_, selected))) => *selected = selected.saturating_sub(1),
                     (Key::Named(NamedKey::ArrowDown), _, Some((items, selected))) => *selected = (*selected + 1).min(items.len().saturating_sub(1)),
                     (Key::Named(NamedKey::Enter), _, Some(_)) => game.choose(false),
-                    (Key::Named(NamedKey::Escape), _, Some(_)) => game.choose(true),
                     (Key::Named(NamedKey::Enter), None, None) => game.press_dialog_button(),
                     _ => {}
                 }
