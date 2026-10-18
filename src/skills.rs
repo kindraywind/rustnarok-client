@@ -64,6 +64,9 @@ const LIST_WIDTH: f32 = 330.0;
 const LIST_TOP: f32 = 32.0;
 const LIST_ROW: f32 = 32.0;
 const LIST_ROWS: usize = 10;
+/// The list view's corner grip changes only its height: 400 at most, a row less per 32 px up.
+// ponytail: the least (the game's tab strip + 12) is taken as 3 rows.
+const LIST_LEAST_ROWS: usize = 3;
 /// In a row, from the icon at (44, top + 2): the level up button at (78, +2), the selection band 164×28 at (104, +0),
 /// the name at (112, +3), "Lv :" at (113, +15) or (124, +15) beside the arrows at (112, +16) and (192, +16), the SP at
 /// (212, +15).
@@ -110,6 +113,8 @@ pub struct Assets {
     pub up: [Texture; 3],
     /// The bottom bar's left end, middle and right end.
     bar: [Texture; 3],
+    /// The list view's corner grip.
+    resize: Texture,
     /// Whitens skills not learned.
     veil: Texture,
     /// The arrows that pick the level to use: less, more.
@@ -133,6 +138,7 @@ impl Assets {
             slot: image("no_skill"),
             up: ["skill_up_a", "skill_up_b", "skill_up_c"].map(image),
             bar: ["skill_botbar_left", "skill_botbar_mid", "skill_botbar_right"].map(image),
+            resize: gpu.load_texture(grf, &format!("{UI}btn_resize.bmp"), false),
             veil: gpu.solid([255, 255, 255, 150]),
             arrows: ["arw_left", "arw_right"].map(image),
             apply: ["btn_apply", "btn_apply_a", "btn_apply_b"].map(root),
@@ -159,6 +165,8 @@ pub enum Hit {
     },
     Apply,
     Reset,
+    /// The list view's corner grip.
+    Resize,
     Window,
 }
 
@@ -189,6 +197,9 @@ pub struct SkillWindow {
     pinned: Option<u16>,
     /// The simple list rather than the tree.
     simple: bool,
+    /// The list view's rows, and its corner grip while held.
+    list_rows: usize,
+    grip: window::Grip,
 }
 
 impl Default for SkillWindow {
@@ -202,6 +213,8 @@ impl Default for SkillWindow {
             pending: Vec::new(),
             pinned: None,
             simple: false,
+            list_rows: LIST_ROWS,
+            grip: window::Grip::default(),
         }
     }
 }
@@ -459,7 +472,39 @@ impl Sheet<'_> {
 
 impl SkillWindow {
     pub fn height(&self) -> f32 {
-        HEIGHT
+        if self.simple { HEIGHT - (LIST_ROWS - self.list_rows) as f32 * LIST_ROW } else { HEIGHT }
+    }
+
+    /// The list view's rows.
+    pub fn list_rows(&self) -> usize {
+        self.list_rows
+    }
+
+    pub fn set_list_rows(&mut self, rows: usize) {
+        self.list_rows = rows.clamp(LIST_LEAST_ROWS, LIST_ROWS);
+    }
+
+    pub fn start_resize(&mut self, cursor: [f32; 2]) {
+        self.grip.start(cursor, [self.width(), self.height()]);
+    }
+
+    /// While held by its grip, the list view's bottom follows the pointer from the press, a row per 32 px (rounding
+    /// toward the full 400); returns whether it's held.
+    pub fn resize_to(&mut self, cursor: [f32; 2]) -> bool {
+        let Some([_, asked]) = self.grip.asked(cursor) else { return false };
+        let fewer = window::steps(HEIGHT - asked, 0.0, LIST_ROW, LIST_ROWS - LIST_LEAST_ROWS);
+        self.set_list_rows(LIST_ROWS - fewer);
+        true
+    }
+
+    pub fn stop_resize(&mut self) -> bool {
+        self.grip.stop()
+    }
+
+    /// The list view's corner grip on screen (for the test driver).
+    pub fn grip_box(&self) -> Option<[f32; 4]> {
+        let [x, y] = self.frame.at([self.width() - window::GRIP, self.height() - window::GRIP]);
+        (self.simple && self.frame.open && !self.frame.minimized).then_some([x, y, window::GRIP, window::GRIP])
     }
 
     fn width(&self) -> f32 {
@@ -480,7 +525,8 @@ impl SkillWindow {
 
     /// Apply and Reset.
     fn buttons(&self) -> [[f32; 2]; 2] {
-        if self.simple { [LIST_APPLY_AT, LIST_RESET_AT] } else { [APPLY_AT, RESET_AT] }
+        let lift = HEIGHT - self.height();
+        if self.simple { [LIST_APPLY_AT, LIST_RESET_AT].map(|[x, y]| [x, y - lift]) } else { [APPLY_AT, RESET_AT] }
     }
 
     /// The level to use a skill at: the one picked, kept within what's learned, else the learned level.
@@ -572,7 +618,7 @@ impl SkillWindow {
         let tree = self.tree(sheet).into_iter();
         if self.simple {
             let row = |row: usize| [LIST_ICON_X, LIST_TOP + 2.0 + row as f32 * LIST_ROW];
-            return tree.skip(self.scroll).take(LIST_ROWS).enumerate().map(|(index, (_, id))| (id, row(index))).collect();
+            return tree.skip(self.scroll).take(self.list_rows).enumerate().map(|(index, (_, id))| (id, row(index))).collect();
         }
         tree.filter_map(|(place, id)| Some((id, icon_corner(place, self.scroll)?))).collect()
     }
@@ -581,7 +627,7 @@ impl SkillWindow {
     pub fn scroll_by(&mut self, sheet: &Sheet, rows: i32) {
         let tree = self.tree(sheet);
         let most = if self.simple {
-            tree.len().saturating_sub(LIST_ROWS)
+            tree.len().saturating_sub(self.list_rows)
         } else {
             let last = tree.iter().map(|(place, _)| place / COLUMNS).max().unwrap_or(0);
             (last + 1).saturating_sub(ROWS)
@@ -591,9 +637,12 @@ impl SkillWindow {
     }
 
     pub fn hit(&self, cursor: [f32; 2], sheet: &Sheet) -> Option<Hit> {
-        let local = self.frame.local(cursor, HEIGHT)?;
+        let local = self.frame.local(cursor, self.height())?;
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
+        }
+        if self.simple && !self.frame.minimized && window::on_grip([self.width(), self.height()], local) {
+            return Some(Hit::Resize);
         }
         let tabs = self.tab_jobs(sheet);
         if let Some(tab) = (0..tabs.len()).find(|&tab| contains(tab_corner(tab), TAB, local)) {
@@ -652,7 +701,7 @@ impl SkillWindow {
             }
             Hit::Apply => return Some(Action::Apply),
             Hit::Reset => self.pending.clear(),
-            Hit::Window => {}
+            Hit::Resize | Hit::Window => {}
         }
         None
     }
@@ -788,7 +837,7 @@ impl SkillWindow {
         }
         let hit = self.hit(pointer.0, sheet);
         let width = self.width();
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [width, HEIGHT - TITLE_HEIGHT - BAR_HEIGHT]));
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [width, self.height() - TITLE_HEIGHT - BAR_HEIGHT]));
 
         // A tab for each tier down the left, its name a letter a line; the open one in black.
         let tabs = self.tab_jobs(sheet);
@@ -900,14 +949,15 @@ impl SkillWindow {
 
         // The points, on the bottom bar: while levels are pending, left (blue), used (red) and the total. The list
         // says the points left.
-        let bar_top = HEIGHT - BAR_HEIGHT;
+        let bar_top = self.height() - BAR_HEIGHT;
         let [left, middle, right] = &assets.bar;
         layer.sprites.push((left, at([0.0, bar_top]), left.size));
         layer.sprites.push((middle, at([left.size[0], bar_top]), [width - left.size[0] - right.size[0], BAR_HEIGHT]));
         layer.sprites.push((right, at([width - right.size[0], bar_top]), right.size));
         if self.simple {
             let line = message(LIST_POINTS_MESSAGE).replace("%d", &self.points_left(sheet).to_string());
-            layer.texts.push((line, at(LIST_POINTS_AT), [0, 0, 0]));
+            layer.texts.push((line, at([LIST_POINTS_AT[0], LIST_POINTS_AT[1] - (HEIGHT - self.height())]), [0, 0, 0]));
+            layer.sprites.push((&assets.resize, at([width - window::GRIP, self.height() - window::GRIP]), assets.resize.size));
         } else {
             let mut x = POINTS_AT[0];
             let mut put = |layer: &mut Layer<'a>, text: String, color: [u8; 3]| {
@@ -1017,6 +1067,27 @@ impl SkillWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_list_view_resizes_its_height() {
+        let mut window = SkillWindow::default();
+        window.frame.open = true;
+        assert_eq!((window.grip_box(), window.height()), (None, 400.0), "the tree view has no grip");
+        window.set_simple(true);
+        let [x, y, w, h] = window.grip_box().unwrap();
+        let corner = [x + w / 2.0, y + h / 2.0];
+        window.start_resize(corner);
+        // 93 px up is two rows fewer (rounding toward 400); down never grows it past 400.
+        assert!(window.resize_to([corner[0], corner[1] - 93.0]));
+        assert_eq!((window.list_rows(), window.height()), (8, 336.0));
+        window.resize_to([corner[0], corner[1] + 200.0]);
+        assert_eq!(window.list_rows(), LIST_ROWS);
+        window.resize_to([corner[0], corner[1] - 1000.0]);
+        assert_eq!(window.list_rows(), LIST_LEAST_ROWS);
+        assert!(window.stop_resize());
+        // Apply and Reset follow the bottom.
+        assert_eq!(window.buttons()[0][1], window.height() - 27.0);
+    }
 
     fn info(max_level: u16, needs: Vec<(u16, u16)>) -> SkillInfo {
         SkillInfo { max_level, needs, ..Default::default() }

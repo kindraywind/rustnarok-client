@@ -10,14 +10,17 @@ use rustnarok_client::text::Font;
 
 use crate::inventory;
 use crate::render::{Gpu, Texture};
-use crate::shop::group;
+use crate::shop::{self, group};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains};
 
 // ponytail: a 280px list of 32px rows like the NPC shop's; calibrate against the real client.
 const WIDTH: f32 = 280.0;
 const ROW: f32 = 32.0;
-const ROWS: usize = 6;
+/// The vending grids' corner grips: 248, 280 or 312 wide and 2 to 5 rows (the game's 120 to 216 high, as the
+/// cart's).
+const LEAST_ROWS: usize = 2;
+const MOST_ROWS: usize = 5;
 const NAME_FIELD: f32 = 24.0;
 const FOOTER: f32 = 27.0;
 const BUTTON: [f32; 2] = [42.0, 20.0];
@@ -27,8 +30,37 @@ const SHOP_MESSAGE: usize = 227;
 const SETUP_MESSAGE: usize = 232;
 const PICKED: [u8; 4] = [0x34, 0x6A, 0xE1, 0x60];
 
+/// The size both vending windows take: width and rows.
+// ponytail: one size kept for both windows; they open at 5 rows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridSize {
+    pub width: f32,
+    pub rows: usize,
+}
+
+impl Default for GridSize {
+    fn default() -> Self {
+        Self { width: WIDTH, rows: MOST_ROWS }
+    }
+}
+
+impl GridSize {
+    /// A width and rows as far as the grip would take them.
+    pub fn clamped(width: f32, rows: usize) -> Self {
+        Self { width: shop::snap_width(width), rows: rows.clamp(LEAST_ROWS, MOST_ROWS) }
+    }
+
+    /// The size a grip asks for, on a window with `above` px over its rows.
+    fn asked([width, height]: [f32; 2], above: f32) -> Self {
+        let least = above + LEAST_ROWS as f32 * ROW + FOOTER;
+        Self::clamped(width, LEAST_ROWS + window::steps(height, least, ROW, MOST_ROWS - LEAST_ROWS))
+    }
+}
+
 pub struct Assets {
     pub footer: Texture,
+    /// The corner grip.
+    pub resize: Texture,
     pub ok: [Texture; 3],
     pub cancel: [Texture; 3],
     pub close: [Texture; 3],
@@ -40,6 +72,7 @@ impl Assets {
         let image = |name: &str| gpu.load_texture(grf, &format!("{UI}{name}.bmp"), false);
         Self {
             footer: image("basic_interface\\btnbar_mid2"),
+            resize: image("btn_resize"),
             ok: ["btn_ok", "btn_ok_a", "btn_ok_b"].map(image),
             cancel: ["btn_cancel", "btn_cancel_a", "btn_cancel_b"].map(image),
             close: ["btn_close", "btn_close_a", "btn_close_b"].map(image),
@@ -57,6 +90,8 @@ pub enum Hit {
     Row(usize),
     Ok,
     Cancel,
+    /// The corner grip.
+    Resize,
     Window,
 }
 
@@ -79,30 +114,59 @@ pub struct Setup {
     /// Cart index → price.
     pub prices: HashMap<u16, u32>,
     scroll: usize,
+    /// Its size, and the corner grip while held.
+    pub size: GridSize,
+    grip: window::Grip,
 }
 
 impl Setup {
-    pub fn new(most: u16) -> Self {
-        let mut frame = Frame::new(POSITION, WIDTH);
+    pub fn new(most: u16, size: GridSize) -> Self {
+        let mut frame = Frame::new(POSITION, size.width);
         frame.open = true;
-        Self { frame, name: String::new(), typing: true, most: usize::from(most), prices: HashMap::new(), scroll: 0 }
+        let grip = window::Grip::default();
+        Self { frame, name: String::new(), typing: true, most: usize::from(most), prices: HashMap::new(), scroll: 0, size, grip }
     }
 
-    fn height() -> f32 {
-        TITLE_HEIGHT + NAME_FIELD + ROWS as f32 * ROW + FOOTER
+    fn height(&self) -> f32 {
+        TITLE_HEIGHT + NAME_FIELD + self.size.rows as f32 * ROW + FOOTER
     }
 
-    fn buttons() -> [[f32; 2]; 2] {
-        let top = Self::height() - FOOTER + 4.0;
-        [[WIDTH - 110.0, top], [WIDTH - 60.0, top]]
+    fn buttons(&self) -> [[f32; 2]; 2] {
+        let top = self.height() - FOOTER + 4.0;
+        [[self.size.width - 110.0, top], [self.size.width - 60.0, top]]
+    }
+
+    pub fn start_resize(&mut self, cursor: [f32; 2]) {
+        self.grip.start(cursor, [self.size.width, self.height()]);
+    }
+
+    /// While held by its grip, takes the size the pointer asks for; returns whether it's held.
+    pub fn resize_to(&mut self, cursor: [f32; 2]) -> bool {
+        let Some(asked) = self.grip.asked(cursor) else { return false };
+        self.size = GridSize::asked(asked, TITLE_HEIGHT + NAME_FIELD);
+        self.frame.set_width(self.size.width);
+        true
+    }
+
+    pub fn stop_resize(&mut self) -> bool {
+        self.grip.stop()
+    }
+
+    /// The corner grip on screen (for the test driver).
+    pub fn grip_box(&self) -> [f32; 4] {
+        let [x, y] = self.frame.at([self.size.width - window::GRIP, self.height() - window::GRIP]);
+        [x, y, window::GRIP, window::GRIP]
     }
 
     pub fn hit(&self, cursor: [f32; 2], cart: &[InventoryItem]) -> Option<Hit> {
-        let local = self.frame.local(cursor, Self::height())?;
+        let local = self.frame.local(cursor, self.height())?;
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
         }
-        let [ok, cancel] = Self::buttons();
+        if !self.frame.minimized && window::on_grip([self.size.width, self.height()], local) {
+            return Some(Hit::Resize);
+        }
+        let [ok, cancel] = self.buttons();
         if contains(ok, BUTTON, local) {
             return Some(Hit::Ok);
         }
@@ -113,7 +177,7 @@ impl Setup {
             return Some(Hit::Name);
         }
         let row = ((local[1] - TITLE_HEIGHT - NAME_FIELD) / ROW) as usize + self.scroll;
-        Some(if local[1] < Self::height() - FOOTER && row < cart.len() { Hit::Row(row) } else { Hit::Window })
+        Some(if local[1] < self.height() - FOOTER && row < cart.len() { Hit::Row(row) } else { Hit::Window })
     }
 
     pub fn click(&mut self, hit: Hit, cart: &[InventoryItem]) -> Option<Action> {
@@ -148,7 +212,7 @@ impl Setup {
     }
 
     pub fn scroll_by(&mut self, rows: i32, count: usize) {
-        self.scroll = (self.scroll as i32 + rows).clamp(0, count.saturating_sub(ROWS) as i32) as usize;
+        self.scroll = (self.scroll as i32 + rows).clamp(0, count.saturating_sub(self.size.rows) as i32) as usize;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -167,33 +231,35 @@ impl Setup {
     ) {
         let at = |local: [f32; 2]| self.frame.at(local);
         self.frame.draw_title(layer, chrome, messages.get(SETUP_MESSAGE).map_or("", String::as_str), pointer.0);
-        let height = Self::height();
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, height - TITLE_HEIGHT - FOOTER]));
+        let height = self.height();
+        let width = self.size.width;
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [width, height - TITLE_HEIGHT - FOOTER]));
         // The shop's name, typed in.
-        layer.sprites.push((&chrome.border, at([5.0, TITLE_HEIGHT + 3.0]), [WIDTH - 10.0, 18.0]));
-        layer.sprites.push((&chrome.white, at([6.0, TITLE_HEIGHT + 4.0]), [WIDTH - 12.0, 16.0]));
+        layer.sprites.push((&chrome.border, at([5.0, TITLE_HEIGHT + 3.0]), [width - 10.0, 18.0]));
+        layer.sprites.push((&chrome.white, at([6.0, TITLE_HEIGHT + 4.0]), [width - 12.0, 16.0]));
         let name = if self.typing && caret { format!("{}|", self.name) } else { self.name.clone() };
-        layer.texts.push((window::fit(font, &name, WIDTH - 20.0), at([9.0, TITLE_HEIGHT + 5.0]), [0, 0, 0]));
+        layer.texts.push((window::fit(font, &name, width - 20.0), at([9.0, TITLE_HEIGHT + 5.0]), [0, 0, 0]));
         // The cart, picked items marked with their price.
-        for (place, item) in cart.iter().enumerate().skip(self.scroll).take(ROWS) {
+        for (place, item) in cart.iter().enumerate().skip(self.scroll).take(self.size.rows) {
             let top = TITLE_HEIGHT + NAME_FIELD + (place - self.scroll) as f32 * ROW;
             let price = self.prices.get(&item.index);
             if price.is_some() {
-                layer.sprites.push((&assets.picked, at([1.0, top]), [WIDTH - 2.0, ROW]));
+                layer.sprites.push((&assets.picked, at([1.0, top]), [width - 2.0, ROW]));
             }
             draw_item(layer, icons, items, font, item, at([4.0, top + 4.0]));
             if let Some(price) = price {
                 let text = format!("{} z", group(u64::from(*price)));
-                layer.texts.push((text.clone(), at([WIDTH - 6.0 - font.width(&text), top + 10.0]), [0, 0, 0]));
+                layer.texts.push((text.clone(), at([width - 6.0 - font.width(&text), top + 10.0]), [0, 0, 0]));
             }
         }
         let hit = self.hit(pointer.0, cart);
-        layer.sprites.push((&assets.footer, at([0.0, height - FOOTER]), [WIDTH, FOOTER]));
-        let [ok, cancel] = Self::buttons();
+        layer.sprites.push((&assets.footer, at([0.0, height - FOOTER]), [width, FOOTER]));
+        let [ok, cancel] = self.buttons();
         for (images, place, target) in [(&assets.ok, ok, Hit::Ok), (&assets.cancel, cancel, Hit::Cancel)] {
             let look = if hit == Some(target) { 1 + usize::from(pointer.1) } else { 0 };
             layer.sprites.push((&images[look], at(place), BUTTON));
         }
+        layer.sprites.push((&assets.resize, at([width - window::GRIP, height - window::GRIP]), assets.resize.size));
     }
 }
 
@@ -202,21 +268,51 @@ pub struct MyShop {
     pub frame: Frame,
     pub name: String,
     pub goods: Vec<VendItem>,
+    /// Its size, and the corner grip while held.
+    pub size: GridSize,
+    grip: window::Grip,
 }
 
 impl MyShop {
-    pub fn new(name: String, goods: Vec<VendItem>) -> Self {
-        let mut frame = Frame::new(POSITION, WIDTH);
+    pub fn new(name: String, goods: Vec<VendItem>, size: GridSize) -> Self {
+        let mut frame = Frame::new(POSITION, size.width);
         frame.open = true;
-        Self { frame, name, goods }
+        Self { frame, name, goods, size, grip: window::Grip::default() }
     }
 
     fn height(&self) -> f32 {
-        TITLE_HEIGHT + ROWS as f32 * ROW + FOOTER
+        TITLE_HEIGHT + self.size.rows as f32 * ROW + FOOTER
     }
 
     fn close_button(&self) -> [f32; 2] {
-        [WIDTH - 60.0, self.height() - FOOTER + 4.0]
+        [self.size.width - 60.0, self.height() - FOOTER + 4.0]
+    }
+
+    /// Whether `cursor` is on the corner grip.
+    pub fn on_grip(&self, cursor: [f32; 2]) -> bool {
+        !self.frame.minimized && self.frame.local(cursor, self.height()).is_some_and(|local| window::on_grip([self.size.width, self.height()], local))
+    }
+
+    pub fn start_resize(&mut self, cursor: [f32; 2]) {
+        self.grip.start(cursor, [self.size.width, self.height()]);
+    }
+
+    /// While held by its grip, takes the size the pointer asks for; returns whether it's held.
+    pub fn resize_to(&mut self, cursor: [f32; 2]) -> bool {
+        let Some(asked) = self.grip.asked(cursor) else { return false };
+        self.size = GridSize::asked(asked, TITLE_HEIGHT);
+        self.frame.set_width(self.size.width);
+        true
+    }
+
+    pub fn stop_resize(&mut self) -> bool {
+        self.grip.stop()
+    }
+
+    /// The corner grip on screen (for the test driver).
+    pub fn grip_box(&self) -> [f32; 4] {
+        let [x, y] = self.frame.at([self.size.width - window::GRIP, self.height() - window::GRIP]);
+        [x, y, window::GRIP, window::GRIP]
     }
 
     /// Over the window: true on its close button.
@@ -252,16 +348,18 @@ impl MyShop {
         let title = format!("{} : {}", messages.get(SHOP_MESSAGE).map_or("", String::as_str), self.name);
         self.frame.draw_title(layer, chrome, &title, pointer.0);
         let height = self.height();
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, height - TITLE_HEIGHT - FOOTER]));
-        for (place, good) in self.goods.iter().enumerate().take(ROWS) {
+        let width = self.size.width;
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [width, height - TITLE_HEIGHT - FOOTER]));
+        for (place, good) in self.goods.iter().enumerate().take(self.size.rows) {
             let top = TITLE_HEIGHT + place as f32 * ROW;
             draw_item(layer, icons, items, font, &good.item, at([4.0, top + 4.0]));
             let text = format!("{} z", group(u64::from(good.price)));
-            layer.texts.push((text.clone(), at([WIDTH - 6.0 - font.width(&text), top + 10.0]), [0, 0, 0]));
+            layer.texts.push((text.clone(), at([width - 6.0 - font.width(&text), top + 10.0]), [0, 0, 0]));
         }
-        layer.sprites.push((&assets.footer, at([0.0, height - FOOTER]), [WIDTH, FOOTER]));
+        layer.sprites.push((&assets.footer, at([0.0, height - FOOTER]), [width, FOOTER]));
         let look = if self.hit(pointer.0) == Some(true) { 1 + usize::from(pointer.1) } else { 0 };
         layer.sprites.push((&assets.close[look], at(self.close_button()), BUTTON));
+        layer.sprites.push((&assets.resize, at([width - window::GRIP, height - window::GRIP]), assets.resize.size));
     }
 }
 
@@ -294,6 +392,28 @@ pub fn icons(items: &HashMap<u32, ItemInfo>, shown: impl Iterator<Item = (u32, b
 mod tests {
     use super::*;
 
+    #[test]
+    fn vending_grids_resize_like_the_cart() {
+        assert_eq!(GridSize::default(), GridSize { width: 280.0, rows: 5 });
+        assert_eq!(GridSize::clamped(100.0, 9), GridSize { width: 248.0, rows: 5 });
+        assert_eq!(GridSize::clamped(320.0, 0), GridSize { width: 312.0, rows: 2 });
+        let mut setup = Setup::new(3, GridSize::default());
+        let corner = setup.frame.at([setup.size.width - 5.0, setup.height() - 5.0]);
+        assert_eq!(setup.hit(corner, &[]), Some(Hit::Resize));
+        setup.start_resize(corner);
+        // 40 px narrower is 248; 96 up is three rows fewer (31 more wouldn't be one).
+        assert!(setup.resize_to([corner[0] - 40.0, corner[1] - 96.0]));
+        assert_eq!(setup.size, GridSize { width: 248.0, rows: 2 });
+        assert!(setup.stop_resize() && !setup.resize_to(corner));
+        // The open shop takes the same size and grip.
+        let mut shop = MyShop::new("Shop".into(), Vec::new(), setup.size);
+        let corner = shop.frame.at([shop.size.width - 5.0, shop.height() - 5.0]);
+        assert!(shop.on_grip(corner));
+        shop.start_resize(corner);
+        shop.resize_to([corner[0] + 64.0, corner[1] + 64.0]);
+        assert_eq!(shop.size, GridSize { width: 312.0, rows: 4 });
+    }
+
     fn item(index: u16, amount: u16) -> InventoryItem {
         InventoryItem { index, id: 512, amount, identified: true, ..Default::default() }
     }
@@ -301,7 +421,7 @@ mod tests {
     #[test]
     fn picks_goods_and_sells_them_down() {
         let cart = [item(2, 5), item(3, 1)];
-        let mut setup = Setup::new(2);
+        let mut setup = Setup::new(2, GridSize::default());
         assert_eq!(setup.click(Hit::Row(0), &cart), Some(Action::Price(2)));
         setup.prices.insert(2, 15);
         assert_eq!(setup.click(Hit::Ok, &cart), None, "no name yet");
@@ -311,7 +431,7 @@ mod tests {
         // Clicking a picked item takes it off.
         assert_eq!(setup.click(Hit::Row(0), &cart), None);
         assert!(setup.prices.is_empty());
-        let mut shop = MyShop::new("Apples".into(), vec![VendItem { index: 2, item: item(2, 5), price: 15 }]);
+        let mut shop = MyShop::new("Apples".into(), vec![VendItem { index: 2, item: item(2, 5), price: 15 }], GridSize::default());
         shop.sold(2, 3);
         assert_eq!(shop.goods[0].item.amount, 2);
         shop.sold(2, 2);
