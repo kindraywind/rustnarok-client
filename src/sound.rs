@@ -37,9 +37,10 @@ pub struct Settings {
     pub volume: [u8; 2],
 }
 
+/// A first run: music on at 100, effects on at 64.
 impl Default for Settings {
     fn default() -> Self {
-        Self { on: [true; 2], volume: [100; 2] }
+        Self { on: [true; 2], volume: [100, 64] }
     }
 }
 
@@ -70,13 +71,15 @@ impl Settings {
         [0, 1].map(|kind| if self.on[kind] { f32::from(self.volume[kind]) / f32::from(MAX_VOLUME) } else { 0.0 })
     }
 
-    /// The chat's sound commands: /music and /sound turn music or effects on and off, /bv and /v (0 to 127) set
-    /// their volumes. None for any other text; otherwise the message (by number) to show, if any.
+    /// The chat's sound commands: /bgm and /sound (and their Korean names, typed or in Korean letters on an English
+    /// keyboard) turn music or effects on and off, /bv and /v (0 to 127) set their volumes. None for any other text;
+    /// otherwise the message (by number) to show, if any.
+    // ponytail: /bv and /v aren't the game's; they stay until the Game Settings sound rows (#326) set the volumes.
     pub fn command(&mut self, text: &str) -> Option<Option<usize>> {
         let (command, value) = text.split_once(' ').map_or((text, None), |(command, value)| (command, Some(value.trim())));
         let kind = match command {
-            "/music" | "/bv" => 0,
-            "/sound" | "/v" => 1,
+            "/bgm" | "/음악" | "/dmadkr" | "/ㅠ흐" | "/bv" => 0,
+            "/sound" | "/효과음" | "/gyrhkdma" | "/v" => 1,
             _ => return None,
         };
         if command == "/bv" || command == "/v" {
@@ -119,7 +122,7 @@ impl Mixer {
         data.fill(0.0);
         let volumes = self.volumes;
         for voice in &mut self.voices {
-            let gain = voice.volume * volumes[usize::from(!voice.music)] / 32_768.0;
+            let gain = voice.gain(volumes[0]) / 32_768.0;
             let (samples, frames) = (&voice.sound.samples, voice.sound.samples.len() / 2);
             for frame in data.chunks_mut(channels) {
                 // Between two of its frames, linearly; music goes round, an effect stops at its end.
@@ -152,6 +155,8 @@ pub struct Audio {
     rate: u32,
     _stream: cpal::Stream,
     effects: HashMap<String, Option<Samples>>,
+    /// Music is on (/bgm): while off, no song starts.
+    music_on: bool,
 }
 
 impl Audio {
@@ -178,15 +183,23 @@ impl Audio {
             )
             .ok()?;
         stream.play().ok()?;
-        Some(Self { mixer, rate, _stream: stream, effects: HashMap::new() })
+        Some(Self { mixer, rate, _stream: stream, effects: HashMap::new(), music_on: settings.on[0] })
     }
 
+    /// New settings: the song's volume changes at once (playing effects keep theirs); music off stops the song and
+    /// forgets it.
     pub fn set(&mut self, settings: &Settings) {
         self.mixer.lock().unwrap().volumes = settings.gains();
+        self.music_on = settings.on[0];
+        if !self.music_on {
+            self.play_music(None);
+        }
     }
 
-    /// Plays music from a file on a loop (decoding it on a thread), unless it's what plays already; None stops it.
+    /// Plays music from a file on a loop (decoding it on a thread), unless it's what plays already or music is off;
+    /// None stops it.
     pub fn play_music(&mut self, path: Option<&Path>) {
+        let path = wanted(path, self.music_on);
         let mut mixer = self.mixer.lock().unwrap();
         if mixer.music.as_deref() == path {
             return;
@@ -217,7 +230,9 @@ impl Audio {
         let sound = self.effects.entry(name.to_lowercase()).or_insert_with(|| decode(grf.read(&format!("data\\wav\\{name}")).ok()?, "wav")).clone();
         let Some(sound) = sound else { return };
         let mut mixer = self.mixer.lock().unwrap();
-        if mixer.voices.iter().filter(|voice| !voice.music).count() >= MOST_EFFECTS {
+        // An effect keeps the effects' volume it starts with: /sound and a volume change reach only those after it.
+        let volume = volume * mixer.volumes[1];
+        if volume <= 0.0 || mixer.voices.iter().filter(|voice| !voice.music).count() >= MOST_EFFECTS {
             return;
         }
         crate::control::sound_played(name);
@@ -225,10 +240,20 @@ impl Audio {
     }
 }
 
+/// The song to play: none while music is off.
+fn wanted(path: Option<&Path>, music_on: bool) -> Option<&Path> {
+    path.filter(|_| music_on)
+}
+
 impl Voice {
     fn new(sound: Samples, rate: u32, volume: f32, music: bool) -> Self {
         let step = f64::from(sound.rate) / f64::from(rate);
         Self { sound, at: 0.0, step, volume, music }
+    }
+
+    /// Its gain now: the song follows the music volume; an effect keeps what it started with.
+    fn gain(&self, music: f32) -> f32 {
+        if self.music { self.volume * music } else { self.volume }
     }
 }
 
@@ -289,7 +314,8 @@ mod tests {
     #[test]
     fn mixes_and_resamples() {
         let sound = |samples: Vec<i16>| Arc::new(Sound { samples, rate: 1 });
-        let voice = Voice::new(sound(vec![16_384, -16_384, 24_576, 8_192]), 1, 1.0, false);
+        // An effect at the half volume it started with.
+        let voice = Voice::new(sound(vec![16_384, -16_384, 24_576, 8_192]), 1, 0.5, false);
         let mut mixer = Mixer { voices: vec![voice], volumes: [1.0, 0.5], music: None };
         let mut out = [0.0; 6];
         mixer.mix(&mut out, 2);
@@ -312,12 +338,32 @@ mod tests {
     #[test]
     fn takes_the_chats_sound_commands() {
         let mut settings = Settings::default();
-        assert_eq!(settings.command("/music"), Some(Some(32)));
+        assert_eq!(settings, Settings { on: [true; 2], volume: [100, 64] });
+        // "BGM Off", "BGM On", ... by any of its names.
+        for (name, shown) in [("/bgm", 32), ("/음악", 31), ("/dmadkr", 32), ("/ㅠ흐", 31)] {
+            assert_eq!(settings.command(name), Some(Some(shown)));
+        }
+        for (name, shown) in [("/sound", 28), ("/효과음", 27), ("/gyrhkdma", 28)] {
+            assert_eq!(settings.command(name), Some(Some(shown)));
+        }
+        assert_eq!(settings.command("/music"), None, "not a game command");
         assert_eq!(settings.command("/v 300"), Some(None));
         assert_eq!(settings.command("/bv x"), Some(None));
         assert_eq!(settings.command("/sit"), None);
-        assert_eq!(settings, Settings { on: [false, true], volume: [100, MAX_VOLUME] });
-        assert_eq!(settings.gains(), [0.0, 1.0]);
+        assert_eq!(settings, Settings { on: [true, false], volume: [100, MAX_VOLUME] });
+        assert_eq!(settings.gains(), [100.0 / 127.0, 0.0]);
+        // While music is off no song starts.
+        let song = Path::new("BGM/08.mp3");
+        assert_eq!((wanted(Some(song), true), wanted(Some(song), false)), (Some(song), None));
+    }
+
+    #[test]
+    fn keeps_an_effects_start_gain_while_the_song_follows() {
+        let sound = Arc::new(Sound { samples: vec![0; 4], rate: 1 });
+        let effect = Voice::new(sound.clone(), 1, 0.5, false);
+        let song = Voice::new(sound, 1, 1.0, true);
+        assert_eq!([effect.gain(0.2), effect.gain(1.0)], [0.5, 0.5]);
+        assert_eq!([song.gain(0.2), song.gain(1.0)], [0.2, 1.0]);
     }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf` (and the music in `BGM`, if it's there).
