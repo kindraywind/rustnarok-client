@@ -5261,7 +5261,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_EQUIPSWITCH_ADDED => MapEvent::SwitchAdded { index: u16_at(2), places: u32_at(4), result: u16_at(8) },
         ZC_EQUIPSWITCH_REMOVED => MapEvent::SwitchRemoved { index: u16_at(2), places: u32_at(4) },
         ZC_EQUIPSWITCH_REPLY => MapEvent::Switched { failed: u16_at(2) != 0 },
-        ZC_INVENTORY_TAB => MapEvent::FavoriteMoved { index: u16_at(2), favorite: packet[4] != 0 },
+        // rathena's byte is set when the item is out of the favourites (`clif_favorite_item`).
+        ZC_INVENTORY_TAB => MapEvent::FavoriteMoved { index: u16_at(2), favorite: packet[4] == 0 },
         // Length, then the indexes.
         ZC_MERGE_ITEM_OPEN => MapEvent::MergeOpen(packet[4..].chunks_exact(2).map(|index| self::u16_at(index, 0)).collect()),
         ZC_ACK_MERGE_ITEM => MapEvent::Merged { index: u16_at(2), amount: u16_at(4), result: packet[6] },
@@ -6088,7 +6089,8 @@ mod tests {
     fn moves_favourites_and_identifies() {
         assert_eq!(encode_favorite(7, false), [0x07, 0x09, 7, 0, 0]);
         assert_eq!(encode_favorite(7, true)[4], 1);
-        let Some(MapEvent::FavoriteMoved { index: 7, favorite: true }) = decode_map_packet(&[0x08, 0x09, 7, 0, 1]) else { panic!() };
+        let Some(MapEvent::FavoriteMoved { index: 7, favorite: true }) = decode_map_packet(&[0x08, 0x09, 7, 0, 0]) else { panic!() };
+        let Some(MapEvent::FavoriteMoved { favorite: false, .. }) = decode_map_packet(&[0x08, 0x09, 7, 0, 1]) else { panic!() };
         assert_eq!(encode_index(CZ_REQ_ONECLICK_ITEMIDENTIFY, 7), [0x35, 0x0A, 7, 0]);
         assert_eq!([CZ_INVENTORY_TAB, ZC_INVENTORY_TAB, CZ_REQ_ONECLICK_ITEMIDENTIFY].map(packet_length), [Some(5), Some(5), Some(4)]);
         // The favourite flag: bit 2 of an equipment's flags, bit 1 of another item's.
