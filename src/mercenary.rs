@@ -41,26 +41,26 @@ pub fn title(job: u16) -> usize {
 
 // ponytail: data.grf has no mercenary window; the homunculus's background (same labels and bar frames) under the
 // window's title, the values beside its labels, the rest in its empty right half and the buttons on a bar below.
-const WIDTH: f32 = 280.0;
+pub(crate) const WIDTH: f32 = 280.0;
 /// The background's own title strip hides under the window's.
-const BACKGROUND_TOP: f32 = TITLE_HEIGHT - 16.0;
-const BACKGROUND_HEIGHT: f32 = 180.0;
-const FOOTER: f32 = 27.0;
+pub(crate) const BACKGROUND_TOP: f32 = TITLE_HEIGHT - 16.0;
+pub(crate) const BACKGROUND_HEIGHT: f32 = 180.0;
+pub(crate) const FOOTER: f32 = 27.0;
 /// The eight values' right edge and their first row's top; a row every 18 px (the background's underlines).
 const VALUE_RIGHT: f32 = 79.0;
 const FIRST_ROW: f32 = 23.0;
 const ROW: f32 = 18.0;
 /// The HP and SP bars' insides.
-const BARS: [[f32; 2]; 2] = [[118.0, 74.0], [118.0, 89.0]];
+pub(crate) const BARS: [[f32; 2]; 2] = [[118.0, 74.0], [118.0, 89.0]];
 const BAR_FULL: f32 = 75.0;
 const BAR_NUMBERS: f32 = 206.0;
 /// The right half: labels, values' right edge, and the rows above and below the bars.
-const RIGHT_LABEL: f32 = 100.0;
-const RIGHT_VALUE: f32 = WIDTH - 8.0;
-const UPPER_ROWS: [f32; 2] = [21.0, 39.0];
-const LOWER_ROWS: [f32; 4] = [107.0, 125.0, 143.0, 161.0];
-const BUTTON: [f32; 2] = [42.0, 20.0];
-const TEXT: [u8; 3] = [0, 0, 0];
+pub(crate) const RIGHT_LABEL: f32 = 100.0;
+pub(crate) const RIGHT_VALUE: f32 = WIDTH - 8.0;
+pub(crate) const UPPER_ROWS: [f32; 2] = [21.0, 39.0];
+pub(crate) const LOWER_ROWS: [f32; 4] = [107.0, 125.0, 143.0, 161.0];
+pub(crate) const BUTTON: [f32; 2] = [42.0, 20.0];
+pub(crate) const TEXT: [u8; 3] = [0, 0, 0];
 
 pub struct Assets {
     background: Option<Texture>,
@@ -78,11 +78,57 @@ impl Assets {
         let button = |name: &str| ["", "_a", "_b"].map(|suffix| gpu.load_texture(grf, &format!("{UI}btn_{name}{suffix}.bmp"), false));
         Self {
             background: gpu.try_load_texture(grf, &format!("{basic}homuninfo_bg.bmp"), false).ok(),
-            bars: ["blue", "red"].map(|color| ["left", "mid", "right"].map(|part| gpu.load_texture(grf, &format!("{basic}gze{color}_{part}.bmp"), false))),
+            bars: load_bars(gpu, grf),
             footer: gpu.load_texture(grf, &format!("{basic}btnbar_mid2.bmp"), false),
             skill: button("skill"),
             dismiss: button("fired"),
         }
+    }
+}
+
+/// The blue and red bars' left, middle and right pieces.
+pub(crate) fn load_bars(gpu: &Gpu, grf: &Grf) -> [[Texture; 3]; 2] {
+    let basic = format!("{UI}basic_interface\\");
+    ["blue", "red"].map(|color| ["left", "mid", "right"].map(|part| gpu.load_texture(grf, &format!("{basic}gze{color}_{part}.bmp"), false)))
+}
+
+/// The window's background under its title: the homuninfo picture, or white without it.
+pub(crate) fn draw_background<'a>(layer: &mut Layer<'a>, frame: &Frame, chrome: &'a Chrome, background: Option<&'a Texture>) {
+    match background {
+        Some(background) => layer.sprites.push((background, frame.at([0.0, BACKGROUND_TOP]), background.size)),
+        None => layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [WIDTH, BACKGROUND_HEIGHT])),
+    }
+}
+
+/// `text` with its right edge at `right`, `top` below the background's top.
+pub(crate) fn right_text(font: &Font, frame: &Frame, text: String, right: f32, top: f32) -> (String, [f32; 2], [u8; 3]) {
+    let x = (right - font.width(&text)).floor();
+    (text, frame.at([x, BACKGROUND_TOP + top]), TEXT)
+}
+
+/// Atk, Matk, Hit, Critical, Def, Mdef, Flee and Aspd beside the background's labels (ASPD as the status window shows it).
+pub(crate) fn draw_values(layer: &mut Layer, frame: &Frame, font: &Font, values: [u16; 7], aspd: u16) {
+    let aspd = 200 - i32::from(aspd) / 10;
+    let values = values.map(|value| value.to_string()).into_iter().chain([aspd.to_string()]);
+    for (row, value) in values.enumerate() {
+        layer.texts.push(right_text(font, frame, value, VALUE_RIGHT, FIRST_ROW + row as f32 * ROW));
+    }
+}
+
+/// The HP and SP bars filled to their share, with `now/most` beside them.
+pub(crate) fn draw_bars<'a>(layer: &mut Layer<'a>, frame: &Frame, bars: &'a [[Texture; 3]; 2], hp: (u32, u32), sp: (u32, u32)) {
+    for (bar, (now, most)) in [hp, sp].into_iter().enumerate() {
+        let percent = if most > 0 { (u64::from(now) * 100 / u64::from(most)).min(100) } else { 0 };
+        if percent > 0 {
+            // Blue, red when low: SP is always blue.
+            let [left, middle, end] = &bars[usize::from(bar == 0 && percent < 25)];
+            let width = (percent as f32 * BAR_FULL / 100.0).floor();
+            let at = [BARS[bar][0], BACKGROUND_TOP + BARS[bar][1]];
+            layer.sprites.push((left, frame.at(at), left.size));
+            layer.sprites.push((middle, frame.at(offset(at, [left.size[0], 0.0])), [width, middle.size[1]]));
+            layer.sprites.push((end, frame.at(offset(at, [left.size[0] + width, 0.0])), end.size));
+        }
+        layer.texts.push((format!("{now}/{most}"), frame.at([BAR_NUMBERS, BACKGROUND_TOP + BARS[bar][1] - 4.0]), TEXT));
     }
 }
 
@@ -169,41 +215,21 @@ impl Window {
         let frame = &self.frame;
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
         if !frame.minimized {
-            match &assets.background {
-                Some(background) => layer.sprites.push((background, frame.at([0.0, BACKGROUND_TOP]), background.size)),
-                None => layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [WIDTH, BACKGROUND_HEIGHT])),
-            }
+            draw_background(layer, frame, chrome, assets.background.as_ref());
         }
         frame.draw_title(layer, chrome, message(title(job)), pointer.0);
         if frame.minimized {
             return;
         }
-        let right = |text: String, right: f32, top: f32| {
-            let x = (right - font.width(&text)).floor();
-            (text, frame.at([x, BACKGROUND_TOP + top]), TEXT)
-        };
-        // Atk, Matk, Hit, Critical, Def, Mdef, Flee and Aspd, as the status window shows ASPD.
-        let aspd = 200 - i32::from(mercenary.aspd) / 10;
-        let values = [mercenary.atk, mercenary.matk, mercenary.hit, mercenary.critical, mercenary.def, mercenary.mdef, mercenary.flee]
-            .map(|value| value.to_string())
-            .into_iter()
-            .chain([aspd.to_string()]);
-        for (row, value) in values.enumerate() {
-            layer.texts.push(right(value, VALUE_RIGHT, FIRST_ROW + row as f32 * ROW));
-        }
-        for (bar, (now, most)) in [(mercenary.hp, mercenary.max_hp), (mercenary.sp, mercenary.max_sp)].into_iter().enumerate() {
-            let percent = if most > 0 { (u64::from(now) * 100 / u64::from(most)).min(100) } else { 0 };
-            if percent > 0 {
-                // Blue, red when low: SP is always blue.
-                let [left, middle, end] = &assets.bars[usize::from(bar == 0 && percent < 25)];
-                let width = (percent as f32 * BAR_FULL / 100.0).floor();
-                let at = [BARS[bar][0], BACKGROUND_TOP + BARS[bar][1]];
-                layer.sprites.push((left, frame.at(at), left.size));
-                layer.sprites.push((middle, frame.at(offset(at, [left.size[0], 0.0])), [width, middle.size[1]]));
-                layer.sprites.push((end, frame.at(offset(at, [left.size[0] + width, 0.0])), end.size));
-            }
-            layer.texts.push((format!("{now}/{most}"), frame.at([BAR_NUMBERS, BACKGROUND_TOP + BARS[bar][1] - 4.0]), TEXT));
-        }
+        let right = |text: String, edge: f32, top: f32| right_text(font, frame, text, edge, top);
+        draw_values(
+            layer,
+            frame,
+            font,
+            [mercenary.atk, mercenary.matk, mercenary.hit, mercenary.critical, mercenary.def, mercenary.mdef, mercenary.flee],
+            mercenary.aspd,
+        );
+        draw_bars(layer, frame, &assets.bars, (mercenary.hp, mercenary.max_hp), (mercenary.sp, mercenary.max_sp));
         let rows = [
             (UPPER_ROWS[0], "", crate::window::fit(font, &mercenary.name, RIGHT_VALUE - RIGHT_LABEL)),
             (UPPER_ROWS[1], message(LEVEL), mercenary.level.to_string()),
