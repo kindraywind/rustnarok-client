@@ -808,6 +808,7 @@ fn character_look(character: &Character) -> Look {
         head_mid: character.head_mid,
         head_bottom: character.head_bottom,
         robe: character.robe,
+        option: character.option & actor::BODY_OPTIONS,
     }
 }
 
@@ -824,6 +825,7 @@ fn unit_look(unit: &net::Unit) -> Look {
         head_mid: unit.head_mid,
         head_bottom: unit.head_bottom,
         robe: unit.robe,
+        option: unit.option & actor::BODY_OPTIONS,
     }
 }
 
@@ -5153,6 +5155,7 @@ impl App {
                     head_mid: equipped.head_mid,
                     head_bottom: equipped.head_bottom,
                     robe: equipped.robe,
+                    option: 0,
                 };
                 game.viewing = Some(Viewed {
                     window: equipment::Equipment::of(equipped.name),
@@ -6692,6 +6695,17 @@ impl App {
             // Potions and the like: green HP or blue SP over the player.
             MapEvent::Recovered { kind, amount } => {
                 game.damages.push(Damage { target: None, amount, start: Instant::now(), kind: DamageKind::Heal { sp: kind == net::STATUS_SP }, flinch: None });
+            }
+            // Mounting, dismounting or an outfit puts a player in another body.
+            MapEvent::OptionChange { id, option } => {
+                let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
+                if let Some(actor) = actor
+                    && let Some(look) = &mut actor.look
+                    && look.option != option & actor::BODY_OPTIONS
+                {
+                    look.option = option & actor::BODY_OPTIONS;
+                    actor.sprites = SpriteSet::player(grf, look, look_tables);
+                }
             }
             MapEvent::LookChange { id, kind, value, extra } => {
                 // A skill's ground unit becoming another (rathena's Warp Portal opens this way): the new one's effect.
