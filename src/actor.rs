@@ -1067,6 +1067,19 @@ pub const WARG_REACH: f32 = world::CELL * 3.0;
 /// The warg's shadow, twice a body's.
 pub const WARG_SHADOW: f32 = 2.0;
 
+/// Sprite jobs that keep their shadow while sitting: the Star Gladiator line's union forms, which float.
+const SITTING_SHADOW_JOBS: [u16; 5] = [4048, 4238, 4243, 4244, 4316];
+
+/// How wide a unit's shadow is, in cells (0 for none): its sprite job's factor from the data's tables, 1 when the job
+/// isn't listed. A player (`player`) casts none while dead or sitting, but for the floating union forms.
+pub fn shadow_factor(factors: &HashMap<u16, f32>, player: bool, job: u16, option: u32, sitting: bool, dead: bool) -> f32 {
+    let sprite = if player { sprite_job(job, option) } else { job };
+    if player && (dead || sitting && !SITTING_SHADOW_JOBS.contains(&sprite)) {
+        return 0.0;
+    }
+    factors.get(&sprite).copied().unwrap_or(1.0)
+}
+
 /// Cell steps of the eight facings, from south, turning west. World X is east, Z is north.
 const FACING: [[f32; 2]; 8] = [[0.0, -1.0], [-1.0, -1.0], [-1.0, 0.0], [-1.0, 1.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [1.0, -1.0]];
 
@@ -1554,6 +1567,22 @@ mod tests {
     fn apart(a: [f32; 2], b: [f32; 2]) -> f32 {
         let (dx, dz) = (a[0] - b[0], a[1] - b[1]);
         (dx * dx + dz * dz).sqrt()
+    }
+
+    #[test]
+    fn casts_shadows_by_sprite_job() {
+        let factors = HashMap::from([(14, 1.5), (4048, 1.0), (1002, 0.5), (45, 0.0)]);
+        // By the sprite job: a Crusader (14) is listed here; riding, its sprite job is 21, which isn't.
+        assert_eq!(shadow_factor(&factors, true, 14, 0, false, false), 1.5);
+        assert_eq!(shadow_factor(&factors, true, 14, RIDING, false, false), 1.0);
+        // Sitting or dead players: none, but for the floating union forms.
+        assert_eq!(shadow_factor(&factors, true, 0, 0, true, false), 0.0);
+        assert_eq!(shadow_factor(&factors, true, 0, 0, false, true), 0.0);
+        assert_eq!(shadow_factor(&factors, true, 4047, UNION, true, false), 1.0);
+        // Monsters and NPCs by their job, sitting or not; warps none.
+        assert_eq!(shadow_factor(&factors, false, 1002, 0, false, false), 0.5);
+        assert_eq!(shadow_factor(&factors, false, 45, 0, false, false), 0.0);
+        assert_eq!(shadow_factor(&factors, false, 1031, 0, false, false), 1.0);
     }
 
     #[test]

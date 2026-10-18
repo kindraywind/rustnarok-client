@@ -1,0 +1,4 @@
+prontera,151,184,4	script	Shadow 1	1002,{ end; }
+prontera,154,184,4	script	Shadow 2	1039,{ end; }
+prontera,157,184,4	script	Shadow 3	1023,{ end; }
+prontera,160,184,4	script	Shadow 4	1219,{ end; }

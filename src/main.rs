@@ -436,8 +436,8 @@ const PARTY_INVITE: usize = 2056;
 /// A dropped item starts this many cells up and falls one cell per 40ms.
 const DROP_HEIGHT: f32 = 5.0;
 const DROP_MS_PER_CELL: f32 = 40.0;
-/// Items cast a quarter of a character's shadow.
-const ITEM_SHADOW: f32 = 0.25;
+/// Items cast 0.4 of a character's shadow.
+const ITEM_SHADOW: f32 = 0.4;
 
 /// The size a unit is drawn at. The size table applies to monsters (1 when the job isn't listed).
 /// ChangeSize's percent multiplies that. 100 leaves it. None leaves the table factor.
@@ -4466,6 +4466,8 @@ struct App {
     job_names: HashMap<u16, String>,
     /// Sprite scale by monster job. A job that isn't listed is drawn at 1×.
     monster_sizes: HashMap<u16, f32>,
+    /// Shadow width by sprite job, in cells (`actor::shadow_factor`).
+    shadow_factors: HashMap<u16, f32>,
     /// Pets' tables and what they say.
     pets: pet::Data,
     /// The achievements (the translation's achievements.lub) and the titles they give, by ID.
@@ -11213,6 +11215,7 @@ impl App {
         let (skill_info, skill_trees, status_icon_files) = (&self.skill_info, &self.skill_trees, &self.status_icon_files);
         let state_infos = &self.state_infos;
         let monster_sizes = &self.monster_sizes;
+        let shadow_factors = &self.shadow_factors;
         let font = &self.font;
         let now = control::now();
         let pointer = (self.cursor, self.mouse_down);
@@ -11489,16 +11492,24 @@ impl App {
         let shadow_placements = game.shadow.as_mut().map(|shadow| shadow.frame(gpu, 0, 0, 0, Timing::Loop(0.0))).unwrap_or_default();
         let mut billboards: Vec<Billboard> = Vec::new();
         if let Some(shadow) = &game.shadow {
+            // On the ground under each unit, even one in the air (a falling item).
+            let cast = |actor: &actor::Actor, scale: f32| {
+                let factor = actor::shadow_factor(shadow_factors, actor.kind == PLAYER, actor.job, actor.option, actor.sitting, actor.dead);
+                factor * scale
+            };
             for (owner, feet, _) in &frames {
                 let dead = matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.remove_at.is_some()));
                 let scale = match owner {
                     Owner::Item(_) => ITEM_SHADOW,
-                    Owner::Player => player_scale,
-                    Owner::Unit(id) => game.units.get(id).map(|actor| unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent)).unwrap_or(1.0),
+                    Owner::Player => cast(&game.player, player_scale),
+                    Owner::Unit(id) => {
+                        game.units.get(id).map(|actor| cast(actor, unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent))).unwrap_or(1.0)
+                    }
                 };
-                if !dead {
+                if !dead && scale > 0.0 {
+                    let ground = game.world.ground_under(*feet);
                     billboards.extend(shadow_placements.iter().map(|(key, position, size, angle)| {
-                        (shadow.texture(*key), *feet, position.map(|value| value * scale), size.map(|value| value * scale), [1.0; 4], *angle)
+                        (shadow.texture(*key), ground, position.map(|value| value * scale), size.map(|value| value * scale), [1.0; 4], *angle)
                     }));
                 }
             }
@@ -13202,6 +13213,10 @@ fn main() {
         HashMap::new()
     });
     let monster_sizes = lua::monster_sizes(&grf);
+    let shadow_factors = lua::shadow_factors(&grf).unwrap_or_else(|error| {
+        eprintln!("no shadow table: {error}");
+        HashMap::new()
+    });
     let items = lua::item_info(&grf).unwrap_or_else(|error| {
         eprintln!("no item names: {error}");
         HashMap::new()
@@ -13287,6 +13302,7 @@ fn main() {
         grf,
         job_names,
         monster_sizes,
+        shadow_factors,
         pets,
         achievement_info,
         synthesis_boxes,

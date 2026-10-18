@@ -76,6 +76,9 @@ const WORLD_VIEW: [&str; 4] = [
 /// names.
 const ENTRY_QUEUE: &str = "data\\luafiles514\\lua files\\entryqueue\\entryqueuelist.lub";
 /// Per monster job, how big its sprite is drawn (`tbl[job].MonsterSize`). The new file is read second and wins.
+const JOB_IDENTITY: &str = "data\\luafiles514\\lua files\\datainfo\\jobidentity.lub";
+const SHADOW_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\shadowtable.lub";
+const NPC_LOCATION_RADIUS: &str = "data\\luafiles514\\lua files\\datainfo\\npclocationradius.lub";
 const MONSTER_SIZE: &str = "system\\monster_size_effect.lub";
 const MONSTER_SIZE_NEW: &str = "system\\monster_size_effect_new.lub";
 
@@ -799,6 +802,44 @@ pub fn monster_sizes(grf: &Grf) -> HashMap<u16, f32> {
     sizes
 }
 
+/// How wide each sprite job's shadow is, in cells (1 when the job isn't listed): a unit standing on a radius of r
+/// cells (`NpcLocationRadius`) gets 2r + 1, else the shadow table's factor (`ShadowFactorTable`, 0 for none).
+pub fn shadow_factors(grf: &Grf) -> io::Result<HashMap<u16, f32>> {
+    let read = |path: &str| grf.read(path);
+    shadow_tables(read(NPC_IDENTITY)?, read(JOB_IDENTITY)?, read(SHADOW_TABLE)?, read(NPC_LOCATION_RADIUS).ok())
+}
+
+fn shadow_tables(npc_identity: Vec<u8>, job_identity: Vec<u8>, shadows: Vec<u8>, radius: Option<Vec<u8>>) -> io::Result<HashMap<u16, f32>> {
+    let lua = new_lua()?;
+    exec_bytes(&lua, NPC_IDENTITY, npc_identity)?;
+    exec_bytes(&lua, JOB_IDENTITY, job_identity)?;
+    // Names these identity tables don't know all land on one unused key.
+    lua.load("for _, t in ipairs({jobtbl, JTtbl}) do setmetatable(t, { __index = function() return -1 end }) end").exec().map_err(lua_error)?;
+    exec_bytes(&lua, SHADOW_TABLE, shadows)?;
+    let mut factors = HashMap::new();
+    let table = |name: &str| lua.globals().get::<mlua::Table>(name).map_err(lua_error);
+    for pair in table("ShadowFactorTable")?.pairs::<mlua::Value, mlua::Value>() {
+        let (job, factor) = pair.map_err(lua_error)?;
+        if let (Some(job), Some(factor)) = (number(&job).and_then(|job| u16::try_from(job).ok()), lua_f32(factor))
+            && factor >= 0.0
+        {
+            factors.insert(job, factor);
+        }
+    }
+    if let Some(radius) = radius {
+        exec_bytes(&lua, NPC_LOCATION_RADIUS, radius)?;
+        for pair in table("NpcLocationRadius")?.pairs::<mlua::Value, mlua::Value>() {
+            let (job, radius) = pair.map_err(lua_error)?;
+            if let (Some(job), Some(radius)) = (number(&job).and_then(|job| u16::try_from(job).ok()), lua_f32(radius))
+                && radius != 0.0
+            {
+                factors.insert(job, 2.0 * radius + 1.0);
+            }
+        }
+    }
+    Ok(factors)
+}
+
 /// The old table, then the new one over it. A missing side is skipped.
 #[cfg(test)]
 fn monster_size_tables(old: Option<&[u8]>, new: Option<&[u8]>) -> io::Result<HashMap<u16, f32>> {
@@ -1516,6 +1557,29 @@ mod tests {
         // Translated where the translation has it; the newer item keeps the client's name.
         assert_eq!((items[&501].name.as_str(), items[&25_000].name.as_str()), ("Red Potion", "새 아이템"));
         assert!(super::layered(Err(std::io::ErrorKind::NotFound.into()), None).is_err());
+    }
+
+    #[test]
+    fn reads_shadow_factors_by_sprite_job() {
+        let npcs = b"jobtbl = { JT_WARPNPC = 45, JT_PORING = 1002, JT_KADES = 1900, JT_EGG = 1047 }".to_vec();
+        let jobs = b"JTtbl = { JT_KNIGHT_H = 4014, JT_NOVICE = 0 }".to_vec();
+        let shadows = br#"
+            ShadowFactorTable = {
+                [jobtbl.JT_WARPNPC] = 0, [jobtbl.JT_PORING] = 0.5, [jobtbl.JT_EGG] = 0,
+                [JTtbl.JT_KNIGHT_H] = 1.5, [jobtbl.JT_NOT_IN_THIS_DATA] = 3, [jobtbl.JT_KADES] = 2,
+            }
+        "#
+        .to_vec();
+        let radius = b"NpcLocationRadius = { [jobtbl.JT_KADES] = 1 }".to_vec();
+        let factors = super::shadow_tables(npcs.clone(), jobs.clone(), shadows.clone(), Some(radius)).unwrap();
+        // None for warps and eggs, a smaller one for a Poring, a mounted Knight's wider.
+        assert_eq!((factors[&45], factors[&1047], factors[&1002], factors[&4014]), (0.0, 0.0, 0.5, 1.5));
+        // A unit standing on a radius of one cell: three cells wide, whatever the shadow table says.
+        assert_eq!(factors[&1900], 3.0);
+        // Unlisted jobs (the Novice) and names this data doesn't know aren't in the table.
+        assert!(!factors.contains_key(&0));
+        assert_eq!(factors.len(), 5);
+        assert_eq!(super::shadow_tables(npcs, jobs, shadows, None).unwrap()[&1900], 2.0);
     }
 
     #[test]

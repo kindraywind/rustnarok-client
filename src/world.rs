@@ -570,6 +570,11 @@ impl World {
         })
     }
 
+    /// The ground under a world point: the same x and z, at the ground's height there.
+    pub fn ground_under(&self, point: Vector) -> Vector {
+        [point[0], -self.gat.height_at([point[0] / CELL, point[2] / CELL]), point[2]]
+    }
+
     /// World position of a (fractional) cell's center on the ground.
     pub fn cell_position(&self, cell: [f32; 2]) -> Vector {
         let height = self.gat.height([cell[0].round() as i32, cell[1].round() as i32]);

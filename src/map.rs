@@ -268,6 +268,18 @@ impl Gat {
         let y = y.clamp(0, self.height as i32 - 1) as usize;
         self.cells[y * self.width + x].0.iter().sum::<f32>() / 4.0
     }
+
+    /// The ground's height at a point in cells (cell (x, y) spans x..x+1, y..y+1; y north), between its cell's four
+    /// corner heights.
+    pub fn height_at(&self, [x, y]: [f32; 2]) -> f32 {
+        let cell = [x.floor() as i32, y.floor() as i32];
+        let [west, south] = [cell[0].clamp(0, self.width as i32 - 1), cell[1].clamp(0, self.height as i32 - 1)];
+        let [south_west, south_east, north_west, north_east] = self.cells[south as usize * self.width + west as usize].0;
+        let [across, up] = [(x - cell[0] as f32).clamp(0.0, 1.0), (y - cell[1] as f32).clamp(0.0, 1.0)];
+        let south_side = south_west + (south_east - south_west) * across;
+        let north_side = north_west + (north_east - north_west) * across;
+        south_side + (north_side - south_side) * up
+    }
 }
 
 /// Maps the client treats as indoors (closer camera, limited rotation), from data\indoorrswtable.txt.
@@ -342,6 +354,19 @@ pub fn parse_viewpoints(text: &str) -> HashMap<String, Viewpoint> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_the_ground_between_a_cells_corners() {
+        // One cell sloping up to the north-east (negative is up), one flat.
+        let gat = Gat { width: 2, height: 1, cells: vec![([0.0, -2.0, -4.0, -6.0], 0), ([-1.0; 4], 0)] };
+        assert_eq!(gat.height_at([0.0, 0.0]), 0.0);
+        assert_eq!(gat.height_at([0.5, 0.5]), -3.0);
+        assert_eq!(gat.height_at([0.25, 0.0]), -0.5);
+        assert_eq!(gat.height_at([0.0, 0.75]), -3.0);
+        assert_eq!(gat.height_at([1.5, 0.5]), -1.0);
+        // Off the map: the nearest cell's edge.
+        assert_eq!(gat.height_at([-3.0, 0.5]), -2.0);
+    }
 
     #[test]
     fn reads_the_viewpoint_table() {
