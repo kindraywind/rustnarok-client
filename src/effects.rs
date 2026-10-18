@@ -52,14 +52,39 @@ pub struct Table {
     quakes: HashMap<u32, (Duration, Duration)>,
     /// What skills' units on the ground show while they're there, by rathena's UNT_ number: an effect, a model.
     units: HashMap<u32, u32>,
+    /// Units whose effect plays once and is kept rather than starting again.
+    units_once: std::collections::HashSet<u32>,
     models: HashMap<u32, String>,
     misc: HashMap<u32, u32>,
     skills: HashMap<(u16, String), Vec<u32>>,
     items: HashMap<u32, u32>,
     sounds: HashMap<u32, Vec<Sound>>,
+    /// Damaging skills: the two hit effects on the target, the caster's effect, and what else plays as the packet
+    /// comes (on the caster or the target).
+    hits: HashMap<u16, [Option<u32>; 2]>,
+    casters: HashMap<u16, Option<u32>>,
+    struck: HashMap<u16, Vec<(Who, u32)>>,
+    /// Skills without damage, and ground skills (at the cell or on the caster).
+    used: HashMap<u16, Vec<(Who, u32)>>,
+    grounds: HashMap<u16, Vec<(Who, u32)>>,
+    /// What a trap (by skill unit type) shows when it goes off.
+    traps: HashMap<u32, u32>,
     /// What a status (by EFST id) plays again and again on its unit while it's on.
     statuses: HashMap<u16, Vec<u32>>,
 }
+
+/// Where a skill's effect plays.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Who {
+    Caster,
+    Target,
+    Ground,
+}
+
+/// The caster effect of the newest jobs' skills: none.
+const NO_CASTER_EFFECT: [std::ops::RangeInclusive<u16>; 3] = [5401..=5507, 6001..=6006, 6525..=6606];
+/// What most damaging skills show on their caster.
+const CASTER_EFFECT: u32 = 16;
 
 /// A sound an effect plays (a file under data\wav\ without .wav), `delay_ms` after it starts; `%d` in the
 /// file picks from `random`.
@@ -78,11 +103,18 @@ impl Table {
             sprites: HashMap::new(),
             quakes: HashMap::new(),
             units: HashMap::new(),
+            units_once: std::collections::HashSet::new(),
             models: HashMap::new(),
             misc: HashMap::new(),
             skills: HashMap::new(),
             items: HashMap::new(),
             sounds: HashMap::new(),
+            hits: HashMap::new(),
+            casters: HashMap::new(),
+            struck: HashMap::new(),
+            used: HashMap::new(),
+            grounds: HashMap::new(),
+            traps: HashMap::new(),
             statuses: HashMap::new(),
         };
         let parameters = |text: &str| -> HashMap<String, String> {
@@ -91,6 +123,13 @@ impl Table {
         for line in include_str!("effects.txt").lines().filter(|line| !line.starts_with('#')) {
             let fields: Vec<&str> = line.split('\t').collect();
             let number = |index: usize| fields.get(index).and_then(|field| field.parse::<u32>().ok());
+            // -1 for none.
+            let effect = |index: usize| fields.get(index).and_then(|field| field.parse::<i64>().ok()).and_then(|value| u32::try_from(value).ok());
+            let who = |field: &str| match field {
+                "caster" => Who::Caster,
+                "ground" => Who::Ground,
+                _ => Who::Target,
+            };
             match fields[..] {
                 ["str", _, file, folder, attached, ..] => {
                     let Some(id) = number(1) else { continue };
@@ -111,6 +150,9 @@ impl Table {
                 ["unit", ..] => {
                     if let (Some(kind), Some(id)) = (number(1), number(2)) {
                         table.units.insert(kind, id);
+                        if fields.get(3) == Some(&"once") {
+                            table.units_once.insert(kind);
+                        }
                     }
                 }
                 ["rsm", _, file] => {
@@ -146,6 +188,31 @@ impl Table {
                         table.items.insert(item, id);
                     }
                 }
+                ["hit", ..] => {
+                    if let Some(skill) = number(1) {
+                        table.hits.insert(skill as u16, [effect(2), effect(3)]);
+                    }
+                }
+                ["caster", ..] => {
+                    if let Some(skill) = number(1) {
+                        table.casters.insert(skill as u16, effect(2));
+                    }
+                }
+                ["struck" | "used" | "ground", _, place, _] => {
+                    let list = match fields[0] {
+                        "struck" => &mut table.struck,
+                        "used" => &mut table.used,
+                        _ => &mut table.grounds,
+                    };
+                    if let (Some(skill), Some(id)) = (number(1), number(3)) {
+                        list.entry(skill as u16).or_default().push((who(place), id));
+                    }
+                }
+                ["trap", ..] => {
+                    if let (Some(kind), Some(id)) = (number(1), number(2)) {
+                        table.traps.insert(kind, id);
+                    }
+                }
                 ["status", ..] => {
                     if let (Some(status), Some(id)) = (number(1), number(2)) {
                         table.statuses.entry(status as u16).or_default().push(id);
@@ -155,6 +222,41 @@ impl Table {
             }
         }
         table
+    }
+
+    /// A damaging skill's two effects on its target at each hit, when the table has the skill.
+    pub fn hit(&self, skill: u16) -> Option<[Option<u32>; 2]> {
+        self.hits.get(&skill).copied()
+    }
+
+    /// What a damaging skill shows on its caster as the packet comes: the table's, none for the newest jobs' skills,
+    /// else 16.
+    pub fn caster(&self, skill: u16) -> Option<u32> {
+        match self.casters.get(&skill) {
+            Some(&effect) => effect,
+            None if NO_CASTER_EFFECT.iter().any(|range| range.contains(&skill)) => None,
+            None => Some(CASTER_EFFECT),
+        }
+    }
+
+    /// What else a damaging skill shows as the packet comes, when the table has the skill.
+    pub fn struck(&self, skill: u16) -> Option<&[(Who, u32)]> {
+        self.struck.get(&skill).map(Vec::as_slice)
+    }
+
+    /// What a skill without damage shows, when the table has the skill.
+    pub fn used(&self, skill: u16) -> Option<&[(Who, u32)]> {
+        self.used.get(&skill).map(Vec::as_slice)
+    }
+
+    /// What a ground skill shows, when the table has the skill.
+    pub fn ground(&self, skill: u16) -> Option<&[(Who, u32)]> {
+        self.grounds.get(&skill).map(Vec::as_slice)
+    }
+
+    /// What a trap of this skill unit type shows when it goes off.
+    pub fn trap(&self, kind: u32) -> Option<u32> {
+        self.traps.get(&kind).copied()
     }
 
     /// The effects a status (EFST id) keeps playing on its unit while it's on.
@@ -215,6 +317,8 @@ pub enum Target {
     Ground,
     /// A skill's unit on the ground (Fire Wall, a warp portal): its parts start again until it goes.
     Lasting(u32),
+    /// A skill's unit on the ground whose effect plays once and is kept until it goes (Sanctuary, Gospel).
+    Kept(u32),
     /// A unit (None = the player) under a status (EFST id): its parts follow it and start again until
     /// `forget_status`.
     Status(Option<u32>, u16),
@@ -460,6 +564,8 @@ pub struct Effects {
     quakes: Vec<(Instant, Instant)>,
     /// Sounds waiting for their moment: when, the file (under data\wav\), and where.
     sounds: Vec<(Instant, String, Vector)>,
+    /// The skill unit type of each ground unit shown, for what it shows when it changes (a trap going off).
+    unit_kinds: HashMap<u32, u32>,
 }
 
 /// A whole number in `from..=to`.
@@ -602,7 +708,7 @@ impl Effects {
         }
         let anchor = |attached: bool| match target {
             Target::Unit(unit) if attached => Anchor::Unit(unit),
-            Target::Lasting(unit) => Anchor::Lasting(unit, at),
+            Target::Lasting(unit) | Target::Kept(unit) => Anchor::Lasting(unit, at),
             Target::Status(unit, status) => Anchor::Status(unit, status),
             _ => Anchor::At(at),
         };
@@ -662,8 +768,10 @@ impl Effects {
     pub fn play_unit(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, kind: u32, id: u32, at: Vector, now: Instant) {
         // The server tells again of units coming back into sight.
         self.forget(id);
+        self.unit_kinds.insert(id, kind);
         if let Some(&effect) = table.units.get(&kind) {
-            self.play(gpu, grf, table, effect, Target::Lasting(id), at, now);
+            let target = if table.units_once.contains(&kind) { Target::Kept(id) } else { Target::Lasting(id) };
+            self.play(gpu, grf, table, effect, target, at, now);
         }
         let Some(file) = table.models.get(&kind) else { return };
         let model = self.models.entry(file.clone()).or_insert_with(|| load_model(grf, file).map(Rc::new)).clone();
@@ -707,14 +815,23 @@ impl Effects {
             }
         }
         self.rings.retain(|ring| now < ring.end);
+        // A repeating one starts again 8 frames before it ends, so there's no gap: the old one plays out underneath.
+        let mut tails = Vec::new();
         self.playing.retain_mut(|playing| {
             let animation = &playing.loaded.animation;
-            let length = Duration::from_secs_f32(animation.frames as f32 / animation.fps.max(1) as f32);
-            while playing.again && !length.is_zero() && now >= playing.start + length {
-                playing.start += length;
+            let fps = animation.fps.max(1) as f32;
+            let length = Duration::from_secs_f32(animation.frames as f32 / fps);
+            let period = Duration::from_secs_f32(animation.frames.saturating_sub(8).max(1) as f32 / fps);
+            while playing.again && !length.is_zero() && now >= playing.start + period {
+                let previous = playing.start;
+                playing.start += period;
+                if now < previous + length {
+                    tails.push(Playing { loaded: playing.loaded.clone(), start: previous, anchor: playing.anchor, again: false });
+                }
             }
             now < playing.start + length
         });
+        self.playing.extend(tails);
         self.quakes.retain(|(_, until)| now < *until);
 
         // ponytail: sprites face south as seen; the few effect sprites drawn in 8 directions would face their unit.
@@ -763,6 +880,11 @@ impl Effects {
             _ => None,
         });
         playing.or_else(|| standing_at(&self.standing, unit))
+    }
+
+    /// The skill unit type a ground unit was shown as.
+    pub fn unit_kind(&self, unit: u32) -> Option<u32> {
+        self.unit_kinds.get(&unit).copied()
     }
 
     /// Stops what a status plays on its unit (None = the player).
@@ -900,6 +1022,30 @@ fn load_model(grf: &Grf, file: &str) -> Option<Model> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn says_what_skills_show() {
+        let table = Table::load();
+        // Hit effects: Bash 0, Magnum Break 49 on each target, Pierce none (not in the table, so the skill lines).
+        assert_eq!((table.hit(5), table.hit(7)), (Some([Some(0), None]), Some([Some(49), None])));
+        assert_eq!(table.hit(56), None);
+        // On the caster: Bash and the default 16, Brandish Spear 144, the bolts none, the newest jobs' none.
+        assert_eq!((table.caster(5), table.caster(57), table.caster(19), table.caster(5450)), (Some(16), Some(144), None, None));
+        assert_eq!(table.caster(4000), Some(16));
+        // As the packet comes: Cold Bolt's falling arrows on the target.
+        assert_eq!(table.struck(14), Some(&[(Who::Target, 26)][..]));
+        // Ground skills: Volcano and Land Protector at the cell; Ice Wall too.
+        assert_eq!(
+            (table.ground(285), table.ground(288), table.ground(87)),
+            (Some(&[(Who::Ground, 225)][..]), Some(&[(Who::Ground, 238)][..]), Some(&[(Who::Ground, 74)][..]))
+        );
+        // A Claymore Trap (0x98) and a Sandman (0x95) going off.
+        assert_eq!((table.trap(0x98), table.trap(0x95), table.trap(0x7e)), (Some(107), Some(139), None));
+        // Units: Sacramenti, Gospel and Earth Strain.
+        assert_eq!((table.units.get(&0x82), table.units.get(&0xb3), table.units.get(&0xcb)), (Some(&91), Some(&370), Some(&142)));
+        // Earth Strain and Gospel play once and are kept; a warp portal starts again.
+        assert!(table.units_once.contains(&0xcb) && table.units_once.contains(&0xb3) && !table.units_once.contains(&0x80));
+    }
 
     #[test]
     fn says_what_a_status_keeps_playing() {

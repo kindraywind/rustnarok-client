@@ -6,8 +6,15 @@
 # ring <effect id> <name=value;...>: a textured cylinder growing, turning and fading
 # spr <effect id> <sprite under data\sprite\이팩트\ without .spr> <follows the unit 1/0> <name=value;... or ->: a sprite's animation
 # func <effect id> quake <delay ms> <duration ms>: what the client does in code for the effect; quake shakes the camera
-# unit <skill unit type> <effect id>: what a skill's unit on the ground (ZC_SKILL_ENTRY, rathena's UNT_) shows while it's there
+# unit <skill unit type> <effect id> [once]: what a skill's unit on the ground (ZC_SKILL_ENTRY, rathena's UNT_) shows while it's there (once: played once and kept, not started again)
 # rsm <skill unit type> <model under data\model\ without .rsm>: the model standing on such a unit's cell (traps)
+# wav <effect id> <file under data\wav\ without .wav> <delay ms> [random from to]: a sound the effect plays
+# hit <skill> <hit effect 1> <hit effect 2>: what a damaging skill shows on its target at each hit (-1 none); skills not listed fall back to the skill lines
+# caster <skill> <effect>: what a damaging skill shows on its caster as the packet comes (-1 none); skills not listed show 16
+# struck <skill> <caster|target> <effect>: what else a damaging skill shows as the packet comes
+# used <skill> <caster|target> <effect>: what a skill without damage (ZC_USE_SKILL) shows
+# ground <skill> <ground|caster> <effect>: what a ground skill (ZC_NOTIFY_GROUNDSKILL) shows at its cell or on its caster
+# trap <skill unit type> <effect>: what a trap shows at its cell when it goes off (its look turning into 0x8c)
 # status <EFST id> <effect id>: what a status (ZC_MSG_STATE_CHANGE*) plays again and again on its unit while it's on
 str	10	maemor	-	1
 str	13	safetywall	-	0
@@ -1732,39 +1739,7 @@ func	563	quake	0	200
 func	666	quake	0	650
 func	668	quake	0	650
 func	732	quake	0	200
-unit	126	315
-unit	127	25
-unit	128	317
-unit	129	316
-unit	131	319
-unit	132	318
 unit	133	141
-unit	135	138
-unit	141	74
-unit	142	95
-unit	146	171
-unit	154	239
-unit	155	240
-unit	156	241
-unit	157	242
-unit	177	302
-unit	180	374
-unit	183	404
-unit	185	517
-unit	188	631
-unit	189	634
-unit	199	674
-unit	202	754
-unit	203	732
-unit	204	822
-unit	205	825
-unit	206	827
-unit	207	828
-unit	208	829
-unit	218	856
-unit	220	920
-unit	221	926
-unit	222	860
 rsm	143	외부소품\트랩03_3
 rsm	144	외부소품\트랩02
 rsm	145	외부소품\트랩01
@@ -1784,7 +1759,6 @@ rsm	215	event\3차트랩_수01
 rsm	216	event\3차트랩_풍01
 rsm	217	event\3차트랩_지01
 rsm	229	event\3차트랩_가시01
-# wav <effect id> <file under data\wav\ without .wav> <delay ms> [random from to]: a sound the effect plays
 wav	1	effect\ef_hit2	0
 wav	2	effect\ef_hit3	0
 wav	3	effect\ef_hit4	0
@@ -2148,6 +2122,1978 @@ wav	1190	effect\drop_purple	0
 wav	1869	effect\drop_blue	0
 wav	1870	effect\drop_green	0
 wav	1871	effect\drop_red	0
+hit	1	0	-1
+hit	2	0	-1
+hit	3	0	-1
+hit	4	0	-1
+hit	5	0	-1
+hit	6	0	-1
+hit	8	0	-1
+hit	9	0	-1
+hit	10	0	-1
+hit	11	0	-1
+hit	12	0	-1
+hit	13	0	-1
+hit	16	0	-1
+hit	18	0	-1
+hit	21	0	-1
+hit	22	0	-1
+hit	23	0	-1
+hit	24	0	-1
+hit	25	0	-1
+hit	26	0	-1
+hit	27	0	-1
+hit	28	0	-1
+hit	29	0	-1
+hit	30	0	-1
+hit	31	0	-1
+hit	32	0	-1
+hit	33	0	-1
+hit	34	0	-1
+hit	35	0	-1
+hit	36	0	-1
+hit	37	0	-1
+hit	38	0	-1
+hit	39	0	-1
+hit	40	0	-1
+hit	41	0	-1
+hit	42	0	-1
+hit	43	0	-1
+hit	44	0	-1
+hit	45	0	-1
+hit	46	0	-1
+hit	47	0	-1
+hit	48	0	-1
+hit	49	0	-1
+hit	50	0	-1
+hit	51	0	-1
+hit	52	0	-1
+hit	53	0	-1
+hit	55	0	-1
+hit	60	0	-1
+hit	61	0	-1
+hit	62	0	-1
+hit	63	0	-1
+hit	64	0	-1
+hit	65	0	-1
+hit	66	0	-1
+hit	67	0	-1
+hit	68	0	-1
+hit	69	0	-1
+hit	70	0	-1
+hit	71	0	-1
+hit	72	0	-1
+hit	73	0	-1
+hit	74	0	-1
+hit	75	0	-1
+hit	76	0	-1
+hit	77	0	-1
+hit	78	0	-1
+hit	79	0	-1
+hit	80	0	-1
+hit	81	0	-1
+hit	82	0	-1
+hit	83	0	-1
+hit	84	0	-1
+hit	85	0	-1
+hit	86	0	-1
+hit	87	0	-1
+hit	88	0	-1
+hit	89	0	-1
+hit	92	0	-1
+hit	93	0	-1
+hit	94	0	-1
+hit	95	0	-1
+hit	96	0	-1
+hit	97	0	-1
+hit	98	0	-1
+hit	99	0	-1
+hit	100	0	-1
+hit	101	0	-1
+hit	102	0	-1
+hit	103	0	-1
+hit	104	0	-1
+hit	105	0	-1
+hit	106	0	-1
+hit	107	0	-1
+hit	108	0	-1
+hit	109	0	-1
+hit	110	0	-1
+hit	111	0	-1
+hit	112	0	-1
+hit	113	0	-1
+hit	114	0	-1
+hit	115	0	-1
+hit	116	0	-1
+hit	117	0	-1
+hit	118	0	-1
+hit	119	0	-1
+hit	120	0	-1
+hit	121	0	-1
+hit	122	0	-1
+hit	123	0	-1
+hit	124	0	-1
+hit	125	0	-1
+hit	126	0	-1
+hit	127	0	-1
+hit	128	0	-1
+hit	130	0	-1
+hit	131	0	-1
+hit	132	0	-1
+hit	133	0	-1
+hit	134	0	-1
+hit	135	0	-1
+hit	136	0	-1
+hit	137	0	-1
+hit	138	0	-1
+hit	139	0	-1
+hit	140	0	-1
+hit	141	0	-1
+hit	142	0	-1
+hit	143	0	-1
+hit	144	0	-1
+hit	145	0	-1
+hit	146	0	-1
+hit	147	0	-1
+hit	148	0	-1
+hit	149	0	-1
+hit	150	0	-1
+hit	151	0	-1
+hit	152	0	-1
+hit	153	0	-1
+hit	154	0	-1
+hit	155	0	-1
+hit	156	0	-1
+hit	157	0	-1
+hit	158	0	-1
+hit	159	0	-1
+hit	160	0	-1
+hit	161	0	-1
+hit	162	0	-1
+hit	163	0	-1
+hit	164	0	-1
+hit	165	0	-1
+hit	166	0	-1
+hit	167	0	-1
+hit	168	0	-1
+hit	169	0	-1
+hit	170	0	-1
+hit	171	0	-1
+hit	172	0	-1
+hit	173	0	-1
+hit	174	0	-1
+hit	175	0	-1
+hit	176	0	-1
+hit	177	0	-1
+hit	178	0	-1
+hit	179	0	-1
+hit	180	0	-1
+hit	181	0	-1
+hit	182	0	-1
+hit	183	0	-1
+hit	191	0	-1
+hit	192	0	-1
+hit	193	0	-1
+hit	194	0	-1
+hit	195	0	-1
+hit	196	0	-1
+hit	197	0	-1
+hit	198	0	-1
+hit	199	0	-1
+hit	200	0	-1
+hit	201	0	-1
+hit	202	0	-1
+hit	203	0	-1
+hit	204	0	-1
+hit	205	0	-1
+hit	206	0	-1
+hit	207	0	-1
+hit	208	0	-1
+hit	209	0	-1
+hit	210	0	-1
+hit	211	0	-1
+hit	212	0	-1
+hit	213	0	-1
+hit	214	0	-1
+hit	215	0	-1
+hit	216	0	-1
+hit	217	0	-1
+hit	218	0	-1
+hit	219	0	-1
+hit	220	0	-1
+hit	221	0	-1
+hit	222	0	-1
+hit	223	0	-1
+hit	224	0	-1
+hit	225	0	-1
+hit	226	0	-1
+hit	227	0	-1
+hit	228	0	-1
+hit	229	0	-1
+hit	230	0	-1
+hit	231	0	-1
+hit	232	0	-1
+hit	233	0	-1
+hit	234	0	-1
+hit	235	0	-1
+hit	236	0	-1
+hit	237	0	-1
+hit	238	0	-1
+hit	239	0	-1
+hit	240	0	-1
+hit	241	0	-1
+hit	242	0	-1
+hit	243	0	-1
+hit	244	0	-1
+hit	245	0	-1
+hit	246	0	-1
+hit	247	0	-1
+hit	248	0	-1
+hit	249	0	-1
+hit	250	0	-1
+hit	251	0	-1
+hit	252	0	-1
+hit	253	0	-1
+hit	254	0	-1
+hit	255	0	-1
+hit	256	0	-1
+hit	257	0	-1
+hit	258	0	-1
+hit	259	0	-1
+hit	260	0	-1
+hit	261	0	-1
+hit	262	0	-1
+hit	263	0	-1
+hit	264	0	-1
+hit	265	0	-1
+hit	266	0	-1
+hit	267	0	-1
+hit	268	0	-1
+hit	269	0	-1
+hit	270	0	-1
+hit	271	0	-1
+hit	272	0	-1
+hit	273	0	-1
+hit	274	0	-1
+hit	275	0	-1
+hit	276	0	-1
+hit	277	0	-1
+hit	278	0	-1
+hit	279	0	-1
+hit	280	0	-1
+hit	281	0	-1
+hit	282	0	-1
+hit	283	0	-1
+hit	284	0	-1
+hit	285	0	-1
+hit	286	0	-1
+hit	287	0	-1
+hit	288	0	-1
+hit	289	0	-1
+hit	290	0	-1
+hit	291	0	-1
+hit	292	0	-1
+hit	293	0	-1
+hit	294	0	-1
+hit	295	0	-1
+hit	296	0	-1
+hit	297	0	-1
+hit	298	0	-1
+hit	299	0	-1
+hit	300	0	-1
+hit	301	0	-1
+hit	302	0	-1
+hit	303	0	-1
+hit	304	0	-1
+hit	305	0	-1
+hit	306	0	-1
+hit	307	0	-1
+hit	308	0	-1
+hit	309	0	-1
+hit	310	0	-1
+hit	311	0	-1
+hit	312	0	-1
+hit	313	0	-1
+hit	314	0	-1
+hit	315	0	-1
+hit	316	0	-1
+hit	317	0	-1
+hit	318	0	-1
+hit	319	0	-1
+hit	320	0	-1
+hit	321	0	-1
+hit	322	0	-1
+hit	323	0	-1
+hit	324	0	-1
+hit	325	0	-1
+hit	326	0	-1
+hit	327	0	-1
+hit	328	0	-1
+hit	329	0	-1
+hit	330	0	-1
+hit	331	0	-1
+hit	332	0	-1
+hit	333	0	-1
+hit	334	0	-1
+hit	335	0	-1
+hit	336	0	-1
+hit	337	0	-1
+hit	338	0	-1
+hit	339	0	-1
+hit	340	0	-1
+hit	341	0	-1
+hit	342	0	-1
+hit	343	0	-1
+hit	344	0	-1
+hit	345	0	-1
+hit	346	0	-1
+hit	348	0	-1
+hit	349	0	-1
+hit	350	0	-1
+hit	351	0	-1
+hit	352	0	-1
+hit	353	0	-1
+hit	354	0	-1
+hit	355	0	-1
+hit	356	0	-1
+hit	357	0	-1
+hit	358	0	-1
+hit	359	0	-1
+hit	360	0	-1
+hit	361	0	-1
+hit	362	0	-1
+hit	363	0	-1
+hit	364	0	-1
+hit	365	0	-1
+hit	366	0	-1
+hit	367	0	-1
+hit	368	0	-1
+hit	369	0	-1
+hit	370	0	-1
+hit	371	0	-1
+hit	372	0	-1
+hit	373	0	-1
+hit	374	0	-1
+hit	375	0	-1
+hit	376	0	-1
+hit	377	0	-1
+hit	378	0	-1
+hit	379	0	-1
+hit	380	0	-1
+hit	381	0	-1
+hit	382	0	-1
+hit	383	0	-1
+hit	384	0	-1
+hit	385	0	-1
+hit	386	0	-1
+hit	387	0	-1
+hit	388	0	-1
+hit	389	0	-1
+hit	390	0	-1
+hit	391	0	-1
+hit	392	0	-1
+hit	393	0	-1
+hit	394	0	-1
+hit	395	0	-1
+hit	396	0	-1
+hit	398	0	-1
+hit	399	0	-1
+hit	400	0	-1
+hit	401	0	-1
+hit	402	0	-1
+hit	403	0	-1
+hit	404	0	-1
+hit	405	0	-1
+hit	406	0	-1
+hit	407	0	-1
+hit	408	0	-1
+hit	409	0	-1
+hit	410	0	-1
+hit	473	0	-1
+hit	474	0	-1
+hit	475	0	-1
+hit	476	0	-1
+hit	477	0	-1
+hit	478	0	-1
+hit	479	0	-1
+hit	480	0	-1
+hit	481	0	-1
+hit	482	0	-1
+hit	483	0	-1
+hit	484	0	-1
+hit	485	0	-1
+hit	486	0	-1
+hit	487	0	-1
+hit	488	0	-1
+hit	489	0	-1
+hit	490	0	-1
+hit	491	0	-1
+hit	492	0	-1
+hit	7	49	-1
+hit	17	49	-1
+hit	19	49	-1
+hit	8202	49	-1
+hit	14	51	-1
+hit	15	51	-1
+hit	20	52	-1
+hit	54	152	-1
+hit	90	147	-1
+hit	91	147	-1
+hit	770	147	-1
+hit	190	180	-1
+hit	2600	180	-1
+hit	2602	180	-1
+hit	467	549	-1
+hit	468	549	-1
+hit	2022	1567	-1
+hit	2202	1591	1592
+hit	2307	-1	1411
+hit	2317	1689	-1
+hit	2519	1689	-1
+hit	2414	1593	-1
+hit	2446	1623	-1
+hit	5243	2095	2096
+hit	5274	1826	-1
+hit	5320	2132	-1
+hit	5322	2115	-1
+caster	1	16
+caster	2	16
+caster	3	16
+caster	4	16
+caster	6	16
+caster	8	16
+caster	36	16
+caster	37	16
+caster	38	16
+caster	39	16
+caster	40	16
+caster	41	16
+caster	43	16
+caster	44	16
+caster	48	16
+caster	49	16
+caster	50	16
+caster	52	16
+caster	53	16
+caster	355	16
+caster	5	16
+caster	7	16
+caster	42	16
+caster	46	16
+caster	366	16
+caster	499	16
+caster	1009	16
+caster	8202	16
+caster	9	12
+caster	10	12
+caster	11	-1
+caster	12	-1
+caster	13	-1
+caster	14	-1
+caster	15	-1
+caster	16	-1
+caster	17	-1
+caster	18	-1
+caster	19	-1
+caster	20	-1
+caster	21	-1
+caster	22	12
+caster	23	12
+caster	24	12
+caster	25	12
+caster	26	12
+caster	27	-1
+caster	30	-1
+caster	31	12
+caster	32	-1
+caster	33	-1
+caster	35	12
+caster	54	12
+caster	65	12
+caster	66	12
+caster	67	12
+caster	68	12
+caster	69	12
+caster	70	12
+caster	71	12
+caster	72	12
+caster	73	12
+caster	74	12
+caster	75	12
+caster	76	12
+caster	77	-1
+caster	78	12
+caster	79	12
+caster	80	12
+caster	81	12
+caster	82	12
+caster	83	12
+caster	84	12
+caster	85	12
+caster	86	-1
+caster	87	12
+caster	88	12
+caster	89	12
+caster	90	12
+caster	91	12
+caster	92	12
+caster	340	-1
+caster	341	12
+caster	342	12
+caster	400	12
+caster	483	12
+caster	669	12
+caster	694	12
+caster	723	12
+caster	769	12
+caster	770	12
+caster	1006	12
+caster	2533	-1
+caster	2534	-1
+caster	2536	-1
+caster	2537	12
+caster	8222	12
+caster	28	-1
+caster	34	-1
+caster	136	-1
+caster	156	-1
+caster	157	-1
+caster	334	-1
+caster	335	-1
+caster	408	-1
+caster	487	-1
+caster	489	-1
+caster	689	-1
+caster	2051	-1
+caster	5063	-1
+caster	5064	-1
+caster	5065	-1
+caster	29	-1
+caster	151	-1
+caster	304	-1
+caster	690	-1
+caster	45	43
+caster	47	-1
+caster	212	-1
+caster	214	-1
+caster	219	-1
+caster	253	-1
+caster	266	-1
+caster	267	-1
+caster	338	-1
+caster	367	-1
+caster	368	-1
+caster	379	-1
+caster	382	-1
+caster	406	-1
+caster	502	-1
+caster	503	-1
+caster	512	-1
+caster	513	-1
+caster	514	-1
+caster	515	-1
+caster	518	-1
+caster	519	-1
+caster	520	-1
+caster	661	-1
+caster	674	-1
+caster	712	-1
+caster	728	-1
+caster	732	-1
+caster	740	-1
+caster	1001	-1
+caster	1005	-1
+caster	2004	-1
+caster	2005	-1
+caster	2006	-1
+caster	2017	-1
+caster	2023	-1
+caster	2030	-1
+caster	2031	-1
+caster	2036	-1
+caster	2037	-1
+caster	2233	-1
+caster	2236	-1
+caster	2259	-1
+caster	2261	-1
+caster	2280	-1
+caster	2284	-1
+caster	2288	-1
+caster	2298	-1
+caster	2314	-1
+caster	2317	-1
+caster	2320	-1
+caster	2324	-1
+caster	2342	-1
+caster	2476	-1
+caster	5245	-1
+caster	5248	-1
+caster	5249	-1
+caster	5250	-1
+caster	5277	-1
+caster	5283	-1
+caster	5287	-1
+caster	5289	-1
+caster	5294	-1
+caster	5295	-1
+caster	5296	-1
+caster	5344	-1
+caster	5345	-1
+caster	5346	-1
+caster	5348	-1
+caster	8601	-1
+caster	8602	-1
+caster	8603	-1
+caster	8604	-1
+caster	8605	-1
+caster	51	-1
+caster	55	-1
+caster	60	-1
+caster	63	-1
+caster	64	-1
+caster	93	-1
+caster	94	-1
+caster	95	-1
+caster	96	-1
+caster	97	-1
+caster	98	-1
+caster	99	-1
+caster	100	-1
+caster	101	-1
+caster	102	-1
+caster	103	-1
+caster	104	-1
+caster	105	-1
+caster	106	-1
+caster	107	-1
+caster	108	-1
+caster	110	-1
+caster	111	-1
+caster	112	-1
+caster	113	-1
+caster	114	-1
+caster	126	-1
+caster	127	-1
+caster	128	-1
+caster	129	-1
+caster	130	-1
+caster	131	-1
+caster	132	-1
+caster	133	-1
+caster	134	-1
+caster	135	-1
+caster	137	-1
+caster	138	-1
+caster	139	-1
+caster	140	-1
+caster	141	-1
+caster	153	-1
+caster	158	-1
+caster	159	-1
+caster	160	-1
+caster	161	-1
+caster	162	-1
+caster	163	-1
+caster	164	-1
+caster	165	-1
+caster	166	-1
+caster	167	-1
+caster	168	-1
+caster	169	-1
+caster	170	-1
+caster	171	-1
+caster	172	-1
+caster	173	-1
+caster	174	-1
+caster	175	-1
+caster	176	-1
+caster	177	-1
+caster	178	-1
+caster	179	-1
+caster	180	-1
+caster	181	-1
+caster	182	-1
+caster	183	-1
+caster	184	-1
+caster	185	-1
+caster	186	-1
+caster	187	-1
+caster	188	-1
+caster	189	-1
+caster	190	-1
+caster	191	-1
+caster	192	-1
+caster	234	-1
+caster	235	-1
+caster	236	-1
+caster	237	-1
+caster	258	-1
+caster	264	-1
+caster	271	-1
+caster	272	-1
+caster	273	-1
+caster	371	-1
+caster	383	-1
+caster	459	-1
+caster	479	-1
+caster	486	-1
+caster	495	-1
+caster	544	-1
+caster	654	-1
+caster	663	-1
+caster	666	-1
+caster	667	-1
+caster	668	-1
+caster	675	-1
+caster	676	-1
+caster	678	-1
+caster	721	-1
+caster	724	-1
+caster	757	-1
+caster	758	-1
+caster	759	-1
+caster	760	-1
+caster	762	-1
+caster	780	-1
+caster	783	-1
+caster	2033	-1
+caster	2038	-1
+caster	2040	-1
+caster	2055	-1
+caster	2056	-1
+caster	2326	-1
+caster	2328	-1
+caster	2329	-1
+caster	2332	-1
+caster	2335	-1
+caster	2338	-1
+caster	2341	-1
+caster	2519	-1
+caster	2584	-1
+caster	2592	-1
+caster	2602	-1
+caster	2604	-1
+caster	5030	-1
+caster	5036	-1
+caster	5043	-1
+caster	5205	-1
+caster	5210	-1
+caster	5214	-1
+caster	5220	-1
+caster	5230	-1
+caster	5233	-1
+caster	5234	-1
+caster	5235	-1
+caster	5237	-1
+caster	5251	-1
+caster	5252	-1
+caster	5253	-1
+caster	5265	-1
+caster	5273	-1
+caster	5274	-1
+caster	5284	-1
+caster	5290	-1
+caster	5326	-1
+caster	5329	-1
+caster	5336	-1
+caster	5338	-1
+caster	5339	-1
+caster	5347	-1
+caster	5356	-1
+caster	5357	-1
+caster	5369	-1
+caster	5373	-1
+caster	5380	-1
+caster	5389	-1
+caster	5390	-1
+caster	5391	-1
+caster	5392	-1
+caster	5393	-1
+caster	8425	-1
+caster	8426	-1
+caster	8428	-1
+caster	8430	-1
+caster	8431	-1
+caster	8433	-1
+caster	8434	-1
+caster	8435	-1
+caster	8442	-1
+caster	8443	-1
+caster	8444	-1
+caster	8445	-1
+caster	8446	-1
+caster	8447	-1
+caster	8448	-1
+caster	8449	-1
+caster	8450	-1
+caster	8451	-1
+caster	8452	-1
+caster	8453	-1
+caster	8454	-1
+caster	8455	-1
+caster	8456	-1
+caster	8457	-1
+caster	56	-1
+caster	58	-1
+caster	61	-1
+caster	62	-1
+caster	109	-1
+caster	263	-1
+caster	370	-1
+caster	372	-1
+caster	397	-1
+caster	398	-1
+caster	399	-1
+caster	484	-1
+caster	1016	-1
+caster	2002	-1
+caster	2022	-1
+caster	5314	-1
+caster	5315	-1
+caster	5316	-1
+caster	5320	-1
+caster	5322	-1
+caster	5382	-1
+caster	57	144
+caster	59	-1
+caster	149	-1
+caster	152	-1
+caster	1004	-1
+caster	115	16
+caster	116	16
+caster	117	16
+caster	118	16
+caster	119	16
+caster	120	16
+caster	121	16
+caster	122	16
+caster	123	16
+caster	124	16
+caster	125	16
+caster	688	16
+caster	2238	16
+caster	2239	16
+caster	2249	16
+caster	2250	16
+caster	2251	16
+caster	2252	16
+caster	2253	16
+caster	2254	16
+caster	5335	16
+caster	196	-1
+caster	209	-1
+caster	249	-1
+caster	252	-1
+caster	257	-1
+caster	268	-1
+caster	349	-1
+caster	350	-1
+caster	356	-1
+caster	380	-1
+caster	384	-1
+caster	387	-1
+caster	411	-1
+caster	444	-1
+caster	8204	-1
+caster	8219	-1
+caster	8220	-1
+caster	229	-1
+caster	230	-1
+caster	231	-1
+caster	232	-1
+caster	250	-1
+caster	251	-1
+caster	480	-1
+caster	2480	-1
+caster	2493	-1
+caster	5340	-1
+caster	5341	-1
+caster	5342	-1
+caster	5343	-1
+caster	243	-1
+caster	244	-1
+caster	247	-1
+caster	337	-1
+caster	344	-1
+caster	345	-1
+caster	346	-1
+caster	365	-1
+caster	373	-1
+caster	374	-1
+caster	375	-1
+caster	381	-1
+caster	389	-1
+caster	402	-1
+caster	403	-1
+caster	425	-1
+caster	427	-1
+caster	434	-1
+caster	462	-1
+caster	463	-1
+caster	464	-1
+caster	465	-1
+caster	467	-1
+caster	468	-1
+caster	469	-1
+caster	470	-1
+caster	471	-1
+caster	472	-1
+caster	485	-1
+caster	493	-1
+caster	720	-1
+caster	731	-1
+caster	735	-1
+caster	736	-1
+caster	737	-1
+caster	738	-1
+caster	739	-1
+caster	741	-1
+caster	742	-1
+caster	744	-1
+caster	745	-1
+caster	2001	-1
+caster	2008	-1
+caster	2009	-1
+caster	2012	-1
+caster	2013	-1
+caster	2014	-1
+caster	2019	-1
+caster	2020	-1
+caster	2021	-1
+caster	2202	-1
+caster	2203	-1
+caster	2204	-1
+caster	2211	-1
+caster	2212	-1
+caster	2214	-1
+caster	2217	-1
+caster	2230	-1
+caster	2231	-1
+caster	2237	-1
+caster	2243	-1
+caster	2244	-1
+caster	2246	-1
+caster	2286	-1
+caster	2287	-1
+caster	2289	-1
+caster	2290	-1
+caster	2291	-1
+caster	2292	-1
+caster	2293	-1
+caster	2294	-1
+caster	2295	-1
+caster	2296	-1
+caster	2297	-1
+caster	2299	-1
+caster	2300	-1
+caster	2301	-1
+caster	2302	-1
+caster	2303	-1
+caster	2304	-1
+caster	2309	-1
+caster	2310	-1
+caster	2315	-1
+caster	2316	-1
+caster	2318	-1
+caster	2319	-1
+caster	2321	-1
+caster	2322	-1
+caster	2325	-1
+caster	2350	-1
+caster	2351	-1
+caster	2352	-1
+caster	2381	-1
+caster	2382	-1
+caster	2383	-1
+caster	2413	-1
+caster	2414	-1
+caster	2417	-1
+caster	2418	-1
+caster	2419	-1
+caster	2420	-1
+caster	2422	-1
+caster	2426	-1
+caster	2429	-1
+caster	2443	-1
+caster	2444	-1
+caster	2446	-1
+caster	2447	-1
+caster	2448	-1
+caster	2449	-1
+caster	2450	-1
+caster	2451	-1
+caster	2452	-1
+caster	2453	-1
+caster	2454	-1
+caster	2455	-1
+caster	2456	-1
+caster	2457	-1
+caster	2458	-1
+caster	2459	-1
+caster	2460	-1
+caster	2477	-1
+caster	2479	-1
+caster	2483	-1
+caster	2492	-1
+caster	2518	-1
+caster	5004	-1
+caster	5078	-1
+caster	8009	-1
+caster	8012	-1
+caster	8401	-1
+caster	256	16
+caster	261	16
+caster	269	16
+caster	369	16
+caster	401	16
+caster	730	16
+caster	1015	16
+caster	2334	16
+caster	306	-1
+caster	307	-1
+caster	308	-1
+caster	309	-1
+caster	310	-1
+caster	311	-1
+caster	312	-1
+caster	313	-1
+caster	325	-1
+caster	327	-1
+caster	328	-1
+caster	329	-1
+caster	330	-1
+caster	395	-1
+caster	396	-1
+caster	488	-1
+caster	316	-1
+caster	324	-1
+caster	394	-1
+caster	530	-1
+caster	2258	-1
+caster	2307	-1
+caster	2308	-1
+caster	2312	-1
+caster	5330	-1
+caster	317	-1
+caster	319	-1
+caster	320	-1
+caster	321	-1
+caster	322	-1
+caster	347	454
+caster	357	16
+caster	359	16
+caster	360	16
+caster	361	16
+caster	362	16
+caster	405	16
+caster	482	16
+caster	691	16
+caster	8206	16
+caster	8414	16
+caster	8415	16
+caster	8416	16
+caster	8417	16
+caster	8418	16
+caster	8419	16
+caster	8420	16
+caster	8421	16
+caster	8422	16
+caster	8423	16
+caster	8424	16
+caster	364	-1
+caster	412	-1
+caster	2015	-1
+caster	2285	-1
+caster	413	-1
+caster	2337	-1
+caster	2576	-1
+caster	414	-1
+caster	2478	-1
+caster	415	-1
+caster	2313	-1
+caster	416	-1
+caster	445	-1
+caster	447	-1
+caster	448	-1
+caster	449	-1
+caster	450	-1
+caster	451	-1
+caster	452	-1
+caster	453	-1
+caster	454	-1
+caster	455	-1
+caster	456	-1
+caster	457	-1
+caster	458	-1
+caster	460	-1
+caster	461	-1
+caster	494	-1
+caster	572	-1
+caster	573	-1
+caster	574	-1
+caster	575	-1
+caster	2333	-1
+caster	2340	-1
+caster	2596	-1
+caster	2597	-1
+caster	2598	-1
+caster	2599	-1
+caster	417	-1
+caster	2311	-1
+caster	2344	-1
+caster	2345	-1
+caster	2346	-1
+caster	2347	-1
+caster	2348	-1
+caster	2593	-1
+caster	418	-1
+caster	2018	-1
+caster	2343	-1
+caster	419	-1
+caster	420	-1
+caster	2323	-1
+caster	421	-1
+caster	2336	-1
+caster	426	-1
+caster	2581	-1
+caster	5023	-1
+caster	428	-1
+caster	429	-1
+caster	430	-1
+caster	431	-1
+caster	432	-1
+caster	433	-1
+caster	446	-1
+caster	478	-1
+caster	490	-1
+caster	2215	-1
+caster	2218	-1
+caster	2219	-1
+caster	2220	-1
+caster	2221	-1
+caster	2240	-1
+caster	2241	-1
+caster	2242	-1
+caster	2415	-1
+caster	2416	-1
+caster	2481	-1
+caster	2482	-1
+caster	2484	-1
+caster	2485	-1
+caster	2486	-1
+caster	2490	-1
+caster	2516	-1
+caster	5219	-1
+caster	5223	-1
+caster	5224	-1
+caster	5226	-1
+caster	5231	-1
+caster	5236	-1
+caster	5243	-1
+caster	5244	-1
+caster	500	-1
+caster	2256	-1
+caster	2260	-1
+caster	2271	-1
+caster	2272	-1
+caster	501	-1
+caster	504	-1
+caster	505	-1
+caster	506	-1
+caster	516	-1
+caster	517	-1
+caster	508	-1
+caster	521	-1
+caster	523	-1
+caster	524	-1
+caster	525	-1
+caster	526	-1
+caster	531	-1
+caster	534	-1
+caster	539	-1
+caster	540	-1
+caster	541	-1
+caster	542	-1
+caster	543	-1
+caster	3006	-1
+caster	3007	-1
+caster	3008	-1
+caster	527	-1
+caster	528	-1
+caster	529	-1
+caster	532	-1
+caster	535	-1
+caster	536	-1
+caster	537	-1
+caster	538	-1
+caster	707	16
+caster	2003	16
+caster	2011	16
+caster	719	49
+caster	1011	-1
+caster	1013	-1
+caster	2027	768
+caster	2028	16
+caster	2029	768
+caster	2032	771
+caster	2034	441
+caster	2262	441
+caster	8404	441
+caster	8406	441
+caster	2257	441
+caster	2445	441
+caster	2263	441
+caster	2264	441
+caster	2265	441
+caster	2267	441
+caster	2268	441
+caster	2273	441
+caster	2274	441
+caster	2269	441
+caster	2270	548
+caster	2275	58
+caster	2278	12
+caster	2279	12
+caster	2327	-1
+caster	2330	-1
+caster	2494	911
+caster	2495	911
+caster	2496	911
+caster	2497	911
+caster	8407	911
+caster	8409	911
+caster	2520	548
+caster	2580	-1
+caster	5021	-1
+caster	8410	56
+caster	11	-1
+caster	12	-1
+caster	13	-1
+caster	14	-1
+caster	15	-1
+caster	16	-1
+caster	17	-1
+caster	18	-1
+caster	19	-1
+caster	20	-1
+caster	21	-1
+caster	27	-1
+caster	29	-1
+caster	30	-1
+caster	32	-1
+caster	33	-1
+caster	77	-1
+caster	86	-1
+caster	340	-1
+caster	690	-1
+caster	731	-1
+caster	2008	-1
+caster	2533	-1
+caster	2534	-1
+caster	2536	-1
+caster	5004	-1
+struck	14	target	26
+struck	15	caster	27
+struck	17	caster	24
+struck	19	target	31
+struck	20	target	29
+struck	21	target	30
+struck	28	target	320
+struck	56	caster	148
+struck	57	target	70
+struck	58	caster	150
+struck	59	caster	80
+struck	62	caster	149
+struck	77	caster	82
+struck	84	caster	93
+struck	86	caster	117
+struck	90	target	79
+struck	136	caster	121
+struck	137	caster	123
+struck	149	target	310
+struck	153	caster	170
+struck	160	caster	80
+struck	212	caster	275
+struck	250	target	246
+struck	251	caster	249
+struck	253	target	245
+struck	338	target	245
+struck	254	caster	226
+struck	263	caster	329
+struck	266	caster	264
+struck	267	caster	265
+struck	271	target	266
+struck	337	caster	494
+struck	339	caster	450
+struck	341	caster	93
+struck	344	target	271
+struck	345	target	272
+struck	346	target	270
+struck	365	target	380
+struck	367	target	365
+struck	368	caster	366
+struck	379	caster	361
+struck	381	target	387
+struck	382	caster	388
+struck	394	caster	393
+struck	397	target	339
+struck	398	caster	399
+struck	399	caster	400
+struck	400	target	401
+struck	415	target	413
+struck	415	target	431
+struck	417	target	466
+struck	417	target	429
+struck	419	target	415
+struck	2580	target	415
+struck	419	target	430
+struck	2580	target	430
+struck	421	caster	457
+struck	421	caster	439
+struck	467	caster	547
+struck	468	caster	555
+struck	469	target	425
+struck	469	caster	553
+struck	480	target	520
+struck	485	target	518
+struck	501	target	548
+struck	502	target	648
+struck	503	target	649
+struck	507	target	644
+struck	512	target	647
+struck	514	caster	623
+struck	515	target	643
+struck	518	target	628
+struck	519	caster	584
+struck	520	caster	645
+struck	528	target	632
+struck	530	target	630
+struck	534	target	618
+struck	537	target	619
+struck	540	caster	621
+struck	542	caster	624
+struck	544	target	633
+struck	653	caster	666
+struck	750	caster	666
+struck	659	caster	668
+struck	661	caster	409
+struck	712	caster	409
+struck	665	caster	669
+struck	756	caster	669
+struck	667	caster	670
+struck	762	caster	670
+struck	669	caster	22
+struck	672	target	676
+struck	673	target	677
+struck	675	caster	214
+struck	676	caster	675
+struck	714	target	1029
+struck	715	target	1030
+struck	716	caster	1032
+struck	742	target	923
+struck	2448	target	923
+struck	2002	caster	832
+struck	2004	caster	723
+struck	2012	target	589
+struck	2022	caster	1568
+struck	2023	caster	457
+struck	2023	caster	439
+struck	2030	target	770
+struck	2031	caster	768
+struck	2031	target	589
+struck	2034	caster	768
+struck	2034	caster	773
+struck	2055	caster	265
+struck	2056	caster	265
+struck	2218	caster	804
+struck	2225	target	49
+struck	2226	target	52
+struck	2227	target	51
+struck	2228	target	147
+struck	2237	caster	750
+struck	2256	caster	806
+struck	2270	caster	780
+struck	2270	caster	794
+struck	2271	target	786
+struck	2272	caster	781
+struck	2309	caster	905
+struck	2310	caster	906
+struck	2312	caster	907
+struck	2314	caster	58
+struck	2314	caster	377
+struck	2322	target	91
+struck	2324	caster	886
+struck	2324	target	886
+struck	2324	target	899
+struck	2324	target	894
+struck	2324	target	906
+struck	2326	caster	885
+struck	2326	caster	886
+struck	2336	caster	457
+struck	2336	caster	886
+struck	2336	caster	893
+struck	2340	caster	886
+struck	2343	caster	1575
+struck	2344	caster	885
+struck	2344	caster	886
+struck	2413	caster	1584
+struck	2414	target	1569
+struck	2414	target	1594
+struck	2426	caster	863
+struck	2429	target	869
+struck	2593	target	1224
+struck	2593	target	429
+struck	2604	target	425
+struck	2604	caster	1206
+struck	8012	target	567
+struck	8012	target	425
+struck	8024	target	960
+struck	8025	caster	1082
+struck	8028	target	965
+struck	8030	target	967
+struck	8036	target	966
+struck	8037	target	966
+struck	8038	target	966
+struck	8241	target	1031
+struck	8401	target	252
+struck	8401	target	336
+struck	8404	caster	441
+struck	8404	target	441
+struck	8407	target	389
+struck	8410	caster	214
+struck	8410	target	214
+struck	8413	caster	936
+struck	8413	target	956
+struck	8414	caster	936
+struck	8414	target	958
+struck	8415	caster	936
+struck	8415	target	955
+struck	8416	caster	886
+struck	8416	target	949
+struck	8417	caster	886
+struck	8417	target	954
+struck	8418	caster	886
+struck	8418	caster	894
+struck	8418	target	952
+struck	8419	caster	937
+struck	8419	target	947
+struck	8420	caster	937
+struck	8420	target	948
+struck	8421	caster	937
+struck	8421	target	951
+struck	8422	caster	938
+struck	8422	target	957
+struck	8423	caster	938
+struck	8423	target	953
+struck	8424	caster	938
+struck	8424	target	950
+struck	8425	target	31
+struck	8426	caster	24
+struck	8428	target	901
+struck	8428	target	17
+struck	8430	target	26
+struck	8431	target	941
+struck	8433	target	942
+struck	8433	caster	439
+struck	8434	caster	943
+struck	8435	target	466
+struck	8437	caster	935
+struck	8442	target	944
+used	6	target	67
+used	7	caster	17
+used	8202	caster	17
+used	8	caster	11
+used	16	target	23
+used	28	target	325
+used	334	target	325
+used	729	target	325
+used	2043	target	325
+used	2051	target	325
+used	8001	target	325
+used	29	target	37
+used	690	target	37
+used	2042	target	37
+used	8240	target	37
+used	30	target	38
+used	31	caster	39
+used	32	caster	40
+used	33	caster	41
+used	34	target	42
+used	689	target	42
+used	2041	target	42
+used	8239	target	42
+used	35	target	66
+used	45	caster	153
+used	50	target	18
+used	53	target	21
+used	54	target	77
+used	60	caster	130
+used	495	caster	130
+used	66	target	84
+used	67	target	88
+used	68	target	86
+used	71	target	136
+used	72	target	78
+used	73	caster	112
+used	8238	caster	112
+used	74	caster	76
+used	8222	caster	76
+used	75	caster	75
+used	76	target	87
+used	2057	target	87
+used	78	target	85
+used	727	target	85
+used	5072	target	85
+used	81	caster	62
+used	88	target	28
+used	108	target	101
+used	5297	target	101
+used	111	caster	98
+used	459	caster	98
+used	112	target	103
+used	113	caster	128
+used	486	caster	128
+used	114	caster	104
+used	138	target	125
+used	141	target	125
+used	139	target	126
+used	142	caster	309
+used	2016	caster	309
+used	155	caster	311
+used	157	caster	169
+used	162	caster	174
+used	163	caster	177
+used	164	caster	173
+used	165	caster	175
+used	166	caster	179
+used	167	caster	178
+used	168	caster	172
+used	169	caster	176
+used	173	caster	183
+used	724	caster	183
+used	2267	caster	183
+used	8016	caster	183
+used	196	caster	215
+used	201	caster	214
+used	205	caster	213
+used	211	target	274
+used	214	caster	276
+used	215	target	269
+used	343	target	269
+used	216	target	270
+used	217	target	271
+used	218	target	272
+used	234	target	300
+used	235	target	300
+used	236	target	300
+used	237	target	300
+used	252	caster	252
+used	255	caster	251
+used	256	target	248
+used	257	caster	222
+used	8219	caster	222
+used	258	caster	250
+used	262	caster	253
+used	268	caster	261
+used	270	caster	203
+used	276	caster	244
+used	277	target	234
+used	280	target	255
+used	1018	target	255
+used	281	target	256
+used	1008	target	256
+used	282	target	257
+used	1019	target	257
+used	283	target	258
+used	1017	target	258
+used	289	target	235
+used	746	target	235
+used	304	caster	848
+used	5068	caster	848
+used	306	caster	845
+used	307	caster	842
+used	308	caster	844
+used	309	caster	842
+used	310	caster	842
+used	311	caster	845
+used	312	caster	842
+used	313	caster	842
+used	317	caster	843
+used	325	caster	843
+used	318	caster	295
+used	319	caster	844
+used	320	caster	840
+used	321	caster	843
+used	322	caster	841
+used	326	caster	296
+used	327	caster	844
+used	328	caster	844
+used	329	caster	840
+used	330	caster	840
+used	335	target	253
+used	342	target	453
+used	349	caster	455
+used	350	caster	456
+used	506	caster	456
+used	355	caster	367
+used	357	caster	369
+used	359	caster	368
+used	360	caster	368
+used	8206	caster	368
+used	361	target	375
+used	691	target	375
+used	364	caster	378
+used	364	target	379
+used	366	target	382
+used	373	caster	383
+used	374	caster	384
+used	374	target	385
+used	375	target	406
+used	378	caster	493
+used	380	caster	386
+used	383	caster	389
+used	384	caster	390
+used	387	caster	391
+used	390	caster	392
+used	395	caster	394
+used	396	caster	395
+used	396	target	396
+used	402	target	403
+used	403	caster	505
+used	8004	caster	505
+used	406	caster	409
+used	408	target	408
+used	411	caster	442
+used	413	caster	435
+used	425	caster	461
+used	426	caster	446
+used	428	caster	418
+used	429	caster	418
+used	430	caster	418
+used	431	caster	488
+used	432	caster	488
+used	433	caster	488
+used	434	target	543
+used	445	target	503
+used	447	target	503
+used	448	target	503
+used	449	target	503
+used	450	target	503
+used	451	target	503
+used	446	target	220
+used	462	target	543
+used	463	target	543
+used	464	target	542
+used	465	target	419
+used	470	target	420
+used	471	target	427
+used	472	target	254
+used	475	caster	496
+used	476	target	495
+used	479	target	300
+used	482	target	521
+used	487	caster	843
+used	489	target	500
+used	504	caster	625
+used	505	caster	626
+used	517	caster	626
+used	513	target	627
+used	516	caster	637
+used	536	target	635
+used	539	caster	636
+used	541	caster	622
+used	555	target	344
+used	578	caster	220
+used	693	target	699
+used	694	target	91
+used	698	caster	717
+used	707	caster	441
+used	2011	caster	441
+used	716	caster	1032
+used	717	caster	1032
+used	718	caster	1033
+used	719	caster	25
+used	720	caster	801
+used	2204	caster	801
+used	721	caster	1053
+used	722	target	1052
+used	730	caster	886
+used	735	caster	886
+used	738	target	768
+used	2021	target	768
+used	740	caster	722
+used	741	caster	538
+used	2020	caster	538
+used	741	target	538
+used	2020	target	538
+used	771	target	1600
+used	1002	caster	599
+used	1005	target	602
+used	1010	caster	606
+used	1011	caster	607
+used	2001	caster	756
+used	2003	caster	441
+used	2009	caster	731
+used	2013	caster	538
+used	2014	caster	756
+used	2015	caster	756
+used	2018	caster	756
+used	2017	caster	17
+used	2017	target	263
+used	2019	caster	538
+used	2026	target	21
+used	2027	caster	771
+used	2028	caster	768
+used	2039	target	441
+used	2045	target	112
+used	2046	caster	725
+used	2047	target	66
+used	2048	target	66
+used	2050	target	719
+used	2054	target	833
+used	2205	target	729
+used	2207	target	797
+used	2209	caster	799
+used	2230	caster	751
+used	2262	caster	777
+used	2263	caster	543
+used	2264	caster	778
+used	2265	caster	778
+used	2268	caster	779
+used	2269	caster	543
+used	2273	caster	782
+used	2274	caster	500
+used	2275	target	785
+used	2287	caster	826
+used	2289	caster	811
+used	2291	caster	812
+used	2292	target	813
+used	2293	target	814
+used	2294	target	815
+used	2295	target	816
+used	2296	target	817
+used	2297	target	818
+used	2298	target	820
+used	2311	caster	886
+used	2313	caster	886
+used	2315	caster	886
+used	2318	caster	908
+used	2325	caster	910
+used	2333	caster	886
+used	2334	caster	886
+used	2335	caster	886
+used	2337	caster	435
+used	2338	caster	886
+used	2341	caster	886
+used	2341	target	886
+used	2342	caster	886
+used	2345	caster	886
+used	2345	target	886
+used	2346	caster	886
+used	2346	target	886
+used	2347	caster	886
+used	2348	caster	886
+used	2350	target	847
+used	2351	target	847
+used	2352	target	847
+used	2381	target	848
+used	2382	target	848
+used	2383	target	849
+used	2383	caster	849
+used	2421	target	861
+used	2422	target	969
+used	2423	target	861
+used	2424	target	862
+used	2425	target	864
+used	2427	target	868
+used	2428	target	866
+used	2429	caster	842
+used	2430	target	870
+used	2431	target	872
+used	2432	target	874
+used	2433	target	876
+used	2434	target	878
+used	2451	caster	886
+used	2455	target	886
+used	2461	caster	934
+used	2476	caster	1365
+used	2480	target	216
+used	2493	caster	886
+used	2494	caster	911
+used	2495	caster	911
+used	2496	caster	911
+used	2497	caster	911
+used	2564	caster	446
+used	2565	caster	637
+used	2581	caster	446
+used	2596	target	503
+used	2597	target	503
+used	2598	target	503
+used	2599	target	503
+used	2605	target	1210
+used	2612	caster	1208
+used	2612	target	1207
+used	5005	caster	1044
+used	5008	caster	1046
+used	5009	target	1043
+used	5010	caster	1081
+used	5011	caster	1047
+used	5014	caster	1042
+used	5071	caster	1042
+used	5023	caster	446
+used	5065	target	408
+used	5313	target	495
+used	5336	caster	58
+used	8002	caster	456
+used	8002	target	456
+used	8005	caster	570
+used	8005	target	570
+used	8006	caster	569
+used	8006	target	569
+used	8008	caster	571
+used	8010	caster	564
+used	8011	caster	564
+used	8026	caster	961
+used	8039	caster	962
+used	8051	caster	2338
+used	8603	target	313
+used	8604	target	253
+ground	21	ground	30
+ground	69	ground	91
+ground	694	ground	91
+ground	70	ground	83
+ground	79	ground	113
+ground	83	ground	92
+ground	85	ground	90
+ground	87	ground	74
+ground	89	ground	89
+ground	723	ground	89
+ground	91	ground	142
+ground	92	ground	95
+ground	110	ground	102
+ground	111	ground	98
+ground	459	ground	98
+ground	115	ground	69
+ground	130	ground	119
+ground	140	ground	124
+ground	285	ground	225
+ground	286	ground	236
+ground	287	ground	237
+ground	288	ground	238
+ground	478	ground	497
+ground	483	ground	223
+ground	484	ground	522
+ground	491	caster	58
+ground	710	caster	135
+ground	717	caster	1032
+ground	733	ground	102
+ground	5006	ground	102
+ground	737	ground	1424
+ground	2321	ground	1424
+ground	769	ground	1255
+ground	770	ground	1399
+ground	774	ground	1062
+ground	2260	caster	791
+ground	2447	ground	1450
+ground	2571	ground	1062
+ground	5028	ground	1106
+ground	5042	ground	1112
+ground	5219	ground	1760
+ground	5223	ground	1798
+ground	5319	ground	2087
+trap	143	106
+trap	149	139
+trap	150	99
+trap	151	108
+trap	152	107
+trap	210	139
+trap	211	139
+trap	212	139
+trap	213	139
+trap	214	107
+trap	217	107
+trap	215	108
+trap	216	107
+trap	218	464
+trap	222	464
+trap	268	1602
+unit	126	315
+unit	127	25
+unit	237	25
+unit	128	317
+unit	129	316
+unit	130	91
+unit	131	319	once
+unit	132	318	once
+unit	135	138	once
+unit	197	138	once
+unit	136	97
+unit	141	74	once
+unit	195	74	once
+unit	196	74	once
+unit	142	95
+unit	146	171	once
+unit	154	239	once
+unit	155	240	once
+unit	156	241	once
+unit	157	242	once
+unit	177	302	once
+unit	178	341
+unit	179	370	once
+unit	180	374	once
+unit	182	405	once
+unit	183	404	once
+unit	184	522	once
+unit	185	517	once
+unit	187	620	once
+unit	188	631	once
+unit	189	634
+unit	190	638
+unit	191	639
+unit	192	640
+unit	193	641
+unit	194	642
+unit	199	1555
+unit	200	671	once
+unit	201	672	once
+unit	202	1655
+unit	203	142	once
+unit	204	822	once
+unit	205	825
+unit	206	827
+unit	207	828
+unit	208	829
+unit	218	856
+unit	219	1276
+unit	220	920
+unit	221	926
+unit	222	860
+unit	224	1080
+unit	225	772	once
+unit	226	783	once
+unit	227	784	once
+unit	228	929
+unit	230	912
+unit	231	916
+unit	241	916
+unit	232	917
+unit	233	918
+unit	234	919
+unit	235	921
+unit	238	939	once
+unit	239	465
+unit	240	1088
+unit	242	916
+unit	243	916
+unit	244	916
+unit	254	1026
+unit	255	25
+unit	256	25
+unit	257	1050
+unit	258	1051
+unit	259	1278
+unit	261	1064
+unit	264	1120
 status	2	166
 status	161	166
 status	25	166
