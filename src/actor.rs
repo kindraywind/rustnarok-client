@@ -1113,6 +1113,13 @@ impl Actor {
 mod tests {
     use super::*;
 
+    #[test]
+    fn looks_for_sprites_by_kind() {
+        assert_eq!(SpriteSet::folders(5), ["몬스터", "npc"]);
+        assert_eq!(SpriteSet::folders(8), ["homun", "몬스터", "npc"]);
+        assert_eq!(SpriteSet::folders(6), ["npc", "몬스터"]);
+    }
+
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn standing_players_hold_their_head_still() {

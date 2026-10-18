@@ -56,6 +56,7 @@ mod emotion_list;
 mod equipment;
 mod escape;
 mod guild;
+mod homunculus;
 mod hotkeys;
 mod inventory;
 mod iteminfo;

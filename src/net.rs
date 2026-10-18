@@ -5667,6 +5667,108 @@ mod tests {
     }
 
     #[test]
+    fn decodes_homunculi() {
+        let state = |state: u8, value: u32| [&ZC_CHANGESTATE_MER.to_le_bytes()[..], &[0, state], &7u32.to_le_bytes(), &value.to_le_bytes()].concat();
+        let Some(MapEvent::HomunculusState { state: 0, id: 7, value: 0 }) = decode_map_packet(&state(0, 0)) else { panic!() };
+        let Some(MapEvent::HomunculusState { state: 2, id: 7, value: 60 }) = decode_map_packet(&state(2, 60)) else { panic!() };
+
+        // clif_hominfo, PACKETVER 20220406.
+        let property = |flags: u8| {
+            let mut packet = ZC_PROPERTY_HOMUN.to_le_bytes().to_vec();
+            packet.extend_from_slice(&name_field("Lif"));
+            packet.push(flags);
+            for value in [99u16, 60, 250, 300, 310, 320, 330, 340, 350, 360, 370] {
+                packet.extend_from_slice(&value.to_le_bytes());
+            }
+            for value in [4000u32, 5000, 600, 700] {
+                packet.extend_from_slice(&value.to_le_bytes());
+            }
+            packet.extend_from_slice(&5_000_000_000i64.to_le_bytes());
+            packet.extend_from_slice(&9_000_000_000i64.to_le_bytes());
+            packet.extend_from_slice(&8u16.to_le_bytes());
+            packet.extend_from_slice(&2u16.to_le_bytes());
+            packet
+        };
+        assert_eq!(property(0b101).len(), 85);
+        let Some(MapEvent::HomunculusInfo(mut homunculus)) = decode_map_packet(&property(0b101)) else { panic!() };
+        assert_eq!(
+            homunculus,
+            Homunculus {
+                name: "Lif".into(),
+                flags: 0b101,
+                level: 99,
+                hunger: 60,
+                intimacy: 250,
+                atk: 300,
+                matk: 310,
+                hit: 320,
+                critical: 330,
+                def: 340,
+                mdef: 350,
+                flee: 360,
+                aspd: 370,
+                hp: 4000,
+                max_hp: 5000,
+                sp: 600,
+                max_sp: 700,
+                exp: 5_000_000_000,
+                next_exp: 9_000_000_000,
+                skill_points: 8,
+                range: 2,
+            }
+        );
+        assert!(homunculus.renamed() && homunculus.alive() && !homunculus.vaporized());
+        let Some(MapEvent::HomunculusInfo(vaporized)) = decode_map_packet(&property(0b010)) else { panic!() };
+        assert!(!vaporized.renamed() && vaporized.vaporized() && !vaporized.alive());
+
+        let change = |kind: u16, value: u64| [&ZC_HO_PAR_CHANGE2.to_le_bytes()[..], &kind.to_le_bytes(), &value.to_le_bytes()].concat();
+        let Some(MapEvent::HomunculusChanged { kind, value }) = decode_map_packet(&change(HOMUNCULUS_HP, 99)) else { panic!() };
+        assert_eq!((kind, value), (HOMUNCULUS_HP, 99));
+        homunculus.set(kind, value);
+        homunculus.set(HOMUNCULUS_EXP, 6_000_000_000);
+        homunculus.set(HOMUNCULUS_SP, u64::MAX);
+        assert_eq!((homunculus.hp, homunculus.exp, homunculus.sp), (99, 6_000_000_000, u32::MAX));
+        let before = homunculus.clone();
+        homunculus.set(HOMUNCULUS_HP + 1, 5);
+        homunculus.set(0x7FFF, 5);
+        assert_eq!(homunculus, before);
+
+        let mut skills = ZC_HOSKILLINFO_LIST.to_le_bytes().to_vec();
+        skills.extend_from_slice(&41u16.to_le_bytes());
+        for (id, level, upgradable) in [(8001u16, 3u16, 1u8), (8002, 1, 0)] {
+            let mut entry = vec![0u8; SKILL_SIZE];
+            entry[..2].copy_from_slice(&id.to_le_bytes());
+            entry[6..8].copy_from_slice(&level.to_le_bytes());
+            entry[36] = upgradable;
+            skills.extend_from_slice(&entry);
+        }
+        let length = skills.len() as u16;
+        skills[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::HomunculusSkills(list)) = decode_map_packet(&skills) else { panic!() };
+        assert_eq!(list.iter().map(|skill| (skill.id, skill.level, skill.upgradable)).collect::<Vec<_>>(), [(8001, 3, true), (8002, 1, false)]);
+
+        let update =
+            [&ZC_HOSKILLINFO_UPDATE.to_le_bytes()[..], &8001u16.to_le_bytes(), &4u16.to_le_bytes(), &30u16.to_le_bytes(), &9u16.to_le_bytes(), &[1]].concat();
+        let Some(MapEvent::HomunculusSkill(skill)) = decode_map_packet(&update) else { panic!() };
+        assert_eq!(skill, Skill { id: 8001, kind: 0, level: 4, sp: 30, range: 9, upgradable: true });
+
+        let fed = |ok: u8| [&ZC_FEED_MER.to_le_bytes()[..], &[ok], &531u32.to_le_bytes()].concat();
+        let Some(MapEvent::HomunculusFed { ok: true, food: 531 }) = decode_map_packet(&fed(1)) else { panic!() };
+        let Some(MapEvent::HomunculusFed { ok: false, food: 531 }) = decode_map_packet(&fed(0)) else { panic!() };
+
+        assert_eq!(encode_homunculus_command(HOMUNCULUS_FEED), [0x2D, 0x02, 0, 0, 1]);
+        let rename = encode_rename_homunculus("Lif");
+        assert_eq!((&rename[..2], &rename[2..6]), (&[0x31, 0x02][..], &b"Lif\0"[..]));
+        // Never past 23 bytes, nor half a character.
+        assert_eq!(encode_rename_homunculus(&"a".repeat(30))[25], 0);
+        assert_eq!(&encode_rename_homunculus(&format!("{}가", "a".repeat(22)))[24..], [0, 0]);
+
+        let ids =
+            [ZC_CHANGESTATE_MER, ZC_PROPERTY_HOMUN, ZC_HO_PAR_CHANGE2, ZC_HOSKILLINFO_LIST, ZC_HOSKILLINFO_UPDATE, ZC_FEED_MER, CZ_COMMAND_MER, CZ_RENAME_MER];
+        assert_eq!(ids.map(packet_length), [Some(12), Some(85), Some(12), Some(-1), Some(11), Some(7), Some(5), Some(26)]);
+    }
+
+    #[test]
     fn decodes_pets() {
         let Some(MapEvent::PetEggs(eggs)) = decode_map_packet(&[0xA6, 0x01, 8, 0, 3, 0, 9, 0]) else { panic!() };
         assert_eq!(eggs, [3, 9]);
