@@ -64,6 +64,7 @@ mod chatroom;
 mod clan;
 mod control;
 mod cursor;
+mod cutin;
 mod dressroom;
 mod effects;
 mod emotion;
@@ -1084,7 +1085,7 @@ struct Game {
     shop: Option<shop::Shop>,
     storage: storage::Storage,
     /// An NPC's illustration and where it goes.
-    cutin: Option<(Texture, u8)>,
+    cutin: Option<cutin::Cutin>,
     /// NPC marks on the minimap: whose (NPC and mark), the cell, its color and until when (None: until taken away).
     marks: Vec<Mark>,
     /// The box asking how many, and what for.
@@ -1814,6 +1815,7 @@ fn esc_panel(id: Panel) -> Option<escape::WindowId> {
         Panel::MercenarySkills => MercenarySkills,
         Panel::Homunculus => Homunculus,
         Panel::HomunculusSkills => HomunculusSkills,
+        Panel::Cutin => return None,
     })
 }
 
@@ -1835,6 +1837,8 @@ enum Panel {
     MercenarySkills,
     Homunculus,
     HomunculusSkills,
+    /// An NPC's picture.
+    Cutin,
 }
 
 /// What the box asking how many is for.
@@ -2558,6 +2562,7 @@ impl Game {
                 .homunculus
                 .as_ref()
                 .is_some_and(|homunculus| self.homunculus_skill_list.hit(cursor, &self.homunculus_skills, homunculus.skill_points).is_some()),
+            Panel::Cutin => self.cutin.as_ref().is_some_and(|cutin| cutin.contains(cursor)),
         })
     }
 
@@ -2672,6 +2677,7 @@ impl Game {
             Panel::MercenarySkills => &self.mercenary_skill_list.frame,
             Panel::Homunculus => &self.homunculus_window.frame,
             Panel::HomunculusSkills => &self.homunculus_skill_list.frame,
+            Panel::Cutin => return self.cutin.as_ref().map(|cutin| &cutin.frame),
         })
     }
 
@@ -3977,6 +3983,7 @@ impl Game {
             Panel::MercenarySkills => self.mercenary.is_some() && self.mercenary_skill_list.frame.open,
             Panel::Homunculus => self.homunculus.is_some() && self.homunculus_window.frame.open,
             Panel::HomunculusSkills => self.homunculus.is_some() && self.homunculus_skill_list.frame.open,
+            Panel::Cutin => self.cutin.is_some(),
         }
     }
 
@@ -5195,6 +5202,7 @@ struct Assets {
     say: npc_say::Assets,
     npc_menu: npc_menu::Assets,
     npc_input: npc_input::Assets,
+    cutin: cutin::Assets,
     next: ButtonImages,
     close: ButtonImages,
     bars: [Texture; 7],
@@ -5304,6 +5312,7 @@ impl Assets {
             say: npc_say::Assets::load(gpu),
             npc_menu: npc_menu::Assets::load(gpu, grf),
             npc_input: npc_input::Assets::load(gpu),
+            cutin: cutin::Assets::load(gpu, grf),
             next: button(UI, "btn_next"),
             close: button(UI, "btn_close"),
             bars: BAR_COLORS.map(|color| gpu.solid(color)),
@@ -7654,6 +7663,11 @@ impl App {
                 let id = game.window_at(cursor).unwrap();
                 game.raise(id);
                 match id {
+                    Panel::Cutin => {
+                        if game.cutin.as_ref().is_some_and(|cutin| cutin.on_close(cursor, &assets.cutin)) {
+                            game.cutin = None;
+                        }
+                    }
                     Panel::Hotkeys => {
                         let hit = game.hotkeys.hit(cursor).unwrap();
                         game.hotkeys.click(hit);
@@ -8093,6 +8107,10 @@ impl App {
             game.quest_window.frame.drag_to(self.cursor, 466.0);
             game.minimap_window.frame.drag_to(self.cursor, minimap_window::HEIGHT);
             game.say.frame.drag_to(self.cursor, npc_say::SIZE[1]);
+            if let Some(cutin) = &mut game.cutin {
+                let height = cutin.height();
+                cutin.frame.drag_to(self.cursor, height);
+            }
             let menu_height = game.dialog.as_ref().and_then(|dialog| dialog.menu.as_ref()).map_or(0.0, |menu| menu.size()[1]);
             game.npc_menu.drag_to(self.cursor, menu_height);
             game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
@@ -8801,6 +8819,7 @@ impl App {
                     | game.block_list.as_mut().is_some_and(|list| list.frame.drop_drag())
                     | game.minimap_window.frame.drop_drag()
                     | game.say.frame.drop_drag()
+                    | game.cutin.as_mut().is_some_and(|cutin| cutin.frame.drop_drag())
                     | game.npc_menu.drop_drag();
                 windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
             }
@@ -9307,6 +9326,10 @@ impl App {
                 }
                 Panel::Equipment if game.equipment.hit(cursor, &game.inventory.items) == Some(equipment::Hit::Title(TitleHit::Title)) => {
                     game.equipment.frame.start_drag(cursor)
+                }
+                // Any part of an NPC's picture but its close button drags it.
+                Panel::Cutin if self.assets.as_ref().is_some_and(|assets| !game.cutin.as_ref().is_some_and(|cutin| cutin.on_close(cursor, &assets.cutin))) => {
+                    game.cutin.as_mut().unwrap().frame.start_drag(cursor)
                 }
                 _ => {}
             }
@@ -10652,6 +10675,7 @@ impl App {
                         Panel::MercenarySkills,
                         Panel::Homunculus,
                         Panel::HomunculusSkills,
+                        Panel::Cutin,
                     ],
                     damages: Vec::new(),
                     status,
@@ -13037,9 +13061,20 @@ impl App {
                 let id = if allow { ALLOW_ALL_RESULTS } else { BLOCK_ALL_RESULTS } + usize::from(result != 0);
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
             }
+            // An NPC's picture: from illust (or cardbmp when it isn't there), a window over the ones open before it.
+            // Type 255 closes it; the picture already showing stays where it is.
             MapEvent::Cutin { image, place } => {
-                let path = format!("{UI}illust\\{image}{}", if image.contains('.') { "" } else { ".bmp" });
-                game.cutin = gpu.filter(|_| !image.is_empty()).and_then(|gpu| gpu.try_load_texture(grf, &path, false).ok()).map(|texture| (texture, place));
+                let showing = game.cutin.as_ref().map(|cutin| (cutin.name.as_str(), cutin.kind));
+                if place == cutin::CLOSE || image.is_empty() {
+                    game.cutin = None;
+                } else if !cutin::same(showing, &image, place) {
+                    let name = cutin::file_name(&image);
+                    let picture = gpu.and_then(|gpu| {
+                        ["illust", "cardbmp"].iter().find_map(|folder| gpu.try_load_texture(grf, &format!("{UI}{folder}\\{name}"), false).ok())
+                    });
+                    game.cutin = picture.map(|picture| cutin::Cutin::new(name, place, picture, screen()));
+                    game.raise(Panel::Cutin);
+                }
             }
             MapEvent::CatalogOpen { remote, uses } => game.catalog = Some(catalog::Catalog::new(remote, uses)),
             MapEvent::CatalogResults { first, more, uses, rows } => {
@@ -15072,20 +15107,6 @@ impl App {
         if game.quest_window.tracker {
             quest_tracker::draw(&mut chat_layer, &quest_tracker::blocks(&game.quests, quest_texts, &game.quest_window.hidden, messages));
         }
-        // An NPC's illustration, over the world and under the windows.
-        let mut cutin_layer = Layer::default();
-        if let Some((image, place)) = &game.cutin {
-            let [width, height] = image.size;
-            let corner = match place {
-                0 => [0.0, screen()[1] - height],
-                1 => [((screen()[0] - width) / 2.0).floor(), screen()[1] - height],
-                2 => [screen()[0] - width, screen()[1] - height],
-                _ => [((screen()[0] - width) / 2.0).floor(), ((screen()[1] - height) / 2.0).floor()],
-            };
-            if *place <= 4 {
-                cutin_layer.sprites.push((image, corner, image.size));
-            }
-        }
         game.status_height = game.status_window.height(&assets.status);
         // Our own HP in the party window comes from our status.
         let own_hp = [net::STATUS_HP, net::STATUS_MAX_HP].map(|kind| game.status.get(&kind).copied().unwrap_or(0) as i32);
@@ -15114,7 +15135,7 @@ impl App {
         if self.graphics.effects_on {
             game.weather.draw(&mut weather_layer, &assets.weather, now);
         }
-        let mut layers = vec![weather_layer, base, announce_layer, cutin_layer, chat_layer];
+        let mut layers = vec![weather_layer, base, announce_layer, chat_layer];
         let mut preview = Some(preview);
         let cooling = skills::Cooling { cooldowns: &game.cooldowns, fan: &assets.fan, now: control::now() };
         for &id in &game.windows {
@@ -15203,6 +15224,11 @@ impl App {
                         let list = &game.homunculus_skill_list;
                         let skills = &game.homunculus_skills;
                         list.draw(&mut layer, &assets.chrome, &assets.skills, icons, font, messages, skills, homunculus.skill_points, skill_info, pointer);
+                    }
+                }
+                Panel::Cutin => {
+                    if let Some(cutin) = &game.cutin {
+                        cutin.draw(&mut layer, &assets.chrome, &assets.cutin, pointer.0);
                     }
                 }
                 Panel::Status => {
