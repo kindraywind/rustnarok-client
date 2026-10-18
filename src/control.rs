@@ -962,12 +962,10 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .chain(game.shop.iter().flat_map(crate::shop::Shop::button_boxes))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
-        .chain(
-            game.sign_rects
-                .iter()
-                .filter(|(_, _, kind)| *kind == crate::chatroom::BUYING_STORE)
-                .map(|&(rect, ..)| json!({"kind": "button", "name": "buying_sign", "box": [rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]]})),
-        )
+        .chain(game.sign_rects.iter().filter(|(_, _, kind)| *kind != crate::chatroom::SHOP).map(|&(rect, _, kind)| {
+            let name = if kind == crate::chatroom::BUYING_STORE { "buying_sign" } else { "room_sign" };
+            json!({"kind": "button", "name": name, "box": [rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]]})
+        }))
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1246,6 +1244,15 @@ fn game_state(app: &App, game: &Game) -> Value {
         "cursor": format!("{:?}", app.cursor_look.kind()),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
         "chat_line_open": game.chat_mode.chat_line_open(),
+        // The boards over heads by kind (room, shop, buying): [x, y, width, height].
+        "signs": game.sign_rects.iter().map(|&(rect, _, kind)| {
+            let name = match kind {
+                crate::chatroom::SHOP => "shop",
+                crate::chatroom::BUYING_STORE => "buying",
+                _ => "room",
+            };
+            (name.to_owned(), json!([rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]]))
+        }).collect::<serde_json::Map<_, _>>(),
         "chat_height": game.chat.height(),
     });
     // The ranking board.

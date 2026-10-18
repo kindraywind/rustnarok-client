@@ -11936,8 +11936,15 @@ impl App {
                 continue;
             }
             let unit = (*owner != game.account_id).then_some(*owner);
-            let Some([x, y]) = head(&unit) else { continue };
-            let rect = chatroom::draw_sign(&mut base, &assets.chatroom, font, sign, [x, y - chatroom::SIGN[1] - 6.0]);
+            let feet = match unit {
+                None => player_feet,
+                Some(id) => match feet_of.get(&id) {
+                    Some(&feet) => feet,
+                    None => continue,
+                },
+            };
+            let Some(point) = sprite_point(feet, -chatroom::SIGN_ABOVE) else { continue };
+            let rect = chatroom::draw_sign(&mut base, &assets.chatroom, font, sign, point.map(f32::round));
             game.sign_rects.push((rect, sign.id, sign.kind));
         }
         for (unit, (text, color, _)) in &game.speech {
