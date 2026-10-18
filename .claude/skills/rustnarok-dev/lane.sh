@@ -81,6 +81,8 @@ rm_lane() {
     if [ "$force" != "--force" ] && [ -n "$(git -C "$lane" status --porcelain)" ]; then
         die "$name has uncommitted changes (--force to drop them)"
     fi
+    # A PR merged a moment ago counts: see origin/main as it is now.
+    git -C "$MAIN" fetch -q origin main || true
     local pids
     pids=$(clients "$lane")
     [ -n "$pids" ] && kill $pids 2>/dev/null || true
