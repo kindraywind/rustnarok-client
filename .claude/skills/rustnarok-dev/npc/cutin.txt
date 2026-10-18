@@ -1,0 +1,19 @@
+// An NPC's picture by type, shown again unchanged, and closed by its button (issue #446). Loaded and unloaded by
+// scenarios/npc-cutin.json.
+iz_int01,30,26,4	script	Picture Clerk	4_M_01,{
+	cutin "Kafra_01", 2;
+	mes "[Picture Clerk]";
+	mes "Type 2.";
+	next;
+	cutin "Kafra_01", 2;
+	mes "The same picture again.";
+	next;
+	cutin "Kafra_01", 0;
+	mes "Type 0.";
+	next;
+	cutin "Kafra_01", 3;
+	mes "Type 3.";
+	next;
+	mes "Done.";
+	close;
+}

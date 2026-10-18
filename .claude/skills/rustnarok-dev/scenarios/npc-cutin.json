@@ -1,0 +1,32 @@
+{
+  "about": "NPC pictures (issue #446): `cutin \"Kafra_01\", 2` loads kafra_01.bmp (320x480) with its centre 200 px in from the right edge and its bottom on the screen's; it's a window a drag moves, and the same picture again stays where it is; type 0 puts it 200 px in from the left; type 3 centres it under a title bar with a close button that closes it. The NPC (npc/cutin.txt) is loaded with @loadnpc and unloaded at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/cutin.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/cutin.txt"}, {"wait": 1000},
+    {"click_unit": {"kind": "npc", "name": "Picture Clerk"}}, {"wait": 1000},
+    {"expect": {"state": {"cutin_window.kind": 2, "cutin_window.name": "kafra_01.bmp", "cutin_window.at": [664.0, 288.0], "cutin_window.height": 480.0}}},
+    {"move": [10, 10]}, {"wait": 200},
+    {"shot": "cutin-type-2", "crop": [424, 168, 600, 600], "threshold": 5},
+    {"drag": [[824, 600], [724, 550]]}, {"wait": 300},
+    {"expect": {"state": {"cutin_window.at": [564.0, 238.0]}}},
+    {"key": "Enter"}, {"wait": 800},
+    {"expect": {"state": {"dialog.lines.0": "The same picture again.", "cutin_window.at": [564.0, 238.0]}}},
+    {"key": "Enter"}, {"wait": 800},
+    {"expect": {"state": {"cutin_window.kind": 0, "cutin_window.at": [40.0, 288.0]}}},
+    {"move": [1000, 10]}, {"wait": 200},
+    {"shot": "cutin-type-0", "crop": [0, 168, 600, 600], "threshold": 5},
+    {"key": "Enter"}, {"wait": 800},
+    {"expect": {"state": {"cutin_window.kind": 3, "cutin_window.at": [352.0, 127.0], "cutin_window.height": 497.0}}},
+    {"move": [1000, 10]}, {"wait": 200},
+    {"shot": "cutin-type-3", "crop": [262, 100, 500, 560], "threshold": 5},
+    {"click_on": {"button": "cutin_close"}}, {"wait": 300},
+    {"expect": {"state": {"cutin": false}}},
+    {"key": "Enter"}, {"wait": 800},
+    {"key": "Enter"}, {"wait": 500},
+    {"expect": {"windows_closed": ["NpcDialog"]}},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/cutin.txt"}, {"wait": 500}
+  ]
+}

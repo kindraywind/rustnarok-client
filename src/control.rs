@@ -988,6 +988,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.basic_info.menu_boxes().into_iter().map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
         .chain(game.basic_info.toggle_box().map(|area| json!({"kind": "button", "name": "menu", "box": area})))
         .chain(
+            app.assets
+                .as_ref()
+                .and_then(|assets| game.cutin.as_ref()?.close_box(&assets.cutin))
+                .map(|area| json!({"kind": "button", "name": "cutin_close", "box": area})),
+        )
+        .chain(
             game.queue_window
                 .frame
                 .open
@@ -1186,6 +1192,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "scroll": game.say.scroll,
         })
     });
+    // The NPC's picture: its window's corner and height, its type and file.
+    let cutin_window = game.cutin.as_ref().map(|cutin| json!({"at": cutin.frame.position, "height": cutin.height(), "kind": cutin.kind, "name": cutin.name}));
     let now = Instant::now();
     let mut state = json!({
         "map": game.map,
@@ -1471,6 +1479,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     });
     // The skill units on the ground standing as models (their UNT_ numbers).
     state["standing_models"] = game.effects.standing_kinds().into();
+    state["cutin_window"] = cutin_window.into();
     // The effect sounds played in the last five seconds (`no_sound` in a scenario checks these).
     state["sounds_recent"] = recent_sounds().into();
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
