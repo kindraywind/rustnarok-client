@@ -1013,6 +1013,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             game.party_window
                 .button_boxes(game.party.as_ref(), &game.friends, game.account_id)
                 .into_iter()
+                .chain(game.member_windows.button_boxes(game.party.as_ref()))
+                .chain(game.party_window.compact.then(|| crate::party::compact_boxes(game.party.as_ref())).into_iter().flatten())
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.inventory.tab_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1088,6 +1090,10 @@ fn game_state(app: &App, game: &Game) -> Value {
             .filter(|(_, open)| *open)
             .map(|(name, _)| name.to_owned()),
     );
+    windows.extend(game.member_windows.names(game.party.as_ref()));
+    if game.party_window.compact && game.party.is_some() {
+        windows.push("PartyList".to_owned());
+    }
     let dialog = game.dialog.as_ref().map(|dialog| {
         json!({
             "npc": dialog.npc,
@@ -1232,6 +1238,13 @@ fn game_state(app: &App, game: &Game) -> Value {
                 "name": party.name,
                 "leader": leader,
                 "members": party.members.iter().map(|member| member.info.name.clone()).collect::<Vec<_>>(),
+                // Members whose last party HP (0x080E) is under their max, so a scenario can see a hit land.
+                "wounded": party
+                    .members
+                    .iter()
+                    .filter(|member| member.hp.is_some_and(|[hp, max]| hp < max))
+                    .map(|member| member.info.name.clone())
+                    .collect::<Vec<_>>(),
                 "exp_shared": party.exp_shared,
                 "pickup_shared": party.pickup_shared,
                 "item_shared": party.item_shared,

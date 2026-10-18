@@ -922,6 +922,8 @@ struct Game {
     /// The party, its window, and an invitation waiting for an answer (party ID and name).
     party: Option<party::Party>,
     party_window: party::PartyWindow,
+    /// Members dragged out of the party window: a small HP window each, until it's closed, they leave, or logout.
+    member_windows: party::MemberWindows,
     party_invite: Option<(u32, String)>,
     /// The partner's name, as the last I Miss You told it (while the player has the ring's skill).
     partner: Option<String>,
@@ -1954,6 +1956,17 @@ impl Game {
         aim_use(ground, unit, if ground { self.ground_cell(cursor) } else { None })
     }
 
+    /// A party member's small window (or a row of the compact list) under the pointer, for aiming a skill.
+    /// The close button is left out: that still closes the window.
+    fn party_member_at(&self, cursor: [f32; 2]) -> Option<u32> {
+        match self.member_windows.hit(cursor) {
+            Some((account, party::MemberHit::Body)) => Some(account),
+            Some(_) => None,
+            None if self.party_window.compact => party::compact_hit(cursor, self.party.as_ref()),
+            None => None,
+        }
+    }
+
     /// Talks to an NPC, turned to face it; only standing still or sitting (walking or attacking, nothing).
     /// rathena answers when it's too far.
     fn talk_to(&mut self, id: u32) {
@@ -2596,6 +2609,8 @@ impl Game {
             || self.reputation_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
             || self.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some()
             || self.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some()
+            || self.member_windows.hit(cursor).is_some()
+            || self.party_window.compact && party::compact_hit(cursor, self.party.as_ref()).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
             || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
@@ -6195,6 +6210,14 @@ impl App {
                     None => {}
                 }
             }
+            // A small party window: its close button removes it. A click on the body was a drag (handled on press).
+            Scene::Game(game)
+                if game.member_windows.hit(cursor).is_some() || game.party_window.compact && party::compact_hit(cursor, game.party.as_ref()).is_some() =>
+            {
+                if let Some((account, party::MemberHit::Close)) = game.member_windows.hit(cursor) {
+                    game.member_windows.close(account);
+                }
+            }
             Scene::Game(game) if game.window_at(cursor).is_some() => {
                 let id = game.window_at(cursor).unwrap();
                 game.raise(id);
@@ -6439,6 +6462,7 @@ impl App {
                                 game.party_setup = Some(party::Setup::new(party, leader, game.party_window.frame.position));
                             }
                         }
+                        Some(party::Hit::LastRow) => game.party_window.compact = !game.party_window.compact,
                         _ => {}
                     },
                     Panel::Storage => {
@@ -6563,6 +6587,7 @@ impl App {
             }
             let party_height = game.party_window.height(game.party.as_ref(), &game.friends);
             game.party_window.frame.drag_to(self.cursor, party_height);
+            game.member_windows.drag_to(self.cursor);
             let status_height = game.status_height;
             game.status_window.frame.drag_to(self.cursor, status_height);
             let guild_height = game.guild_window.height();
@@ -7117,9 +7142,12 @@ impl App {
                 }
                 let option_windows = game.graphics_window.as_mut().is_some_and(options::GraphicsWindow::drop_drag)
                     | game.shortcuts_window.as_mut().is_some_and(options::ShortcutsWindow::drop_drag);
+                let member_held =
+                    game.member_windows.release(game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends, game.account_id).is_none(), self.cursor);
                 let windows = trade_moved
                     | slid
                     | option_windows
+                    | member_held
                     | game.party_window.frame.drop_drag()
                     | game.status_window.frame.drop_drag()
                     | game.guild_window.frame.drop_drag()
@@ -7176,6 +7204,12 @@ impl App {
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
             && game.targeting.is_some()
         {
+            // ponytail: a click on the member's window casts on their account id (a player's unit id). Range is the
+            // same as aiming at them in the world; the close button still closes.
+            if let Some(account) = game.party_member_at(cursor) {
+                game.aim_skill(SkillTarget::Unit(account));
+                return;
+            }
             let on_ui = game.on_ui(cursor, &self.items, assets.message.size);
             match (on_ui, game.aim_target(cursor, game.players_first(self.modifiers.shift_key()))) {
                 (false, Some(target)) => {
@@ -7405,6 +7439,20 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && let Some((account, hit)) = game.member_windows.hit(cursor)
+        {
+            if hit == party::MemberHit::Body {
+                game.member_windows.press_window(account, cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && game.party_window.compact
+            && party::compact_hit(cursor, game.party.as_ref()).is_some()
+        {
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
             && let Some(id) = game.window_at(cursor)
         {
             game.raise(id);
@@ -7441,6 +7489,11 @@ impl App {
             match id {
                 Panel::BasicInfo if game.basic_info.hit(cursor) == Some(basic_info::Hit::Title) => game.basic_info.frame.start_drag(cursor),
                 Panel::Inventory if game.inventory.hit(cursor) == Some(inventory::Hit::Title(TitleHit::Title)) => game.inventory.frame.start_drag(cursor),
+                Panel::Party if matches!(game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id), Some(party::Hit::Member(_))) => {
+                    if let Some(party::Hit::Member(account)) = game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id) {
+                        game.member_windows.press_row(account);
+                    }
+                }
                 Panel::Party
                     if game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id) == Some(party::Hit::Title(TitleHit::Title)) =>
                 {
@@ -8551,6 +8604,7 @@ impl App {
                         window.frame.open = window.friends || order.split(',').any(|part| part == "window");
                         window
                     },
+                    member_windows: party::MemberWindows::default(),
                     party_invite: None,
                     partner: None,
                     adopt_asked: None,
@@ -10304,6 +10358,7 @@ impl App {
                     })
                     .collect();
                 game.party = Some(party);
+                game.member_windows.retain(game.party.as_ref());
             }
             MapEvent::PartyMember { party: name, member, cell, .. } => {
                 let party = game.party.get_or_insert_with(party::Party::default);
@@ -10322,12 +10377,14 @@ impl App {
                     3 => game.chat_line(message(1873), CHAT_ERROR),
                     _ if account == game.account_id => {
                         game.party = None;
+                        game.member_windows.retain(None);
                         game.chat_line(message(PARTY_LEFT), CHAT_ITEM);
                     }
                     _ => {
                         if let Some(party) = &mut game.party {
                             party.members.retain(|member| member.info.account != account);
                         }
+                        game.member_windows.retain(game.party.as_ref());
                         game.unit_hp.remove(&account);
                     }
                 }
@@ -13002,6 +13059,19 @@ impl App {
             layer.faded = game.panel_faded(id);
             layers.push(layer);
         }
+        // Party members dragged out of the list, and the compact stack, over the other windows.
+        let mut member_layer = Layer::default();
+        game.member_windows.draw(
+            &mut member_layer,
+            &assets.chrome,
+            &assets.party,
+            font,
+            game.party.as_ref(),
+            here.as_str(),
+            game.party_window.compact,
+            pointer.0,
+        );
+        layers.push(member_layer);
         // A dragged item's or skill's icon follows the pointer.
         let dragged_icon = match game.dragging {
             Some((Dragged::Item(index), _, true)) => {
