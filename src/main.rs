@@ -379,6 +379,8 @@ const BOUND: usize = 1328;
 const RENTAL_MINUTES: usize = 1256;
 const RENTAL_SECONDS: usize = 1270;
 const RENTAL_ENDED: usize = 1258;
+/// EFST_BLADESTOP, EFST_CURSEDCIRCLE_ATKER and EFST_CURSEDCIRCLE_TARGET: a unit locked with another.
+const LOCK_ICONS: [u16; 3] = [85, 416, 417];
 /// The Convex Mirror: no boss here, the boss will show on the minimap; its status icon (EFST_CASH_BOSS_ALARM).
 const NO_BOSS: usize = 1223;
 const BOSS_SHOWN: usize = 1225;
@@ -517,6 +519,10 @@ struct Game {
     slot: Option<(usize, Instant)>,
     /// Units casting (None = the player): when it began and how long it takes.
     casts: HashMap<Option<u32>, (Instant, Duration)>,
+    /// Units that may use their next combo skill (None = the player): when the window opened and how long it lasts.
+    combos: HashMap<Option<u32>, (Instant, Duration)>,
+    /// Units locked together by Blade Stop or Cursed Circle: source and target.
+    locks: Vec<(u32, u32)>,
     /// Words over heads (chat, skill names), by unit (None = the player): text, color, when said.
     speech: HashMap<Option<u32>, (String, [u8; 3], Instant)>,
     /// Status effects on the player with an icon: the client's EFST id, when it began and ends (None: no end).
@@ -1803,6 +1809,17 @@ impl Game {
         }
     }
 
+    /// Units locked together hold still on the frame they had when caught; the others move again.
+    fn hold_locked(&mut self) {
+        let now = control::now();
+        let me = self.account_id;
+        let locks = &self.locks;
+        let actors = std::iter::once((me, &mut self.player)).chain(self.units.iter_mut().map(|(id, actor)| (*id, actor)));
+        for (id, actor) in actors {
+            actor.held = (locked_with(locks, id) > 0).then(|| actor.held.unwrap_or(now));
+        }
+    }
+
     fn chat_line(&mut self, text: String, color: [u8; 3]) {
         self.chat.push(text, color);
     }
@@ -2053,6 +2070,7 @@ struct Assets {
     /// The cast bar's fill, the speech bubble's box and border, the aimed skill's box, and status icons' clocks
     /// (white, then orange in the last minute) by step.
     cast_fill: Texture,
+    combo_fill: Texture,
     speech_fill: Texture,
     speech_border: Texture,
     target_fill: Texture,
@@ -2153,6 +2171,7 @@ impl Assets {
             clan: clan::Assets::load(gpu, grf),
             vend: vend::Assets::load(gpu, grf),
             cast_fill: gpu.solid([0x00, 0xFF, 0x00, 0xFF]),
+            combo_fill: gpu.solid([0xFF, 0xA0, 0x00, 0xFF]),
             speech_fill: gpu.solid([0, 0, 0, 102]),
             speech_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
             target_fill: gpu.solid([0, 0, 0, 128]),
@@ -4752,6 +4771,8 @@ impl App {
                     slot_sprite: SpriteSet::at(&self.grf, "data\\sprite\\slotmachine"),
                     slot: None,
                     casts: HashMap::new(),
+                    combos: HashMap::new(),
+                    locks: Vec::new(),
                     speech: HashMap::new(),
                     status_icons: Vec::new(),
                     cooldowns: skills::Cooldowns::default(),
@@ -5173,6 +5194,8 @@ impl App {
                 if id != game.account_id {
                     game.spirits.remove(&Some(id));
                 }
+                lock_pair(&mut game.locks, id, id, false);
+                game.hold_locked();
                 // A body keeps what plays on it (the killing hit's effects) until it goes.
                 if reason != 1 {
                     game.effects.forget(id);
@@ -5208,7 +5231,7 @@ impl App {
                     player.walk(path);
                 }
             }
-            MapEvent::Stop { id, position } => {
+            MapEvent::Stop { id, position } | MapEvent::Slide { id, position } => {
                 let cell = position.map(i32::from);
                 if id == game.account_id {
                     game.player.stop_at(cell);
@@ -5245,6 +5268,9 @@ impl App {
                 game.boss = None;
                 game.materials = None;
                 game.deal_choice = None;
+                game.combos.clear();
+                game.locks.clear();
+                game.hold_locked();
                 if map == game.map {
                     // A teleport on the same map: no loading, but the server takes the player off the map until
                     // the load is acknowledged (it drops everything else till then) and sends what's in view again.
@@ -5255,6 +5281,24 @@ impl App {
                 } else {
                     self.show_loading(LoadTarget::Change { map, position });
                 }
+            }
+            MapEvent::ComboWindow { id, ms } => {
+                game.combos.insert((id != game.account_id).then_some(id), (control::now(), Duration::from_millis(u64::from(ms))));
+            }
+            // Locked units turn to face each other.
+            // ponytail: the facing is an estimate.
+            MapEvent::BladeStop { source, target, on } => {
+                lock_pair(&mut game.locks, source, target, on);
+                let me = game.account_id;
+                let cell = |game: &Game, id: u32| if id == me { Some(game.player.cell) } else { game.units.get(&id).map(|actor| actor.cell) };
+                if on && let (Some(from), Some(to)) = (cell(game, source), cell(game, target)) {
+                    for (id, toward) in [(source, to), (target, from)] {
+                        if let Some(actor) = if id == me { Some(&mut game.player) } else { game.units.get_mut(&id) } {
+                            actor.face(toward);
+                        }
+                    }
+                }
+                game.hold_locked();
             }
             MapEvent::NpcSay { npc, text } => game.dialog_for(npc).lines.push(show_links(&text)),
             MapEvent::NpcNext { npc } => game.dialog_for(npc).button = DialogButton::Next,
@@ -6571,6 +6615,12 @@ impl App {
                 if id == game.account_id && kind == BOSS_ALARM && !on {
                     game.boss = None;
                 }
+                // A lock's status ending lets go of the unit's pairs too: rathena sends no ZC_BLADESTOP release for
+                // Cursed Circle (its caster's count of caught units stays 0).
+                if !on && LOCK_ICONS.contains(&kind) {
+                    lock_pair(&mut game.locks, id, id, false);
+                    game.hold_locked();
+                }
                 if id == game.account_id {
                     game.status_icons.retain(|(icon, ..)| *icon != kind);
                     if on && self.status_icon_files.contains_key(&kind) {
@@ -7437,6 +7487,20 @@ impl App {
             base.sprites.push((border, [left, y], CAST_BAR));
             base.sprites.push((background, [left + 1.0, y + 1.0], [CAST_BAR[0] - 2.0, CAST_BAR[1] - 2.0]));
             base.sprites.push((&assets.cast_fill, [left + 1.0, y + 1.0], [((CAST_BAR[0] - 2.0) * done).round(), CAST_BAR[1] - 2.0]));
+        }
+        // Combo windows: a bar under the cast bar's place, emptying as the window runs out.
+        // ponytail: how the official client shows a combo window isn't knowable from rathena.
+        game.combos.retain(|_, (start, length)| now.duration_since(*start) < *length);
+        for (unit, &(start, length)) in &game.combos {
+            let Some([x, y]) = head(unit) else { continue };
+            let [left, top] = [x - CAST_BAR[0] / 2.0, y + CAST_BAR[1] + 1.0];
+            base.sprites.push((border, [left, top], CAST_BAR));
+            base.sprites.push((background, [left + 1.0, top + 1.0], [CAST_BAR[0] - 2.0, CAST_BAR[1] - 2.0]));
+            base.sprites.push((
+                &assets.combo_fill,
+                [left + 1.0, top + 1.0],
+                [((CAST_BAR[0] - 2.0) * share_left(start, length, now)).round(), CAST_BAR[1] - 2.0],
+            ));
         }
         // Chat room signs over their owners' heads, like speech (not the room we're in).
         game.sign_rects.clear();
@@ -8528,9 +8592,50 @@ fn main() {
     event_loop.run_app(&mut app).expect("run");
 }
 
+/// Locks a pair of units (Blade Stop, Cursed Circle), or lets go of every pair that holds either of them.
+fn lock_pair(locks: &mut Vec<(u32, u32)>, source: u32, target: u32, on: bool) {
+    if !on {
+        locks.retain(|&(a, b)| ![a, b].iter().any(|id| *id == source || *id == target));
+    } else if !locks.contains(&(source, target)) {
+        locks.push((source, target));
+    }
+}
+
+/// How many units a unit is locked with.
+fn locked_with(locks: &[(u32, u32)], id: u32) -> usize {
+    locks.iter().filter(|&&(source, target)| source == id || target == id).count()
+}
+
+/// The share of a window (a combo's) still left.
+fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
+    1.0 - (now.saturating_duration_since(start).as_secs_f32() / length.as_secs_f32().max(f32::EPSILON)).min(1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locks_and_lets_go_of_pairs() {
+        // Cursed Circle: one Sura (1) catches two units; the release names the last one and the Sura.
+        let mut locks = Vec::new();
+        lock_pair(&mut locks, 1, 2, true);
+        lock_pair(&mut locks, 1, 3, true);
+        lock_pair(&mut locks, 1, 3, true);
+        assert_eq!((locked_with(&locks, 1), locked_with(&locks, 2), locked_with(&locks, 4)), (2, 1, 0));
+        lock_pair(&mut locks, 3, 1, false);
+        assert!(locks.is_empty());
+        // Blade Stop: either side lets go of the pair.
+        lock_pair(&mut locks, 5, 6, true);
+        lock_pair(&mut locks, 6, 0, false);
+        assert!(locks.is_empty());
+        // A combo window empties as it runs out.
+        let start = Instant::now();
+        let length = Duration::from_millis(800);
+        assert_eq!(share_left(start, length, start), 1.0);
+        assert_eq!(share_left(start, length, start + Duration::from_millis(200)), 0.75);
+        assert_eq!(share_left(start, length, start + Duration::from_secs(2)), 0.0);
+    }
 
     #[test]
     fn coins_for_the_gunslinger_line() {
