@@ -16,13 +16,17 @@ const SIGN_TEXT: [f32; 2] = [31.0, 8.0];
 /// pixels lower.
 pub const SIGN_ABOVE: f32 = 96.0;
 const ROOM_DROP: f32 = 17.0;
-/// A shop board: grey frame, white, and a yellow band inside.
-const SHOP_FRAME: [u8; 4] = [0xC3, 0xC3, 0xC3, 0xFF];
-const SHOP_BAND: [u8; 4] = [0xFF, 0xFA, 0x7D, 0xFF];
-/// The system box's corner and edge pieces, and the chat room board's tail under its middle.
+/// A shop board: a white box over all but its bottom 6 px (yellow for the one picked), a grey line inset 2 inside it.
+const SHOP_LINE: [u8; 4] = [0xC3, 0xC3, 0xC3, 0xFF];
+const SHOP_PICKED: [u8; 4] = [0xFF, 0xFA, 0x7D, 0xFF];
+const SHOP_BOTTOM: f32 = 6.0;
+const SHOP_INSET: f32 = 2.0;
+/// The icon's corner on both boards.
+const ICON: [f32; 2] = [3.0, 3.0];
+/// The chat room board: the system box's 14-px pieces, the edges tiled every 12 px from 12, the bottom row's top at 28.
 const PIECE: f32 = 14.0;
-const TAIL: usize = 6;
-const TAIL_EDGE: [u8; 4] = [0x8C, 0x8C, 0x8C, 0xFF];
+const TILE: f32 = 12.0;
+const BOTTOM_ROW: f32 = 28.0;
 const ROOM_WIDTH: f32 = 279.0;
 const ROOM_LIST: f32 = 120.0;
 const ROOM_SEND: f32 = 30.0;
@@ -80,9 +84,11 @@ pub struct Assets {
     /// Open and password-locked room icons, a vendor's shop, and a buying store.
     icons: [Texture; 4],
     white: Texture,
-    frame: Texture,
-    band: Texture,
-    tail_edge: Texture,
+    /// A shop board's grey line, and the picked shop's yellow.
+    line: Texture,
+    picked: Texture,
+    /// The chat room board's tail.
+    tail: Texture,
     /// The system box: corners, edges (lu, mu, ru, lm, rm, ld, md, rd).
     pieces: [Texture; 8],
     ok: [Texture; 3],
@@ -97,9 +103,9 @@ impl Assets {
         Self {
             icons: [image("chat_open"), image("chat_close"), image("shop"), image("buyingshop")],
             white: gpu.solid([255; 4]),
-            frame: gpu.solid(SHOP_FRAME),
-            band: gpu.solid(SHOP_BAND),
-            tail_edge: gpu.solid(TAIL_EDGE),
+            line: gpu.solid(SHOP_LINE),
+            picked: gpu.solid(SHOP_PICKED),
+            tail: image("sysbox_arr_l"),
             pieces: ["lu", "mu", "ru", "lm", "rm", "ld", "md", "rd"].map(|name| image(&format!("sysbox_{name}"))),
             ok: ["btn_ok", "btn_ok_a", "btn_ok_b"].map(image),
             cancel: ["btn_cancel", "btn_cancel_a", "btn_cancel_b"].map(image),
@@ -122,42 +128,49 @@ pub fn sign_rect(kind: u8, head: [f32; 2]) -> [f32; 4] {
     [corner[0], corner[1], corner[0] + SIGN[0], corner[1] + SIGN[1]]
 }
 
-/// The tail's rows under a chat room board with its box at `rect`: each row's left, top and width, narrowing to a
-/// point under the middle.
-// ponytail: the tail's size and look; the data has no bitmap for it.
-fn tail_rows(rect: [f32; 4]) -> Vec<[f32; 3]> {
-    let middle = ((rect[0] + rect[2]) / 2.0).floor();
-    (0..TAIL).map(|row| [middle - (TAIL - 1 - row) as f32, rect[3] - 1.0 + row as f32, (2 * (TAIL - row) - 1) as f32]).collect()
+/// A shop board's pieces inside the board: the filled box, the grey line's four sides, the icon's corner.
+fn shop_pieces() -> ([f32; 4], [[f32; 4]; 4], [f32; 2]) {
+    let [w, h] = SIGN;
+    let fill = [0.0, 0.0, w, h - SHOP_BOTTOM];
+    let [x, y, lw, lh] = [SHOP_INSET, SHOP_INSET, w - 2.0 * SHOP_INSET, h - SHOP_BOTTOM - 2.0 * SHOP_INSET];
+    let line = [[x, y, lw, 1.0], [x, y + lh - 1.0, lw, 1.0], [x, y, 1.0, lh], [x + lw - 1.0, y, 1.0, lh]];
+    (fill, line, ICON)
 }
 
-/// Draws a sign over the unit whose head point is `head`, and gives its box.
-pub fn draw_sign<'a>(layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, sign: &Sign, head: [f32; 2]) -> [f32; 4] {
+/// Where the chat room board's tiled edge pieces go across, inside the board: every 12 px from 12 while a piece fits
+/// before the right corner.
+fn edge_tiles() -> Vec<f32> {
+    let last = SIGN[0] - PIECE;
+    (1..).map(|step| step as f32 * TILE).take_while(|&x| x < last).collect()
+}
+
+/// Draws a sign over the unit whose head point is `head`, and gives its box. A `picked` shop board is yellow.
+pub fn draw_sign<'a>(layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, sign: &Sign, head: [f32; 2], picked: bool) -> [f32; 4] {
     let rect = sign_rect(sign.kind, head);
     let [x, y] = [rect[0], rect[1]];
-    let [w, h] = SIGN;
+    let at = |local: [f32; 2]| [x + local[0], y + local[1]];
+    let w = SIGN[0];
     if is_shop(sign.kind) {
-        // ponytail: the band's place: inside a white margin of 2 within the frame.
-        layer.sprites.push((&assets.frame, [x, y], SIGN));
-        layer.sprites.push((&assets.white, [x + 1.0, y + 1.0], [w - 2.0, h - 2.0]));
-        layer.sprites.push((&assets.band, [x + 3.0, y + 3.0], [w - 6.0, h - 6.0]));
+        let (fill, line, _) = shop_pieces();
+        layer.sprites.push((if picked { &assets.picked } else { &assets.white }, at([fill[0], fill[1]]), [fill[2], fill[3]]));
+        for [lx, ly, lw, lh] in line {
+            layer.sprites.push((&assets.line, at([lx, ly]), [lw, lh]));
+        }
     } else {
         let [lu, mu, ru, lm, rm, ld, md, rd] = &assets.pieces;
-        let middle = [w - 2.0 * PIECE, h - 2.0 * PIECE];
-        layer.sprites.push((&assets.white, [x + PIECE, y + PIECE], middle));
-        layer.sprites.push((lu, [x, y], [PIECE; 2]));
-        layer.sprites.push((mu, [x + PIECE, y], [middle[0], PIECE]));
-        layer.sprites.push((ru, [x + w - PIECE, y], [PIECE; 2]));
-        layer.sprites.push((lm, [x, y + PIECE], [PIECE, middle[1]]));
-        layer.sprites.push((rm, [x + w - PIECE, y + PIECE], [PIECE, middle[1]]));
-        layer.sprites.push((ld, [x, y + h - PIECE], [PIECE; 2]));
-        layer.sprites.push((md, [x + PIECE, y + h - PIECE], [middle[0], PIECE]));
-        layer.sprites.push((rd, [x + w - PIECE, y + h - PIECE], [PIECE; 2]));
-        for [left, top, width] in tail_rows(rect) {
-            layer.sprites.push((&assets.tail_edge, [left, top], [width, 1.0]));
-            if width > 2.0 {
-                layer.sprites.push((&assets.white, [left + 1.0, top], [width - 2.0, 1.0]));
+        let piece = [PIECE; 2];
+        // The middle band between the rows, then the rows over it; the tail over the bottom row's middle.
+        layer.sprites.push((lm, at([0.0, PIECE]), [PIECE, BOTTOM_ROW - PIECE]));
+        layer.sprites.push((&assets.white, at([PIECE, PIECE]), [w - 2.0 * PIECE, BOTTOM_ROW - PIECE]));
+        layer.sprites.push((rm, at([w - PIECE, PIECE]), [PIECE, BOTTOM_ROW - PIECE]));
+        for (row, [left, middle, right]) in [(0.0, [lu, mu, ru]), (BOTTOM_ROW, [ld, md, rd])] {
+            for tile in edge_tiles() {
+                layer.sprites.push((middle, at([tile, row]), piece));
             }
+            layer.sprites.push((left, at([0.0, row]), piece));
+            layer.sprites.push((right, at([w - PIECE, row]), piece));
         }
+        layer.sprites.push((&assets.tail, at([((w - assets.tail.size[0]) / 2.0).floor(), BOTTOM_ROW]), assets.tail.size));
     }
     let icon = &assets.icons[match sign.kind {
         0 => 1,
@@ -165,10 +178,10 @@ pub fn draw_sign<'a>(layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, sig
         BUYING_STORE => 3,
         _ => 0,
     }];
-    // ponytail: the icon's place, left of the text and centred down the board.
-    layer.sprites.push((icon, [x + 3.0, y + ((h - icon.size[1]) / 2.0).floor()], icon.size));
-    let text = window::fit(font, &sign.text(), w - SIGN_TEXT[0] - 4.0);
-    layer.texts.push((text, [x + SIGN_TEXT[0], y + SIGN_TEXT[1]], [0, 0, 0]));
+    layer.sprites.push((icon, at(ICON), icon.size));
+    // ponytail: the client's 12-px font for the board isn't ours; the text keeps the window font in its box.
+    let text = window::fit(font, &sign.text(), w - SIGN_TEXT[0] - 3.0);
+    layer.texts.push((text, at(SIGN_TEXT), [0, 0, 0]));
     rect
 }
 
@@ -385,10 +398,14 @@ mod tests {
         assert_eq!(sign_rect(BUYING_STORE, [500.0, 300.0]), [430.0, 266.0, 570.0, 300.0]);
         assert_eq!(sign_rect(1, [500.0, 300.0]), [430.0, 283.0, 570.0, 317.0]);
         assert_eq!(sign_rect(0, [500.5, 300.0]), [431.0, 283.0, 571.0, 317.0]);
-        // The tail narrows to one pixel under the middle, from the box's last row down.
-        let tail = tail_rows([430.0, 283.0, 570.0, 317.0]);
-        assert_eq!(tail.first(), Some(&[495.0, 316.0, 11.0]));
-        assert_eq!(tail.last(), Some(&[500.0, 321.0, 1.0]));
+        // A shop board: white over 140 x 28, the grey line 136 x 24 at (2, 2), the icon at (3, 3).
+        let (fill, line, icon) = shop_pieces();
+        assert_eq!(fill, [0.0, 0.0, 140.0, 28.0]);
+        assert_eq!(line, [[2.0, 2.0, 136.0, 1.0], [2.0, 25.0, 136.0, 1.0], [2.0, 2.0, 1.0, 24.0], [137.0, 2.0, 1.0, 24.0]]);
+        assert_eq!(icon, [3.0, 3.0]);
+        // The chat room board's edges: tiles every 12 px from 12 up to the right corner at 126; the bottom row at 28.
+        assert_eq!(edge_tiles(), (1..=10).map(|step| step as f32 * 12.0).collect::<Vec<_>>());
+        assert_eq!(BOTTOM_ROW, SIGN[1] - 6.0);
     }
 
     #[test]

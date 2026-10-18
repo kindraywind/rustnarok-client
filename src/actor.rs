@@ -1709,14 +1709,25 @@ impl Actor {
         self.facing_from_server = true;
     }
 
-    /// Walks `path` from the cell it's on (or on from the step under way).
-    pub fn walk(&mut self, path: Vec<[i32; 2]>) {
-        let now = Instant::now();
-        self.start_walking(now);
-        if self.path.is_empty() {
-            self.leg = (self.cell.map(|value| value as f32), now);
+    /// Walks `path` on from `from`, where the server starts it. A walk changed midway starts from the cell the step
+    /// under way ends on, so that step plays out first and the new path follows; from anywhere else the unit heads
+    /// to `from` from where it is now.
+    pub fn walk_on(&mut self, from: [i32; 2], path: Vec<[i32; 2]>, now: Instant) {
+        if !self.moving() {
+            self.cell = from;
         }
-        self.path = arrivals(self.leg.0, self.leg.1, &path, self.step_ms, 1.0);
+        self.start_walking(now);
+        if let Some(at) = self.path.iter().position(|&(cell, _)| cell == from) {
+            self.path.truncate(at + 1);
+            let arrives = self.path[at].1;
+            self.path.extend(arrivals(from.map(|value| value as f32), arrives, &path, self.step_ms, 1.0));
+        } else {
+            let start = self.update(now);
+            self.cell = start.map(|value| value.round() as i32);
+            self.leg = (start, now);
+            let path: Vec<_> = (self.cell != from || path.is_empty()).then_some(from).into_iter().chain(path).collect();
+            self.path = arrivals(start, now, &path, self.step_ms, 1.0);
+        }
     }
 
     /// Walks `path` as the server has it: from `from` and its sixteenths of a cell `sub` (8: the centre), beginning at
@@ -2143,6 +2154,31 @@ mod tests {
         assert_eq!(actor.direction, 5);
         assert_eq!(actor.update(at(400)), [12.0, 11.0]);
         assert!(!actor.moving());
+    }
+
+    #[test]
+    fn turns_midway_without_a_jump() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut actor = Actor::new("a".into(), None, [10, 10], 0, 100);
+        actor.walk_on([10, 10], vec![[11, 10], [12, 10], [13, 10]], start);
+        assert_near(actor.update(at(150)), [11.5, 10.0]);
+        // Turned north mid-step: the server starts the new path from 12,10, where this step ends.
+        actor.walk_on([12, 10], vec![[12, 11], [12, 12]], at(150));
+        assert_near(actor.update(at(160)), [11.6, 10.0]);
+        assert_near(actor.update(at(250)), [12.0, 10.5]);
+        assert_eq!(actor.direction, 4);
+        assert_near(actor.update(at(401)), [12.0, 12.0]);
+        assert!(!actor.moving());
+        // From a cell we've already left (we ran ahead): back to it from where we are, then on.
+        let mut actor = Actor::new("a".into(), None, [10, 10], 0, 100);
+        actor.walk_on([10, 10], vec![[11, 10], [12, 10]], start);
+        actor.update(at(150));
+        actor.walk_on([11, 10], vec![[11, 11]], at(150));
+        assert_near(actor.update(at(175)), [11.25, 10.0]);
+        assert_eq!(actor.direction, 2);
+        assert_near(actor.update(at(200)), [11.0, 10.0]);
+        assert_near(actor.update(at(300)), [11.0, 11.0]);
     }
 
     #[test]

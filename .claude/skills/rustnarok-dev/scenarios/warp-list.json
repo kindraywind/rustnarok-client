@@ -1,5 +1,5 @@
 {
-  "about": "Warp Portal and Teleport: /memo saves izlude, Teleport lists Random Area and the save point (Esc cancels), Warp Portal lists the save point and the memo point, and picking one opens the portal. The first account is made an Acolyte with every skill.",
+  "about": "Warp Portal and Teleport: /memo saves izlude, Teleport lists Random Area and the save point (Esc leaves it; its Cancel row cancels), Warp Portal lists the save point and the memo point, and picking one opens the portal. The first account is made an Acolyte with every skill.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -14,8 +14,12 @@
     {"key": "Alt+S"}, {"wait": 300}, {"move": [900, 700]},
     {"expect": {"windows_open": ["WarpList"]}},
     {"shot": "teleport-list", "crop": [330, 450, 300, 140]},
-    {"key": "Escape"}, {"wait": 500},
+    {"key": "Escape"}, {"wait": 300},
+    {"expect": {"windows_open": ["WarpList"], "state": {"escape.0": "char_select"}}},
+    {"key": "Escape"}, {"wait": 300},
+    {"key": "ArrowDown"}, {"key": "ArrowDown"}, {"key": "Enter"}, {"wait": 500},
     {"expect": {"windows_closed": ["WarpList"], "map": "izlude.gat"}},
+    {"say": "@heal"}, {"wait": 500},
     {"key": "Alt+S"}, {"wait": 500},
     {"click_on": {"skill": 27}, "count": 2}, {"wait": 300},
     {"key": "Alt+S"}, {"wait": 300},

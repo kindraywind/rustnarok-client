@@ -802,6 +802,9 @@ struct Game {
     /// The emotion sprite, and the emotions showing: by unit (None = the player), the sprite action and when.
     emotion_sprite: Option<SpriteSet>,
     emotions: HashMap<Option<u32>, (usize, Instant)>,
+    /// The MVP sprite, and over which MVP winners it shows (None = the player) since when.
+    mvp_sprite: Option<SpriteSet>,
+    mvps: HashMap<Option<u32>, Instant>,
     /// The status marks' sprites (stun, sleep, curse, the ice block) by name.
     mark_sprites: HashMap<&'static str, SpriteSet>,
     /// What circles units (None = the player): spheres or coins, shields, charms, souls; the sphere's, the shield's
@@ -3042,8 +3045,7 @@ impl Game {
                 push(id, self.panel_open(panel));
             }
         }
-        push(NpcDialog, self.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()));
-        push(WarpList, self.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some()));
+        // An NPC's window and the warp list aren't Esc's to close: they end with their own buttons.
         push(Shop, self.shop.is_some());
         push(Refine, self.refine.is_some());
         push(GradeEnchant, self.grade.is_some());
@@ -3130,6 +3132,9 @@ impl Game {
         if matches!(self.queue_asked, Some(QueueAsked::Lobby(..))) {
             names.push("BattleLobby".into());
         }
+        if let Some(dialog) = &self.dialog {
+            names.push(if dialog.warp.is_some() { "WarpList" } else { "NpcDialog" }.into());
+        }
         names
     }
 
@@ -3178,7 +3183,7 @@ impl Game {
         None
     }
 
-    /// A question (or an NPC menu waiting for a choice) is up.
+    /// A question is up. An NPC's menu (and the warp list) isn't one: Esc leaves those alone.
     fn question_open(&self) -> bool {
         self.save_asked
             || self.bind_asked.is_some()
@@ -3195,17 +3200,12 @@ impl Game {
             || self.trade_asked.is_some()
             || self.deal_choice.is_some()
             || self.amount.is_some()
-            || self.dialog.as_ref().is_some_and(|dialog| dialog.menu.is_some())
             || self.adopt_asked.is_some()
             || self.queue_asked.is_some()
     }
 
-    /// Answers the open question with No. An NPC menu is cancelled.
+    /// Answers the open question with No.
     fn answer_no(&mut self, messages: &[String]) {
-        if self.dialog.as_ref().is_some_and(|dialog| dialog.menu.is_some()) {
-            self.choose(true);
-            return;
-        }
         if self.save_asked {
             self.save_asked = false;
             return;
@@ -7609,6 +7609,7 @@ impl App {
             battle_line: game.chat_mode.battle_line_open(),
             whisper_list: game.chat.whisper_list_open(),
             focused: game.focused_text(),
+            conversation: game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()),
             question: game.question_open(),
             newest: game.esc_order.first().copied(),
         };
@@ -7991,7 +7992,6 @@ impl App {
                     (Key::Named(NamedKey::ArrowUp), _, Some((_, selected))) => *selected = selected.saturating_sub(1),
                     (Key::Named(NamedKey::ArrowDown), _, Some((items, selected))) => *selected = (*selected + 1).min(items.len().saturating_sub(1)),
                     (Key::Named(NamedKey::Enter), _, Some(_)) => game.choose(false),
-                    (Key::Named(NamedKey::Escape), _, Some(_)) => game.choose(true),
                     (Key::Named(NamedKey::Enter), None, None) => game.press_dialog_button(),
                     _ => {}
                 }
@@ -8517,6 +8517,8 @@ impl App {
                     shadow: SpriteSet::at(&self.grf, "data\\sprite\\shadow"),
                     emotion_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\emotion"),
                     emotions: HashMap::new(),
+                    mvp_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\mvp"),
+                    mvps: HashMap::new(),
                     mark_sprites: ["status-stun", "status-sleep", "status-curse", "얼음땡"]
                         .into_iter()
                         .filter_map(|name| Some((name, SpriteSet::at(&self.grf, &format!("data\\sprite\\이팩트\\{name}"))?)))
@@ -9339,12 +9341,9 @@ impl App {
                 }
             }
             MapEvent::PlayerMove { from, to, .. } => {
-                let player = &mut game.player;
-                if !player.moving() {
-                    player.cell = from.map(i32::from);
-                }
-                if let Some(path) = world::find_path(&game.world.gat, player.cell, to.map(i32::from)) {
-                    player.walk(path);
+                let from = from.map(i32::from);
+                if let Some(path) = world::find_path(&game.world.gat, from, to.map(i32::from)) {
+                    game.player.walk_on(from, path, control::now());
                 }
             }
             // A knockback (ZC_HIGHJUMP) slides the unit there; the stop that follows at the same cell leaves the slide
@@ -9736,12 +9735,13 @@ impl App {
                 let name = inventory::item_name(&self.items, item, true, 0);
                 game.chat_line(messages::fill(template, &[&player, &grade::grade_letter(next), &name]), CHAT_BROADCAST);
             }
-            // ponytail: the banner effect alone; the data also has a sprite, data\sprite\이팩트\mvp.spr, the real
-            // client may show with it.
+            // The banner effect, and the MVP sprite over the winner.
+            // ponytail: ZC_MVP starts the sprite and it plays once through, like an emotion; neither is pinned down.
             MapEvent::Mvp(id) => {
                 if let Some(gpu) = gpu {
                     game.play_effect(gpu, grf, table, EF_MVP, id);
                 }
+                game.mvps.insert((id != game.account_id).then_some(id), control::now());
             }
             // ponytail: the reward lines in the items' cyan; the real client's color is unknown.
             MapEvent::MvpItem(item) => {
@@ -12278,8 +12278,7 @@ impl App {
         // Emotions play once over heads.
         let mut shown = Vec::new();
         if let Some(sprite) = &mut game.emotion_sprite {
-            game.emotions
-                .retain(|_, (action, start)| now.duration_since(*start).as_secs_f32() * 1000.0 < sprite.index_ms(*action).unwrap_or(emotion::SHOWN_MS));
+            game.emotions.retain(|_, (action, start)| head_marks::playing(now.duration_since(*start), sprite.index_ms(*action).unwrap_or(emotion::SHOWN_MS)));
             for (unit, (action, start)) in &game.emotions {
                 let feet = match unit {
                     None => player_feet,
@@ -12290,6 +12289,16 @@ impl App {
                 };
                 let elapsed = now.duration_since(*start).as_secs_f32() * 1000.0;
                 shown.push((feet, sprite.frame_at(gpu, *action, 0, Timing::Loop(elapsed))));
+            }
+        }
+        // The MVP sprite plays once over the winner, where emotions hang, following them.
+        let mut mvp_shown = Vec::new();
+        if let Some(sprite) = &mut game.mvp_sprite {
+            let length = sprite.index_ms(0).unwrap_or(emotion::SHOWN_MS);
+            game.mvps.retain(|_, start| head_marks::playing(now.duration_since(*start), length));
+            for (unit, start) in &game.mvps {
+                let Some(feet) = unit.map_or(Some(player_feet), |id| feet_of.get(&id).copied()) else { continue };
+                mvp_shown.push((feet, sprite.frame_at(gpu, 0, 0, Timing::Loop(now.duration_since(*start).as_secs_f32() * 1000.0))));
             }
         }
         // Status marks: stun stars, sleep, curse and silence's "..." over heads, the ice block at a frozen unit's feet.
@@ -12316,6 +12325,14 @@ impl App {
         }
         if let Some(sprite) = &game.emotion_sprite {
             billboards.extend(shown.into_iter().flat_map(|(feet, placements)| {
+                let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
+                placements.into_iter().map(move |(key, position, size, angle)| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                })
+            }));
+        }
+        if let Some(sprite) = &game.mvp_sprite {
+            billboards.extend(mvp_shown.into_iter().flat_map(|(feet, placements)| {
                 let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
                 placements.into_iter().map(move |(key, position, size, angle)| {
                     (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
@@ -12674,7 +12691,9 @@ impl App {
                 },
             };
             let Some(point) = sprite_point(feet, -chatroom::SIGN_ABOVE) else { continue };
-            let rect = chatroom::draw_sign(&mut base, &assets.chatroom, font, sign, point.map(f32::round));
+            // ponytail: the one yellow shop board is the vendor whose shop window is open.
+            let picked = game.shop.as_ref().and_then(|shop| shop.vendor.as_ref()).is_some_and(|(vendor, ..)| vendor == owner);
+            let rect = chatroom::draw_sign(&mut base, &assets.chatroom, font, sign, point.map(f32::round), picked);
             game.sign_rects.push((rect, sign.id, sign.kind));
         }
         for (unit, (text, color, _)) in &game.speech {

@@ -1,5 +1,5 @@
 {
-  "about": "Boards over heads (issue #202) at prt_fild08: the first player makes a chat room with the room maker (Alt+C) at 170 360; the second, six cells east, turns Merchant, puts Jellopy in the cart and opens a vending shop (dev switch). The first sees the shop's board (its own room shows as its window); the second sees both (its own shop window covers its own board). Both boards are 140x34 and centred on their owners: the room's in the system box with a tail, 17 px lower than the shop's white-and-yellow box. The second goes back to a Novice without cart or items at base level 1, and the first leaves its room by warping back to Prontera.",
+  "about": "Boards over heads (issue #202) at prt_fild08: the first player makes a chat room with the room maker (Alt+C) at 170 360; the second, six cells east, turns Merchant, puts Jellopy in the cart and opens a vending shop (dev switch). The first sees the shop's board (its own room shows as its window); the second sees both (its own shop window covers its own board). Both boards are 140x34 and centred on their owners: the room's in the system box with a tail, 17 px lower than the shop's white-and-yellow box. Then the first leaves its room and opens the shop by its board: that one board turns yellow. The second goes back to a Novice without cart or items at base level 1, and the first leaves its room by warping back to Prontera.",
   "account": "",
   "slot": 0,
   "second": {
@@ -221,6 +221,49 @@
         220
       ],
       "threshold": 5
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "ChatRoom"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "button": "shop_sign"
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "shop-picked",
+      "crop": [
+        150,
+        150,
+        780,
+        330
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 400
     },
     {
       "as": "second",

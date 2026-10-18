@@ -988,8 +988,12 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .chain(game.shop.iter().flat_map(crate::shop::Shop::button_boxes))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
-        .chain(game.sign_rects.iter().filter(|(_, _, kind)| *kind != crate::chatroom::SHOP).map(|&(rect, _, kind)| {
-            let name = if kind == crate::chatroom::BUYING_STORE { "buying_sign" } else { "room_sign" };
+        .chain(game.sign_rects.iter().map(|&(rect, _, kind)| {
+            let name = match kind {
+                crate::chatroom::BUYING_STORE => "buying_sign",
+                crate::chatroom::SHOP => "shop_sign",
+                _ => "room_sign",
+            };
             json!({"kind": "button", "name": name, "box": [rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]]})
         }))
         .chain(game.dialog_links.iter().chain(&game.chat_links).map(|(area, target)| match target {
@@ -1118,6 +1122,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "char_id": game.me.id,
             "job": game.me.job,
             "cell": game.player.cell,
+            // Where it's drawn, in cells: between two while walking.
+            "position": game.player.position(self::now()),
             "direction": game.player.direction,
             "moving": game.player.moving(),
             // The falcon (25 above the ground) and the warg (on the ground), or null. Riding leaves the warg null.
@@ -1263,6 +1269,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         // The bars under units: by whose ("player", "homunculus", "mercenary", "elemental", "pet", else the unit ID), the
         // box and each row's fill (null when its maximum isn't known).
         "bars": game.bars_drawn.iter().map(|(whose, area, fills)| (whose.clone(), json!({"box": area, "fills": fills}))).collect::<serde_json::Map<_, _>>(),
+        // Who has the MVP sprite over their head now.
+        "mvp_sprites": game.mvps.keys().map(|unit| unit.map_or(game.me.name.clone(), |id| game.units.get(&id).map(|actor| actor.name.clone()).unwrap_or_default())).collect::<Vec<_>>(),
         "map_property": game.map_property.map(|(property, flags)| json!({"type": property, "flags": flags})),
         "map_type": game.map_type,
         // The PvP counter as it shows (rank, players), or null.
