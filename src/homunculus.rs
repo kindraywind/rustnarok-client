@@ -58,6 +58,11 @@ pub fn intimacy_word(intimacy: u16) -> usize {
     }
 }
 
+/// A message's lines: the table writes its breaks as "\n".
+fn text_lines(text: &str) -> impl Iterator<Item = &str> {
+    text.split("\\n").flat_map(str::lines)
+}
+
 /// Whether the homunculus's full status says "starving": hunger at exactly 1, 5 or 10, and not the hunger last
 /// warned about.
 pub fn starving_now(warned: Option<u16>, hunger: u16) -> bool {
@@ -284,7 +289,7 @@ impl Window {
             Some(background) => layer.sprites.push((background, at([0.0, 0.0]), background.size)),
             None => chrome.draw_title_bar(layer, at([0.0, 0.0]), WIDTH),
         }
-        for (row, line) in message(NOTE).lines().enumerate() {
+        for (row, line) in text_lines(message(NOTE)).enumerate() {
             layer.texts.push((line.to_owned(), at([NOTE_AT[0], NOTE_AT[1] + row as f32 * font.line_height()]), NOTE_COLOR));
         }
         frame.draw_bare_title(layer, chrome, message(TITLE), pointer.0);
@@ -339,7 +344,7 @@ impl Window {
         // Automatic feeding.
         let check = &assets.check[usize::from(self.auto_feed)];
         layer.sprites.push((check, at(AUTO_BOX), CHECK));
-        for (row, line) in message(AUTO_FEED).lines().enumerate() {
+        for (row, line) in text_lines(message(AUTO_FEED)).enumerate() {
             text(layer, line.to_owned(), [AUTO_LABEL[0], AUTO_LABEL[1] + row as f32 * font.line_height()]);
         }
         // Intimacy (the word keeps its leading space).
@@ -527,6 +532,7 @@ mod tests {
         assert_eq!([0, 1, 2, 5, 9, 10, 11].map(|hunger| starving_now(None, hunger)), [false, true, false, true, false, true, false]);
         assert!(!starving_now(Some(10), 10));
         assert!(starving_now(Some(10), 5));
+        assert_eq!(text_lines("Auto \\nFeeding").collect::<Vec<_>>(), ["Auto ", "Feeding"]);
     }
 
     #[test]
