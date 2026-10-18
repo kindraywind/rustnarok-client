@@ -279,7 +279,7 @@ struct GroundOutput {
     // Faces are drawn from both sides, so light them from whichever side faces the light.
     let weight = abs(dot(normalize(in.normal), globals.light_direction.xyz));
     let light = clamp(globals.ambient.rgb + globals.diffuse.rgb * weight, vec3(0.0), vec3(1.0));
-    return vec4(texel.rgb * light, 1.0);
+    return vec4(texel.rgb * in.color.rgb * light, 1.0);
 }
 
 // Shadows and effects take their feet's `depth`, flat. Sprites work theirs out per pixel from their `plane` (the
@@ -1011,6 +1011,7 @@ type ModelMesh = (Vec<GroundVertex>, Vec<(usize, Range<u32>)>, Vec<String>, usiz
 pub struct Animated {
     rsm: std::rc::Rc<Rsm>,
     placement: model::Matrix,
+    color: [f32; 4],
     anim_type: i32,
     speed: f32,
     start: Option<std::time::Instant>,
@@ -1042,7 +1043,7 @@ impl World {
             let triangles = posed.entry((std::rc::Rc::as_ptr(&instance.rsm), frame.to_bits())).or_insert_with(|| instance.rsm.triangles_at(frame));
             for &triangle in &instance.order {
                 if let Some(triangle) = triangles.get(triangle) {
-                    vertices.extend(placed_vertices(&instance.placement, triangle));
+                    vertices.extend(placed_vertices(&instance.placement, instance.color, triangle));
                 }
             }
         }
@@ -1065,15 +1066,19 @@ fn placement(instance: &rustnarok_client::map::Model, half: [f32; 2]) -> model::
     .fold(model::IDENTITY, |matrix, next| model::multiply(&matrix, next))
 }
 
-/// A triangle's three vertices placed in the world (y up), with its face normal.
-fn placed_vertices(placement: &model::Matrix, triangle: &model::Triangle) -> [GroundVertex; 3] {
+fn model_color([r, g, b]: [u8; 3]) -> [f32; 4] {
+    [f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0, 1.0]
+}
+
+/// A triangle's three vertices placed in the world (y up), with its face normal and the instance's colour.
+fn placed_vertices(placement: &model::Matrix, color: [f32; 4], triangle: &model::Triangle) -> [GroundVertex; 3] {
     // Native space has Y down; the world has Y up.
     let positions = triangle.positions.map(|position| {
         let [x, y, z] = model::transform(placement, position);
         [x, -y, z]
     });
     let normal = normalize(cross(subtract(positions[1], positions[0]), subtract(positions[2], positions[0])));
-    std::array::from_fn(|corner| GroundVertex { position: positions[corner], normal, uv: triangle.uvs[corner], lightmap_uv: [0.0; 2], color: [1.0; 4] })
+    std::array::from_fn(|corner| GroundVertex { position: positions[corner], normal, uv: triangle.uvs[corner], lightmap_uv: [0.0; 2], color })
 }
 
 fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
@@ -1095,6 +1100,7 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
         rsm_2 += usize::from(rsm.version >= (2, 0));
 
         let placement = placement(instance, half);
+        let color = model_color(instance.tint);
 
         let mut texture_of = |name: &String, per_texture: &mut Vec<Vec<GroundVertex>>| {
             *texture_index.entry(name.clone()).or_insert_with(|| {
@@ -1118,6 +1124,7 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
             animated.push(Animated {
                 rsm: rsm.clone(),
                 placement,
+                color,
                 anim_type: instance.anim_type,
                 speed: instance.anim_speed,
                 start: None,
@@ -1129,7 +1136,7 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
         }
         for triangle in triangles.iter() {
             let texture = texture_of(&rsm.textures[triangle.texture], &mut per_texture);
-            per_texture[texture].extend(placed_vertices(&placement, triangle));
+            per_texture[texture].extend(placed_vertices(&placement, color, triangle));
         }
     }
 
@@ -1263,14 +1270,17 @@ mod tests {
             scale: [2.0; 3],
             anim_type: 0,
             anim_speed: 1.0,
+            tint: [0x33, 0x66, 0x99],
         };
         let matrix = placement(&instance, [100.0, 200.0]);
         let flipped = [2.0, 1.0, 0.0];
         let [x, y, z] = model::transform(&matrix, flipped);
         assert!((x - 110.0).abs() < 1e-3 && (y - 2.0).abs() < 1e-3 && (z - 216.0).abs() < 1e-3, "{x} {y} {z}");
-        // In the world (y up) it stands 2 below the native y, as every model does.
+        // In the world (y up) it stands 2 below the native y, as every model does, and takes the instance's tint.
         let triangle = model::Triangle { texture: 0, positions: [flipped; 3], uvs: [[0.0; 2]; 3] };
-        assert_eq!(placed_vertices(&matrix, &triangle)[0].position[1], -y);
+        let vertex = placed_vertices(&matrix, model_color(instance.tint), &triangle)[0];
+        assert_eq!(vertex.position[1], -y);
+        assert_eq!(vertex.color, [0x33 as f32 / 255.0, 0x66 as f32 / 255.0, 0x99 as f32 / 255.0, 1.0]);
     }
 
     #[test]

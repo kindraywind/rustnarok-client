@@ -32,6 +32,10 @@ impl<'a> Reader<'a> {
         Ok(i32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
 
+    fn u32(&mut self) -> io::Result<u32> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+
     fn f32(&mut self) -> io::Result<f32> {
         Ok(f32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
@@ -88,6 +92,8 @@ pub struct Model {
     /// How it plays its animation (0 none, 1 once, 2 looping) and how fast.
     pub anim_type: i32,
     pub anim_speed: f32,
+    /// RSW 2.7 colour (R, G, B); white on older maps.
+    pub tint: [u8; 3],
 }
 
 /// An ambient sound source (an RSW type-3 object): a wav played every `cycle` seconds from a box `width` × `height`
@@ -157,6 +163,10 @@ impl Rsw {
         if version >= (1, 6) {
             reader.take(16)?; // ground bounds
         }
+        if version >= (2, 7) && build >= 221 {
+            let count = reader.u32()? as usize;
+            reader.take(count.saturating_mul(4))?;
+        }
 
         let mut models = Vec::new();
         let mut sounds = Vec::new();
@@ -174,10 +184,16 @@ impl Rsw {
                     if version >= (2, 6) && build >= 186 {
                         reader.u8()?;
                     }
+                    let tint = if version >= (2, 7) {
+                        let [b, g, r, _] = reader.u32()?.to_le_bytes();
+                        [r, g, b]
+                    } else {
+                        [255; 3]
+                    };
                     let file = reader.string(80)?;
                     reader.string(80)?; // node name
                     let (position, rotation, scale) = (reader.vector()?, reader.vector()?, reader.vector()?);
-                    models.push(Model { name, file, position, rotation, scale, anim_type, anim_speed });
+                    models.push(Model { name, file, position, rotation, scale, anim_type, anim_speed, tint });
                 }
                 // Light sources and effects aren't drawn yet; their sizes are fixed.
                 2 => drop(reader.take(80 + 12 + 12 + 4)?),
@@ -431,6 +447,68 @@ mod tests {
         // Before 2.0 there's no cycle: 4 seconds.
         let old = Rsw::parse(&rsw_with_a_sound((1, 9))).unwrap();
         assert_eq!(old.sounds[0].cycle, 4.0);
+    }
+
+    #[test]
+    fn reads_rsw_2_7_models_and_tints() {
+        let rsw_with_a_model = |version: (u8, u8), build: i32, list: &[u32]| {
+            let text = |bytes: &mut Vec<u8>, value: &str, length: usize| {
+                let mut field = value.as_bytes().to_vec();
+                field.resize(length, 0);
+                bytes.extend(field);
+            };
+            let numbers = |bytes: &mut Vec<u8>, values: &[f32]| values.iter().for_each(|value| bytes.extend(value.to_le_bytes()));
+            let mut bytes = b"GRSW".to_vec();
+            bytes.extend([version.0, version.1]);
+            bytes.extend(build.to_le_bytes());
+            bytes.push(1);
+            for name in ["", "prt_mk.gnd", "prt_mk.gat", ""] {
+                text(&mut bytes, name, 40);
+            }
+            bytes.extend(45i32.to_le_bytes());
+            bytes.extend(45i32.to_le_bytes());
+            numbers(&mut bytes, &[1.0, 1.0, 1.0, 0.3, 0.3, 0.3, 0.5]);
+            bytes.extend([0; 16]);
+            if version >= (2, 7) && build >= 221 {
+                bytes.extend((list.len() as u32).to_le_bytes());
+                list.iter().for_each(|entry| bytes.extend(entry.to_le_bytes()));
+            }
+            bytes.extend(1i32.to_le_bytes());
+            bytes.extend(1i32.to_le_bytes());
+            text(&mut bytes, "lamp", 40);
+            bytes.extend(2i32.to_le_bytes());
+            numbers(&mut bytes, &[1.0]);
+            bytes.extend(0i32.to_le_bytes());
+            if build >= 186 {
+                bytes.push(0);
+            }
+            if version >= (2, 7) {
+                bytes.extend(0xFF336699u32.to_le_bytes());
+            }
+            text(&mut bytes, "lamp.rsm", 80);
+            text(&mut bytes, "Object01", 80);
+            numbers(&mut bytes, &[12.0, -5.0, 34.0, 0.0, 90.0, 0.0, 1.0, 1.0, 1.0]);
+            bytes
+        };
+
+        let rsw = Rsw::parse(&rsw_with_a_model((2, 7), 221, &[0xFF112233, 0xFF445566])).unwrap();
+        assert_eq!(rsw.models.len(), 1);
+        assert_eq!((rsw.models[0].file.as_str(), rsw.models[0].position, rsw.models[0].tint), ("lamp.rsm", [12.0, -5.0, 34.0], [0x33, 0x66, 0x99]));
+
+        let empty_list = Rsw::parse(&rsw_with_a_model((2, 7), 221, &[])).unwrap();
+        assert_eq!(
+            (empty_list.models[0].file.as_str(), empty_list.models[0].position, empty_list.models[0].tint),
+            ("lamp.rsm", [12.0, -5.0, 34.0], [0x33, 0x66, 0x99])
+        );
+
+        let build_220 = Rsw::parse(&rsw_with_a_model((2, 7), 220, &[])).unwrap();
+        assert_eq!(
+            (build_220.models[0].file.as_str(), build_220.models[0].position, build_220.models[0].tint),
+            ("lamp.rsm", [12.0, -5.0, 34.0], [0x33, 0x66, 0x99])
+        );
+
+        let rsw_2_6 = Rsw::parse(&rsw_with_a_model((2, 6), 221, &[])).unwrap();
+        assert_eq!((rsw_2_6.models[0].file.as_str(), rsw_2_6.models[0].tint), ("lamp.rsm", [255, 255, 255]));
     }
 
     #[test]

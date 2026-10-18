@@ -1,0 +1,12 @@
+{
+  "about": "RSW 2.7 maps (issue #440): ra_temple (119, 175), an RSW 2.7 map with a 16-entry list before the objects and per-model u32 tints, loads with its RSM 1 temple pillars, doors and pedestals instead of failing with 'unknown RSW object type'.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp ra_temple 119 175"}, {"settle": 2500},
+    {"expect": {"map": "ra_temple.gat"}},
+    {"move": [1000, 740]},
+    {"shot": "ra-temple", "mask": [[400, 130, 220, 150]], "threshold": 5},
+    {"say": "@warp prontera 156 180"}, {"settle": 1500}
+  ]
+}
