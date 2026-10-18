@@ -817,6 +817,8 @@ struct Game {
     walks: u32,
     walk_held: bool,
     last_walk_try: Option<Instant>,
+    /// A walk asked for during the player's own swing, sent when the swing ends.
+    walk_after_swing: Option<[i32; 2]>,
     press_mark: Option<(Instant, [f32; 2], bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
@@ -1949,6 +1951,10 @@ impl Game {
     /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`: not blocked, nobody standing there, a
     /// path to it); nothing when the last walk went out less than MOVE_GAP ago. Whether a walk was sent.
     fn walk_toward(&mut self, cell: [i32; 2], now: Instant) -> bool {
+        if self.player.swinging(control::now()) {
+            self.walk_after_swing = Some(cell);
+            return false;
+        }
         if !may_move(self.last_move, now) {
             return false;
         }
@@ -1966,13 +1972,18 @@ impl Game {
     }
 
     /// Turns to face a cell, the head straight. rathena counts directions the other way along y from the sprites.
+    /// Only standing, sitting or flinching; see `turn_toward`.
     fn turn_to(&mut self, cell: [i32; 2]) {
         let step = [cell[0] - self.player.cell[0], cell[1] - self.player.cell[1]];
-        if step != [0, 0] {
-            let _ = self.session.change_direction(world::direction([step[0], -step[1]]), 0);
-            self.player.set_direction(world::direction(step));
-            self.player.head_direction = 0;
+        if step == [0, 0] || self.player.moving() || self.player.swinging(control::now()) {
+            return;
         }
+        // The sprites count directions the other way round from rathena: body = (4 - ours) mod 8 and back.
+        let body = (12 - self.player.direction % 8) % 8;
+        let (body, head) = turn_toward(body, self.player.head_direction as u8, world::direction([step[0], -step[1]]));
+        let _ = self.session.change_direction(body, head);
+        self.player.set_direction((12 - body) % 8);
+        self.player.head_direction = u16::from(head);
     }
 
     /// What a left click on the world does: talk to an NPC, attack, swing once at a player, pick up an item, or
@@ -3933,7 +3944,7 @@ impl Game {
         let amount = act.damage + act.left_damage;
         let lands = Instant::now() + Duration::from_secs_f32(hit_ms.unwrap_or(act.source_speed.max(0) as f32) / 1000.0);
         // Misses, endured hits and lucky dodges don't flinch.
-        let flinch = (amount > 0 && !matches!(act.kind, 4 | 9 | 11)).then_some(act.target_speed.max(100) as f32);
+        let flinch = (amount > 0 && !matches!(act.kind, 4 | 9 | 11)).then_some(act.target_speed as f32);
         let kind = match act.kind {
             11 => DamageKind::Lucky,
             10 | 13 => DamageKind::Critical,
@@ -8969,6 +8980,7 @@ impl App {
                     walks: 0,
                     walk_held: false,
                     last_walk_try: None,
+                    walk_after_swing: None,
                     press_mark: None,
                     auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
                         let (x, y) = cell.split_once(',')?;
@@ -11971,15 +11983,21 @@ impl App {
         // Bodies that finished dying leave; hits that land make their target flinch.
         game.units.retain(|_, actor| actor.remove_at.is_none_or(|at| at > now));
         for damage in &mut game.damages {
-            if damage.start <= now && damage.flinch.take().is_some() {
+            if damage.start <= now && damage.flinch.is_some() {
+                let motion = damage.flinch.take();
                 let target = match damage.target {
                     None => Some(&mut game.player),
                     Some(id) => game.units.get_mut(&id),
                 };
-                // A monster already in a special action (attacking, casting) doesn't flinch.
-                if let Some(target) = target.filter(|target| target.remove_at.is_none() && !(target.kind == MONSTER && target.in_action(now))) {
+                // The flinch stops a walk once its step is done and gets a sitting player up.
+                if let Some(target) =
+                    target.filter(|target| target.remove_at.is_none() && !target.dead && actor::flinches(target.kind, target.animation(now).0))
+                    && let Some(motion) = motion
+                {
                     let (_, flinch, _) = actor::combat_actions(target.kind);
-                    target.play_at_pace(flinch, now, 1.0, false);
+                    target.flinch(flinch, now, motion);
+                    target.stop_after_step();
+                    target.sitting = false;
                     target.stand_ready();
                 }
             }
@@ -13970,6 +13988,10 @@ impl ApplicationHandler<NetEvent> for App {
                 let now = Instant::now();
                 game.attack_step(now);
                 game.pending_step(now);
+                if let Some(cell) = game.walk_after_swing.filter(|_| !game.player.swinging(control::now())) {
+                    game.walk_after_swing = None;
+                    game.walk_toward(cell, now);
+                }
                 if follows_pointer(game.walk_held, game.pending.is_some(), game.last_walk_try, now)
                     && let Some(assets) = &self.assets
                     && !game.on_ui(self.cursor, &self.items, assets.message.size)
@@ -14423,6 +14445,21 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
     1.0 - (now.saturating_duration_since(start).as_secs_f32() / length.as_secs_f32().max(f32::EPSILON)).min(1.0)
 }
 
+/// Turning on the spot toward rathena direction `target` (0 north, counting counter-clockwise): the body and the head
+/// (0 straight, 1 right, 2 left) after. Ahead or behind, the body turns. 45° aside, the head turns, or the body when the
+/// head already looks that way. 90° to 135° aside, the body turns one sector short and the head looks the rest.
+fn turn_toward(body: u8, head: u8, target: u8) -> (u8, u8) {
+    match (body + 8 - target) % 8 {
+        1 if head == 1 => (target, 0),
+        1 => (body, 1),
+        2 | 3 => ((target + 1) % 8, 1),
+        7 if head == 2 => (target, 0),
+        7 => (body, 2),
+        5 | 6 => ((target + 7) % 8, 2),
+        _ => (target, 0),
+    }
+}
+
 /// Why an item can't be dropped on the ground now: `Some(None)` quietly, `Some(Some(message))` saying so; `None` when
 /// it can. In order: a wear asked for under 2 s ago, a deal or talk under way, the equipment window, the storage, the
 /// mail window, the ammunition worn.
@@ -14445,6 +14482,24 @@ fn ground_drop_refused(since_wear: Option<Duration>, busy: bool, equipment: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_head_turns_before_the_body() {
+        // Facing north (0): north-east (7) is 45° right: the head looks right, then the body turns.
+        assert_eq!(turn_toward(0, 0, 7), (0, 1));
+        assert_eq!(turn_toward(0, 1, 7), (7, 0));
+        // East (6), 90° right: the body to north-east, the head right; south-east (5), 135°: the body east.
+        assert_eq!(turn_toward(0, 0, 6), (7, 1));
+        assert_eq!(turn_toward(0, 0, 5), (6, 1));
+        // Left: north-west (1) the head; west (2) and south-west (3) one sector short.
+        assert_eq!(turn_toward(0, 0, 1), (0, 2));
+        assert_eq!(turn_toward(0, 2, 1), (1, 0));
+        assert_eq!(turn_toward(0, 0, 2), (1, 2));
+        assert_eq!(turn_toward(0, 0, 3), (2, 2));
+        // Ahead and behind: the body, the head straight.
+        assert_eq!(turn_toward(0, 2, 0), (0, 0));
+        assert_eq!(turn_toward(0, 1, 4), (4, 0));
+    }
 
     #[test]
     fn some_things_open_keep_items_off_the_ground() {
