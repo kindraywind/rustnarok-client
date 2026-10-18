@@ -214,29 +214,29 @@ pub struct Amount<T> {
     /// What the answer is for.
     pub what: T,
     pub typed: String,
-    /// The question (a message number), and whether only digits go in.
+    /// The question (a message number).
     message: usize,
-    digits: bool,
+    /// How many digits go in; 0 takes a name instead.
+    max_digits: usize,
 }
 
 impl<T> Amount<T> {
-    const DIGITS: usize = 9;
     /// A name's 23 bytes, about as many characters.
     const NAME: usize = 23;
 
     /// Asks how many ("Input Number"), with `start` already typed in.
     pub fn new(what: T, start: Option<u32>) -> Self {
-        Self { what, typed: start.map(|amount| amount.to_string()).unwrap_or_default(), message: 1259, digits: true }
+        Self { what, typed: start.map(|amount| amount.to_string()).unwrap_or_default(), message: 1259, max_digits: 5 }
     }
 
-    /// Asks for a price ("Price: "), digits only.
+    /// Asks for a buying-store price ("Price: "), up to 8 digits (the most is 99,990,000).
     pub fn price(what: T) -> Self {
-        Self { what, typed: String::new(), message: 1721, digits: true }
+        Self { what, typed: String::new(), message: 1721, max_digits: 8 }
     }
 
     /// Asks for a name, under that message.
     pub fn name(what: T, message: usize) -> Self {
-        Self { what, typed: String::new(), message, digits: false }
+        Self { what, typed: String::new(), message, max_digits: 0 }
     }
 
     pub fn value(&self) -> u32 {
@@ -244,8 +244,8 @@ impl<T> Amount<T> {
     }
 
     pub fn type_text(&mut self, text: &str) {
-        let (limit, typed) = if self.digits { (Self::DIGITS, self.typed.len()) } else { (Self::NAME, self.typed.chars().count()) };
-        let digits = self.digits;
+        let digits = self.max_digits > 0;
+        let (limit, typed) = if digits { (self.max_digits, self.typed.len()) } else { (Self::NAME, self.typed.chars().count()) };
         self.typed.extend(
             text.chars().filter(|character| if digits { character.is_ascii_digit() } else { !character.is_control() }).take(limit.saturating_sub(typed)),
         );
@@ -302,5 +302,18 @@ mod tests {
         assert_eq!(wrap(&font, "Remove the targetted", font.width("Remove the tar"), 9), ["Remove the", "targetted"]);
         let korean = "타나토스타워하층부";
         assert!(wrap(&font, korean, font.width("타나토스"), 9).len() > 1, "no spaces: anywhere");
+    }
+
+    #[test]
+    fn limits_what_goes_in_each_prompt() {
+        let mut amount = Amount::new((), None);
+        amount.type_text("12a345678");
+        assert_eq!(amount.typed, "12345");
+        let mut price = Amount::price(());
+        price.type_text("999999999");
+        assert_eq!(price.typed, "99999999");
+        let mut name = Amount::name((), 0);
+        name.type_text("A name longer than twenty-three");
+        assert_eq!(name.typed, "A name longer than twen");
     }
 }
