@@ -986,6 +986,8 @@ struct Game {
     /// The item description window, and how many lines its text wraps to.
     item_window: Option<iteminfo::ItemWindow>,
     item_lines: usize,
+    /// A card's picture, opened from its info.
+    card_view: Option<iteminfo::CardView>,
     /// Whispers sent and not yet answered: to whom, and what.
     whispered: VecDeque<(String, String)>,
     /// Names whose whispers we asked to block or allow, not yet answered (the answer doesn't name them).
@@ -1259,8 +1261,9 @@ struct CameraGoal {
     dragging: Option<[f32; 2]>,
     /// The last right press: when, where, and whether the pointer moved off since.
     last_press: Option<(Instant, [f32; 2], bool)>,
-    /// The parts of a tilt and a zoom step dragged but not yet whole.
-    carry: [f32; 2],
+    /// The pointer's vertical movement this frame with the right button down, and whether Ctrl and Shift were held:
+    /// tilt and zoom are applied once a frame (`drag_frame`).
+    dragged: (f32, bool, bool),
     last_wheel: Option<Instant>,
     /// The map's own camera table, which then sets the limits (and no double click resets).
     limits: Option<rustnarok_client::map::Viewpoint>,
@@ -1284,7 +1287,7 @@ impl CameraGoal {
             indoor,
             dragging: None,
             last_press: None,
-            carry: [0.0; 2],
+            dragged: (0.0, false, false),
             last_wheel: None,
             limits,
             zoom_out,
@@ -1296,8 +1299,8 @@ impl CameraGoal {
                 goal.set_distance(table.distance_in);
             }
             None => {
-                // The widest tilt each kind of map allows (with Ctrl, and indoors fixed 60 too).
-                let [low, high] = if indoor { [35.0, 60.0] } else { [25.0, 65.0] };
+                // The widest tilt each kind of map allows: with Ctrl outdoors, 35 to 55 indoors.
+                let [low, high] = if indoor { [35.0, 55.0] } else { [25.0, 65.0] };
                 goal.pitch = saved[0].clamp(low, high);
                 goal.set_distance(saved[1]);
             }
@@ -1372,19 +1375,15 @@ impl CameraGoal {
         self.steer(cursor[0] - last[0], cursor[1] - last[1], modifiers.control_key(), modifiers.shift_key(), modifiers.alt_key());
     }
 
-    /// A drag of `dx`, `dy` pixels: turns a degree a pixel (indoors within YAW_RANGE_INDOOR), except with Shift; with
-    /// Shift it tilts and with Ctrl it zooms, half a degree or unit a pixel (dragging down tilts down and comes
-    /// closer), in whole steps (the rest carries over). Ctrl turns too; Alt does nothing.
+    /// A drag of `dx`, `dy` pixels: turns a degree a pixel (indoors within YAW_RANGE_INDOOR), except with Shift. With
+    /// Shift it tilts and with Ctrl it zooms, once a frame (`drag_frame`). Ctrl turns too; Alt does nothing.
     fn steer(&mut self, dx: f32, dy: f32, ctrl: bool, shift: bool, alt: bool) {
         if alt {
             return;
         }
-        let steps = |carry: &mut f32| {
-            *carry += dy / 2.0;
-            let whole = carry.trunc();
-            *carry -= whole;
-            whole
-        };
+        if shift || ctrl {
+            self.dragged = (self.dragged.0 + dy, ctrl, shift);
+        }
         if !shift {
             self.yaw += dx;
             if let Some(table) = self.limits {
@@ -1393,13 +1392,19 @@ impl CameraGoal {
                 self.yaw = self.yaw.clamp(YAW_RANGE_INDOOR[0], YAW_RANGE_INDOOR[1]);
             }
         }
+    }
+
+    /// The frame's tilt or zoom drag: half a degree or unit a pixel of the frame's vertical movement, whole steps only
+    /// (the rest is dropped, so a very slow drag does nothing). Dragging down tilts down and comes closer.
+    fn drag_frame(&mut self) {
+        let (dy, ctrl, shift) = std::mem::replace(&mut self.dragged, (0.0, false, false));
+        let steps = (dy / 2.0).trunc();
         if shift {
             let [low, high] = self.pitch_limits(ctrl);
-            self.pitch = (self.pitch + steps(&mut self.carry[0])).clamp(low, high);
+            self.pitch = (self.pitch + steps).clamp(low, high);
         }
         if ctrl {
-            let closer = steps(&mut self.carry[1]);
-            self.set_distance(self.distance() - closer);
+            self.set_distance(self.distance() - steps);
         }
     }
 
@@ -1450,13 +1455,22 @@ struct SavedView {
     changed: Option<Instant>,
 }
 
+/// A first run's view: outdoors 400 units away, indoors 300, tilted 45.
+const FIRST_DISTANCE: [f32; 2] = [400.0, 300.0];
+
 impl Default for SavedView {
     fn default() -> Self {
-        Self { views: [[PITCH, ZOOM * UNITS_PER_ZOOM]; 2], changed: None }
+        Self { views: FIRST_DISTANCE.map(|distance| [PITCH, distance]), changed: None }
     }
 }
 
 impl SavedView {
+    /// The view a client the harness drives starts from, every run: 300 units both ways.
+    // ponytail: the scenarios' fixed pixel clicks were placed at 300; a driven client keeps it outdoors too.
+    fn harness() -> Self {
+        Self { views: [[PITCH, ZOOM * UNITS_PER_ZOOM]; 2], changed: None }
+    }
+
     /// From the saved text: outdoor tilt and distance, then indoor; anything missing stays the default.
     fn parse(text: &str) -> Self {
         let mut saved = Self::default();
@@ -2776,6 +2790,7 @@ impl Game {
         self.graphics_window = None;
         self.shortcuts_window = None;
         self.item_window = None;
+        self.card_view = None;
         self.monster_window = None;
         self.ranking = None;
         self.dressroom = None;
@@ -2844,6 +2859,7 @@ impl Game {
             || self.cashshop_buy_asked
             || self.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some())
             || self.item_window.as_ref().is_some_and(|window| window.hit(cursor, items).is_some())
             || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
             || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
@@ -3295,6 +3311,7 @@ impl Game {
         push(CashShop, self.cashshop.is_some());
         push(PickList, self.pick.is_some());
         push(Trade, self.trade.is_some());
+        push(CardPicture, self.card_view.is_some());
         push(ItemInfo, self.item_window.is_some());
         push(ChatRoom, self.room.is_some());
         push(RoomMake, self.room_make.is_some());
@@ -3586,7 +3603,11 @@ impl Game {
                 let _ = self.session.cancel_trade();
                 self.trade = None;
             }
-            ItemInfo => self.item_window = None,
+            ItemInfo => {
+                self.item_window = None;
+                self.card_view = None;
+            }
+            CardPicture => self.card_view = None,
             ChatRoom => {
                 let _ = self.session.leave_chat_room();
             }
@@ -4768,6 +4789,28 @@ fn inventory_right(alt: bool, shift: bool, ctrl: bool) -> Option<InventoryRight>
     }
 }
 
+/// With compare on, the worn items that share a slot with the inventory item under the pointer.
+fn compared_windows(inventory: &Inventory, items: &HashMap<u32, ItemInfo>, messages: &[String], cursor: [f32; 2]) -> Vec<iteminfo::ItemWindow> {
+    if !inventory.compare || !inventory.frame.open {
+        return Vec::new();
+    }
+    let Some((index, area)) = inventory.item_boxes().into_iter().find(|(_, area)| contains([area[0], area[1]], [area[2], area[3]], cursor)) else {
+        return Vec::new();
+    };
+    let Some(hovered) = inventory.get(index) else { return Vec::new() };
+    inventory::compared_worn(hovered, &inventory.items)
+        .into_iter()
+        .enumerate()
+        .map(|(place, item)| {
+            let damaged = item.broken.then(|| messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
+            let mut window = iteminfo::ItemWindow::new(iteminfo::Shown::of(item, damaged));
+            window.worn = true;
+            window.place_beside(area, place, items);
+            window
+        })
+        .collect()
+}
+
 /// Where Alt + right click sends a stack: the first that's open of the storage, a trade, the cart.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum QuickTo {
@@ -5109,6 +5152,8 @@ struct App {
     battlegrounds: Vec<lua::Battleground>,
     /// The cards' words in item names.
     card_names: inventory::CardNames,
+    /// Card illustration names (`num2cardillustnametable.txt`).
+    card_pictures: iteminfo::CardPictures,
     /// What each reform item can turn into, from the client's reform list.
     reforms: HashMap<u32, Vec<lua::ReformInfo>>,
     /// Enchant tables from the client's Lua, by table number.
@@ -5632,7 +5677,15 @@ impl App {
             // A link in the chat log or the NPC window: an item's information, or a navigation to the place.
             Scene::Game(game) if game.link_at(cursor).is_some() => match game.link_at(cursor).cloned().unwrap() {
                 links::Target::Item(item) => {
-                    let shown = iteminfo::Shown { item: item.id, identified: true, refine: item.refine, cards: item.cards, damaged: None, expires: 0 };
+                    let shown = iteminfo::Shown {
+                        item: item.id,
+                        identified: true,
+                        refine: item.refine,
+                        cards: item.cards,
+                        damaged: None,
+                        expires: 0,
+                        card: self.card_pictures.name(item.id).is_some(),
+                    };
                     let position = game.item_window.as_ref().map(|window| window.position);
                     let mut window = iteminfo::ItemWindow::new(shown);
                     if let Some(position) = position {
@@ -5840,10 +5893,44 @@ impl App {
                     game.signs.remove(&game.account_id);
                 }
             }
-            // The item description window: its close button.
+            // A card's picture: its close button. A click anywhere on it stays there.
+            Scene::Game(game) if game.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some()) => {
+                if game.card_view.as_ref().unwrap().hit(cursor) == Some(iteminfo::ViewHit::Close) {
+                    game.card_view = None;
+                }
+            }
+            // The item description window: its close button, a card's picture, or a card in a slot.
             Scene::Game(game) if game.item_window.as_ref().is_some_and(|window| window.hit(cursor, &self.items).is_some()) => {
-                if game.item_window.as_ref().unwrap().hit(cursor, &self.items) == Some(iteminfo::Hit::Close) {
-                    game.item_window = None;
+                match game.item_window.as_ref().unwrap().hit(cursor, &self.items) {
+                    Some(iteminfo::Hit::Close) => {
+                        game.item_window = None;
+                        game.card_view = None;
+                    }
+                    Some(iteminfo::Hit::View) => {
+                        let item = game.item_window.as_ref().unwrap().shown.item;
+                        if let Some(name) = self.card_pictures.name(item) {
+                            game.card_view = Some(iteminfo::CardView::new(iteminfo::cardbmp_path(name)));
+                            escape::touch(&mut game.esc_order, escape::WindowId::CardPicture);
+                        }
+                    }
+                    Some(iteminfo::Hit::Card(id)) => {
+                        let position = game.item_window.as_ref().map(|window| offset(window.position, [20.0, 20.0]));
+                        let mut window = iteminfo::ItemWindow::new(iteminfo::Shown {
+                            item: id,
+                            identified: true,
+                            refine: 0,
+                            cards: [0; 4],
+                            damaged: None,
+                            expires: 0,
+                            card: true,
+                        });
+                        if let Some(position) = position {
+                            window.position = position;
+                        }
+                        game.item_window = Some(window);
+                        game.card_view = None;
+                    }
+                    _ => {}
                 }
             }
             // The right-click menu takes the next click, wherever it lands.
@@ -6935,6 +7022,9 @@ impl App {
             game.homunculus_window.frame.drag_to(self.cursor, homunculus::Window::height());
             let homunculus_skills_height = homunculus::SkillList::height(game.homunculus_skills.len());
             game.homunculus_skill_list.frame.drag_to(self.cursor, homunculus_skills_height);
+            if let Some(view) = &mut game.card_view {
+                view.drag_to(self.cursor);
+            }
             if let Some(window) = &mut game.item_window {
                 window.drag_to(self.cursor);
             }
@@ -7240,8 +7330,7 @@ impl App {
             };
             if let Some(item) = described {
                 let damaged = item.broken.then(|| self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
-                let shown =
-                    iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires };
+                let shown = iteminfo::Shown::of(&item, damaged);
                 let position = game.item_window.as_ref().map(|window| window.position);
                 let mut window = iteminfo::ItemWindow::new(shown);
                 if let Some(position) = position {
@@ -7307,6 +7396,7 @@ impl App {
                     let inv = &game.inventory.items;
                     game.buying_setup.as_mut().unwrap().scroll_by(rows, inv);
                 }
+                _ if game.card_view.as_ref().is_some_and(|view| view.hit(self.cursor).is_some()) => {}
                 _ if on_item => {
                     let lines = game.item_lines;
                     game.item_window.as_mut().unwrap().scroll_by(rows, lines);
@@ -7448,8 +7538,12 @@ impl App {
                         }
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
-                    // Let go over the world: dropped at the player's feet, asking how many of a stack.
-                    (Some((Dragged::Item(index), _, true)), None) if !game.on_ui(self.cursor, &self.items, message_size) && !game.store_open() => {
+                    // Let go over the world: dropped at the player's feet, asking how many of a stack. The drop lock holds it.
+                    (Some((Dragged::Item(index), _, true)), None)
+                        if inventory::may_ground_drop(game.inventory.lock_drop)
+                            && !game.on_ui(self.cursor, &self.items, message_size)
+                            && !game.store_open() =>
+                    {
                         game.drop_on_ground(index, &self.messages)
                     }
                     // Onto the equipment window, wherever: worn. Off it onto the inventory: taken off. Not while trading.
@@ -7479,6 +7573,7 @@ impl App {
                 let trade_moved = game.chat.drop_drag()
                     | game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
                     | game.room.as_mut().is_some_and(|room| room.frame.drop_drag())
+                    | game.card_view.as_mut().is_some_and(|view| view.drop_drag())
                     | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
                     | game.mail.drop_drag()
                     | game.quest_window.frame.drop_drag()
@@ -7660,7 +7755,9 @@ impl App {
             game.sync_esc();
             // A button on the game menu is not a press on the window under it.
             let on_menu = game.escape.as_ref().is_some_and(|menu| menu.hit(cursor, game.can_resurrect()).is_some());
-            if !on_menu && game.item_window.as_ref().is_some_and(|window| window.hit(cursor, &self.items).is_some()) {
+            if !on_menu && game.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some()) {
+                escape::touch(&mut game.esc_order, escape::WindowId::CardPicture);
+            } else if !on_menu && game.item_window.as_ref().is_some_and(|window| window.hit(cursor, &self.items).is_some()) {
                 escape::touch(&mut game.esc_order, escape::WindowId::ItemInfo);
             } else if !on_menu {
                 game.press_esc(cursor);
@@ -7675,6 +7772,16 @@ impl App {
                 }
                 return;
             }
+        }
+        // A card's picture sits over the item info.
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(view) = &mut game.card_view
+            && let Some(hit) = view.hit(cursor)
+        {
+            if hit == iteminfo::ViewHit::Grip {
+                view.start_drag(cursor);
+            }
+            return;
         }
         // The chat window goes by its tab strip.
         if let Scene::Game(game) = &mut self.scene
@@ -8913,7 +9020,11 @@ impl App {
                     hit_boxes: Vec::new(),
                     ground: HashMap::new(),
                     item_sprites: HashMap::new(),
-                    inventory: Inventory::new(std::env::var_os("RUSTNAROK_CLIENT_INVENTORY").is_some()),
+                    inventory: {
+                        let mut inventory = Inventory::new(std::env::var_os("RUSTNAROK_CLIENT_INVENTORY").is_some());
+                        inventory.apply_boxes(inventory::Boxes::load());
+                        inventory
+                    },
                     equipment: {
                         let mut equipment = Equipment::default();
                         equipment.frame.open = std::env::var_os("RUSTNAROK_CLIENT_EQUIPMENT").is_some();
@@ -8965,6 +9076,7 @@ impl App {
                     achievements: HashMap::new(),
                     achievement_window: achievement::AchievementWindow::default(),
                     item_window: None,
+                    card_view: None,
                     item_lines: 0,
                     whispered: VecDeque::new(),
                     whisper_asked: VecDeque::new(),
@@ -9313,8 +9425,8 @@ impl App {
                 PLAYER => SpriteSet::player(grf, &unit_look(unit), look_tables),
                 PET => job_names.get(&unit.job).and_then(|name| pet_sprites(grf, name, pets.tables.accessory_acts.get(&unit.head_bottom))),
                 MERCENARY if (6017..=6046).contains(&unit.job) => job_names.get(&unit.job).and_then(|name| SpriteSet::mercenary(grf, unit.job, name)),
-                // Hidden NPCs (script triggers) have no sprite in the client either.
-                _ if HIDDEN_JOBS.contains(&unit.job) => None,
+                // Hidden NPCs (script triggers) have no sprite in the client either; a warp portal is only its rings.
+                _ if HIDDEN_JOBS.contains(&unit.job) || unit.job == WARP_JOB => None,
                 _ => job_names.get(&unit.job).and_then(|name| SpriteSet::single(grf, name, unit.kind)),
             };
             let mut actor = Actor::new(unit.name.clone(), sprites, unit.position.map(i32::from), unit.direction, unit.speed);
@@ -9615,7 +9727,7 @@ impl App {
                     item.grade = grade;
                     item.broken = broken;
                     let damaged = item.broken.then(|| damaged_line.clone());
-                    iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires }
+                    iteminfo::Shown::of(item, damaged)
                 });
                 // ponytail: that the preview is the item info window is a guess.
                 if let Some(shown) = shown {
@@ -12218,6 +12330,7 @@ impl App {
             *arrived = Some(now);
         }
         let player_feet = game.world.cell_position(player_cell);
+        game.camera_goal.drag_frame();
         game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame), player_feet, game.camera_snap);
         // An earthquake shakes the view sideways and in and out, the other way each frame.
         let quake = if self.graphics.effects_on { game.effects.quake(now) } else { 0.0 };
@@ -13205,8 +13318,11 @@ impl App {
         pick_icons.extend(game.upgrade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.achievement_window.icons(achievement_info));
         pick_icons.extend(game.roulette.as_ref().map(|window| window.icons(items)).unwrap_or_default());
+        let compared = compared_windows(&game.inventory, items, messages, pointer.0);
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
+        trade_icons.extend(compared.iter().flat_map(|window| window.images(items)));
+        trade_icons.extend(game.card_view.iter().map(|view| view.path.clone()));
         if game.vend_setup.is_some() {
             trade_icons.extend(vend::icons(items, game.cart.items.iter().map(|item| (item.id, item.identified))));
         }
@@ -13879,6 +13995,14 @@ impl App {
             game.item_lines = lines.len();
             window.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
         }
+        if let Some(view) = &game.card_view {
+            view.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, pointer.0);
+        }
+        let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
+        for window in &compared {
+            let lines = window.lines(items, messages, unix_now, &|text, width| wrap_colored(font, text, width));
+            window.draw(&mut tooltip, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
+        }
         if game.save_asked {
             let dialog = dialog_position(&assets.message);
             let question = messages.get(escape::SAVE_QUESTION).map_or("Do you really want to go back to your savepoint?", String::as_str);
@@ -14477,6 +14601,7 @@ fn main() {
         HashMap::new()
     });
     let card_names = inventory::CardNames::load(&grf);
+    let card_pictures = iteminfo::CardPictures::load(&grf);
     let battlegrounds = lua::entry_queue(&grf).unwrap_or_else(|error| {
         eprintln!("no battleground list: {error}");
         Vec::new()
@@ -14506,10 +14631,11 @@ fn main() {
     let viewpoints = rustnarok_client::map::viewpoints(&grf).unwrap_or_default();
     // A client the harness drives starts from the default view and keeps it to itself.
     let driven = std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_some();
-    let saved_view = settings_path("camera")
-        .filter(|_| !driven)
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .map_or_else(SavedView::default, |text| SavedView::parse(&text));
+    let saved_view = if driven {
+        SavedView::harness()
+    } else {
+        settings_path("camera").and_then(|path| std::fs::read_to_string(path).ok()).map_or_else(SavedView::default, |text| SavedView::parse(&text))
+    };
     let pc_job_names = lua::pc_job_names(&grf).unwrap_or_default();
     let map_names = rustnarok_client::map::map_names(&grf).unwrap_or_default();
     let skill_descriptions = lua::skill_descriptions(&grf).unwrap_or_else(|error| {
@@ -14568,6 +14694,7 @@ fn main() {
         items,
         battlegrounds,
         card_names,
+        card_pictures,
         reforms,
         enchant_tables,
         styling_shop,
@@ -15043,6 +15170,14 @@ mod tests {
         assert_eq!((saved.of(false), saved.of(true)), ([50.0, 350.0], [45.0, 280.0]));
         assert_eq!(SavedView::parse(&saved.text()), SavedView { changed: None, ..saved });
         assert_eq!(SavedView::parse("junk"), SavedView::default());
+        // A first run: 400 outdoors, 300 indoors, tilted 45; the harness's client 300 both ways.
+        assert_eq!(SavedView::default().views, [[45.0, 400.0], [45.0, 300.0]]);
+        assert_eq!(SavedView::harness().views, [[45.0, 300.0]; 2]);
+        // Arriving, a saved tilt is kept within 25 to 65 outdoors and 35 to 55 indoors.
+        assert_eq!(CameraGoal::arrive(true, None, [60.0, 300.0], false).pitch, 55.0);
+        assert_eq!(CameraGoal::arrive(false, None, [60.0, 400.0], false).pitch, 60.0);
+        assert_eq!(CameraGoal::arrive(true, None, [20.0, 300.0], false).pitch, 35.0);
+        assert_eq!(CameraGoal::arrive(false, None, [45.0, 400.0], false).distance(), 400.0);
         let now = Instant::now();
         saved.follow(&outdoors, now, false);
         assert_eq!((saved.of(false), saved.of(true)), ([65.0, 400.0], [45.0, 280.0]));
@@ -15059,20 +15194,33 @@ mod tests {
         outdoors.steer(360.0, 0.0, false, false, false);
         outdoors.steer(90.0, 0.0, false, false, true);
         assert_eq!(outdoors.yaw, 360.0);
-        // Shift tilts half a degree a pixel, 50 to 65 (25 to 65 with Ctrl); a pixel at a time carries over.
-        outdoors.steer(0.0, 200.0, false, true, false);
+        // Shift tilts half a degree a pixel, once a frame, 50 to 65 (25 to 65 with Ctrl).
+        let drag = |goal: &mut CameraGoal, dx: f32, dy: f32, ctrl: bool, shift: bool| {
+            goal.steer(dx, dy, ctrl, shift, false);
+            goal.drag_frame();
+        };
+        drag(&mut outdoors, 0.0, 200.0, false, true);
         assert_eq!(outdoors.pitch, 65.0);
-        outdoors.steer(0.0, -400.0, false, true, false);
+        drag(&mut outdoors, 0.0, -400.0, false, true);
         assert_eq!(outdoors.pitch, 50.0);
+        // A pixel a frame drops its half degree each frame: ten frames, no tilt. Five in one frame: two steps.
+        for _ in 0..10 {
+            drag(&mut outdoors, 0.0, 1.0, true, true);
+        }
+        assert_eq!(outdoors.pitch, 50.0);
+        drag(&mut outdoors, 0.0, 5.0, true, true);
+        assert_eq!(outdoors.pitch, 52.0);
+        // Moves within one frame add up before the halving.
         outdoors.steer(0.0, 1.0, true, true, false);
         outdoors.steer(0.0, 1.0, true, true, false);
-        assert_eq!(outdoors.pitch, 51.0);
-        outdoors.steer(0.0, -400.0, true, true, false);
+        outdoors.drag_frame();
+        assert_eq!(outdoors.pitch, 53.0);
+        drag(&mut outdoors, 0.0, -400.0, true, true);
         assert_eq!(outdoors.pitch, 25.0);
         // Ctrl zooms (down comes closer) and turns too; 230 to 400 units.
-        outdoors.steer(10.0, 400.0, true, false, false);
+        drag(&mut outdoors, 10.0, 400.0, true, false);
         assert_eq!((outdoors.distance(), outdoors.yaw), (230.0, 370.0));
-        outdoors.steer(0.0, -1000.0, true, false, false);
+        drag(&mut outdoors, 0.0, -1000.0, true, false);
         assert_eq!(outdoors.distance(), 400.0);
         // The wheel: one step however far, at most every 15 ms; with Shift it tilts.
         outdoors.wheel(3, now, false, false);
@@ -15101,11 +15249,13 @@ mod tests {
         indoors.steer(100.0, 0.0, false, false, false);
         assert_eq!(indoors.yaw, 65.0);
         indoors.steer(0.0, -50.0, false, true, false);
+        indoors.drag_frame();
         assert_eq!(indoors.pitch, 60.0);
         indoors.press([5.0, 5.0], now, false, false);
         indoors.press([5.0, 5.0], now + Duration::from_millis(100), false, false);
         assert_eq!(indoors.yaw, 65.0);
         indoors.steer(0.0, -1000.0, true, false, false);
+        indoors.drag_frame();
         assert_eq!(indoors.distance(), 300.0);
     }
 

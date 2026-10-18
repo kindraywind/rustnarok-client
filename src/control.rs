@@ -931,6 +931,10 @@ fn game_state(app: &App, game: &Game) -> Value {
         .item_boxes()
         .into_iter()
         .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
+        .chain(game.inventory.check_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.item_window.iter().flat_map(|window| window.button_boxes(&app.items)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
         .chain(
             game.skill_window.skill_boxes(&app.skill_trees, &jobs, &game.skills).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})),

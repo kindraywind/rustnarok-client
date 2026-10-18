@@ -73,6 +73,8 @@ pub enum WindowId {
     PickList,
     Trade,
     ItemInfo,
+    /// A card's picture.
+    CardPicture,
     ChatRoom,
     RoomMake,
     EmotionList,
@@ -160,6 +162,7 @@ impl WindowId {
             Self::PickList => "PickList",
             Self::Trade => "Trade",
             Self::ItemInfo => "ItemInfo",
+            Self::CardPicture => "CardPicture",
             Self::ChatRoom => "ChatRoom",
             Self::RoomMake => "RoomMake",
             Self::EmotionList => "EmotionList",
