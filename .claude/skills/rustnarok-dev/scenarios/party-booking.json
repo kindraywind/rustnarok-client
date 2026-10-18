@@ -8,6 +8,7 @@
     {"say": "@recall {second}"}, {"as": "second", "settle": 2000},
     {"type": "/leave"}, {"key": "Enter"}, {"as": "second", "type": "/leave"}, {"as": "second", "key": "Enter"}, {"wait": 800},
     {"type": "/organize Crabs277"}, {"key": "Enter"}, {"wait_for": {"event": "PartyMade", "ms": 5000}}, {"wait": 500},
+    {"expect": {"windows_open": ["Party"]}}, {"key": "Alt+Z"},
     {"key": "Ctrl+Z"}, {"wait": 1500},
     {"click_on": {"button": "booking_min"}}, {"key": "Backspace"}, {"key": "Backspace"}, {"key": "Backspace"}, {"type": "1"},
     {"click_on": {"button": "booking_max"}}, {"key": "Backspace"}, {"key": "Backspace"}, {"key": "Backspace"}, {"type": "99"},

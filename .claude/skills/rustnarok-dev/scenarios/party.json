@@ -52,6 +52,16 @@
       "wait": 1500
     },
     {
+      "expect": {
+        "windows_open": [
+          "Party"
+        ]
+      }
+    },
+    {
+      "key": "Alt+Z"
+    },
+    {
       "click_on": {
         "unit": "{second}"
       },
@@ -73,7 +83,7 @@
     },
     {
       "expect": {
-        "chat": "Request for party accepted."
+        "chat": "accepted your party invitation."
       }
     },
     {
@@ -83,6 +93,36 @@
           "Party"
         ]
       }
+    },
+    {
+      "expect": {
+        "chat": "Party Setup - How to share EXP"
+      }
+    },
+    {
+      "as": "second",
+      "type": "%hello party"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0109",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "hello party"
+      }
+    },
+    {
+      "shot": "party-chat-balloon"
     },
     {
       "key": "Alt+Z"
@@ -182,5 +222,5 @@
       "wait": 800
     }
   ],
-  "about": "Two players form a party: the first organizes it and invites through the right-click menu, the second accepts; both party windows list both members. The window is the game's 273×326 with job icons, the crown, Lv.N, Name(Map) in the member's colour, the HP bar and status icons (issue #480); its title button switches it to 243×179 and back."
+  "about": "Two players form a party: the first organizes it and invites through the right-click menu, the second accepts; both party windows list both members. The window is the game's 273×326 with job icons, the crown, Lv.N, Name(Map) in the member's colour, the HP bar and status icons (issue #480); its title button switches it to 243×179 and back. Making and joining open the windows by themselves, and the second's party chat shows over their head."
 }

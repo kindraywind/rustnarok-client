@@ -57,6 +57,16 @@
       "wait": 1500
     },
     {
+      "expect": {
+        "windows_open": [
+          "Party"
+        ]
+      }
+    },
+    {
+      "key": "Alt+Z"
+    },
+    {
       "click_on": {
         "unit": "{second}"
       },
@@ -67,7 +77,7 @@
     },
     {
       "click_on": {
-        "menu_item": "Send party invitation"
+        "menu_item": "party"
       }
     },
     {
@@ -78,7 +88,7 @@
     },
     {
       "expect": {
-        "chat": "Request for party accepted."
+        "chat": "accepted your party invitation."
       }
     },
     {
