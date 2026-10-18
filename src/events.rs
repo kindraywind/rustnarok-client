@@ -1824,7 +1824,12 @@ impl App {
                     game.chat_line(messages::fill(message(homunculus::NOT_FED), &[&name]), homunculus::NOT_FED_COLOR);
                 }
             }
-            MapEvent::MercenaryInfo(hired) => game.mercenary = Some(hired),
+            // The contract's end, as a local date and time by the message table's pattern.
+            MapEvent::MercenaryInfo(hired) => {
+                let pattern = self.messages.get(mercenary::CONTRACT_PATTERN).map_or("", String::as_str);
+                game.mercenary_window.contract = rustnarok_client::lua::local_date(pattern, i64::from(hired.contract_end));
+                game.mercenary = Some(hired);
+            }
             MapEvent::ElementalInfo { id, values } => game.elemental = Some((id, values)),
             MapEvent::ElementalChanged { kind, value } => {
                 if let Some((_, values)) = &mut game.elemental

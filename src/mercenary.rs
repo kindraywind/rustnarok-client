@@ -9,21 +9,25 @@ use rustnarok_client::lua::SkillInfo;
 use rustnarok_client::net::{Mercenary, Skill};
 use rustnarok_client::text::Font;
 
+use crate::homunculus::{Gauge, gauge, gauge_text};
 use crate::render::{Gpu, Texture};
 use crate::skills;
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, UI, contains, offset, screen};
+use crate::{Layer, UI, contains, screen};
 
 const TITLE_ARCHER: usize = 1181;
 const TITLE_SWORDMAN: usize = 1182;
 const TITLE_SPEARMAN: usize = 1183;
 const TITLE_MONSTER: usize = 1367;
+const NAME: usize = 407;
 const LEVEL: usize = 408;
 const EXPIRATION: usize = 1184;
 const LOYALTY: usize = 1185;
 const SUMMONS: usize = 1186;
 const KILLS: usize = 1187;
 const SKILLS_TITLE: usize = 1262;
+/// The contract's end: a strftime pattern ("%m/%d %H:%M").
+pub const CONTRACT_PATTERN: usize = 1260;
 pub const EXPIRED: usize = 1266;
 pub const DIED: usize = 1267;
 pub const RELEASED: usize = 1268;
@@ -39,34 +43,43 @@ pub fn title(job: u16) -> usize {
     }
 }
 
-// ponytail: data.grf has no mercenary window; the homunculus's background (same labels and bar frames) under the
-// window's title, the values beside its labels, the rest in its empty right half and the buttons on a bar below.
-pub(crate) const WIDTH: f32 = 280.0;
-/// The background's own title strip hides under the window's.
+/// The homunculus's background (it brings its own title strip); places from the window's corner, title included.
+const WIDTH: f32 = 280.0;
+const HEIGHT: f32 = 180.0;
+const POSITION: [f32; 2] = [150.0, 100.0];
+/// The background as the homunculus window puts it (one pixel lower: the values' rows were measured so).
 pub(crate) const BACKGROUND_TOP: f32 = TITLE_HEIGHT - 16.0;
-pub(crate) const BACKGROUND_HEIGHT: f32 = 180.0;
-pub(crate) const FOOTER: f32 = 27.0;
 /// The eight values' right edge and their first row's top; a row every 18 px (the background's underlines).
 const VALUE_RIGHT: f32 = 79.0;
 const FIRST_ROW: f32 = 23.0;
 const ROW: f32 = 18.0;
-/// The HP and SP bars' insides.
-pub(crate) const BARS: [[f32; 2]; 2] = [[118.0, 74.0], [118.0, 89.0]];
-const BAR_FULL: f32 = 75.0;
-const BAR_NUMBERS: f32 = 206.0;
-/// The right half: labels, values' right edge, and the rows above and below the bars.
-pub(crate) const RIGHT_LABEL: f32 = 100.0;
-pub(crate) const RIGHT_VALUE: f32 = WIDTH - 8.0;
-pub(crate) const UPPER_ROWS: [f32; 2] = [21.0, 39.0];
-pub(crate) const LOWER_ROWS: [f32; 4] = [107.0, 125.0, 143.0, 161.0];
-pub(crate) const BUTTON: [f32; 2] = [42.0, 20.0];
 pub(crate) const TEXT: [u8; 3] = [0, 0, 0];
+const LABEL: f32 = 100.0;
+const VALUE: f32 = 135.0;
+const NAME_TOP: f32 = 24.0;
+const NAME_SHADOW: [u8; 3] = [0x64, 0x64, 0x64];
+const LEVEL_TOP: f32 = 47.0;
+const BUTTON: [f32; 2] = [42.0, 20.0];
+const DISMISS: [f32; 2] = [187.0, 44.0];
+const SKILLS: [f32; 2] = [232.0, 44.0];
+/// HP and SP: 85 × 9 bars, their numbers after them.
+const HP_BAR: [f32; 2] = [117.0, 73.0];
+const SP_BAR: [f32; 2] = [117.0, 88.0];
+const BAR: [f32; 2] = [85.0, 9.0];
+const FILL_END: f32 = 4.0;
+const NUMBERS_X: f32 = 218.0;
+const NUMBERS_UP: f32 = 3.0;
+const EXPIRATION_TOP: f32 = 111.0;
+const CONTRACT_X: f32 = 155.0;
+const CONTRACT_COLOR: [u8; 3] = [0xFF, 0, 0];
+/// The lower lines: label place, value place.
+const LOWER: [([f32; 2], [f32; 2]); 3] = [([100.0, 135.0], [170.0, 133.0]), ([100.0, 159.0], [170.0, 157.0]), ([230.0, 133.0], [245.0, 157.0])];
 
 pub struct Assets {
     background: Option<Texture>,
-    /// Blue and red bars' left, middle and right.
-    bars: [[Texture; 3]; 2],
-    footer: Texture,
+    track: Texture,
+    /// The blue and red fills: left, middle, right.
+    fills: [[Texture; 3]; 2],
     /// Normal, hovered, pressed.
     skill: [Texture; 3],
     dismiss: [Texture; 3],
@@ -74,29 +87,16 @@ pub struct Assets {
 
 impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
-        let basic = format!("{UI}basic_interface\\");
+        let basic = |name: &str| gpu.load_texture(grf, &format!("{UI}basic_interface\\{name}.bmp"), false);
         let button = |name: &str| ["", "_a", "_b"].map(|suffix| gpu.load_texture(grf, &format!("{UI}btn_{name}{suffix}.bmp"), false));
+        let pieces = |color: &str| ["left", "mid", "right"].map(|part| basic(&format!("gze{color}_{part}")));
         Self {
-            background: gpu.try_load_texture(grf, &format!("{basic}homuninfo_bg.bmp"), false).ok(),
-            bars: load_bars(gpu, grf),
-            footer: gpu.load_texture(grf, &format!("{basic}btnbar_mid2.bmp"), false),
+            background: gpu.try_load_texture(grf, &format!("{UI}basic_interface\\homuninfo_bg.bmp"), false).ok(),
+            track: basic("gze_bg1"),
+            fills: [pieces("blue"), pieces("red")],
             skill: button("skill"),
             dismiss: button("fired"),
         }
-    }
-}
-
-/// The blue and red bars' left, middle and right pieces.
-pub(crate) fn load_bars(gpu: &Gpu, grf: &Grf) -> [[Texture; 3]; 2] {
-    let basic = format!("{UI}basic_interface\\");
-    ["blue", "red"].map(|color| ["left", "mid", "right"].map(|part| gpu.load_texture(grf, &format!("{basic}gze{color}_{part}.bmp"), false)))
-}
-
-/// The window's background under its title: the homuninfo picture, or white without it.
-pub(crate) fn draw_background<'a>(layer: &mut Layer<'a>, frame: &Frame, chrome: &'a Chrome, background: Option<&'a Texture>) {
-    match background {
-        Some(background) => layer.sprites.push((background, frame.at([0.0, BACKGROUND_TOP]), background.size)),
-        None => layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [WIDTH, BACKGROUND_HEIGHT])),
     }
 }
 
@@ -120,85 +120,55 @@ pub(crate) fn draw_values(layer: &mut Layer, frame: &Frame, font: &Font, values:
     }
 }
 
-/// The HP and SP bars filled to their share, with `now/most` beside them.
-pub(crate) fn draw_bars<'a>(layer: &mut Layer<'a>, frame: &Frame, bars: &'a [[Texture; 3]; 2], hp: (u32, u32), sp: (u32, u32)) {
-    for (bar, (now, most)) in [hp, sp].into_iter().enumerate() {
-        let percent = if most > 0 { (u64::from(now) * 100 / u64::from(most)).min(100) } else { 0 };
-        if percent > 0 {
-            // Blue, red when low: SP is always blue.
-            let [left, middle, end] = &bars[usize::from(bar == 0 && percent < 25)];
-            let width = (percent as f32 * BAR_FULL / 100.0).floor();
-            let at = [BARS[bar][0], BACKGROUND_TOP + BARS[bar][1]];
-            layer.sprites.push((left, frame.at(at), left.size));
-            layer.sprites.push((middle, frame.at(offset(at, [left.size[0], 0.0])), [width, middle.size[1]]));
-            layer.sprites.push((end, frame.at(offset(at, [left.size[0] + width, 0.0])), end.size));
-        }
-        layer.texts.push((format!("{now}/{most}"), frame.at([BAR_NUMBERS, BACKGROUND_TOP + BARS[bar][1] - 4.0]), TEXT));
-    }
-}
-
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Hit {
-    Title(TitleHit),
+    Close,
     Skills,
     Dismiss,
+    /// Anywhere else: the window drags from it.
     Window,
 }
 
 pub struct Window {
     pub frame: Frame,
+    /// The contract's end as the window writes it, worked out when the mercenary's status comes.
+    pub contract: String,
 }
 
 impl Default for Window {
     fn default() -> Self {
-        Self { frame: Frame::new([((screen()[0] - WIDTH) / 2.0).floor() + 160.0, 150.0], WIDTH) }
+        Self { frame: Frame::new(POSITION, WIDTH), contract: String::new() }
     }
-}
-
-/// The time left on a contract ending at `end` (Unix seconds) as minutes and seconds.
-// ponytail: how the client writes the expiration isn't knowable; minutes and seconds left.
-pub fn time_left(end: u32, now: u64) -> String {
-    let left = u64::from(end).saturating_sub(now);
-    format!("{}:{:02}", left / 60, left % 60)
 }
 
 impl Window {
     pub fn height() -> f32 {
-        BACKGROUND_TOP + BACKGROUND_HEIGHT + FOOTER
-    }
-
-    fn skills_at() -> [f32; 2] {
-        [WIDTH - 2.0 * BUTTON[0] - 14.0, BACKGROUND_TOP + BACKGROUND_HEIGHT + 4.0]
-    }
-
-    fn dismiss_at() -> [f32; 2] {
-        [WIDTH - BUTTON[0] - 8.0, BACKGROUND_TOP + BACKGROUND_HEIGHT + 4.0]
+        HEIGHT
     }
 
     /// The buttons on screen (for the test driver).
     pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
-        if !self.frame.open || self.frame.minimized {
+        if !self.frame.open {
             return Vec::new();
         }
         let place = |at: [f32; 2]| {
             let [x, y] = self.frame.at(at);
             [x, y, BUTTON[0], BUTTON[1]]
         };
-        vec![("skill", place(Self::skills_at())), ("dismiss", place(Self::dismiss_at()))]
+        vec![("skill", place(SKILLS)), ("dismiss", place(DISMISS))]
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
-        let local = self.frame.local(cursor, Self::height())?;
-        if let Some(hit) = self.frame.title_hit(local) {
-            return Some(Hit::Title(hit));
-        }
-        if contains(Self::skills_at(), BUTTON, local) {
-            return Some(Hit::Skills);
-        }
-        if contains(Self::dismiss_at(), BUTTON, local) {
-            return Some(Hit::Dismiss);
-        }
-        Some(Hit::Window)
+        let local = self.frame.local(cursor, HEIGHT)?;
+        Some(if self.frame.title_hit(local) == Some(TitleHit::Close) {
+            Hit::Close
+        } else if contains(SKILLS, BUTTON, local) {
+            Hit::Skills
+        } else if contains(DISMISS, BUTTON, local) {
+            Hit::Dismiss
+        } else {
+            Hit::Window
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -211,54 +181,62 @@ impl Window {
         messages: &[String],
         mercenary: &Mercenary,
         job: u16,
-        now: u64,
         pointer: ([f32; 2], bool),
     ) {
         if !self.frame.open {
             return;
         }
         let frame = &self.frame;
+        let at = |local: [f32; 2]| frame.at(local);
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
-        if !frame.minimized {
-            draw_background(layer, frame, chrome, assets.background.as_ref());
-        }
-        frame.draw_title(layer, chrome, message(title(job)), pointer.0);
-        if frame.minimized {
-            return;
-        }
-        let right = |text: String, edge: f32, top: f32| right_text(font, frame, text, edge, top);
-        draw_values(
-            layer,
-            frame,
-            font,
-            [mercenary.atk, mercenary.matk, mercenary.hit, mercenary.critical, mercenary.def, mercenary.mdef, mercenary.flee],
-            mercenary.aspd,
-        );
-        draw_bars(layer, frame, &assets.bars, (mercenary.hp, mercenary.max_hp), (mercenary.sp, mercenary.max_sp));
-        let rows = [
-            (UPPER_ROWS[0], "", crate::window::fit(font, &mercenary.name, RIGHT_VALUE - RIGHT_LABEL)),
-            (UPPER_ROWS[1], message(LEVEL), mercenary.level.to_string()),
-            (LOWER_ROWS[0], message(EXPIRATION), time_left(mercenary.contract_end, now)),
-            (LOWER_ROWS[1], message(LOYALTY), mercenary.loyalty.to_string()),
-            (LOWER_ROWS[2], message(SUMMONS), mercenary.summons.to_string()),
-            (LOWER_ROWS[3], message(KILLS), mercenary.kills.to_string()),
-        ];
-        for (top, label, value) in rows {
-            if label.is_empty() {
-                layer.texts.push((value, frame.at([RIGHT_LABEL, BACKGROUND_TOP + top]), TEXT));
-            } else {
-                layer.texts.push((label.to_owned(), frame.at([RIGHT_LABEL, BACKGROUND_TOP + top]), TEXT));
-                layer.texts.push(right(value, RIGHT_VALUE, top));
+        let m = mercenary;
+        match &assets.background {
+            Some(background) => layer.sprites.push((background, at([0.0, 0.0]), background.size)),
+            None => {
+                chrome.draw_title_bar(layer, at([0.0, 0.0]), WIDTH);
+                layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, HEIGHT - TITLE_HEIGHT]));
             }
         }
-        layer.sprites.push((&assets.footer, frame.at([0.0, BACKGROUND_TOP + BACKGROUND_HEIGHT]), [WIDTH, FOOTER]));
+        frame.draw_bare_title(layer, chrome, message(title(job)), pointer.0);
+        draw_values(layer, frame, font, [m.atk, m.matk, m.hit, m.critical, m.def, m.mdef, m.flee], m.aspd);
+        // The name over a grey copy a pixel right, the level.
+        layer.texts.push((message(NAME).to_owned(), at([LABEL, NAME_TOP]), TEXT));
+        layer.texts.push((m.name.clone(), at([VALUE + 1.0, NAME_TOP]), NAME_SHADOW));
+        layer.texts.push((m.name.clone(), at([VALUE, NAME_TOP]), TEXT));
+        layer.texts.push((message(LEVEL).to_owned(), at([LABEL, LEVEL_TOP]), TEXT));
+        layer.texts.push((m.level.to_string(), at([VALUE, LEVEL_TOP]), TEXT));
         let hit = self.hit(pointer.0);
         let look = |target: Hit| {
             let hovered = hit == Some(target);
             usize::from(hovered) + usize::from(hovered && pointer.1)
         };
-        layer.sprites.push((&assets.skill[look(Hit::Skills)], frame.at(Self::skills_at()), BUTTON));
-        layer.sprites.push((&assets.dismiss[look(Hit::Dismiss)], frame.at(Self::dismiss_at()), BUTTON));
+        layer.sprites.push((&assets.dismiss[look(Hit::Dismiss)], at(DISMISS), BUTTON));
+        layer.sprites.push((&assets.skill[look(Hit::Skills)], at(SKILLS), BUTTON));
+        // HP and SP: the bar with its numbers inside, "now / most" after it.
+        for (place, (value, most)) in [(HP_BAR, (m.hp, m.max_hp)), (SP_BAR, (m.sp, m.max_sp))] {
+            let gauge = gauge(value, most, BAR[0]);
+            if gauge != Gauge::Hidden {
+                layer.sprites.push((&assets.track, at(place), BAR));
+            }
+            if let Gauge::Filled(width, red) = gauge {
+                let [left, middle, end] = &assets.fills[usize::from(red)];
+                layer.sprites.push((left, at(place), [FILL_END, BAR[1]]));
+                layer.sprites.push((middle, at([place[0] + FILL_END, place[1]]), [width, BAR[1]]));
+                layer.sprites.push((end, at([place[0] + FILL_END + width, place[1]]), [end.size[0], BAR[1]]));
+                // ponytail: centred on the bar.
+                let numbers = gauge_text(value, most);
+                let x = place[0] + ((BAR[0] - font.width(&numbers)) / 2.0).floor();
+                layer.texts.push((numbers, at([x, place[1] - 2.0]), TEXT));
+            }
+            layer.texts.push((format!("{value} / {most}"), at([NUMBERS_X, place[1] - NUMBERS_UP]), TEXT));
+        }
+        // The contract's end in red; loyalty, summons and kills.
+        layer.texts.push((message(EXPIRATION).to_owned(), at([LABEL, EXPIRATION_TOP]), TEXT));
+        layer.texts.push((self.contract.clone(), at([CONTRACT_X, EXPIRATION_TOP]), CONTRACT_COLOR));
+        for ((label, value), (label_at, value_at)) in [(LOYALTY, u32::from(m.loyalty)), (SUMMONS, m.summons), (KILLS, m.kills)].into_iter().zip(LOWER) {
+            layer.texts.push((message(label).to_owned(), at(label_at), TEXT));
+            layer.texts.push((value.to_string(), at(value_at), TEXT));
+        }
     }
 }
 
@@ -408,8 +386,23 @@ mod tests {
     fn titles_by_job() {
         assert_eq!([aspd(500), aspd(505)], [150, 149]);
         assert_eq!([6017, 6026, 6027, 6036, 6037, 6046, 6047, 1002].map(title), [1181, 1181, 1183, 1183, 1182, 1182, 1367, 1367]);
-        assert_eq!(time_left(1_000, 1_000 - 125), "2:05");
-        assert_eq!(time_left(1_000, 2_000), "0:00");
+    }
+
+    #[test]
+    fn lays_the_window_out() {
+        let mut window = Window::default();
+        window.frame.open = true;
+        let boxes = window.button_boxes();
+        // At (150, 100): Dismiss (337, 144), Skills (382, 144); only the close button on the title bar.
+        assert_eq!(boxes.iter().map(|(name, [x, y, ..])| (*name, [*x, *y])).collect::<Vec<_>>(), [("skill", [382.0, 144.0]), ("dismiss", [337.0, 144.0])]);
+        assert_eq!(window.hit([383.0, 145.0]), Some(Hit::Skills));
+        assert_eq!(window.hit([338.0, 145.0]), Some(Hit::Dismiss));
+        assert_eq!(window.hit([420.0, 108.0]), Some(Hit::Close));
+        assert_eq!(window.hit([400.0, 108.0]), Some(Hit::Window));
+        assert_eq!(window.hit([200.0, 279.0]), Some(Hit::Window));
+        assert_eq!(window.hit([200.0, 280.0]), None);
+        // An 85-px bar: SP red under a quarter, as HP.
+        assert_eq!([gauge(25, 100, BAR[0]), gauge(24, 100, BAR[0])], [Gauge::Filled(19.0, false), Gauge::Filled(18.0, true)]);
     }
 
     #[test]
