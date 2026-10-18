@@ -988,8 +988,12 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .chain(game.shop.iter().flat_map(crate::shop::Shop::button_boxes))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
-        .chain(game.sign_rects.iter().filter(|(_, _, kind)| *kind != crate::chatroom::SHOP).map(|&(rect, _, kind)| {
-            let name = if kind == crate::chatroom::BUYING_STORE { "buying_sign" } else { "room_sign" };
+        .chain(game.sign_rects.iter().map(|&(rect, _, kind)| {
+            let name = match kind {
+                crate::chatroom::BUYING_STORE => "buying_sign",
+                crate::chatroom::SHOP => "shop_sign",
+                _ => "room_sign",
+            };
             json!({"kind": "button", "name": name, "box": [rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]]})
         }))
         .chain(game.dialog_links.iter().chain(&game.chat_links).map(|(area, target)| match target {
