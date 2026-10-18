@@ -10,6 +10,8 @@ use crate::grf::Grf;
 const NPC_IDENTITY: &str = "data\\luafiles514\\lua files\\datainfo\\npcidentity.lub";
 const JOB_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\jobname.lub";
 const PET_INFO: &str = "data\\luafiles514\\lua files\\datainfo\\petinfo.lub";
+const DRESS_LIST: &str = "data\\luafiles514\\lua files\\dressroom\\jobdresslist.lub";
+const DRESS_F: &str = "data\\luafiles514\\lua files\\dressroom\\dress_f.lub";
 const TITLE_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\titletable.lub";
 /// Not in data.grf: the translation's System folder has it.
 const ACHIEVEMENTS: &str = "system\\achievements.lub";
@@ -150,6 +152,21 @@ fn names<K: TryFrom<i64> + std::hash::Hash + Eq>(table: &mlua::Table) -> io::Res
         }
     }
     Ok(names)
+}
+
+/// The dress room's lists (`_DressHeadstyleList`, `_DressHeadPaletteList`, `_DressBodyPaletteList`): the values of
+/// their `{label, value}` rows, in order.
+pub fn dress_lists(grf: &Grf) -> io::Result<[Vec<u16>; 3]> {
+    let lua = run(grf, &[DRESS_LIST, DRESS_F])?;
+    let values = |name: &str| -> io::Result<Vec<u16>> {
+        let table: mlua::Table = lua.globals().get(name).map_err(lua_error)?;
+        let mut values = Vec::new();
+        for row in table.sequence_values::<mlua::Table>() {
+            values.push(row.map_err(lua_error)?.get::<u16>(2).map_err(lua_error)?);
+        }
+        Ok(values)
+    };
+    Ok([values("_DressHeadstyleList")?, values("_DressHeadPaletteList")?, values("_DressBodyPaletteList")?])
 }
 
 /// Sprite names of NPCs and monsters by job ID (`JobNameTable`), e.g. 45 → "1_ETC_01".

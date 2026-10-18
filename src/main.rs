@@ -52,6 +52,7 @@ mod chatroom;
 mod clan;
 mod control;
 mod cursor;
+mod dressroom;
 mod effects;
 mod emotion;
 mod emotion_list;
@@ -765,6 +766,10 @@ struct Game {
     /// The player's mercenary, its skills, its window and skill list, how it's steered, and whether dismissing it is
     /// being asked.
     mercenary: Option<net::Mercenary>,
+    /// The dress room's lists, the room while it's open, and its figure.
+    dress_lists: dressroom::Lists,
+    dressroom: Option<dressroom::Room>,
+    dress_figure: Option<SpriteSet>,
     /// /noshift: a click on a player attacks without Shift (saved).
     no_shift: bool,
     /// The map's property and flags (net::MAP_*), and its type, as the server last sent them.
@@ -1240,6 +1245,11 @@ impl Game {
     /// Whether players win over monsters under the pointer: Shift held, or aiming a skill for players, but not both.
     // ponytail: "a skill for players" is one the server flags as for friends (Heal, Blessing); a skill table may list
     // more.
+    /// Opens the dress room on the player's own look.
+    fn open_dressroom(&mut self) {
+        self.dressroom = Some(dressroom::Room::new(&character_look(&self.me), &self.dress_lists));
+    }
+
     /// Who the player sides with on this map, for `versus`: the map's flags, our party's online members, our guild.
     // ponytail: allies come with the guild alliance list (#102); none until then.
     fn side(&self) -> versus::Side {
@@ -1573,6 +1583,10 @@ impl Game {
             chat::Command::Who => self.session.user_count(),
             chat::Command::Memo => self.session.remember_warp_point(),
             chat::Command::PvpInfo => self.session.pvp_info(self.me.id, self.account_id),
+            chat::Command::DressRoom => {
+                self.open_dressroom();
+                Ok(())
+            }
             // ponytail: the client's own line for /noshift isn't in this data; a plain one.
             chat::Command::NoShift => {
                 self.no_shift = !self.no_shift;
@@ -2459,6 +2473,7 @@ struct Assets {
     cashshop: cashshop::Assets,
     context_menu: menu::Assets,
     weather: weather::Assets,
+    dressroom: dressroom::Assets,
     mercenary: mercenary::Assets,
     homunculus: homunculus::Assets,
     party: party::Assets,
@@ -2565,6 +2580,7 @@ impl Assets {
             cashshop: cashshop::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
             weather: weather::Assets::load(gpu, grf),
+            dressroom: dressroom::Assets::load(gpu, grf),
             mercenary: mercenary::Assets::load(gpu, grf),
             homunculus: homunculus::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
@@ -3715,6 +3731,14 @@ impl App {
                         game.expansion_asked = None;
                         let _ = game.session.answer_expansion(yes);
                     }
+                }
+            }
+            // The dress room: pickers, turning, closing.
+            Scene::Game(game) if game.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some() => {
+                let room = game.dressroom.as_mut().unwrap();
+                if room.hit(cursor).is_some_and(|hit| room.click(hit, &game.dress_lists)) {
+                    game.dressroom = None;
+                    game.dress_figure = None;
                 }
             }
             // Handing the party over: OK asks the server.
@@ -5232,6 +5256,10 @@ impl App {
                 }
             }
             Scene::Game(game) if game.party_setup.is_some() && *key == Key::Named(NamedKey::Escape) => game.party_setup = None,
+            Scene::Game(game) if game.dressroom.is_some() && *key == Key::Named(NamedKey::Escape) => {
+                game.dressroom = None;
+                game.dress_figure = None;
+            }
             Scene::Game(game) if game.dismiss_asked && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_dismiss(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
@@ -5794,6 +5822,11 @@ impl App {
                     refusing_party: None,
                     announcements: announce::Bar::default(),
                     map_property: None,
+                    dress_lists: lua::dress_lists(&self.grf)
+                        .map(|[hair, hair_color, clothes_color]| dressroom::Lists { hair, hair_color, clothes_color })
+                        .unwrap_or_default(),
+                    dressroom: None,
+                    dress_figure: None,
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     map_type: None,
                     pvp_rank: None,
@@ -7244,6 +7277,7 @@ impl App {
                 let _ = game.session.ready_to_play();
             }
             MapEvent::MapType(kind) => game.map_type = Some(kind),
+            MapEvent::DressRoom => game.open_dressroom(),
             // Sent to the area: only our own counts. Rank 0 or no players hides the counter; a hidden player's (all
             // ones) shows nothing.
             // Only on a map that counts.
@@ -8403,6 +8437,17 @@ impl App {
         if let Some(sprites) = &mut game.player.sprites {
             frames.push((Owner::Player, player_feet, sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing)));
         }
+        // The dress room's figure: rebuilt when a pick changes, standing the way it's turned.
+        if let Some(room) = &mut game.dressroom
+            && room.changed
+        {
+            game.dress_figure = SpriteSet::player(grf, &room.look(&character_look(&game.me), &game.dress_lists), &self.look_tables);
+            room.changed = false;
+        }
+        let dress_placements = match (&game.dressroom, &mut game.dress_figure) {
+            (Some(room), Some(figure)) => figure.frame(gpu, actor::IDLE, room.direction, 0, Timing::Loop(0.0)),
+            _ => Vec::new(),
+        };
         // The equipment window shows the character standing, facing front.
         let preview_feet = game.equipment.preview_feet();
         let viewed_feet = game.viewing.as_ref().and_then(|viewed| viewed.window.preview_feet());
@@ -9485,6 +9530,14 @@ impl App {
         }
         if let Some(setup) = &game.party_setup {
             setup.draw(&mut shop_layer, &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), messages, pointer);
+        }
+        if let Some(room) = &game.dressroom {
+            let feet = room.feet();
+            let figure = match &game.dress_figure {
+                Some(sprites) => dress_placements.iter().map(|(key, position, size)| (sprites.texture(*key), offset(feet, *position), *size)).collect(),
+                None => Vec::new(),
+            };
+            room.draw(&mut shop_layer, &assets.chrome, &assets.dressroom, font, messages, &game.dress_lists, figure, pointer);
         }
         if let Some(window) = &game.audio_window {
             window.draw(&mut shop_layer, &assets.chrome, &assets.options, font, messages, sound, pointer.0);

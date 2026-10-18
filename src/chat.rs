@@ -212,6 +212,8 @@ pub enum Command {
     PvpInfo,
     /// /noshift: a click on a player attacks without Shift, on or off.
     NoShift,
+    /// /dressroom: the dress room.
+    DressRoom,
 }
 
 /// The command typed, if `text` is one; a name is the rest of the line, quotes taken off.
@@ -231,6 +233,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/memo" => Command::Memo,
         "/pvpinfo" => Command::PvpInfo,
         "/noshift" => Command::NoShift,
+        "/dressroom" => Command::DressRoom,
         _ => return None,
     })
 }
@@ -251,6 +254,7 @@ mod tests {
         assert_eq!(command("/memo"), Some(Command::Memo));
         assert_eq!(command("/pvpinfo"), Some(Command::PvpInfo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
+        assert_eq!(command("/dressroom"), Some(Command::DressRoom));
         assert_eq!(command("/ex"), Some(Command::BlockList));
         assert_eq!(command("/ex Poring"), Some(Command::Whispers { name: "Poring".into(), allow: false }));
         assert_eq!(command("/in \"Big Poring\" "), Some(Command::Whispers { name: "Big Poring".into(), allow: true }));
