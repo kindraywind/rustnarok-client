@@ -710,6 +710,16 @@ const ZC_ACK_RANKING2: u16 = 0x0AF6;
 const CZ_REQNAME_BYGID: u16 = 0x0369;
 const ZC_ACK_REQNAME_BYGID: u16 = 0x0AF7;
 const ZC_STARSKILL: u16 = 0x020E;
+const CZ_SEARCH_STORE_INFO: u16 = 0x0835;
+const ZC_SEARCH_STORE_INFO_FAILED: u16 = 0x0837;
+const CZ_SEARCH_STORE_INFO_NEXT_PAGE: u16 = 0x0838;
+const ZC_OPEN_SEARCH_STORE_INFO: u16 = 0x083A;
+const CZ_CLOSE_SEARCH_STORE_INFO: u16 = 0x083B;
+const CZ_SSILIST_ITEM_CLICK: u16 = 0x083C;
+const ZC_SSILIST_ITEM_CLICK_ACK: u16 = 0x083D;
+const ZC_SEARCH_STORE_INFO_ACK: u16 = 0x0B64;
+/// One result of ZC_SEARCH_STORE_INFO_ACK.
+const CATALOG_ROW_SIZE: usize = 142;
 /// ZC_STARSKILL's kind for the Taekwon Mission's target.
 pub const STAR_MISSION: u8 = 20;
 const ZC_NOTIFY_RANKING: u16 = 0x019A;
@@ -840,12 +850,24 @@ pub const HOMUNCULUS_SP: u16 = 7;
 const ZC_PET_ACT: u16 = 0x01AA;
 const CZ_PET_ACT: u16 = 0x01A9;
 const ZC_ACK_REQNAMEALL_NPC: u16 = 0x0ADF;
+/// ZC_UI_OPEN: a window by kind. Kind 1 is the stylist, kind 8 is grade enchanting.
+const ZC_UI_OPEN: u16 = 0x0AE2;
+const ZC_STYLE_CHANGE_RES: u16 = 0x0A47;
+/// The 16-byte style request. The 14-byte CZ_REQ_STYLE_CHANGE (0x0A46) is not what this version reads.
+const CZ_REQ_STYLE_CHANGE2: u16 = 0x0AFC;
+const CZ_REQ_STYLE_CLOSE: u16 = 0x0A48;
 const ZC_OPEN_REFINING_UI: u16 = 0x0AA0;
 const CZ_REFINING_SELECT_ITEM: u16 = 0x0AA1;
 const ZC_REFINING_MATERIAL_LIST: u16 = 0x0AA2;
 const CZ_REQ_REFINING: u16 = 0x0AA3;
 const CZ_CLOSE_REFINING_UI: u16 = 0x0AA4;
 const ZC_ACK_ITEMREFINING: u16 = 0x0188;
+const CZ_GRADE_ENCHANT_SELECT_EQUIPMENT: u16 = 0x0B59;
+const ZC_GRADE_ENCHANT_MATERIAL_LIST: u16 = 0x0B5A;
+const CZ_GRADE_ENCHANT_REQUEST: u16 = 0x0B5B;
+const CZ_GRADE_ENCHANT_CLOSE_UI: u16 = 0x0B5C;
+const ZC_GRADE_ENCHANT_ACK: u16 = 0x0B5D;
+const ZC_GRADE_ENCHANT_BROADCAST_RESULT: u16 = 0x0B5E;
 const ZC_RANDOM_COMBINE_ITEM_UI_OPEN: u16 = 0x0A4E;
 const CZ_REQ_RANDOM_COMBINE_ITEM: u16 = 0x0A4F;
 const ZC_ACK_RANDOM_COMBINE_ITEM: u16 = 0x0A50;
@@ -859,6 +881,16 @@ const ZC_OPEN_REFORM_UI: u16 = 0x0B8F;
 const CZ_CLOSE_REFORM_UI: u16 = 0x0B90;
 const CZ_ITEM_REFORM: u16 = 0x0B91;
 const ZC_ITEM_REFORM_ACK: u16 = 0x0B92;
+
+/// ZC_UI_OPEN_V3's enchant window.
+const ENCHANT_UI: u8 = 10;
+const ZC_UI_OPEN_V3: u16 = 0x0B9A;
+const CZ_REQUEST_RANDOM_ENCHANT: u16 = 0x0B9B;
+const CZ_REQUEST_PERFECT_ENCHANT: u16 = 0x0B9C;
+const CZ_REQUEST_UPGRADE_ENCHANT: u16 = 0x0B9D;
+const CZ_REQUEST_RESET_ENCHANT: u16 = 0x0B9E;
+const ZC_RESPONSE_ENCHANT: u16 = 0x0B9F;
+const CZ_CLOSE_UI_ENCHANT: u16 = 0x0BA0;
 const ZC_AUTOSPELLLIST: u16 = 0x0AFB;
 const CZ_SELECTAUTOSPELL: u16 = 0x01CE;
 const ZC_SKILL_SELECT_REQUEST: u16 = 0x0442;
@@ -1229,6 +1261,21 @@ fn decode_broadcast(message: &[u8]) -> (String, [u8; 3], BroadcastKind) {
     }
 }
 
+/// A store the Universal Catalog found (ZC_SEARCH_STORE_INFO_ACK).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CatalogRow {
+    pub store: u32,
+    /// The owner's account.
+    pub account: u32,
+    pub shop: String,
+    pub item: u32,
+    pub kind: u8,
+    pub price: u32,
+    pub amount: u16,
+    pub cards: [u32; 4],
+    pub refine: u8,
+}
+
 /// The player's mercenary as ZC_MER_INIT has it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Mercenary {
@@ -1394,6 +1441,25 @@ pub struct RoulettePrize {
     pub column: u8,
     pub item: u32,
     pub amount: u16,
+}
+
+/// Blessings on a grade try: the item, how many one step takes, the most steps, and the chance each step adds (percent).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GradeBlessing {
+    pub item: u32,
+    pub per_step: u32,
+    pub most: u32,
+    pub chance: u32,
+}
+
+/// One material row of a grade try. `lowers_refine` and `can_break` are the option's flags (0 or 1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GradeMaterial {
+    pub item: u32,
+    pub amount: u32,
+    pub zeny: u32,
+    pub lowers_refine: bool,
+    pub can_break: bool,
 }
 
 #[derive(Debug)]
@@ -1714,6 +1780,23 @@ pub enum MapEvent {
     },
     /// A script opens the dress room (`opendressroom`).
     DressRoom,
+    /// A Universal Catalog opens the store search: `remote` opens a store found (effect 1), else it shows where it
+    /// is; the searches left.
+    CatalogOpen {
+        remote: bool,
+        uses: u8,
+    },
+    /// A page of results: the first replaces the list, later ones add to it; `more`: a next page exists.
+    CatalogResults {
+        first: bool,
+        more: bool,
+        uses: u8,
+        rows: Vec<CatalogRow>,
+    },
+    /// A search failed: 0 nothing found, 1 too many, 2 no searches left, 3 too soon, 4 the store's gone.
+    CatalogFailed(u8),
+    /// Where a store found stands on this map; none when it's on another.
+    CatalogMark(Option<[i16; 2]>),
     /// A ranking's top ten (0 Blacksmith, 1 Alchemist, 2 Taekwon, 3 Killer): character IDs (0: an empty place) and
     /// points, and the player's own points.
     Ranking {
@@ -1895,8 +1978,17 @@ pub enum MapEvent {
         why: u32,
         skills: Vec<u16>,
     },
+    /// The stylist's answer (ZC_STYLE_CHANGE_RES): true when the change failed.
+    StyleChanged(bool),
     /// The refine window opens.
     RefineOpen,
+    /// The enchant window opens on this enchant table.
+    EnchantOpen(u64),
+    /// An enchant's answer: a message number, and the enchant put in (0 on a failure and after a reset).
+    Enchanted {
+        message: u32,
+        item: u32,
+    },
     /// What an item in the refine window can be refined with: ores (item, chance %, zeny), and how many Blacksmith's
     /// Blessings protect it (0: they can't).
     RefineMaterials {
@@ -1909,6 +2001,32 @@ pub enum MapEvent {
         result: u16,
         index: u16,
         refine: u16,
+    },
+    /// ZC_UI_OPEN: a window by kind (1 is the stylist, 8 is grade enchanting) and the data it carries.
+    UiOpen {
+        kind: u8,
+        data: u32,
+    },
+    /// What grades an item, or index −1 when its level has none. Chance is a percent. Blessing steps add `chance`
+    /// each, up to `most`. Each material row is one option, in the order the request numbers them.
+    GradeMaterials {
+        index: i16,
+        chance: u32,
+        blessing: GradeBlessing,
+        materials: Vec<GradeMaterial>,
+    },
+    /// A grade try: the item's grade after it, and the result (0 raised, 1 failed, 2 refine down, 3 destroyed, 4 protected).
+    GradeResult {
+        index: u16,
+        grade: u16,
+        result: u32,
+    },
+    /// Someone's grade try, told to every player: success raised it, failure did not.
+    GradeAnnounced {
+        player: String,
+        item: u32,
+        grade: u16,
+        success: bool,
     },
     /// A Laphine synthesis box opened (the box's item ID).
     SynthesisOpen(u32),
@@ -2846,6 +2964,8 @@ pub struct InventoryItem {
     pub worn: u32,
     pub identified: bool,
     pub refine: u8,
+    /// Enchant grade: 0 none, 1 D, 2 C, 3 B, 4 A.
+    pub grade: u8,
     pub cards: [u32; 4],
     /// Broken: it can't be worn until it's repaired.
     pub broken: bool,
@@ -2919,6 +3039,7 @@ fn decode_equip_item(entry: &[u8]) -> InventoryItem {
         worn: u32_at(entry, 11),
         cards: cards_at(entry, 15),
         refine: entry[65],
+        grade: entry[66],
         identified: entry[67] & 1 != 0,
         broken: entry[67] & 2 != 0,
         bind: u16_at(entry, 35),
@@ -3293,6 +3414,21 @@ impl MapSession {
         self.stream.write_all(&CZ_CLOSE_REFINING_UI.to_le_bytes())
     }
 
+    /// Puts an item in the grade window. Its materials come back, or index −1 when that level has no grades.
+    pub fn grade_select(&mut self, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_grade_select(index))
+    }
+
+    /// Starts a grade try. `steps` 0 sends blessings off; more than 0 sends them on with that many steps.
+    pub fn grade_enchant(&mut self, index: u16, material: u32, steps: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_grade_enchant(index, material, steps))
+    }
+
+    /// Closes the grade window. Until this, the server holds the player still.
+    pub fn close_grade(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_close_grade())
+    }
+
     /// Sends the synthesis window's materials. Each entry is an inventory index and the amount the list wants.
     pub fn synthesize(&mut self, box_id: u32, entries: &[(u16, u16)]) -> io::Result<()> {
         self.stream.write_all(&encode_synthesis(box_id, entries))
@@ -3319,6 +3455,37 @@ impl MapSession {
     /// Tells the server the reform window closed. Until it hears this, it holds the player.
     pub fn close_reform(&mut self) -> io::Result<()> {
         self.stream.write_all(&encode_close_reform())
+    }
+
+    /// The enchant window: a random enchant, a chosen perfect one, an upgrade, a reset, or closing it.
+    pub fn enchant_random(&mut self, table: u64, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_enchant_random(table, index))
+    }
+
+    pub fn enchant_perfect(&mut self, table: u64, index: u16, item: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_enchant_perfect(table, index, item))
+    }
+
+    pub fn enchant_upgrade(&mut self, table: u64, index: u16, slot: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_enchant_upgrade(table, index, slot))
+    }
+
+    pub fn enchant_reset(&mut self, table: u64, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_enchant_reset(table, index))
+    }
+
+    pub fn close_enchant(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_enchant_close())
+    }
+
+    /// Buys the stylist's rows (0 leaves a part as it is). Always the 16-byte request.
+    pub fn buy_style(&mut self, picks: StylePicks) -> io::Result<()> {
+        self.stream.write_all(&encode_style_change(picks))
+    }
+
+    /// Closes the stylist. Until this, the server holds the player and refuses another one.
+    pub fn close_stylist(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_style_close())
     }
 
     /// Hatches the egg at this inventory index (from `PetEggs`).
@@ -3784,6 +3951,25 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Searches the stores on the map: vending (`buying` false) or buying stores, the items by ID, prices between
+    /// `min` and `max` (0: no limit); the answer is `CatalogResults` or `CatalogFailed`.
+    pub fn search_stores(&mut self, buying: bool, max: u32, min: u32, items: &[u32], cards: &[u32]) -> io::Result<()> {
+        self.stream.write_all(&encode_store_search(buying, max, min, items, cards))
+    }
+
+    pub fn next_store_page(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_SEARCH_STORE_INFO_NEXT_PAGE.to_le_bytes())
+    }
+
+    pub fn close_store_search(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_CLOSE_SEARCH_STORE_INFO.to_le_bytes())
+    }
+
+    /// A result picked: where it is (`CatalogMark`), or its store opened.
+    pub fn pick_store(&mut self, account: u32, store: u32, item: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_store_pick(account, store, item))
+    }
+
     /// Asks for a ranking's top ten (0 Blacksmith, 1 Alchemist, 2 Taekwon, 3 Killer); the answer is `Ranking`.
     pub fn ask_ranking(&mut self, kind: u16) -> io::Result<()> {
         self.stream.write_all(&encode_ranking_request(kind))
@@ -4197,6 +4383,27 @@ fn encode_skill_select(why: u32, skill: u16) -> [u8; 8] {
     packet
 }
 
+/// CZ_GRADE_ENCHANT_SELECT_EQUIPMENT: the inventory index.
+fn encode_grade_select(index: u16) -> [u8; 4] {
+    let mut packet = [0u8; 4];
+    packet[..2].copy_from_slice(&CZ_GRADE_ENCHANT_SELECT_EQUIPMENT.to_le_bytes());
+    packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_GRADE_ENCHANT_REQUEST: the item, the material row, and blessing steps (0 sends the flag off). Protect stays 0.
+fn encode_grade_enchant(index: u16, material: u32, steps: u32) -> [u8; 14] {
+    let mut packet = [0u8; 14];
+    packet[..2].copy_from_slice(&CZ_GRADE_ENCHANT_REQUEST.to_le_bytes());
+    packet[2..4].copy_from_slice(&index.to_le_bytes());
+    packet[4..8].copy_from_slice(&material.to_le_bytes());
+    if steps > 0 {
+        packet[8] = 1;
+        packet[9..13].copy_from_slice(&steps.to_le_bytes());
+    }
+    packet
+}
+
 /// CZ_REQ_RANDOM_COMBINE_ITEM: length, the box's item ID as it came, then index and amount for each material.
 fn encode_synthesis(box_id: u32, entries: &[(u16, u16)]) -> Vec<u8> {
     let mut packet = CZ_REQ_RANDOM_COMBINE_ITEM.to_le_bytes().to_vec();
@@ -4205,6 +4412,34 @@ fn encode_synthesis(box_id: u32, entries: &[(u16, u16)]) -> Vec<u8> {
     for (index, amount) in entries {
         packet.extend_from_slice(&index.to_le_bytes());
         packet.extend_from_slice(&amount.to_le_bytes());
+    }
+    packet
+}
+
+/// CZ_GRADE_ENCHANT_CLOSE_UI.
+fn encode_close_grade() -> [u8; 2] {
+    CZ_GRADE_ENCHANT_CLOSE_UI.to_le_bytes()
+}
+
+/// Rows of the styling shop to buy. 0 leaves that part unchanged. Body style is sent, and this version keeps it 0.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StylePicks {
+    pub hair_color: u16,
+    pub hair_style: u16,
+    pub clothes_color: u16,
+    pub head_top: u16,
+    pub head_mid: u16,
+    pub head_bottom: u16,
+    pub body_style: u16,
+}
+
+/// CZ_REQ_STYLE_CHANGE2: 16 bytes, one u16 row at offsets 2, 4, 6, 8, 10, 12 and 14.
+fn encode_style_change(picks: StylePicks) -> [u8; 16] {
+    let mut packet = [0u8; 16];
+    packet[..2].copy_from_slice(&CZ_REQ_STYLE_CHANGE2.to_le_bytes());
+    let rows = [picks.hair_color, picks.hair_style, picks.clothes_color, picks.head_top, picks.head_mid, picks.head_bottom, picks.body_style];
+    for (index, row) in rows.into_iter().enumerate() {
+        packet[2 + index * 2..4 + index * 2].copy_from_slice(&row.to_le_bytes());
     }
     packet
 }
@@ -4240,6 +4475,53 @@ fn encode_close_reform() -> [u8; 2] {
     CZ_CLOSE_REFORM_UI.to_le_bytes()
 }
 
+/// CZ_REQUEST_RANDOM_ENCHANT: the enchant table and the item's inventory index.
+fn encode_enchant_random(table: u64, index: u16) -> [u8; 12] {
+    let mut packet = [0u8; 12];
+    packet[..2].copy_from_slice(&CZ_REQUEST_RANDOM_ENCHANT.to_le_bytes());
+    packet[2..10].copy_from_slice(&table.to_le_bytes());
+    packet[10..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_REQUEST_PERFECT_ENCHANT: the table, the item, and the enchant's item ID.
+fn encode_enchant_perfect(table: u64, index: u16, item: u32) -> [u8; 16] {
+    let mut packet = [0u8; 16];
+    packet[..2].copy_from_slice(&CZ_REQUEST_PERFECT_ENCHANT.to_le_bytes());
+    packet[2..10].copy_from_slice(&table.to_le_bytes());
+    packet[10..12].copy_from_slice(&index.to_le_bytes());
+    packet[12..].copy_from_slice(&item.to_le_bytes());
+    packet
+}
+
+/// CZ_REQUEST_UPGRADE_ENCHANT: the table, the item, and the card slot (0-3).
+fn encode_enchant_upgrade(table: u64, index: u16, slot: u16) -> [u8; 14] {
+    let mut packet = [0u8; 14];
+    packet[..2].copy_from_slice(&CZ_REQUEST_UPGRADE_ENCHANT.to_le_bytes());
+    packet[2..10].copy_from_slice(&table.to_le_bytes());
+    packet[10..12].copy_from_slice(&index.to_le_bytes());
+    packet[12..].copy_from_slice(&slot.to_le_bytes());
+    packet
+}
+
+/// CZ_REQUEST_RESET_ENCHANT: the table and the item.
+fn encode_enchant_reset(table: u64, index: u16) -> [u8; 12] {
+    let mut packet = [0u8; 12];
+    packet[..2].copy_from_slice(&CZ_REQUEST_RESET_ENCHANT.to_le_bytes());
+    packet[2..10].copy_from_slice(&table.to_le_bytes());
+    packet[10..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_CLOSE_UI_ENCHANT: the header alone.
+fn encode_enchant_close() -> [u8; 2] {
+    CZ_CLOSE_UI_ENCHANT.to_le_bytes()
+}
+
+fn encode_style_close() -> [u8; 2] {
+    CZ_REQ_STYLE_CLOSE.to_le_bytes()
+}
+
 /// CZ_REQ_REFINING: the item, the ore, and whether Blacksmith's Blessings go with it.
 fn encode_refine(index: u16, ore: u32, blessings: bool) -> [u8; 9] {
     let mut packet = [0u8; 9];
@@ -4255,6 +4537,31 @@ fn encode_hatch(index: u16) -> [u8; 4] {
     let mut packet = [0u8; 4];
     packet[..2].copy_from_slice(&CZ_SELECT_PETEGG.to_le_bytes());
     packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_SEARCH_STORE_INFO: kind (0 vending, 1 buying), max then min price, the item and card counts, the IDs.
+fn encode_store_search(buying: bool, max: u32, min: u32, items: &[u32], cards: &[u32]) -> Vec<u8> {
+    let mut packet = CZ_SEARCH_STORE_INFO.to_le_bytes().to_vec();
+    packet.extend_from_slice(&[0, 0, u8::from(buying)]);
+    packet.extend_from_slice(&max.to_le_bytes());
+    packet.extend_from_slice(&min.to_le_bytes());
+    packet.extend_from_slice(&[items.len().min(255) as u8, cards.len().min(255) as u8]);
+    for id in items.iter().take(255).chain(cards.iter().take(255)) {
+        packet.extend_from_slice(&id.to_le_bytes());
+    }
+    let length = packet.len() as u16;
+    packet[2..4].copy_from_slice(&length.to_le_bytes());
+    packet
+}
+
+/// CZ_SSILIST_ITEM_CLICK: the owner's account, the store, the item, as the result gave them.
+fn encode_store_pick(account: u32, store: u32, item: u32) -> [u8; 14] {
+    let mut packet = [0u8; 14];
+    packet[..2].copy_from_slice(&CZ_SSILIST_ITEM_CLICK.to_le_bytes());
+    packet[2..6].copy_from_slice(&account.to_le_bytes());
+    packet[6..10].copy_from_slice(&store.to_le_bytes());
+    packet[10..].copy_from_slice(&item.to_le_bytes());
     packet
 }
 
@@ -4701,6 +5008,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 location: u32_at(28),
                 kind: packet[32],
                 refine: packet[68],
+                grade: packet[69],
                 worn: 0,
                 broken: packet[11] != 0,
                 bind: u16_at(38),
@@ -4852,6 +5160,34 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // Flag 3: a name follows; 2: none.
         ZC_ACK_REQNAME_BYGID => MapEvent::CharName { id: u32_at(4), name: (u16_at(2) == 3).then(|| c_string(&packet[8..32])) },
         ZC_UPDATE_RANKING_POINT => MapEvent::RankingPoints { kind: u16_at(2), added: u32_at(4) as i32, total: u32_at(8) },
+        ZC_OPEN_SEARCH_STORE_INFO => MapEvent::CatalogOpen { remote: u16_at(2) == 1, uses: packet[4] },
+        ZC_SEARCH_STORE_INFO_ACK => MapEvent::CatalogResults {
+            first: packet[4] != 0,
+            more: packet[5] != 0,
+            uses: packet[6],
+            rows: packet[7..]
+                .chunks_exact(CATALOG_ROW_SIZE)
+                .map(|row| {
+                    let at = |offset: usize| u32::from_le_bytes(row[offset..offset + 4].try_into().unwrap());
+                    CatalogRow {
+                        store: at(0),
+                        account: at(4),
+                        shop: c_string(&row[8..88]),
+                        item: at(88),
+                        kind: row[92],
+                        price: at(93),
+                        amount: u16::from_le_bytes([row[97], row[98]]),
+                        cards: std::array::from_fn(|card| at(99 + 4 * card)),
+                        refine: row[140],
+                    }
+                })
+                .collect(),
+        },
+        ZC_SEARCH_STORE_INFO_FAILED => MapEvent::CatalogFailed(packet[2]),
+        ZC_SSILIST_ITEM_CLICK_ACK => {
+            let cell = [u16_at(2) as i16, u16_at(4) as i16];
+            MapEvent::CatalogMark((cell != [-1, -1]).then_some(cell))
+        }
         ZC_STARSKILL => MapEvent::StarSkill { name: c_string(&packet[2..26]), monster: u32_at(26), count: packet[30], kind: packet[31] },
         ZC_NOTIFY_RANKING => MapEvent::PvpRank { account: u32_at(2), rank: u32_at(6), players: u32_at(10) },
         ZC_ACK_PVPPOINT => MapEvent::PvpInfo { wins: u32_at(10), losses: u32_at(14), points: u32_at(18) as i32 },
@@ -4978,12 +5314,40 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_AUTOSPELLLIST => MapEvent::SpellList(packet[4..].chunks_exact(4).map(|skill| self::u32_at(skill, 0)).collect()),
         ZC_SKILL_SELECT_REQUEST => MapEvent::SkillSelect { why: u32_at(4), skills: packet[8..].chunks_exact(2).map(|skill| self::u16_at(skill, 0)).collect() },
         ZC_OPEN_REFINING_UI => MapEvent::RefineOpen,
+        ZC_UI_OPEN_V3 if packet[2] == ENCHANT_UI => MapEvent::EnchantOpen(u64_at(packet, 3)),
+        ZC_RESPONSE_ENCHANT => MapEvent::Enchanted { message: u32_at(2), item: u32_at(6) },
         ZC_REFINING_MATERIAL_LIST => MapEvent::RefineMaterials {
             index: u16_at(4),
             blessings: packet[6],
             materials: packet[7..].chunks_exact(9).map(|ore| (self::u32_at(ore, 0), ore[4], self::u32_at(ore, 5))).collect(),
         },
         ZC_ACK_ITEMREFINING => MapEvent::Refined { result: u16_at(2), index: u16_at(4), refine: u16_at(6) },
+        ZC_UI_OPEN => MapEvent::UiOpen { kind: packet[2], data: u32_at(3) },
+        // Index −1: this level has no grades. Rows of 17 bytes start at 34.
+        ZC_GRADE_ENCHANT_MATERIAL_LIST => {
+            if packet.len() < 34 {
+                return None;
+            }
+            MapEvent::GradeMaterials {
+                index: i16::from_le_bytes([packet[4], packet[5]]),
+                chance: u32_at(6),
+                blessing: GradeBlessing { item: u32_at(10), per_step: u32_at(14), most: u32_at(18), chance: u32_at(22) },
+                materials: packet[34..]
+                    .chunks_exact(17)
+                    .map(|entry| GradeMaterial {
+                        item: self::u32_at(entry, 0),
+                        amount: self::u32_at(entry, 4),
+                        zeny: self::u32_at(entry, 8),
+                        lowers_refine: self::u32_at(entry, 12) != 0,
+                        can_break: entry[16] != 0,
+                    })
+                    .collect(),
+            }
+        }
+        ZC_GRADE_ENCHANT_ACK => MapEvent::GradeResult { index: u16_at(2), grade: u16_at(4), result: u32_at(6) },
+        ZC_GRADE_ENCHANT_BROADCAST_RESULT => {
+            MapEvent::GradeAnnounced { player: c_string(&packet[2..26]), item: u32_at(26), grade: u16_at(30), success: packet[32] != 0 }
+        }
         ZC_RANDOM_COMBINE_ITEM_UI_OPEN => MapEvent::SynthesisOpen(u32_at(2)),
         ZC_ACK_RANDOM_COMBINE_ITEM => MapEvent::Synthesized(u16_at(2)),
         ZC_RANDOM_UPGRADE_ITEM_UI_OPEN => MapEvent::UpgradeOpen(u32_at(2)),
@@ -5506,6 +5870,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_ATTACK_FAILURE_FOR_DISTANCE => {
             MapEvent::TooFar { target: u32_at(2), target_cell: [u16_at(6), u16_at(8)], cell: [u16_at(10), u16_at(12)], range: u16_at(14) }
         }
+        ZC_STYLE_CHANGE_RES => MapEvent::StyleChanged(packet[2] != 0),
         _ => return None,
     })
 }
@@ -6195,6 +6560,95 @@ mod tests {
     }
 
     #[test]
+    fn decodes_grade_enchant() {
+        assert!(matches!(decode_map_packet(&[0xE2, 0x0A, 8, 0, 0, 0, 0]), Some(MapEvent::UiOpen { kind: 8, data: 0 })));
+        assert!(matches!(decode_map_packet(&[0xE2, 0x0A, 1, 7, 0, 0, 0]), Some(MapEvent::UiOpen { kind: 1, data: 7 })));
+
+        // Two rows: 1 Etel Aquamarine for 175,000 z (can break), 5 for 875,000 z. Blessings: 1 a step, 10 steps, +1%.
+        let mut list = ZC_GRADE_ENCHANT_MATERIAL_LIST.to_le_bytes().to_vec();
+        list.extend_from_slice(&68u16.to_le_bytes());
+        list.extend_from_slice(&4i16.to_le_bytes());
+        list.extend_from_slice(&80u32.to_le_bytes());
+        for value in [1_000_337u32, 1, 10, 1, 0, 0] {
+            list.extend_from_slice(&value.to_le_bytes());
+        }
+        for (item, amount, zeny, lowers, breaks) in [(1_000_325u32, 1u32, 175_000u32, 0u32, 1u8), (1_000_325, 5, 875_000, 1, 0)] {
+            list.extend_from_slice(&item.to_le_bytes());
+            list.extend_from_slice(&amount.to_le_bytes());
+            list.extend_from_slice(&zeny.to_le_bytes());
+            list.extend_from_slice(&lowers.to_le_bytes());
+            list.push(breaks);
+        }
+        assert_eq!(list.len(), 68);
+        let Some(MapEvent::GradeMaterials { index: 4, chance: 80, blessing, materials }) = decode_map_packet(&list) else { panic!() };
+        assert_eq!(blessing, GradeBlessing { item: 1_000_337, per_step: 1, most: 10, chance: 1 });
+        assert_eq!(
+            materials,
+            [
+                GradeMaterial { item: 1_000_325, amount: 1, zeny: 175_000, lowers_refine: false, can_break: true },
+                GradeMaterial { item: 1_000_325, amount: 5, zeny: 875_000, lowers_refine: true, can_break: false },
+            ]
+        );
+        let mut none = vec![0u8; 34];
+        none[..2].copy_from_slice(&ZC_GRADE_ENCHANT_MATERIAL_LIST.to_le_bytes());
+        none[2..4].copy_from_slice(&34u16.to_le_bytes());
+        none[4..6].copy_from_slice(&(-1i16).to_le_bytes());
+        let Some(MapEvent::GradeMaterials { index: -1, chance: 0, materials, .. }) = decode_map_packet(&none) else { panic!() };
+        assert!(materials.is_empty());
+
+        let result = [&ZC_GRADE_ENCHANT_ACK.to_le_bytes()[..], &4u16.to_le_bytes(), &1u16.to_le_bytes(), &0u32.to_le_bytes()].concat();
+        let Some(MapEvent::GradeResult { index: 4, grade: 1, result: 0 }) = decode_map_packet(&result) else { panic!() };
+
+        let mut announced = ZC_GRADE_ENCHANT_BROADCAST_RESULT.to_le_bytes().to_vec();
+        let mut name = b"Pori**".to_vec();
+        name.resize(24, 0);
+        announced.extend_from_slice(&name);
+        announced.extend_from_slice(&15282u32.to_le_bytes());
+        announced.extend_from_slice(&1u16.to_le_bytes());
+        announced.push(1);
+        assert_eq!(Some(announced.len() as i32), packet_length(ZC_GRADE_ENCHANT_BROADCAST_RESULT));
+        let Some(MapEvent::GradeAnnounced { player, item: 15282, grade: 1, success: true }) = decode_map_packet(&announced) else { panic!() };
+        assert_eq!(player, "Pori**");
+        announced[32] = 0;
+        let Some(MapEvent::GradeAnnounced { success: false, .. }) = decode_map_packet(&announced) else { panic!() };
+
+        let mut equip = vec![0u8; 5 + EQUIP_ITEM_SIZE];
+        equip[..2].copy_from_slice(&ZC_INVENTORY_ITEMLIST_EQUIP.to_le_bytes());
+        let entry = &mut equip[5..];
+        entry[..2].copy_from_slice(&7u16.to_le_bytes());
+        entry[2..6].copy_from_slice(&15282u32.to_le_bytes());
+        entry[65] = 20;
+        entry[66] = 2;
+        entry[67] = 1;
+        let Some(MapEvent::InventoryItems { items, .. }) = decode_map_packet(&equip) else { panic!() };
+        assert_eq!((items[0].id, items[0].refine, items[0].grade), (15282, 20, 2));
+
+        let mut pickup = vec![0u8; 70];
+        pickup[..2].copy_from_slice(&ZC_ITEM_PICKUP_ACK.to_le_bytes());
+        pickup[2..4].copy_from_slice(&7u16.to_le_bytes());
+        pickup[6..10].copy_from_slice(&15282u32.to_le_bytes());
+        pickup[68] = 20;
+        pickup[69] = 1;
+        let Some(MapEvent::PickedUp { item, .. }) = decode_map_packet(&pickup) else { panic!() };
+        assert_eq!((item.refine, item.grade), (20, 1));
+
+        assert_eq!(encode_grade_select(4), [0x59, 0x0B, 4, 0]);
+        assert_eq!(encode_grade_enchant(4, 0, 2), [0x5B, 0x0B, 4, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0]);
+        assert_eq!(encode_grade_enchant(4, 1, 0), [0x5B, 0x0B, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(encode_close_grade(), [0x5C, 0x0B]);
+        let ids = [
+            ZC_UI_OPEN,
+            CZ_GRADE_ENCHANT_SELECT_EQUIPMENT,
+            ZC_GRADE_ENCHANT_MATERIAL_LIST,
+            CZ_GRADE_ENCHANT_REQUEST,
+            CZ_GRADE_ENCHANT_CLOSE_UI,
+            ZC_GRADE_ENCHANT_ACK,
+            ZC_GRADE_ENCHANT_BROADCAST_RESULT,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(7), Some(4), Some(-1), Some(14), Some(2), Some(10), Some(33)]);
+    }
+
+    #[test]
     fn decodes_laphine_boxes() {
         let open = [&ZC_RANDOM_COMBINE_ITEM_UI_OPEN.to_le_bytes()[..], &100_000u32.to_le_bytes()].concat();
         assert!(matches!(decode_map_packet(&open), Some(MapEvent::SynthesisOpen(100_000))));
@@ -6266,6 +6720,49 @@ mod tests {
         assert_eq!(encode_blocking_play_cancel(), [0x47, 0x04]);
         assert!(matches!(decode_map_packet(&[0xD6, 0x01, 19, 0]), Some(MapEvent::MapType(19))));
         assert!(matches!(decode_map_packet(&[0x02, 0x0A, 0, 0]), Some(MapEvent::DressRoom)));
+    }
+
+    #[test]
+    fn decodes_store_searches() {
+        assert!(matches!(decode_map_packet(&[0x3A, 0x08, 1, 0, 10]), Some(MapEvent::CatalogOpen { remote: true, uses: 10 })));
+        assert!(matches!(decode_map_packet(&[0x37, 0x08, 3]), Some(MapEvent::CatalogFailed(3))));
+        // Two results, the second with cards and a refine.
+        let mut results = ZC_SEARCH_STORE_INFO_ACK.to_le_bytes().to_vec();
+        results.extend_from_slice(&[0, 0, 1, 1, 9]);
+        for (store, item, refine, card) in [(11u32, 909u32, 0u8, 0u32), (12, 1201, 7, 4035)] {
+            let mut row = vec![0u8; CATALOG_ROW_SIZE];
+            row[..4].copy_from_slice(&store.to_le_bytes());
+            row[4..8].copy_from_slice(&2_000_001u32.to_le_bytes());
+            row[8..20].copy_from_slice(b"Catalog test");
+            row[88..92].copy_from_slice(&item.to_le_bytes());
+            row[93..97].copy_from_slice(&1500u32.to_le_bytes());
+            row[97..99].copy_from_slice(&10u16.to_le_bytes());
+            row[99..103].copy_from_slice(&card.to_le_bytes());
+            row[140] = refine;
+            results.extend_from_slice(&row);
+        }
+        let length = results.len() as u16;
+        results[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::CatalogResults { first: true, more: true, uses: 9, rows }) = decode_map_packet(&results) else { panic!() };
+        assert_eq!(
+            (rows[0].store, rows[0].account, rows[0].shop.as_str(), rows[0].item, rows[0].price, rows[0].amount),
+            (11, 2_000_001, "Catalog test", 909, 1500, 10)
+        );
+        assert_eq!((rows[1].item, rows[1].refine, rows[1].cards), (1201, 7, [4035, 0, 0, 0]));
+        let empty = [&ZC_SEARCH_STORE_INFO_ACK.to_le_bytes()[..], &7u16.to_le_bytes(), &[1, 0, 8]].concat();
+        assert!(matches!(decode_map_packet(&empty), Some(MapEvent::CatalogResults { rows, uses: 8, .. }) if rows.is_empty()));
+        let mark = |x: i16, y: i16| [&ZC_SSILIST_ITEM_CLICK_ACK.to_le_bytes()[..], &x.to_le_bytes(), &y.to_le_bytes()].concat();
+        assert!(matches!(decode_map_packet(&mark(170, 330)), Some(MapEvent::CatalogMark(Some([170, 330])))));
+        assert!(matches!(decode_map_packet(&mark(-1, -1)), Some(MapEvent::CatalogMark(None))));
+        // Max price before min, two items, no cards: 23 bytes.
+        let search = encode_store_search(false, 2000, 100, &[909, 910], &[]);
+        assert_eq!(search.len(), 23);
+        assert_eq!(&search[..15], &[0x35, 0x08, 23, 0, 0, 0xD0, 0x07, 0, 0, 100, 0, 0, 0, 2, 0]);
+        assert_eq!(&search[15..], &[0x8D, 0x03, 0, 0, 0x8E, 0x03, 0, 0]);
+        assert_eq!(encode_store_pick(2_000_001, 11, 909), [0x3C, 0x08, 0x81, 0x84, 0x1E, 0, 11, 0, 0, 0, 0x8D, 0x03, 0, 0]);
+        assert_eq!(packet_length(CZ_SEARCH_STORE_INFO_NEXT_PAGE), Some(2));
+        assert_eq!(packet_length(CZ_CLOSE_SEARCH_STORE_INFO), Some(2));
+        assert_eq!(packet_length(ZC_SEARCH_STORE_INFO_ACK), Some(-1));
     }
 
     #[test]
@@ -6701,9 +7198,11 @@ mod tests {
         entry[..2].copy_from_slice(&5u16.to_le_bytes());
         entry[2..6].copy_from_slice(&1201u32.to_le_bytes());
         entry[35..37].copy_from_slice(&2u16.to_le_bytes());
+        entry[65] = 9;
+        entry[66] = 4;
         entry[67] = 3;
         let item = decode_equip_item(&entry);
-        assert_eq!((item.index, item.id, item.identified, item.broken, item.bind), (5, 1201, true, true, 2));
+        assert_eq!((item.index, item.id, item.identified, item.broken, item.bind, item.refine, item.grade), (5, 1201, true, true, 2, 9, 4));
         entry[67] = 1;
         assert!(!decode_equip_item(&entry).broken);
         // ZC_ITEM_PICKUP_ACK: broken at 11, bind at 38.
@@ -6712,8 +7211,10 @@ mod tests {
         pickup[6..10].copy_from_slice(&2301u32.to_le_bytes());
         pickup[11] = 1;
         pickup[38..40].copy_from_slice(&1u16.to_le_bytes());
+        pickup[68] = 7;
+        pickup[69] = 2;
         let Some(MapEvent::PickedUp { item, .. }) = decode_map_packet(&pickup) else { panic!() };
-        assert_eq!((item.id, item.broken, item.bind), (2301, true, 1));
+        assert_eq!((item.id, item.broken, item.bind, item.refine, item.grade), (2301, true, 1, 7, 2));
         let Some(MapEvent::BoundOnEquip(7)) = decode_map_packet(&[0xD3, 0x02, 7, 0]) else { panic!() };
         let Some(MapEvent::TookOffAll { refused: false }) = decode_map_packet(&[0xAE, 0x0B, 0]) else { panic!() };
         let Some(MapEvent::TookOffAll { refused: true }) = decode_map_packet(&[0xAE, 0x0B, 1]) else { panic!() };
@@ -6968,6 +7469,30 @@ mod tests {
         assert_eq!(packet_length(ZC_ACK_READ_RODEX), Some(-1));
         assert_eq!(packet_length(ZC_ACK_ADD_ITEM_RODEX), Some(64));
         assert_eq!(packet_length(ZC_CHECKNAME), Some(34));
+    }
+
+    #[test]
+    fn decodes_the_stylist() {
+        // ZC_UI_OPEN: kind at 2, data u32 at 3. Kind 1 is the stylist; 8 is grade enchant, decoded the same way.
+        assert!(matches!(decode_map_packet(&[0xE2, 0x0A, 1, 0, 0, 0, 0]), Some(MapEvent::UiOpen { kind: 1, data: 0 })));
+        assert!(matches!(decode_map_packet(&[0xE2, 0x0A, 8, 4, 0, 0, 0]), Some(MapEvent::UiOpen { kind: 8, data: 4 })));
+        // ZC_STYLE_CHANGE_RES: 0 done, 1 failed.
+        assert!(matches!(decode_map_packet(&[0x47, 0x0A, 0]), Some(MapEvent::StyleChanged(false))));
+        assert!(matches!(decode_map_packet(&[0x47, 0x0A, 1]), Some(MapEvent::StyleChanged(true))));
+
+        let picks = StylePicks { hair_color: 3, hair_style: 5, clothes_color: 2, head_top: 1, head_mid: 0, head_bottom: 0, body_style: 0 };
+        let packet = encode_style_change(picks);
+        assert_eq!(packet.len(), 16);
+        // 0x0AFC, never the 14-byte 0x0A46.
+        assert_eq!(&packet[..2], &[0xFC, 0x0A]);
+        assert_ne!(&packet[..2], &[0x46, 0x0A]);
+        let row = |offset: usize| u16::from_le_bytes([packet[offset], packet[offset + 1]]);
+        assert_eq!((row(2), row(4), row(6), row(8), row(10), row(12), row(14)), (3, 5, 2, 1, 0, 0, 0));
+        let body = encode_style_change(StylePicks { body_style: 2, ..StylePicks::default() });
+        assert_eq!(u16::from_le_bytes([body[14], body[15]]), 2);
+        assert_eq!(&body[2..14], &[0; 12]);
+        assert_eq!(encode_style_close(), [0x48, 0x0A]);
+        assert_eq!([ZC_UI_OPEN, ZC_STYLE_CHANGE_RES, CZ_REQ_STYLE_CHANGE2, CZ_REQ_STYLE_CLOSE].map(packet_length), [Some(7), Some(3), Some(16), Some(2)]);
     }
 
     #[test]
@@ -7271,6 +7796,40 @@ mod tests {
         for (header, length) in [(ZC_NOTIFY_CLAN_CONNECTINFO, 6), (ZC_ACK_CLAN_LEAVE, 2), (ZC_CLANINFO, -1), (CZ_CLAN_CHAT, -1), (ZC_NOTIFY_CLAN_CHAT, -1)] {
             assert_eq!(packet_length(header), Some(length));
         }
+    }
+
+    #[test]
+    fn decodes_enchant() {
+        let mut open = ZC_UI_OPEN_V3.to_le_bytes().to_vec();
+        open.resize(11, 0);
+        open[2] = ENCHANT_UI;
+        open[3..11].copy_from_slice(&33u64.to_le_bytes());
+        let Some(MapEvent::EnchantOpen(33)) = decode_map_packet(&open) else { panic!() };
+        open[2] = 1;
+        assert!(decode_map_packet(&open).is_none());
+        let answer = [&ZC_RESPONSE_ENCHANT.to_le_bytes()[..], &3857u32.to_le_bytes(), &4818u32.to_le_bytes()].concat();
+        let Some(MapEvent::Enchanted { message: 3857, item: 4818 }) = decode_map_packet(&answer) else { panic!() };
+        let failed = [&ZC_RESPONSE_ENCHANT.to_le_bytes()[..], &3858u32.to_le_bytes(), &0u32.to_le_bytes()].concat();
+        let Some(MapEvent::Enchanted { message: 3858, item: 0 }) = decode_map_packet(&failed) else { panic!() };
+        assert_eq!(encode_enchant_random(33, 4)[0..2], CZ_REQUEST_RANDOM_ENCHANT.to_le_bytes());
+        assert_eq!(u64::from_le_bytes(encode_enchant_random(33, 4)[2..10].try_into().unwrap()), 33);
+        assert_eq!(u16::from_le_bytes(encode_enchant_random(33, 4)[10..12].try_into().unwrap()), 4);
+        let perfect = encode_enchant_perfect(33, 4, 4818);
+        assert_eq!((u16::from_le_bytes(perfect[10..12].try_into().unwrap()), u32::from_le_bytes(perfect[12..16].try_into().unwrap())), (4, 4818));
+        let upgrade = encode_enchant_upgrade(33, 4, 3);
+        assert_eq!(u16::from_le_bytes(upgrade[12..14].try_into().unwrap()), 3);
+        assert_eq!(encode_enchant_reset(33, 4)[10..12], 4u16.to_le_bytes());
+        assert_eq!(encode_enchant_close(), CZ_CLOSE_UI_ENCHANT.to_le_bytes());
+        let ids = [
+            ZC_UI_OPEN_V3,
+            CZ_REQUEST_RANDOM_ENCHANT,
+            CZ_REQUEST_PERFECT_ENCHANT,
+            CZ_REQUEST_UPGRADE_ENCHANT,
+            CZ_REQUEST_RESET_ENCHANT,
+            ZC_RESPONSE_ENCHANT,
+            CZ_CLOSE_UI_ENCHANT,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(11), Some(12), Some(16), Some(14), Some(12), Some(10), Some(2)]);
     }
 
     /// Against a running rathena: `RUSTNAROK_CLIENT_TEST_ACCOUNT=user:password cargo test -- --ignored`.

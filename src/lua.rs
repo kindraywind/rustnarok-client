@@ -1,6 +1,6 @@
 //! The client's Lua data tables (compiled Lua 5.1 in data.grf), run in an embedded Lua 5.1.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 
 use mlua::Lua;
@@ -15,6 +15,9 @@ const DRESS_F: &str = "data\\luafiles514\\lua files\\dressroom\\dress_f.lub";
 const TITLE_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\titletable.lub";
 /// Not in data.grf: the translation's System folder has it.
 const ACHIEVEMENTS: &str = "system\\achievements.lub";
+/// The styling shop's functions, then its lists. They fill `StylingShop`.
+const STYLING_SHOP_F: &str = "data\\luafiles514\\lua files\\stylingshop\\stylingshopinfo_f.lub";
+const STYLING_SHOP: &str = "data\\luafiles514\\lua files\\stylingshop\\stylingshopinfo.lub";
 /// The same table under the name older data (kRO 2022, its translations) gives it.
 const ACHIEVEMENT_LIST: &str = "system\\achievement_list.lub";
 const ITEM_INFO: &str = "data\\luafiles514\\lua files\\datainfo\\iteminfo.lub";
@@ -269,6 +272,88 @@ pub fn achievement_table(source: Vec<u8>) -> io::Result<HashMap<u32, Achievement
         achievements.insert(id, info);
     }
     Ok(achievements)
+}
+
+/// One row of the styling shop. `goods` is the look it gives (a color, a style, or a headgear's item id). The row's
+/// number in its table is what the buy request sends; 0 in the request means that part stays.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StyleRow {
+    pub goods: u32,
+    /// Zeny, when the row costs some.
+    pub zeny: u32,
+    /// The coupon it uses up, and the box that holds one. Either is enough; 0 is none.
+    pub item: u32,
+    pub box_item: u32,
+    pub is_doram: Option<bool>,
+    /// A hair style that can be dyed. Absent means the table doesn't say; false refuses a hair color.
+    pub is_coloring: Option<bool>,
+}
+
+/// The styling shop's lists, by row number. Costume change is left out.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StylingShop {
+    pub head_palette: BTreeMap<u16, StyleRow>,
+    pub head_style: BTreeMap<u16, StyleRow>,
+    pub doram_head_style: BTreeMap<u16, StyleRow>,
+    pub body_palette: BTreeMap<u16, StyleRow>,
+    pub doram_body_palette: BTreeMap<u16, StyleRow>,
+    pub top_accessory: BTreeMap<u16, StyleRow>,
+    pub mid_accessory: BTreeMap<u16, StyleRow>,
+    pub bottom_accessory: BTreeMap<u16, StyleRow>,
+    pub body_style: BTreeMap<u16, StyleRow>,
+}
+
+/// `StylingShop` after running the files' bytes in order (the framework, then the lists).
+pub fn styling_shop(sources: &[Vec<u8>]) -> io::Result<StylingShop> {
+    let lua = new_lua()?;
+    for (index, source) in sources.iter().enumerate() {
+        exec_bytes(&lua, &format!("stylingshop{index}"), source.clone())?;
+    }
+    let shop: mlua::Table = lua.globals().get("StylingShop").map_err(lua_error)?;
+    let rows = |name: &str| style_rows(&shop, name);
+    Ok(StylingShop {
+        head_palette: rows("HeadPalette")?,
+        head_style: rows("HeadStyle")?,
+        doram_head_style: rows("DoramHeadStyle")?,
+        body_palette: rows("BodyPalette")?,
+        doram_body_palette: rows("DoramBodyPalette")?,
+        top_accessory: rows("TopAccessory")?,
+        mid_accessory: rows("MidAccessory")?,
+        bottom_accessory: rows("BottomAccessory")?,
+        body_style: rows("BodyStyle")?,
+    })
+}
+
+/// The styling shop from data.grf (framework, then the lists).
+pub fn load_styling_shop(grf: &Grf) -> io::Result<StylingShop> {
+    styling_shop(&[grf.read(STYLING_SHOP_F)?, grf.read(STYLING_SHOP)?])
+}
+
+fn style_rows(shop: &mlua::Table, name: &str) -> io::Result<BTreeMap<u16, StyleRow>> {
+    let Ok(Some(table)) = shop.get::<Option<mlua::Table>>(name) else { return Ok(BTreeMap::new()) };
+    let number = |entry: &mlua::Table, key: &str| entry.get::<Option<u32>>(key).ok().flatten().unwrap_or(0);
+    let flag = |entry: &mlua::Table, key: &str| entry.get::<Option<bool>>(key).ok().flatten();
+    let mut rows = BTreeMap::new();
+    for pair in table.pairs::<i64, mlua::Table>() {
+        let (index, entry) = pair.map_err(lua_error)?;
+        let Ok(index) = u16::try_from(index) else { continue };
+        if index == 0 {
+            continue;
+        }
+        let payment: Option<mlua::Table> = entry.get("payment").ok().flatten();
+        rows.insert(
+            index,
+            StyleRow {
+                goods: number(&entry, "goods"),
+                zeny: payment.as_ref().map(|payment| number(payment, "zeny")).unwrap_or(0),
+                item: payment.as_ref().map(|payment| number(payment, "itid")).unwrap_or(0),
+                box_item: payment.as_ref().map(|payment| number(payment, "boxitid")).unwrap_or(0),
+                is_doram: flag(&entry, "isDoram"),
+                is_coloring: flag(&entry, "isColoring"),
+            },
+        );
+    }
+    Ok(rows)
 }
 
 /// The titles achievements give (`title_tbl`), e.g. 1000 → "Junction of life".
@@ -709,8 +794,279 @@ pub fn upgrade_boxes(grf: &Grf) -> io::Result<HashMap<u32, UpgradeBox>> {
     upgrade_table(grf.read(UPGRADE_TABLE)?)
 }
 
-/// `ItemDBNameTbl`: item names to ids. The enchant window uses this same table.
+const ENCHANT_LIST_F: &str = "data\\luafiles514\\lua files\\enchant\\enchantlist_f.lub";
+const ENCHANT_LIST: &str = "data\\luafiles514\\lua files\\enchant\\enchantlist.lub";
 pub const ITEM_DB_NAMES: &str = "data\\luafiles514\\lua files\\itemdbnametbl.lub";
+// ponytail: the official client provides these; the values are what lets every table load. LoadAllData is not called
+// (it hands the tables to the client). The C_Set stubs are there in case a file calls it anyway.
+const ENCHANT_STUBS: &str = r#"
+MAX_SLOT_NUM = 4
+MAX_REFINE_LEVEL = 20
+MAX_GRADE_LEVEL = 4
+MAX_MATERIAL_NUM = 10
+function C_GetSlotCount() return 0 end
+function MessageBox() end
+function C_SetSlotOrder() return true, "" end
+function C_AddTargetItem() return true, "" end
+function C_SetCondition() return true, "" end
+function C_ApproveRandomOption() return true, "" end
+function C_SetReset() return true, "" end
+function C_SetCaution() return true, "" end
+function C_SetRequire() return true, "" end
+function C_SetSuccessRate() return true, "" end
+function C_SetGradeBonus() return true, "" end
+function C_SetEnchant() return true, "" end
+function C_AddPerfectEnchant() return true, "" end
+function C_AddUpgradeEnchant() return true, "" end
+"#;
+
+/// What a random or perfect enchant, an upgrade or a reset costs.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EnchantCost {
+    pub zeny: u32,
+    pub materials: Vec<(u32, u32)>,
+}
+
+/// A perfect enchant: the item it puts in, and what it costs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PerfectEnchant {
+    pub item: u32,
+    pub cost: EnchantCost,
+}
+
+/// An upgrade of an enchant already in a slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnchantUpgrade {
+    pub result: u32,
+    pub cost: EnchantCost,
+}
+
+/// One card slot of an enchant table.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EnchantSlot {
+    pub cost: EnchantCost,
+    pub success_rate: u32,
+    /// Added to the success rate, by grade.
+    pub grade_bonus: Vec<(u8, u32)>,
+    /// Random enchants at a grade: item id and weight, out of 100000.
+    pub rates: Vec<(u8, Vec<(u32, u32)>)>,
+    pub perfect: Vec<PerfectEnchant>,
+    /// The enchant in the slot, and what it upgrades to.
+    pub upgrades: Vec<(u32, EnchantUpgrade)>,
+}
+
+impl EnchantSlot {
+    pub fn bonus(&self, grade: u8) -> u32 {
+        self.grade_bonus.iter().find(|(listed, _)| *listed == grade).map(|(_, bonus)| *bonus).unwrap_or(0)
+    }
+
+    pub fn rate_list(&self, grade: u8) -> &[(u32, u32)] {
+        self.rates.iter().find(|(listed, _)| *listed == grade).map(|(_, list)| list.as_slice()).unwrap_or(&[])
+    }
+
+    /// Random enchants are offered when the slot has a rate table at all.
+    pub fn random(&self) -> bool {
+        !self.rates.is_empty()
+    }
+}
+
+/// Resetting the enchants on an item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnchantReset {
+    pub enabled: bool,
+    /// Out of 100000. Zero is not offered: rathena takes the cost and then doesn't answer.
+    pub rate: u32,
+    pub cost: EnchantCost,
+}
+
+/// One enchant table (`Table[n]` in the client's enchant list).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnchantTable {
+    pub targets: Vec<u32>,
+    pub slot_order: Vec<u8>,
+    pub min_refine: u8,
+    pub min_grade: u8,
+    /// Whether an item with random options may go in. The client doesn't track those, so this is recorded only.
+    pub approve_random_opt: bool,
+    pub reset: Option<EnchantReset>,
+    /// Card slots 0 to 3.
+    pub slots: [Option<EnchantSlot>; 4],
+}
+
+/// The enchant tables from data.grf (`enchantlist_f`, `enchantlist`, `itemdbnametbl`).
+pub fn enchants(grf: &Grf) -> io::Result<HashMap<u64, EnchantTable>> {
+    let names = grf.read(ITEM_DB_NAMES).unwrap_or_default();
+    let mut lists = Vec::new();
+    if let Ok(bytes) = grf.read(ENCHANT_LIST_F) {
+        lists.push(bytes);
+    }
+    lists.push(grf.read(ENCHANT_LIST)?);
+    enchant_tables(&lists, names)
+}
+
+/// Reads `Table` from the list files' bytes (the `_f` file first, when there is one) and item names from `names`.
+/// A test passes a small Lua source of the same shape. Names are resolved by the raw bytes of the key.
+pub fn enchant_tables(lists: &[Vec<u8>], names: Vec<u8>) -> io::Result<HashMap<u64, EnchantTable>> {
+    let lua = new_lua()?;
+    lua.load(ENCHANT_STUBS).set_name("enchant stubs").exec().map_err(lua_error)?;
+    if !names.is_empty() {
+        exec_bytes(&lua, ITEM_DB_NAMES, names)?;
+    }
+    for (index, bytes) in lists.iter().enumerate() {
+        exec_bytes(&lua, &format!("enchant list {index}"), bytes.clone())?;
+    }
+    let names = loaded_item_names(&lua);
+    let table: mlua::Table = lua.globals().get("Table").map_err(lua_error)?;
+    let mut tables = HashMap::new();
+    for pair in table.pairs::<mlua::Value, mlua::Value>() {
+        let (key, value) = pair.map_err(lua_error)?;
+        let (Some(id), mlua::Value::Table(entry)) = (lua_u64(&key), value) else { continue };
+        tables.insert(id, read_enchant(&entry, &names));
+    }
+    Ok(tables)
+}
+
+/// `ItemDBNameTbl`, keyed by the Lua string's own bytes (Korean names are cp949, not UTF-8).
+fn loaded_item_names(lua: &Lua) -> HashMap<Vec<u8>, u32> {
+    let Ok(table) = lua.globals().get::<mlua::Table>("ItemDBNameTbl") else { return HashMap::new() };
+    let mut names = HashMap::new();
+    for pair in table.pairs::<mlua::Value, mlua::Value>().flatten() {
+        if let (mlua::Value::String(key), Some(id)) = (pair.0, value_u32(&pair.1)) {
+            names.insert(key.as_bytes().as_ref().to_vec(), id);
+        }
+    }
+    names
+}
+
+fn value_u32(value: &mlua::Value) -> Option<u32> {
+    match value {
+        mlua::Value::Integer(id) => u32::try_from(*id).ok(),
+        mlua::Value::Number(id) if id.is_finite() && *id >= 0.0 && *id <= u32::MAX as f64 => Some(*id as u32),
+        _ => None,
+    }
+}
+
+fn lua_u64(value: &mlua::Value) -> Option<u64> {
+    match value {
+        mlua::Value::Integer(id) => u64::try_from(*id).ok(),
+        mlua::Value::Number(id) if id.is_finite() && *id >= 0.0 => Some(*id as u64),
+        _ => None,
+    }
+}
+
+fn named_id(value: &mlua::Value, names: &HashMap<Vec<u8>, u32>) -> Option<u32> {
+    match value {
+        mlua::Value::String(text) => {
+            let bytes = text.as_bytes();
+            names.get(bytes.as_ref()).copied()
+        }
+        _ => value_u32(value),
+    }
+}
+
+fn mat_list(table: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> Vec<(u32, u32)> {
+    let Ok(mats) = table.get::<mlua::Table>("MatTbl") else { return Vec::new() };
+    let mut list = Vec::new();
+    for (key, amount) in mats.pairs::<mlua::Value, mlua::Value>().flatten() {
+        if let (Some(id), Some(amount)) = (named_id(&key, names), value_u32(&amount)) {
+            list.push((id, amount));
+        }
+    }
+    list.sort();
+    list
+}
+
+fn cost_of(table: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> EnchantCost {
+    EnchantCost { zeny: table.get::<u32>("Zeny").unwrap_or(0), materials: mat_list(table, names) }
+}
+
+fn read_enchant(entry: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> EnchantTable {
+    let targets = entry
+        .get::<mlua::Table>("TargetItemTbl")
+        .map(|items| items.sequence_values::<mlua::Value>().flatten().filter_map(|name| named_id(&name, names)).collect())
+        .unwrap_or_default();
+    let slot_order =
+        entry.get::<mlua::Table>("SlotOrder").map(|order| order.sequence_values::<u8>().flatten().filter(|slot| *slot < 4).collect()).unwrap_or_default();
+    let condition = entry.get::<mlua::Table>("Condition").ok();
+    let number = |table: &mlua::Table, key: &str| table.get::<u32>(key).unwrap_or(0);
+    let reset = entry.get::<mlua::Table>("Reset").ok().map(|reset| EnchantReset {
+        enabled: lua_flag(&reset, "bReset"),
+        rate: number(&reset, "Rate"),
+        cost: cost_of(&reset, names),
+    });
+    let mut slots: [Option<EnchantSlot>; 4] = [None, None, None, None];
+    if let Ok(table) = entry.get::<mlua::Table>("Slot") {
+        for (key, slot) in table.pairs::<mlua::Value, mlua::Table>().flatten() {
+            let Some(index) = value_u32(&key).filter(|index| *index < 4) else { continue };
+            slots[index as usize] = Some(read_slot(&slot, names));
+        }
+    }
+    EnchantTable {
+        targets,
+        slot_order,
+        min_refine: condition.as_ref().map(|condition| number(condition, "MinRefine") as u8).unwrap_or(0),
+        min_grade: condition.as_ref().map(|condition| number(condition, "MinGrade") as u8).unwrap_or(0),
+        approve_random_opt: lua_flag(entry, "bApproveRandomOpt"),
+        reset,
+        slots,
+    }
+}
+
+fn read_slot(slot: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> EnchantSlot {
+    let require = slot.get::<mlua::Table>("RequireTbl").ok();
+    let mut grade_bonus = Vec::new();
+    if let Ok(bonuses) = slot.get::<mlua::Table>("GradeBonusTbl") {
+        for (grade, bonus) in bonuses.pairs::<mlua::Value, mlua::Value>().flatten() {
+            if let (Some(grade), Some(bonus)) = (value_u32(&grade), value_u32(&bonus)) {
+                grade_bonus.push((grade as u8, bonus));
+            }
+        }
+        grade_bonus.sort();
+    }
+    let mut rates = Vec::new();
+    if let Ok(table) = slot.get::<mlua::Table>("EnchantRateTbl") {
+        for (grade, list) in table.pairs::<mlua::Value, mlua::Table>().flatten() {
+            let Some(grade) = value_u32(&grade) else { continue };
+            let mut enchants = Vec::new();
+            for (name, weight) in list.pairs::<mlua::Value, mlua::Value>().flatten() {
+                if let (Some(id), Some(weight)) = (named_id(&name, names), value_u32(&weight)) {
+                    enchants.push((id, weight));
+                }
+            }
+            enchants.sort();
+            rates.push((grade as u8, enchants));
+        }
+        rates.sort_by_key(|(grade, _)| *grade);
+    }
+    let mut perfect = Vec::new();
+    if let Ok(table) = slot.get::<mlua::Table>("PerfectECTbl") {
+        for (name, info) in table.pairs::<mlua::Value, mlua::Table>().flatten() {
+            if let Some(item) = named_id(&name, names) {
+                perfect.push(PerfectEnchant { item, cost: cost_of(&info, names) });
+            }
+        }
+        perfect.sort_by_key(|row| row.item);
+    }
+    let mut upgrades = Vec::new();
+    if let Ok(table) = slot.get::<mlua::Table>("UpgradeECTbl") {
+        for (name, info) in table.pairs::<mlua::Value, mlua::Table>().flatten() {
+            let result = info.get::<mlua::Value>("ResultItemDB").ok().and_then(|name| named_id(&name, names));
+            if let (Some(item), Some(result)) = (named_id(&name, names), result) {
+                upgrades.push((item, EnchantUpgrade { result, cost: cost_of(&info, names) }));
+            }
+        }
+        upgrades.sort_by_key(|(item, _)| *item);
+    }
+    EnchantSlot {
+        cost: require.as_ref().map(|require| cost_of(require, names)).unwrap_or(EnchantCost { zeny: 0, materials: Vec::new() }),
+        success_rate: slot.get::<u32>("SuccessRate").unwrap_or(0),
+        grade_bonus,
+        rates,
+        perfect,
+        upgrades,
+    }
+}
+
 /// `ReformItemList` and `ReformInfo`.
 pub const ITEM_REFORM: &str = "data\\luafiles514\\lua files\\itemreform\\itemreformsystem.lub";
 
@@ -828,14 +1184,14 @@ fn flag(table: &mlua::Table, key: &str, default: bool) -> bool {
     }
 }
 
-fn named_id(table: &mlua::Table, key: &str, names: &HashMap<Vec<u8>, u32>) -> Option<u32> {
+fn reform_named(table: &mlua::Table, key: &str, names: &HashMap<Vec<u8>, u32>) -> Option<u32> {
     let value = table.get::<mlua::Value>(key).ok()?;
     names.get(&raw_bytes(&value)?).copied()
 }
 
 fn read_reform(entry: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> Option<ReformInfo> {
-    let base = named_id(entry, "BaseItem", names)?;
-    let result = named_id(entry, "ResultItem", names)?;
+    let base = reform_named(entry, "BaseItem", names)?;
+    let result = reform_named(entry, "ResultItem", names)?;
     let mut materials = Vec::new();
     if let Ok(table) = entry.get::<mlua::Table>("Material") {
         for pair in table.pairs::<mlua::Value, mlua::Value>().flatten() {
@@ -965,6 +1321,64 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_styling_shop_table() {
+        let source = r#"
+            StylingShop = {
+                HeadPalette = { [1] = { goods = 1, payment = { zeny = 100000 }, isDoram = true } },
+                HeadStyle = {
+                    [2] = { goods = 2, payment = { zeny = 100000 }, isColoring = false },
+                    [24] = { goods = 24, payment = { itid = 7622, boxitid = 16843 } }
+                },
+                DoramHeadStyle = { [2] = { goods = 2, payment = { zeny = 100000 }, isColoring = false } },
+                BodyPalette = {
+                    [1] = { goods = 0, payment = { itid = 6047, boxitid = 16855 } },
+                    [2] = { goods = 2, payment = { itid = 6046, boxitid = 16854 } }
+                },
+                DoramBodyPalette = { [1] = { goods = 0, payment = { itid = 6047, boxitid = 16855 } } },
+                TopAccessory = { [1] = { goods = 2220, payment = { zeny = 1000 }, isDoram = true } },
+                MidAccessory = {},
+                BottomAccessory = { [1] = { goods = 2241, payment = { zeny = 5000 } } },
+                BodyStyle = { [1] = { goods = 0, payment = { itid = 6959, boxitid = 6959 } } },
+                CostumeChange = { [1] = { goods = 99, payment = { zeny = 1 } } }
+            }
+        "#;
+        let shop = super::styling_shop(&[source.as_bytes().to_vec()]).unwrap();
+        assert_eq!(shop.head_palette[&1], super::StyleRow { goods: 1, zeny: 100_000, is_doram: Some(true), ..super::StyleRow::default() });
+        assert_eq!(shop.head_style[&2].is_coloring, Some(false));
+        assert_eq!((shop.head_style[&24].item, shop.head_style[&24].box_item), (7622, 16843));
+        assert_eq!(shop.body_palette[&1].goods, 0);
+        assert_eq!((shop.body_palette[&2].item, shop.body_palette[&2].box_item), (6046, 16854));
+        assert_eq!(shop.top_accessory[&1].goods, 2220);
+        assert_eq!(shop.body_style[&1].item, 6959);
+        assert!(shop.mid_accessory.is_empty());
+        // Costume change is not one of the lists this window reads: goods 99 never lands in them.
+        let goods = shop.body_style.values().chain(shop.head_style.values()).map(|row| row.goods);
+        assert!(goods.into_iter().all(|goods| goods != 99));
+    }
+
+    #[test]
+    fn runs_the_styling_shops_functions_then_its_lists() {
+        let framework = r#"
+            StylingShop = {}
+            StylingShop.HeadPalette = {}
+            StylingShop.BodyPalette = {}
+            function StylingShop.AddHeadPalette(goods, payment, isDoram)
+                StylingShop.HeadPalette[#StylingShop.HeadPalette + 1] = { goods = goods, payment = payment, isDoram = isDoram }
+            end
+            function StylingShop.AddBodyPalette(goods, payment)
+                StylingShop.BodyPalette[#StylingShop.BodyPalette + 1] = { goods = goods, payment = payment }
+            end
+        "#;
+        let lists = r#"
+            StylingShop.AddHeadPalette(3, { zeny = 100000 }, true)
+            StylingShop.AddBodyPalette(0, { itid = 6047, boxitid = 16855 })
+        "#;
+        let shop = super::styling_shop(&[framework.as_bytes().to_vec(), lists.as_bytes().to_vec()]).unwrap();
+        assert_eq!(shop.head_palette[&1].goods, 3);
+        assert_eq!((shop.body_palette[&1].goods, shop.body_palette[&1].item, shop.body_palette[&1].box_item), (0, 6047, 16855));
+    }
+
+    #[test]
     fn reads_reform_names_as_raw_bytes() {
         // "\196\247" is the bytes C4 F7 (Lua's \ddd escapes are decimal), not UTF-8. One name is stored as id to name.
         let names = super::item_db_names(
@@ -1081,5 +1495,50 @@ mod tests {
         // Warp portals and Poring are the classic examples.
         assert_eq!(names.get(&45).map(String::as_str), Some("1_ETC_01"));
         assert_eq!(names.get(&1002).map(|name| name.to_lowercase()), Some("poring".into()));
+    }
+
+    #[test]
+    fn reads_an_enchant_table_and_resolves_names_by_their_bytes() {
+        let names = b"ItemDBNameTbl = { Sharp1 = 4818, Sharp2 = 4817, Mysterious = 25669, [\"\\128\\129\"] = 600028 }\n".to_vec();
+        let list = b"
+            function order(self, ...)
+                self.SlotOrder = {}
+                for i = 1, #arg do self.SlotOrder[i] = arg[i] end
+            end
+            local info = {
+                TargetItemTbl = { \"\\128\\129\" },
+                Condition = { MinRefine = 5, MinGrade = 1 },
+                bApproveRandomOpt = false,
+                Reset = { bReset = true, Rate = 100000, Zeny = 500000, MatTbl = {} },
+                Slot = {
+                    [3] = {
+                        RequireTbl = { Zeny = 1000, MatTbl = { Mysterious = 2 } },
+                        SuccessRate = 80000,
+                        GradeBonusTbl = { [0] = 0, [1] = 5000 },
+                        EnchantRateTbl = { [1] = { Sharp1 = 100000 } },
+                        PerfectECTbl = { Sharp1 = { Zeny = 100000, MatTbl = { Mysterious = 20 } } },
+                        UpgradeECTbl = { Sharp1 = { ResultItemDB = \"Sharp2\", Zeny = 200000, MatTbl = { Mysterious = 40 } } },
+                    },
+                },
+            }
+            order(info, 3, 2)
+            Table = { [33] = info }
+        "
+        .to_vec();
+        let tables = super::enchant_tables(&[list], names).unwrap();
+        let table = &tables[&33];
+        assert_eq!(table.targets, [600028]);
+        assert_eq!(table.slot_order, [3, 2]);
+        assert_eq!((table.min_refine, table.min_grade, table.approve_random_opt), (5, 1, false));
+        let reset = table.reset.as_ref().unwrap();
+        assert_eq!((reset.enabled, reset.rate, reset.cost.zeny), (true, 100000, 500000));
+        let slot = table.slots[3].as_ref().unwrap();
+        assert_eq!((slot.cost.zeny, slot.cost.materials.as_slice(), slot.success_rate, slot.bonus(1)), (1000, [(25669, 2)].as_slice(), 80000, 5000));
+        assert_eq!(slot.rate_list(1), [(4818, 100000)]);
+        assert!(slot.rate_list(0).is_empty());
+        assert_eq!(slot.perfect[0].item, 4818);
+        assert_eq!((slot.perfect[0].cost.zeny, slot.perfect[0].cost.materials.as_slice()), (100000, [(25669, 20)].as_slice()));
+        assert_eq!(slot.upgrades[0].1.result, 4817);
+        assert_eq!(slot.upgrades[0].1.cost.materials, [(25669, 40)]);
     }
 }

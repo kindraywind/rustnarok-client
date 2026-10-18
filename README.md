@@ -16,7 +16,7 @@ As good as the original, and better where it can be.
 [![rathena](https://img.shields.io/badge/server-rathena-2F7D32)](https://github.com/kindraywind/rathena/tree/rustnarok)
 [![Clean room](https://img.shields.io/badge/clean%20room-no%20game%20data%20in%20git-1F6FEB)](#-conventions)
 
-[Quick start](#-quick-start) · [What works](#-what-works) · [Server](#-server) · [Development](#-development) · [Not done yet](#-not-done-yet)
+[Quick start](#-quick-start) · [What works](#-what-works) · [An AI plays it](#-an-ai-plays-it) · [Server](#-server) · [Development](#-development) · [Not done yet](#-not-done-yet)
 
 </div>
 
@@ -49,7 +49,7 @@ Login, char and map servers at PACKETVER 20220406. Every packet length is genera
 <td width="50%" valign="top">
 
 ### 🧪 Tested by playing
-A control socket and an MCP server drive the live client; scenario suites screenshot each change and diff it
+A control socket and an [MCP server](#-an-ai-plays-it) drive the live client; scenario suites screenshot each change and diff it
 against `main`.
 
 </td>
@@ -65,7 +65,7 @@ against `main`.
 | 🧙 **Characters** | Players with heads, headgear, weapons, shields and garments; monsters, NPCs, pets and warp portals; walking, sitting, emotions, spirit spheres and coins, pushcarts; HP/SP bars, names with party, guild, position and emblem on pointing, chat bubbles, cast bars, the MVP banner. |
 | ⚔️ **Combat and skills** | Attacking with reach checks, damage numbers of every kind, death; the skill window and hotkeys, casting with targets, status icons, effects (STR animations, moving textures and sprites, cylinders, sprite animations, camera shakes), skills' units on the ground (Fire Wall, Safety Wall, Pneuma, warp portals, traps), Warp Portal's destination list, Auto Spell and Shadow Spell. |
 | 🪟 **Windows** | Basic info with its menu, inventory (with expansion), equipment (and another player's), item descriptions with card slots, status (raising stats), skills, the hotkey bar, chat with whispers, the emotion list and chat macros, NPC dialogs (menus, number and text input), quests, the option menu (Esc) with audio, graphics and shortcut settings, the right-click menu. |
-| 🛒 **Trade and crafting** | NPC shops, markets and barter shops, trading, vending (one's own shop and others'), buying stores (one's own store and selling into others'), storage, cart, the bank, the refine window, card insertion, the Magnifier, making items from a list (Pharmacy, Arrow Crafting, cooking), Repair and Upgrade Weapon, the material window (Change Material, Four Spirit Analysis). |
+| 🛒 **Trade and crafting** | NPC shops, markets and barter shops, trading, vending (one's own shop and others'), buying stores (one's own store and selling into others'), storage, cart, the bank, the refine window, the enchant window, the grade enchant window, card insertion, the Magnifier, making items from a list (Pharmacy, Arrow Crafting, cooking), Repair and Upgrade Weapon, the material window (Change Material, Four Spirit Analysis). |
 | 🐾 **Pets** | Taming with its slot machine, hatching, the pet window (Alt+J), feeding, renaming, accessories, performances and pet talk. |
 | 🧪 **Homunculus** | Its sprite, the window (Alt+R) with its values, bars and words, the skill list with level up, feeding, renaming, following the player (Alt+T) and Alt + right click orders. |
 | 👥 **Together** | Parties, guilds (info with the emblem, members, positions, skills, expel list, notice), clans, friends, chat rooms, RODEX mail, server announcements and item news. |
@@ -75,6 +75,36 @@ against `main`.
 
 Window places are measured over the client's own bitmaps where they show them. Where they don't, they are estimates
 marked `ponytail:` in the code, to calibrate against screenshots of the real client.
+
+## 🤖 An AI plays it
+
+`rustnarok-client-mcp` hands the live client to an AI assistant as MCP tools. It sees the frames, reads the game state
+and plays through the same mouse and keyboard code a player does. Features here are checked that way. Some of what it
+does:
+
+| Ask | What happens |
+|---|---|
+| 🎮 *"Log in and kill a Poring."* | `launch` logs in and enters the map, `say "@monster poring"` spawns one, `state` lists it with its screen box, and a `click` in that box attacks through the client's own picking. |
+| 🎞️ *"Show me Fire Bolt frame by frame."* | `wait` casts it and freezes the animation clock the moment the skill lands; `clock step` and `screenshot` then walk the effect 16 ms at a time. |
+| 🧪 *"Put a Red Potion on F1."* | `key Alt+E` opens the inventory, `state` names every item's and hotkey slot's box, and `drag` drops one on the other. |
+| 🔍 *"Why did I get disconnected?"* | `trace` lists the last packets from the char and map servers with the events they made, the drop's reason included. |
+| 🔎 *"Is that text blurry?"* | `screenshot` with `crop` and `scale: 2` zooms into any part of the 1024×768 canvas. |
+| 🇰🇷 *"Say hello in Korean."* | `type` sends Hangul in as the input method's commit, the way a Korean keyboard does. |
+| ⚔️ *"Is the other player an enemy in PvP?"* | Scenarios run two clients on two accounts: one warps, recalls the other, finds it among `state`'s enemies and attacks it. |
+| 🖼️ *"Did my change break anything?"* | `visual.py` plays the JSON scenarios in `scenarios/` on the branch and on `main` and makes before/after/diff sheets; pull requests here carry them. |
+
+Catching a short effect, as tool calls:
+
+```jsonc
+{"tool": "say",   "text": "@monster poring"}
+{"tool": "state"}                                   // the Poring's screen box: [480, 330, 520, 370]
+{"tool": "key",   "key": "F1"}                      // Fire Bolt, aimed
+{"tool": "wait",  "do": {"cmd": "click", "x": 500, "y": 350}, "event": "SkillHit", "pause": true}
+{"tool": "screenshot", "crop": [400, 250, 200, 150], "scale": 2}
+{"tool": "clock", "action": "step", "ms": 50}       // then screenshot again, frame after frame
+```
+
+Setting it up: [Driving the client](#-driving-the-client).
 
 ## 🚀 Quick start
 
