@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 default-run = "rustnarok-client"
 
 [dependencies]
+arboard = { version = "3.4", default-features = false }
 bytemuck = { version = "1", features = ["derive"] }
 cpal = "0.17"
 encoding_rs = "0.8"
