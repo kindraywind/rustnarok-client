@@ -442,7 +442,6 @@ const FRIEND_ONLINE: usize = 1041;
 /// Parties: "Ask (%s) to join your party", made, " Party has sent you an invitation...", "You left the party",
 /// party chat colors (ours, others'), the prompts' titles.
 const PARTY_ASK: usize = 392;
-const PARTY_MADE: usize = 77;
 const PARTY_INVITED: usize = 94;
 const PARTY_LEFT: usize = 84;
 const PARTY_CHAT_OURS: [u8; 3] = chat::PARTY_OURS;
@@ -600,8 +599,10 @@ fn arrival_notices(flags: u32, job: u16) -> Vec<usize> {
 }
 const PARTY_REFUSING: usize = 1325;
 const PARTY_ALLOWING: usize = 1326;
-/// "You can't modify Party Setup."
-const PARTY_SETUP_REFUSED: usize = 373;
+/// "Party leader is [%s].", the setup lines' and the new leader's colour, and the invitation lines'.
+const PARTY_NEW_LEADER: usize = 1552;
+const PARTY_SETUP_LINE: [u8; 3] = [0xFF, 0xFF, 0x00];
+const PARTY_NOTICE: [u8; 3] = [0xFF, 0xFF, 0x64];
 const LEADER_CHOICE: usize = 1532;
 /// "Item cannot be dropped from the hotkey bar."
 const HOTKEY_ITEM_STAYS: usize = 1696;
@@ -2909,6 +2910,14 @@ impl Game {
                 }
             }
         }
+    }
+
+    /// The party window opens on its party tab (made or joined a party).
+    fn open_party_tab(&mut self) {
+        self.party_window.friends = false;
+        self.party_window.picked = None;
+        self.party_window.frame.open = true;
+        self.raise(Panel::Party);
     }
 
     fn toggle_navigation(&mut self) {
@@ -7639,12 +7648,16 @@ impl App {
                 }
             }
             // A party invites us: OK or cancel.
-            Scene::Game(game) if game.party_invite.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
-                let dialog = dialog_position(&assets.message);
+            // Yes joins and opens the party window on its party tab.
+            Scene::Game(game) if game.party_invite.is_some() && contains(party::invitation_at(screen()), assets.message.size, cursor) => {
+                let dialog = party::invitation_at(screen());
                 for (place, accept) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
                         let (party, _) = game.party_invite.take().unwrap();
                         let _ = game.session.answer_party(party, accept);
+                        if accept {
+                            game.open_party_tab();
+                        }
                     }
                 }
             }
@@ -12785,6 +12798,7 @@ impl App {
                     3 => game.chat_line(message(1873), CHAT_ERROR),
                     _ if account == game.account_id => {
                         game.party = None;
+                        game.party_setup = None;
                         game.member_windows.retain(None);
                         game.chat_line(message(PARTY_LEFT), CHAT_ITEM);
                     }
@@ -12797,14 +12811,14 @@ impl App {
                     }
                 }
             }
+            // Made: the party window opens on its party tab.
             MapEvent::PartyMade(result) => {
-                let (id, color) = match result {
-                    0 => (PARTY_MADE, CHAT_ITEM),
-                    1 => (78, CHAT_ERROR),
-                    2 => (79, CHAT_ERROR),
-                    _ => (1387, CHAT_ERROR),
-                };
-                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+                if let Some((id, tone)) = party::made_line(result) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if tone == party::Tone::Good { CHAT_ITEM } else { CHAT_ERROR });
+                }
+                if result == 0 {
+                    game.open_party_tab();
+                }
             }
             MapEvent::PartyInvite { party, name } => {
                 game.party_invite = Some((party, name));
@@ -12812,24 +12826,15 @@ impl App {
                 if std::env::var("RUSTNAROK_CLIENT_PARTY").is_ok_and(|order| order.split(',').any(|part| part == "accept")) {
                     game.party_invite = None;
                     let _ = game.session.answer_party(party, true);
+                    game.open_party_tab();
                 }
             }
             // How an invitation went, in the client's words.
             MapEvent::PartyInviteResult { name, result } => {
-                let id = match result {
-                    0 => 80,
-                    1 => 81,
-                    2 => 82,
-                    3 => 83,
-                    4 => 608,
-                    5 => 1324,
-                    7 => 71,
-                    8 => 1388,
-                    10 => 3027,
-                    _ => 1871,
-                };
-                let text = rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]);
-                game.chat_line(text, if result == 2 { CHAT_ITEM } else { CHAT_ERROR });
+                if let Some((id, tone)) = party::invite_result_line(result) {
+                    let text = party::invite_result_text(self.messages.get(id).map_or("", String::as_str), &name);
+                    game.chat_line(text, if tone == party::Tone::Good { CHAT_ITEM } else { CHAT_ERROR });
+                }
             }
             // A map's property: its notices, then the "ready" the server waits for.
             MapEvent::MapProperty { property, flags } => {
@@ -12963,7 +12968,15 @@ impl App {
                     game.last_rank = rank;
                 }
             }
-            MapEvent::PartyChat { account, text } => game.chat_line(text, if account == game.account_id { PARTY_CHAT_OURS } else { PARTY_CHAT }),
+            // Party chat: a line, and the words over the speaker's head (ours over our own) while they're on screen.
+            MapEvent::PartyChat { account, text } => {
+                if account == game.account_id {
+                    game.say(None, text.clone(), CHAT_WHITE);
+                } else if game.units.contains_key(&account) {
+                    game.say(Some(account), text.clone(), CHAT_WHITE);
+                }
+                game.chat_line(text, if account == game.account_id { PARTY_CHAT_OURS } else { PARTY_CHAT });
+            }
             MapEvent::PartyPosition { account, cell } => {
                 if let Some(member) = game.party.as_mut().and_then(|party| party.member(account)) {
                     member.cell = cell.map(|cell| cell.map(i32::from));
@@ -12976,11 +12989,9 @@ impl App {
                 let text = rustnarok_client::messages::fill(self.messages.get(PARTY_PICKUP).map_or("", String::as_str), &[&member.unwrap_or_default(), &name]);
                 game.chat_line(text, PARTY_CHAT);
             }
-            // It comes at every map load: a line only when it changes.
+            // Every time it comes (each map load too): whether invitations are taken.
             MapEvent::PartyRefusing(refusing) => {
-                if game.refusing_party.is_some_and(|known| known != refusing) {
-                    game.chat_line(self.messages.get(if refusing { PARTY_REFUSING } else { PARTY_ALLOWING }).cloned().unwrap_or_default(), CHAT_ITEM);
-                }
+                game.chat_line(self.messages.get(if refusing { PARTY_REFUSING } else { PARTY_ALLOWING }).cloned().unwrap_or_default(), PARTY_NOTICE);
                 game.refusing_party = Some(refusing);
             }
             // Members' HP: in the window, and as a bar under them.
@@ -13001,9 +13012,11 @@ impl App {
                     party.pickup_shared = pickup;
                     party.item_shared = share;
                 }
-                if exp == 2 {
-                    // ponytail: which line the official client prints for a refused share is an estimate.
-                    game.chat_line(self.messages.get(PARTY_SETUP_REFUSED).cloned().unwrap_or_default(), CHAT_ERROR);
+                // Every time it comes (at login and on each change): "Party Setup - <what> : <how>", three lines.
+                let message = |id: usize| self.messages.get(id).map_or("", String::as_str).trim();
+                for (setup, label, value, note) in party::setup_lines(exp, pickup, share) {
+                    let note = note.map(|note| format!(" ({})", message(note))).unwrap_or_default();
+                    game.chat_line(format!("{} - {} : {}{note}", message(setup), message(label), message(value)), PARTY_SETUP_LINE);
                 }
             }
             MapEvent::PartyLeader { old, new } => {
@@ -13012,6 +13025,9 @@ impl App {
                         member.info.leader = member.info.account == new;
                     }
                 }
+                let leader = game.party.as_mut().and_then(|party| party.member(new)).map(|member| member.info.name.clone()).unwrap_or_default();
+                let text = rustnarok_client::messages::fill(self.messages.get(PARTY_NEW_LEADER).map_or("", String::as_str), &[&leader]);
+                game.chat_line(text, PARTY_SETUP_LINE);
             }
             MapEvent::PartyMemberInfo { account, job, level } => {
                 if let Some(member) = game.party.as_mut().and_then(|party| party.member(account)) {
@@ -16068,11 +16084,11 @@ impl App {
         }
         // A party invites us: its name and the question, OK or cancel.
         if let Some((_, name)) = &game.party_invite {
-            let dialog = dialog_position(&assets.message);
+            let dialog = party::invitation_at(screen());
             shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
-            let question = format!("{name} {}", message(PARTY_INVITED).trim_start());
+            let question = party::invitation_text(name, message(PARTY_INVITED));
             for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }

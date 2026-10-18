@@ -67,7 +67,7 @@
     },
     {
       "click_on": {
-        "menu_item": "Send party invitation"
+        "menu_item": "party"
       }
     },
     {
@@ -78,7 +78,7 @@
     },
     {
       "expect": {
-        "chat": "Request for party accepted."
+        "chat": "accepted your party invitation."
       }
     },
     {

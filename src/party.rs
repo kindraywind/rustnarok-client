@@ -128,6 +128,78 @@ impl Settings {
     }
 }
 
+/// How a line about the party reads: good news in cyan, refusals in red.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Tone {
+    Good,
+    Bad,
+}
+
+/// The line for an invitation's answer (ZC_PARTY_JOIN_REQ_ACK, with the invited character's name), if any.
+pub fn invite_result_line(result: u32) -> Option<(usize, Tone)> {
+    Some(match result {
+        0 => (80, Tone::Bad),
+        1 => (2060, Tone::Bad),
+        2 => (2061, Tone::Good),
+        3 => (83, Tone::Bad),
+        4 => (608, Tone::Bad),
+        5 => (1324, Tone::Bad),
+        7 => (71, Tone::Bad),
+        8 => (1388, Tone::Bad),
+        9 => (1871, Tone::Bad),
+        10 => (3027, Tone::Bad),
+        11 => (3226, Tone::Bad),
+        18 => (3634, Tone::Bad),
+        _ => return None,
+    })
+}
+
+/// The line for making a party (ZC_ACK_MAKE_GROUP), if any; 0 made it.
+pub fn made_line(result: u8) -> Option<(usize, Tone)> {
+    Some(match result {
+        0 => (77, Tone::Good),
+        1 => (78, Tone::Bad),
+        2 => (79, Tone::Bad),
+        3 => (1387, Tone::Bad),
+        _ => return None,
+    })
+}
+
+/// "Party Setup", then each line's label, value and a note in brackets after it (ZC_REQ_GROUPINFO_CHANGE_V2): how EXP
+/// is shared (EXP 2: each takes, as a level gap keeps it), how items are picked up, how they're shared.
+pub fn setup_lines(exp: u32, pickup: bool, share: bool) -> [(usize, usize, usize, Option<usize>); 3] {
+    const SETUP: usize = 291;
+    const EACH: usize = 287;
+    let (exp_value, note) = match exp {
+        1 => (288, None),
+        2 => (EACH, Some(1535)),
+        _ => (EACH, None),
+    };
+    [(SETUP, 292, exp_value, note), (SETUP, 293, if pickup { 290 } else { EACH }, None), (SETUP, 738, if share { 288 } else { EACH }, None)]
+}
+
+/// An invitation answer's line: the template's `%s` takes the name; the accepted and rejected lines have none, the
+/// name goes in front.
+pub fn invite_result_text(template: &str, name: &str) -> String {
+    if template.contains('%') {
+        rustnarok_client::messages::fill(template, &[&name])
+    } else if template.starts_with(' ') {
+        format!("{name}{template}")
+    } else {
+        template.to_owned()
+    }
+}
+
+/// The invitation box's question: "(" + the party's name + ")" + message 94.
+pub fn invitation_text(party: &str, asks: &str) -> String {
+    format!("({party}){asks}")
+}
+
+/// The invitation box's corner on a screen this size: ((W − 640) / 2 + 200, 200·H / 480).
+pub fn invitation_at(screen: [f32; 2]) -> [f32; 2] {
+    [(screen[0] - 640.0) / 2.0 + 200.0, 200.0 * screen[1] / 480.0]
+}
+
 /// What the window's buttons do.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Button {
@@ -991,6 +1063,41 @@ mod tests {
 
     fn member(account: u32, leader: bool) -> PartyMember {
         PartyMember { account, name: format!("M{account}"), leader, online: true, ..Default::default() }
+    }
+
+    #[test]
+    fn words_the_party_lines() {
+        assert_eq!((0..=19).map(invite_result_line).collect::<Vec<_>>(), [
+            Some((80, Tone::Bad)),
+            Some((2060, Tone::Bad)),
+            Some((2061, Tone::Good)),
+            Some((83, Tone::Bad)),
+            Some((608, Tone::Bad)),
+            Some((1324, Tone::Bad)),
+            None,
+            Some((71, Tone::Bad)),
+            Some((1388, Tone::Bad)),
+            Some((1871, Tone::Bad)),
+            Some((3027, Tone::Bad)),
+            Some((3226, Tone::Bad)),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some((3634, Tone::Bad)),
+            None,
+        ]);
+        assert_eq!([0, 1, 2, 3, 4].map(made_line), [Some((77, Tone::Good)), Some((78, Tone::Bad)), Some((79, Tone::Bad)), Some((1387, Tone::Bad)), None]);
+        assert_eq!(setup_lines(0, false, false), [(291, 292, 287, None), (291, 293, 287, None), (291, 738, 287, None)]);
+        assert_eq!(setup_lines(1, true, true), [(291, 292, 288, None), (291, 293, 290, None), (291, 738, 288, None)]);
+        assert_eq!(setup_lines(2, false, true)[0], (291, 292, 287, Some(1535)));
+        assert_eq!(invite_result_text(" accepted your party invitation.", "Second"), "Second accepted your party invitation.");
+        assert_eq!(invite_result_text("(%s) are currently in restricted map to join a party.", "Second"), "(Second) are currently in restricted map to join a party.");
+        assert_eq!(invite_result_text("Character with this level cannot join the party", "Second"), "Character with this level cannot join the party");
+        assert_eq!(invitation_text("QAParty", " Party has sent you an invitation."), "(QAParty) Party has sent you an invitation.");
+        assert_eq!(invitation_at([1024.0, 768.0]), [392.0, 320.0]);
     }
 
     #[test]

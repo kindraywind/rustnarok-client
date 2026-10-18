@@ -156,7 +156,7 @@
     },
     {
       "expect": {
-        "chat": "Request for party accepted."
+        "chat": "accepted your party invitation."
       }
     },
     {
@@ -239,7 +239,11 @@
       "key": "Alt+E"
     },
     {
-      "key": "Alt+Z"
+      "expect": {
+        "windows_open": [
+          "Party"
+        ]
+      }
     },
     {
       "wait": 500
@@ -335,7 +339,7 @@
     },
     {
       "expect": {
-        "chat": "You can't modify Party Setup.",
+        "chat": "Each Take (Can't be changed because of level gap)",
         "state": {
           "party.exp_shared": false
         }
@@ -389,7 +393,8 @@
         ],
         "state": {
           "party.leader": "{second}"
-        }
+        },
+        "chat": "Party leader is"
       }
     },
     {
@@ -397,7 +402,8 @@
       "expect": {
         "state": {
           "party.leader": "{second}"
-        }
+        },
+        "chat": "Party leader is"
       }
     },
     {
