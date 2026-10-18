@@ -71,6 +71,8 @@ const TAKE_OFF: [f32; 2] = [40.0, 20.0];
 const TAKE_OFF_NAME: usize = 3955;
 const SHOW_EQUIPMENT_MESSAGE: usize = 1362;
 const VIEW_COSTUME_MESSAGE: usize = 4103;
+// ponytail: older message tables end before 4103; the box keeps a label.
+const VIEW_COSTUME_FALLBACK: &str = "View Costume";
 /// What Unequip All takes off: General's gear, or Costume's costume and shadow pieces.
 const GENERAL_PIECES: u32 = 0x3FF;
 const COSTUME_PIECES: u32 = 0x3C00 | 0x3F_0000;
@@ -695,7 +697,11 @@ impl Equipment {
         let (ticked, label) = if self.tab == 0 { (self.shown, SHOW_EQUIPMENT_MESSAGE) } else { (self.costumes_shown, VIEW_COSTUME_MESSAGE) };
         let checkbox = &assets.checkbox[usize::from(ticked)];
         layer.sprites.push((checkbox, at(BOX), checkbox.size));
-        layer.texts.push((message(label).to_owned(), at(BOX_LABEL), [0, 0, 0]));
+        let label = match message(label) {
+            "" if label == VIEW_COSTUME_MESSAGE => VIEW_COSTUME_FALLBACK,
+            text => text,
+        };
+        layer.texts.push((label.to_owned(), at(BOX_LABEL), [0, 0, 0]));
         // Unequip All: _a, _b pointed at, _c greyed.
         let button = if !self.unequip_enabled(worn) {
             &assets.take_off_greyed
