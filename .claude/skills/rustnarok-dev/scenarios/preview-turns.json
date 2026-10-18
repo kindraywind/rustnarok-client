@@ -7,7 +7,7 @@
     {"say": "@itemreset"}, {"wait": 800},
     {"say": "@item 20541 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"key": "Alt+E"}, {"wait": 400},
-    {"click": [11, 225]}, {"wait": 300},
+    {"click_on": {"button": "tab:equip"}}, {"wait": 300},
     {"click_on": {"inventory_item": 20541}, "count": 2},
     {"wait_for": {"event": "Equipped", "ms": 5000}},
     {"key": "Alt+E"}, {"wait": 400},

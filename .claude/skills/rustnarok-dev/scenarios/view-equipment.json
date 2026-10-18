@@ -9,7 +9,7 @@
     {"as": "second", "say": "@itemreset"}, {"wait": 800},
     {"as": "second", "say": "@item 2301 1"}, {"as": "second", "wait_for": {"event": "PickedUp", "ms": 5000}},
     {"as": "second", "key": "Alt+E"}, {"wait": 400},
-    {"as": "second", "click": [11, 225]}, {"wait": 300},
+    {"as": "second", "click_on": {"button": "tab:equip"}}, {"wait": 300},
     {"as": "second", "click_on": {"inventory_item": 2301}, "count": 2}, {"as": "second", "wait_for": {"event": "Equipped", "ms": 5000}},
     {"as": "second", "key": "Alt+E"}, {"wait": 500},
     {"click_on": {"unit": "{second}"}, "button": "right"}, {"wait": 400},
