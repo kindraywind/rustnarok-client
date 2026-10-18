@@ -247,6 +247,8 @@ pub struct EscView {
     pub battle_line: bool,
     pub whisper_list: bool,
     pub focused: Option<WindowId>,
+    /// An NPC's text window or choice menu is up.
+    pub conversation: bool,
     pub question: bool,
     pub newest: Option<WindowId>,
 }
@@ -272,8 +274,8 @@ pub fn decide(repeat: bool, view: EscView) -> Option<EscAct> {
     if let Some(id) = view.newest {
         return Some(if id == WindowId::Shop { EscAct::ShopCancel } else { EscAct::Close(id) });
     }
-    // 5. The game menu.
-    Some(EscAct::ToggleMenu)
+    // 5. The game menu, but not over a conversation with an NPC.
+    (!view.conversation).then_some(EscAct::ToggleMenu)
 }
 
 /// Token of Siegfried (and the other tokens in that group) or Light of Regene: the player can stand up here.
@@ -447,17 +449,32 @@ mod tests {
 
     #[test]
     fn esc_follows_the_first_rule() {
-        let window = EscView { battle_line: false, whisper_list: false, focused: None, question: false, newest: Some(WindowId::Inventory) };
+        let window =
+            EscView { battle_line: false, whisper_list: false, focused: None, conversation: false, question: false, newest: Some(WindowId::Inventory) };
         // A repeating key does nothing, even with a window up.
         assert_eq!(decide(true, window), None);
         // A closed battle-mode line is not the first case: the window closes.
         assert_eq!(decide(false, window), Some(EscAct::Close(WindowId::Inventory)));
         // An open battle-mode line is first: the whisper list, else the line. Windows and questions wait.
-        let battle = EscView { battle_line: true, whisper_list: true, focused: Some(WindowId::Mailbox), question: true, newest: Some(WindowId::Skills) };
+        let battle = EscView {
+            battle_line: true,
+            whisper_list: true,
+            focused: Some(WindowId::Mailbox),
+            conversation: false,
+            question: true,
+            newest: Some(WindowId::Skills),
+        };
         assert_eq!(decide(false, battle), Some(EscAct::CloseWhisperList));
         assert_eq!(decide(false, EscView { whisper_list: false, ..battle }), Some(EscAct::CloseBattleChat));
         // A text box beats a question and the newest window.
-        let typing = EscView { battle_line: false, whisper_list: false, focused: Some(WindowId::VendSetup), question: true, newest: Some(WindowId::Shop) };
+        let typing = EscView {
+            battle_line: false,
+            whisper_list: false,
+            focused: Some(WindowId::VendSetup),
+            conversation: false,
+            question: true,
+            newest: Some(WindowId::Shop),
+        };
         assert_eq!(decide(false, typing), Some(EscAct::Cancel(WindowId::VendSetup)));
         // A question beats the newest window.
         let question = EscView { focused: None, ..typing };
@@ -466,7 +483,14 @@ mod tests {
         assert_eq!(decide(false, EscView { question: false, newest: Some(WindowId::Shop), ..question }), Some(EscAct::ShopCancel));
         assert_eq!(decide(false, EscView { question: false, newest: Some(WindowId::Skills), ..question }), Some(EscAct::Close(WindowId::Skills)));
         // Nothing open: the menu.
-        assert_eq!(decide(false, EscView { newest: None, question: false, ..question }), Some(EscAct::ToggleMenu));
+        let idle = EscView { newest: None, question: false, ..question };
+        assert_eq!(decide(false, idle), Some(EscAct::ToggleMenu));
+        // Talking to an NPC: nothing, unless another window is newer (it closes) or its text box has the caret
+        // (it's cancelled). The warp list isn't a conversation: the menu toggles over it.
+        let talking = EscView { conversation: true, ..idle };
+        assert_eq!(decide(false, talking), None);
+        assert_eq!(decide(false, EscView { newest: Some(WindowId::Inventory), ..talking }), Some(EscAct::Close(WindowId::Inventory)));
+        assert_eq!(decide(false, EscView { focused: Some(WindowId::NpcDialog), ..talking }), Some(EscAct::Cancel(WindowId::NpcDialog)));
     }
 
     #[test]
