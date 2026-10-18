@@ -15,7 +15,7 @@ use crate::{Layer, UI, contains, offset};
 // ponytail: sizes and offsets of the classic inventory over its bitmaps; calibrate against the real client.
 /// Columns it opens with, and how far its corner grip takes them (248 to 312 wide in 32 px steps).
 const COLUMNS: usize = 7;
-const MOST_COLUMNS: std::ops::RangeInclusive<usize> = 6..=8;
+const COLUMN_LIMITS: std::ops::RangeInclusive<usize> = 6..=8;
 /// Its tab strip is taller than the 240 px the grip allows, so it's always 6 rows high: the grip only widens it.
 const ROWS: std::ops::RangeInclusive<usize> = 6..=6;
 /// The cart has no tab strip: 120 to 216 high, so 2 to 5 rows.
@@ -531,7 +531,7 @@ impl Inventory {
 
     /// Takes `columns` and `rows` as far as the grip would go; the items reflow.
     pub fn set_size(&mut self, [columns, rows]: [usize; 2]) {
-        self.columns = columns.clamp(*MOST_COLUMNS.start(), *MOST_COLUMNS.end());
+        self.columns = columns.clamp(*COLUMN_LIMITS.start(), *COLUMN_LIMITS.end());
         self.rows = rows.clamp(*self.row_limits.start(), *self.row_limits.end());
         self.frame.set_width(self.width());
         self.scroll_by(0);
