@@ -957,6 +957,10 @@ struct Game {
     companion_mark: Option<(u32, u32)>,
     /// Open windows from back to front.
     windows: Vec<Panel>,
+    /// Windows Esc closes, newest first. Pushed on open and on a press, dropped on close.
+    esc_order: Vec<escape::WindowId>,
+    /// The save-point question (messages[1548]) is up.
+    save_asked: bool,
     damages: Vec<Damage>,
     /// The player's own status values (HP, SP, ...) by rathena SP_* ID.
     status: HashMap<u16, i64>,
@@ -1309,6 +1313,28 @@ type ScriptedInput = (Duration, bool, [f32; 2], Option<[f32; 2]>);
 
 fn map_key(map: &str) -> String {
     map.trim_end_matches(".gat").trim_end_matches(".rsw").to_lowercase()
+}
+
+/// A panel Esc closes. The hotbar and the basic info window stay up.
+fn esc_panel(id: Panel) -> Option<escape::WindowId> {
+    use escape::WindowId::*;
+    Some(match id {
+        Panel::Hotkeys | Panel::BasicInfo => return None,
+        Panel::Inventory => Inventory,
+        Panel::Equipment => Equipment,
+        Panel::Skills => Skills,
+        Panel::Storage => Storage,
+        Panel::Party => Party,
+        Panel::Status => Status,
+        Panel::Guild => Guild,
+        Panel::Clan => Clan,
+        Panel::Cart => Cart,
+        Panel::Pet => Pet,
+        Panel::Mercenary => Mercenary,
+        Panel::MercenarySkills => MercenarySkills,
+        Panel::Homunculus => Homunculus,
+        Panel::HomunculusSkills => HomunculusSkills,
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -2140,14 +2166,21 @@ impl Game {
 
     fn toggle_emotion_list(&mut self) {
         self.emotion_list = if self.emotion_list.is_some() { None } else { Some(emotion_list::List::default()) };
+        if self.emotion_list.is_some() {
+            escape::touch(&mut self.esc_order, escape::WindowId::EmotionList);
+        } else {
+            escape::remove(&mut self.esc_order, escape::WindowId::EmotionList);
+        }
     }
 
     /// Opens the macro window, or closes it keeping what was typed.
     fn toggle_macro_window(&mut self) {
         if self.macro_window.take().is_none() {
             self.macro_window = Some(macros::Window::default());
+            escape::touch(&mut self.esc_order, escape::WindowId::Macros);
         } else {
             macros::save(macros::path().as_deref(), &self.macro_lines);
+            escape::remove(&mut self.esc_order, escape::WindowId::Macros);
         }
     }
 
@@ -2192,6 +2225,7 @@ impl Game {
             &mut self.quest_window.frame,
             &mut self.achievement_window.frame,
             &mut self.mail.list.frame,
+            &mut self.queue_window.frame,
         ] {
             frame.open = false;
         }
@@ -2611,10 +2645,502 @@ impl Game {
         }
     }
 
-    /// Puts a window in front of the others.
+    /// Puts a window in front of the others, and at the front of the Esc list when it is open.
     fn raise(&mut self, id: Panel) {
         self.windows.retain(|&window| window != id);
         self.windows.push(id);
+        if let Some(esc) = esc_panel(id) {
+            if self.panel_open(id) {
+                escape::touch(&mut self.esc_order, esc);
+            } else {
+                escape::remove(&mut self.esc_order, esc);
+            }
+        }
+    }
+
+    fn panel_open(&self, id: Panel) -> bool {
+        match id {
+            Panel::Hotkeys => self.hotkeys.frame.open,
+            Panel::BasicInfo => self.basic_info.frame.open,
+            Panel::Inventory => self.inventory.frame.open,
+            Panel::Equipment => self.equipment.frame.open,
+            Panel::Skills => self.skill_window.frame.open,
+            Panel::Storage => self.storage.frame.open,
+            Panel::Party => self.party_window.frame.open,
+            Panel::Status => self.status_window.frame.open,
+            Panel::Guild => self.guild.is_some() && self.guild_window.frame.open,
+            Panel::Clan => self.clan.is_some() && self.clan_window.frame.open,
+            Panel::Cart => self.cart.cart.is_some() && self.cart.frame.open,
+            Panel::Pet => self.pet.is_some() && self.pet_window.frame.open,
+            Panel::Mercenary => self.mercenary.is_some() && self.mercenary_window.frame.open,
+            Panel::MercenarySkills => self.mercenary.is_some() && self.mercenary_skill_list.frame.open,
+            Panel::Homunculus => self.homunculus.is_some() && self.homunculus_window.frame.open,
+            Panel::HomunculusSkills => self.homunculus.is_some() && self.homunculus_skill_list.frame.open,
+        }
+    }
+
+    /// Token of Siegfried (or Light of Regene): the dead menu offers standing up here.
+    fn can_resurrect(&self) -> bool {
+        escape::can_stand_up(self.inventory.items.iter().map(|item| item.id), self.status_icons.iter().map(|(id, ..)| *id))
+    }
+
+    /// Every window Esc may close that is open now, questions included.
+    fn esc_open(&self) -> Vec<escape::WindowId> {
+        use escape::WindowId::*;
+        let mut open = Vec::new();
+        let mut push = |id: escape::WindowId, shown: bool| {
+            if shown {
+                open.push(id);
+            }
+        };
+        for panel in [
+            Panel::Inventory,
+            Panel::Equipment,
+            Panel::Skills,
+            Panel::Storage,
+            Panel::Party,
+            Panel::Status,
+            Panel::Guild,
+            Panel::Clan,
+            Panel::Cart,
+            Panel::Pet,
+            Panel::Mercenary,
+            Panel::MercenarySkills,
+            Panel::Homunculus,
+            Panel::HomunculusSkills,
+        ] {
+            if let Some(id) = esc_panel(panel) {
+                push(id, self.panel_open(panel));
+            }
+        }
+        push(NpcDialog, self.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()));
+        push(WarpList, self.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some()));
+        push(Shop, self.shop.is_some());
+        push(Refine, self.refine.is_some());
+        push(GradeEnchant, self.grade.is_some());
+        push(LaphineSynthesis, self.synthesis.is_some());
+        push(LaphineUpgrade, self.upgrade.is_some());
+        push(ItemReform, self.reform.is_some());
+        push(Enchant, self.enchant.is_some());
+        push(Stylist, self.stylist.is_some());
+        push(Materials, self.materials.is_some());
+        push(PartySetup, self.party_setup.is_some());
+        push(DressRoom, self.dressroom.is_some());
+        push(Ranking, self.ranking.is_some());
+        push(Catalog, self.catalog.is_some());
+        push(Roulette, self.roulette.is_some());
+        push(MonsterInfo, self.monster_window.is_some());
+        push(Achievements, self.achievement_window.frame.open);
+        push(OtherEquipment, self.viewing.is_some());
+        push(Bank, self.bank.is_some());
+        push(CashShop, self.cashshop.is_some());
+        push(PickList, self.pick.is_some());
+        push(Trade, self.trade.is_some());
+        push(ItemInfo, self.item_window.is_some());
+        push(ChatRoom, self.room.is_some());
+        push(RoomMake, self.room_make.is_some());
+        push(EmotionList, self.emotion_list.is_some());
+        push(Macros, self.macro_window.is_some());
+        push(VendSetup, self.vend_setup.is_some());
+        push(MyShop, self.my_shop.is_some());
+        push(BuyingStoreSetup, self.buying_setup.is_some());
+        push(MyBuyingStore, self.my_buying_store.is_some());
+        push(Mailbox, self.mail.list.frame.open);
+        push(MailRead, self.mail.letter.is_some());
+        push(MailWrite, self.mail.compose.is_some());
+        push(AudioSettings, self.audio_window.is_some());
+        push(GraphicsSettings, self.graphics_window.is_some());
+        push(ShortcutSettings, self.shortcuts_window.is_some());
+        push(WorldMap, self.world_map.is_some());
+        push(Quests, self.quest_window.frame.open);
+        push(Menu, self.menu.is_some());
+        push(Targeting, self.targeting.is_some());
+        push(Capturing, self.capturing);
+        push(Amount, self.amount.is_some());
+        push(SaveAsked, self.save_asked);
+        push(BindAsked, self.bind_asked.is_some());
+        push(ExpansionAsked, self.expansion_asked.is_some());
+        push(LeaderAsked, self.leader_asked.is_some());
+        push(DismissAsked, self.dismiss_asked);
+        push(HomunculusRename, self.homunculus_rename.is_some());
+        push(PetAsked, self.pet_asked.is_some());
+        push(CashShopBuy, self.cashshop_buy_asked);
+        push(GuildAsked, self.guild_asked.is_some());
+        push(GuildInvite, self.guild_invite.is_some());
+        push(PartyInvite, self.party_invite.is_some());
+        push(FriendAsked, self.friend_asked.is_some());
+        push(TradeAsked, self.trade_asked.is_some());
+        push(DealChoice, self.deal_choice.is_some());
+        push(BattleQueue, self.queue_window.frame.open);
+        push(AdoptAsked, self.adopt_asked.is_some());
+        push(QueueAsked, self.queue_asked.is_some());
+        open
+    }
+
+    /// Brings the Esc list in line with what's open.
+    fn sync_esc(&mut self) {
+        let open = self.esc_open();
+        escape::sync(&mut self.esc_order, &open);
+    }
+
+    /// `windows` in the control state: the Esc order, newest first, plus a few second names for the same window.
+    fn esc_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.esc_order.iter().map(|id| id.name().to_owned()).collect();
+        if self.equipment.frame.open && self.equipment.swapping {
+            names.push("SwapEquipment".into());
+        }
+        if self.pick.as_ref().is_some_and(|(list, _)| list.merging) {
+            names.push("ItemMerge".into());
+        }
+        if matches!(self.guild_asked, Some(GuildAsked::Leave)) {
+            names.push("LeaveAsked".into());
+        }
+        if matches!(self.queue_asked, Some(QueueAsked::Lobby(..))) {
+            names.push("BattleLobby".into());
+        }
+        names
+    }
+
+    /// A text box inside a window has the caret. The always-on chat line is not one of these.
+    fn focused_text(&self) -> Option<escape::WindowId> {
+        use escape::WindowId::*;
+        if self.dialog.as_ref().is_some_and(|dialog| dialog.input.is_some()) {
+            return Some(if self.dialog.as_ref().unwrap().warp.is_some() { WarpList } else { NpcDialog });
+        }
+        if self.vend_setup.as_ref().is_some_and(|setup| setup.typing) {
+            return Some(VendSetup);
+        }
+        if self.buying_setup.as_ref().is_some_and(|setup| setup.focus.is_some()) {
+            return Some(BuyingStoreSetup);
+        }
+        if self.mail.compose.as_ref().is_some_and(|compose| compose.field.is_some()) {
+            return Some(MailWrite);
+        }
+        if self.mail.list.typing {
+            return Some(Mailbox);
+        }
+        if self.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) {
+            return Some(Macros);
+        }
+        if self.room_make.is_some() {
+            return Some(RoomMake);
+        }
+        if self.room.is_some() {
+            return Some(ChatRoom);
+        }
+        if self.cashshop.as_ref().is_some_and(|shop| shop.typing) {
+            return Some(CashShop);
+        }
+        if self.bank.as_ref().is_some_and(|bank| bank.typing) {
+            return Some(Bank);
+        }
+        if self.trade.as_ref().is_some_and(|trade| trade.typing) {
+            return Some(Trade);
+        }
+        if self.storage.typing {
+            return Some(Storage);
+        }
+        if self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) {
+            return Some(Catalog);
+        }
+        None
+    }
+
+    /// A question (or an NPC menu waiting for a choice) is up.
+    fn question_open(&self) -> bool {
+        self.save_asked
+            || self.bind_asked.is_some()
+            || self.expansion_asked.is_some()
+            || self.leader_asked.is_some()
+            || self.dismiss_asked
+            || self.homunculus_rename.is_some()
+            || self.pet_asked.is_some()
+            || self.cashshop_buy_asked
+            || self.guild_asked.is_some()
+            || self.guild_invite.is_some()
+            || self.party_invite.is_some()
+            || self.friend_asked.is_some()
+            || self.trade_asked.is_some()
+            || self.deal_choice.is_some()
+            || self.amount.is_some()
+            || self.dialog.as_ref().is_some_and(|dialog| dialog.menu.is_some())
+            || self.adopt_asked.is_some()
+            || self.queue_asked.is_some()
+    }
+
+    /// Answers the open question with No. An NPC menu is cancelled.
+    fn answer_no(&mut self, messages: &[String]) {
+        if self.dialog.as_ref().is_some_and(|dialog| dialog.menu.is_some()) {
+            self.choose(true);
+            return;
+        }
+        if self.save_asked {
+            self.save_asked = false;
+            return;
+        }
+        if self.amount.is_some() {
+            self.answer_amount(false, messages);
+            return;
+        }
+        if self.bind_asked.is_some() {
+            self.answer_bind(false);
+            return;
+        }
+        if self.expansion_asked.is_some() {
+            self.expansion_asked = None;
+            let _ = self.session.answer_expansion(false);
+            return;
+        }
+        if self.leader_asked.take().is_some() {
+            return;
+        }
+        if self.dismiss_asked {
+            self.answer_dismiss(false, messages);
+            return;
+        }
+        if self.homunculus_rename.is_some() {
+            self.answer_homunculus_name(false);
+            return;
+        }
+        if self.pet_asked.is_some() {
+            self.answer_pet(false);
+            return;
+        }
+        if self.cashshop_buy_asked {
+            self.cashshop_buy_asked = false;
+            if let Some((free, items)) = self.cashshop.as_ref().and_then(|shop| shop.buy_request(false)) {
+                let _ = self.session.buy_cashshop(free, &items);
+            }
+            return;
+        }
+        if let Some(asked) = self.guild_asked.take() {
+            if let crate::GuildAsked::Ally { id, .. } = asked {
+                let _ = self.session.answer_alliance(id, false);
+            }
+            return;
+        }
+        if let Some((guild, _)) = self.guild_invite.take() {
+            let _ = self.session.answer_guild(guild, false);
+            return;
+        }
+        if let Some((party, _)) = self.party_invite.take() {
+            let _ = self.session.answer_party(party, false);
+            return;
+        }
+        if let Some((account, character, _)) = self.friend_asked.take() {
+            let _ = self.session.answer_friend(account, character, false);
+            return;
+        }
+        if self.trade_asked.take().is_some() {
+            let _ = self.session.answer_trade(false);
+            return;
+        }
+        if let Some((parent, partner, _, _)) = self.adopt_asked.take() {
+            let _ = self.session.answer_adoption(parent, partner, false);
+            return;
+        }
+        if let Some(asked) = self.queue_asked.take() {
+            if let QueueAsked::Lobby(name, _) = asked {
+                let _ = self.session.answer_lobby(false, &name);
+            }
+            return;
+        }
+        self.deal_choice = None;
+    }
+
+    /// Closes one window the way its Cancel or close button does, and drops it from the Esc list.
+    fn close_esc(&mut self, id: escape::WindowId) {
+        use escape::WindowId::*;
+        match id {
+            Inventory => self.inventory.frame.open = false,
+            Equipment => self.equipment.frame.open = false,
+            Skills => self.skill_window.frame.open = false,
+            Storage => {
+                self.storage.close();
+                let _ = self.session.close_storage();
+            }
+            Party => self.party_window.frame.open = false,
+            Status => self.status_window.frame.open = false,
+            Guild => self.guild_window.frame.open = false,
+            Clan => self.clan_window.frame.open = false,
+            Cart => self.cart.frame.open = false,
+            Pet => self.pet_window.frame.open = false,
+            Mercenary => self.mercenary_window.frame.open = false,
+            MercenarySkills => self.mercenary_skill_list.frame.open = false,
+            Homunculus => self.homunculus_window.frame.open = false,
+            HomunculusSkills => self.homunculus_skill_list.frame.open = false,
+            NpcDialog | WarpList => {
+                if self.dialog.as_ref().is_some_and(|dialog| dialog.menu.is_some()) {
+                    self.choose(true);
+                } else if let Some(dialog) = self.dialog.take() {
+                    let _ = self.session.close_dialog(dialog.npc);
+                }
+            }
+            Shop => self.close_shop(),
+            Refine => {
+                let _ = self.session.close_refine();
+                self.refine = None;
+            }
+            GradeEnchant => {
+                let _ = self.session.close_grade();
+                self.grade = None;
+            }
+            LaphineSynthesis => {
+                let _ = self.session.close_synthesis();
+                self.synthesis = None;
+            }
+            LaphineUpgrade => {
+                let _ = self.session.close_upgrade();
+                self.upgrade = None;
+            }
+            ItemReform => {
+                let _ = self.session.close_reform();
+                self.reform = None;
+            }
+            Enchant => {
+                let _ = self.session.close_enchant();
+                self.enchant = None;
+            }
+            Stylist => {
+                let _ = self.session.close_stylist();
+                self.stylist = None;
+            }
+            Materials => self.materials = None,
+            PartySetup => self.party_setup = None,
+            DressRoom => {
+                self.dressroom = None;
+                self.dress_figure = None;
+            }
+            Ranking => self.ranking = None,
+            Catalog => self.close_catalog(),
+            Roulette => self.close_roulette(),
+            MonsterInfo => self.monster_window = None,
+            Achievements => self.achievement_window.frame.open = false,
+            OtherEquipment => self.viewing = None,
+            Bank => {
+                let _ = self.session.close_bank(self.account_id);
+                self.bank = None;
+            }
+            CashShop => self.close_cashshop(),
+            PickList => self.answer_pick(None),
+            Trade => {
+                let _ = self.session.cancel_trade();
+                self.trade = None;
+            }
+            ItemInfo => self.item_window = None,
+            ChatRoom => {
+                let _ = self.session.leave_chat_room();
+            }
+            RoomMake => self.room_make = None,
+            EmotionList => self.emotion_list = None,
+            Macros => {
+                if self.macro_window.take().is_some() {
+                    macros::save(macros::path().as_deref(), &self.macro_lines);
+                }
+            }
+            VendSetup => {
+                let _ = self.session.open_shop("", false, &[]);
+                self.vend_setup = None;
+            }
+            MyShop => {
+                let _ = self.session.close_shop();
+                self.my_shop = None;
+                self.signs.remove(&self.account_id);
+            }
+            BuyingStoreSetup => {
+                let _ = self.session.open_buying_store("", 0, false, &[]);
+                self.buying_setup = None;
+            }
+            MyBuyingStore => {
+                let _ = self.session.close_buying_store();
+                self.my_buying_store = None;
+                self.signs.remove(&self.account_id);
+            }
+            Mailbox => {
+                self.mail.list.frame.open = false;
+                let _ = self.session.close_mailbox();
+            }
+            MailRead => self.mail.letter = None,
+            MailWrite => self.mail.compose = None,
+            AudioSettings => self.audio_window = None,
+            GraphicsSettings => self.graphics_window = None,
+            ShortcutSettings => self.shortcuts_window = None,
+            WorldMap => self.world_map = None,
+            Quests => self.quest_window.frame.open = false,
+            Menu => self.menu = None,
+            Targeting => self.targeting = None,
+            Capturing => self.capturing = false,
+            Amount => self.answer_amount(false, &[]),
+            SaveAsked => self.save_asked = false,
+            BindAsked => self.answer_bind(false),
+            ExpansionAsked => {
+                self.expansion_asked = None;
+                let _ = self.session.answer_expansion(false);
+            }
+            LeaderAsked => {
+                self.leader_asked = None;
+            }
+            DismissAsked => self.answer_dismiss(false, &[]),
+            HomunculusRename => self.answer_homunculus_name(false),
+            PetAsked => self.answer_pet(false),
+            CashShopBuy => self.cashshop_buy_asked = false,
+            GuildAsked => {
+                self.guild_asked = None;
+            }
+            GuildInvite => {
+                if let Some((guild, _)) = self.guild_invite.take() {
+                    let _ = self.session.answer_guild(guild, false);
+                }
+            }
+            PartyInvite => {
+                if let Some((party, _)) = self.party_invite.take() {
+                    let _ = self.session.answer_party(party, false);
+                }
+            }
+            FriendAsked => {
+                if let Some((account, character, _)) = self.friend_asked.take() {
+                    let _ = self.session.answer_friend(account, character, false);
+                }
+            }
+            TradeAsked => {
+                self.trade_asked = None;
+                let _ = self.session.answer_trade(false);
+            }
+            DealChoice => self.deal_choice = None,
+            BattleQueue => self.queue_window.frame.open = false,
+            AdoptAsked => {
+                if let Some((parent, partner, _, _)) = self.adopt_asked.take() {
+                    let _ = self.session.answer_adoption(parent, partner, false);
+                }
+            }
+            QueueAsked => {
+                if let Some(crate::QueueAsked::Lobby(name, _)) = self.queue_asked.take() {
+                    let _ = self.session.answer_lobby(false, &name);
+                }
+            }
+        }
+        escape::remove(&mut self.esc_order, id);
+    }
+
+    /// The window under a press, so Esc closes the one the player just touched.
+    fn press_esc(&mut self, cursor: [f32; 2]) {
+        if let Some(id) = self.esc_at(cursor) {
+            escape::touch(&mut self.esc_order, id);
+        }
+    }
+
+    fn esc_at(&self, cursor: [f32; 2]) -> Option<escape::WindowId> {
+        use escape::WindowId::*;
+        if self.menu.is_some() {
+            return Some(Menu);
+        }
+        if self.shop.as_ref().is_some_and(|shop| shop.covers(cursor)) {
+            return Some(Shop);
+        }
+        if self.world_map.is_some() {
+            return Some(WorldMap);
+        }
+        self.window_at(cursor).and_then(esc_panel)
     }
 
     /// Uses an inventory item: consumables are used, equipment is put on.
@@ -4365,29 +4891,45 @@ impl App {
                     game.world_map = None;
                 }
             }
-            // The option menu keeps the pointer until it's closed.
-            Scene::Game(game) if game.escape.is_some() => match game.escape.as_ref().unwrap().hit(cursor).flatten() {
-                Some(escape::Choice::SavePoint) => {
-                    let _ = game.session.restart(false);
+            // Save point asks first. OK goes; Cancel stays.
+            Scene::Game(game) if game.save_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.save_asked = false;
+                        if yes {
+                            game.escape = None;
+                            let _ = game.session.restart(false);
+                        }
+                    }
                 }
+            }
+            // The option menu keeps the pointer until it's closed.
+            Scene::Game(game) if game.escape.is_some() => match game.escape.as_ref().unwrap().hit(cursor, game.can_resurrect()).flatten() {
+                Some(escape::Choice::SavePoint) => game.save_asked = true,
                 Some(escape::Choice::CharSelect) => {
+                    game.escape = None;
                     let _ = game.session.restart(true);
                 }
                 Some(escape::Choice::Exit) => {
+                    game.escape = None;
                     let _ = game.session.quit();
                 }
-                Some(escape::Choice::Cancel) => game.escape = None,
-                Some(escape::Choice::Sound) => {
+                Some(escape::Choice::Return) => game.escape = None,
+                Some(escape::Choice::Resurrect) => {
                     game.escape = None;
-                    game.audio_window = Some(options::AudioWindow::new());
+                    let _ = game.session.standing_resurrection();
                 }
-                Some(escape::Choice::Graphics) => {
+                // Game settings and shortcut settings are the windows from #68.
+                Some(escape::Choice::GameSettings) => {
                     game.escape = None;
                     game.graphics_window = Some(options::GraphicsWindow::new());
+                    escape::touch(&mut game.esc_order, escape::WindowId::GraphicsSettings);
                 }
-                Some(escape::Choice::Hotkeys) => {
+                Some(escape::Choice::Shortcuts) => {
                     game.escape = None;
                     game.shortcuts_window = Some(options::ShortcutsWindow::new());
+                    escape::touch(&mut game.esc_order, escape::WindowId::ShortcutSettings);
                 }
                 None => {}
             },
@@ -6009,7 +6551,7 @@ impl App {
         }
     }
 
-    /// A mouse press: grabs a window by its title bar.
+    /// A mouse press: grabs a window by its title bar, and notes it for Esc.
     fn press(&mut self) {
         let cursor = self.cursor;
         // Aiming a skill: the press on its target uses it; any other press lets go of the aim. On the world that's
@@ -6087,6 +6629,17 @@ impl App {
                 _ => {}
             }
             return;
+        }
+        if let Scene::Game(game) = &mut self.scene {
+            // Windows opened since the last Esc join the list before this press moves one to the front.
+            game.sync_esc();
+            // A button on the game menu is not a press on the window under it.
+            let on_menu = game.escape.as_ref().is_some_and(|menu| menu.hit(cursor, game.can_resurrect()).is_some());
+            if !on_menu && game.item_window.as_ref().is_some_and(|window| window.hit(cursor, &self.items).is_some()) {
+                escape::touch(&mut game.esc_order, escape::WindowId::ItemInfo);
+            } else if !on_menu {
+                game.press_esc(cursor);
+            }
         }
         if let Scene::Game(game) = &mut self.scene {
             let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
@@ -6363,6 +6916,32 @@ impl App {
         self.send_chat_input(false, false);
         if let Scene::Game(game) = &mut self.scene {
             game.chat.input = typing;
+        }
+    }
+
+    /// One Esc in the game: the battle-mode line, a focused text box, a question's No, the newest window, or the menu.
+    fn game_escape(&mut self) {
+        let Scene::Game(game) = &mut self.scene else { return };
+        game.sync_esc();
+        let view = escape::EscView {
+            battle_line: game.chat.battle_line_open(),
+            whisper_list: game.chat.whisper_list_open(),
+            focused: game.focused_text(),
+            question: game.question_open(),
+            newest: game.esc_order.first().copied(),
+        };
+        let act = escape::decide(false, view);
+        let Scene::Game(game) = &mut self.scene else { return };
+        match act {
+            Some(escape::EscAct::CloseWhisperList) => game.chat.close_whisper_list(),
+            Some(escape::EscAct::CloseBattleChat) => game.chat.close_battle_line(),
+            Some(escape::EscAct::Cancel(id) | escape::EscAct::Close(id)) => game.close_esc(id),
+            Some(escape::EscAct::ShopCancel) => game.close_esc(escape::WindowId::Shop),
+            Some(escape::EscAct::AnswerNo) => game.answer_no(&self.messages),
+            Some(escape::EscAct::ToggleMenu) => {
+                game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: game.player.dead }) };
+            }
+            None => {}
         }
     }
 
@@ -6679,6 +7258,12 @@ impl App {
                 }
                 _ => make.type_text(event.text.as_deref().unwrap_or_default()),
             },
+            // Esc, one window per press, and never on a key that is auto-repeating.
+            Scene::Game(_) if *key == Key::Named(NamedKey::Escape) => {
+                if !event.repeat {
+                    self.game_escape();
+                }
+            }
             Scene::Game(game) if game.dialog.is_some() => {
                 let dialog = game.dialog.as_mut().unwrap();
                 match (key, &mut dialog.input, &mut dialog.menu) {
@@ -7393,6 +7978,8 @@ impl App {
                     macro_window: None,
                     macro_lines: macros::load(macros::path().as_deref()),
                     room_tried: false,
+                    esc_order: Vec::new(),
+                    save_asked: false,
                     windows: vec![
                         Panel::Hotkeys,
                         Panel::BasicInfo,
@@ -11587,8 +12174,18 @@ impl App {
             game.item_lines = lines.len();
             window.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
         }
+        if game.save_asked {
+            let dialog = dialog_position(&assets.message);
+            let question = messages.get(escape::SAVE_QUESTION).map_or("Do you really want to go back to your savepoint?", String::as_str);
+            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
+            for (row, line) in message_lines(font, question, MESSAGE_WIDTH).into_iter().enumerate() {
+                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
         if let Some(menu) = &game.escape {
-            menu.draw(&mut shop_layer, &assets.chrome, &assets.escape, messages, pointer);
+            menu.draw(&mut shop_layer, &assets.chrome, &assets.escape, messages, pointer, game.can_resurrect());
         }
         if let Some(setup) = &game.party_setup {
             setup.draw(&mut shop_layer, &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), messages, pointer);

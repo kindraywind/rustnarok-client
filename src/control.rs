@@ -202,7 +202,7 @@ pub struct KeyPress {
     pub logical_key: Key,
     pub physical_key: PhysicalKey,
     pub text: Option<String>,
-    /// An auto-repeated key-down. Shortcuts ignore it; typing still takes it.
+    /// An auto-repeated key-down. Shortcuts and Esc ignore it; typing still takes it.
     pub repeat: bool,
 }
 
@@ -747,7 +747,10 @@ fn scene_name(scene: &Scene) -> &'static str {
     }
 }
 
-fn state(app: &App) -> Value {
+fn state(app: &mut App) -> Value {
+    if let Scene::Game(game) = &mut app.scene {
+        game.sync_esc();
+    }
     let mut state = json!({
         "ok": true,
         "scene": scene_name(&app.scene),
@@ -816,8 +819,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         game.combos.get(&unit).map_or(0, |(start, length)| length.saturating_sub(crate::control::now().saturating_duration_since(*start)).as_millis() as u64)
     };
     // The message box's OK and Cancel while a question is up.
-    let question =
-        game.guild_asked.is_some() || game.guild_invite.is_some() || game.cashshop_buy_asked || game.adopt_asked.is_some() || game.queue_asked.is_some();
+    let question = game.guild_asked.is_some()
+        || game.guild_invite.is_some()
+        || game.cashshop_buy_asked
+        || game.save_asked
+        || game.adopt_asked.is_some()
+        || game.queue_asked.is_some();
     let question_buttons = app.assets.as_ref().filter(|_| question).into_iter().flat_map(|assets| {
         let dialog = crate::dialog_position(&assets.message);
         [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)].map(|(name, place, button)| {
@@ -868,24 +875,6 @@ fn game_state(app: &App, game: &Game) -> Value {
             json!({"id": id, "item": item.item, "name": name, "amount": item.amount, "cell": item.at, "screen": screen(Owner::Item(id)), "area": area(Owner::Item(id))})
         })
         .collect();
-    let open = |panel: &Panel| match panel {
-        Panel::Hotkeys => game.hotkeys.frame.open,
-        Panel::BasicInfo => game.basic_info.frame.open,
-        Panel::Inventory => game.inventory.frame.open,
-        Panel::Equipment => game.equipment.frame.open,
-        Panel::Skills => game.skill_window.frame.open,
-        Panel::Storage => game.storage.frame.open,
-        Panel::Party => game.party_window.frame.open,
-        Panel::Status => game.status_window.frame.open,
-        Panel::Guild => game.guild.is_some() && game.guild_window.frame.open,
-        Panel::Clan => game.clan.is_some() && game.clan_window.frame.open,
-        Panel::Cart => game.cart.cart.is_some() && game.cart.frame.open,
-        Panel::Pet => game.pet.is_some() && game.pet_window.frame.open,
-        Panel::Mercenary => game.mercenary.is_some() && game.mercenary_window.frame.open,
-        Panel::MercenarySkills => game.mercenary.is_some() && game.mercenary_skill_list.frame.open,
-        Panel::Homunculus => game.homunculus.is_some() && game.homunculus_window.frame.open,
-        Panel::HomunculusSkills => game.homunculus.is_some() && game.homunculus_skill_list.frame.open,
-    };
     let jobs = crate::skills::tabs(&app.skill_trees, game.me.job, &game.skills);
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
     // The leader question's OK and Cancel, in the message box.
@@ -1043,70 +1032,15 @@ fn game_state(app: &App, game: &Game) -> Value {
                 })
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
+        .chain(
+            game.escape
+                .iter()
+                .flat_map(|menu| menu.button_boxes(game.can_resurrect()))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .collect();
-    let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
-    let overlays = [
-        ("NpcDialog", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none())),
-        ("WarpList", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some())),
-        ("Shop", game.shop.is_some()),
-        ("Refine", game.refine.is_some()),
-        ("GradeEnchant", game.grade.is_some()),
-        ("LaphineSynthesis", game.synthesis.is_some()),
-        ("LaphineUpgrade", game.upgrade.is_some()),
-        ("ItemReform", game.reform.is_some()),
-        ("Enchant", game.enchant.is_some()),
-        ("Stylist", game.stylist.is_some()),
-        ("Materials", game.materials.is_some()),
-        ("PartySetup", game.party_setup.is_some()),
-        ("DressRoom", game.dressroom.is_some()),
-        ("Ranking", game.ranking.is_some()),
-        ("Catalog", game.catalog.is_some()),
-        ("LeaderAsked", game.leader_asked.is_some()),
-        ("Roulette", game.roulette.is_some()),
-        ("MonsterInfo", game.monster_window.is_some()),
-        ("Achievements", game.achievement_window.frame.open),
-        ("InventoryExpansion", game.expansion_asked.is_some()),
-        ("PetAsked", game.pet_asked.is_some()),
-        ("OtherEquipment", game.viewing.is_some()),
-        ("SwapEquipment", game.equipment.frame.open && game.equipment.swapping),
-        ("Bank", game.bank.is_some()),
-        ("CashShop", game.cashshop.is_some()),
-        ("PickList", game.pick.is_some()),
-        ("GuildAsked", game.guild_asked.is_some()),
-        ("ItemMerge", game.pick.as_ref().is_some_and(|(list, _)| list.merging)),
-        ("DealChoice", game.deal_choice.is_some()),
-        ("Trade", game.trade.is_some()),
-        ("TradeAsked", game.trade_asked.is_some()),
-        ("Amount", game.amount.is_some()),
-        ("Menu", game.menu.is_some()),
-        ("Escape", game.escape.is_some()),
-        ("ItemInfo", game.item_window.is_some()),
-        ("ChatRoom", game.room.is_some()),
-        ("RoomMake", game.room_make.is_some()),
-        ("EmotionList", game.emotion_list.is_some()),
-        ("Macros", game.macro_window.is_some()),
-        ("PartyInvite", game.party_invite.is_some()),
-        ("FriendAsked", game.friend_asked.is_some()),
-        ("GuildInvite", game.guild_invite.is_some()),
-        ("AdoptAsked", game.adopt_asked.is_some()),
-        ("LeaveAsked", matches!(game.guild_asked, Some(crate::GuildAsked::Leave))),
-        ("BattleQueue", game.queue_window.frame.open),
-        ("BattleLobby", matches!(game.queue_asked, Some(crate::QueueAsked::Lobby(..)))),
-        ("VendSetup", game.vend_setup.is_some()),
-        ("MyShop", game.my_shop.is_some()),
-        ("BuyingStoreSetup", game.buying_setup.is_some()),
-        ("MyBuyingStore", game.my_buying_store.is_some()),
-        ("Mailbox", game.mail.list.frame.open),
-        ("MailRead", game.mail.letter.is_some()),
-        ("MailWrite", game.mail.compose.is_some()),
-        ("NewMail", game.mail.unread),
-        ("AudioSettings", game.audio_window.is_some()),
-        ("GraphicsSettings", game.graphics_window.is_some()),
-        ("ShortcutSettings", game.shortcuts_window.is_some()),
-        ("WorldMap", game.world_map.is_some()),
-        ("Quests", game.quest_window.frame.open),
-    ];
-    windows.extend(overlays.into_iter().filter(|(_, shown)| *shown).map(|(name, _)| name.to_owned()));
+    // Newest first: the order Esc closes them in.
+    let windows = game.esc_names();
     let dialog = game.dialog.as_ref().map(|dialog| {
         json!({
             "npc": dialog.npc,
@@ -1164,6 +1098,9 @@ fn game_state(app: &App, game: &Game) -> Value {
             "look": player_look(game.player.look.as_ref().unwrap_or(&Look::default())),
         },
         "windows": windows,
+        // The game menu's buttons, when it is open (null when it isn't). Newest-first `windows` does not include it.
+        "escape": game.escape.as_ref().map(|menu| menu.choices(game.can_resurrect()).into_iter().map(|choice| choice.button()).collect::<Vec<_>>()),
+        "save_asked": game.save_asked,
         // What a test can click by name instead of by pixels: inventory items (index and item), hotkey slots, skill
         // boxes, pick list rows, menu choices and window buttons (by name), each with its box on screen.
         "targets": targets,

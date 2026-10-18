@@ -22,6 +22,8 @@ const ARROW: f32 = 13.0;
 const TRACK: f32 = 174.0;
 const THUMB: f32 = 24.0;
 const STEP: u8 = 8;
+// The menu no longer opens this window (its buttons are the spec's). The window stays.
+#[allow(dead_code)]
 const POSITION: [f32; 2] = [372.0, 300.0];
 /// "Audio Settings", then "    BGM" and "    SFX" (their spaces leave room for the checkbox).
 const TITLE: usize = 1485;
@@ -366,6 +368,8 @@ pub struct AudioWindow {
 }
 
 impl AudioWindow {
+    // The menu no longer opens this window. It stays, with the audio settings it already draws.
+    #[allow(dead_code)]
     pub fn new() -> Self {
         let mut frame = Frame::new(POSITION, WIDTH);
         frame.open = true;
