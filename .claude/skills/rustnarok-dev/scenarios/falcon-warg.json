@@ -32,6 +32,8 @@
     {"move": [1000, 740]},
     {"wait": 500},
     {"shot": "falcon-and-warg", "crop": [260, 100, 500, 420], "threshold": 40},
+    {"say": "@option 0 0 0"},
+    {"wait_for": {"event": "OptionChange", "ms": 5000}},
     {"say": "@job 0"},
     {"wait_for": {"event": "LookChange", "ms": 5000}},
     {"wait": 600},

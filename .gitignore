@@ -11,3 +11,6 @@
 /.claude/skills/local-*
 /.claude/settings.local.json
 __pycache__/
+
+# Screenshots the client saves (Print Screen): game images never go in the repository.
+/ScreenShot/

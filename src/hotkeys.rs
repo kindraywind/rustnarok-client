@@ -11,40 +11,55 @@ use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame};
 use crate::{Layer, UI, contains, inventory};
 
-// ponytail: places over shortitem_bg.bmp; calibrate against the real client.
-const WIDTH: f32 = 280.0;
-const ROW_HEIGHT: f32 = 34.0;
+// The game's bar: 290 wide, a 34-high shortcut frame a row (33 apart, overlapping by one), slots 29 apart.
+const WIDTH: f32 = 290.0;
+const ROW_HEIGHT: f32 = 33.0;
 pub const PER_ROW: usize = 9;
 const ROWS: usize = 4;
-const SLOT: [f32; 2] = [24.0, 23.0];
+const SLOT: [f32; 2] = [24.0, 24.0];
 const SLOT_STEP: f32 = 29.0;
-const FIRST_SLOT: [f32; 2] = [5.0, 5.0];
-const ROW_NUMBER: [f32; 2] = [FIRST_SLOT[0] + PER_ROW as f32 * SLOT_STEP + 5.0, 13.0];
-const CLOSE: [f32; 2] = [WIDTH - 13.0, 2.0];
-const BUTTON_SIZE: [f32; 2] = [11.0, 11.0];
-const DEFAULT_POSITION: [f32; 2] = [480.0, 0.0];
+const FIRST_SLOT: [f32; 2] = [16.0, 4.0];
+/// The hover box sits a pixel lower than the icon.
+const HOVER_DROP: f32 = 1.0;
+const ROW_NUMBER: [f32; 2] = [6.0, 13.0];
+const ROW_NUMBER_COLOR: [u8; 3] = [74, 74, 47];
+/// The bar switch (hotbar 1 or 2), and the minus and plus buttons by the last row.
+const SWITCH: [f32; 2] = [3.0, 4.0];
+const SWITCH_SIZE: [f32; 2] = [10.0, 26.0];
+const STEP_BUTTON: [f32; 2] = [11.0, 11.0];
+const DEFAULT_POSITION: [f32; 2] = [230.0, 0.0];
+const DEFAULT_ROWS: usize = 2;
 
 pub struct Assets {
-    background: Texture,
-    close: Texture,
-    resize: Texture,
+    frame: Texture,
+    /// The bar switch for hotbar 1 and 2.
+    switch: [Texture; 2],
+    minus: Texture,
+    plus: Texture,
+    /// Refine grade marks, D to A.
+    grades: [Texture; 4],
 }
 
 impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
-        let image = |path: String| gpu.load_texture(grf, &path, false);
+        let image = |path: String| gpu.try_load_texture(grf, &path, false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
         Self {
-            background: image(format!("{UI}basic_interface\\shortitem_bg.bmp")),
-            close: image(format!("{UI}basic_interface\\sys_close_off.bmp")),
-            resize: image(format!("{UI}btn_resize.bmp")),
+            frame: image(format!("{UI}shortcut\\shortcut_frame.bmp")),
+            switch: ["shortcut_1_bts", "shortcut_2_bts"].map(|name| image(format!("{UI}{name}.bmp"))),
+            minus: image(format!("{UI}shortcut\\btn_minus_normal.bmp")),
+            plus: image(format!("{UI}shortcut\\btn_plus_normal.bmp")),
+            grades: [1, 2, 3, 4].map(|grade| image(format!("{UI}grade_enchant\\grade_icon{grade}.bmp"))),
         }
     }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Hit {
-    Close,
-    Resize,
+    /// One row fewer, one more.
+    Minus,
+    Plus,
+    /// The bar switch (the second bar isn't there yet: it does nothing).
+    Switch,
     Slot(usize),
     Window,
 }
@@ -63,25 +78,37 @@ impl Default for Hotkeys {
     fn default() -> Self {
         let mut frame = Frame::new(DEFAULT_POSITION, WIDTH);
         frame.open = true;
-        Self { frame, keys: vec![None; ROWS * PER_ROW], rows: 1, first: 0 }
+        Self { frame, keys: vec![None; ROWS * PER_ROW], rows: DEFAULT_ROWS, first: 0 }
     }
 }
 
 impl Hotkeys {
     pub fn height(&self) -> f32 {
-        self.rows as f32 * ROW_HEIGHT
+        ROW_HEIGHT * self.rows as f32 + 10.0
     }
 
-    /// The slot (row by row) under the pointer.
+    /// Where the minus and plus buttons sit: by the last row.
+    fn step_buttons(&self) -> [[f32; 2]; 2] {
+        let bottom = ROW_HEIGHT * self.rows as f32;
+        [[277.0, bottom - 28.0], [277.0, bottom - 13.0]]
+    }
+
+    /// The slot (row by row) or button under the pointer.
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         let local = self.frame.local(cursor, self.height())?;
-        if contains(CLOSE, BUTTON_SIZE, local) {
-            return Some(Hit::Close);
+        let [minus, plus] = self.step_buttons();
+        if contains(minus, STEP_BUTTON, local) {
+            return Some(Hit::Minus);
         }
-        if contains([WIDTH - 14.0, self.height() - 14.0], [13.0, 13.0], local) {
-            return Some(Hit::Resize);
+        if contains(plus, STEP_BUTTON, local) {
+            return Some(Hit::Plus);
         }
-        Some((0..self.rows * PER_ROW).find(|&slot| contains(slot_corner(slot), SLOT, local)).map(|slot| Hit::Slot(self.key_index(slot))).unwrap_or(Hit::Window))
+        if contains(SWITCH, SWITCH_SIZE, local) {
+            return Some(Hit::Switch);
+        }
+        Some(
+            (0..self.rows * PER_ROW).find(|&slot| contains(hover_corner(slot), SLOT, local)).map(|slot| Hit::Slot(self.key_index(slot))).unwrap_or(Hit::Window),
+        )
     }
 
     /// Ctrl+F12: the next row of the four is the one drawn first.
@@ -97,9 +124,9 @@ impl Hotkeys {
 
     pub fn click(&mut self, hit: Hit) {
         match hit {
-            Hit::Close => self.frame.open = false,
-            Hit::Resize => self.rows = self.rows % ROWS + 1,
-            Hit::Slot(_) | Hit::Window => {}
+            Hit::Minus => self.rows = self.rows.saturating_sub(1).max(1),
+            Hit::Plus => self.rows = (self.rows + 1).min(ROWS),
+            Hit::Switch | Hit::Slot(_) | Hit::Window => {}
         }
     }
 
@@ -123,12 +150,14 @@ impl Hotkeys {
         }
         for row in 0..self.rows {
             let top = row as f32 * ROW_HEIGHT;
-            layer.sprites.push((&assets.background, self.frame.at([0.0, top]), assets.background.size));
+            layer.sprites.push((&assets.frame, self.frame.at([0.0, top]), assets.frame.size));
             let number = ((self.first + row) % ROWS + 1).to_string();
-            layer.texts.push((number, self.frame.at([ROW_NUMBER[0], top + ROW_NUMBER[1] - 4.0]), [0, 0, 0]));
+            layer.texts.push((number, self.frame.at([ROW_NUMBER[0], top + ROW_NUMBER[1]]), ROW_NUMBER_COLOR));
         }
-        layer.sprites.push((&assets.close, self.frame.at(CLOSE), assets.close.size));
-        layer.sprites.push((&assets.resize, self.frame.at([WIDTH - 14.0, self.height() - 14.0]), assets.resize.size));
+        layer.sprites.push((&assets.switch[0], self.frame.at(SWITCH), SWITCH_SIZE));
+        let [minus, plus] = self.step_buttons();
+        layer.sprites.push((&assets.minus, self.frame.at(minus), STEP_BUTTON));
+        layer.sprites.push((&assets.plus, self.frame.at(plus), STEP_BUTTON));
         for visible in 0..self.rows * PER_ROW {
             let key = self.keys.get(self.key_index(visible)).and_then(|key| *key);
             let corner = self.frame.at(slot_corner(visible));
@@ -155,6 +184,11 @@ impl Hotkeys {
             if let Some(Some(icon)) = icons.get(&inventory::icon_path(info, true)) {
                 layer.sprites.push((icon, corner, icon.size));
             }
+            // A graded item carries its grade's mark.
+            let grade = inventory.iter().find(|item| item.id == id).map_or(0, |item| item.grade);
+            if let Some(mark) = usize::from(grade).checked_sub(1).and_then(|index| assets.grades.get(index)) {
+                layer.sprites.push((mark, [corner[0], corner[1] + 12.0], mark.size));
+            }
             // How many are carried, bottom right.
             let amount: u32 = inventory.iter().filter(|item| item.id == id && item.worn == 0).map(|item| u32::from(item.amount)).sum();
             count_text(layer, font, corner, &amount.to_string());
@@ -166,6 +200,20 @@ impl Hotkeys {
 }
 
 impl Hotkeys {
+    /// The minus and plus buttons on screen (for the test driver): `hotkey_minus`, `hotkey_plus`.
+    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        if !self.frame.open {
+            return Vec::new();
+        }
+        let [minus, plus] = self.step_buttons();
+        [("hotkey_minus", minus), ("hotkey_plus", plus)]
+            .map(|(name, local)| {
+                let [x, y] = self.frame.at(local);
+                (name, [x, y, STEP_BUTTON[0], STEP_BUTTON[1]])
+            })
+            .to_vec()
+    }
+
     /// The shown slots on screen: slot number and box.
     pub fn slot_boxes(&self) -> Vec<(usize, [f32; 4])> {
         if !self.frame.open {
@@ -173,21 +221,66 @@ impl Hotkeys {
         }
         (0..self.rows * PER_ROW)
             .map(|visible| {
-                let corner = self.frame.at(slot_corner(visible));
+                let corner = self.frame.at(hover_corner(visible));
                 (self.key_index(visible), [corner[0], corner[1], SLOT[0], SLOT[1]])
             })
             .collect()
     }
 }
 
-/// A number at a slot's bottom right: black on a white shadow.
+/// Where an amount or level goes: its right edge at the slot's x + 27, its top at the slot's y + 17.
+// ponytail: the game's 11 px size isn't one of the font's; it's drawn in the usual one.
+fn count_place(corner: [f32; 2], width: f32) -> [f32; 2] {
+    [corner[0] + 27.0 - width, corner[1] + 17.0]
+}
+
+/// A number at a slot's bottom right: black, outlined in white on four sides.
 fn count_text(layer: &mut Layer<'_>, font: &Font, corner: [f32; 2], text: &str) {
-    let place = [corner[0] + SLOT[0] - 1.0 - font.width(text), corner[1] + 12.0];
-    layer.texts.push((text.to_owned(), [place[0] + 1.0, place[1] + 1.0], [255; 3]));
+    let place = count_place(corner, font.width(text));
+    for nudge in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+        layer.texts.push((text.to_owned(), [place[0] + nudge[0], place[1] + nudge[1]], [255; 3]));
+    }
     layer.texts.push((text.to_owned(), place, [0, 0, 0]));
 }
 
-/// A slot's top-left corner inside the bar.
+/// A slot's icon corner inside the bar.
 fn slot_corner(slot: usize) -> [f32; 2] {
     [FIRST_SLOT[0] + (slot % PER_ROW) as f32 * SLOT_STEP, (slot / PER_ROW) as f32 * ROW_HEIGHT + FIRST_SLOT[1]]
+}
+
+/// A slot's hover (and hit) box corner: a pixel under the icon.
+fn hover_corner(slot: usize) -> [f32; 2] {
+    let [x, y] = slot_corner(slot);
+    [x, y + HOVER_DROP]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lays_out_the_games_bar() {
+        // Slots: icons at (16 + 29c, 4 + 33r), hit boxes a pixel lower.
+        assert_eq!((slot_corner(0), slot_corner(8), slot_corner(9), slot_corner(20)), ([16.0, 4.0], [248.0, 4.0], [16.0, 37.0], [74.0, 70.0]));
+        assert_eq!(hover_corner(10), [45.0, 38.0]);
+        assert_eq!(count_place([16.0, 4.0], 7.0), [36.0, 21.0]);
+        let mut bar = Hotkeys::default();
+        bar.frame.open = true;
+        assert_eq!((bar.frame.position, bar.rows, bar.height()), ([230.0, 0.0], 2, 76.0));
+        let at = |local: [f32; 2]| bar.frame.at(local);
+        assert_eq!(bar.hit(at([20.0, 10.0])), Some(Hit::Slot(0)));
+        assert_eq!(bar.hit(at([20.0, 43.0])), Some(Hit::Slot(9)));
+        assert_eq!(bar.hit(at([5.0, 10.0])), Some(Hit::Switch));
+        // The minus and plus buttons by the last row: (277, 66 - 28) and (277, 66 - 13).
+        assert_eq!(bar.hit(at([280.0, 41.0])), Some(Hit::Minus));
+        assert_eq!(bar.hit(at([280.0, 56.0])), Some(Hit::Plus));
+        bar.click(Hit::Plus);
+        bar.click(Hit::Plus);
+        bar.click(Hit::Plus);
+        assert_eq!(bar.rows, 4, "four at most");
+        for _ in 0..5 {
+            bar.click(Hit::Minus);
+        }
+        assert_eq!(bar.rows, 1, "one at least");
+    }
 }

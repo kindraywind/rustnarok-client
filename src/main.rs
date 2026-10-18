@@ -97,6 +97,7 @@ mod refine;
 mod reform;
 mod render;
 mod roulette;
+mod screenshot;
 mod shop;
 mod shortcuts;
 mod skill_descript;
@@ -868,6 +869,8 @@ struct Game {
     new_items: bool,
     /// The level up buttons in the bottom corners.
     level_ups: level_up::LevelUps,
+    /// The server's overweight point, in percent of the weight limit.
+    overweight: u32,
     /// A new quest's icon (until the quest window opens), and hunts' progress banners.
     quest_icon: bool,
     banners: quest_notice::Banners,
@@ -4499,6 +4502,8 @@ struct App {
     keybinds: shortcuts::Shortcuts,
     /// Print Screen writes the next frame here and keeps running.
     print_screen: Option<std::path::PathBuf>,
+    /// The file a screenshot was just saved to, for its chat line.
+    shot_saved: Option<String>,
     cursor_look: cursor::Cursor,
     /// The client's loading pictures, and the loading screen while it's up.
     loading_images: Vec<String>,
@@ -7144,6 +7149,15 @@ impl App {
         }
     }
 
+    /// The next frame goes to ScreenShot/screen<server><NNN>.jpg in the folder the client runs in.
+    // ponytail: "next to the client" taken as the folder it runs in (where its data is), not the executable's.
+    fn request_screenshot(&mut self) {
+        let server = self.account.as_ref().and_then(|account| account.char_servers.get(self.char_server)).map(|server| server.name.clone()).unwrap_or_default();
+        let folder = std::path::Path::new(screenshot::FOLDER);
+        let _ = std::fs::create_dir_all(folder);
+        self.print_screen = Some(screenshot::next_path(folder, &server));
+    }
+
     /// The shortcut this key fires, if it has one. A repeated key-down does not.
     fn fire_shortcut(&mut self, event: &control::KeyPress) -> bool {
         let Scene::Game(game) = &self.scene else { return false };
@@ -7173,8 +7187,7 @@ impl App {
             return true;
         }
         if fired == shortcuts::Action::Screenshot {
-            let millis = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_millis());
-            self.print_screen = settings_path("screenshots").map(|dir| dir.join(format!("shot-{millis}.png")));
+            self.request_screenshot();
             return true;
         }
         if fired == shortcuts::Action::Minimap {
@@ -7334,7 +7347,25 @@ impl App {
     }
 
     fn key(&mut self, event: &control::KeyPress) {
-        if event.state != ElementState::Pressed {
+        // Print Screen on its release (Windows sends no press for it), Scroll Lock, and on Macs Cmd+Shift+S (they have
+        // no Print Screen; a ponytail choice): a screenshot.
+        let pressed = event.state == ElementState::Pressed && !event.repeat;
+        let shot = match &event.logical_key {
+            Key::Named(NamedKey::PrintScreen) => event.state == ElementState::Released,
+            Key::Named(NamedKey::ScrollLock) => pressed,
+            _ => {
+                cfg!(target_os = "macos")
+                    && pressed
+                    && self.modifiers.super_key()
+                    && self.modifiers.shift_key()
+                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyS)
+            }
+        };
+        if shot {
+            self.request_screenshot();
+            return;
+        }
+        if event.state != ElementState::Pressed || event.logical_key == Key::Named(NamedKey::PrintScreen) {
             return;
         }
         let key = &event.logical_key;
@@ -8119,6 +8150,7 @@ impl App {
                     pickup_popup: None,
                     new_items: false,
                     level_ups: level_up::LevelUps::default(),
+                    overweight: basic_info::OVERWEIGHT,
                     quest_icon: false,
                     banners: quest_notice::Banners::default(),
                     char_names: HashMap::new(),
@@ -8396,6 +8428,8 @@ impl App {
                     game.effects.play(gpu, grf, table, EF_WARPZONE2, effects::Target::Unit(Some(unit.id)), at, Instant::now());
                 }
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
+                actor.body_state = unit.body_state;
+                actor.health_state = unit.health_state;
                 actor.stop_at(unit.position.map(i32::from));
                 actor.direction = unit.direction;
                 actor.head_direction = unit.head_direction;
@@ -8426,6 +8460,8 @@ impl App {
             }
             MapEvent::UnitWalk { unit, to, .. } => {
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
+                actor.body_state = unit.body_state;
+                actor.health_state = unit.health_state;
                 let from = unit.position.map(i32::from);
                 actor.guild = unit.guild;
                 if actor.cell != from && !actor.moving() {
@@ -8433,6 +8469,14 @@ impl App {
                 }
                 if let Some(path) = world::find_path(&game.world.gat, actor.cell, to.map(i32::from)) {
                     actor.walk(path);
+                }
+                actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
+                // A walk into view is often the first packet. The falcon and warg come with it.
+                if unit.id == game.account_id {
+                    game.player.cloaked = actor.cloaked;
+                    game.player.sync_companions(unit.option, grf);
+                } else {
+                    actor.sync_companions(unit.option, grf);
                 }
                 game.want_emblem(unit.guild, unit.emblem);
                 game.monster_hp(&unit);
@@ -9163,6 +9207,7 @@ impl App {
                 let [before, after] = MVP_EXP.map(|id| self.messages.get(id).cloned().unwrap_or_default());
                 game.chat_line(format!("{before}{exp}{after}"), CHAT_ITEM);
             }
+            MapEvent::OverweightPercent(percent) => game.overweight = percent,
             MapEvent::MvpOverweight => game.chat_line(self.messages.get(MVP_OVERWEIGHT).cloned().unwrap_or_default(), CHAT_ERROR),
             MapEvent::HomunculusState { state: net::HOMUNCULUS_OWNED, id, .. } => game.homunculus_id = Some(id),
             MapEvent::HomunculusState { state: net::HOMUNCULUS_INTIMACY, value, .. } => {
@@ -10673,11 +10718,13 @@ impl App {
             MapEvent::Recovered { kind, amount } => {
                 game.damages.push(Damage { target: None, amount, start: Instant::now(), kind: DamageKind::Heal { sp: kind == net::STATUS_SP }, flinch: None });
             }
-            // Mounting, dismounting or an outfit puts a player in another body.
-            MapEvent::OptionChange { id, option } => {
+            // Mounting, dismounting or an outfit puts a player in another body. Body and health state colour it.
+            MapEvent::OptionChange { id, option, body, health } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor {
                     actor.cloaked = option & actor::UNSEEN_OPTIONS != 0;
+                    actor.body_state = body;
+                    actor.health_state = health;
                 }
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor
@@ -11083,6 +11130,10 @@ impl App {
 
     fn redraw_game(&mut self, event_loop: &ActiveEventLoop) {
         let (Some(gpu), Some(assets), Scene::Game(game)) = (&mut self.gpu, &self.assets, &mut self.scene) else { return };
+        // ponytail: the client's own line for a saved screenshot isn't in the data; a plain one.
+        if let Some(name) = self.shot_saved.take() {
+            game.chat_line(format!("Screenshot saved: {name}"), CHAT_ITEM);
+        }
         let (grf, items, messages, icons, cursor_look, pc_job_names) =
             (&self.grf, &self.items, &self.messages, &mut self.icons, &mut self.cursor_look, &self.pc_job_names);
         let (audio, sound) = (&mut self.audio, &self.sound);
@@ -11181,7 +11232,9 @@ impl App {
                 cart.frame_at(gpu, usize::from(seen_direction(direction, yaw)), 0, cart_timing(action, timing)),
             ));
         }
+        let player_tint = actor::status_tint(game.player.body_state, game.player.health_state);
         if let Some(sprites) = &mut game.player.sprites {
+            sprites.set_tint(player_tint);
             frames.push((Owner::Player, player_feet, sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing)));
         }
         if !game.player.cloaked {
@@ -11211,7 +11264,11 @@ impl App {
             _ => Vec::new(),
         };
         let preview_placements = match (preview_feet, &mut game.player.sprites) {
-            (Some(_), Some(sprites)) => sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
+            (Some(_), Some(sprites)) => {
+                // The equipment figure keeps the sprite's own colours.
+                sprites.set_tint(None);
+                sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0))
+            }
             _ => Vec::new(),
         };
         let stylist_placements = game.stylist.as_mut().map(|window| window.pose(gpu)).unwrap_or_default();
@@ -11241,7 +11298,9 @@ impl App {
                     cart.frame_at(gpu, usize::from(seen_direction(direction, yaw)), 0, cart_timing(action, timing)),
                 ));
             }
+            let tint = crate::actor::status_tint(actor.body_state, actor.health_state);
             if let Some(sprites) = &mut actor.sprites {
+                sprites.set_tint(tint);
                 frames.push((Owner::Unit(id), feet, sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing)));
             }
             if !actor.cloaked {
@@ -11923,6 +11982,7 @@ impl App {
         if game.quest_window.frame.open {
             game.quest_icon = false;
         }
+        game.basic_info.fourth = basic_info::fourth_job(game.me.job);
         game.banners.current(control::now());
         game.level_ups
             .seen(game.status_window.frame.open && !game.status_window.frame.minimized, game.skill_window.frame.open && !game.skill_window.frame.minimized);
@@ -12085,6 +12145,7 @@ impl App {
                         new_items: game.new_items,
                         new_level: game.level_ups.base,
                         new_job_level: game.level_ups.job,
+                        overweight: game.overweight,
                     };
                     game.basic_info.draw(&mut layer, &assets.chrome, &assets.basic_info, font, messages, &info, pointer.0);
                 }
@@ -12630,7 +12691,10 @@ impl App {
         };
         if let Some(path) = self.print_screen.take() {
             let _ = path.parent().map(std::fs::create_dir_all);
-            let _ = gpu.snapshot(Some(&frame), &sprites).save(&path);
+            let shot = image::DynamicImage::ImageRgba8(gpu.snapshot(Some(&frame), &sprites)).to_rgb8();
+            if shot.save(&path).is_ok() {
+                self.shot_saved = path.file_name().map(|name| name.to_string_lossy().into_owned());
+            }
         }
         let shot_delay = std::env::var("RUSTNAROK_CLIENT_SHOT_DELAY").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(2.0);
         match &self.screenshot {
@@ -13144,6 +13208,7 @@ fn main() {
         shortcuts,
         keybinds,
         print_screen: None,
+        shot_saved: None,
         cursor_look,
         loading_images,
         loading: None,

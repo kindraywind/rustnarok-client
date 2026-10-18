@@ -1,0 +1,125 @@
+{
+  "about": "Basic info window (issue #210): a Novice's window is the game's 134-pixel one (rows, bars and plain text as it draws them) and its mini view the name, a levels line and an HP/SP line; a 4th job (Dragon Knight) keeps the 150-pixel window. Ends a Novice.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "basic-info-novice",
+      "crop": [
+        0,
+        0,
+        230,
+        150
+      ],
+      "threshold": 5
+    },
+    {
+      "click": [
+        211,
+        8
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "basic-info-novice-mini",
+      "crop": [
+        0,
+        0,
+        230,
+        80
+      ],
+      "threshold": 5
+    },
+    {
+      "click": [
+        211,
+        8
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@job 4252"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "basic-info-fourth",
+      "crop": [
+        0,
+        0,
+        230,
+        170
+      ],
+      "threshold": 5
+    },
+    {
+      "click": [
+        211,
+        8
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "basic-info-fourth-mini",
+      "crop": [
+        0,
+        0,
+        230,
+        90
+      ],
+      "threshold": 5
+    },
+    {
+      "click": [
+        211,
+        8
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@job 0"
+    },
+    {
+      "wait": 800
+    }
+  ]
+}
