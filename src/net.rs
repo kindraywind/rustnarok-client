@@ -3303,7 +3303,7 @@ pub struct InventoryItem {
     pub expires: u32,
     /// Where it goes in the Swap Equipment set; 0 when it isn't in it.
     pub switch: u32,
-    /// In the favourites (rathena's flag; the client shows them under the etc tab).
+    /// In the favourites (rathena's flag; listed on the favourites tab).
     pub favorite: bool,
 }
 

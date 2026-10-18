@@ -1,0 +1,10 @@
+{
+  "about": "A warp portal is only its rings: no NPC sprite standing on it. Prontera's south exit (156, 22) seen from 156, 30.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 30"}, {"settle": 2500},
+    {"move": [1000, 300]},
+    {"shot": "warp-portal", "crop": [330, 560, 360, 208], "threshold": 5}
+  ]
+}

@@ -73,6 +73,8 @@ pub enum WindowId {
     PickList,
     Trade,
     ItemInfo,
+    /// A card's picture.
+    CardPicture,
     ChatRoom,
     RoomMake,
     EmotionList,
@@ -90,7 +92,6 @@ pub enum WindowId {
     WorldMap,
     Quests,
     Menu,
-    Targeting,
     Capturing,
     /// Questions. Esc answers them No before it would close a window (rule 3); they are still listed so `windows` shows them.
     Amount,
@@ -169,6 +170,7 @@ impl WindowId {
             Self::PickList => "PickList",
             Self::Trade => "Trade",
             Self::ItemInfo => "ItemInfo",
+            Self::CardPicture => "CardPicture",
             Self::ChatRoom => "ChatRoom",
             Self::RoomMake => "RoomMake",
             Self::EmotionList => "EmotionList",
@@ -186,7 +188,6 @@ impl WindowId {
             Self::WorldMap => "WorldMap",
             Self::Quests => "Quests",
             Self::Menu => "Menu",
-            Self::Targeting => "Targeting",
             Self::Capturing => "Capturing",
             Self::Amount => "Amount",
             Self::SaveAsked => "SaveAsked",

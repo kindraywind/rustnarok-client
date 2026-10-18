@@ -612,6 +612,10 @@ const SKILL_DELAY: usize = 219;
 /// The Talkie Box (a Hunter's trap holding a message), and the box asking for its message.
 // ponytail: 436 "Please type a message for the Talkie Box"; 435 may be the official one.
 const TALKIE_BOX: u16 = 125;
+/// The aim balloons' text.
+const AIM_TEXT: [u8; 3] = [50, 255, 50];
+/// The one skill that takes a homunculus as its target.
+const POTION_PITCHER: u16 = 231;
 const TALKIE_ASKS: usize = 436;
 /// Equipment: a break ("[%s]'s %s has been damaged.", Weapon, Armor), the item's damaged line, and binding (the
 /// question before, the line after).
@@ -727,6 +731,26 @@ fn vanish_effect(reason: u8, option: u32) -> Option<u32> {
     }
 }
 
+/// Over a monster: the attack cursor when a click would attack it (not with Shift held, unless /noshift is on).
+fn monster_cursor(shift: bool, no_shift: bool) -> cursor::Kind {
+    if shift && !no_shift { cursor::Kind::Default } else { cursor::Kind::Attack }
+}
+
+/// The turning cursor only while the right button turns the camera: not when Shift tilts it, nor with Alt.
+fn turning_cursor(dragging: bool, shift: bool, alt: bool) -> bool {
+    dragging && !shift && !alt
+}
+
+/// A warp portal's pick box around its feet, in sprite pixels: 50/640 of the screen's width and 50/730 of its height
+/// each way at the default camera, so it grows and shrinks with the zoom like a sprite.
+// ponytail: worked out for the 1024-wide screen; a wider canvas keeps the same box.
+const WARP_PICK: [f32; 2] = [59.7, 39.3];
+
+/// A warp portal's pick box on screen (`0..1`, y down: left, top, right, bottom).
+fn warp_pick_rect(view: &world::View, feet: world::Vector) -> Option<[f32; 4]> {
+    view.sprite_rect(feet, [-WARP_PICK[0], -WARP_PICK[1]], WARP_PICK)
+}
+
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
 const WARP_JOB: u16 = 45;
 
@@ -820,6 +844,8 @@ struct Game {
     last_walk_try: Option<Instant>,
     /// A walk asked for during the player's own swing, sent when the swing ends.
     walk_after_swing: Option<[i32; 2]>,
+    /// Skills used at a level picked (the rest go at the learned level when aimed).
+    separate_levels: std::collections::HashSet<u16>,
     press_mark: Option<(Instant, [f32; 2], bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
@@ -914,6 +940,8 @@ struct Game {
     /// The item description window, and how many lines its text wraps to.
     item_window: Option<iteminfo::ItemWindow>,
     item_lines: usize,
+    /// A card's picture, opened from its info.
+    card_view: Option<iteminfo::CardView>,
     /// Whispers sent and not yet answered: to whom, and what.
     whispered: VecDeque<(String, String)>,
     /// Names whose whispers we asked to block or allow, not yet answered (the answer doesn't name them).
@@ -959,6 +987,8 @@ struct Game {
     /// The party, its window, and an invitation waiting for an answer (party ID and name).
     party: Option<party::Party>,
     party_window: party::PartyWindow,
+    /// Members dragged out of the party window: a small HP window each, until it's closed, they leave, or logout.
+    member_windows: party::MemberWindows,
     party_invite: Option<(u32, String)>,
     /// The partner's name, as the last I Miss You told it (while the player has the ring's skill).
     partner: Option<String>,
@@ -2033,6 +2063,17 @@ impl Game {
         aim_use(ground, unit, if ground { self.ground_cell(cursor) } else { None })
     }
 
+    /// A party member's small window (or a row of the compact list) under the pointer, for aiming a skill.
+    /// The close button is left out: that still closes the window.
+    fn party_member_at(&self, cursor: [f32; 2]) -> Option<u32> {
+        match self.member_windows.hit(cursor) {
+            Some((account, party::MemberHit::Body)) => Some(account),
+            Some(_) => None,
+            None if self.party_window.compact => party::compact_hit(cursor, self.party.as_ref()),
+            None => None,
+        }
+    }
+
     /// Talks to an NPC, turned to face it; only standing still or sitting (walking or attacking, nothing).
     /// rathena answers when it's too far.
     fn talk_to(&mut self, id: u32) {
@@ -2238,29 +2279,36 @@ impl Game {
             || self.pick.as_ref().is_some_and(|(list, _)| list.button_boxes().into_iter().any(|(_, area)| inside(area)))
     }
 
-    /// Whether the skill being aimed can be used on what's under the pointer: the ground for a ground skill (where it
-    /// can be walked), a unit of the kind it's for.
-    fn aim_valid(&self, cursor: [f32; 2], players_first: bool) -> bool {
+    /// Whether the aim cursor shows "valid" here: over a unit a press would take; never for a ground skill.
+    fn aim_valid(&self, cursor: [f32; 2], shift: bool) -> bool {
+        matches!(self.aim_target(cursor, self.players_first(shift)), Some(SkillTarget::Unit(unit)) if self.aim_takes_unit(unit, shift))
+    }
+
+    /// Whether a press on `unit` takes the skill being aimed (`aim_takes`). A homunculus takes only Potion Pitcher;
+    /// NPCs and the like none.
+    fn aim_takes_unit(&self, unit: u32, shift: bool) -> bool {
         let Some((id, _)) = self.targeting else { return false };
-        let flags = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).map_or(0, |skill| skill.kind);
-        match self.aim_target(cursor, players_first) {
-            Some(SkillTarget::Cell(cell)) => self.world.gat.walkable(cell),
-            Some(SkillTarget::Unit(unit)) if unit == self.account_id => aim_fits(flags, AimAt::Me),
-            Some(SkillTarget::Unit(unit)) => match self.units.get(&unit).map(|actor| actor.kind) {
-                Some(MONSTER) => aim_fits(flags, AimAt::Monster),
-                Some(PLAYER) => aim_fits(flags, AimAt::Player),
-                _ => false,
-            },
-            None => false,
-        }
+        let support = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).is_some_and(|skill| skill.kind == net::Skill::FRIEND);
+        let pvp = self.side().flags & net::MAP_NO_LOCK_ON != 0;
+        let at = match self.units.get(&unit).map(|actor| actor.kind) {
+            _ if unit == self.account_id => AimAt::Me,
+            Some(MONSTER) => AimAt::Monster,
+            Some(HOMUNCULUS) => return id == POTION_PITCHER,
+            Some(NPC) | None => return false,
+            Some(_) => AimAt::Player,
+        };
+        aim_takes(at, support, shift, self.no_shift, pvp)
     }
 
     fn skill_points(&self) -> i64 {
         self.status.get(&net::STATUS_SKILL_POINT).copied().unwrap_or(0)
     }
 
-    /// Starts using a skill: skills on oneself go off at once, the others wait for a target.
+    /// Starts using a skill, ending any aim first: by its exact type a self skill goes off at once, an enemy, ground or
+    /// support skill is aimed, anything else (passives, traps, mixed types) does nothing. A level above the learned one
+    /// does nothing; an aimed skill without a level to pick goes at the learned level.
     fn use_skill(&mut self, id: u16, level: u16) {
+        self.targeting = None;
         // ponytail: a blocked skill says so and sends nothing (the server drops it without a word unless @showdelay is
         // on); whether the real client asks the server anyway isn't known.
         if self.cooldowns.left(id, control::now()).is_some() {
@@ -2272,11 +2320,18 @@ impl Game {
         if self.store_open() {
             return;
         }
-        let level = level.clamp(1, skill.level.max(1));
-        if skill.kind & net::Skill::SELF != 0 {
-            let _ = self.session.use_skill(id, level, self.account_id);
-        } else if skill.kind & (net::Skill::ENEMY | net::Skill::GROUND | net::Skill::FRIEND) != 0 {
-            self.targeting = Some((id, level));
+        if level == 0 || level > skill.level {
+            return;
+        }
+        match skill.kind {
+            net::Skill::SELF => {
+                let _ = self.session.use_skill(id, level, self.account_id);
+            }
+            net::Skill::ENEMY | net::Skill::GROUND | net::Skill::FRIEND => {
+                self.targeting = Some((id, if self.separate_levels.contains(&id) { level } else { skill.level }));
+            }
+            // ponytail: trap skills (32) aim at ground skill units in the game; not made yet.
+            _ => {}
         }
     }
 
@@ -2489,7 +2544,7 @@ impl Game {
     /// An incoming whisper: always a main-chat line, a 1:1 window when that sender's box is on, and one away reply.
     fn receive_whisper(&mut self, from: String, text: String) {
         let line = format!("(From {from}) : {text}");
-        self.chat_line(line.clone(), WHISPER_COLOR);
+        self.chat_line_kind(line.clone(), WHISPER_COLOR, chat::Kind::Whisper);
         self.chat.note_recent(&from);
         let friend = self.friends.iter().any(|friend| friend.name.eq_ignore_ascii_case(&from));
         if self.whisper_open.opens(friend) {
@@ -2503,7 +2558,7 @@ impl Game {
             self.chat.note_recent(&from);
             self.talks.push_line(&from, format!("(To {from}) : {reply}"));
             // ponytail: a plain line; the client's wording for an automatic answer isn't identified.
-            self.chat_line(format!("Away: answered {from}."), WHISPER_COLOR);
+            self.chat_line_kind(format!("Away: answered {from}."), WHISPER_COLOR, chat::Kind::Whisper);
         }
     }
 
@@ -2831,6 +2886,7 @@ impl Game {
         self.graphics_window = None;
         self.shortcuts_window = None;
         self.item_window = None;
+        self.card_view = None;
         self.monster_window = None;
         self.ranking = None;
         self.dressroom = None;
@@ -2900,12 +2956,15 @@ impl Game {
             || self.block_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.away_prompt.as_ref().is_some_and(|prompt| prompt.hit(cursor).is_some())
             || self.chat.on_list(cursor)
+            || self.member_windows.hit(cursor).is_some()
+            || self.party_window.compact && party::compact_hit(cursor, self.party.as_ref()).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
             || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
             || self.cashshop_buy_asked
             || self.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some())
             || self.item_window.as_ref().is_some_and(|window| window.hit(cursor, items).is_some())
             || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
             || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
@@ -2927,6 +2986,7 @@ impl Game {
             || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.stylist.as_ref().is_some_and(|window| window.covers(cursor))
             || self.chat.blocks(cursor)
+            || self.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).is_some()
             || self.link_at(cursor).is_some()
             || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -3360,6 +3420,7 @@ impl Game {
         push(CashShop, self.cashshop.is_some());
         push(PickList, self.pick.is_some());
         push(Trade, self.trade.is_some());
+        push(CardPicture, self.card_view.is_some());
         push(ItemInfo, self.item_window.is_some());
         push(ChatRoom, self.room.is_some());
         push(RoomMake, self.room_make.is_some());
@@ -3378,7 +3439,6 @@ impl Game {
         push(WorldMap, self.world_map.is_some());
         push(Quests, self.quest_window.frame.open);
         push(Menu, self.menu.is_some());
-        push(Targeting, self.targeting.is_some());
         push(Capturing, self.capturing);
         push(Amount, self.amount.is_some());
         push(SaveAsked, self.save_asked);
@@ -3659,7 +3719,11 @@ impl Game {
                 let _ = self.session.cancel_trade();
                 self.trade = None;
             }
-            ItemInfo => self.item_window = None,
+            ItemInfo => {
+                self.item_window = None;
+                self.card_view = None;
+            }
+            CardPicture => self.card_view = None,
             ChatRoom => {
                 let _ = self.session.leave_chat_room();
             }
@@ -3700,7 +3764,6 @@ impl Game {
             WorldMap => self.world_map = None,
             Quests => self.quest_window.frame.open = false,
             Menu => self.menu = None,
-            Targeting => self.targeting = None,
             Capturing => self.capturing = false,
             Amount => self.answer_amount(false, &[]),
             SaveAsked => self.save_asked = false,
@@ -4097,6 +4160,11 @@ impl Game {
         self.chat.push(text, color);
     }
 
+    /// A chat line of a kind its colour doesn't tell (whispers share the broadcasts' yellow).
+    fn chat_line_kind(&mut self, text: String, color: [u8; 3], kind: chat::Kind) {
+        self.chat.push_kind(text, color, kind);
+    }
+
     /// Starts the attacker's swing now; the number and the flinch come when the hit lands.
     fn act(&mut self, act: net::Act, tables: &LookTables) {
         // Sitting down and standing up.
@@ -4407,7 +4475,6 @@ struct Assets {
     combo_fill: Texture,
     speech_fill: Texture,
     speech_border: Texture,
-    target_fill: Texture,
     clocks: [Vec<Texture>; 2],
     connect: ButtonImages,
     ok: ButtonImages,
@@ -4528,7 +4595,6 @@ impl Assets {
             combo_fill: gpu.solid([0xFF, 0xA0, 0x00, 0xFF]),
             speech_fill: gpu.solid([0, 0, 0, 102]),
             speech_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
-            target_fill: gpu.solid([0, 0, 0, 128]),
             clocks: [[255, 255, 255, 166], [255, 150, 50, 166]]
                 .map(|color| (0..=CLOCK_STEPS).map(|step| gpu.texture(&clock(step as f32 / CLOCK_STEPS as f32, color), false)).collect()),
             connect: ["normal", "over", "press"].map(|state| image(format!("{login}bt_start_{state}.bmp"))),
@@ -4781,15 +4847,15 @@ enum AimAt {
     Player,
 }
 
-/// Whether a skill (its target flags, `net::Skill::*`) can be used on that: enemy skills on monsters (and players,
-/// where the map lets them), friend skills on players and oneself, self skills on oneself.
-// ponytail: an enemy skill counts as fitting any player; whether the map allows the hit isn't checked here.
-fn aim_fits(flags: u32, at: AimAt) -> bool {
-    let has = |flag: u32| flags & flag != 0;
+/// Whether a press while aiming takes the unit: a monster with Shift up and another player with Shift down, the other
+/// way round for a support skill (standing in for the game's `IsPlayerSkill`). `/noshift` drops the Shift rule and a
+/// PvP map lets players in. Yourself only for a support skill, by the players' rule.
+fn aim_takes(at: AimAt, support: bool, shift: bool, no_shift: bool, pvp: bool) -> bool {
+    let players = no_shift || shift != support;
     match at {
-        AimAt::Me => has(net::Skill::SELF) || has(net::Skill::FRIEND),
-        AimAt::Monster => has(net::Skill::ENEMY),
-        AimAt::Player => has(net::Skill::FRIEND) || has(net::Skill::ENEMY),
+        AimAt::Monster => no_shift || shift == support,
+        AimAt::Player => players || pvp,
+        AimAt::Me => support && players,
     }
 }
 
@@ -4862,6 +4928,28 @@ fn inventory_right(alt: bool, shift: bool, ctrl: bool) -> Option<InventoryRight>
     } else {
         None
     }
+}
+
+/// With compare on, the worn items that share a slot with the inventory item under the pointer.
+fn compared_windows(inventory: &Inventory, items: &HashMap<u32, ItemInfo>, messages: &[String], cursor: [f32; 2]) -> Vec<iteminfo::ItemWindow> {
+    if !inventory.compare || !inventory.frame.open {
+        return Vec::new();
+    }
+    let Some((index, area)) = inventory.item_boxes().into_iter().find(|(_, area)| contains([area[0], area[1]], [area[2], area[3]], cursor)) else {
+        return Vec::new();
+    };
+    let Some(hovered) = inventory.get(index) else { return Vec::new() };
+    inventory::compared_worn(hovered, &inventory.items)
+        .into_iter()
+        .enumerate()
+        .map(|(place, item)| {
+            let damaged = item.broken.then(|| messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
+            let mut window = iteminfo::ItemWindow::new(iteminfo::Shown::of(item, damaged));
+            window.worn = true;
+            window.place_beside(area, place, items);
+            window
+        })
+        .collect()
 }
 
 /// Where Alt + right click sends a stack: the first that's open of the storage, a trade, the cart.
@@ -5205,6 +5293,8 @@ struct App {
     battlegrounds: Vec<lua::Battleground>,
     /// The cards' words in item names.
     card_names: inventory::CardNames,
+    /// Card illustration names (`num2cardillustnametable.txt`).
+    card_pictures: iteminfo::CardPictures,
     /// What each reform item can turn into, from the client's reform list.
     reforms: HashMap<u32, Vec<lua::ReformInfo>>,
     /// Enchant tables from the client's Lua, by table number.
@@ -5509,7 +5599,7 @@ impl App {
                 None if game.mail.typing() => game.mail.type_text(text),
                 None if game.room.is_some() => game.room.as_mut().unwrap().input.push_str(text),
                 None if !game.chat_mode.chat_line_open() => {}
-                None => game.chat.typing().extend(typed),
+                None => game.chat.type_text(&typed.collect::<String>()),
             },
             Scene::CharMake(make, _) => make.type_text(text),
             Scene::Prompt { input, then: Then::ConfirmName(_), .. } => {
@@ -5728,7 +5818,15 @@ impl App {
             // A link in the chat log or the NPC window: an item's information, or a navigation to the place.
             Scene::Game(game) if game.link_at(cursor).is_some() => match game.link_at(cursor).cloned().unwrap() {
                 links::Target::Item(item) => {
-                    let shown = iteminfo::Shown { item: item.id, identified: true, refine: item.refine, cards: item.cards, damaged: None, expires: 0 };
+                    let shown = iteminfo::Shown {
+                        item: item.id,
+                        identified: true,
+                        refine: item.refine,
+                        cards: item.cards,
+                        damaged: None,
+                        expires: 0,
+                        card: self.card_pictures.name(item.id).is_some(),
+                    };
                     let position = game.item_window.as_ref().map(|window| window.position);
                     let mut window = iteminfo::ItemWindow::new(shown);
                     if let Some(position) = position {
@@ -5939,10 +6037,44 @@ impl App {
                     game.signs.remove(&game.account_id);
                 }
             }
-            // The item description window: its close button.
+            // A card's picture: its close button. A click anywhere on it stays there.
+            Scene::Game(game) if game.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some()) => {
+                if game.card_view.as_ref().unwrap().hit(cursor) == Some(iteminfo::ViewHit::Close) {
+                    game.card_view = None;
+                }
+            }
+            // The item description window: its close button, a card's picture, or a card in a slot.
             Scene::Game(game) if game.item_window.as_ref().is_some_and(|window| window.hit(cursor, &self.items).is_some()) => {
-                if game.item_window.as_ref().unwrap().hit(cursor, &self.items) == Some(iteminfo::Hit::Close) {
-                    game.item_window = None;
+                match game.item_window.as_ref().unwrap().hit(cursor, &self.items) {
+                    Some(iteminfo::Hit::Close) => {
+                        game.item_window = None;
+                        game.card_view = None;
+                    }
+                    Some(iteminfo::Hit::View) => {
+                        let item = game.item_window.as_ref().unwrap().shown.item;
+                        if let Some(name) = self.card_pictures.name(item) {
+                            game.card_view = Some(iteminfo::CardView::new(iteminfo::cardbmp_path(name)));
+                            escape::touch(&mut game.esc_order, escape::WindowId::CardPicture);
+                        }
+                    }
+                    Some(iteminfo::Hit::Card(id)) => {
+                        let position = game.item_window.as_ref().map(|window| offset(window.position, [20.0, 20.0]));
+                        let mut window = iteminfo::ItemWindow::new(iteminfo::Shown {
+                            item: id,
+                            identified: true,
+                            refine: 0,
+                            cards: [0; 4],
+                            damaged: None,
+                            expires: 0,
+                            card: true,
+                        });
+                        if let Some(position) = position {
+                            window.position = position;
+                        }
+                        game.item_window = Some(window);
+                        game.card_view = None;
+                    }
+                    _ => {}
                 }
             }
             // The right-click menu takes the next click, wherever it lands.
@@ -6627,6 +6759,14 @@ impl App {
                     None => {}
                 }
             }
+            // A small party window: its close button removes it. A click on the body was a drag (handled on press).
+            Scene::Game(game)
+                if game.member_windows.hit(cursor).is_some() || game.party_window.compact && party::compact_hit(cursor, game.party.as_ref()).is_some() =>
+            {
+                if let Some((account, party::MemberHit::Close)) = game.member_windows.hit(cursor) {
+                    game.member_windows.close(account);
+                }
+            }
             Scene::Game(game) if game.window_at(cursor).is_some() => {
                 let id = game.window_at(cursor).unwrap();
                 game.raise(id);
@@ -6634,7 +6774,9 @@ impl App {
                     Panel::Hotkeys => {
                         let hit = game.hotkeys.hit(cursor).unwrap();
                         game.hotkeys.click(hit);
-                        if let hotkeys::Hit::Slot(slot) = hit {
+                        if let hotkeys::Hit::Slot(slot) = hit
+                            && game.hotkeys.clicks.double(slot as u16)
+                        {
                             game.press_hotkey(slot);
                         }
                     }
@@ -6727,7 +6869,7 @@ impl App {
                             && let Some(item) = game.inventory.get(index)
                         {
                             let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
-                            game.chat.typing().push_str(&item_link(item.id, &name));
+                            game.chat.type_whole(&item_link(item.id, &name));
                         } else if let Some(index) = game.inventory.click(hit) {
                             game.use_item(index);
                         }
@@ -6874,6 +7016,7 @@ impl App {
                             }
                         }
                         Some(party::Hit::Button(party::Button::FriendSetup)) => game.open_friend_setup(),
+                        Some(party::Hit::LastRow) => game.party_window.compact = !game.party_window.compact,
                         _ => {}
                     },
                     Panel::Storage => {
@@ -6900,6 +7043,15 @@ impl App {
                             None => {}
                         }
                     }
+                }
+            }
+            // The chat tab settings: a kind of line on or off for the tab.
+            Scene::Game(game) if game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).is_some() => {
+                match game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).unwrap() {
+                    chat::SettingsHit::Title(TitleHit::Close) => game.chat.settings = None,
+                    chat::SettingsHit::Title(title) => game.chat.settings.as_mut().unwrap().frame.click_title(title),
+                    chat::SettingsHit::Kind(kind) => game.chat.toggle_kind(kind),
+                    chat::SettingsHit::Window => {}
                 }
             }
             Scene::Game(game) if game.chat.on_list(cursor) || game.chat.blocks(cursor) => {
@@ -6984,6 +7136,7 @@ impl App {
             }
             let (inventory_height, equipment_height, info_height) = (game.inventory.height(), game.equipment.height(), game.basic_info.height());
             game.basic_info.frame.drag_to(self.cursor, info_height);
+            game.chat.drag_to(self.cursor);
             let hotkeys_height = game.hotkeys.height();
             game.hotkeys.frame.drag_to(self.cursor, hotkeys_height);
             game.inventory.frame.drag_to(self.cursor, inventory_height);
@@ -6998,6 +7151,7 @@ impl App {
             }
             let party_height = game.party_window.height(game.party.as_ref(), &game.friends);
             game.party_window.frame.drag_to(self.cursor, party_height);
+            game.member_windows.drag_to(self.cursor);
             let status_height = game.status_height;
             game.status_window.frame.drag_to(self.cursor, status_height);
             let guild_height = game.guild_window.height();
@@ -7020,6 +7174,9 @@ impl App {
             if let Some(list) = &mut game.block_list {
                 let height = list.height();
                 list.frame.drag_to(self.cursor, height);
+            }
+            if let Some(view) = &mut game.card_view {
+                view.drag_to(self.cursor);
             }
             if let Some(window) = &mut game.item_window {
                 window.drag_to(self.cursor);
@@ -7326,8 +7483,7 @@ impl App {
             };
             if let Some(item) = described {
                 let damaged = item.broken.then(|| self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
-                let shown =
-                    iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires };
+                let shown = iteminfo::Shown::of(&item, damaged);
                 let position = game.item_window.as_ref().map(|window| window.position);
                 let mut window = iteminfo::ItemWindow::new(shown);
                 if let Some(position) = position {
@@ -7369,6 +7525,13 @@ impl App {
             let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_reform = game.reform.as_ref().is_some_and(|window| window.hit(self.cursor, &game.inventory.items).is_some());
             match game.window_at(self.cursor) {
+                // Aiming, the wheel picks the level (up raises it), wherever the pointer is.
+                _ if game.targeting.is_some() => {
+                    let (id, level) = game.targeting.unwrap();
+                    let separate = self.skill_info.get(&id).is_some_and(|info| info.separate_level);
+                    let learned = game.skills.iter().find(|skill| skill.id == id).map_or(level, |skill| skill.level);
+                    game.targeting = Some((id, aim_level(level, learned, rows, separate)));
+                }
                 _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
                 _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
                 _ if game.enchant.as_ref().is_some_and(|window| window.hit(self.cursor).is_some()) => {
@@ -7386,6 +7549,7 @@ impl App {
                     let inv = &game.inventory.items;
                     game.buying_setup.as_mut().unwrap().scroll_by(rows, inv);
                 }
+                _ if game.card_view.as_ref().is_some_and(|view| view.hit(self.cursor).is_some()) => {}
                 _ if on_item => {
                     let lines = game.item_lines;
                     game.item_window.as_mut().unwrap().scroll_by(rows, lines);
@@ -7410,13 +7574,6 @@ impl App {
                 }
                 Some(_) => {}
                 None if game.chat.contains(self.cursor) => game.chat.scroll_by(rows),
-                // Aiming, the wheel picks the level (up raises it) instead of zooming.
-                None if game.targeting.is_some() => {
-                    let (id, level) = game.targeting.unwrap();
-                    let separate = self.skill_info.get(&id).is_some_and(|info| info.separate_level);
-                    let learned = game.skills.iter().find(|skill| skill.id == id).map_or(level, |skill| skill.level);
-                    game.targeting = Some((id, aim_level(level, learned, rows, separate)));
-                }
                 None => game.camera_goal.wheel(rows, Instant::now(), self.modifiers.control_key(), self.modifiers.shift_key()),
             }
         }
@@ -7534,8 +7691,12 @@ impl App {
                         }
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
-                    // Let go over the world: dropped at the player's feet, asking how many of a stack.
-                    (Some((Dragged::Item(index), _, true)), None) if !game.on_ui(self.cursor, &self.items, message_size) && !game.store_open() => {
+                    // Let go over the world: dropped at the player's feet, asking how many of a stack. The drop lock holds it.
+                    (Some((Dragged::Item(index), _, true)), None)
+                        if inventory::may_ground_drop(game.inventory.lock_drop)
+                            && !game.on_ui(self.cursor, &self.items, message_size)
+                            && !game.store_open() =>
+                    {
                         game.drop_on_ground(index, &self.messages)
                     }
                     // Onto the equipment window, wherever: worn. Off it onto the inventory: taken off. Not while trading.
@@ -7562,8 +7723,10 @@ impl App {
                     }
                     _ => {}
                 }
-                let trade_moved = game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
+                let trade_moved = game.chat.drop_drag()
+                    | game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
                     | game.room.as_mut().is_some_and(|room| room.frame.drop_drag())
+                    | game.card_view.as_mut().is_some_and(|view| view.drop_drag())
                     | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
                     | game.mail.drop_drag()
                     | game.quest_window.frame.drop_drag()
@@ -7583,9 +7746,12 @@ impl App {
                 }
                 let option_windows = game.graphics_window.as_mut().is_some_and(options::GraphicsWindow::drop_drag)
                     | game.shortcuts_window.as_mut().is_some_and(options::ShortcutsWindow::drop_drag);
+                let member_held =
+                    game.member_windows.release(game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends, game.account_id).is_none(), self.cursor);
                 let windows = trade_moved
                     | slid
                     | option_windows
+                    | member_held
                     | game.party_window.frame.drop_drag()
                     | game.status_window.frame.drop_drag()
                     | game.guild_window.frame.drop_drag()
@@ -7645,18 +7811,37 @@ impl App {
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
             && game.targeting.is_some()
         {
+            // ponytail: a click on the member's window casts on their account id (a player's unit id). Range is the
+            // same as aiming at them in the world; the close button still closes.
+            if let Some(account) = game.party_member_at(cursor) {
+                game.aim_skill(SkillTarget::Unit(account));
+                return;
+            }
             let on_ui = game.on_ui(cursor, &self.items, assets.message.size);
-            match (on_ui, game.aim_target(cursor, game.players_first(self.modifiers.shift_key()))) {
-                (false, Some(target)) => {
-                    game.aim_skill(target);
-                    return;
-                }
-                (on_ui, _) => {
-                    game.targeting = None;
-                    if !on_ui {
-                        return;
+            let shift = self.modifiers.shift_key();
+            if on_ui {
+                game.targeting = None;
+            } else {
+                // An NPC is talked to; a unit the press doesn't take, the ground under a unit skill, an item or a warp:
+                // the aim just ends. Over 90 % weight a unit skill is refused.
+                let weight = |id: u16| game.status.get(&id).copied().unwrap_or(0);
+                let heavy = attack_refused(weight(net::STATUS_WEIGHT), weight(net::STATUS_MAX_WEIGHT), false);
+                match game.aim_target(cursor, game.players_first(shift)) {
+                    Some(SkillTarget::Unit(id)) if game.units.get(&id).is_some_and(|actor| actor.kind == NPC && actor.job != WARP_JOB) => {
+                        game.targeting = None;
+                        game.talk_to(id);
                     }
+                    Some(SkillTarget::Unit(id)) if game.aim_takes_unit(id, shift) => match heavy {
+                        Some(line) => {
+                            game.targeting = None;
+                            game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR);
+                        }
+                        None => game.aim_skill(SkillTarget::Unit(id)),
+                    },
+                    Some(target @ SkillTarget::Cell(_)) => game.aim_skill(target),
+                    _ => game.targeting = None,
                 }
+                return;
             }
         }
         // A press on the ground walks there at once, and holding the button keeps following the pointer. Shift turns
@@ -7726,7 +7911,9 @@ impl App {
             game.sync_esc();
             // A button on the game menu is not a press on the window under it.
             let on_menu = game.escape.as_ref().is_some_and(|menu| menu.hit(cursor, game.can_resurrect()).is_some());
-            if !on_menu && game.item_window.as_ref().is_some_and(|window| window.hit(cursor, &self.items).is_some()) {
+            if !on_menu && game.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some()) {
+                escape::touch(&mut game.esc_order, escape::WindowId::CardPicture);
+            } else if !on_menu && game.item_window.as_ref().is_some_and(|window| window.hit(cursor, &self.items).is_some()) {
                 escape::touch(&mut game.esc_order, escape::WindowId::ItemInfo);
             } else if !on_menu {
                 game.press_esc(cursor);
@@ -7741,6 +7928,22 @@ impl App {
                 }
                 return;
             }
+        }
+        // A card's picture sits over the item info.
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(view) = &mut game.card_view
+            && let Some(hit) = view.hit(cursor)
+        {
+            if hit == iteminfo::ViewHit::Grip {
+                view.start_drag(cursor);
+            }
+            return;
+        }
+        // The chat window goes by its tab strip.
+        if let Scene::Game(game) = &mut self.scene
+            && game.chat.press(cursor)
+        {
+            return;
         }
         // The item description window goes by its top (the NPC window's links are over it).
         if let Scene::Game(game) = &mut self.scene
@@ -7879,6 +8082,20 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && let Some((account, hit)) = game.member_windows.hit(cursor)
+        {
+            if hit == party::MemberHit::Body {
+                game.member_windows.press_window(account, cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && game.party_window.compact
+            && party::compact_hit(cursor, game.party.as_ref()).is_some()
+        {
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
             && let Some(id) = game.window_at(cursor)
         {
             game.raise(id);
@@ -7921,6 +8138,11 @@ impl App {
             match id {
                 Panel::BasicInfo if game.basic_info.hit(cursor) == Some(basic_info::Hit::Title) => game.basic_info.frame.start_drag(cursor),
                 Panel::Inventory if game.inventory.hit(cursor) == Some(inventory::Hit::Title(TitleHit::Title)) => game.inventory.frame.start_drag(cursor),
+                Panel::Party if matches!(game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id), Some(party::Hit::Member(_))) => {
+                    if let Some(party::Hit::Member(account)) = game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id) {
+                        game.member_windows.press_row(account);
+                    }
+                }
                 Panel::Party
                     if game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id) == Some(party::Hit::Title(TitleHit::Title)) =>
                 {
@@ -7994,6 +8216,8 @@ impl App {
             }
         } else {
             let effects_on = self.graphics.effects_on;
+            // The receiving group button's choice, or the key held.
+            let (party, guild) = (party || game.chat.send_to == chat::SendTo::Party, guild || game.chat.send_to == chat::SendTo::Guild);
             if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.graphics.effects_on) {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
             }
@@ -8647,7 +8871,8 @@ impl App {
                                     game.chat.typing().pop();
                                 }
                                 _ if typing && !self.modifiers.alt_key() && !self.modifiers.super_key() && !self.modifiers.control_key() => {
-                                    game.chat.typing().extend(event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()));
+                                    let typed: String = event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()).collect();
+                                    game.chat.type_text(&typed);
                                 }
                                 _ => {}
                             }
@@ -8977,7 +9202,11 @@ impl App {
                     hit_boxes: Vec::new(),
                     ground: HashMap::new(),
                     item_sprites: HashMap::new(),
-                    inventory: Inventory::new(std::env::var_os("RUSTNAROK_CLIENT_INVENTORY").is_some()),
+                    inventory: {
+                        let mut inventory = Inventory::new(std::env::var_os("RUSTNAROK_CLIENT_INVENTORY").is_some());
+                        inventory.apply_boxes(inventory::Boxes::load());
+                        inventory
+                    },
                     equipment: {
                         let mut equipment = Equipment::default();
                         equipment.frame.open = std::env::var_os("RUSTNAROK_CLIENT_EQUIPMENT").is_some();
@@ -9029,6 +9258,7 @@ impl App {
                     achievements: HashMap::new(),
                     achievement_window: achievement::AchievementWindow::default(),
                     item_window: None,
+                    card_view: None,
                     item_lines: 0,
                     whispered: VecDeque::new(),
                     whisper_asked: VecDeque::new(),
@@ -9072,6 +9302,7 @@ impl App {
                         window.frame.open = window.friends || order.split(',').any(|part| part == "window");
                         window
                     },
+                    member_windows: party::MemberWindows::default(),
                     party_invite: None,
                     partner: None,
                     adopt_asked: None,
@@ -9247,6 +9478,7 @@ impl App {
                     walk_held: false,
                     last_walk_try: None,
                     walk_after_swing: None,
+                    separate_levels: self.skill_info.iter().filter(|(_, info)| info.separate_level).map(|(&id, _)| id).collect(),
                     press_mark: None,
                     auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
                         let (x, y) = cell.split_once(',')?;
@@ -9379,8 +9611,8 @@ impl App {
                 PLAYER => SpriteSet::player(grf, &unit_look(unit), look_tables),
                 PET => job_names.get(&unit.job).and_then(|name| pet_sprites(grf, name, pets.tables.accessory_acts.get(&unit.head_bottom))),
                 MERCENARY if (6017..=6046).contains(&unit.job) => job_names.get(&unit.job).and_then(|name| SpriteSet::mercenary(grf, unit.job, name)),
-                // Hidden NPCs (script triggers) have no sprite in the client either.
-                _ if HIDDEN_JOBS.contains(&unit.job) => None,
+                // Hidden NPCs (script triggers) have no sprite in the client either; a warp portal is only its rings.
+                _ if HIDDEN_JOBS.contains(&unit.job) || unit.job == WARP_JOB => None,
                 _ => job_names.get(&unit.job).and_then(|name| SpriteSet::single(grf, name, unit.kind)),
             };
             let mut actor = Actor::new(unit.name.clone(), sprites, unit.position.map(i32::from), unit.direction, unit.speed);
@@ -9681,7 +9913,7 @@ impl App {
                     item.grade = grade;
                     item.broken = broken;
                     let damaged = item.broken.then(|| damaged_line.clone());
-                    iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires }
+                    iteminfo::Shown::of(item, damaged)
                 });
                 // ponytail: that the preview is the item info window is a guess.
                 if let Some(shown) = shown {
@@ -10852,6 +11084,7 @@ impl App {
                     })
                     .collect();
                 game.party = Some(party);
+                game.member_windows.retain(game.party.as_ref());
             }
             MapEvent::PartyMember { party: name, member, cell, .. } => {
                 let party = game.party.get_or_insert_with(party::Party::default);
@@ -10870,12 +11103,14 @@ impl App {
                     3 => game.chat_line(message(1873), CHAT_ERROR),
                     _ if account == game.account_id => {
                         game.party = None;
+                        game.member_windows.retain(None);
                         game.chat_line(message(PARTY_LEFT), CHAT_ITEM);
                     }
                     _ => {
                         if let Some(party) = &mut game.party {
                             party.members.retain(|member| member.info.account != account);
                         }
+                        game.member_windows.retain(game.party.as_ref());
                         game.unit_hp.remove(&account);
                     }
                 }
@@ -11191,7 +11426,7 @@ impl App {
                     1 => self.messages.get(WHISPER_FAILED).cloned().unwrap_or_default(),
                     _ => format!("{to}{}", self.messages.get(WHISPER_FAILED + usize::from(result) - 1).cloned().unwrap_or_default()),
                 };
-                game.chat_line(line, WHISPER_COLOR);
+                game.chat_line_kind(line, WHISPER_COLOR, chat::Kind::Whisper);
             }
             MapEvent::ItemSkill(skill) => game.cast_item_skill(skill),
             // Eggs to hatch: the pick list; an empty one shows nothing.
@@ -12481,16 +12716,11 @@ impl App {
             })
             .collect();
 
-        // Warp portals have no sprite: the cell they stand on is their pick box.
-        let half = world::CELL / 2.0;
+        // Warp portals have no sprite: their pick box is drawn around the feet.
         for (&id, actor) in game.units.iter().filter(|(_, actor)| actor.job == WARP_JOB) {
             let feet = game.world.cell_position(actor.cell.map(|value| value as f32));
-            let corners: Option<Vec<_>> = [[-half, -half], [half, -half], [half, half], [-half, half]]
-                .iter()
-                .map(|[dx, dz]| view.project([feet[0] + dx, feet[1], feet[2] + dz]).map(to_screen))
-                .collect();
-            if let Some(corners) = corners {
-                let cell = picking::bounds(&corners);
+            if let Some([left, top, right, bottom]) = warp_pick_rect(&view, feet) {
+                let cell = picking::bounds(&[to_screen([left, top]), to_screen([right, bottom])]);
                 let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]).powi(2)).sum::<f32>();
                 game.hit_boxes.push(picking::Target {
                     owner: Owner::Unit(id),
@@ -13272,8 +13502,11 @@ impl App {
         pick_icons.extend(game.upgrade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.achievement_window.icons(achievement_info));
         pick_icons.extend(game.roulette.as_ref().map(|window| window.icons(items)).unwrap_or_default());
+        let compared = compared_windows(&game.inventory, items, messages, pointer.0);
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
+        trade_icons.extend(compared.iter().flat_map(|window| window.images(items)));
+        trade_icons.extend(game.card_view.iter().map(|view| view.path.clone()));
         if game.vend_setup.is_some() {
             trade_icons.extend(vend::icons(items, game.cart.items.iter().map(|item| (item.id, item.identified))));
         }
@@ -13298,6 +13531,16 @@ impl App {
         let caret = open && (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
         let name_of = |item: &links::ItemLink| inventory::item_name(items, item.id, true, item.refine);
         game.chat_links = game.chat.draw(&mut chat_layer, &assets.chat, font, messages, open, caret, &name_of);
+        // The input bar buttons' tooltips, over the pointer.
+        if let Some(text) = game.chat.tooltip(pointer.0).and_then(|id| messages.get(id)) {
+            let size = [font.width(text) + 8.0, font.line_height() + 4.0];
+            let corner = [pointer.0[0] - size[0] / 2.0, pointer.0[1] - size[1] - 6.0];
+            tooltip.sprites.push((&assets.speech_fill, corner, size));
+            for (edge, piece) in overhead::border(size) {
+                tooltip.sprites.push((&assets.speech_border, offset(corner, edge), piece));
+            }
+            tooltip.texts.push((text.clone(), offset(corner, [4.0, 2.0]), [0, 0, 0]));
+        }
         let size = [game.world.gat.width as u32, game.world.gat.height as u32];
         // NPC marks blink, shown half of each second.
         game.marks.retain(|(.., until)| until.is_none_or(|until| until > now));
@@ -13609,6 +13852,19 @@ impl App {
             layer.faded = game.panel_faded(id);
             layers.push(layer);
         }
+        // Party members dragged out of the list, and the compact stack, over the other windows.
+        let mut member_layer = Layer::default();
+        game.member_windows.draw(
+            &mut member_layer,
+            &assets.chrome,
+            &assets.party,
+            font,
+            game.party.as_ref(),
+            here.as_str(),
+            game.party_window.compact,
+            pointer.0,
+        );
+        layers.push(member_layer);
         // A dragged item's or skill's icon follows the pointer.
         let dragged_icon = match game.dragging {
             Some((Dragged::Item(index) | Dragged::Worn(index), _, true)) => {
@@ -13632,22 +13888,25 @@ impl App {
             tooltip.sprites.push((icon, [pointer.0[0] - icon.size[0] / 2.0, pointer.0[1] - icon.size[1] / 2.0], icon.size));
         }
 
-        // An aimed skill: its name at the top, "select a target" at the bottom, its level by the pointer. Taming has
-        // no skill: the bottom line only.
+        // An aimed skill: its name in a balloon at the top, "select a target" in one at the bottom, centred. Taming has
+        // no skill: the bottom one only.
         let mut aim_lines = Vec::new();
-        if let Some((id, level)) = game.targeting {
-            aim_lines.push((skill_info.get(&id).map_or_else(|| id.to_string(), |info| info.name.clone()), 45.0));
-            tooltip.outlined(&level.to_string(), [pointer.0[0] + 20.0, pointer.0[1] - 18.0]);
+        if let Some((id, _)) = game.targeting {
+            aim_lines.push((skill_info.get(&id).map_or_else(|| id.to_string(), |info| info.name.clone()), screen()[1] * 46.0 / 480.0));
         }
         if game.targeting.is_some() || game.capturing {
-            aim_lines.push((message(TARGET_MESSAGE).to_owned(), screen()[1] - 60.0 - 23.0));
+            aim_lines.push((message(TARGET_MESSAGE).to_owned(), screen()[1] * 400.0 / 480.0));
         }
         for (text, top) in aim_lines {
-            let width = font.width(&text).ceil() + 14.0;
-            let left = ((screen()[0] - width) / 2.0).floor();
-            tooltip.sprites.push((&assets.target_fill, [left, top], [width, 23.0]));
-            tooltip.texts.push((text.clone(), [left + 8.0, top + 6.0], [0, 0, 0]));
-            tooltip.texts.push((text, [left + 7.0, top + 5.0], [0x00, 0xFF, 0x00]));
+            let size = overhead::size(font.width(&text), 1);
+            let corner = [((screen()[0] - size[0]) / 2.0).floor(), top.floor()];
+            tooltip.sprites.push((&assets.speech_fill, corner, size));
+            for (edge, piece) in overhead::border(size) {
+                tooltip.sprites.push((&assets.speech_border, offset(corner, edge), piece));
+            }
+            let place = offset(corner, overhead::TEXT_AT);
+            tooltip.texts.push((text.clone(), offset(place, [1.0, 1.0]), [0, 0, 0]));
+            tooltip.texts.push((text, place, AIM_TEXT));
         }
         // The store search under the shops it opens from afar.
         let mut catalog_layer = Layer::default();
@@ -13656,6 +13915,9 @@ impl App {
         }
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
+        if let Some(settings) = &game.chat.settings {
+            settings.draw(&mut shop_layer, &assets.chrome, messages, &game.chat.tabs[settings.tab].kinds, pointer.0);
+        }
         // A skill's description, over the windows.
         if let Some(window) = &game.skill_description {
             window.draw(&mut shop_layer, &assets.chrome, &assets.skill_descript, font, pointer.0);
@@ -13917,6 +14179,14 @@ impl App {
             game.item_lines = lines.len();
             window.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
         }
+        if let Some(view) = &game.card_view {
+            view.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, pointer.0);
+        }
+        let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
+        for window in &compared {
+            let lines = window.lines(items, messages, unix_now, &|text, width| wrap_colored(font, text, width));
+            window.draw(&mut tooltip, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
+        }
         if game.save_asked {
             let dialog = dialog_position(&assets.message);
             let question = messages.get(escape::SAVE_QUESTION).map_or("Do you really want to go back to your savepoint?", String::as_str);
@@ -13986,12 +14256,13 @@ impl App {
         // The cursor shows what a click would do.
         let on_window = game.on_ui(pointer.0, items, assets.message.size);
         let ground = view.pick_ground([pointer.0[0] / screen()[0], pointer.0[1] / screen()[1]], &game.world.gat);
-        cursor_look.set(if game.camera_goal.dragging.is_some() {
+        let (shift, alt) = (self.modifiers.shift_key(), self.modifiers.alt_key());
+        cursor_look.set(if turning_cursor(game.camera_goal.dragging.is_some(), shift, alt) {
             cursor::Kind::Rotate
         } else if pointer.1 && game.attack.is_some_and(|attack| attack.held) {
             cursor::Kind::Attack
         } else if (game.targeting.is_some() || game.capturing) && !on_window {
-            if game.aim_valid(pointer.0, players_first) { cursor::Kind::TargetValid } else { cursor::Kind::Target }
+            if game.aim_valid(pointer.0, self.modifiers.shift_key()) { cursor::Kind::TargetValid } else { cursor::Kind::Target }
         } else if game.link_at(pointer.0).is_some() {
             cursor::Kind::Clickable
         } else if on_window {
@@ -14001,7 +14272,7 @@ impl App {
         } else {
             match hovered(&game.hit_boxes, pointer.0, players_first) {
                 Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
-                    Some(MONSTER) => cursor::Kind::Attack,
+                    Some(MONSTER) => monster_cursor(shift, game.no_shift),
                     Some(NPC) => npc_cursor(game.units[&id].job),
                     Some(PLAYER) if game.opponent(id).is_some_and(|other| game.side().attack_cursor(&other, players_first, false)) => cursor::Kind::Attack,
                     Some(HOMUNCULUS | MERCENARY | ELEMENTAL) if versus::companion_cursor(game.side().flags) => cursor::Kind::Attack,
@@ -14503,6 +14774,7 @@ fn main() {
         HashMap::new()
     });
     let card_names = inventory::CardNames::load(&grf);
+    let card_pictures = iteminfo::CardPictures::load(&grf);
     let battlegrounds = lua::entry_queue(&grf).unwrap_or_else(|error| {
         eprintln!("no battleground list: {error}");
         Vec::new()
@@ -14594,6 +14866,7 @@ fn main() {
         items,
         battlegrounds,
         card_names,
+        card_pictures,
         reforms,
         enchant_tables,
         styling_shop,
@@ -14826,6 +15099,30 @@ mod tests {
         assert_eq!(vanish_effect(3, actor::OPTION_INVISIBLE), None);
         assert_eq!(vanish_effect(2, 0), Some(314));
         assert_eq!((vanish_effect(0, 0), vanish_effect(1, 0)), (None, None));
+    }
+
+    #[test]
+    fn shows_the_attack_and_turning_cursors_only_when_they_apply() {
+        assert_eq!(monster_cursor(false, false), cursor::Kind::Attack);
+        assert_eq!(monster_cursor(true, false), cursor::Kind::Default);
+        assert_eq!(monster_cursor(true, true), cursor::Kind::Attack);
+        // The right button held: no key and Ctrl turn (Ctrl isn't asked); Shift tilts; Alt doesn't.
+        assert!(turning_cursor(true, false, false) && !turning_cursor(true, true, false) && !turning_cursor(true, false, true));
+        assert!(!turning_cursor(false, false, false));
+    }
+
+    #[test]
+    fn picks_warps_in_a_box_around_their_feet() {
+        let camera = |distance: f32| Camera { target: [100.0, 0.0, 100.0], distance, pitch: 45f32.to_radians(), yaw: 0.0, ground: f32::MIN };
+        let size = |distance: f32| {
+            let [left, top, right, bottom] = warp_pick_rect(&camera(distance).view(4.0 / 3.0), [100.0, 0.0, 100.0]).unwrap();
+            [(right - left) * 1024.0, (bottom - top) * 768.0]
+        };
+        // About 166 by 109 screen pixels at the default distance, centred on the feet; smaller farther out.
+        let [width, height] = size(300.0);
+        assert!((width - 166.0).abs() < 8.0 && (height - 109.0).abs() < 6.0, "{width} {height}");
+        let far = size(400.0);
+        assert!(far[0] < width * 0.8 && far[1] < height * 0.8, "{far:?}");
     }
 
     #[test]
@@ -15103,11 +15400,18 @@ mod tests {
     }
 
     #[test]
-    fn tells_a_fitting_target() {
-        let (enemy, friend, me) = (net::Skill::ENEMY, net::Skill::FRIEND, net::Skill::SELF);
-        assert!(aim_fits(enemy, AimAt::Monster) && !aim_fits(enemy, AimAt::Me));
-        assert!(aim_fits(friend, AimAt::Me) && aim_fits(friend, AimAt::Player) && !aim_fits(friend, AimAt::Monster));
-        assert!(aim_fits(me, AimAt::Me) && !aim_fits(me, AimAt::Player));
+    fn a_press_takes_by_shift_and_skill() {
+        let takes = |at, support, shift| aim_takes(at, support, shift, false, false);
+        // Enemy skills: monsters without Shift, players with it, never yourself.
+        assert!(takes(AimAt::Monster, false, false) && !takes(AimAt::Monster, false, true));
+        assert!(takes(AimAt::Player, false, true) && !takes(AimAt::Player, false, false));
+        assert!(!takes(AimAt::Me, false, false) && !takes(AimAt::Me, false, true));
+        // Support skills the other way round; yourself without Shift.
+        assert!(takes(AimAt::Player, true, false) && takes(AimAt::Monster, true, true) && !takes(AimAt::Monster, true, false));
+        assert!(takes(AimAt::Me, true, false) && !takes(AimAt::Me, true, true));
+        // /noshift takes both whatever Shift does; a PvP map lets players in.
+        assert!(aim_takes(AimAt::Monster, false, true, true, false) && aim_takes(AimAt::Player, false, false, true, false));
+        assert!(aim_takes(AimAt::Player, false, false, false, true) && !aim_takes(AimAt::Me, false, false, true, true));
     }
 
     #[test]

@@ -27,7 +27,16 @@ const HEIGHT: f32 = TITLE_HEIGHT + BODY_HEIGHT + FOOTER_HEIGHT;
 /// The tab strip, after a 1px white edge.
 const TABS_AT: [f32; 2] = [1.0, TITLE_HEIGHT];
 const TABS_SIZE: [f32; 2] = [20.0, BODY_HEIGHT];
-const TABS: usize = 3;
+const TABS: usize = 4;
+/// Favourites, after Item, Equip and Etc.
+const FAVORITES_TAB: usize = 3;
+/// "Compare equips" and "Lock item drop".
+const COMPARE: usize = 2842;
+const LOCK_DROP: usize = 2843;
+/// The two boxes in the footer, and how wide each one is (box plus its label).
+// ponytail: where the boxes sit isn't knowable; they share the footer, after the count.
+const CHECK_X: f32 = 90.0;
+const CHECK_SPAN: f32 = 86.0;
 /// The first cell.
 const GRID: [f32; 2] = [TAB_COLUMN + MARGIN, TITLE_HEIGHT + 8.0];
 const ICON_OFFSET: f32 = 4.0;
@@ -71,9 +80,10 @@ pub struct Assets {
     cell: Texture,
     count: Texture,
     resize: Texture,
-    /// Marks an item in the Swap Equipment set, and one in the favourites.
+    /// Marks an item in the Swap Equipment set.
     switch: Texture,
-    favorite: Texture,
+    /// Off, then on.
+    checkbox: [Texture; 2],
 }
 
 impl Assets {
@@ -82,15 +92,65 @@ impl Assets {
         let image = |path: String| gpu.load_texture(grf, &path, false);
         Self {
             footer: ["left", "mid", "right"].map(|part| image(format!("{basic}btnbar_{part}2.bmp"))),
-            tabs: std::array::from_fn(|tab| image(format!("{basic}tab_itm_0{}.bmp", tab + 1))),
+            // ponytail: the data's three strips (tab_itm_01..03). The favourites tab reuses the etc strip, and the
+            // column is split into four equal hit areas. A four-tab strip would replace both.
+            tabs: std::array::from_fn(|tab| image(format!("{basic}tab_itm_0{}.bmp", tab.min(2) + 1))),
             cell: image(format!("{basic}itemwin_mid.bmp")),
             count: image(format!("{UI}inventory\\icon_num.bmp")),
             resize: image(format!("{UI}btn_resize.bmp")),
             switch: image(format!("{UI}swap_equipment\\ico_change.bmp")),
-            // ponytail: the style shop's favourite star; this window's tabs have no favourites tab to show.
-            favorite: image(format!("{UI}styleshop\\btn_favorite_on.bmp")),
+            checkbox: ["0", "1"].map(|look| image(format!("{UI}checkbox_{look}.bmp"))),
         }
     }
+}
+
+/// The inventory's two boxes, kept with the settings (`lock_drop` then `compare`, each 0 or 1).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Boxes {
+    pub lock_drop: bool,
+    pub compare: bool,
+}
+
+impl Boxes {
+    pub fn parse(text: &str) -> Self {
+        let mut words = text.split_whitespace();
+        let on = |word: Option<&str>| word == Some("1");
+        Self { lock_drop: on(words.next()), compare: on(words.next()) }
+    }
+
+    pub fn text(self) -> String {
+        format!("{} {}", u8::from(self.lock_drop), u8::from(self.compare))
+    }
+
+    fn path() -> Option<std::path::PathBuf> {
+        crate::settings_path("inventory")
+    }
+
+    pub fn load() -> Self {
+        Self::path().and_then(|path| std::fs::read_to_string(path).ok()).map(|text| Self::parse(&text)).unwrap_or_default()
+    }
+
+    pub fn save(self) {
+        let Some(path) = Self::path() else { return };
+        let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, self.text()));
+    }
+}
+
+/// Letting an item go over the ground drops it. The lock stops that: no amount box, no drop.
+pub fn may_ground_drop(lock_drop: bool) -> bool {
+    !lock_drop
+}
+
+/// Worn items that sit in a slot the hovered item can go in. Only an unworn piece of equipment is compared.
+pub fn compared_worn<'a>(hovered: &InventoryItem, items: &'a [InventoryItem]) -> Vec<&'a InventoryItem> {
+    if hovered.worn != 0 || hovered.location == 0 || !equipment(hovered.kind) {
+        return Vec::new();
+    }
+    items.iter().filter(|item| item.index != hovered.index && item.worn & hovered.location != 0).collect()
+}
+
+fn equipment(kind: u8) -> bool {
+    matches!(kind, net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR | net::ITEM_PET_ARMOR)
 }
 
 /// Where a click on the window landed.
@@ -100,6 +160,10 @@ pub enum Hit {
     Tab(usize),
     /// An item, by inventory index.
     Item(u16),
+    /// Lock item drop.
+    LockDrop,
+    /// Compare equips.
+    Compare,
     Window,
 }
 
@@ -117,6 +181,9 @@ pub struct Inventory {
     /// First row shown.
     scroll: usize,
     clicks: Clicks,
+    /// Lock item drop, and compare the worn item while pointing at an unworn one.
+    pub lock_drop: bool,
+    pub compare: bool,
 }
 
 impl Default for Inventory {
@@ -130,13 +197,15 @@ impl Default for Inventory {
             tab: 0,
             scroll: 0,
             clicks: Clicks::default(),
+            lock_drop: false,
+            compare: false,
         }
     }
 }
 
-/// The tab an item is listed under: favourites under the etc tab (rathena's flag is PlaceETCTab), the rest by type.
+/// The tab an item is listed under: a favourite only on the favourites tab, the rest by type.
 pub fn listed_tab(item: &InventoryItem) -> usize {
-    if item.favorite { 2 } else { tab_of(item.kind) }
+    if item.favorite { FAVORITES_TAB } else { tab_of(item.kind) }
 }
 
 /// The tab an item type is listed under: usable, equipment or everything else.
@@ -338,11 +407,29 @@ impl Inventory {
             Hit::Title(hit)
         } else if contains(TABS_AT, TABS_SIZE, local) {
             Hit::Tab((((local[1] - TABS_AT[1]) / (TABS_SIZE[1] / TABS as f32)) as usize).min(TABS - 1))
+        } else if let Some(hit) = self.check_at(local) {
+            hit
         } else if let Some(item) = self.cell_at(local).and_then(|cell| self.listed().nth(self.scroll * COLUMNS + cell)) {
             Hit::Item(item.index)
         } else {
             Hit::Window
         })
+    }
+
+    /// The lock and compare boxes, in the player's inventory only (the cart shares this window).
+    fn check_at(&self, local: [f32; 2]) -> Option<Hit> {
+        if self.cart.is_some() {
+            return None;
+        }
+        let top = TITLE_HEIGHT + BODY_HEIGHT;
+        if !(top..top + FOOTER_HEIGHT).contains(&local[1]) || local[0] < CHECK_X {
+            return None;
+        }
+        match ((local[0] - CHECK_X) / CHECK_SPAN).floor() as i32 {
+            0 => Some(Hit::LockDrop),
+            1 => Some(Hit::Compare),
+            _ => None,
+        }
     }
 
     fn cell_at(&self, local: [f32; 2]) -> Option<usize> {
@@ -360,6 +447,14 @@ impl Inventory {
                 self.scroll = 0;
             }
             Hit::Item(index) => return self.clicks.double(index).then_some(index),
+            Hit::LockDrop => {
+                self.lock_drop = !self.lock_drop;
+                self.boxes().save();
+            }
+            Hit::Compare => {
+                self.compare = !self.compare;
+                self.boxes().save();
+            }
             Hit::Window => {}
         }
         None
@@ -369,18 +464,43 @@ impl Inventory {
         HEIGHT
     }
 
-    /// The three tabs on screen (for the test driver): `tab:item`, `tab:equip`, `tab:etc`.
+    pub fn boxes(&self) -> Boxes {
+        Boxes { lock_drop: self.lock_drop, compare: self.compare }
+    }
+
+    pub fn apply_boxes(&mut self, boxes: Boxes) {
+        self.lock_drop = boxes.lock_drop;
+        self.compare = boxes.compare;
+    }
+
+    /// The four tabs on screen (for the test driver): `tab:item`, `tab:equip`, `tab:etc`, `tab:favorite`.
     pub fn tab_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
         if !self.frame.open || self.frame.minimized {
             return Vec::new();
         }
         let height = TABS_SIZE[1] / TABS as f32;
-        ["tab:item", "tab:equip", "tab:etc"]
+        ["tab:item", "tab:equip", "tab:etc", "tab:favorite"]
             .into_iter()
             .enumerate()
             .map(|(tab, name)| {
                 let [x, y] = self.frame.at([TABS_AT[0], TABS_AT[1] + tab as f32 * height]);
                 (name, [x, y, TABS_SIZE[0], height])
+            })
+            .collect()
+    }
+
+    /// The lock and compare boxes on screen.
+    pub fn check_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized || self.cart.is_some() {
+            return Vec::new();
+        }
+        let y = self.frame.at([0.0, TITLE_HEIGHT + BODY_HEIGHT])[1];
+        ["lock_drop", "compare"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| {
+                let x = self.frame.at([CHECK_X + index as f32 * CHECK_SPAN, 0.0])[0];
+                (name, [x, y, CHECK_SPAN, FOOTER_HEIGHT])
             })
             .collect()
     }
@@ -455,9 +575,6 @@ impl Inventory {
             if item.switch != 0 {
                 layer.sprites.push((&assets.switch, place, assets.switch.size));
             }
-            if item.favorite {
-                layer.sprites.push((&assets.favorite, offset(place, [CELL - assets.favorite.size[0], 0.0]), assets.favorite.size));
-            }
             if tab_of(item.kind) != 1 {
                 let amount = item.amount.to_string();
                 let corner = offset(place, [CELL - 1.0 - font.width(&amount), 15.0]);
@@ -486,6 +603,17 @@ impl Inventory {
             layer.texts.push((text.clone(), at([WIDTH - 20.0 - font.width(&text), footer_top + 8.0]), [0, 0, 0]));
         }
         layer.sprites.push((&assets.resize, at([WIDTH - 14.0, HEIGHT - 14.0]), assets.resize.size));
+        // The player's inventory: lock item drop, then compare equips.
+        if self.cart.is_none() {
+            for (index, (on, id)) in [(self.lock_drop, LOCK_DROP), (self.compare, COMPARE)].into_iter().enumerate() {
+                let check = &assets.checkbox[usize::from(on)];
+                let x = CHECK_X + index as f32 * CHECK_SPAN;
+                let y = footer_top + ((FOOTER_HEIGHT - check.size[1]) / 2.0).floor();
+                layer.sprites.push((check, at([x, y]), check.size));
+                let label = window::fit(font, message(id), CHECK_SPAN - check.size[0] - 4.0);
+                layer.texts.push((label, at([x + check.size[0] + 2.0, y]), [0, 0, 0]));
+            }
+        }
     }
 }
 
@@ -561,11 +689,64 @@ mod tests {
         // The first cell of the usable tab holds the potion; the equipment tab lists the weapon.
         let first_cell = offset(inventory.frame.position, offset(GRID, [5.0, 5.0]));
         assert_eq!(inventory.hit(first_cell), Some(Hit::Item(3)));
-        let equipment_tab = offset(inventory.frame.position, [5.0, TITLE_HEIGHT + TABS_SIZE[1] / 2.0]);
+        let equipment_tab = offset(inventory.frame.position, [5.0, TITLE_HEIGHT + TABS_SIZE[1] / TABS as f32 * 1.5]);
         assert_eq!(inventory.hit(equipment_tab), Some(Hit::Tab(1)));
         inventory.click(Hit::Tab(1));
         assert_eq!(inventory.hit(first_cell), Some(Hit::Item(2)));
         assert_eq!(inventory.click(Hit::Item(2)), None);
         assert_eq!(inventory.click(Hit::Item(2)), Some(2));
+    }
+
+    #[test]
+    fn lists_a_favourite_only_on_its_tab() {
+        let plain = InventoryItem { index: 1, id: 501, kind: net::ITEM_HEALING, amount: 1, identified: true, ..Default::default() };
+        let favourite = InventoryItem { favorite: true, ..plain.clone() };
+        let etc = InventoryItem { index: 2, id: 909, kind: 3, amount: 1, identified: true, ..Default::default() };
+        assert_eq!(listed_tab(&plain), 0);
+        assert_eq!(listed_tab(&etc), 2);
+        assert_eq!(listed_tab(&favourite), FAVORITES_TAB);
+        // A favourite weapon leaves the equipment tab too.
+        let weapon = InventoryItem { index: 3, kind: net::ITEM_WEAPON, favorite: true, ..plain.clone() };
+        assert_eq!(listed_tab(&weapon), FAVORITES_TAB);
+
+        let mut inventory = Inventory::new(true);
+        inventory.extend(vec![favourite, etc]);
+        let first_cell = offset(inventory.frame.position, offset(GRID, [5.0, 5.0]));
+        inventory.click(Hit::Tab(2));
+        assert_eq!(inventory.hit(first_cell), Some(Hit::Item(2)));
+        inventory.click(Hit::Tab(FAVORITES_TAB));
+        assert_eq!(inventory.hit(first_cell), Some(Hit::Item(1)));
+        inventory.click(Hit::Tab(0));
+        assert_eq!(inventory.hit(first_cell), Some(Hit::Window));
+    }
+
+    #[test]
+    fn the_drop_lock_stops_a_ground_drop() {
+        assert!(may_ground_drop(false));
+        assert!(!may_ground_drop(true));
+        assert_eq!(Boxes::parse("1 0"), Boxes { lock_drop: true, compare: false });
+        assert_eq!(Boxes::parse("0 1").text(), "0 1");
+        assert_eq!(Boxes::parse("").text(), "0 0");
+    }
+
+    #[test]
+    fn matches_worn_items_in_the_hovered_slots() {
+        let sword = InventoryItem { index: 1, kind: net::ITEM_WEAPON, location: 2, ..Default::default() };
+        let worn = InventoryItem { index: 2, kind: net::ITEM_WEAPON, location: 2, worn: 2, ..Default::default() };
+        let shield = InventoryItem { index: 3, kind: net::ITEM_ARMOR, location: 32, worn: 32, ..Default::default() };
+        let potion = InventoryItem { index: 4, kind: net::ITEM_HEALING, ..Default::default() };
+        let items = [sword.clone(), worn.clone(), shield.clone(), potion.clone()];
+        assert_eq!(compared_worn(&sword, &items).iter().map(|item| item.index).collect::<Vec<_>>(), [2]);
+        // A two-hander covers the weapon and the shield.
+        let hands = InventoryItem { index: 5, kind: net::ITEM_WEAPON, location: 2 | 32, ..Default::default() };
+        assert_eq!(compared_worn(&hands, &items).iter().map(|item| item.index).collect::<Vec<_>>(), [2, 3]);
+        // Already worn, or not equipment: nothing beside it.
+        assert!(compared_worn(&worn, &items).is_empty());
+        assert!(compared_worn(&potion, &items).is_empty());
+        // Both accessory slots, when the hovered piece can go in either.
+        let left = InventoryItem { index: 6, kind: net::ITEM_ARMOR, location: 8, worn: 8, ..Default::default() };
+        let right = InventoryItem { index: 7, kind: net::ITEM_ARMOR, location: 128, worn: 128, ..Default::default() };
+        let ring = InventoryItem { index: 8, kind: net::ITEM_ARMOR, location: 8 | 128, ..Default::default() };
+        assert_eq!(compared_worn(&ring, &[left, right]).iter().map(|item| item.index).collect::<Vec<_>>(), [6, 7]);
     }
 }

@@ -931,6 +931,10 @@ fn game_state(app: &App, game: &Game) -> Value {
         .item_boxes()
         .into_iter()
         .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
+        .chain(game.inventory.check_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.item_window.iter().flat_map(|window| window.button_boxes(&app.items)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
         .chain(
             game.skill_window.skill_boxes(&app.skill_trees, &jobs, &game.skills).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})),
@@ -1003,6 +1007,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(
             game.navi_window.iter().flat_map(crate::navigation::Window::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
+        .chain(game.chat.settings.iter().flat_map(crate::chat::Settings::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.chat.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1023,6 +1029,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             game.party_window
                 .button_boxes(game.party.as_ref(), &game.friends, game.account_id)
                 .into_iter()
+                .chain(game.member_windows.button_boxes(game.party.as_ref()))
+                .chain(game.party_window.compact.then(|| crate::party::compact_boxes(game.party.as_ref())).into_iter().flatten())
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.inventory.tab_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1103,6 +1111,10 @@ fn game_state(app: &App, game: &Game) -> Value {
             .filter(|(_, open)| *open)
             .map(|(name, _)| name.to_owned()),
     );
+    windows.extend(game.member_windows.names(game.party.as_ref()));
+    if game.party_window.compact && game.party.is_some() {
+        windows.push("PartyList".to_owned());
+    }
     let dialog = game.dialog.as_ref().map(|dialog| {
         json!({
             "npc": dialog.npc,
@@ -1249,6 +1261,13 @@ fn game_state(app: &App, game: &Game) -> Value {
                 "name": party.name,
                 "leader": leader,
                 "members": party.members.iter().map(|member| member.info.name.clone()).collect::<Vec<_>>(),
+                // Members whose last party HP (0x080E) is under their max, so a scenario can see a hit land.
+                "wounded": party
+                    .members
+                    .iter()
+                    .filter(|member| member.hp.is_some_and(|[hp, max]| hp < max))
+                    .map(|member| member.info.name.clone())
+                    .collect::<Vec<_>>(),
                 "exp_shared": party.exp_shared,
                 "pickup_shared": party.pickup_shared,
                 "item_shared": party.item_shared,
@@ -1298,7 +1317,14 @@ fn game_state(app: &App, game: &Game) -> Value {
         }),
         // What the mouse cursor shows.
         "cursor": format!("{:?}", app.cursor_look.kind()),
-        "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
+        "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, ..)| text.as_str()).collect::<Vec<_>>(),
+        // The chat window: the tab shown, each tab's last lines, where typed lines go, the lock.
+        "chat_tab": game.chat.tab,
+        "chat_tabs": (0..2).map(|tab| game.chat.tab_lines(tab).iter().rev().take(5).rev().map(|(text, ..)| text.clone()).collect::<Vec<_>>()).collect::<Vec<_>>(),
+        "chat_send_to": format!("{:?}", game.chat.send_to),
+        "chat_locked": game.chat.locked,
+        "chat_corner": game.chat.corner_moved(),
+        "chat_input": game.chat.input,
         "block_names": game.block_list.as_ref().map(|list| list.names().to_vec()).unwrap_or_default(),
         "whisper_open": json!({"friends": game.whisper_open.friends, "strangers": game.whisper_open.strangers}),
         "chat_line_open": game.chat_mode.chat_line_open(),

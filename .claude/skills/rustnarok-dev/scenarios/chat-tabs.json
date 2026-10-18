@@ -1,0 +1,338 @@
+{
+  "about": "Chat tabs (issue #312): two players form a party (as in party.json); the second's party line and the first's public line land in Public, and the party line in Battle too (Battle shows battle messages, whispers, party and guild). The first's tab settings for Public untick Party Chat, and the party line leaves Public (ticked again after). The window drags by its tab strip, the lock and the stick button work, and typing 300 letters stops at 234. Both leave the party at the end.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0,
+    "env": {
+      "RUSTNAROK_CLIENT_PARTY": "accept"
+    }
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "type": "/leave"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "as": "second",
+      "say": "@warp prontera 157 180"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "as": "second",
+      "type": "/leave"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "type": "/organize QAParty"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "click_on": {
+        "unit": "{second}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "menu_item": "Send party invitation"
+      }
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "expect": {
+        "chat": "Request for party accepted."
+      }
+    },
+    {
+      "as": "second",
+      "type": "%party hello"
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "chat_input": "%party hello"
+        }
+      }
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "chat_input": ""
+        }
+      }
+    },
+    {
+      "expect": {
+        "chat": "party hello",
+        "state": {
+          "chat_tab": 0
+        }
+      }
+    },
+    {
+      "say": "public hello"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "move": [
+        1000,
+        300
+      ]
+    },
+    {
+      "shot": "tab-public",
+      "crop": [
+        0,
+        560,
+        620,
+        208
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "chat_tab_1"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_tab": 1
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        300
+      ]
+    },
+    {
+      "shot": "tab-battle",
+      "crop": [
+        0,
+        560,
+        620,
+        208
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "chat_tab_0"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "chat_options"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "tab_party"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        1000,
+        300
+      ]
+    },
+    {
+      "shot": "public-without-party",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "tab_party"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "chat_options"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "mouse_down": {
+        "button": "chat_strip"
+      }
+    },
+    {
+      "move": [
+        460,
+        300
+      ]
+    },
+    {
+      "move": [
+        470,
+        200
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          470,
+          200
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "chat_corner.1": 100
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "dragged",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "chat_lock"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_locked": true
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "chat_lock"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "chat_stick"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_corner": null
+        }
+      }
+    },
+    {
+      "type": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "as": "second",
+      "type": "/leave"
+    },
+    {
+      "type": "/leave"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    }
+  ]
+}
