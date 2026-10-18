@@ -397,6 +397,8 @@ fn rank_line(before: u32, now: u32) -> Option<usize> {
         _ => None,
     }
 }
+/// The bow's weapon type (rathena's W_BOW): its attack pace isn't capped.
+const BOW: u32 = 11;
 /// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
 const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
 
@@ -404,7 +406,7 @@ const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 42
 /// any other body goes after a moment.
 fn fall(actor: &mut Actor, lands: Instant) {
     let (.., die) = actor::combat_actions(actor.kind);
-    actor.play(die, lands, 800.0, true);
+    actor.play_at_pace(die, lands, 1.0, true);
     if actor.kind == PLAYER {
         actor.dead = true;
     } else {
@@ -3544,6 +3546,7 @@ impl Game {
         let me = self.account_id;
         let target_cell = if act.target == me { Some(self.player.cell) } else { self.units.get(&act.target).map(|actor| actor.cell) };
         let source = if act.source == me { Some(&mut self.player) } else { self.units.get_mut(&act.source) };
+        let mut hit_ms = None;
         if let Some(source) = source {
             if let Some(cell) = target_cell {
                 source.face(cell);
@@ -3552,20 +3555,25 @@ impl Game {
                 Some(look) => actor::attack_action(look.job, look.sex, tables.weapon_type(look.weapon)),
                 None => actor::combat_actions(source.kind).0,
             };
-            source.play(attack, Instant::now(), act.source_speed.max(100) as f32, false);
+            let bow = source.look.as_ref().is_some_and(|look| tables.weapon_type(look.weapon) == BOW);
+            let scale = actor::attack_scale(act.source_speed, bow);
+            source.play_at_pace(attack, Instant::now(), scale, false);
             source.stand_ready();
+            hit_ms = source.sprites.as_ref().and_then(|sprites| sprites.hit_ms(attack * 8 + usize::from(source.direction % 8), scale));
         }
-        self.show_hit(&act);
+        self.show_hit(&act, hit_ms);
     }
 
     /// The numbers of a hit as it lands: split over a multi-hit's hits (with the running total over monsters),
     /// yellow for a critical, "Lucky" for a lucky dodge.
-    fn show_hit(&mut self, act: &net::Act) {
+    /// The numbers (and the flinch) of a hit, landing `hit_ms` after now (the attacker's "atk" frame), or after its
+    /// attack motion when its sprite doesn't say.
+    fn show_hit(&mut self, act: &net::Act, hit_ms: Option<f32>) {
         let me = self.account_id;
         let target = (act.target != me).then_some(act.target);
         let on_player = act.target == me || target.and_then(|id| self.units.get(&id)).is_some_and(|actor| actor.kind == PLAYER);
         let amount = act.damage + act.left_damage;
-        let lands = Instant::now() + Duration::from_millis(act.source_speed.max(0) as u64);
+        let lands = Instant::now() + Duration::from_secs_f32(hit_ms.unwrap_or(act.source_speed.max(0) as f32) / 1000.0);
         // Misses, endured hits and lucky dodges don't flinch.
         let flinch = (amount > 0 && !matches!(act.kind, 4 | 9 | 11)).then_some(act.target_speed.max(100) as f32);
         let kind = match act.kind {
@@ -10654,12 +10662,12 @@ impl App {
                     }
                     // Monsters swing as for an attack; players take the skill pose.
                     if source.kind != PLAYER {
-                        source.play(actor::combat_actions(source.kind).0, Instant::now(), act.source_speed.max(100) as f32, false);
+                        source.play_at_pace(actor::combat_actions(source.kind).0, Instant::now(), actor::attack_scale(act.source_speed, false), false);
                     }
                 }
                 game.skill_motion(act.source, skill, i32::from(level as i16), overhead::Shout::Hit, act.source_speed as f32, &self.skill_info);
                 if act.damage != 0 && !(act.source == act.target && act.kind == 6) {
-                    game.show_hit(&act);
+                    game.show_hit(&act, None);
                     // Hit by hit: what comes at the target first (a bolt's arrows), then what shows as it lands.
                     if let Some(gpu) = gpu {
                         let now = Instant::now();
@@ -11250,16 +11258,15 @@ impl App {
         // Bodies that finished dying leave; hits that land make their target flinch.
         game.units.retain(|_, actor| actor.remove_at.is_none_or(|at| at > now));
         for damage in &mut game.damages {
-            if damage.start <= now
-                && let Some(duration) = damage.flinch.take()
-            {
+            if damage.start <= now && damage.flinch.take().is_some() {
                 let target = match damage.target {
                     None => Some(&mut game.player),
                     Some(id) => game.units.get_mut(&id),
                 };
-                if let Some(target) = target.filter(|target| target.remove_at.is_none()) {
+                // A monster already in a special action (attacking, casting) doesn't flinch.
+                if let Some(target) = target.filter(|target| target.remove_at.is_none() && !(target.kind == MONSTER && target.in_action(now))) {
                     let (_, flinch, _) = actor::combat_actions(target.kind);
-                    target.play(flinch, now, duration, false);
+                    target.play_at_pace(flinch, now, 1.0, false);
                     target.stand_ready();
                 }
             }

@@ -47,13 +47,43 @@ pub fn combat_actions(kind: u8) -> (usize, usize, usize) {
 /// How far into an action a frame is drawn.
 #[derive(Clone, Copy)]
 pub enum Timing {
-    /// Milliseconds into a looping action (idle, walk), at the ACT's own frame delays.
+    /// Milliseconds into a looping action (standing), at the ACT's own frame delays.
     Loop(f32),
-    /// Fraction (0..1) of a one-shot action stretched over a given duration (attack, flinch, death).
+    /// Fraction (0..1) of a one-shot action stretched over a given duration (a skill's pose, a pickup).
     Span(f32),
+    /// Milliseconds into a one-shot action at its ACT pace times a scale (attack, flinch, death), the last frame held.
+    Once(f32, f32),
+    /// World units walked so far: legs move with the distance walked, not the time.
+    Walk(f32),
 }
-/// ACT delays are in units of 25 ms.
-const DELAY_UNIT_MS: f32 = 25.0;
+/// ACT delays are in units of 24 ms.
+const DELAY_UNIT_MS: f32 = 24.0;
+/// Walking frames per world unit walked, times the ACT delay.
+const WALK_FRAMES: f32 = 1.48;
+/// An attack plays at its ACT pace times min(attackMT, ATTACK_PACE) / ATTACK_PACE (a bow, uncapped).
+const ATTACK_PACE: f32 = 432.0;
+
+/// The frame of `count` a looping action shows `ms` in, at an ACT delay of `delay` units.
+pub fn loop_frame(ms: f32, delay: f32, count: usize) -> usize {
+    (ms / (delay * DELAY_UNIT_MS)) as usize % count.max(1)
+}
+
+/// The frame a one-shot action shows `ms` in: as looping, then its last frame.
+pub fn once_frame(ms: f32, delay: f32, count: usize) -> usize {
+    ((ms / (delay * DELAY_UNIT_MS)) as usize).min(count.max(1) - 1)
+}
+
+/// The walking frame after `distance` world units walked (a cell is 5).
+pub fn walk_frame(distance: f32, delay: f32, count: usize) -> usize {
+    (distance * WALK_FRAMES / delay) as usize % count.max(1)
+}
+
+/// How much an attack's ACT pace is stretched for an attack motion of `attack_ms` (ZC_NOTIFY_ACT's source speed):
+/// capped at ATTACK_PACE, except for players shooting a bow.
+pub fn attack_scale(attack_ms: i32, bow: bool) -> f32 {
+    let motion = attack_ms.max(1) as f32;
+    (if bow { motion } else { motion.min(ATTACK_PACE) }) / ATTACK_PACE
+}
 
 /// A job's sprite names: its body (also its .imf and garment motions), its weapons' folder and file prefix, and its
 /// body dyes.
@@ -815,7 +845,8 @@ impl SpriteSet {
                 Part::Body => Some(frame_index),
                 Part::Robe => layer_frame(frames.len(), head_count, if look.is_some() { 0 } else { frame_index }, frame_index, own),
                 Part::HeadBottom | Part::HeadMid | Part::HeadTop => layer_frame(frames.len(), head_count, frame_index, frame_index, own),
-                Part::Head | Part::Weapon | Part::WeaponGlow | Part::Shield => (frame_index < frames.len()).then_some(frame_index),
+                // A frame the layer lacks falls back to its first.
+                Part::Head | Part::Weapon | Part::WeaponGlow | Part::Shield => Some(if frame_index < frames.len() { frame_index } else { 0 }),
             };
             let Some(frame) = frame.and_then(|frame| frames.get(frame)) else { continue };
             let mut shift = if part.on_head() { sprite::head_shift(body_frame, frame) } else { [0, 0] };
@@ -872,6 +903,17 @@ impl SpriteSet {
         self.layers.first()?.act.actions.get(index).map(Vec::len)
     }
 
+    /// When a hit lands in an attack (action `index`) played at `scale` times its ACT pace: at the frame with an
+    /// "atk" event, else the second-to-last.
+    pub fn hit_ms(&self, index: usize, scale: f32) -> Option<f32> {
+        let body = &self.layers[0];
+        let frames = body.act.actions.get(index).filter(|frames| !frames.is_empty())?;
+        let atk = |frame: &sprite::Frame| usize::try_from(frame.event).ok().and_then(|event| body.act.events.get(event)).is_some_and(|name| name == "atk");
+        let frame = frames.iter().position(atk).unwrap_or(frames.len().saturating_sub(2));
+        let delay = body.act.delays.get(index).copied().unwrap_or(4.0).max(1.0);
+        Some(frame as f32 * delay * DELAY_UNIT_MS * scale)
+    }
+
     pub fn index_ms(&self, index: usize) -> Option<f32> {
         let frames = self.layers[0].act.actions.get(index)?.len();
         let delay = self.layers[0].act.delays.get(index).copied().unwrap_or(4.0).max(1.0);
@@ -883,14 +925,15 @@ impl SpriteSet {
     }
 }
 
-/// Which of `count` frames of the layer's action `index` plays at `timing`, at the layer's own frame delay.
+/// Which of `count` frames of the layer's action `index` plays at `timing`, at the layer's own frame delay (4 when
+/// it has none, at least 1).
 fn animated(layer: &Layer, index: usize, count: usize, timing: Timing) -> usize {
+    let delay = layer.act.delays.get(index).copied().unwrap_or(4.0).max(1.0);
     match timing {
-        Timing::Loop(elapsed_ms) => {
-            let frame_ms = layer.act.delays.get(index).copied().unwrap_or(4.0).max(1.0) * DELAY_UNIT_MS;
-            (elapsed_ms / frame_ms) as usize % count
-        }
+        Timing::Loop(elapsed_ms) => loop_frame(elapsed_ms, delay, count),
         Timing::Span(progress) => ((progress * count as f32) as usize).min(count - 1),
+        Timing::Once(elapsed_ms, scale) => once_frame(elapsed_ms, delay * scale, count),
+        Timing::Walk(distance) => walk_frame(distance, delay, count),
     }
 }
 
@@ -1008,9 +1051,16 @@ impl Dressing {
 struct Shot {
     action: usize,
     started: Instant,
-    duration_ms: f32,
+    pace: Pace,
     /// Keep showing the last frame afterwards (death).
     hold: bool,
+}
+
+/// How a one-shot action plays: stretched over a duration, or at its ACT pace times a scale.
+#[derive(Clone, Copy)]
+enum Pace {
+    Stretch(f32),
+    Act(f32),
 }
 
 /// The client's damage numbers (data\sprite\이팩트\숫자.spr), one image per digit, and its MISS label (msg.spr).
@@ -1209,6 +1259,8 @@ pub struct Actor {
     step_started: Instant,
     /// Milliseconds per straight step (diagonals take √2 as long).
     pub step_ms: f32,
+    /// World units walked in finished steps since the unit appeared.
+    distance: f32,
     /// The facing in the sprites' eight directions, and exactly, in degrees (`angle_of`: 0 south, 90 east).
     pub direction: u8,
     pub rot: f32,
@@ -1262,6 +1314,7 @@ impl Actor {
             path: Vec::new(),
             step_started: now,
             step_ms: f32::from(speed.max(1)),
+            distance: 0.0,
             direction,
             rot: rot_of(direction),
             head_direction: 0,
@@ -1308,7 +1361,26 @@ impl Actor {
     }
 
     pub fn play(&mut self, action: usize, start: Instant, duration_ms: f32, hold: bool) {
-        self.shot = Some(Shot { action, started: start, duration_ms: duration_ms.max(50.0), hold });
+        self.shot = Some(Shot { action, started: start, pace: Pace::Stretch(duration_ms.max(50.0)), hold });
+    }
+
+    /// Plays `action` once at its ACT pace times `scale` (attack, flinch), or holds its last frame (death).
+    pub fn play_at_pace(&mut self, action: usize, start: Instant, scale: f32, hold: bool) {
+        self.shot = Some(Shot { action, started: start, pace: Pace::Act(scale.max(0.01)), hold });
+    }
+
+    /// Whether a one-shot action (an attack, a skill's pose, a flinch, dying) is playing now.
+    pub fn in_action(&self, now: Instant) -> bool {
+        !matches!(self.animation(now).0, IDLE | WALK | SIT | READY)
+    }
+
+    /// World units walked since the unit appeared, the step under way included.
+    fn walked(&self, now: Instant) -> f32 {
+        let Some(&next) = self.path.first() else { return self.distance };
+        let step = [next[0] - self.cell[0], next[1] - self.cell[1]];
+        let length = if step[0] != 0 && step[1] != 0 { std::f32::consts::SQRT_2 } else { 1.0 };
+        let progress = now.saturating_duration_since(self.step_started).as_secs_f32() * 1000.0 / (self.step_ms * length);
+        self.distance + progress.min(1.0) * length * world::CELL
     }
 
     /// Turns to face a cell: the nearest of the eight directions, and its exact angle.
@@ -1367,6 +1439,7 @@ impl Actor {
                 return [self.cell[0] as f32 + step[0] as f32 * progress, self.cell[1] as f32 + step[1] as f32 * progress];
             }
             self.cell = next;
+            self.distance += if step[0] != 0 && step[1] != 0 { std::f32::consts::SQRT_2 } else { 1.0 } * world::CELL;
             self.path.remove(0);
             self.step_started += std::time::Duration::from_secs_f32(duration / 1000.0);
             if self.path.is_empty() {
@@ -1381,9 +1454,16 @@ impl Actor {
         // ponytail: a locked unit holding its frame is an estimate of how the official client shows it.
         let now = self.held.map_or(now, |at| at.min(now));
         if let Some(shot) = self.shot.as_ref().filter(|shot| shot.started <= now) {
-            let progress = now.saturating_duration_since(shot.started).as_secs_f32() * 1000.0 / shot.duration_ms;
-            if progress < 1.0 || shot.hold {
-                return (shot.action, Timing::Span(progress.min(1.0)));
+            let elapsed = now.saturating_duration_since(shot.started).as_secs_f32() * 1000.0;
+            match shot.pace {
+                Pace::Stretch(duration) if elapsed < duration || shot.hold => return (shot.action, Timing::Span((elapsed / duration).min(1.0))),
+                Pace::Act(scale) => {
+                    let length = self.sprites.as_ref().and_then(|sprites| sprites.index_ms(shot.action * 8 + usize::from(self.direction % 8))).unwrap_or(0.0);
+                    if elapsed < length * scale || shot.hold {
+                        return (shot.action, Timing::Once(elapsed, scale));
+                    }
+                }
+                Pace::Stretch(_) => {}
             }
         }
         let action = if self.moving() {
@@ -1395,6 +1475,9 @@ impl Actor {
         } else {
             IDLE
         };
+        if action == WALK {
+            return (action, Timing::Walk(self.walked(now)));
+        }
         (action, Timing::Loop(now.saturating_duration_since(self.animation_started).as_secs_f32() * 1000.0))
     }
 
@@ -1456,6 +1539,21 @@ mod tests {
         assert_eq!(SpriteSet::folders(5), ["몬스터", "npc"]);
         assert_eq!(SpriteSet::folders(8), ["homun", "몬스터", "npc"]);
         assert_eq!(SpriteSet::folders(6), ["npc", "몬스터"]);
+    }
+
+    #[test]
+    fn plays_frames_at_the_games_pace() {
+        // 24 ms units: a delay of 4 shows a frame for 96 ms; looping wraps, once holds the last.
+        assert_eq!([0.0, 95.0, 96.0, 400.0].map(|ms| loop_frame(ms, 4.0, 4)), [0, 0, 1, 0]);
+        assert_eq!([95.0, 96.0, 10_000.0].map(|ms| once_frame(ms, 4.0, 4)), [0, 1, 3]);
+        // Walking: frames by distance (a cell is 5 units), the same whatever the speed.
+        assert_eq!([0.0, 2.7, 2.71, 5.0, 10.8].map(|distance| walk_frame(distance, 1.0, 8)), [0, 3, 4, 7, 7]);
+        assert_eq!(walk_frame(30.0, 4.0, 8), 3);
+        // The attack's pace: attackMT over 432, capped there unless a bow.
+        assert_eq!(
+            [attack_scale(200, false), attack_scale(432, false), attack_scale(800, false), attack_scale(800, true)],
+            [200.0 / 432.0, 1.0, 1.0, 800.0 / 432.0]
+        );
     }
 
     #[test]

@@ -823,6 +823,13 @@ fn game_state(app: &App, game: &Game) -> Value {
         value["charm"] = element.checked_sub(1).and_then(|element| crate::CHARM_NAMES.get(usize::from(element))).copied().into();
         value["souls"] = orbs.souls.into();
     };
+    // The action a unit plays now, and its body's frame (null without a sprite), on the drawing's clock.
+    let animation = |actor: &crate::actor::Actor| {
+        let (action, timing) = actor.animation(crate::control::now());
+        let frame =
+            actor.sprites.as_ref().and_then(|sprites| sprites.body_frame(action * 8 + usize::from(actor.direction % 8), timing)).map(|(frame, _)| frame);
+        (action, frame)
+    };
     // A combo window's milliseconds left, on the drawing's clock (0: none).
     let combo_ms = |unit: Option<u32>| {
         game.combos.get(&unit).map_or(0, |(start, length)| length.saturating_sub(crate::control::now().saturating_duration_since(*start)).as_millis() as u64)
@@ -857,6 +864,9 @@ fn game_state(app: &App, game: &Game) -> Value {
                 other => json!(other),
             };
             let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "combo_ms": combo_ms(Some(id)), "held": crate::locked_with(&game.locks, id)});
+            let (action, frame) = animation(actor);
+            unit["action"] = action.into();
+            unit["frame"] = frame.into();
             orbs(&mut unit, Some(id));
             if let Some(rect) = screen(Owner::Unit(id)) {
                 unit["screen"] = json!(rect);
@@ -1106,6 +1116,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "combo_ms": combo_ms(None),
             // How many units Blade Stop or Cursed Circle locks the player with.
             "held": crate::locked_with(&game.locks, game.account_id),
+            "action": animation(&game.player).0,
+            "frame": animation(&game.player).1,
             "hp": status(net::STATUS_HP),
             "max_hp": status(net::STATUS_MAX_HP),
             "sp": status(net::STATUS_SP),
