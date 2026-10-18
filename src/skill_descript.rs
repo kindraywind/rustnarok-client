@@ -161,10 +161,10 @@ mod tests {
     #[test]
     fn colors_lines_and_carries_them_over() {
         let lines = ["Bash".to_owned(), "Description: ^777777Hits".to_owned(), "hard.^000000 More".to_owned()];
-        let colored = colored(&lines);
-        assert_eq!(colored[0], [([0, 0, 0], "Bash".to_owned())]);
-        assert_eq!(colored[1], [([0, 0, 0], "Description: ".to_owned()), ([0x77, 0x77, 0x77], "Hits".to_owned())]);
-        assert_eq!(colored[2], [([0x77, 0x77, 0x77], "hard.".to_owned()), ([0, 0, 0], " More".to_owned())]);
+        let shown = colored(&lines);
+        assert_eq!(shown[0], [([0, 0, 0], "Bash".to_owned())]);
+        assert_eq!(shown[1], [([0, 0, 0], "Description: ".to_owned()), ([0x77, 0x77, 0x77], "Hits".to_owned())]);
+        assert_eq!(shown[2], [([0x77, 0x77, 0x77], "hard.".to_owned()), ([0, 0, 0], " More".to_owned())]);
         assert_eq!(colored(&[]), [vec![([0, 0, 0], UNKNOWN.to_owned())]]);
     }
 
