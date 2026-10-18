@@ -263,6 +263,9 @@ impl Setup {
     ) {
         let at = |local: [f32; 2]| self.frame.at(local);
         self.frame.draw_title(layer, chrome, messages.get(SETUP_TITLE).map_or("", String::as_str), pointer.0);
+        if self.frame.minimized {
+            return;
+        }
         let height = Self::height();
         layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, height - TITLE_HEIGHT - FOOTER]));
         // Store name field.
