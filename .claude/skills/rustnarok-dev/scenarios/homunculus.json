@@ -1,0 +1,221 @@
+{
+  "about": "A homunculus (issue #46): @makehomun makes a Lif, which shows and follows; the window (Alt+R); feeding; @homlevel gives a skill point and the skill list raises Healing Hands; Alt + right click sends it at a Poring; Alt+T stops it following; vaporizing it shows. RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's homunculus (rathena's `homunculus` and `skill_homunculus` rows, and `char.homun_id` set to 0), or @makehomun is refused.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@makehomun 6001"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0ba4",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "units_at_least": {
+          "homunculus": 1
+        },
+        "state": {
+          "homunculus.name": "Lif",
+          "homunculus.level": 1,
+          "homunculus.following": true,
+          "homunculus.vaporized": false
+        }
+      }
+    },
+    {
+      "shot": "homunculus",
+      "threshold": 20
+    },
+    {
+      "key": "Alt+R"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Homunculus"
+        ]
+      }
+    },
+    {
+      "shot": "homunculus-window",
+      "threshold": 20
+    },
+    {
+      "say": "@item 537 2"
+    },
+    {
+      "say": "@homhungry 50"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "click_on": {
+        "button": "feed"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x022f",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "homunculus.hunger": 60
+        }
+      }
+    },
+    {
+      "say": "@homlevel 2"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "state": {
+          "homunculus.level": 3,
+          "homunculus.skill_points": 1
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "skill"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "HomunculusSkills"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "button": "raise:8001"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0239",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "homunculus.skill_points": 0
+        }
+      }
+    },
+    {
+      "shot": "homunculus-skills",
+      "threshold": 20
+    },
+    {
+      "key": "Alt+R"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "say": "@monster poring 1"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "click_unit": {
+        "kind": "monster",
+        "name": "Poring"
+      },
+      "button": "right",
+      "mods": "Alt"
+    },
+    {
+      "wait_for": {
+        "event": "Act",
+        "ms": 5000
+      }
+    },
+    {
+      "shot": "homunculus-attack",
+      "threshold": 20
+    },
+    {
+      "key": "Alt+T"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "homunculus.following": false
+        }
+      }
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "say": "@useskill 244 1 self"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "homunculus.vaporized": true
+        }
+      }
+    },
+    {
+      "key": "Alt+R"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "homunculus-vaporized",
+      "threshold": 20
+    }
+  ]
+}

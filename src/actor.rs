@@ -623,9 +623,17 @@ impl SpriteSet {
         Some(Self { layers: [Some(body), weapon].into_iter().flatten().collect(), player: true, dressing: None, scale: 1.0, textures: HashMap::new() })
     }
 
-    pub fn single(grf: &Grf, name: &str, monster: bool) -> Option<Self> {
-        let folders = if monster { ["몬스터", "npc"] } else { ["npc", "몬스터"] };
-        folders.iter().find_map(|folder| Self::at(grf, &format!("data\\sprite\\{folder}\\{name}")))
+    /// The sprite folders to look in for a unit of this kind (5 monster, 8 homunculus), first match wins.
+    pub fn folders(kind: u8) -> &'static [&'static str] {
+        match kind {
+            5 => &["몬스터", "npc"],
+            8 => &["homun", "몬스터", "npc"],
+            _ => &["npc", "몬스터"],
+        }
+    }
+
+    pub fn single(grf: &Grf, name: &str, kind: u8) -> Option<Self> {
+        Self::folders(kind).iter().find_map(|folder| Self::at(grf, &format!("data\\sprite\\{folder}\\{name}")))
     }
 
     /// One sprite by path without extension, e.g. `data\sprite\shadow`.
@@ -1112,6 +1120,13 @@ impl Actor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn looks_for_sprites_by_kind() {
+        assert_eq!(SpriteSet::folders(5), ["몬스터", "npc"]);
+        assert_eq!(SpriteSet::folders(8), ["homun", "몬스터", "npc"]);
+        assert_eq!(SpriteSet::folders(6), ["npc", "몬스터"]);
+    }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
