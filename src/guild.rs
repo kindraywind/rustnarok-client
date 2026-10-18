@@ -7,7 +7,6 @@ use std::io::Read;
 use image::RgbaImage;
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::SkillInfo;
-use rustnarok_client::messages;
 use rustnarok_client::net::{GuildInfo, GuildMember, GuildPosition, GuildRelation, Skill};
 use rustnarok_client::text::Font;
 
@@ -87,11 +86,6 @@ const POSITION_COLUMNS: [(usize, f32); 6] = [(510, 10.0), (511, 50.0), (512, 190
 const PERMISSIONS: [u32; 3] = [GuildPosition::INVITE, GuildPosition::EXPEL, GuildPosition::STORAGE];
 /// Expel list columns: name, reason.
 const EXPEL_COLUMNS: [(usize, f32); 2] = [(407, 10.0), (462, 150.0)];
-/// Guild skills keep their place in a grid, by number (GD_APPROVAL is 10000), six to a row.
-const SKILL_BASE: u16 = 10000;
-const SKILL_COLUMNS: usize = 6;
-const SKILL_LEFT: f32 = (WIDTH - SKILL_COLUMNS as f32 * skills::CELL[0]) / 2.0;
-const SKILL_POINTS: usize = 284;
 const GREY: [u8; 3] = [0x88, 0x88, 0x88];
 const TAB_FILL: [u8; 4] = [0xE7, 0xEB, 0xF4, 0xFF];
 /// The info page's allies and antagonists, stacked on its right: each heading, its box under it, and three 16 px
@@ -138,6 +132,12 @@ pub struct Assets {
     drop: [Texture; 3],
     ok: [Texture; 3],
     edit: Texture,
+    /// The skills page: the level up button, Use and Close, and the bands of a skill costing no SP and one not learned.
+    level_up: [Texture; 3],
+    use_button: [Texture; 3],
+    close_button: [Texture; 3],
+    no_sp: Texture,
+    unlearned: Texture,
 }
 
 impl Assets {
@@ -162,6 +162,11 @@ impl Assets {
             drop: ["basic_interface\\txtbox_btn_a", "basic_interface\\txtbox_btn_b", "basic_interface\\txtbox_btn_c"].map(image),
             ok: ["btn_ok", "btn_ok_a", "btn_ok_b"].map(image),
             edit: gpu.solid(EDIT_FILL),
+            level_up: ["basic_interface\\skill_up_a", "basic_interface\\skill_up_b", "basic_interface\\skill_up_c"].map(image),
+            use_button: ["btn_use", "btn_use_a", "btn_use_b"].map(image),
+            close_button: ["btn_close", "btn_close_a", "btn_close_b"].map(image),
+            no_sp: gpu.solid([0x70, 0xD7, 0xED, 0xFF]),
+            unlearned: gpu.solid([0xB4, 0xB4, 0xB4, 0xFF]),
         }
     }
 }
@@ -194,9 +199,11 @@ pub struct Guild {
 pub enum Hit {
     Title(TitleHit),
     Tab(usize),
-    /// A guild skill's box, or its level up button.
+    /// A guild skill's row, or its level up button; the skills page's Use and Close.
     Skill(u16),
     LevelUp(u16),
+    SkillUse,
+    SkillClose,
     /// An ally or an antagonist on the info page (a click selects it, the master's right click ends it): its guild ID,
     /// and whether it's an antagonist.
     Relation(u32, bool),
@@ -545,6 +552,8 @@ pub struct GuildWindow {
     pub pending: Vec<(u32, u32, u32)>,
     pub drop: Option<(usize, usize)>,
     pub moves_rest_until: Option<std::time::Instant>,
+    /// The skill selected on the skills page.
+    pub skill: Option<u16>,
 }
 
 impl Default for GuildWindow {
@@ -560,6 +569,7 @@ impl Default for GuildWindow {
             pending: Vec::new(),
             drop: None,
             moves_rest_until: None,
+            skill: None,
         }
     }
 }
@@ -641,11 +651,45 @@ pub fn head_key(member: &GuildMember) -> String {
     format!("guildhead:{}:{}:{}:{}", member.job, member.sex, member.hair, member.hair_color)
 }
 
-/// Where a guild skill's box sits.
-fn skill_corner(id: u16) -> [f32; 2] {
-    let place = usize::from(id.saturating_sub(SKILL_BASE));
-    let [column, row] = [place % SKILL_COLUMNS, place / SKILL_COLUMNS];
-    [SKILL_LEFT + column as f32 * skills::CELL[0] + (skills::CELL[0] - skills::BOX) / 2.0, PAGE_TOP + 6.0 + row as f32 * skills::CELL[1]]
+/// The skills page: one column of rows 34 apart (7 show), the selected row's band (104, 43 + y, 164 × 28), the icon at
+/// (44, 45 + y), the name at (112, 46 + y), "Lv : n" at (113, 58 + y) and the SP at (212, 58 + y); the master's level up
+/// button at (78, 45 + y); Use and Close at (46, 293) and (92, 293); "SkillPoint : n" at (300, 297).
+const SKILL_ROW: f32 = 34.0;
+const SKILL_ROWS: usize = 7;
+const SKILL_BAND: ([f32; 2], [f32; 2]) = ([104.0, 43.0], [164.0, 28.0]);
+const SKILL_ICON: [f32; 2] = [44.0, 45.0];
+const SKILL_NAME: [f32; 2] = [112.0, 46.0];
+const SKILL_LEVEL: [f32; 2] = [113.0, 58.0];
+const SKILL_SP: [f32; 2] = [212.0, 58.0];
+const SKILL_UP: [f32; 2] = [78.0, 45.0];
+const SKILL_USE: [f32; 2] = [46.0, 293.0];
+const SKILL_CLOSE: [f32; 2] = [92.0, 293.0];
+const SKILL_BUTTON: [f32; 2] = [42.0, 20.0];
+const SKILL_POINT_AT: [f32; 2] = [300.0, 297.0];
+const PASSIVE: usize = 286;
+const UNLEARNED_NAME: [u8; 3] = [0x78, 0x78, 0x78];
+/// The right click's one entry, "View Skill Info".
+pub const VIEW_SKILL_INFO: usize = 322;
+
+/// The selected row's band: an active skill's, one costing no SP, one not learned.
+pub fn skill_band(skill: &Skill) -> [u8; 4] {
+    if skill.level == 0 {
+        [0xB4, 0xB4, 0xB4, 0xFF]
+    } else if skill.sp == 0 {
+        [0x70, 0xD7, 0xED, 0xFF]
+    } else {
+        [0x70, 0x9F, 0xED, 0xFF]
+    }
+}
+
+/// The SP line once learned: "Sp : n", or "Passive" (286) for a skill that targets nothing.
+pub fn skill_sp_text(skill: &Skill, passive: &str) -> String {
+    if skill.kind == 0 { passive.to_owned() } else { format!("Sp : {}", skill.sp) }
+}
+
+/// The row a press picks on the skills page, before scrolling: rows on a 32-px pitch from y 41.
+fn skill_row_at(local: [f32; 2]) -> Option<usize> {
+    (local[1] >= 41.0).then(|| ((local[1] - 41.0) / 32.0) as usize).filter(|&row| row < SKILL_ROWS)
 }
 
 /// A guild emblem from the server: a zlib-compressed BMP, its magenta keyed out.
@@ -707,6 +751,11 @@ impl PositionPart {
 impl GuildWindow {
     pub fn height(&self) -> f32 {
         HEIGHT
+    }
+
+    /// Whether a skill's row has the level up button: the master's, with points left, on an upgradable skill.
+    fn levels_up(&self, guild: &Guild, skill: &Skill) -> bool {
+        guild.master && guild.skill_points > 0 && skill.upgradable
     }
 
     pub fn show_tab(&mut self, tab: usize) {
@@ -812,14 +861,19 @@ impl GuildWindow {
             }
         }
         if self.tab == SKILLS {
-            for skill in &guild.skills {
-                let corner = skill_corner(skill.id);
-                if guild.skill_points > 0 && skill.upgradable && contains(offset(corner, skills::UP), [24.0, 24.0], local) {
+            for (row, skill) in guild.skills.iter().skip(self.scroll).take(SKILL_ROWS).enumerate() {
+                if self.levels_up(guild, skill) && contains(offset(SKILL_UP, [0.0, row as f32 * SKILL_ROW]), [24.0, 24.0], local) {
                     return Some(Hit::LevelUp(skill.id));
                 }
-                if contains(corner, [skills::BOX; 2], local) {
-                    return Some(Hit::Skill(skill.id));
-                }
+            }
+            if contains(SKILL_USE, SKILL_BUTTON, local) {
+                return Some(Hit::SkillUse);
+            }
+            if contains(SKILL_CLOSE, SKILL_BUTTON, local) {
+                return Some(Hit::SkillClose);
+            }
+            if let Some(skill) = skill_row_at(local).and_then(|row| guild.skills.get(row + self.scroll)) {
+                return Some(Hit::Skill(skill.id));
             }
         }
         Some(Hit::Window)
@@ -861,6 +915,20 @@ impl GuildWindow {
                 .enumerate()
                 .flat_map(|(row, position)| position_parts(row).map(|(part, corner, size)| (part.name(position.id), place(corner, size))))
                 .collect(),
+            // The skills page: `skill:<id>` rows, `skill_up:<id>` buttons, `skill_use` and `skill_close`.
+            SKILLS => {
+                let mut boxes = Vec::new();
+                for (row, skill) in guild.skills.iter().skip(self.scroll).take(SKILL_ROWS).enumerate() {
+                    let y = row as f32 * SKILL_ROW;
+                    boxes.push((format!("skill:{}", skill.id), place(offset(SKILL_BAND.0, [0.0, y]), SKILL_BAND.1)));
+                    if self.levels_up(guild, skill) {
+                        boxes.push((format!("skill_up:{}", skill.id), place(offset(SKILL_UP, [0.0, y]), [24.0, 24.0])));
+                    }
+                }
+                boxes.push(("skill_use".to_owned(), place(SKILL_USE, SKILL_BUTTON)));
+                boxes.push(("skill_close".to_owned(), place(SKILL_CLOSE, SKILL_BUTTON)));
+                boxes
+            }
             MEMBERS => {
                 let mut boxes: Vec<(String, [f32; 4])> = member_order(&guild.members, self.sort, self.online_first)
                     .into_iter()
@@ -915,6 +983,7 @@ impl GuildWindow {
         }
         let total = match self.tab {
             MEMBERS => guild.members.len(),
+            SKILLS => guild.skills.len().saturating_sub(SKILL_ROWS - ROWS.min(SKILL_ROWS)),
             POSITIONS => guild.position_info.len(),
             EXPELLED => guild.expelled.len(),
             _ => 0,
@@ -934,9 +1003,8 @@ impl GuildWindow {
     pub fn draw<'a>(
         &self,
         layer: &mut Layer<'a>,
-        tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
-        (assets, skill_assets): (&'a Assets, &'a skills::Assets),
+        assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         font: &Font,
         messages: &[String],
@@ -1137,23 +1205,39 @@ impl GuildWindow {
             }
             // Skills where they sit, the master's level up buttons, and the points left on the footer.
             SKILLS => {
-                for skill in &guild.skills {
-                    let corner = skill_corner(skill.id);
+                let passive = message(PASSIVE);
+                for (row, skill) in guild.skills.iter().skip(self.scroll).take(SKILL_ROWS).enumerate() {
+                    let y = row as f32 * SKILL_ROW;
+                    let down = |place: [f32; 2]| offset(place, [0.0, y]);
                     let info = skill_info.get(&skill.id);
-                    let name = info.map_or_else(|| skill.id.to_string(), |info| info.name.clone());
-                    skills::draw_box(layer, skill_assets, icons, font, at(corner), info, &name, skill.level);
-                    if guild.skill_points > 0 && skill.upgradable {
-                        let state = if hit == Some(Hit::LevelUp(skill.id)) { 1 + usize::from(pointer.1) } else { 0 };
-                        let up = &skill_assets.up[state];
-                        layer.sprites.push((up, at(offset(corner, skills::UP)), up.size));
+                    if self.skill == Some(skill.id) {
+                        let band = match skill_band(skill) {
+                            [0x70, 0x9F, ..] => &assets.hover,
+                            [0x70, 0xD7, ..] => &assets.no_sp,
+                            _ => &assets.unlearned,
+                        };
+                        layer.sprites.push((band, at(down(SKILL_BAND.0)), SKILL_BAND.1));
                     }
-                    if hit == Some(Hit::Skill(skill.id)) {
-                        let max = info.map_or(0, |info| info.max_level);
-                        window::tooltip(tooltip, chrome, font, &format!("{name} Lv {}/{max}", skill.level), offset(pointer.0, [12.0, 12.0]), [255; 3]);
+                    if let Some(Some(icon)) = info.map(skills::icon_path).and_then(|path| icons.get(&path)) {
+                        layer.sprites.push((icon, at(down(SKILL_ICON)), [24.0, 24.0]));
+                    }
+                    let name = info.map_or_else(|| skill.id.to_string(), |info| info.name.clone());
+                    let color = if skill.level == 0 { UNLEARNED_NAME } else { [0, 0, 0] };
+                    text(layer, window::fit(font, &name, WIDTH - SKILL_NAME[0] - 8.0), down(SKILL_NAME), color);
+                    if skill.level > 0 {
+                        text(layer, format!("Lv : {}", skill.level), down(SKILL_LEVEL), [0, 0, 0]);
+                        text(layer, skill_sp_text(skill, passive), down(SKILL_SP), [0, 0, 0]);
+                    }
+                    if self.levels_up(guild, skill) {
+                        let state = if hit == Some(Hit::LevelUp(skill.id)) { 1 + usize::from(pointer.1) } else { 0 };
+                        layer.sprites.push((&assets.level_up[state], at(down(SKILL_UP)), [24.0, 24.0]));
                     }
                 }
-                let points = messages::fill(message(SKILL_POINTS), &[&guild.skill_points]);
-                text(layer, points, [12.0, HEIGHT - FOOTER + ((FOOTER - font.line_height()) / 2.0).floor()], [0, 0, 0]);
+                for (place, images, which) in [(SKILL_USE, &assets.use_button, Hit::SkillUse), (SKILL_CLOSE, &assets.close_button, Hit::SkillClose)] {
+                    let look = if hit == Some(which) { 1 + usize::from(pointer.1) } else { 0 };
+                    layer.sprites.push((&images[look], at(place), SKILL_BUTTON));
+                }
+                text(layer, format!("SkillPoint : {}", guild.skill_points), SKILL_POINT_AT, [0, 0, 0]);
             }
             // The expel list: who, and why.
             EXPELLED => {
@@ -1415,11 +1499,29 @@ mod tests {
     }
 
     #[test]
-    fn places_guild_skills_by_number() {
-        assert_eq!(skill_corner(10000), [SKILL_LEFT + 17.0, PAGE_TOP + 6.0]);
-        assert_eq!(skill_corner(10007), [SKILL_LEFT + 62.0 + 17.0, PAGE_TOP + 6.0 + 58.0]);
-        // The last of the 20 still fits on the page.
-        assert!(skill_corner(10019)[1] + skills::CELL[1] <= HEIGHT - FOOTER);
+    fn lists_guild_skills_in_a_column() {
+        let skill = |id: u16, kind: u32, level: u16, sp: u16, upgradable: bool| Skill { id, kind, level, sp, range: 0, upgradable };
+        assert_eq!(skill_band(&skill(10000, 1, 1, 10, false)), [0x70, 0x9F, 0xED, 0xFF]);
+        assert_eq!(skill_band(&skill(10000, 1, 1, 0, false)), [0x70, 0xD7, 0xED, 0xFF]);
+        assert_eq!(skill_band(&skill(10000, 1, 0, 10, false)), [0xB4, 0xB4, 0xB4, 0xFF]);
+        assert_eq!(skill_sp_text(&skill(10000, 0, 1, 0, false), "Passive"), "Passive");
+        assert_eq!(skill_sp_text(&skill(10010, 4, 1, 40, false), "Passive"), "Sp : 40");
+        // Rows picked on a 32-px pitch from y 41 (drawn 34 apart from 43).
+        assert_eq!(
+            [30.0, 41.0, 72.0, 73.0, 41.0 + 32.0 * 6.0 + 5.0, 41.0 + 32.0 * 7.0].map(|y| skill_row_at([150.0, y])),
+            [None, Some(0), Some(0), Some(1), Some(6), None]
+        );
+        let mut guild = Guild { skill_points: 1, skills: vec![skill(10000, 0, 1, 0, true), skill(10001, 4, 0, 30, true)], ..Default::default() };
+        let mut window = GuildWindow { tab: SKILLS, ..GuildWindow::default() };
+        window.frame.open = true;
+        let corner = window.frame.position;
+        let at = move |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
+        // The level up button is the master's.
+        assert_eq!(window.hit(at([80.0, 45.0 + 34.0 + 5.0]), &guild), Some(Hit::Skill(10001)), "a member has none");
+        guild.master = true;
+        assert_eq!(window.hit(at([80.0, 45.0 + 34.0 + 5.0]), &guild), Some(Hit::LevelUp(10001)));
+        assert_eq!(window.hit(at([150.0, 50.0]), &guild), Some(Hit::Skill(10000)));
+        assert_eq!((window.hit(at([50.0, 300.0]), &guild), window.hit(at([100.0, 300.0]), &guild)), (Some(Hit::SkillUse), Some(Hit::SkillClose)));
     }
 
     #[test]

@@ -454,6 +454,14 @@ impl App {
                 Some(Choice::EndRelation(id, antagonist)) => {
                     let _ = game.session.end_relation(id, antagonist);
                 }
+                // A guild skill's description, where the menu was.
+                Some(Choice::GuildSkillInfo(id)) => {
+                    let lines = self.skill_descriptions.get(&id).cloned().unwrap_or_default();
+                    let active = game.skill_active(id);
+                    game.skill_description =
+                        Some(skill_descript::SkillDescription::new(id, &lines, true, active, |height| skill_descript::at_window(cursor, height)));
+                    game.sync_esc();
+                }
                 Some(Choice::GuildMember(choice, index)) => {
                     if let Some(member) = game.guild.as_ref().and_then(|guild| guild.members.get(index)).cloned() {
                         match choice {
@@ -1335,6 +1343,19 @@ impl App {
                         Some(guild::Hit::LevelUp(skill)) => {
                             let _ = game.session.skill_up(skill);
                         }
+                        // The skills page: a row selects, Use uses the selected learned skill at its level, Close closes.
+                        Some(guild::Hit::Skill(id)) => game.guild_window.skill = Some(id),
+                        Some(guild::Hit::SkillUse) => {
+                            let level = game
+                                .guild
+                                .as_ref()
+                                .and_then(|guild| guild.skills.iter().find(|skill| Some(skill.id) == game.guild_window.skill))
+                                .map(|skill| (skill.id, skill.level));
+                            if let Some((id, level)) = level.filter(|&(_, level)| level > 0) {
+                                game.use_skill(id, level);
+                            }
+                        }
+                        Some(guild::Hit::SkillClose) => game.guild_window.frame.open = false,
                         Some(guild::Hit::Relation(id, antagonist)) => game.guild_window.selected = Some((id, antagonist)),
                         // The master's positions page: a box switches its permission; the title and tax are asked for.
                         Some(guild::Hit::Permission(id, permission)) => {
@@ -1837,10 +1858,16 @@ impl App {
                     game.skill_window.pin(skill);
                     skill.map(|id| (id, false))
                 }
-                Some(Panel::Guild) => match game.guild.as_ref().and_then(|guild| game.guild_window.hit(cursor, guild)) {
-                    Some(guild::Hit::Skill(id)) => Some((id, true)),
-                    _ => None,
-                },
+                // A guild skill: a one-entry menu, "View Skill Info".
+                Some(Panel::Guild) => {
+                    if let Some(guild::Hit::Skill(id)) = game.guild.as_ref().and_then(|guild| game.guild_window.hit(cursor, guild)) {
+                        game.right_press = None;
+                        let label = self.messages.get(guild::VIEW_SKILL_INFO).cloned().unwrap_or_default();
+                        game.menu = Some(menu::Menu::new(cursor, vec![Some((label, Choice::GuildSkillInfo(id)))], &self.font));
+                        return;
+                    }
+                    None
+                }
                 _ => None,
             };
             if let Some((id, closable)) = opened {

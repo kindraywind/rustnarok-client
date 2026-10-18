@@ -1704,9 +1704,8 @@ impl App {
                         let emblem = game.emblems.get(&guild.id).and_then(|(_, emblem)| emblem.as_ref());
                         game.guild_window.draw(
                             &mut layer,
-                            &mut tooltip,
                             &assets.chrome,
-                            (&assets.guild, &assets.skills),
+                            &assets.guild,
                             icons,
                             font,
                             messages,
