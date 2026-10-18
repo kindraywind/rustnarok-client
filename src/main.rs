@@ -2754,6 +2754,7 @@ impl Game {
             || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.stylist.as_ref().is_some_and(|window| window.covers(cursor))
             || self.chat.blocks(cursor)
+            || self.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).is_some()
             || self.link_at(cursor).is_some()
             || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -3886,6 +3887,11 @@ impl Game {
 
     fn chat_line(&mut self, text: String, color: [u8; 3]) {
         self.chat.push(text, color);
+    }
+
+    /// A chat line of a kind its colour doesn't tell (whispers share the broadcasts' yellow).
+    fn chat_line_kind(&mut self, text: String, color: [u8; 3], kind: chat::Kind) {
+        self.chat.push_kind(text, color, kind);
     }
 
     /// Starts the attacker's swing now; the number and the flinch come when the hit lands.
@@ -5300,7 +5306,7 @@ impl App {
                 None if game.mail.typing() => game.mail.type_text(text),
                 None if game.room.is_some() => game.room.as_mut().unwrap().input.push_str(text),
                 None if !game.chat_mode.chat_line_open() => {}
-                None => game.chat.typing().extend(typed),
+                None => game.chat.type_text(&typed.collect::<String>()),
             },
             Scene::CharMake(make, _) => make.type_text(text),
             Scene::Prompt { input, then: Then::ConfirmName(_), .. } => {
@@ -6515,7 +6521,7 @@ impl App {
                             && let Some(item) = game.inventory.get(index)
                         {
                             let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
-                            game.chat.typing().push_str(&item_link(item.id, &name));
+                            game.chat.type_whole(&item_link(item.id, &name));
                         } else if let Some(index) = game.inventory.click(hit) {
                             game.use_item(index);
                         }
@@ -6689,6 +6695,15 @@ impl App {
                     }
                 }
             }
+            // The chat tab settings: a kind of line on or off for the tab.
+            Scene::Game(game) if game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).is_some() => {
+                match game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).unwrap() {
+                    chat::SettingsHit::Title(TitleHit::Close) => game.chat.settings = None,
+                    chat::SettingsHit::Title(title) => game.chat.settings.as_mut().unwrap().frame.click_title(title),
+                    chat::SettingsHit::Kind(kind) => game.chat.toggle_kind(kind),
+                    chat::SettingsHit::Window => {}
+                }
+            }
             Scene::Game(game) if game.chat.blocks(cursor) => {
                 game.chat.click(cursor);
                 // ponytail: a click on the chat bar opens the battle-mode line; Enter is the key the spec names.
@@ -6771,6 +6786,7 @@ impl App {
             }
             let (inventory_height, equipment_height, info_height) = (game.inventory.height(), game.equipment.height(), game.basic_info.height());
             game.basic_info.frame.drag_to(self.cursor, info_height);
+            game.chat.drag_to(self.cursor);
             let hotkeys_height = game.hotkeys.height();
             game.hotkeys.frame.drag_to(self.cursor, hotkeys_height);
             game.inventory.frame.drag_to(self.cursor, inventory_height);
@@ -7341,7 +7357,8 @@ impl App {
                     }
                     _ => {}
                 }
-                let trade_moved = game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
+                let trade_moved = game.chat.drop_drag()
+                    | game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
                     | game.room.as_mut().is_some_and(|room| room.frame.drop_drag())
                     | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
                     | game.mail.drop_drag()
@@ -7517,6 +7534,12 @@ impl App {
                 }
                 return;
             }
+        }
+        // The chat window goes by its tab strip.
+        if let Scene::Game(game) = &mut self.scene
+            && game.chat.press(cursor)
+        {
+            return;
         }
         // The item description window goes by its top (the NPC window's links are over it).
         if let Scene::Game(game) = &mut self.scene
@@ -7770,6 +7793,8 @@ impl App {
             }
         } else {
             let effects_on = self.graphics.effects_on;
+            // The receiving group button's choice, or the key held.
+            let (party, guild) = (party || game.chat.send_to == chat::SendTo::Party, guild || game.chat.send_to == chat::SendTo::Guild);
             if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.graphics.effects_on) {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
             }
@@ -8397,7 +8422,8 @@ impl App {
                                     game.chat.typing().pop();
                                 }
                                 _ if typing && !self.modifiers.alt_key() && !self.modifiers.super_key() && !self.modifiers.control_key() => {
-                                    game.chat.typing().extend(event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()));
+                                    let typed: String = event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()).collect();
+                                    game.chat.type_text(&typed);
                                 }
                                 _ => {}
                             }
@@ -10927,7 +10953,7 @@ impl App {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
             }
             // Whispers, yellow both ways (the client's "(From name)" wording).
-            MapEvent::Whisper { from, text } => game.chat_line(format!("(From {from}) : {text}"), WHISPER_COLOR),
+            MapEvent::Whisper { from, text } => game.chat_line_kind(format!("(From {from}) : {text}"), WHISPER_COLOR, chat::Kind::Whisper),
             MapEvent::WhisperResult(result) => {
                 let (to, text) = game.whispered.pop_front().unwrap_or_default();
                 let line = match result {
@@ -10935,7 +10961,7 @@ impl App {
                     1 => self.messages.get(WHISPER_FAILED).cloned().unwrap_or_default(),
                     _ => format!("{to}{}", self.messages.get(WHISPER_FAILED + usize::from(result) - 1).cloned().unwrap_or_default()),
                 };
-                game.chat_line(line, WHISPER_COLOR);
+                game.chat_line_kind(line, WHISPER_COLOR, chat::Kind::Whisper);
             }
             MapEvent::ItemSkill(skill) => game.cast_item_skill(skill),
             // Eggs to hatch: the pick list; an empty one shows nothing.
@@ -13038,6 +13064,16 @@ impl App {
         let caret = open && (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
         let name_of = |item: &links::ItemLink| inventory::item_name(items, item.id, true, item.refine);
         game.chat_links = game.chat.draw(&mut chat_layer, &assets.chat, font, messages, open, caret, &name_of);
+        // The input bar buttons' tooltips, over the pointer.
+        if let Some(text) = game.chat.tooltip(pointer.0).and_then(|id| messages.get(id)) {
+            let size = [font.width(text) + 8.0, font.line_height() + 4.0];
+            let corner = [pointer.0[0] - size[0] / 2.0, pointer.0[1] - size[1] - 6.0];
+            tooltip.sprites.push((&assets.speech_fill, corner, size));
+            for (edge, piece) in overhead::border(size) {
+                tooltip.sprites.push((&assets.speech_border, offset(corner, edge), piece));
+            }
+            tooltip.texts.push((text.clone(), offset(corner, [4.0, 2.0]), [0, 0, 0]));
+        }
         let size = [game.world.gat.width as u32, game.world.gat.height as u32];
         // NPC marks blink, shown half of each second.
         game.marks.retain(|(.., until)| until.is_none_or(|until| until > now));
@@ -13396,6 +13432,9 @@ impl App {
         }
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
+        if let Some(settings) = &game.chat.settings {
+            settings.draw(&mut shop_layer, &assets.chrome, messages, &game.chat.tabs[settings.tab].kinds, pointer.0);
+        }
         // A skill's description, over the windows.
         if let Some(window) = &game.skill_description {
             window.draw(&mut shop_layer, &assets.chrome, &assets.skill_descript, font, pointer.0);
