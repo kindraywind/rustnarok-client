@@ -212,7 +212,8 @@ pub struct Assets {
 impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let folder = format!("{UI}enchantui\\");
-        let image = |name: &str| gpu.load_texture(grf, &format!("{folder}{name}.bmp"), false);
+        // Older data (2022 kRO) has no enchantui folder: blank pictures then, rather than no client at all.
+        let image = |name: &str| gpu.try_load_texture(grf, &format!("{folder}{name}.bmp"), false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
         // ponytail: random / confirm / grow / reset guessed as the Normal / Perfect / Upgrade / Reset tabs.
         let tab = |name: &str| [image(&format!("tab_enc_{name}_out")), image(&format!("tab_enc_{name}_pressed")), image(&format!("tab_enc_{name}_disable"))];
         Self {
