@@ -1,0 +1,27 @@
+{
+  "about": "The party invitation box (issue #481): \"(QAParty)\" and the question at the game's place (392, 320 at 1024×768); Yes joins and opens the party window, and the inviter reads \"<second> accepted your party invitation.\"",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"type": "/leave"}, {"key": "Enter"}, {"as": "second", "type": "/leave"}, {"as": "second", "key": "Enter"}, {"wait": 1500},
+    {"say": "@recall {second}"}, {"as": "second", "settle": 2000},
+    {"type": "/organize QAParty"}, {"key": "Enter"}, {"wait_for": {"event": "PartyMade", "ms": 5000}}, {"wait": 500},
+    {"expect": {"windows_open": ["Party"]}}, {"key": "Alt+Z"},
+    {"click_on": {"unit": "{second}"}, "button": "right"}, {"wait": 400},
+    {"click_on": {"menu_item": "party"}},
+    {"as": "second", "wait_for": {"packet": "0x02c6", "ms": 5000}}, {"as": "second", "wait": 300},
+    {"as": "second", "expect": {"windows_open": ["PartyInvite"], "windows_closed": ["Party"]}},
+    {"as": "second", "move": [1000, 740]},
+    {"as": "second", "shot": "party-invitation"},
+    {"as": "second", "click_on": {"button": "ok"}},
+    {"wait_for": {"packet": "0x02c5", "ms": 5000}}, {"wait": 500},
+    {"expect": {"chat": "{second} accepted your party invitation."}},
+    {"as": "second", "expect": {"windows_open": ["Party"], "windows_closed": ["PartyInvite"]}},
+    {"as": "second", "type": "/leave"}, {"as": "second", "key": "Enter"}, {"type": "/leave"}, {"key": "Enter"}, {"wait": 800}
+  ]
+}

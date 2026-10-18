@@ -888,6 +888,14 @@ fn game_state(app: &App, game: &Game) -> Value {
             json!({"kind": "button", "name": name, "box": [x, y, button[0].size[0], button[0].size[1]]})
         })
     });
+    // The party invitation's, at its own place.
+    let invitation_buttons = app.assets.as_ref().filter(|_| game.party_invite.is_some()).into_iter().flat_map(|assets| {
+        let dialog = crate::party::invitation_at(crate::screen());
+        [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)].map(|(name, place, button)| {
+            let [x, y] = crate::offset(dialog, place);
+            json!({"kind": "button", "name": name, "box": [x, y, button[0].size[0], button[0].size[1]]})
+        })
+    });
     // Hidden players are left out: the client doesn't show them.
     let mut units: Vec<_> = game.units.iter().filter(|(_, actor)| crate::actor::seen(actor.hide_option, false) == crate::actor::Seen::Whole).collect();
     units.sort_by_key(|(_, actor)| distance(actor.cell));
@@ -1125,6 +1133,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .chain(game.trade.iter().flat_map(|trade| trade.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(question_buttons)
+        .chain(invitation_buttons)
         .chain(["plus", "minus", "mini"].map(|name| json!({"kind": "button", "name": format!("minimap_{name}"), "box": crate::minimap::button_box(name)})))
         .chain(game.minimap_window.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.hotkeys.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
