@@ -879,6 +879,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.synthesis.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.upgrade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
@@ -949,6 +950,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("WarpList", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some())),
         ("Shop", game.shop.is_some()),
         ("Refine", game.refine.is_some()),
+        ("GradeEnchant", game.grade.is_some()),
         ("LaphineSynthesis", game.synthesis.is_some()),
         ("LaphineUpgrade", game.upgrade.is_some()),
         ("Enchant", game.enchant.is_some()),
