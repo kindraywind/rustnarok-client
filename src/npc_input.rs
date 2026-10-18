@@ -3,7 +3,7 @@
 
 use crate::render::{Gpu, Texture};
 use crate::window::Chrome;
-use crate::{Layer, offset, pickup};
+use crate::{Layer, contains, offset, pickup};
 
 const NUMBER_SIZE: [f32; 2] = [176.0, 46.0];
 const TEXT_SIZE: [f32; 2] = [346.0, 46.0];
@@ -79,6 +79,10 @@ impl Input {
     /// OK's corner on a screen this big.
     pub fn ok_on(&self, screen: [f32; 2]) -> [f32; 2] {
         offset(corner(screen), self.ok_at())
+    }
+
+    pub fn contains(&self, screen: [f32; 2], cursor: [f32; 2]) -> bool {
+        contains(corner(screen), self.size(), cursor)
     }
 
     /// Typed characters, up to the field's length.

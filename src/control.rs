@@ -1173,6 +1173,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     let dialog = game.dialog.as_ref().map(|dialog| {
         json!({
             "npc": dialog.npc,
+            "talking": dialog.talking,
             "lines": dialog.lines,
             "button": match dialog.button {
                 DialogButton::Next => "next",

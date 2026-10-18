@@ -1921,6 +1921,13 @@ impl Actor {
         self.shot = Some(Shot { action, started: start, pace: Pace::Hold((ms / length.max(1.0)).max(1.0)), hold: false });
     }
 
+    /// Back to standing from a held `action` (a cast cut short).
+    pub fn stop_holding(&mut self, action: usize) {
+        if self.shot.as_ref().is_some_and(|shot| shot.action == action) {
+            self.shot = None;
+        }
+    }
+
     /// In its own attack swing now.
     pub fn swinging(&self, now: Instant) -> bool {
         self.animation(now).0 == combat_actions(self.kind).0
