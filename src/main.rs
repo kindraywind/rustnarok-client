@@ -5,7 +5,8 @@
 //! Dev switches: `RUSTNAROK_CLIENT_GRF` (data.grf path), `RUSTNAROK_CLIENT_SERVER` (login server, over the data folder's
 //! clientinfo.xml and the default 127.0.0.1:6900),
 //! `RUSTNAROK_CLIENT_LOGIN=user:password` (fill in and submit on start), `RUSTNAROK_CLIENT_AUTOSTART=<slot>` (then pick the first
-//! server and play that slot; any other value stops at character select), `RUSTNAROK_CLIENT_WALK=x,y` (walk there a second after entering the map),
+//! server and play that slot; any other value stops at character select), `RUSTNAROK_CLIENT_PIN=<4 digits>` (enter that PIN when
+//! the char server asks), `RUSTNAROK_CLIENT_WALK=x,y` (walk there a second after entering the map),
 //! `RUSTNAROK_CLIENT_TALK=<name>[:<n>]` (talk to that NPC, pressing "next" or "close" up to n times), `RUSTNAROK_CLIENT_ATTACK=1` (attack the
 //! nearest monster in view), `RUSTNAROK_CLIENT_SAY=<text>[|<text>...]` (type each into the chat a second after entering, e.g.
 //! GM commands or /organize; `RUSTNAROK_CLIENT_SAY_AT` seconds in instead),
@@ -70,6 +71,7 @@ mod party;
 mod pet;
 mod pick_list;
 mod picking;
+mod pin;
 mod quest;
 mod refine;
 mod render;
@@ -350,6 +352,18 @@ const SPIRIT_TURN: f32 = 1.5;
 const SPIRIT_TILT: f32 = 0.4;
 /// The sphere picture's ball is about 22px across in a 94px square.
 const SPHERE_SCALE: f32 = 0.5;
+/// Shields, souls and charms circle at their own heights, so two kinds on one unit don't overlap; the shield and
+/// charm pictures are scaled down to about a sphere's size, and souls are spheres tinted pale violet.
+// ponytail: heights, sizes and tints are estimates; calibrate against the real client.
+const SHIELD_HEIGHT: f32 = 22.0;
+const SHIELD_SCALE: f32 = 0.22;
+const SOUL_HEIGHT: f32 = 64.0;
+const SOUL_TINT: [f32; 4] = [0.85, 0.7, 1.0, 1.0];
+const CHARM_HEIGHT: f32 = 84.0;
+const CHARM_SCALE: f32 = 0.4;
+/// Charm tints by element: water, earth, fire, wind.
+const CHARM_TINTS: [[f32; 4]; 4] = [[0.5, 0.7, 1.0, 1.0], [0.75, 0.55, 0.35, 1.0], [1.0, 0.45, 0.35, 1.0], [0.5, 1.0, 0.55, 1.0]];
+const CHARM_NAMES: [&str; 4] = ["water", "earth", "fire", "wind"];
 /// Heal, Highness Heal and Coluceo Heal report how much they healed.
 const HEAL_SKILLS: [u16; 3] = [28, 2043, 2044];
 const CAST_BAR: [f32; 2] = [60.0, 6.0];
@@ -435,16 +449,17 @@ const HIDDEN_JOBS: [u16; 2] = [111, 139];
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
 const WARP_JOB: u16 = 45;
 
-// The camera as tuned against the official client: zoom 125 (62.5 cells) and 50 degrees up by default.
-// ponytail: the zoom-out limit (5x) is a guess; calibrate against the real client.
-const ZOOM: f32 = 125.0;
+// The camera by default: 300 world units (60 cells) from the player, 45 degrees up, with world.rs's 15 degree field
+// of view. Zooming and tilting go further either way than the defaults need.
+// ponytail: the zoom-out limit (5x) is a guess; narrow it if the far view breaks.
+const ZOOM: f32 = 120.0;
 const ZOOM_MIN: f32 = 65.0;
 const ZOOM_MAX: f32 = 325.0;
 const ZOOM_MAX_INDOOR: f32 = 162.5;
 const ZOOM_STEP: f32 = 15.0;
 /// World units per zoom unit.
 const UNITS_PER_ZOOM: f32 = 2.5;
-const PITCH: f32 = 50.0;
+const PITCH: f32 = 45.0;
 const PITCH_RANGE: [f32; 2] = [10.0, 90.0];
 const PITCH_RANGE_INDOOR: [f32; 2] = [40.0, 60.0];
 const YAW_RANGE: [f32; 2] = [-360.0, 360.0];
@@ -490,9 +505,12 @@ struct Game {
     /// The emotion sprite, and the emotions showing: by unit (None = the player), the sprite action and when.
     emotion_sprite: Option<SpriteSet>,
     emotions: HashMap<Option<u32>, (usize, Instant)>,
-    /// Spirit spheres or coins: by unit (None = the player), how many; the sphere's picture, the coin's sprite.
-    spirits: HashMap<Option<u32>, u16>,
+    /// What circles units (None = the player): spheres or coins, shields, charms, souls; the sphere's, the shield's
+    /// and the charm's pictures, the coin's sprite.
+    spirits: HashMap<Option<u32>, Orbs>,
     sphere: Option<Texture>,
+    shield: Option<Texture>,
+    charm: Option<Texture>,
     coin_sprite: Option<SpriteSet>,
     digits: Option<Digits>,
     /// The NPC conversation on screen.
@@ -2057,6 +2075,7 @@ struct Assets {
     message: Texture,
     char_select: char_select::Assets,
     char_make: char_make::Assets,
+    pin: pin::Assets,
     skills: skills::Assets,
     shop: shop::Assets,
     pick_list: pick_list::Assets,
@@ -2160,6 +2179,7 @@ impl Assets {
             message: image(format!("{UI}win_msgbox.bmp")),
             char_select: char_select::Assets::load(gpu, grf, font, messages),
             char_make: char_make::Assets::load(gpu, grf),
+            pin: pin::Assets::load(gpu, grf),
             skills: skills::Assets::load(gpu, grf),
             shop: shop::Assets::load(gpu, grf),
             pick_list: pick_list::Assets::load(gpu, grf),
@@ -2282,6 +2302,42 @@ fn button_sprite(pointer: ([f32; 2], bool), position: [f32; 2], images: &ButtonI
         (false, _) => &images[0],
     };
     (image, position, image.size)
+}
+
+/// What circles a unit: spirit spheres (or coins), Millennium Shield shields, charms (element 1-4 and how many) and
+/// souls.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Orbs {
+    spheres: u16,
+    shields: u16,
+    charms: (u16, u16),
+    souls: u16,
+}
+
+/// Changes what circles a unit; a unit left with nothing leaves the map.
+fn change_orbs(spirits: &mut HashMap<Option<u32>, Orbs>, unit: Option<u32>, change: impl FnOnce(&mut Orbs)) {
+    let orbs = spirits.entry(unit).or_default();
+    change(orbs);
+    if orbs.charms.1 == 0 {
+        orbs.charms = (0, 0);
+    }
+    if *orbs == Orbs::default() {
+        spirits.remove(&unit);
+    }
+}
+
+/// The Royal Guard line, whose rage spheres rathena sends as shields (and as spheres when one comes into view).
+// ponytail: both packets go into the one sphere count for these jobs.
+fn guard_job(job: u16) -> bool {
+    matches!(job, 4066 | 4073 | 4082 | 4083 | 4102 | 4110 | 4258 | 4281)
+}
+
+/// Where `count` things circling a body at `height` are now: each one's center, and whether it's on the near side.
+fn orbit(count: u16, height: f32, turned: f32) -> impl Iterator<Item = ([f32; 2], bool)> {
+    (0..count).map(move |place| {
+        let angle = turned * SPIRIT_TURN + f32::from(place) * std::f32::consts::TAU / f32::from(count);
+        ([angle.cos() * SPIRIT_RADIUS, -height + angle.sin() * SPIRIT_RADIUS * SPIRIT_TILT], angle.sin() > 0.0)
+    })
 }
 
 /// Jobs whose spirits are coins: Gunslinger, Rebellion, their baby forms, Night Watch; anyone else's are spheres.
@@ -2611,6 +2667,9 @@ impl App {
 
     fn start_game(&mut self) {
         let Scene::CharSelect(select) = &self.scene else { return };
+        if !select.unlocked() {
+            return;
+        }
         let Some(character) = select.selected_character().cloned() else { return };
         match self.char_session.as_mut().map(|session| session.select(character.slot)) {
             Some(Ok(())) => {
@@ -2634,6 +2693,9 @@ impl App {
     /// Does what a click or key on the character select asked for.
     fn select_action(&mut self, action: char_select::Action) {
         use char_select::Action;
+        if !matches!(action, Action::Close) && matches!(&self.scene, Scene::CharSelect(select) if !select.unlocked()) {
+            return;
+        }
         let sent = match action {
             Action::Start => return self.start_game(),
             Action::Make(slot) => {
@@ -2661,6 +2723,37 @@ impl App {
         match sent {
             Some(Ok(())) => self.wait(),
             _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
+        }
+    }
+
+    /// Runs autostart (`RUSTNAROK_CLIENT_AUTOSTART=<slot>`) and `RUSTNAROK_CLIENT_MAKE`/`DELETE` once PIN state 0 is in.
+    fn finish_char_select_entry(&mut self) {
+        let first = !std::mem::replace(&mut self.scripted, true);
+        if !first {
+            return;
+        }
+        if std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok().and_then(|slot| slot.parse::<usize>().ok()).is_some() {
+            self.start_game();
+        }
+        self.run_select_switches();
+    }
+
+    fn apply_pin_action(&mut self, action: pin::PinAction) {
+        let sent = match action {
+            pin::PinAction::None => return,
+            pin::PinAction::Check { seed, pin } => self.char_session.as_mut().map(|session| session.check_pin(seed, &pin)),
+            pin::PinAction::Make { seed, pin } => self.char_session.as_mut().map(|session| session.make_pin(seed, &pin)),
+            pin::PinAction::Change { seed, old_pin, new_pin } => self.char_session.as_mut().map(|session| session.change_pin(seed, &old_pin, &new_pin)),
+            pin::PinAction::Message(id) => {
+                let text = self.message_text(id);
+                let back = std::mem::replace(&mut self.scene, Scene::Login);
+                self.message(text, back);
+                return;
+            }
+            pin::PinAction::Close => return self.back_to_login(),
+        };
+        if !matches!(sent, Some(Ok(()))) {
+            self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login);
         }
     }
 
@@ -2889,9 +2982,18 @@ impl App {
                 }
             }
             Scene::CharSelect(select) => {
-                let action = if select.menu.is_some() { select.click_menu(cursor) } else { select.hit(cursor).and_then(|hit| select.click(hit)) };
-                if let Some(action) = action {
-                    self.select_action(action);
+                if let Some(pad) = &mut select.pin_pad {
+                    if let Some(button) = pad.hit(cursor) {
+                        let action = pad.press(button);
+                        self.apply_pin_action(action);
+                    }
+                } else if select.unlocked() {
+                    let action = if select.menu.is_some() { select.click_menu(cursor) } else { select.hit(cursor).and_then(|hit| select.click(hit)) };
+                    if let Some(action) = action {
+                        self.select_action(action);
+                    }
+                } else if select.hit(cursor) == Some(char_select::Hit::Close) {
+                    self.select_action(char_select::Action::Close);
                 }
             }
             Scene::CharMake(make, _) => {
@@ -3704,9 +3806,10 @@ impl App {
             }
             return;
         }
-        // On the character select, a card's menu of moving and renaming.
+        // On the character select, a card's menu of moving and renaming (only once the PIN check has passed).
         if let Scene::CharSelect(select) = &mut self.scene
             && state == ElementState::Pressed
+            && select.unlocked()
         {
             select.open_menu(self.cursor, &self.font, &self.messages);
         }
@@ -4356,6 +4459,25 @@ impl App {
                 Key::Named(NamedKey::Escape) => self.scene = Scene::Login,
                 _ => {}
             },
+            Scene::CharSelect(select) if select.pin_pad.is_some() => {
+                let pad = select.pin_pad.as_mut().unwrap();
+                // ponytail: the official pad is mouse-only (message 1906); also accept digit keys so scenarios can `type` a PIN.
+                let action = match key {
+                    Key::Named(NamedKey::Backspace) => {
+                        pad.backspace();
+                        pin::PinAction::None
+                    }
+                    Key::Named(NamedKey::Enter) => pad.press(pin::PinButton::Ok),
+                    Key::Named(NamedKey::Escape) => pad.press(pin::PinButton::Cancel),
+                    _ => event
+                        .text
+                        .as_deref()
+                        .and_then(|text| text.chars().next())
+                        .filter(char::is_ascii_digit)
+                        .map_or(pin::PinAction::None, |digit| pad.push_digit(digit)),
+                };
+                self.apply_pin_action(action);
+            }
             Scene::CharSelect(select) => match key {
                 Key::Named(NamedKey::ArrowLeft) => select.step(-1),
                 Key::Named(NamedKey::ArrowRight) => select.step(1),
@@ -4594,9 +4716,10 @@ impl App {
             NetEvent::Char(CharEvent::Characters { slots, characters }) => {
                 let figures = characters.iter().map(|character| SpriteSet::player(&self.grf, &character_look(character), &self.look_tables)).collect();
                 let mut select = char_select::Select::new(characters, figures, usize::from(slots));
-                // A list sent again (after a deletion) keeps the cursor where it was.
+                // A list sent again (after a deletion) keeps the cursor and PIN verification where they were.
                 if let Scene::CharSelect(previous) = self.scene.base() {
                     select.selected = previous.selected;
+                    select.pin_verified = previous.pin_verified;
                 } else if let Some(slot) = self.played_slot.take() {
                     // Back from the game: the character just played.
                     select.selected = slot;
@@ -4608,17 +4731,15 @@ impl App {
                 {
                     select.selected = slot;
                 }
+                let verified = select.pin_verified;
                 match &mut self.scene {
                     // After a rename its message stays up over the new list.
                     Scene::Message(_, back) if matches!(**back, Scene::CharSelect(_)) => **back = Scene::CharSelect(Box::new(select)),
                     scene => *scene = Scene::CharSelect(Box::new(select)),
                 }
-                let first = !std::mem::replace(&mut self.scripted, true);
-                if autostart.is_some() && first {
-                    self.start_game();
-                }
-                if first {
-                    self.run_select_switches();
+                // Autostart and MAKE/DELETE wait for PIN state 0 (`finish_char_select_entry`).
+                if verified {
+                    self.finish_char_select_entry();
                 }
             }
             NetEvent::Char(CharEvent::DeleteReserved { id, result, seconds }) => {
@@ -4732,6 +4853,52 @@ impl App {
                     Err(_) => self.message("맵 서버에 접속할 수 없습니다.", Scene::Login),
                 }
             }
+            NetEvent::Char(CharEvent::Pin { seed, state }) => {
+                self.settle();
+                let Scene::CharSelect(select) = self.scene.base_mut() else { return };
+                let outcome = pin::PinPad::apply_server(&mut select.pin_pad, seed, state);
+                match outcome {
+                    pin::PinServerOutcome::Passed { message } => {
+                        select.pin_verified = true;
+                        self.finish_char_select_entry();
+                        if let Some(id) = message
+                            && matches!(self.scene, Scene::CharSelect(_))
+                        {
+                            let text = self.message_text(id);
+                            let back = std::mem::replace(&mut self.scene, Scene::Login);
+                            self.message(text, back);
+                        }
+                    }
+                    pin::PinServerOutcome::Prompt => {
+                        select.pin_verified = false;
+                        if state == 1 && !select.auto_pin_tried {
+                            select.auto_pin_tried = true;
+                            if let Ok(auto_pin) = std::env::var("RUSTNAROK_CLIENT_PIN")
+                                && auto_pin.len() == 4
+                                && auto_pin.bytes().all(|byte| byte.is_ascii_digit())
+                                && let Some(pad) = &mut select.pin_pad
+                            {
+                                let mut action = pin::PinAction::None;
+                                for digit in auto_pin.chars() {
+                                    action = pad.push_digit(digit);
+                                }
+                                self.apply_pin_action(action);
+                            }
+                        }
+                    }
+                    pin::PinServerOutcome::Message { id, tries_left } => {
+                        select.pin_verified = false;
+                        let text = messages::fill(&self.message_text(id), &[&tries_left]);
+                        let back = std::mem::replace(&mut self.scene, Scene::Login);
+                        self.message(text, back);
+                    }
+                    pin::PinServerOutcome::LockedOut(id) => {
+                        self.char_session = None;
+                        let text = self.message_text(id);
+                        self.message(text, Scene::Login);
+                    }
+                }
+            }
             NetEvent::Char(CharEvent::Refused(code)) => {
                 self.char_session = None;
                 self.message(format!("접속이 거부되었습니다. ({code})"), Scene::Login);
@@ -4795,6 +4962,8 @@ impl App {
                     emotions: HashMap::new(),
                     spirits: HashMap::new(),
                     sphere: gpu.try_load_texture(&self.grf, "data\\texture\\effect\\기구.bmp", true).ok(),
+                    shield: render::load_image(&self.grf, "data\\texture\\effect\\shield.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
+                    charm: render::load_image(&self.grf, "data\\texture\\effect\\charm.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
                     coin_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\동전"),
                     digits: Digits::load(gpu, &self.grf),
                     dialog: None,
@@ -5235,13 +5404,22 @@ impl App {
                 }
             }
             MapEvent::Spirits { id, count } => {
-                let key = (id != game.account_id).then_some(id);
-                if count > 0 {
-                    game.spirits.insert(key, count);
-                } else {
-                    game.spirits.remove(&key);
-                }
+                change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.spheres = count);
             }
+            // A Royal Guard's rage spheres come as shields too.
+            MapEvent::Shields { id, count } => {
+                let job = if id == game.account_id { Some(game.me.job) } else { game.units.get(&id).map(|actor| actor.job) };
+                let guard = job.is_some_and(guard_job);
+                change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| {
+                    *if guard { &mut orbs.spheres } else { &mut orbs.shields } = count
+                });
+            }
+            MapEvent::Charms { id, kind, count } => {
+                change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| {
+                    orbs.charms = if (1..=4).contains(&kind) { (kind, count) } else { (0, 0) }
+                });
+            }
+            MapEvent::Souls { id, count } => change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.souls = count),
             MapEvent::Vanish { id, reason } => {
                 if id != game.account_id {
                     game.spirits.remove(&Some(id));
@@ -7026,7 +7204,11 @@ impl App {
                 }
             }
             Scene::CharSelect(select) => {
-                select.draw(&mut base, &assets.char_select, font, &self.messages, &self.pc_job_names, &self.map_names, &self.icons, base_pointer, &poses)
+                let select_pointer = if select.pin_pad.is_some() { ([-1.0; 2], false) } else { base_pointer };
+                select.draw(&mut base, &assets.char_select, font, &self.messages, &self.pc_job_names, &self.map_names, &self.icons, select_pointer, &poses);
+                if let Some(pad) = &select.pin_pad {
+                    pad.draw(&mut base, &assets.chrome, &assets.pin, font, &self.messages, base_pointer);
+                }
             }
             Scene::CharMake(make, _) => {
                 let caret = matches!(self.scene, Scene::CharMake(..)) && blink_phase.is_multiple_of(2);
@@ -7318,7 +7500,7 @@ impl App {
         let turned = now.duration_since(game.entered).as_secs_f32();
         let coin = game.coin_sprite.as_mut().map(|sprite| sprite.frame_at(gpu, 0, 0, Timing::Loop(turned * 1000.0))).unwrap_or_default();
         let mut spirits: [Vec<Billboard>; 2] = [Vec::new(), Vec::new()];
-        for (unit, &count) in &game.spirits {
+        for (unit, orbs) in &game.spirits {
             let (feet, job) = match unit {
                 None => (player_feet, game.me.job),
                 Some(id) => match (feet_of.get(id), game.units.get(id)) {
@@ -7326,10 +7508,22 @@ impl App {
                     _ => continue,
                 },
             };
-            for place in 0..count {
-                let angle = turned * SPIRIT_TURN + f32::from(place) * std::f32::consts::TAU / f32::from(count);
-                let center = [angle.cos() * SPIRIT_RADIUS, -SPIRIT_HEIGHT + angle.sin() * SPIRIT_RADIUS * SPIRIT_TILT];
-                let side = &mut spirits[usize::from(angle.sin() > 0.0)];
+            // Shields at the waist, souls over the spheres, charms over the head.
+            let (element, charms) = orbs.charms;
+            let pictures = [
+                (game.shield.as_ref(), orbs.shields, SHIELD_HEIGHT, SHIELD_SCALE, [1.0; 4]),
+                (game.sphere.as_ref(), orbs.souls, SOUL_HEIGHT, SPHERE_SCALE, SOUL_TINT),
+                (game.charm.as_ref(), charms, CHARM_HEIGHT, CHARM_SCALE, CHARM_TINTS[usize::from(element.clamp(1, 4) - 1)]),
+            ];
+            for (picture, count, height, scale, tint) in pictures {
+                let Some(picture) = picture else { continue };
+                let size = picture.size.map(|side| side * scale);
+                for (center, near) in orbit(count, height, turned) {
+                    spirits[usize::from(near)].push((picture, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, tint));
+                }
+            }
+            for (center, near) in orbit(orbs.spheres, SPIRIT_HEIGHT, turned) {
+                let side = &mut spirits[usize::from(near)];
                 if coin_job(job) {
                     if let Some(sprite) = &game.coin_sprite {
                         side.extend(
@@ -8734,6 +8928,27 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_what_circles_a_unit() {
+        let mut spirits = HashMap::new();
+        change_orbs(&mut spirits, None, |orbs| orbs.spheres = 5);
+        change_orbs(&mut spirits, None, |orbs| orbs.charms = (3, 2));
+        change_orbs(&mut spirits, Some(7), |orbs| orbs.souls = 4);
+        assert_eq!(spirits[&None], Orbs { spheres: 5, charms: (3, 2), ..Orbs::default() });
+        // A 0 clears only its kind; a unit with nothing left leaves.
+        change_orbs(&mut spirits, None, |orbs| orbs.charms = (3, 0));
+        assert_eq!(spirits[&None], Orbs { spheres: 5, ..Orbs::default() });
+        change_orbs(&mut spirits, Some(7), |orbs| orbs.souls = 0);
+        assert!(!spirits.contains_key(&Some(7)));
+        change_orbs(&mut spirits, None, |orbs| orbs.spheres = 0);
+        assert!(spirits.is_empty());
+        assert!(guard_job(4066) && !guard_job(4054));
+        // A glow on black: black goes clear, a dim red stays red, half as opaque.
+        let image = render::glow(image::RgbaImage::from_pixel(1, 1, image::Rgba([128, 0, 0, 255])));
+        assert_eq!(image.get_pixel(0, 0).0, [255, 0, 0, 128]);
+        assert_eq!(render::glow(image::RgbaImage::new(1, 1)).get_pixel(0, 0).0, [0; 4]);
+    }
 
     #[test]
     fn locks_and_lets_go_of_pairs() {
