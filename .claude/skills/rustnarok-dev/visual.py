@@ -175,17 +175,19 @@ def locate(target):
         return [round(value) for value in reply["point"]] if reply.get("ok") else None
     target = dict(target)
     dx, dy = target.pop("offset", [0, 0])
+    below = target.pop("below", None)
     (kind, value), = target.items()
     state = drive.send({"cmd": "state"})
     game = state.get("game", {})
     if kind in ("unit", "ground_item"):
         # A unit by name or an item on the ground by item id (its sprite's box on screen); "offset" from its centre, e.g.
-        # into the menu it opens or onto its cell.
+        # into the menu it opens or onto its cell, or "below": that many pixels under the sprite's bottom edge.
         things = game.get("units", []) if kind == "unit" else game.get("ground_items", [])
         for thing in things:
             if thing.get("name" if kind == "unit" else "item") == value and thing.get("screen"):
                 x0, y0, x1, y1 = thing["screen"]
-                return [round((x0 + x1) / 2) + dx, round((y0 + y1) / 2) + dy]
+                y = y1 + below if below is not None else round((y0 + y1) / 2)
+                return [round((x0 + x1) / 2) + dx, y + dy]
         return None
     # In the game the game's targets; at character select the screen's (char_slot, menu_item).
     for found in game.get("targets", state.get("targets", [])):

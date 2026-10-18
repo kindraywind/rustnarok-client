@@ -7997,7 +7997,7 @@ impl App {
                 Owner::Unit(id) => game.units.get(&id).is_some_and(|actor| actor.kind == PLAYER) || game.pet_id == Some(id),
                 _ => false,
             });
-            let on_unit = match picking::pick(with_menu, self.cursor, true) {
+            let on_unit = match picking::pick(with_menu, self.cursor, true, screen_middle()) {
                 _ if game.window_at(self.cursor).is_some() || game.chat.blocks(self.cursor) => None,
                 Some(Owner::Unit(id)) => Some(id),
                 _ => None,
@@ -13463,8 +13463,8 @@ impl App {
             frames.push((Owner::Item(id), feet, sprites.frame(gpu, 0, 0, 0, Timing::Loop(0.0))));
         }
 
-        // Clickable areas: each unit's and item's sprite bounds and the cell under it on screen, in logical pixels.
-        // The dead and the hidden can't be clicked.
+        // Clickable areas: each unit's and item's sprite bounds on screen, in logical pixels, and how far along the
+        // camera's view it stands. The dead and the hidden can't be clicked.
         let to_screen = |[x, y]: [f32; 2]| [x * screen()[0], y * screen()[1]];
         let siege_map = game.map_property.is_some_and(|(_, flags)| versus::siege(flags));
         let our_guild = game.guild.as_ref().map_or(0, |guild| guild.id);
@@ -13483,13 +13483,7 @@ impl App {
                 }
                 let [left, top, right, bottom] = view.sprite_rect(*feet, low, high)?;
                 let sprite = [left * screen()[0], top * screen()[1], right * screen()[0], bottom * screen()[1]];
-                let half = world::CELL / 2.0;
-                let corners: Option<Vec<_>> = [[-half, -half], [half, -half], [half, half], [-half, half]]
-                    .iter()
-                    .map(|[dx, dz]| view.project([feet[0] + dx, feet[1], feet[2] + dz]).map(to_screen))
-                    .collect();
-                let cell = corners.map_or(sprite, |corners| picking::bounds(&corners));
-                let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]).powi(2)).sum::<f32>();
+                let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]) * view.forward[axis]).sum::<f32>();
                 let kind = match owner {
                     Owner::Player => picking::Kind::Player,
                     Owner::Item(_) => picking::Kind::Item,
@@ -13504,21 +13498,21 @@ impl App {
                     },
                 };
                 let min = if kind == picking::Kind::Item { picking::ITEM_MIN } else { picking::UNIT_MIN };
-                Some(picking::Target { owner: *owner, kind, sprite, area: picking::area(sprite, cell, min), depth })
+                Some(picking::Target { owner: *owner, kind, sprite, area: picking::area(sprite, min), depth })
             })
             .collect();
 
-        // Warp portals have no sprite: their pick box is drawn around the feet.
+        // Warp portals have no sprite: their pick box is drawn around the feet. They rank as NPCs.
         for (&id, actor) in game.units.iter().filter(|(_, actor)| actor.job == WARP_JOB) {
             let feet = game.world.cell_position(actor.cell.map(|value| value as f32));
             if let Some([left, top, right, bottom]) = warp_pick_rect(&view, feet) {
                 let cell = picking::bounds(&[to_screen([left, top]), to_screen([right, bottom])]);
-                let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]).powi(2)).sum::<f32>();
+                let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]) * view.forward[axis]).sum::<f32>();
                 game.hit_boxes.push(picking::Target {
                     owner: Owner::Unit(id),
-                    kind: picking::Kind::Other,
+                    kind: picking::Kind::Npc,
                     sprite: cell,
-                    area: picking::area(cell, cell, picking::UNIT_MIN),
+                    area: picking::area(cell, picking::UNIT_MIN),
                     depth,
                 });
             }
@@ -15301,14 +15295,19 @@ fn flatten<'a>(composed: &'a [Composed<'a>]) -> (Vec<Sprite<'a>>, Vec<f32>) {
     (sprites, alphas)
 }
 
+/// The middle of the screen, where picking splits it in quarters.
+fn screen_middle() -> [f32; 2] {
+    [screen()[0] / 2.0, screen()[1] / 2.0]
+}
+
 /// The unit or item the pointer is on (see `picking::pick`), the player aside (only skills aim at oneself).
 fn hovered(hit_boxes: &[picking::Target<Owner>], cursor: [f32; 2], players_first: bool) -> Option<Owner> {
-    picking::pick(hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player), cursor, players_first)
+    picking::pick(hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player), cursor, players_first, screen_middle())
 }
 
 /// The unit the pointer is on, the player included: what skills and taming aim at.
 fn hovered_unit(hit_boxes: &[picking::Target<Owner>], cursor: [f32; 2], players_first: bool) -> Option<Owner> {
-    picking::pick(hit_boxes.iter().copied().filter(|target| !matches!(target.owner, Owner::Item(_))), cursor, players_first)
+    picking::pick(hit_boxes.iter().copied().filter(|target| !matches!(target.owner, Owner::Item(_))), cursor, players_first, screen_middle())
 }
 
 impl ApplicationHandler<NetEvent> for App {

@@ -1,5 +1,5 @@
 {
-  "about": "Picking things on the map: a click on a potion's cell beside its small sprite picks it up, and a click a little below a Red Mushroom's sprite, on its cell, attacks it.",
+  "about": "Picking things on the map: a click on a potion's cell beside its small sprite picks it up (inside its area, grown to the minimum), and a click a little below a Red Mushroom's sprite, still in its grown area, attacks it. A click just under a tall NPC's sprite (Moonlight Flower's look, npc/sprite-layers.txt), on the ground in front of its feet, walks there instead of talking to it.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -163,6 +163,75 @@
     },
     {
       "say": "@killmonster2"
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/sprite-layers.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/sprite-layers.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "chat": "Script loaded."
+      }
+    },
+    {
+      "move": {
+        "unit": "Layers 1",
+        "below": 1
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "picking-under-npc",
+      "crop": [
+        262,
+        100,
+        500,
+        400
+      ]
+    },
+    {
+      "click_on": {
+        "unit": "Layers 1",
+        "below": 1
+      }
+    },
+    {
+      "wait_for": {
+        "sent": "0x035f",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "NpcDialog"
+        ]
+      }
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/sprite-layers.txt"
+    },
+    {
+      "wait": 500
     }
   ]
 }
