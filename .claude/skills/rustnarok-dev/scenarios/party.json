@@ -100,9 +100,6 @@
       }
     },
     {
-      "key": "Alt+Z"
-    },
-    {
       "as": "second",
       "type": "%hello party"
     },
@@ -126,6 +123,9 @@
     },
     {
       "shot": "party-chat-balloon"
+    },
+    {
+      "key": "Alt+Z"
     },
     {
       "wait": 600
