@@ -1,0 +1,19 @@
+{
+  "about": "Looks of other units (issue #444): an NPC with a player's class (4008) is drawn as a player; talked to, its script runs setnpcdisplay (ZC_NPCSPRITE_CHANGE) and it takes a Poring's sprite at once. The NPC (npc/looks.txt) is loaded with @loadnpc and unloaded at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/looks.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/looks.txt"}, {"wait": 1500},
+    {"expect": {"unit": {"name": "Display Clerk", "kind": "npc", "job": 4008}}},
+    {"move": [1000, 750]}, {"wait": 200},
+    {"shot": "npc-as-player", "crop": [362, 184, 400, 350], "threshold": 10},
+    {"click_unit": {"kind": "npc", "name": "Display Clerk"}}, {"wait": 1000},
+    {"key": "Enter"}, {"wait": 1000},
+    {"expect": {"unit": {"name": "Display Clerk", "job": 1002}}},
+    {"move": [1000, 750]}, {"wait": 200},
+    {"shot": "npc-display", "crop": [362, 184, 400, 350], "threshold": 10},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/looks.txt"}, {"wait": 500}
+  ]
+}

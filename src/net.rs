@@ -807,6 +807,7 @@ const ZC_DELETE_ITEM_FROM_BODY: u16 = 0x07FA;
 const CZ_USE_ITEM: u16 = 0x0439;
 const ZC_USE_ITEM_ACK: u16 = 0x01C8;
 const ZC_SPRITE_CHANGE: u16 = 0x01D7;
+const ZC_NPCSPRITE_CHANGE: u16 = 0x01B0;
 const ZC_STATE_CHANGE: u16 = 0x0229;
 const CZ_REQ_WEAR_EQUIP: u16 = 0x0998;
 const ZC_REQ_WEAR_EQUIP_ACK: u16 = 0x0999;
@@ -1411,7 +1412,7 @@ const ZC_NOTIFY_NEWENTRY: u16 = 0x09FE;
 const ZC_NOTIFY_STANDENTRY: u16 = 0x09FF;
 
 /// A player, NPC or monster as the map server describes it (ZC_NOTIFY_*ENTRY11).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Unit {
     pub id: u32,
     /// Object type: 0 player, 5 monster, 6 NPC, ... (rathena's clif_bl_type).
@@ -2974,6 +2975,11 @@ pub enum MapEvent {
         option: u32,
     },
     /// A unit's looks changed (`kind` is a `LOOK_*`); for weapons `extra` is the shield.
+    /// A unit takes another job's sprite (rathena's `setnpcdisplay`, a homunculus evolving or mutating).
+    JobSprite {
+        id: u32,
+        job: u32,
+    },
     LookChange {
         id: u32,
         kind: u8,
@@ -6447,6 +6453,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 .collect(),
         },
         ZC_SPRITE_CHANGE => MapEvent::LookChange { id: u32_at(2), kind: packet[6], value: u32_at(7), extra: u32_at(11) },
+        ZC_NPCSPRITE_CHANGE => MapEvent::JobSprite { id: u32_at(2), job: u32_at(7) },
         // clif_changeoption_target: AID, bodyState, healthState, effectState, PK mode.
         ZC_STATE_CHANGE => MapEvent::OptionChange { id: u32_at(2), body: u16_at(6), health: u16_at(8), option: u32_at(10) },
         ZC_REQ_WEAR_EQUIP_ACK => MapEvent::Equipped { index: u16_at(2), location: u32_at(4), result: packet[10] },
@@ -6858,6 +6865,13 @@ mod tests {
         assert_eq!(packet_length(ZC_ITEM_PICKUP_ACK), Some(70));
         assert_eq!(packet_length(ZC_USE_ITEM_ACK), Some(15));
         assert_eq!(packet_length(ZC_SPRITE_CHANGE), Some(15));
+        // ZC_NPCSPRITE_CHANGE: the unit, a byte, the new class.
+        let mut npc = vec![0xb0, 0x01];
+        npc.extend_from_slice(&110_000_009u32.to_le_bytes());
+        npc.push(0);
+        npc.extend_from_slice(&6009u32.to_le_bytes());
+        assert!(matches!(decode_map_packet(&npc), Some(MapEvent::JobSprite { id: 110_000_009, job: 6009 })));
+        assert_eq!(packet_length(ZC_NPCSPRITE_CHANGE), Some(11));
         assert_eq!(packet_length(ZC_REQ_WEAR_EQUIP_ACK), Some(11));
         assert_eq!(packet_length(ZC_REQ_TAKEOFF_EQUIP_ACK), Some(9));
     }

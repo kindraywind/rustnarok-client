@@ -1821,6 +1821,51 @@ fn unit_look(unit: &net::Unit) -> Look {
     }
 }
 
+/// Whether a unit is drawn as a player: a player, or any unit with a player's job (0–30, 4001–5999), as an `@clone`
+/// or a script NPC with a player class is. It stays what it is for clicks, names, the cursor and the HP bar.
+fn drawn_as_player(kind: u8, job: u16) -> bool {
+    kind == PLAYER || matches!(job, 0..=30 | 4001..=5999)
+}
+
+/// The look an entry brings for a unit already there, when it changes it: every move entry's, and a stand or new
+/// entry's only for a player (another unit keeps its job on those).
+fn refreshed_look(actor: &Actor, unit: &net::Unit, move_entry: bool) -> Option<Look> {
+    let look = unit_look(unit);
+    (drawn_as_player(unit.kind, unit.job) && (move_entry || unit.kind == PLAYER) && actor.look.as_ref() != Some(&look)).then_some(look)
+}
+
+/// A unit not drawn as a player taking another job (ZC_SPRITE_CHANGE type 0, ZC_NPCSPRITE_CHANGE, a move entry):
+/// whether its sprites need loading again.
+fn take_job(actor: &mut Actor, job: u16) -> bool {
+    let changed = actor.job != job;
+    actor.job = job;
+    changed
+}
+
+/// A unit taking another job at once (ZC_SPRITE_CHANGE type 0, ZC_NPCSPRITE_CHANGE): drawn as a player with it, or
+/// with the job's own sprite.
+fn change_job(actor: &mut Actor, job: u16, grf: &Grf, job_names: &HashMap<u16, String>, look_tables: &LookTables) {
+    if drawn_as_player(actor.kind, job) {
+        let look = Look { job, ..actor.look.clone().unwrap_or_default() };
+        if actor.look.as_ref() != Some(&look) {
+            actor.sprites = SpriteSet::player(grf, &look, look_tables);
+            actor.look = Some(look);
+        }
+        actor.job = job;
+    } else if take_job(actor, job) {
+        actor.look = None;
+        actor.sprites = job_sprites(grf, job_names, actor.kind, job);
+    }
+}
+
+/// A unit's sprites for a job it isn't drawn as a player with: none for hidden jobs and warps.
+fn job_sprites(grf: &Grf, job_names: &HashMap<u16, String>, kind: u8, job: u16) -> Option<SpriteSet> {
+    if HIDDEN_JOBS.contains(&job) || job == WARP_JOB {
+        return None;
+    }
+    job_names.get(&job).and_then(|name| SpriteSet::single(grf, name, kind))
+}
+
 /// Applies a ZC_SPRITE_CHANGE to a look; returns whether it changed anything drawn.
 fn change_look(look: &mut Look, kind: u8, value: u32, extra: u32) -> bool {
     let before = look.clone();
@@ -10911,7 +10956,7 @@ impl App {
         };
         let new_actor = |unit: &net::Unit| {
             let sprites = match unit.kind {
-                PLAYER => SpriteSet::player(grf, &unit_look(unit), look_tables),
+                _ if drawn_as_player(unit.kind, unit.job) => SpriteSet::player(grf, &unit_look(unit), look_tables),
                 PET => job_names.get(&unit.job).and_then(|name| pet_sprites(grf, name, pets.tables.accessory_acts.get(&unit.head_bottom))),
                 MERCENARY if (6017..=6046).contains(&unit.job) => job_names.get(&unit.job).and_then(|name| SpriteSet::mercenary(grf, unit.job, name)),
                 // Hidden NPCs (script triggers) have no sprite in the client either; a warp portal is only its rings.
@@ -10922,7 +10967,7 @@ impl App {
             actor.kind = unit.kind;
             actor.job = unit.job;
             actor.level = unit.level;
-            actor.look = (unit.kind == PLAYER).then(|| unit_look(unit));
+            actor.look = drawn_as_player(unit.kind, unit.job).then(|| unit_look(unit));
             actor.hidden = HIDDEN_JOBS.contains(&unit.job) || unit.job == WARP_JOB;
             actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
             actor.hide_option = unit.option;
@@ -10966,9 +11011,9 @@ impl App {
                     actor.fade_in = Some(control::now());
                 }
                 // A player seen again may have changed clothes (or guilds) meanwhile.
-                if actor.look.as_ref().is_some_and(|look| *look != unit_look(&unit)) {
-                    actor.look = Some(unit_look(&unit));
-                    actor.sprites = SpriteSet::player(grf, actor.look.as_ref().unwrap(), look_tables);
+                if let Some(look) = refreshed_look(actor, &unit, false) {
+                    actor.sprites = SpriteSet::player(grf, &look, look_tables);
+                    actor.look = Some(look);
                 }
                 actor.guild = unit.guild;
                 actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
@@ -10998,6 +11043,16 @@ impl App {
                 game.leave_behind(unit.id);
                 let known = game.units.contains_key(&unit.id);
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
+                // Every move entry brings the unit's job and looks again.
+                if let Some(look) = refreshed_look(actor, &unit, true) {
+                    actor.job = unit.job;
+                    actor.sprites = SpriteSet::player(grf, &look, look_tables);
+                    actor.look = Some(look);
+                } else if !drawn_as_player(unit.kind, unit.job) && take_job(actor, unit.job) {
+                    actor.look = None;
+                    actor.sprites = job_sprites(grf, job_names, unit.kind, unit.job);
+                }
+                actor.hide_option = unit.option;
                 actor.body_state = unit.body_state;
                 actor.health_state = unit.health_state;
                 actor.level = unit.level;
@@ -13553,6 +13608,12 @@ impl App {
                     actor.sync_companions(option, grf);
                 }
             }
+            // A unit takes another job's sprite at once (setnpcdisplay, a homunculus evolving).
+            MapEvent::JobSprite { id, job } => {
+                if let Some(actor) = game.units.get_mut(&id) {
+                    change_job(actor, job as u16, grf, job_names, look_tables);
+                }
+            }
             MapEvent::LookChange { id, kind, value, extra } => {
                 // A skill's ground unit becoming another (rathena's Warp Portal opens this way): the new one's effect. A trap
                 // going off (becoming 0x8c) first shows its trigger at its cell.
@@ -13571,11 +13632,15 @@ impl App {
                     game.me.job = value as u16;
                 }
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
-                if let Some(actor) = actor
-                    && let Some(look) = &mut actor.look
-                    && change_look(look, kind, value, extra)
-                {
-                    actor.sprites = SpriteSet::player(grf, look, look_tables);
+                // A job change on any unit (rathena's `setunitdata` too); parts on anything drawn as a player. At once.
+                if let Some(actor) = actor {
+                    if kind == net::LOOK_JOB {
+                        change_job(actor, value as u16, grf, job_names, look_tables);
+                    } else if let Some(look) = &mut actor.look
+                        && change_look(look, kind, value, extra)
+                    {
+                        actor.sprites = SpriteSet::player(grf, look, look_tables);
+                    }
                 }
                 // The preview follows the real look once the server has applied it. Picks stay until the window closes.
                 if id == game.account_id {
@@ -16889,6 +16954,27 @@ mod tests {
         assert_eq!(arrival(true, false, true, PLAYER, 0), Arrival::Plain, "our own character");
         // Turned round: the two job ranges and their edges.
         assert_eq!([21063, 21064, 21088, 21089, 22550, 22551, 22668, 22669].map(turned_round), [false, true, true, false, false, true, true, false]);
+    }
+
+    #[test]
+    fn draws_player_jobs_as_players() {
+        // Any unit with a player job (0–30, 4001–5999) is drawn as a player; other jobs only on players.
+        assert_eq!([0, 30, 31, 4000, 4001, 5999, 6000].map(|job| drawn_as_player(MONSTER, job)), [true, true, false, false, true, true, false]);
+        assert!(drawn_as_player(NPC, 4008) && !drawn_as_player(NPC, 45) && drawn_as_player(PLAYER, 1002));
+        // A type 0 change gives a monster another job.
+        let mut poring = Actor::new("Poring".into(), None, [10, 10], 0, 150);
+        (poring.kind, poring.job) = (MONSTER, 1002);
+        assert!(take_job(&mut poring, 1031) && poring.job == 1031);
+        assert!(!take_job(&mut poring, 1031), "the same job: nothing to load");
+        // A move entry with new headgear changes a known player's look; a stand entry does too, for a player only.
+        let unit = net::Unit { id: 150_014, kind: PLAYER, job: 7, sex: 1, head_top: 5, ..net::Unit::default() };
+        let mut player = Actor::new("Someone".into(), None, [10, 10], 0, 150);
+        player.look = Some(unit_look(&net::Unit { head_top: 0, ..unit.clone() }));
+        assert_eq!(refreshed_look(&player, &unit, true).map(|look| look.head_top), Some(5));
+        player.look = refreshed_look(&player, &unit, true);
+        assert_eq!(refreshed_look(&player, &unit, true), None, "already so");
+        let clone = net::Unit { kind: MONSTER, head_top: 9, ..unit.clone() };
+        assert!(refreshed_look(&player, &clone, false).is_none() && refreshed_look(&player, &clone, true).is_some());
     }
 
     #[test]
