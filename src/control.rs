@@ -1155,6 +1155,9 @@ fn game_state(app: &App, game: &Game) -> Value {
             }),
             // The last cell a mouse walk went to, and how many have gone out.
             "walk_goal": game.walk_goal,
+            // Where the cursor is drawn (the middle of what it snapped to, else the pointer).
+            "cursor_at": game.cursor_at,
+            "cursor_snapped": game.cursor_at != app.cursor,
             // The cell drawn under the pointer (null past the map's edge).
             "ground_cell": game.ground_cell(app.cursor),
             "walks": game.walks,
