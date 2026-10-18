@@ -1,5 +1,5 @@
 {
-  "about": "Guild positions (issue #103): the first makes guild PosTest and invites the second (RUSTNAROK_CLIENT_GUILD=accept). On the members page the master right-clicks the second and moves them to 'Position 2'; both windows follow and the title under the second's name follows (ZC_GUILD_POSITION). On the positions page the master switches position 1's invite box, renames it 'Officer' and sets its tax to 10; the second's window and the title follow. The second leaves from their own row on the members page (asked first); the first sees them go. @breakguild ends it. Both characters must start without a guild or clan. If a run stops between the invitation and leaving, the second stays in PosTest and the next run fails at the invitation: log in as the second, leave from the members page, then @breakguild as the first (the scenario reset can't take a member out of a guild).",
+  "about": "Guild positions (issue #103): the first makes guild PosTest and invites the second (RUSTNAROK_CLIENT_GUILD=accept). On the members page the master picks 'Position 2' from the second's drop-down and presses OK (issue #516); both windows follow and the title under the second's name follows (ZC_GUILD_POSITION). On the positions page the master switches position 1's invite box, renames it 'Officer' and sets its tax to 10; the second's window and the title follow. The second leaves from their own row on the members page (asked first); the first sees them go. @breakguild ends it. Both characters must start without a guild or clan. If a run stops between the invitation and leaving, the second stays in PosTest and the next run fails at the invitation: log in as the second, leave from the members page, then @breakguild as the first (the scenario reset can't take a member out of a guild).",
   "account": "",
   "slot": 0,
   "second": {
@@ -21,6 +21,9 @@
     },
     {
       "wait": 500
+    },
+    {
+      "wait": 1500
     },
     {
       "say": "@recall {second}"
@@ -108,19 +111,26 @@
     },
     {
       "click_on": {
-        "button": "member:{second}"
-      },
-      "button": "right"
+        "button": "drop:{second}"
+      }
     },
     {
-      "wait": 400
+      "wait": 300
     },
     {
-      "shot": "guild-member-menu"
+      "shot": "guild-member-dropdown"
     },
     {
       "click_on": {
-        "menu_item": "Position 2"
+        "button": "position:1"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "moves_ok"
       }
     },
     {
@@ -323,6 +333,16 @@
       "as": "second",
       "click_on": {
         "button": "member:{second}"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 200
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "member:{second}"
       },
       "button": "right"
     },
@@ -344,9 +364,13 @@
       "as": "second",
       "expect": {
         "windows_open": [
-          "LeaveAsked"
+          "GuildReason"
         ]
       }
+    },
+    {
+      "as": "second",
+      "type": "bye"
     },
     {
       "as": "second",
@@ -357,7 +381,7 @@
     },
     {
       "as": "second",
-      "shot": "guild-leave-asked"
+      "shot": "guild-leave-reason"
     },
     {
       "as": "second",

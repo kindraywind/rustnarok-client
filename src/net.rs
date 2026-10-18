@@ -195,13 +195,29 @@ pub fn encode_position_change(position: &GuildPosition, title: &str) -> Vec<u8> 
     packet
 }
 
-/// CZ_REQ_CHANGE_MEMBERPOS with one member.
-pub fn encode_member_move(account: u32, character: u32, position: u32) -> Vec<u8> {
+/// CZ_REQ_CHANGE_MEMBERPOS with every move (account, character, position): 4 + 12 bytes a member.
+pub fn encode_member_moves(moves: &[(u32, u32, u32)]) -> Vec<u8> {
     let mut packet = CZ_REQ_CHANGE_MEMBERPOS.to_le_bytes().to_vec();
-    packet.extend_from_slice(&16u16.to_le_bytes());
-    for value in [account, character, position] {
+    packet.extend_from_slice(&((4 + 12 * moves.len()) as u16).to_le_bytes());
+    for &(account, character, position) in moves {
+        for value in [account, character, position] {
+            packet.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    packet
+}
+
+/// A guild's member and a reason, as CZ_REQ_LEAVE_GUILD and CZ_REQ_BAN_GUILD carry them: guild, account,
+/// character, 40 bytes of reason.
+pub fn encode_guild_reason(header: u16, guild: u32, account: u32, character: u32, reason: &str) -> Vec<u8> {
+    let mut packet = header.to_le_bytes().to_vec();
+    for value in [guild, account, character] {
         packet.extend_from_slice(&value.to_le_bytes());
     }
+    let mut why = encode_text(reason);
+    why.truncate(39);
+    why.resize(40, 0);
+    packet.extend_from_slice(&why);
     packet
 }
 
@@ -1247,6 +1263,7 @@ const CZ_REQ_LEAVE_GUILD: u16 = 0x0159;
 const CZ_REG_CHANGE_GUILD_POSITIONINFO: u16 = 0x0161;
 const ZC_ACK_CHANGE_GUILD_POSITIONINFO: u16 = 0x0174;
 const CZ_REQ_CHANGE_MEMBERPOS: u16 = 0x0155;
+const CZ_REQ_BAN_GUILD: u16 = 0x015B;
 const ZC_ACK_REQ_CHANGE_MEMBERS: u16 = 0x0156;
 const ZC_GUILD_POSITION: u16 = 0x0AFD;
 const CZ_REQ_MAKE_GUILD: u16 = 0x0165;
@@ -2719,6 +2736,8 @@ pub enum MapEvent {
         name: String,
         master: bool,
         emblem: u32,
+        /// Our position's rights (invite 0x01, expel 0x10).
+        mode: u32,
     },
     GuildInfo(GuildInfo),
     /// A stat or trait raise answered (ZC_STATUS_CHANGE_ACK): its new value when it went up, none when refused.
@@ -4447,19 +4466,18 @@ impl MapSession {
         self.stream.write_all(&encode_position_change(position, title))
     }
 
-    /// The master moves a member to another position.
-    pub fn move_member(&mut self, account: u32, character: u32, position: u32) -> io::Result<()> {
-        self.stream.write_all(&encode_member_move(account, character, position))
+    /// The master moves members to other positions (account, character, position each), in one packet.
+    pub fn move_members(&mut self, moves: &[(u32, u32, u32)]) -> io::Result<()> {
+        self.stream.write_all(&encode_member_moves(moves))
+    }
+
+    /// Expels a member (CZ_REQ_BAN_GUILD), with a reason.
+    pub fn expel_from_guild(&mut self, guild: u32, account: u32, character: u32, reason: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_guild_reason(CZ_REQ_BAN_GUILD, guild, account, character, reason))
     }
 
     pub fn leave_guild(&mut self, guild: u32, account: u32, character: u32, reason: &str) -> io::Result<()> {
-        let mut packet = CZ_REQ_LEAVE_GUILD.to_le_bytes().to_vec();
-        for value in [guild, account, character] {
-            packet.extend_from_slice(&value.to_le_bytes());
-        }
-        let mut why = encode_text(reason);
-        why.resize(40, 0);
-        packet.extend_from_slice(&why);
+        let packet = encode_guild_reason(CZ_REQ_LEAVE_GUILD, guild, account, character, reason);
         self.stream.write_all(&packet)
     }
 
@@ -6308,7 +6326,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             refine: packet[56],
             ..Default::default()
         }),
-        ZC_UPDATE_GDID => MapEvent::Guild { id: u32_at(2), name: c_string(&packet[19..43]), master: packet[14] != 0, emblem: u32_at(6) },
+        ZC_UPDATE_GDID => MapEvent::Guild { id: u32_at(2), name: c_string(&packet[19..43]), master: packet[14] != 0, emblem: u32_at(6), mode: u32_at(10) },
         // ID, level, members, most members, average level, exp, next exp, tax points, honor, virtue, emblem, name,
         // castles, zeny, master's ID and name.
         ZC_GUILD_INFO => MapEvent::GuildInfo(GuildInfo {
@@ -8426,7 +8444,15 @@ mod tests {
         assert_eq!(request.len(), 44);
         assert_eq!(&request[..20], &[0x61, 0x01, 44, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0]);
         assert_eq!(&request[20..], &name_field("Officer")[..]);
-        assert_eq!(encode_member_move(7, 8, 19), [0x55, 0x01, 16, 0, 7, 0, 0, 0, 8, 0, 0, 0, 19, 0, 0, 0]);
+        assert_eq!(encode_member_moves(&[(7, 8, 19)]), [0x55, 0x01, 16, 0, 7, 0, 0, 0, 8, 0, 0, 0, 19, 0, 0, 0]);
+        // Two moves in one packet: 4 + 12 · 2 bytes.
+        let two = encode_member_moves(&[(7, 8, 19), (9, 10, 0)]);
+        assert_eq!((two.len(), &two[2..4], &two[16..28]), (28, &[28u8, 0][..], &[9u8, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0][..]));
+        // CZ_REQ_BAN_GUILD: guild, account, character, a reason in 40 bytes (empty is fine).
+        let ban = encode_guild_reason(CZ_REQ_BAN_GUILD, 3, 7, 8, "");
+        assert_eq!((ban.len(), &ban[..6], ban[14]), (54, &[0x5B, 0x01, 3, 0, 0, 0][..], 0));
+        let long = encode_guild_reason(CZ_REQ_LEAVE_GUILD, 3, 7, 8, &"x".repeat(60));
+        assert_eq!((long.len(), long[14 + 38], long[14 + 39]), (54, b'x', 0));
     }
 
     #[test]

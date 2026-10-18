@@ -1140,6 +1140,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(leader_question.into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(party_question.into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
+            game.reason_box
+                .iter()
+                .flat_map(|reason| reason.button_boxes(crate::screen()))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(
             game.mercenary.iter().flat_map(|_| game.mercenary_window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(

@@ -411,13 +411,12 @@ const ALLY_CHOICE: usize = 399;
 const ANTAGONIST_CHOICE: usize = 403;
 /// "(guild) Guild is asking for an Alliance with them. Do you accept?", "Are you sure that you want to delete it?"
 const ALLY_ASKS: usize = 393;
-/// "Are you sure that you want to leave?", and the lines when someone leaves: "You left the guild.", "%s has left the
-/// guild.", "Withdrawal Reason: %s". The member menu's "Leave Guild".
-const LEAVE_ASKS: usize = 357;
+/// The lines when someone leaves: "You left the guild.", "%s has left the guild.", "Withdrawal Reason: %s".
 const LEFT_GUILD: usize = 489;
 const MEMBER_LEFT: usize = 364;
 const LEFT_BECAUSE: usize = 365;
-const LEAVE_CHOICE: usize = 508;
+/// "Are sure want to assign %s as guild leader? ..." with the member's name twice.
+const GUILD_LEADER_ASKS: usize = 2924;
 /// The master's menu on an ally or antagonist: "Delete".
 const RELATION_DELETE: usize = 351;
 /// A tracked quest's menu: "Quest information", "Delete".
@@ -1311,6 +1310,8 @@ struct Game {
     guild_invite: Option<(u32, String)>,
     /// A guild question: another guild asks for an alliance, or the master is about to end a relation.
     guild_asked: Option<GuildAsked>,
+    /// The reason box for leaving the guild or expelling a member.
+    reason_box: Option<guild::ReasonBox>,
     /// Dev switch RUSTNAROK_CLIENT_GUILD=window ran.
     guild_shown: bool,
     /// The clan we're in, and its window.
@@ -2109,10 +2110,8 @@ enum Choice {
     QuestAside(u32),
     /// Ask this party member (by account) to be adopted.
     Adopt(u32),
-    /// The guild master moves a member (by its place in the member list) to a position.
-    GuildMove(usize, u32),
-    /// Leave the guild (asks first).
-    GuildLeave,
+    /// The member menu on the guild's members page: an entry, for a member (by place in the member list).
+    GuildMember(guild::MemberChoice, usize),
     /// The master ends the relation with this guild (antagonist or not), without asking.
     EndRelation(u32, bool),
     /// Whisper this player: their name in the chat's name box.
@@ -2314,6 +2313,8 @@ enum BoxQuestion {
     LastRow,
     /// A plain notice of this message, OK only (the big minimap refused on this map).
     Notice(usize),
+    /// The master hands the guild to this member (2924, both %s their name).
+    GuildLeader { account: u32, character: u32, name: String },
 }
 
 impl BoxQuestion {
@@ -2325,6 +2326,16 @@ impl BoxQuestion {
             Self::OnlyLeader => party::ONLY_LEADER_INVITES,
             Self::LastRow => party::IN_THE_LAST_ROW,
             Self::Notice(message) => *message,
+            Self::GuildLeader { .. } => GUILD_LEADER_ASKS,
+        }
+    }
+
+    /// Its words: the message, with the member's name in the leader question.
+    fn text(&self, messages: &[String]) -> String {
+        let template = messages.get(self.message()).map_or("", String::as_str);
+        match self {
+            Self::GuildLeader { name, .. } => rustnarok_client::messages::fill(template, &[name, name]),
+            _ => template.to_owned(),
         }
     }
 
@@ -2337,8 +2348,6 @@ impl BoxQuestion {
 enum GuildAsked {
     /// Another guild (its name) asks for an alliance, through the player who asked (account ID).
     Ally { id: u32, guild: String },
-    /// Leave the guild.
-    Leave,
 }
 
 /// What a pick list's answer is for.
@@ -3910,6 +3919,7 @@ impl App {
                 None if game.storage.typing => game.storage.type_text(text),
                 None if game.booking.as_ref().is_some_and(|window| window.focus.is_some()) => game.booking.as_mut().unwrap().type_text(text),
                 None if game.party_dialog.as_ref().is_some_and(|dialog| dialog.typing) => game.party_dialog.as_mut().unwrap().type_text(text),
+                None if game.reason_box.is_some() => game.reason_box.as_mut().unwrap().type_text(text),
                 None if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
                     let window = game.navi_window.as_mut().unwrap();
                     window.text.push_str(text);

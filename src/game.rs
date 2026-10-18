@@ -692,6 +692,20 @@ impl Game {
         }
     }
 
+    /// The reason box answered: OK sends the reason as typed (empty is fine), Cancel only closes.
+    pub(crate) fn answer_reason(&mut self, ok: bool) {
+        let Some(asked) = self.reason_box.take() else { return };
+        let Some(guild) = &self.guild else { return };
+        if !ok {
+            return;
+        }
+        let _ = match asked.kind {
+            guild::Reasoned::Leave => self.session.leave_guild(guild.id, self.account_id, self.me.id, &asked.text),
+            guild::Reasoned::Expel(account, character) if guild.can_expel() => self.session.expel_from_guild(guild.id, account, character, &asked.text),
+            guild::Reasoned::Expel(..) => Ok(()),
+        };
+    }
+
     /// What a docked party window's click or Enter came to.
     pub(crate) fn party_dialog_action(&mut self, action: party::DialogAction, messages: &[String]) {
         let message = |id: usize| messages.get(id).cloned().unwrap_or_default();
@@ -747,6 +761,9 @@ impl Game {
             BoxQuestion::Disband => self.leave_party(),
             BoxQuestion::Expel(account, name) => {
                 let _ = self.session.expel_from_party(account, &name);
+            }
+            BoxQuestion::GuildLeader { account, character, .. } => {
+                let _ = self.session.move_members(&[(account, character, 0)]);
             }
             BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) => {}
         }
@@ -1531,6 +1548,7 @@ impl Game {
             || self.trade.as_ref().is_some_and(|trade| trade.typing)
             || self.booking.as_ref().is_some_and(|window| window.focus.is_some())
             || self.party_dialog.as_ref().is_some_and(|dialog| dialog.typing)
+            || self.reason_box.is_some()
             || self.storage.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
             || self.talks.typing()
@@ -1646,6 +1664,7 @@ impl Game {
             || self.level_ups.hit(cursor).is_some()
             || (self.quest_icon && quest_notice::on_icon(cursor))
             || (self.minimap_shown() && minimap::covers(cursor))
+            || self.reason_box.as_ref().is_some_and(|reason| reason.hit(cursor, screen()).is_some())
             || self.minimap_window.covers(cursor)
             || (asking && contains(dialog_position_of(message), message, cursor))
             || self.on_npc_window(cursor)
@@ -2279,8 +2298,8 @@ impl Game {
         if self.pick.as_ref().is_some_and(|(list, _)| list.merging) {
             names.push("ItemMerge".into());
         }
-        if matches!(self.guild_asked, Some(GuildAsked::Leave)) {
-            names.push("LeaveAsked".into());
+        if self.reason_box.is_some() {
+            names.push("GuildReason".into());
         }
         if matches!(self.queue_asked, Some(QueueAsked::Lobby(..))) {
             names.push("BattleLobby".into());
@@ -2452,10 +2471,11 @@ impl Game {
             }
             return;
         }
-        if let Some(asked) = self.guild_asked.take() {
-            if let crate::GuildAsked::Ally { id, .. } = asked {
-                let _ = self.session.answer_alliance(id, false);
-            }
+        if let Some(GuildAsked::Ally { id, .. }) = self.guild_asked.take() {
+            let _ = self.session.answer_alliance(id, false);
+            return;
+        }
+        if self.reason_box.take().is_some() {
             return;
         }
         if let Some((guild, _)) = self.guild_invite.take() {

@@ -2001,7 +2001,6 @@ impl App {
         let guild_question = match (&game.guild_invite, &game.guild_asked) {
             (Some((_, name)), _) => Some(format!("({name}){}", message(GUILD_INVITED))),
             (_, Some(GuildAsked::Ally { guild, .. })) => Some(format!("({guild}){}", message(ALLY_ASKS))),
-            (_, Some(GuildAsked::Leave)) => Some(message(LEAVE_ASKS).to_owned()),
             _ => None,
         };
         if let Some(question) = guild_question {
@@ -2107,6 +2106,11 @@ impl App {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }
+        // The guild's reason box.
+        if let Some(reason) = &game.reason_box {
+            let caret = (now.saturating_duration_since(game.entered).as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+            reason.draw(shop_layer.window(), &assets.chrome, &assets.guild, (&assets.ok, &assets.cancel), font, messages, screen(), pointer, caret);
+        }
         // The message box: its words, OK and Cancel (OK alone when it only tells).
         if let Some(asked) = &game.question_box {
             let dialog = dialog_position(&assets.message);
@@ -2114,7 +2118,7 @@ impl App {
             for (place, yes) in box_buttons(asked.asks()) {
                 shop_layer.sprites.push(button_sprite(pointer, offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }));
             }
-            for (row, line) in message_lines(font, message(asked.message()), MESSAGE_WIDTH).into_iter().enumerate() {
+            for (row, line) in message_lines(font, &asked.text(messages), MESSAGE_WIDTH).into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }
