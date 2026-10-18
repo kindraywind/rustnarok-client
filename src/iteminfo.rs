@@ -170,13 +170,21 @@ impl ItemWindow {
 
     /// A filled card slot under the pointer, by the card's item id.
     fn card_at(&self, local: [f32; 2], items: &HashMap<u32, ItemInfo>) -> Option<u32> {
-        let slots = self.slots(items);
         let top = SIZE[1] + CARDS_GAP + 4.0;
-        (0..slots).find_map(|slot| {
+        self.card_ids(items).find_map(|(slot, card)| {
             let corner = [6.0 + slot as f32 * (SLOT + 4.0), top];
+            contains(corner, [SLOT, SLOT], local).then_some(card)
+        })
+    }
+
+    /// Filled card slots. 0x00FE and 0x00FF in the first slot mark a brewed or forged item: the other slots hold the
+    /// maker and the element, not card ids.
+    fn card_ids(&self, items: &HashMap<u32, ItemInfo>) -> impl Iterator<Item = (usize, u32)> {
+        let forged = matches!(self.shown.cards[0], 0x00FE | 0x00FF);
+        let slots = self.slots(items);
+        (0..slots).filter_map(move |slot| {
             let card = self.shown.cards[slot];
-            // 0x00FE and 0x00FF mark a brewed or forged item, not a card.
-            (card > 0xFF && contains(corner, [SLOT, SLOT], local)).then_some(card)
+            (!forged && card > 0xFF).then_some((slot, card))
         })
     }
 
@@ -188,12 +196,9 @@ impl ItemWindow {
             boxes.push(("card_picture".into(), [corner[0], corner[1], VIEW_SIZE[0], VIEW_SIZE[1]]));
         }
         let top = SIZE[1] + CARDS_GAP + 4.0;
-        for slot in 0..self.slots(items) {
-            let card = self.shown.cards[slot];
-            if card > 0xFF {
-                let corner = offset(self.position, [6.0 + slot as f32 * (SLOT + 4.0), top]);
-                boxes.push((format!("card:{card}"), [corner[0], corner[1], SLOT, SLOT]));
-            }
+        for (slot, card) in self.card_ids(items) {
+            let corner = offset(self.position, [6.0 + slot as f32 * (SLOT + 4.0), top]);
+            boxes.push((format!("card:{card}"), [corner[0], corner[1], SLOT, SLOT]));
         }
         boxes
     }
@@ -432,6 +437,9 @@ mod tests {
         window.shown.cards[0] = 4001;
         let slot = offset(window.position, [8.0, SIZE[1] + CARDS_GAP + 6.0]);
         assert_eq!(window.hit(slot, &items), Some(Hit::Card(4001)));
+        // A forged weapon's later slots are the element and the maker, not cards.
+        window.shown.cards = [0x00FF, 5 << 8 | 3, 4, 2];
+        assert_eq!(window.hit(slot, &items), Some(Hit::Window));
         window.shown.card = true;
         assert_eq!(window.hit(offset(window.position, [VIEW[0] + 2.0, VIEW[1] + 2.0]), &items), Some(Hit::View));
         window.scroll_by(3, 7);

@@ -85,6 +85,7 @@ mod menu;
 mod mercenary;
 mod minimap;
 mod monster_info;
+mod navigation;
 mod options;
 mod overhead;
 mod party;
@@ -460,6 +461,14 @@ const PARTY_ALLOWING: usize = 1326;
 /// "You can't modify Party Setup."
 const PARTY_SETUP_REFUSED: usize = 373;
 const LEADER_CHOICE: usize = 1532;
+/// "Item cannot be dropped from the hotkey bar."
+const HOTKEY_ITEM_STAYS: usize = 1696;
+/// Dropping on the ground with the equipment window open, the mail window open, or the ammunition worn.
+const DROP_EQUIPMENT_OPEN: usize = 189;
+const DROP_MAIL_OPEN: usize = 2736;
+const DROP_AMMO_WORN: usize = 657;
+/// Nothing is dropped on the ground this soon after asking to wear something.
+const WEAR_PAUSE: Duration = Duration::from_secs(2);
 const LEADER_QUESTION: usize = 1533;
 const PARTY_CREATE: usize = 2054;
 /// What a locked chat room asks ("Please enter Password.").
@@ -563,6 +572,12 @@ const MENU_SELECTION: [u8; 4] = [0xCD, 0xE0, 0xFF, 0xFF];
 const SKILL_ACTION: usize = 12;
 /// How far over the ground the magic square under a ground cast floats, so the ground doesn't cover it.
 const CAST_SQUARE_LIFT: f32 = 0.2;
+/// The navigation arrow sits this far over the head; routes the player starts may use every service.
+// ponytail: the client's arrow height and its services for a route picked by hand are estimates.
+const NAVI_ARROW_RISE: f32 = 12.0;
+const NAVI_SERVICES: u8 = 111;
+/// How many cells toward where it heads the arrow looks.
+const NAVI_ARROW_LOOK: f32 = 3.0;
 /// Words over a head stay this long.
 const SPEECH_TIME: Duration = Duration::from_secs(5);
 /// Spirit spheres and coins: how far from the body they circle, how high, how fast (radians a second), and how
@@ -795,6 +810,9 @@ struct Game {
     /// The emotion sprite, and the emotions showing: by unit (None = the player), the sprite action and when.
     emotion_sprite: Option<SpriteSet>,
     emotions: HashMap<Option<u32>, (usize, Instant)>,
+    /// The MVP sprite, and over which MVP winners it shows (None = the player) since when.
+    mvp_sprite: Option<SpriteSet>,
+    mvps: HashMap<Option<u32>, Instant>,
     /// The status marks' sprites (stun, sleep, curse, the ice block) by name.
     mark_sprites: HashMap<&'static str, SpriteSet>,
     /// What circles units (None = the player): spheres or coins, shields, charms, souls; the sphere's, the shield's
@@ -821,6 +839,8 @@ struct Game {
     hotkeys: hotkeys::Hotkeys,
     /// An item or skill being dragged: what, where the drag began, and whether it has moved yet.
     dragging: Option<(Dragged, [f32; 2], bool)>,
+    /// A right press let go of the drag: the left button's release does nothing.
+    drag_cancelled: bool,
     skills: Vec<net::Skill>,
     skill_window: skills::SkillWindow,
     /// A Talkie Box's message waiting to be placed, and the boxes saying theirs (where each stands).
@@ -963,6 +983,8 @@ struct Game {
     expansion_asked: Option<u32>,
     /// The item the player last put in or took out of the Swap Equipment set: its answer gets a line.
     switch_asked: Option<u16>,
+    /// When something was last asked to be worn.
+    last_wear: Option<Instant>,
     /// A bind-on-equip item (inventory index) waiting for OK to be worn; the broken items' indexes before the
     /// inventory came again (None: there was none yet, at login).
     bind_asked: Option<u16>,
@@ -982,6 +1004,9 @@ struct Game {
     /// Reputation points by reputation type, as the server last sent them, and the reputation window while it's open.
     reputation: HashMap<u64, i64>,
     reputation_window: Option<reputation::Window>,
+    /// The navigation under way, and the navigation window while it's open.
+    navigation: Option<navigation::Active>,
+    navi_window: Option<navigation::Window>,
     /// What was just picked up, for five seconds; and whether anything was since the inventory was last open.
     pickup_popup: Option<pickup::Popup>,
     new_items: bool,
@@ -1077,8 +1102,8 @@ struct Game {
     sign_rects: Vec<([f32; 4], u32, u8)>,
     /// Item links as last drawn, their boxes and items: in the chat log (under the windows) and in the NPC window
     /// (over them).
-    chat_links: Vec<([f32; 4], links::ItemLink)>,
-    dialog_links: Vec<([f32; 4], links::ItemLink)>,
+    chat_links: Vec<([f32; 4], links::Target)>,
+    dialog_links: Vec<([f32; 4], links::Target)>,
     /// The room we're in, and the window making one.
     room: Option<chatroom::Room>,
     room_make: Option<chatroom::Make>,
@@ -1123,8 +1148,9 @@ struct Game {
     auto_skill: Option<(u16, u16)>,
     /// The player's attack reach in cells.
     attack_range: i32,
-    /// What to do once the walk toward it ends (and when it ended).
+    /// What to do once the walk toward it ends (and when it ended), and where its walk went and when (None: none yet).
     pending: Option<(Pending, Option<Instant>)>,
+    pending_walk: Option<([i32; 2], Instant)>,
 }
 
 /// Where the camera eases toward, steered with the right mouse button and the wheel.
@@ -1600,6 +1626,24 @@ enum Asked {
     },
 }
 
+impl Asked {
+    /// A count of items to move, not a name or a price.
+    fn moves_items(&self) -> bool {
+        matches!(
+            self,
+            Asked::Shop(_)
+                | Asked::Store(_)
+                | Asked::Drop(_)
+                | Asked::Take(_)
+                | Asked::Trade(_)
+                | Asked::ToCart(_)
+                | Asked::FromCart(_)
+                | Asked::Mail(_)
+                | Asked::Material(_)
+        )
+    }
+}
+
 /// What the right-click menu offers.
 #[derive(Clone, Copy, PartialEq)]
 enum Choice {
@@ -1690,6 +1734,8 @@ enum Dragged {
     Carted(u16),
     /// What a hotkey slot holds, by slot.
     Hotkey(usize),
+    /// A worn item, by inventory index, out of the equipment window.
+    Worn(u16),
 }
 
 /// What a sprite on the map belongs to.
@@ -1968,20 +2014,52 @@ impl Game {
         let _ = self.session.talk(id);
     }
 
-    /// Picks up an item, walking over first when it's out of reach.
-    fn pick_up(&mut self, id: u32) {
+    /// Picks up an item, facing it: at once from the next cell, else walking there with the pickup pending.
+    fn pick_up(&mut self, id: u32, now: Instant) {
         if self.store_open() {
             return;
         }
-        let Some(item) = self.ground.get(&id) else { return };
-        let at = item.at;
+        let Some(at) = self.ground.get(&id).map(|item| item.at) else { return };
         self.player.face(at);
-        if !within_pickup(self.player.cell, at) {
-            self.pending = Some((Pending::PickUp(id), None));
-            let _ = self.session.walk(at.map(|value| value as u16));
-        } else {
-            self.pending = None;
-            let _ = self.session.pick_up(id);
+        // Another press on the item while walking to it keeps that walk.
+        if !(self.player.moving() && self.pending.is_some_and(|(pending, _)| pending == Pending::PickUp(id))) {
+            self.pending_walk = None;
+        }
+        self.pending = Some((Pending::PickUp(id), None));
+        self.pending_step(now);
+    }
+
+    /// A pickup or skill waiting on a walk, each frame. A pickup goes out as soon as the player's cell is next to the
+    /// item, still walking; a walk the move limit held back is asked for again.
+    fn pending_step(&mut self, now: Instant) {
+        match self.pending {
+            Some((Pending::PickUp(id), arrived)) => {
+                let Some(at) = self.ground.get(&id).map(|item| item.at) else {
+                    self.pending = None;
+                    return;
+                };
+                match pickup_step(self.player.cell, at, self.pending_walk.map(|(cell, _)| cell)) {
+                    PickStep::PickUp => {
+                        self.pending = None;
+                        self.player.face(at);
+                        let _ = self.session.pick_up(id);
+                    }
+                    PickStep::Walk if may_move(self.last_move, now) => {
+                        self.last_move = Some(now);
+                        self.pending_walk = Some((at, now));
+                        let _ = self.session.walk(at.map(|value| value as u16));
+                    }
+                    // Stopped out of reach after walking there: it can't be reached.
+                    PickStep::Wait if arrived.zip(self.pending_walk).is_some_and(|(stopped, (_, sent))| stopped > sent) => self.pending = None,
+                    _ => {}
+                }
+            }
+            Some((Pending::Skill { id, level, target }, _)) if self.pending_walk.is_none() => {
+                self.pending = None;
+                self.targeting = Some((id, level));
+                self.aim_skill(target);
+            }
+            _ => {}
         }
     }
 
@@ -2100,6 +2178,11 @@ impl Game {
     /// Whether the pointer is on a window's control: a title bar's close or minimize button, the equipment window's
     /// buttons, a pick list's OK or Cancel.
     // ponytail: tabs, scroll arrows, resize corners and the minimap aren't told apart yet.
+    /// Opens the navigation window, or closes it.
+    fn toggle_navigation(&mut self) {
+        self.navi_window = if self.navi_window.is_some() { None } else { Some(navigation::Window::new()) };
+    }
+
     /// Opens the reputation window, or closes it.
     fn toggle_reputation(&mut self, tables: &reputation::Tables) {
         self.reputation_window = match self.reputation_window.take() {
@@ -2109,7 +2192,7 @@ impl Game {
     }
 
     /// The item link under the pointer: the NPC window's, else the chat log's where no window covers it.
-    fn link_at(&self, cursor: [f32; 2]) -> Option<&links::ItemLink> {
+    fn link_at(&self, cursor: [f32; 2]) -> Option<&links::Target> {
         links::at(&self.dialog_links, cursor).or_else(|| self.window_at(cursor).is_none().then(|| links::at(&self.chat_links, cursor)).flatten())
     }
 
@@ -2218,8 +2301,15 @@ impl Game {
         } else if let Some(stop) =
             world::find_path(&self.world.gat, self.player.cell, goal).and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, range)))
         {
+            // Within the move limit the walk waits: `pending_step` aims again on a later frame.
+            let now = Instant::now();
             self.pending = Some((Pending::Skill { id, level, target }, None));
-            let _ = self.session.walk(stop.map(|value| value as u16));
+            self.pending_walk = None;
+            if may_move(self.last_move, now) {
+                self.last_move = Some(now);
+                self.pending_walk = Some((stop, now));
+                let _ = self.session.walk(stop.map(|value| value as u16));
+            }
         }
     }
 
@@ -2390,6 +2480,11 @@ impl Game {
             }
             chat::Command::DressRoom => {
                 self.open_dressroom();
+                Ok(())
+            }
+            chat::Command::Navigation => {
+                self.toggle_navigation();
+                self.sync_esc();
                 Ok(())
             }
             // ponytail: the client's lines for /camera speak of zooming; they're used for on and off.
@@ -2597,6 +2692,7 @@ impl Game {
             || self.viewing.as_ref().is_some_and(|viewed| viewed.window.hit(cursor, &viewed.items).is_some())
             || self.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some()
             || self.reputation_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
+            || self.navi_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
             || self.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some()
             || self.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
@@ -2722,6 +2818,11 @@ impl Game {
                 }
                 Ok(())
             }
+            // None or less into storage or the cart is one.
+            what @ (Asked::Store(_) | Asked::ToCart(_)) => {
+                self.give(what, amount.value().max(1));
+                Ok(())
+            }
             what if amount.value() > 0 => {
                 self.give(what, amount.value());
                 Ok(())
@@ -2747,10 +2848,11 @@ impl Game {
                 let have = self.storage.get(index).map_or(0, |item| u32::from(item.amount));
                 self.session.take_from_storage(index, amount.min(have))
             }
-            Asked::Drop(index) => {
-                let have = self.inventory.get(index).map_or(0, |item| item.amount);
-                self.session.drop_item(index, (amount.min(u32::from(have))) as u16)
-            }
+            // More than there is drops nothing.
+            Asked::Drop(index) => match self.inventory.get(index).map_or(0, |item| u32::from(item.amount)) {
+                have if amount > have => Ok(()),
+                _ => self.session.drop_item(index, amount as u16),
+            },
             Asked::PartyName
             | Asked::Invite
             | Asked::RoomPassword(_)
@@ -3025,8 +3127,7 @@ impl Game {
                 push(id, self.panel_open(panel));
             }
         }
-        push(NpcDialog, self.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()));
-        push(WarpList, self.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some()));
+        // An NPC's window and the warp list aren't Esc's to close: they end with their own buttons.
         push(Shop, self.shop.is_some());
         push(Refine, self.refine.is_some());
         push(GradeEnchant, self.grade.is_some());
@@ -3040,6 +3141,7 @@ impl Game {
         push(DressRoom, self.dressroom.is_some());
         push(Ranking, self.ranking.is_some());
         push(Reputation, self.reputation_window.is_some());
+        push(Navigation, self.navi_window.is_some());
         push(Catalog, self.catalog.is_some());
         push(SkillDescription, self.skill_description.is_some());
         push(Roulette, self.roulette.is_some());
@@ -3113,6 +3215,9 @@ impl Game {
         if matches!(self.queue_asked, Some(QueueAsked::Lobby(..))) {
             names.push("BattleLobby".into());
         }
+        if let Some(dialog) = &self.dialog {
+            names.push(if dialog.warp.is_some() { "WarpList" } else { "NpcDialog" }.into());
+        }
         names
     }
 
@@ -3161,7 +3266,7 @@ impl Game {
         None
     }
 
-    /// A question (or an NPC menu waiting for a choice) is up.
+    /// A question is up. An NPC's menu (and the warp list) isn't one: Esc leaves those alone.
     fn question_open(&self) -> bool {
         self.save_asked
             || self.bind_asked.is_some()
@@ -3178,17 +3283,12 @@ impl Game {
             || self.trade_asked.is_some()
             || self.deal_choice.is_some()
             || self.amount.is_some()
-            || self.dialog.as_ref().is_some_and(|dialog| dialog.menu.is_some())
             || self.adopt_asked.is_some()
             || self.queue_asked.is_some()
     }
 
-    /// Answers the open question with No. An NPC menu is cancelled.
+    /// Answers the open question with No.
     fn answer_no(&mut self, messages: &[String]) {
-        if self.dialog.as_ref().is_some_and(|dialog| dialog.menu.is_some()) {
-            self.choose(true);
-            return;
-        }
         if self.save_asked {
             self.save_asked = false;
             return;
@@ -3328,6 +3428,7 @@ impl Game {
             }
             Ranking => self.ranking = None,
             Reputation => self.reputation_window = None,
+            Navigation => self.navi_window = None,
             Catalog => self.close_catalog(),
             SkillDescription => self.skill_description = None,
             Roulette => self.close_roulette(),
@@ -3464,6 +3565,25 @@ impl Game {
         self.window_at(cursor).and_then(esc_panel)
     }
 
+    /// Asks to wear an item.
+    fn wear(&mut self, index: u16, location: u32) {
+        self.last_wear = Some(control::now());
+        let _ = self.session.wear(index, location);
+    }
+
+    /// An inventory item let go over the world: dropped, unless something open or a fresh wear holds it back.
+    fn drop_on_ground(&mut self, index: u16, messages: &[String]) {
+        let since_wear = self.last_wear.map(|at| control::now().saturating_duration_since(at));
+        let busy = self.trade.is_some() || self.dialog.is_some() || self.shop.is_some();
+        let mail = self.mail.list.frame.open || self.mail.compose.is_some() || self.mail.letter.is_some();
+        let ammo = self.inventory.get(index).is_some_and(|item| item.kind == net::ITEM_AMMO && item.worn != 0);
+        match ground_drop_refused(since_wear, busy, self.equipment.frame.open, self.storage.frame.open, mail, ammo) {
+            None => self.move_item(Asked::Drop(index)),
+            Some(Some(id)) => self.chat_line(messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+            Some(None) => {}
+        }
+    }
+
     /// Uses an inventory item: consumables are used, equipment is put on.
     fn use_item(&mut self, index: u16) {
         if self.store_open() {
@@ -3485,7 +3605,8 @@ impl Game {
             // An item that binds once worn asks first.
             net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR if item.identified && item.bind == 1 => self.bind_asked = Some(index),
             net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR | net::ITEM_PET_ARMOR | net::ITEM_AMMO if item.identified => {
-                let _ = self.session.wear(index, item.location);
+                let location = item.location;
+                self.wear(index, location);
             }
             // A card asks what it can go into.
             net::ITEM_CARD => {
@@ -3541,7 +3662,7 @@ impl Game {
     fn answer_bind(&mut self, yes: bool) {
         let Some(index) = self.bind_asked.take().filter(|_| yes) else { return };
         if let Some(location) = self.inventory.get(index).map(|item| item.location) {
-            let _ = self.session.wear(index, location);
+            self.wear(index, location);
         }
     }
 
@@ -4027,8 +4148,11 @@ struct Assets {
     party: party::Assets,
     chatroom: chatroom::Assets,
     reputation: reputation::Assets,
+    /// The navigation arrows, by direction (south, south-west, … south-east).
+    navi_arrows: Vec<Texture>,
     /// Item links' underline in the NPC window.
     link_line: Texture,
+    navi_line: Texture,
     /// The magic square under a ground cast.
     magic_target: Option<Texture>,
     escape: escape::Assets,
@@ -4150,7 +4274,9 @@ impl Assets {
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
             reputation: reputation::Assets::load(gpu, grf),
+            navi_arrows: (0..8).map(|turn| image(format!("{UI}navigation_interface\\navi_grid_{turn}.tga"))).collect(),
             link_line: gpu.solid([links::COLOR[0], links::COLOR[1], links::COLOR[2], 0xFF]),
+            navi_line: gpu.solid([links::NAVI_COLOR[0], links::NAVI_COLOR[1], links::NAVI_COLOR[2], 0xFF]),
             magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
@@ -4457,6 +4583,26 @@ fn within_pickup(from: [i32; 2], at: [i32; 2]) -> bool {
     (at[0] - from[0]).abs().max((at[1] - from[1]).abs()) <= 1
 }
 
+/// What a pending pickup does this frame.
+#[derive(Debug, PartialEq)]
+enum PickStep {
+    PickUp,
+    Walk,
+    Wait,
+}
+
+/// A pending pickup: picked up once the player's cell is next to the item, walking or not; out of reach, a walk
+/// there unless the last one already went there.
+fn pickup_step(player: [i32; 2], item: [i32; 2], walked_to: Option<[i32; 2]>) -> PickStep {
+    if within_pickup(player, item) {
+        PickStep::PickUp
+    } else if walked_to != Some(item) {
+        PickStep::Walk
+    } else {
+        PickStep::Wait
+    }
+}
+
 /// The cursor over an NPC: a warp portal's, or talking.
 fn npc_cursor(job: u16) -> cursor::Kind {
     if job == WARP_JOB { cursor::Kind::Warp } else { cursor::Kind::Talk }
@@ -4547,6 +4693,12 @@ const DOUBLE_PRESS: Duration = Duration::from_millis(500);
 
 fn may_move(last: Option<Instant>, now: Instant) -> bool {
     last.is_none_or(|last| now.saturating_duration_since(last) >= MOVE_GAP)
+}
+
+/// Whether the held button walks toward the pointer now: held, nothing pending (an item being picked up), and
+/// MOVE_GAP since the last try.
+fn follows_pointer(held: bool, pending: bool, last_try: Option<Instant>, now: Instant) -> bool {
+    held && !pending && last_try.is_none_or(|last| now.saturating_duration_since(last) > MOVE_GAP)
 }
 
 /// Whether a press now, after the last one (when, and whether the pointer moved since), is a double press.
@@ -4652,8 +4804,8 @@ fn message_lines(font: &text::Font, text: &str, width: f32) -> Vec<String> {
 /// shows them: the name alone in the link's color, then the color before it again.
 // ponytail: no underline and no clicking (navigation, item info) yet.
 fn show_links(text: &str) -> String {
-    // Item links are marked runs by now (links::mark); these are the rest.
-    const LINKS: [(&str, &str); 2] = [("NAVI", "C00000"), ("URL", "0070C0")];
+    // Item and navigation links are marked runs by now (links::mark); URLs are only coloured.
+    const LINKS: [(&str, &str); 1] = [("URL", "0070C0")];
     let mut shown = String::new();
     let mut rest = text;
     'scan: while let Some(open) = rest.find('<') {
@@ -4698,7 +4850,7 @@ fn wrap_linked(font: &text::Font, text: &str, width: f32) -> links::LinkedLines 
             }
             for (color, piece) in pieces {
                 line_width += font.width(&piece);
-                let color = if item.is_some() { links::COLOR } else { color };
+                let color = item.as_ref().map_or(color, links::Target::color);
                 wrapped.last_mut().unwrap().push((color, piece, item.clone()));
             }
         }
@@ -4871,6 +5023,8 @@ struct App {
     skill_trees: SkillTrees,
     /// The client's reputation groups and reputations.
     reputation_tables: reputation::Tables,
+    /// The client's navigation tables: maps, the ways between them, NPCs and monsters.
+    navi_tables: lua::NaviTables,
     status_icon_files: HashMap<u16, (u8, String)>,
     /// What each status icon says when pointed at.
     state_infos: HashMap<u16, lua::StateInfo>,
@@ -5129,6 +5283,11 @@ impl App {
                     }
                 }
                 None if game.storage.typing => game.storage.type_text(text),
+                None if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
+                    let window = game.navi_window.as_mut().unwrap();
+                    window.text.push_str(text);
+                    window.search(&self.navi_tables);
+                }
                 None if game.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) => game.catalog.as_mut().unwrap().type_text(text),
                 None if game.room_make.is_some() => game.room_make.as_mut().unwrap().type_text(text),
                 None if game.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) => {
@@ -5355,25 +5514,32 @@ impl App {
                     self.make_action(action);
                 }
             }
-            // An item link in the chat log or the NPC window: the item's information.
-            Scene::Game(game) if game.link_at(cursor).is_some() => {
-                let item = game.link_at(cursor).cloned().unwrap();
-                let shown = iteminfo::Shown {
-                    item: item.id,
-                    identified: true,
-                    refine: item.refine,
-                    cards: item.cards,
-                    damaged: None,
-                    expires: 0,
-                    card: self.card_pictures.name(item.id).is_some(),
-                };
-                let position = game.item_window.as_ref().map(|window| window.position);
-                let mut window = iteminfo::ItemWindow::new(shown);
-                if let Some(position) = position {
-                    window.position = position;
+            // A link in the chat log or the NPC window: an item's information, or a navigation to the place.
+            Scene::Game(game) if game.link_at(cursor).is_some() => match game.link_at(cursor).cloned().unwrap() {
+                links::Target::Item(item) => {
+                    let shown = iteminfo::Shown {
+                        item: item.id,
+                        identified: true,
+                        refine: item.refine,
+                        cards: item.cards,
+                        damaged: None,
+                        expires: 0,
+                        card: self.card_pictures.name(item.id).is_some(),
+                    };
+                    let position = game.item_window.as_ref().map(|window| window.position);
+                    let mut window = iteminfo::ItemWindow::new(shown);
+                    if let Some(position) = position {
+                        window.position = position;
+                    }
+                    game.item_window = Some(window);
                 }
-                game.item_window = Some(window);
-            }
+                links::Target::Navi { map, cell } => {
+                    let map = navigation::map_key(&map);
+                    let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
+                    let target = navigation::Target { cell: (cell != [0, 0]).then_some(cell), monster: None, name, map };
+                    game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
+                }
+            },
             Scene::Game(game) if game.deal_choice.is_some() => {
                 let npc = game.deal_choice.unwrap();
                 let dialog = dialog_position(&assets.message);
@@ -5866,6 +6032,25 @@ impl App {
                     _ => {}
                 }
             }
+            // The navigation window: its field, a result to go to, stopping.
+            Scene::Game(game) if game.navi_window.as_ref().and_then(|window| window.hit(cursor)).is_some() => {
+                let window = game.navi_window.as_mut().unwrap();
+                match window.hit(cursor).unwrap() {
+                    navigation::Hit::Title(TitleHit::Close) => game.navi_window = None,
+                    navigation::Hit::Title(title) => window.frame.click_title(title),
+                    navigation::Hit::Field => window.typing = true,
+                    navigation::Hit::Result(index) => {
+                        let target = window.results[index].clone();
+                        window.typing = false;
+                        game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
+                    }
+                    navigation::Hit::Stop => {
+                        window.typing = false;
+                        game.navigation = None;
+                    }
+                    navigation::Hit::Window => window.typing = false,
+                }
+            }
             // The reputation window: its title bar.
             Scene::Game(game) if game.reputation_window.as_ref().and_then(|window| window.hit(cursor)).is_some() => {
                 match game.reputation_window.as_ref().and_then(|window| window.hit(cursor)) {
@@ -6349,8 +6534,10 @@ impl App {
                                 game.toggle_reputation(&self.reputation_tables);
                                 game.sync_esc();
                             }
-                            // ponytail: navigation has no window yet; its button does nothing.
-                            Some("navigation") => {}
+                            Some("navigation") => {
+                                game.toggle_navigation();
+                                game.sync_esc();
+                            }
                             Some("map") => {
                                 game.world_map = match (game.world_map.take(), &self.gpu) {
                                     (None, Some(gpu)) => worldmap::WorldMap::open(gpu, &self.grf, &self.worlds.0, self.worlds.1, &map_key(&game.map)),
@@ -6712,6 +6899,17 @@ impl App {
 
     /// The right button: Alt moves stacks to storage, a click on a player opens their menu, a press aims the camera.
     fn right_button(&mut self, state: ElementState) {
+        // A right press lets go of a held drag and closes the box asking how many of an item.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Pressed
+        {
+            let dropped = game.dragging.take().is_some();
+            game.drag_cancelled |= dropped;
+            let closed = game.amount.take_if(|amount| amount.what.moves_items()).is_some();
+            if dropped || closed {
+                return;
+            }
+        }
         // Alt + right press orders the homunculus (when it's out), off the windows.
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
             && state == ElementState::Pressed
@@ -7064,11 +7262,12 @@ impl App {
         let dragged = match &mut self.scene {
             Scene::Game(game) if state == ElementState::Released => {
                 let item = game.dragging.take();
-                // An item or a skill let go over a hotkey slot goes there.
+                // An item, a skill or a hotkey let go over a hotkey slot goes there (`hotkeys::drop_on`).
                 if let Some((dragged, _, true)) = item
                     && let Some(hotkeys::Hit::Slot(slot)) = game.hotkeys.hit(self.cursor)
                 {
                     let key = match dragged {
+                        Dragged::Hotkey(from) if from != slot => game.hotkeys.keys[from],
                         Dragged::Item(index) => game.inventory.get(index).map(|item| net::Hotkey { skill: false, id: item.id, count: item.amount as i16 }),
                         // At the level picked in the skill window.
                         Dragged::Skill(id) => game.skills.iter().find(|skill| skill.id == id).map(|skill| net::Hotkey {
@@ -7076,32 +7275,31 @@ impl App {
                             id: u32::from(id),
                             count: game.skill_window.use_level(id, skill.level) as i16,
                         }),
-                        Dragged::Stored(_) | Dragged::Carted(_) | Dragged::Hotkey(_) => None,
+                        Dragged::Stored(_) | Dragged::Carted(_) | Dragged::Hotkey(_) | Dragged::Worn(_) => None,
                     };
                     if let Some(key) = key {
-                        game.hotkeys.keys[slot] = Some(key);
-                        let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, Some(key));
+                        for (slot, key) in hotkeys::drop_on(&game.hotkeys.keys, key, slot) {
+                            game.hotkeys.keys[slot] = key;
+                            let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, key);
+                        }
                     }
                 }
-                // A hotkey moved along the bar trades places with what's there; let go off the bar, it's taken off.
-                if let Some((Dragged::Hotkey(from), _, true)) = item {
-                    let to = match game.hotkeys.hit(self.cursor) {
-                        Some(hotkeys::Hit::Slot(to)) => Some(to),
-                        Some(_) => Some(from),
-                        None => None,
-                    };
-                    match to {
-                        Some(to) if to != from => {
-                            game.hotkeys.keys.swap(from, to);
-                            for slot in [from, to] {
-                                let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, game.hotkeys.keys[slot]);
-                            }
-                        }
-                        Some(_) => {}
-                        None => {
+                // A skill hotkey let go off the slots, on the bar or over the world, is taken off. An item hotkey stays:
+                // over the world it can't be dropped. Over another window nothing happens.
+                if let Some((Dragged::Hotkey(from), _, true)) = item
+                    && let Some(key) = game.hotkeys.keys[from]
+                {
+                    let on_bar = game.hotkeys.hit(self.cursor);
+                    let elsewhere = on_bar.is_none() && game.window_at(self.cursor).is_some();
+                    match on_bar {
+                        Some(hotkeys::Hit::Slot(_)) => {}
+                        _ if elsewhere => {}
+                        _ if key.skill => {
                             game.hotkeys.keys[from] = None;
                             let _ = game.session.set_hotkey(game.hotkeys.tab(), from as u16, None);
                         }
+                        Some(_) => {}
+                        None => game.chat_line(self.messages.get(HOTKEY_ITEM_STAYS).cloned().unwrap_or_default(), CHAT_ERROR),
                     }
                 }
                 // An item let go over the storage goes in; a stored one let go over the inventory comes out.
@@ -7158,13 +7356,25 @@ impl App {
                         }
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
-                    // Let go over the world: dropped at the player's feet, asking how many of a stack.
+                    // Let go over the world: dropped at the player's feet, asking how many of a stack. The drop lock holds it.
                     (Some((Dragged::Item(index), _, true)), None)
                         if inventory::may_ground_drop(game.inventory.lock_drop)
                             && !game.on_ui(self.cursor, &self.items, message_size)
                             && !game.store_open() =>
                     {
-                        game.move_item(Asked::Drop(index))
+                        game.drop_on_ground(index, &self.messages)
+                    }
+                    // Onto the equipment window, wherever: worn. Off it onto the inventory: taken off. Not while trading.
+                    (Some((Dragged::Item(index), _, true)), Some(Panel::Equipment))
+                        if !game.equipment.swapping
+                            && game.equipment.owner.is_none()
+                            && game.trade.is_none()
+                            && game.inventory.get(index).is_some_and(|item| item.location != 0 && item.worn == 0) =>
+                    {
+                        game.use_item(index)
+                    }
+                    (Some((Dragged::Worn(index), _, true)), Some(Panel::Inventory)) if game.trade.is_none() => {
+                        let _ = game.session.take_off(index);
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Cart)) => game.move_item(Asked::ToCart(index)),
                     (Some((Dragged::Carted(index), _, true)), Some(Panel::Inventory)) => game.move_item(Asked::FromCart(index)),
@@ -7219,7 +7429,7 @@ impl App {
                     | game.basic_info.frame.drop_drag()
                     | game.hotkeys.frame.drop_drag()
                     | game.skill_window.frame.drop_drag();
-                windows || item.is_some_and(|(_, _, moved)| moved)
+                windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
             }
             _ => false,
         };
@@ -7309,7 +7519,12 @@ impl App {
                     }
                 }
                 WorldClick::Talk(id) => game.talk_to(id),
-                WorldClick::PickUp(id) if !game.player.sitting => game.pick_up(id),
+                // Held, the button follows the pointer again once the item is picked up.
+                WorldClick::PickUp(id) if !game.player.sitting => {
+                    game.pick_up(id, now);
+                    game.walk_held = true;
+                    game.last_walk_try = Some(now);
+                }
                 WorldClick::Warp(cell) if !ctrl => {
                     game.walk_toward(cell, now);
                     game.walk_held = true;
@@ -7514,6 +7729,12 @@ impl App {
             if let (Panel::Cart, Some(inventory::Hit::Item(index))) = (id, game.cart.hit(cursor)) {
                 game.dragging = Some((Dragged::Carted(index), cursor, false));
             }
+            if let (Panel::Equipment, Some(equipment::Hit::Slot(index))) = (id, game.equipment.hit(cursor, &game.inventory.items))
+                && game.equipment.owner.is_none()
+                && !game.equipment.swapping
+            {
+                game.dragging = Some((Dragged::Worn(index), cursor, false));
+            }
             if id == Panel::Storage
                 && let Some(assets) = &self.assets
             {
@@ -7641,6 +7862,7 @@ impl App {
             battle_line: game.chat_mode.battle_line_open(),
             whisper_list: game.chat.whisper_list_open(),
             focused: game.focused_text(),
+            conversation: game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()),
             question: game.question_open(),
             newest: game.esc_order.first().copied(),
         };
@@ -8023,7 +8245,6 @@ impl App {
                     (Key::Named(NamedKey::ArrowUp), _, Some((_, selected))) => *selected = selected.saturating_sub(1),
                     (Key::Named(NamedKey::ArrowDown), _, Some((items, selected))) => *selected = (*selected + 1).min(items.len().saturating_sub(1)),
                     (Key::Named(NamedKey::Enter), _, Some(_)) => game.choose(false),
-                    (Key::Named(NamedKey::Escape), _, Some(_)) => game.choose(true),
                     (Key::Named(NamedKey::Enter), None, None) => game.press_dialog_button(),
                     _ => {}
                 }
@@ -8171,6 +8392,18 @@ impl App {
                     }
                     _ => trade.type_text(event.text.as_deref().unwrap_or_default()),
                 }
+            }
+            // The navigation window's search field: each change searches again.
+            Scene::Game(game) if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
+                let window = game.navi_window.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Enter | NamedKey::Escape) => window.typing = false,
+                    Key::Named(NamedKey::Backspace) => {
+                        window.text.pop();
+                    }
+                    _ => window.text.push_str(event.text.as_deref().unwrap_or_default()),
+                }
+                window.search(&self.navi_tables);
             }
             Scene::Game(game) if game.storage.typing => match key {
                 Key::Named(NamedKey::Enter) => game.storage.typing = false,
@@ -8537,6 +8770,8 @@ impl App {
                     shadow: SpriteSet::at(&self.grf, "data\\sprite\\shadow"),
                     emotion_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\emotion"),
                     emotions: HashMap::new(),
+                    mvp_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\mvp"),
+                    mvps: HashMap::new(),
                     mark_sprites: ["status-stun", "status-sleep", "status-curse", "얼음땡"]
                         .into_iter()
                         .filter_map(|name| Some((name, SpriteSet::at(&self.grf, &format!("data\\sprite\\이팩트\\{name}"))?)))
@@ -8565,6 +8800,7 @@ impl App {
                     basic_info: BasicInfo::default(),
                     hotkeys: hotkeys::Hotkeys::default(),
                     dragging: None,
+                    drag_cancelled: false,
                     skills: Vec::new(),
                     skill_window: {
                         let mut window = skills::SkillWindow::default();
@@ -8658,6 +8894,7 @@ impl App {
                     friend_asked: None,
                     expansion_asked: None,
                     switch_asked: None,
+                    last_wear: None,
                     bind_asked: None,
                     broken_before: None,
                     pet_id: None,
@@ -8675,6 +8912,8 @@ impl App {
                     ranking: None,
                     reputation: HashMap::new(),
                     reputation_window: None,
+                    navigation: None,
+                    navi_window: None,
                     catalog: None,
                     skill_description: None,
                     pickup_popup: None,
@@ -8809,6 +9048,7 @@ impl App {
                     }),
                     attack_range: 1,
                     pending: None,
+                    pending_walk: None,
                     auto_say: std::env::var("RUSTNAROK_CLIENT_SAY").ok(),
                     last_move: None,
                     walk_goal: None,
@@ -9362,23 +9602,29 @@ impl App {
                 }
             }
             MapEvent::PlayerMove { from, to, .. } => {
-                let player = &mut game.player;
-                if !player.moving() {
-                    player.cell = from.map(i32::from);
-                }
-                if let Some(path) = world::find_path(&game.world.gat, player.cell, to.map(i32::from)) {
-                    player.walk(path);
+                let from = from.map(i32::from);
+                if let Some(path) = world::find_path(&game.world.gat, from, to.map(i32::from)) {
+                    game.player.walk_on(from, path, control::now());
                 }
             }
+            // A knockback (ZC_HIGHJUMP) slides the unit there; the stop that follows at the same cell leaves the slide
+            // running.
             MapEvent::Stop { id, position } | MapEvent::Slide { id, position } => {
                 let cell = position.map(i32::from);
-                if id == game.account_id {
-                    game.player.stop_at(cell);
-                    if let Some((_, arrived)) = &mut game.pending {
-                        *arrived = Some(Instant::now());
+                let slide = matches!(event, MapEvent::Slide { .. });
+                let now = control::now();
+                let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
+                if let Some(actor) = actor {
+                    if slide {
+                        actor.slide_to(cell, now);
+                    } else if actor.sliding_to() != Some(cell) {
+                        actor.stop_at(cell);
                     }
-                } else if let Some(actor) = game.units.get_mut(&id) {
-                    actor.stop_at(cell);
+                }
+                if id == game.account_id
+                    && let Some((_, arrived)) = &mut game.pending
+                {
+                    *arrived = Some(Instant::now());
                 }
             }
             // In a chat room, talk goes to its window.
@@ -9750,12 +9996,13 @@ impl App {
                 let name = inventory::item_name(&self.items, item, true, 0);
                 game.chat_line(messages::fill(template, &[&player, &grade::grade_letter(next), &name]), CHAT_BROADCAST);
             }
-            // ponytail: the banner effect alone; the data also has a sprite, data\sprite\이팩트\mvp.spr, the real
-            // client may show with it.
+            // The banner effect, and the MVP sprite over the winner.
+            // ponytail: ZC_MVP starts the sprite and it plays once through, like an emotion; neither is pinned down.
             MapEvent::Mvp(id) => {
                 if let Some(gpu) = gpu {
                     game.play_effect(gpu, grf, table, EF_MVP, id);
                 }
+                game.mvps.insert((id != game.account_id).then_some(id), control::now());
             }
             // ponytail: the reward lines in the items' cyan; the real client's color is unknown.
             MapEvent::MvpItem(item) => {
@@ -11243,6 +11490,17 @@ impl App {
                 }
                 game.sync_esc();
             }
+            // The server starts a navigation: to a cell (kind 0), a map (1) or a monster's map (3).
+            MapEvent::Navigate { kind, services, hide_window, map, cell, monster } => {
+                let map = navigation::map_key(&map);
+                let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
+                let target = navigation::Target { cell: (kind == 0).then_some(cell), monster: (kind == 3).then_some(monster), name, map };
+                game.navigation = Some(navigation::Active::new(target, services));
+                if !hide_window && game.navi_window.is_none() {
+                    game.toggle_navigation();
+                    game.sync_esc();
+                }
+            }
             MapEvent::CastCancelled(source) => {
                 let caster = (source != game.account_id).then_some(source);
                 game.casts.remove(&caster);
@@ -12281,8 +12539,7 @@ impl App {
         // Emotions play once over heads.
         let mut shown = Vec::new();
         if let Some(sprite) = &mut game.emotion_sprite {
-            game.emotions
-                .retain(|_, (action, start)| now.duration_since(*start).as_secs_f32() * 1000.0 < sprite.index_ms(*action).unwrap_or(emotion::SHOWN_MS));
+            game.emotions.retain(|_, (action, start)| head_marks::playing(now.duration_since(*start), sprite.index_ms(*action).unwrap_or(emotion::SHOWN_MS)));
             for (unit, (action, start)) in &game.emotions {
                 let feet = match unit {
                     None => player_feet,
@@ -12293,6 +12550,16 @@ impl App {
                 };
                 let elapsed = now.duration_since(*start).as_secs_f32() * 1000.0;
                 shown.push((feet, sprite.frame_at(gpu, *action, 0, Timing::Loop(elapsed))));
+            }
+        }
+        // The MVP sprite plays once over the winner, where emotions hang, following them.
+        let mut mvp_shown = Vec::new();
+        if let Some(sprite) = &mut game.mvp_sprite {
+            let length = sprite.index_ms(0).unwrap_or(emotion::SHOWN_MS);
+            game.mvps.retain(|_, start| head_marks::playing(now.duration_since(*start), length));
+            for (unit, start) in &game.mvps {
+                let Some(feet) = unit.map_or(Some(player_feet), |id| feet_of.get(&id).copied()) else { continue };
+                mvp_shown.push((feet, sprite.frame_at(gpu, 0, 0, Timing::Loop(now.duration_since(*start).as_secs_f32() * 1000.0))));
             }
         }
         // Status marks: stun stars, sleep, curse and silence's "..." over heads, the ice block at a frozen unit's feet.
@@ -12319,6 +12586,14 @@ impl App {
         }
         if let Some(sprite) = &game.emotion_sprite {
             billboards.extend(shown.into_iter().flat_map(|(feet, placements)| {
+                let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
+                placements.into_iter().map(move |(key, position, size, angle)| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                })
+            }));
+        }
+        if let Some(sprite) = &game.mvp_sprite {
+            billboards.extend(mvp_shown.into_iter().flat_map(|(feet, placements)| {
                 let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
                 placements.into_iter().map(move |(key, position, size, angle)| {
                     (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
@@ -12641,6 +12916,27 @@ impl App {
                 [((overhead::CAST_BAR[0] - 2.0) * share_left(start, length, now)).round(), overhead::CAST_BAR[1] - 2.0],
             ));
         }
+        // Navigation: there is the end of it; else the trail to where it heads on this map, and the arrow over the head.
+        let here = navigation::map_key(&game.map);
+        if game.navigation.as_ref().is_some_and(|active| navigation::arrived(&here, game.player.cell, &active.target)) {
+            game.navigation = None;
+        }
+        let navi_next = game.navigation.as_ref().and_then(|active| navigation::next_cell(&self.navi_tables, &here, &active.target, active.services));
+        if let Some(active) = &mut game.navigation {
+            let gat = &game.world.gat;
+            active.update_trail(&here, game.player.cell, navi_next, |from, to| world::find_path(gat, from, to));
+        }
+        if let Some(next) = navi_next {
+            // A point a few cells toward it, so a far goal off the screen still turns the arrow.
+            let toward = [f32::from(next[0]) - game.player.cell[0] as f32, f32::from(next[1]) - game.player.cell[1] as f32];
+            let length = toward[0].hypot(toward[1]).max(1.0);
+            let near = [0, 1].map(|axis| game.player.cell[axis] as f32 + toward[axis] / length * NAVI_ARROW_LOOK.min(length));
+            let goal = game.world.cell_position(near);
+            if let (Some(from), Some(to), Some([x, y])) = (sprite_point(player_feet, 0.0), sprite_point(goal, 0.0), head(&None)) {
+                let arrow = &assets.navi_arrows[navigation::arrow([to[0] - from[0], to[1] - from[1]])];
+                base.sprites.push((arrow, [x - arrow.size[0] / 2.0, y - NAVI_ARROW_RISE - arrow.size[1]], arrow.size));
+            }
+        }
         // Chat room signs over their owners' heads, like speech (not the room we're in).
         game.sign_rects.clear();
         for (owner, sign) in &game.signs {
@@ -12656,7 +12952,9 @@ impl App {
                 },
             };
             let Some(point) = sprite_point(feet, -chatroom::SIGN_ABOVE) else { continue };
-            let rect = chatroom::draw_sign(&mut base, &assets.chatroom, font, sign, point.map(f32::round));
+            // ponytail: the one yellow shop board is the vendor whose shop window is open.
+            let picked = game.shop.as_ref().and_then(|shop| shop.vendor.as_ref()).is_some_and(|(vendor, ..)| vendor == owner);
+            let rect = chatroom::draw_sign(&mut base, &assets.chatroom, font, sign, point.map(f32::round), picked);
             game.sign_rects.push((rect, sign.id, sign.kind));
         }
         for (unit, (text, color, _)) in &game.speech {
@@ -12696,7 +12994,8 @@ impl App {
                         overlay.texts.push((piece.clone(), [x, y], *color));
                         // Item links underlined, and clickable.
                         if let Some(item) = item {
-                            overlay.sprites.push((&assets.link_line, [x, y + font.line_height() - 1.0], [width, 1.0]));
+                            let line = if item.item().is_some() { &assets.link_line } else { &assets.navi_line };
+                            overlay.sprites.push((line, [x, y + font.line_height() - 1.0], [width, 1.0]));
                             dialog_links.push(([x, y, width, font.line_height()], item.clone()));
                         }
                         x += width;
@@ -12853,7 +13152,9 @@ impl App {
                 game.minimap_crop.as_ref().map(|(_, texture)| texture)
             }
         };
-        let markers = minimap::Markers { cell: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss };
+        let trail = game.navigation.as_ref().map_or(&[][..], |active| active.trail.as_slice());
+        let goal = navi_next.map(|cell| cell.map(i32::from));
+        let markers = minimap::Markers { cell: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss, trail, goal };
         minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.minimap_zoom, &markers);
         // Status icons down the right, each with the clock of its time (orange in the last minute).
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
@@ -13107,7 +13408,7 @@ impl App {
         }
         // A dragged item's or skill's icon follows the pointer.
         let dragged_icon = match game.dragging {
-            Some((Dragged::Item(index), _, true)) => {
+            Some((Dragged::Item(index) | Dragged::Worn(index), _, true)) => {
                 game.inventory.get(index).and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)))
             }
             Some((Dragged::Skill(id), _, true)) => skill_info.get(&id).map(skills::icon_path),
@@ -13440,6 +13741,10 @@ impl App {
         if let Some(board) = &game.ranking {
             board.draw(&mut shop_layer, &assets.chrome, font, messages, &game.char_names, pointer.0);
         }
+        if let Some(window) = &game.navi_window {
+            let caret = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+            window.draw(&mut shop_layer, &assets.chrome, font, messages, game.navigation.as_ref().map(|active| &active.target), pointer.0, caret);
+        }
         if let Some(window) = &game.reputation_window {
             window.draw(&mut shop_layer, &assets.chrome, &assets.reputation, font, messages, &self.reputation_tables, &game.reputation, pointer.0);
         }
@@ -13752,9 +14057,8 @@ impl ApplicationHandler<NetEvent> for App {
                 // try, not over a window, nor while an attack or a pickup is on its way.
                 let now = Instant::now();
                 game.attack_step(now);
-                if game.walk_held
-                    && game.pending.is_none()
-                    && game.last_walk_try.is_none_or(|last| now.saturating_duration_since(last) > MOVE_GAP)
+                game.pending_step(now);
+                if follows_pointer(game.walk_held, game.pending.is_some(), game.last_walk_try, now)
                     && let Some(assets) = &self.assets
                     && !game.on_ui(self.cursor, &self.items, assets.message.size)
                     && let Some(cell) = game.ground_cell(self.cursor)
@@ -13856,7 +14160,7 @@ impl ApplicationHandler<NetEvent> for App {
                         && let Some((&id, _)) = game.ground.iter().min_by_key(|(_, item)| distance(item.at))
                     {
                         game.auto_pick_up = false;
-                        game.pick_up(id);
+                        game.pick_up(id, now);
                     }
                     if game.entered.elapsed() >= Duration::from_secs(3)
                         && !game.skills.is_empty()
@@ -13886,17 +14190,13 @@ impl ApplicationHandler<NetEvent> for App {
                         }
                     }
                 }
-                if let Some((pending, Some(arrived))) = game.pending
+                // A skill walked into range goes off once the walk has settled.
+                if let Some((Pending::Skill { id, level, target }, Some(arrived))) = game.pending
                     && arrived.elapsed() >= ATTACK_SETTLE
                 {
                     game.pending = None;
-                    match pending {
-                        Pending::PickUp(id) => game.pick_up(id),
-                        Pending::Skill { id, level, target } => {
-                            game.targeting = Some((id, level));
-                            game.aim_skill(target);
-                        }
-                    }
+                    game.targeting = Some((id, level));
+                    game.aim_skill(target);
                 }
                 if let Some(gpu) = &self.gpu {
                     gpu.window.request_redraw();
@@ -14024,6 +14324,7 @@ fn main() {
     });
     let skill_trees = lua::skill_trees(&grf).unwrap_or_default();
     let reputation_tables = reputation::Tables::load(&grf);
+    let navi_tables = lua::navigation(&grf).unwrap_or_default();
     let status_icon_files = lua::status_icons(&grf).unwrap_or_default();
     let state_infos = lua::state_info(&grf).unwrap_or_else(|error| {
         eprintln!("no status icon descriptions: {error}");
@@ -14089,6 +14390,7 @@ fn main() {
         skill_descriptions,
         skill_trees,
         reputation_tables,
+        navi_tables,
         status_icon_files,
         state_infos,
         effect_table: effects::Table::load(),
@@ -14195,9 +14497,41 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
     1.0 - (now.saturating_duration_since(start).as_secs_f32() / length.as_secs_f32().max(f32::EPSILON)).min(1.0)
 }
 
+/// Why an item can't be dropped on the ground now: `Some(None)` quietly, `Some(Some(message))` saying so; `None` when
+/// it can. In order: a wear asked for under 2 s ago, a deal or talk under way, the equipment window, the storage, the
+/// mail window, the ammunition worn.
+fn ground_drop_refused(since_wear: Option<Duration>, busy: bool, equipment: bool, storage: bool, mail: bool, ammo: bool) -> Option<Option<usize>> {
+    if since_wear.is_some_and(|since| since < WEAR_PAUSE) || busy {
+        Some(None)
+    } else if equipment {
+        Some(Some(DROP_EQUIPMENT_OPEN))
+    } else if storage {
+        Some(None)
+    } else if mail {
+        Some(Some(DROP_MAIL_OPEN))
+    } else if ammo {
+        Some(Some(DROP_AMMO_WORN))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn some_things_open_keep_items_off_the_ground() {
+        let refused = |since: Option<u64>, open: [bool; 5]| ground_drop_refused(since.map(Duration::from_millis), open[0], open[1], open[2], open[3], open[4]);
+        assert_eq!(refused(None, [false; 5]), None);
+        assert_eq!(refused(Some(2000), [false; 5]), None);
+        assert_eq!(refused(Some(1999), [false; 5]), Some(None));
+        assert_eq!(refused(None, [true, true, false, false, false]), Some(None), "a trade first, quietly");
+        assert_eq!(refused(None, [false, true, true, true, true]), Some(Some(DROP_EQUIPMENT_OPEN)));
+        assert_eq!(refused(None, [false, false, true, true, true]), Some(None), "the storage, quietly");
+        assert_eq!(refused(None, [false, false, false, true, true]), Some(Some(DROP_MAIL_OPEN)));
+        assert_eq!(refused(None, [false, false, false, false, true]), Some(Some(DROP_AMMO_WORN)));
+    }
 
     #[test]
     fn saves_where_the_windows_were_left() {
@@ -14386,7 +14720,7 @@ mod tests {
         assert_eq!(quick_target(false, false, false), None);
         // Our Shift-click's link reads back as a link to the item.
         let (shown, runs) = links::split(&links::mark(&item_link(512, "Apple"), &|_| String::new()));
-        assert_eq!((shown.as_str(), runs[0].1.id), ("Apple", 512));
+        assert_eq!((shown.as_str(), runs[0].1.item().map(|item| item.id)), ("Apple", Some(512)));
     }
 
     #[test]
@@ -14559,6 +14893,34 @@ mod tests {
     }
 
     #[test]
+    fn picks_up_on_the_way() {
+        // Four cells away and walking there: nothing until the player's cell is next to the item.
+        assert_eq!(pickup_step([10, 10], [14, 10], None), PickStep::Walk);
+        assert_eq!(pickup_step([11, 10], [14, 10], Some([14, 10])), PickStep::Wait);
+        assert_eq!(pickup_step([12, 11], [14, 10], Some([14, 10])), PickStep::Wait);
+        assert_eq!(pickup_step([13, 11], [14, 10], Some([14, 10])), PickStep::PickUp);
+        assert_eq!(pickup_step([14, 10], [14, 10], None), PickStep::PickUp);
+        // A walk the move limit held back is asked for again on a later frame, once.
+        let start = Instant::now();
+        let (mut walked, mut last) = (None, Some(start));
+        let mut walks = Vec::new();
+        for ms in [100, 200, 299, 300, 350, 700] {
+            let now = start + Duration::from_millis(ms);
+            if pickup_step([10, 10], [14, 10], walked) == PickStep::Walk && may_move(last, now) {
+                (walked, last) = (Some([14, 10]), Some(now));
+                walks.push(ms);
+            }
+        }
+        assert_eq!(walks, [300]);
+        // The held button follows the pointer only once nothing is pending, MOVE_GAP after its last try.
+        assert!(!follows_pointer(true, true, None, start));
+        assert!(follows_pointer(true, false, None, start));
+        assert!(!follows_pointer(true, false, Some(start), start + Duration::from_millis(300)));
+        assert!(follows_pointer(true, false, Some(start), start + Duration::from_millis(301)));
+        assert!(!follows_pointer(false, false, None, start));
+    }
+
+    #[test]
     fn walks_no_more_than_every_300_ms() {
         let start = Instant::now();
         let at = |ms: u64| start + Duration::from_millis(ms);
@@ -14594,7 +14956,7 @@ mod tests {
     #[test]
     fn keeps_wrapped_links_clickable() {
         let font = Font::load();
-        let apple = links::ItemLink { id: 512, ..links::ItemLink::default() };
+        let apple = links::Target::Item(links::ItemLink { id: 512, ..links::ItemLink::default() });
         let text = format!("^0000FFTake {} home^000000", links::marked("Big Red Apple", &apple));
         // Narrow enough that the link breaks: both of its lines are the link, in its colour; the colour before it
         // comes back after it.
@@ -14611,14 +14973,17 @@ mod tests {
         assert_eq!(lines.last().unwrap().last().map(|(color, piece, _)| (*color, piece.trim())), Some(([0, 0, 0xFF], "home")));
         // The click test over a link wrapped onto two lines: either box finds the item, the gap beside them nothing.
         let boxes = [([10.0, 20.0, 40.0, 14.0], apple.clone()), ([0.0, 34.0, 25.0, 14.0], apple.clone())];
-        let at = |cursor: [f32; 2]| links::at(&boxes, cursor).map(|item| item.id);
+        let at = |cursor: [f32; 2]| links::at(&boxes, cursor).and_then(links::Target::item).map(|item| item.id);
         assert_eq!([at([30.0, 25.0]), at([5.0, 40.0]), at([30.0, 40.0]), at([50.0, 25.0])], [Some(512), Some(512), None, None]);
     }
 
     #[test]
     fn shows_npc_links_by_name() {
         let navi = "Let me mark the ^B9062F<NAVI>[Tool Shop]<INFO>prontera,134,221,0,000,0</INFO></NAVI>^000000 for you.";
-        assert_eq!(show_links(navi), "Let me mark the ^B9062F^C00000[Tool Shop]^B9062F^000000 for you.");
+        // The place is a link to navigate to; the colour codes around it stay for the wrapping to read.
+        let (shown, runs) = links::split(&show_links(&links::mark(navi, &|_| String::new())));
+        assert_eq!(shown, "Let me mark the ^B9062F[Tool Shop]^000000 for you.");
+        assert_eq!(runs.iter().map(|(_, target)| target.clone()).collect::<Vec<_>>(), [links::Target::Navi { map: "prontera".into(), cell: [134, 221] }]);
         let marked = show_links(&links::mark("a <ITEM>Apple<INFO>512</INFO></ITEM> < b", &|_| String::new()));
         assert_eq!(links::split(&marked).0, "a Apple < b");
     }

@@ -1,0 +1,13 @@
+// A conversation (issue #293): a page with Next, then a menu. Loaded and unloaded by scenarios/esc-npc.json.
+iz_int01,22,26,4	script	Talk Clerk	4_M_01,{
+	mes "[Talk Clerk]";
+	mes "Esc doesn't end this.";
+	next;
+	switch (select("Stay:Leave")) {
+	case 1:
+		mes "Still here.";
+		close;
+	case 2:
+		close;
+	}
+}

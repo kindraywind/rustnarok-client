@@ -278,9 +278,33 @@ fn hover_corner(slot: usize) -> [f32; 2] {
     [x, y + HOVER_DROP]
 }
 
+/// What a key let go on slot `to` changes: the slot takes it, and every other slot in that row of 9 holding the same
+/// skill or item is emptied. So moving a key along its row moves it, and to another row copies it.
+pub fn drop_on(keys: &[Option<Hotkey>], key: Hotkey, to: usize) -> Vec<(usize, Option<Hotkey>)> {
+    let row = to / PER_ROW * PER_ROW;
+    let same = |held: &Option<Hotkey>| held.is_some_and(|held| held.skill == key.skill && held.id == key.id);
+    (row..row + PER_ROW).filter(|&slot| slot != to && keys.get(slot).is_some_and(same)).map(|slot| (slot, None)).chain([(to, Some(key))]).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_moves_along_its_row_and_copies_to_another() {
+        let heal = Hotkey { skill: true, id: 28, count: 10 };
+        let potion = Hotkey { skill: false, id: 501, count: 30 };
+        let mut keys = vec![None; ROWS * PER_ROW];
+        keys[0] = Some(heal);
+        keys[1] = Some(potion);
+        keys[9] = Some(heal);
+        // Along row 1: the old slot empties, the target is overwritten (the potion is lost, not swapped).
+        assert_eq!(drop_on(&keys, heal, 1), vec![(0, None), (1, Some(heal))]);
+        // Into row 2: row 1 keeps it; row 2's other Heal goes.
+        assert_eq!(drop_on(&keys, heal, 12), vec![(9, None), (12, Some(heal))]);
+        // The same item id as a skill id is another key.
+        assert_eq!(drop_on(&keys, Hotkey { skill: false, id: 28, count: 1 }, 2), vec![(2, Some(Hotkey { skill: false, id: 28, count: 1 }))]);
+    }
 
     #[test]
     fn lays_out_the_games_bar() {

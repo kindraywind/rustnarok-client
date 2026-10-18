@@ -3,7 +3,7 @@
 use rustnarok_client::grf::Grf;
 use rustnarok_client::text::Font;
 
-use crate::links::{self, ItemLink};
+use crate::links::{self, ItemLink, Target};
 use crate::render::{Gpu, Texture};
 use crate::{Layer, UI, contains, screen};
 
@@ -65,8 +65,9 @@ pub struct Assets {
     darker: Texture,
     white: Texture,
     tab_border: Texture,
-    /// Item links' underline.
+    /// Item and navigation links' underlines.
     link: Texture,
+    navi_link: Texture,
 }
 
 impl Assets {
@@ -84,6 +85,7 @@ impl Assets {
             white: gpu.solid([255; 4]),
             tab_border: gpu.solid(TAB_BORDER),
             link: gpu.solid([crate::links::COLOR[0], crate::links::COLOR[1], crate::links::COLOR[2], 0xFF]),
+            navi_link: gpu.solid([crate::links::NAVI_COLOR[0], crate::links::NAVI_COLOR[1], crate::links::NAVI_COLOR[2], 0xFF]),
         }
     }
 }
@@ -221,7 +223,7 @@ impl Chat {
         open: bool,
         caret: bool,
         name_of: &dyn Fn(&ItemLink) -> String,
-    ) -> Vec<([f32; 4], ItemLink)> {
+    ) -> Vec<([f32; 4], Target)> {
         let mut link_boxes = Vec::new();
         if self.hidden {
             return link_boxes;
@@ -259,15 +261,16 @@ impl Chat {
             for (row, (line, color)) in self.lines[start..end].iter().enumerate() {
                 let [mut x, y] = line_at(first_row + row);
                 let y = top + y;
-                // Item links in their colour, underlined.
+                // Links in their colour, underlined.
                 for (piece, item) in links::pieces(&links::mark(line, name_of)) {
                     let width = font.width(&piece);
-                    let color = if item.is_some() { links::COLOR } else { *color };
+                    let color = item.as_ref().map_or(*color, Target::color);
                     layer.texts.push((piece.clone(), [x + 1.0, y + 1.0], [0, 0, 0]));
                     layer.texts.push((piece, [x, y], color));
                     if let Some(item) = item {
                         let under = y + font.line_height() - 1.0;
-                        layer.sprites.push((&assets.link, [x, under], [width, 1.0]));
+                        let line = if item.item().is_some() { &assets.link } else { &assets.navi_link };
+                        layer.sprites.push((line, [x, under], [width, 1.0]));
                         link_boxes.push(([x, y, width, font.line_height()], item));
                     }
                     x += width;
@@ -342,6 +345,8 @@ pub enum Command {
     DressRoom,
     /// /blacksmith, /alchemist, /taekwon, /pk: a ranking's top ten (0 to 3).
     Ranking(u16),
+    /// /navigation, /navi: the navigation window, open or closed.
+    Navigation,
 }
 
 /// The command typed, if `text` is one; a name is the rest of the line, quotes taken off.
@@ -372,6 +377,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/taekwon" => Command::Ranking(2),
         // Only the bare /pk: /pk on and /pk off are another command.
         "/pk" if name.is_empty() => Command::Ranking(3),
+        "/navigation" | "/navi" => Command::Navigation,
         _ => return None,
     })
 }
@@ -466,6 +472,7 @@ mod tests {
             assert_eq!(command(text), Some(Command::Ranking(kind)), "{text}");
         }
         assert_eq!(command("/pk on"), None);
+        assert_eq!([command("/navigation"), command("/navi")], [Some(Command::Navigation), Some(Command::Navigation)]);
         assert_eq!(command("/ex"), Some(Command::BlockList));
         assert_eq!(command("/ex Poring"), Some(Command::Whispers { name: "Poring".into(), allow: false }));
         assert_eq!(command("/in \"Big Poring\" "), Some(Command::Whispers { name: "Big Poring".into(), allow: true }));

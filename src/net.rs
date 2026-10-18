@@ -751,6 +751,8 @@ const CZ_USE_SKILL_TOGROUND: u16 = 0x0366;
 const ZC_USESKILL_ACK: u16 = 0x0B1A;
 /// A unit's cast was cut off (rathena's clif_skillcastcancel).
 const ZC_DISPEL: u16 = 0x01B9;
+/// The server starts a navigation (rathena's clif_navigateTo).
+const ZC_NAVIGATION_ACTIVE: u16 = 0x08E2;
 /// Reputation points by reputation type, and the server opening the reputation window (rathena's clif_reputation_*).
 const ZC_REPUTE_INFO: u16 = 0x0B8D;
 const ZC_REPUTE_OPEN: u16 = 0x0B8E;
@@ -2908,6 +2910,17 @@ pub enum MapEvent {
     ReputationOpen {
         group: u64,
         repute: u32,
+    },
+    /// The server starts a navigation (ZC_NAVIGATION_ACTIVE): to a cell (kind 0), a map (1) or a monster (3) on
+    /// `map`; `services` are the digits of rathena's NAV_ flags (ones the airship, tens scrolls, hundreds Kafra);
+    /// `hide_window` keeps the navigation window shut.
+    Navigate {
+        kind: u8,
+        services: u8,
+        hide_window: bool,
+        map: String,
+        cell: [u16; 2],
+        monster: u16,
     },
     /// A unit's cast was cut off before the skill went (ZC_DISPEL).
     CastCancelled(u32),
@@ -5342,6 +5355,14 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         ZC_SKILLINFO_DELETE => MapEvent::SkillRemoved(u16_at(2)),
         ZC_DISPEL => MapEvent::CastCancelled(u32_at(2)),
+        ZC_NAVIGATION_ACTIVE => MapEvent::Navigate {
+            kind: packet[2],
+            services: packet[3],
+            hide_window: packet[4] != 0,
+            map: c_string(&packet[5..21]),
+            cell: [u16_at(21), u16_at(23)],
+            monster: u16_at(25),
+        },
         // A success byte, then 16 bytes an entry: the type (u64) and the points (i64).
         ZC_REPUTE_INFO => MapEvent::Reputation(
             packet
@@ -6425,6 +6446,24 @@ mod tests {
         open.extend(0u32.to_le_bytes());
         assert_eq!(open.len(), packet_length(ZC_REPUTE_OPEN).unwrap() as usize);
         assert!(matches!(decode_map_packet(&open), Some(MapEvent::ReputationOpen { group: 2, repute: 3 })));
+    }
+
+    #[test]
+    fn reads_a_navigation() {
+        let mut packet = ZC_NAVIGATION_ACTIVE.to_le_bytes().to_vec();
+        packet.extend([0, 111, 1]);
+        let mut map = *b"prontera.gat\0\0\0\0";
+        map[12..].fill(0);
+        packet.extend(map);
+        for value in [150u16, 160, 0] {
+            packet.extend(value.to_le_bytes());
+        }
+        assert_eq!(packet.len(), packet_length(ZC_NAVIGATION_ACTIVE).unwrap() as usize);
+        let event = decode_map_packet(&packet);
+        assert!(
+            matches!(&event, Some(MapEvent::Navigate { kind: 0, services: 111, hide_window: true, map, cell: [150, 160], monster: 0 }) if map == "prontera.gat"),
+            "{event:?}"
+        );
     }
 
     #[test]
