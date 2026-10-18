@@ -59,7 +59,7 @@ pub struct StatusWindow {
 
 impl Default for StatusWindow {
     fn default() -> Self {
-        Self { frame: Frame::new(POSITION, WIDTH) }
+        Self { frame: Frame::new(POSITION, WIDTH).collapsing() }
     }
 }
 

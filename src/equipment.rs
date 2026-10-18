@@ -166,7 +166,7 @@ pub struct Equipment {
 impl Default for Equipment {
     fn default() -> Self {
         Self {
-            frame: Frame::new(DEFAULT_POSITION, WIDTH),
+            frame: Frame::new(DEFAULT_POSITION, WIDTH).collapsing(),
             tab: 0,
             clicks: Clicks::default(),
             owner: None,

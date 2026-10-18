@@ -18,17 +18,19 @@ struct Screen { size: vec2<f32> };
 @group(1) @binding(0) var image: texture_2d<f32>;
 @group(1) @binding(1) var image_sampler: sampler;
 
-struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
+struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) alpha: f32 };
 
-@vertex fn vs(@location(0) pixel: vec2<f32>, @location(1) uv: vec2<f32>) -> VertexOutput {
+@vertex fn vs(@location(0) pixel: vec2<f32>, @location(1) uv: vec2<f32>, @location(2) alpha: f32) -> VertexOutput {
     var out: VertexOutput;
     out.position = vec4(pixel.x / screen.size.x * 2.0 - 1.0, 1.0 - pixel.y / screen.size.y * 2.0, 0.0, 1.0);
     out.uv = uv;
+    out.alpha = alpha;
     return out;
 }
 
 @fragment fn fs(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(image, image_sampler, in.uv);
+    let color = textureSample(image, image_sampler, in.uv);
+    return vec4(color.rgb, color.a * in.alpha);
 }
 ";
 
@@ -37,6 +39,7 @@ struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) uv: v
 struct Vertex {
     pixel: [f32; 2],
     uv: [f32; 2],
+    alpha: f32,
 }
 
 #[derive(Clone)]
@@ -168,7 +171,7 @@ impl Gpu {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32],
                 }],
             },
             primitive: Default::default(),
@@ -294,8 +297,9 @@ impl Gpu {
         self.texts.borrow_mut().clear();
     }
 
-    pub fn draw(&mut self, world: Option<&dyn WorldPass>, sprites: &[Sprite]) {
-        crate::control::on_draw(self, world, sprites);
+    /// Draws the world and then `sprites` in order, each at its `alphas` opacity (1 past the list's end).
+    pub fn draw(&mut self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32]) {
+        crate::control::on_draw(self, world, sprites, alphas);
         if self.hidden {
             // The frame's texture uploads still go out, or they'd pile up until the next screenshot.
             self.queue.submit([]);
@@ -307,7 +311,7 @@ impl Gpu {
             _ => return self.resize(),
         };
         let size = [self.config.width, self.config.height];
-        let encoder = self.encode(&frame.texture.create_view(&Default::default()), size, world, sprites);
+        let encoder = self.encode(&frame.texture.create_view(&Default::default()), size, world, sprites, alphas);
         self.queue.submit([encoder.finish()]);
         frame.present();
         let now = self.frame.get() + 1;
@@ -316,12 +320,12 @@ impl Gpu {
     }
 
     /// Renders one frame at 1x into a PNG, for checking output against the real client.
-    pub fn capture(&self, world: Option<&dyn WorldPass>, sprites: &[Sprite], path: &str) {
-        self.snapshot(world, sprites).save(path).expect("save screenshot");
+    pub fn capture(&self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32], path: &str) {
+        self.snapshot(world, sprites, alphas).save(path).expect("save screenshot");
     }
 
     /// Renders one frame at 1x.
-    pub fn snapshot(&self, world: Option<&dyn WorldPass>, sprites: &[Sprite]) -> RgbaImage {
+    pub fn snapshot(&self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32]) -> RgbaImage {
         let [width, height] = screen().map(|value| value as u32);
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let target = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -342,7 +346,7 @@ impl Gpu {
             mapped_at_creation: false,
         });
 
-        let mut encoder = self.encode(&target.create_view(&Default::default()), [width, height], world, sprites);
+        let mut encoder = self.encode(&target.create_view(&Default::default()), [width, height], world, sprites, alphas);
         encoder.copy_texture_to_buffer(
             target.as_image_copy(),
             wgpu::TexelCopyBufferInfo {
@@ -366,11 +370,13 @@ impl Gpu {
         RgbaImage::from_raw(width, height, rgba).expect("frame size")
     }
 
-    fn encode(&self, view: &wgpu::TextureView, size: [u32; 2], world: Option<&dyn WorldPass>, sprites: &[Sprite]) -> wgpu::CommandEncoder {
+    fn encode(&self, view: &wgpu::TextureView, size: [u32; 2], world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32]) -> wgpu::CommandEncoder {
         let vertices: Vec<Vertex> = sprites
             .iter()
-            .flat_map(|&(_, [x, y], [w, h])| {
-                let corner = |dx: f32, dy: f32| Vertex { pixel: [x + dx * w, y + dy * h], uv: [dx, dy] };
+            .enumerate()
+            .flat_map(|(index, &(_, [x, y], [w, h]))| {
+                let alpha = alphas.get(index).copied().unwrap_or(1.0);
+                let corner = |dx: f32, dy: f32| Vertex { pixel: [x + dx * w, y + dy * h], uv: [dx, dy], alpha };
                 [corner(0., 0.), corner(1., 0.), corner(0., 1.), corner(0., 1.), corner(1., 0.), corner(1., 1.)]
             })
             .collect();
