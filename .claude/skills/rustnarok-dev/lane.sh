@@ -41,9 +41,12 @@ new() {
     git -C "$MAIN" fetch -q origin main
     mkdir -p "$LANES"
     git -C "$MAIN" worktree add -q -b "$branch" "$lane" origin/main
+    # The main checkout's build, cloned copy-on-write (instant, no disk until it changes): the lane's first build then
+    # compiles only this crate, not every dependency. ponytail: macOS only; elsewhere `cp --reflink` would do it.
+    [ "$(uname)" = Darwin ] && [ -d "$MAIN/target" ] && cp -c -R "$MAIN/target" "$lane/target" 2>/dev/null || true
     for item in $LINKED; do
         if [ -L "$MAIN/$item" ]; then
-            ln -s "$(readlink "$MAIN/$item")" "$lane/$item"
+            ln -s "$(readlink -f "$MAIN/$item")" "$lane/$item"
         elif [ -e "$MAIN/$item" ]; then
             ln -s "$MAIN/$item" "$lane/$item"
         fi

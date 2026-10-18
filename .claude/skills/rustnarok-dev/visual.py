@@ -466,6 +466,9 @@ def baseline(scenarios):
     subprocess.run(["git", "fetch", "-q", "origin"], cwd=REPO, check=True)
     if not os.path.isdir(WORKTREE):
         subprocess.run(["git", "worktree", "add", "-q", "--detach", WORKTREE, "origin/main"], cwd=REPO, check=True)
+        # This checkout's build, cloned copy-on-write, so main's first build compiles only this crate (macOS).
+        if sys.platform == "darwin" and os.path.isdir(os.path.join(REPO, "target")):
+            subprocess.run(["cp", "-c", "-R", os.path.join(REPO, "target"), os.path.join(WORKTREE, "target")], check=False)
     else:
         subprocess.run(["git", "checkout", "-q", "--detach", "origin/main"], cwd=WORKTREE, check=True)
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=WORKTREE, capture_output=True, text=True).stdout.strip()
