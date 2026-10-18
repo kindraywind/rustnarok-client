@@ -6,7 +6,7 @@
     {"say": "@itemreset"}, {"wait": 500},
     {"say": "@cash -1000000"}, {"wait": 500},
     {"say": "@cash 100"}, {"wait": 500},
-    {"click": [108, 152]}, {"wait": 300},
+    {"click_on": {"button": "menu"}}, {"wait": 300},
     {"click_on": {"menu_item": "shop"}},
     {"wait_for": {"packet": "0x0b6e", "ms": 5000}},
     {"wait_for": {"packet": "0x08ca", "ms": 5000}}, {"wait": 400},

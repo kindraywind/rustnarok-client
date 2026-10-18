@@ -792,6 +792,7 @@ const ZC_BROADCAST: u16 = 0x009A;
 const ZC_MAPPROPERTY_R2: u16 = 0x099B;
 const CZ_BLOCKING_PLAY_CANCEL: u16 = 0x0447;
 const ZC_NOTIFY_MAPPROPERTY2: u16 = 0x01D6;
+const ZC_WEIGHT_INFO: u16 = 0x0ADE;
 const ZC_CONGRATULATION: u16 = 0x01EA;
 const ZC_COUPLENAME: u16 = 0x01E6;
 const ZC_DIVORCE: u16 = 0x0205;
@@ -2056,6 +2057,8 @@ pub enum MapEvent {
     MvpItem(u32),
     MvpExp(u32),
     MvpOverweight,
+    /// The weight at which the player counts as overweight, in percent of the limit (ZC_WEIGHT_INFO).
+    OverweightPercent(u32),
     /// The carried equipment a card can go into (inventory indexes).
     CardList(Vec<u16>),
     /// A card put into equipment, or not; rathena takes the card away without saying so.
@@ -5551,6 +5554,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_MVP_GETTING_ITEM => MapEvent::MvpItem(u32_at(2)),
         ZC_MVP_GETTING_SPECIAL_EXP => MapEvent::MvpExp(u32_at(2)),
         ZC_THROW_MVPITEM => MapEvent::MvpOverweight,
+        ZC_WEIGHT_INFO => MapEvent::OverweightPercent(u32_at(2)),
         ZC_ITEMCOMPOSITION_LIST => MapEvent::CardList(packet[4..].chunks_exact(2).map(|index| u16::from_le_bytes([index[0], index[1]])).collect()),
         // The result byte is rathena's "failure".
         ZC_ACK_ITEMCOMPOSITION => MapEvent::CardInserted { equip: u16_at(2), card: u16_at(4), ok: packet[6] == 0 },
@@ -6657,6 +6661,7 @@ mod tests {
         let Some(MapEvent::MvpItem(6010)) = decode_map_packet(&packet(ZC_MVP_GETTING_ITEM, 6010)) else { panic!() };
         let Some(MapEvent::MvpExp(90_000)) = decode_map_packet(&packet(ZC_MVP_GETTING_SPECIAL_EXP, 90_000)) else { panic!() };
         let Some(MapEvent::MvpOverweight) = decode_map_packet(&ZC_THROW_MVPITEM.to_le_bytes()) else { panic!() };
+        assert!(matches!(decode_map_packet(&[0xDE, 0x0A, 50, 0, 0, 0]), Some(MapEvent::OverweightPercent(50))));
         assert_eq!([ZC_MVP, ZC_MVP_GETTING_ITEM, ZC_MVP_GETTING_SPECIAL_EXP, ZC_THROW_MVPITEM].map(packet_length), [Some(6), Some(6), Some(6), Some(2)]);
     }
 

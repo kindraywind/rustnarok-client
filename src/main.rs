@@ -869,6 +869,8 @@ struct Game {
     new_items: bool,
     /// The level up buttons in the bottom corners.
     level_ups: level_up::LevelUps,
+    /// The server's overweight point, in percent of the weight limit.
+    overweight: u32,
     /// A new quest's icon (until the quest window opens), and hunts' progress banners.
     quest_icon: bool,
     banners: quest_notice::Banners,
@@ -8124,6 +8126,7 @@ impl App {
                     pickup_popup: None,
                     new_items: false,
                     level_ups: level_up::LevelUps::default(),
+                    overweight: basic_info::OVERWEIGHT,
                     quest_icon: false,
                     banners: quest_notice::Banners::default(),
                     char_names: HashMap::new(),
@@ -9160,6 +9163,7 @@ impl App {
                 let [before, after] = MVP_EXP.map(|id| self.messages.get(id).cloned().unwrap_or_default());
                 game.chat_line(format!("{before}{exp}{after}"), CHAT_ITEM);
             }
+            MapEvent::OverweightPercent(percent) => game.overweight = percent,
             MapEvent::MvpOverweight => game.chat_line(self.messages.get(MVP_OVERWEIGHT).cloned().unwrap_or_default(), CHAT_ERROR),
             MapEvent::HomunculusState { state: net::HOMUNCULUS_OWNED, id, .. } => game.homunculus_id = Some(id),
             MapEvent::HomunculusState { state: net::HOMUNCULUS_INTIMACY, value, .. } => {
@@ -11881,6 +11885,7 @@ impl App {
         if game.quest_window.frame.open {
             game.quest_icon = false;
         }
+        game.basic_info.fourth = basic_info::fourth_job(game.me.job);
         game.banners.current(control::now());
         game.level_ups
             .seen(game.status_window.frame.open && !game.status_window.frame.minimized, game.skill_window.frame.open && !game.skill_window.frame.minimized);
@@ -12043,6 +12048,7 @@ impl App {
                         new_items: game.new_items,
                         new_level: game.level_ups.base,
                         new_job_level: game.level_ups.job,
+                        overweight: game.overweight,
                     };
                     game.basic_info.draw(&mut layer, &assets.chrome, &assets.basic_info, font, messages, &info, pointer.0);
                 }
