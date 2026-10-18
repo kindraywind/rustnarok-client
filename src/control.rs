@@ -814,6 +814,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("InventoryExpansion", game.expansion_asked.is_some()),
         ("PetAsked", game.pet_asked.is_some()),
         ("OtherEquipment", game.viewing.is_some()),
+        ("SwapEquipment", game.equipment.frame.open && game.equipment.swapping),
         ("Bank", game.bank.is_some()),
         ("PickList", game.pick.is_some()),
         ("DealChoice", game.deal_choice.is_some()),
@@ -883,7 +884,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         // boxes, pick list rows, menu choices and window buttons (by name), each with its box on screen.
         "targets": targets,
         // What's carried: index, item, how many, identified, worn where (0: not worn).
-        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires})).collect::<Vec<_>>(),
+        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires, "switch": item.switch})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
         "dialog": dialog,
