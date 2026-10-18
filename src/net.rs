@@ -1877,9 +1877,10 @@ pub enum MapEvent {
         result: u8,
         item: InventoryItem,
     },
-    /// The server starts listing an inventory (`kind` 0 is the player's own).
+    /// The server starts listing an inventory (`kind` 0 is the player's own), with its name (the storage's title).
     InventoryStart {
         kind: u8,
+        name: String,
     },
     InventoryItems {
         kind: u8,
@@ -5604,7 +5605,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 switch: 0,
             },
         },
-        ZC_INVENTORY_START => MapEvent::InventoryStart { kind: packet[4] },
+        ZC_INVENTORY_START => MapEvent::InventoryStart { kind: packet[4], name: c_string(packet.get(5..).unwrap_or_default()) },
         ZC_INVENTORY_ITEMLIST_NORMAL => {
             MapEvent::InventoryItems { kind: packet[4], items: packet[5..].chunks_exact(NORMAL_ITEM_SIZE).map(decode_normal_item).collect() }
         }
@@ -7241,6 +7242,12 @@ mod tests {
         assert_eq!(worn, [(1201, 2, 1), (2301, 16, 0)]);
 
         assert_eq!(encode_config(CONFIG_OPEN_EQUIPMENT, true), [0xD8, 0x02, 0, 0, 0, 0, 1, 0, 0, 0]);
+        // ZC_INVENTORY_START: the storage's name from byte 5, up to its NUL; an empty one.
+        let start = |name: &[u8]| decode_map_packet(&[&[0x08, 0x0B, 6 + name.len() as u8, 0, 2], name].concat());
+        let Some(MapEvent::InventoryStart { kind: 2, name }) = start(b"Guild Storage\0") else { panic!() };
+        assert_eq!(name, "Guild Storage");
+        let Some(MapEvent::InventoryStart { kind: 2, name }) = start(b"\0") else { panic!() };
+        assert!(name.is_empty());
         let Some(MapEvent::ShowEquipment { shown: true, answer: true }) = decode_map_packet(&[0xD9, 0x02, 0, 0, 0, 0, 1, 0, 0, 0]) else { panic!() };
         assert!(decode_map_packet(&[0xD9, 0x02, 1, 0, 0, 0, 1, 0, 0, 0]).is_none());
         let Some(MapEvent::ShowEquipment { shown: false, answer: false }) = decode_map_packet(&[0xDA, 0x02, 0]) else { panic!() };

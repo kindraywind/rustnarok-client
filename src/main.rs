@@ -12160,7 +12160,7 @@ impl App {
                 }
             }
             // The inventory again: what broke since says so; the out pet's egg (marked broken) stays hidden.
-            MapEvent::InventoryStart { kind: 0 } => {
+            MapEvent::InventoryStart { kind: 0, .. } => {
                 let had = !game.inventory.items.is_empty();
                 game.broken_before = had.then(|| game.inventory.items.iter().filter(|item| item.broken).map(|item| item.index).collect());
                 game.inventory.clear();
@@ -12229,14 +12229,13 @@ impl App {
                     item.favorite = favorite;
                 }
             }
-            // The storage opens with the inventory beside it.
-            MapEvent::InventoryStart { kind: 2 } => {
-                game.storage.open();
+            // The storage opens under the server's name for it; the inventory stays as it was.
+            MapEvent::InventoryStart { kind: 2, name } => {
+                game.storage.open(name);
                 game.raise(Panel::Storage);
-                game.inventory.frame.open = true;
             }
             MapEvent::InventoryItems { kind: 2, items } => game.storage.extend(items),
-            MapEvent::InventoryStart { kind: 1 } => game.cart.clear(),
+            MapEvent::InventoryStart { kind: 1, .. } => game.cart.clear(),
             MapEvent::InventoryItems { kind: 1, items } => game.cart.extend(items),
             MapEvent::InventoryStart { .. } | MapEvent::InventoryItems { .. } => {}
             MapEvent::Quests(quests) => game.quests = quests,
@@ -15958,7 +15957,10 @@ impl App {
                         pointer,
                     );
                 }
-                Panel::Storage => game.storage.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.storage, icons, items, messages, font, pointer, caret),
+                Panel::Storage => {
+                    let names = (&messages[..], card_names, &game.char_names);
+                    game.storage.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.storage, icons, items, names, font, pointer, caret);
+                }
                 Panel::Equipment => game.equipment.draw(
                     &mut layer,
                     &mut tooltip,
