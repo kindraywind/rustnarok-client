@@ -63,6 +63,7 @@ mod homunculus;
 mod hotkeys;
 mod inventory;
 mod iteminfo;
+mod laphine;
 mod macros;
 mod mail;
 mod material;
@@ -697,6 +698,9 @@ struct Game {
     /// The deal under way; someone asking for one (name, character ID, level); whom we asked.
     trade: Option<trade::Trade>,
     refine: Option<refine::Refine>,
+    /// Laphine synthesis and upgrade, open until their close packet or a map change.
+    synthesis: Option<laphine::Synthesis>,
+    upgrade: Option<laphine::Upgrade>,
     /// The material window (Change Material, Four Spirit Analysis).
     materials: Option<material::Materials>,
     /// The Lucky Roulette's window.
@@ -1664,6 +1668,8 @@ impl Game {
             || self.mail.hit(cursor).is_some()
             || self.quest_window.hit(cursor, &self.quests).is_some()
             || self.achievement_window.covers(cursor)
+            || self.synthesis.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.upgrade.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || roulette::icon_hit(cursor)
             || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -2469,6 +2475,7 @@ struct Assets {
     storage: storage::Assets,
     trade: trade::Assets,
     refine: refine::Assets,
+    laphine: laphine::Assets,
     bank: bank::Assets,
     cashshop: cashshop::Assets,
     context_menu: menu::Assets,
@@ -2576,6 +2583,7 @@ impl Assets {
             storage: storage::Assets::load(gpu, grf),
             trade: trade::Assets::load(gpu, grf),
             refine: refine::Assets::load(gpu, grf),
+            laphine: laphine::Assets::load(gpu, grf),
             bank: bank::Assets::load(gpu, grf),
             cashshop: cashshop::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
@@ -2938,6 +2946,9 @@ struct App {
     pets: pet::Data,
     /// The achievements (the translation's achievements.lub) and the titles they give, by ID.
     achievement_info: HashMap<u32, lua::AchievementInfo>,
+    /// Laphine boxes by the box's item ID.
+    synthesis_boxes: HashMap<u32, lua::SynthesisBox>,
+    upgrade_boxes: HashMap<u32, lua::UpgradeBox>,
     title_names: HashMap<u32, String>,
     /// Item names and resources by item ID, and the client's numbered messages.
     items: HashMap<u32, ItemInfo>,
@@ -3907,6 +3918,39 @@ impl App {
                     game.materials = None;
                 }
             }
+            Scene::Game(game) if game.synthesis.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let hit = game.synthesis.as_ref().unwrap().hit(cursor).unwrap();
+                match game.synthesis.as_mut().unwrap().click(hit) {
+                    Some(laphine::Action::Make) => {
+                        let (box_id, entries) = {
+                            let window = game.synthesis.as_ref().unwrap();
+                            (window.box_id, window.entries())
+                        };
+                        let _ = game.session.synthesize(box_id, &entries);
+                    }
+                    Some(laphine::Action::Close) => {
+                        let _ = game.session.close_synthesis();
+                        game.synthesis = None;
+                    }
+                    None => {}
+                }
+            }
+            Scene::Game(game) if game.upgrade.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let hit = game.upgrade.as_ref().unwrap().hit(cursor).unwrap();
+                match game.upgrade.as_mut().unwrap().click(hit) {
+                    Some(laphine::Action::Make) => {
+                        if let Some(index) = game.upgrade.as_ref().unwrap().index() {
+                            let box_id = game.upgrade.as_ref().unwrap().box_id;
+                            let _ = game.session.upgrade_item(box_id, index);
+                        }
+                    }
+                    Some(laphine::Action::Close) => {
+                        let _ = game.session.close_upgrade();
+                        game.upgrade = None;
+                    }
+                    None => {}
+                }
+            }
             Scene::Game(game) if game.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
                 let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
                 let carried = &game.inventory.items;
@@ -4380,6 +4424,12 @@ impl App {
             if let Some(window) = &mut game.roulette {
                 window.frame.drag_to(self.cursor, roulette::HEIGHT);
             }
+            if let Some(window) = &mut game.synthesis {
+                window.frame.drag_to(self.cursor, laphine::Synthesis::height());
+            }
+            if let Some(window) = &mut game.upgrade {
+                window.frame.drag_to(self.cursor, laphine::Upgrade::height());
+            }
             if let Some(window) = &mut game.monster_window {
                 window.frame.drag_to(self.cursor, monster_info::MonsterWindow::height());
             }
@@ -4568,7 +4618,11 @@ impl App {
             let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.cart.items).is_some());
             let on_buying_setup = game.buying_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.inventory.items).is_some());
             let on_cashshop = game.cashshop.as_ref().is_some_and(|shop| shop.hit(self.cursor).is_some());
+            let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+            let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             match game.window_at(self.cursor) {
+                _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
+                _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
                 _ if on_cashshop => game.cashshop.as_mut().unwrap().scroll_at(self.cursor, rows),
                 _ if on_setup => {
                     let count = game.cart.items.len();
@@ -4654,7 +4708,27 @@ impl App {
                 let on_mail = matches!(game.mail.hit(self.cursor), Some(mail::Hit::Compose(_)));
                 let on_refine = game.refine.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_materials = game.materials.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+                let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+                let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 match (item, game.window_at(self.cursor)) {
+                    (Some((Dragged::Item(index), _, true)), _) if on_synthesis || on_upgrade => {
+                        if let Some(item) = game.inventory.get(index).cloned() {
+                            let said = if on_synthesis {
+                                game.synthesis.as_mut().and_then(|window| match window.put(&item) {
+                                    laphine::Put::Say(id) => Some(id),
+                                    _ => None,
+                                })
+                            } else {
+                                game.upgrade.as_mut().and_then(|window| match window.put(&item) {
+                                    laphine::Put::Say(id) => Some(id),
+                                    _ => None,
+                                })
+                            };
+                            if let Some(id) = said {
+                                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                            }
+                        }
+                    }
                     (Some((Dragged::Item(index), _, true)), _) if on_mail => game.move_item(Asked::Mail(index)),
                     (Some((Dragged::Item(index), _, true)), _) if on_materials => game.move_item(Asked::Material(index)),
                     // Into the refine machine: the server lists what refines it.
@@ -4689,6 +4763,8 @@ impl App {
                     | game.mail.drop_drag()
                     | game.quest_window.frame.drop_drag()
                     | game.achievement_window.frame.drop_drag()
+                    | game.synthesis.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag());
                 // A slider let go keeps its volume for next time.
@@ -4795,6 +4871,22 @@ impl App {
         {
             if window.frame.local(cursor, monster_info::MonsterWindow::height()).and_then(|local| window.frame.title_hit(local)) == Some(TitleHit::Title) {
                 window.frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.synthesis.as_ref().and_then(|window| window.hit(cursor))
+        {
+            if hit == laphine::Hit::Title(TitleHit::Title) {
+                game.synthesis.as_mut().unwrap().frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.upgrade.as_ref().and_then(|window| window.hit(cursor))
+        {
+            if hit == laphine::Hit::Title(TitleHit::Title) {
+                game.upgrade.as_mut().unwrap().frame.start_drag(cursor);
             }
             return;
         }
@@ -5777,6 +5869,8 @@ impl App {
                     item_skill: None,
                     trade: None,
                     refine: None,
+                    synthesis: None,
+                    upgrade: None,
                     materials: None,
                     roulette: None,
                     monster_window: None,
@@ -6210,6 +6304,72 @@ impl App {
                 game.inventory.frame.open = true;
                 game.raise(Panel::Inventory);
             }
+            MapEvent::SynthesisOpen(id) => match self.synthesis_boxes.get(&id) {
+                Some(info) => {
+                    game.synthesis = Some(laphine::Synthesis::new(id, info));
+                    game.inventory.frame.open = true;
+                    game.raise(Panel::Inventory);
+                }
+                None => {
+                    let _ = game.session.close_synthesis();
+                }
+            },
+            MapEvent::UpgradeOpen(id) => match self.upgrade_boxes.get(&id) {
+                Some(info) => {
+                    game.upgrade = Some(laphine::Upgrade::new(id, info));
+                    game.inventory.frame.open = true;
+                    game.raise(Panel::Inventory);
+                }
+                None => {
+                    let _ = game.session.close_upgrade();
+                }
+            },
+            MapEvent::Synthesized(result) => {
+                if result == 0
+                    && let Some(window) = &mut game.synthesis
+                {
+                    window.clear();
+                }
+                let id = match result {
+                    5 => Some(laphine::NOT_ENOUGH),
+                    7 => Some(laphine::NOTHING),
+                    _ => None,
+                };
+                if let Some(id) = id {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
+            MapEvent::LaphineUpgraded(result) => {
+                // ponytail: 2971 and 2972 are guesses for the upgrade's result lines.
+                let (id, color) = if result == 0 {
+                    if let Some(window) = &mut game.upgrade {
+                        window.clear();
+                    }
+                    (laphine::UPGRADE_OK, CHAT_ITEM)
+                } else {
+                    (laphine::UPGRADE_FAIL, CHAT_ERROR)
+                };
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+            }
+            MapEvent::ItemPreview { index, cards, refine, broken, grade: _ } => {
+                let damaged_line = self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default();
+                let shown = game.inventory.items.iter_mut().find(|item| item.index == index).map(|item| {
+                    item.cards = cards;
+                    item.refine = refine;
+                    item.broken = broken;
+                    let damaged = item.broken.then(|| damaged_line.clone());
+                    iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires }
+                });
+                // ponytail: that the preview is the item info window is a guess.
+                if let Some(shown) = shown {
+                    let position = game.item_window.as_ref().map(|window| window.position);
+                    let mut window = iteminfo::ItemWindow::new(shown);
+                    if let Some(position) = position {
+                        window.position = position;
+                    }
+                    game.item_window = Some(window);
+                }
+            }
             MapEvent::RefineMaterials { index, blessings, materials } => {
                 if materials.is_empty() {
                     game.chat_line(self.messages.get(CANT_REFINE).cloned().unwrap_or_default(), CHAT_ERROR);
@@ -6326,6 +6486,9 @@ impl App {
                 game.close_cashshop();
                 // rathena forgets the refine window on a map change; the material window and the roulette go too.
                 game.refine = None;
+                // rathena forgets both Laphine windows on a map change, without a close packet.
+                game.synthesis = None;
+                game.upgrade = None;
                 game.roulette = None;
                 // The mirror's status ends with the warp.
                 game.boss = None;
@@ -9046,6 +9209,8 @@ impl App {
         let mut pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
         pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
+        pick_icons.extend(game.synthesis.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
+        pick_icons.extend(game.upgrade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.achievement_window.icons(achievement_info));
         pick_icons.extend(game.roulette.as_ref().map(|window| window.icons(items)).unwrap_or_default());
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
@@ -9418,6 +9583,12 @@ impl App {
         }
         if let Some(window) = &game.materials {
             window.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, &game.inventory.items, messages, font, pointer);
+        }
+        if let Some(window) = &game.synthesis {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
+        }
+        if let Some(window) = &game.upgrade {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(trade) = &game.trade {
             trade.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);
@@ -9988,6 +10159,14 @@ fn main() {
     let pets = pet::Data::load(&grf);
     // ponytail: without the translation's achievements.lub the window lists nothing and names achievements by ID.
     let achievement_info = lua::achievements(&grf).unwrap_or_default();
+    let synthesis_boxes = lua::synthesis_boxes(&grf).unwrap_or_else(|error| {
+        eprintln!("no laphine synthesis table: {error}");
+        HashMap::new()
+    });
+    let upgrade_boxes = lua::upgrade_boxes(&grf).unwrap_or_else(|error| {
+        eprintln!("no laphine upgrade table: {error}");
+        HashMap::new()
+    });
     let title_names = lua::titles(&grf).unwrap_or_default();
     let job_names = lua::job_names(&grf).unwrap_or_else(|error| {
         eprintln!("no NPC/monster sprite names: {error}");
@@ -10033,6 +10212,8 @@ fn main() {
         job_names,
         pets,
         achievement_info,
+        synthesis_boxes,
+        upgrade_boxes,
         title_names,
         items,
         messages,
