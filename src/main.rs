@@ -108,6 +108,7 @@ mod screenshot;
 mod shop;
 mod shortcuts;
 mod skill_descript;
+mod skill_motions;
 mod skills;
 mod sound;
 mod status;
@@ -707,7 +708,7 @@ const EF_WARPZONE2: u32 = 321;
 /// The MVP's banner (mvp.str).
 const EF_MVP: u32 = 68;
 /// The cast aura by the skill's element: neutral, water, earth, fire, wind, poison, holy, shadow, ghost, undead.
-const CAST_AURAS: [u32; 10] = [12, 54, 57, 55, 56, 59, 58, 454, 58, 454];
+const CAST_AURAS: [u32; 10] = [12, 54, 56, 55, 57, 59, 58, 12, 12, 12];
 /// "Select a target", under an aimed skill's name.
 const TARGET_MESSAGE: usize = 234;
 /// Taming's result: the slot machine's success and failure actions (they play those sounds), how long the last
@@ -3508,15 +3509,56 @@ impl Game {
     }
 
     /// A unit starts or uses a skill: players strike the skill pose, and units call its name (see `overhead::shouts`).
-    fn skill_motion(&mut self, source: u32, skill: u16, level: i32, packet: overhead::Shout, duration: f32, info: &HashMap<u16, SkillInfo>) {
+    /// A player caster's motion for a skill packet (`skill_motions`) and its name shouted. A cast holds the cast pose
+    /// for `pace` ms (none for skills cast standing); the others play their motion at `pace` times its ACT pace.
+    /// Returns when the hit lands, in ms from now: the swing's "atk" frame, the skill pose's frame 6.
+    #[allow(clippy::too_many_arguments)]
+    fn skill_motion(
+        &mut self,
+        source: u32,
+        skill: u16,
+        level: i32,
+        packet: overhead::Shout,
+        pace: f32,
+        info: &HashMap<u16, SkillInfo>,
+        tables: &LookTables,
+    ) -> Option<f32> {
         let me = self.account_id;
-        let Some(actor) = (if source == me { Some(&mut self.player) } else { self.units.get_mut(&source) }) else { return };
+        let actor = (if source == me { Some(&mut self.player) } else { self.units.get_mut(&source) })?;
         if actor.remove_at.is_some() {
-            return;
+            return None;
         }
         let monster = actor.kind == MONSTER;
+        let mut hit_ms = None;
         if actor.kind == PLAYER {
-            actor.play(SKILL_ACTION, Instant::now(), duration.max(100.0), false);
+            let now = Instant::now();
+            let action = match (packet, skill_motions::motion(skill)) {
+                (overhead::Shout::Cast, _) if skill_motions::cast_standing(skill) => None,
+                (overhead::Shout::Cast, _) => {
+                    actor.hold_for(SKILL_ACTION, now, pace);
+                    None
+                }
+                (_, skill_motions::Motion::Keep) => None,
+                (_, skill_motions::Motion::Attack) => Some(
+                    actor
+                        .look
+                        .as_ref()
+                        .map_or(actor::combat_actions(actor.kind).0, |look| actor::attack_action(look.job, look.sex, tables.weapon_type(look.weapon))),
+                ),
+                (_, skill_motions::Motion::Throw) => Some(5),
+                (_, skill_motions::Motion::ThirdAttack) => Some(11),
+                (_, skill_motions::Motion::PickUp) => Some(actor::PICKUP),
+                (_, skill_motions::Motion::Skill) if skill_motions::ready_instead(actor.job) => Some(actor::READY),
+                (_, skill_motions::Motion::Skill) => Some(SKILL_ACTION),
+            };
+            if let Some(action) = action {
+                actor.play_at_pace(action, now, pace, false);
+                let index = action * 8 + usize::from(actor.direction % 8);
+                hit_ms = actor.sprites.as_ref().and_then(|sprites| match action {
+                    SKILL_ACTION => sprites.frame_ms(index, 6, pace),
+                    _ => sprites.hit_ms(index, pace),
+                });
+            }
             actor.stand_ready();
         }
         if overhead::shouts(skill, level, monster, packet)
@@ -3525,6 +3567,7 @@ impl Game {
             let unit = (source != me).then_some(source);
             self.say(unit, format!("{} !!", info.name), CHAT_WHITE);
         }
+        hit_ms.map(|ms| ms + skill_motions::hit_extra_ms(skill))
     }
 
     /// Puts a window in front of the others, and at the front of the Esc list when it is open.
@@ -4428,14 +4471,14 @@ impl Game {
             source.stand_ready();
             hit_ms = source.sprites.as_ref().and_then(|sprites| sprites.hit_ms(attack * 8 + usize::from(source.direction % 8), scale));
         }
-        self.show_hit(&act, hit_ms);
+        self.show_hit(&act, hit_ms, MULTI_HIT_DELAY);
     }
 
     /// The numbers of a hit as it lands: split over a multi-hit's hits (with the running total over monsters),
     /// yellow for a critical, "Lucky" for a lucky dodge.
     /// The numbers (and the flinch) of a hit, landing `hit_ms` after now (the attacker's "atk" frame), or after its
     /// attack motion when its sprite doesn't say.
-    fn show_hit(&mut self, act: &net::Act, hit_ms: Option<f32>) {
+    fn show_hit(&mut self, act: &net::Act, hit_ms: Option<f32>, gap: Duration) {
         let me = self.account_id;
         let target = (act.target != me).then_some(act.target);
         let hit = match target {
@@ -4465,7 +4508,7 @@ impl Game {
         };
         let hits = if amount > 0 { i32::from(act.hits.max(1)) } else { 1 };
         for hit in 0..hits {
-            let start = lands + MULTI_HIT_DELAY * hit as u32;
+            let start = lands + gap * hit as u32;
             self.damages.push(Damage { target, amount: amount / hits, start, kind, flinch, drift, source: (amount > 0).then_some(act.source) });
             if hits > 1 && !on_player {
                 self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: DamageKind::Combo, flinch: None, drift, source: None });
@@ -12170,7 +12213,7 @@ impl App {
                         None => game.cast_squares.remove(&(source != me).then_some(source)),
                     };
                 }
-                game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info);
+                game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info, look_tables);
                 skill_effects(game, skill, "beginCastEffectId", source);
             }
             MapEvent::SkillHit { skill, level, act } => {
@@ -12182,24 +12225,28 @@ impl App {
                     if let Some(cell) = target_cell.filter(|_| act.source != act.target) {
                         source.face(cell);
                     }
-                    // Monsters swing as for an attack; players take the skill pose.
+                    // Monsters swing as for an attack; players take the skill's motion (`skill_motion`).
                     if source.kind != PLAYER {
                         source.play_at_pace(actor::combat_actions(source.kind).0, Instant::now(), actor::attack_scale(act.source_speed, false), false);
                     }
                 }
-                game.skill_motion(act.source, skill, i32::from(level as i16), overhead::Shout::Hit, act.source_speed as f32, &self.skill_info);
+                let scale = actor::attack_scale(act.source_speed, false);
+                let hit_ms = game.skill_motion(act.source, skill, i32::from(level as i16), overhead::Shout::Hit, scale, &self.skill_info, look_tables);
+                // Hits land on the motion's hit frame (else after the attack motion), each `hit_gap_ms` after the last.
+                let hit_ms = hit_ms.unwrap_or(act.source_speed.max(0) as f32);
+                let gap = Duration::from_millis(skill_motions::hit_gap_ms(skill));
                 if act.damage != 0 && !(act.source == act.target && act.kind == 6) {
-                    game.show_hit(&act, None);
+                    game.show_hit(&act, Some(hit_ms), gap);
                     // Hit by hit: what comes at the target first (a bolt's arrows), then what shows as it lands.
                     if let Some(gpu) = gpu {
                         let now = Instant::now();
-                        let lands = now + Duration::from_millis(act.source_speed.max(0) as u64);
+                        let lands = now + Duration::from_secs_f32(hit_ms / 1000.0);
                         for hit in 0..u32::from(act.hits.max(1)) {
                             for effect in table.skill(skill, "beforeHitEffectId") {
-                                game.play_effect_from(gpu, grf, table, effect, act.target, now + MULTI_HIT_DELAY * hit);
+                                game.play_effect_from(gpu, grf, table, effect, act.target, now + gap * hit);
                             }
                             for effect in table.skill(skill, "hitEffectId") {
-                                game.play_effect_from(gpu, grf, table, effect, act.target, lands + MULTI_HIT_DELAY * hit);
+                                game.play_effect_from(gpu, grf, table, effect, act.target, lands + gap * hit);
                             }
                         }
                     }
@@ -12216,7 +12263,7 @@ impl App {
                 {
                     caster.face(cell);
                 }
-                game.skill_motion(source, skill, amount, overhead::Shout::Used, 400.0, &self.skill_info);
+                game.skill_motion(source, skill, amount, overhead::Shout::Used, 1.0, &self.skill_info, look_tables);
                 if HEAL_SKILLS.contains(&skill) {
                     game.damages.push(Damage {
                         target: (target != me).then_some(target),
@@ -12243,7 +12290,7 @@ impl App {
                 if let Some(caster) = caster {
                     caster.face([i32::from(cell[0]), i32::from(cell[1])]);
                 }
-                game.skill_motion(source, skill, i32::from(level as i16), overhead::Shout::Hit, 400.0, &self.skill_info);
+                game.skill_motion(source, skill, i32::from(level as i16), overhead::Shout::Hit, 1.0, &self.skill_info, look_tables);
             }
             MapEvent::SkillUnit { id, kind, cell } => {
                 if let Some(gpu) = gpu {
