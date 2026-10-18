@@ -40,6 +40,7 @@
 
 mod achievement;
 mod actor;
+mod announce;
 mod bank;
 mod basic_info;
 mod buying;
@@ -132,7 +133,6 @@ const CHAT_ITEM: [u8; 3] = [0x00, 0xFF, 0xFF];
 const CHAT_ERROR: [u8; 3] = [0xFF, 0x00, 0x00];
 // ponytail: the two announcement shades are guesses; calibrate them against the real client.
 const CHAT_BROADCAST: [u8; 3] = [0xFF, 0xFF, 0x00];
-const CHAT_BROADCAST_BLUE: [u8; 3] = [0x00, 0xC0, 0xFF];
 /// Messages that come with a skill's name, "[Name] message" (rathena's notes give 0xCDCDFF).
 const CHAT_SKILL_MESSAGE: [u8; 3] = [0xCD, 0xCD, 0xFF];
 /// Out of ammunition, too heavy, ammunition equipped (ZC_ACTION_FAILURE).
@@ -672,6 +672,10 @@ struct Game {
     /// The player's mercenary, its skills, its window and skill list, how it's steered, and whether dismissing it is
     /// being asked.
     mercenary: Option<net::Mercenary>,
+    /// Server announcements in the bar across the top.
+    announcements: announce::Bar,
+    /// The names whose whispers (and speaker announcements) the player blocks, as far as the server has said.
+    blocked: HashSet<String>,
     /// Whether the player refuses party invitations (None until the server says).
     refusing_party: Option<bool>,
     /// The party setup window, and the member whose leadership is being asked about.
@@ -5427,6 +5431,8 @@ impl App {
                     pet_asked: None,
                     mercenary: None,
                     refusing_party: None,
+                    announcements: announce::Bar::default(),
+                    blocked: HashSet::new(),
                     party_setup: None,
                     leader_asked: None,
                     mercenary_skills: Vec::new(),
@@ -6121,7 +6127,16 @@ impl App {
                 }
             }
             // Announcements, and the client's own messages by number.
-            MapEvent::Broadcast { text, color, blue } => game.chat_line(text, color.unwrap_or(if blue { CHAT_BROADCAST_BLUE } else { CHAT_BROADCAST })),
+            // In the chat and the bar; a blocked speaker's not at all.
+            MapEvent::Broadcast { text, color, kind, size } => {
+                if let net::BroadcastKind::Speaker(name) = &kind
+                    && game.blocked.contains(name)
+                {
+                    return;
+                }
+                game.chat_line(text.clone(), color);
+                game.announcements.push(text, color, size.unwrap_or(announce::SIZE), control::now());
+            }
             // ponytail: in the announcements' yellow; a monster's drop says the box's line with the monster's name, as
             // rathena's notes have it, unchecked against the real client.
             MapEvent::ItemObtained { item, player, box_item, monster } => {
@@ -7216,11 +7231,22 @@ impl App {
             }
             MapEvent::WhisperSetting { allow, result } => {
                 let name = game.whisper_asked.pop_front().unwrap_or_default();
+                if result == 0 {
+                    if allow {
+                        game.blocked.remove(&name);
+                    } else {
+                        game.blocked.insert(name.clone());
+                    }
+                }
                 let id = if allow { ALLOW_RESULTS } else { BLOCK_RESULTS } + usize::from(result.min(2));
                 game.chat_line(format!("{name}{}", self.messages.get(id).cloned().unwrap_or_default()), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
             }
-            MapEvent::WhisperList(names) if names.is_empty() => game.chat_line(self.messages.get(BLOCKED_NONE).cloned().unwrap_or_default(), CHAT_ITEM),
+            MapEvent::WhisperList(names) if names.is_empty() => {
+                game.blocked.clear();
+                game.chat_line(self.messages.get(BLOCKED_NONE).cloned().unwrap_or_default(), CHAT_ITEM)
+            }
             MapEvent::WhisperList(names) => {
+                game.blocked = names.iter().cloned().collect();
                 for name in names {
                     game.chat_line(name, CHAT_ITEM);
                 }
@@ -8512,12 +8538,17 @@ impl App {
         if let Some(member) = game.party.as_mut().and_then(|party| party.member(account)) {
             member.hp = Some(own_hp);
         }
+        // Announcements under the windows.
+        game.announcements.expire(now);
+        game.announcements.prepare(gpu, font);
+        let mut announce_layer = Layer::default();
+        game.announcements.draw(&mut announce_layer);
         // Weather over the map, under the names and windows.
         let mut weather_layer = Layer::default();
         if self.graphics.effects_on {
             game.weather.draw(&mut weather_layer, &assets.weather, now);
         }
-        let mut layers = vec![weather_layer, base, cutin_layer, chat_layer];
+        let mut layers = vec![weather_layer, base, announce_layer, cutin_layer, chat_layer];
         let mut preview = Some(preview);
         let cooling = skills::Cooling { cooldowns: &game.cooldowns, clocks: &assets.clocks[0], now: control::now(), note: message(COOLDOWN_LEFT) };
         for &id in &game.windows {

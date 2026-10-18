@@ -1122,6 +1122,47 @@ pub struct Pet {
     pub monster: u16,
 }
 
+/// What kind of announcement a ZC_BROADCAST is, by its prefix.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BroadcastKind {
+    Normal,
+    /// "ssss": War of Emperium notices.
+    Woe,
+    /// "micc": a speaker's, by name (dropped when the player blocks that name).
+    Speaker(String),
+}
+
+const BROADCAST_YELLOW: [u8; 3] = [0xFF, 0xFF, 0x00];
+const BROADCAST_BLUE: [u8; 3] = [0x00, 0xFF, 0xFF];
+
+/// "RRGGBB" as a color; yellow when it isn't one.
+fn hex_color(text: &[u8]) -> [u8; 3] {
+    let hex = std::str::from_utf8(text).ok().and_then(|text| u32::from_str_radix(text, 16).ok()).filter(|_| text.len() == 6);
+    hex.map_or(BROADCAST_YELLOW, |value| [(value >> 16) as u8, (value >> 8) as u8, value as u8])
+}
+
+/// ZC_BROADCAST's text (from byte 4): its prefix ("tool", "blue", "micc", "ssss", any case) decides the color and
+/// where the words start; without one, a `#…` part up to the first `:` is cut out.
+fn decode_broadcast(message: &[u8]) -> (String, [u8; 3], BroadcastKind) {
+    let prefix = message.get(..4).map(<[u8]>::to_ascii_lowercase).unwrap_or_default();
+    let text = |from: usize| c_string(message.get(from..).unwrap_or_default());
+    match prefix.as_slice() {
+        b"tool" => (text(10), hex_color(message.get(4..10).unwrap_or_default()), BroadcastKind::Normal),
+        b"blue" => (text(4), BROADCAST_BLUE, BroadcastKind::Normal),
+        b"micc" => (text(34), hex_color(message.get(28..34).unwrap_or_default()), BroadcastKind::Speaker(c_string(message.get(4..28).unwrap_or_default()))),
+        b"ssss" => (text(4), BROADCAST_YELLOW, BroadcastKind::Woe),
+        _ => {
+            let mut text = text(0);
+            if let Some(hash) = text.char_indices().skip(1).find(|&(_, character)| character == '#').map(|(at, _)| at)
+                && let Some(colon) = text[hash..].find(':')
+            {
+                text.replace_range(hash..hash + colon, "");
+            }
+            (text, BROADCAST_YELLOW, BroadcastKind::Normal)
+        }
+    }
+}
+
 /// The player's mercenary as ZC_MER_INIT has it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Mercenary {
@@ -1543,10 +1584,12 @@ pub enum MapEvent {
         time: u32,
     },
     /// An announcement: plain ones yellow (or blue when the server asks), ZC_BROADCAST2 in its own color.
+    /// A server announcement, its color resolved; `size` is ZC_BROADCAST2's font size.
     Broadcast {
         text: String,
-        color: Option<[u8; 3]>,
-        blue: bool,
+        color: [u8; 3],
+        kind: BroadcastKind,
+        size: Option<u16>,
     },
     /// Someone got a special item: out of a box (its item), from a monster (its name), or from an NPC (neither).
     ItemObtained {
@@ -4366,13 +4409,13 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_NOTIFY_UNREADMAIL => MapEvent::MailUnread(packet[2] != 0),
         // "blue" (and "ssss" for the War of Emperium) at the start are color hints, not words.
         ZC_BROADCAST => {
-            let text = c_string(&packet[4..]);
-            let blue = text.starts_with("blue");
-            let text = text.strip_prefix("blue").or_else(|| text.strip_prefix("ssss")).unwrap_or(&text).to_owned();
-            MapEvent::Broadcast { text, color: None, blue }
+            let (text, color, kind) = decode_broadcast(&packet[4..]);
+            MapEvent::Broadcast { text, color, kind, size: None }
         }
-        // The color is 0xRRGGBB, little-endian.
-        ZC_BROADCAST2 => MapEvent::Broadcast { text: c_string(&packet[16..]), color: Some([packet[6], packet[5], packet[4]]), blue: false },
+        // The color is 0xRRGGBB, little-endian; the font size is at 10 (type, alignment and Y aren't used).
+        ZC_BROADCAST2 => {
+            MapEvent::Broadcast { text: c_string(&packet[16..]), color: [packet[6], packet[5], packet[4]], kind: BroadcastKind::Normal, size: Some(u16_at(10)) }
+        }
         // The player's name and what it came from each come after their length: a box's item ID (4), a monster's
         // name (24), nothing for an NPC.
         ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN => {
@@ -5266,8 +5309,26 @@ mod tests {
         blue.extend_from_slice(b"blueHello all\0");
         let length = blue.len() as u16;
         blue[2..4].copy_from_slice(&length.to_le_bytes());
-        let Some(MapEvent::Broadcast { text, color: None, blue: true }) = decode_map_packet(&blue) else { panic!() };
+        let Some(MapEvent::Broadcast { text, color: BROADCAST_BLUE, kind: BroadcastKind::Normal, size: None }) = decode_map_packet(&blue) else { panic!() };
         assert_eq!(text, "Hello all");
+
+        // Every prefix, in either case.
+        for (message, want, color, kind) in [
+            (&b"Hello\0"[..], "Hello", BROADCAST_YELLOW, BroadcastKind::Normal),
+            (b"BLUEShout\0", "Shout", BROADCAST_BLUE, BroadcastKind::Normal),
+            (b"ssssThe War of Emperium has begun.\0", "The War of Emperium has begun.", BROADCAST_YELLOW, BroadcastKind::Woe),
+            (b"toolFF8800Orange\0", "Orange", [0xFF, 0x88, 0x00], BroadcastKind::Normal),
+            (b"TOOLzzzzzzBad hex\0", "Bad hex", BROADCAST_YELLOW, BroadcastKind::Normal),
+            // A name's #tag up to the first colon goes.
+            (b"GM#1234 : Server restart\0", "GM: Server restart", BROADCAST_YELLOW, BroadcastKind::Normal),
+            (b"#notag at the start\0", "#notag at the start", BROADCAST_YELLOW, BroadcastKind::Normal),
+        ] {
+            assert_eq!(decode_broadcast(message), (want.to_owned(), color, kind), "{}", String::from_utf8_lossy(message));
+        }
+        let mut speaker = b"micc".to_vec();
+        speaker.extend_from_slice(&name_field("Loud"));
+        speaker.extend_from_slice(b"00FF00Buy potions\0");
+        assert_eq!(decode_broadcast(&speaker), ("Buy potions".to_owned(), [0, 0xFF, 0], BroadcastKind::Speaker("Loud".into())));
 
         let mut colored = ZC_BROADCAST2.to_le_bytes().to_vec();
         colored.extend_from_slice(&[0, 0]);
@@ -5276,8 +5337,9 @@ mod tests {
         colored.extend_from_slice(b"Event!\0");
         let length = colored.len() as u16;
         colored[2..4].copy_from_slice(&length.to_le_bytes());
-        let Some(MapEvent::Broadcast { text, color: Some(color), .. }) = decode_map_packet(&colored) else { panic!() };
-        assert_eq!((text.as_str(), color), ("Event!", [0xFF, 0x80, 0x00]));
+        colored[10..12].copy_from_slice(&16u16.to_le_bytes());
+        let Some(MapEvent::Broadcast { text, color, size, .. }) = decode_map_packet(&colored) else { panic!() };
+        assert_eq!((text.as_str(), color, size), ("Event!", [0xFF, 0x80, 0x00], Some(16)));
 
         let mut value = ZC_MSG_VALUE.to_le_bytes().to_vec();
         value.extend_from_slice(&178u16.to_le_bytes());
