@@ -1,0 +1,27 @@
+{
+  "about": "Attack modes (issue #169): with /noctrl off, holding the button on a training dummy (2408: it doesn't fight back and outlives the hits) attacks while held, and letting go sends CZ_CANCEL_LOCKON (0x0118); with /noctrl on, one click keeps attacking; Shift+click on a monster does nothing. /noctrl is a saved client option, on by default: the scenario expects it on at the start and leaves it on.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"expect": {"state": {"player.no_ctrl": true}}},
+    {"type": "/noctrl"}, {"key": "Enter"}, {"wait": 300},
+    {"expect": {"chat": "Use auto attack with Ctrl.", "state": {"player.no_ctrl": false}}},
+    {"say": "@monster 2408 1"}, {"wait": 1500},
+    {"mouse_down": {"unit": "Dummy 10"}}, {"wait_for": {"sent": "0x0437", "ms": 5000}}, {"wait": 1500},
+    {"expect": {"state": {"player.attack.continuous": false}}},
+    {"move": [1000, 750]},
+    {"shot": "held-attack", "crop": [362, 234, 300, 240], "threshold": 5},
+    {"mouse_up": {"point": [1000, 750]}}, {"wait_for": {"sent": "0x0118", "ms": 3000}}, {"wait": 300},
+    {"expect": {"state": {"player.attack": null}}},
+    {"type": "/noctrl"}, {"key": "Enter"}, {"wait": 300},
+    {"expect": {"chat": "Use auto attack without Ctrl.", "state": {"player.no_ctrl": true}}},
+    {"wait": 1300},
+    {"click_on": {"unit": "Dummy 10"}}, {"wait": 500},
+    {"expect": {"state": {"player.attack.continuous": true}}},
+    {"click_on": {"unit": "Dummy 10"}, "mods": "shift"}, {"wait": 500},
+    {"expect": {"state": {"player.attack": null}}},
+    {"say": "@killmonster2"}, {"wait": 500}
+  ]
+}

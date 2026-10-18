@@ -630,6 +630,7 @@ const CZ_ENTER: u16 = 0x0436;
 const CZ_NOTIFY_ACTORINIT: u16 = 0x007D;
 const CZ_REQUEST_MOVE: u16 = 0x035F;
 const CZ_CHANGE_DIRECTION: u16 = 0x0361;
+const CZ_CANCEL_LOCKON: u16 = 0x0118;
 const CZ_REQUEST_TIME: u16 = 0x0360;
 const CZ_REQUEST_CHAT: u16 = 0x00F3;
 const CZ_WHISPER: u16 = 0x0096;
@@ -3304,6 +3305,11 @@ impl MapSession {
         let mut packet = CZ_REQUEST_MOVE.to_le_bytes().to_vec();
         packet.extend_from_slice(&encode_position(to, 0));
         self.stream.write_all(&packet)
+    }
+
+    /// Stops attacking (CZ_CANCEL_LOCKON).
+    pub fn stop_attack(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_CANCEL_LOCKON.to_le_bytes())
     }
 
     /// Turns the character (rathena's direction: 0 north, counterclockwise), the head straight (0) or to a side.
@@ -6596,6 +6602,7 @@ mod tests {
     fn turns() {
         assert_eq!(encode_direction(6, 0), [0x61, 0x03, 0, 0, 6]);
         assert_eq!(packet_length(CZ_CHANGE_DIRECTION), Some(5));
+        assert_eq!((CZ_CANCEL_LOCKON.to_le_bytes(), packet_length(CZ_CANCEL_LOCKON)), ([0x18, 0x01], Some(2)));
     }
 
     #[test]

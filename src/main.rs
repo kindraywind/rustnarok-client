@@ -859,6 +859,13 @@ struct Game {
     head_emblems: Vec<(String, u32, [f32; 4])>,
     /// /noshift: a click on a player attacks without Shift (saved).
     no_shift: bool,
+    /// /noctrl: a click on a monster keeps attacking without Ctrl (saved; on unless turned off).
+    no_ctrl: bool,
+    /// The attack asked for with the mouse, and when the last attack packet went out; riding a mount that can't
+    /// attack.
+    attack: Option<Attack>,
+    last_attack: Option<Instant>,
+    riding: bool,
     /// The map's property and flags (net::MAP_*), and its type, as the server last sent them.
     map_property: Option<(u16, u32)>,
     map_type: Option<u16>,
@@ -1264,7 +1271,6 @@ struct Loading {
 /// An action waiting for the player to arrive.
 #[derive(Clone, Copy, PartialEq)]
 enum Pending {
-    Attack(u32),
     PickUp(u32),
     Skill { id: u16, level: u16, target: SkillTarget },
 }
@@ -1434,10 +1440,46 @@ impl Game {
         }
     }
 
+    /// Attacks `target` and keeps at it, walking into reach first.
     fn attack(&mut self, target: u32) {
-        if let Some(goal) = self.units.get(&target).map(|actor| actor.cell) {
-            self.attack_from(target, self.player.cell, goal);
+        self.attack = Some(Attack::new(target, true));
+        self.attack_step(Instant::now());
+    }
+
+    /// Moves the attack along: once in reach (or once a walk toward it has ended) the one attack packet goes out, no
+    /// sooner than ATTACK_GAP after the last; out of reach, every CHASE_GAP a cell in reach is looked for, and walked
+    /// to when it changed. A target gone (or dying) ends it; after the packet the server keeps at it (or swings once).
+    fn attack_step(&mut self, now: Instant) {
+        let Some(mut attack) = self.attack else { return };
+        let Some(goal) = self.units.get(&attack.target).filter(|actor| actor.remove_at.is_none()).map(|actor| actor.cell) else {
+            self.attack = None;
+            return;
+        };
+        if attack.sent || self.store_open() {
+            return;
         }
+        let from = self.player.cell;
+        if in_attack_reach(from, goal, self.attack_range) || (attack.chased && !self.player.moving()) {
+            if may_attack(self.last_attack, now) {
+                let _ = self.session.act(attack.target, attack.action());
+                self.last_attack = Some(now);
+                attack.sent = true;
+            }
+        } else if attack.last_chase.is_none_or(|last| now.saturating_duration_since(last) >= CHASE_GAP) {
+            attack.last_chase = Some(now);
+            let path = world::find_path(&self.world.gat, from, goal);
+            let stop = path.and_then(|path| path.into_iter().find(|&cell| in_attack_reach(cell, goal, self.attack_range)));
+            if let Some(stop) = stop.filter(|&stop| attack.chase_cell != Some(stop))
+                && may_move(self.last_move, now)
+            {
+                self.last_move = Some(now);
+                attack.chase_cell = Some(stop);
+                attack.chased = true;
+                let _ = self.session.walk(stop.map(|value| value as u16));
+            }
+        }
+        // A one swing that went out is over; so is one let go of.
+        self.attack = Some(attack).filter(|attack| !(attack.sent && !attack.continuous && !attack.held));
     }
 
     /// The cell under a point on screen, on the plane at the player's height.
@@ -1499,22 +1541,6 @@ impl Game {
 
     fn store_open(&self) -> bool {
         self.my_shop.is_some() || self.my_buying_store.is_some()
-    }
-
-    /// Attacks `target`, walking into reach first: the server only swings from within range.
-    fn attack_from(&mut self, target: u32, from: [i32; 2], goal: [i32; 2]) {
-        if self.store_open() {
-            return;
-        }
-        if world::in_reach(from, goal, self.attack_range) {
-            self.pending = None;
-            let _ = self.session.act(target, net::ACT_ATTACK_REPEAT);
-        } else if let Some(stop) =
-            world::find_path(&self.world.gat, from, goal).and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, self.attack_range)))
-        {
-            self.pending = Some((Pending::Attack(target), None));
-            let _ = self.session.walk(stop.map(|value| value as u16));
-        }
     }
 
     /// Picks up an item, walking over first when it's out of reach.
@@ -1802,6 +1828,15 @@ impl Game {
             }
             chat::Command::DressRoom => {
                 self.open_dressroom();
+                Ok(())
+            }
+            chat::Command::NoCtrl => {
+                self.no_ctrl = !self.no_ctrl;
+                if let Some(path) = settings_path("noctrl") {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.no_ctrl { "1" } else { "0" }));
+                }
+                let line = messages.get(if self.no_ctrl { NO_CTRL_ON } else { NO_CTRL_OFF }).cloned().unwrap_or_default();
+                self.chat_line(line, CHAT_ITEM);
                 Ok(())
             }
             // ponytail: the client's own line for /noshift isn't in this data; a plain one.
@@ -3073,6 +3108,81 @@ fn dialog_position(dialog: &Texture) -> [f32; 2] {
 
 fn dialog_position_of(size: [f32; 2]) -> [f32; 2] {
     [((SCREEN[0] - size[0]) / 2.0).floor(), ((SCREEN[1] - size[1]) / 1.5).floor()]
+}
+
+/// An attack asked for with the mouse.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Attack {
+    target: u32,
+    /// Kept up (Ctrl or /noctrl); otherwise only while the button is held.
+    continuous: bool,
+    held: bool,
+    /// The attack packet went out.
+    sent: bool,
+    /// A walk toward it went out (to where), and when a cell in reach was last looked for.
+    chased: bool,
+    chase_cell: Option<[i32; 2]>,
+    last_chase: Option<Instant>,
+}
+
+/// What letting go of the button does to an attack.
+#[derive(Debug, PartialEq)]
+enum Release {
+    Keep,
+    /// It went out and was only while held: CZ_CANCEL_LOCKON.
+    Cancel,
+}
+
+impl Attack {
+    fn new(target: u32, continuous: bool) -> Self {
+        Self { target, continuous, held: true, sent: false, chased: false, chase_cell: None, last_chase: None }
+    }
+
+    fn release(&mut self) -> Release {
+        if self.continuous {
+            return Release::Keep;
+        }
+        self.held = false;
+        if self.sent { Release::Cancel } else { Release::Keep }
+    }
+
+    /// Keeps attacking while kept up or held; let go before it reached, one swing.
+    fn action(&self) -> u8 {
+        if self.continuous || self.held { net::ACT_ATTACK_REPEAT } else { net::ACT_ATTACK }
+    }
+}
+
+/// An attack packet goes no sooner than this after the last; out of reach, a cell in reach is looked for this often.
+const ATTACK_GAP: Duration = Duration::from_millis(1200);
+const CHASE_GAP: Duration = Duration::from_millis(450);
+/// "Attacks and skills cannot be used when your Weight is over 90%.", "Unable to attack while riding."
+const OVERWEIGHT: usize = 307;
+const RIDING_NO_ATTACK: usize = 1885;
+/// EFST_ALL_RIDING: a mount that can't attack (rathena's All_Riding has NoAttack).
+const ALL_RIDING: u16 = 613;
+/// /noctrl's lines: on, off.
+const NO_CTRL_ON: usize = 717;
+const NO_CTRL_OFF: usize = 718;
+
+/// In reach to attack: at most range × 5 + 5.5 world units away (a cell is 5).
+fn in_attack_reach(from: [i32; 2], to: [i32; 2], range: i32) -> bool {
+    let [dx, dy] = [(from[0] - to[0]) as f32, (from[1] - to[1]) as f32];
+    dx.hypot(dy) * 5.0 <= range as f32 * 5.0 + 5.5
+}
+
+fn may_attack(last: Option<Instant>, now: Instant) -> bool {
+    last.is_none_or(|last| now.saturating_duration_since(last) >= ATTACK_GAP)
+}
+
+/// Why an attack can't start: weight at 90% or more, riding a mount that can't attack.
+fn attack_refused(weight: i64, max_weight: i64, riding: bool) -> Option<usize> {
+    if max_weight > 0 && weight * 10 >= max_weight * 9 {
+        Some(OVERWEIGHT)
+    } else if riding {
+        Some(RIDING_NO_ATTACK)
+    } else {
+        None
+    }
 }
 
 /// What a left click on the world does (`Game::world_click`).
@@ -4917,7 +5027,8 @@ impl App {
                 // ground walked when the button went down (`press`).
                 match game.world_click(cursor, shift) {
                     WorldClick::Talk(id) => drop(game.session.talk(id)),
-                    WorldClick::Attack(id) => game.attack(id),
+                    // Started on the press.
+                    WorldClick::Attack(_) => {}
                     WorldClick::Swing(id) => drop(game.session.act(id, net::ACT_ATTACK)),
                     WorldClick::PickUp(id) => game.pick_up(id),
                     WorldClick::Ground => {}
@@ -5279,6 +5390,13 @@ impl App {
             && state == ElementState::Released
         {
             game.walk_held = false;
+            // An attack held down stops when let go, once it went out.
+            if let Some(attack) = &mut game.attack
+                && attack.release() == Release::Cancel
+            {
+                game.attack = None;
+                let _ = game.session.stop_attack();
+            }
         }
         let message_size = self.assets.as_ref().map_or([0.0; 2], |assets| assets.message.size);
         let dragged = match &mut self.scene {
@@ -5482,19 +5600,36 @@ impl App {
             let now = Instant::now();
             let double = double_press(game.press_mark, now);
             game.press_mark = Some((now, false));
-            let ground = matches!(game.world_click(cursor, self.modifiers.shift_key()), WorldClick::Ground);
-            if !double
-                && ground
-                && !self.modifiers.control_key()
-                && let Some(cell) = game.ground_cell(cursor)
-            {
-                if self.modifiers.shift_key() || game.player.sitting {
-                    game.turn_to(cell);
-                } else {
-                    game.walk_toward(cell, now);
-                    game.walk_held = true;
-                    game.last_walk_try = Some(now);
+            let (shift, ctrl) = (self.modifiers.shift_key(), self.modifiers.control_key());
+            // A new press ends the attack under way.
+            game.attack = None;
+            match game.world_click(cursor, shift) {
+                _ if double => {}
+                // A monster with Shift (without /noshift): nothing.
+                WorldClick::Attack(id) if shift && !game.no_shift && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER) => {}
+                // An attack: kept up with Ctrl or /noctrl, otherwise while the button is held.
+                WorldClick::Attack(id) => {
+                    let weight = |id: u16| game.status.get(&id).copied().unwrap_or(0);
+                    match attack_refused(weight(net::STATUS_WEIGHT), weight(net::STATUS_MAX_WEIGHT), game.riding) {
+                        Some(line) => game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR),
+                        None => {
+                            game.attack = Some(Attack::new(id, ctrl || game.no_ctrl));
+                            game.attack_step(now);
+                        }
+                    }
                 }
+                WorldClick::Ground if !ctrl => {
+                    if let Some(cell) = game.ground_cell(cursor) {
+                        if shift || game.player.sitting {
+                            game.turn_to(cell);
+                        } else {
+                            game.walk_toward(cell, now);
+                            game.walk_held = true;
+                            game.last_walk_try = Some(now);
+                        }
+                    }
+                }
+                _ => {}
             }
             return;
         }
@@ -6734,6 +6869,10 @@ impl App {
                     dress_figure: None,
                     head_emblems: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
+                    no_ctrl: settings_path("noctrl").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
+                    attack: None,
+                    last_attack: None,
+                    riding: false,
                     map_type: None,
                     battle: battleground::Battle::default(),
                     queue_window: battle_queue::QueueWindow::default(),
@@ -7410,6 +7549,7 @@ impl App {
                 game.boss = None;
                 game.materials = None;
                 game.deal_choice = None;
+                game.attack = None;
                 // The merge window closes without a word.
                 if matches!(game.pick, Some((_, Picking::Merge))) {
                     game.pick = None;
@@ -9215,6 +9355,9 @@ impl App {
                     lock_pair(&mut game.locks, id, id, false);
                     game.hold_locked();
                 }
+                if id == game.account_id && kind == ALL_RIDING {
+                    game.riding = on;
+                }
                 if id == game.account_id {
                     game.status_icons.retain(|(icon, ..)| *icon != kind);
                     if on && self.status_icon_files.contains_key(&kind) {
@@ -9457,10 +9600,13 @@ impl App {
                     game.play_effect(gpu, grf, table, effect, id);
                 }
             }
-            // The server's positions: walk from where it has us.
-            MapEvent::TooFar { target, target_cell, cell, range } => {
+            // Out of reach after all: chase it again, as asked (kept up unless it was only while held).
+            // ponytail: the chase starts from the client's positions, not the server's in the packet.
+            MapEvent::TooFar { target, range, .. } => {
                 game.attack_range = i32::from(range);
-                game.attack_from(target, cell.map(i32::from), target_cell.map(i32::from));
+                let (continuous, held) = game.attack.map_or((true, false), |attack| (attack.continuous, attack.held));
+                game.attack = Some(Attack { held, ..Attack::new(target, continuous) });
+                game.attack_step(Instant::now());
             }
             MapEvent::StyleChanged(false) => {
                 game.stylist = None;
@@ -10992,6 +11138,8 @@ impl App {
         };
         cursor_look.set(if game.camera_goal.dragging.is_some() {
             cursor::Kind::Rotate
+        } else if pointer.1 && game.attack.is_some_and(|attack| attack.held) {
+            cursor::Kind::Attack
         } else if (game.targeting.is_some() || game.capturing) && !on_window {
             cursor::Kind::Target
         } else if on_window {
@@ -11223,6 +11371,7 @@ impl ApplicationHandler<NetEvent> for App {
                 // The held button follows the pointer: another walk each time MOVE_GAP has passed since the last
                 // try, not over a window, nor while an attack or a pickup is on its way.
                 let now = Instant::now();
+                game.attack_step(now);
                 if game.walk_held
                     && game.pending.is_none()
                     && game.last_walk_try.is_none_or(|last| now.saturating_duration_since(last) > MOVE_GAP)
@@ -11362,7 +11511,6 @@ impl ApplicationHandler<NetEvent> for App {
                 {
                     game.pending = None;
                     match pending {
-                        Pending::Attack(target) => game.attack(target),
                         Pending::PickUp(id) => game.pick_up(id),
                         Pending::Skill { id, level, target } => {
                             game.targeting = Some((id, level));
@@ -11740,6 +11888,32 @@ mod tests {
         assert_eq!(share_left(start, length, start), 1.0);
         assert_eq!(share_left(start, length, start + Duration::from_millis(200)), 0.75);
         assert_eq!(share_left(start, length, start + Duration::from_secs(2)), 0.0);
+    }
+
+    #[test]
+    fn attacks_as_the_player_asked() {
+        // Reach: range × 5 + 5.5 units.
+        assert!(in_attack_reach([0, 0], [2, 0], 1));
+        assert!(!in_attack_reach([0, 0], [2, 1], 1));
+        assert!(in_attack_reach([0, 0], [10, 0], 9) && !in_attack_reach([0, 0], [11, 0], 9));
+        let start = Instant::now();
+        assert!(may_attack(None, start) && !may_attack(Some(start), start + Duration::from_millis(1199)));
+        assert!(may_attack(Some(start), start + ATTACK_GAP));
+        // Kept up: letting go changes nothing.
+        let mut kept = Attack::new(5, true);
+        assert_eq!((kept.release(), kept.action()), (Release::Keep, net::ACT_ATTACK_REPEAT));
+        // Held and sent: letting go cancels it.
+        let mut held = Attack { sent: true, ..Attack::new(5, false) };
+        assert_eq!(held.action(), net::ACT_ATTACK_REPEAT);
+        assert_eq!(held.release(), Release::Cancel);
+        // Let go before it reached: one swing when it comes.
+        let mut early = Attack::new(5, false);
+        assert_eq!(early.release(), Release::Keep);
+        assert_eq!(early.action(), net::ACT_ATTACK);
+        assert_eq!(
+            [attack_refused(900, 1000, false), attack_refused(899, 1000, false), attack_refused(0, 1000, true)],
+            [Some(OVERWEIGHT), None, Some(RIDING_NO_ATTACK)]
+        );
     }
 
     #[test]
