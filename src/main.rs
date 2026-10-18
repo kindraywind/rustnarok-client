@@ -51,6 +51,7 @@ mod battle_queue;
 mod battleground;
 mod buying;
 mod cashshop;
+mod cast_square;
 mod catalog;
 mod char_make;
 mod char_select;
@@ -533,6 +534,8 @@ const MENU_CANCEL: [f32; 2] = [230.0, 91.0];
 const MENU_SELECTION: [u8; 4] = [0xCD, 0xE0, 0xFF, 0xFF];
 /// A player's action while casting or using a skill.
 const SKILL_ACTION: usize = 12;
+/// How far over the ground the magic square under a ground cast floats, so the ground doesn't cover it.
+const CAST_SQUARE_LIFT: f32 = 0.2;
 /// Words over a head stay this long.
 const SPEECH_TIME: Duration = Duration::from_secs(5);
 /// Spirit spheres and coins: how far from the body they circle, how high, how fast (radians a second), and how
@@ -766,6 +769,8 @@ struct Game {
     slot: Option<(usize, Instant)>,
     /// Units casting (None = the player): when it began and how long it takes.
     casts: HashMap<Option<u32>, (Instant, Duration)>,
+    /// The magic squares under ground skills being cast, by caster (None = the player); each goes with its cast.
+    cast_squares: HashMap<Option<u32>, cast_square::Square>,
     /// Units that may use their next combo skill (None = the player): when the window opened and how long it lasts.
     combos: HashMap<Option<u32>, (Instant, Duration)>,
     /// Units locked together by Blade Stop or Cursed Circle: source and target.
@@ -3819,6 +3824,8 @@ struct Assets {
     homunculus: homunculus::Assets,
     party: party::Assets,
     chatroom: chatroom::Assets,
+    /// The magic square under a ground cast.
+    magic_target: Option<Texture>,
     escape: escape::Assets,
     options: options::Assets,
     quest: quest::Assets,
@@ -3937,6 +3944,7 @@ impl Assets {
             homunculus: homunculus::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
+            magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
             quest: quest::Assets::load(gpu, grf),
@@ -8170,6 +8178,7 @@ impl App {
                     slot_sprite: SpriteSet::at(&self.grf, "data\\sprite\\slotmachine"),
                     slot: None,
                     casts: HashMap::new(),
+                    cast_squares: HashMap::new(),
                     combos: HashMap::new(),
                     locks: Vec::new(),
                     speech: HashMap::new(),
@@ -10702,7 +10711,15 @@ impl App {
                     caster.face(goal.unwrap_or([i32::from(cell[0]), i32::from(cell[1])]));
                 }
                 if cast_ms > 0 {
-                    game.casts.insert((source != me).then_some(source), (Instant::now(), Duration::from_millis(u64::from(cast_ms))));
+                    let (start, length) = (Instant::now(), Duration::from_millis(u64::from(cast_ms)));
+                    game.casts.insert((source != me).then_some(source), (start, length));
+                    // A cast at a cell: the magic square there. The packet has no level: ours is the skill tree's.
+                    // ponytail: our level is the highest learned, not the one picked; others' is level 10.
+                    let level = (source == me).then(|| game.skills.iter().find(|known| known.id == skill).map(|known| known.level)).flatten();
+                    match (target == 0).then(|| cast_square::Square::new(skill, level, cell, start, length)).flatten() {
+                        Some(square) => game.cast_squares.insert((source != me).then_some(source), square),
+                        None => game.cast_squares.remove(&(source != me).then_some(source)),
+                    };
                 }
                 game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info);
                 skill_effects(game, skill, "beginCastEffectId", source);
@@ -10788,6 +10805,12 @@ impl App {
             // Cooldowns: kept across map changes (the server doesn't repeat them), sent again after a relog.
             MapEvent::SkillCooldown { skill, ms } => game.cooldowns.set(skill, ms, control::now()),
             MapEvent::SkillFailed { ok: true, .. } => {}
+            // A cut-off cast: its bar and its magic square go.
+            MapEvent::CastCancelled(source) => {
+                let caster = (source != game.account_id).then_some(source);
+                game.casts.remove(&caster);
+                game.cast_squares.remove(&caster);
+            }
             MapEvent::SkillFailed { skill, detail, cause, .. } => {
                 game.casts.remove(&None);
                 // The client's messages for why: a skill's own reason, else the general cause.
@@ -12935,8 +12958,28 @@ impl App {
             None => Some(player_feet),
             Some(id) => feet_of.get(&id).copied(),
         };
-        let (effect_quads, effect_meshes) =
+        let (effect_quads, mut effect_meshes) =
             if effects_on { (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit)) } else { (Vec::new(), Vec::new()) };
+        // Magic squares under ground casts, for as long as their casts last; flat on the ground, a little over it.
+        game.cast_squares.retain(|caster, square| square.alive(now) && game.casts.contains_key(caster));
+        if let Some(texture) = &assets.magic_target {
+            for square in game.cast_squares.values() {
+                let steps = square.width.ceil() as usize;
+                let vertices = square
+                    .triangles(now, steps)
+                    .into_iter()
+                    .map(|(cell, uv)| {
+                        let ground = game.world.cell_position(cell);
+                        world::MeshVertex {
+                            position: [cell[0] * world::CELL + world::CELL / 2.0, ground[1] + CAST_SQUARE_LIFT, cell[1] * world::CELL + world::CELL / 2.0],
+                            uv,
+                            tint: [1.0; 4],
+                        }
+                    })
+                    .collect();
+                effect_meshes.push((texture, vertices, true));
+            }
+        }
         let frame = WorldFrame {
             world: &game.world,
             view: &view,
