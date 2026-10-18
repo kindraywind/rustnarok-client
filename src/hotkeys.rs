@@ -204,12 +204,9 @@ impl Hotkeys {
                 }
                 // The level it's used at, bottom right, as an item's amount; a clock while it's blocked.
                 count_text(layer, font, corner, &count.to_string());
-                let cooldown = cooling.draw(layer, *id as u16, corner, [24.0, 24.0]);
+                cooling.draw(layer, *id as u16, corner, [24.0, 24.0]);
                 if contains(corner, SLOT, cursor) {
                     window::tooltip(tooltip, chrome, font, &format!("{} Lv {count}", info.name), [corner[0], corner[1] + SLOT[1] + 2.0], [255; 3]);
-                    if let Some(cooldown) = &cooldown {
-                        window::tooltip(tooltip, chrome, font, cooldown, [corner[0], corner[1] + SLOT[1] + 25.0], [255; 3]);
-                    }
                 }
                 continue;
             }

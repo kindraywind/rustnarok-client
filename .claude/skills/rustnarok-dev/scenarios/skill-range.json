@@ -1,0 +1,30 @@
+{
+  "about": "Skill cooldowns and range (issue #360): a Swordman uses Endure (10 s cooldown): the hotbar slot gets the black fan, and pressing it again is refused with 'Cannot use [Endure] due to cooldown delay.'. Then Bash aimed at a training dummy 8 cells away walks into reach and goes off. The scenario takes the hotkeys off and goes back to Novice.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"say": "@job 1"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500}, {"say": "@heal"}, {"wait": 400},
+    {"key": "Alt+S"}, {"wait": 400},
+    {"drag_on": [{"skill": 8}, {"hotkey": 0}]}, {"wait": 300},
+    {"drag_on": [{"skill": 5}, {"hotkey": 1}]}, {"wait": 300},
+    {"expect": {"hotkeys": {"0": 8, "1": 5}}},
+    {"key": "Alt+S"}, {"wait": 300},
+    {"key": "F1"}, {"wait": 1500},
+    {"move": [1000, 600]},
+    {"shot": "cooldown-fan", "crop": [230, 0, 290, 70], "threshold": 3},
+    {"key": "F1"}, {"wait": 300},
+    {"expect": {"chat": "Cannot use [Endure] due to cooldown delay."}},
+    {"say": "@monster 2408 1"}, {"wait": 1500},
+    {"say": "@warp prt_fild08 170 368"}, {"settle": 1500},
+    {"key": "F2"}, {"wait": 200},
+    {"click_unit": {"kind": "monster", "name": "Dummy 10"}}, {"wait": 6000},
+    {"expect": {"state": {"player.aiming": null, "player.skill_sent.skill": 5}}},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"drag_on": [{"hotkey": 0}, {"point": [700, 500]}]}, {"wait": 300},
+    {"drag_on": [{"hotkey": 1}, {"point": [700, 500]}]}, {"wait": 300},
+    {"expect": {"hotkeys": {"0": null, "1": null}}},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}
