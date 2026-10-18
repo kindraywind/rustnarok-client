@@ -615,8 +615,35 @@ const HOMUNCULUS: u8 = 8;
 /// rathena's NPC_ELEMENTAL_TYPE.
 const ELEMENTAL: u8 = 10;
 const MERCENARY: u8 = 9;
-/// JT_HIDDEN_NPC, JT_HIDDEN_WARP_NPC: invisible script NPCs.
-const HIDDEN_JOBS: [u16; 2] = [111, 139];
+/// The effect launcher (104), JT_HIDDEN_NPC and JT_HIDDEN_WARP_NPC: invisible script NPCs.
+const HIDDEN_JOBS: [u16; 3] = [104, 111, 139];
+/// Names over the world: NPCs', monsters' (red well above our level, grey well under), our summons', ground items'.
+const NPC_NAME_COLOR: [u8; 3] = [0x95, 0xB8, 0xF7];
+const MONSTER_NAME_COLOR: [u8; 3] = [0xFF, 0xC3, 0xC3];
+const STRONG_NAME_COLOR: [u8; 3] = [0xFF, 0x00, 0x00];
+const WEAK_NAME_COLOR: [u8; 3] = [0x9B, 0x9B, 0x9B];
+const SUMMON_NAME_COLOR: [u8; 3] = [0xC8, 0xC8, 0xC8];
+const ITEM_NAME_COLOR: [u8; 3] = [0xFF, 0xEF, 0x95];
+
+/// The colour of a unit's name over the world, by its object type and job: NPC-like units blue, monsters pink (red at
+/// 11 or more levels above ours, grey at more than 15 below), our own summons grey, players and the rest white.
+fn name_color(kind: u8, job: u16, level: u16, ours: bool, own_level: i64) -> [u8; 3] {
+    if ours {
+        return SUMMON_NAME_COLOR;
+    }
+    if matches!(kind, 1 | NPC | 12) || matches!(job, 45..=999 | 10001..=20000) {
+        return NPC_NAME_COLOR;
+    }
+    if !matches!(job, 1001..=3998 | 20021..=31999) {
+        return CHAT_WHITE;
+    }
+    match i64::from(level) - own_level {
+        11.. => STRONG_NAME_COLOR,
+        ..-15 => WEAK_NAME_COLOR,
+        _ => MONSTER_NAME_COLOR,
+    }
+}
+
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
 const WARP_JOB: u16 = 45;
 
@@ -1682,12 +1709,13 @@ impl Game {
         }
     }
 
-    /// Who the player sides with on this map, for `versus`: the map's flags, our party's online members, our guild.
-    // ponytail: allies come with the guild alliance list (#102); none until then.
+    /// Who the player sides with on this map, for `versus`: the map's flags, our party's online members, our guild and
+    /// its allies.
     fn side(&self) -> versus::Side {
         let party = self.party.iter().flat_map(|party| &party.members).filter(|member| member.info.online).map(|member| member.info.account).collect();
         let flags = self.map_property.map_or(0, |(_, flags)| flags);
-        versus::Side { flags, party, guild: self.guild.as_ref().map_or(0, |guild| guild.id), allies: Vec::new(), camp: self.battle.camp(self.account_id) }
+        let allies = self.guild.iter().flat_map(|guild| &guild.relations).filter(|relation| !relation.antagonist).map(|relation| relation.id).collect();
+        versus::Side { flags, party, guild: self.guild.as_ref().map_or(0, |guild| guild.id), allies, camp: self.battle.camp(self.account_id) }
     }
 
     /// Another player as `versus` sees them.
@@ -2368,7 +2396,6 @@ impl Game {
             || self.level_ups.hit(cursor).is_some()
             || (self.quest_icon && quest_notice::on_icon(cursor))
             || minimap::button_at(cursor).is_some()
-            || (self.quest_window.tracker && !quest_tracker::tracked(&self.quests).is_empty() && quest_tracker::covers(cursor))
             || (asking && contains(dialog_position_of(message), message, cursor))
             || self.dialog.is_some()
             || self.amount.is_some()
@@ -3502,14 +3529,15 @@ impl Game {
         }
     }
 
-    /// Units locked together hold still on the frame they had when caught; the others move again.
+    /// Units locked together, turned to stone or frozen hold still on the frame they had when caught; the others move
+    /// again.
     fn hold_locked(&mut self) {
         let now = control::now();
         let me = self.account_id;
         let locks = &self.locks;
         let actors = std::iter::once((me, &mut self.player)).chain(self.units.iter_mut().map(|(id, actor)| (*id, actor)));
         for (id, actor) in actors {
-            actor.held = (locked_with(locks, id) > 0).then(|| actor.held.unwrap_or(now));
+            actor.held = (locked_with(locks, id) > 0 || actor::stilled(actor.body_state)).then(|| actor.held.unwrap_or(now));
         }
     }
 
@@ -8514,6 +8542,7 @@ impl App {
             let mut actor = Actor::new(unit.name.clone(), sprites, unit.position.map(i32::from), unit.direction, unit.speed);
             actor.kind = unit.kind;
             actor.job = unit.job;
+            actor.level = unit.level;
             actor.look = (unit.kind == PLAYER).then(|| unit_look(unit));
             actor.hidden = HIDDEN_JOBS.contains(&unit.job) || unit.job == WARP_JOB;
             actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
@@ -10019,6 +10048,10 @@ impl App {
             // A map's property: its notices, then the "ready" the server waits for.
             MapEvent::MapProperty { property, flags } => {
                 game.map_property = Some((property, flags));
+                // Allies are spared on siege maps: their list comes with the guild's first page.
+                if versus::siege(flags) && game.guild.is_some() {
+                    let _ = game.session.guild_page(0);
+                }
                 for id in arrival_notices(flags, game.me.job) {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), MAP_NOTICE);
                 }
@@ -10866,6 +10899,7 @@ impl App {
                     actor.body_state = body;
                     actor.health_state = health;
                 }
+                game.hold_locked();
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor
                     && let Some(look) = &mut actor.look
@@ -11423,6 +11457,9 @@ impl App {
         };
         let stylist_placements = game.stylist.as_mut().map(|window| window.pose(gpu)).unwrap_or_default();
         let mut labels = Vec::new();
+        // Whose names show grey (ours) and against what level monsters' are judged.
+        let own_level = game.status.get(&net::STATUS_BASE_LEVEL).copied().unwrap_or(1);
+        let our_summons = [game.pet_id, game.homunculus_id, game.mercenary.as_ref().map(|mercenary| mercenary.id)];
         // Talkie Boxes saying their words stand where their traps were.
         let mut feet_of = game.talkie_spots.clone();
         for (&id, actor) in &mut game.units {
@@ -11444,7 +11481,7 @@ impl App {
             let seen = seen_direction(actor.rot, yaw, rounds_facing(actor.kind, actor.job, action));
             // NPC names show under them; players' and monsters' on hover (below).
             if !actor.hidden && (actor.kind == NPC || actor.sprites.is_none()) {
-                labels.push((actor.name.clone(), feet));
+                labels.push((actor.name.clone(), feet, name_color(actor.kind, actor.job, actor.level, our_summons.contains(&Some(id)), own_level)));
             }
             if let Some(cart) = &mut actor.cart {
                 carts.push((Owner::Unit(id), behind(feet, direction), cart.frame_at(gpu, usize::from(seen), 0, cart_timing(action, timing))));
@@ -11905,7 +11942,8 @@ impl App {
             if let Some(tag) = tag.filter(|tag| !tag.guild.is_empty()) {
                 guild_line = Some((name.clone(), format!("{} [{}]", tag.guild, tag.position), feet, actor.guild));
             }
-            labels.push((name, feet));
+            let color = name_color(actor.kind, actor.job, actor.level, our_summons.contains(&Some(id)), own_level);
+            labels.push((name, feet, color));
             if actor.kind == PLAYER && game.pointed != pointed {
                 let _ = game.session.ask_name(id);
             }
@@ -11916,17 +11954,18 @@ impl App {
             && let Some(item) = game.ground.get(&id)
         {
             let name = inventory::item_name(items, item.item, item.identified, 0);
-            labels.push((messages::fill(message(messages::ITEM_AMOUNT), &[&name, &item.amount]), game.world.cell_position(item.cell)));
+            labels.push((messages::fill(message(messages::ITEM_AMOUNT), &[&name, &item.amount]), game.world.cell_position(item.cell), ITEM_NAME_COLOR));
         }
 
         // In-world overlays: under the feet (in sprite pixels, the way sprites are drawn) HP bars and names under them;
         // over the head cast bars and what's said.
         let sprite_point = |feet: [f32; 3], y: f32| view.sprite_rect(feet, [0.0, y], [0.0, y]).map(|[x, y, ..]| [x * SCREEN[0], y * SCREEN[1]]);
         let mut base = Layer::default();
-        for (name, feet) in &labels {
+        for (name, feet, color) in &labels {
             let name = name.split('#').next().unwrap_or_default();
             if let Some(point) = sprite_point(*feet, overhead::NAME_BELOW) {
-                base.outlined(name, overhead::label_corner(point, font.width(name), font.line_height(), SCREEN));
+                let [x, y] = overhead::label_corner(point, font.width(name), font.line_height(), SCREEN);
+                base.outlined_in(name, [x, y + overhead::NAME_TEXT_TOP], *color);
             }
         }
         // ponytail: a player's title, then their guild, on lines under the name; where titles go isn't known.
@@ -11935,14 +11974,14 @@ impl App {
             && let Some(point) = sprite_point(*feet, overhead::NAME_BELOW)
         {
             let [x, y] = overhead::label_corner(point, font.width(title), font.line_height(), SCREEN);
-            base.outlined(title, [x, y + font.line_height()]);
+            base.outlined(title, [x, y + overhead::NAME_TEXT_TOP + font.line_height()]);
             under_name += 1.0;
         }
         if let Some((name, line, feet, guild_id)) = &guild_line
             && let Some(point) = sprite_point(*feet, overhead::NAME_BELOW)
         {
             let corner = |text: &str| overhead::label_corner(point, font.width(text), font.line_height(), SCREEN);
-            let top = corner(name)[1] + under_name * font.line_height();
+            let top = corner(name)[1] + overhead::NAME_TEXT_TOP + under_name * font.line_height();
             base.outlined(line, [corner(line)[0], top]);
             // ponytail: the emblem left of the guild line; calibrate against the real client.
             if let Some(emblem) = game.emblems.get(guild_id).and_then(|(_, emblem)| emblem.as_ref()) {
@@ -13549,6 +13588,21 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colours_names_by_who_they_are() {
+        // NPCs by type or job, monsters by job and level against ours, our own summons, players.
+        assert_eq!(name_color(NPC, 100, 0, false, 50), NPC_NAME_COLOR);
+        assert_eq!(name_color(MONSTER, 10_005, 0, false, 50), NPC_NAME_COLOR);
+        assert_eq!(name_color(MONSTER, 1002, 50, false, 50), MONSTER_NAME_COLOR);
+        assert_eq!(name_color(MONSTER, 1002, 60, false, 50), MONSTER_NAME_COLOR);
+        assert_eq!(name_color(MONSTER, 1002, 61, false, 50), STRONG_NAME_COLOR);
+        assert_eq!(name_color(MONSTER, 1002, 35, false, 50), MONSTER_NAME_COLOR);
+        assert_eq!(name_color(MONSTER, 1002, 34, false, 50), WEAK_NAME_COLOR);
+        assert_eq!(name_color(HOMUNCULUS, 6001, 10, true, 50), SUMMON_NAME_COLOR);
+        assert_eq!(name_color(HOMUNCULUS, 6001, 10, false, 50), CHAT_WHITE);
+        assert_eq!(name_color(PLAYER, 4008, 99, false, 50), CHAT_WHITE);
+    }
 
     #[test]
     fn dead_players_lie_there_until_revived() {

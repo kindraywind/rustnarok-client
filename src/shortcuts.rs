@@ -532,6 +532,13 @@ fn exe_action(exe: &str, table: u8, index: u16) -> Action {
     if name.contains("ROTATE") {
         return Action::RotateHotkeys;
     }
+    // ponytail: no second hotkey bar or equipment set swap yet; these mustn't fall to the bar or the equipment window.
+    if name.contains("CHANGE_SKILLBAR") || name.contains("SWAP_EQUIP") {
+        return Action::Unused;
+    }
+    if name.contains("COSEQUIP") {
+        return Action::Costume;
+    }
     if name.contains("SKILLBAR") || (name.contains("HOTKEY") && name.contains("ONOFF")) {
         return Action::HotkeyBar;
     }
@@ -880,6 +887,15 @@ mod tests {
         text_focus: bool,
     ) -> Option<Action> {
         action(shortcuts, &KeyEvent { key, physical, alt, shift, ctrl, repeat, text_focus })
+    }
+
+    #[test]
+    fn tells_costume_and_unbuilt_actions_from_their_neighbours() {
+        assert_eq!(exe_action("MSI_HK_COSEQUIPWND_ONOFF", 0, 0), Action::Costume);
+        assert_eq!(exe_action("MSI_HK_EQUIPWND_ONOFF", 0, 0), Action::Equipment);
+        assert_eq!(exe_action("MSI_HK_CHANGE_SKILLBAR", 0, 0), Action::Unused);
+        assert_eq!(exe_action("MSI_HK_SWAP_EQUIPMENT", 0, 0), Action::Unused);
+        assert_eq!(exe_action("MSI_HK_SKILLBAR_ONOFF", 0, 0), Action::HotkeyBar);
     }
 
     #[test]

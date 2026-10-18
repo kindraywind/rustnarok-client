@@ -570,12 +570,17 @@ pub fn status_tint(body: u16, health: u16) -> Option<[u8; 3]> {
         OPT1_STONE => Some([64, 64, 64]),
         OPT1_FREEZE => Some([0, 128, 255]),
         OPT1_STONEWAIT => Some([128, 128, 128]),
-        // ponytail: stacked health bits take deadly poison, then poison, then curse.
+        // ponytail: stacked health bits take deadly poison, then curse over poison.
         _ if health & OPT2_DPOISON != 0 => Some([255, 50, 255]),
-        _ if health & OPT2_POISON != 0 => Some([255, 128, 255]),
         _ if health & OPT2_CURSE != 0 => Some([200, 50, 50]),
+        _ if health & OPT2_POISON != 0 => Some([255, 128, 255]),
         _ => None,
     }
+}
+
+/// Whether a body state (stone, frozen) stops the unit's animation where it is.
+pub fn stilled(body: u16) -> bool {
+    matches!(body, OPT1_STONE | OPT1_FREEZE)
 }
 
 /// Multiplies a layer's RGB by `tint` and keeps its alpha.
@@ -1261,6 +1266,9 @@ pub const WARG_REACH: f32 = world::CELL * 3.0;
 /// The warg's shadow, twice a body's.
 pub const WARG_SHADOW: f32 = 2.0;
 
+/// The MVP tomb, which casts no shadow.
+const MVP_TOMB: u16 = 565;
+
 /// Sprite jobs that keep their shadow while sitting: the Star Gladiator line's union forms, which float.
 const SITTING_SHADOW_JOBS: [u16; 5] = [4048, 4238, 4243, 4244, 4316];
 
@@ -1268,7 +1276,7 @@ const SITTING_SHADOW_JOBS: [u16; 5] = [4048, 4238, 4243, 4244, 4316];
 /// isn't listed. A player (`player`) casts none while dead or sitting, but for the floating union forms.
 pub fn shadow_factor(factors: &HashMap<u16, f32>, player: bool, job: u16, option: u32, sitting: bool, dead: bool) -> f32 {
     let sprite = if player { sprite_job(job, option) } else { job };
-    if player && (dead || sitting && !SITTING_SHADOW_JOBS.contains(&sprite)) {
+    if player && (dead || sitting && !SITTING_SHADOW_JOBS.contains(&sprite)) || sprite == MVP_TOMB {
         return 0.0;
     }
     factors.get(&sprite).copied().unwrap_or(1.0)
@@ -1406,6 +1414,8 @@ pub struct Actor {
     pub job: u16,
     /// A player's guild (0: none).
     pub guild: u32,
+    /// The level the server shows (monsters' and players'; 0 for NPCs and pets).
+    pub level: u16,
     /// A player's looks, to rebuild its sprites when they change.
     pub look: Option<Look>,
     /// Script NPCs the client never draws.
@@ -1468,6 +1478,7 @@ impl Actor {
             kind: 0,
             job: 0,
             guild: 0,
+            level: 0,
             look: None,
             hidden: false,
             sprites,
@@ -2083,9 +2094,11 @@ mod tests {
         assert_eq!(status_tint(OPT1_FREEZE, OPT2_POISON), Some([0, 128, 255]));
         assert_eq!(status_tint(OPT1_STONE, OPT2_CURSE | OPT2_POISON), Some([64, 64, 64]));
         assert_eq!(status_tint(OPT1_STONEWAIT, OPT2_DPOISON), Some([128, 128, 128]));
-        // Two health bits at once: deadly poison, then poison, then curse.
+        // Two health bits at once: deadly poison, then curse over poison.
         assert_eq!(status_tint(0, OPT2_POISON | OPT2_DPOISON), Some([255, 50, 255]));
-        assert_eq!(status_tint(0, OPT2_POISON | OPT2_CURSE), Some([255, 128, 255]));
+        assert_eq!(status_tint(0, OPT2_POISON | OPT2_CURSE), Some([200, 50, 50]));
+        // Stone and freeze stop the animation; the others don't.
+        assert!(stilled(OPT1_STONE) && stilled(OPT1_FREEZE) && !stilled(OPT1_STONEWAIT) && !stilled(0));
         // Stun, silence and a state that has ended leave the sprite alone.
         assert_eq!(status_tint(3, 0x0010), None);
         assert_eq!(status_tint(0, 0), None);

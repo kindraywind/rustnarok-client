@@ -9,9 +9,8 @@ use rustnarok_client::text::Font;
 use crate::quest::QuestText;
 use crate::{Layer, SCREEN, contains};
 
-/// The tracker's area: 250 by 400 at (W - 320, 150); no frame, no title.
+/// The tracker's area: 250 by 400 at (W - 320, 150); no frame, no title. Clicks go through it to the world.
 pub const CORNER: [f32; 2] = [SCREEN[0] - 320.0, 150.0];
-pub const SIZE: [f32; 2] = [250.0, 400.0];
 /// At most this many quests.
 const MOST: usize = 5;
 /// "Complete", for a hunt done.
@@ -124,11 +123,6 @@ pub fn blocks(quests: &[Quest], texts: &HashMap<u32, QuestText>, messages: &[Str
             }
         })
         .collect()
-}
-
-/// Whether the pointer is in the tracker's area.
-pub fn covers(cursor: [f32; 2]) -> bool {
-    contains(CORNER, SIZE, cursor)
 }
 
 /// The quest whose title is under the pointer.
