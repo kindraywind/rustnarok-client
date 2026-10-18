@@ -87,7 +87,7 @@ marked `ponytail:` in the code, to calibrate against screenshots of the real cli
 
    Settings (saved ID, sound, chat macros) are kept in `~/Library/Application Support/rustnarok-client` on macOS,
    `%APPDATA%\rustnarok-client` on Windows and `~/.config/rustnarok-client` (or `$XDG_CONFIG_HOME`) on Linux. CI
-   builds, tests and lints all three.
+   builds, tests and lints on Linux; Windows was last checked by CI in PR #128.
 2. **Game data**: put an official kRO `data.grf` (2024 data is what's tested) in the repository folder, or point
    `RUSTNAROK_CLIENT_GRF` at one.
 3. **English** (optional): a translation pack's `data` and `System` folders next to data.grf. Their loose files go
