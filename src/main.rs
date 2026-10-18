@@ -391,8 +391,6 @@ const PARTY_CREATE: usize = 2054;
 /// What a locked chat room asks ("Please enter Password.").
 const ROOM_PASSWORD: usize = 15;
 const PARTY_INVITE: usize = 2056;
-/// Items can be picked up from this far (closer means walking first).
-const PICKUP_RANGE: f32 = 2.0;
 /// A dropped item starts this many cells up and falls one cell per 40ms.
 const DROP_HEIGHT: f32 = 5.0;
 const DROP_MS_PER_CELL: f32 = 40.0;
@@ -1384,7 +1382,7 @@ impl Game {
             return false;
         }
         let from = self.player.cell;
-        let taken: std::collections::HashSet<[i32; 2]> = self.units.values().map(|actor| actor.cell).collect();
+        let taken: std::collections::HashSet<[i32; 2]> = self.units.values().filter(|actor| !actor.hidden).map(|actor| actor.cell).collect();
         let gat = &self.world.gat;
         let open = |cell: [i32; 2]| gat.walkable(cell) && !taken.contains(&cell) && world::find_path(gat, from, cell).is_some();
         let Some(goal) = world::walk_goal(cell, from, open) else { return false };
@@ -1411,6 +1409,8 @@ impl Game {
     fn world_click(&self, cursor: [f32; 2], shift: bool) -> WorldClick {
         match hovered(&self.hit_boxes, cursor, shift) {
             Some(Owner::Unit(id)) => match self.units.get(&id).map(|actor| actor.kind) {
+                // A warp portal: walk onto it.
+                Some(NPC) if self.units[&id].job == WARP_JOB => WorldClick::Warp(self.units[&id].cell),
                 Some(NPC) => WorldClick::Talk(id),
                 Some(MONSTER) => WorldClick::Attack(id),
                 // Players: an attack where the map (or Shift, or /noshift) says so; one swing a click on a siege map.
@@ -1430,6 +1430,18 @@ impl Game {
         self.my_shop.is_some() || self.my_buying_store.is_some()
     }
 
+    /// Talks to an NPC, turned to face it; only standing still or sitting (walking or attacking, nothing).
+    /// rathena answers when it's too far.
+    fn talk_to(&mut self, id: u32) {
+        if !may_talk(self.player.moving(), self.attack.is_some(), self.player.sitting) {
+            return;
+        }
+        if let Some(cell) = self.units.get(&id).map(|actor| actor.cell) {
+            self.turn_to(cell);
+        }
+        let _ = self.session.talk(id);
+    }
+
     /// Picks up an item, walking over first when it's out of reach.
     fn pick_up(&mut self, id: u32) {
         if self.store_open() {
@@ -1438,8 +1450,7 @@ impl Game {
         let Some(item) = self.ground.get(&id) else { return };
         let at = item.at;
         self.player.face(at);
-        let [dx, dy] = [(at[0] - self.player.cell[0]) as f32, (at[1] - self.player.cell[1]) as f32];
-        if dx.hypot(dy) > PICKUP_RANGE {
+        if !within_pickup(self.player.cell, at) {
             self.pending = Some((Pending::PickUp(id), None));
             let _ = self.session.walk(at.map(|value| value as u16));
         } else {
@@ -2949,8 +2960,25 @@ fn attack_refused(weight: i64, max_weight: i64, riding: bool) -> Option<usize> {
     }
 }
 
+/// Talking needs the player standing still (or sitting): not walking, not attacking.
+fn may_talk(moving: bool, attacking: bool, sitting: bool) -> bool {
+    sitting || !(moving || attacking)
+}
+
+/// An item can be picked up from the next cell, diagonals too.
+fn within_pickup(from: [i32; 2], at: [i32; 2]) -> bool {
+    (at[0] - from[0]).abs().max((at[1] - from[1]).abs()) <= 1
+}
+
+/// The cursor over an NPC: a warp portal's, or talking.
+fn npc_cursor(job: u16) -> cursor::Kind {
+    if job == WARP_JOB { cursor::Kind::Warp } else { cursor::Kind::Talk }
+}
+
 /// What a left click on the world does (`Game::world_click`).
 enum WorldClick {
+    /// A warp portal's cell.
+    Warp([i32; 2]),
     Talk(u32),
     Attack(u32),
     Swing(u32),
@@ -4659,12 +4687,11 @@ impl App {
                 // Whatever is under the cursor (see `picking::pick`): talk to NPCs, attack monsters, pick items up. The
                 // ground walked when the button went down (`press`).
                 match game.world_click(cursor, shift) {
-                    WorldClick::Talk(id) => drop(game.session.talk(id)),
                     // Started on the press.
                     WorldClick::Attack(_) => {}
                     WorldClick::Swing(id) => drop(game.session.act(id, net::ACT_ATTACK)),
-                    WorldClick::PickUp(id) => game.pick_up(id),
-                    WorldClick::Ground => {}
+                    // The rest went with the press.
+                    WorldClick::Talk(_) | WorldClick::PickUp(_) | WorldClick::Warp(_) | WorldClick::Ground => {}
                 }
             }
             Scene::Message(..) => {
@@ -4816,6 +4843,15 @@ impl App {
         }
         if let Scene::Game(game) = &mut self.scene {
             let assets = self.assets.as_ref();
+            // A right press on an NPC talks too.
+            if state == ElementState::Pressed
+                && let Some(assets) = assets
+                && !game.on_ui(self.cursor, &self.items, assets.message.size)
+                && let Some(Owner::Unit(id)) = hovered_unit(&game.hit_boxes, self.cursor, false)
+                && game.units.get(&id).is_some_and(|actor| actor.kind == NPC && actor.job != WARP_JOB)
+            {
+                game.talk_to(id);
+            }
             // Alt + right click moves a whole stack between the inventory and the open storage.
             let moved = match game.window_at(self.cursor) {
                 _ if state != ElementState::Pressed || !self.modifiers.alt_key() || !game.storage.frame.open => None,
@@ -5205,6 +5241,13 @@ impl App {
                             game.attack_step(now);
                         }
                     }
+                }
+                WorldClick::Talk(id) => game.talk_to(id),
+                WorldClick::PickUp(id) if !game.player.sitting => game.pick_up(id),
+                WorldClick::Warp(cell) if !ctrl => {
+                    game.walk_toward(cell, now);
+                    game.walk_held = true;
+                    game.last_walk_try = Some(now);
                 }
                 WorldClick::Ground if !ctrl => {
                     if let Some(cell) = game.ground_cell(cursor) {
@@ -9235,6 +9278,27 @@ impl App {
             })
             .collect();
 
+        // Warp portals have no sprite: the cell they stand on is their pick box.
+        let half = world::CELL / 2.0;
+        for (&id, actor) in game.units.iter().filter(|(_, actor)| actor.job == WARP_JOB) {
+            let feet = game.world.cell_position(actor.cell.map(|value| value as f32));
+            let corners: Option<Vec<_>> = [[-half, -half], [half, -half], [half, half], [-half, half]]
+                .iter()
+                .map(|[dx, dz]| view.project([feet[0] + dx, feet[1], feet[2] + dz]).map(to_screen))
+                .collect();
+            if let Some(corners) = corners {
+                let cell = picking::bounds(&corners);
+                let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]).powi(2)).sum::<f32>();
+                game.hit_boxes.push(picking::Target {
+                    owner: Owner::Unit(id),
+                    kind: picking::Kind::Other,
+                    sprite: cell,
+                    area: picking::area(cell, cell, picking::UNIT_MIN),
+                    depth,
+                });
+            }
+        }
+
         // Shadows first, so characters standing at the same depth draw over them.
         let shadow_placements = game.shadow.as_mut().map(|shadow| shadow.frame(gpu, 0, 0, 0, Timing::Loop(0.0))).unwrap_or_default();
         let mut billboards: Vec<Billboard> = Vec::new();
@@ -10275,9 +10339,6 @@ impl App {
         let ground = view
             .pick([pointer.0[0] / SCREEN[0], pointer.0[1] / SCREEN[1]], player_feet[1])
             .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32]);
-        let near_warp = |cell: [i32; 2]| {
-            game.units.values().any(|actor| actor.job == WARP_JOB && (actor.cell[0] - cell[0]).abs() <= 1 && (actor.cell[1] - cell[1]).abs() <= 1)
-        };
         cursor_look.set(if game.camera_goal.dragging.is_some() {
             cursor::Kind::Rotate
         } else if pointer.1 && game.attack.is_some_and(|attack| attack.held) {
@@ -10290,14 +10351,13 @@ impl App {
             match hovered(&game.hit_boxes, pointer.0, players_first) {
                 Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
                     Some(MONSTER) => cursor::Kind::Attack,
-                    Some(NPC) => cursor::Kind::Talk,
+                    Some(NPC) => npc_cursor(game.units[&id].job),
                     Some(PLAYER) if game.opponent(id).is_some_and(|other| game.side().attack_cursor(&other, players_first, false)) => cursor::Kind::Attack,
                     Some(HOMUNCULUS | MERCENARY | ELEMENTAL) if versus::companion_cursor(game.side().flags) => cursor::Kind::Attack,
                     _ => cursor::Kind::Default,
                 },
                 Some(Owner::Item(_)) => cursor::Kind::Pick,
                 _ => match ground {
-                    Some(cell) if near_warp(cell) => cursor::Kind::Warp,
                     Some(cell) if !game.world.gat.walkable(cell) => cursor::Kind::NoWalk,
                     _ => cursor::Kind::Default,
                 },
@@ -10992,6 +11052,15 @@ mod tests {
         assert_eq!(share_left(start, length, start), 1.0);
         assert_eq!(share_left(start, length, start + Duration::from_millis(200)), 0.75);
         assert_eq!(share_left(start, length, start + Duration::from_secs(2)), 0.0);
+    }
+
+    #[test]
+    fn talks_and_picks_up_from_close() {
+        assert!(may_talk(false, false, false) && may_talk(true, false, true));
+        assert!(!may_talk(true, false, false) && !may_talk(false, true, false));
+        assert!(within_pickup([5, 5], [6, 6]) && within_pickup([5, 5], [5, 5]));
+        assert!(!within_pickup([5, 5], [7, 5]) && !within_pickup([5, 5], [6, 7]));
+        assert_eq!([npc_cursor(WARP_JOB), npc_cursor(86)], [cursor::Kind::Warp, cursor::Kind::Talk]);
     }
 
     #[test]
