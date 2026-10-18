@@ -1,0 +1,121 @@
+{
+ "about": "Window frames: a window held by its title goes half see-through, snaps flush to a screen edge 10 px or closer when let go, and collapses to its title on a double click there (status window).",
+ "account": "",
+ "slot": 0,
+ "steps": [
+  {
+   "say": "@warp prontera 156 180"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "key": "Alt+A"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "expect": {
+    "windows_open": [
+     "Status"
+    ]
+   }
+  },
+  {
+   "drag": [
+    [
+     260,
+     205
+    ],
+    [
+     66,
+     205
+    ]
+   ],
+   "held": true
+  },
+  {
+   "wait": 400
+  },
+  {
+   "shot": "window-held",
+   "crop": [
+    0,
+    150,
+    480,
+    330
+   ]
+  },
+  {
+   "cmd": {
+    "cmd": "release"
+   }
+  },
+  {
+   "wait": 400
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "wait": 100
+  },
+  {
+   "shot": "window-let-go",
+   "crop": [
+    0,
+    150,
+    480,
+    330
+   ]
+  },
+  {
+   "click": [
+    120,
+    205
+   ],
+   "count": 2
+  },
+  {
+   "wait": 300
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "wait": 100
+  },
+  {
+   "shot": "window-collapsed",
+   "crop": [
+    0,
+    150,
+    480,
+    330
+   ]
+  },
+  {
+   "click": [
+    120,
+    205
+   ],
+   "count": 2
+  },
+  {
+   "wait": 300
+  },
+  {
+   "key": "Alt+A"
+  },
+  {
+   "wait": 300
+  }
+ ]
+}

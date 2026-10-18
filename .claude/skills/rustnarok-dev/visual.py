@@ -10,6 +10,7 @@
 A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": {...}, "steps": [...]} with steps such as
   {"say": "@warp prontera 156 180"}  {"settle": 1500}  {"wait": 1500}  {"key": "Alt+E"}  {"type": "hello"}
   {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]], "button": "right", "mods": "Ctrl"}  {"move": [x, y]} (or a target)
+  {"drag": [[x, y], [x2, y2]], "held": true} ... {"cmd": {"cmd": "release"}}  (the button stays down: look mid-drag)
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
     (targets by name from the control socket's `targets`: inventory_item (item id), pick_item (a pick list's row, item
     id), menu_item (part of a right-click menu choice's label), button (a window button's name, e.g. "feed"),
@@ -366,7 +367,7 @@ def step_on_client(action, shots_dir, name):
     if "drag" in action:
         start, end = action["drag"]
         command = {"cmd": "drag", "from": start, "to": end}
-        for key in ("button", "mods"):
+        for key in ("button", "mods", "held"):
             if key in action:
                 command[key] = action[key]
         return drive.send(command)

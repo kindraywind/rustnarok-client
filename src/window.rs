@@ -3,6 +3,8 @@
 use rustnarok_client::grf::Grf;
 use rustnarok_client::text::Font;
 
+use std::time::{Duration, Instant};
+
 use crate::render::{Gpu, Texture};
 use crate::{Layer, UI, contains, offset, screen};
 
@@ -52,6 +54,44 @@ pub enum TitleHit {
     Close,
 }
 
+/// A dragged window's edge this close to the screen's snaps to it.
+const MAGNET: f32 = 10.0;
+/// Dragged off screen, a window keeps this much of its width showing (and its title bar always), to grab it again.
+const KEEP_SHOWING: f32 = 40.0;
+/// Held by the pointer, a window is drawn this see-through (128 of 255 opaque), easing there and back over HOLD_EASE.
+const HELD_FADED: f32 = 1.0 - 128.0 / 255.0;
+const HOLD_EASE: Duration = Duration::from_millis(267);
+/// A second press on the title bar this soon collapses or opens a window that does that.
+const TITLE_DOUBLE_CLICK: Duration = Duration::from_millis(500);
+
+/// Where a window `size` big goes when dragged to `to`: an edge within MAGNET of the screen's snaps flush, and it
+/// stays where it can be grabbed again (the title bar on screen, KEEP_SHOWING of its width).
+pub fn dragged_to(to: [f32; 2], size: [f32; 2]) -> [f32; 2] {
+    let snap = |at: f32, length: f32, screen: f32| {
+        if at.abs() <= MAGNET {
+            0.0
+        } else if (at + length - screen).abs() <= MAGNET {
+            screen - length
+        } else {
+            at
+        }
+    };
+    let x = snap(to[0], size[0], screen()[0]).clamp(KEEP_SHOWING - size[0], screen()[0] - KEEP_SHOWING);
+    let y = snap(to[1], size[1], screen()[1]).clamp(0.0, screen()[1] - TITLE_HEIGHT);
+    [x, y]
+}
+
+/// How see-through a window is `now`: easing to HELD_FADED while held (since `held`), and back once let go (at
+/// `let_go`, from how faded it was then).
+fn hold_fade(held: Option<Instant>, let_go: Option<(Instant, f32)>, now: Instant) -> f32 {
+    let eased = |since: Instant| (now.saturating_duration_since(since).as_secs_f32() / HOLD_EASE.as_secs_f32()).min(1.0);
+    match (held, let_go) {
+        (Some(held), _) => HELD_FADED * eased(held),
+        (None, Some((at, from))) => from * (1.0 - eased(at)),
+        (None, None) => 0.0,
+    }
+}
+
 /// A window's place on screen and its title bar's state.
 pub struct Frame {
     pub open: bool,
@@ -60,11 +100,33 @@ pub struct Frame {
     width: f32,
     /// Pointer offset into the title bar while the window is dragged.
     drag: Option<[f32; 2]>,
+    /// When it was grabbed, or let go (and how faded it was then), for the see-through while held.
+    held: Option<Instant>,
+    let_go: Option<(Instant, f32)>,
+    /// A double click on the title bar collapses or opens it; the last title press.
+    collapses: bool,
+    last_title_press: Option<Instant>,
 }
 
 impl Frame {
     pub fn new(position: [f32; 2], width: f32) -> Self {
-        Self { open: false, minimized: false, position, width, drag: None }
+        Self { open: false, minimized: false, position, width, drag: None, held: None, let_go: None, collapses: false, last_title_press: None }
+    }
+
+    /// The window collapses to its title bar on a double click there (inventory, equipment, status, basic info).
+    pub fn collapsing(mut self) -> Self {
+        self.collapses = true;
+        self
+    }
+
+    /// The pointer is holding it.
+    pub fn dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    /// How see-through to draw it now (0 opaque): half while it's held.
+    pub fn faded(&self) -> f32 {
+        hold_fade(self.held, self.let_go, crate::control::now())
     }
 
     pub fn toggle(&mut self) {
@@ -104,20 +166,34 @@ impl Frame {
         }
     }
 
+    /// A press on the title bar grabs the window; a second one soon after collapses or opens one that does that.
     pub fn start_drag(&mut self, cursor: [f32; 2]) {
+        let now = crate::control::now();
+        if self.collapses && self.last_title_press.is_some_and(|at| now.saturating_duration_since(at) < TITLE_DOUBLE_CLICK) {
+            self.minimized = !self.minimized;
+            self.last_title_press = None;
+        } else {
+            self.last_title_press = Some(now);
+        }
         self.drag = Some([cursor[0] - self.position[0], cursor[1] - self.position[1]]);
+        self.held = Some(now);
+        self.let_go = None;
     }
 
-    /// Follows the pointer while dragged, keeping the window (`height` tall) on screen; returns whether it is.
+    /// Follows the pointer while dragged (see `dragged_to`); returns whether it is.
     pub fn drag_to(&mut self, cursor: [f32; 2], height: f32) -> bool {
         let Some(grab) = self.drag else { return false };
         let height = if self.minimized { TITLE_HEIGHT } else { height };
-        self.position = [(cursor[0] - grab[0]).clamp(0.0, screen()[0] - self.width), (cursor[1] - grab[1]).clamp(0.0, screen()[1] - height)];
+        self.position = dragged_to([cursor[0] - grab[0], cursor[1] - grab[1]], [self.width, height]);
         true
     }
 
     /// Ends a drag; returns whether one was going on.
     pub fn drop_drag(&mut self) -> bool {
+        let now = crate::control::now();
+        if let Some(held) = self.held.take() {
+            self.let_go = Some((now, hold_fade(Some(held), None, now)));
+        }
         self.drag.take().is_some()
     }
 
@@ -293,6 +369,45 @@ impl<T> Amount<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dragged_windows_snap_to_the_edges_and_stay_in_reach() {
+        let size = [280.0, 300.0];
+        // Within 10 px of an edge: flush. Farther: where it was put.
+        assert_eq!(dragged_to([7.0, 9.0], size), [0.0, 0.0]);
+        assert_eq!(dragged_to([1024.0 - 280.0 - 10.0, 768.0 - 300.0 + 4.0], size), [744.0, 468.0]);
+        assert_eq!(dragged_to([11.0, 12.0], size), [11.0, 12.0]);
+        // Off screen it keeps 40 px showing and its title bar.
+        assert_eq!(dragged_to([-500.0, -50.0], size), [-240.0, 0.0]);
+        assert_eq!(dragged_to([2000.0, 2000.0], size), [984.0, 768.0 - TITLE_HEIGHT]);
+    }
+
+    #[test]
+    fn held_windows_fade_to_half_and_back() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        assert_eq!(hold_fade(None, None, start), 0.0);
+        assert!((hold_fade(Some(start), None, at(267)) - HELD_FADED).abs() < 1e-4);
+        assert!((hold_fade(Some(start), None, at(133)) - HELD_FADED / 2.0).abs() < 0.01);
+        // Let go halfway faded: back to opaque over the same time.
+        assert!((hold_fade(None, Some((at(0), 0.25)), at(133)) - 0.125).abs() < 0.01);
+        assert_eq!(hold_fade(None, Some((at(0), 0.25)), at(400)), 0.0);
+    }
+
+    #[test]
+    fn a_double_click_on_the_title_collapses_a_window_that_does_that() {
+        let mut inventory = Frame::new([0.0, 0.0], 280.0).collapsing();
+        inventory.start_drag([5.0, 5.0]);
+        inventory.drop_drag();
+        assert!(!inventory.minimized);
+        inventory.start_drag([5.0, 5.0]);
+        inventory.drop_drag();
+        assert!(inventory.minimized);
+        let mut storage = Frame::new([0.0, 0.0], 280.0);
+        storage.start_drag([5.0, 5.0]);
+        storage.start_drag([5.0, 5.0]);
+        assert!(!storage.minimized);
+    }
 
     #[test]
     fn wraps_whole_words() {

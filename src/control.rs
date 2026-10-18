@@ -13,7 +13,8 @@
 //! - `screenshot` `{crop?: [x, y, width, height], scale?}`: the next frame through the `RUSTNAROK_CLIENT_SCREENSHOT` capture,
 //!   as base64 PNG (`png`).
 //! - `move` `{x, y}`, `click` `{x, y, button?: "left"|"right", mods?: "Alt+Shift", count?}`, `drag` `{from: [x, y],
-//!   to: [x, y], button?, mods?}`: the pointer and buttons, through the same code as the mouse.
+//!   to: [x, y], button?, mods?, held?}` (`held`: the button stays down until `release` `{button?}`): the pointer and
+//!   buttons, through the same code as the mouse.
 //! - `key` `{key, repeat?, hold?}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End",
 //!   "PageUp", "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12", "PrintScreen", "ScrollLock" or one
 //!   character, after modifiers like "Alt+" or "Ctrl+". `repeat` is an auto-repeat; shortcuts ignore it. `hold` is
@@ -97,6 +98,14 @@ pub enum Command {
         button: Button,
         #[serde(default)]
         mods: String,
+        /// Leave the button down at `to` (let go with `release`), to look at something mid-drag.
+        #[serde(default)]
+        held: bool,
+    },
+    /// Lets go of a button held by a `drag` with `held`.
+    Release {
+        #[serde(default)]
+        button: Button,
     },
     Key {
         key: String,
@@ -448,9 +457,9 @@ pub fn now() -> Instant {
 }
 
 /// Every drawn frame passes here: a screenshot asked for is taken of it, the way `RUSTNAROK_CLIENT_SCREENSHOT` captures.
-pub fn on_draw(gpu: &Gpu, world: Option<&dyn WorldPass>, sprites: &[Sprite]) {
+pub fn on_draw(gpu: &Gpu, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32]) {
     if WANT_SHOT.swap(false, Ordering::Relaxed) {
-        *SHOT.lock().unwrap() = Some(gpu.snapshot(world, sprites));
+        *SHOT.lock().unwrap() = Some(gpu.snapshot(world, sprites, alphas));
     }
 }
 
@@ -494,14 +503,20 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             });
             Ok(Value::Null)
         }
-        Command::Drag { from, to, button, mods } => {
+        Command::Drag { from, to, button, mods, held: keep_down } => {
             let held = modifiers(&mods)?;
             hold(app, held, |app| {
                 point(app, from);
                 press(app, event_loop, button, ElementState::Pressed);
                 point(app, to);
-                press(app, event_loop, button, ElementState::Released);
+                if !keep_down {
+                    press(app, event_loop, button, ElementState::Released);
+                }
             });
+            Ok(Value::Null)
+        }
+        Command::Release { button } => {
+            press(app, event_loop, button, ElementState::Released);
             Ok(Value::Null)
         }
         Command::Wheel { x, y, rows } => {
