@@ -117,6 +117,9 @@ pub struct Assets {
     guild_ring: Texture,
     /// The map's boss, where the Convex Mirror shows it.
     boss: Texture,
+    /// A navigation's trail dots and where it heads.
+    trail: Texture,
+    goal: Texture,
 }
 
 /// Turns an image by `angle` radians around its center (nearest neighbor), keeping its size.
@@ -153,6 +156,8 @@ impl Assets {
             guild: gpu.texture(&disc(2, rgba(0xffffa6d2)), false),
             guild_ring: gpu.texture(&disc(3, rgba(0xaaffffff)), false),
             boss: image(format!("{UI}map\\bossmonster.bmp")),
+            trail: gpu.texture(&disc(1, rgba(0xffff4040)), false),
+            goal: gpu.texture(&disc(3, rgba(0xffff2020)), false),
         }
     }
 }
@@ -195,7 +200,8 @@ pub fn load_map(grf: &Grf, map: &str) -> Option<RgbaImage> {
 }
 
 /// What the minimap draws besides the overview: the player's cell and the arrow's turn (180° less the camera's yaw),
-/// NPC marks and party members (a cell and a texture of their colour), guild members, the boss.
+/// NPC marks and party members (a cell and a texture of their colour), guild members, the boss, and a navigation's
+/// trail (cells) and where it heads on this map.
 pub struct Markers<'a> {
     pub cell: [i32; 2],
     pub yaw: f32,
@@ -203,6 +209,8 @@ pub struct Markers<'a> {
     pub party: &'a [([i32; 2], &'a Texture)],
     pub guild: &'a [[i32; 2]],
     pub boss: Option<[i32; 2]>,
+    pub trail: &'a [[i32; 2]],
+    pub goal: Option<[i32; 2]>,
 }
 
 /// Draws the minimap: the overview's window (already cropped, `overview`), then the markers through it, then the
@@ -213,6 +221,15 @@ pub fn draw<'a>(layer: &mut Layer<'a>, assets: &'a Assets, overview: Option<&'a 
     if let Some(overview) = overview {
         layer.sprites.push((overview, origin(), [SIZE, SIZE]));
         let at = |cell: [i32; 2]| on_screen(share(cell, size), window, zoom).map(|point| point.map(f32::round));
+        // A navigation's trail, a dot every few cells, and a disc where it heads.
+        // ponytail: the client's own route look on the minimap isn't known; red dots.
+        for &cell in markers.trail.iter().step_by(crate::navigation::TRAIL_STEP) {
+            let Some([x, y]) = at(cell) else { continue };
+            layer.sprites.push((&assets.trail, [x - 1.0, y - 1.0], assets.trail.size));
+        }
+        if let Some([x, y]) = markers.goal.and_then(at) {
+            layer.sprites.push((&assets.goal, [x - 3.0, y - 3.0], assets.goal.size));
+        }
         // The cross: 8x2 and 2x8.
         for &(cell, color) in markers.marks {
             let Some([x, y]) = at(cell) else { continue };

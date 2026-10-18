@@ -85,6 +85,7 @@ mod menu;
 mod mercenary;
 mod minimap;
 mod monster_info;
+mod navigation;
 mod options;
 mod overhead;
 mod party;
@@ -563,6 +564,12 @@ const MENU_SELECTION: [u8; 4] = [0xCD, 0xE0, 0xFF, 0xFF];
 const SKILL_ACTION: usize = 12;
 /// How far over the ground the magic square under a ground cast floats, so the ground doesn't cover it.
 const CAST_SQUARE_LIFT: f32 = 0.2;
+/// The navigation arrow sits this far over the head; routes the player starts may use every service.
+// ponytail: the client's arrow height and its services for a route picked by hand are estimates.
+const NAVI_ARROW_RISE: f32 = 12.0;
+const NAVI_SERVICES: u8 = 111;
+/// How many cells toward where it heads the arrow looks.
+const NAVI_ARROW_LOOK: f32 = 3.0;
 /// Words over a head stay this long.
 const SPEECH_TIME: Duration = Duration::from_secs(5);
 /// Spirit spheres and coins: how far from the body they circle, how high, how fast (radians a second), and how
@@ -980,6 +987,9 @@ struct Game {
     /// Reputation points by reputation type, as the server last sent them, and the reputation window while it's open.
     reputation: HashMap<u64, i64>,
     reputation_window: Option<reputation::Window>,
+    /// The navigation under way, and the navigation window while it's open.
+    navigation: Option<navigation::Active>,
+    navi_window: Option<navigation::Window>,
     /// What was just picked up, for five seconds; and whether anything was since the inventory was last open.
     pickup_popup: Option<pickup::Popup>,
     new_items: bool,
@@ -1075,8 +1085,8 @@ struct Game {
     sign_rects: Vec<([f32; 4], u32, u8)>,
     /// Item links as last drawn, their boxes and items: in the chat log (under the windows) and in the NPC window
     /// (over them).
-    chat_links: Vec<([f32; 4], links::ItemLink)>,
-    dialog_links: Vec<([f32; 4], links::ItemLink)>,
+    chat_links: Vec<([f32; 4], links::Target)>,
+    dialog_links: Vec<([f32; 4], links::Target)>,
     /// The room we're in, and the window making one.
     room: Option<chatroom::Room>,
     room_make: Option<chatroom::Make>,
@@ -2098,6 +2108,11 @@ impl Game {
     /// Whether the pointer is on a window's control: a title bar's close or minimize button, the equipment window's
     /// buttons, a pick list's OK or Cancel.
     // ponytail: tabs, scroll arrows, resize corners and the minimap aren't told apart yet.
+    /// Opens the navigation window, or closes it.
+    fn toggle_navigation(&mut self) {
+        self.navi_window = if self.navi_window.is_some() { None } else { Some(navigation::Window::new()) };
+    }
+
     /// Opens the reputation window, or closes it.
     fn toggle_reputation(&mut self, tables: &reputation::Tables) {
         self.reputation_window = match self.reputation_window.take() {
@@ -2107,7 +2122,7 @@ impl Game {
     }
 
     /// The item link under the pointer: the NPC window's, else the chat log's where no window covers it.
-    fn link_at(&self, cursor: [f32; 2]) -> Option<&links::ItemLink> {
+    fn link_at(&self, cursor: [f32; 2]) -> Option<&links::Target> {
         links::at(&self.dialog_links, cursor).or_else(|| self.window_at(cursor).is_none().then(|| links::at(&self.chat_links, cursor)).flatten())
     }
 
@@ -2390,6 +2405,11 @@ impl Game {
                 self.open_dressroom();
                 Ok(())
             }
+            chat::Command::Navigation => {
+                self.toggle_navigation();
+                self.sync_esc();
+                Ok(())
+            }
             // ponytail: the client's lines for /camera speak of zooming; they're used for on and off.
             chat::Command::Camera => {
                 self.camera_snap = !self.camera_snap;
@@ -2594,6 +2614,7 @@ impl Game {
             || self.viewing.as_ref().is_some_and(|viewed| viewed.window.hit(cursor, &viewed.items).is_some())
             || self.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some()
             || self.reputation_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
+            || self.navi_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
             || self.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some()
             || self.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
@@ -3036,6 +3057,7 @@ impl Game {
         push(DressRoom, self.dressroom.is_some());
         push(Ranking, self.ranking.is_some());
         push(Reputation, self.reputation_window.is_some());
+        push(Navigation, self.navi_window.is_some());
         push(Catalog, self.catalog.is_some());
         push(SkillDescription, self.skill_description.is_some());
         push(Roulette, self.roulette.is_some());
@@ -3323,6 +3345,7 @@ impl Game {
             }
             Ranking => self.ranking = None,
             Reputation => self.reputation_window = None,
+            Navigation => self.navi_window = None,
             Catalog => self.close_catalog(),
             SkillDescription => self.skill_description = None,
             Roulette => self.close_roulette(),
@@ -4018,8 +4041,11 @@ struct Assets {
     party: party::Assets,
     chatroom: chatroom::Assets,
     reputation: reputation::Assets,
+    /// The navigation arrows, by direction (south, south-west, … south-east).
+    navi_arrows: Vec<Texture>,
     /// Item links' underline in the NPC window.
     link_line: Texture,
+    navi_line: Texture,
     /// The magic square under a ground cast.
     magic_target: Option<Texture>,
     escape: escape::Assets,
@@ -4141,7 +4167,9 @@ impl Assets {
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
             reputation: reputation::Assets::load(gpu, grf),
+            navi_arrows: (0..8).map(|turn| image(format!("{UI}navigation_interface\\navi_grid_{turn}.tga"))).collect(),
             link_line: gpu.solid([links::COLOR[0], links::COLOR[1], links::COLOR[2], 0xFF]),
+            navi_line: gpu.solid([links::NAVI_COLOR[0], links::NAVI_COLOR[1], links::NAVI_COLOR[2], 0xFF]),
             magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
@@ -4621,8 +4649,8 @@ fn message_lines(font: &text::Font, text: &str, width: f32) -> Vec<String> {
 /// shows them: the name alone in the link's color, then the color before it again.
 // ponytail: no underline and no clicking (navigation, item info) yet.
 fn show_links(text: &str) -> String {
-    // Item links are marked runs by now (links::mark); these are the rest.
-    const LINKS: [(&str, &str); 2] = [("NAVI", "C00000"), ("URL", "0070C0")];
+    // Item and navigation links are marked runs by now (links::mark); URLs are only coloured.
+    const LINKS: [(&str, &str); 1] = [("URL", "0070C0")];
     let mut shown = String::new();
     let mut rest = text;
     'scan: while let Some(open) = rest.find('<') {
@@ -4667,7 +4695,7 @@ fn wrap_linked(font: &text::Font, text: &str, width: f32) -> links::LinkedLines 
             }
             for (color, piece) in pieces {
                 line_width += font.width(&piece);
-                let color = if item.is_some() { links::COLOR } else { color };
+                let color = item.as_ref().map_or(color, links::Target::color);
                 wrapped.last_mut().unwrap().push((color, piece, item.clone()));
             }
         }
@@ -4838,6 +4866,8 @@ struct App {
     skill_trees: SkillTrees,
     /// The client's reputation groups and reputations.
     reputation_tables: reputation::Tables,
+    /// The client's navigation tables: maps, the ways between them, NPCs and monsters.
+    navi_tables: lua::NaviTables,
     status_icon_files: HashMap<u16, (u8, String)>,
     /// What each status icon says when pointed at.
     state_infos: HashMap<u16, lua::StateInfo>,
@@ -5096,6 +5126,11 @@ impl App {
                     }
                 }
                 None if game.storage.typing => game.storage.type_text(text),
+                None if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
+                    let window = game.navi_window.as_mut().unwrap();
+                    window.text.push_str(text);
+                    window.search(&self.navi_tables);
+                }
                 None if game.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) => game.catalog.as_mut().unwrap().type_text(text),
                 None if game.room_make.is_some() => game.room_make.as_mut().unwrap().type_text(text),
                 None if game.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) => {
@@ -5322,17 +5357,24 @@ impl App {
                     self.make_action(action);
                 }
             }
-            // An item link in the chat log or the NPC window: the item's information.
-            Scene::Game(game) if game.link_at(cursor).is_some() => {
-                let item = game.link_at(cursor).cloned().unwrap();
-                let shown = iteminfo::Shown { item: item.id, identified: true, refine: item.refine, cards: item.cards, damaged: None, expires: 0 };
-                let position = game.item_window.as_ref().map(|window| window.position);
-                let mut window = iteminfo::ItemWindow::new(shown);
-                if let Some(position) = position {
-                    window.position = position;
+            // A link in the chat log or the NPC window: an item's information, or a navigation to the place.
+            Scene::Game(game) if game.link_at(cursor).is_some() => match game.link_at(cursor).cloned().unwrap() {
+                links::Target::Item(item) => {
+                    let shown = iteminfo::Shown { item: item.id, identified: true, refine: item.refine, cards: item.cards, damaged: None, expires: 0 };
+                    let position = game.item_window.as_ref().map(|window| window.position);
+                    let mut window = iteminfo::ItemWindow::new(shown);
+                    if let Some(position) = position {
+                        window.position = position;
+                    }
+                    game.item_window = Some(window);
                 }
-                game.item_window = Some(window);
-            }
+                links::Target::Navi { map, cell } => {
+                    let map = navigation::map_key(&map);
+                    let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
+                    let target = navigation::Target { cell: (cell != [0, 0]).then_some(cell), monster: None, name, map };
+                    game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
+                }
+            },
             Scene::Game(game) if game.deal_choice.is_some() => {
                 let npc = game.deal_choice.unwrap();
                 let dialog = dialog_position(&assets.message);
@@ -5789,6 +5831,25 @@ impl App {
                     Some(ranking::Hit::Title(TitleHit::Close)) => game.ranking = None,
                     Some(ranking::Hit::Title(title)) => game.ranking.as_mut().unwrap().frame.click_title(title),
                     _ => {}
+                }
+            }
+            // The navigation window: its field, a result to go to, stopping.
+            Scene::Game(game) if game.navi_window.as_ref().and_then(|window| window.hit(cursor)).is_some() => {
+                let window = game.navi_window.as_mut().unwrap();
+                match window.hit(cursor).unwrap() {
+                    navigation::Hit::Title(TitleHit::Close) => game.navi_window = None,
+                    navigation::Hit::Title(title) => window.frame.click_title(title),
+                    navigation::Hit::Field => window.typing = true,
+                    navigation::Hit::Result(index) => {
+                        let target = window.results[index].clone();
+                        window.typing = false;
+                        game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
+                    }
+                    navigation::Hit::Stop => {
+                        window.typing = false;
+                        game.navigation = None;
+                    }
+                    navigation::Hit::Window => window.typing = false,
                 }
             }
             // The reputation window: its title bar.
@@ -6274,8 +6335,10 @@ impl App {
                                 game.toggle_reputation(&self.reputation_tables);
                                 game.sync_esc();
                             }
-                            // ponytail: navigation has no window yet; its button does nothing.
-                            Some("navigation") => {}
+                            Some("navigation") => {
+                                game.toggle_navigation();
+                                game.sync_esc();
+                            }
                             Some("map") => {
                                 game.world_map = match (game.world_map.take(), &self.gpu) {
                                     (None, Some(gpu)) => worldmap::WorldMap::open(gpu, &self.grf, &self.worlds.0, self.worlds.1, &map_key(&game.map)),
@@ -8077,6 +8140,18 @@ impl App {
                     _ => trade.type_text(event.text.as_deref().unwrap_or_default()),
                 }
             }
+            // The navigation window's search field: each change searches again.
+            Scene::Game(game) if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
+                let window = game.navi_window.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Enter | NamedKey::Escape) => window.typing = false,
+                    Key::Named(NamedKey::Backspace) => {
+                        window.text.pop();
+                    }
+                    _ => window.text.push_str(event.text.as_deref().unwrap_or_default()),
+                }
+                window.search(&self.navi_tables);
+            }
             Scene::Game(game) if game.storage.typing => match key {
                 Key::Named(NamedKey::Enter) => game.storage.typing = false,
                 Key::Named(NamedKey::Escape) => {
@@ -8575,6 +8650,8 @@ impl App {
                     ranking: None,
                     reputation: HashMap::new(),
                     reputation_window: None,
+                    navigation: None,
+                    navi_window: None,
                     catalog: None,
                     skill_description: None,
                     pickup_popup: None,
@@ -11143,6 +11220,17 @@ impl App {
                 }
                 game.sync_esc();
             }
+            // The server starts a navigation: to a cell (kind 0), a map (1) or a monster's map (3).
+            MapEvent::Navigate { kind, services, hide_window, map, cell, monster } => {
+                let map = navigation::map_key(&map);
+                let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
+                let target = navigation::Target { cell: (kind == 0).then_some(cell), monster: (kind == 3).then_some(monster), name, map };
+                game.navigation = Some(navigation::Active::new(target, services));
+                if !hide_window && game.navi_window.is_none() {
+                    game.toggle_navigation();
+                    game.sync_esc();
+                }
+            }
             MapEvent::CastCancelled(source) => {
                 let caster = (source != game.account_id).then_some(source);
                 game.casts.remove(&caster);
@@ -12541,6 +12629,27 @@ impl App {
                 [((overhead::CAST_BAR[0] - 2.0) * share_left(start, length, now)).round(), overhead::CAST_BAR[1] - 2.0],
             ));
         }
+        // Navigation: there is the end of it; else the trail to where it heads on this map, and the arrow over the head.
+        let here = navigation::map_key(&game.map);
+        if game.navigation.as_ref().is_some_and(|active| navigation::arrived(&here, game.player.cell, &active.target)) {
+            game.navigation = None;
+        }
+        let navi_next = game.navigation.as_ref().and_then(|active| navigation::next_cell(&self.navi_tables, &here, &active.target, active.services));
+        if let Some(active) = &mut game.navigation {
+            let gat = &game.world.gat;
+            active.update_trail(&here, game.player.cell, navi_next, |from, to| world::find_path(gat, from, to));
+        }
+        if let Some(next) = navi_next {
+            // A point a few cells toward it, so a far goal off the screen still turns the arrow.
+            let toward = [f32::from(next[0]) - game.player.cell[0] as f32, f32::from(next[1]) - game.player.cell[1] as f32];
+            let length = toward[0].hypot(toward[1]).max(1.0);
+            let near = [0, 1].map(|axis| game.player.cell[axis] as f32 + toward[axis] / length * NAVI_ARROW_LOOK.min(length));
+            let goal = game.world.cell_position(near);
+            if let (Some(from), Some(to), Some([x, y])) = (sprite_point(player_feet, 0.0), sprite_point(goal, 0.0), head(&None)) {
+                let arrow = &assets.navi_arrows[navigation::arrow([to[0] - from[0], to[1] - from[1]])];
+                base.sprites.push((arrow, [x - arrow.size[0] / 2.0, y - NAVI_ARROW_RISE - arrow.size[1]], arrow.size));
+            }
+        }
         // Chat room signs over their owners' heads, like speech (not the room we're in).
         game.sign_rects.clear();
         for (owner, sign) in &game.signs {
@@ -12596,7 +12705,8 @@ impl App {
                         overlay.texts.push((piece.clone(), [x, y], *color));
                         // Item links underlined, and clickable.
                         if let Some(item) = item {
-                            overlay.sprites.push((&assets.link_line, [x, y + font.line_height() - 1.0], [width, 1.0]));
+                            let line = if item.item().is_some() { &assets.link_line } else { &assets.navi_line };
+                            overlay.sprites.push((line, [x, y + font.line_height() - 1.0], [width, 1.0]));
                             dialog_links.push(([x, y, width, font.line_height()], item.clone()));
                         }
                         x += width;
@@ -12750,7 +12860,9 @@ impl App {
                 game.minimap_crop.as_ref().map(|(_, texture)| texture)
             }
         };
-        let markers = minimap::Markers { cell: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss };
+        let trail = game.navigation.as_ref().map_or(&[][..], |active| active.trail.as_slice());
+        let goal = navi_next.map(|cell| cell.map(i32::from));
+        let markers = minimap::Markers { cell: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss, trail, goal };
         minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.minimap_zoom, &markers);
         // Status icons down the right, each with the clock of its time (orange in the last minute).
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
@@ -13328,6 +13440,10 @@ impl App {
         }
         if let Some(board) = &game.ranking {
             board.draw(&mut shop_layer, &assets.chrome, font, messages, &game.char_names, pointer.0);
+        }
+        if let Some(window) = &game.navi_window {
+            let caret = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+            window.draw(&mut shop_layer, &assets.chrome, font, messages, game.navigation.as_ref().map(|active| &active.target), pointer.0, caret);
         }
         if let Some(window) = &game.reputation_window {
             window.draw(&mut shop_layer, &assets.chrome, &assets.reputation, font, messages, &self.reputation_tables, &game.reputation, pointer.0);
@@ -13912,6 +14028,7 @@ fn main() {
     });
     let skill_trees = lua::skill_trees(&grf).unwrap_or_default();
     let reputation_tables = reputation::Tables::load(&grf);
+    let navi_tables = lua::navigation(&grf).unwrap_or_default();
     let status_icon_files = lua::status_icons(&grf).unwrap_or_default();
     let state_infos = lua::state_info(&grf).unwrap_or_else(|error| {
         eprintln!("no status icon descriptions: {error}");
@@ -13976,6 +14093,7 @@ fn main() {
         skill_descriptions,
         skill_trees,
         reputation_tables,
+        navi_tables,
         status_icon_files,
         state_infos,
         effect_table: effects::Table::load(),
@@ -14273,7 +14391,7 @@ mod tests {
         assert_eq!(quick_target(false, false, false), None);
         // Our Shift-click's link reads back as a link to the item.
         let (shown, runs) = links::split(&links::mark(&item_link(512, "Apple"), &|_| String::new()));
-        assert_eq!((shown.as_str(), runs[0].1.id), ("Apple", 512));
+        assert_eq!((shown.as_str(), runs[0].1.item().map(|item| item.id)), ("Apple", Some(512)));
     }
 
     #[test]
@@ -14481,7 +14599,7 @@ mod tests {
     #[test]
     fn keeps_wrapped_links_clickable() {
         let font = Font::load();
-        let apple = links::ItemLink { id: 512, ..links::ItemLink::default() };
+        let apple = links::Target::Item(links::ItemLink { id: 512, ..links::ItemLink::default() });
         let text = format!("^0000FFTake {} home^000000", links::marked("Big Red Apple", &apple));
         // Narrow enough that the link breaks: both of its lines are the link, in its colour; the colour before it
         // comes back after it.
@@ -14498,14 +14616,17 @@ mod tests {
         assert_eq!(lines.last().unwrap().last().map(|(color, piece, _)| (*color, piece.trim())), Some(([0, 0, 0xFF], "home")));
         // The click test over a link wrapped onto two lines: either box finds the item, the gap beside them nothing.
         let boxes = [([10.0, 20.0, 40.0, 14.0], apple.clone()), ([0.0, 34.0, 25.0, 14.0], apple.clone())];
-        let at = |cursor: [f32; 2]| links::at(&boxes, cursor).map(|item| item.id);
+        let at = |cursor: [f32; 2]| links::at(&boxes, cursor).and_then(links::Target::item).map(|item| item.id);
         assert_eq!([at([30.0, 25.0]), at([5.0, 40.0]), at([30.0, 40.0]), at([50.0, 25.0])], [Some(512), Some(512), None, None]);
     }
 
     #[test]
     fn shows_npc_links_by_name() {
         let navi = "Let me mark the ^B9062F<NAVI>[Tool Shop]<INFO>prontera,134,221,0,000,0</INFO></NAVI>^000000 for you.";
-        assert_eq!(show_links(navi), "Let me mark the ^B9062F^C00000[Tool Shop]^B9062F^000000 for you.");
+        // The place is a link to navigate to; the colour codes around it stay for the wrapping to read.
+        let (shown, runs) = links::split(&show_links(&links::mark(navi, &|_| String::new())));
+        assert_eq!(shown, "Let me mark the ^B9062F[Tool Shop]^000000 for you.");
+        assert_eq!(runs.iter().map(|(_, target)| target.clone()).collect::<Vec<_>>(), [links::Target::Navi { map: "prontera".into(), cell: [134, 221] }]);
         let marked = show_links(&links::mark("a <ITEM>Apple<INFO>512</INFO></ITEM> < b", &|_| String::new()));
         assert_eq!(links::split(&marked).0, "a Apple < b");
     }

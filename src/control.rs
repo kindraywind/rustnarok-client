@@ -992,7 +992,13 @@ fn game_state(app: &App, game: &Game) -> Value {
             let name = if kind == crate::chatroom::BUYING_STORE { "buying_sign" } else { "room_sign" };
             json!({"kind": "button", "name": name, "box": [rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]]})
         }))
-        .chain(game.dialog_links.iter().chain(&game.chat_links).map(|(area, item)| json!({"kind": "item_link", "id": item.id, "box": area})))
+        .chain(game.dialog_links.iter().chain(&game.chat_links).map(|(area, target)| match target {
+            crate::links::Target::Item(item) => json!({"kind": "item_link", "id": item.id, "box": area}),
+            crate::links::Target::Navi { map, .. } => json!({"kind": "navi_link", "map": map, "box": area}),
+        }))
+        .chain(
+            game.navi_window.iter().flat_map(crate::navigation::Window::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1281,6 +1287,13 @@ fn game_state(app: &App, game: &Game) -> Value {
         "cursor": format!("{:?}", app.cursor_look.kind()),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
         "chat_line_open": game.chat_mode.chat_line_open(),
+        // The navigation under way: where to, and how long the trail on this map is.
+        "navigation": game.navigation.as_ref().map(|active| json!({
+            "map": active.target.map,
+            "cell": active.target.cell,
+            "monster": active.target.monster,
+            "trail": active.trail.len(),
+        })),
         // Reputation points by reputation type.
         "reputation": game.reputation.iter().map(|(kind, points)| (kind.to_string(), json!(points))).collect::<serde_json::Map<_, _>>(),
         // The item information window's item, if it's open.

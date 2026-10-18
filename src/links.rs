@@ -1,18 +1,62 @@
-//! Item links in chat and NPC text. The three forms the server sends (`<ITEM>name<INFO>id</INFO></ITEM>`,
-//! `<ITEMLINK>…</ITEMLINK>` and `<ITEML>…</ITEML>`, see rathena's `create_item_link`) become marked runs in the text
-//! the windows already draw: the link's words between markers that carry its item, so a line keeps its links through
-//! wrapping and the windows can underline them and take clicks on them.
+//! Links in chat and NPC text. The three item forms the server sends (`<ITEM>name<INFO>id</INFO></ITEM>`,
+//! `<ITEMLINK>…</ITEMLINK>` and `<ITEML>…</ITEML>`, see rathena's `create_item_link`) and navigation links
+//! (`<NAVI>name<INFO>map,x,y,…</INFO></NAVI>`) become marked runs in the text the windows already draw: the link's
+//! words between markers that carry its target, so a line keeps its links through wrapping and the windows can
+//! underline them and take clicks on them.
 
 use std::ops::Range;
 
-/// Opens a link; the item follows, then `WORDS`, then the words shown, then `END`.
+/// Opens a link; the target follows, then `WORDS`, then the words shown, then `END`.
 const START: char = '\u{E000}';
 const WORDS: char = '\u{E001}';
 const END: char = '\u{E002}';
 /// Wrapped text: per line, its pieces' colour, text and the link each is part of.
-pub type LinkedLines = Vec<Vec<([u8; 3], String, Option<ItemLink>)>>;
-/// The colour links are drawn in.
+pub type LinkedLines = Vec<Vec<([u8; 3], String, Option<Target>)>>;
+/// The colours item links and navigation links are drawn in.
 pub const COLOR: [u8; 3] = [0x00, 0x70, 0xC0];
+pub const NAVI_COLOR: [u8; 3] = [0xC0, 0x00, 0x00];
+
+/// What a link opens: an item's information, or a navigation to a place (x and y 0: the map itself).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Target {
+    Item(ItemLink),
+    Navi { map: String, cell: [u16; 2] },
+}
+
+impl Target {
+    pub fn color(&self) -> [u8; 3] {
+        match self {
+            Target::Item(_) => COLOR,
+            Target::Navi { .. } => NAVI_COLOR,
+        }
+    }
+
+    pub fn item(&self) -> Option<&ItemLink> {
+        match self {
+            Target::Item(item) => Some(item),
+            Target::Navi { .. } => None,
+        }
+    }
+
+    fn encode(&self) -> String {
+        match self {
+            Target::Item(item) => format!("i {}", item.encode()),
+            Target::Navi { map, cell } => format!("n {} {} {map}", cell[0], cell[1]),
+        }
+    }
+
+    fn decode(text: &str) -> Option<Self> {
+        match text.split_once(' ')? {
+            ("i", item) => ItemLink::decode(item).map(Target::Item),
+            ("n", place) => {
+                let mut fields = place.splitn(3, ' ');
+                let cell = [fields.next()?.parse().ok()?, fields.next()?.parse().ok()?];
+                Some(Target::Navi { map: fields.next()?.to_owned(), cell })
+            }
+            _ => None,
+        }
+    }
+}
 
 /// The item a link stands for: what the item information window shows.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -99,31 +143,36 @@ pub fn decode_iteml(body: &str) -> Option<ItemLink> {
     Some(link)
 }
 
-/// `words` as a link to `item`.
-pub fn marked(words: &str, item: &ItemLink) -> String {
-    format!("{START}{}{WORDS}{words}{END}", item.encode())
+/// `words` as a link to `target`.
+pub fn marked(words: &str, target: &Target) -> String {
+    format!("{START}{}{WORDS}{words}{END}", target.encode())
 }
 
-/// The text with its item links made into marked runs, named by `name_of` where the link carries no words (`<ITEML>`).
+/// The text with its item and navigation links made into marked runs, items named by `name_of` where the link carries
+/// no words (`<ITEML>`).
 pub fn mark(text: &str, name_of: &dyn Fn(&ItemLink) -> String) -> String {
     let mut shown = String::new();
     let mut rest = text;
     'scan: while let Some(open) = rest.find('<') {
-        for tag in ["ITEMLINK", "ITEML", "ITEM"] {
+        for tag in ["ITEMLINK", "ITEML", "ITEM", "NAVI"] {
             let start = format!("<{tag}>");
             let end = format!("</{tag}>");
             if let Some(inner) = rest[open..].strip_prefix(start.as_str())
                 && let Some(close) = inner.find(end.as_str())
             {
                 let body = &inner[..close];
-                let link = if tag == "ITEML" {
-                    decode_iteml(body).map(|item| (name_of(&item), item))
-                } else {
+                let info = || body.split_once("<INFO>").map(|(words, info)| (words, info.trim_end_matches("</INFO>").trim()));
+                let link = match tag {
+                    "ITEML" => decode_iteml(body).map(|item| (name_of(&item), Target::Item(item))),
+                    // name<INFO>map,x,y,…</INFO>
+                    "NAVI" => info().and_then(|(words, info)| {
+                        let mut fields = info.split(',');
+                        let map = fields.next()?.trim().to_owned();
+                        let cell = [fields.next()?.trim().parse().ok()?, fields.next()?.trim().parse().ok()?];
+                        Some((words.to_owned(), Target::Navi { map, cell }))
+                    }),
                     // name<INFO>id</INFO>
-                    body.split_once("<INFO>").and_then(|(words, info)| {
-                        let id = info.trim_end_matches("</INFO>").trim().parse().ok()?;
-                        Some((words.to_owned(), ItemLink { id, ..ItemLink::default() }))
-                    })
+                    _ => info().and_then(|(words, id)| Some((words.to_owned(), Target::Item(ItemLink { id: id.parse().ok()?, ..ItemLink::default() })))),
                 };
                 let Some((words, item)) = link else { continue };
                 shown.push_str(&rest[..open]);
@@ -139,8 +188,8 @@ pub fn mark(text: &str, name_of: &dyn Fn(&ItemLink) -> String) -> String {
     shown
 }
 
-/// The text as shown (markers and items taken out), and each link's byte range in it with its item.
-pub fn split(text: &str) -> (String, Vec<(Range<usize>, ItemLink)>) {
+/// The text as shown (markers and targets taken out), and each link's byte range in it with its target.
+pub fn split(text: &str) -> (String, Vec<(Range<usize>, Target)>) {
     let mut shown = String::new();
     let mut runs = Vec::new();
     let mut rest = text;
@@ -148,7 +197,7 @@ pub fn split(text: &str) -> (String, Vec<(Range<usize>, ItemLink)>) {
         shown.push_str(&rest[..open]);
         let after = &rest[open + START.len_utf8()..];
         let (Some(words_at), Some(end_at)) = (after.find(WORDS), after.find(END)) else { break };
-        if let Some(item) = ItemLink::decode(&after[..words_at]) {
+        if let Some(item) = Target::decode(&after[..words_at]) {
             let start = shown.len();
             shown.push_str(&after[words_at + WORDS.len_utf8()..end_at]);
             runs.push((start..shown.len(), item));
@@ -160,7 +209,7 @@ pub fn split(text: &str) -> (String, Vec<(Range<usize>, ItemLink)>) {
 }
 
 /// The link whose box (x, y, width, height) holds `cursor`, the last drawn first.
-pub fn at(boxes: &[([f32; 4], ItemLink)], cursor: [f32; 2]) -> Option<&ItemLink> {
+pub fn at(boxes: &[([f32; 4], Target)], cursor: [f32; 2]) -> Option<&Target> {
     boxes
         .iter()
         .rev()
@@ -169,7 +218,7 @@ pub fn at(boxes: &[([f32; 4], ItemLink)], cursor: [f32; 2]) -> Option<&ItemLink>
 }
 
 /// Pieces of marked text, in order: each piece's text and the link it's part of, if any.
-pub fn pieces(text: &str) -> Vec<(String, Option<ItemLink>)> {
+pub fn pieces(text: &str) -> Vec<(String, Option<Target>)> {
     let (shown, runs) = split(text);
     let mut pieces = Vec::new();
     let mut at = 0;
@@ -199,15 +248,20 @@ mod tests {
         // An NPC's and our own Shift-click's: the words and the id.
         let (shown, runs) = split(&mark("buy an <ITEM>[Apple]<INFO>512</INFO></ITEM> now", &named));
         assert_eq!(shown, "buy an [Apple] now");
-        assert_eq!(runs, vec![(7..14, ItemLink { id: 512, ..ItemLink::default() })]);
+        assert_eq!(runs, vec![(7..14, Target::Item(ItemLink { id: 512, ..ItemLink::default() }))]);
         let (shown, runs) = split(&mark("<ITEMLINK>Jellopy<INFO>909</INFO></ITEMLINK>", &named));
-        assert_eq!((shown.as_str(), runs[0].1.id), ("Jellopy", 909));
+        assert_eq!((shown.as_str(), runs[0].1.item().map(|item| item.id)), ("Jellopy", Some(909)));
         // rathena's <ITEML> for a +7 Knife (1201 = "jn") with cards 4001 (12x) and 0, grade 1, one option 1/0/20.
         let iteml = "<ITEML>000021jn%07&01'01)12x)00)00)00+01,00-0k</ITEML>";
         let (shown, runs) = split(&mark(&format!("look {iteml}!"), &named));
         assert_eq!(shown, "look Knife!");
         let item = ItemLink { id: 1201, refine: 7, cards: [4001, 0, 0, 0], grade: 1, options: vec![[1, 0, 20]] };
-        assert_eq!(runs, vec![(5..10, item)]);
+        assert_eq!(runs, vec![(5..10, Target::Item(item))]);
+        // A navigation link: its words and its place.
+        let (shown, runs) = split(&mark("go to <NAVI>[Tool Shop]<INFO>prontera,134,221,0,000,0</INFO></NAVI>.", &named));
+        assert_eq!(shown, "go to [Tool Shop].");
+        assert_eq!(runs, vec![(6..17, Target::Navi { map: "prontera".into(), cell: [134, 221] })]);
+        assert_eq!(runs[0].1.color(), NAVI_COLOR);
         // A plain item with nothing after its id, and text that only looks like a tag.
         assert_eq!(decode_iteml("0000000jn").map(|item| item.id), Some(1201));
         assert_eq!(split(&mark("a < b <ITEM>broken</ITEM>", &named)).0, "a < b <ITEM>broken</ITEM>");
@@ -215,9 +269,11 @@ mod tests {
 
     #[test]
     fn splits_text_into_pieces() {
-        let text = format!("a {} b {}", marked("One", &ItemLink { id: 1, ..ItemLink::default() }), marked("Two", &ItemLink { id: 2, ..ItemLink::default() }));
+        let item = |id: u32| Target::Item(ItemLink { id, ..ItemLink::default() });
+        let text = format!("a {} b {}", marked("One", &item(1)), marked("Two", &item(2)));
         let parts = pieces(&text);
-        let words: Vec<(&str, Option<u32>)> = parts.iter().map(|(text, item)| (text.as_str(), item.as_ref().map(|item| item.id))).collect();
+        let words: Vec<(&str, Option<u32>)> =
+            parts.iter().map(|(text, target)| (text.as_str(), target.as_ref().and_then(Target::item).map(|item| item.id))).collect();
         assert_eq!(words, [("a ", None), ("One", Some(1)), (" b ", None), ("Two", Some(2))]);
         assert_eq!(pieces("plain"), [("plain".to_owned(), None)]);
     }
