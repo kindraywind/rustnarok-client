@@ -37,6 +37,11 @@ const WANTED_TITLE: usize = 1737;
 pub const OVER_WANTED_MESSAGE: usize = 1739;
 pub const OVER_LIMIT_MESSAGE: usize = 1740;
 const GREY: [u8; 3] = [0x70, 0x70, 0x70];
+/// Buying from an NPC: "Please avoid buying 2 of the same items at one time.", "It is not possible to purchase the
+/// same item more than 30000 pieces at a time", "You do not have enough zeny."
+pub const SAME_EQUIPMENT: usize = 119;
+pub const OVER_30000: usize = 1704;
+pub const NOT_ENOUGH_ZENY: usize = 55;
 
 pub struct Assets {
     strip: Texture,
@@ -93,14 +98,18 @@ pub enum Hit {
     Window(usize),
 }
 
-/// What a click asks the client to do.
+/// What a click or a drop asks the client to do.
 #[derive(Debug, PartialEq)]
 pub enum Action {
     /// Buy or sell what's in the deal.
     Deal,
     Close,
-    /// Ask how many of an offer to put in the deal.
-    Ask(usize),
+    /// Ask how many of an offer to put in the deal, the box filled with this many.
+    Ask(usize, u32),
+    /// Ask how many of a deal row to take out, the box filled with all of them.
+    AskOut(usize, u32),
+    /// Say a message (with a number in it): a refused addition.
+    Say(usize, Option<u32>),
 }
 
 pub struct Shop {
@@ -118,6 +127,8 @@ pub struct Shop {
     scroll: [usize; 2],
     selected: [Option<usize>; 2],
     clicks: Clicks,
+    /// The zeny carried, for what buying from an NPC may add.
+    pub zeny: u64,
 }
 
 impl Shop {
@@ -138,6 +149,69 @@ impl Shop {
             scroll: [0; 2],
             selected: [None; 2],
             clicks: Clicks::default(),
+            zeny: u64::MAX,
+        }
+    }
+
+    /// A plain NPC shop (not a player's shop or store, a market or a barter).
+    pub fn plain(&self) -> bool {
+        self.vendor.is_none() && self.buying_store.is_none() && self.market.is_none()
+    }
+
+    /// Windows held by their title bars follow the pointer.
+    pub fn drag_to(&mut self, cursor: [f32; 2]) {
+        for (window, frame) in self.frames.iter_mut().enumerate() {
+            frame.drag_to(cursor, Self::height(window));
+        }
+    }
+
+    /// Which of its windows is under the pointer: 0 the goods, 1 the deal.
+    pub fn window_at(&self, cursor: [f32; 2]) -> Option<usize> {
+        match self.hit(cursor)? {
+            Hit::Title(window, _) | Hit::Row(window, _) | Hit::Window(window) => Some(window),
+            Hit::Deal | Hit::Cancel => Some(1),
+        }
+    }
+
+    /// The offer a row of a window shows (window 1: a deal row).
+    pub fn offer_at(&self, window: usize, row: usize) -> Option<&Offer> {
+        let offer = if window == 0 { row } else { self.deal.get(row)?.0 };
+        self.offers.get(offer)
+    }
+
+    /// An offer dragged onto the deal: equipment (and a single one carried) goes in at once, the rest asks how many,
+    /// the box filled with 1 when buying and with the whole stack when selling.
+    pub fn drop_offer(&mut self, row: usize) -> Option<Action> {
+        let offer = self.offers.get(row)?;
+        if self.buying_store.is_some() {
+            return (offer.have > 0).then_some(Action::Ask(row, u32::from(offer.have)));
+        }
+        let selling = self.selling || self.vendor.is_some();
+        let single = matches!(offer.kind, ITEM_WEAPON | ITEM_ARMOR | ITEM_PET_EGG | ITEM_PET_ARMOR) || (selling && offer.have == 1);
+        if single {
+            return self.add_checked(row, 1).map(|(message, arg)| Action::Say(message, arg));
+        }
+        Some(Action::Ask(row, if self.selling { u32::from(offer.have) } else { 1 }))
+    }
+
+    /// A deal row dragged back onto the goods: one comes out at once, more asks how many.
+    pub fn drop_deal(&mut self, row: usize) -> Option<Action> {
+        let &(_, amount) = self.deal.get(row)?;
+        if amount == 1 {
+            self.take_out(row, 1);
+            return None;
+        }
+        Some(Action::AskOut(row, amount))
+    }
+
+    /// Takes `amount` of a deal row out of the deal (all of them: the row goes).
+    pub fn take_out(&mut self, row: usize, amount: u32) {
+        let Some((_, had)) = self.deal.get_mut(row) else { return };
+        if amount >= *had {
+            self.deal.remove(row);
+            self.selected[1] = None;
+        } else {
+            *had -= amount;
         }
     }
 
@@ -220,8 +294,9 @@ impl Shop {
             Hit::Title(window, title) => self.frames[window].click_title(title),
             Hit::Row(window, row) => {
                 self.selected[window] = Some(row);
-                // Rows of both windows share the double click tracker: tell them apart.
-                if self.clicks.double((window * 1000 + row) as u16) {
+                // Rows of both windows share the double click tracker: tell them apart. A plain NPC shop moves items
+                // only by dragging.
+                if self.clicks.double((window * 1000 + row) as u16) && !self.plain() {
                     return self.pick(window, row);
                 }
             }
@@ -242,7 +317,7 @@ impl Shop {
         }
         let offer = &self.offers[row];
         if self.buying_store.is_some() {
-            return (offer.have > 0).then_some(Action::Ask(row));
+            return (offer.have > 0).then_some(Action::Ask(row, 0));
         }
         let single =
             matches!(offer.kind, ITEM_WEAPON | ITEM_ARMOR | ITEM_PET_EGG | ITEM_PET_ARMOR) || ((self.selling || self.vendor.is_some()) && offer.have == 1);
@@ -250,7 +325,7 @@ impl Shop {
             self.add(row, 1);
             return None;
         }
-        Some(Action::Ask(row))
+        Some(Action::Ask(row, 0))
     }
 
     /// Puts `amount` of an offer in the deal. For a buying store, checks the wanted amount (1739) and the buyer's
@@ -283,6 +358,24 @@ impl Shop {
             return None;
         }
         let single = matches!(self.offers[offer].kind, ITEM_WEAPON | ITEM_ARMOR | ITEM_PET_EGG | ITEM_PET_ARMOR);
+        // Buying from an NPC: one piece of each equipment, up to 30000 of a thing, no more than the zeny carried.
+        if self.plain() && !self.selling {
+            let already = self.deal.iter().find(|(row, _)| *row == offer).map_or(0, |&(_, had)| had);
+            if single && already > 0 {
+                return Some((SAME_EQUIPMENT, None));
+            }
+            let wanted = if single { 1 } else { amount };
+            let amount = wanted.min(30_000 - already.min(30_000));
+            if self.total() + u64::from(amount) * u64::from(self.offers[offer].price) > self.zeny {
+                return Some((NOT_ENOUGH_ZENY, None));
+            }
+            match self.deal.iter_mut().find(|(row, _)| *row == offer) {
+                Some((_, had)) => *had += amount,
+                None if amount > 0 => self.deal.push((offer, amount)),
+                None => {}
+            }
+            return (amount < wanted).then_some((OVER_30000, Some(30_000)));
+        }
         // Selling, or buying from a player: no more than there are.
         let limit = if self.selling || self.vendor.is_some() {
             u32::from(self.offers[offer].have)
@@ -551,6 +644,31 @@ mod tests {
         assert_eq!(market.deal, [(0, 3)]);
         market.bought(&[(1010, 2)]);
         assert_eq!((market.offers[0].stock, market.deal.is_empty()), (Some(1), true));
+    }
+
+    #[test]
+    fn drags_in_and_out_of_the_deal() {
+        let mut shop = Shop::new(false, vec![offer(501, 50, 0, 0), offer(1201, 100, 0, ITEM_WEAPON)]);
+        // Buying: a potion asks how many (1 in the box); a knife goes in at once, and a second one is refused.
+        assert_eq!(shop.drop_offer(0), Some(Action::Ask(0, 1)));
+        assert_eq!(shop.drop_offer(1), None);
+        assert_eq!(shop.drop_offer(1), Some(Action::Say(SAME_EQUIPMENT, None)));
+        assert_eq!(shop.deal, [(1, 1)]);
+        // Not more than the zeny carried; past 30000 of a thing it's cut, and says so.
+        shop.zeny = 1_000;
+        assert_eq!(shop.add_checked(0, 20), Some((NOT_ENOUGH_ZENY, None)));
+        shop.zeny = u64::MAX;
+        assert_eq!(shop.add_checked(0, 29_999), None);
+        assert_eq!(shop.add_checked(0, 5), Some((OVER_30000, Some(30_000))));
+        assert_eq!(shop.deal, [(1, 1), (0, 30_000)]);
+        // Back out: one at once, more asks with the whole row in the box.
+        assert_eq!(shop.drop_deal(0), None);
+        assert_eq!(shop.drop_deal(0), Some(Action::AskOut(0, 30_000)));
+        shop.take_out(0, 10_000);
+        assert_eq!(shop.deal, [(0, 20_000)]);
+        // Selling: the box holds the whole stack.
+        let mut selling = Shop::new(true, vec![offer(909, 3, 40, 3)]);
+        assert_eq!(selling.drop_offer(0), Some(Action::Ask(0, 40)));
     }
 
     #[test]

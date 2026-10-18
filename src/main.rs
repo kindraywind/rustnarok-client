@@ -1765,6 +1765,8 @@ enum Panel {
 enum Asked {
     /// A row of the shop, into the deal.
     Shop(usize),
+    /// A row of the shop's deal, out of it.
+    ShopOut(usize),
     /// An inventory item, into storage.
     Store(u16),
     /// An inventory item, onto the ground.
@@ -1811,6 +1813,7 @@ impl Asked {
         matches!(
             self,
             Asked::Shop(_)
+                | Asked::ShopOut(_)
                 | Asked::Store(_)
                 | Asked::Drop(_)
                 | Asked::Take(_)
@@ -1918,6 +1921,9 @@ enum Dragged {
     Hotkey(usize),
     /// A worn item, by inventory index, out of the equipment window.
     Worn(u16),
+    /// A shop's offer (by row), or a row of its deal.
+    ShopOffer(usize),
+    ShopDeal(usize),
 }
 
 /// What a sprite on the map belongs to.
@@ -3200,6 +3206,7 @@ impl Game {
             Asked::FromCart(index) => self.cart.get(index).map(|item| item.amount),
             Asked::Take(index) => self.storage.get(index).map(|item| item.amount),
             Asked::Shop(_)
+            | Asked::ShopOut(_)
             | Asked::PartyName
             | Asked::Invite
             | Asked::RoomPassword(_)
@@ -3268,9 +3275,21 @@ impl Game {
                 }
                 Ok(())
             }
-            Asked::Shop(row) if amount.value() > 0 => {
+            Asked::ShopOut(row) => {
                 if let Some(shop) = &mut self.shop
-                    && let Some((msg_id, arg)) = shop.add_checked(row, amount.value())
+                    && amount.value() > 0
+                {
+                    shop.take_out(row, amount.value());
+                }
+                Ok(())
+            }
+            Asked::Shop(row) if amount.value() > 0 => {
+                let zeny = self.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u64;
+                if let Some(shop) = &mut self.shop
+                    && let Some((msg_id, arg)) = {
+                        shop.zeny = zeny;
+                        shop.add_checked(row, amount.value())
+                    }
                 {
                     let text = messages.get(msg_id).map_or("", String::as_str);
                     let line = match arg {
@@ -3300,6 +3319,12 @@ impl Game {
             Asked::Shop(row) => {
                 if let Some(shop) = &mut self.shop {
                     shop.add(row, amount);
+                }
+                Ok(())
+            }
+            Asked::ShopOut(row) => {
+                if let Some(shop) = &mut self.shop {
+                    shop.take_out(row, amount);
                 }
                 Ok(())
             }
@@ -7081,8 +7106,8 @@ impl App {
                         let _ = shop.send(&mut game.session);
                     }
                     Some(shop::Action::Close) => game.close_shop(),
-                    Some(shop::Action::Ask(row)) => game.amount = Some(window::Amount::new(Asked::Shop(row), None)),
-                    None => {}
+                    Some(shop::Action::Ask(row, _)) => game.amount = Some(window::Amount::new(Asked::Shop(row), None)),
+                    Some(shop::Action::AskOut(..) | shop::Action::Say(..)) | None => {}
                 }
             }
             // A small party window: its close button removes it. A click on the body was a drag (handled on press).
@@ -7474,6 +7499,9 @@ impl App {
             if let Some(trade) = &mut game.trade {
                 let height = trade.height();
                 trade.frame.drag_to(self.cursor, height);
+            }
+            if let Some(shop) = &mut game.shop {
+                shop.drag_to(self.cursor);
             }
             let party_height = game.party_window.height(game.party.as_ref(), &game.friends);
             game.party_window.frame.drag_to(self.cursor, party_height);
@@ -7956,7 +7984,7 @@ impl App {
                             id: u32::from(id),
                             count: game.skill_window.use_level(id, skill.level) as i16,
                         }),
-                        Dragged::Stored(_) | Dragged::Carted(_) | Dragged::Hotkey(_) | Dragged::Worn(_) => None,
+                        Dragged::Stored(_) | Dragged::Carted(_) | Dragged::Hotkey(_) | Dragged::Worn(_) | Dragged::ShopOffer(_) | Dragged::ShopDeal(_) => None,
                     };
                     if let Some(key) = key {
                         for (slot, key) in hotkeys::drop_on(&game.hotkeys.keys, key, slot) {
@@ -7981,6 +8009,28 @@ impl App {
                         }
                         Some(_) => {}
                         None => game.chat_line(self.messages.get(HOTKEY_ITEM_STAYS).cloned().unwrap_or_default(), CHAT_ERROR),
+                    }
+                }
+                // A shop's offer let go over its deal goes in; a deal row let go over its goods comes out.
+                if let Some((Dragged::ShopOffer(row) | Dragged::ShopDeal(row), _, true)) = item
+                    && let Some(shop) = &mut game.shop
+                {
+                    let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u64;
+                    shop.zeny = zeny;
+                    let action = match (item.map(|(dragged, ..)| dragged), shop.window_at(self.cursor)) {
+                        (Some(Dragged::ShopOffer(_)), Some(1)) => shop.drop_offer(row),
+                        (Some(Dragged::ShopDeal(_)), Some(0)) => shop.drop_deal(row),
+                        _ => None,
+                    };
+                    match action {
+                        Some(shop::Action::Ask(row, fill)) => game.amount = Some(window::Amount::new(Asked::Shop(row), (fill > 0).then_some(fill))),
+                        Some(shop::Action::AskOut(row, fill)) => game.amount = Some(window::Amount::new(Asked::ShopOut(row), Some(fill))),
+                        Some(shop::Action::Say(message, arg)) => {
+                            let text = self.messages.get(message).map_or("", String::as_str);
+                            let line = arg.map_or_else(|| text.to_owned(), |arg| rustnarok_client::messages::fill(text, &[&arg]));
+                            game.chat_line(line, CHAT_ERROR);
+                        }
+                        _ => {}
                     }
                 }
                 // An item let go over the storage goes in; a stored one let go over the inventory comes out.
@@ -8071,6 +8121,7 @@ impl App {
                 }
                 let trade_moved = game.chat.drop_drag()
                     | game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
+                    | game.shop.as_mut().is_some_and(|shop| shop.frames.iter_mut().fold(false, |moved, frame| frame.drop_drag() | moved))
                     | game.room.as_mut().is_some_and(|room| room.frame.drop_drag())
                     | game.card_view.as_mut().is_some_and(|view| view.drop_drag())
                     | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
@@ -8334,6 +8385,18 @@ impl App {
         {
             if hit == trade::Hit::Title(TitleHit::Title) {
                 trade.frame.start_drag(cursor);
+            }
+            return;
+        }
+        // A shop's row starts a drag at once; its title bar moves the window.
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.shop.as_ref().and_then(|shop| shop.hit(cursor))
+        {
+            match hit {
+                shop::Hit::Row(0, row) => game.dragging = Some((Dragged::ShopOffer(row), cursor, false)),
+                shop::Hit::Row(_, row) => game.dragging = Some((Dragged::ShopDeal(row), cursor, false)),
+                shop::Hit::Title(window, TitleHit::Title) => game.shop.as_mut().unwrap().frames[window].start_drag(cursor),
+                _ => {}
             }
             return;
         }
@@ -14304,6 +14367,16 @@ impl App {
             Some((Dragged::Stored(index), _, true)) => {
                 game.storage.get(index).and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)))
             }
+            Some((Dragged::ShopOffer(row), _, true)) => game
+                .shop
+                .as_ref()
+                .and_then(|shop| shop.offer_at(0, row))
+                .and_then(|offer| items.get(&offer.item).map(|info| inventory::icon_path(info, offer.identified))),
+            Some((Dragged::ShopDeal(row), _, true)) => game
+                .shop
+                .as_ref()
+                .and_then(|shop| shop.offer_at(1, row))
+                .and_then(|offer| items.get(&offer.item).map(|info| inventory::icon_path(info, offer.identified))),
             Some((Dragged::Carted(index), _, true)) => {
                 game.cart.get(index).and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)))
             }

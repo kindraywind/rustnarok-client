@@ -1196,6 +1196,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "look": player_look(game.player.look.as_ref().unwrap_or(&Look::default())),
         },
         "windows": windows,
+        // An open shop's deal: what's in it and how many.
+        "shop_deal": game.shop.as_ref().map(|shop| shop.deal.iter().map(|&(offer, amount)| json!({"item": shop.offers[offer].item, "amount": amount})).collect::<Vec<_>>()),
         // The windows Esc closes, in the order it closes them (newest first).
         "esc_order": game.esc_names(),
         // The game menu's buttons, when it is open (null when it isn't). Newest-first `windows` does not include it.
