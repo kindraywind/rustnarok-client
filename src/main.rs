@@ -2268,7 +2268,7 @@ impl Game {
     }
 
     /// An inventory item let go on the deal: it goes in unless the deal is locked, holds it already or is full.
-    fn offer(&mut self, index: u16) -> Option<usize> {
+    fn offer(&mut self, index: u16, all: bool) -> Option<usize> {
         let trade = self.trade.as_ref()?;
         if !trade.open_for_items() {
             return None;
@@ -2279,7 +2279,22 @@ impl Game {
         if trade.items[0].len() + trade.pending.len() >= trade::MOST_ITEMS {
             return Some(TRADE_FULL);
         }
-        self.move_item(Asked::Trade(index));
+        match self.inventory.get(index).map(|item| u32::from(item.amount)) {
+            Some(amount) if all => self.give(Asked::Trade(index), amount),
+            _ => self.move_item(Asked::Trade(index)),
+        }
+        None
+    }
+
+    /// Alt + right click on an inventory item: the whole stack goes to the first that's open of the storage, a trade
+    /// and the cart. A refused trade says why.
+    fn quick_move(&mut self, index: u16) -> Option<usize> {
+        let amount = u32::from(self.inventory.get(index)?.amount);
+        match quick_target(self.storage.frame.open, self.trade.is_some(), self.cart.cart.is_some() && self.cart.frame.open)? {
+            QuickTo::Storage => self.give(Asked::Store(index), amount),
+            QuickTo::Trade => return self.offer(index, true),
+            QuickTo::Cart => self.give(Asked::ToCart(index), amount),
+        }
         None
     }
 
@@ -3285,6 +3300,50 @@ fn within_pickup(from: [i32; 2], at: [i32; 2]) -> bool {
 fn npc_cursor(job: u16) -> cursor::Kind {
     if job == WARP_JOB { cursor::Kind::Warp } else { cursor::Kind::Talk }
 }
+
+/// A right click on an inventory item with a modifier: Alt sends the stack on, Shift moves it into the favourites or
+/// out, Ctrl identifies it. None: no modifier (the description).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum InventoryRight {
+    QuickMove,
+    Favorite,
+    Identify,
+}
+
+fn inventory_right(alt: bool, shift: bool, ctrl: bool) -> Option<InventoryRight> {
+    if alt {
+        Some(InventoryRight::QuickMove)
+    } else if shift {
+        Some(InventoryRight::Favorite)
+    } else if ctrl {
+        Some(InventoryRight::Identify)
+    } else {
+        None
+    }
+}
+
+/// Where Alt + right click sends a stack: the first that's open of the storage, a trade, the cart.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum QuickTo {
+    Storage,
+    Trade,
+    Cart,
+}
+
+fn quick_target(storage: bool, trade: bool, cart: bool) -> Option<QuickTo> {
+    [(storage, QuickTo::Storage), (trade, QuickTo::Trade), (cart, QuickTo::Cart)].into_iter().find(|(open, _)| *open).map(|(_, to)| to)
+}
+
+/// An item's link on the chat line, as the chat shows links.
+// ponytail: the tag the chat already reads for item links; the official client's own link isn't knowable.
+fn item_link(id: u32, name: &str) -> String {
+    format!("<ITEM>{name}<INFO>{id}</INFO></ITEM>")
+}
+
+/// Magnifier and Novice Magnifier (rathena's ITEMID_MAGNIFIER and ITEMID_NOVICE_MAGNIFIER).
+const MAGNIFIERS: [u32; 2] = [611, 12325];
+/// "You don't have any Magnifier."
+const NO_MAGNIFIER: usize = 2735;
 
 /// What a left click on the world does (`Game::world_click`).
 enum WorldClick {
@@ -4773,7 +4832,14 @@ impl App {
                     }
                     Panel::Inventory => {
                         let hit = game.inventory.hit(cursor).unwrap();
-                        if let Some(index) = game.inventory.click(hit) {
+                        // Shift + click puts the item's link on the chat line.
+                        if shift
+                            && let inventory::Hit::Item(index) = hit
+                            && let Some(item) = game.inventory.get(index)
+                        {
+                            let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
+                            game.chat.typing().push_str(&item_link(item.id, &name));
+                        } else if let Some(index) = game.inventory.click(hit) {
                             game.use_item(index);
                         }
                     }
@@ -5139,13 +5205,32 @@ impl App {
             {
                 game.talk_to(id);
             }
-            // Alt + right click moves a whole stack between the inventory and the open storage.
+            // A right click on an inventory item with a modifier: Alt sends the stack to what's open, Shift moves it
+            // into the favourites or out, Ctrl identifies it with a Magnifier.
+            let (alt, shift, ctrl) = (self.modifiers.alt_key(), self.modifiers.shift_key(), self.modifiers.control_key());
+            if state == ElementState::Pressed
+                && game.window_at(self.cursor) == Some(Panel::Inventory)
+                && let Some(inventory::Hit::Item(index)) = game.inventory.hit(self.cursor)
+                && let Some(item) = game.inventory.get(index).cloned()
+                && let Some(action) = inventory_right(alt, shift, ctrl)
+            {
+                let line = match action {
+                    InventoryRight::QuickMove => game.quick_move(index),
+                    InventoryRight::Favorite => game.session.move_favorite(index, item.favorite).err().and(None),
+                    InventoryRight::Identify if item.identified => None,
+                    InventoryRight::Identify if game.inventory.items.iter().any(|carried| MAGNIFIERS.contains(&carried.id)) => {
+                        game.session.identify_one(index).err().and(None)
+                    }
+                    InventoryRight::Identify => Some(NO_MAGNIFIER),
+                };
+                if let Some(line) = line {
+                    game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+                return;
+            }
+            // Alt + right click takes a whole stack out of the open storage.
             let moved = match game.window_at(self.cursor) {
                 _ if state != ElementState::Pressed || !self.modifiers.alt_key() || !game.storage.frame.open => None,
-                Some(Panel::Inventory) => match game.inventory.hit(self.cursor) {
-                    Some(inventory::Hit::Item(index)) => game.inventory.get(index).map(|item| (Asked::Store(index), item.amount)),
-                    _ => None,
-                },
                 Some(Panel::Storage) => match assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items)) {
                     Some(storage::Hit::Item(index)) => game.storage.get(index).map(|item| (Asked::Take(index), item.amount)),
                     _ => None,
@@ -5421,7 +5506,7 @@ impl App {
                         }
                     }
                     (Some((Dragged::Item(index), _, true)), _) if on_trade => {
-                        if let Some(id) = game.offer(index) {
+                        if let Some(id) = game.offer(index, false) {
                             game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                         }
                     }
@@ -7520,6 +7605,11 @@ impl App {
             }
             // The wear and take-off answers that follow move the items.
             MapEvent::Switched { .. } => {}
+            MapEvent::FavoriteMoved { index, favorite } => {
+                if let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index) {
+                    item.favorite = favorite;
+                }
+            }
             // The storage opens with the inventory beside it.
             MapEvent::InventoryStart { kind: 2 } => {
                 game.storage.open();
@@ -11410,6 +11500,19 @@ mod tests {
         assert_eq!(share_left(start, length, start), 1.0);
         assert_eq!(share_left(start, length, start + Duration::from_millis(200)), 0.75);
         assert_eq!(share_left(start, length, start + Duration::from_secs(2)), 0.0);
+    }
+
+    #[test]
+    fn moves_items_with_a_modifier() {
+        assert_eq!(
+            [inventory_right(true, true, false), inventory_right(false, true, true), inventory_right(false, false, true), inventory_right(false, false, false)],
+            [Some(InventoryRight::QuickMove), Some(InventoryRight::Favorite), Some(InventoryRight::Identify), None]
+        );
+        assert_eq!(quick_target(true, true, true), Some(QuickTo::Storage));
+        assert_eq!(quick_target(false, true, true), Some(QuickTo::Trade));
+        assert_eq!(quick_target(false, false, true), Some(QuickTo::Cart));
+        assert_eq!(quick_target(false, false, false), None);
+        assert_eq!(show_links(&item_link(512, "Apple")), "^0070C0Apple^000000");
     }
 
     #[test]
