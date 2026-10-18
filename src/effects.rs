@@ -653,11 +653,10 @@ impl Effects {
         }
     }
 
-    /// How far the camera is shaken now, up or down.
+    /// How far an earthquake shakes the camera now (0: none).
     pub fn quake(&self, now: Instant) -> f32 {
-        let Some((from, _)) = self.quakes.iter().find(|(from, until)| (*from..*until).contains(&now)) else { return 0.0 };
-        // ponytail: a 10 Hz bounce of a third of a cell, by eye; the client's own amplitude isn't measured.
-        if (now.duration_since(*from).as_millis() / 50).is_multiple_of(2) { CELL / 3.0 } else { -CELL / 3.0 }
+        // ponytail: a third of a cell, by eye; the client's own amplitude isn't measured.
+        if self.quakes.iter().any(|(from, until)| (*from..*until).contains(&now)) { CELL / 3.0 } else { 0.0 }
     }
 
     /// The sounds whose moment came: the file (under data\wav\), and where.
