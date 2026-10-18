@@ -631,6 +631,9 @@ const CZ_NOTIFY_ACTORINIT: u16 = 0x007D;
 const CZ_REQUEST_MOVE: u16 = 0x035F;
 const CZ_CHANGE_DIRECTION: u16 = 0x0361;
 const CZ_CANCEL_LOCKON: u16 = 0x0118;
+const CZ_INVENTORY_TAB: u16 = 0x0907;
+const ZC_INVENTORY_TAB: u16 = 0x0908;
+const CZ_REQ_ONECLICK_ITEMIDENTIFY: u16 = 0x0A35;
 const CZ_REQUEST_TIME: u16 = 0x0360;
 const CZ_REQUEST_CHAT: u16 = 0x00F3;
 const CZ_WHISPER: u16 = 0x0096;
@@ -2369,6 +2372,11 @@ pub enum MapEvent {
         amount: u16,
         result: u8,
     },
+    /// An item went into the favourites, or out.
+    FavoriteMoved {
+        index: u16,
+        favorite: bool,
+    },
     /// The set is switched with what's worn now.
     Switched {
         failed: bool,
@@ -3170,6 +3178,8 @@ pub struct InventoryItem {
     pub expires: u32,
     /// Where it goes in the Swap Equipment set; 0 when it isn't in it.
     pub switch: u32,
+    /// In the favourites (rathena's flag; the client shows them under the etc tab).
+    pub favorite: bool,
 }
 
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
@@ -3219,6 +3229,7 @@ fn decode_normal_item(entry: &[u8]) -> InventoryItem {
         cards: cards_at(entry, 13),
         expires: u32_at(entry, 29),
         identified: entry[33] & 1 != 0,
+        favorite: entry[33] & 2 != 0,
         ..Default::default()
     }
 }
@@ -3237,6 +3248,7 @@ fn decode_equip_item(entry: &[u8]) -> InventoryItem {
         grade: entry[66],
         identified: entry[67] & 1 != 0,
         broken: entry[67] & 2 != 0,
+        favorite: entry[67] & 4 != 0,
         bind: u16_at(entry, 35),
         expires: u32_at(entry, 31),
         switch: 0,
@@ -3305,6 +3317,16 @@ impl MapSession {
         let mut packet = CZ_REQUEST_MOVE.to_le_bytes().to_vec();
         packet.extend_from_slice(&encode_position(to, 0));
         self.stream.write_all(&packet)
+    }
+
+    /// Moves an item into the favourites, or (when it's there now: `favorite`) out of them.
+    pub fn move_favorite(&mut self, index: u16, favorite: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_favorite(index, favorite))
+    }
+
+    /// Identifies an item with a Magnifier from the inventory (rathena uses one up).
+    pub fn identify_one(&mut self, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_index(CZ_REQ_ONECLICK_ITEMIDENTIFY, index))
     }
 
     /// Stops attacking (CZ_CANCEL_LOCKON).
@@ -4957,6 +4979,12 @@ fn encode_materials(kind: u32, ok: bool, entries: &[(u16, u16)]) -> Vec<u8> {
 }
 
 /// CZ_REQ_ACH_REWARD and CZ_REQ_CHANGE_TITLE: a header and an ID.
+/// CZ_INVENTORY_TAB: the index, and whether the item is in the favourites now (rathena moves it the other way).
+fn encode_favorite(index: u16, favorite: bool) -> [u8; 5] {
+    let [[h0, h1], [i0, i1]] = [CZ_INVENTORY_TAB, index].map(u16::to_le_bytes);
+    [h0, h1, i0, i1, u8::from(favorite)]
+}
+
 /// CZ_REQ_ALLY_GUILD: the player asked, then our account and character.
 fn encode_ally_request(account: u32, me: u32, character: u32) -> Vec<u8> {
     [&CZ_REQ_ALLY_GUILD.to_le_bytes()[..], &account.to_le_bytes(), &me.to_le_bytes(), &character.to_le_bytes()].concat()
@@ -5278,6 +5306,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 grade: packet[69],
                 worn: 0,
                 broken: packet[11] != 0,
+                favorite: packet[65] != 0,
                 bind: u16_at(38),
                 expires: u32_at(34),
                 switch: 0,
@@ -5766,6 +5795,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_EQUIPSWITCH_ADDED => MapEvent::SwitchAdded { index: u16_at(2), places: u32_at(4), result: u16_at(8) },
         ZC_EQUIPSWITCH_REMOVED => MapEvent::SwitchRemoved { index: u16_at(2), places: u32_at(4) },
         ZC_EQUIPSWITCH_REPLY => MapEvent::Switched { failed: u16_at(2) != 0 },
+        // rathena's byte is set when the item is out of the favourites (`clif_favorite_item`).
+        ZC_INVENTORY_TAB => MapEvent::FavoriteMoved { index: u16_at(2), favorite: packet[4] == 0 },
         // Length, then the indexes.
         ZC_MERGE_ITEM_OPEN => MapEvent::MergeOpen(packet[4..].chunks_exact(2).map(|index| self::u16_at(index, 0)).collect()),
         ZC_ACK_MERGE_ITEM => MapEvent::Merged { index: u16_at(2), amount: u16_at(4), result: packet[6] },
@@ -6603,6 +6634,23 @@ mod tests {
         assert_eq!(encode_direction(6, 0), [0x61, 0x03, 0, 0, 6]);
         assert_eq!(packet_length(CZ_CHANGE_DIRECTION), Some(5));
         assert_eq!((CZ_CANCEL_LOCKON.to_le_bytes(), packet_length(CZ_CANCEL_LOCKON)), ([0x18, 0x01], Some(2)));
+    }
+
+    #[test]
+    fn moves_favourites_and_identifies() {
+        assert_eq!(encode_favorite(7, false), [0x07, 0x09, 7, 0, 0]);
+        assert_eq!(encode_favorite(7, true)[4], 1);
+        let Some(MapEvent::FavoriteMoved { index: 7, favorite: true }) = decode_map_packet(&[0x08, 0x09, 7, 0, 0]) else { panic!() };
+        let Some(MapEvent::FavoriteMoved { favorite: false, .. }) = decode_map_packet(&[0x08, 0x09, 7, 0, 1]) else { panic!() };
+        assert_eq!(encode_index(CZ_REQ_ONECLICK_ITEMIDENTIFY, 7), [0x35, 0x0A, 7, 0]);
+        assert_eq!([CZ_INVENTORY_TAB, ZC_INVENTORY_TAB, CZ_REQ_ONECLICK_ITEMIDENTIFY].map(packet_length), [Some(5), Some(5), Some(4)]);
+        // The favourite flag: bit 2 of an equipment's flags, bit 1 of another item's.
+        let mut entry = vec![0u8; EQUIP_ITEM_SIZE];
+        entry[67] = 5;
+        assert!(decode_equip_item(&entry).favorite);
+        let mut normal = vec![0u8; NORMAL_ITEM_SIZE];
+        normal[33] = 3;
+        assert!(decode_normal_item(&normal).favorite && decode_normal_item(&normal).identified);
     }
 
     #[test]

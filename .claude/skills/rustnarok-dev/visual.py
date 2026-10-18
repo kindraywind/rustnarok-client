@@ -401,10 +401,11 @@ def run(scenarios, binary, out):
         scenario = json.load(open(path))
         name = os.path.splitext(os.path.basename(path))[0]
         print(f"{name}:")
-        # A client that can't get in (say, no character in the slot on this server) fails its scenario, not the run.
+        # A client that can't get in (no character in the slot, an account the accounts file doesn't have) fails its
+        # scenario, not the run.
         try:
             names = launch(binary, scenario)
-        except RuntimeError as error:
+        except (RuntimeError, KeyError) as error:
             quit_all(scenario)
             results[name] = [f"launch: {error}"]
             print(f"  {name}: FAIL (launch: {error})")

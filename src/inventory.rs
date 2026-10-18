@@ -71,8 +71,9 @@ pub struct Assets {
     cell: Texture,
     count: Texture,
     resize: Texture,
-    /// Marks an item in the Swap Equipment set.
+    /// Marks an item in the Swap Equipment set, and one in the favourites.
     switch: Texture,
+    favorite: Texture,
 }
 
 impl Assets {
@@ -86,6 +87,8 @@ impl Assets {
             count: image(format!("{UI}inventory\\icon_num.bmp")),
             resize: image(format!("{UI}btn_resize.bmp")),
             switch: image(format!("{UI}swap_equipment\\ico_change.bmp")),
+            // ponytail: the style shop's favourite star; this window's tabs have no favourites tab to show.
+            favorite: image(format!("{UI}styleshop\\btn_favorite_on.bmp")),
         }
     }
 }
@@ -129,6 +132,11 @@ impl Default for Inventory {
             clicks: Clicks::default(),
         }
     }
+}
+
+/// The tab an item is listed under: favourites under the etc tab (rathena's flag is PlaceETCTab), the rest by type.
+pub fn listed_tab(item: &InventoryItem) -> usize {
+    if item.favorite { 2 } else { tab_of(item.kind) }
 }
 
 /// The tab an item type is listed under: usable, equipment or everything else.
@@ -321,7 +329,7 @@ impl Inventory {
 
     /// The current tab's items; worn equipment shows in the equipment window instead.
     fn listed(&self) -> impl Iterator<Item = &InventoryItem> {
-        self.items.iter().filter(|item| item.worn == 0 && tab_of(item.kind) == self.tab)
+        self.items.iter().filter(|item| item.worn == 0 && listed_tab(item) == self.tab)
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
@@ -446,6 +454,9 @@ impl Inventory {
             // ponytail: the mark's corner isn't knowable.
             if item.switch != 0 {
                 layer.sprites.push((&assets.switch, place, assets.switch.size));
+            }
+            if item.favorite {
+                layer.sprites.push((&assets.favorite, offset(place, [CELL - assets.favorite.size[0], 0.0]), assets.favorite.size));
             }
             if tab_of(item.kind) != 1 {
                 let amount = item.amount.to_string();
