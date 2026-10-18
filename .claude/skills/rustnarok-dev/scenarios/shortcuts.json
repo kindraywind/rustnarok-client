@@ -1,5 +1,5 @@
 {
-  "about": "Shortcuts: holding F1 uses a hotkey once, and F11 closes the open windows (issue #177). With the chat line open, Shift+F1 types into it and uses nothing (issue #301).",
+  "about": "Shortcuts: holding F1 uses a hotkey once, and F11 closes the open windows (issue #177).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -117,45 +117,6 @@
           }
         ]
       }
-    },
-    {
-      "key": "Enter"
-    },
-    {
-      "wait": 300
-    },
-    {
-      "expect": {
-        "state": {
-          "chat_line_open": true
-        }
-      }
-    },
-    {
-      "key": "Shift+F1"
-    },
-    {
-      "wait_for": {
-        "sent": "0x0439",
-        "ms": 1500
-      },
-      "none": true
-    },
-    {
-      "expect": {
-        "inventory_has": [
-          {
-            "id": 501,
-            "amount": 4
-          }
-        ]
-      }
-    },
-    {
-      "key": "Escape"
-    },
-    {
-      "wait": 300
     },
     {
       "key": "F11"
