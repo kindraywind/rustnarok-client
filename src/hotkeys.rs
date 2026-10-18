@@ -76,13 +76,23 @@ pub struct Hotkeys {
     rows: usize,
     /// Which row is drawn first. Ctrl+F12 walks this.
     first: usize,
+    /// A slot is used by a double click; a single press only starts a drag.
+    pub clicks: window::Clicks,
 }
 
 impl Default for Hotkeys {
     fn default() -> Self {
         let mut frame = Frame::new(DEFAULT_POSITION, WIDTH);
         frame.open = true;
-        Self { frame, keys: vec![None; ROWS * PER_ROW], other: vec![None; ROWS * PER_ROW], tab: 0, rows: DEFAULT_ROWS, first: 0 }
+        Self {
+            frame,
+            keys: vec![None; ROWS * PER_ROW],
+            other: vec![None; ROWS * PER_ROW],
+            tab: 0,
+            rows: DEFAULT_ROWS,
+            first: 0,
+            clicks: window::Clicks::default(),
+        }
     }
 }
 

@@ -274,7 +274,7 @@ pub fn wrap(font: &Font, text: &str, width: f32, lines: usize) -> Vec<String> {
 pub struct Clicks(Option<(u16, std::time::Instant)>);
 
 impl Clicks {
-    const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
+    const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(500);
 
     /// Records a click; returns whether it completes a double click.
     pub fn double(&mut self, index: u16) -> bool {

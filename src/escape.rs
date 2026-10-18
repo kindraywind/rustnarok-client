@@ -90,7 +90,6 @@ pub enum WindowId {
     WorldMap,
     Quests,
     Menu,
-    Targeting,
     Capturing,
     /// Questions. Esc answers them No before it would close a window (rule 3); they are still listed so `windows` shows them.
     Amount,
@@ -178,7 +177,6 @@ impl WindowId {
             Self::WorldMap => "WorldMap",
             Self::Quests => "Quests",
             Self::Menu => "Menu",
-            Self::Targeting => "Targeting",
             Self::Capturing => "Capturing",
             Self::Amount => "Amount",
             Self::SaveAsked => "SaveAsked",

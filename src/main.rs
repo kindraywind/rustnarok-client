@@ -611,6 +611,10 @@ const SKILL_DELAY: usize = 219;
 /// The Talkie Box (a Hunter's trap holding a message), and the box asking for its message.
 // ponytail: 436 "Please type a message for the Talkie Box"; 435 may be the official one.
 const TALKIE_BOX: u16 = 125;
+/// The aim balloons' text.
+const AIM_TEXT: [u8; 3] = [50, 255, 50];
+/// The one skill that takes a homunculus as its target.
+const POTION_PITCHER: u16 = 231;
 const TALKIE_ASKS: usize = 436;
 /// Equipment: a break ("[%s]'s %s has been damaged.", Weapon, Armor), the item's damaged line, and binding (the
 /// question before, the line after).
@@ -839,6 +843,8 @@ struct Game {
     last_walk_try: Option<Instant>,
     /// A walk asked for during the player's own swing, sent when the swing ends.
     walk_after_swing: Option<[i32; 2]>,
+    /// Skills used at a level picked (the rest go at the learned level when aimed).
+    separate_levels: std::collections::HashSet<u16>,
     press_mark: Option<(Instant, [f32; 2], bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
@@ -2263,29 +2269,36 @@ impl Game {
             || self.pick.as_ref().is_some_and(|(list, _)| list.button_boxes().into_iter().any(|(_, area)| inside(area)))
     }
 
-    /// Whether the skill being aimed can be used on what's under the pointer: the ground for a ground skill (where it
-    /// can be walked), a unit of the kind it's for.
-    fn aim_valid(&self, cursor: [f32; 2], players_first: bool) -> bool {
+    /// Whether the aim cursor shows "valid" here: over a unit a press would take; never for a ground skill.
+    fn aim_valid(&self, cursor: [f32; 2], shift: bool) -> bool {
+        matches!(self.aim_target(cursor, self.players_first(shift)), Some(SkillTarget::Unit(unit)) if self.aim_takes_unit(unit, shift))
+    }
+
+    /// Whether a press on `unit` takes the skill being aimed (`aim_takes`). A homunculus takes only Potion Pitcher;
+    /// NPCs and the like none.
+    fn aim_takes_unit(&self, unit: u32, shift: bool) -> bool {
         let Some((id, _)) = self.targeting else { return false };
-        let flags = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).map_or(0, |skill| skill.kind);
-        match self.aim_target(cursor, players_first) {
-            Some(SkillTarget::Cell(cell)) => self.world.gat.walkable(cell),
-            Some(SkillTarget::Unit(unit)) if unit == self.account_id => aim_fits(flags, AimAt::Me),
-            Some(SkillTarget::Unit(unit)) => match self.units.get(&unit).map(|actor| actor.kind) {
-                Some(MONSTER) => aim_fits(flags, AimAt::Monster),
-                Some(PLAYER) => aim_fits(flags, AimAt::Player),
-                _ => false,
-            },
-            None => false,
-        }
+        let support = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).is_some_and(|skill| skill.kind == net::Skill::FRIEND);
+        let pvp = self.side().flags & net::MAP_NO_LOCK_ON != 0;
+        let at = match self.units.get(&unit).map(|actor| actor.kind) {
+            _ if unit == self.account_id => AimAt::Me,
+            Some(MONSTER) => AimAt::Monster,
+            Some(HOMUNCULUS) => return id == POTION_PITCHER,
+            Some(NPC) | None => return false,
+            Some(_) => AimAt::Player,
+        };
+        aim_takes(at, support, shift, self.no_shift, pvp)
     }
 
     fn skill_points(&self) -> i64 {
         self.status.get(&net::STATUS_SKILL_POINT).copied().unwrap_or(0)
     }
 
-    /// Starts using a skill: skills on oneself go off at once, the others wait for a target.
+    /// Starts using a skill, ending any aim first: by its exact type a self skill goes off at once, an enemy, ground or
+    /// support skill is aimed, anything else (passives, traps, mixed types) does nothing. A level above the learned one
+    /// does nothing; an aimed skill without a level to pick goes at the learned level.
     fn use_skill(&mut self, id: u16, level: u16) {
+        self.targeting = None;
         // ponytail: a blocked skill says so and sends nothing (the server drops it without a word unless @showdelay is
         // on); whether the real client asks the server anyway isn't known.
         if self.cooldowns.left(id, control::now()).is_some() {
@@ -2297,11 +2310,18 @@ impl Game {
         if self.store_open() {
             return;
         }
-        let level = level.clamp(1, skill.level.max(1));
-        if skill.kind & net::Skill::SELF != 0 {
-            let _ = self.session.use_skill(id, level, self.account_id);
-        } else if skill.kind & (net::Skill::ENEMY | net::Skill::GROUND | net::Skill::FRIEND) != 0 {
-            self.targeting = Some((id, level));
+        if level == 0 || level > skill.level {
+            return;
+        }
+        match skill.kind {
+            net::Skill::SELF => {
+                let _ = self.session.use_skill(id, level, self.account_id);
+            }
+            net::Skill::ENEMY | net::Skill::GROUND | net::Skill::FRIEND => {
+                self.targeting = Some((id, if self.separate_levels.contains(&id) { level } else { skill.level }));
+            }
+            // ponytail: trap skills (32) aim at ground skill units in the game; not made yet.
+            _ => {}
         }
     }
 
@@ -3227,7 +3247,6 @@ impl Game {
         push(WorldMap, self.world_map.is_some());
         push(Quests, self.quest_window.frame.open);
         push(Menu, self.menu.is_some());
-        push(Targeting, self.targeting.is_some());
         push(Capturing, self.capturing);
         push(Amount, self.amount.is_some());
         push(SaveAsked, self.save_asked);
@@ -3542,7 +3561,6 @@ impl Game {
             WorldMap => self.world_map = None,
             Quests => self.quest_window.frame.open = false,
             Menu => self.menu = None,
-            Targeting => self.targeting = None,
             Capturing => self.capturing = false,
             Amount => self.answer_amount(false, &[]),
             SaveAsked => self.save_asked = false,
@@ -4229,7 +4247,6 @@ struct Assets {
     combo_fill: Texture,
     speech_fill: Texture,
     speech_border: Texture,
-    target_fill: Texture,
     clocks: [Vec<Texture>; 2],
     connect: ButtonImages,
     ok: ButtonImages,
@@ -4350,7 +4367,6 @@ impl Assets {
             combo_fill: gpu.solid([0xFF, 0xA0, 0x00, 0xFF]),
             speech_fill: gpu.solid([0, 0, 0, 102]),
             speech_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
-            target_fill: gpu.solid([0, 0, 0, 128]),
             clocks: [[255, 255, 255, 166], [255, 150, 50, 166]]
                 .map(|color| (0..=CLOCK_STEPS).map(|step| gpu.texture(&clock(step as f32 / CLOCK_STEPS as f32, color), false)).collect()),
             connect: ["normal", "over", "press"].map(|state| image(format!("{login}bt_start_{state}.bmp"))),
@@ -4603,15 +4619,15 @@ enum AimAt {
     Player,
 }
 
-/// Whether a skill (its target flags, `net::Skill::*`) can be used on that: enemy skills on monsters (and players,
-/// where the map lets them), friend skills on players and oneself, self skills on oneself.
-// ponytail: an enemy skill counts as fitting any player; whether the map allows the hit isn't checked here.
-fn aim_fits(flags: u32, at: AimAt) -> bool {
-    let has = |flag: u32| flags & flag != 0;
+/// Whether a press while aiming takes the unit: a monster with Shift up and another player with Shift down, the other
+/// way round for a support skill (standing in for the game's `IsPlayerSkill`). `/noshift` drops the Shift rule and a
+/// PvP map lets players in. Yourself only for a support skill, by the players' rule.
+fn aim_takes(at: AimAt, support: bool, shift: bool, no_shift: bool, pvp: bool) -> bool {
+    let players = no_shift || shift != support;
     match at {
-        AimAt::Me => has(net::Skill::SELF) || has(net::Skill::FRIEND),
-        AimAt::Monster => has(net::Skill::ENEMY),
-        AimAt::Player => has(net::Skill::FRIEND) || has(net::Skill::ENEMY),
+        AimAt::Monster => no_shift || shift == support,
+        AimAt::Player => players || pvp,
+        AimAt::Me => support && players,
     }
 }
 
@@ -6461,7 +6477,9 @@ impl App {
                     Panel::Hotkeys => {
                         let hit = game.hotkeys.hit(cursor).unwrap();
                         game.hotkeys.click(hit);
-                        if let hotkeys::Hit::Slot(slot) = hit {
+                        if let hotkeys::Hit::Slot(slot) = hit
+                            && game.hotkeys.clicks.double(slot as u16)
+                        {
                             game.press_hotkey(slot);
                         }
                     }
@@ -7199,6 +7217,13 @@ impl App {
             let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_reform = game.reform.as_ref().is_some_and(|window| window.hit(self.cursor, &game.inventory.items).is_some());
             match game.window_at(self.cursor) {
+                // Aiming, the wheel picks the level (up raises it), wherever the pointer is.
+                _ if game.targeting.is_some() => {
+                    let (id, level) = game.targeting.unwrap();
+                    let separate = self.skill_info.get(&id).is_some_and(|info| info.separate_level);
+                    let learned = game.skills.iter().find(|skill| skill.id == id).map_or(level, |skill| skill.level);
+                    game.targeting = Some((id, aim_level(level, learned, rows, separate)));
+                }
                 _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
                 _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
                 _ if game.enchant.as_ref().is_some_and(|window| window.hit(self.cursor).is_some()) => {
@@ -7240,13 +7265,6 @@ impl App {
                 }
                 Some(_) => {}
                 None if game.chat.contains(self.cursor) => game.chat.scroll_by(rows),
-                // Aiming, the wheel picks the level (up raises it) instead of zooming.
-                None if game.targeting.is_some() => {
-                    let (id, level) = game.targeting.unwrap();
-                    let separate = self.skill_info.get(&id).is_some_and(|info| info.separate_level);
-                    let learned = game.skills.iter().find(|skill| skill.id == id).map_or(level, |skill| skill.level);
-                    game.targeting = Some((id, aim_level(level, learned, rows, separate)));
-                }
                 None => game.camera_goal.wheel(rows, Instant::now(), self.modifiers.control_key(), self.modifiers.shift_key()),
             }
         }
@@ -7483,17 +7501,30 @@ impl App {
                 return;
             }
             let on_ui = game.on_ui(cursor, &self.items, assets.message.size);
-            match (on_ui, game.aim_target(cursor, game.players_first(self.modifiers.shift_key()))) {
-                (false, Some(target)) => {
-                    game.aim_skill(target);
-                    return;
-                }
-                (on_ui, _) => {
-                    game.targeting = None;
-                    if !on_ui {
-                        return;
+            let shift = self.modifiers.shift_key();
+            if on_ui {
+                game.targeting = None;
+            } else {
+                // An NPC is talked to; a unit the press doesn't take, the ground under a unit skill, an item or a warp:
+                // the aim just ends. Over 90 % weight a unit skill is refused.
+                let weight = |id: u16| game.status.get(&id).copied().unwrap_or(0);
+                let heavy = attack_refused(weight(net::STATUS_WEIGHT), weight(net::STATUS_MAX_WEIGHT), false);
+                match game.aim_target(cursor, game.players_first(shift)) {
+                    Some(SkillTarget::Unit(id)) if game.units.get(&id).is_some_and(|actor| actor.kind == NPC && actor.job != WARP_JOB) => {
+                        game.targeting = None;
+                        game.talk_to(id);
                     }
+                    Some(SkillTarget::Unit(id)) if game.aim_takes_unit(id, shift) => match heavy {
+                        Some(line) => {
+                            game.targeting = None;
+                            game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR);
+                        }
+                        None => game.aim_skill(SkillTarget::Unit(id)),
+                    },
+                    Some(target @ SkillTarget::Cell(_)) => game.aim_skill(target),
+                    _ => game.targeting = None,
                 }
+                return;
             }
         }
         // A press on the ground walks there at once, and holding the button keeps following the pointer. Shift turns
@@ -9081,6 +9112,7 @@ impl App {
                     walk_held: false,
                     last_walk_try: None,
                     walk_after_swing: None,
+                    separate_levels: self.skill_info.iter().filter(|(_, info)| info.separate_level).map(|(&id, _)| id).collect(),
                     press_mark: None,
                     auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
                         let (x, y) = cell.split_once(',')?;
@@ -13488,22 +13520,25 @@ impl App {
             tooltip.sprites.push((icon, [pointer.0[0] - icon.size[0] / 2.0, pointer.0[1] - icon.size[1] / 2.0], icon.size));
         }
 
-        // An aimed skill: its name at the top, "select a target" at the bottom, its level by the pointer. Taming has
-        // no skill: the bottom line only.
+        // An aimed skill: its name in a balloon at the top, "select a target" in one at the bottom, centred. Taming has
+        // no skill: the bottom one only.
         let mut aim_lines = Vec::new();
-        if let Some((id, level)) = game.targeting {
-            aim_lines.push((skill_info.get(&id).map_or_else(|| id.to_string(), |info| info.name.clone()), 45.0));
-            tooltip.outlined(&level.to_string(), [pointer.0[0] + 20.0, pointer.0[1] - 18.0]);
+        if let Some((id, _)) = game.targeting {
+            aim_lines.push((skill_info.get(&id).map_or_else(|| id.to_string(), |info| info.name.clone()), screen()[1] * 46.0 / 480.0));
         }
         if game.targeting.is_some() || game.capturing {
-            aim_lines.push((message(TARGET_MESSAGE).to_owned(), screen()[1] - 60.0 - 23.0));
+            aim_lines.push((message(TARGET_MESSAGE).to_owned(), screen()[1] * 400.0 / 480.0));
         }
         for (text, top) in aim_lines {
-            let width = font.width(&text).ceil() + 14.0;
-            let left = ((screen()[0] - width) / 2.0).floor();
-            tooltip.sprites.push((&assets.target_fill, [left, top], [width, 23.0]));
-            tooltip.texts.push((text.clone(), [left + 8.0, top + 6.0], [0, 0, 0]));
-            tooltip.texts.push((text, [left + 7.0, top + 5.0], [0x00, 0xFF, 0x00]));
+            let size = overhead::size(font.width(&text), 1);
+            let corner = [((screen()[0] - size[0]) / 2.0).floor(), top.floor()];
+            tooltip.sprites.push((&assets.speech_fill, corner, size));
+            for (edge, piece) in overhead::border(size) {
+                tooltip.sprites.push((&assets.speech_border, offset(corner, edge), piece));
+            }
+            let place = offset(corner, overhead::TEXT_AT);
+            tooltip.texts.push((text.clone(), offset(place, [1.0, 1.0]), [0, 0, 0]));
+            tooltip.texts.push((text, place, AIM_TEXT));
         }
         // The store search under the shops it opens from afar.
         let mut catalog_layer = Layer::default();
@@ -13841,7 +13876,7 @@ impl App {
         } else if pointer.1 && game.attack.is_some_and(|attack| attack.held) {
             cursor::Kind::Attack
         } else if (game.targeting.is_some() || game.capturing) && !on_window {
-            if game.aim_valid(pointer.0, players_first) { cursor::Kind::TargetValid } else { cursor::Kind::Target }
+            if game.aim_valid(pointer.0, self.modifiers.shift_key()) { cursor::Kind::TargetValid } else { cursor::Kind::Target }
         } else if game.link_at(pointer.0).is_some() {
             cursor::Kind::Clickable
         } else if on_window {
@@ -14977,11 +15012,18 @@ mod tests {
     }
 
     #[test]
-    fn tells_a_fitting_target() {
-        let (enemy, friend, me) = (net::Skill::ENEMY, net::Skill::FRIEND, net::Skill::SELF);
-        assert!(aim_fits(enemy, AimAt::Monster) && !aim_fits(enemy, AimAt::Me));
-        assert!(aim_fits(friend, AimAt::Me) && aim_fits(friend, AimAt::Player) && !aim_fits(friend, AimAt::Monster));
-        assert!(aim_fits(me, AimAt::Me) && !aim_fits(me, AimAt::Player));
+    fn a_press_takes_by_shift_and_skill() {
+        let takes = |at, support, shift| aim_takes(at, support, shift, false, false);
+        // Enemy skills: monsters without Shift, players with it, never yourself.
+        assert!(takes(AimAt::Monster, false, false) && !takes(AimAt::Monster, false, true));
+        assert!(takes(AimAt::Player, false, true) && !takes(AimAt::Player, false, false));
+        assert!(!takes(AimAt::Me, false, false) && !takes(AimAt::Me, false, true));
+        // Support skills the other way round; yourself without Shift.
+        assert!(takes(AimAt::Player, true, false) && takes(AimAt::Monster, true, true) && !takes(AimAt::Monster, true, false));
+        assert!(takes(AimAt::Me, true, false) && !takes(AimAt::Me, true, true));
+        // /noshift takes both whatever Shift does; a PvP map lets players in.
+        assert!(aim_takes(AimAt::Monster, false, true, true, false) && aim_takes(AimAt::Player, false, false, true, false));
+        assert!(aim_takes(AimAt::Player, false, false, false, true) && !aim_takes(AimAt::Me, false, false, true, true));
     }
 
     #[test]
