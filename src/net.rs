@@ -707,6 +707,10 @@ const ZC_CASH_ITEM_DELETE: u16 = 0x0299;
 const ZC_NOTIFY_BIND_ON_EQUIP: u16 = 0x02D3;
 const CZ_REQ_TAKEOFF_EQUIP_ALL: u16 = 0x0BAD;
 const ZC_ACK_TAKEOFF_EQUIP_ALL: u16 = 0x0BAE;
+const ZC_MERGE_ITEM_OPEN: u16 = 0x096D;
+const CZ_REQ_MERGE_ITEM: u16 = 0x096E;
+const ZC_ACK_MERGE_ITEM: u16 = 0x096F;
+const CZ_CANCEL_MERGE_ITEM: u16 = 0x0974;
 const CZ_REQ_EQUIPSWITCH_ADD: u16 = 0x0A97;
 const ZC_EQUIPSWITCH_ADDED: u16 = 0x0A98;
 const CZ_REQ_EQUIPSWITCH_REMOVE: u16 = 0x0A99;
@@ -1699,6 +1703,14 @@ pub enum MapEvent {
     SwitchRemoved {
         index: u16,
         places: u32,
+    },
+    /// The item merge window opens with the stacks (inventory indexes) that can merge.
+    MergeOpen(Vec<u16>),
+    /// Stacks merged into the one at `index`, now `amount` (result 0), or not: 2 the total is too big.
+    Merged {
+        index: u16,
+        amount: u16,
+        result: u8,
     },
     /// The set is switched with what's worn now.
     Switched {
@@ -2926,6 +2938,16 @@ impl MapSession {
     }
 
     /// Switches the Swap Equipment set with what's worn.
+    /// Merges stacks of one item into the first.
+    pub fn merge_items(&mut self, indexes: &[u16]) -> io::Result<()> {
+        self.stream.write_all(&encode_merge_items(indexes))
+    }
+
+    /// The item merge window closed without merging.
+    pub fn cancel_merge(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_CANCEL_MERGE_ITEM.to_le_bytes())
+    }
+
     pub fn switch_all(&mut self) -> io::Result<()> {
         self.stream.write_all(&CZ_REQ_EQUIPSWITCH.to_le_bytes())
     }
@@ -3424,6 +3446,12 @@ fn encode_index(header: u16, index: u16) -> [u8; 4] {
 }
 
 /// CZ_REQ_EQUIPSWITCH_ADD: the inventory index, then the places.
+/// CZ_REQ_MERGE_ITEM: the length, then the indexes; the first keeps the total.
+fn encode_merge_items(indexes: &[u16]) -> Vec<u8> {
+    let length = 4 + 2 * indexes.len() as u16;
+    [CZ_REQ_MERGE_ITEM, length].iter().chain(indexes).flat_map(|value| value.to_le_bytes()).collect()
+}
+
 fn encode_switch_add(index: u16, places: u32) -> Vec<u8> {
     [&CZ_REQ_EQUIPSWITCH_ADD.to_le_bytes()[..], &index.to_le_bytes(), &places.to_le_bytes()].concat()
 }
@@ -4254,6 +4282,9 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_EQUIPSWITCH_ADDED => MapEvent::SwitchAdded { index: u16_at(2), places: u32_at(4), result: u16_at(8) },
         ZC_EQUIPSWITCH_REMOVED => MapEvent::SwitchRemoved { index: u16_at(2), places: u32_at(4) },
         ZC_EQUIPSWITCH_REPLY => MapEvent::Switched { failed: u16_at(2) != 0 },
+        // Length, then the indexes.
+        ZC_MERGE_ITEM_OPEN => MapEvent::MergeOpen(packet[4..].chunks_exact(2).map(|index| self::u16_at(index, 0)).collect()),
+        ZC_ACK_MERGE_ITEM => MapEvent::Merged { index: u16_at(2), amount: u16_at(4), result: packet[6] },
         ZC_CASH_TIME_COUNTER => MapEvent::RentalTime { item: u32_at(2), seconds: u32_at(6) },
         ZC_CASH_ITEM_DELETE => MapEvent::RentalExpired { index: u16_at(2), item: u32_at(4) },
         // Class, level, size, HP, DEF, race, MDEF, element, then the nine elements' damage %.
@@ -5525,6 +5556,19 @@ mod tests {
             let Some(MapEvent::Slide { id: 2000010, position: [170, 370] }) = decode_map_packet(&slide) else { panic!() };
         }
         assert_eq!([ZC_COMBODELAY, ZC_BLADESTOP, ZC_HIGHJUMP, ZC_FASTMOVE].map(packet_length), [Some(10), Some(14), Some(10), Some(10)]);
+    }
+
+    #[test]
+    fn merges_items() {
+        let open = [&ZC_MERGE_ITEM_OPEN.to_le_bytes()[..], &10u16.to_le_bytes(), &[2, 0, 5, 0, 9, 0]].concat();
+        let Some(MapEvent::MergeOpen(indexes)) = decode_map_packet(&open) else { panic!() };
+        assert_eq!(indexes, [2, 5, 9]);
+        let Some(MapEvent::Merged { index: 5, amount: 7, result: 0 }) = decode_map_packet(&[0x6F, 0x09, 5, 0, 7, 0, 0]) else { panic!() };
+        let Some(MapEvent::Merged { index: 0, amount: 0, result: 2 }) = decode_map_packet(&[0x6F, 0x09, 0, 0, 0, 0, 2]) else { panic!() };
+        assert_eq!(encode_merge_items(&[5, 2]), [0x6E, 0x09, 8, 0, 5, 0, 2, 0]);
+        assert_eq!(CZ_CANCEL_MERGE_ITEM.to_le_bytes(), [0x74, 0x09]);
+        let ids = [ZC_MERGE_ITEM_OPEN, CZ_REQ_MERGE_ITEM, ZC_ACK_MERGE_ITEM, CZ_CANCEL_MERGE_ITEM];
+        assert_eq!(ids.map(packet_length), [Some(-1), Some(-1), Some(7), Some(2)]);
     }
 
     #[test]

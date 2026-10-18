@@ -1,0 +1,4 @@
+prontera,153,183,4	script	Merge Test	1_M_WIZARD,{
+	mergeitem;
+	end;
+}
