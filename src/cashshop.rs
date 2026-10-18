@@ -92,6 +92,8 @@ pub struct CashShop {
     pub free_to_spend: u32,
     pub frame: Frame,
     pub selected_tab: usize,
+    pub goods_scroll: usize,
+    pub cart_scroll: usize,
     pub typing: bool,
     typed_free: String,
 }
@@ -108,6 +110,8 @@ impl CashShop {
             free_to_spend: 0,
             frame,
             selected_tab: 0,
+            goods_scroll: 0,
+            cart_scroll: 0,
             typing: false,
             typed_free: String::new(),
         }
@@ -182,6 +186,10 @@ impl CashShop {
         self.selected_tab = tab;
         true
     }
+
+    pub fn scroll_goods(&mut self, _rows: i32) {}
+
+    pub fn scroll_cart(&mut self, _lines: i32) {}
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         let local = self.frame.local(cursor, HEIGHT)?;
@@ -448,5 +456,110 @@ mod tests {
         shop.append(2, vec![(501, 10)]);
         assert!(shop.select_tab(2));
         assert_eq!(shop.click(Hit::Close), Some(Action::Close));
+    }
+
+    fn stock(shop: &mut CashShop, tab: usize, count: u32) {
+        shop.append(tab as i16, (0..count).map(|index| (1000 + index, 10)).collect());
+    }
+
+    #[test]
+    fn goods_scroll_clamps_at_both_ends() {
+        let mut shop = CashShop::new(0, 0);
+        stock(&mut shop, 0, 20);
+        shop.scroll_goods(-1);
+        assert_eq!(shop.goods_scroll, 0);
+        shop.scroll_goods(1);
+        assert_eq!(shop.goods_scroll, 1);
+        shop.scroll_goods(50);
+        assert_eq!(shop.goods_scroll, 2);
+        shop.scroll_goods(-50);
+        assert_eq!(shop.goods_scroll, 0);
+    }
+
+    #[test]
+    fn small_tabs_cannot_scroll() {
+        let mut shop = CashShop::new(0, 0);
+        stock(&mut shop, 0, GOOD_ROWS as u32 * GOOD_COLUMNS as u32);
+        shop.scroll_goods(3);
+        assert_eq!(shop.goods_scroll, 0);
+        stock(&mut shop, 1, 4);
+        shop.selected_tab = 1;
+        shop.scroll_goods(3);
+        assert_eq!(shop.goods_scroll, 0);
+    }
+
+    #[test]
+    fn twenty_items_scroll_two_rows() {
+        let mut shop = CashShop::new(0, 0);
+        stock(&mut shop, 0, 20);
+        shop.scroll_goods(i32::MAX);
+        assert_eq!(shop.goods_scroll, 2);
+    }
+
+    #[test]
+    fn cart_scroll_max_is_lines_beyond_visible() {
+        let mut shop = CashShop::new(0, 0);
+        shop.cart = (0..8).map(|index| (500 + index, 1, 0, 10)).collect();
+        shop.scroll_cart(10);
+        assert_eq!(shop.cart_scroll, 3);
+        shop.scroll_cart(-1);
+        assert_eq!(shop.cart_scroll, 2);
+        shop.scroll_cart(-10);
+        assert_eq!(shop.cart_scroll, 0);
+        shop.cart.truncate(CART_ROWS);
+        shop.scroll_cart(5);
+        assert_eq!(shop.cart_scroll, 0);
+    }
+
+    #[test]
+    fn removing_cart_lines_reclamps_cart_scroll() {
+        let mut shop = CashShop::new(0, 0);
+        shop.cart = (0..8).map(|index| (500 + index, 1, 0, 10)).collect();
+        shop.cart_scroll = 3;
+        assert!(shop.remove(507, 0));
+        assert_eq!(shop.cart_scroll, 2);
+        shop.remove(506, 0);
+        shop.remove(505, 0);
+        shop.remove(504, 0);
+        assert_eq!(shop.cart_scroll, 0);
+    }
+
+    #[test]
+    fn select_tab_resets_goods_scroll() {
+        let mut shop = CashShop::new(0, 0);
+        stock(&mut shop, 0, 20);
+        stock(&mut shop, 1, 20);
+        shop.goods_scroll = 2;
+        assert!(shop.select_tab(1));
+        assert_eq!(shop.goods_scroll, 0);
+    }
+
+    #[test]
+    fn item_boxes_show_only_the_visible_window() {
+        let mut shop = CashShop::new(0, 0);
+        stock(&mut shop, 0, 20);
+        assert_eq!(shop.item_boxes().len(), GOOD_ROWS * GOOD_COLUMNS);
+        shop.scroll_goods(2);
+        let boxes = shop.item_boxes();
+        assert_eq!(boxes.len(), GOOD_ROWS * GOOD_COLUMNS);
+        assert_eq!(boxes[0].0, shop.tabs[0][shop.goods_scroll * GOOD_COLUMNS].0);
+        assert_eq!(boxes.last().unwrap().0, shop.tabs[0][19].0);
+    }
+
+    #[test]
+    fn hit_item_cell_is_relative_to_the_scroll() {
+        let mut shop = CashShop::new(0, 0);
+        stock(&mut shop, 0, 20);
+        shop.scroll_goods(1);
+        let place = shop.item_boxes()[0].1;
+        let hit = shop.hit([place[0] + 5.0, place[1] + 5.0]);
+        assert_eq!(hit, Some(Hit::Item(0)));
+        shop.click(hit.unwrap());
+        assert_eq!(shop.cart, [(shop.tabs[0][GOOD_COLUMNS].0, 1, 0, 10)]);
+    }
+
+    #[test]
+    fn unknown_buy_result_maps_to_1228() {
+        assert_eq!(buy_result_message(99), 1228);
     }
 }
