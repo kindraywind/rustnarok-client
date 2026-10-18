@@ -233,6 +233,14 @@ fn encode_queue_name(command: u16, name: &str) -> Vec<u8> {
     packet
 }
 
+/// CZ_MEMORIALDUNGEON_COMMAND: a u32 command. Destroy is `COMMAND_MEMORIALDUNGEON_DESTROY_FORCE`.
+pub fn encode_memorial_command(command: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_MEMORIALDUNGEON_COMMAND.to_le_bytes());
+    packet[2..6].copy_from_slice(&command.to_le_bytes());
+    packet
+}
+
 /// CZ_REPLY_LOBBY_ADMISSION: 1 enters, 2 declines; the names (rathena reads only the answer).
 pub fn encode_lobby_reply(accept: bool, name: &str) -> Vec<u8> {
     let mut packet = CZ_REPLY_LOBBY_ADMISSION.to_le_bytes().to_vec();
@@ -936,6 +944,16 @@ const CZ_REPLY_LOBBY_ADMISSION: u16 = 0x08E0;
 const ZC_REPLY_ACK_LOBBY_ADMISSION: u16 = 0x08E1;
 const CZ_REQ_ENTRY_QUEUE_RANKING: u16 = 0x090A;
 const ZC_ENTRY_QUEUE_INIT: u16 = 0x090E;
+/// ZC instance create / wait / status / notify, and CZ memorial dungeon command.
+const ZC_INSTANCE_CREATE: u16 = 0x02CB;
+const ZC_INSTANCE_WAIT: u16 = 0x02CC;
+const ZC_INSTANCE_STATUS: u16 = 0x02CD;
+const ZC_INSTANCE_NOTIFY: u16 = 0x02CE;
+const CZ_MEMORIALDUNGEON_COMMAND: u16 = 0x02CF;
+/// rathena INSTANCE_NAME_LENGTH: 60 bytes plus the terminating NUL.
+pub const INSTANCE_NAME_LENGTH: usize = 61;
+/// CZ_MEMORIALDUNGEON_COMMAND: destroy the instance. Sent only after the player confirms.
+pub const COMMAND_MEMORIALDUNGEON_DESTROY_FORCE: u32 = 3;
 /// How one applies to a battleground's queue: alone, as a party, as a guild.
 pub const QUEUE_ALONE: u16 = 1;
 pub const QUEUE_PARTY: u16 = 2;
@@ -3118,6 +3136,26 @@ pub enum MapEvent {
         kind: u16,
         amount: i32,
     },
+    /// ZC instance create (0x02CB): the name and the place in the waiting line.
+    InstanceCreate {
+        name: String,
+        place: u16,
+    },
+    /// ZC instance changewait (0x02CC): the new place in line.
+    InstanceWait {
+        place: u16,
+    },
+    /// ZC instance status (0x02CD): the name and the time-limit and idle-limit Unix times.
+    InstanceStatus {
+        name: String,
+        time_limit: u32,
+        idle_limit: u32,
+    },
+    /// ZC instance changestatus (0x02CE): rathena `e_instance_notify` and a Unix time (the idle limit on notify 0).
+    InstanceNotify {
+        kind: u32,
+        time: u32,
+    },
     /// A status effect began or ended on a unit (ZC_MSG_STATE_CHANGE): the client's EFST id and the time left.
     StatusIcon {
         kind: u16,
@@ -4433,6 +4471,11 @@ impl MapSession {
     /// Enters the battle, or not.
     pub fn answer_lobby(&mut self, accept: bool, name: &str) -> io::Result<()> {
         self.stream.write_all(&encode_lobby_reply(accept, name))
+    }
+
+    /// CZ_MEMORIALDUNGEON_COMMAND. Destroy (command 3) goes only after the player confirms.
+    pub fn memorial_command(&mut self, command: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_memorial_command(command))
     }
 
     /// Asks a party member (account) to be adopted by the player and their partner.
@@ -6517,6 +6560,14 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             MapEvent::TooFar { target: u32_at(2), target_cell: [u16_at(6), u16_at(8)], cell: [u16_at(10), u16_at(12)], range: u16_at(14) }
         }
         ZC_STYLE_CHANGE_RES => MapEvent::StyleChanged(packet[2] != 0),
+        ZC_INSTANCE_CREATE => MapEvent::InstanceCreate { name: c_string(&packet[2..2 + INSTANCE_NAME_LENGTH]), place: u16_at(2 + INSTANCE_NAME_LENGTH) },
+        ZC_INSTANCE_WAIT => MapEvent::InstanceWait { place: u16_at(2) },
+        ZC_INSTANCE_STATUS => MapEvent::InstanceStatus {
+            name: c_string(&packet[2..2 + INSTANCE_NAME_LENGTH]),
+            time_limit: u32_at(2 + INSTANCE_NAME_LENGTH),
+            idle_limit: u32_at(2 + INSTANCE_NAME_LENGTH + 4),
+        },
+        ZC_INSTANCE_NOTIFY => MapEvent::InstanceNotify { kind: u32_at(2), time: u32_at(6) },
         _ => return None,
     })
 }
@@ -8496,6 +8547,50 @@ mod tests {
         assert_eq!(packet_length(ZC_ACK_READ_RODEX), Some(-1));
         assert_eq!(packet_length(ZC_ACK_ADD_ITEM_RODEX), Some(64));
         assert_eq!(packet_length(ZC_CHECKNAME), Some(34));
+    }
+
+    #[test]
+    fn decodes_memorial_dungeon() {
+        let name_field = |name: &str| {
+            let mut field = [0u8; INSTANCE_NAME_LENGTH];
+            let bytes = encode_text(name);
+            let length = bytes.len().min(INSTANCE_NAME_LENGTH - 1);
+            field[..length].copy_from_slice(&bytes[..length]);
+            field
+        };
+        let mut create = ZC_INSTANCE_CREATE.to_le_bytes().to_vec();
+        create.extend_from_slice(&name_field("Endless Tower"));
+        create.extend_from_slice(&4u16.to_le_bytes());
+        assert_eq!(create.len(), 65);
+        let Some(MapEvent::InstanceCreate { name, place }) = decode_map_packet(&create) else { panic!() };
+        assert_eq!((name.as_str(), place), ("Endless Tower", 4));
+
+        let mut waiting = ZC_INSTANCE_WAIT.to_le_bytes().to_vec();
+        waiting.extend_from_slice(&2u16.to_le_bytes());
+        assert!(matches!(decode_map_packet(&waiting), Some(MapEvent::InstanceWait { place: 2 })));
+
+        let mut status = ZC_INSTANCE_STATUS.to_le_bytes().to_vec();
+        status.extend_from_slice(&name_field("Orc's Memory"));
+        status.extend_from_slice(&1_700_000_100u32.to_le_bytes());
+        status.extend_from_slice(&1_700_000_000u32.to_le_bytes());
+        assert_eq!(status.len(), 71);
+        let Some(MapEvent::InstanceStatus { name, time_limit, idle_limit }) = decode_map_packet(&status) else { panic!() };
+        assert_eq!((name.as_str(), time_limit, idle_limit), ("Orc's Memory", 1_700_000_100, 1_700_000_000));
+
+        let notify = |kind: u32, time: u32| {
+            let mut packet = ZC_INSTANCE_NOTIFY.to_le_bytes().to_vec();
+            packet.extend_from_slice(&kind.to_le_bytes());
+            packet.extend_from_slice(&time.to_le_bytes());
+            packet
+        };
+        assert!(matches!(decode_map_packet(&notify(0, 1_700_000_050)), Some(MapEvent::InstanceNotify { kind: 0, time: 1_700_000_050 })));
+        assert!(matches!(decode_map_packet(&notify(4, 0)), Some(MapEvent::InstanceNotify { kind: 4, time: 0 })));
+
+        assert_eq!(encode_memorial_command(COMMAND_MEMORIALDUNGEON_DESTROY_FORCE), [0xCF, 0x02, 3, 0, 0, 0]);
+        assert_eq!(
+            [ZC_INSTANCE_CREATE, ZC_INSTANCE_WAIT, ZC_INSTANCE_STATUS, ZC_INSTANCE_NOTIFY, CZ_MEMORIALDUNGEON_COMMAND].map(packet_length),
+            [Some(65), Some(4), Some(71), Some(10), Some(6)]
+        );
     }
 
     #[test]

@@ -1,0 +1,32 @@
+{
+  "about": "The memorial dungeon window (issue #275): Alt+B opens it empty. A party leader talks to an NPC (npc/memorial.txt, loaded with @loadnpc) that runs instance_create on Endless Tower. The window shows the name and both countdowns, Destroy asks yes or no, and OK removes it. The NPC is unloaded at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"type": "/leave"}, {"key": "Enter"}, {"wait": 500},
+    {"type": "/organize MemorialQA"}, {"key": "Enter"}, {"wait_for": {"event": "PartyMade", "ms": 5000}}, {"wait": 400},
+    {"key": "Alt+Z"}, {"wait": 300},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/memorial.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/memorial.txt"}, {"wait": 1000},
+    {"key": "Alt+B"}, {"wait": 300},
+    {"expect": {"windows_open": ["Memorial"], "state": {"instance": null}}},
+    {"key": "Alt+B"}, {"wait": 300},
+    {"expect": {"windows_closed": ["Memorial"]}},
+    {"click_unit": {"kind": "npc", "name": "Memorial Clerk"}}, {"wait_for": {"packet": "0x02cd", "ms": 8000}}, {"wait": 400},
+    {"expect": {
+      "windows_open": ["Memorial"],
+      "state": {"instance.name": "Endless Tower", "instance.place": null},
+      "state_at_least": {"instance.time_left": 1, "instance.idle_left": 1}
+    }},
+    {"shot": "memorial-progress", "crop": [360, 140, 300, 200]},
+    {"click_on": {"button": "destroy"}}, {"wait": 300},
+    {"expect": {"windows_open": ["Memorial", "MemorialAsked"]}},
+    {"click_on": {"button": "ok"}},
+    {"wait_for": {"sent": "0x02cf", "ms": 3000}},
+    {"wait_for": {"packet": "0x02ce", "ms": 5000}}, {"wait": 300},
+    {"expect": {"windows_closed": ["Memorial", "MemorialAsked"], "chat": "has been removed", "state": {"instance": null}}},
+    {"type": "/leave"}, {"key": "Enter"}, {"wait": 400},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/memorial.txt"}, {"wait": 500}
+  ]
+}

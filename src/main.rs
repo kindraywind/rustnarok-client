@@ -87,6 +87,7 @@ mod links;
 mod macros;
 mod mail;
 mod material;
+mod memorial;
 mod menu;
 mod mercenary;
 mod minimap;
@@ -1387,6 +1388,9 @@ struct Game {
     map_type: Option<u16>,
     /// The battleground queue's window, the battleground queued for (and how many wait), and its question up.
     queue_window: battle_queue::QueueWindow,
+    /// The memorial dungeon, and whether Destroy is asking yes or no.
+    memorial: memorial::Window,
+    memorial_asked: bool,
     queued: Option<(String, Option<u32>)>,
     queue_asked: Option<QueueAsked>,
     /// The battleground's camps, score, teammates' dots and battle chat; forgotten on a map change.
@@ -3798,6 +3802,22 @@ impl Game {
             || self.chat_mode.chat_line_open()
     }
 
+    /// Opens the memorial window and puts it first for Esc.
+    fn show_memorial(&mut self) {
+        self.memorial.frame.open = true;
+        self.memorial.frame.minimized = false;
+        escape::touch(&mut self.esc_order, escape::WindowId::Memorial);
+    }
+
+    /// The instance is gone: the window and its question go with it.
+    fn end_memorial(&mut self) {
+        self.memorial.instance = None;
+        self.memorial.frame.open = false;
+        self.memorial_asked = false;
+        escape::remove(&mut self.esc_order, escape::WindowId::Memorial);
+        escape::remove(&mut self.esc_order, escape::WindowId::MemorialAsked);
+    }
+
     /// F11 closes the player's windows. A talk with an NPC stays until the server ends it.
     fn close_windows(&mut self) {
         for frame in [
@@ -3821,9 +3841,11 @@ impl Game {
             &mut self.achievement_window.frame,
             &mut self.mail.list.frame,
             &mut self.queue_window.frame,
+            &mut self.memorial.frame,
         ] {
             frame.open = false;
         }
+        self.memorial_asked = false;
         self.basic_info.menu_open = false;
         self.equipment.swapping = false;
         if self.macro_window.take().is_some() {
@@ -3876,10 +3898,12 @@ impl Game {
             || self.trade_asked.is_some()
             || self.booking_asked.is_some()
             || self.queue_asked.is_some()
-            || self.adopt_asked.is_some();
+            || self.adopt_asked.is_some()
+            || self.memorial_asked;
         self.window_at(cursor).is_some()
             || self.catalog.as_ref().and_then(|catalog| catalog.hit(cursor)).is_some()
             || self.queue_window.covers(cursor)
+            || self.memorial.covers(cursor)
             || self.skill_description.as_ref().is_some_and(|window| window.contains(cursor))
             || self.level_ups.hit(cursor).is_some()
             || (self.quest_icon && quest_notice::on_icon(cursor))
@@ -4489,6 +4513,8 @@ impl Game {
         push(FriendAsked, self.friend_asked.is_some());
         push(DealChoice, self.deal_choice.is_some());
         push(BattleQueue, self.queue_window.frame.open);
+        push(Memorial, self.memorial.frame.open);
+        push(MemorialAsked, self.memorial_asked);
         push(AdoptAsked, self.adopt_asked.is_some());
         push(QueueAsked, self.queue_asked.is_some());
         open
@@ -4619,6 +4645,7 @@ impl Game {
             || self.adopt_asked.is_some()
             || self.queue_asked.is_some()
             || self.booking_asked.is_some()
+            || self.memorial_asked
     }
 
     /// The Apply question's answer: yes sends each pending level, what it needs first; no keeps them pending.
@@ -4639,6 +4666,10 @@ impl Game {
         }
         if self.save_asked {
             self.save_asked = false;
+            return;
+        }
+        if self.memorial_asked {
+            self.memorial_asked = false;
             return;
         }
         if self.apply_asked {
@@ -4887,6 +4918,12 @@ impl Game {
             }
             DealChoice => self.deal_choice = None,
             BattleQueue => self.queue_window.frame.open = false,
+            Memorial => {
+                self.memorial.frame.open = false;
+                self.memorial_asked = false;
+                escape::remove(&mut self.esc_order, escape::WindowId::MemorialAsked);
+            }
+            MemorialAsked => self.memorial_asked = false,
             AdoptAsked => {
                 if let Some((parent, partner, _, _)) = self.adopt_asked.take() {
                     let _ = self.session.answer_adoption(parent, partner, false);
@@ -4947,6 +4984,9 @@ impl Game {
         }
         if self.minimap_window.covers(cursor) {
             return Some(Minimap);
+        }
+        if self.memorial.covers(cursor) {
+            return Some(Memorial);
         }
         self.window_at(cursor).and_then(esc_panel)
     }
@@ -7190,6 +7230,18 @@ impl App {
                     }
                 }
             }
+            // Destroy asks first. OK sends the command; Cancel stays in the dungeon window.
+            Scene::Game(game) if game.memorial_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.memorial_asked = false;
+                        if yes {
+                            let _ = game.session.memorial_command(net::COMMAND_MEMORIALDUNGEON_DESTROY_FORCE);
+                        }
+                    }
+                }
+            }
             // Save point asks first. OK goes; Cancel stays.
             Scene::Game(game) if game.save_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
@@ -7616,6 +7668,18 @@ impl App {
                     }
                 }
             }
+            // The memorial window: drag is a press; a click closes, or asks before Destroy.
+            Scene::Game(game) if game.memorial.frame.open && game.memorial.hit(cursor).is_some() => match game.memorial.hit(cursor) {
+                Some(memorial::Hit::Title(title)) => {
+                    game.memorial.frame.click_title(title);
+                    if !game.memorial.frame.open {
+                        game.memorial_asked = false;
+                        escape::remove(&mut game.esc_order, escape::WindowId::Memorial);
+                    }
+                }
+                Some(memorial::Hit::Destroy) => game.memorial_asked = true,
+                _ => {}
+            },
             // The queue window: a battleground picked, applying, cancelling.
             Scene::Game(game) if game.queue_window.frame.open && game.queue_window.hit(cursor, &self.battlegrounds, game.queued.is_some()).is_some() => {
                 match game.queue_window.hit(cursor, &self.battlegrounds, game.queued.is_some()) {
@@ -8675,6 +8739,8 @@ impl App {
             if let Some(window) = &mut game.monster_window {
                 window.frame.drag_to(self.cursor, monster_info::MonsterWindow::height());
             }
+            let memorial_height = game.memorial.height();
+            game.memorial.frame.drag_to(self.cursor, memorial_height);
             if let Some(window) = &mut game.stylist {
                 window.frame.drag_to(self.cursor, stylist::HEIGHT);
             }
@@ -9321,7 +9387,8 @@ impl App {
                     | game.grade.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.enchant.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag())
-                    | game.stylist.as_mut().is_some_and(|window| window.frame.drop_drag());
+                    | game.stylist.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.memorial.frame.drop_drag();
                 // A slider let go keeps its volume for next time.
                 let slid = game.audio_window.as_mut().is_some_and(options::AudioWindow::drop_drag);
                 if slid {
@@ -9552,6 +9619,14 @@ impl App {
             } else if !on_menu {
                 game.press_esc(cursor);
             }
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && game.memorial.hit(cursor).is_some()
+        {
+            if game.memorial.hit(cursor) == Some(memorial::Hit::Title(TitleHit::Title)) {
+                game.memorial.frame.start_drag(cursor);
+            }
+            return;
         }
         if let Scene::Game(game) = &mut self.scene {
             let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
@@ -10191,9 +10266,17 @@ impl App {
             }
             // Only the showing bar's keys come here (see shortcuts::action).
             shortcuts::Action::Hotbar { slot, .. } => game.press_hotkey(usize::from(slot), &self.messages),
-            // ponytail: no window yet (memorial, commands, ground cursor, tip, party board, hunting, flags). The key is eaten.
-            shortcuts::Action::Memorial
-            | shortcuts::Action::Commands
+            shortcuts::Action::Memorial => {
+                if game.memorial.frame.open {
+                    game.memorial.frame.open = false;
+                    game.memorial_asked = false;
+                    escape::remove(&mut game.esc_order, escape::WindowId::Memorial);
+                } else {
+                    game.show_memorial();
+                }
+            }
+            // ponytail: no window yet (commands, ground cursor, tip, hunting, flags). The key is eaten.
+            shortcuts::Action::Commands
             | shortcuts::Action::GroundCursor
             | shortcuts::Action::Tip
             | shortcuts::Action::Hunting
@@ -11225,6 +11308,8 @@ impl App {
                     map_type: None,
                     battle: battleground::Battle::default(),
                     queue_window: battle_queue::QueueWindow::default(),
+                    memorial: memorial::Window::default(),
+                    memorial_asked: false,
                     queued: None,
                     queue_asked: None,
                     camp_looks: None,
@@ -14414,6 +14499,36 @@ impl App {
             }
             // ponytail: no client line fits a failed style change, so the result is printed plainly. The window stays.
             MapEvent::StyleChanged(true) => game.chat_line(stylist::FAILED_LINE.to_owned(), CHAT_ERROR),
+            MapEvent::InstanceCreate { name, place } => {
+                game.memorial.instance = Some(memorial::Instance::waiting(name, place));
+                game.show_memorial();
+            }
+            MapEvent::InstanceWait { place } => {
+                if let Some(instance) = &mut game.memorial.instance {
+                    instance.place = Some(place);
+                }
+            }
+            MapEvent::InstanceStatus { name, time_limit, idle_limit } => {
+                game.memorial.instance = Some(memorial::Instance::made(name, time_limit, idle_limit));
+                game.show_memorial();
+            }
+            // 0 keeps the window and stores the new idle-limit Unix time. 1 through 4 close it.
+            MapEvent::InstanceNotify { kind, time } => {
+                if kind == memorial::IN_NOTIFY {
+                    if let Some(instance) = &mut game.memorial.instance {
+                        instance.idle_limit = Some(time);
+                    }
+                } else if memorial::closes(kind) {
+                    let name = game.memorial.instance.as_ref().map(|instance| instance.name.clone()).unwrap_or_default();
+                    if let Some(id) = memorial::notify_message(kind) {
+                        let template = self.messages.get(id).cloned().unwrap_or_default();
+                        let line = if kind == memorial::IN_CREATE_FAIL { messages::fill(&template, &[&name]) } else { template };
+                        let color = if kind == memorial::IN_CREATE_FAIL { CHAT_ERROR } else { CHAT_WHITE };
+                        game.chat_line(line, color);
+                    }
+                    game.end_memorial();
+                }
+            }
             MapEvent::Entered { .. } | MapEvent::ServerTime(..) => unreachable!("handled above"),
             MapEvent::Disconnected(_) => self.message(self.messages.get(DISCONNECTED_MESSAGE).cloned().unwrap_or_default(), Scene::Login),
         }
@@ -16395,6 +16510,9 @@ impl App {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }
+        if game.memorial.frame.open {
+            game.memorial.draw(shop_layer.window(), &assets.chrome, font, messages, pointer.0, memorial::unix_now());
+        }
         // The battleground queue, and its question: applying, leaving, or entering with the time left.
         if game.queue_window.frame.open {
             game.queue_window.draw(
@@ -16489,6 +16607,17 @@ impl App {
         if game.apply_asked {
             let dialog = dialog_position(&assets.message);
             let question = messages.get(skills::APPLY_QUESTION).map_or("", String::as_str);
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
+            for (row, line) in message_lines(font, question, MESSAGE_WIDTH).into_iter().enumerate() {
+                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
+        if game.memorial_asked {
+            let dialog = dialog_position(&assets.message);
+            // ponytail: no msgstringtable id was given for this question, so the Destroy button's label asks it.
+            let question = messages.get(memorial::DESTROY_ASK).map_or("Destroy instance", String::as_str);
             shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
