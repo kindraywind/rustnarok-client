@@ -8415,6 +8415,12 @@ impl App {
                         }
                         Some(guild::Hit::PositionTitle(id)) => game.amount = Some(window::Amount::name(Asked::PositionTitle(id), POSITION_TITLE)),
                         Some(guild::Hit::Tax(id)) => game.amount = Some(window::Amount::new(Asked::PositionTax(id), None)),
+                        // The members page: select, sort, online first.
+                        Some(hit @ (guild::Hit::Member(_) | guild::Hit::SortBy(_) | guild::Hit::LoginStatus | guild::Hit::MemberPage)) => {
+                            if let Some(guild) = &game.guild {
+                                game.guild_window.click_members(hit, guild);
+                            }
+                        }
                         _ => {}
                     },
                     Panel::Clan => {
@@ -15898,6 +15904,15 @@ impl App {
             icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, false).ok());
         }
         party::load_icons(icons, gpu, grf, game.party.as_ref());
+        // Online guild members' heads, for the member list.
+        if game.guild_window.frame.open {
+            for member in game.guild.iter().flat_map(|guild| guild.members.iter()).filter(|member| member.online) {
+                icons.entry(guild::head_key(member)).or_insert_with(|| {
+                    let look = actor::Look { job: member.job, sex: member.sex as u8, hair: member.hair, hair_color: member.hair_color, ..Default::default() };
+                    actor::head_image(grf, &look).map(|image| gpu.texture(&image, false))
+                });
+            }
+        }
         let mut tooltip = Layer::default();
         let mut chat_layer = Layer::default();
         let open = game.chat_mode.chat_line_open();

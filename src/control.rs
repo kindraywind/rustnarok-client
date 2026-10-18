@@ -1527,6 +1527,17 @@ fn game_state(app: &App, game: &Game) -> Value {
         "chat_height": game.chat.height(),
     });
     // The party window's size mode and size.
+    // The guild window's members page: the names in the order shown, the column sorted by, online first.
+    state["guild_window"] = json!({
+        "order": game.guild.as_ref().map(|guild| {
+            crate::guild::member_order(&guild.members, game.guild_window.sort, game.guild_window.online_first)
+                .into_iter()
+                .map(|index| guild.members[index].name.clone())
+                .collect::<Vec<_>>()
+        }),
+        "sort": game.guild_window.sort,
+        "online_first": game.guild_window.online_first,
+    });
     state["party_window"] = json!({"mode": game.party_window.mode, "size": game.party_window.size(), "locked": game.party_window.locked});
     // The small party windows: each member's window's top left.
     state["small_windows"] = game

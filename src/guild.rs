@@ -61,7 +61,26 @@ pub fn perspective(screen_per_sprite: f32, height: f32) -> f32 {
 
 const INFO_LEFT: f32 = 52.0;
 /// Member columns: name, position, job, level.
-const COLUMNS: [(usize, f32); 4] = [(407, 10.0), (503, 150.0), (504, 250.0), (408, 340.0)];
+/// The member grid: 1-px #C8C8C8 lines, the outline, the header's rule, five rows 44 apart, the column lines; the
+/// header's labels (Name, Position, Job, Level, Tax, Contribution) at y 51 and their cells (left edges, 6 to 381).
+const GRID_LINE: [u8; 4] = [0xC8, 0xC8, 0xC8, 0xFF];
+const GRID: [f32; 4] = [5.0, 46.0, 377.0, 241.0];
+const GRID_HEADER: f32 = 66.0;
+const MEMBER_ROW: f32 = 44.0;
+const MEMBER_ROWS: usize = 5;
+const GRID_COLUMNS: [f32; 5] = [104.0, 170.0, 224.0, 264.0, 304.0];
+const COLUMNS: [(usize, f32); 6] = [(407, 10.0), (503, 109.0), (504, 175.0), (408, 229.0), (506, 269.0), (507, 309.0)];
+const CELLS: [f32; 7] = [6.0, 104.0, 170.0, 224.0, 264.0, 304.0, 381.0];
+const SORTED_FILL: [u8; 4] = [0xCE, 0xD8, 0xEB, 0xFF];
+const ONLINE_BAND: [u8; 4] = [0xE2, 0xFF, 0xE4, 0xFF];
+const DATE_TEXT: [u8; 3] = [0x40, 0x40, 0x40];
+/// "Show guild member login status": the box and its label.
+const LOGIN_STATUS: usize = 2864;
+const LOGIN_BOX: ([f32; 2], [f32; 2]) = ([12.0, 299.0], [240.0, 12.0]);
+const NAMELESS: usize = 581;
+/// The access date's format and line.
+const DATE_FORMAT: usize = 3011;
+const ACCESS_DATE: usize = 3012;
 /// Position columns: rank, title, invite, expel, storage, tax %.
 const POSITION_COLUMNS: [(usize, f32); 6] = [(510, 10.0), (511, 50.0), (512, 190.0), (513, 240.0), (2499, 290.0), (514, 345.0)];
 /// What the invite, expel and storage columns check.
@@ -110,6 +129,11 @@ pub struct Assets {
     check: [Texture; 2],
     hover: Texture,
     white: Texture,
+    /// The member grid's lines, its online band and sorted header, and the sort arrows (up, down).
+    grid: Texture,
+    online: Texture,
+    sorted: Texture,
+    arrows: [Texture; 2],
 }
 
 impl Assets {
@@ -127,6 +151,10 @@ impl Assets {
             check: ["checkbox_0", "checkbox_1"].map(image),
             hover: gpu.solid(HOVER),
             white: gpu.solid([0xFF; 4]),
+            grid: gpu.solid(GRID_LINE),
+            online: gpu.solid(ONLINE_BAND),
+            sorted: gpu.solid(SORTED_FILL),
+            arrows: ["guild\\guild_arrow_up", "guild\\guild_arrow_down"].map(image),
         }
     }
 }
@@ -169,6 +197,10 @@ pub enum Hit {
     Tax(u32),
     /// A row of the members page, by its place in `Guild::members`.
     Member(usize),
+    /// The members page: a header cell (sorting by its column), the login status box, anywhere else on the page.
+    SortBy(usize),
+    LoginStatus,
+    MemberPage,
     Window,
 }
 
@@ -276,12 +308,87 @@ pub struct GuildWindow {
     scroll: usize,
     /// The relation selected on the info page (guild ID, antagonist).
     pub selected: Option<(u32, bool)>,
+    /// The members page: the member selected (by character), the column sorted by and whether up, and whether
+    /// online members come first.
+    pub member: Option<u32>,
+    pub sort: Option<(usize, bool)>,
+    pub online_first: bool,
 }
 
 impl Default for GuildWindow {
     fn default() -> Self {
-        Self { frame: Frame::new(POSITION, WIDTH), tab: 0, scroll: 0, selected: None }
+        Self { frame: Frame::new(POSITION, WIDTH), tab: 0, scroll: 0, selected: None, member: None, sort: None, online_first: false }
     }
+}
+
+/// The members in the order shown: the packet's (rathena: the master first), or by a column, up or down; online
+/// members first while asked, each group keeping that order. ponytail: Position sorts by rank, Job by job ID, Tax keeps
+/// the order (the list carries no tax).
+pub fn member_order(members: &[GuildMember], sort: Option<(usize, bool)>, online_first: bool) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..members.len()).collect();
+    if let Some((column, up)) = sort {
+        order.sort_by(|&a, &b| {
+            let [a, b] = [&members[a], &members[b]];
+            let by = match column {
+                0 => a.name.cmp(&b.name),
+                1 => a.position.cmp(&b.position),
+                2 => a.job.cmp(&b.job),
+                3 => a.level.cmp(&b.level),
+                5 => a.contribution.cmp(&b.contribution),
+                _ => std::cmp::Ordering::Equal,
+            };
+            if up { by } else { by.reverse() }
+        });
+    }
+    if online_first {
+        order.sort_by_key(|&index| !members[index].online);
+    }
+    order
+}
+
+/// The member grid's header cell under a window-local point.
+fn header_cell(local: [f32; 2]) -> Option<usize> {
+    if !(47.0..GRID_HEADER).contains(&local[1]) {
+        return None;
+    }
+    (0..6).find(|&column| (CELLS[column]..CELLS[column + 1]).contains(&local[0]))
+}
+
+/// The row of the member grid under a window-local point (5 rows from y 66, x 5–382).
+fn grid_row(local: [f32; 2]) -> Option<usize> {
+    let inside = (GRID[0]..GRID[0] + GRID[2]).contains(&local[0]) && (GRID_HEADER..GRID_HEADER + MEMBER_ROW * MEMBER_ROWS as f32).contains(&local[1]);
+    inside.then(|| ((local[1] - GRID_HEADER) / MEMBER_ROW) as usize)
+}
+
+/// A day's date from Unix time (UTC) in a strftime-style template: `%y`, `%m`, `%d`, `%Y`.
+// ponytail: UTC; the client's local date would need the time zone.
+pub fn format_date(unix: u32, template: &str) -> String {
+    let days = i64::from(unix) / 86_400;
+    // Civil date from days since 1970-01-01.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    template
+        .replace("%Y", &format!("{year:04}"))
+        .replace("%y", &format!("{:02}", year.rem_euclid(100)))
+        .replace("%m", &format!("{month:02}"))
+        .replace("%d", &format!("{day:02}"))
+}
+
+/// A contribution's colour: red at the most it can hold (2147483647), else black.
+pub fn contribution_color(contribution: u32) -> [u8; 3] {
+    if contribution >= i32::MAX as u32 { RED } else { [0, 0, 0] }
+}
+
+/// The key a member's head is loaded under in the icons.
+pub fn head_key(member: &GuildMember) -> String {
+    format!("guildhead:{}:{}:{}:{}", member.job, member.sex, member.hair, member.hair_color)
 }
 
 /// Where a guild skill's box sits.
@@ -347,10 +454,6 @@ impl PositionPart {
     }
 }
 
-fn member_box(row: usize) -> ([f32; 2], [f32; 2]) {
-    ([4.0, row_top(row) - 2.0], [WIDTH - 8.0, LINE])
-}
-
 impl GuildWindow {
     pub fn height(&self) -> f32 {
         HEIGHT
@@ -359,6 +462,23 @@ impl GuildWindow {
     pub fn show_tab(&mut self, tab: usize) {
         self.tab = tab;
         self.scroll = 0;
+    }
+
+    /// A click on the members page: a row selects its member, elsewhere clears; a header cell sorts by its column
+    /// (up, then flipped by the same column again); the box puts online members first.
+    pub fn click_members(&mut self, hit: Hit, guild: &Guild) {
+        match hit {
+            Hit::Member(index) => self.member = guild.members.get(index).map(|member| member.character),
+            Hit::SortBy(column) => {
+                self.sort = Some(match self.sort {
+                    Some((sorted, up)) if sorted == column => (column, !up),
+                    _ => (column, true),
+                });
+            }
+            Hit::LoginStatus => self.online_first = !self.online_first,
+            Hit::MemberPage => self.member = None,
+            _ => {}
+        }
     }
 
     pub fn hit(&self, cursor: [f32; 2], guild: &Guild) -> Option<Hit> {
@@ -387,12 +507,18 @@ impl GuildWindow {
             }
         }
         if self.tab == MEMBERS {
-            let shown = guild.members.len().saturating_sub(self.scroll).min(ROWS);
-            if let Some(row) = (0..shown).find(|&row| {
-                let (corner, size) = member_box(row);
-                contains(corner, size, local)
-            }) {
-                return Some(Hit::Member(self.scroll + row));
+            if let Some(column) = header_cell(local) {
+                return Some(Hit::SortBy(column));
+            }
+            if contains(LOGIN_BOX.0, LOGIN_BOX.1, local) {
+                return Some(Hit::LoginStatus);
+            }
+            let order = member_order(&guild.members, self.sort, self.online_first);
+            if let Some(&index) = grid_row(local).and_then(|row| order.get(self.scroll + row)) {
+                return Some(Hit::Member(index));
+            }
+            if local[1] > PAGE_TOP && local[1] < HEIGHT - FOOTER {
+                return Some(Hit::MemberPage);
             }
         }
         if self.tab == SKILLS {
@@ -445,23 +571,34 @@ impl GuildWindow {
                 .enumerate()
                 .flat_map(|(row, position)| position_parts(row).map(|(part, corner, size)| (part.name(position.id), place(corner, size))))
                 .collect(),
-            MEMBERS => guild
-                .members
-                .iter()
-                .skip(self.scroll)
-                .take(ROWS)
-                .enumerate()
-                .map(|(row, member)| {
-                    let (corner, size) = member_box(row);
-                    (format!("member:{}", member.name), place(corner, size))
-                })
-                .collect(),
+            MEMBERS => {
+                let mut boxes: Vec<(String, [f32; 4])> = member_order(&guild.members, self.sort, self.online_first)
+                    .into_iter()
+                    .skip(self.scroll)
+                    .take(MEMBER_ROWS)
+                    .enumerate()
+                    .map(|(row, index)| {
+                        let top = GRID_HEADER + 1.0 + row as f32 * MEMBER_ROW;
+                        (format!("member:{}", guild.members[index].name), place([6.0, top], [375.0, MEMBER_ROW - 1.0]))
+                    })
+                    .collect();
+                for (column, name) in ["name", "position", "job", "level", "tax", "contribution"].into_iter().enumerate() {
+                    boxes.push((format!("sort:{name}"), place([CELLS[column], 47.0], [CELLS[column + 1] - CELLS[column], GRID_HEADER - 47.0])));
+                }
+                boxes.push(("login_status".to_owned(), place(LOGIN_BOX.0, LOGIN_BOX.1)));
+                boxes
+            }
             _ => Vec::new(),
         }
     }
 
     /// The wheel scrolls the open list.
     pub fn scroll_by(&mut self, rows: i32, guild: &Guild) {
+        // The members page shows 5 rows.
+        if self.tab == MEMBERS {
+            self.scroll = (self.scroll as i32 + rows).clamp(0, guild.members.len().saturating_sub(MEMBER_ROWS) as i32) as usize;
+            return;
+        }
         let total = match self.tab {
             MEMBERS => guild.members.len(),
             POSITIONS => guild.position_info.len(),
@@ -570,17 +707,65 @@ impl GuildWindow {
                     }
                 }
             }
-            // Members: name, position, job and level; those offline in grey.
+            // Members: the grid, the sorted column's header, five rows (the online band and head, name, position, job,
+            // level, tax, contribution, the access date), and the login status box.
             MEMBERS => {
-                header(layer, &COLUMNS);
-                for (row, member) in guild.members.iter().skip(self.scroll).take(ROWS).enumerate() {
-                    let color = if member.online { [0, 0, 0] } else { GREY };
-                    let position = guild.positions.get(&member.position).cloned().unwrap_or_default();
-                    let job = job_names.get(&member.job).cloned().unwrap_or_else(|| member.job.to_string());
-                    for (value, (_, x)) in [member.name.clone(), position, job, member.level.to_string()].into_iter().zip(COLUMNS) {
-                        text(layer, window::fit(font, &value, 95.0), [x, row_top(row)], color);
-                    }
+                if let Some((column, up)) = self.sort {
+                    layer.sprites.push((&assets.sorted, at([CELLS[column], 47.0]), [CELLS[column + 1] - CELLS[column], 19.0]));
+                    let (label, x) = COLUMNS[column];
+                    let arrow = &assets.arrows[usize::from(!up)];
+                    layer.sprites.push((arrow, at([x + font.width(message(label)) + 2.0, 53.0]), [7.0, 6.0]));
                 }
+                for &(label, x) in &COLUMNS {
+                    text(layer, message(label).to_owned(), [x, 51.0], [0, 0, 0]);
+                }
+                let order = member_order(&guild.members, self.sort, self.online_first);
+                for (row, &index) in order.iter().skip(self.scroll).take(MEMBER_ROWS).enumerate() {
+                    let member = &guild.members[index];
+                    let top = 67.0 + row as f32 * MEMBER_ROW;
+                    if member.online {
+                        layer.sprites.push((&assets.online, at([6.0, top]), [375.0, 43.0]));
+                    }
+                    if self.member == Some(member.character) {
+                        layer.sprites.push((&assets.hover, at([6.0, top]), [375.0, 43.0]));
+                    }
+                    if member.online
+                        && let Some(Some(head)) = icons.get(&head_key(member))
+                    {
+                        layer.sprites.push((head, at([((44.0 - head.size[0]) / 2.0).floor() + 6.0, top + 3.0]), head.size));
+                    }
+                    let name = if member.name.is_empty() { message(NAMELESS).to_owned() } else { member.name.clone() };
+                    text(layer, window::fit(font, &name, 51.0), [43.0, top + 12.0], [0, 0, 0]);
+                    let position = guild.positions.get(&member.position).cloned().unwrap_or_default();
+                    text(layer, window::fit(font, &position, 49.0), [109.0, top + 16.0], [0, 0, 0]);
+                    let job = job_names.get(&member.job).cloned().unwrap_or_else(|| member.job.to_string());
+                    text(layer, window::fit(font, &job, 39.0), [175.0, top + 16.0], [0, 0, 0]);
+                    let right = |layer: &mut Layer<'a>, value: String, edge: f32, color: [u8; 3]| {
+                        let x = edge - font.width(&value);
+                        text(layer, value, [x, top + 16.0], color);
+                    };
+                    right(layer, member.level.to_string(), 260.0, [0, 0, 0]);
+                    // ponytail: the member list carries no tax.
+                    right(layer, format!("{:3.0}%", 0.0), 300.0, [0, 0, 0]);
+                    right(layer, member.contribution.to_string(), 377.0, contribution_color(member.contribution));
+                    let date = format_date(member.last_login, message(DATE_FORMAT));
+                    let line = rustnarok_client::messages::fill(message(ACCESS_DATE), &[&date]);
+                    text(layer, line, [8.0, top + 33.0], DATE_TEXT);
+                }
+                // The grid over the bands.
+                let [x, y, w, h] = GRID;
+                for (corner, size) in [([x, y], [w, 1.0]), ([x, y + h], [w + 1.0, 1.0]), ([x, y], [1.0, h]), ([x + w, y], [1.0, h])] {
+                    layer.sprites.push((&assets.grid, at(corner), size));
+                }
+                for k in 0..=MEMBER_ROWS {
+                    layer.sprites.push((&assets.grid, at([x, GRID_HEADER + MEMBER_ROW * k as f32]), [w, 1.0]));
+                }
+                for column in GRID_COLUMNS {
+                    layer.sprites.push((&assets.grid, at([column, y]), [1.0, h]));
+                }
+                let check = &assets.check[usize::from(self.online_first)];
+                layer.sprites.push((check, at(LOGIN_BOX.0), check.size));
+                text(layer, message(LOGIN_STATUS).to_owned(), [LOGIN_BOX.0[0] + 14.0, LOGIN_BOX.0[1] - 1.0], [0, 0, 0]);
             }
             // Positions: rank, title, what its members may do, and the tax on their exp.
             POSITIONS => {
@@ -647,6 +832,52 @@ impl GuildWindow {
 mod tests {
     use super::*;
 
+    fn member(name: &str, level: u16, online: bool, contribution: u32) -> GuildMember {
+        GuildMember { name: name.into(), level, online, contribution, character: u32::from(level), ..Default::default() }
+    }
+
+    #[test]
+    fn sorts_selects_and_dates_the_members() {
+        let members = vec![member("Master", 50, true, 10), member("Ann", 20, false, 30), member("Bob", 90, true, 20), member("Cid", 70, false, 0)];
+        assert_eq!(member_order(&members, None, false), [0, 1, 2, 3], "the packet's order");
+        assert_eq!(member_order(&members, Some((0, true)), false), [1, 2, 3, 0]);
+        assert_eq!(member_order(&members, Some((3, true)), false), [1, 0, 3, 2]);
+        assert_eq!(member_order(&members, Some((3, false)), false), [2, 3, 0, 1]);
+        assert_eq!(member_order(&members, Some((5, false)), false), [1, 2, 0, 3]);
+        // Online first keeps each group in the column's order.
+        assert_eq!(member_order(&members, Some((3, false)), true), [2, 0, 3, 1]);
+        assert_eq!(member_order(&members, None, true), [0, 2, 1, 3]);
+        // A press: header cells, rows, and the rest.
+        assert_eq!(header_cell([10.0, 50.0]), Some(0));
+        assert_eq!(header_cell([230.0, 60.0]), Some(3));
+        assert_eq!(header_cell([310.0, 66.0]), None);
+        assert_eq!((grid_row([20.0, 67.0]), grid_row([20.0, 109.0]), grid_row([20.0, 110.0]), grid_row([381.0, 285.0])), (Some(0), Some(0), Some(1), Some(4)));
+        assert_eq!((grid_row([20.0, 287.0]), grid_row([2.0, 100.0])), (None, None));
+        let guild = Guild { members: members.clone(), ..Guild::default() };
+        let mut window = GuildWindow { tab: MEMBERS, ..GuildWindow::default() };
+        window.frame.open = true;
+        let corner = window.frame.position;
+        let at = move |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
+        assert_eq!(window.hit(at([20.0, 115.0]), &guild), Some(Hit::Member(1)));
+        assert_eq!(window.hit(at([230.0, 55.0]), &guild), Some(Hit::SortBy(3)));
+        assert_eq!(window.hit(at([20.0, 300.0]), &guild), Some(Hit::LoginStatus));
+        window.click_members(Hit::SortBy(3), &guild);
+        window.click_members(Hit::SortBy(3), &guild);
+        assert_eq!(window.sort, Some((3, false)), "the same column again flips it");
+        assert_eq!(window.hit(at([20.0, 70.0]), &guild), Some(Hit::Member(2)), "the highest level first");
+        window.click_members(Hit::Member(2), &guild);
+        assert_eq!(window.member, Some(90));
+        window.click_members(Hit::MemberPage, &guild);
+        assert_eq!(window.member, None);
+        window.click_members(Hit::SortBy(0), &guild);
+        assert_eq!(window.sort, Some((0, true)), "a new column sorts up");
+        // The access date and the contribution's colour.
+        assert_eq!(format_date(1_792_368_000, "%y.%m.%d"), "26.10.19");
+        assert_eq!(format_date(0, "%Y-%m-%d"), "1970-01-01");
+        assert_eq!(format_date(951_782_400, "%y.%m.%d"), "00.02.29");
+        assert_eq!((contribution_color(2_147_483_647), contribution_color(5)), (RED, [0, 0, 0]));
+    }
+
     #[test]
     fn picks_tabs_across_the_top() {
         let mut window = GuildWindow::default();
@@ -703,8 +934,10 @@ mod tests {
         window.frame.open = true;
         window.show_tab(MEMBERS);
         let mut guild = crab();
-        assert_eq!(window.hit(window.frame.at([20.0, row_top(1) + 5.0]), &guild), Some(Hit::Member(1)));
-        assert_eq!(window.button_boxes(&guild).into_iter().map(|(name, _)| name).collect::<Vec<_>>(), ["member:Boss", "member:Newbie"]);
+        assert_eq!(window.hit(window.frame.at([20.0, GRID_HEADER + MEMBER_ROW + 5.0]), &guild), Some(Hit::Member(1)));
+        let names: Vec<String> = window.button_boxes(&guild).into_iter().map(|(name, _)| name).collect();
+        assert_eq!(names[..2], ["member:Boss", "member:Newbie"]);
+        assert!(names.contains(&"sort:level".to_owned()) && names.contains(&"login_status".to_owned()));
         // The master on another member: positions 1 to 19 but the one they hold.
         let moves = guild.member_menu(1, 1);
         assert_eq!(moves.len(), 18);

@@ -55,7 +55,7 @@
     },
     {
       "click_on": {
-        "menu_item": "Guild Invitation"
+        "menu_item": "Guild invitation"
       }
     },
     {
@@ -69,7 +69,7 @@
     },
     {
       "expect": {
-        "chat": "You have accepted the guild invitation."
+        "chat": "Offer Accepted"
       }
     },
     {
@@ -396,7 +396,7 @@
     },
     {
       "expect": {
-        "chat": "has left the guild.",
+        "chat": "has withdrawn from the guild.",
         "state": {
           "guild.members.{second}": null
         }

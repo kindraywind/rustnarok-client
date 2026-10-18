@@ -3408,11 +3408,17 @@ pub struct GuildRelation {
 pub struct GuildMember {
     pub account: u32,
     pub character: u32,
+    /// Their hair style and colour, and sex (0 female, 1 male), for their head in the member list.
+    pub hair: u16,
+    pub hair_color: u16,
+    pub sex: u16,
     pub job: u16,
     pub level: u16,
     pub contribution: u32,
     pub online: bool,
     pub position: u32,
+    /// When they last logged in (Unix time).
+    pub last_login: u32,
     pub name: String,
 }
 
@@ -6324,11 +6330,15 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 .map(|member| GuildMember {
                     account: self::u32_at(member, 0),
                     character: self::u32_at(member, 4),
+                    hair: self::u16_at(member, 8),
+                    hair_color: self::u16_at(member, 10),
+                    sex: self::u16_at(member, 12),
                     job: self::u16_at(member, 14),
                     level: self::u16_at(member, 16),
                     contribution: self::u32_at(member, 18),
                     online: self::u32_at(member, 22) != 0,
                     position: self::u32_at(member, 26),
+                    last_login: self::u32_at(member, 30),
                     name: c_string(&member[34..58]),
                 })
                 .collect(),
@@ -6575,6 +6585,31 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_guild_member_records() {
+        // 0b7d <length>.W, then 58 bytes a member: AID, GID, hair, hair colour, sex, job, level, contribution, state,
+        // position, last login, name.
+        let mut record = Vec::new();
+        for value in [7u32, 150_000] {
+            record.extend(value.to_le_bytes());
+        }
+        for value in [12u16, 3, 1, 4001, 99] {
+            record.extend(value.to_le_bytes());
+        }
+        for value in [2_147_483_647u32, 1, 5, 1_792_368_000] {
+            record.extend(value.to_le_bytes());
+        }
+        let mut name = b"Crab".to_vec();
+        name.resize(24, 0);
+        record.extend(name);
+        let packet = [&ZC_MEMBERMGR_INFO.to_le_bytes()[..], &(4u16 + 58).to_le_bytes(), &record].concat();
+        let Some(MapEvent::GuildMembers(members)) = decode_map_packet(&packet) else { panic!("not decoded") };
+        let member = &members[0];
+        assert_eq!((member.account, member.character, member.hair, member.hair_color, member.sex), (7, 150_000, 12, 3, 1));
+        assert_eq!((member.job, member.level, member.contribution, member.online, member.position), (4001, 99, 2_147_483_647, true, 5));
+        assert_eq!((member.last_login, member.name.as_str()), (1_792_368_000, "Crab"));
+    }
 
     #[test]
     fn encodes_login_request() {
