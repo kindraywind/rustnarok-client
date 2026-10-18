@@ -704,6 +704,20 @@ fn name_color(kind: u8, job: u16, level: u16, ours: bool, own_level: i64) -> [u8
     }
 }
 
+/// The effect a unit leaves where it vanished, by rathena's `clr_type`: 3 teleported (EF_TELEPORTATION), 2 logged out
+/// (its fainter rings); nothing for a GM hidden from sight (OPTION_INVISIBLE), nor for going out of sight or dying.
+// ponytail: the 300 and 600 the game passes with these aren't used.
+fn vanish_effect(reason: u8, option: u32) -> Option<u32> {
+    if option & actor::OPTION_INVISIBLE != 0 {
+        return None;
+    }
+    match reason {
+        3 => Some(304),
+        2 => Some(314),
+        _ => None,
+    }
+}
+
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
 const WARP_JOB: u16 = 45;
 
@@ -9325,6 +9339,15 @@ impl App {
                 if id == game.account_id && reason == 1 {
                     game.escape = Some(escape::Menu { dead: true });
                 }
+                // Teleporting and logging out leave rings and a sound on the spot (not for a GM hidden from sight).
+                if id != game.account_id
+                    && let (Some(gpu), Some(actor)) = (gpu, dying.as_deref())
+                    && let Some(effect) = vanish_effect(reason, actor.hide_option)
+                {
+                    let at = game.world.cell_position(actor.position(Instant::now()));
+                    game.effects.play(gpu, grf, table, effect, effects::Target::Ground, at, Instant::now());
+                }
+                let dying = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 match (reason, dying) {
                     (1, Some(actor)) => fall(actor, lands),
                     // Out of sight: it fades out, its shadow gone at once.
@@ -14252,6 +14275,14 @@ mod tests {
         assert_eq!(canvas_width([2048, 1536]), 1024.0);
         assert_eq!(canvas_width([3840, 2160]), 1365.0, "16:9");
         assert_eq!(canvas_width([1000, 1000]), 1024.0, "narrower than 4:3 keeps 1024, with bars above and below");
+    }
+
+    #[test]
+    fn rings_where_a_unit_teleported_or_logged_out() {
+        assert_eq!(vanish_effect(3, 0), Some(304));
+        assert_eq!(vanish_effect(3, actor::OPTION_INVISIBLE), None);
+        assert_eq!(vanish_effect(2, 0), Some(314));
+        assert_eq!((vanish_effect(0, 0), vanish_effect(1, 0)), (None, None));
     }
 
     #[test]
