@@ -1,0 +1,14 @@
+// Reputation (issue #278): one NPC sets the player's standing with the Orc Village (1500) and Grey Wolf Village
+// (-2600) and opens the reputation window; the other sets both back to 0. Loaded and unloaded by
+// scenarios/reputation.json.
+prontera,158,183,4	script	Repute Giver	4_M_01,{
+	set_reputation_points 1, 1500;
+	set_reputation_points 3, -2600;
+	reputationui;
+	end;
+}
+prontera,154,183,4	script	Repute Reset	4_M_01,{
+	set_reputation_points 1, 0;
+	set_reputation_points 3, 0;
+	end;
+}

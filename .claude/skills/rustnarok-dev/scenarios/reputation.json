@@ -1,0 +1,156 @@
+{
+  "about": "Reputation window (issue #278): our NPC script (npc/reputation.txt) sets the player's standing with the Orc Village to 1500 and the Grey Wolf Village to -2600, then opens the window (ZC_REPUTE_OPEN). It lists the groups from the client's tables with each reputation's points, five lights a side (two blue for the orcs at 1500 of 3000, two red for the wolves at -2600 of -5000) and a bar to the next light. Esc closes it; the menu's repute button opens and closes it again. The other NPC sets the points back to 0, and the script is unloaded.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/reputation.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/reputation.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "click_on": {
+        "unit": "Repute Reset"
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Reputation"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "unit": "Repute Giver"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b8e",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Reputation"
+        ],
+        "state": {
+          "reputation.1": 1500,
+          "reputation.3": -2600
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "reputation-window",
+      "threshold": 10
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Reputation"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "button": "menu"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "repute"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Reputation"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "menu_item": "repute"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Reputation"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "button": "menu"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "unit": "Repute Reset"
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "reputation.1": 0,
+          "reputation.3": 0
+        }
+      }
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/reputation.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

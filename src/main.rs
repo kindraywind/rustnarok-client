@@ -100,6 +100,7 @@ mod ranking;
 mod refine;
 mod reform;
 mod render;
+mod reputation;
 mod roulette;
 mod screenshot;
 mod shop;
@@ -939,6 +940,9 @@ struct Game {
     /// The ranking board while it's open, characters' names by ID as the server told them (None: it has none), and
     /// the names asked for.
     ranking: Option<ranking::Board>,
+    /// Reputation points by reputation type, as the server last sent them, and the reputation window while it's open.
+    reputation: HashMap<u64, i64>,
+    reputation_window: Option<reputation::Window>,
     /// What was just picked up, for five seconds; and whether anything was since the inventory was last open.
     pickup_popup: Option<pickup::Popup>,
     new_items: bool,
@@ -1987,6 +1991,14 @@ impl Game {
     /// Whether the pointer is on a window's control: a title bar's close or minimize button, the equipment window's
     /// buttons, a pick list's OK or Cancel.
     // ponytail: tabs, scroll arrows, resize corners and the minimap aren't told apart yet.
+    /// Opens the reputation window, or closes it.
+    fn toggle_reputation(&mut self, tables: &reputation::Tables) {
+        self.reputation_window = match self.reputation_window.take() {
+            Some(_) => None,
+            None => Some(reputation::Window::new(tables, &self.reputation)),
+        };
+    }
+
     /// The item link under the pointer: the NPC window's, else the chat log's where no window covers it.
     fn link_at(&self, cursor: [f32; 2]) -> Option<&links::ItemLink> {
         links::at(&self.dialog_links, cursor).or_else(|| self.window_at(cursor).is_none().then(|| links::at(&self.chat_links, cursor)).flatten())
@@ -2475,6 +2487,7 @@ impl Game {
             || self.bank.as_ref().is_some_and(|bank| bank.hit(cursor).is_some())
             || self.viewing.as_ref().is_some_and(|viewed| viewed.window.hit(cursor, &viewed.items).is_some())
             || self.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some()
+            || self.reputation_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
             || self.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some()
             || self.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
@@ -2916,6 +2929,7 @@ impl Game {
         push(PartySetup, self.party_setup.is_some());
         push(DressRoom, self.dressroom.is_some());
         push(Ranking, self.ranking.is_some());
+        push(Reputation, self.reputation_window.is_some());
         push(Catalog, self.catalog.is_some());
         push(SkillDescription, self.skill_description.is_some());
         push(Roulette, self.roulette.is_some());
@@ -3202,6 +3216,7 @@ impl Game {
                 self.dress_figure = None;
             }
             Ranking => self.ranking = None,
+            Reputation => self.reputation_window = None,
             Catalog => self.close_catalog(),
             SkillDescription => self.skill_description = None,
             Roulette => self.close_roulette(),
@@ -3895,6 +3910,7 @@ struct Assets {
     homunculus: homunculus::Assets,
     party: party::Assets,
     chatroom: chatroom::Assets,
+    reputation: reputation::Assets,
     /// Item links' underline in the NPC window.
     link_line: Texture,
     /// The magic square under a ground cast.
@@ -4017,6 +4033,7 @@ impl Assets {
             homunculus: homunculus::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
+            reputation: reputation::Assets::load(gpu, grf),
             link_line: gpu.solid([links::COLOR[0], links::COLOR[1], links::COLOR[2], 0xFF]),
             magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
             escape: escape::Assets::load(gpu, grf),
@@ -4693,6 +4710,8 @@ struct App {
     /// Skills' descriptions, line by line.
     skill_descriptions: HashMap<u16, Vec<String>>,
     skill_trees: SkillTrees,
+    /// The client's reputation groups and reputations.
+    reputation_tables: reputation::Tables,
     status_icon_files: HashMap<u16, (u8, String)>,
     /// What each status icon says when pointed at.
     state_infos: HashMap<u16, lua::StateInfo>,
@@ -5639,6 +5658,14 @@ impl App {
                     _ => {}
                 }
             }
+            // The reputation window: its title bar.
+            Scene::Game(game) if game.reputation_window.as_ref().and_then(|window| window.hit(cursor)).is_some() => {
+                match game.reputation_window.as_ref().and_then(|window| window.hit(cursor)) {
+                    Some(reputation::Hit::Title(TitleHit::Close)) => game.reputation_window = None,
+                    Some(reputation::Hit::Title(title)) => game.reputation_window.as_mut().unwrap().frame.click_title(title),
+                    _ => {}
+                }
+            }
             // The dress room: pickers, turning, closing.
             Scene::Game(game) if game.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some() => {
                 let room = game.dressroom.as_mut().unwrap();
@@ -6110,9 +6137,12 @@ impl App {
                                 game.shortcuts_window = if game.shortcuts_window.is_some() { None } else { Some(options::ShortcutsWindow::new()) };
                                 game.sync_esc();
                             }
-                            // ponytail: navigation and repute have no window yet (the navigation and reputation
-                            // windows); their buttons do nothing.
-                            Some("navigation" | "repute") => {}
+                            Some("repute") => {
+                                game.toggle_reputation(&self.reputation_tables);
+                                game.sync_esc();
+                            }
+                            // ponytail: navigation has no window yet; its button does nothing.
+                            Some("navigation") => {}
                             Some("map") => {
                                 game.world_map = match (game.world_map.take(), &self.gpu) {
                                     (None, Some(gpu)) => worldmap::WorldMap::open(gpu, &self.grf, &self.worlds.0, self.worlds.1, &map_key(&game.map)),
@@ -7565,6 +7595,10 @@ impl App {
                 game.status_window.frame.toggle();
                 game.raise(Panel::Status);
             }
+            shortcuts::Action::Reputation => {
+                game.toggle_reputation(&self.reputation_tables);
+                game.sync_esc();
+            }
             shortcuts::Action::RotateHotkeys => game.hotkeys.rotate(),
             shortcuts::Action::SwitchHotkeys => game.hotkeys.switch(),
             shortcuts::Action::Costume => {
@@ -8405,6 +8439,8 @@ impl App {
                         .unwrap_or_default(),
                     dressroom: None,
                     ranking: None,
+                    reputation: HashMap::new(),
+                    reputation_window: None,
                     catalog: None,
                     skill_description: None,
                     pickup_popup: None,
@@ -10938,6 +10974,19 @@ impl App {
             MapEvent::SkillCooldown { skill, ms } => game.cooldowns.set(skill, ms, control::now()),
             MapEvent::SkillFailed { ok: true, .. } => {}
             // A cut-off cast: its bar and its magic square go.
+            // Reputation points: the window fits the rows they show.
+            MapEvent::Reputation(entries) => {
+                game.reputation.extend(entries);
+                if let Some(window) = &mut game.reputation_window {
+                    window.refresh(&self.reputation_tables, &game.reputation);
+                }
+            }
+            MapEvent::ReputationOpen { .. } => {
+                if game.reputation_window.is_none() {
+                    game.toggle_reputation(&self.reputation_tables);
+                }
+                game.sync_esc();
+            }
             MapEvent::CastCancelled(source) => {
                 let caster = (source != game.account_id).then_some(source);
                 game.casts.remove(&caster);
@@ -13072,6 +13121,9 @@ impl App {
         if let Some(board) = &game.ranking {
             board.draw(&mut shop_layer, &assets.chrome, font, messages, &game.char_names, pointer.0);
         }
+        if let Some(window) = &game.reputation_window {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.reputation, font, messages, &self.reputation_tables, &game.reputation, pointer.0);
+        }
         if let Some(room) = &game.dressroom {
             let feet = room.feet();
             let figure = match &game.dress_figure {
@@ -13647,6 +13699,7 @@ fn main() {
         HashMap::new()
     });
     let skill_trees = lua::skill_trees(&grf).unwrap_or_default();
+    let reputation_tables = reputation::Tables::load(&grf);
     let status_icon_files = lua::status_icons(&grf).unwrap_or_default();
     let state_infos = lua::state_info(&grf).unwrap_or_else(|error| {
         eprintln!("no status icon descriptions: {error}");
@@ -13710,6 +13763,7 @@ fn main() {
         skill_info,
         skill_descriptions,
         skill_trees,
+        reputation_tables,
         status_icon_files,
         state_infos,
         effect_table: effects::Table::load(),
