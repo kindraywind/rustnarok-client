@@ -10,7 +10,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN, UI, contains, inventory, shop};
+use crate::{Layer, UI, contains, inventory, screen, shop};
 
 const TITLE: usize = 1780;
 const SELL: usize = 1778;
@@ -158,7 +158,7 @@ pub struct Catalog {
 
 impl Catalog {
     pub fn new(remote: bool, uses: u8) -> Self {
-        let mut frame = Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor(), 90.0], WIDTH);
+        let mut frame = Frame::new([((screen()[0] - WIDTH) / 2.0).floor(), 90.0], WIDTH);
         frame.open = true;
         Self {
             frame,

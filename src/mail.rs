@@ -14,7 +14,7 @@ use crate::inventory;
 use crate::render::{Gpu, Texture};
 use crate::shop::group;
 use crate::window::{self, Chrome, Frame, TitleHit};
-use crate::{Layer, SCREEN, UI, contains, offset};
+use crate::{Layer, UI, contains, offset, screen};
 
 // ponytail: the rows, slots and boxes are read off bg_rodex_list.bmp and bg_rodex_read.bmp; what sits where over
 // them (buttons, labels, the icon on screen) is a guess to calibrate against the real client.
@@ -59,7 +59,9 @@ const TO_FIELD: [f32; 4] = [60.0, 21.0, 150.0, 16.0];
 const TITLE_FIELD: [f32; 4] = [60.0, 43.0, 226.0, 16.0];
 const VALIDATE: [f32; 2] = [216.0, 20.0];
 const LINE: f32 = 16.0;
-const NOTICE: [f32; 2] = [SCREEN[0] - 16.0 - 43.0, 152.0];
+fn notice() -> [f32; 2] {
+    [screen()[0] - 16.0 - 43.0, 152.0]
+}
 const MAX_ITEMS: usize = 5;
 /// Messages: the windows' names, the tabs, the labels and the buttons.
 const LIST_TITLE: usize = 2727;
@@ -458,7 +460,7 @@ impl Mail {
         if let Some(hit) = self.list.hit(cursor) {
             return Some(Hit::List(hit));
         }
-        (self.unread && !self.list.frame.open && contains(NOTICE, NOTICE_SIZE, cursor)).then_some(Hit::Notice)
+        (self.unread && !self.list.frame.open && contains(notice(), NOTICE_SIZE, cursor)).then_some(Hit::Notice)
     }
 
     /// Opens the mailbox (the list comes from the server), or closes it with what's read in it.
@@ -767,7 +769,7 @@ impl Mail {
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
         let hit = self.hit(pointer.0);
         if self.unread && !self.list.frame.open {
-            layer.sprites.push((&assets.notice, NOTICE, assets.notice.size));
+            layer.sprites.push((&assets.notice, notice(), assets.notice.size));
         }
         if self.list.frame.open {
             self.draw_list(layer, chrome, assets, font, messages, hit, pointer, caret);

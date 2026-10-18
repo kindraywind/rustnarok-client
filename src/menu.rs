@@ -4,7 +4,7 @@
 use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
-use crate::{Layer, SCREEN, contains, offset};
+use crate::{Layer, contains, offset, screen};
 
 // ponytail: the context menu's look (2px padding, 16px rows, #739CEF hover, #CECECE lines), square corners.
 const PADDING: f32 = 2.0;
@@ -37,7 +37,7 @@ impl<T: Copy + PartialEq> Menu<T> {
     pub fn new(pointer: [f32; 2], entries: Vec<Entry<T>>, font: &Font) -> Self {
         let width = entries.iter().flatten().map(|(text, _)| font.width(text).ceil()).fold(0.0, f32::max) + 2.0 * (PADDING + 1.0);
         let height = Self::rows_height(&entries) + 2.0 * PADDING;
-        let corner = [pointer[0].min(SCREEN[0] - width), pointer[1].min(SCREEN[1] - height)];
+        let corner = [pointer[0].min(screen()[0] - width), pointer[1].min(screen()[1] - height)];
         Self { corner, entries, width }
     }
 

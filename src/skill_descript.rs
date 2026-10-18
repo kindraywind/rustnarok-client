@@ -5,7 +5,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome};
-use crate::{Layer, SCREEN, contains};
+use crate::{Layer, contains, screen};
 
 pub const WIDTH: f32 = 304.0;
 const LINE: f32 = 18.0;
@@ -55,21 +55,21 @@ pub fn colored(lines: &[String]) -> Vec<Line> {
 
 /// The window's height for this many lines: 18 a line, plus the frames, at most the screen less 50.
 pub fn height(lines: usize) -> f32 {
-    (LINE * lines as f32 + 4.0 + 6.0).min(SCREEN[1] - 50.0)
+    (LINE * lines as f32 + 4.0 + 6.0).min(screen()[1] - 50.0)
 }
 
 /// Opened from the hotkey bar: at the pointer's x (kept on screen), under the slot's row, or over it when the bar is
 /// in the lower half of the screen.
 pub fn at_hotbar(pointer_x: f32, row: [f32; 2], height: f32) -> [f32; 2] {
-    let x = pointer_x.clamp(0.0, SCREEN[0] - WIDTH);
-    let y = if row[0] < SCREEN[1] / 2.0 { row[1] } else { row[0] - height };
+    let x = pointer_x.clamp(0.0, screen()[0] - WIDTH);
+    let y = if row[0] < screen()[1] / 2.0 { row[1] } else { row[0] - height };
     [x, y.max(0.0)]
 }
 
 /// Opened from the skill window: right of the pointer, kept on screen.
 // ponytail: "the control's screen position + the mouse + (24, 0)" read as the pointer + (24, 0).
 pub fn at_window(pointer: [f32; 2], height: f32) -> [f32; 2] {
-    [(pointer[0] + 24.0).clamp(0.0, SCREEN[0] - WIDTH), pointer[1].clamp(0.0, (SCREEN[1] - height).max(0.0))]
+    [(pointer[0] + 24.0).clamp(0.0, screen()[0] - WIDTH), pointer[1].clamp(0.0, (screen()[1] - height).max(0.0))]
 }
 
 pub struct Assets {
@@ -171,10 +171,10 @@ mod tests {
     #[test]
     fn sizes_and_places_it() {
         assert_eq!(height(10), 190.0);
-        assert_eq!(height(100), SCREEN[1] - 50.0, "capped; the body scrolls");
+        assert_eq!(height(100), screen()[1] - 50.0, "capped; the body scrolls");
         // From a hotbar row near the top: under it; near the bottom: over it; x kept on screen.
         assert_eq!(at_hotbar(100.0, [10.0, 42.0], 190.0), [100.0, 42.0]);
-        assert_eq!(at_hotbar(900.0, [700.0, 732.0], 190.0), [SCREEN[0] - WIDTH, 510.0]);
+        assert_eq!(at_hotbar(900.0, [700.0, 732.0], 190.0), [screen()[0] - WIDTH, 510.0]);
         assert_eq!(at_window([300.0, 200.0], 190.0), [324.0, 200.0]);
     }
 }

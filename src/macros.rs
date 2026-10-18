@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use rustnarok_client::text::Font;
 
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN, contains, offset};
+use crate::{Layer, contains, offset, screen};
 
 pub const COUNT: usize = 10;
 
@@ -58,7 +58,7 @@ pub struct Window {
 
 impl Window {
     fn frame() -> Frame {
-        let mut frame = Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor(), ((SCREEN[1] - HEIGHT) / 2.0).floor()], WIDTH);
+        let mut frame = Frame::new([((screen()[0] - WIDTH) / 2.0).floor(), ((screen()[1] - HEIGHT) / 2.0).floor()], WIDTH);
         frame.open = true;
         frame
     }

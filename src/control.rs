@@ -475,9 +475,9 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
         }
         Command::CellPoint { x, y } => {
             let Scene::Game(game) = &app.scene else { return Err("not in the game".into()) };
-            let view = game.camera.view(crate::SCREEN[0] / crate::SCREEN[1]);
+            let view = game.camera.view(crate::screen()[0] / crate::screen()[1]);
             let point = view.project(game.world.cell_position([x as f32, y as f32])).ok_or("the cell is behind the camera")?;
-            Ok(json!({"ok": true, "point": [point[0] * crate::SCREEN[0], point[1] * crate::SCREEN[1]]}))
+            Ok(json!({"ok": true, "point": [point[0] * crate::screen()[0], point[1] * crate::screen()[1]]}))
         }
         Command::Move { x, y } => {
             point(app, [x, y]);

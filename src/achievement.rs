@@ -12,7 +12,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN, UI, contains, inventory, offset};
+use crate::{Layer, UI, contains, inventory, offset, screen};
 
 const TITLE: usize = 2646;
 const SCORE: usize = 2647;
@@ -127,7 +127,7 @@ pub struct AchievementWindow {
 
 impl Default for AchievementWindow {
     fn default() -> Self {
-        Self { frame: Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor(), 100.0], WIDTH), tab: 0, sub: 0, scroll: 0, picked: None }
+        Self { frame: Frame::new([((screen()[0] - WIDTH) / 2.0).floor(), 100.0], WIDTH), tab: 0, sub: 0, scroll: 0, picked: None }
     }
 }
 

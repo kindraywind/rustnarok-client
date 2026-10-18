@@ -9,7 +9,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::sprite::Spr;
 
 use crate::render::{Gpu, Texture};
-use crate::{Layer, SCREEN};
+use crate::{Layer, screen};
 
 pub const SNOW: u32 = 162;
 pub const SAKURA: u32 = 163;
@@ -150,9 +150,9 @@ fn falling<'a>(layer: &mut Layer<'a>, images: &'a [Texture], effect: u32, second
         let image = &images[((n as f32 + seconds * fall.turn * (0.5 + b)) as usize) % images.len()];
         let scale = between(fall.scale, c);
         let size = [image.size[0] * scale, image.size[1] * scale];
-        let room = SCREEN[1] + size[1];
+        let room = screen()[1] + size[1];
         let y = (a * room + seconds * between(fall.speed, b)).rem_euclid(room) - size[1];
-        let x = d * SCREEN[0] + fall.sway * (seconds * (0.5 + c) + d * 6.3).sin();
+        let x = d * screen()[0] + fall.sway * (seconds * (0.5 + c) + d * 6.3).sin();
         layer.sprites.push((image, [x.round(), y.round()], size));
     }
 }
@@ -175,7 +175,7 @@ fn drifting<'a>(layer: &mut Layer<'a>, images: &'a [Texture], effect: u32, secon
         let [a, b, c, _] = randoms(effect, n);
         let image = &images[n as usize % images.len()];
         let size = [image.size[0] * drift.scale, image.size[1] * drift.scale];
-        let room = [SCREEN[0] + size[0], SCREEN[1] + size[1]];
+        let room = [screen()[0] + size[0], screen()[1] + size[1]];
         let x = (a * room[0] + seconds * between(drift.speed, b)).rem_euclid(room[0]) - size[0];
         let y = (c * room[1] + seconds * drift.rise).rem_euclid(room[1]) - size[1];
         layer.sprites.push((image, [x.round(), y.round()], size));

@@ -9,7 +9,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome};
-use crate::{Layer, SCREEN, UI, contains, offset};
+use crate::{Layer, UI, contains, offset, screen};
 
 const BUTTON: [f32; 2] = [11.0, 11.0];
 
@@ -33,9 +33,9 @@ impl WorldMap {
 
     /// The picture's corner on screen, and its scale.
     fn placement(&self) -> ([f32; 2], f32) {
-        let scale = (SCREEN[0] / self.picture.size[0]).min(SCREEN[1] / self.picture.size[1]);
+        let scale = (screen()[0] / self.picture.size[0]).min(screen()[1] / self.picture.size[1]);
         let size = self.picture.size.map(|side| side * scale);
-        ([((SCREEN[0] - size[0]) / 2.0).floor(), ((SCREEN[1] - size[1]) / 2.0).floor()], scale)
+        ([((screen()[0] - size[0]) / 2.0).floor(), ((screen()[1] - size[1]) / 2.0).floor()], scale)
     }
 
     fn close_button(&self) -> [f32; 2] {
@@ -66,7 +66,7 @@ impl WorldMap {
     ) {
         let Some(world) = worlds.get(self.world) else { return };
         let (corner, scale) = self.placement();
-        layer.sprites.push((&self.backdrop, [0.0, 0.0], SCREEN));
+        layer.sprites.push((&self.backdrop, [0.0, 0.0], screen()));
         layer.sprites.push((&self.picture, corner, self.picture.size.map(|side| side * scale)));
         for field in world.fields.iter().filter(|field| field.map == map) {
             let (at, size) = self.place(field.rect);

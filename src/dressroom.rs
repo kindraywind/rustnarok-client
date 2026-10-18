@@ -7,7 +7,7 @@ use rustnarok_client::text::Font;
 use crate::actor::Look;
 use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN, UI, contains, offset};
+use crate::{Layer, UI, contains, offset, screen};
 
 /// The values the pickers step through (data\luafiles514\lua files\dressroom\), and the stages.
 #[derive(Debug, Clone, PartialEq)]
@@ -136,7 +136,7 @@ impl Room {
     /// Opens on the player's own hair and colors (the first choice for a value the lists don't have) and stage 0.
     pub fn new(look: &Look, lists: &Lists) -> Self {
         let at = |list: &[u16], value: u16| list.iter().position(|&choice| choice == value).unwrap_or(0);
-        let mut frame = Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor(), 120.0], WIDTH);
+        let mut frame = Frame::new([((screen()[0] - WIDTH) / 2.0).floor(), 120.0], WIDTH);
         frame.open = true;
         Self {
             frame,

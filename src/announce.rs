@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
-use crate::{Layer, SCREEN};
+use crate::{Layer, screen};
 
 /// The bar's top, below the top of the screen.
 const TOP: f32 = 51.0;
@@ -88,7 +88,7 @@ impl Bar {
             let Some(lines) = &message.lines else { continue };
             let width = lines.iter().map(|line| line.size[0]).fold(0.0, f32::max) + 2.0 * INSET;
             let height: f32 = lines.iter().map(|line| line.size[1] + LINE_GAP).sum::<f32>() + 2.0 * INSET - LINE_GAP;
-            let left = ((SCREEN[0] - width) / 2.0).floor();
+            let left = ((screen()[0] - width) / 2.0).floor();
             layer.sprites.push((background, [left, top], [width, height]));
             let mut y = top + INSET;
             for line in lines {

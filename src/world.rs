@@ -20,7 +20,7 @@ pub const CELL: f32 = 5.0;
 // Camera and sprite scale as tuned against the official client (vFov 15, zoom 125 = 62.5 cells).
 /// World units per sprite pixel (about 35 sprite pixels per cell).
 const SPRITE_SCALE: f32 = CELL / 35.0;
-/// The logical screen's height in pixels (`SCREEN` in main.rs): the field of view is vertical, so a screen pixel is
+/// The logical screen's height in pixels (`screen()` in main.rs): the field of view is vertical, so a screen pixel is
 /// this fraction of the view's height at any aspect.
 const SCREEN_HEIGHT: f32 = 768.0;
 const FIELD_OF_VIEW: f32 = 15.0;
