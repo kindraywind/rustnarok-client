@@ -48,6 +48,7 @@ mod bank;
 mod basic_info;
 mod buying;
 mod cashshop;
+mod catalog;
 mod char_make;
 mod char_select;
 mod chat;
@@ -793,6 +794,8 @@ struct Game {
     /// The ranking board while it's open, characters' names by ID as the server told them (None: it has none), and
     /// the names asked for.
     ranking: Option<ranking::Board>,
+    /// The Universal Catalog's store search while it's open.
+    catalog: Option<catalog::Catalog>,
     char_names: HashMap<u32, Option<String>>,
     names_asked: HashSet<u32>,
     /// The dress room's lists, the room while it's open, and its figure.
@@ -1060,6 +1063,8 @@ fn change_look(look: &mut Look, kind: u8, value: u32, extra: u32) -> bool {
 /// A map name as the indoor table lists it.
 /// An NPC's mark on the minimap: (NPC, mark ID), cell, image, and until when (None while the NPC keeps it).
 type Mark = ((u32, u8), [i32; 2], Texture, Option<Instant>);
+/// The Universal Catalog's mark, apart from the NPCs'.
+const CATALOG_MARK: (u32, u8) = (u32::MAX, 0);
 
 /// A scripted input (RUSTNAROK_CLIENT_CLICKS): when, right button, where, and where to drag to.
 type ScriptedInput = (Duration, bool, [f32; 2], Option<[f32; 2]>);
@@ -1279,6 +1284,41 @@ impl Game {
     /// Opens the dress room on the player's own look.
     fn open_dressroom(&mut self) {
         self.dressroom = Some(dressroom::Room::new(&character_look(&self.me), &self.dress_lists));
+    }
+
+    /// A click in the store search window.
+    fn click_catalog(&mut self, hit: catalog::Hit, items: &HashMap<u32, ItemInfo>, messages: &[String]) {
+        let Some(catalog) = &mut self.catalog else { return };
+        match hit {
+            catalog::Hit::Title(TitleHit::Close) | catalog::Hit::Close => self.close_catalog(),
+            catalog::Hit::Title(title) => catalog.frame.click_title(title),
+            catalog::Hit::Kind(buying) => catalog.buying = buying,
+            catalog::Hit::Field(field) => catalog.focus = Some(field),
+            catalog::Hit::Search => match catalog::search(&catalog.name, &catalog.min, &catalog.max, items) {
+                Ok((ids, max, min)) => {
+                    let _ = self.session.search_stores(catalog.buying, max, min, &ids, &[]);
+                }
+                Err(id) => self.chat_line(messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+            },
+            catalog::Hit::Next => {
+                let _ = self.session.next_store_page();
+            }
+            catalog::Hit::Row(index) => {
+                if catalog.click_row(index) {
+                    let row = &catalog.rows[index];
+                    let _ = self.session.pick_store(row.account, row.store, row.item);
+                }
+            }
+            catalog::Hit::Window => catalog.focus = None,
+        }
+    }
+
+    /// Closes the store search, telling the server (CZ_CLOSE_SEARCH_STORE_INFO).
+    fn close_catalog(&mut self) {
+        if self.catalog.take().is_some() {
+            let _ = self.session.close_store_search();
+            self.marks.retain(|(key, ..)| *key != CATALOG_MARK);
+        }
     }
 
     /// Who the player sides with on this map, for `versus`: the map's flags, our party's online members, our guild.
@@ -2514,6 +2554,7 @@ struct Assets {
     context_menu: menu::Assets,
     weather: weather::Assets,
     dressroom: dressroom::Assets,
+    catalog: catalog::Assets,
     mercenary: mercenary::Assets,
     homunculus: homunculus::Assets,
     party: party::Assets,
@@ -2625,6 +2666,7 @@ impl Assets {
             context_menu: menu::Assets::load(gpu),
             weather: weather::Assets::load(gpu, grf),
             dressroom: dressroom::Assets::load(gpu, grf),
+            catalog: catalog::Assets::load(gpu, grf),
             mercenary: mercenary::Assets::load(gpu, grf),
             homunculus: homunculus::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
@@ -3249,6 +3291,7 @@ impl App {
                     }
                 }
                 None if game.storage.typing => game.storage.type_text(text),
+                None if game.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) => game.catalog.as_mut().unwrap().type_text(text),
                 None if game.room_make.is_some() => game.room_make.as_mut().unwrap().type_text(text),
                 None if game.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) => {
                     game.macro_window.as_ref().unwrap().type_text(&mut game.macro_lines, text)
@@ -3783,6 +3826,14 @@ impl App {
                         let _ = game.session.answer_expansion(yes);
                     }
                 }
+            }
+            // The store search: the kind, the fields, searching, paging, and a row twice to find its store.
+            // A store it opened stands over it.
+            Scene::Game(game)
+                if game.catalog.as_ref().and_then(|catalog| catalog.hit(cursor)).is_some() && !game.shop.as_ref().is_some_and(|shop| shop.covers(cursor)) =>
+            {
+                let hit = game.catalog.as_ref().and_then(|catalog| catalog.hit(cursor));
+                game.click_catalog(hit.unwrap(), &self.items, &self.messages);
             }
             // The ranking board: another ranking, or closing it.
             Scene::Game(game) if game.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some() => {
@@ -5681,6 +5732,22 @@ impl App {
                 }
                 _ => game.storage.type_text(event.text.as_deref().unwrap_or_default()),
             },
+            Scene::Game(game) if game.catalog.is_some() && matches!(key, Key::Named(NamedKey::Escape)) => game.close_catalog(),
+            Scene::Game(game) if game.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) => {
+                let catalog = game.catalog.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Enter) => game.click_catalog(catalog::Hit::Search, &self.items, &self.messages),
+                    Key::Named(NamedKey::Tab) => {
+                        catalog.focus = Some(match catalog.focus {
+                            Some(catalog::Field::Name) => catalog::Field::Min,
+                            Some(catalog::Field::Min) => catalog::Field::Max,
+                            _ => catalog::Field::Name,
+                        })
+                    }
+                    Key::Named(NamedKey::Backspace) => catalog.backspace(),
+                    _ => catalog.type_text(event.text.as_deref().unwrap_or_default()),
+                }
+            }
             Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Escape)) => game.deal_choice = None,
             // Typing always goes to the chat line, as in the client; Enter sends it, whispered when the name box has
             // a name. Tab moves between the name box and the message.
@@ -6118,6 +6185,7 @@ impl App {
                         .unwrap_or_default(),
                     dressroom: None,
                     ranking: None,
+                    catalog: None,
                     char_names: HashMap::new(),
                     names_asked: HashSet::new(),
                     dress_figure: None,
@@ -6264,6 +6332,8 @@ impl App {
                 game.ground.clear();
                 game.marks.clear();
                 game.signs.clear();
+                // The server ends the search on leaving the map.
+                game.catalog = None;
                 if let Some(shop) = &game.my_shop {
                     game.signs.insert(game.account_id, chatroom::Sign::shop(game.account_id, shop.name.clone()));
                 }
@@ -7200,7 +7270,14 @@ impl App {
                 game.signs.remove(&id);
             }
             MapEvent::VendorGoods { vendor, shop: shop_id, goods } => {
-                let name = game.signs.get(&vendor).map(|sign| sign.title.clone()).unwrap_or_default();
+                // A store opened from the catalog may stand out of sight: its name as the search found it.
+                let name = game.signs.get(&vendor).map(|sign| sign.title.clone()).unwrap_or_else(|| {
+                    game.catalog
+                        .as_ref()
+                        .and_then(|catalog| catalog.rows.iter().find(|row| row.account == vendor))
+                        .map(|row| row.shop.clone())
+                        .unwrap_or_default()
+                });
                 let offers = goods
                     .into_iter()
                     .map(|good| shop::Offer {
@@ -8274,6 +8351,25 @@ impl App {
             MapEvent::Cutin { image, place } => {
                 let path = format!("{UI}illust\\{image}{}", if image.contains('.') { "" } else { ".bmp" });
                 game.cutin = gpu.filter(|_| !image.is_empty()).and_then(|gpu| gpu.try_load_texture(grf, &path, false).ok()).map(|texture| (texture, place));
+            }
+            MapEvent::CatalogOpen { remote, uses } => game.catalog = Some(catalog::Catalog::new(remote, uses)),
+            MapEvent::CatalogResults { first, more, uses, rows } => {
+                if let Some(catalog) = &mut game.catalog {
+                    catalog.page(first, more, uses, rows);
+                }
+            }
+            MapEvent::CatalogFailed(reason) => {
+                game.chat_line(self.messages.get(catalog::failure_message(reason)).cloned().unwrap_or_default(), CHAT_ERROR);
+            }
+            // Where the store picked stands: a yellow mark on the minimap (none: it's gone).
+            MapEvent::CatalogMark(cell) => {
+                game.marks.retain(|(key, ..)| *key != CATALOG_MARK);
+                if let Some(catalog) = &mut game.catalog {
+                    catalog.mark = cell;
+                }
+                if let (Some(cell), Some(gpu)) = (cell, gpu) {
+                    game.marks.push((CATALOG_MARK, cell.map(i32::from), gpu.solid([0xFF, 0xFF, 0x00, 255]), None));
+                }
             }
             MapEvent::Mark { npc, kind, cell, id, color } => {
                 game.marks.retain(|(key, ..)| *key != (npc, id));
@@ -9565,6 +9661,7 @@ impl App {
             trade_icons.extend(vend::icons(items, store.items.iter().map(|item| (item.item_id, true))));
         }
         trade_icons.extend(game.mail.icons(items));
+        trade_icons.extend(game.catalog.as_ref().map(|catalog| catalog.icons(items)).unwrap_or_default());
         for path in skill_icons.chain(status_paths).chain(shop_icons).chain(pick_icons).chain(game.storage.icons(items)).chain(trade_icons) {
             icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, false).ok());
         }
@@ -9828,6 +9925,11 @@ impl App {
             tooltip.texts.push((text.clone(), [left + 8.0, top + 6.0], [0, 0, 0]));
             tooltip.texts.push((text, [left + 7.0, top + 5.0], [0x00, 0xFF, 0x00]));
         }
+        // The store search under the shops it opens from afar.
+        let mut catalog_layer = Layer::default();
+        if let Some(catalog) = &game.catalog {
+            catalog.draw(&mut catalog_layer, &assets.chrome, &assets.catalog, icons, items, font, messages, (pointer.0, pointer.1, caret));
+        }
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
         if let Some((list, _)) = &game.pick {
@@ -10077,7 +10179,7 @@ impl App {
         if let Some(world_map) = &game.world_map {
             world_map.draw(&mut world_layer, &assets.chrome, font, &worlds.0, map_names, &map_key(&game.map), pointer.0);
         }
-        layers.extend([shop_layer, overlay, menu_layer, tooltip, world_layer]);
+        layers.extend([catalog_layer, shop_layer, overlay, menu_layer, tooltip, world_layer]);
         let composed = compose(gpu, font, layers);
         let mut sprites = flatten(&composed);
 

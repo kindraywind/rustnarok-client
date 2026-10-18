@@ -896,6 +896,8 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.inventory.tab_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.catalog.iter().flat_map(|catalog| catalog.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.catalog.iter().flat_map(|catalog| catalog.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.ranking.iter().flat_map(|board| board.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.dressroom.iter().flat_map(|room| room.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.party_setup.iter().flat_map(|setup| setup.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -959,6 +961,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("PartySetup", game.party_setup.is_some()),
         ("DressRoom", game.dressroom.is_some()),
         ("Ranking", game.ranking.is_some()),
+        ("Catalog", game.catalog.is_some()),
         ("LeaderAsked", game.leader_asked.is_some()),
         ("Roulette", game.roulette.is_some()),
         ("MonsterInfo", game.monster_window.is_some()),
@@ -1136,6 +1139,16 @@ fn game_state(app: &App, game: &Game) -> Value {
             "rows": rows.iter().map(|row| json!({"char_id": row.id, "name": row.name, "points": row.points})).collect::<Vec<_>>(),
         })
     }));
+    // The Universal Catalog's store search.
+    state["catalog"] = json!(game.catalog.as_ref().map(|catalog| json!({
+        "remote": catalog.remote,
+        "uses": catalog.uses,
+        "buying": catalog.buying,
+        "more": catalog.more,
+        "mark": catalog.mark,
+        "results": catalog.rows.len(),
+        "rows": catalog.rows.iter().map(|row| json!({"item": row.item, "shop": row.shop, "account": row.account, "price": row.price, "amount": row.amount})).collect::<Vec<_>>(),
+    })));
     orbs(&mut state["player"], None);
     state
 }
