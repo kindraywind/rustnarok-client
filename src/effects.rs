@@ -12,7 +12,10 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::render::{Gpu, Texture};
-use crate::world::{CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
+use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
+
+/// A quad's corners as texture coordinates: top left, top right, bottom right, bottom left.
+const QUAD_UV: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
 /// Effects not following a unit sit half a cell lower, in sprite pixels.
 const GROUND_DROP: f32 = 17.5;
@@ -795,8 +798,11 @@ impl Effects {
             // A sprite's images, sized in percent about its feet.
             if let Some(Some(Some(sprite))) = floating.sprite.as_ref().map(|path| self.sprites.get(path)) {
                 let scale = [width / 100.0, height / 100.0];
-                for &(key, [left, top], [w, h]) in &floating.placed {
-                    let corners = [[left, top], [left + w, top], [left + w, top + h], [left, top + h]].map(|[x, y]| corner([x * scale[0], y * scale[1]]));
+                for &(key, position, size, layer_angle) in &floating.placed {
+                    let corners = QUAD_UV.map(|uv| {
+                        let [x, y] = world::sprite_corner(position, size, layer_angle, uv).0;
+                        corner([x * scale[0], y * scale[1]])
+                    });
                     quads.push((sprite.texture(key), anchor, corners, color, floating.additive));
                 }
                 continue;
@@ -812,8 +818,11 @@ impl Effects {
             let Some(at) = animation.anchor.place(&position_of) else { continue };
             let Some(Some(sprite)) = self.sprites.get(&animation.sprite) else { continue };
             let [x, y] = animation.offset;
-            for &(key, [left, top], [w, h]) in &animation.placed {
-                let corners = [[left + x, top + y], [left + w + x, top + y], [left + w + x, top + h + y], [left + x, top + h + y]];
+            for &(key, position, size, layer_angle) in &animation.placed {
+                let corners = QUAD_UV.map(|uv| {
+                    let [left, top] = world::sprite_corner(position, size, layer_angle, uv).0;
+                    [left + x, top + y]
+                });
                 quads.push((sprite.texture(key), at, corners, [1.0; 4], false));
             }
         }

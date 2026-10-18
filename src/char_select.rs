@@ -474,7 +474,7 @@ impl Select {
             let character = &self.characters[*index];
             let feet = offset(Self::cell(usize::from(character.slot)), FEET);
             let figure = self.figures[*index].as_ref().unwrap();
-            layer.sprites.extend(placements.iter().map(|(key, position, size)| (figure.texture(*key), offset(feet, *position), *size)));
+            layer.sprites.extend(placements.iter().map(|(key, position, size, _)| (figure.texture(*key), offset(feet, *position), *size)));
         }
         for character in self.characters.iter().filter(|character| usize::from(character.slot) / PER_PAGE == self.page()) {
             let cell = Self::cell(usize::from(character.slot));

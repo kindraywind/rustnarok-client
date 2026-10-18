@@ -500,8 +500,9 @@ pub fn attack_action(job: u16, sex: u8, weapon_type: u32) -> usize {
 /// Identifies a decoded image: layer, image kind, index and the layer's tint.
 type ImageKey = (usize, u32, usize, [u8; 4]);
 
-/// One image of a frame: which image, top-left offset from the feet, size (negative width = mirrored).
-pub type Placed = (ImageKey, [f32; 2], [f32; 2]);
+/// One image of a frame: which image, top-left offset from the feet, size (negative width = mirrored), and degrees
+/// to turn it clockwise about its middle.
+pub type Placed = (ImageKey, [f32; 2], [f32; 2], f32);
 
 /// rathena's OPT1_* (status.hpp): the body states that colour a sprite.
 const OPT1_STONE: u16 = 1;
@@ -833,6 +834,7 @@ impl SpriteSet {
                     (number, placement.kind, placement.image, layer_color(placement.color, self.tint)),
                     placement.position.map(|value| value * self.scale),
                     placement.size.map(|value| value * self.scale),
+                    placement.angle as f32,
                 )
             }));
         }

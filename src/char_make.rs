@@ -310,7 +310,7 @@ impl Make {
         }
         let figure_sprites = |index: usize, feet: [f32; 2]| {
             let figure = self.figures[index].as_ref();
-            poses[index].iter().flatten().filter_map(move |(key, position, size)| Some((figure?.texture(*key), offset(feet, *position), *size)))
+            poses[index].iter().flatten().filter_map(move |(key, position, size, _)| Some((figure?.texture(*key), offset(feet, *position), *size)))
         };
         layer.sprites.extend(figure_sprites(0, Self::at(offset(RACES[0], RACE_FEET))));
         layer.sprites.extend(figure_sprites(1, Self::at(offset(RACES[1], RACE_FEET))));

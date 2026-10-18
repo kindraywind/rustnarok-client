@@ -70,7 +70,7 @@ impl List {
     // are nearly empty; the largest frame stands in until the list's own icons (emotion_index*.act?) are worked out.
     /// Each entry's picture: the largest frame of its emotion's action.
     pub fn icons(&self, gpu: &crate::render::Gpu, sprite: &mut SpriteSet) -> Vec<Vec<Placed>> {
-        let area = |placed: &[Placed]| placed.iter().map(|(_, _, size)| (size[0] * size[1]).abs()).sum::<f32>();
+        let area = |placed: &[Placed]| placed.iter().map(|(_, _, size, _)| (size[0] * size[1]).abs()).sum::<f32>();
         self.entries
             .iter()
             .map(|&(kind, _)| {
@@ -111,13 +111,13 @@ impl List {
             if let (Some(sprite), Some(placed)) = (sprite, icons.get(index))
                 && !placed.is_empty()
             {
-                let (low, high) = placed.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(low, high), (_, position, size)| {
+                let (low, high) = placed.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(low, high), (_, position, size, _)| {
                     ([low[0].min(position[0]), low[1].min(position[1])], [high[0].max(position[0] + size[0]), high[1].max(position[1] + size[1])])
                 });
                 let scale = (ICON / (high[0] - low[0]).max(high[1] - low[1]).max(1.0)).min(1.0);
                 let size = [(high[0] - low[0]) * scale, (high[1] - low[1]) * scale];
                 let origin = frame.at(offset(cell, [((CELL[0] - size[0]) / 2.0).floor(), ((ICON - size[1]) / 2.0).floor() + 1.0]));
-                for (key, position, part) in placed {
+                for (key, position, part, _) in placed {
                     let at = [origin[0] + (position[0] - low[0]) * scale, origin[1] + (position[1] - low[1]) * scale];
                     layer.sprites.push((sprite.texture(*key), at, [part[0] * scale, part[1] * scale]));
                 }

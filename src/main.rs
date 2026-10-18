@@ -451,7 +451,7 @@ fn scale_frame(placed: &mut [actor::Placed], scale: f32) {
     if scale == 1.0 {
         return;
     }
-    for (_, position, size) in placed {
+    for (_, position, size, _) in placed {
         *position = position.map(|value| value * scale);
         *size = size.map(|value| value * scale);
     }
@@ -11438,7 +11438,7 @@ impl App {
             .filter(|(_, _, placements)| !placements.is_empty())
             .filter_map(|(owner, feet, placements)| {
                 let (mut low, mut high) = ([f32::MAX; 2], [f32::MIN; 2]);
-                for (_, position, size) in placements {
+                for (_, position, size, _) in placements {
                     for axis in 0..2 {
                         let (a, b) = (position[axis], position[axis] + size[axis]);
                         low[axis] = low[axis].min(a.min(b));
@@ -11505,16 +11505,16 @@ impl App {
                     Owner::Unit(id) => game.units.get(id).map(|actor| unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent)).unwrap_or(1.0),
                 };
                 if !dead {
-                    billboards.extend(shadow_placements.iter().map(|(key, position, size)| {
-                        (shadow.texture(*key), *feet, position.map(|value| value * scale), size.map(|value| value * scale), [1.0; 4])
+                    billboards.extend(shadow_placements.iter().map(|(key, position, size, angle)| {
+                        (shadow.texture(*key), *feet, position.map(|value| value * scale), size.map(|value| value * scale), [1.0; 4], *angle)
                     }));
                 }
             }
             // The warg's shadow is twice a body's. The falcon, up in the air, casts none.
             for draw in companion_draws.iter().filter(|draw| draw.warg) {
                 let scale = actor::WARG_SHADOW;
-                billboards.extend(shadow_placements.iter().map(|(key, position, size)| {
-                    (shadow.texture(*key), draw.feet, position.map(|value| value * scale), size.map(|value| value * scale), [1.0; 4])
+                billboards.extend(shadow_placements.iter().map(|(key, position, size, angle)| {
+                    (shadow.texture(*key), draw.feet, position.map(|value| value * scale), size.map(|value| value * scale), [1.0; 4], *angle)
                 }));
             }
         }
@@ -11551,21 +11551,20 @@ impl App {
                 let Some(picture) = picture else { continue };
                 let size = picture.size.map(|side| side * scale);
                 for (center, near) in orbit(count, height, turned) {
-                    spirits[usize::from(near)].push((picture, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, tint));
+                    spirits[usize::from(near)].push((picture, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, tint, 0.0));
                 }
             }
             for (center, near) in orbit(orbs.spheres, SPIRIT_HEIGHT, turned) {
                 let side = &mut spirits[usize::from(near)];
                 if coin_job(job) {
                     if let Some(sprite) = &game.coin_sprite {
-                        side.extend(
-                            coin.iter()
-                                .map(|(key, position, size)| (sprite.texture(*key), feet, [center[0] + position[0], center[1] + position[1]], *size, [1.0; 4])),
-                        );
+                        side.extend(coin.iter().map(|(key, position, size, angle)| {
+                            (sprite.texture(*key), feet, [center[0] + position[0], center[1] + position[1]], *size, [1.0; 4], *angle)
+                        }));
                     }
                 } else if let Some(sphere) = &game.sphere {
                     let size = sphere.size.map(|side| side * SPHERE_SCALE);
-                    side.push((sphere, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, [1.0; 4]));
+                    side.push((sphere, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, [1.0; 4], 0.0));
                 }
             }
         }
@@ -11579,11 +11578,11 @@ impl App {
         };
         billboards.extend(carts.iter().flat_map(|(owner, feet, placements)| {
             let cart = cart_of(owner).unwrap();
-            placements.iter().map(move |(key, position, size)| (cart.texture(*key), *feet, *position, *size, [1.0; 4]))
+            placements.iter().map(move |(key, position, size, angle)| (cart.texture(*key), *feet, *position, *size, [1.0; 4], *angle))
         }));
         billboards.extend(frames.iter().flat_map(|(owner, feet, placements)| {
             let sprites = sprites_of(owner).unwrap();
-            placements.iter().map(move |(key, position, size)| (sprites.texture(*key), *feet, *position, *size, [1.0; 4]))
+            placements.iter().map(move |(key, position, size, angle)| (sprites.texture(*key), *feet, *position, *size, [1.0; 4], *angle))
         }));
         for draw in &companion_draws {
             let actor = match draw.owner {
@@ -11595,7 +11594,7 @@ impl App {
                 Owner::Item(_) => continue,
             };
             let Some(sprites) = (if draw.warg { actor.warg.as_ref() } else { actor.falcon.as_ref() }).and_then(actor::Companion::sprites) else { continue };
-            billboards.extend(draw.placed.iter().map(|(key, position, size)| (sprites.texture(*key), draw.feet, *position, *size, [1.0; 4])));
+            billboards.extend(draw.placed.iter().map(|(key, position, size, angle)| (sprites.texture(*key), draw.feet, *position, *size, [1.0; 4], *angle)));
         }
         billboards.extend(in_front);
         // The emotion list's pictures, posed while the sprite can still decode them.
@@ -11673,7 +11672,7 @@ impl App {
             billboards.extend(shown.into_iter().flat_map(|(feet, placements)| {
                 placements
                     .into_iter()
-                    .map(move |(key, position, size)| (sprite.texture(key), feet, [position[0], position[1] - EMOTION_HEIGHT], size, [1.0; 4]))
+                    .map(move |(key, position, size, angle)| (sprite.texture(key), feet, [position[0], position[1] - EMOTION_HEIGHT], size, [1.0; 4], angle))
             }));
         }
 
@@ -11705,7 +11704,7 @@ impl App {
                 for texture in rising {
                     // Half the sprite pixel scale.
                     let (position, size) = centered(texture, 0.5);
-                    billboards.push((texture, at(3.5 + progress * 7.0, 0.0), position, size, [1.0, 1.0, 1.0, alpha]));
+                    billboards.push((texture, at(3.5 + progress * 7.0, 0.0), position, size, [1.0, 1.0, 1.0, alpha], 0.0));
                 }
                 match damage.kind {
                     _ if !rising.is_empty() => {}
@@ -11717,21 +11716,23 @@ impl App {
                         let tint = match damage.kind {
                             DamageKind::Critical => {
                                 let (position, size) = centered(&digits.critical, 0.6 * scale);
-                                billboards.push((&digits.critical, anchor, [position[0], position[1] - 6.0], size, [0.66, 0.66, 0.66, alpha]));
+                                billboards.push((&digits.critical, anchor, [position[0], position[1] - 6.0], size, [0.66, 0.66, 0.66, alpha], 0.0));
                                 [0.9, 0.9, 0.15, alpha]
                             }
                             DamageKind::Hit { taken: true } => [1.0, 0.0, 0.0, alpha],
                             _ => [1.0, 1.0, 1.0, alpha],
                         };
-                        billboards
-                            .extend(digits.place(damage.amount, scale).into_iter().map(|(texture, position, size)| (texture, anchor, position, size, tint)));
+                        billboards.extend(
+                            digits.place(damage.amount, scale).into_iter().map(|(texture, position, size)| (texture, anchor, position, size, tint, 0.0)),
+                        );
                     }
                     DamageKind::Heal { sp } => {
                         let scale = ((1.0 - progress * 2.0) * 3.0).max(0.8);
                         let anchor = at(2.0 + if progress < 0.4 { 0.0 } else { (progress - 0.4) * 5.0 }, 0.0);
                         let tint = if sp { [0.13, 0.19, 0.75, alpha] } else { [0.0, 1.0, 0.0, alpha] };
-                        billboards
-                            .extend(digits.place(damage.amount, scale).into_iter().map(|(texture, position, size)| (texture, anchor, position, size, tint)));
+                        billboards.extend(
+                            digits.place(damage.amount, scale).into_iter().map(|(texture, position, size)| (texture, anchor, position, size, tint, 0.0)),
+                        );
                     }
                     DamageKind::Combo { last } => {
                         if newest_combo.get(&damage.target) != Some(&damage.start) || (!last && progress > 0.15) {
@@ -11743,7 +11744,7 @@ impl App {
                             digits
                                 .place(damage.amount, scale)
                                 .into_iter()
-                                .map(|(texture, position, size)| (texture, anchor, position, size, [0.9, 0.9, 0.15, alpha])),
+                                .map(|(texture, position, size)| (texture, anchor, position, size, [0.9, 0.9, 0.15, alpha], 0.0)),
                         );
                     }
                 }
@@ -11752,13 +11753,13 @@ impl App {
 
         let viewed_preview: Vec<Sprite> = match (viewed_feet, game.viewing.as_ref().and_then(|viewed| viewed.sprites.as_ref())) {
             (Some(feet), Some(sprites)) => {
-                viewed_placements.iter().map(|(key, position, size)| (sprites.texture(*key), offset(feet, *position), *size)).collect()
+                viewed_placements.iter().map(|(key, position, size, _)| (sprites.texture(*key), offset(feet, *position), *size)).collect()
             }
             _ => Vec::new(),
         };
         let preview: Vec<Sprite> = match (preview_feet, &game.player.sprites) {
             (Some(feet), Some(sprites)) => {
-                preview_placements.iter().map(|(key, position, size)| (sprites.texture(*key), offset(feet, *position), *size)).collect()
+                preview_placements.iter().map(|(key, position, size, _)| (sprites.texture(*key), offset(feet, *position), *size)).collect()
             }
             _ => Vec::new(),
         };
@@ -11944,8 +11945,15 @@ impl App {
                 continue;
             }
             let unit = (*owner != game.account_id).then_some(*owner);
-            let Some([x, y]) = head(&unit) else { continue };
-            let rect = chatroom::draw_sign(&mut base, &assets.chatroom, font, sign, [x, y - chatroom::SIGN[1] - 6.0]);
+            let feet = match unit {
+                None => player_feet,
+                Some(id) => match feet_of.get(&id) {
+                    Some(&feet) => feet,
+                    None => continue,
+                },
+            };
+            let Some(point) = sprite_point(feet, -chatroom::SIGN_ABOVE) else { continue };
+            let rect = chatroom::draw_sign(&mut base, &assets.chatroom, font, sign, point.map(f32::round));
             game.sign_rects.push((rect, sign.id, sign.kind));
         }
         for (unit, (text, color, _)) in &game.speech {
@@ -12711,7 +12719,7 @@ impl App {
         if let Some(room) = &game.dressroom {
             let feet = room.feet();
             let figure = match &game.dress_figure {
-                Some(sprites) => dress_placements.iter().map(|(key, position, size)| (sprites.texture(*key), offset(feet, *position), *size)).collect(),
+                Some(sprites) => dress_placements.iter().map(|(key, position, size, _)| (sprites.texture(*key), offset(feet, *position), *size)).collect(),
                 None => Vec::new(),
             };
             room.draw(&mut shop_layer, &assets.chrome, &assets.dressroom, font, messages, &game.dress_lists, figure, pointer);
@@ -12771,13 +12779,13 @@ impl App {
         for (font, frames) in [(&game.rank_font, &counter), (&game.time_font, &clock), (&game.time_attack, &banner)] {
             if let Some(Some(font)) = font {
                 for (placed, anchor) in frames {
-                    sprites.extend(placed.iter().map(|(key, at, size)| (font.texture(*key), [anchor[0] + at[0], anchor[1] + at[1]], *size)));
+                    sprites.extend(placed.iter().map(|(key, at, size, _)| (font.texture(*key), [anchor[0] + at[0], anchor[1] + at[1]], *size)));
                 }
             }
         }
         if let Some(sprite) = &game.slot_sprite {
             let middle = [SCREEN[0] / 2.0, SCREEN[1] / 2.0];
-            sprites.extend(slot_frame.into_iter().map(|(key, offset, size)| (sprite.texture(key), [middle[0] + offset[0], middle[1] + offset[1]], size)));
+            sprites.extend(slot_frame.into_iter().map(|(key, offset, size, _)| (sprite.texture(key), [middle[0] + offset[0], middle[1] + offset[1]], size)));
         }
         cursor_look.press(pointer.1);
         sprites.extend(cursor_look.draw(gpu, pointer.0));
