@@ -86,6 +86,21 @@
       }
     },
     {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "save_asked": true
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
       "settle": 1500
     },
     {
