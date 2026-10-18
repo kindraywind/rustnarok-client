@@ -7497,6 +7497,7 @@ impl App {
                                 }
                             }
                             Some(skills::Action::Apply) => game.apply_asked = true,
+                            Some(skills::Action::View(simple)) => skills::save_view(simple),
                             None => {}
                         }
                     }
@@ -9841,6 +9842,7 @@ impl App {
                     skills: Vec::new(),
                     skill_window: {
                         let mut window = skills::SkillWindow::default();
+                        window.set_simple(skills::load_view());
                         window.frame.open = std::env::var_os("RUSTNAROK_CLIENT_SKILLS").is_some();
                         window
                     },
