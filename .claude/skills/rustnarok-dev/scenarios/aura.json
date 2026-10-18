@@ -1,0 +1,20 @@
+{
+  "about": "The max-level aura: MCPTester is a level 99 Novice, so the level-99 aura shows under the feet (two ground glows, three blue ribbons, rising motes). /aura simplifies it to the motes; /aura2 takes it away; both again bring it back.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 2000},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"move": [1000, 700]},
+    {"shot": "aura-full", "crop": [312, 234, 400, 300], "threshold": 5},
+    {"type": "/aura"}, {"key": "Enter"}, {"wait": 400},
+    {"expect": {"chat": "Simplified Aura [ON]"}},
+    {"shot": "aura-simple", "crop": [312, 234, 400, 300], "threshold": 5},
+    {"type": "/aura2"}, {"key": "Enter"}, {"wait": 400},
+    {"expect": {"chat": "Aura effect is OFF"}},
+    {"shot": "aura-none", "crop": [312, 234, 400, 300], "threshold": 5},
+    {"type": "/aura2"}, {"key": "Enter"}, {"wait": 300},
+    {"type": "/aura"}, {"key": "Enter"}, {"wait": 300},
+    {"expect": {"chat": "Simplified Aura [OFF]"}}
+  ]
+}

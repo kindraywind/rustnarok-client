@@ -46,6 +46,7 @@
 mod achievement;
 mod actor;
 mod announce;
+mod aura;
 mod bank;
 mod basic_info;
 mod battle_mode;
@@ -319,6 +320,12 @@ const BLOCK_ALL_RESULTS: usize = 58;
 const ALLOW_ALL_RESULTS: usize = 60;
 /// /effect: effects on, effects off.
 const EFFECTS_ON: usize = 23;
+/// /aura: "Simplified Aura [OFF]" / "[ON]"; /aura2: "Aura effect is ON" / "OFF"; /aura while /aura2 has it off.
+const SIMPLIFIED_AURA_OFF: usize = 711;
+const SIMPLIFIED_AURA_ON: usize = 712;
+const AURA_EFFECT_ON: usize = 2994;
+const AURA_EFFECT_OFF: usize = 2995;
+const AURA_OFF_FIRST: usize = 2996;
 const EFFECTS_OFF: usize = 24;
 /// Deals: "requests a deal", no one of that name, "can't overlap items", "no more than 10 kinds", how asking went
 /// (70 + the result), how it ended (75 done, 76 failed, 74 cancelled), too heavy.
@@ -2648,14 +2655,14 @@ impl Game {
 
     /// Sends what's typed: whispered when the name box has a name, to the party with a leading % (or `party`, Ctrl
     /// held). Returns a message to show when it can't.
-    fn send_chat(&mut self, party: bool, guild: bool, messages: &[String], effects_on: &mut bool) -> Option<usize> {
+    fn send_chat(&mut self, party: bool, guild: bool, messages: &[String], graphics: &mut options::GraphicsSettings) -> Option<usize> {
         let text = std::mem::take(&mut self.chat.input);
         let (text, to) = (text.trim(), self.chat.whisper.trim().to_owned());
         if text.is_empty() {
             return None;
         }
         if let Some(command) = chat::command(text) {
-            self.client_command(command, messages, effects_on);
+            self.client_command(command, messages, graphics);
             return None;
         }
         // /sit sits down or stands up; /! /? /ho and the rest show an emotion.
@@ -2893,7 +2900,7 @@ impl Game {
     }
 
     /// Answers a chat command the client handles itself; replies from the server come back as map events.
-    fn client_command(&mut self, command: chat::Command, messages: &[String], effects_on: &mut bool) {
+    fn client_command(&mut self, command: chat::Command, messages: &[String], graphics: &mut options::GraphicsSettings) {
         let message = |id: usize| messages.get(id).cloned().unwrap_or_default();
         let _ = match command {
             chat::Command::Help => {
@@ -3016,8 +3023,25 @@ impl Game {
             }
             chat::Command::AllWhispers { allow } => self.session.set_whisper_all(allow),
             chat::Command::Effect => {
-                *effects_on = !*effects_on;
-                self.chat_line(message(if *effects_on { EFFECTS_ON } else { EFFECTS_OFF }), CHAT_ITEM);
+                graphics.effects_on = !graphics.effects_on;
+                self.chat_line(message(if graphics.effects_on { EFFECTS_ON } else { EFFECTS_OFF }), CHAT_ITEM);
+                Ok(())
+            }
+            // /aura: the max-level aura in full or simplified (its motes only); not while /aura2 has it off.
+            chat::Command::Aura => {
+                graphics.aura = !graphics.aura;
+                let line = match (graphics.aura_off, graphics.aura) {
+                    (true, _) => AURA_OFF_FIRST,
+                    (false, true) => SIMPLIFIED_AURA_OFF,
+                    (false, false) => SIMPLIFIED_AURA_ON,
+                };
+                self.chat_line(message(line), [255, 255, 100]);
+                Ok(())
+            }
+            // /aura2: no max-level aura at all.
+            chat::Command::AuraOff => {
+                graphics.aura_off = !graphics.aura_off;
+                self.chat_line(message(if graphics.aura_off { AURA_EFFECT_OFF } else { AURA_EFFECT_ON }), CHAT_ITEM);
                 Ok(())
             }
             chat::Command::Achievements => {
@@ -4798,6 +4822,7 @@ struct Assets {
     navi_line: Texture,
     /// The magic square under a ground cast.
     magic_target: Option<Texture>,
+    aura: aura::Textures,
     escape: escape::Assets,
     options: options::Assets,
     quest: quest::Assets,
@@ -4932,6 +4957,7 @@ impl Assets {
             link_line: gpu.solid([links::COLOR[0], links::COLOR[1], links::COLOR[2], 0xFF]),
             navi_line: gpu.solid([links::NAVI_COLOR[0], links::NAVI_COLOR[1], links::NAVI_COLOR[2], 0xFF]),
             magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
+            aura: aura::Textures::load(gpu, grf),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
             quest: quest::Assets::load(gpu, grf),
@@ -8811,13 +8837,13 @@ impl App {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
             }
         } else {
-            let effects_on = self.graphics.effects_on;
+            let before = self.graphics;
             // The receiving group button's choice, or the key held.
             let (party, guild) = (party || game.chat.send_to == chat::SendTo::Party, guild || game.chat.send_to == chat::SendTo::Guild);
-            if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.graphics.effects_on) {
+            if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.graphics) {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
             }
-            if effects_on != self.graphics.effects_on {
+            if before != self.graphics {
                 self.graphics.save();
             }
         }
@@ -10292,6 +10318,7 @@ impl App {
                 }
                 actor.body_state = unit.body_state;
                 actor.health_state = unit.health_state;
+                actor.level = unit.level;
                 actor.stop_at(unit.position.map(i32::from));
                 actor.set_direction(unit.direction);
                 actor.head_direction = unit.head_direction;
@@ -10327,6 +10354,7 @@ impl App {
                 }
                 actor.body_state = unit.body_state;
                 actor.health_state = unit.health_state;
+                actor.level = unit.level;
                 let from = unit.position.map(i32::from);
                 actor.guild = unit.guild;
                 // On the server's clock, a little behind it; from where it really is in its cell.
@@ -15075,8 +15103,25 @@ impl App {
             None => Some(player_feet),
             Some(id) => feet_of.get(&id).copied(),
         };
-        let (effect_quads, mut effect_meshes) =
+        let (mut effect_quads, mut effect_meshes) =
             if effects_on { (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit)) } else { (Vec::new(), Vec::new()) };
+        // Max-level auras under the feet of those in sight, with the effects (unless /aura2 has them off).
+        if effects_on && !self.graphics.aura_off {
+            let seconds = now.duration_since(game.entered).as_secs_f32();
+            let own_level = game.status.get(&net::STATUS_BASE_LEVEL).copied().unwrap_or(0).clamp(0, i64::from(u16::MAX)) as u16;
+            let own_job = game.player.look.as_ref().map_or(game.me.job, |look| look.job);
+            let player = (!game.player.cloaked).then_some((game.account_id, own_job, own_level, player_feet));
+            let others = game.units.iter().filter(|(_, actor)| !actor.cloaked && actor.remove_at.is_none()).filter_map(|(&id, actor)| {
+                let feet = *feet_of.get(&id)?;
+                let near = f32::hypot(feet[0] - player_feet[0], feet[2] - player_feet[2]) <= aura::SEEN_CELLS * world::CELL;
+                near.then_some((id, actor.job, actor.level, feet))
+            });
+            for (id, job, level, feet) in player.into_iter().chain(others) {
+                if let Some(baby) = aura::level99(job, level) {
+                    aura::draw(&assets.aura, feet, baby, seconds, id, self.graphics.aura, &mut effect_meshes, &mut effect_quads);
+                }
+            }
+        }
         // Magic squares under ground casts, for as long as their casts last; flat on the ground, a little over it.
         game.cast_squares.retain(|caster, square| square.alive(now) && game.casts.contains_key(caster));
         if let Some(texture) = &assets.magic_target {
@@ -15335,12 +15380,12 @@ impl ApplicationHandler<NetEvent> for App {
                     // Through the chat line, so the client's commands (/organize, %) work too.
                     let say_at = std::env::var("RUSTNAROK_CLIENT_SAY_AT").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(1.0);
                     if let Some(texts) = game.auto_say.take_if(|_| game.entered.elapsed().as_secs_f32() >= say_at) {
-                        let effects_on = self.graphics.effects_on;
+                        let before = self.graphics;
                         for text in texts.split('|') {
                             game.chat.input = text.to_owned();
-                            let _ = game.send_chat(false, false, &self.messages, &mut self.graphics.effects_on);
+                            let _ = game.send_chat(false, false, &self.messages, &mut self.graphics);
                         }
-                        if effects_on != self.graphics.effects_on {
+                        if before != self.graphics {
                             self.graphics.save();
                         }
                     }
@@ -15381,14 +15426,14 @@ impl ApplicationHandler<NetEvent> for App {
                     }
                     if let Some(whispers) = std::env::var("RUSTNAROK_CLIENT_WHISPER").ok().filter(|_| game.whispered.is_empty() && game.chat.whisper.is_empty())
                     {
-                        let effects_on = self.graphics.effects_on;
+                        let before = self.graphics;
                         for whisper in whispers.split(';') {
                             let (to, text) = whisper.split_once('|').unwrap_or((whisper, "hi"));
                             game.chat.whisper = to.to_owned();
                             game.chat.input = text.to_owned();
-                            let _ = game.send_chat(false, false, &self.messages, &mut self.graphics.effects_on);
+                            let _ = game.send_chat(false, false, &self.messages, &mut self.graphics);
                         }
-                        if effects_on != self.graphics.effects_on {
+                        if before != self.graphics {
                             self.graphics.save();
                         }
                     }
