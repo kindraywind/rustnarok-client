@@ -1014,6 +1014,89 @@ impl SkillWindow {
     }
 }
 
+/// What fills a refusal line's blanks.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Fill {
+    Nothing,
+    /// The skill's name.
+    Skill,
+    /// The item's name, and for "[%s] required '%d' amount." the number.
+    Item,
+    ItemCount(i32),
+    Number(i32),
+}
+
+/// The red lines for a refused skill (ZC_ACK_TOUSESKILL): message ids and what fills each, by cause and the skill's
+/// detail (`btype`). Some only show with `/skillfail` on (`skill_fail`).
+pub fn refusal_lines(skill: u16, btype: i32, cause: u8, skill_fail: bool) -> Vec<(usize, Fill)> {
+    let line = |id: usize| vec![(id, Fill::Nothing)];
+    let by = |ids: &[usize]| usize::try_from(btype).ok().and_then(|index| ids.get(index)).map_or(Vec::new(), |&id| line(id));
+    let quiet = |id: usize| if skill_fail { line(id) } else { Vec::new() };
+    match cause {
+        // Failed: the skill's own reason (Basic Skill's by what it was for), else the general line.
+        0 => match (skill, btype) {
+            (1, 0..=6) => line(159 + btype as usize),
+            (1, 7) => vec![(383, Fill::Nothing), (1304, Fill::Nothing)],
+            (1, 8) => line(1304),
+            (27, _) => line(214),
+            (50, _) => line(205),
+            (52, _) => line(207),
+            _ => quiet(204),
+        },
+        1 => line(202),
+        2 => line(203),
+        3 => line(808),
+        // The cooldown, by name; none for two skills that show their own.
+        4 if skill_fail && ![6552, 6601].contains(&skill) => vec![(1460, Fill::Skill)],
+        4 => Vec::new(),
+        5 => line(233),
+        6 => line(239),
+        7 => line(246),
+        8 => line(247),
+        9 => line(580),
+        // ponytail: the game also drops the four Tetra Vortex states here for skills 2217–2221.
+        10 => quiet(285),
+        11..=25 => line([1396, 1397, 1398, 1399, 1400, 1401, 1411, 1412, 1413, 1414, 1415, 1416, 1417, 1425, 1864][usize::from(cause - 11)]),
+        26..=37 => line([1427, 1428, 1929, 1932, 1937, 1433, 1434, 1435, 1948, 1952, 1951, 1439][usize::from(cause - 26)]),
+        40 => line(1450),
+        43 => line(1453),
+        50..=54 => line([1462, 1474, 1475, 1476, 1477][usize::from(cause - 50)]),
+        57 => line(1519),
+        60 => line(1522),
+        71 => vec![(1536, Fill::ItemCount(btype))],
+        72 => vec![(1538, Fill::Item)],
+        // ponytail: the detail picks between each pair, 0 the first.
+        73 => line(if btype == 0 { 1559 } else { 1560 }),
+        74 => line(if btype == 0 { 1561 } else { 1562 }),
+        85 => line(if btype == 0 { 2552 } else { 2553 }),
+        // ponytail: the detail indexes the weapon lines.
+        78 => by(&[1691, 1692, 1863, 1994, 2554, 2555, 2556, 2557, 2561]),
+        79..=84 => line([1748, 1823, 1824, 1825, 1954, 2466][usize::from(cause - 79)]),
+        87 => line(2563),
+        // The detail is the message.
+        86 => usize::try_from(btype).map_or(Vec::new(), line),
+        88 => line(2626),
+        89 => line(2982),
+        90 | 91 | 92 | 98 | 101 => {
+            let id = match cause {
+                90 => 2997,
+                91 => 3006,
+                92 => 3458,
+                98 => 3584,
+                _ => 3773,
+            };
+            vec![(id, Fill::Number(btype))]
+        }
+        93..=97 => line([3482, 3483, 3529, 3530, 3533][usize::from(cause - 93)]),
+        99 => line(3604),
+        100 => line(3643),
+        102..=110 => line(3957 + usize::from(cause - 102)),
+        111..=115 => line([3968, 3987, 4004, 4005, 4193][usize::from(cause - 111)]),
+        116 | 117 => vec![(4377, Fill::Number(btype))],
+        _ => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1280,5 +1363,27 @@ mod tests {
         assert_eq!(window.hit(center(tabs[0].1), &sheet), Some(Hit::Tab(0)));
         window.frame.minimized = true;
         assert!(window.tab_boxes(&sheet).is_empty());
+    }
+
+    #[test]
+    fn says_why_a_skill_was_refused() {
+        let ids = |skill, btype, cause, skill_fail| refusal_lines(skill, btype, cause, skill_fail).into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+        // Failed: Basic Skill by what it was for, Warp Portal's own, else the general line only with /skillfail.
+        assert_eq!((ids(1, 0, 0, true), ids(1, 7, 0, true), ids(1, 8, 0, true)), (vec![159], vec![383, 1304], vec![1304]));
+        assert_eq!((ids(27, 0, 0, true), ids(5, 0, 0, true), ids(5, 0, 0, false)), (vec![214], vec![204], vec![]));
+        // The cooldown names the skill, only with /skillfail, never for 6552.
+        assert_eq!(refusal_lines(19, 0, 4, true), [(1460, Fill::Skill)]);
+        assert!(refusal_lines(19, 0, 4, false).is_empty() && refusal_lines(6552, 0, 4, true).is_empty());
+        // "Skill has failed." only with /skillfail; the rest always.
+        assert_eq!((ids(19, 0, 10, true), ids(19, 0, 10, false)), (vec![285], vec![]));
+        assert_eq!((ids(19, 0, 1, false), ids(19, 0, 13, false), ids(19, 0, 83, false)), (vec![202], vec![1398], vec![1954]));
+        assert_eq!(
+            (ids(19, 0, 25, true), ids(19, 0, 37, true), ids(19, 0, 110, true), ids(19, 0, 115, true)),
+            (vec![1864], vec![1439], vec![3965], vec![4193])
+        );
+        // The detail fills some, names the item for others, or is the message itself; unknown causes say nothing.
+        assert_eq!(refusal_lines(19, 5, 71, true), [(1536, Fill::ItemCount(5))]);
+        assert_eq!(refusal_lines(19, 3, 90, true), [(2997, Fill::Number(3))]);
+        assert_eq!((ids(19, 731, 86, true), ids(19, 0, 38, true), ids(19, 0, 200, true)), (vec![731], vec![], vec![]));
     }
 }

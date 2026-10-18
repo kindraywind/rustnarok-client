@@ -1208,6 +1208,8 @@ struct Game {
     no_shift: bool,
     /// /noctrl: a click on a monster keeps attacking without Ctrl (saved; on unless turned off).
     no_ctrl: bool,
+    /// /skillfail: the red lines for some skill failures (saved; on unless turned off).
+    skill_fail: bool,
     /// /snap, /itemsnap, /skillsnap (saved; only /skillsnap on unless changed).
     snaps: Snaps,
     /// Where the cursor is drawn: the pointer, or the middle of what it snapped to.
@@ -2978,6 +2980,15 @@ impl Game {
                 let distance = self.camera_goal.distance();
                 self.camera_goal.set_distance(distance);
                 let line = messages.get(if on { ZOOM_OUT_ON } else { ZOOM_OUT_OFF }).cloned().unwrap_or_default();
+                self.chat_line(line, CHAT_ITEM);
+                Ok(())
+            }
+            chat::Command::SkillFail => {
+                self.skill_fail = !self.skill_fail;
+                if let Some(path) = settings_path("skillfail") {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.skill_fail { "1" } else { "0" }));
+                }
+                let line = messages.get(if self.skill_fail { SKILL_FAIL_ON } else { SKILL_FAIL_OFF }).cloned().unwrap_or_default();
                 self.chat_line(line, CHAT_ITEM);
                 Ok(())
             }
@@ -5229,6 +5240,9 @@ const ALL_RIDING: u16 = 613;
 /// /noctrl's lines: on, off.
 const NO_CTRL_ON: usize = 717;
 const NO_CTRL_OFF: usize = 718;
+/// /skillfail's lines: on, off.
+const SKILL_FAIL_ON: usize = 730;
+const SKILL_FAIL_OFF: usize = 731;
 
 /// In reach to attack: at most range × 5 + 5.5 world units away (a cell is 5).
 fn in_attack_reach(from: [i32; 2], to: [i32; 2], range: i32) -> bool {
@@ -10082,6 +10096,7 @@ impl App {
                     camera_snap: settings_path("camerasnap").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     quake_flip: false,
                     no_ctrl: settings_path("noctrl").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
+                    skill_fail: settings_path("skillfail").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
                     snaps: Snaps::load(),
                     cursor_at: [-1.0; 2],
                     attack: None,
@@ -12704,34 +12719,20 @@ impl App {
                 game.casts.remove(&caster);
                 game.cast_squares.remove(&caster);
             }
-            MapEvent::SkillFailed { skill, detail, cause, .. } => {
-                game.casts.remove(&None);
-                // The client's messages for why: a skill's own reason, else the general cause.
-                let by_skill = (detail != 0).then(|| match skill {
-                    1 if detail < 7 => 159 + detail as usize,
-                    1 if detail == 7 => 383,
-                    27 => 214,
-                    50 => 205,
-                    52 => 207,
-                    _ => 204,
-                });
-                let by_cause = match cause {
-                    1 => Some(202),
-                    2 => Some(203),
-                    3 => Some(808),
-                    4 => Some(219),
-                    5 => Some(233),
-                    6 => Some(239),
-                    7 => Some(246),
-                    8 => Some(247),
-                    9 => Some(580),
-                    10 => Some(285),
-                    13 => Some(1398),
-                    83 => Some(661),
-                    _ => None,
-                };
-                if let Some(id) = by_cause.or(by_skill) {
-                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+            // Why the server refused a skill, in red; the cast bar and square stay.
+            MapEvent::SkillFailed { skill, detail, item, cause, .. } => {
+                let skill_name = self.skill_info.get(&skill).map_or_else(|| skill.to_string(), |info| info.name.clone());
+                let item_name = self.items.get(&item).map_or_else(|| item.to_string(), |info| info.name(true).to_owned());
+                for (id, fill) in skills::refusal_lines(skill, detail, cause, game.skill_fail) {
+                    let Some(template) = self.messages.get(id).filter(|template| !template.is_empty()) else { continue };
+                    let line = match fill {
+                        skills::Fill::Nothing => template.clone(),
+                        skills::Fill::Skill => rustnarok_client::messages::fill(template, &[&skill_name]),
+                        skills::Fill::Item => rustnarok_client::messages::fill(template, &[&item_name]),
+                        skills::Fill::ItemCount(count) => rustnarok_client::messages::fill(template, &[&item_name, &count]),
+                        skills::Fill::Number(number) => rustnarok_client::messages::fill(template, &[&number]),
+                    };
+                    game.chat_line(line, CHAT_ERROR);
                 }
             }
             // A pushcart comes and goes as a status, its type the status's value.

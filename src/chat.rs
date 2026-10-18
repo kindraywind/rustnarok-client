@@ -901,6 +901,8 @@ pub enum Command {
     Zoom,
     /// /noctrl, /nc: a click on a monster keeps attacking without Ctrl, on or off.
     NoCtrl,
+    /// /skillfail, /sf: the red lines for some skill failures, on or off.
+    SkillFail,
     /// /snap, /itemsnap, /skillsnap: the cursor jumps to the middle of a monster, of an item, or of a monster while
     /// aiming a skill; each on or off.
     Snap,
@@ -946,6 +948,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/noshift" => Command::NoShift,
         "/notrade" | "/nt" => Command::NoTrade,
         "/noctrl" | "/nc" => Command::NoCtrl,
+        "/skillfail" | "/sf" => Command::SkillFail,
         "/snap" => Command::Snap,
         "/itemsnap" => Command::ItemSnap,
         "/skillsnap" => Command::SkillSnap,
@@ -1172,6 +1175,7 @@ mod tests {
         assert_eq!(command("/noshift"), Some(Command::NoShift));
         assert_eq!([command("/notrade"), command("/nt")], [Some(Command::NoTrade), Some(Command::NoTrade)]);
         assert_eq!([command("/noctrl"), command("/nc")], [Some(Command::NoCtrl), Some(Command::NoCtrl)]);
+        assert_eq!([command("/skillfail"), command("/sf")], [Some(Command::SkillFail), Some(Command::SkillFail)]);
         assert_eq!([command("/snap"), command("/itemsnap"), command("/skillsnap")], [Some(Command::Snap), Some(Command::ItemSnap), Some(Command::SkillSnap)]);
         assert_eq!(command("/camera"), Some(Command::Camera));
         assert_eq!(command("/zoom"), Some(Command::Zoom));
