@@ -248,6 +248,11 @@ impl Animation {
     }
 }
 
+/// Where a unit's standing model is.
+fn standing_at<T>(standing: &[(T, u32, Vector)], unit: u32) -> Option<Vector> {
+    standing.iter().find(|(_, id, _)| *id == unit).map(|(_, _, at)| *at)
+}
+
 /// A model standing on a skill's ground unit (traps): by texture, its triangles' corners.
 struct Model(Vec<(String, Vec<Corner>)>);
 
@@ -728,14 +733,15 @@ impl Effects {
     }
 
     /// Drops the effects playing on a unit that went away.
-    /// Where a skill's ground unit stands, while an effect plays there for it.
+    /// Where a skill's ground unit stands, while an effect plays there for it or a model stands on it (a trap).
     pub fn ground_unit_at(&self, unit: u32) -> Option<Vector> {
         let anchors = self.playing.iter().map(|playing| playing.anchor);
         let anchors = anchors.chain(self.floating.iter().map(|floating| floating.anchor)).chain(self.rings.iter().map(|ring| ring.anchor));
-        anchors.chain(self.animations.iter().map(|animation| animation.anchor)).find_map(|anchor| match anchor {
+        let playing = anchors.chain(self.animations.iter().map(|animation| animation.anchor)).find_map(|anchor| match anchor {
             Anchor::Lasting(id, at) if id == unit => Some(at),
             _ => None,
-        })
+        });
+        playing.or_else(|| standing_at(&self.standing, unit))
     }
 
     pub fn forget(&mut self, unit: u32) {
@@ -858,6 +864,13 @@ fn load_model(grf: &Grf, file: &str) -> Option<Model> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_a_trap_by_its_model() {
+        let standing = [((), 7u32, [1.0, 2.0, 3.0]), ((), 9, [4.0, 5.0, 6.0])];
+        assert_eq!(standing_at(&standing, 9), Some([4.0, 5.0, 6.0]));
+        assert_eq!(standing_at(&standing, 8), None);
+    }
 
     #[test]
     fn effects_name_their_sounds() {

@@ -362,6 +362,10 @@ const STATUS_STEP: [f32; 2] = [45.0, 36.0];
 const CLOCK_STEPS: usize = 32;
 /// A skill still blocked: "There is a Delay after using a Skill.", and the words after a cooldown's seconds left.
 const SKILL_DELAY: usize = 219;
+/// The Talkie Box (a Hunter's trap holding a message), and the box asking for its message.
+// ponytail: 436 "Please type a message for the Talkie Box"; 435 may be the official one.
+const TALKIE_BOX: u16 = 125;
+const TALKIE_ASKS: usize = 436;
 /// Equipment: a break ("[%s]'s %s has been damaged.", Weapon, Armor), the item's damaged line, and binding (the
 /// question before, the line after).
 const DAMAGED: usize = 1301;
@@ -499,6 +503,9 @@ struct Game {
     dragging: Option<(Dragged, [f32; 2], bool)>,
     skills: Vec<net::Skill>,
     skill_window: skills::SkillWindow,
+    /// A Talkie Box's message waiting to be placed, and the boxes saying theirs (where each stands).
+    talkie_text: Option<String>,
+    talkie_spots: HashMap<u32, world::Vector>,
     /// Skills blocked after use, and the line one still blocked prints when used.
     cooldowns: skills::Cooldowns,
     skill_delay_line: String,
@@ -888,6 +895,11 @@ enum Asked {
     Material(u16),
     /// The pet's new name.
     PetName,
+    /// A Talkie Box's message, before it's placed at the cell.
+    TalkieBox {
+        level: u16,
+        cell: [i32; 2],
+    },
 }
 
 /// What the right-click menu offers.
@@ -1139,6 +1151,12 @@ impl Game {
 
     /// Uses the aimed skill on what was clicked, walking into its range first.
     fn aim_skill(&mut self, target: SkillTarget) {
+        // A Talkie Box asks for its message first.
+        if let (Some((TALKIE_BOX, level)), SkillTarget::Cell(cell), None) = (self.targeting, target, &self.talkie_text) {
+            self.targeting = None;
+            self.amount = Some(window::Amount::name(Asked::TalkieBox { level, cell }, TALKIE_ASKS));
+            return;
+        }
         let Some((id, level)) = self.targeting.take() else { return };
         // The mercenary casts its own skills from where it stands; out of its range the server does nothing.
         if self.mercenary_skills.iter().any(|skill| skill.id == id) {
@@ -1159,7 +1177,7 @@ impl Game {
             self.pending = None;
             let _ = match target {
                 SkillTarget::Unit(unit) => self.session.use_skill(id, level, unit),
-                SkillTarget::Cell(cell) => self.session.use_skill_at(id, level, cell.map(|value| value as u16)),
+                SkillTarget::Cell(cell) => self.send_skill_at(id, level, cell.map(|value| value as u16)),
             };
         } else if let Some(stop) =
             world::find_path(&self.world.gat, self.player.cell, goal).and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, range)))
@@ -1384,7 +1402,7 @@ impl Game {
             }
             Asked::FromCart(index) => self.cart.get(index).map(|item| item.amount),
             Asked::Take(index) => self.storage.get(index).map(|item| item.amount),
-            Asked::Shop(_) | Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) | Asked::VendPrice(_) | Asked::PetName => None,
+            Asked::Shop(_) | Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) | Asked::VendPrice(_) | Asked::PetName | Asked::TalkieBox { .. } => None,
         };
         match amount {
             Some(1) => self.give(asked, 1),
@@ -1404,6 +1422,13 @@ impl Game {
             // A name for the pet asks once more: it can be renamed only once.
             Asked::PetName if !name.is_empty() => {
                 self.pet_asked = Some(PetAsked::Rename(name.to_owned()));
+                Ok(())
+            }
+            // The message is in: the box goes where it was aimed (walking there first if need be).
+            Asked::TalkieBox { level, cell } => {
+                self.talkie_text = Some(name.to_owned());
+                self.targeting = Some((TALKIE_BOX, level));
+                self.aim_skill(SkillTarget::Cell(cell));
                 Ok(())
             }
             Asked::PartyName | Asked::Invite | Asked::PetName => Ok(()),
@@ -1436,7 +1461,7 @@ impl Game {
                 let have = self.inventory.get(index).map_or(0, |item| item.amount);
                 self.session.drop_item(index, (amount.min(u32::from(have))) as u16)
             }
-            Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) | Asked::PetName => Ok(()),
+            Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) | Asked::PetName | Asked::TalkieBox { .. } => Ok(()),
             Asked::VendPrice(index) => {
                 if let Some(setup) = &mut self.vend_setup {
                     setup.prices.insert(index, amount);
@@ -1689,6 +1714,14 @@ impl Game {
         let Some(index) = self.bind_asked.take().filter(|_| yes) else { return };
         if let Some(location) = self.inventory.get(index).map(|item| item.location) {
             let _ = self.session.wear(index, location);
+        }
+    }
+
+    /// A ground skill goes out; a Talkie Box carries the message typed for it.
+    fn send_skill_at(&mut self, id: u16, level: u16, cell: [u16; 2]) -> std::io::Result<()> {
+        match self.talkie_text.take().filter(|_| id == TALKIE_BOX) {
+            Some(text) => self.session.use_skill_at_with_text(id, level, cell, &text),
+            None => self.session.use_skill_at(id, level, cell),
         }
     }
 
@@ -4707,6 +4740,8 @@ impl App {
                     speech: HashMap::new(),
                     status_icons: Vec::new(),
                     cooldowns: skills::Cooldowns::default(),
+                    talkie_text: None,
+                    talkie_spots: HashMap::new(),
                     skill_delay_line: self.messages.get(SKILL_DELAY).cloned().unwrap_or_default(),
                     effects: effects::Effects::default(),
                     deal_choice: None,
@@ -6233,6 +6268,15 @@ impl App {
                     }
                 }
             }
+            // A Talkie Box went off: its words over it, like speech.
+            // ponytail: a box never seen (a hidden trap) puts them in the chat; where the real client shows them isn't known.
+            MapEvent::TalkieBox { unit, text } => match game.effects.ground_unit_at(unit) {
+                Some(at) => {
+                    game.talkie_spots.insert(unit, at);
+                    game.say(Some(unit), text, CHAT_WHITE);
+                }
+                None => game.chat_line(text, CHAT_WHITE),
+            },
             MapEvent::IdentifyList(indexes) => {
                 let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
                 if items.is_empty() {
@@ -6977,7 +7021,8 @@ impl App {
             _ => Vec::new(),
         };
         let mut labels = Vec::new();
-        let mut feet_of = HashMap::new();
+        // Talkie Boxes saying their words stand where their traps were.
+        let mut feet_of = game.talkie_spots.clone();
         for (&id, actor) in &mut game.units {
             let cell = actor.update(now);
             let feet = game.world.cell_position(cell);
@@ -7361,6 +7406,7 @@ impl App {
         // Over heads: cast bars filling green, and the words said there.
         game.casts.retain(|_, (start, length)| now.duration_since(*start) < *length);
         game.speech.retain(|_, (.., said)| now.duration_since(*said) < SPEECH_TIME);
+        game.talkie_spots.retain(|id, _| game.speech.contains_key(&Some(*id)));
         let head = |unit: &Option<u32>| -> Option<[f32; 2]> {
             let feet = match unit {
                 None => player_feet,

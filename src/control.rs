@@ -872,6 +872,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             json!({"class": info.class, "level": info.level, "hp": info.hp, "size": info.size, "race": info.race, "element": info.element})
         }),
         "boss": game.boss.as_ref().map(|(name, cell)| json!({"name": name, "cell": cell})),
+        // What Talkie Boxes are saying now.
+        "talkie": game.talkie_spots.keys().filter_map(|id| game.speech.get(&Some(*id)).map(|(text, ..)| text.clone())).collect::<Vec<_>>(),
         // A taming item waiting for its monster.
         "capturing": game.capturing,
         "aimed_skill": game.targeting.map(|(id, level)| json!({"id": id, "level": level, "name": app.skill_info.get(&id).map(|info| info.name.as_str())})),
