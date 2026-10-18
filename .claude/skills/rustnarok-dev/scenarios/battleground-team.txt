@@ -1,0 +1,16 @@
+// A battleground team without the queue, for the battleground scenario (issue #107). Load it with
+// @loadnpc <absolute path>, take it out with @unloadnpcfile <absolute path>. Whisper npc:RustnarokBG:
+// "join" puts the player on the team on bat_c01 (in every data set; bat_c03 isn't in the 2022 data), "score#3#1" sets the score, "leave" takes them off the team.
+-	script	RustnarokBG	-1,{
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "join") {
+		if (!$@rustnarok_team)
+			$@rustnarok_team = bg_create("bat_c01", 52, 129);
+		bg_join $@rustnarok_team, "bat_c01", 52, 129;
+	} else if (@whispervar0$ == "score")
+		bg_updatescore "bat_c01", atoi(@whispervar1$), atoi(@whispervar2$);
+	else if (@whispervar0$ == "leave")
+		bg_leave;
+	end;
+}

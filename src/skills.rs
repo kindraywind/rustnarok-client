@@ -21,6 +21,8 @@ pub const CELL: [f32; 2] = [62.0, 58.0];
 pub const BOX: f32 = 28.0;
 /// Where the level up button sits by a skill's box.
 pub const UP: [f32; 2] = [BOX + 1.0, 2.0];
+/// How much around it a click takes.
+const LEVEL_UP: [f32; 2] = [24.0, 24.0];
 const SIDE: f32 = 13.0;
 const WIDTH: f32 = SIDE * 2.0 + COLUMNS as f32 * CELL[0];
 const TAB_HEIGHT: f32 = 20.0;
@@ -104,6 +106,39 @@ const ARROW: [f32; 2] = [11.0, 11.0];
 /// Whether a skill gets level arrows: learned past level 1, and used rather than passive.
 fn steppable(skill: &Skill) -> bool {
     skill.level > 1 && skill.kind != 0
+}
+
+/// The tab for skills no tab of the line holds (a Wedding Ring's, an adopted family's, cards'), after the line's.
+pub const ETC: u16 = u16::MAX;
+// ponytail: 1471 "Etc" as its label is an estimate.
+const ETC_LABEL: usize = 1471;
+
+/// The player's skills that no tree of the line holds, in ID order.
+pub fn extra_skills(skills: &[Skill], trees: &SkillTrees, jobs: &[u16]) -> Vec<u16> {
+    let held = |id: u16| jobs.iter().filter_map(|job| trees.trees.get(job)).any(|tree| tree.iter().any(|&(_, each)| each == id));
+    let mut extra: Vec<u16> = skills.iter().map(|skill| skill.id).filter(|&id| !held(id)).collect();
+    extra.sort_unstable();
+    extra.dedup();
+    extra
+}
+
+/// The skill window's tabs: the job's line, then `ETC` when the player has skills none of it holds.
+pub fn tabs(trees: &SkillTrees, job: u16, skills: &[Skill]) -> Vec<u16> {
+    let mut jobs = trees.lineage(job);
+    if !extra_skills(skills, trees, &jobs).is_empty() {
+        jobs.push(ETC);
+    }
+    jobs
+}
+
+/// Where a job's tab sits in the window.
+fn tab_corner(tab: usize) -> [f32; 2] {
+    [SIDE + tab as f32 * TAB_WIDTH, TITLE_HEIGHT]
+}
+
+/// Whether a skill's level up button shows: points left, and the server says it can rise.
+fn upgradable(skills: &[Skill], id: u16, points: i64) -> bool {
+    points > 0 && skills.iter().any(|skill| skill.id == id && skill.upgradable)
 }
 
 /// Where a skill's box sits in the window.
@@ -222,9 +257,16 @@ impl SkillWindow {
         self.tab.min(jobs.len().saturating_sub(1))
     }
 
-    /// The skills in the open tab, by place.
-    fn tree<'t>(&self, trees: &'t SkillTrees, jobs: &[u16]) -> &'t [(usize, u16)] {
-        jobs.get(self.tab(jobs)).and_then(|job| trees.trees.get(job)).map_or(&[], Vec::as_slice)
+    /// The skills in the open tab, by place; the `ETC` tab's in ID order.
+    fn tree(&self, trees: &SkillTrees, jobs: &[u16], skills: &[Skill]) -> Vec<(usize, u16)> {
+        match jobs.get(self.tab(jobs)) {
+            Some(&ETC) => {
+                let line: Vec<u16> = jobs.iter().copied().filter(|&job| job != ETC).collect();
+                extra_skills(skills, trees, &line).into_iter().enumerate().collect()
+            }
+            Some(job) => trees.trees.get(job).cloned().unwrap_or_default(),
+            None => Vec::new(),
+        }
     }
 
     pub fn hit(&self, cursor: [f32; 2], trees: &SkillTrees, jobs: &[u16], skills: &[Skill], points: i64) -> Option<Hit> {
@@ -233,16 +275,11 @@ impl SkillWindow {
             return Some(Hit::Title(hit));
         }
         if local[1] < TITLE_HEIGHT + TAB_HEIGHT {
-            return Some(
-                (0..jobs.len())
-                    .find(|&tab| contains([SIDE + tab as f32 * TAB_WIDTH, TITLE_HEIGHT], [TAB_WIDTH, TAB_HEIGHT], local))
-                    .map_or(Hit::Window, Hit::Tab),
-            );
+            return Some((0..jobs.len()).find(|&tab| contains(tab_corner(tab), [TAB_WIDTH, TAB_HEIGHT], local)).map_or(Hit::Window, Hit::Tab));
         }
-        for &(place, id) in self.tree(trees, jobs) {
+        for (place, id) in self.tree(trees, jobs, skills) {
             let corner = box_corner(place);
-            let upgradable = points > 0 && skills.iter().any(|skill| skill.id == id && skill.upgradable);
-            if upgradable && contains(offset(corner, UP), [24.0, 24.0], local) {
+            if upgradable(skills, id, points) && contains(offset(corner, UP), LEVEL_UP, local) {
                 return Some(Hit::LevelUp(id));
             }
             if let Some(skill) = skills.iter().find(|skill| skill.id == id).filter(|skill| steppable(skill))
@@ -274,25 +311,54 @@ impl SkillWindow {
     }
 
     /// The open tab's skill boxes on screen: skill and box.
-    pub fn skill_boxes(&self, trees: &SkillTrees, jobs: &[u16]) -> Vec<(u16, [f32; 4])> {
+    pub fn skill_boxes(&self, trees: &SkillTrees, jobs: &[u16], skills: &[Skill]) -> Vec<(u16, [f32; 4])> {
         if !self.frame.open {
             return Vec::new();
         }
-        self.tree(trees, jobs)
-            .iter()
-            .map(|&(place, id)| {
+        self.tree(trees, jobs, skills)
+            .into_iter()
+            .map(|(place, id)| {
                 let corner = self.frame.at(box_corner(place));
                 (id, [corner[0], corner[1], BOX, BOX])
             })
             .collect()
     }
 
+    /// The open tab's level up buttons on screen (for the test driver): skill and box.
+    pub fn raise_boxes(&self, trees: &SkillTrees, jobs: &[u16], skills: &[Skill], points: i64) -> Vec<(u16, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized {
+            return Vec::new();
+        }
+        self.tree(trees, jobs, skills)
+            .into_iter()
+            .filter(|&(_, id)| upgradable(skills, id, points))
+            .map(|(place, id)| {
+                let [x, y] = self.frame.at(offset(box_corner(place), UP));
+                (id, [x, y, LEVEL_UP[0], LEVEL_UP[1]])
+            })
+            .collect()
+    }
+
+    /// The job tabs on screen (for the test driver): job and box.
+    pub fn tab_boxes(&self, jobs: &[u16]) -> Vec<(u16, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized {
+            return Vec::new();
+        }
+        jobs.iter()
+            .enumerate()
+            .map(|(tab, &job)| {
+                let [x, y] = self.frame.at(tab_corner(tab));
+                (job, [x, y, TAB_WIDTH, TAB_HEIGHT])
+            })
+            .collect()
+    }
+
     /// The icons the open tab shows, to load before drawing.
-    pub fn icons(&self, trees: &SkillTrees, jobs: &[u16], info: &HashMap<u16, SkillInfo>) -> Vec<String> {
+    pub fn icons(&self, trees: &SkillTrees, jobs: &[u16], skills: &[Skill], info: &HashMap<u16, SkillInfo>) -> Vec<String> {
         if !self.frame.open {
             return Vec::new();
         }
-        self.tree(trees, jobs).iter().filter_map(|(_, id)| info.get(id).map(icon_path)).collect()
+        self.tree(trees, jobs, skills).iter().filter_map(|(_, id)| info.get(id).map(icon_path)).collect()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -331,13 +397,16 @@ impl SkillWindow {
             layer.sprites.push((&chrome.border, corner, [size[0], 1.0]));
             layer.sprites.push((&chrome.border, corner, [1.0, size[1]]));
             layer.sprites.push((&chrome.border, offset(corner, [size[0] - 1.0, 0.0]), [1.0, size[1]]));
-            let name = job_names.get(job).map_or_else(|| job.to_string(), Clone::clone);
+            let name = match *job {
+                ETC => message(ETC_LABEL).to_owned(),
+                job => job_names.get(&job).map_or_else(|| job.to_string(), Clone::clone),
+            };
             let place = offset(corner, [((size[0] - font.width(&name)) / 2.0).floor(), 3.0]);
             layer.texts.push((name, place, if tab == open { [0, 0, 0] } else { GREY }));
         }
         layer.sprites.push((&chrome.border, at([0.0, TITLE_HEIGHT + TAB_HEIGHT]), [WIDTH, 1.0]));
 
-        for &(place, id) in self.tree(trees, jobs) {
+        for (place, id) in self.tree(trees, jobs, skills) {
             let corner = box_corner(place);
             let known = skills.iter().find(|skill| skill.id == id);
             let level = known.map_or(0, |skill| skill.level);
@@ -382,6 +451,26 @@ impl SkillWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_skills_no_tab_of_the_line_holds() {
+        // A Swordman (1) from a Novice (0): Basic Skill 1 and Bash 5 sit in their trees.
+        let trees = SkillTrees { trees: HashMap::from([(0, vec![(0, 1)]), (1, vec![(0, 5), (1, 6)])]), parents: HashMap::from([(1, 0)]) };
+        let skill = |id| Skill { id, kind: Skill::SELF, level: 1, sp: 0, range: 0, upgradable: false };
+        let plain = [skill(1), skill(5)];
+        assert!(extra_skills(&plain, &trees, &[0, 1]).is_empty());
+        assert_eq!(tabs(&trees, 1, &plain), [0, 1], "no extra skills, no tab");
+        // A Wedding Ring's skills (I Miss You 336, I Will Protect You 334) go in, by ID; the tree's stay out.
+        let married = [skill(336), skill(1), skill(334), skill(5)];
+        assert_eq!(extra_skills(&married, &trees, &[0, 1]), [334, 336]);
+        assert_eq!(tabs(&trees, 1, &married), [0, 1, ETC]);
+        // The tab lays them out in ID order.
+        let mut window = SkillWindow::default();
+        window.frame.open = true;
+        window.tab = 2;
+        let jobs = tabs(&trees, 1, &married);
+        assert_eq!(window.skill_boxes(&trees, &jobs, &married).into_iter().map(|(id, _)| id).collect::<Vec<_>>(), [334, 336]);
+    }
 
     #[test]
     fn counts_cooldowns_down() {
@@ -432,5 +521,31 @@ mod tests {
         let heal = Skill { id: 28, kind: Skill::FRIEND, level: 10, sp: 13, range: 9, upgradable: false };
         assert!(!steppable(&passive) && steppable(&heal));
         assert!(!steppable(&Skill { level: 1, ..heal }));
+    }
+
+    #[test]
+    fn names_the_level_up_buttons_a_click_takes() {
+        // Novice (0) then Mage (2): Basic Skill in the first tab; Fire Bolt and Cold Bolt in the second.
+        let trees = SkillTrees { trees: HashMap::from([(0, vec![(0, 1)]), (2, vec![(0, 19), (2, 14)])]), parents: HashMap::new() };
+        let jobs = [0, 2];
+        let skill = |id: u16, level: u16, upgradable: bool| Skill { id, kind: Skill::ENEMY, level, sp: 12, range: 9, upgradable };
+        let skills = [skill(1, 9, false), skill(19, 0, true), skill(14, 10, false)];
+        let mut window = SkillWindow::default();
+        assert!(window.raise_boxes(&trees, &jobs, &skills, 5).is_empty() && window.tab_boxes(&jobs).is_empty());
+        window.frame.open = true;
+        let center = |area: [f32; 4]| [area[0] + area[2] / 2.0, area[1] + area[3] / 2.0];
+        // The Mage tab opens by default; only Fire Bolt can still rise, and its box is the one the click test takes.
+        let boxes = window.raise_boxes(&trees, &jobs, &skills, 5);
+        assert_eq!(boxes.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [19]);
+        assert_eq!(window.hit(center(boxes[0].1), &trees, &jobs, &skills, 5), Some(Hit::LevelUp(19)));
+        assert!(window.raise_boxes(&trees, &jobs, &skills, 0).is_empty());
+        // The tabs, by job: the Novice tab's box switches to it.
+        let tabs = window.tab_boxes(&jobs);
+        assert_eq!(tabs.iter().map(|(job, _)| *job).collect::<Vec<_>>(), [0, 2]);
+        assert_eq!(window.hit(center(tabs[0].1), &trees, &jobs, &skills, 5), Some(Hit::Tab(0)));
+        window.click(Hit::Tab(0));
+        assert!(window.raise_boxes(&trees, &jobs, &skills, 5).is_empty());
+        window.frame.minimized = true;
+        assert!(window.tab_boxes(&jobs).is_empty());
     }
 }
