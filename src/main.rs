@@ -4760,6 +4760,8 @@ struct App {
     /// achievements, at login), handled once the game is on.
     entering: Option<(MapSession, String)>,
     early_events: Vec<MapEvent>,
+    /// The server's latest tick and when it came, to place other units' walks in time.
+    server_clock: Option<(u32, Instant)>,
     fields: [String; 2],
     /// Remember the ID for next time (the login window's save box).
     save_id: bool,
@@ -8670,8 +8672,13 @@ impl App {
     }
 
     fn map_event(&mut self, event: MapEvent) {
-        if let MapEvent::Entered { position, direction } = event {
+        if let MapEvent::Entered { position, direction, clock } = event {
+            self.server_clock = Some(clock);
             self.show_loading(LoadTarget::Enter { position, direction });
+            return;
+        }
+        if let MapEvent::ServerTime(tick, at) = event {
+            self.server_clock = Some((tick, at));
             return;
         }
 
@@ -8763,7 +8770,7 @@ impl App {
                     actor.head_direction = head_direction;
                 }
             }
-            MapEvent::UnitWalk { unit, to, .. } => {
+            MapEvent::UnitWalk { unit, to, start_time, sub } => {
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
                 if actor.remove_at.is_some() {
                     *actor = new_actor(&unit);
@@ -8772,12 +8779,11 @@ impl App {
                 actor.health_state = unit.health_state;
                 let from = unit.position.map(i32::from);
                 actor.guild = unit.guild;
-                if actor.cell != from && !actor.moving() {
-                    actor.cell = from;
-                }
-                if let Some(path) = world::find_path(&game.world.gat, actor.cell, to.map(i32::from)) {
-                    actor.walk(path);
-                }
+                // On the server's clock, a little behind it; from where it really is in its cell.
+                let now = control::now();
+                let begin = self.server_clock.map_or(now, |clock| actor::local_time(clock, start_time) + actor::REMOTE_DELAY);
+                let path = world::find_path(&game.world.gat, from, to.map(i32::from)).unwrap_or_default();
+                actor.walk_from(from, sub, path, begin, now);
                 actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
                 // A walk into view is often the first packet. The falcon and warg come with it.
                 if unit.id == game.account_id {
@@ -11327,7 +11333,7 @@ impl App {
             }
             // ponytail: no client line fits a failed style change, so the result is printed plainly. The window stays.
             MapEvent::StyleChanged(true) => game.chat_line(stylist::FAILED_LINE.to_owned(), CHAT_ERROR),
-            MapEvent::Entered { .. } => unreachable!("handled above"),
+            MapEvent::Entered { .. } | MapEvent::ServerTime(..) => unreachable!("handled above"),
             MapEvent::Disconnected(_) => self.message(self.messages.get(DISCONNECTED_MESSAGE).cloned().unwrap_or_default(), Scene::Login),
         }
     }
@@ -13797,6 +13803,7 @@ fn main() {
         playing: None,
         entering: None,
         early_events: Vec::new(),
+        server_clock: None,
         fields: [saved_id().unwrap_or_default(), String::new()],
         save_id: saved_id().is_some(),
         focus: usize::from(saved_id().is_some()),

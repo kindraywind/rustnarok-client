@@ -1,0 +1,21 @@
+{
+  "about": "Walking in step with the server (issue #193): the second character walks four cells diagonally; we see it from the move packet on the server's clock, 72 ms behind, a diagonal step taking speed x 1.414. The clock pauses when the walk packet comes; shots 300 ms and 600 ms on show it between cells, then it stands where the second client has it.",
+  "account": "",
+  "slot": 0,
+  "second": {"account": "2", "slot": 0},
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"as": "second", "say": "@warp prt_fild08 168 356"}, {"wait": 2500},
+    {"as": "second", "click_on": {"cell": [172, 360]}},
+    {"wait_for": {"packet": "0x09fd", "pause": true, "ms": 3000}},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 300}},
+    {"move": [1000, 750]},
+    {"shot": "server-walk-a", "crop": [262, 184, 500, 400], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 300}},
+    {"shot": "server-walk-b", "crop": [262, 184, 500, 400], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 2000},
+    {"as": "second", "expect": {"state": {"player.cell": [172, 360]}}},
+    {"shot": "server-walk-end", "crop": [262, 184, 500, 400], "threshold": 5}
+  ]
+}
