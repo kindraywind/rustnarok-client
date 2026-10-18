@@ -1167,6 +1167,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "map": game.map,
         // The weather effect IDs showing.
         "weather": game.weather.ids(),
+        // An NPC's picture is up.
+        "cutin": game.cutin.is_some(),
         "player": {
             "name": game.me.name,
             "account_id": game.account_id,
