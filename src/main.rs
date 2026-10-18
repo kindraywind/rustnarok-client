@@ -603,7 +603,10 @@ const PARTY_ALLOWING: usize = 1326;
 const PARTY_NEW_LEADER: usize = 1552;
 const PARTY_SETUP_LINE: [u8; 3] = [0xFF, 0xFF, 0x00];
 const PARTY_NOTICE: [u8; 3] = [0xFF, 0xFF, 0x64];
-const LEADER_CHOICE: usize = 1532;
+/// "Can't re-assign party leader", for an offline member.
+const LEADER_OFFLINE: usize = 1534;
+const PARTY_LEAVE_ASKS: usize = 357;
+const PARTY_EXPEL_ASKS: usize = 363;
 /// "Item cannot be dropped from the hotkey bar."
 const HOTKEY_ITEM_STAYS: usize = 1696;
 /// Dropping on the ground with the equipment window open, the mail window open, or the ammunition worn.
@@ -1406,6 +1409,10 @@ struct Game {
     /// The party setup window, and the member whose leadership is being asked about.
     party_setup: Option<party::Setup>,
     leader_asked: Option<u32>,
+    /// A party question up: leaving, disbanding, expelling a member, or "only the leader can invite".
+    party_asked: Option<PartyQuestion>,
+    /// The last press on a party member's row (when, whose): a second soon after on the same row is a double click.
+    row_press: Option<(Instant, u32)>,
     /// 1:1 whisper windows, when an incoming whisper opens one, the friend setup, the block list and the away message.
     talks: whisper::Talks,
     whisper_open: whisper::OpenSettings,
@@ -2065,8 +2072,8 @@ enum Choice {
     ViewEquipment(u32),
     /// A command to the player's pet (net::PET_INFO and on).
     Pet(u8),
-    /// Hand the party to this member (by account).
-    Leader(u32),
+    /// A party member's menu entry, for this member (by account).
+    Member(party::MemberChoice, u32),
     /// The room's owner hands the room to this member, or kicks them out (by their row in the member list).
     RoomOwner(usize),
     RoomKick(usize),
@@ -2702,7 +2709,7 @@ impl Game {
             Panel::Equipment => self.equipment.hit(cursor, &self.inventory.items).is_some(),
             Panel::Skills => self.skill_window.frame.local(cursor, self.skill_window.height()).is_some(),
             Panel::Storage => self.storage.frame.open && self.storage.frame.local(cursor, self.storage.height()).is_some(),
-            Panel::Party => self.party_window.frame.open && self.party_window.hit(cursor, self.party.as_ref(), &self.friends, self.account_id).is_some(),
+            Panel::Party => self.party_window.frame.open && self.party_window.hit(cursor, self.party.as_ref(), &self.friends).is_some(),
             Panel::Status => self.status_window.frame.open && self.status_window.frame.local(cursor, self.status_height).is_some(),
             Panel::Guild => self.guild.is_some() && self.guild_window.frame.local(cursor, self.guild_window.height()).is_some(),
             Panel::Clan => self.clan.is_some() && self.clan_window.frame.local(cursor, self.clan_window.height()).is_some(),
@@ -2910,6 +2917,80 @@ impl Game {
                 }
             }
         }
+    }
+
+    /// A party question answered (OK: `yes`).
+    fn answer_party(&mut self, yes: bool, messages: &[String]) {
+        let Some(asked) = self.party_asked.take() else { return };
+        if !yes {
+            return;
+        }
+        match asked {
+            PartyQuestion::Leave => match self.party.as_ref().map(|party| party::leave_decision(party, self.account_id, &self.map)) {
+                Some(party::Leaving::HandOver(account)) => {
+                    let _ = self.session.change_party_leader(account);
+                    self.leave_party();
+                }
+                Some(party::Leaving::Delegate) => self.chat_line(messages.get(party::LEAVE_AFTER_DELEGATION).cloned().unwrap_or_default(), CHAT_ERROR),
+                Some(party::Leaving::AskDisband) => self.party_asked = Some(PartyQuestion::Disband),
+                Some(party::Leaving::Leave) | None => self.leave_party(),
+            },
+            PartyQuestion::Disband => self.leave_party(),
+            PartyQuestion::Expel(account, name) => {
+                let _ = self.session.expel_from_party(account, &name);
+            }
+            PartyQuestion::OnlyLeader => {}
+        }
+    }
+
+    /// CZ_REQ_LEAVE_GROUP; the invite window closes.
+    fn leave_party(&mut self) {
+        let _ = self.session.leave_party();
+        if self.amount.as_ref().is_some_and(|amount| matches!(amount.what, Asked::Invite)) {
+            self.amount = None;
+        }
+    }
+
+    /// A member's menu entry chosen (`member` by account).
+    fn member_choice(&mut self, choice: party::MemberChoice, member: u32, messages: &[String]) {
+        let Some(info) = self.party.as_ref().and_then(|party| party.members.iter().find(|m| m.info.account == member)).map(|m| m.info.clone()) else {
+            return;
+        };
+        match choice {
+            party::MemberChoice::Mail => {
+                let _ = self.session.start_mail(&info.name);
+            }
+            party::MemberChoice::Leave => self.party_asked = Some(PartyQuestion::Leave),
+            party::MemberChoice::Whisper => self.whisper_member(&info.name),
+            party::MemberChoice::Expel => self.party_asked = Some(PartyQuestion::Expel(info.account, info.name)),
+            party::MemberChoice::Assign if !info.online => self.chat_line(messages.get(LEADER_OFFLINE).cloned().unwrap_or_default(), CHAT_ERROR),
+            party::MemberChoice::Assign => self.leader_asked = Some(info.account),
+            party::MemberChoice::RemoveSmall => self.member_windows.close(info.account),
+        }
+    }
+
+    /// "Open 1:1 Chat" with a member: their name in the chat's name box, as the player menu's.
+    fn whisper_member(&mut self, name: &str) {
+        self.chat.whisper = name.to_owned();
+        self.chat.naming = false;
+    }
+
+    /// The menu on a party member (`small`: on their small window), at the pointer + 1.
+    fn member_menu(&mut self, account: u32, small: bool, cursor: [f32; 2], messages: &[String], font: &Font) {
+        let leader = self.party.as_ref().is_some_and(|party| party.leader() == Some(self.account_id));
+        let choices = party::member_menu(self.account_id, account, leader, small)
+            .into_iter()
+            .map(|choice| Some((messages.get(choice.message()).cloned().unwrap_or_default(), Choice::Member(choice, account))))
+            .collect();
+        self.menu = Some(menu::Menu::new(offset(cursor, [1.0, 1.0]), choices, font));
+    }
+
+    /// Whether a press on this member's row or small window casts the skill being aimed on them.
+    fn row_takes_aim(&self, account: u32, shift: bool) -> bool {
+        let Some((id, _)) = self.targeting else { return false };
+        let friend = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).is_some_and(|skill| skill.kind & net::Skill::FRIEND != 0);
+        let online = self.party.as_ref().and_then(|party| party.members.iter().find(|m| m.info.account == account)).is_some_and(|m| m.info.online);
+        party::row_takes_skill(id, friend, shift || self.no_shift, account == self.account_id, online)
     }
 
     /// The party window opens on its party tab (made or joined a party).
@@ -3706,6 +3787,7 @@ impl Game {
             || self.bind_asked.is_some()
             || self.expansion_asked.is_some()
             || self.leader_asked.is_some()
+            || self.party_asked.is_some()
             || self.dismiss_asked
             || self.homunculus_rename.is_some()
             || self.pet_asked.is_some()
@@ -4318,6 +4400,7 @@ impl Game {
         push(BindAsked, self.bind_asked.is_some());
         push(ExpansionAsked, self.expansion_asked.is_some());
         push(LeaderAsked, self.leader_asked.is_some());
+        push(PartyAsked, self.party_asked.is_some());
         push(DismissAsked, self.dismiss_asked);
         push(HomunculusRename, self.homunculus_rename.is_some());
         push(PetAsked, self.pet_asked.is_some());
@@ -4444,6 +4527,7 @@ impl Game {
             || self.bind_asked.is_some()
             || self.expansion_asked.is_some()
             || self.leader_asked.is_some()
+            || self.party_asked.is_some()
             || self.dismiss_asked
             || self.homunculus_rename.is_some()
             || self.pet_asked.is_some()
@@ -4497,6 +4581,9 @@ impl Game {
             return;
         }
         if self.leader_asked.take().is_some() {
+            return;
+        }
+        if self.party_asked.take().is_some() {
             return;
         }
         if self.dismiss_asked {
@@ -4697,6 +4784,7 @@ impl Game {
             LeaderAsked => {
                 self.leader_asked = None;
             }
+            PartyAsked => self.party_asked = None,
             DismissAsked => self.answer_dismiss(false, &[]),
             HomunculusRename => self.answer_homunculus_name(false),
             PetAsked => self.answer_pet(false),
@@ -5190,6 +5278,40 @@ enum DialogButton {
 }
 
 /// A guild question, answered with OK or Cancel.
+/// A party question's buttons and whether each answers yes: OK and Cancel, or OK alone where Cancel would be.
+fn party_question_buttons(asks: bool) -> Vec<([f32; 2], bool)> {
+    if asks { vec![(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] } else { vec![(RIGHT_BUTTON, true)] }
+}
+
+/// A party question in the message box.
+#[derive(Debug, Clone, PartialEq)]
+enum PartyQuestion {
+    /// "Are you sure that you want to leave?" (357).
+    Leave,
+    /// Nobody to hand the party to: disband instead? (3257).
+    Disband,
+    /// "Are you sure that you want to expel this player?" (363), for this member (account, name).
+    Expel(u32, String),
+    /// "Only the leader can invite." (2070), OK only.
+    OnlyLeader,
+}
+
+impl PartyQuestion {
+    fn message(&self) -> usize {
+        match self {
+            Self::Leave => PARTY_LEAVE_ASKS,
+            Self::Disband => party::ASK_DISBAND,
+            Self::Expel(..) => PARTY_EXPEL_ASKS,
+            Self::OnlyLeader => party::ONLY_LEADER_INVITES,
+        }
+    }
+
+    /// Whether it asks (OK and Cancel), else it tells (OK alone).
+    fn asks(&self) -> bool {
+        *self != Self::OnlyLeader
+    }
+}
+
 enum GuildAsked {
     /// Another guild (its name) asks for an alliance, through the player who asked (account ID).
     Ally { id: u32, guild: String },
@@ -7249,7 +7371,7 @@ impl App {
                 Some(Choice::Pet(net::PET_FEED)) => game.pet_asked = Some(PetAsked::Feed),
                 Some(Choice::Pet(net::PET_INFO)) => game.open_pet_window(),
                 Some(Choice::Pet(command)) => game.pet_command(command),
-                Some(Choice::Leader(account)) => game.leader_asked = Some(account),
+                Some(Choice::Member(choice, account)) => game.member_choice(choice, account, &self.messages),
                 Some(Choice::RoomOwner(row)) => {
                     if let Some(name) = game.room.as_ref().and_then(|room| room.member_choices(row, &game.me.name)) {
                         let _ = game.session.hand_over_chat_room(&name);
@@ -7567,6 +7689,16 @@ impl App {
                         if yes {
                             let _ = game.session.change_party_leader(account);
                         }
+                    }
+                }
+            }
+            // A party question: OK (alone when it only tells) or Cancel.
+            Scene::Game(game) if game.party_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                let asks = game.party_asked.as_ref().is_some_and(PartyQuestion::asks);
+                for (place, yes) in party_question_buttons(asks) {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.answer_party(yes, &self.messages);
                     }
                 }
             }
@@ -8182,7 +8314,7 @@ impl App {
                             }
                         }
                     }
-                    Panel::Party => match game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id) {
+                    Panel::Party => match game.party_window.hit(cursor, game.party.as_ref(), &game.friends) {
                         Some(party::Hit::Title(title)) => game.party_window.click_title(title),
                         Some(party::Hit::Tab(friends)) => {
                             game.party_window.friends = friends;
@@ -8201,11 +8333,23 @@ impl App {
                                 let _ = game.session.remove_friend(friend.account, friend.character);
                             }
                         }
+                        // With the lock on, only the lock and the agency take a press.
+                        Some(party::Hit::Button(button)) if !game.party_window.takes(button) => {}
+                        Some(party::Hit::Button(party::Button::Lock(locked))) => game.party_window.locked = !locked,
+                        // ponytail: the agency does nothing yet.
+                        Some(party::Hit::Button(party::Button::Agency)) => {}
                         Some(party::Hit::Button(party::Button::Create)) => game.amount = Some(window::Amount::name(Asked::PartyName, PARTY_CREATE)),
-                        Some(party::Hit::Button(party::Button::Invite)) => game.amount = Some(window::Amount::name(Asked::Invite, PARTY_INVITE)),
-                        Some(party::Hit::Button(party::Button::Leave)) => {
-                            let _ = game.session.leave_party();
+                        // The leader's press opens or closes the invite window; anyone else is told only the leader invites.
+                        Some(party::Hit::Button(party::Button::Invite)) => {
+                            if game.party.as_ref().and_then(party::Party::leader) != Some(game.account_id) {
+                                game.party_asked = Some(PartyQuestion::OnlyLeader);
+                            } else if game.amount.as_ref().is_some_and(|amount| matches!(amount.what, Asked::Invite)) {
+                                game.amount = None;
+                            } else {
+                                game.amount = Some(window::Amount::name(Asked::Invite, PARTY_INVITE));
+                            }
                         }
+                        Some(party::Hit::Button(party::Button::Leave)) => game.party_asked = Some(PartyQuestion::Leave),
                         Some(party::Hit::Button(party::Button::Setup)) => {
                             if let Some(party) = &game.party {
                                 let leader = party.leader() == Some(game.account_id);
@@ -8505,19 +8649,27 @@ impl App {
             game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             return;
         }
-        // The leader's right click (not a drag) on another member's row in the party window: hand the party over.
+        // A right click (not a drag) on a member's row in the party window, or on their small window, unlocked: the
+        // member's menu.
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Released
             && let Some((start, None)) = game.right_press
             && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
-            && game.window_at(self.cursor) == Some(Panel::Party)
-            && let Some(party::Hit::Member(account)) = game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends, game.account_id)
-            && game.party.as_ref().is_some_and(|party| party.offers_leader(game.account_id, account))
+            && !game.party_window.locked
         {
-            game.right_press = None;
-            let label = self.messages.get(LEADER_CHOICE).cloned().unwrap_or_default();
-            game.menu = Some(menu::Menu::new(self.cursor, vec![Some((label, Choice::Leader(account)))], &self.font));
-            return;
+            let small = match game.member_windows.hit(self.cursor) {
+                Some((account, party::MemberHit::Body)) => Some(account),
+                _ => None,
+            };
+            let row = match game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends) {
+                Some(party::Hit::Member(account)) if game.window_at(self.cursor) == Some(Panel::Party) => Some(account),
+                _ => None,
+            };
+            if let Some((account, small)) = small.map(|account| (account, true)).or(row.map(|account| (account, false))) {
+                game.right_press = None;
+                game.member_menu(account, small, self.cursor, &self.messages, &self.font);
+                return;
+            }
         }
         // A right click on a tracked quest's title: its details, or putting it aside.
         if let Scene::Game(game) = &mut self.scene
@@ -9096,7 +9248,7 @@ impl App {
                 let option_windows = game.graphics_window.as_mut().is_some_and(options::GraphicsWindow::drop_drag)
                     | game.shortcuts_window.as_mut().is_some_and(options::ShortcutsWindow::drop_drag);
                 let member_held =
-                    game.member_windows.release(game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends, game.account_id).is_none(), self.cursor);
+                    game.member_windows.release(game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends).is_none(), self.cursor);
                 let windows = trade_moved
                     | slid
                     | option_windows
@@ -9179,8 +9331,17 @@ impl App {
         {
             // ponytail: a click on the member's window casts on their account id (a player's unit id). Range is the
             // same as aiming at them in the world; the close button still closes.
-            if let Some(account) = game.party_member_at(cursor) {
-                game.aim_skill(SkillTarget::Unit(account));
+            // A member's small window or row in the party window: their skill if the rule takes it, else the aim ends.
+            let row = match game.party_window.hit(cursor, game.party.as_ref(), &game.friends) {
+                Some(party::Hit::Member(account)) if game.window_at(cursor) == Some(Panel::Party) => Some(account),
+                _ => None,
+            };
+            if let Some(account) = game.party_member_at(cursor).or(row) {
+                if game.row_takes_aim(account, self.modifiers.shift_key()) {
+                    game.aim_skill(SkillTarget::Unit(account));
+                } else {
+                    game.targeting = None;
+                }
                 return;
             }
             let on_ui = game.on_ui(cursor, &self.items, assets.message.size);
@@ -9582,13 +9743,27 @@ impl App {
                 Panel::BasicInfo if game.basic_info.hit(cursor) == Some(basic_info::Hit::Title) => game.basic_info.frame.start_drag(cursor),
                 Panel::Hotkeys if game.hotkeys.grabbed(cursor) => game.hotkeys.frame.start_drag(cursor),
                 Panel::Inventory if game.inventory.hit(cursor) == Some(inventory::Hit::Title(TitleHit::Title)) => game.inventory.frame.start_drag(cursor),
-                Panel::Party if matches!(game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id), Some(party::Hit::Member(_))) => {
-                    if let Some(party::Hit::Member(account)) = game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id) {
-                        game.member_windows.press_row(account);
+                // A member's row, unlocked: dragged out it makes a small window; a second press on another member's row
+                // soon after opens the 1:1 chat with them.
+                Panel::Party if matches!(game.party_window.hit(cursor, game.party.as_ref(), &game.friends), Some(party::Hit::Member(_))) => {
+                    if let Some(party::Hit::Member(account)) = game.party_window.hit(cursor, game.party.as_ref(), &game.friends)
+                        && !game.party_window.locked
+                    {
+                        let now = Instant::now();
+                        let double = game.row_press.is_some_and(|(at, whose)| whose == account && now.saturating_duration_since(at) < DOUBLE_PRESS);
+                        game.row_press = (!double).then_some((now, account));
+                        if double && account != game.account_id {
+                            let name = game.party.as_ref().and_then(|party| party.members.iter().find(|m| m.info.account == account)).map(|m| m.info.name.clone());
+                            if let Some(name) = name {
+                                game.whisper_member(&name);
+                            }
+                        } else {
+                            game.member_windows.press_row(account);
+                        }
                     }
                 }
                 Panel::Party
-                    if game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id) == Some(party::Hit::Title(TitleHit::Title)) =>
+                    if game.party_window.hit(cursor, game.party.as_ref(), &game.friends) == Some(party::Hit::Title(TitleHit::Title)) =>
                 {
                     game.party_window.frame.start_drag(cursor)
                 }
@@ -10142,6 +10317,9 @@ impl App {
                 if *key == Key::Named(NamedKey::Enter) {
                     let _ = game.session.change_party_leader(account);
                 }
+            }
+            Scene::Game(game) if game.party_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.answer_party(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
             Scene::Game(game) if game.party_setup.is_some() && *key == Key::Named(NamedKey::Escape) => game.party_setup = None,
             Scene::Game(game) if game.ranking.is_some() && *key == Key::Named(NamedKey::Escape) => game.ranking = None,
@@ -10953,6 +11131,8 @@ impl App {
                     blocked: HashSet::new(),
                     party_setup: None,
                     leader_asked: None,
+                    party_asked: None,
+                    row_press: None,
                     talks: whisper::Talks::default(),
                     whisper_open: whisper::OpenSettings::load(),
                     friend_setup: None,
@@ -16085,6 +16265,17 @@ impl App {
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
+                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
+        // A party question: its words, OK and Cancel (OK alone when it only tells).
+        if let Some(asked) = &game.party_asked {
+            let dialog = dialog_position(&assets.message);
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
+            for (place, yes) in party_question_buttons(asked.asks()) {
+                shop_layer.sprites.push(button_sprite(pointer, offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }));
+            }
+            for (row, line) in message_lines(font, message(asked.message()), MESSAGE_WIDTH).into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }

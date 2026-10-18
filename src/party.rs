@@ -104,10 +104,6 @@ impl Party {
         Settings { exp_even: self.exp_shared, pickup: self.pickup_shared, share: self.item_shared }
     }
 
-    /// Whether the player (`me`) may hand the party to the member `account`: the leader, to another online member.
-    pub fn offers_leader(&self, me: u32, account: u32) -> bool {
-        self.leader() == Some(me) && account != me && self.members.iter().any(|member| member.info.account == account && member.info.online)
-    }
 }
 
 /// The party's three settings, as the setup window shows them.
@@ -203,6 +199,9 @@ pub fn invitation_at(screen: [f32; 2]) -> [f32; 2] {
 /// What the window's buttons do.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Button {
+    /// The adventurer's agency; the lock (on or off).
+    Agency,
+    Lock(bool),
     Create,
     Invite,
     Leave,
@@ -216,6 +215,9 @@ pub enum Button {
 impl Button {
     fn image(self) -> &'static str {
         match self {
+            Self::Agency => "mesbtn_01",
+            Self::Lock(false) => "mesbtn_07",
+            Self::Lock(true) => "mesbtn_06",
             Self::Create => "mesbtn_08",
             Self::Invite => "mesbtn_010",
             Self::Leave => "mesbtn_09",
@@ -229,6 +231,9 @@ impl Button {
     /// The client's words for it, in a tooltip.
     fn message(self) -> usize {
         match self {
+            Self::Agency => 3514,
+            Self::Lock(false) => 1627,
+            Self::Lock(true) => 1626,
             Self::Create => 2054,
             Self::Invite => 2056,
             Self::Leave => 2055,
@@ -239,7 +244,122 @@ impl Button {
             Self::FriendSetup => 101,
         }
     }
+
+    /// Its name for the test driver.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Agency => "agency",
+            Self::Lock(_) => "lock",
+            Self::Create => "create",
+            Self::Invite => "invite",
+            Self::Leave => "leave",
+            Self::Setup => "setup",
+            Self::Whisper => "whisper",
+            Self::Delete => "delete",
+            Self::FriendSetup => "friendsetup",
+        }
+    }
 }
+
+/// What Leave does once asked (`leave_decision`).
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Leaving {
+    /// Leave now.
+    Leave,
+    /// Hand the party to this member first, then leave.
+    HandOver(u32),
+    /// Others are online, none on our map: "You can leave a party after delegation." (3273), nothing sent.
+    Delegate,
+    /// Nobody else is online: ask whether to disband instead (3257).
+    AskDisband,
+}
+
+pub const LEAVE_AFTER_DELEGATION: usize = 3273;
+pub const ASK_DISBAND: usize = 3257;
+
+/// Whether two map names are the same map (`prontera.gat` and `prontera`).
+fn same_map(a: &str, b: &str) -> bool {
+    let key = |map: &str| map.to_ascii_lowercase().trim_end_matches(".gat").trim_end_matches(".rsw").to_owned();
+    key(a) == key(b)
+}
+
+/// What Leave does: a leader with others hands the party to the first other member, in list order, who is online
+/// and on our map; others online elsewhere keep them in; nobody else online asks to disband.
+pub fn leave_decision(party: &Party, me: u32, our_map: &str) -> Leaving {
+    let others: Vec<&PartyMember> = party.members.iter().map(|member| &member.info).filter(|info| info.account != me).collect();
+    if party.leader() != Some(me) || others.is_empty() {
+        return Leaving::Leave;
+    }
+    if let Some(next) = others.iter().find(|info| info.online && same_map(&info.map, our_map)) {
+        return Leaving::HandOver(next.account);
+    }
+    if others.iter().any(|info| info.online) { Leaving::Delegate } else { Leaving::AskDisband }
+}
+
+/// A member's right-click menu entries.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum MemberChoice {
+    Mail,
+    Leave,
+    Whisper,
+    Expel,
+    Assign,
+    /// Close the small party window it was opened on.
+    RemoveSmall,
+}
+
+impl MemberChoice {
+    pub fn message(self) -> usize {
+        match self {
+            Self::Mail => 2808,
+            Self::Leave => 96,
+            Self::Whisper => 360,
+            Self::Expel => 97,
+            Self::Assign => 1532,
+            Self::RemoveSmall => 3102,
+        }
+    }
+}
+
+/// The menu on a member's row (or small party window, `small`): mail; on our own row leaving, on another whispering
+/// and, when we lead, expelling and handing over.
+pub fn member_menu(me: u32, account: u32, leader: bool, small: bool) -> Vec<MemberChoice> {
+    let mut choices = vec![MemberChoice::Mail];
+    if account == me {
+        choices.push(MemberChoice::Leave);
+    } else {
+        choices.push(MemberChoice::Whisper);
+        if leader {
+            choices.extend([MemberChoice::Expel, MemberChoice::Assign]);
+        }
+    }
+    if small {
+        choices.push(MemberChoice::RemoveSmall);
+    }
+    choices
+}
+
+/// Skills that go on a member's row with Shift held (or /noshift on).
+const SUPPORT_SKILLS: [u16; 60] = [
+    28, 29, 30, 34, 35, 53, 54, 66, 67, 68, 71, 72, 73, 77, 78, 138, 139, 231, 234, 235, 236, 237, 255, 280, 281, 282, 283, 286, 289, 374, 402, 463,
+    464, 465, 466, 467, 468, 469, 470, 471, 472, 479, 1015, 2001, 2020, 2026, 2027, 2050, 2051, 2052, 2053, 2341, 2344, 2345, 2346, 2347, 2348, 2451,
+    2515, 8221,
+];
+
+/// Whether a press on a member's row (or small window) casts the skill being aimed on them: a Heal-like skill
+/// (`friend`), or with Shift (`shift`, /noshift counts) one on the support list; our own row takes support skills only,
+/// an offline one nothing.
+pub fn row_takes_skill(skill: u16, friend: bool, shift: bool, own: bool, online: bool) -> bool {
+    let support = SUPPORT_SKILLS.contains(&skill);
+    if !online {
+        return false;
+    }
+    // ponytail: our own row keeps the same Heal-like or Shift rule, limited to the support list.
+    (friend || (shift && support)) && (!own || support)
+}
+
+/// The invite button pressed by someone not leading: "Only the leader can invite." (2070).
+pub const ONLY_LEADER_INVITES: usize = 2070;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Hit {
@@ -288,7 +408,18 @@ impl Assets {
             crown: image(format!("{UI}{PARTY_ART}ico_partycrown.bmp")),
             status: ["me", "on", "off"].map(|name| image(format!("{UI}{PARTY_ART}icon_party_{name}.bmp"))),
             bar_colors: [[0x14, 0x19, 0x9B, 255], [0x44, 0x44, 0x44, 255], [0x16, 0xEA, 0x25, 255], [0xEA, 0x16, 0x16, 255]].map(|color| gpu.solid(color)),
-            buttons: [Button::Create, Button::Invite, Button::Leave, Button::Setup, Button::Whisper, Button::Delete, Button::FriendSetup]
+            buttons: [
+                Button::Agency,
+                Button::Lock(false),
+                Button::Lock(true),
+                Button::Create,
+                Button::Invite,
+                Button::Leave,
+                Button::Setup,
+                Button::Whisper,
+                Button::Delete,
+                Button::FriendSetup,
+            ]
                 .into_iter()
                 .map(|button| (button, ["", "_a", "_b"].map(|look| image(format!("{basic}{}{look}.bmp", button.image())))))
                 .collect(),
@@ -538,11 +669,13 @@ pub struct PartyWindow {
     /// The size mode (0: 273×326, 1: 243×179), and rows scrolled past.
     pub mode: usize,
     scroll: usize,
+    /// The lock: only it and the agency take a press while it's on.
+    pub locked: bool,
 }
 
 impl Default for PartyWindow {
     fn default() -> Self {
-        Self { frame: Frame::new(POSITION, MODES[0].0[0]), friends: false, picked: None, mode: 0, scroll: 0 }
+        Self { frame: Frame::new(POSITION, MODES[0].0[0]), friends: false, picked: None, mode: 0, scroll: 0, locked: false }
     }
 }
 
@@ -612,23 +745,29 @@ impl PartyWindow {
         TITLE_HEIGHT + row as f32 * self.row_height()
     }
 
-    /// The buttons shown: for friends, whispering and dropping; making a party without one; inviting (the leader),
-    /// leaving and setting it up within one.
-    fn buttons(&self, party: Option<&Party>, me: u32) -> Vec<Button> {
+    /// The buttons shown: for friends, whispering and dropping; for the party the agency, setup and the lock, then
+    /// making a party without one, or inviting and leaving within one.
+    fn buttons(&self, party: Option<&Party>) -> Vec<Button> {
         if self.friends {
             return vec![Button::Whisper, Button::Delete, Button::FriendSetup];
         }
+        let mut buttons = vec![Button::Agency, Button::Setup, Button::Lock(self.locked)];
         match party {
-            None => vec![Button::Create],
-            Some(party) if party.leader() == Some(me) => vec![Button::Setup, Button::Invite, Button::Leave],
-            Some(_) => vec![Button::Setup, Button::Leave],
+            None => buttons.push(Button::Create),
+            Some(_) => buttons.extend([Button::Invite, Button::Leave]),
         }
+        buttons
     }
 
-    /// A button's place on the bar. ponytail: the buttons keep their order from the bar's left end; their places are
-    /// another issue.
+    /// Whether a press on `button` does anything: with the lock on, only the lock and the agency do.
+    pub fn takes(&self, button: Button) -> bool {
+        !self.locked || matches!(button, Button::Lock(_) | Button::Agency)
+    }
+
+    /// A button's place on the bar: the party's from x 5, 26 apart; the friends' as before.
     fn button_at(&self, place: usize) -> [f32; 2] {
-        [7.0 + place as f32 * BUTTON[0], self.size()[1] - BAR_ABOVE]
+        let left = if self.friends { 7.0 } else { 5.0 };
+        [left + place as f32 * BUTTON[0], self.size()[1] - BAR_ABOVE]
     }
 
     /// The footer's tabs: friends at x 4, 48 wide; party at x 64.
@@ -644,7 +783,7 @@ impl PartyWindow {
 
     /// The buttons (`setup`, `invite`, `leave`, ...) and each member's row (`member:<name>`) on screen, for the test
     /// driver.
-    pub fn button_boxes(&self, party: Option<&Party>, me: u32) -> Vec<(String, [f32; 4])> {
+    pub fn button_boxes(&self, party: Option<&Party>) -> Vec<(String, [f32; 4])> {
         if !self.frame.open || self.frame.minimized {
             return Vec::new();
         }
@@ -653,10 +792,10 @@ impl PartyWindow {
             [x, y, size[0], size[1]]
         };
         let mut boxes: Vec<(String, [f32; 4])> = self
-            .buttons(party, me)
+            .buttons(party)
             .into_iter()
             .enumerate()
-            .map(|(index, button)| (format!("{button:?}").to_lowercase(), place(self.button_at(index), BUTTON)))
+            .map(|(index, button)| (button.name().to_owned(), place(self.button_at(index), BUTTON)))
             .collect();
         let members = party.filter(|_| !self.friends).map_or(&[][..], |party| &party.members);
         let width = self.size()[0];
@@ -667,13 +806,13 @@ impl PartyWindow {
         boxes
     }
 
-    pub fn hit(&self, cursor: [f32; 2], party: Option<&Party>, friends: &[Friend], me: u32) -> Option<Hit> {
+    pub fn hit(&self, cursor: [f32; 2], party: Option<&Party>, friends: &[Friend]) -> Option<Hit> {
         let [width, height] = self.size();
         let local = self.frame.local(cursor, height)?;
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
         }
-        for (place, button) in self.buttons(party, me).into_iter().enumerate() {
+        for (place, button) in self.buttons(party).into_iter().enumerate() {
             if contains(self.button_at(place), BUTTON, local) {
                 return Some(Hit::Button(button));
             }
@@ -732,7 +871,7 @@ impl PartyWindow {
         if self.frame.minimized {
             return;
         }
-        let hit = self.hit(pointer.0, party, friends, me);
+        let hit = self.hit(pointer.0, party, friends);
         // The white body, outlined, from under the title to 38 above the bottom.
         let body = height - BODY_UNDER - TITLE_HEIGHT;
         layer.sprites.push((&assets.body_border, at([0.0, TITLE_HEIGHT]), [width, body]));
@@ -820,7 +959,7 @@ impl PartyWindow {
         layer.sprites.push((left, at([0.0, bar_top]), [left.size[0], BAR_HEIGHT]));
         layer.sprites.push((middle, at([left.size[0], bar_top]), [width - left.size[0] - right.size[0], BAR_HEIGHT]));
         layer.sprites.push((right, at([width - right.size[0], bar_top]), [right.size[0], BAR_HEIGHT]));
-        for (place, button) in self.buttons(party, me).into_iter().enumerate() {
+        for (place, button) in self.buttons(party).into_iter().enumerate() {
             let look = match hit {
                 Some(Hit::Button(hovered)) if hovered == button => 1 + usize::from(pointer.1),
                 _ => 0,
@@ -1111,11 +1250,66 @@ mod tests {
         assert_eq!(party.member(2).unwrap().hp, Some([5, 10]));
         assert_eq!(party.leader(), Some(1));
         let mut window = PartyWindow::default();
-        assert_eq!(window.buttons(Some(&party), 1), [Button::Setup, Button::Invite, Button::Leave]);
-        assert_eq!(window.buttons(Some(&party), 2), [Button::Setup, Button::Leave]);
-        assert_eq!(window.buttons(None, 2), [Button::Create]);
+        let party_bar = [Button::Agency, Button::Setup, Button::Lock(false), Button::Invite, Button::Leave];
+        assert_eq!(window.buttons(Some(&party)), party_bar);
+        assert_eq!(window.buttons(None), [Button::Agency, Button::Setup, Button::Lock(false), Button::Create]);
+        let xs = |window: &PartyWindow, party| (0..window.buttons(party).len()).map(|place| window.button_at(place)[0]).collect::<Vec<_>>();
+        assert_eq!(xs(&window, Some(&party)), [5.0, 31.0, 57.0, 83.0, 109.0]);
+        assert_eq!(xs(&window, None), [5.0, 31.0, 57.0, 83.0]);
+        assert!(party_bar.iter().all(|&button| window.takes(button)));
+        window.locked = true;
+        assert_eq!(window.buttons(Some(&party))[2], Button::Lock(true));
+        assert_eq!((Button::Lock(false).image(), Button::Lock(true).image()), ("mesbtn_07", "mesbtn_06"));
+        assert_eq!((Button::Lock(false).message(), Button::Lock(true).message(), Button::Agency.message()), (1627, 1626, 3514));
+        let taken: Vec<Button> = window.buttons(Some(&party)).into_iter().filter(|&button| window.takes(button)).collect();
+        assert_eq!(taken, [Button::Agency, Button::Lock(true)]);
         window.friends = true;
-        assert_eq!(window.buttons(None, 2), [Button::Whisper, Button::Delete, Button::FriendSetup]);
+        assert_eq!(window.buttons(None), [Button::Whisper, Button::Delete, Button::FriendSetup]);
+    }
+
+    #[test]
+    fn decides_how_to_leave() {
+        let on = |account: u32, leader: bool, map: &str| PartyMember { map: map.into(), ..member(account, leader) };
+        let off = |account: u32| PartyMember { online: false, ..member(account, false) };
+        let party_of = |members: Vec<PartyMember>| {
+            let mut party = Party::default();
+            members.into_iter().for_each(|info| party.upsert(info));
+            party
+        };
+        // Leading: the first other online member on our map, in list order.
+        let party = party_of(vec![on(1, true, "prontera.gat"), off(2), on(3, false, "geffen.gat"), on(4, false, "prontera.gat"), on(5, false, "prontera.gat")]);
+        assert_eq!(leave_decision(&party, 1, "prontera"), Leaving::HandOver(4));
+        assert_eq!(leave_decision(&party, 1, "payon"), Leaving::Delegate);
+        assert_eq!(leave_decision(&party, 4, "prontera"), Leaving::Leave, "a member just leaves");
+        assert_eq!(leave_decision(&party_of(vec![on(1, true, "prontera.gat"), off(2)]), 1, "prontera"), Leaving::AskDisband);
+        assert_eq!(leave_decision(&party_of(vec![on(1, true, "prontera.gat")]), 1, "prontera"), Leaving::Leave, "alone");
+    }
+
+    #[test]
+    fn offers_each_rows_menu() {
+        use MemberChoice::*;
+        assert_eq!(member_menu(1, 1, true, false), [Mail, Leave]);
+        assert_eq!(member_menu(1, 2, true, false), [Mail, Whisper, Expel, Assign]);
+        assert_eq!(member_menu(2, 1, false, false), [Mail, Whisper]);
+        assert_eq!(member_menu(1, 2, true, true), [Mail, Whisper, Expel, Assign, RemoveSmall]);
+        assert_eq!(member_menu(1, 1, true, true), [Mail, Leave, RemoveSmall]);
+        assert_eq!([Mail, Leave, Whisper, Expel, Assign, RemoveSmall].map(MemberChoice::message), [2808, 96, 360, 97, 1532, 3102]);
+    }
+
+    #[test]
+    fn casts_on_rows_by_the_rule() {
+        const HEAL: u16 = 28;
+        const BLESSING: u16 = 34;
+        const BASH: u16 = 5;
+        // Another member: a Heal-like skill always, a support one with Shift, an enemy one never.
+        assert!(row_takes_skill(HEAL, true, false, false, true));
+        assert!(!row_takes_skill(BLESSING, false, false, false, true));
+        assert!(row_takes_skill(BLESSING, false, true, false, true));
+        assert!(!row_takes_skill(BASH, false, true, false, true));
+        // Our own row: support skills only; an offline row nothing.
+        assert!(row_takes_skill(HEAL, true, false, true, true));
+        assert!(!row_takes_skill(BASH, true, false, true, true));
+        assert!(!row_takes_skill(HEAL, true, true, false, false));
     }
 
     #[test]
@@ -1155,20 +1349,15 @@ mod tests {
     }
 
     #[test]
-    fn offers_the_leader_menu_to_the_leader_only() {
+    fn names_the_buttons_and_rows_for_the_driver() {
         let mut party = Party::default();
         party.upsert(member(1, true));
         party.upsert(member(2, false));
         party.upsert(PartyMember { online: false, ..member(3, false) });
-        assert!(party.offers_leader(1, 2));
-        assert!(!party.offers_leader(1, 1), "not to the leader's own row");
-        assert!(!party.offers_leader(2, 1), "not from a member");
-        assert!(!party.offers_leader(1, 3), "not to someone offline");
-        assert!(!party.offers_leader(1, 9), "not to a stranger");
         let mut window = PartyWindow::default();
         window.frame.open = true;
-        let names: Vec<String> = window.button_boxes(Some(&party), 1).into_iter().map(|(name, _)| name).collect();
-        assert_eq!(names, ["setup", "invite", "leave", "member:M1", "member:M2", "member:M3", "party_mode"]);
+        let names: Vec<String> = window.button_boxes(Some(&party)).into_iter().map(|(name, _)| name).collect();
+        assert_eq!(names, ["agency", "setup", "lock", "invite", "leave", "member:M1", "member:M2", "member:M3", "party_mode"]);
     }
 
     #[test]

@@ -955,6 +955,20 @@ fn game_state(app: &App, game: &Game) -> Value {
     let jobs = crate::skills::tabs(&app.skill_trees, game.me.job, &game.skills);
     let sheet = crate::skills::Sheet { trees: &app.skill_trees, jobs: &jobs, skills: &game.skills, info: &game.skill_info, points: game.skill_points() };
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
+    // A party question's OK (and Cancel when it asks).
+    let party_question: Vec<(&str, [f32; 4])> = match (&app.assets, &game.party_asked) {
+        (Some(assets), Some(asked)) => {
+            let dialog = crate::dialog_position(&assets.message);
+            crate::party_question_buttons(asked.asks())
+                .into_iter()
+                .map(|(place, yes)| {
+                    let images = if yes { &assets.ok } else { &assets.cancel };
+                    (if yes { "ok" } else { "cancel" }, [dialog[0] + place[0], dialog[1] + place[1], images[0].size[0], images[0].size[1]])
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
     // The leader question's OK and Cancel, in the message box.
     let leader_question: Vec<(&str, [f32; 4])> = match (&app.assets, game.leader_asked.is_some() || game.apply_asked) {
         (Some(assets), true) => {
@@ -1102,7 +1116,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .chain(
             game.party_window
-                .button_boxes(game.party.as_ref(), game.account_id)
+                .button_boxes(game.party.as_ref())
                 .into_iter()
                 .chain(game.member_windows.button_boxes(game.party.as_ref()))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
@@ -1119,6 +1133,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.away_prompt.iter().flat_map(|prompt| prompt.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.chat.list_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(leader_question.into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(party_question.into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
             game.mercenary.iter().flat_map(|_| game.mercenary_window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
@@ -1497,7 +1512,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "chat_height": game.chat.height(),
     });
     // The party window's size mode and size.
-    state["party_window"] = json!({"mode": game.party_window.mode, "size": game.party_window.size()});
+    state["party_window"] = json!({"mode": game.party_window.mode, "size": game.party_window.size(), "locked": game.party_window.locked});
     // The party booking board: the posts found (their leaders' names), its last line, and who asks to join us.
     state["booking"] = game
         .booking
