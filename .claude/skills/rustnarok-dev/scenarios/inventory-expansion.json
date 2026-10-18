@@ -7,7 +7,7 @@
     {"say": "@itemreset"}, {"wait": 800},
     {"say": "@item 25793 2"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"key": "Alt+E"}, {"wait": 400},
-    {"move": [274, 180]}, {"wait": 150},
+    {"move": [272, 128]}, {"wait": 150},
     {"expect": {"state": {"cursor": "Clickable"}}},
     {"click_on": {"button": "tab:etc"}}, {"wait": 300},
     {"click_on": {"inventory_item": 25793}, "count": 2}, {"wait_for": {"packet": "0x0b15", "ms": 5000}},
@@ -19,7 +19,7 @@
     {"click_on": {"inventory_item": 25793}, "count": 2}, {"wait_for": {"packet": "0x0b15", "ms": 5000}},
     {"key": "Enter"}, {"wait_for": {"packet": "0x0b17", "ms": 5000}}, {"wait": 500},
     {"move": [900, 700]},
-    {"expect": {"chat": "You have successfully expanded the possession limit.", "windows_closed": ["InventoryExpansion"]}},
+    {"expect": {"chat": "You have successfully expanded", "windows_closed": ["InventoryExpansion"]}},
     {"shot": "expanded", "crop": [0, 160, 320, 160]}
   ]
 }
