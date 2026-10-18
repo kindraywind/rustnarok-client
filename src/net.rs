@@ -855,6 +855,10 @@ const CZ_RANDOM_UPGRADE_ITEM_UI_CLOSE: u16 = 0x0AB5;
 const CZ_REQ_RANDOM_UPGRADE_ITEM: u16 = 0x0AB6;
 const ZC_ACK_RANDOM_UPGRADE_ITEM: u16 = 0x0AB7;
 const ZC_CHANGE_ITEM_OPTION: u16 = 0x0B43;
+const ZC_OPEN_REFORM_UI: u16 = 0x0B8F;
+const CZ_CLOSE_REFORM_UI: u16 = 0x0B90;
+const CZ_ITEM_REFORM: u16 = 0x0B91;
+const ZC_ITEM_REFORM_ACK: u16 = 0x0B92;
 const ZC_AUTOSPELLLIST: u16 = 0x0AFB;
 const CZ_SELECTAUTOSPELL: u16 = 0x01CE;
 const ZC_SKILL_SELECT_REQUEST: u16 = 0x0442;
@@ -1921,6 +1925,13 @@ pub enum MapEvent {
         refine: u8,
         grade: u8,
         broken: bool,
+    },
+    /// The item reform window opens for this reform item (the box, or the item an NPC named).
+    ReformOpen(u32),
+    /// A reform finished: result 0 means done, and the client closes the window.
+    Reformed {
+        index: u16,
+        result: u8,
     },
     /// Eggs that can hatch, by inventory index.
     PetEggs(Vec<u16>),
@@ -3300,6 +3311,16 @@ impl MapSession {
         self.stream.write_all(&encode_upgrade_close())
     }
 
+    /// Asks to reform the item at `index` with the reform item the window was opened for.
+    pub fn reform(&mut self, item: u32, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_item_reform(item, index))
+    }
+
+    /// Tells the server the reform window closed. Until it hears this, it holds the player.
+    pub fn close_reform(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_close_reform())
+    }
+
     /// Hatches the egg at this inventory index (from `PetEggs`).
     pub fn hatch(&mut self, index: u16) -> io::Result<()> {
         self.stream.write_all(&encode_hatch(index))
@@ -4205,6 +4226,20 @@ fn encode_upgrade_close() -> [u8; 2] {
     CZ_RANDOM_UPGRADE_ITEM_UI_CLOSE.to_le_bytes()
 }
 
+/// CZ_ITEM_REFORM: the reform item, then the inventory index of the item to reform.
+fn encode_item_reform(item: u32, index: u16) -> [u8; 8] {
+    let mut packet = [0u8; 8];
+    packet[..2].copy_from_slice(&CZ_ITEM_REFORM.to_le_bytes());
+    packet[2..6].copy_from_slice(&item.to_le_bytes());
+    packet[6..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_CLOSE_REFORM_UI: the header only.
+fn encode_close_reform() -> [u8; 2] {
+    CZ_CLOSE_REFORM_UI.to_le_bytes()
+}
+
 /// CZ_REQ_REFINING: the item, the ore, and whether Blacksmith's Blessings go with it.
 fn encode_refine(index: u16, ore: u32, blessings: bool) -> [u8; 9] {
     let mut packet = [0u8; 9];
@@ -4961,6 +4996,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             refine: packet[46],
             grade: packet[47],
         },
+        ZC_OPEN_REFORM_UI => MapEvent::ReformOpen(u32_at(2)),
+        ZC_ITEM_REFORM_ACK => MapEvent::Reformed { index: u16_at(2), result: packet[4] },
         ZC_PETEGG_LIST => {
             MapEvent::PetEggs(packet[4..usize::from(u16_at(2)).min(packet.len())].chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect())
         }
@@ -6203,6 +6240,22 @@ mod tests {
             ZC_CHANGE_ITEM_OPTION,
         ];
         assert_eq!(ids.map(packet_length), [Some(6), Some(-1), Some(4), Some(2), Some(6), Some(2), Some(8), Some(4), Some(48)]);
+    }
+
+    #[test]
+    fn decodes_reform() {
+        // ZC_OPEN_REFORM_UI: the reform item (Thanos Upgrade Box).
+        let mut open = ZC_OPEN_REFORM_UI.to_le_bytes().to_vec();
+        open.extend_from_slice(&100817u32.to_le_bytes());
+        assert_eq!(open.len(), 6);
+        let Some(MapEvent::ReformOpen(100817)) = decode_map_packet(&open) else { panic!() };
+        // ZC_ITEM_REFORM_ACK: index 3, result 0 (done).
+        let Some(MapEvent::Reformed { index: 3, result: 0 }) = decode_map_packet(&[0x92, 0x0B, 3, 0, 0]) else { panic!() };
+        // 100817 is D1 89 01 00.
+        assert_eq!(encode_item_reform(100817, 4), [0x91, 0x0B, 0xD1, 0x89, 0x01, 0x00, 4, 0]);
+        assert_eq!(encode_close_reform(), [0x90, 0x0B]);
+        let ids = [ZC_OPEN_REFORM_UI, CZ_CLOSE_REFORM_UI, CZ_ITEM_REFORM, ZC_ITEM_REFORM_ACK];
+        assert_eq!(ids.map(packet_length), [Some(6), Some(2), Some(8), Some(5)]);
     }
 
     #[test]
