@@ -84,6 +84,7 @@ mod material;
 mod menu;
 mod mercenary;
 mod minimap;
+mod minimap_window;
 mod monster_info;
 mod navigation;
 mod options;
@@ -179,8 +180,6 @@ const TEXT_COLOR: [u8; 3] = [0, 0, 0];
 const FRAME_TIME: Duration = Duration::from_millis(16);
 /// The client pings the map server so idle connections aren't dropped.
 const KEEPALIVE: Duration = Duration::from_secs(10);
-/// Waits this long after the walk to a target ends before attacking; the server may still have the player a cell back.
-const ATTACK_SETTLE: Duration = Duration::from_millis(50);
 /// Chat colors: others, our own, item messages, errors.
 const CHAT_WHITE: [u8; 3] = [255, 255, 255];
 const CHAT_SELF: [u8; 3] = [0x00, 0xFF, 0x00];
@@ -610,7 +609,9 @@ const STATUS_ICON: f32 = status_tip::ICON;
 /// Steps of the clock drawn over a status icon.
 const CLOCK_STEPS: usize = 32;
 /// A skill still blocked: "There is a Delay after using a Skill.", and the words after a cooldown's seconds left.
-const SKILL_DELAY: usize = 219;
+const COOLDOWN_REFUSED: usize = 1460;
+/// A skill goes once less than this of its cooldown is left.
+const COOLDOWN_GRACE: Duration = Duration::from_millis(100);
 /// The Talkie Box (a Hunter's trap holding a message), and the box asking for its message.
 // ponytail: 436 "Please type a message for the Talkie Box"; 435 may be the official one.
 const TALKIE_BOX: u16 = 125;
@@ -644,7 +645,6 @@ const SWITCH_REMOVED: usize = 3144;
 const NO_BOSS: usize = 1223;
 const BOSS_SHOWN: usize = 1225;
 const BOSS_ALARM: u16 = 253;
-const COOLDOWN_LEFT: usize = 3230;
 /// The spark of a landed hit, and a warp portal's rings.
 const EF_HIT1: u32 = 0;
 const EF_WARPZONE2: u32 = 321;
@@ -869,10 +869,14 @@ struct Game {
     /// The map's overview picture, for the minimap, and the part of it showing (with what it was cut for).
     minimap: Option<image::RgbaImage>,
     minimap_crop: Option<((u32, u32, u32, minimap::View), Texture)>,
-    /// Ctrl+Tab walks this: opaque, see-through, hidden.
+    /// Ctrl+Tab walks this: opaque, see-through, hidden. Kept with the settings (`minimap_view`).
     minimap_view: minimap::View,
     /// The minimap's zoom (1 to 4), kept with the settings.
     minimap_zoom: f32,
+    /// ponytail: the navigation route (#276) reads this. The route itself is not drawn here.
+    navigation_route: bool,
+    /// The big minimap of the current map.
+    minimap_window: minimap_window::Window,
     /// Guild members' cells on this map; party members' minimap colours by their place in the party.
     guild_places: HashMap<u32, [i32; 2]>,
     party_colors: Vec<Texture>,
@@ -893,8 +897,8 @@ struct Game {
     last_walk_try: Option<Instant>,
     /// A walk asked for during the player's own swing, sent when the swing ends.
     walk_after_swing: Option<[i32; 2]>,
-    /// Skills used at a level picked (the rest go at the learned level when aimed).
-    separate_levels: std::collections::HashSet<u16>,
+    /// The client's skill table: names, levels to pick, ranges by level.
+    skill_info: HashMap<u16, SkillInfo>,
     press_mark: Option<(Instant, [f32; 2], bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
@@ -940,7 +944,8 @@ struct Game {
     talkie_spots: HashMap<u32, world::Vector>,
     /// Skills blocked after use, and the line one still blocked prints when used.
     cooldowns: skills::Cooldowns,
-    skill_delay_line: String,
+    /// "Cannot use [%s] due to cooldown delay."
+    cooldown_line: String,
     /// A skill waiting for its target: ID and level.
     targeting: Option<(u16, u16)>,
     /// A taming item waiting for its monster; the slot machine, and the result it plays (action, since when).
@@ -1637,8 +1642,8 @@ fn change_look(look: &mut Look, kind: u8, value: u32, extra: u32) -> bool {
 }
 
 /// A map name as the indoor table lists it.
-/// An NPC's mark on the minimap: (NPC, mark ID), cell, image, and until when (None while the NPC keeps it).
-type Mark = ((u32, u8), [i32; 2], Texture, Option<Instant>);
+/// An NPC's mark on the minimap: (NPC, mark ID), cell, image, until when (None while the NPC keeps it), and when it was set.
+type Mark = ((u32, u8), [i32; 2], Texture, Option<Instant>, Instant);
 /// The Universal Catalog's mark, apart from the NPCs'.
 const CATALOG_MARK: (u32, u8) = (u32::MAX, 0);
 
@@ -2100,6 +2105,15 @@ impl Game {
                     versus::Click::Swing => WorldClick::Swing(id),
                     versus::Click::Walk => WorldClick::Ground,
                 },
+                // Someone else's homunculus, mercenary or elemental where the map lets them be fought.
+                Some(kind @ (HOMUNCULUS | MERCENARY | ELEMENTAL)) => {
+                    let ours = self.homunculus_id == Some(id) || self.mercenary.as_ref().is_some_and(|mercenary| mercenary.id == id);
+                    match versus::companion_click(self.side().flags, kind, self.players_first(shift), self.no_shift, ours) {
+                        versus::Click::Attack => WorldClick::Attack(id),
+                        versus::Click::Swing => WorldClick::Swing(id),
+                        versus::Click::Walk => WorldClick::Ground,
+                    }
+                }
                 _ => WorldClick::Ground,
             },
             Some(Owner::Item(id)) => WorldClick::PickUp(id),
@@ -2187,10 +2201,45 @@ impl Game {
                     _ => {}
                 }
             }
-            Some((Pending::Skill { id, level, target }, _)) if self.pending_walk.is_none() => {
-                self.pending = None;
-                self.targeting = Some((id, level));
-                self.aim_skill(target);
+            // A skill: sent the moment it's in reach (walking or not), or once the walk there ended; out of reach, a walk
+            // toward a cell in range on the way to where the target is going, again whenever that changes. It waits
+            // while the player swings, casts or sits; a target out of sight ends it.
+            Some((Pending::Skill { id, level, target }, arrived)) => {
+                let clock = control::now();
+                if self.player.swinging(clock) || self.casts.contains_key(&None) || self.player.sitting {
+                    return;
+                }
+                let toward = match target {
+                    SkillTarget::Unit(unit) if unit == self.account_id => Some((self.player.position(clock), self.player.cell)),
+                    SkillTarget::Unit(unit) => {
+                        self.units.get(&unit).filter(|actor| actor.remove_at.is_none()).map(|actor| (actor.position(clock), actor.destination()))
+                    }
+                    SkillTarget::Cell(cell) => Some((cell.map(|value| value as f32), cell)),
+                };
+                let Some((at, goal)) = toward else {
+                    self.pending = None;
+                    return;
+                };
+                let range = self.skill_range(id, level);
+                let walked = arrived.is_some() && !self.player.moving();
+                if skill_in_reach(self.player.position(clock), at, range) || walked {
+                    self.pending = None;
+                    self.pending_walk = None;
+                    self.send_skill(id, level, target);
+                } else if self.pending_walk.is_none_or(|(toward, _)| toward != goal) && may_move(self.last_move, now) {
+                    let reach = range.max(1.0) as i32;
+                    match world::find_path(&self.world.gat, self.player.cell, goal)
+                        .and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, reach)))
+                    {
+                        Some(stop) => {
+                            self.last_move = Some(now);
+                            self.pending_walk = Some((goal, now));
+                            self.pending = Some((Pending::Skill { id, level, target }, None));
+                            let _ = self.session.walk(stop.map(|value| value as u16));
+                        }
+                        None => self.pending = None,
+                    }
+                }
             }
             _ => {}
         }
@@ -2230,8 +2279,8 @@ impl Game {
         }
     }
 
-    /// Every window's frame, by name, for saving where each was left.
-    fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 16] {
+    /// Every window's frame, by name, for saving where each was left. `minimap` is the game's MINIMAPWNDINFO.
+    fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 17] {
         [
             ("hotkeys", &mut self.hotkeys.frame),
             ("basic_info", &mut self.basic_info.frame),
@@ -2249,6 +2298,7 @@ impl Game {
             ("mercenary_skills", &mut self.mercenary_skill_list.frame),
             ("homunculus", &mut self.homunculus_window.frame),
             ("homunculus_skills", &mut self.homunculus_skill_list.frame),
+            ("minimap", &mut self.minimap_window.frame),
         ]
     }
 
@@ -2326,6 +2376,9 @@ impl Game {
 
     /// The item link under the pointer: the NPC window's, else the chat log's where no window covers it.
     fn link_at(&self, cursor: [f32; 2]) -> Option<&links::Target> {
+        if self.minimap_window.covers(cursor) {
+            return None;
+        }
         links::at(&self.dialog_links, cursor).or_else(|| self.window_at(cursor).is_none().then(|| links::at(&self.chat_links, cursor)).flatten())
     }
 
@@ -2370,26 +2423,23 @@ impl Game {
     /// does nothing; an aimed skill without a level to pick goes at the learned level.
     fn use_skill(&mut self, id: u16, level: u16) {
         self.targeting = None;
-        // ponytail: a blocked skill says so and sends nothing (the server drops it without a word unless @showdelay is
-        // on); whether the real client asks the server anyway isn't known.
-        if self.cooldowns.left(id, control::now()).is_some() {
-            self.chat_line(self.skill_delay_line.clone(), CHAT_ERROR);
-            return;
-        }
-        let Some(skill) = self.skills.iter().find(|skill| skill.id == id) else { return self.use_companion_skill(id, level) };
+        let Some(&net::Skill { kind, level: learned, .. }) = self.skills.iter().find(|skill| skill.id == id) else {
+            return self.use_companion_skill(id, level);
+        };
         // With a store open only the mercenary's skills go.
         if self.store_open() {
             return;
         }
-        if level == 0 || level > skill.level {
+        if level == 0 || level > learned {
             return;
         }
-        match skill.kind {
-            net::Skill::SELF => {
+        match kind {
+            net::Skill::SELF if self.cooled_down(id) => {
                 let _ = self.session.use_skill(id, level, self.account_id);
             }
+            net::Skill::SELF => {}
             net::Skill::ENEMY | net::Skill::GROUND | net::Skill::FRIEND => {
-                self.targeting = Some((id, if self.separate_levels.contains(&id) { level } else { skill.level }));
+                self.targeting = Some((id, if self.skill_info.get(&id).is_some_and(|info| info.separate_level) { level } else { learned }));
             }
             // ponytail: trap skills (32) aim at ground skill units in the game; not made yet.
             _ => {}
@@ -2431,33 +2481,40 @@ impl Game {
         if self.store_open() {
             return;
         }
-        let goal = match target {
-            SkillTarget::Unit(unit) if unit == self.account_id => Some(self.player.cell),
-            SkillTarget::Unit(unit) => self.units.get(&unit).map(|actor| actor.cell),
-            SkillTarget::Cell(cell) => Some(cell),
-        };
-        let Some(goal) = goal else { return };
-        let range = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).map_or(1, |skill| i32::from(skill.range).max(1));
-        if world::in_reach(self.player.cell, goal, range) {
-            self.pending = None;
-            self.skill_sent = Some((id, level, target));
-            let _ = match target {
-                SkillTarget::Unit(unit) => self.session.use_skill(id, level, unit),
-                SkillTarget::Cell(cell) => self.send_skill_at(id, level, cell.map(|value| value as u16)),
-            };
-        } else if let Some(stop) =
-            world::find_path(&self.world.gat, self.player.cell, goal).and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, range)))
-        {
-            // Within the move limit the walk waits: `pending_step` aims again on a later frame.
-            let now = Instant::now();
-            self.pending = Some((Pending::Skill { id, level, target }, None));
-            self.pending_walk = None;
-            if may_move(self.last_move, now) {
-                self.last_move = Some(now);
-                self.pending_walk = Some((stop, now));
-                let _ = self.session.walk(stop.map(|value| value as u16));
-            }
+        // Out of reach it walks there first: `pending_step` checks every frame.
+        self.pending = Some((Pending::Skill { id, level, target }, None));
+        self.pending_walk = None;
+        self.pending_step(Instant::now());
+    }
+
+    /// Whether a skill's cooldown is over (or under 100 ms is left); if not, says so.
+    fn cooled_down(&mut self, id: u16) -> bool {
+        if self.cooldowns.left(id, control::now()).is_none_or(|left| left < COOLDOWN_GRACE) {
+            return true;
         }
+        let name = self.skill_info.get(&id).map_or_else(|| id.to_string(), |info| info.name.clone());
+        self.chat_line(rustnarok_client::messages::fill(&self.cooldown_line, &[&name]), CHAT_ERROR);
+        false
+    }
+
+    /// The range in cells of skill `id` at `level`: its range for that level, plus what the skill list adds at the
+    /// learned level.
+    fn skill_range(&self, id: u16, level: u16) -> f32 {
+        let known = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id);
+        let per_level = self.skill_info.get(&id).map_or(&[][..], |info| &info.attack_range);
+        skill_range(per_level, level, known.map_or(level, |skill| skill.level), known.map_or(1, |skill| skill.range))
+    }
+
+    /// Sends a skill walked into range (refused while its cooldown runs).
+    fn send_skill(&mut self, id: u16, level: u16, target: SkillTarget) {
+        if !self.cooled_down(id) {
+            return;
+        }
+        self.skill_sent = Some((id, level, target));
+        let _ = match target {
+            SkillTarget::Unit(unit) => self.session.use_skill(id, level, unit),
+            SkillTarget::Cell(cell) => self.send_skill_at(id, level, cell.map(|value| value as u16)),
+        };
     }
 
     /// Plays an effect on a unit (by server ID; the player's own works too) where it stands.
@@ -2755,6 +2812,7 @@ impl Game {
             || self.trade.as_ref().is_some_and(|trade| trade.typing)
             || self.storage.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
+            || self.minimap_window.naming()
             // Battle mode off: the line is always open, so letters stay out of the shortcut layer.
             || self.chat_mode.chat_line_open()
     }
@@ -2792,6 +2850,7 @@ impl Game {
         }
         self.emotion_list = None;
         self.world_map = None;
+        self.minimap_window.close();
         self.audio_window = None;
         self.graphics_window = None;
         self.shortcuts_window = None;
@@ -2838,6 +2897,7 @@ impl Game {
             || self.level_ups.hit(cursor).is_some()
             || (self.quest_icon && quest_notice::on_icon(cursor))
             || minimap::button_at(cursor).is_some()
+            || self.minimap_window.covers(cursor)
             || (asking && contains(dialog_position_of(message), message, cursor))
             || self.dialog.is_some()
             || self.amount.is_some()
@@ -3340,6 +3400,7 @@ impl Game {
         push(GraphicsSettings, self.graphics_window.is_some());
         push(ShortcutSettings, self.shortcuts_window.is_some());
         push(WorldMap, self.world_map.is_some());
+        push(Minimap, self.minimap_window.frame.open);
         push(Quests, self.quest_window.frame.open);
         push(Menu, self.menu.is_some());
         push(Capturing, self.capturing);
@@ -3432,6 +3493,9 @@ impl Game {
         }
         if self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) {
             return Some(Catalog);
+        }
+        if self.minimap_window.naming() {
+            return Some(Minimap);
         }
         None
     }
@@ -3658,6 +3722,13 @@ impl Game {
             GraphicsSettings => self.graphics_window = None,
             ShortcutSettings => self.shortcuts_window = None,
             WorldMap => self.world_map = None,
+            Minimap => {
+                if self.minimap_window.naming() {
+                    self.minimap_window.cancel_name();
+                } else {
+                    self.minimap_window.close();
+                }
+            }
             Quests => self.quest_window.frame.open = false,
             Menu => self.menu = None,
             Capturing => self.capturing = false,
@@ -3730,6 +3801,9 @@ impl Game {
         }
         if self.world_map.is_some() {
             return Some(WorldMap);
+        }
+        if self.minimap_window.covers(cursor) {
+            return Some(Minimap);
         }
         self.window_at(cursor).and_then(esc_panel)
     }
@@ -4347,6 +4421,8 @@ struct Assets {
     speech_fill: Texture,
     speech_border: Texture,
     clocks: [Vec<Texture>; 2],
+    /// The cooldown fan by step, `cooldown_fan`.
+    fan: Vec<Texture>,
     connect: ButtonImages,
     ok: ButtonImages,
     cancel: ButtonImages,
@@ -4374,6 +4450,16 @@ struct Assets {
 }
 
 /// A status icon's clock: the part of the 32px square swept clockwise from 12 o'clock by `share` of a turn.
+/// A cooldown's fan over a 32 px icon after `passed` of it (0 to 1): black at alpha 170 from that angle clockwise round
+/// to 12 o'clock, so it clears clockwise from 12.
+fn cooldown_fan(passed: f32) -> RgbaImage {
+    RgbaImage::from_fn(32, 32, |x, y| {
+        let [dx, dy] = [x as f32 + 0.5 - 16.0, y as f32 + 0.5 - 16.0];
+        let turned = (dx.atan2(-dy) / std::f32::consts::TAU).rem_euclid(1.0);
+        if turned >= passed { Rgba([0, 0, 0, 170]) } else { Rgba([0; 4]) }
+    })
+}
+
 fn clock(share: f32, color: [u8; 4]) -> RgbaImage {
     RgbaImage::from_fn(32, 32, |x, y| {
         let [dx, dy] = [x as f32 + 0.5 - 16.0, y as f32 + 0.5 - 16.0];
@@ -4468,6 +4554,7 @@ impl Assets {
             speech_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
             clocks: [[255, 255, 255, 166], [255, 150, 50, 166]]
                 .map(|color| (0..=CLOCK_STEPS).map(|step| gpu.texture(&clock(step as f32 / CLOCK_STEPS as f32, color), false)).collect()),
+            fan: (0..=CLOCK_STEPS).map(|step| gpu.texture(&cooldown_fan(step as f32 / CLOCK_STEPS as f32), false)).collect(),
             connect: ["normal", "over", "press"].map(|state| image(format!("{login}bt_start_{state}.bmp"))),
             ok: button(UI, "btn_ok"),
             cancel: button(UI, "btn_cancel"),
@@ -4576,6 +4663,18 @@ fn parse_window_places(text: &str) -> HashMap<&str, ([f32; 2], bool)> {
 /// Whether /zoom is on (saved; off unless turned on).
 fn zoom_out_saved() -> bool {
     settings_path("zoomout").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1")
+}
+
+/// Opens or closes the big minimap. With no overview picture, says `no_picture` and leaves it closed.
+/// ponytail: said when opening is asked and the map has no overview, and when a warp closes an open window
+/// because the new map has none. A picture that fails to decode counts as none.
+fn toggle_big_minimap(game: &mut Game, gpu: &render::Gpu, no_picture: String) {
+    let map = map_key(&game.map);
+    let image = game.minimap.clone();
+    if !game.minimap_window.toggle(gpu, image.as_ref(), &map) {
+        game.chat_line(no_picture, CHAT_ERROR);
+    }
+    game.sync_esc();
 }
 
 pub(crate) fn settings_path(name: &str) -> Option<std::path::PathBuf> {
@@ -4716,6 +4815,21 @@ enum AimAt {
     Me,
     Monster,
     Player,
+}
+
+/// A skill's range in cells at `level`: its range by level (1 where the table has none) plus what the skill list adds
+/// to it at the learned level; the list's range when the table has nothing.
+fn skill_range(per_level: &[u16], level: u16, learned: u16, listed: u16) -> f32 {
+    if per_level.is_empty() {
+        return f32::from(listed.max(1));
+    }
+    let at = |level: u16| per_level.get(usize::from(level.max(1)) - 1).map_or(1.0, |&range| f32::from(range));
+    at(level) + f32::from(listed) - at(learned)
+}
+
+/// Whether a skill reaches from `from` to `to` (cells, drawn positions): within range × 5 + 5.5 world units.
+fn skill_in_reach(from: [f32; 2], to: [f32; 2], range: f32) -> bool {
+    f32::hypot(to[0] - from[0], to[1] - from[1]) * world::CELL <= range * world::CELL + 5.5
 }
 
 /// Whether a press while aiming takes the unit: a monster with Shift up and another player with Shift down, the other
@@ -6150,8 +6264,15 @@ impl App {
                     _ => {}
                 }
             }
-            // The minimap's bottom row: zoom in and out (kept with the settings), the world map.
-            // ponytail: object and view-on have nothing to do yet; mini opens the world map until there's a big minimap.
+            // The big minimap: a click on it, before the small one's buttons (it can cover them).
+            Scene::Game(game) if game.minimap_window.hit(cursor, [game.world.gat.width as u32, game.world.gat.height as u32]).is_some() => {
+                let size = [game.world.gat.width as u32, game.world.gat.height as u32];
+                if let Some(hit) = game.minimap_window.hit(cursor, size) {
+                    game.minimap_window.click(hit);
+                    game.sync_esc();
+                }
+            }
+            // The minimap's bottom row: zoom (kept with the settings), the big map, the route flag.
             Scene::Game(game) if game.window_at(cursor).is_none() && minimap::button_at(cursor).is_some() => match minimap::button_at(cursor) {
                 Some(button @ ("plus" | "minus")) => {
                     game.minimap_zoom = if button == "plus" { minimap::zoom_in(game.minimap_zoom) } else { minimap::zoom_out(game.minimap_zoom) };
@@ -6160,11 +6281,15 @@ impl App {
                     }
                 }
                 Some("mini") => {
-                    game.world_map = match (game.world_map.take(), &self.gpu) {
-                        (None, Some(gpu)) => worldmap::WorldMap::open(gpu, &self.grf, &self.worlds.0, self.worlds.1, &map_key(&game.map)),
-                        _ => None,
-                    };
+                    if let Some(gpu) = &self.gpu {
+                        let no_picture = self.messages.get(minimap_window::NO_PICTURE).cloned().unwrap_or_default();
+                        toggle_big_minimap(game, gpu, no_picture);
+                    }
                 }
+                // ponytail: #276 draws the navigation route when this is on. The route itself is not drawn here.
+                Some("object") => game.navigation_route = !game.navigation_route,
+                // ponytail: viewon shows the camera's view wedge on the minimap. That wedge isn't drawn.
+                Some("viewon") => {}
                 _ => {}
             },
             // The new-quest icon: the quest window.
@@ -7058,6 +7183,7 @@ impl App {
             }
             game.mail.drag_to(self.cursor);
             game.quest_window.frame.drag_to(self.cursor, 466.0);
+            game.minimap_window.frame.drag_to(self.cursor, minimap_window::HEIGHT);
             game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
             if let Some(window) = &mut game.roulette {
                 window.frame.drag_to(self.cursor, roulette::HEIGHT);
@@ -7653,7 +7779,8 @@ impl App {
                     | game.equipment.frame.drop_drag()
                     | game.basic_info.frame.drop_drag()
                     | game.hotkeys.frame.drop_drag()
-                    | game.skill_window.frame.drop_drag();
+                    | game.skill_window.frame.drop_drag()
+                    | game.minimap_window.frame.drop_drag();
                 windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
             }
             _ => false,
@@ -7751,13 +7878,15 @@ impl App {
                 _ if double => {}
                 // A monster with Shift (without /noshift): nothing.
                 WorldClick::Attack(id) if shift && !game.no_shift && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER) => {}
-                // An attack: kept up with Ctrl or /noctrl, otherwise while the button is held.
+                // An attack: kept up with Ctrl or /noctrl (on someone else's homunculus always), otherwise while the
+                // button is held.
                 WorldClick::Attack(id) => {
+                    let homunculus = game.units.get(&id).is_some_and(|actor| actor.kind == HOMUNCULUS);
                     let weight = |id: u16| game.status.get(&id).copied().unwrap_or(0);
                     match attack_refused(weight(net::STATUS_WEIGHT), weight(net::STATUS_MAX_WEIGHT), game.riding) {
                         Some(line) => game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR),
                         None => {
-                            game.attack = Some(Attack::new(id, ctrl || game.no_ctrl));
+                            game.attack = Some(Attack::new(id, ctrl || game.no_ctrl || homunculus));
                             game.attack_step(now);
                         }
                     }
@@ -7787,6 +7916,18 @@ impl App {
                 }
                 _ => {}
             }
+            return;
+        }
+        // The big minimap is above the other windows, under the world map.
+        if let Scene::Game(game) = &mut self.scene
+            && game.world_map.is_none()
+            && game.minimap_window.covers(cursor)
+        {
+            let size = [game.world.gat.width as u32, game.world.gat.height as u32];
+            if game.minimap_window.hit(cursor, size) == Some(minimap_window::Hit::Title(TitleHit::Title)) {
+                game.minimap_window.frame.start_drag(cursor);
+            }
+            game.press_esc(cursor);
             return;
         }
         if let Scene::Game(game) = &mut self.scene {
@@ -8200,6 +8341,14 @@ impl App {
         if fired == shortcuts::Action::Minimap {
             if let Scene::Game(game) = &mut self.scene {
                 game.minimap_view = game.minimap_view.next();
+                minimap::save_view(game.minimap_view);
+            }
+            return true;
+        }
+        if fired == shortcuts::Action::MinimapWindow {
+            let no_picture = self.messages.get(minimap_window::NO_PICTURE).cloned().unwrap_or_default();
+            if let (Scene::Game(game), Some(gpu)) = (&mut self.scene, &self.gpu) {
+                toggle_big_minimap(game, gpu, no_picture);
             }
             return true;
         }
@@ -8344,6 +8493,7 @@ impl App {
             shortcuts::Action::Macro(_)
             | shortcuts::Action::Screenshot
             | shortcuts::Action::Minimap
+            | shortcuts::Action::MinimapWindow
             | shortcuts::Action::ChatMode
             | shortcuts::Action::Unused => {}
         }
@@ -8703,6 +8853,14 @@ impl App {
                     _ => catalog.type_text(event.text.as_deref().unwrap_or_default()),
                 }
             }
+            // Naming a memo on the big minimap. Esc cancels it (game_escape) before this.
+            Scene::Game(game) if game.minimap_window.naming() => match key {
+                Key::Named(NamedKey::Enter) => {
+                    game.minimap_window.store();
+                }
+                Key::Named(NamedKey::Backspace) => game.minimap_window.backspace(),
+                _ => game.minimap_window.type_text(event.text.as_deref().unwrap_or_default()),
+            },
             Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Escape)) => game.deal_choice = None,
             // Earlier arms are windows that want the key. Esc is game_escape, which closes an open battle-mode
             // line first. Here the chat line has the key. Off: the line is always open and letters type. On: Enter
@@ -9014,6 +9172,7 @@ impl App {
                     (net::STATUS_JOB_EXP, me.job_exp),
                     (net::STATUS_ZENY, i64::from(me.zeny)),
                 ]);
+                let minimap_map = map_key(&map);
                 self.scene = Scene::Game(Box::new(Game {
                     saved_places: String::new(),
                     session,
@@ -9027,11 +9186,13 @@ impl App {
                     camera_goal,
                     minimap,
                     minimap_crop: None,
-                    minimap_view: minimap::View::default(),
+                    minimap_view: minimap::saved_view(),
                     minimap_zoom: settings_path("minimap_zoom")
                         .and_then(|path| std::fs::read_to_string(path).ok())
                         .and_then(|text| text.trim().parse::<f32>().ok())
                         .map_or(1.0, |zoom| zoom.clamp(1.0, minimap::MOST_ZOOM)),
+                    navigation_route: false,
+                    minimap_window: minimap_window::Window::new(gpu, &minimap_map),
                     guild_places: HashMap::new(),
                     party_colors: Vec::new(),
                     show_bars: true,
@@ -9093,7 +9254,7 @@ impl App {
                     cooldowns: skills::Cooldowns::default(),
                     talkie_text: None,
                     talkie_spots: HashMap::new(),
-                    skill_delay_line: self.messages.get(SKILL_DELAY).cloned().unwrap_or_default(),
+                    cooldown_line: self.messages.get(COOLDOWN_REFUSED).cloned().unwrap_or_default(),
                     effects: effects::Effects::default(),
                     deal_choice: None,
                     shop: None,
@@ -9331,7 +9492,7 @@ impl App {
                     walk_held: false,
                     last_walk_try: None,
                     walk_after_swing: None,
-                    separate_levels: self.skill_info.iter().filter(|(_, info)| info.separate_level).map(|(&id, _)| id).collect(),
+                    skill_info: self.skill_info.clone(),
                     press_mark: None,
                     auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
                         let (x, y) = cell.split_once(',')?;
@@ -9363,6 +9524,7 @@ impl App {
 
     /// Loads another map on the same map server.
     fn change_map(&mut self, map: String, position: [u16; 2]) {
+        let no_picture = self.messages.get(minimap_window::NO_PICTURE).cloned().unwrap_or_default();
         let (Scene::Game(game), Some(gpu)) = (&mut self.scene, &self.gpu) else { return };
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
@@ -9371,6 +9533,12 @@ impl App {
                 game.camera = game.camera_goal.camera(world.cell_position(position.map(f32::from)));
                 game.minimap = minimap::load_map(&self.grf, &map);
                 game.minimap_crop = None;
+                let image = game.minimap.clone();
+                // ponytail: said when a warp leaves the big map open on a map with no overview. A picture that fails to decode counts as none.
+                if game.minimap_window.change_map(gpu, image.as_ref(), &map_key(&map)) {
+                    game.chat_line(no_picture, CHAT_ERROR);
+                    game.sync_esc();
+                }
                 game.guild_places.clear();
                 game.world = world;
                 game.map = map;
@@ -11636,7 +11804,7 @@ impl App {
                     catalog.mark = cell;
                 }
                 if let (Some(cell), Some(gpu)) = (cell, gpu) {
-                    game.marks.push((CATALOG_MARK, cell.map(i32::from), gpu.solid([0xFF, 0xFF, 0x00, 255]), None));
+                    game.marks.push((CATALOG_MARK, cell.map(i32::from), gpu.solid([0xFF, 0xFF, 0x00, 255]), None, control::now()));
                 }
             }
             MapEvent::Mark { npc, kind, cell, id, color } => {
@@ -11644,8 +11812,8 @@ impl App {
                 if kind != 2
                     && let Some(gpu) = gpu
                 {
-                    let until = (kind == 0).then(|| Instant::now() + Duration::from_secs(15));
-                    game.marks.push(((npc, id), cell.map(i32::from), gpu.solid([color[0], color[1], color[2], 255]), until));
+                    let until = (kind == 0).then(|| control::now() + Duration::from_secs(15));
+                    game.marks.push(((npc, id), cell.map(i32::from), gpu.solid([color[0], color[1], color[2], 255]), until, control::now()));
                 }
             }
             MapEvent::InventoryExpansion(slots) => game.inventory.expansion = slots,
@@ -13397,8 +13565,8 @@ impl App {
             tooltip.texts.push((text.clone(), offset(corner, [4.0, 2.0]), [0, 0, 0]));
         }
         let size = [game.world.gat.width as u32, game.world.gat.height as u32];
-        // NPC marks blink, shown half of each second.
-        game.marks.retain(|(.., until)| until.is_none_or(|until| until > now));
+        // NPC marks last until they're taken down. Each blinks from the moment it was set.
+        game.marks.retain(|(_, _, _, until, _)| until.is_none_or(|until| until > now));
         // The pickup popup's five seconds; an open inventory has been seen.
         if game.pickup_popup.as_ref().is_some_and(|popup| !popup.alive(control::now())) {
             game.pickup_popup = None;
@@ -13415,9 +13583,12 @@ impl App {
         game.banners.current(control::now());
         game.level_ups
             .seen(game.status_window.frame.open && !game.status_window.frame.minimized, game.skill_window.frame.open && !game.skill_window.frame.minimized);
-        // ponytail: the marks blink together, half of each second since entering the map, not each from its own time.
-        let blink_on = minimap::blink_on(game.entered.elapsed().as_millis());
-        let marks: Vec<_> = game.marks.iter().filter(|_| blink_on).map(|(_, cell, color, _)| (*cell, color)).collect();
+        let marks: Vec<_> = game
+            .marks
+            .iter()
+            .filter(|(_, _, _, _, set)| minimap::mark_visible(0, now.saturating_duration_since(*set).as_millis()))
+            .map(|(_, cell, color, _, _)| (*cell, color))
+            .collect();
         // Party members on this map, coloured by their place in the party list.
         if game.party_colors.is_empty() {
             game.party_colors = (0..16).map(|place| gpu.solid(minimap::party_color(place))).collect();
@@ -13456,7 +13627,16 @@ impl App {
         let trail = game.navigation.as_ref().map_or(&[][..], |active| active.trail.as_slice());
         let goal = navi_next.map(|cell| cell.map(i32::from));
         let markers = minimap::Markers { cell: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss, trail, goal };
-        minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.minimap_zoom, &markers);
+        minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.minimap_zoom, &markers, minimap::Pointer { at: pointer.0, down: pointer.1 });
+        if !game.minimap_window.covers(pointer.0)
+            && game.window_at(pointer.0).is_none()
+            && let Some(name) = minimap::button_at(pointer.0)
+        {
+            let text = messages.get(minimap::tooltip_id(name)).map(String::as_str).unwrap_or("");
+            if !text.is_empty() {
+                window::tooltip(&mut tooltip, &assets.chrome, font, text, offset(pointer.0, [12.0, 12.0]), [255; 3]);
+            }
+        }
         // Status icons down the right, each with the clock of its time (orange in the last minute).
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
             let (_, file) = status_icon_files.get(kind)?;
@@ -13546,7 +13726,7 @@ impl App {
         }
         let mut layers = vec![weather_layer, base, announce_layer, cutin_layer, chat_layer];
         let mut preview = Some(preview);
-        let cooling = skills::Cooling { cooldowns: &game.cooldowns, clocks: &assets.clocks[0], now: control::now(), note: message(COOLDOWN_LEFT) };
+        let cooling = skills::Cooling { cooldowns: &game.cooldowns, fan: &assets.fan, now: control::now() };
         for &id in &game.windows {
             let mut layer = Layer::default();
             match id {
@@ -14094,7 +14274,32 @@ impl App {
             world_map.draw(&mut world_layer, &assets.chrome, font, &worlds.0, map_names, &map_key(&game.map), pointer.0);
         }
         game.dialog_links = dialog_links;
-        layers.extend([catalog_layer, shop_layer, overlay, menu_layer, tooltip, world_layer]);
+        let mut minimap_layer = Layer::default();
+        {
+            let show_quests = game.minimap_window.show_quests;
+            let show_boss = game.minimap_window.show_boss;
+            minimap_layer.faded = game.minimap_window.frame.faded();
+            let quest_cells: Vec<[i32; 2]> = if show_quests {
+                game.quests.iter().filter(|quest| quest.active).filter_map(|quest| quest_texts.get(&quest.id).and_then(|text| text.npc)).collect()
+            } else {
+                Vec::new()
+            };
+            let title = map_names.get(&map_key(&game.map)).cloned().unwrap_or_else(|| map_key(&game.map));
+            let naming_caret = (now.saturating_duration_since(game.entered).as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+            let boss_pin = show_boss.then_some(boss).flatten();
+            game.minimap_window.draw(
+                &mut minimap_layer,
+                &assets.chrome,
+                &assets.minimap,
+                messages,
+                &title,
+                size,
+                &minimap_window::Pins { player: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss: boss_pin, quests: &quest_cells },
+                pointer.0,
+                naming_caret,
+            );
+        }
+        layers.extend([catalog_layer, shop_layer, minimap_layer, overlay, menu_layer, tooltip, world_layer]);
         let composed = compose(gpu, font, layers);
         let (mut sprites, alphas) = flatten(&composed);
 
@@ -14535,14 +14740,6 @@ impl ApplicationHandler<NetEvent> for App {
                             let _ = game.session.wear(index, location);
                         }
                     }
-                }
-                // A skill walked into range goes off once the walk has settled.
-                if let Some((Pending::Skill { id, level, target }, Some(arrived))) = game.pending
-                    && arrived.elapsed() >= ATTACK_SETTLE
-                {
-                    game.pending = None;
-                    game.targeting = Some((id, level));
-                    game.aim_skill(target);
                 }
                 if let Some(gpu) = &self.gpu {
                     gpu.window.request_redraw();
@@ -15308,6 +15505,27 @@ mod tests {
         assert_eq!(companion_mark(Some((1, 9)), 1, 9, false), (None, true));
         assert_eq!(companion_mark(Some((1, 8)), 1, 9, false), (Some((1, 9)), false));
         assert_eq!(companion_mark(None, 1, 9, true), (None, true));
+    }
+
+    #[test]
+    fn skills_reach_by_level_and_world_distance() {
+        // Fire Bolt's table: 9 at every level. A list that says 10 at the learned level adds 1 at any level.
+        assert_eq!(skill_range(&[9; 10], 3, 10, 10), 10.0);
+        assert_eq!(skill_range(&[1, 2, 3], 1, 3, 3), 1.0, "a range that grows by level, used at level 1");
+        assert_eq!(skill_range(&[], 5, 5, 0), 1.0, "nothing known: 1");
+        assert_eq!(skill_range(&[], 5, 5, 9), 9.0);
+        // range x 5 + 5.5 world units: 9 cells reach 10.1 cells away, not 10.2.
+        assert!(skill_in_reach([0.0, 0.0], [10.1, 0.0], 9.0) && !skill_in_reach([0.0, 0.0], [10.2, 0.0], 9.0));
+        assert!(skill_in_reach([0.0, 0.0], [1.0, 1.0], 1.0));
+    }
+
+    #[test]
+    fn the_cooldown_fan_clears_clockwise_from_twelve() {
+        let dark = |image: &RgbaImage, x: u32, y: u32| image.get_pixel(x, y)[3] == 170;
+        // A quarter in: 12 to 3 o'clock is clear, the rest dark.
+        let fan = cooldown_fan(0.25);
+        assert!(!dark(&fan, 20, 4) && !dark(&fan, 28, 12) && dark(&fan, 28, 20) && dark(&fan, 12, 28) && dark(&fan, 4, 12) && dark(&fan, 12, 4));
+        assert!(dark(&cooldown_fan(0.0), 20, 4) && !dark(&cooldown_fan(1.0), 4, 12));
     }
 
     #[test]

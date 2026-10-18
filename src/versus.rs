@@ -97,6 +97,18 @@ pub fn click(flags: u32, wants: bool, no_shift: bool, me: u32, account: u32) -> 
     }
 }
 
+/// A left click on someone else's homunculus (8), mercenary (9) or elemental (10). Our own, and pets, aren't attacked
+/// by a click. A homunculus is attacked where players fight (bit 4) or on a siege map (bit 2); a mercenary or an
+/// elemental goes by the player rule (`click`).
+pub fn companion_click(flags: u32, kind: u8, wants: bool, no_shift: bool, ours: bool) -> Click {
+    match kind {
+        _ if ours => Click::Walk,
+        8 if flags & (MAP_SIEGE | MAP_NO_LOCK_ON) != 0 => Click::Attack,
+        9 | 10 => click(flags, wants, no_shift, 0, 1),
+        _ => Click::Walk,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,6 +123,26 @@ mod tests {
 
     fn other(account: u32, guild: u32) -> Other {
         Other { account, guild, dead: false, camp: None }
+    }
+
+    #[test]
+    fn clicks_on_others_summons_attack_where_the_map_says() {
+        let (homunculus, mercenary, elemental, pet) = (8, 9, 10, 7);
+        // Someone else's homunculus: attacked on a PvP map and on castles (in WoE or not); walked to in town.
+        assert_eq!(companion_click(TOWN, homunculus, false, false, false), Click::Walk);
+        assert_eq!(companion_click(PVP, homunculus, false, false, false), Click::Attack);
+        assert_eq!(companion_click(CASTLE, homunculus, false, false, false), Click::Attack);
+        assert_eq!(companion_click(WOE, homunculus, false, false, false), Click::Attack);
+        // A mercenary or an elemental goes by the player rule: Shift or /noshift in town, a swing a click in WoE.
+        assert_eq!(companion_click(TOWN, mercenary, false, false, false), Click::Walk);
+        assert_eq!(companion_click(TOWN, mercenary, true, false, false), Click::Attack);
+        assert_eq!(companion_click(TOWN, elemental, false, true, false), Click::Attack);
+        assert_eq!(companion_click(PVP, elemental, false, false, false), Click::Attack);
+        assert_eq!(companion_click(WOE, mercenary, true, false, false), Click::Swing);
+        // Our own, and pets, never.
+        assert_eq!(companion_click(PVP, homunculus, true, true, true), Click::Walk);
+        assert_eq!(companion_click(PVP, mercenary, true, true, true), Click::Walk);
+        assert_eq!(companion_click(PVP, pet, true, true, false), Click::Walk);
     }
 
     #[test]

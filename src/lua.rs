@@ -693,17 +693,29 @@ pub struct SkillInfo {
     pub max_level: u16,
     /// The level to use can be picked (`bSeperateLv`): the skill window's arrows, the wheel while aiming.
     pub separate_level: bool,
+    /// Its range in cells by level (`AttackRange`), from level 1.
+    pub attack_range: Vec<u16>,
 }
 
 /// The quests' titles, descriptions and summaries (`QuestInfoList`), from the translation's System folder.
 const QUEST_INFO: &str = "system\\OngoingQuestInfoList_True.lub";
 
-/// A quest's words: title, description (its lines joined), summary.
-pub fn quest_info(grf: &Grf) -> io::Result<HashMap<u32, [String; 3]>> {
+/// A quest's words, and the NPC cell the big minimap marks when the table gives one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuestInfo {
+    pub title: String,
+    pub description: String,
+    pub summary: String,
+    /// ponytail: `NpcPosX`/`NpcPosY` on the quest itself. The real list can nest several NPCs, each with a sprite.
+    pub npc: Option<[i32; 2]>,
+}
+
+/// A quest's words: title, description (its lines joined), summary, and its NPC cell when listed.
+pub fn quest_info(grf: &Grf) -> io::Result<HashMap<u32, QuestInfo>> {
     quest_infos(&run(grf, &[QUEST_INFO])?)
 }
 
-fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, [String; 3]>> {
+fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
     let list: mlua::Table = lua.globals().get("QuestInfoList").map_err(lua_error)?;
     let mut quests = HashMap::new();
     for pair in list.pairs::<i64, mlua::Table>() {
@@ -713,8 +725,12 @@ fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, [String; 3]>> {
             .get::<mlua::Table>("Description")
             .map(|lines| lines.sequence_values::<mlua::String>().flatten().map(|line| decode(&line)).collect::<Vec<_>>().join(" "))
             .unwrap_or_default();
+        let npc = match (entry.get::<i64>("NpcPosX"), entry.get::<i64>("NpcPosY")) {
+            (Ok(x), Ok(y)) => Some([x as i32, y as i32]),
+            _ => None,
+        };
         if let Ok(id) = u32::try_from(id) {
-            quests.insert(id, [text("Title"), description, text("Summary")]);
+            quests.insert(id, QuestInfo { title: text("Title"), description, summary: text("Summary"), npc });
         }
     }
     Ok(quests)
@@ -749,6 +765,7 @@ pub fn skill_info(grf: &Grf) -> io::Result<HashMap<u16, SkillInfo>> {
             name: text(entry.get("SkillName")),
             max_level: entry.get("MaxLv").unwrap_or(0),
             separate_level: entry.get("bSeperateLv").unwrap_or(false),
+            attack_range: entry.get::<mlua::Table>("AttackRange").map(|ranges| ranges.sequence_values::<u16>().flatten().collect()).unwrap_or_default(),
         };
         if let Ok(id) = u16::try_from(id) {
             skills.insert(id, info);
@@ -1710,11 +1727,19 @@ mod tests {
     #[test]
     fn reads_quest_info() {
         let lua = super::new_lua().unwrap();
-        lua.load(r#"QuestInfoList = { [7001] = { Title = "Hunting Porings", Description = { "Hunt", "ten Porings." }, Summary = "Poring x10" } }"#)
-            .exec()
-            .unwrap();
+        lua.load(
+            r#"QuestInfoList = {
+                [7001] = { Title = "Hunting Porings", Description = { "Hunt", "ten Porings." }, Summary = "Poring x10" },
+                [7002] = { Title = "See Kafra", Description = { "Talk." }, Summary = "Kafra", NpcPosX = 150, NpcPosY = 180 },
+            }"#,
+        )
+        .exec()
+        .unwrap();
         let quests = super::quest_infos(&lua).unwrap();
-        assert_eq!(quests[&7001], ["Hunting Porings".to_owned(), "Hunt ten Porings.".to_owned(), "Poring x10".to_owned()]);
+        assert_eq!(quests[&7001].title, "Hunting Porings");
+        assert_eq!(quests[&7001].description, "Hunt ten Porings.");
+        assert_eq!(quests[&7001].npc, None);
+        assert_eq!(quests[&7002].npc, Some([150, 180]));
     }
 
     #[test]

@@ -1,0 +1,17 @@
+{
+  "about": "The big minimap (issue #317): the mini button opens the 516×559 window of the current map; Record, a click on the map and Store keep a memo, and state reports it.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 191"}, {"settle": 1500},
+    {"click_on": {"button": "minimap_mini"}}, {"wait": 400},
+    {"expect": {"windows_open": ["Minimap"], "state": {"minimap_window.open": true}}},
+    {"click_on": {"button": "minimap_record"}}, {"wait": 200},
+    {"click_on": {"button": "minimap_map"}}, {"wait": 200},
+    {"type": "Spot"},
+    {"click_on": {"button": "minimap_store"}}, {"wait": 300},
+    {"expect": {"state": {"minimap_window.memos.0.name": "Spot", "minimap_window.open": true}}},
+    {"move": [700, 400]},
+    {"shot": "big-minimap-memo", "crop": [488, 190, 516, 559]}
+  ]
+}
