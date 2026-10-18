@@ -1,0 +1,31 @@
+// Twenty statuses with icons at once, for the status-icons scenario (issue #213). Load it with @loadnpc <absolute
+// path>, take it out with @unloadnpcfile <absolute path>. Whisper npc:RustnarokIcons "buffs" for the twenty, "clear"
+// to end them.
+-	script	RustnarokIcons	-1,{
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "buffs") {
+		sc_start SC_BLESSING, 300000, 10;
+		sc_start SC_INCREASEAGI, 300000, 10;
+		sc_start SC_ANGELUS, 300000, 10;
+		sc_start SC_GLORIA, 300000, 5;
+		sc_start SC_MAGNIFICAT, 300000, 5;
+		sc_start SC_IMPOSITIO, 300000, 5;
+		sc_start SC_SUFFRAGIUM, 300000, 3;
+		sc_start SC_ASPERSIO, 300000, 5;
+		sc_start SC_KYRIE, 300000, 10;
+		sc_start SC_ASSUMPTIO, 300000, 5;
+		sc_start SC_ADRENALINE, 300000, 5;
+		sc_start SC_WEAPONPERFECTION, 300000, 10;
+		sc_start SC_OVERTHRUST, 300000, 5;
+		sc_start SC_ENDURE, 300000, 10;
+		sc_start SC_CONCENTRATE, 300000, 10;
+		sc_start SC_TWOHANDQUICKEN, 300000, 10;
+		sc_start SC_LOUD, 300000, 1;
+		sc_start SC_ENERGYCOAT, 300000, 1;
+		sc_start SC_PROVIDENCE, 300000, 5;
+		sc_start SC_TRUESIGHT, 300000, 10;
+	} else if (@whispervar0$ == "clear")
+		sc_end SC_ALL;
+	end;
+}
