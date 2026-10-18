@@ -1087,6 +1087,9 @@ fn game_state(app: &App, game: &Game) -> Value {
             "cell": game.player.cell,
             "direction": game.player.direction,
             "moving": game.player.moving(),
+            // The falcon (25 above the ground) and the warg (on the ground), or null. Riding leaves the warg null.
+            "falcon": companion_state(game.player.falcon.as_ref(), crate::actor::FALCON_HEIGHT),
+            "warg": companion_state(game.player.warg.as_ref(), 0.0),
             "casting": game.casts.contains_key(&None),
             // The attack asked for with the mouse (null: none), kept up or only while held.
             "attack": game.attack.map(|attack| json!({"target": attack.target, "continuous": attack.continuous})),
@@ -1305,6 +1308,12 @@ fn game_state(app: &App, game: &Game) -> Value {
 }
 
 /// The player's look as the game state reports it. Zeros until the server has sent one.
+fn companion_state(companion: Option<&crate::actor::Companion>, height: f32) -> Value {
+    let Some(companion) = companion else { return Value::Null };
+    let tenth = |value: f32| (f64::from(value) * 10.0).round() / 10.0;
+    json!({"x": tenth(companion.at[0]), "z": tenth(companion.at[1]), "height": height, "moving": companion.moving})
+}
+
 fn player_look(look: &Look) -> Value {
     json!({
         "hair": look.hair,

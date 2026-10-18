@@ -1248,6 +1248,29 @@ fn seen_direction(direction: u8, yaw: f32) -> u8 {
     (i32::from(direction) - (yaw.to_degrees() / 45.0).round() as i32).rem_euclid(8) as u8
 }
 
+/// Ground position of a companion at world XZ, lifted by `lift` (the falcon's 25).
+fn companion_feet(world: &World, at: [f32; 2], lift: f32) -> [f32; 3] {
+    let mut feet = world.cell_position([at[0] / world::CELL - 0.5, at[1] / world::CELL - 0.5]);
+    feet[1] += lift;
+    feet
+}
+
+struct CompanionDraw {
+    owner: Owner,
+    warg: bool,
+    feet: [f32; 3],
+    placed: Vec<actor::Placed>,
+}
+
+fn push_companion(companion: &mut actor::Companion, warg: bool, owner: Owner, gpu: &Gpu, world: &World, yaw: f32, now: Instant, out: &mut Vec<CompanionDraw>) {
+    let lift = if warg { 0.0 } else { actor::FALCON_HEIGHT };
+    let placed = companion.frame(gpu, seen_direction(companion.direction, yaw), now, !warg);
+    if placed.is_empty() {
+        return;
+    }
+    out.push(CompanionDraw { owner, warg, feet: companion_feet(world, companion.at, lift), placed });
+}
+
 /// A pet: its monster's sprite, moving by its accessory's ACT when it wears one the data has.
 fn pet_sprites(grf: &Grf, name: &str, act: Option<&String>) -> Option<SpriteSet> {
     let worn = act.and_then(|act| SpriteSet::with_act(grf, &format!("data\\sprite\\몬스터\\{name}"), &format!("data\\sprite\\몬스터\\{act}")));
@@ -7973,6 +7996,7 @@ impl App {
                 let sprites = SpriteSet::player(&self.grf, &look, &self.look_tables);
                 let mut player = Actor::new(me.name.clone(), sprites, position.map(i32::from), direction, 150);
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
+                player.sync_companions(me.option, &self.grf);
                 let indoor = self.indoor.contains(&map_key(&map));
                 let camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
                 let camera = camera_goal.camera(world.cell_position(position.map(f32::from)));
@@ -8432,6 +8456,14 @@ impl App {
                     actor.sprites = SpriteSet::player(grf, actor.look.as_ref().unwrap(), look_tables);
                 }
                 actor.guild = unit.guild;
+                actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
+                // Our own entry is the player actor. A copy in the unit list doesn't grow a second falcon or warg.
+                if unit.id == game.account_id {
+                    game.player.cloaked = actor.cloaked;
+                    game.player.sync_companions(unit.option, grf);
+                } else {
+                    actor.sync_companions(unit.option, grf);
+                }
                 game.want_emblem(unit.guild, unit.emblem);
                 game.monster_hp(&unit);
             }
@@ -8453,6 +8485,14 @@ impl App {
                 }
                 if let Some(path) = world::find_path(&game.world.gat, actor.cell, to.map(i32::from)) {
                     actor.walk(path);
+                }
+                actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
+                // A walk into view is often the first packet. The falcon and warg come with it.
+                if unit.id == game.account_id {
+                    game.player.cloaked = actor.cloaked;
+                    game.player.sync_companions(unit.option, grf);
+                } else {
+                    actor.sync_companions(unit.option, grf);
                 }
                 game.want_emblem(unit.guild, unit.emblem);
                 game.monster_hp(&unit);
@@ -10710,6 +10750,10 @@ impl App {
                     look.option = option & actor::BODY_OPTIONS;
                     actor.sprites = SpriteSet::player(grf, look, look_tables);
                 }
+                let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
+                if let Some(actor) = actor {
+                    actor.sync_companions(option, grf);
+                }
             }
             MapEvent::LookChange { id, kind, value, extra } => {
                 // A skill's ground unit becoming another (rathena's Warp Portal opens this way): the new one's effect.
@@ -11156,6 +11200,7 @@ impl App {
         // Move everyone, follow the player, then decode the sprite frames (mutably) before borrowing them.
         let walking = game.player.moving();
         let player_cell = game.player.update(now);
+        game.player.step_companions(actor::world_xz(player_cell), walking);
         if walking
             && !game.player.moving()
             && let Some((_, arrived)) = &mut game.pending
@@ -11194,6 +11239,7 @@ impl App {
             [feet[0] - dx / length * world::CELL * 0.5, feet[1], feet[2] - dy / length * world::CELL * 0.5]
         };
         let mut carts = Vec::new();
+        let mut companion_draws: Vec<CompanionDraw> = Vec::new();
         let cart_timing = |action: usize, timing: Timing| if action == actor::WALK { timing } else { Timing::Loop(0.0) };
         if let Some(cart) = &mut game.player.cart {
             carts.push((
@@ -11206,6 +11252,14 @@ impl App {
         if let Some(sprites) = &mut game.player.sprites {
             sprites.set_tint(player_tint);
             frames.push((Owner::Player, player_feet, sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing)));
+        }
+        if !game.player.cloaked {
+            if let Some(falcon) = &mut game.player.falcon {
+                push_companion(falcon, false, Owner::Player, gpu, &game.world, yaw, now, &mut companion_draws);
+            }
+            if let Some(warg) = &mut game.player.warg {
+                push_companion(warg, true, Owner::Player, gpu, &game.world, yaw, now, &mut companion_draws);
+            }
         }
         // The dress room's figure: rebuilt when a pick changes, standing the way it's turned.
         if let Some(room) = &mut game.dressroom
@@ -11238,7 +11292,9 @@ impl App {
         // Talkie Boxes saying their words stand where their traps were.
         let mut feet_of = game.talkie_spots.clone();
         for (&id, actor) in &mut game.units {
+            let walking = actor.moving();
             let cell = actor.update(now);
+            actor.step_companions(actor::world_xz(cell), walking);
             let feet = game.world.cell_position(cell);
             feet_of.insert(id, feet);
             if let Some(sound) = actor.sound_now(now) {
@@ -11262,6 +11318,14 @@ impl App {
             if let Some(sprites) = &mut actor.sprites {
                 sprites.set_tint(tint);
                 frames.push((Owner::Unit(id), feet, sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing)));
+            }
+            if !actor.cloaked {
+                if let Some(falcon) = &mut actor.falcon {
+                    push_companion(falcon, false, Owner::Unit(id), gpu, &game.world, yaw, now, &mut companion_draws);
+                }
+                if let Some(warg) = &mut actor.warg {
+                    push_companion(warg, true, Owner::Unit(id), gpu, &game.world, yaw, now, &mut companion_draws);
+                }
             }
         }
         if let Some(audio) = audio {
@@ -11359,6 +11423,13 @@ impl App {
                     }));
                 }
             }
+            // The warg's shadow is twice a body's. The falcon, up in the air, casts none.
+            for draw in companion_draws.iter().filter(|draw| draw.warg) {
+                let scale = actor::WARG_SHADOW;
+                billboards.extend(shadow_placements.iter().map(|(key, position, size)| {
+                    (shadow.texture(*key), draw.feet, position.map(|value| value * scale), size.map(|value| value * scale), [1.0; 4])
+                }));
+            }
         }
         let shadows = billboards.len();
         let sprites_of = |owner: &Owner| match owner {
@@ -11427,6 +11498,18 @@ impl App {
             let sprites = sprites_of(owner).unwrap();
             placements.iter().map(move |(key, position, size)| (sprites.texture(*key), *feet, *position, *size, [1.0; 4]))
         }));
+        for draw in &companion_draws {
+            let actor = match draw.owner {
+                Owner::Player => &game.player,
+                Owner::Unit(id) => match game.units.get(&id) {
+                    Some(actor) => actor,
+                    None => continue,
+                },
+                Owner::Item(_) => continue,
+            };
+            let Some(sprites) = (if draw.warg { actor.warg.as_ref() } else { actor.falcon.as_ref() }).and_then(actor::Companion::sprites) else { continue };
+            billboards.extend(draw.placed.iter().map(|(key, position, size)| (sprites.texture(*key), draw.feet, *position, *size, [1.0; 4])));
+        }
         billboards.extend(in_front);
         // The emotion list's pictures, posed while the sprite can still decode them.
         let emotion_icons = match (&game.emotion_list, &mut game.emotion_sprite) {
