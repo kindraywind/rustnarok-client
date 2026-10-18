@@ -1,0 +1,17 @@
+{
+  "about": "Sprite depth (issue #192): the second character dies one cell north of us (behind) and lies flat on the ground: its lower half, nearer the camera than its feet, now shows over our boots where it reaches them, and our body still covers its upper half. Then it stands up behind us. Sprites take a tilted depth per pixel and draw their soft pixels in a second pass.",
+  "account": "",
+  "slot": 0,
+  "second": {"account": "2", "slot": 0},
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"as": "second", "say": "@warp prt_fild08 170 361"}, {"wait": 2000},
+    {"as": "second", "say": "@die"}, {"wait": 3000},
+    {"move": [1000, 750]},
+    {"shot": "depth-corpse", "crop": [362, 234, 300, 290], "threshold": 5},
+    {"as": "second", "say": "@alive"}, {"wait": 2000},
+    {"move": [1000, 750]},
+    {"shot": "depth-standing", "crop": [362, 234, 300, 290], "threshold": 5}
+  ]
+}

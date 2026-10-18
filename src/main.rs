@@ -76,6 +76,7 @@ mod inventory;
 mod iteminfo;
 mod laphine;
 mod level_up;
+mod links;
 mod macros;
 mod mail;
 mod material;
@@ -140,7 +141,7 @@ use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
-use world::{Billboard, Camera, World, WorldFrame};
+use world::{Billboard, Camera, DepthLayer, World, WorldFrame};
 
 /// The client renders in these logical pixels; Retina scaling happens in the projection.
 pub const SCREEN: [f32; 2] = [1024.0, 768.0];
@@ -1028,6 +1029,10 @@ struct Game {
     /// Chat rooms over their owners' heads (by owner), and where their signs were last drawn (room ID, password).
     signs: HashMap<u32, chatroom::Sign>,
     sign_rects: Vec<([f32; 4], u32, u8)>,
+    /// Item links as last drawn, their boxes and items: in the chat log (under the windows) and in the NPC window
+    /// (over them).
+    chat_links: Vec<([f32; 4], links::ItemLink)>,
+    dialog_links: Vec<([f32; 4], links::ItemLink)>,
     /// The room we're in, and the window making one.
     room: Option<chatroom::Room>,
     room_make: Option<chatroom::Make>,
@@ -1350,6 +1355,15 @@ fn companion_feet(world: &World, at: [f32; 2], lift: f32) -> [f32; 3] {
     let mut feet = world.cell_position([at[0] / world::CELL - 0.5, at[1] / world::CELL - 0.5]);
     feet[1] += lift;
     feet
+}
+
+/// What shows in front of its owner (spirit spheres on the near side, emotions) steps nearer than any of its images.
+const IN_FRONT: f32 = 100.0;
+
+/// The depth layer of a sprite's `index`th image: a player's all share the body's plane, each a step nearer; other
+/// sprites' each sit a layer nearer.
+fn sprite_layer(index: usize, player: bool, flat: bool) -> DepthLayer {
+    if player { DepthLayer { index: 0.0, nudge: index as f32, flat } } else { DepthLayer { index: index as f32, nudge: 0.0, flat } }
 }
 
 struct CompanionDraw {
@@ -1976,6 +1990,11 @@ impl Game {
     /// Whether the pointer is on a window's control: a title bar's close or minimize button, the equipment window's
     /// buttons, a pick list's OK or Cancel.
     // ponytail: tabs, scroll arrows, resize corners and the minimap aren't told apart yet.
+    /// The item link under the pointer: the NPC window's, else the chat log's where no window covers it.
+    fn link_at(&self, cursor: [f32; 2]) -> Option<&links::ItemLink> {
+        links::at(&self.dialog_links, cursor).or_else(|| self.window_at(cursor).is_none().then(|| links::at(&self.chat_links, cursor)).flatten())
+    }
+
     fn on_control(&self, cursor: [f32; 2]) -> bool {
         let inside = |area: [f32; 4]| contains([area[0], area[1]], [area[2], area[3]], cursor);
         let title = self
@@ -2487,6 +2506,7 @@ impl Game {
             || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.stylist.as_ref().is_some_and(|window| window.covers(cursor))
             || self.chat.blocks(cursor)
+            || self.link_at(cursor).is_some()
             || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
     }
@@ -2790,8 +2810,9 @@ impl Game {
         }
     }
 
-    /// Words over a unit's head (None = the player).
+    /// Words over a unit's head (None = the player); an item link shows as its words.
     fn say(&mut self, unit: Option<u32>, text: String, color: [u8; 3]) {
+        let text = links::split(&links::mark(&text, &|_| String::new())).0;
         self.speech.insert(unit, (text, color, Instant::now()));
     }
 
@@ -3877,6 +3898,8 @@ struct Assets {
     homunculus: homunculus::Assets,
     party: party::Assets,
     chatroom: chatroom::Assets,
+    /// Item links' underline in the NPC window.
+    link_line: Texture,
     /// The magic square under a ground cast.
     magic_target: Option<Texture>,
     escape: escape::Assets,
@@ -3997,6 +4020,7 @@ impl Assets {
             homunculus: homunculus::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
+            link_line: gpu.solid([links::COLOR[0], links::COLOR[1], links::COLOR[2], 0xFF]),
             magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
@@ -4459,7 +4483,8 @@ fn message_lines(font: &text::Font, text: &str, width: f32) -> Vec<String> {
 /// shows them: the name alone in the link's color, then the color before it again.
 // ponytail: no underline and no clicking (navigation, item info) yet.
 fn show_links(text: &str) -> String {
-    const LINKS: [(&str, &str); 4] = [("NAVI", "C00000"), ("ITEMLINK", "0070C0"), ("ITEM", "0070C0"), ("URL", "0070C0")];
+    // Item links are marked runs by now (links::mark); these are the rest.
+    const LINKS: [(&str, &str); 2] = [("NAVI", "C00000"), ("URL", "0070C0")];
     let mut shown = String::new();
     let mut rest = text;
     'scan: while let Some(open) = rest.find('<') {
@@ -4488,16 +4513,42 @@ fn show_links(text: &str) -> String {
 }
 
 fn wrap_colored(font: &text::Font, text: &str, width: f32) -> iteminfo::ColoredLines {
-    let mut lines = vec![Vec::new()];
+    wrap_linked(font, text, width).into_iter().map(|pieces| pieces.into_iter().map(|(color, piece, _)| (color, piece)).collect()).collect()
+}
+
+/// Colour-coded text wrapped to `width`, item links in their colour and each piece with the link it's part of.
+fn wrap_linked(font: &text::Font, text: &str, width: f32) -> links::LinkedLines {
+    let mut wrapped: links::LinkedLines = vec![Vec::new()];
     let mut line_width = 0.0;
     let mut color = [0, 0, 0];
+    for (part, item) in links::pieces(text) {
+        for (row, pieces) in wrap_plain(font, &part, width, line_width, &mut color).into_iter().enumerate() {
+            if row > 0 {
+                wrapped.push(Vec::new());
+                line_width = 0.0;
+            }
+            for (color, piece) in pieces {
+                line_width += font.width(&piece);
+                let color = if item.is_some() { links::COLOR } else { color };
+                wrapped.last_mut().unwrap().push((color, piece, item.clone()));
+            }
+        }
+    }
+    wrapped
+}
+
+/// Colour-coded text wrapped to `width`, its first line already `used` wide and `color` in force (left as the text
+/// leaves it).
+fn wrap_plain(font: &text::Font, text: &str, width: f32, used: f32, color: &mut [u8; 3]) -> iteminfo::ColoredLines {
+    let mut lines = vec![Vec::new()];
+    let mut line_width = used;
     let mut rest = text;
     while !rest.is_empty() {
         if let Some(code) =
             rest.strip_prefix('^').filter(|code| code.len() >= 6 && code.is_char_boundary(6) && code[..6].chars().all(|digit| digit.is_ascii_hexdigit()))
         {
             let value = u32::from_str_radix(&code[..6], 16).unwrap();
-            color = [(value >> 16) as u8, (value >> 8) as u8, value as u8];
+            *color = [(value >> 16) as u8, (value >> 8) as u8, value as u8];
             rest = &code[6..];
             continue;
         }
@@ -4511,7 +4562,7 @@ fn wrap_colored(font: &text::Font, text: &str, width: f32) -> iteminfo::ColoredL
             line_width = 0.0;
         }
         let word = if line_width == 0.0 { word.trim_start() } else { word };
-        lines.last_mut().unwrap().push((color, word.to_owned()));
+        lines.last_mut().unwrap().push((*color, word.to_owned()));
         line_width += font.width(word);
         rest = &rest[end..];
     }
@@ -5121,6 +5172,17 @@ impl App {
                 if let Some(action) = make.hit(cursor).and_then(|hit| make.click(hit, &self.grf, &self.look_tables)) {
                     self.make_action(action);
                 }
+            }
+            // An item link in the chat log or the NPC window: the item's information.
+            Scene::Game(game) if game.link_at(cursor).is_some() => {
+                let item = game.link_at(cursor).cloned().unwrap();
+                let shown = iteminfo::Shown { item: item.id, identified: true, refine: item.refine, cards: item.cards, damaged: None, expires: 0 };
+                let position = game.item_window.as_ref().map(|window| window.position);
+                let mut window = iteminfo::ItemWindow::new(shown);
+                if let Some(position) = position {
+                    window.position = position;
+                }
+                game.item_window = Some(window);
             }
             Scene::Game(game) if game.deal_choice.is_some() => {
                 let npc = game.deal_choice.unwrap();
@@ -7046,8 +7108,9 @@ impl App {
                 return;
             }
         }
-        // The item description window goes by its top.
+        // The item description window goes by its top (the NPC window's links are over it).
         if let Scene::Game(game) = &mut self.scene
+            && links::at(&game.dialog_links, cursor).is_none()
             && let Some(window) = &mut game.item_window
             && let Some(hit) = window.hit(cursor, &self.items)
         {
@@ -8421,6 +8484,8 @@ impl App {
                     pointed: None,
                     signs: HashMap::new(),
                     sign_rects: Vec::new(),
+                    chat_links: Vec::new(),
+                    dialog_links: Vec::new(),
                     room: None,
                     room_make: None,
                     emotion_list: None,
@@ -9119,7 +9184,10 @@ impl App {
                 }
                 game.hold_locked();
             }
-            MapEvent::NpcSay { npc, text } => game.dialog_for(npc).lines.push(show_links(&text)),
+            MapEvent::NpcSay { npc, text } => {
+                let name_of = |item: &links::ItemLink| inventory::item_name(&self.items, item.id, true, item.refine);
+                game.dialog_for(npc).lines.push(show_links(&links::mark(&text, &name_of)));
+            }
             MapEvent::NpcNext { npc } => game.dialog_for(npc).button = DialogButton::Next,
             // A script may end in `close` without having said anything (rathena's item scripts do): no box for
             // that, but answer it so the script doesn't keep the player.
@@ -11703,7 +11771,15 @@ impl App {
                 if !dead && scale > 0.0 {
                     let ground = game.world.ground_under(*feet);
                     billboards.extend(shadow_placements.iter().map(|(key, position, size, angle)| {
-                        (shadow.texture(*key), ground, position.map(|value| value * scale), size.map(|value| value * scale), [1.0; 4], *angle)
+                        (
+                            shadow.texture(*key),
+                            ground,
+                            position.map(|value| value * scale),
+                            size.map(|value| value * scale),
+                            [1.0; 4],
+                            *angle,
+                            DepthLayer::default(),
+                        )
                     }));
                 }
             }
@@ -11711,7 +11787,15 @@ impl App {
             for draw in companion_draws.iter().filter(|draw| draw.warg) {
                 let scale = actor::WARG_SHADOW;
                 billboards.extend(shadow_placements.iter().map(|(key, position, size, angle)| {
-                    (shadow.texture(*key), draw.feet, position.map(|value| value * scale), size.map(|value| value * scale), [1.0; 4], *angle)
+                    (
+                        shadow.texture(*key),
+                        draw.feet,
+                        position.map(|value| value * scale),
+                        size.map(|value| value * scale),
+                        [1.0; 4],
+                        *angle,
+                        DepthLayer::default(),
+                    )
                 }));
             }
         }
@@ -11729,6 +11813,7 @@ impl App {
         let turned = now.duration_since(game.entered).as_secs_f32();
         let coin = game.coin_sprite.as_mut().map(|sprite| sprite.frame_at(gpu, 0, 0, Timing::Loop(turned * 1000.0))).unwrap_or_default();
         let mut spirits: [Vec<Billboard>; 2] = [Vec::new(), Vec::new()];
+        let orbit_layer = |near: bool| DepthLayer { nudge: if near { IN_FRONT } else { -1.0 }, ..DepthLayer::default() };
         for (unit, orbs) in &game.spirits {
             let (feet, job) = match unit {
                 None => (player_feet, game.me.job),
@@ -11748,7 +11833,15 @@ impl App {
                 let Some(picture) = picture else { continue };
                 let size = picture.size.map(|side| side * scale);
                 for (center, near) in orbit(count, height, turned) {
-                    spirits[usize::from(near)].push((picture, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, tint, 0.0));
+                    spirits[usize::from(near)].push((
+                        picture,
+                        feet,
+                        [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0],
+                        size,
+                        tint,
+                        0.0,
+                        orbit_layer(near),
+                    ));
                 }
             }
             for (center, near) in orbit(orbs.spheres, SPIRIT_HEIGHT, turned) {
@@ -11756,12 +11849,12 @@ impl App {
                 if coin_job(job) {
                     if let Some(sprite) = &game.coin_sprite {
                         side.extend(coin.iter().map(|(key, position, size, angle)| {
-                            (sprite.texture(*key), feet, [center[0] + position[0], center[1] + position[1]], *size, [1.0; 4], *angle)
+                            (sprite.texture(*key), feet, [center[0] + position[0], center[1] + position[1]], *size, [1.0; 4], *angle, orbit_layer(near))
                         }));
                     }
                 } else if let Some(sphere) = &game.sphere {
                     let size = sphere.size.map(|side| side * SPHERE_SCALE);
-                    side.push((sphere, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, [1.0; 4], 0.0));
+                    side.push((sphere, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, [1.0; 4], 0.0, orbit_layer(near)));
                 }
             }
         }
@@ -11775,8 +11868,16 @@ impl App {
         };
         billboards.extend(carts.iter().flat_map(|(owner, feet, placements)| {
             let cart = cart_of(owner).unwrap();
-            placements.iter().map(move |(key, position, size, angle)| (cart.texture(*key), *feet, *position, *size, [1.0; 4], *angle))
+            placements.iter().enumerate().map(move |(index, (key, position, size, angle))| {
+                (cart.texture(*key), *feet, *position, *size, [1.0; 4], *angle, sprite_layer(index, false, false))
+            })
         }));
+        // The dead lie flat.
+        let stand_of = |owner: &Owner| match owner {
+            Owner::Player => (true, game.player.dead),
+            Owner::Unit(id) => game.units.get(id).map_or((false, false), |actor| (actor.kind == PLAYER, actor.dead || actor.remove_at.is_some())),
+            Owner::Item(_) => (false, false),
+        };
         billboards.extend(frames.iter().flat_map(|(owner, feet, placements)| {
             let sprites = sprites_of(owner).unwrap();
             let tint = match owner {
@@ -11786,7 +11887,10 @@ impl App {
                 }
                 _ => [1.0; 4],
             };
-            placements.iter().map(move |(key, position, size, angle)| (sprites.texture(*key), *feet, *position, *size, tint, *angle))
+            let (player, flat) = stand_of(owner);
+            placements.iter().enumerate().map(move |(index, (key, position, size, angle))| {
+                (sprites.texture(*key), *feet, *position, *size, tint, *angle, sprite_layer(index, player, flat))
+            })
         }));
         for draw in &companion_draws {
             let actor = match draw.owner {
@@ -11798,7 +11902,9 @@ impl App {
                 Owner::Item(_) => continue,
             };
             let Some(sprites) = (if draw.warg { actor.warg.as_ref() } else { actor.falcon.as_ref() }).and_then(actor::Companion::sprites) else { continue };
-            billboards.extend(draw.placed.iter().map(|(key, position, size, angle)| (sprites.texture(*key), draw.feet, *position, *size, [1.0; 4], *angle)));
+            billboards.extend(draw.placed.iter().enumerate().map(|(index, (key, position, size, angle))| {
+                (sprites.texture(*key), draw.feet, *position, *size, [1.0; 4], *angle, sprite_layer(index, false, false))
+            }));
         }
         billboards.extend(in_front);
         // The emotion list's pictures, posed while the sprite can still decode them.
@@ -11897,7 +12003,9 @@ impl App {
         if let Some(sprite) = &game.emotion_sprite {
             billboards.extend(shown.into_iter().flat_map(|(feet, placements)| {
                 let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
-                placements.into_iter().map(move |(key, position, size, angle)| (sprite.texture(key), anchor, position, size, [1.0; 4], angle))
+                placements.into_iter().map(move |(key, position, size, angle)| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                })
             }));
         }
         for (name, anchor, placements) in marked {
@@ -11906,7 +12014,9 @@ impl App {
                 None => game.emotion_sprite.as_ref(),
             };
             if let Some(sprite) = sprite {
-                billboards.extend(placements.into_iter().map(|(key, position, size, angle)| (sprite.texture(key), anchor, position, size, [1.0; 4], angle)));
+                billboards.extend(placements.into_iter().map(|(key, position, size, angle)| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                }));
             }
         }
 
@@ -11932,10 +12042,15 @@ impl App {
                     let [east, north] = damage.drift.map(|sign| sign * motion.drift);
                     [feet[0] + east, feet[1] + motion.height, feet[2] + north]
                 };
+                // Digits stand a step in front of a critical's burst behind them.
+                let digits_layer = DepthLayer { nudge: 1.0, ..DepthLayer::default() };
                 let number = |motion: actor::NumberMotion, color: [f32; 3]| {
                     let tint = [color[0], color[1], color[2], motion.alpha];
                     let anchor = at(&motion);
-                    digits.place(damage.amount, motion.scale).into_iter().map(move |(texture, position, size)| (texture, anchor, position, size, tint, 0.0))
+                    digits
+                        .place(damage.amount, motion.scale)
+                        .into_iter()
+                        .map(move |(texture, position, size)| (texture, anchor, position, size, tint, 0.0, digits_layer))
                 };
                 match damage.kind {
                     DamageKind::Hit { taken, sp } => {
@@ -11954,7 +12069,15 @@ impl App {
                             let tint = [0xAA as f32 / 255.0, 0xAA as f32 / 255.0, 0xAA as f32 / 255.0, motion.alpha];
                             let anchor = at(&motion);
                             billboards.extend(posed.iter().map(|&(key, position, size, angle)| {
-                                (sprite.texture(key), anchor, position.map(|value| value * motion.scale), size.map(|value| value * motion.scale), tint, angle)
+                                (
+                                    sprite.texture(key),
+                                    anchor,
+                                    position.map(|value| value * motion.scale),
+                                    size.map(|value| value * motion.scale),
+                                    tint,
+                                    angle,
+                                    DepthLayer::default(),
+                                )
                             }));
                         }
                         billboards.extend(number(actor::hit_number(ticks, true), [1.0, 1.0, 0.0]));
@@ -11963,12 +12086,16 @@ impl App {
                         let motion = actor::miss_number(ticks);
                         let size = digits.miss.size.map(|value| value * motion.scale);
                         let color = if red { [1.0, 0.0, 0.0, motion.alpha] } else { [1.0, 1.0, 1.0, motion.alpha] };
-                        billboards.push((&digits.miss, at(&motion), [-size[0] / 2.0, -size[1] / 2.0], size, color, 0.0));
+                        billboards.push((&digits.miss, at(&motion), [-size[0] / 2.0, -size[1] / 2.0], size, color, 0.0, DepthLayer::default()));
                     }
                     DamageKind::Lucky => {
                         if let Some(sprite) = message_sprite {
                             let anchor = [feet[0], feet[1] + actor::LUCKY_HEIGHT, feet[2]];
-                            billboards.extend(posed.iter().map(|&(key, position, size, angle)| (sprite.texture(key), anchor, position, size, [1.0; 4], angle)));
+                            billboards.extend(
+                                posed
+                                    .iter()
+                                    .map(|&(key, position, size, angle)| (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer::default())),
+                            );
                         }
                     }
                     DamageKind::Heal { sp } => billboards.extend(number(actor::heal_number(ticks), if sp { [0.0, 0.0, 1.0] } else { [0.0, 1.0, 0.0] })),
@@ -12206,21 +12333,29 @@ impl App {
 
         // NPC windows on top.
         let mut overlay = Layer::default();
+        let mut dialog_links = Vec::new();
         if let Some(dialog) = &game.dialog {
             // A warp list is the menu alone.
             if dialog.warp.is_none() {
                 let position = npc_box_position();
                 overlay.sprites.push((&assets.dialog, position, assets.dialog.size));
-                let mut lines: Vec<Vec<([u8; 3], String)>> = dialog.lines.iter().flat_map(|line| wrap_colored(font, line, DIALOG_TEXT_WIDTH)).collect();
+                let mut lines: links::LinkedLines = dialog.lines.iter().flat_map(|line| wrap_linked(font, line, DIALOG_TEXT_WIDTH)).collect();
                 if let Some((text, value)) = &dialog.input {
-                    lines.push(vec![([0, 0, 0], format!("{}: {value}_", if *text { "입력" } else { "수량" }))]);
+                    lines.push(vec![([0, 0, 0], format!("{}: {value}_", if *text { "입력" } else { "수량" }), None)]);
                 }
                 let shown = lines.len().saturating_sub(DIALOG_LINES);
                 for (row, pieces) in lines[shown..].iter().enumerate() {
                     let mut x = position[0] + DIALOG_TEXT[0];
-                    for (color, piece) in pieces {
-                        overlay.texts.push((piece.clone(), [x, position[1] + DIALOG_TEXT[1] + row as f32 * DIALOG_LINE], *color));
-                        x += font.width(piece);
+                    let y = position[1] + DIALOG_TEXT[1] + row as f32 * DIALOG_LINE;
+                    for (color, piece, item) in pieces {
+                        let width = font.width(piece);
+                        overlay.texts.push((piece.clone(), [x, y], *color));
+                        // Item links underlined, and clickable.
+                        if let Some(item) = item {
+                            overlay.sprites.push((&assets.link_line, [x, y + font.line_height() - 1.0], [width, 1.0]));
+                            dialog_links.push(([x, y, width, font.line_height()], item.clone()));
+                        }
+                        x += width;
                     }
                 }
                 match dialog.button {
@@ -12312,7 +12447,8 @@ impl App {
         let mut chat_layer = Layer::default();
         let open = game.chat_mode.chat_line_open();
         let caret = open && (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
-        game.chat.draw(&mut chat_layer, &assets.chat, font, messages, open, caret);
+        let name_of = |item: &links::ItemLink| inventory::item_name(items, item.id, true, item.refine);
+        game.chat_links = game.chat.draw(&mut chat_layer, &assets.chat, font, messages, open, caret, &name_of);
         let size = [game.world.gat.width as u32, game.world.gat.height as u32];
         // NPC marks blink, shown half of each second.
         game.marks.retain(|(.., until)| until.is_none_or(|until| until > now));
@@ -12973,6 +13109,7 @@ impl App {
         if let Some(world_map) = &game.world_map {
             world_map.draw(&mut world_layer, &assets.chrome, font, &worlds.0, map_names, &map_key(&game.map), pointer.0);
         }
+        game.dialog_links = dialog_links;
         layers.extend([catalog_layer, shop_layer, overlay, menu_layer, tooltip, world_layer]);
         let composed = compose(gpu, font, layers);
         let mut sprites = flatten(&composed);
@@ -12988,6 +13125,8 @@ impl App {
             cursor::Kind::Attack
         } else if (game.targeting.is_some() || game.capturing) && !on_window {
             if game.aim_valid(pointer.0, players_first) { cursor::Kind::TargetValid } else { cursor::Kind::Target }
+        } else if game.link_at(pointer.0).is_some() {
+            cursor::Kind::Clickable
         } else if on_window {
             if game.on_control(pointer.0) { cursor::Kind::Clickable } else { cursor::Kind::Default }
         } else if game.companion_mark.is_some_and(|(_, target)| hovered(&game.hit_boxes, pointer.0, false) == Some(Owner::Unit(target))) {
@@ -13856,7 +13995,9 @@ mod tests {
         assert_eq!(quick_target(false, true, true), Some(QuickTo::Trade));
         assert_eq!(quick_target(false, false, true), Some(QuickTo::Cart));
         assert_eq!(quick_target(false, false, false), None);
-        assert_eq!(show_links(&item_link(512, "Apple")), "^0070C0Apple^000000");
+        // Our Shift-click's link reads back as a link to the item.
+        let (shown, runs) = links::split(&links::mark(&item_link(512, "Apple"), &|_| String::new()));
+        assert_eq!((shown.as_str(), runs[0].1.id), ("Apple", 512));
     }
 
     #[test]
@@ -14062,10 +14203,35 @@ mod tests {
     }
 
     #[test]
+    fn keeps_wrapped_links_clickable() {
+        let font = Font::load();
+        let apple = links::ItemLink { id: 512, ..links::ItemLink::default() };
+        let text = format!("^0000FFTake {} home^000000", links::marked("Big Red Apple", &apple));
+        // Narrow enough that the link breaks: both of its lines are the link, in its colour; the colour before it
+        // comes back after it.
+        let width = font.width("^Take Big Red");
+        let lines = wrap_linked(&font, &text, width);
+        let linked: Vec<(usize, String)> = lines
+            .iter()
+            .enumerate()
+            .flat_map(|(row, pieces)| pieces.iter().filter(|(.., item)| item.as_ref() == Some(&apple)).map(move |(_, piece, _)| (row, piece.trim().to_owned())))
+            .filter(|(_, piece)| !piece.is_empty())
+            .collect();
+        assert!(linked.iter().any(|(row, _)| *row == 0) && linked.iter().any(|(row, _)| *row > 0), "{lines:?}");
+        assert!(lines.iter().flatten().all(|(color, _, item)| item.is_none() || *color == links::COLOR));
+        assert_eq!(lines.last().unwrap().last().map(|(color, piece, _)| (*color, piece.trim())), Some(([0, 0, 0xFF], "home")));
+        // The click test over a link wrapped onto two lines: either box finds the item, the gap beside them nothing.
+        let boxes = [([10.0, 20.0, 40.0, 14.0], apple.clone()), ([0.0, 34.0, 25.0, 14.0], apple.clone())];
+        let at = |cursor: [f32; 2]| links::at(&boxes, cursor).map(|item| item.id);
+        assert_eq!([at([30.0, 25.0]), at([5.0, 40.0]), at([30.0, 40.0]), at([50.0, 25.0])], [Some(512), Some(512), None, None]);
+    }
+
+    #[test]
     fn shows_npc_links_by_name() {
         let navi = "Let me mark the ^B9062F<NAVI>[Tool Shop]<INFO>prontera,134,221,0,000,0</INFO></NAVI>^000000 for you.";
         assert_eq!(show_links(navi), "Let me mark the ^B9062F^C00000[Tool Shop]^B9062F^000000 for you.");
-        assert_eq!(show_links("a <ITEM>Apple<INFO>512</INFO></ITEM> < b"), "a ^0070C0Apple^000000 < b");
+        let marked = show_links(&links::mark("a <ITEM>Apple<INFO>512</INFO></ITEM> < b", &|_| String::new()));
+        assert_eq!(links::split(&marked).0, "a Apple < b");
     }
 
     #[test]
