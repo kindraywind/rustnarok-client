@@ -1,0 +1,30 @@
+{
+  "about": "NPC number and text input (issue #449): each opens a box of its own at (392, 320) at 1024x768, the number one 176x46 with \"Input number \" and \"0\" in its field, the text one 346x46 and empty; Esc does nothing; typing 25 and Enter sends 25; OK with an empty text field sends nothing and the box stays. The NPC (npc/input.txt) is loaded with @loadnpc and unloaded at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/input.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/input.txt"}, {"wait": 1000},
+    {"click_unit": {"kind": "npc", "name": "Input Clerk"}}, {"wait": 1000},
+    {"expect": {"windows_open": ["NpcDialog", "NpcInput"], "state": {"dialog.input": {"text": false, "typed": "0"}}}},
+    {"move": [900, 700]}, {"wait": 200},
+    {"shot": "npc-input-number", "crop": [190, 90, 400, 290], "threshold": 5},
+    {"key": "Escape"}, {"wait": 300},
+    {"expect": {"windows_open": ["NpcInput"], "state": {"dialog.input.typed": "0", "escape": null}}},
+    {"type": "25"}, {"wait": 200},
+    {"key": "Enter"}, {"wait_for": {"sent": "0x0143", "ms": 3000}}, {"wait": 500},
+    {"expect": {"windows_closed": ["NpcInput"], "state": {"dialog.lines.2": "Got 25."}}},
+    {"key": "Enter"}, {"wait": 1000},
+    {"expect": {"windows_open": ["NpcInput"], "state": {"dialog.input": {"text": true, "typed": ""}}}},
+    {"key": "Enter"}, {"wait": 500},
+    {"expect": {"windows_open": ["NpcInput"]}},
+    {"type": "hello"}, {"wait": 200},
+    {"shot": "npc-input-text", "crop": [190, 90, 560, 290], "threshold": 5},
+    {"key": "Enter"}, {"wait_for": {"sent": "0x01d5", "ms": 3000}}, {"wait": 500},
+    {"expect": {"windows_closed": ["NpcInput"], "state": {"dialog.lines.1": "Got hello."}}},
+    {"key": "Enter"}, {"wait": 500},
+    {"expect": {"windows_closed": ["NpcDialog"]}},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/input.txt"}, {"wait": 500}
+  ]
+}

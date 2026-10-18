@@ -1,0 +1,12 @@
+// A number and then a text input (issue #449). Loaded and unloaded by scenarios/npc-input.json.
+iz_int01,28,26,4	script	Input Clerk	4_M_01,{
+	mes "[Input Clerk]";
+	mes "A number?";
+	input .@n;
+	mes "Got " + .@n + ".";
+	next;
+	mes "Some text?";
+	input .@s$;
+	mes "Got " + .@s$ + ".";
+	close;
+}

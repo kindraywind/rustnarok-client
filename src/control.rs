@@ -1180,7 +1180,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 DialogButton::None => "none",
             },
             "menu": dialog.menu.as_ref().map(|menu| json!({"items": menu.items, "selected": menu.selected, "first": menu.first, "position": game.npc_menu.position})),
-            "input": dialog.input.as_ref().map(|(text, typed)| json!({"text": text, "typed": typed})),
+            "input": dialog.input.as_ref().map(|input| json!({"text": input.text, "typed": input.typed})),
             "position": game.say.frame.position,
             "scroll": game.say.scroll,
         })
