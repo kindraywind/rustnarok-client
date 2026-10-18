@@ -3846,13 +3846,6 @@ impl App {
                 let height = room.height();
                 room.frame.drag_to(self.cursor, height);
             }
-            if let Some(setup) = &mut game.buying_setup {
-                setup.frame.drag_to(self.cursor, buying::Setup::height());
-            }
-            if let Some(store) = &mut game.my_buying_store {
-                let height = store.height();
-                store.frame.drag_to(self.cursor, height);
-            }
             game.mail.drag_to(self.cursor);
             game.quest_window.frame.drag_to(self.cursor, 466.0);
             game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
