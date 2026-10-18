@@ -880,6 +880,17 @@ const CZ_REQ_MAKE_GUILD: u16 = 0x0165;
 const CZ_JOIN_GUILD: u16 = 0x016B;
 const CZ_GUILD_CHAT: u16 = 0x017E;
 const CZ_REQ_JOIN_GUILD2: u16 = 0x0916;
+const ZC_MYGUILD_BASIC_INFO: u16 = 0x014C;
+const CZ_REQ_ALLY_GUILD: u16 = 0x0170;
+const ZC_REQ_ALLY_GUILD: u16 = 0x0171;
+const CZ_ALLY_GUILD: u16 = 0x0172;
+const ZC_ACK_REQ_ALLY_GUILD: u16 = 0x0173;
+const CZ_REQ_HOSTILE_GUILD: u16 = 0x0180;
+const ZC_ACK_REQ_HOSTILE_GUILD: u16 = 0x0181;
+const CZ_REQ_DELETE_RELATED_GUILD: u16 = 0x0183;
+const ZC_DELETE_RELATED_GUILD: u16 = 0x0184;
+const CZ_REQ_DISORGANIZE_GUILD: u16 = 0x015D;
+const ZC_ACK_DISORGANIZE_GUILD_RESULT: u16 = 0x015E;
 const ZC_POSITION_ID_NAME_INFO: u16 = 0x0166;
 const ZC_RESULT_MAKE_GUILD: u16 = 0x0167;
 const ZC_ACK_REQ_JOIN_GUILD: u16 = 0x0169;
@@ -1893,6 +1904,25 @@ pub enum MapEvent {
     },
     /// How an invitation went: 0 they're in a guild, 1 refused, 2 joined, 3 the guild is full.
     GuildInviteResult(u8),
+    /// The guild's allies and antagonists.
+    GuildRelations(Vec<GuildRelation>),
+    /// Another guild (its name) asks ours for an alliance, through the player who asked (account ID).
+    AllyAsked {
+        id: u32,
+        guild: String,
+    },
+    /// How an alliance request went (0 already allied, 1 they're answering another, 2 allied, 3 refused or they
+    /// have too many, 4 we have too many, 5 not allowed).
+    AllyResult(u8),
+    /// How setting an antagonist went: 0 set, 1 too many, 2 already one.
+    AntagonistResult(u8),
+    /// A relation with a guild ended.
+    GuildRelationEnded {
+        id: u32,
+        antagonist: bool,
+    },
+    /// Disbanding the guild: 0 done, 1 wrong name, 2 members are left.
+    GuildDisbanded(u32),
     /// Someone (by character ID) left or was expelled, and why.
     GuildLeft {
         character: u32,
@@ -2391,6 +2421,14 @@ fn decode_achievement(entry: &[u8]) -> Achievement {
 /// Score, rank, points into it, points it needs.
 fn decode_totals(bytes: &[u8]) -> AchievementTotals {
     AchievementTotals { score: u32_at(bytes, 0), level: u16_at(bytes, 4), points: u32_at(bytes, 6), needed: u32_at(bytes, 10) }
+}
+
+/// A guild allied with the player's, or held as an antagonist.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GuildRelation {
+    pub antagonist: bool,
+    pub id: u32,
+    pub name: String,
 }
 
 /// Someone in the player's guild.
@@ -3209,6 +3247,31 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Asks the guild of the player (account ID) for an alliance; ours are the player's account and character.
+    pub fn ask_alliance(&mut self, account: u32, me: u32, character: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_ally_request(account, me, character))
+    }
+
+    /// Answers an alliance request, to the player who asked (account ID).
+    pub fn answer_alliance(&mut self, account: u32, yes: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_pair(CZ_ALLY_GUILD, account, u32::from(yes)))
+    }
+
+    /// Sets the guild of the player (account ID) as an antagonist.
+    pub fn set_antagonist(&mut self, account: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_id(CZ_REQ_HOSTILE_GUILD, account))
+    }
+
+    /// Ends the alliance with a guild, or no longer holds it as an antagonist.
+    pub fn end_relation(&mut self, guild: u32, antagonist: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_pair(CZ_REQ_DELETE_RELATED_GUILD, guild, u32::from(antagonist)))
+    }
+
+    /// Disbands the guild; the key is its name.
+    pub fn disband_guild(&mut self, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_disband(name))
+    }
+
     pub fn answer_guild(&mut self, guild: u32, accept: bool) -> io::Result<()> {
         let mut packet = CZ_JOIN_GUILD.to_le_bytes().to_vec();
         packet.extend_from_slice(&guild.to_le_bytes());
@@ -3731,6 +3794,23 @@ fn encode_materials(kind: u32, ok: bool, entries: &[(u16, u16)]) -> Vec<u8> {
 }
 
 /// CZ_REQ_ACH_REWARD and CZ_REQ_CHANGE_TITLE: a header and an ID.
+/// CZ_REQ_ALLY_GUILD: the player asked, then our account and character.
+fn encode_ally_request(account: u32, me: u32, character: u32) -> Vec<u8> {
+    [&CZ_REQ_ALLY_GUILD.to_le_bytes()[..], &account.to_le_bytes(), &me.to_le_bytes(), &character.to_le_bytes()].concat()
+}
+
+/// A header and two u32s.
+fn encode_pair(header: u16, first: u32, second: u32) -> Vec<u8> {
+    [&header.to_le_bytes()[..], &first.to_le_bytes(), &second.to_le_bytes()].concat()
+}
+
+/// CZ_REQ_DISORGANIZE_GUILD: the key (the guild's name) in 40 bytes.
+fn encode_disband(name: &str) -> Vec<u8> {
+    let mut key = encoding_rs::EUC_KR.encode(name).0.into_owned();
+    key.resize(40, 0);
+    [&CZ_REQ_DISORGANIZE_GUILD.to_le_bytes()[..], &key].concat()
+}
+
 fn encode_id(header: u16, id: u32) -> [u8; 6] {
     let mut packet = [0u8; 6];
     packet[..2].copy_from_slice(&header.to_le_bytes());
@@ -4493,6 +4573,18 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_RESULT_MAKE_GUILD => MapEvent::GuildMade(packet[2]),
         ZC_REQ_JOIN_GUILD => MapEvent::GuildInvite { id: u32_at(2), name: c_string(&packet[6..30]) },
         ZC_ACK_REQ_JOIN_GUILD => MapEvent::GuildInviteResult(packet[2]),
+        // Length, then each guild: relation, ID, name.
+        ZC_MYGUILD_BASIC_INFO => MapEvent::GuildRelations(
+            packet[4..]
+                .chunks_exact(32)
+                .map(|entry| GuildRelation { antagonist: self::u32_at(entry, 0) == 1, id: self::u32_at(entry, 4), name: c_string(&entry[8..32]) })
+                .collect(),
+        ),
+        ZC_REQ_ALLY_GUILD => MapEvent::AllyAsked { id: u32_at(2), guild: c_string(&packet[6..30]) },
+        ZC_ACK_REQ_ALLY_GUILD => MapEvent::AllyResult(packet[2]),
+        ZC_ACK_REQ_HOSTILE_GUILD => MapEvent::AntagonistResult(packet[2]),
+        ZC_DELETE_RELATED_GUILD => MapEvent::GuildRelationEnded { id: u32_at(2), antagonist: u32_at(6) == 1 },
+        ZC_ACK_DISORGANIZE_GUILD_RESULT => MapEvent::GuildDisbanded(u32_at(2)),
         ZC_ACK_LEAVE_GUILD => MapEvent::GuildLeft { character: u32_at(2), reason: c_string(&packet[6..46]), expelled: false },
         ZC_ACK_BAN_GUILD => MapEvent::GuildLeft { character: u32_at(42), reason: c_string(&packet[2..42]), expelled: true },
         ZC_CLANINFO => {
@@ -5556,6 +5648,44 @@ mod tests {
             let Some(MapEvent::Slide { id: 2000010, position: [170, 370] }) = decode_map_packet(&slide) else { panic!() };
         }
         assert_eq!([ZC_COMBODELAY, ZC_BLADESTOP, ZC_HIGHJUMP, ZC_FASTMOVE].map(packet_length), [Some(10), Some(14), Some(10), Some(10)]);
+    }
+
+    #[test]
+    fn speaks_of_allies_and_antagonists() {
+        let entry = |relation: u32, id: u32, name: &str| [&relation.to_le_bytes()[..], &id.to_le_bytes(), &name_field(name)].concat();
+        let list = [&ZC_MYGUILD_BASIC_INFO.to_le_bytes()[..], &68u16.to_le_bytes(), &entry(0, 7, "RelTestB"), &entry(1, 9, "Crabs")].concat();
+        let Some(MapEvent::GuildRelations(relations)) = decode_map_packet(&list) else { panic!() };
+        assert_eq!(
+            relations,
+            [GuildRelation { antagonist: false, id: 7, name: "RelTestB".into() }, GuildRelation { antagonist: true, id: 9, name: "Crabs".into() }]
+        );
+        let Some(MapEvent::GuildRelations(none)) = decode_map_packet(&[0x4C, 0x01, 4, 0]) else { panic!() };
+        assert!(none.is_empty());
+        let asked = [&ZC_REQ_ALLY_GUILD.to_le_bytes()[..], &2_000_011u32.to_le_bytes(), &name_field("RelTestA")].concat();
+        let Some(MapEvent::AllyAsked { id: 2_000_011, guild }) = decode_map_packet(&asked) else { panic!() };
+        assert_eq!(guild, "RelTestA");
+        let Some(MapEvent::AllyResult(2)) = decode_map_packet(&[0x73, 0x01, 2]) else { panic!() };
+        let Some(MapEvent::AntagonistResult(0)) = decode_map_packet(&[0x81, 0x01, 0]) else { panic!() };
+        let Some(MapEvent::GuildRelationEnded { id: 7, antagonist: true }) = decode_map_packet(&[0x84, 0x01, 7, 0, 0, 0, 1, 0, 0, 0]) else { panic!() };
+        let Some(MapEvent::GuildDisbanded(2)) = decode_map_packet(&[0x5E, 0x01, 2, 0, 0, 0]) else { panic!() };
+        assert_eq!(encode_ally_request(5, 6, 7), [0x70, 0x01, 5, 0, 0, 0, 6, 0, 0, 0, 7, 0, 0, 0]);
+        assert_eq!(encode_pair(CZ_ALLY_GUILD, 5, 1), [0x72, 0x01, 5, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(encode_pair(CZ_ALLY_GUILD, 5, 0)[6..], [0, 0, 0, 0]);
+        assert_eq!(encode_id(CZ_REQ_HOSTILE_GUILD, 5), [0x80, 0x01, 5, 0, 0, 0]);
+        assert_eq!(encode_pair(CZ_REQ_DELETE_RELATED_GUILD, 7, 1), [0x83, 0x01, 7, 0, 0, 0, 1, 0, 0, 0]);
+        let disband = encode_disband("RelTestA");
+        assert_eq!((disband.len(), &disband[..10], disband[10]), (42, &[0x5D, 0x01, b'R', b'e', b'l', b'T', b'e', b's', b't', b'A'][..], 0));
+        let ids = [
+            ZC_MYGUILD_BASIC_INFO,
+            ZC_REQ_ALLY_GUILD,
+            ZC_ACK_REQ_ALLY_GUILD,
+            ZC_ACK_REQ_HOSTILE_GUILD,
+            ZC_DELETE_RELATED_GUILD,
+            ZC_ACK_DISORGANIZE_GUILD_RESULT,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(-1), Some(30), Some(3), Some(3), Some(10), Some(6)]);
+        let ids = [CZ_REQ_ALLY_GUILD, CZ_ALLY_GUILD, CZ_REQ_HOSTILE_GUILD, CZ_REQ_DELETE_RELATED_GUILD, CZ_REQ_DISORGANIZE_GUILD];
+        assert_eq!(ids.map(packet_length), [Some(14), Some(10), Some(6), Some(10), Some(42)]);
     }
 
     #[test]

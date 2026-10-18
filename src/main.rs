@@ -243,6 +243,12 @@ const CART_POSITION: [f32; 2] = [300.0, 172.0];
 /// Guilds: "Send (%s) a Guild Invitation", " Guild has sent you an invitation...", made (374, then 375, 376, 405),
 /// how an invitation went (378 + the result), "Guild Member %s has connected/disconnected", guild chat's color.
 const GUILD_CHOICE: usize = 382;
+/// "Send an Guild Alliance Request", "Set this guild as an Antagonist".
+const ALLY_CHOICE: usize = 399;
+const ANTAGONIST_CHOICE: usize = 403;
+/// "(guild) Guild is asking for an Alliance with them. Do you accept?", "Are you sure that you want to delete it?"
+const ALLY_ASKS: usize = 393;
+const DELETE_ASKS: usize = 356;
 const GUILD_INVITED: usize = 377;
 const GUILD_ONLINE: usize = 485;
 const GUILD_CHAT: [u8; 3] = [180, 255, 180];
@@ -619,6 +625,8 @@ struct Game {
     guild: Option<guild::Guild>,
     guild_window: guild::GuildWindow,
     guild_invite: Option<(u32, String)>,
+    /// A guild question: another guild asks for an alliance, or the master is about to end a relation.
+    guild_asked: Option<GuildAsked>,
     /// Dev switch RUSTNAROK_CLIENT_GUILD=window ran.
     guild_shown: bool,
     /// The clan we're in, and its window.
@@ -947,6 +955,9 @@ enum Choice {
     Befriend(u32),
     /// Invite them into the guild.
     GuildInvite(u32),
+    /// Ask their guild for an alliance, or set it as an antagonist.
+    Ally(u32),
+    Antagonist(u32),
     /// See what they wear.
     ViewEquipment(u32),
     /// A command to the player's pet (net::PET_INFO and on).
@@ -1312,6 +1323,11 @@ impl Game {
         }
         if let Some(name) = text.strip_prefix("/guild ") {
             let _ = self.session.make_guild(self.me.id, name.trim().trim_matches('"'));
+            return None;
+        }
+        // The guild's name is the key; rathena does nothing for a wrong one.
+        if let Some(name) = text.strip_prefix("/breakguild ") {
+            let _ = self.session.disband_guild(name.trim().trim_matches('"'));
             return None;
         }
         // ponytail: /cl sends to the clan until the chat window has the send-to choice (messages 85, 86, 437, 2361).
@@ -1929,6 +1945,14 @@ enum DialogButton {
     None,
     Next,
     Close,
+}
+
+/// A guild question, answered with OK or Cancel.
+enum GuildAsked {
+    /// Another guild (its name) asks for an alliance, through the player who asked (account ID).
+    Ally { id: u32, guild: String },
+    /// End the relation with this guild.
+    End { id: u32, antagonist: bool },
 }
 
 /// What a pick list's answer is for.
@@ -3125,6 +3149,12 @@ impl App {
                         let _ = game.session.invite_to_guild(&actor.name.clone());
                     }
                 }
+                Some(Choice::Ally(id)) => {
+                    let _ = game.session.ask_alliance(id, game.account_id, game.me.id);
+                }
+                Some(Choice::Antagonist(id)) => {
+                    let _ = game.session.set_antagonist(id);
+                }
                 // Feeding asks first; the status opens the pet window.
                 Some(Choice::Pet(net::PET_FEED)) => game.pet_asked = Some(PetAsked::Feed),
                 Some(Choice::Pet(net::PET_INFO)) => game.open_pet_window(),
@@ -3200,6 +3230,19 @@ impl App {
                     if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
                         let (guild, _) = game.guild_invite.take().unwrap();
                         let _ = game.session.answer_guild(guild, accept);
+                    }
+                }
+            }
+            // A guild question: OK or cancel. Whoever is asked for an alliance answers either way.
+            Scene::Game(game) if game.guild_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        let _ = match game.guild_asked.take().unwrap() {
+                            GuildAsked::Ally { id, .. } => game.session.answer_alliance(id, yes),
+                            GuildAsked::End { id, antagonist } if yes => game.session.end_relation(id, antagonist),
+                            GuildAsked::End { .. } => Ok(()),
+                        };
                     }
                 }
             }
@@ -3521,6 +3564,7 @@ impl App {
                         Some(guild::Hit::LevelUp(skill)) => {
                             let _ = game.session.skill_up(skill);
                         }
+                        Some(guild::Hit::Relation(id, antagonist)) => game.guild_asked = Some(GuildAsked::End { id, antagonist }),
                         _ => {}
                     },
                     Panel::Clan => {
@@ -3855,9 +3899,14 @@ impl App {
                     choices.extend(commands.map(|(label, command)| Some((fill(label), Choice::Pet(command)))));
                 } else {
                     choices.push(Some((fill(TRADE_CHOICE), Choice::Trade(id))));
-                    // The guild's master can invite.
+                    // The guild's master can invite, and ask another guild for an alliance or set it as an antagonist.
+                    // ponytail: where the two sit in the menu is an estimate.
                     if game.guild.as_ref().is_some_and(|guild| guild.master && guild.members.iter().all(|member| member.account != id)) {
                         choices.push(Some((fill(GUILD_CHOICE), Choice::GuildInvite(id))));
+                    }
+                    if game.guild.as_ref().is_some_and(|guild| guild.master && actor.guild != 0 && actor.guild != guild.id) {
+                        choices.push(Some((fill(ALLY_CHOICE), Choice::Ally(id))));
+                        choices.push(Some((fill(ANTAGONIST_CHOICE), Choice::Antagonist(id))));
                     }
                     // Not yet a friend: offer it, under a line.
                     if game.friends.iter().all(|friend| friend.account != id) {
@@ -5078,6 +5127,7 @@ impl App {
                     guild: None,
                     guild_window: guild::GuildWindow::default(),
                     guild_invite: None,
+                    guild_asked: None,
                     guild_shown: false,
                     clan: None,
                     clan_window: clan::ClanWindow::default(),
@@ -6140,6 +6190,30 @@ impl App {
                 } else {
                     game.guild_invite = Some((id, name));
                 }
+            }
+            MapEvent::GuildRelations(relations) => {
+                if let Some(guild) = &mut game.guild {
+                    guild.relations = relations;
+                }
+            }
+            MapEvent::AllyAsked { id, guild } => game.guild_asked = Some(GuildAsked::Ally { id, guild }),
+            MapEvent::AllyResult(result) | MapEvent::AntagonistResult(result) => {
+                let (line, good) = if matches!(event, MapEvent::AllyResult(_)) { guild::ally_result(result) } else { guild::antagonist_result(result) };
+                game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), if good { CHAT_ITEM } else { CHAT_ERROR });
+            }
+            MapEvent::GuildRelationEnded { id, antagonist } => {
+                if let Some(guild) = &mut game.guild {
+                    guild.relations.retain(|relation| (relation.id, relation.antagonist) != (id, antagonist));
+                }
+            }
+            // Disbanded: the guild is gone, as if the player had left it.
+            MapEvent::GuildDisbanded(result) => {
+                let (line, good) = guild::disband_result(result);
+                if good {
+                    game.guild = None;
+                    game.guild_window.frame.open = false;
+                }
+                game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), if good { CHAT_ITEM } else { CHAT_ERROR });
             }
             MapEvent::GuildInviteResult(result) => {
                 let id = 378 + usize::from(result.min(3));
@@ -8273,13 +8347,18 @@ impl App {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }
-        // A guild invites us.
-        if let Some((_, name)) = &game.guild_invite {
+        // A guild invites us, asks for an alliance, or the master is about to end a relation.
+        let guild_question = match (&game.guild_invite, &game.guild_asked) {
+            (Some((_, name)), _) => Some(format!("({name}){}", message(GUILD_INVITED))),
+            (_, Some(GuildAsked::Ally { guild, .. })) => Some(format!("({guild}){}", message(ALLY_ASKS))),
+            (_, Some(GuildAsked::End { .. })) => Some(message(DELETE_ASKS).to_owned()),
+            _ => None,
+        };
+        if let Some(question) = guild_question {
             let dialog = dialog_position(&assets.message);
             shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
-            let question = format!("({name}){}", message(GUILD_INVITED));
             for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }

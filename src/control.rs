@@ -731,6 +731,15 @@ fn game_state(app: &App, game: &Game) -> Value {
     let combo_ms = |unit: Option<u32>| {
         game.combos.get(&unit).map_or(0, |(start, length)| length.saturating_sub(crate::control::now().saturating_duration_since(*start)).as_millis() as u64)
     };
+    // The message box's OK and Cancel while a guild question is up.
+    let question = game.guild_asked.is_some() || game.guild_invite.is_some();
+    let question_buttons = app.assets.as_ref().filter(|_| question).into_iter().flat_map(|assets| {
+        let dialog = crate::dialog_position(&assets.message);
+        [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)].map(|(name, place, button)| {
+            let [x, y] = crate::offset(dialog, place);
+            json!({"kind": "button", "name": name, "box": [x, y, button[0].size[0], button[0].size[1]]})
+        })
+    });
     let mut units: Vec<_> = game.units.iter().collect();
     units.sort_by_key(|(_, actor)| distance(actor.cell));
     let units: Vec<Value> = units
@@ -813,6 +822,13 @@ fn game_state(app: &App, game: &Game) -> Value {
             game.mercenary.iter().flat_map(|_| game.mercenary_window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(
+            game.guild
+                .iter()
+                .flat_map(|guild| game.guild_window.relation_boxes(guild))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(question_buttons)
+        .chain(
             game.mercenary
                 .iter()
                 .flat_map(|_| game.mercenary_skill_list.skill_boxes(&game.mercenary_skills))
@@ -835,6 +851,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("SwapEquipment", game.equipment.frame.open && game.equipment.swapping),
         ("Bank", game.bank.is_some()),
         ("PickList", game.pick.is_some()),
+        ("GuildAsked", game.guild_asked.is_some()),
         ("ItemMerge", game.pick.as_ref().is_some_and(|(list, _)| list.merging)),
         ("DealChoice", game.deal_choice.is_some()),
         ("Trade", game.trade.is_some()),
@@ -922,6 +939,11 @@ fn game_state(app: &App, game: &Game) -> Value {
             json!({"gold": gold, "silver": silver, "bronze": bronze, "bonus": window.bonus, "prizes": window.prizes.len(), "spinning": window.spinning(now), "prize": prize})
         }),
         // Sense's window (null when closed), and the boss the Convex Mirror shows (null when none).
+        // The player's guild (null without one): its allies' and antagonists' names.
+        "guild": game.guild.as_ref().map(|guild| {
+            let names = |antagonist: bool| guild.relations.iter().filter(|relation| relation.antagonist == antagonist).map(|relation| relation.name.as_str()).collect::<Vec<_>>();
+            json!({"id": guild.id, "name": guild.name, "master": guild.master, "allies": names(false), "antagonists": names(true)})
+        }),
         // The item merge window: how many rows, and the picked stacks' indexes.
         "merge": game.pick.as_ref().filter(|(list, _)| list.merging).map(|(list, _)| json!({"rows": list.items.len(), "picked": list.picked_indexes()})),
         "monster_info": game.monster_window.as_ref().map(|window| {

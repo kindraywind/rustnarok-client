@@ -8,7 +8,7 @@ use image::RgbaImage;
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::SkillInfo;
 use rustnarok_client::messages;
-use rustnarok_client::net::{GuildInfo, GuildMember, GuildPosition, Skill};
+use rustnarok_client::net::{GuildInfo, GuildMember, GuildPosition, GuildRelation, Skill};
 use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
@@ -53,6 +53,17 @@ const SKILL_LEFT: f32 = (WIDTH - SKILL_COLUMNS as f32 * skills::CELL[0]) / 2.0;
 const SKILL_POINTS: usize = 284;
 const GREY: [u8; 3] = [0x88, 0x88, 0x88];
 const TAB_FILL: [u8; 4] = [0xE7, 0xEB, 0xF4, 0xFF];
+/// The info page's allies (left) and antagonists (right), under their headings: three rows each, rathena's default
+/// max_guild_alliance.
+// ponytail: where the lists sit is an estimate.
+const RELATION_HEADINGS: [usize; 2] = [338, 339];
+const RELATION_TOP: f32 = PAGE_TOP + 166.0;
+const RELATION_ROW: f32 = 18.0;
+const RELATION_LEFT: [f32; 2] = [12.0, 206.0];
+const RELATION_WIDTH: f32 = 182.0;
+const RELATION_ROWS: usize = 3;
+/// The menu's hover color, on a relation the master can end.
+const HOVER: [u8; 4] = [0x73, 0x9C, 0xEF, 0xFF];
 /// An emblem's BMP is under 2 KB; more than this is no emblem.
 const EMBLEM_BYTES: u64 = 64 * 1024;
 
@@ -62,6 +73,7 @@ pub struct Assets {
     /// The emblem's frame, and the position page's checkboxes (off, on).
     frame: Texture,
     check: [Texture; 2],
+    hover: Texture,
 }
 
 impl Assets {
@@ -72,6 +84,7 @@ impl Assets {
             tab_fill: gpu.solid(TAB_FILL),
             frame: image("emblem_frame"),
             check: ["checkbox_0", "checkbox_1"].map(image),
+            hover: gpu.solid(HOVER),
         }
     }
 }
@@ -94,6 +107,8 @@ pub struct Guild {
     /// Who was expelled, and why.
     pub expelled: Vec<(String, String)>,
     pub notice: (String, String),
+    /// Allied guilds and antagonists.
+    pub relations: Vec<GuildRelation>,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -103,7 +118,40 @@ pub enum Hit {
     /// A guild skill's box, or its level up button.
     Skill(u16),
     LevelUp(u16),
+    /// An ally or an antagonist on the info page (the master's to end): its guild ID, and whether it's an antagonist.
+    Relation(u32, bool),
     Window,
+}
+
+/// The info page's columns: allies, then antagonists, the first rows of each.
+fn columns(relations: &[GuildRelation]) -> [Vec<&GuildRelation>; 2] {
+    [false, true].map(|antagonist| relations.iter().filter(|relation| relation.antagonist == antagonist).take(RELATION_ROWS).collect())
+}
+
+/// A relation row's corner and size.
+fn relation_box(column: usize, row: usize) -> ([f32; 2], [f32; 2]) {
+    ([RELATION_LEFT[column], RELATION_TOP + (row + 1) as f32 * RELATION_ROW], [RELATION_WIDTH, RELATION_ROW])
+}
+
+/// An alliance request's result: its line, and whether it's good news. rathena's numbers are told as they come.
+// ponytail: result 5 (only masters may) has no line of its own; 1717 is an estimate.
+pub fn ally_result(result: u8) -> (usize, bool) {
+    if result <= 4 { (394 + usize::from(result), result == 2) } else { (1717, false) }
+}
+
+/// Setting an antagonist: its line, and whether it's good news.
+pub fn antagonist_result(result: u8) -> (usize, bool) {
+    (495 + usize::from(result.min(2)), result == 0)
+}
+
+/// Disbanding: its line, and whether it's good news.
+pub fn disband_result(result: u32) -> (usize, bool) {
+    match result {
+        0 => (400, true),
+        1 => (401, false),
+        2 => (402, false),
+        _ => (366, false),
+    }
 }
 
 pub struct GuildWindow {
@@ -152,6 +200,16 @@ impl GuildWindow {
         if let Some(tab) = (0..TABS.len()).find(|&tab| contains([tab as f32 * TAB[0], TITLE_HEIGHT], TAB, local)) {
             return Some(Hit::Tab(tab));
         }
+        if self.tab == 0 && guild.master {
+            for (column, relations) in columns(&guild.relations).into_iter().enumerate() {
+                for (row, relation) in relations.into_iter().enumerate() {
+                    let (corner, size) = relation_box(column, row);
+                    if contains(corner, size, local) {
+                        return Some(Hit::Relation(relation.id, relation.antagonist));
+                    }
+                }
+            }
+        }
         if self.tab == SKILLS {
             for skill in &guild.skills {
                 let corner = skill_corner(skill.id);
@@ -164,6 +222,23 @@ impl GuildWindow {
             }
         }
         Some(Hit::Window)
+    }
+
+    /// The relations the master can click on the info page, named after their guilds.
+    pub fn relation_boxes(&self, guild: &Guild) -> Vec<(String, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized || self.tab != 0 || !guild.master {
+            return Vec::new();
+        }
+        let rows = columns(&guild.relations)
+            .into_iter()
+            .enumerate()
+            .flat_map(|(column, relations)| relations.into_iter().enumerate().map(move |(row, relation)| (column, row, relation)));
+        rows.map(|(column, row, relation)| {
+            let (corner, size) = relation_box(column, row);
+            let [x, y] = self.frame.at(corner);
+            (relation.name.clone(), [x, y, size[0], size[1]])
+        })
+        .collect()
     }
 
     /// The wheel scrolls the open list.
@@ -257,6 +332,18 @@ impl GuildWindow {
                 ];
                 for (row, (label, value)) in LABELS.iter().zip(values).enumerate() {
                     text(layer, format!("{} : {value}", message(*label)), [INFO_LEFT, PAGE_TOP + 8.0 + row as f32 * LINE], [0, 0, 0]);
+                }
+                // Allies and antagonists, each under its heading; the master's pointer marks the one it would end.
+                for (column, relations) in columns(&guild.relations).into_iter().enumerate() {
+                    text(layer, message(RELATION_HEADINGS[column]).to_owned(), [RELATION_LEFT[column], RELATION_TOP], [0, 0, 0]);
+                    layer.sprites.push((&chrome.border, at([RELATION_LEFT[column], RELATION_TOP + RELATION_ROW - 2.0]), [RELATION_WIDTH, 1.0]));
+                    for (row, relation) in relations.into_iter().enumerate() {
+                        let (corner, size) = relation_box(column, row);
+                        if hit == Some(Hit::Relation(relation.id, relation.antagonist)) {
+                            layer.sprites.push((&assets.hover, at(corner), size));
+                        }
+                        text(layer, window::fit(font, &relation.name, RELATION_WIDTH - 12.0), offset(corner, [6.0, 2.0]), [0, 0, 0]);
+                    }
                 }
             }
             // Members: name, position, job and level; those offline in grey.
@@ -353,6 +440,31 @@ mod tests {
         window.show_tab(EXPELLED);
         window.scroll_by(5, &guild);
         assert_eq!(window.scroll, 0, "nobody expelled, nothing to scroll");
+    }
+
+    #[test]
+    fn lists_allies_and_antagonists() {
+        let relation = |antagonist: bool, id: u32| GuildRelation { antagonist, id, name: format!("G{id}") };
+        let relations = vec![relation(false, 1), relation(true, 2), relation(false, 3), relation(false, 4), relation(false, 5)];
+        let [allies, antagonists] = columns(&relations);
+        assert_eq!(allies.iter().map(|relation| relation.id).collect::<Vec<_>>(), [1, 3, 4]);
+        assert_eq!(antagonists.iter().map(|relation| relation.id).collect::<Vec<_>>(), [2]);
+        let mut window = GuildWindow::default();
+        window.frame.open = true;
+        let mut guild = Guild { relations, ..Default::default() };
+        let (corner, _) = relation_box(1, 0);
+        let point = window.frame.at(offset(corner, [20.0, 5.0]));
+        // Only the master may end one.
+        assert_eq!(window.hit(point, &guild), Some(Hit::Window));
+        assert!(window.relation_boxes(&guild).is_empty());
+        guild.master = true;
+        assert_eq!(window.hit(point, &guild), Some(Hit::Relation(2, true)));
+        assert_eq!(window.relation_boxes(&guild).iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["G1", "G3", "G4", "G2"]);
+        // The last row still fits on the page.
+        assert!(relation_box(0, RELATION_ROWS - 1).0[1] + RELATION_ROW <= HEIGHT - FOOTER);
+        assert_eq!([0, 2, 4, 5].map(ally_result), [(394, false), (396, true), (398, false), (1717, false)]);
+        assert_eq!([0, 2, 3].map(antagonist_result), [(495, true), (497, false), (497, false)]);
+        assert_eq!([0, 1, 2, 9].map(disband_result), [(400, true), (401, false), (402, false), (366, false)]);
     }
 
     #[test]
