@@ -2106,7 +2106,7 @@ impl Game {
             || roulette::icon_hit(cursor)
             || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.stylist.as_ref().is_some_and(|window| window.covers(cursor))
-            || self.chat.contains(cursor)
+            || self.chat.blocks(cursor)
             || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
     }
@@ -5125,7 +5125,7 @@ impl App {
                     }
                 }
             }
-            Scene::Game(game) if game.chat.contains(cursor) => game.chat.click(cursor),
+            Scene::Game(game) if game.chat.blocks(cursor) => game.chat.click(cursor),
             Scene::Game(game) if game.dialog.is_some() => {
                 // NPC windows take the click; the map doesn't react while talking.
                 let dialog = game.dialog.as_mut().unwrap();
@@ -5374,7 +5374,7 @@ impl App {
                 _ => false,
             });
             let on_unit = match picking::pick(with_menu, self.cursor, true) {
-                _ if game.window_at(self.cursor).is_some() || game.chat.contains(self.cursor) => None,
+                _ if game.window_at(self.cursor).is_some() || game.chat.blocks(self.cursor) => None,
                 Some(Owner::Unit(id)) => Some(id),
                 _ => None,
             };

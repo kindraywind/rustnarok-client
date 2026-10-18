@@ -105,6 +105,13 @@ impl Chat {
         self.scroll = 0;
     }
 
+    /// Whether a press here is the window's alone: its tabs, its grab strip and the input bar. The log's lines let
+    /// presses through to the world (the wheel still scrolls them).
+    pub fn blocks(&self, cursor: [f32; 2]) -> bool {
+        let log_top = self.top() + TAB_HEIGHT + HANDLE;
+        self.contains(cursor) && !contains([0.0, log_top], [600.0, self.log_height()], cursor)
+    }
+
     pub fn push(&mut self, text: String, color: [u8; 3]) {
         self.lines.push((text, color));
         // New lines show unless the log is scrolled back.
@@ -269,6 +276,17 @@ pub fn command(text: &str) -> Option<Command> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lets_presses_through_the_log() {
+        let chat = Chat::default();
+        let log_top = SCREEN[1] - INPUT_HEIGHT - PADDING - HEIGHTS[0];
+        // The log's lines: the window has them, the world too.
+        assert!(chat.contains([300.0, log_top + 10.0]) && !chat.blocks([300.0, log_top + 10.0]));
+        // The input bar and the tabs are the window's alone.
+        assert!(chat.blocks([300.0, SCREEN[1] - 10.0]) && chat.blocks([20.0, chat.top() + 5.0]));
+        assert!(!chat.contains([700.0, log_top + 10.0]) && !chat.blocks([700.0, log_top + 10.0]));
+    }
 
     #[test]
     fn reads_the_clients_commands() {
