@@ -1010,6 +1010,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.chat.settings.iter().flat_map(crate::chat::Settings::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.chat.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.room.iter().flat_map(|room| room.button_boxes(&game.me.name)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.quest_window.button_boxes(&game.quests).into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1420,7 +1421,11 @@ fn game_state(app: &App, game: &Game) -> Value {
     // A skill's description while it shows: which skill, and its lines.
     state["skill_description"] = json!(game.skill_description.as_ref().map(|window| json!({"skill": window.skill, "lines": window.text()})));
     // The quest tracker as drawn: each quest's title, summary and hunt lines (none while it's off).
-    let blocks = if game.quest_window.tracker { crate::quest_tracker::blocks(&game.quests, &app.quest_texts, &app.messages) } else { Vec::new() };
+    let blocks = if game.quest_window.tracker {
+        crate::quest_tracker::blocks(&game.quests, &app.quest_texts, &game.quest_window.hidden, &app.messages)
+    } else {
+        Vec::new()
+    };
     state["quest_tracker"] =
         json!(blocks.iter().map(|block| json!({"id": block.id, "title": block.title, "summary": block.summary, "hunts": block.hunts})).collect::<Vec<_>>());
     // The new-quest icon up, and the progress banners showing.

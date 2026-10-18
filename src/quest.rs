@@ -1,7 +1,8 @@
 //! The quest window (Alt+U): quests in progress and those put aside under the client's own tabbed background, each
 //! with a lock that moves it between them, and beside it the picked quest's description, hunts and time limit.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::net::Quest;
@@ -38,6 +39,9 @@ const HUNTS: usize = 2191;
 /// "Show Quest": the tracker on screen, on or off, under the list.
 // ponytail: the checkbox's place under the rows is an estimate.
 const SHOW_TRACKER: usize = 2019;
+/// Each quest in progress has a switch for the tracker, left of its lock.
+// ponytail: the switch's place in the row.
+const SWITCH_AT: [f32; 2] = [280.0, 17.0];
 const SHOW_AT: [f32; 2] = [14.0, 440.0];
 const CHECK: [f32; 2] = [12.0, 12.0];
 const TIME_LIMIT: usize = 2194;
@@ -50,6 +54,8 @@ pub struct QuestText {
     pub summary: String,
     /// The quest NPC's cell on the big minimap, when the quest info lists one.
     pub npc: Option<[i32; 2]>,
+    /// Only a cooldown timer: never on the tracker.
+    pub cooldown: bool,
 }
 
 /// The quests' words: the translation's quest info Lua where there is one, else questid2display.txt.
@@ -57,7 +63,8 @@ pub fn texts(grf: &Grf) -> HashMap<u32, QuestText> {
     let mut texts: HashMap<u32, QuestText> =
         grf.read("data\\questid2display.txt").map(|bytes| parse_texts(&encoding_rs::EUC_KR.decode(&bytes).0)).unwrap_or_default();
     for (id, info) in rustnarok_client::lua::quest_info(grf).unwrap_or_default() {
-        texts.insert(id, QuestText { title: info.title, description: info.description, summary: info.summary, npc: info.npc });
+        let text = QuestText { title: info.title, description: info.description, summary: info.summary, npc: info.npc, cooldown: info.cooldown };
+        texts.insert(id, text);
     }
     texts
 }
@@ -68,7 +75,8 @@ fn parse_texts(text: &str) -> HashMap<u32, QuestText> {
     fields
         .chunks_exact(6)
         .filter_map(|entry| {
-            Some((entry[0].parse().ok()?, QuestText { title: entry[1].to_owned(), description: entry[4].to_owned(), summary: entry[5].to_owned(), npc: None }))
+            let text = QuestText { title: entry[1].to_owned(), description: entry[4].to_owned(), summary: entry[5].to_owned(), npc: None, cooldown: false };
+            Some((entry[0].parse().ok()?, text))
         })
         .collect()
 }
@@ -109,6 +117,8 @@ pub enum Hit {
     /// A quest, by its place among those the tab shows.
     Row(usize),
     Lock(usize),
+    /// A quest in progress's tracker switch.
+    Switch(usize),
     /// The "Show Quest" checkbox.
     ShowTracker,
     DetailClose,
@@ -122,12 +132,29 @@ pub struct QuestWindow {
     pub picked: Option<u32>,
     /// The quest tracker shows on screen.
     pub tracker: bool,
+    /// Quests whose switch is off: the tracker leaves them out (saved, as the game's OngoingSimpleViewList).
+    pub hidden: HashSet<u32>,
 }
 
 impl Default for QuestWindow {
     fn default() -> Self {
-        Self { frame: Frame::new(POSITION, WIDTH), tab: 0, picked: None, tracker: true }
+        Self { frame: Frame::new(POSITION, WIDTH), tab: 0, picked: None, tracker: true, hidden: HashSet::new() }
     }
+}
+
+fn hidden_path() -> Option<PathBuf> {
+    crate::settings_path("quest_hidden")
+}
+
+/// The hidden quests' ids, one a line.
+pub fn hidden_from(text: &str) -> HashSet<u32> {
+    text.lines().filter_map(|line| line.trim().parse().ok()).collect()
+}
+
+pub fn hidden_text(hidden: &HashSet<u32>) -> String {
+    let mut ids: Vec<u32> = hidden.iter().copied().collect();
+    ids.sort_unstable();
+    ids.iter().map(u32::to_string).collect::<Vec<_>>().join("\n")
 }
 
 impl QuestWindow {
@@ -138,6 +165,26 @@ impl QuestWindow {
 
     fn detail_corner(&self) -> [f32; 2] {
         offset(self.frame.position, [WIDTH + 2.0, 24.0])
+    }
+
+    /// The window with the hidden quests as saved.
+    pub fn load() -> Self {
+        let hidden = hidden_path().and_then(|path| std::fs::read_to_string(path).ok()).map(|text| hidden_from(&text)).unwrap_or_default();
+        Self { hidden, ..Self::default() }
+    }
+
+    pub fn save_hidden_to(&self, path: &Path) {
+        let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, hidden_text(&self.hidden)));
+    }
+
+    /// Turns a quest's tracker switch, and saves.
+    pub fn toggle_shown(&mut self, id: u32) {
+        if !self.hidden.remove(&id) {
+            self.hidden.insert(id);
+        }
+        if let Some(path) = hidden_path() {
+            self.save_hidden_to(&path);
+        }
     }
 
     /// The quests the open tab shows: in progress, or put aside.
@@ -184,7 +231,29 @@ impl QuestWindow {
         }
         let place = place as usize;
         let top = ROWS_AT[1] + place as f32 * ROW_STEP;
-        Some(if contains([ROWS_AT[0] + LOCK_AT[0], top + LOCK_AT[1]], LOCK, local) { Hit::Lock(place) } else { Hit::Row(place) })
+        Some(if contains([ROWS_AT[0] + LOCK_AT[0], top + LOCK_AT[1]], LOCK, local) {
+            Hit::Lock(place)
+        } else if self.tab == 0 && contains([ROWS_AT[0] + SWITCH_AT[0], top + SWITCH_AT[1]], CHECK, local) {
+            Hit::Switch(place)
+        } else {
+            Hit::Row(place)
+        })
+    }
+
+    /// The in-progress quests' switches on screen (for the test driver), named "quest_switch_<id>".
+    pub fn button_boxes(&self, quests: &[Quest]) -> Vec<(String, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized || self.tab != 0 {
+            return Vec::new();
+        }
+        self.shown(quests)
+            .into_iter()
+            .take(ROWS)
+            .enumerate()
+            .map(|(place, quest)| {
+                let [x, y] = self.frame.at([ROWS_AT[0] + SWITCH_AT[0], ROWS_AT[1] + place as f32 * ROW_STEP + SWITCH_AT[1]]);
+                (format!("quest_switch_{}", quest.id), [x, y, CHECK[0], CHECK[1]])
+            })
+            .collect()
     }
 
     /// A click; returns the quest to take up again or put aside, with its new state.
@@ -203,6 +272,10 @@ impl QuestWindow {
             Hit::Lock(place) => {
                 let quest = *self.shown(quests).get(place)?;
                 return Some((quest.id, !quest.active));
+            }
+            Hit::Switch(place) => {
+                let id = self.shown(quests).get(place)?.id;
+                self.toggle_shown(id);
             }
             Hit::ShowTracker => self.tracker = !self.tracker,
             Hit::DetailClose => self.picked = None,
@@ -246,6 +319,11 @@ impl QuestWindow {
             layer.texts.push((window::fit(font, summary, 240.0), at([ROWS_AT[0] + 42.0, top + 24.0]), GREY));
             let lock = &assets.lock[usize::from(quest.active)];
             layer.sprites.push((lock, at([ROWS_AT[0] + LOCK_AT[0], top + LOCK_AT[1]]), lock.size));
+            // In progress: whether the tracker lists it.
+            if self.tab == 0 {
+                let check = &assets.check[usize::from(!self.hidden.contains(&quest.id))];
+                layer.sprites.push((check, at([ROWS_AT[0] + SWITCH_AT[0], top + SWITCH_AT[1]]), CHECK));
+            }
         }
         // Whether the tracker shows.
         let check = &assets.check[usize::from(self.tracker)];
@@ -301,9 +379,23 @@ mod tests {
     }
 
     #[test]
+    fn switches_quests_on_the_tracker() {
+        let quests = [Quest { id: 1, active: true, ..Default::default() }];
+        let mut window = QuestWindow::default();
+        window.frame.open = true;
+        let [x, y, w, h] = window.button_boxes(&quests)[0].1;
+        assert_eq!(window.hit([x + w / 2.0, y + h / 2.0], &quests), Some(Hit::Switch(0)));
+        // The hidden ids, saved a line each.
+        let hidden: HashSet<u32> = [7001, 12].into_iter().collect();
+        assert_eq!(hidden_text(&hidden), "12\n7001");
+        assert_eq!(hidden_from("12\n7001\nnot a number\n"), hidden);
+    }
+
+    #[test]
     fn reads_quest_texts() {
         let texts = parse_texts("1#Ransom#SG_FEEL#QUE_NOIMAGE#\nTurtle#\nCarapace#\n\n101#Professor#SG_FEEL#QUE_NOIMAGE#\nGo up.#\nTalk#\n");
-        assert_eq!(texts[&101], QuestText { title: "Professor".into(), description: "Go up.".into(), summary: "Talk".into(), npc: None });
+        let professor = QuestText { title: "Professor".into(), description: "Go up.".into(), summary: "Talk".into(), npc: None, cooldown: false };
+        assert_eq!(texts[&101], professor);
         assert_eq!(texts[&1].summary, "Carapace");
     }
 }
