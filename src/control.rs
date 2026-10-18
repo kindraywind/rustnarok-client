@@ -1260,6 +1260,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "cursor": format!("{:?}", app.cursor_look.kind()),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
         "chat_line_open": game.chat_mode.chat_line_open(),
+        // Reputation points by reputation type.
+        "reputation": game.reputation.iter().map(|(kind, points)| (kind.to_string(), json!(points))).collect::<serde_json::Map<_, _>>(),
         // The item information window's item, if it's open.
         "item_window": game.item_window.as_ref().map(|window| window.shown.item),
         // The magic squares under ground casts: the target cell and the width in cells.
