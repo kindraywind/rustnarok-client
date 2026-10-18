@@ -9027,7 +9027,10 @@ impl App {
                 game.toggle_reputation(&self.reputation_tables);
                 game.sync_esc();
             }
-            shortcuts::Action::RotateHotkeys => game.hotkeys.rotate(),
+            shortcuts::Action::RotateHotkeys => {
+                let (tab, rowshift) = game.hotkeys.rotate();
+                let _ = game.session.rotate_hotkeys(tab, rowshift);
+            }
             shortcuts::Action::SwitchHotkeys => game.hotkeys.switch(),
             shortcuts::Action::Costume => {
                 if game.equipment.frame.open && game.equipment.showing_costume() {
@@ -12426,7 +12429,7 @@ impl App {
                 }
             }
             MapEvent::InventoryExpansion(slots) => game.inventory.expansion = slots,
-            MapEvent::Hotkeys { tab, keys, .. } => game.hotkeys.set_tab(tab, keys),
+            MapEvent::Hotkeys { tab, rotate, keys } => game.hotkeys.set_tab(tab, rotate, keys),
             MapEvent::Skills(skills) => game.skills = skills,
             MapEvent::SkillChanged(changed) => match game.skills.iter_mut().find(|skill| skill.id == changed.id) {
                 // ZC_SKILLINFO_UPDATE doesn't say the kind.
