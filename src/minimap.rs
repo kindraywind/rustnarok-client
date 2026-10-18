@@ -19,8 +19,9 @@ const BUTTONS: [(&str, f32); 5] = [("object", 144.0), ("plus", 72.0), ("minus", 
 /// The see-through overview's alpha (0xaa).
 const SEE_THROUGH: u8 = 0xAA;
 pub const MOST_ZOOM: f32 = 4.0;
-/// The player arrow turned in this many steps around.
-const TURNS: u32 = 32;
+/// The player arrow turned in whole degrees around.
+const TURNS: u32 = 360;
+const ARROW_SHADOW: u32 = 0x77333333;
 /// Party members' colours by their place in the party list (15 the last); past the table, grey.
 const PARTY_COLORS: [u32; 16] = [
     0xff0a3278, 0xff007878, 0xff000000, 0xff780000, 0xff007800, 0xff787800, 0xff780078, 0xff783200, 0xff787878, 0xff000078, 0xff003232, 0xff320000, 0xff003200,
@@ -32,6 +33,37 @@ const PARTY_PAST: u32 = 0xff323232;
 fn rgba(argb: u32) -> [u8; 4] {
     let [a, r, g, b] = argb.to_be_bytes();
     [r, g, b, a]
+}
+
+/// The clockwise angle in whole degrees for the player's facing `rot` in degrees (`trunc(180 - rot)`).
+pub fn arrow_angle(rot: f32) -> i32 {
+    (180.0 - rot).trunc() as i32
+}
+
+/// The arrow's step in `0..360` for the player's facing `rot` in degrees.
+pub fn arrow_turn(rot: f32) -> usize {
+    arrow_angle(rot).rem_euclid(TURNS as i32) as usize
+}
+
+/// The 10×10 box `(x - 5, y - 5)..(x + 5, y + 5)` for the player arrow.
+pub fn arrow_box([x, y]: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+    ([x - 5.0, y - 5.0], [10.0, 10.0])
+}
+
+/// The 14×16 box `(x - 7, y - 7)..(x + 7, y + 9)` for the arrow's shadow (centred 1 px below the arrow).
+pub fn shadow_box([x, y]: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+    ([x - 7.0, y - 7.0], [14.0, 16.0])
+}
+
+/// Tints an arrow texel with `0x77333333` (RGB × #333333, alpha × 0x77 / 255).
+pub fn shadow_pixel(pixel: [u8; 4]) -> [u8; 4] {
+    let tint = rgba(ARROW_SHADOW);
+    std::array::from_fn(|i| (u16::from(pixel[i]) * u16::from(tint[i]) / 255) as u8)
+}
+
+/// The arrow bitmap tinted with `0x77333333` for its shadow.
+pub fn shadow_image(image: &RgbaImage) -> RgbaImage {
+    RgbaImage::from_fn(image.width(), image.height(), |x, y| Rgba(shadow_pixel(image.get_pixel(x, y).0)))
 }
 
 /// A party member's colour by their place in the party list.
@@ -202,11 +234,12 @@ pub fn button_at(cursor: [f32; 2]) -> Option<&'static str> {
 }
 
 pub struct Assets {
-    /// The player arrow turned TURNS ways.
+    /// The player arrow turned TURNS ways (whole degrees).
     arrows: Vec<Texture>,
+    /// The arrow's shadow (`map_arrow.bmp` tinted `0x77333333`) turned the same ways.
+    arrow_shadows: Vec<Texture>,
     /// Each bottom-row button at rest, under the pointer, and held (`i_<name>_1/2/3.bmp`).
     buttons: Vec<[Texture; 3]>,
-    arrow_shadow: Texture,
     dot_back: Texture,
     guild: Texture,
     guild_ring: Texture,
@@ -247,11 +280,13 @@ fn disc(radius: u32, color: [u8; 4]) -> RgbaImage {
 impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let arrow = render::load_image(grf, &format!("{UI}map\\map_arrow.bmp")).unwrap_or_else(|_| RgbaImage::new(1, 1));
+        let shadow = shadow_image(&arrow);
         let image = |path: String| gpu.try_load_texture(grf, &path, false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
+        let turns = |source: &RgbaImage| (0..TURNS).map(|turn| gpu.texture(&rotate(source, (turn as f32).to_radians()), false)).collect();
         Self {
-            arrows: (0..TURNS).map(|turn| gpu.texture(&rotate(&arrow, turn as f32 * std::f32::consts::TAU / TURNS as f32), false)).collect(),
+            arrows: turns(&arrow),
+            arrow_shadows: turns(&shadow),
             buttons: BUTTONS.iter().map(|(name, _)| [1, 2, 3].map(|state| image(format!("{UI}minimap\\i_{name}_{state}.bmp")))).collect(),
-            arrow_shadow: gpu.solid(rgba(0x77333333)),
             dot_back: gpu.solid(rgba(0x99ffffff)),
             guild: gpu.texture(&disc(2, rgba(0xffffa6d2)), false),
             guild_ring: gpu.texture(&disc(3, rgba(0xaaffffff)), false),
@@ -264,14 +299,14 @@ impl Assets {
         }
     }
 
-    /// The player arrow for the camera's yaw (180° less the yaw, in TURNS steps).
-    pub fn player_arrow(&self, yaw: f32) -> &Texture {
-        let turn = ((180.0 - yaw).rem_euclid(360.0) / 360.0 * TURNS as f32).round() as usize % TURNS as usize;
-        &self.arrows[turn]
+    /// The player arrow for the player's facing `rot` in degrees (`trunc(180 - rot)` whole degrees clockwise).
+    pub fn player_arrow(&self, rot: f32) -> &Texture {
+        &self.arrows[arrow_turn(rot)]
     }
 
-    pub fn arrow_shadow(&self) -> &Texture {
-        &self.arrow_shadow
+    /// The arrow's shadow for the player's facing `rot` in degrees.
+    pub fn arrow_shadow(&self, rot: f32) -> &Texture {
+        &self.arrow_shadows[arrow_turn(rot)]
     }
 
     pub fn guild_ring(&self) -> &Texture {
@@ -355,7 +390,7 @@ pub fn load_map(grf: &Grf, map: &str) -> Option<RgbaImage> {
     render::load_image(grf, &format!("{UI}map\\{name}.bmp")).ok()
 }
 
-/// What the minimap draws besides the overview: the player's cell and the arrow's turn (180° less the camera's yaw),
+/// What the minimap draws besides the overview: the player's cell and facing in degrees (`yaw`, `Actor::rot`),
 /// NPC marks and party members (a cell and a texture of their colour), guild members, the boss, and a navigation's
 /// trail (cells) and where it heads on this map.
 pub struct Markers<'a> {
@@ -396,11 +431,12 @@ pub fn draw<'a>(layer: &mut Layer<'a>, assets: &'a Assets, overview: Option<&'a 
     if let Some(area) = markers.goal.and_then(|cell| plain(cell, 3.0)) {
         layer.sprites.push((&assets.goal, [area[0], area[1]], assets.goal.size));
     }
-    // The player: the arrow turned with the camera over its shadow, never left out.
-    if let Some([x, y]) = point(markers.cell).map(|at| at.map(f32::round)) {
-        layer.sprites.push((&assets.arrow_shadow, [x - 7.0, y - 7.0], [14.0, 16.0]));
-        let turn = ((180.0 - markers.yaw).rem_euclid(360.0) / 360.0 * TURNS as f32).round() as usize % TURNS as usize;
-        layer.sprites.push((&assets.arrows[turn], [x - 5.0, y - 5.0], [10.0, 10.0]));
+    // The player: the arrow turned by the player's facing in whole degrees, over its arrow-shaped shadow, never left out.
+    if let Some(point) = point(markers.cell).map(|at| at.map(f32::round)) {
+        let (shadow_at, shadow_size) = shadow_box(point);
+        layer.sprites.push((assets.arrow_shadow(markers.yaw), shadow_at, shadow_size));
+        let (arrow_at, arrow_size) = arrow_box(point);
+        layer.sprites.push((assets.player_arrow(markers.yaw), arrow_at, arrow_size));
     }
     // The boss, all of its 12×12 kept inside the square.
     if let Some(at) = markers.boss.and_then(point) {
@@ -469,6 +505,38 @@ mod tests {
         let turned = rotate(&image, std::f32::consts::FRAC_PI_2);
         assert_eq!(turned.get_pixel(4, 7).0, [255; 4]);
         assert_eq!(rotate(&image, 0.0), image);
+    }
+
+    #[test]
+    fn turns_the_player_arrow_by_facing_in_whole_degrees_over_its_shadow() {
+        // Facing north (180) -> 0°, east (90) -> 90°, south (0) -> 180°, west (270) -> -90° (turn 270).
+        assert_eq!((arrow_angle(180.0), arrow_turn(180.0)), (0, 0));
+        assert_eq!((arrow_angle(90.0), arrow_turn(90.0)), (90, 90));
+        assert_eq!((arrow_angle(0.0), arrow_turn(0.0)), (180, 180));
+        assert_eq!((arrow_angle(270.0), arrow_turn(270.0)), (-90, 270));
+        // Truncation to whole degrees: 180 - 179.6 = 0.4 -> 0°, 180 - 90.4 = 89.6 -> 89°, 180 - 270.5 = -90.5 -> -90°.
+        assert_eq!((arrow_angle(179.6), arrow_turn(179.6)), (0, 0));
+        assert_eq!((arrow_angle(90.4), arrow_turn(90.4)), (89, 89));
+        assert_eq!((arrow_angle(270.5), arrow_turn(270.5)), (-90, 270));
+        assert_eq!(TURNS, 360);
+        // An upward tip at (4, 1) on a 9×9 arrow lands at the top for north (180), right for east (90),
+        // bottom for south (0), and left for west (270).
+        let mut arrow = RgbaImage::new(9, 9);
+        arrow.put_pixel(4, 1, Rgba([255; 4]));
+        let turned = |rot: f32| rotate(&arrow, (arrow_turn(rot) as f32).to_radians());
+        assert_eq!(turned(180.0).get_pixel(4, 1).0, [255; 4]);
+        assert_eq!(turned(90.0).get_pixel(7, 4).0, [255; 4]);
+        assert_eq!(turned(0.0).get_pixel(4, 7).0, [255; 4]);
+        assert_eq!(turned(270.0).get_pixel(1, 4).0, [255; 4]);
+        // The shadow is the same arrow bitmap tinted 0x77333333 in (x - 7, y - 7)..(x + 7, y + 9), 1 px below the 10×10 arrow.
+        assert_eq!(arrow_box([100.0, 80.0]), ([95.0, 75.0], [10.0, 10.0]));
+        assert_eq!(shadow_box([100.0, 80.0]), ([93.0, 73.0], [14.0, 16.0]));
+        assert_eq!(shadow_pixel([255, 255, 255, 255]), [0x33, 0x33, 0x33, 0x77]);
+        assert_eq!(shadow_pixel([200, 100, 50, 255]), [40, 20, 10, 0x77]);
+        assert_eq!(shadow_pixel([255, 0, 255, 0]), [0x33, 0, 0x33, 0]);
+        let shadow = rotate(&shadow_image(&arrow), (arrow_turn(90.0) as f32).to_radians());
+        assert_eq!(shadow.get_pixel(7, 4).0, [0x33, 0x33, 0x33, 0x77]);
+        assert_eq!(shadow.get_pixel(0, 0).0, [0, 0, 0, 0]);
     }
 
     #[test]

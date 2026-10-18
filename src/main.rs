@@ -15774,7 +15774,7 @@ impl App {
         let goal = navi_next.map(|cell| cell.map(i32::from));
         let markers = minimap::Markers {
             cell: game.player.cell,
-            yaw,
+            yaw: game.player.rot,
             marks: &marks,
             quests: &game.quest_marks.iter().map(|&(_, cell, color)| (cell, color)).collect::<Vec<_>>(),
             store: game.store_mark,
@@ -16525,7 +16525,15 @@ impl App {
                 messages,
                 &title,
                 size,
-                &minimap_window::Pins { player: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss: boss_pin, quests: &quest_cells },
+                &minimap_window::Pins {
+                    player: game.player.cell,
+                    yaw: game.player.rot,
+                    marks: &marks,
+                    party: &dots,
+                    guild: &guild,
+                    boss: boss_pin,
+                    quests: &quest_cells,
+                },
                 pointer.0,
                 naming_caret,
             );

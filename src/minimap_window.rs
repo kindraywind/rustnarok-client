@@ -409,10 +409,11 @@ impl Window {
                     layer.texts.push((name.to_owned(), [x + 6.0, y - 6.0], [255, 255, 255]));
                 }
             }
-            let [x, y] = at(pins.player);
-            layer.sprites.push((assets.arrow_shadow(), [x - 7.0, y - 7.0], [14.0, 16.0]));
-            let arrow = assets.player_arrow(pins.yaw);
-            layer.sprites.push((arrow, [x - 5.0, y - 5.0], [10.0, 10.0]));
+            let point = at(pins.player);
+            let (shadow_at, shadow_size) = minimap::shadow_box(point);
+            layer.sprites.push((assets.arrow_shadow(pins.yaw), shadow_at, shadow_size));
+            let (arrow_at, arrow_size) = minimap::arrow_box(point);
+            layer.sprites.push((assets.player_arrow(pins.yaw), arrow_at, arrow_size));
             for (index, place) in CHECK_AT.into_iter().enumerate() {
                 let on = if index == 0 { self.show_quests } else { self.show_boss };
                 layer.sprites.push((&chrome.border, self.frame.at(place), CHECK));
