@@ -1114,6 +1114,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             }),
             // The last cell a mouse walk went to, and how many have gone out.
             "walk_goal": game.walk_goal,
+            // The cell drawn under the pointer (null past the map's edge).
+            "ground_cell": game.ground_cell(app.cursor),
             "walks": game.walks,
             "combo_ms": combo_ms(None),
             // How many units Blade Stop or Cursed Circle locks the player with.

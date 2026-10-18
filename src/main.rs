@@ -1839,10 +1839,8 @@ impl Game {
 
     /// The cell under a point on screen, on the plane at the player's height.
     fn ground_cell(&self, cursor: [f32; 2]) -> Option<[i32; 2]> {
-        let height = self.world.cell_position(self.player.cell.map(|value| value as f32))[1];
         let view = self.camera.view(screen()[0] / screen()[1]);
-        view.pick([cursor[0] / screen()[0], cursor[1] / screen()[1]], height)
-            .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32])
+        view.pick_ground([cursor[0] / screen()[0], cursor[1] / screen()[1]], &self.world.gat)
     }
 
     /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`: not blocked, nobody standing there, a
@@ -13162,9 +13160,7 @@ impl App {
 
         // The cursor shows what a click would do.
         let on_window = game.on_ui(pointer.0, items, assets.message.size);
-        let ground = view
-            .pick([pointer.0[0] / screen()[0], pointer.0[1] / screen()[1]], player_feet[1])
-            .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32]);
+        let ground = view.pick_ground([pointer.0[0] / screen()[0], pointer.0[1] / screen()[1]], &game.world.gat);
         cursor_look.set(if game.camera_goal.dragging.is_some() {
             cursor::Kind::Rotate
         } else if pointer.1 && game.attack.is_some_and(|attack| attack.held) {
@@ -13187,9 +13183,10 @@ impl App {
                     _ => cursor::Kind::Default,
                 },
                 Some(Owner::Item(_)) => cursor::Kind::Pick,
+                // Past the map's edge counts as somewhere that can't be walked.
                 _ => match ground {
-                    Some(cell) if !game.world.gat.walkable(cell) => cursor::Kind::NoWalk,
-                    _ => cursor::Kind::Default,
+                    Some(cell) if game.world.gat.walkable(cell) => cursor::Kind::Default,
+                    _ => cursor::Kind::NoWalk,
                 },
             }
         });
