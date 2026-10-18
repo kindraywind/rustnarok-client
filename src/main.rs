@@ -411,10 +411,6 @@ const ALLY_CHOICE: usize = 399;
 const ANTAGONIST_CHOICE: usize = 403;
 /// "(guild) Guild is asking for an Alliance with them. Do you accept?", "Are you sure that you want to delete it?"
 const ALLY_ASKS: usize = 393;
-/// The lines when someone leaves: "You left the guild.", "%s has left the guild.", "Withdrawal Reason: %s".
-const LEFT_GUILD: usize = 489;
-const MEMBER_LEFT: usize = 364;
-const LEFT_BECAUSE: usize = 365;
 /// "Are sure want to assign %s as guild leader? ..." with the member's name twice.
 const GUILD_LEADER_ASKS: usize = 2924;
 /// The master's menu on an ally or antagonist: "Delete".
@@ -1381,6 +1377,10 @@ struct Game {
     bars_drawn: Vec<(String, [f32; 4], Vec<Option<f32>>)>,
     /// /noshift: a click on a player attacks without Shift (saved).
     no_shift: bool,
+    /// /loginout: the guild notice and members' log-in lines (on unless turned off; saved). /notalkmsg2: guild chat
+    /// hidden (saved).
+    login_notices: bool,
+    no_guild_talk: bool,
     /// /emblem: emblems next to hovered players' names (saved; on unless turned off).
     show_emblems: bool,
     /// Units under the unknown-name status (672), whose names hide on PvP and siege maps.

@@ -474,6 +474,8 @@ impl App {
                     head_emblems: Vec::new(),
                     bars_drawn: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
+                    login_notices: settings_path("loginout").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
+                    no_guild_talk: settings_path("notalkmsg2").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     show_emblems: settings_path("emblem").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
                     unknown_names: HashSet::new(),
                     hover_block: None,
@@ -2173,23 +2175,34 @@ impl App {
                 }
                 game.name_tags.insert(id, tag);
             }
+            // The notice: "[ subject ]" and "[ text ]" while /loginout is on; kept either way.
             MapEvent::GuildNotice { subject, text } => {
-                if !subject.is_empty() {
-                    game.chat_line(format!("[{subject}] {text}"), GUILD_CHAT);
+                if game.login_notices {
+                    for line in guild::notice_lines(&subject, &text) {
+                        game.chat_line(line, guild::NOTICE_LINE);
+                    }
                 }
                 if let Some(guild) = &mut game.guild {
                     guild.notice = (subject, text);
                 }
             }
-            MapEvent::GuildChat(text) => game.chat_line(text, GUILD_CHAT),
+            // Guild chat, unless /notalkmsg2 hides it.
+            MapEvent::GuildChat(text) => {
+                if !game.no_guild_talk {
+                    game.chat_line(text, GUILD_CHAT);
+                }
+            }
             MapEvent::GuildMemberOnline { account, character, online } => {
                 let member =
                     game.guild.as_mut().and_then(|guild| guild.members.iter_mut().find(|member| member.account == account && member.character == character));
+                // A member logging in or out: a guild line in cyan while /loginout is on, when their name is known.
                 if let Some(member) = member {
                     member.online = online;
                     let name = member.name.clone();
-                    let text = rustnarok_client::messages::fill(self.messages.get(GUILD_ONLINE + usize::from(!online)).map_or("", String::as_str), &[&name]);
-                    game.chat_line(text, GUILD_CHAT);
+                    if game.login_notices && !name.is_empty() {
+                        let template = self.messages.get(GUILD_ONLINE + usize::from(!online)).map_or("", String::as_str);
+                        game.chat_line_kind(rustnarok_client::messages::fill(template, &[&name]), guild::LINE_CYAN, chat::Kind::Guild);
+                    }
                 }
             }
             MapEvent::GuildMade(result) => {
@@ -2234,27 +2247,25 @@ impl App {
                 game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), if good { CHAT_ITEM } else { CHAT_ERROR });
             }
             MapEvent::GuildInviteResult(result) => {
-                let id = 378 + usize::from(result.min(3));
-                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 2 { CHAT_ITEM } else { CHAT_ERROR });
+                if let Some((id, color)) = guild::invite_result_line(result) {
+                    game.chat_line_kind(self.messages.get(id).cloned().unwrap_or_default(), color, chat::Kind::Guild);
+                }
             }
+            // Someone left or was expelled: us (the guild goes), or another (they leave the list).
             MapEvent::GuildLeft { character, reason, expelled } => {
-                if character == game.me.id {
+                let us = character == game.me.id;
+                let name =
+                    game.guild.as_ref().and_then(|guild| guild.members.iter().find(|member| member.character == character)).map(|member| member.name.clone());
+                if us {
                     game.guild = None;
                     game.guild_window.frame.open = false;
-                    if !expelled {
-                        game.chat_line(self.messages.get(LEFT_GUILD).cloned().unwrap_or_default(), GUILD_CHAT);
-                    }
                 } else if let Some(guild) = &mut game.guild {
-                    let name = guild.members.iter().find(|member| member.character == character).map(|member| member.name.clone());
                     guild.members.retain(|member| member.character != character);
-                    // ponytail: the leave lines' color (the guild chat's) is an estimate.
-                    if let Some(name) = name.filter(|_| !expelled) {
-                        let line = |id: usize, value: &str| messages::fill(self.messages.get(id).map_or("", String::as_str), &[&value]);
-                        game.chat_line(line(MEMBER_LEFT, &name), GUILD_CHAT);
-                        if !reason.is_empty() {
-                            game.chat_line(line(LEFT_BECAUSE, &reason), GUILD_CHAT);
-                        }
-                    }
+                }
+                let nameless = self.messages.get(581).cloned().unwrap_or_default();
+                for (id, value, color) in guild::leaving_lines(us, expelled, name.as_deref(), &reason, &nameless) {
+                    let text = messages::fill(self.messages.get(id).map_or("", String::as_str), &[&value]);
+                    game.chat_line_kind(text, color, chat::Kind::Guild);
                 }
             }
             // The clan: its info at login or on joining, how many are online, leaving, and its chat.

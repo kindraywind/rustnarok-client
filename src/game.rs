@@ -1450,6 +1450,19 @@ impl Game {
                 Ok(())
             }
             // ponytail: plain on/off lines, as /noshift prints.
+            chat::Command::LoginOut | chat::Command::NoGuildTalk => {
+                let (name, on) = match command {
+                    chat::Command::LoginOut => ("loginout", &mut self.login_notices),
+                    _ => ("notalkmsg2", &mut self.no_guild_talk),
+                };
+                *on = !*on;
+                let on = *on;
+                if let Some(path) = settings_path(name) {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if on { "1" } else { "0" }));
+                }
+                self.chat_line(format!("{name}: {}", if on { "On" } else { "Off" }), CHAT_ITEM);
+                Ok(())
+            }
             chat::Command::Snap | chat::Command::ItemSnap | chat::Command::SkillSnap => {
                 let (name, on) = match command {
                     chat::Command::Snap => ("snap", &mut self.snaps.snap),

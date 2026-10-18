@@ -1282,6 +1282,9 @@ pub enum Command {
     Achievements,
     /// /noshift: a click on a player attacks without Shift, on or off.
     NoShift,
+    /// /loginout (/li): the guild notice and members' log-in lines on or off; /notalkmsg2 (/nm2): guild chat hidden.
+    LoginOut,
+    NoGuildTalk,
     /// /emblem: guild and clan emblems next to hovered players' names, on or off.
     Emblem,
     /// /notrade, /nt: deal requests are refused at once, on or off.
@@ -1335,6 +1338,8 @@ pub fn command(text: &str) -> Option<Command> {
         "/achievement" => Command::Achievements,
         "/memo" => Command::Memo,
         "/noshift" => Command::NoShift,
+        "/loginout" | "/li" => Command::LoginOut,
+        "/notalkmsg2" | "/nm2" => Command::NoGuildTalk,
         "/emblem" => Command::Emblem,
         "/notrade" | "/nt" => Command::NoTrade,
         "/noctrl" | "/nc" => Command::NoCtrl,
@@ -1763,6 +1768,8 @@ mod tests {
         assert_eq!(command("/where"), Some(Command::Where));
         assert_eq!(command("/memo"), Some(Command::Memo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
+        assert_eq!((command("/loginout"), command("/li")), (Some(Command::LoginOut), Some(Command::LoginOut)));
+        assert_eq!((command("/notalkmsg2"), command("/nm2")), (Some(Command::NoGuildTalk), Some(Command::NoGuildTalk)));
         assert_eq!(command("/emblem"), Some(Command::Emblem));
         assert_eq!([command("/notrade"), command("/nt")], [Some(Command::NoTrade), Some(Command::NoTrade)]);
         assert_eq!([command("/noctrl"), command("/nc")], [Some(Command::NoCtrl), Some(Command::NoCtrl)]);
