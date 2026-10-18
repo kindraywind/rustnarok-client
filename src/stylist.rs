@@ -312,7 +312,7 @@ impl Window {
 
     pub fn pose(&mut self, gpu: &Gpu) -> Vec<Placed> {
         let direction = self.direction;
-        self.figure.as_mut().map(|sprites| sprites.frame(gpu, crate::actor::IDLE, direction, 0, Timing::Loop(0.0))).unwrap_or_default()
+        self.figure.as_mut().map(|sprites| sprites.flat_frame(gpu, crate::actor::IDLE, direction, 0, Timing::Loop(0.0))).unwrap_or_default()
     }
 
     /// The pointer is over the window, title bar included.

@@ -11350,21 +11350,21 @@ impl App {
             room.changed = false;
         }
         let dress_placements = match (&game.dressroom, &mut game.dress_figure) {
-            (Some(room), Some(figure)) => figure.frame(gpu, actor::IDLE, room.direction, 0, Timing::Loop(0.0)),
+            (Some(room), Some(figure)) => figure.flat_frame(gpu, actor::IDLE, room.direction, 0, Timing::Loop(0.0)),
             _ => Vec::new(),
         };
         // The equipment window shows the character standing, facing front.
         let preview_feet = game.equipment.preview_feet();
         let viewed_feet = game.viewing.as_ref().and_then(|viewed| viewed.window.preview_feet());
         let viewed_placements = match (viewed_feet, game.viewing.as_mut().and_then(|viewed| viewed.sprites.as_mut())) {
-            (Some(_), Some(sprites)) => sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
+            (Some(_), Some(sprites)) => sprites.flat_frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
             _ => Vec::new(),
         };
         let preview_placements = match (preview_feet, &mut game.player.sprites) {
             (Some(_), Some(sprites)) => {
                 // The equipment figure keeps the sprite's own colours.
                 sprites.set_tint(None);
-                sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0))
+                sprites.flat_frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0))
             }
             _ => Vec::new(),
         };

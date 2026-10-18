@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::time::Instant;
 
+use image::RgbaImage;
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::LookTables;
 use rustnarok_client::sprite::{self, Act, Palette, Spr};
@@ -497,12 +498,31 @@ pub fn attack_action(job: u16, sex: u8, weapon_type: u32) -> usize {
     [5, 10, 11][motion]
 }
 
-/// Identifies a decoded image: layer, image kind, index and the layer's tint.
-type ImageKey = (usize, u32, usize, [u8; 4]);
+/// Identifies a decoded image: layer, image kind, index, the layer's tint, and how it was turned ahead of time for a
+/// flat preview (`SpriteSet::flat_frame`): 0 upright, else degrees clockwise, plus 360 when mirrored first.
+type ImageKey = (usize, u32, usize, [u8; 4], u16);
 
 /// One image of a frame: which image, top-left offset from the feet, size (negative width = mirrored), and degrees
 /// to turn it clockwise about its middle.
 pub type Placed = (ImageKey, [f32; 2], [f32; 2], f32);
+
+/// An image turned `degrees` clockwise about its middle (mirrored left to right first when `mirror`), on a canvas just
+/// big enough for it; pixels picked nearest, the rest clear.
+fn turn_image(image: &RgbaImage, degrees: i32, mirror: bool) -> RgbaImage {
+    let (sin, cos) = (degrees as f32).to_radians().sin_cos();
+    let [width, height] = [image.width() as f32, image.height() as f32];
+    let size = [(width * cos.abs() + height * sin.abs()).round().max(1.0), (width * sin.abs() + height * cos.abs()).round().max(1.0)];
+    RgbaImage::from_fn(size[0] as u32, size[1] as u32, |x, y| {
+        let [dx, dy] = [x as f32 + 0.5 - size[0] / 2.0, y as f32 + 0.5 - size[1] / 2.0];
+        // Turned back: where this pixel came from.
+        let [source_x, source_y] = [dx * cos + dy * sin + width / 2.0, -dx * sin + dy * cos + height / 2.0];
+        if source_x < 0.0 || source_y < 0.0 || source_x >= width || source_y >= height {
+            return image::Rgba([0; 4]);
+        }
+        let column = source_x as u32;
+        *image.get_pixel(if mirror { image.width() - 1 - column } else { column }, source_y as u32)
+    })
+}
 
 /// rathena's OPT1_* (status.hpp): the body states that colour a sprite.
 const OPT1_STONE: u16 = 1;
@@ -762,22 +782,52 @@ impl SpriteSet {
     pub fn frame_at(&mut self, gpu: &Gpu, index: usize, head_direction: u16, timing: Timing) -> Vec<Placed> {
         let mut placed = self.place(index, head_direction, timing);
         for &(key, ..) in &placed {
-            if !self.textures.contains_key(&key) {
-                let layer = &self.layers[key.0];
-                if let Some(mut image) = layer.spr.image(key.1, key.2, layer.palette.as_ref()) {
-                    if key.3 != [255; 4] {
-                        for pixel in image.pixels_mut() {
-                            for (channel, tint) in pixel.0.iter_mut().zip(key.3) {
-                                *channel = (u16::from(*channel) * u16::from(tint) / 255) as u8;
-                            }
-                        }
-                    }
-                    self.textures.insert(key, gpu.texture(&image, false));
-                }
-            }
+            self.decode(gpu, key);
         }
         placed.retain(|(key, ..)| self.textures.contains_key(key));
         placed
+    }
+
+    /// A frame for a flat preview (character select, the equipment window): as `frame`, but turned layers come as
+    /// pictures turned ahead of time and placed upright by their bounding box, as 2D sprites don't turn.
+    pub fn flat_frame(&mut self, gpu: &Gpu, action: usize, direction: u8, head_direction: u16, timing: Timing) -> Vec<Placed> {
+        let mut placed = self.frame(gpu, action, direction, head_direction, timing);
+        for (key, position, size, angle) in &mut placed {
+            let degrees = (angle.round() as i32).rem_euclid(360) as u16;
+            if degrees == 0 {
+                continue;
+            }
+            let mirrored = size[0] < 0.0;
+            let turned = (key.0, key.1, key.2, key.3, degrees + if mirrored { 360 } else { 0 });
+            self.decode(gpu, turned);
+            let (Some(upright), Some(image)) = (self.textures.get(key), self.textures.get(&turned)) else { continue };
+            // The picture keeps the layer's zoom: its pixels are as big as the upright image's.
+            let zoom = [size[0].abs() / upright.size[0], size[1] / upright.size[1]];
+            let middle = [position[0] + size[0] / 2.0, position[1] + size[1] / 2.0];
+            let turned_size = [image.size[0] * zoom[0], image.size[1] * zoom[1]];
+            (*key, *position, *size, *angle) = (turned, [middle[0] - turned_size[0] / 2.0, middle[1] - turned_size[1] / 2.0], turned_size, 0.0);
+        }
+        placed
+    }
+
+    /// Decodes an image into a texture once: its layer's palette and tint, and, for a flat preview, turned.
+    fn decode(&mut self, gpu: &Gpu, key: ImageKey) {
+        if self.textures.contains_key(&key) {
+            return;
+        }
+        let layer = &self.layers[key.0];
+        let Some(mut image) = layer.spr.image(key.1, key.2, layer.palette.as_ref()) else { return };
+        if key.3 != [255; 4] {
+            for pixel in image.pixels_mut() {
+                for (channel, tint) in pixel.0.iter_mut().zip(key.3) {
+                    *channel = (u16::from(*channel) * u16::from(tint) / 255) as u8;
+                }
+            }
+        }
+        if key.4 != 0 {
+            image = turn_image(&image, i32::from(key.4 % 360), key.4 >= 360);
+        }
+        self.textures.insert(key, gpu.texture(&image, false));
     }
 
     fn place(&self, index: usize, head_direction: u16, timing: Timing) -> Vec<Placed> {
@@ -831,7 +881,7 @@ impl SpriteSet {
             }
             placed.extend(sprite::place(&layer.spr, frame, shift).into_iter().map(|placement| {
                 (
-                    (number, placement.kind, placement.image, layer_color(placement.color, self.tint)),
+                    (number, placement.kind, placement.image, layer_color(placement.color, self.tint), 0),
                     placement.position.map(|value| value * self.scale),
                     placement.size.map(|value| value * self.scale),
                     placement.angle as f32,
@@ -1449,6 +1499,23 @@ impl Actor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn turns_images_for_flat_previews() {
+        let (red, blue) = (image::Rgba([255, 0, 0, 255]), image::Rgba([0, 0, 255, 255]));
+        let strip = RgbaImage::from_fn(2, 1, |x, _| if x == 0 { red } else { blue });
+        // A quarter turn clockwise stands the strip up, its left end on top; mirrored first, its right end.
+        let turned = turn_image(&strip, 90, false);
+        assert_eq!((turned.dimensions(), *turned.get_pixel(0, 0), *turned.get_pixel(0, 1)), ((1, 2), red, blue));
+        assert_eq!(*turn_image(&strip, 90, true).get_pixel(0, 0), blue);
+        // Upright stays as it was; a slight turn grows the canvas and leaves its corners clear.
+        assert_eq!(turn_image(&strip, 0, false), strip);
+        let square = RgbaImage::from_pixel(10, 10, red);
+        let tilted = turn_image(&square, 30, false);
+        assert_eq!(tilted.dimensions(), (14, 14));
+        assert_eq!(tilted.get_pixel(0, 0).0[3], 0);
+        assert_eq!(*tilted.get_pixel(7, 7), red);
+    }
 
     #[test]
     fn hides_by_option_bits() {

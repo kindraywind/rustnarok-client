@@ -269,9 +269,9 @@ impl Make {
         let direction = self.direction;
         let [human, doram, model] = &mut self.figures;
         [
-            human.as_mut().map(|figure| figure.frame(gpu, crate::actor::IDLE, 0, 0, Timing::Loop(0.0))),
-            doram.as_mut().map(|figure| figure.frame(gpu, crate::actor::IDLE, 0, 0, Timing::Loop(0.0))),
-            model.as_mut().map(|figure| figure.frame(gpu, crate::actor::IDLE, direction, 0, Timing::Loop(0.0))),
+            human.as_mut().map(|figure| figure.flat_frame(gpu, crate::actor::IDLE, 0, 0, Timing::Loop(0.0))),
+            doram.as_mut().map(|figure| figure.flat_frame(gpu, crate::actor::IDLE, 0, 0, Timing::Loop(0.0))),
+            model.as_mut().map(|figure| figure.flat_frame(gpu, crate::actor::IDLE, direction, 0, Timing::Loop(0.0))),
         ]
     }
 
