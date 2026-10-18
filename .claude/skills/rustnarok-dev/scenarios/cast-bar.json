@@ -1,0 +1,86 @@
+{
+  "about": "Cast bar (issue #207): a Mage casting Energy Coat on itself shows the cast bar 96.7 sprite pixels over its feet, 60 by 6, filling in the game's green (#16EA25) by whole percents. Ends a Novice without skills.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@job 2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@blvl 49"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@allskill"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "say": "@useskill 157 1 self"
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "shot": "cast-bar",
+      "crop": [
+        432,
+        200,
+        160,
+        200
+      ],
+      "threshold": 5
+    },
+    {
+      "wait": 4000
+    },
+    {
+      "say": "@skreset"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@blvl -49"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@job 0"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}
