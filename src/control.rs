@@ -1051,7 +1051,14 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .collect();
     // Newest first: the order Esc closes them in.
-    let windows = game.esc_names();
+    // The windows open: those Esc closes, in its order, then the ones it leaves up.
+    let mut windows = game.esc_names();
+    windows.extend(
+        [("Hotkeys", game.hotkeys.frame.open), ("BasicInfo", game.basic_info.frame.open)]
+            .into_iter()
+            .filter(|(_, open)| *open)
+            .map(|(name, _)| name.to_owned()),
+    );
     let dialog = game.dialog.as_ref().map(|dialog| {
         json!({
             "npc": dialog.npc,
@@ -1109,6 +1116,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "look": player_look(game.player.look.as_ref().unwrap_or(&Look::default())),
         },
         "windows": windows,
+        // The windows Esc closes, in the order it closes them (newest first).
+        "esc_order": game.esc_names(),
         // The game menu's buttons, when it is open (null when it isn't). Newest-first `windows` does not include it.
         "escape": game.escape.as_ref().map(|menu| menu.choices(game.can_resurrect()).into_iter().map(|choice| choice.button()).collect::<Vec<_>>()),
         "save_asked": game.save_asked,
