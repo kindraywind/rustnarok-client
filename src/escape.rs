@@ -44,8 +44,8 @@ pub enum WindowId {
     MercenarySkills,
     Homunculus,
     HomunculusSkills,
-    NpcDialog,
-    WarpList,
+    /// An NPC's number or text box: Esc stops at it and does nothing.
+    NpcInput,
     /// An NPC shop: Esc presses its Cancel, which tells the server.
     Shop,
     Refine,
@@ -148,8 +148,7 @@ impl WindowId {
             Self::MercenarySkills => "MercenarySkills",
             Self::Homunculus => "Homunculus",
             Self::HomunculusSkills => "HomunculusSkills",
-            Self::NpcDialog => "NpcDialog",
-            Self::WarpList => "WarpList",
+            Self::NpcInput => "NpcInput",
             Self::Shop => "Shop",
             Self::Refine => "Refine",
             Self::GradeEnchant => "GradeEnchant",
@@ -284,9 +283,9 @@ pub fn decide(repeat: bool, view: EscView) -> Option<EscAct> {
     if view.battle_line {
         return Some(if view.whisper_list { EscAct::CloseWhisperList } else { EscAct::CloseBattleChat });
     }
-    // 2. A text box in a window, not the chat line.
+    // 2. A text box in a window, not the chat line. An NPC's input box keeps Esc and does nothing with it.
     if let Some(id) = view.focused {
-        return Some(EscAct::Cancel(id));
+        return (id != WindowId::NpcInput).then_some(EscAct::Cancel(id));
     }
     // 3. A question: No.
     if view.question {
@@ -507,12 +506,12 @@ mod tests {
         // Nothing open: the menu.
         let idle = EscView { newest: None, question: false, ..question };
         assert_eq!(decide(false, idle), Some(EscAct::ToggleMenu));
-        // Talking to an NPC: nothing, unless another window is newer (it closes) or its text box has the caret
-        // (it's cancelled). The warp list isn't a conversation: the menu toggles over it.
+        // Talking to an NPC: nothing, unless another window is newer (it closes). Its input box keeps Esc, even with
+        // a newer window. The warp list isn't a conversation: the menu toggles over it.
         let talking = EscView { conversation: true, ..idle };
         assert_eq!(decide(false, talking), None);
         assert_eq!(decide(false, EscView { newest: Some(WindowId::Inventory), ..talking }), Some(EscAct::Close(WindowId::Inventory)));
-        assert_eq!(decide(false, EscView { focused: Some(WindowId::NpcDialog), ..talking }), Some(EscAct::Cancel(WindowId::NpcDialog)));
+        assert_eq!(decide(false, EscView { focused: Some(WindowId::NpcInput), newest: Some(WindowId::Inventory), ..talking }), None);
     }
 
     #[test]

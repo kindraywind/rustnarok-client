@@ -90,6 +90,7 @@ mod minimap;
 mod minimap_window;
 mod monster_info;
 mod navigation;
+mod npc_input;
 mod npc_menu;
 mod npc_say;
 mod options;
@@ -2161,10 +2162,18 @@ impl Game {
         }
     }
 
+    /// The input box's OK: nothing for an empty field; otherwise the answer goes to an NPC still in view (a text
+    /// one also to id 0) and the box closes.
     fn submit_input(&mut self) {
         let Some(dialog) = &mut self.dialog else { return };
-        let Some((text, value)) = dialog.input.take() else { return };
-        let _ = if text { self.session.input_text(dialog.npc, &value) } else { self.session.input_number(dialog.npc, value.trim().parse().unwrap_or(0)) };
+        let Some(answer) = dialog.input.as_ref().and_then(npc_input::Input::answer) else { return };
+        dialog.input = None;
+        let in_view = self.units.contains_key(&dialog.npc);
+        let _ = match answer {
+            npc_input::Answer::Number(value) if in_view => self.session.input_number(dialog.npc, value),
+            npc_input::Answer::Text(text) if in_view || dialog.npc == 0 => self.session.input_text(dialog.npc, &text),
+            _ => Ok(()),
+        };
     }
 
     /// Whether players win over monsters under the pointer: Shift held, or aiming a skill for players, but not both.
@@ -4082,6 +4091,9 @@ impl Game {
         names.extend(self.talks.window_names());
         if let Some(dialog) = &self.dialog {
             names.push(if dialog.warp.is_some() { "WarpList" } else { "NpcDialog" }.into());
+            if dialog.input.is_some() {
+                names.push("NpcInput".into());
+            }
         }
         names
     }
@@ -4096,7 +4108,7 @@ impl Game {
             return Some(Whisper);
         }
         if self.dialog.as_ref().is_some_and(|dialog| dialog.input.is_some()) {
-            return Some(if self.dialog.as_ref().unwrap().warp.is_some() { WarpList } else { NpcDialog });
+            return Some(NpcInput);
         }
         if self.vend_setup.as_ref().is_some_and(|setup| setup.typing) {
             return Some(VendSetup);
@@ -4268,13 +4280,8 @@ impl Game {
             MercenarySkills => self.mercenary_skill_list.frame.open = false,
             Homunculus => self.homunculus_window.frame.open = false,
             HomunculusSkills => self.homunculus_skill_list.frame.open = false,
-            NpcDialog | WarpList => {
-                if self.dialog.as_ref().is_some_and(|dialog| dialog.menu.is_some()) {
-                    self.choose(true);
-                } else if let Some(dialog) = self.dialog.take() {
-                    let _ = self.session.close_dialog(dialog.npc);
-                }
-            }
+            // Esc never gets here for the input box.
+            NpcInput => {}
             Shop => self.close_shop(),
             Refine => {
                 let _ = self.session.close_refine();
@@ -4931,8 +4938,8 @@ struct Dialog {
     wipe: bool,
     button: DialogButton,
     menu: Option<npc_menu::Menu>,
-    /// Waiting for a number (or text when the flag is set).
-    input: Option<(bool, String)>,
+    /// Waiting for a number or text, in its own box.
+    input: Option<npc_input::Input>,
     /// Warp Portal's or Teleport's list rather than an NPC's: the skill and the maps as the server named them.
     warp: Option<(u16, Vec<String>)>,
 }
@@ -5118,6 +5125,7 @@ struct Assets {
     selection: Texture,
     say: npc_say::Assets,
     npc_menu: npc_menu::Assets,
+    npc_input: npc_input::Assets,
     next: ButtonImages,
     close: ButtonImages,
     bars: [Texture; 7],
@@ -5226,6 +5234,7 @@ impl Assets {
             selection: gpu.solid(SELECTION_COLOR),
             say: npc_say::Assets::load(gpu),
             npc_menu: npc_menu::Assets::load(gpu, grf),
+            npc_input: npc_input::Assets::load(gpu),
             next: button(UI, "btn_next"),
             close: button(UI, "btn_close"),
             bars: BAR_COLORS.map(|color| gpu.solid(color)),
@@ -6298,10 +6307,10 @@ impl App {
         let typed = text.chars().filter(|character| !character.is_control());
         match &mut self.scene {
             Scene::Game(game) => match &mut game.dialog {
-                // NPC text input takes it; number input and plain dialogs don't.
+                // The NPC's input box takes it; plain dialogs don't.
                 Some(dialog) => {
-                    if let Some((true, value)) = &mut dialog.input {
-                        value.extend(typed);
+                    if let Some(input) = &mut dialog.input {
+                        input.type_text(&typed.collect::<String>());
                     }
                 }
                 None if game.storage.typing => game.storage.type_text(text),
@@ -7878,7 +7887,9 @@ impl App {
             Scene::Game(game) if game.dialog.is_some() => {
                 // NPC windows take the click; the map doesn't react while talking.
                 let dialog = game.dialog.as_mut().unwrap();
-                if dialog.button != DialogButton::None && dialog.warp.is_none() && game.say.on_button(cursor) {
+                if dialog.input.as_ref().is_some_and(|input| hit(input.ok_on(screen()), &assets.ok)) {
+                    game.submit_input();
+                } else if dialog.button != DialogButton::None && dialog.warp.is_none() && game.say.on_button(cursor) {
                     game.press_dialog_button(true);
                 } else if let Some(menu) = &dialog.menu {
                     // Rows go on the press; the buttons on the click.
@@ -9670,17 +9681,8 @@ impl App {
                 let dialog = game.dialog.as_mut().unwrap();
                 match (key, &mut dialog.input, &mut dialog.menu) {
                     (Key::Named(NamedKey::Enter), Some(_), _) => game.submit_input(),
-                    (Key::Named(NamedKey::Backspace), Some((_, value)), _) => {
-                        value.pop();
-                    }
-                    (_, Some((text, value)), _) => value.extend(
-                        event
-                            .text
-                            .as_deref()
-                            .unwrap_or_default()
-                            .chars()
-                            .filter(|character| if *text { !character.is_control() } else { character.is_ascii_digit() || *character == '-' }),
-                    ),
+                    (Key::Named(NamedKey::Backspace), Some(input), _) => input.backspace(),
+                    (_, Some(input), _) => input.type_text(event.text.as_deref().unwrap_or_default()),
                     (Key::Named(NamedKey::ArrowUp), _, Some(menu)) => menu.step(false),
                     (Key::Named(NamedKey::ArrowDown), _, Some(menu)) => menu.step(true),
                     (Key::Named(NamedKey::Enter), _, Some(_)) => game.menu_ok(),
@@ -11322,7 +11324,12 @@ impl App {
                 dialog.menu = Some(npc_menu::Menu::new(items));
                 dialog.button = DialogButton::None;
             }
-            MapEvent::NpcInput { npc, text } => game.dialog_for(npc).input = Some((text, String::new())),
+            // The box opens only for an NPC in view (a text one also for id 0).
+            MapEvent::NpcInput { npc, text } => {
+                if game.units.contains_key(&npc) || (text && npc == 0) {
+                    game.dialog_for(npc).input = Some(npc_input::Input::new(text));
+                }
+            }
             // Where Warp Portal or Teleport goes, in the NPC menu's box: "Random Area" for Teleport's random spot, the
             // maps by their file names, then Cancel.
             MapEvent::WarpList { skill, maps } => {
@@ -14716,10 +14723,7 @@ impl App {
         if let Some(dialog) = &game.dialog {
             // A warp list is the menu alone.
             if dialog.warp.is_none() {
-                let mut lines: links::LinkedLines = dialog.lines.iter().flat_map(|line| wrap_linked_by(font, line, npc_say::WRAP_WIDTH, true)).collect();
-                if let Some((text, value)) = &dialog.input {
-                    lines.push(vec![([0, 0, 0], format!("{}: {value}_", if *text { "입력" } else { "수량" }), None)]);
-                }
+                let lines: links::LinkedLines = dialog.lines.iter().flat_map(|line| wrap_linked_by(font, line, npc_say::WRAP_WIDTH, true)).collect();
                 let pitch = font.line_height() + npc_say::LINE_GAP;
                 game.say.text_height = lines.len() as f32 * pitch;
                 game.say.scroll_by(0.0);
@@ -14751,6 +14755,10 @@ impl App {
                 let [ok, cancel] = npc_menu::buttons(menu.items.len()).map(|place| offset(corner, place));
                 overlay.sprites.push(button_sprite(pointer, ok, &assets.ok));
                 overlay.sprites.push(button_sprite(pointer, cancel, &assets.cancel));
+            }
+            if let Some(input) = &dialog.input {
+                input.draw(overlay.window(), &assets.chrome, &assets.pickup, &assets.npc_input, screen());
+                overlay.sprites.push(button_sprite(pointer, input.ok_on(screen()), &assets.ok));
             }
         }
 
