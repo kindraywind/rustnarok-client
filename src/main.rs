@@ -726,6 +726,16 @@ fn vanish_effect(reason: u8, option: u32) -> Option<u32> {
     }
 }
 
+/// A warp portal's pick box around its feet, in sprite pixels: 50/640 of the screen's width and 50/730 of its height
+/// each way at the default camera, so it grows and shrinks with the zoom like a sprite.
+// ponytail: worked out for the 1024-wide screen; a wider canvas keeps the same box.
+const WARP_PICK: [f32; 2] = [59.7, 39.3];
+
+/// A warp portal's pick box on screen (`0..1`, y down: left, top, right, bottom).
+fn warp_pick_rect(view: &world::View, feet: world::Vector) -> Option<[f32; 4]> {
+    view.sprite_rect(feet, [-WARP_PICK[0], -WARP_PICK[1]], WARP_PICK)
+}
+
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
 const WARP_JOB: u16 = 45;
 
@@ -12198,16 +12208,11 @@ impl App {
             })
             .collect();
 
-        // Warp portals have no sprite: the cell they stand on is their pick box.
-        let half = world::CELL / 2.0;
+        // Warp portals have no sprite: their pick box is drawn around the feet.
         for (&id, actor) in game.units.iter().filter(|(_, actor)| actor.job == WARP_JOB) {
             let feet = game.world.cell_position(actor.cell.map(|value| value as f32));
-            let corners: Option<Vec<_>> = [[-half, -half], [half, -half], [half, half], [-half, half]]
-                .iter()
-                .map(|[dx, dz]| view.project([feet[0] + dx, feet[1], feet[2] + dz]).map(to_screen))
-                .collect();
-            if let Some(corners) = corners {
-                let cell = picking::bounds(&corners);
+            if let Some([left, top, right, bottom]) = warp_pick_rect(&view, feet) {
+                let cell = picking::bounds(&[to_screen([left, top]), to_screen([right, bottom])]);
                 let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]).powi(2)).sum::<f32>();
                 game.hit_boxes.push(picking::Target {
                     owner: Owner::Unit(id),
@@ -14480,6 +14485,20 @@ mod tests {
         assert_eq!(vanish_effect(3, actor::OPTION_INVISIBLE), None);
         assert_eq!(vanish_effect(2, 0), Some(314));
         assert_eq!((vanish_effect(0, 0), vanish_effect(1, 0)), (None, None));
+    }
+
+    #[test]
+    fn picks_warps_in_a_box_around_their_feet() {
+        let camera = |distance: f32| Camera { target: [100.0, 0.0, 100.0], distance, pitch: 45f32.to_radians(), yaw: 0.0, ground: f32::MIN };
+        let size = |distance: f32| {
+            let [left, top, right, bottom] = warp_pick_rect(&camera(distance).view(4.0 / 3.0), [100.0, 0.0, 100.0]).unwrap();
+            [(right - left) * 1024.0, (bottom - top) * 768.0]
+        };
+        // About 166 by 109 screen pixels at the default distance, centred on the feet; smaller farther out.
+        let [width, height] = size(300.0);
+        assert!((width - 166.0).abs() < 8.0 && (height - 109.0).abs() < 6.0, "{width} {height}");
+        let far = size(400.0);
+        assert!(far[0] < width * 0.8 && far[1] < height * 0.8, "{far:?}");
     }
 
     #[test]
