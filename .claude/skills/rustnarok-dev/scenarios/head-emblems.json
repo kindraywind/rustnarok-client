@@ -1,0 +1,73 @@
+{
+  "about": "Guild emblems over heads on siege maps (issue #141): on guild_vs1 the second's guild emblem shows over their head for the first, and @gvgoff takes it away (put back with @gvgon). The two characters need guilds with emblems (fixtures; e.g. their own guild each, emblem set on the server).",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {
+      "say": "@warp guild_vs1"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "expect": {
+        "state": {
+          "head_emblems.0.name": "{second}"
+        }
+      }
+    },
+    {
+      "shot": "head-emblem"
+    },
+    {
+      "say": "@gvgoff"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "state": {
+          "head_emblems": []
+        }
+      }
+    },
+    {
+      "shot": "no-head-emblem"
+    },
+    {
+      "say": "@gvgon"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "as": "second",
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "as": "second",
+      "settle": 1500
+    }
+  ]
+}

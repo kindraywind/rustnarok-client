@@ -774,6 +774,8 @@ struct Game {
     dress_lists: dressroom::Lists,
     dressroom: Option<dressroom::Room>,
     dress_figure: Option<SpriteSet>,
+    /// The emblems drawn over heads this frame: whose, their guild, the box (for the test driver).
+    head_emblems: Vec<(String, u32, [f32; 4])>,
     /// /noshift: a click on a player attacks without Shift (saved).
     no_shift: bool,
     /// The map's property and flags (net::MAP_*), and its type, as the server last sent them.
@@ -5921,6 +5923,7 @@ impl App {
                         .unwrap_or_default(),
                     dressroom: None,
                     dress_figure: None,
+                    head_emblems: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     map_type: None,
                     pvp_rank: None,
@@ -6149,6 +6152,7 @@ impl App {
             actor.job = unit.job;
             actor.look = (unit.kind == PLAYER).then(|| unit_look(unit));
             actor.hidden = HIDDEN_JOBS.contains(&unit.job) || unit.job == WARP_JOB;
+            actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
             actor.head_direction = unit.head_direction;
             actor.guild = unit.guild;
             actor
@@ -8154,6 +8158,10 @@ impl App {
             // Mounting, dismounting or an outfit puts a player in another body.
             MapEvent::OptionChange { id, option } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
+                if let Some(actor) = actor {
+                    actor.cloaked = option & actor::UNSEEN_OPTIONS != 0;
+                }
+                let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor
                     && let Some(look) = &mut actor.look
                     && look.option != option & actor::BODY_OPTIONS
@@ -9028,19 +9036,23 @@ impl App {
                 base.sprites.push((emblem, [corner(line)[0] - guild::EMBLEM_SIZE[0] - 2.0, top], guild::EMBLEM_SIZE));
             }
         }
-        // ponytail: on a GvG map (not a battleground) each player's guild emblem over their head; where it sits is an
-        // estimate.
-        let siege = game.map_property.is_some_and(|(_, flags)| flags & net::MAP_SIEGE != 0 && flags & net::MAP_BATTLEFIELD == 0);
-        if siege {
-            let ours = game.guild.as_ref().map(|guild| (guild.id, player_feet));
-            let others = game.units.iter().filter(|(_, actor)| actor.kind == PLAYER && actor.guild != 0 && !actor.hidden);
-            let heads = others.filter_map(|(id, actor)| Some((actor.guild, *feet_of.get(id)?))).chain(ours);
-            for (guild_id, feet) in heads {
-                if let (Some(emblem), Some(point)) = (game.emblems.get(&guild_id).and_then(|(_, emblem)| emblem.as_ref()), sprite_point(feet, -overhead::HEAD))
-                {
-                    let size = guild::EMBLEM_SIZE;
-                    base.sprites.push((emblem, [(point[0] - size[0] / 2.0).round(), (point[1] - size[1] - 4.0).round()], size));
-                }
+        // On a siege map (not a battleground) other players in a guild, and the guardians, carry its emblem over their
+        // heads; it follows the unit but doesn't grow with the zoom.
+        game.head_emblems.clear();
+        if game.map_property.is_some_and(|(_, flags)| versus::siege(flags)) {
+            for (id, actor) in &game.units {
+                let wears = guild::wears_head_emblem(actor.kind == PLAYER, actor.job, actor.guild, actor.cloaked || actor.hidden, *id == game.account_id);
+                let Some(&feet) = feet_of.get(id).filter(|_| wears) else { continue };
+                let (Some(emblem), Some(at_feet), Some(above)) =
+                    (game.emblems.get(&actor.guild).and_then(|(_, emblem)| emblem.as_ref()), sprite_point(feet, 0.0), sprite_point(feet, -100.0))
+                else {
+                    continue;
+                };
+                // The unit's sprite scale: screen pixels a sprite pixel.
+                let scale = (at_feet[1] - above[1]) / 100.0;
+                let [left, top, right, bottom] = guild::head_emblem_box(at_feet, SCREEN, scale);
+                base.sprites.push((emblem, [left.round(), top.round()], guild::EMBLEM_SIZE));
+                game.head_emblems.push((actor.name.clone(), actor.guild, [left, top, right, bottom]));
             }
         }
         let ratio = |value: Option<&i64>, maximum: Option<&i64>| match (value, maximum) {
