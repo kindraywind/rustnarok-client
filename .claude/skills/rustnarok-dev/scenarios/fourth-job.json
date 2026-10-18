@@ -1,5 +1,5 @@
 {
-  "about": "4th job windows (issue #321): a Dragon Knight (@job 4252, base level 199) with 10 trait points and some AP (our NPC's healap). The basic info window is 149 tall with three bars, HP, SP and AP, at the game's rows; the status window's Trait Status bar opens the panel with POW to CRT, their costs and P.ATK to C.RATE, and POW's \"+\" raises it by one (points drop). Back to a level 1 Novice; the lane reset clears the traits.",
+  "about": "4th job windows (issue #321): a Dragon Knight (@job 4252, base level 199) with 10 trait points and some AP (our NPC's healap). The basic info window is 149 tall with three bars, HP, SP and AP, at the game's rows; the status window opens with its trait panel showing POW to CRT, their costs and P.ATK to C.RATE, and POW's \"+\" raises it by one (points drop); the bar shuts the panel. Back to a level 1 Novice; the lane reset clears the traits.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -89,14 +89,6 @@
       "wait": 400
     },
     {
-      "click_on": {
-        "button": "traits"
-      }
-    },
-    {
-      "wait": 400
-    },
-    {
       "move": [
         600,
         700
@@ -138,6 +130,16 @@
     },
     {
       "wait": 300
+    },
+    {
+      "move": [
+        600,
+        700
+      ]
+    },
+    {
+      "shot": "trait-shut",
+      "threshold": 5
     },
     {
       "key": "Alt+A"

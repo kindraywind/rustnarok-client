@@ -981,14 +981,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .chain(game.skill_window.button_boxes().into_iter().map(|(name, area)| (name.to_owned(), area)))
                 .filter(|(_, area)| on_top(Panel::Skills, area))
                 .chain(game.status_window.raise_boxes(&game.status).into_iter().filter(|(_, area)| on_top(Panel::Status, area)))
-                .chain(
-                    app.assets
-                        .as_ref()
-                        .map(|assets| game.status_window.trait_boxes(&assets.status, &game.status))
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|(_, area)| on_top(Panel::Status, area)),
-                )
+                .chain(game.status_window.trait_boxes(&game.status).into_iter().filter(|(_, area)| on_top(Panel::Status, area)))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.basic_info.menu_boxes().into_iter().map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
