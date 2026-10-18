@@ -2184,17 +2184,20 @@ impl App {
                 game.sync_esc();
                 return;
             }
-            // Alt + right click takes a whole stack out of the open storage.
+            // Alt + right press takes a whole stack out of the open storage (or one of its lists): to the inventory while its
+            // window is open, else the cart's; one at a time until the server answers.
             let names = (&self.messages[..], &self.card_names, &game.char_names);
+            let to = storage_quick_target(game.inventory.frame.open, game.cart.cart.is_some() && game.cart.frame.open);
+            let taken = |index: u16, to: StorageTo| if to == StorageTo::Inventory { Asked::Take(index) } else { Asked::StoreToCart(index) };
             let moved = match game.window_at(self.cursor) {
-                _ if state != ElementState::Pressed || !self.modifiers.alt_key() || !game.storage.frame.open => None,
-                Some(Panel::Storage) => match assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items, names)) {
-                    Some(storage::Hit::Item(index)) => game.storage.get(index).map(|item| (Asked::Take(index), item.amount)),
+                _ if state != ElementState::Pressed || !self.modifiers.alt_key() || !game.storage.frame.open || game.quick_moving => None,
+                Some(Panel::Storage) => match (assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items, names)), to) {
+                    (Some(storage::Hit::Item(index)), Some(to)) => game.storage.get(index).map(|item| (taken(index, to), item.amount)),
                     _ => None,
                 },
                 Some(panel @ (Panel::StorageCategory(_) | Panel::StorageSearch)) => {
-                    match storage_list(panel).and_then(|which| game.storage.category_hit(which, self.cursor, &self.items, names)) {
-                        Some(storage::Hit::Item(index)) => game.storage.get(index).map(|item| (Asked::Take(index), item.amount)),
+                    match (storage_list(panel).and_then(|which| game.storage.category_hit(which, self.cursor, &self.items, names)), to) {
+                        (Some(storage::Hit::Item(index)), Some(to)) => game.storage.get(index).map(|item| (taken(index, to), item.amount)),
                         _ => None,
                     }
                 }
@@ -2317,6 +2320,7 @@ impl App {
                     game.show_item(shown);
                 }
             } else if let Some((asked, amount)) = moved {
+                game.quick_moving = true;
                 game.give(asked, u32::from(amount));
             } else if state == ElementState::Pressed && (game.targeting.take().is_some() | std::mem::take(&mut game.capturing)) {
             } else if state == ElementState::Pressed {
@@ -2570,7 +2574,13 @@ impl App {
                     (
                         Some((Dragged::Item(_) | Dragged::Worn(_), _, true)),
                         Some(Panel::Storage | Panel::StorageCategory(_) | Panel::Cart | Panel::Equipment),
-                    ) if trade::refusal(game.trade.is_some(), trade::ItemAction::DropOn).is_some() => {}
+                    )
+                    | (Some((Dragged::Carted(_), _, true)), Some(Panel::Storage | Panel::StorageCategory(_)))
+                    | (Some((Dragged::Stored(_), _, true)), Some(Panel::Cart))
+                        if trade::refusal(game.trade.is_some(), trade::ItemAction::DropOn).is_some() => {}
+                    // Between the cart and the storage, both ways: at once for one, else asking how many.
+                    (Some((Dragged::Carted(index), _, true)), Some(Panel::Storage | Panel::StorageCategory(_))) => game.move_item(Asked::CartToStore(index)),
+                    (Some((Dragged::Stored(index), _, true)), Some(Panel::Cart)) => game.move_item(Asked::StoreToCart(index)),
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Storage | Panel::StorageCategory(_))) => game.move_item(Asked::Store(index)),
                     // Let go over the world: dropped at the player's feet, asking how many of a stack. The drop lock holds it.
                     (Some((Dragged::Item(index), _, true)), None)

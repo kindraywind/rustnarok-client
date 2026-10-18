@@ -180,11 +180,18 @@ impl MapSession {
         self.move_stored(CZ_MOVE_ITEM_FROM_STORE_TO_BODY, index, amount)
     }
 
+    /// Moves a stored item into the cart.
+    pub fn storage_to_cart(&mut self, index: u16, amount: u32) -> io::Result<()> {
+        self.move_stored(CZ_MOVE_ITEM_FROM_STORE_TO_CART, index, amount)
+    }
+
+    /// Moves a cart item into the open storage.
+    pub fn cart_to_storage(&mut self, index: u16, amount: u32) -> io::Result<()> {
+        self.move_stored(CZ_MOVE_ITEM_FROM_CART_TO_STORE, index, amount)
+    }
+
     pub(crate) fn move_stored(&mut self, header: u16, index: u16, amount: u32) -> io::Result<()> {
-        let mut packet = header.to_le_bytes().to_vec();
-        packet.extend_from_slice(&index.to_le_bytes());
-        packet.extend_from_slice(&amount.to_le_bytes());
-        self.stream.write_all(&packet)
+        self.stream.write_all(&encode_moved(header, index, amount))
     }
 
     pub fn close_storage(&mut self) -> io::Result<()> {

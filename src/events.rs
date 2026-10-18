@@ -416,6 +416,7 @@ impl App {
                     card_lines: 0,
                     card_view: None,
                     item_lines: 0,
+                    quick_moving: false,
                     item_place: iteminfo::DEFAULT_PLACE,
                     whispered: VecDeque::new(),
                     whisper_asked: VecDeque::new(),
@@ -798,6 +799,9 @@ impl App {
             return;
         };
         let (grf, job_names, look_tables, pets) = (&self.grf, &self.job_names, &self.look_tables, &self.pets);
+        if frees_quick_move(&event) {
+            game.quick_moving = false;
+        }
         // Which kind of pick a making list is (read before the event is taken apart).
         let event_kind = match &event {
             MapEvent::MakeList(_) => Some(Picking::Make),
@@ -2061,6 +2065,8 @@ impl App {
                 game.storage.add(item);
             }
             MapEvent::StorageRemoved { index, amount } => game.storage.remove(index, amount),
+            // It only ends a quick move's wait (above).
+            MapEvent::MoveFailed { .. } => {}
             MapEvent::StorageClosed => game.storage.close(),
             // Going back to character select: the map session closes and the char server lists the characters again.
             MapEvent::RestartAck(1) => {

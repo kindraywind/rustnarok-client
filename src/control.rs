@@ -1026,6 +1026,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
         .chain(game.inventory.check_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
+            game.cart
+                .item_boxes()
+                .into_iter()
+                .filter_map(|(index, area)| game.cart.get(index).map(|item| json!({"kind": "button", "name": format!("cart_item:{}", item.id), "box": area}))),
+        )
+        .chain(
             game.card_window
                 .iter()
                 .chain(&game.item_window)

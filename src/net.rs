@@ -1460,6 +1460,11 @@ const ZC_DELETE_ITEM_FROM_STORE: u16 = 0x00F6;
 const ZC_CLOSE_STORE: u16 = 0x00F8;
 const CZ_MOVE_ITEM_FROM_BODY_TO_STORE: u16 = 0x0364;
 const CZ_MOVE_ITEM_FROM_STORE_TO_BODY: u16 = 0x0365;
+/// Between the storage and the cart, both ways.
+const CZ_MOVE_ITEM_FROM_STORE_TO_CART: u16 = 0x0128;
+const CZ_MOVE_ITEM_FROM_CART_TO_STORE: u16 = 0x0129;
+/// A move the server turned down.
+const ZC_MOVE_ITEM_FAILED: u16 = 0x0AA7;
 const CZ_CLOSE_STORE: u16 = 0x0193;
 /// A ZC_SKILLINFO_LIST entry (with the server's skill name, for clients before the 2019 renewal of the packet).
 const SKILL_SIZE: usize = 37;
@@ -2373,6 +2378,15 @@ fn encode_cashshop_buy(free: u32, items: &[(u32, u32, u16)]) -> Vec<u8> {
 
 fn encode_cashshop_close() -> Vec<u8> {
     CZ_CASHSHOP_CLOSE.to_le_bytes().to_vec()
+}
+
+/// A move between the inventory, the storage and the cart: index u16, amount u32.
+fn encode_moved(header: u16, index: u16, amount: u32) -> [u8; 8] {
+    let mut packet = [0u8; 8];
+    packet[..2].copy_from_slice(&header.to_le_bytes());
+    packet[2..4].copy_from_slice(&index.to_le_bytes());
+    packet[4..].copy_from_slice(&amount.to_le_bytes());
+    packet
 }
 
 /// CZ_CONFIG: a setting (rathena's e_config_type) on or off.

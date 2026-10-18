@@ -312,9 +312,10 @@ pub fn decide(repeat: bool, view: EscView) -> Option<EscAct> {
     if view.battle_line {
         return Some(if view.whisper_list { EscAct::CloseWhisperList } else { EscAct::CloseBattleChat });
     }
-    // 2. A text box in a window, not the chat line. An NPC's input box keeps Esc and does nothing with it.
+    // 2. A text box in a window, not the chat line. An NPC's input box and the storage's search keep Esc and do
+    // nothing with it.
     if let Some(id) = view.focused {
-        return (id != WindowId::NpcInput).then_some(EscAct::Cancel(id));
+        return (!matches!(id, WindowId::NpcInput | WindowId::Storage)).then_some(EscAct::Cancel(id));
     }
     // 3. A question: No.
     if view.question {
