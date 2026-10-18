@@ -35,14 +35,19 @@ const TITLE_MESSAGE: usize = 3288;
 const CART_MESSAGE: usize = 3289;
 const CASH_MESSAGE: usize = 1858;
 const FREE_MESSAGE: usize = 1857;
+const COST_MESSAGE: usize = 1854;
+const QUANTITY_MESSAGE: usize = 1855;
+const TOTAL_MESSAGE: usize = 1856;
 const FREE_SPEND_MESSAGE: usize = 1306;
 const TAB_MESSAGES: [usize; 9] = [3290, 3291, 3292, 3293, 3294, 3295, 3296, 3297, 3298];
 const GREY: [u8; 3] = [0x88, 0x88, 0x88];
 
 pub struct Assets {
     background: Option<Texture>,
-    tab: Option<Texture>,
-    tab_on: Option<Texture>,
+    cart: Option<Texture>,
+    cell: Option<Texture>,
+    // on, off, disable
+    tabs: [[Option<Texture>; 3]; 9],
     buy: [Option<Texture>; 3],
     close: [Option<Texture>; 3],
     fill: Texture,
@@ -53,11 +58,14 @@ impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let image = |name: &str| gpu.try_load_texture(grf, &format!("{UI}cashshop\\{name}.bmp"), false).ok();
         Self {
-            background: image("cashshop_bg"),
-            tab: image("tab"),
-            tab_on: image("tab_on"),
-            buy: ["normal", "over", "press"].map(|look| image(&format!("btn_buy_{look}"))),
-            close: ["normal", "over", "press"].map(|look| image(&format!("btn_close_{look}"))),
+            background: image("img_shop_bg"),
+            cart: image("img_shop_cart_bg"),
+            cell: image("img_shop_itembg"),
+            // ponytail: tab N is assumed to be tab number N in the shop's tab order.
+            tabs: std::array::from_fn(|tab| ["on", "off", "disable"].map(|look| image(&format!("img_shop_tap{tab}_{look}")))),
+            // There is no hover image: hovering reuses the normal one.
+            buy: [image("btn_buy_normal"), image("btn_buy_normal"), image("btn_buy_press")],
+            close: [image("btn_close"), image("btn_close"), image("btn_close")],
             fill: gpu.solid([0xF5, 0xF5, 0xF5, 0xFF]),
             selected: gpu.solid([0xD5, 0xE5, 0xFF, 0xFF]),
         }
@@ -349,7 +357,14 @@ impl CashShop {
         let hit = self.hit(pointer.0);
         for (tab, &message_id) in TAB_MESSAGES.iter().enumerate().take(self.tabs.len()) {
             let place = offset(TABS, [tab as f32 * TAB_SIZE[0], 0.0]);
-            if let Some(texture) = if tab == self.selected_tab { assets.tab_on.as_ref() } else { assets.tab.as_ref() } {
+            let look = if self.tabs[tab].is_empty() {
+                2
+            } else if tab == self.selected_tab {
+                0
+            } else {
+                1
+            };
+            if let Some(texture) = &assets.tabs[tab][look] {
                 layer.sprites.push((texture, at(place), TAB_SIZE));
             }
             let label = message(message_id);
@@ -358,23 +373,32 @@ impl CashShop {
         }
         for cell in 0..GOOD_ROWS * GOOD_COLUMNS {
             let place = offset(GOODS, [(cell % GOOD_COLUMNS) as f32 * GOOD_SIZE[0], (cell / GOOD_COLUMNS) as f32 * GOOD_SIZE[1]]);
-            let fill = if hit == Some(Hit::Item(cell)) { &assets.selected } else { &assets.fill };
-            layer.sprites.push((fill, at(place), offset(GOOD_SIZE, [-2.0, -2.0])));
+            match &assets.cell {
+                Some(texture) => layer.sprites.push((texture, at(place), GOOD_SIZE)),
+                None => layer.sprites.push((&assets.fill, at(place), offset(GOOD_SIZE, [-2.0, -2.0]))),
+            }
+            if hit == Some(Hit::Item(cell)) {
+                layer.sprites.push((&assets.selected, at(place), offset(GOOD_SIZE, [-2.0, -2.0])));
+            }
             let Some(&(item, price)) = self.tabs[self.selected_tab].get(self.goods_scroll * GOOD_COLUMNS + cell) else { continue };
             if let Some(Some(icon)) = items.get(&item).and_then(|info| icons.get(&inventory::icon_path(info, true))) {
                 layer.sprites.push((icon, at(offset(place, [4.0, 14.0])), icon.size));
             }
             let name = inventory::item_name(items, item, true, 0);
             layer.texts.push((crate::window::fit(font, &name, GOOD_SIZE[0] - 38.0), at(offset(place, [36.0, 12.0])), [0, 0, 0]));
-            layer.texts.push((format!("{} C", group(u64::from(price))), at(offset(place, [36.0, 32.0])), [0x40, 0x40, 0x90]));
+            layer.texts.push((format!("{}: {} C", message(COST_MESSAGE), group(u64::from(price))), at(offset(place, [36.0, 32.0])), [0x40, 0x40, 0x90]));
         }
-        layer.sprites.push((&assets.fill, at(CART), CART_SIZE));
+        layer.sprites.push((assets.cart.as_ref().unwrap_or(&assets.fill), at(CART), CART_SIZE));
         layer.texts.push((message(CART_MESSAGE).to_owned(), at(offset(CART, [5.0, 3.0])), [0, 0, 0]));
         for (row, &(item, amount, _, price)) in self.cart.iter().skip(self.cart_scroll).take(CART_ROWS).enumerate() {
             let place = offset(CART, [5.0, 20.0 + row as f32 * CART_ROW]);
             let name = inventory::item_name(items, item, true, 0);
             layer.texts.push((crate::window::fit(font, &name, 140.0), at(place), [0, 0, 0]));
-            layer.texts.push((format!("{} C  x{amount}", group(u64::from(price))), at(offset(place, [0.0, 17.0])), [0x40, 0x40, 0x90]));
+            layer.texts.push((
+                format!("{}: {} C  {}: {amount}", message(COST_MESSAGE), group(u64::from(price)), message(QUANTITY_MESSAGE)),
+                at(offset(place, [0.0, 17.0])),
+                [0x40, 0x40, 0x90],
+            ));
             layer.texts.push(("−".into(), at(offset(place, [CART_SIZE[0] - 47.0, 2.0])), [0, 0, 0]));
             layer.texts.push(("+".into(), at(offset(place, [CART_SIZE[0] - 26.0, 2.0])), [0, 0, 0]));
         }
@@ -395,7 +419,7 @@ impl CashShop {
                 layer.texts.push((fallback.into(), at(offset(place, [5.0, 4.0])), [0, 0, 0]));
             }
         }
-        layer.texts.push((format!("Total: {} C", group(u64::from(self.cart_total()))), at([438.0, 365.0]), [0, 0, 0]));
+        layer.texts.push((format!("{}: {} C", message(TOTAL_MESSAGE), group(u64::from(self.cart_total()))), at([438.0, 365.0]), [0, 0, 0]));
     }
 }
 
