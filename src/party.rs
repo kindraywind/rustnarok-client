@@ -408,6 +408,8 @@ pub struct Assets {
     mini_bg: Texture,
     crown_grey: Texture,
     has_small: Texture,
+    /// The docked windows' edit box.
+    edit: Texture,
     picked: Texture,
 }
 
@@ -443,6 +445,7 @@ impl Assets {
             radio: ["radiobtn_off", "radiobtn_on"].map(|name| image(format!("{UI}{name}.bmp"))),
             mini_bg: image(format!("{UI}{PARTY_ART}img_partymini_bg.tga")),
             has_small: gpu.solid([0xDD, 0xE8, 0xFF, 0xFF]),
+            edit: gpu.solid(EDIT_BACKGROUND),
             crown_grey: crate::render::load_image(grf, &format!("{UI}{PARTY_ART}ico_partycrown.bmp"))
                 .map_or_else(|_| gpu.solid([0, 0, 0, 0]), |crown| gpu.texture(&greyed(crown), false)),
             picked: gpu.solid([0x73, 0x9C, 0xEF, 0xFF]),
@@ -454,111 +457,228 @@ impl Assets {
     }
 }
 
-// ponytail: the setup window's size and place (by the party window) are estimates.
-const SETUP_WIDTH: f32 = 230.0;
-const SETUP_ROW: f32 = 40.0;
-const SETUP_TOP: f32 = TITLE_HEIGHT + 8.0;
-const SETUP_NOTE: f32 = SETUP_TOP + 3.0 * SETUP_ROW;
-const SETUP_HEIGHT: f32 = SETUP_NOTE + 46.0;
-/// The two choices' left edges.
-const CHOICES: [f32; 2] = [20.0, 120.0];
-const SETUP_BUTTON: [f32; 2] = [42.0, 20.0];
-const SETUP_TITLE: usize = 291;
-/// Each row's label, its first choice (on) and its second (off).
-const SETUP_ROWS: [(usize, usize, usize); 3] = [(292, 288, 287), (293, 290, 289), (738, 740, 739)];
-/// The choices' names for the test driver, in the same order.
+/// The choices' names for the test driver: [setting][0 the "on" choice, 1 the "off"].
 const SETUP_NAMES: [[&str; 2]; 3] = [["exp_even", "exp_each"], ["pickup_party", "pickup_each"], ["share_shared", "share_individual"]];
-const LEADER_ONLY: usize = 294;
+
+/// A group of choices: the setting (0 EXP, 1 pickup, 2 distribution), the label and its y, and each choice's words, y
+/// and whether it is the "on" one.
+type ChoiceGroup = (usize, usize, f32, [(usize, f32, bool); 2]);
+/// An edit box: its place and width, and the label over it (words and place).
+type EditBox = ([f32; 2], f32, Option<(usize, [f32; 2])>);
+
+/// The three windows docked right of the party window: setup (the Setup button), create (Create Party) and invite
+/// (Party Invitation).
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum DialogKind {
+    Setup,
+    Create,
+    Invite,
+}
+
+impl DialogKind {
+    fn size(self) -> [f32; 2] {
+        match self {
+            Self::Setup => [130.0, 245.0],
+            Self::Create => [130.0, 220.0],
+            Self::Invite => [150.0, 100.0],
+        }
+    }
+
+    fn title(self) -> usize {
+        match self {
+            Self::Setup => 291,
+            Self::Create => 2054,
+            Self::Invite => 2056,
+        }
+    }
+
+    /// Its groups of choices: the setting (0 EXP, 1 pickup, 2 distribution), the label and its y, and each choice's
+    /// words, y and whether it is the "on" one. Top to bottom: the "off" choice, then the "on".
+    fn groups(self) -> &'static [ChoiceGroup] {
+        const SETUP: [ChoiceGroup; 3] = [
+            (0, 292, 22.0, [(287, 42.0, false), (288, 62.0, true)]),
+            (1, 293, 87.0, [(289, 107.0, false), (290, 127.0, true)]),
+            (2, 738, 152.0, [(739, 172.0, false), (740, 192.0, true)]),
+        ];
+        const CREATE: [ChoiceGroup; 2] = [(1, 293, 67.0, [(289, 87.0, false), (290, 107.0, true)]), (2, 738, 132.0, [(739, 152.0, false), (740, 172.0, true)])];
+        match self {
+            Self::Setup => &SETUP,
+            Self::Create => &CREATE,
+            Self::Invite => &[],
+        }
+    }
+
+    /// The edit box's place and width, and the label over it.
+    fn edit(self) -> Option<EditBox> {
+        match self {
+            Self::Setup => None,
+            Self::Create => Some(([20.0, 38.0], 100.0, Some((2057, [10.0, 22.0])))),
+            // ponytail: no label is given for the invite window's box.
+            Self::Invite => Some(([20.0, 42.0], 120.0, None)),
+        }
+    }
+}
+
+const RADIO_HIT: [f32; 2] = [160.0, 12.0];
+const EDIT_HEIGHT: f32 = 20.0;
+const EDIT_BACKGROUND: [u8; 4] = [0xE6, 0xE6, 0xE6, 0xFF];
+/// A name: at most 23 bytes.
+const NAME_BYTES: usize = 23;
+const DIALOG_BUTTON: [f32; 2] = [42.0, 20.0];
+/// The red lines for an empty name: the party's, the character's.
+pub const PARTY_NAME_EMPTY: usize = 2073;
+pub const CHARACTER_NAME_EMPTY: usize = 2072;
+/// "<name> has received an invitation to join your party." and "Only the Party Leader can change this setting."
+pub const INVITATION_SENT: usize = 2059;
+pub const LEADER_ONLY: usize = 294;
+
+/// Where a docked window opens: right of the party window when it's open (its corner and width), else at
+/// ((W − 640)/2 + 200, 120·H/480).
+pub fn docked_at(party: Option<([f32; 2], f32)>, screen: [f32; 2]) -> [f32; 2] {
+    match party {
+        Some((at, width)) => [at[0] + width + 2.0, at[1]],
+        None => [(screen[0] - 640.0) / 2.0 + 200.0, 120.0 * screen[1] / 480.0],
+    }
+}
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub enum SetupHit {
+pub enum DialogHit {
     Title(TitleHit),
-    /// A row (0 EXP, 1 pickup, 2 distribution) and which choice: true the first (on).
+    /// A setting (0 EXP, 1 pickup, 2 distribution) and which choice: true the "on" one.
     Choice(usize, bool),
+    Edit,
     Ok,
     Cancel,
     Window,
 }
 
-/// What a click in the setup window comes to.
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum SetupAction {
+/// What a click in a docked window comes to.
+#[derive(Debug, PartialEq, Clone)]
+pub enum DialogAction {
     Close,
-    /// Send these settings, and close.
+    /// Setup: send these settings, and close.
     Send(Settings),
+    /// A member clicked a setting: "Only the Party Leader can change this setting." (294) in the chat.
+    LeaderOnly,
+    /// OK with an empty name: this red line, and the window stays.
+    EmptyName(usize),
+    /// Create: CZ_MAKE_GROUP2 with the name and the item choices (pickup shared, items shared), and close.
+    Make(String, bool, bool),
+    /// Invite: CZ_PARTY_JOIN_REQ with the name, and close.
+    Invite(String),
 }
 
-/// The party setup window (the Setup button): the three settings, changeable by the leader only.
-pub struct Setup {
+/// A window docked right of the party window.
+pub struct PartyDialog {
+    pub kind: DialogKind,
     pub frame: Frame,
     pub settings: Settings,
     start: Settings,
     leader: bool,
+    /// The name typed, and whether the edit box has the caret.
+    pub name: String,
+    pub typing: bool,
 }
 
-impl Setup {
-    pub fn new(party: &Party, leader: bool, beside: [f32; 2]) -> Self {
-        let mut frame = Frame::new([(beside[0] - SETUP_WIDTH - 4.0).max(0.0), beside[1]], SETUP_WIDTH);
+impl PartyDialog {
+    /// The setup window on the party's settings; create with both item choices off; invite with an empty name. EXP 2
+    /// shows as Each Take.
+    pub fn new(kind: DialogKind, party: Option<&Party>, leader: bool, at: [f32; 2]) -> Self {
+        let mut frame = Frame::new(at, kind.size()[0]);
         frame.open = true;
-        Self { frame, settings: party.settings(), start: party.settings(), leader }
+        let settings = if kind == DialogKind::Setup { party.map(Party::settings).unwrap_or_default() } else { Settings::default() };
+        Self { kind, frame, settings, start: settings, leader, name: String::new(), typing: kind != DialogKind::Setup }
     }
 
-    fn choice_at(row: usize, first: bool) -> [f32; 2] {
-        [CHOICES[usize::from(!first)], SETUP_TOP + row as f32 * SETUP_ROW + 18.0]
+    fn ok_at(&self) -> [f32; 2] {
+        let [w, h] = self.kind.size();
+        [w - 92.0, h - 24.0]
     }
 
-    fn ok_at() -> [f32; 2] {
-        [SETUP_WIDTH - 2.0 * SETUP_BUTTON[0] - 14.0, SETUP_HEIGHT - SETUP_BUTTON[1] - 4.0]
+    fn cancel_at(&self) -> [f32; 2] {
+        let [w, h] = self.kind.size();
+        [w - 46.0, h - 24.0]
     }
 
-    fn cancel_at() -> [f32; 2] {
-        [SETUP_WIDTH - SETUP_BUTTON[0] - 8.0, SETUP_HEIGHT - SETUP_BUTTON[1] - 4.0]
-    }
-
-    pub fn hit(&self, cursor: [f32; 2]) -> Option<SetupHit> {
-        let local = self.frame.local(cursor, SETUP_HEIGHT)?;
+    pub fn hit(&self, cursor: [f32; 2]) -> Option<DialogHit> {
+        let local = self.frame.local(cursor, self.kind.size()[1])?;
         if let Some(hit) = self.frame.title_hit(local) {
-            return Some(SetupHit::Title(hit));
+            return Some(DialogHit::Title(hit));
         }
-        for row in 0..3 {
-            for first in [true, false] {
-                if contains(Self::choice_at(row, first), [90.0, 16.0], local) {
-                    return Some(SetupHit::Choice(row, first));
+        for &(setting, _, _, choices) in self.kind.groups() {
+            for (_, y, on) in choices {
+                if contains([20.0, y], RADIO_HIT, local) {
+                    return Some(DialogHit::Choice(setting, on));
                 }
             }
         }
-        if contains(Self::ok_at(), SETUP_BUTTON, local) {
-            return Some(SetupHit::Ok);
+        if let Some((at, width, _)) = self.kind.edit()
+            && contains(at, [width, EDIT_HEIGHT], local)
+        {
+            return Some(DialogHit::Edit);
         }
-        if contains(Self::cancel_at(), SETUP_BUTTON, local) {
-            return Some(SetupHit::Cancel);
+        if contains(self.ok_at(), DIALOG_BUTTON, local) {
+            return Some(DialogHit::Ok);
         }
-        Some(SetupHit::Window)
+        if contains(self.cancel_at(), DIALOG_BUTTON, local) {
+            return Some(DialogHit::Cancel);
+        }
+        Some(DialogHit::Window)
     }
 
-    /// A choice moves only for the leader; OK sends what changed.
-    pub fn click(&mut self, hit: SetupHit) -> Option<SetupAction> {
+    /// A choice moves for the leader (and when creating); a member's click is refused in the chat. OK sends.
+    pub fn click(&mut self, hit: DialogHit) -> Option<DialogAction> {
         match hit {
-            SetupHit::Choice(row, first) if self.leader => self.settings.set(row, first),
-            SetupHit::Title(TitleHit::Close) | SetupHit::Cancel => return Some(SetupAction::Close),
-            SetupHit::Ok if self.leader && self.settings != self.start => return Some(SetupAction::Send(self.settings)),
-            SetupHit::Ok => return Some(SetupAction::Close),
+            DialogHit::Choice(..) if self.kind == DialogKind::Setup && !self.leader => return Some(DialogAction::LeaderOnly),
+            DialogHit::Choice(setting, on) => self.settings.set(setting, on),
+            DialogHit::Edit => self.typing = true,
+            DialogHit::Title(TitleHit::Close) | DialogHit::Cancel => return Some(DialogAction::Close),
+            DialogHit::Ok => return Some(self.ok()),
             _ => {}
         }
         None
     }
 
-    /// The choices and buttons on screen (for the test driver).
+    /// OK (or Enter in the edit box).
+    pub fn ok(&self) -> DialogAction {
+        let name = self.name.trim();
+        match self.kind {
+            DialogKind::Setup if self.leader && self.settings != self.start => DialogAction::Send(self.settings),
+            DialogKind::Setup => DialogAction::Close,
+            DialogKind::Create if name.is_empty() => DialogAction::EmptyName(PARTY_NAME_EMPTY),
+            DialogKind::Create => DialogAction::Make(name.to_owned(), self.settings.pickup, self.settings.share),
+            DialogKind::Invite if name.is_empty() => DialogAction::EmptyName(CHARACTER_NAME_EMPTY),
+            DialogKind::Invite => DialogAction::Invite(name.to_owned()),
+        }
+    }
+
+    /// Typing into the edit box: up to 23 bytes.
+    pub fn type_text(&mut self, text: &str) {
+        for character in text.chars().filter(|character| !character.is_control()) {
+            if self.name.len() + character.len_utf8() > NAME_BYTES {
+                break;
+            }
+            self.name.push(character);
+        }
+    }
+
+    /// The choices, the edit box and the buttons on screen (for the test driver).
     pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
         let place = |at: [f32; 2], size: [f32; 2]| {
             let [x, y] = self.frame.at(at);
             [x, y, size[0], size[1]]
         };
-        let mut boxes: Vec<_> = (0..3)
-            .flat_map(|row| [true, false].map(|first| (SETUP_NAMES[row][usize::from(!first)], place(Self::choice_at(row, first), [90.0, 16.0]))))
+        let mut boxes: Vec<_> = self
+            .kind
+            .groups()
+            .iter()
+            .flat_map(|&(setting, _, _, choices)| choices.map(|(_, y, on)| (SETUP_NAMES[setting][usize::from(!on)], place([20.0, y], RADIO_HIT))))
             .collect();
-        boxes.push(("ok", place(Self::ok_at(), SETUP_BUTTON)));
-        boxes.push(("cancel", place(Self::cancel_at(), SETUP_BUTTON)));
+        if let Some((at, width, _)) = self.kind.edit() {
+            boxes.push(("party_name_box", place(at, [width, EDIT_HEIGHT])));
+        }
+        boxes.push(("ok", place(self.ok_at(), DIALOG_BUTTON)));
+        boxes.push(("cancel", place(self.cancel_at(), DIALOG_BUTTON)));
         boxes
     }
 
@@ -569,33 +689,44 @@ impl Setup {
         chrome: &'a Chrome,
         assets: &'a Assets,
         (ok, cancel): (&'a [Texture; 3], &'a [Texture; 3]),
+        font: &Font,
         messages: &[String],
+        caret: bool,
         pointer: ([f32; 2], bool),
     ) {
         let message = |id: usize| messages.get(id).map_or("", String::as_str).trim_end();
         let at = |local: [f32; 2]| self.frame.at(local);
-        self.frame.draw_title(layer, chrome, message(SETUP_TITLE), pointer.0);
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [SETUP_WIDTH, SETUP_HEIGHT - TITLE_HEIGHT]));
-        for x in [0.0, SETUP_WIDTH - 1.0] {
-            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, SETUP_HEIGHT - TITLE_HEIGHT]));
+        let [width, height] = self.kind.size();
+        self.frame.draw_title(layer, chrome, message(self.kind.title()), pointer.0);
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [width, height - TITLE_HEIGHT]));
+        for x in [0.0, width - 1.0] {
+            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, height - TITLE_HEIGHT]));
         }
-        layer.sprites.push((&chrome.border, at([0.0, SETUP_HEIGHT - 1.0]), [SETUP_WIDTH, 1.0]));
-        for (row, &(label, on, off)) in SETUP_ROWS.iter().enumerate() {
-            layer.texts.push((message(label).to_owned(), at([10.0, SETUP_TOP + row as f32 * SETUP_ROW]), [0, 0, 0]));
-            for (first, words) in [(true, on), (false, off)] {
-                let corner = Self::choice_at(row, first);
-                let radio = &assets.radio[usize::from(self.settings.get(row) == first)];
-                layer.sprites.push((radio, at([corner[0], corner[1] + 2.0]), radio.size));
-                layer.texts.push((message(words).to_owned(), at([corner[0] + radio.size[0] + 4.0, corner[1]]), [0, 0, 0]));
+        layer.sprites.push((&chrome.border, at([0.0, height - 1.0]), [width, 1.0]));
+        for &(setting, label, y, choices) in self.kind.groups() {
+            layer.texts.push((message(label).to_owned(), at([10.0, y]), [0, 0, 0]));
+            for (words, y, on) in choices {
+                let radio = &assets.radio[usize::from(self.settings.get(setting) == on)];
+                layer.sprites.push((radio, at([20.0, y]), radio.size));
+                layer.texts.push((message(words).to_owned(), at([20.0 + radio.size[0] + 4.0, y - 1.0]), [0, 0, 0]));
             }
         }
-        if !self.leader {
-            layer.texts.push((message(LEADER_ONLY).to_owned(), at([10.0, SETUP_NOTE]), [0xC0, 0x30, 0x30]));
+        if let Some((box_at, box_width, label)) = self.kind.edit() {
+            if let Some((label, label_at)) = label {
+                layer.texts.push((message(label).to_owned(), at(label_at), [0, 0, 0]));
+            }
+            layer.sprites.push((&assets.edit, at(box_at), [box_width, EDIT_HEIGHT]));
+            let shown = window::fit(font, &self.name, box_width - 8.0);
+            let caret_x = font.width(&shown);
+            layer.texts.push((shown, at([box_at[0] + 4.0, box_at[1] + 3.0]), [0, 0, 0]));
+            if self.typing && caret {
+                layer.sprites.push((&chrome.border, at([box_at[0] + 4.0 + caret_x, box_at[1] + 3.0]), [1.0, 14.0]));
+            }
         }
         let hit = self.hit(pointer.0);
-        let look = |target: SetupHit| usize::from(hit == Some(target)) + usize::from(hit == Some(target) && pointer.1);
-        layer.sprites.push((&ok[look(SetupHit::Ok)], at(Self::ok_at()), SETUP_BUTTON));
-        layer.sprites.push((&cancel[look(SetupHit::Cancel)], at(Self::cancel_at()), SETUP_BUTTON));
+        let look = |target: DialogHit| usize::from(hit == Some(target)) + usize::from(hit == Some(target) && pointer.1);
+        layer.sprites.push((&ok[look(DialogHit::Ok)], at(self.ok_at()), DIALOG_BUTTON));
+        layer.sprites.push((&cancel[look(DialogHit::Cancel)], at(self.cancel_at()), DIALOG_BUTTON));
     }
 }
 
@@ -1399,35 +1530,72 @@ mod tests {
         let mut party = Party { name: "P".into(), pickup_shared: true, ..Default::default() };
         party.upsert(member(1, true));
         party.upsert(member(2, false));
-        let mut setup = Setup::new(&party, true, [770.0, 180.0]);
-        let at = |setup: &Setup, name: &str| {
-            let [x, y, w, h] = setup.button_boxes().into_iter().find(|(found, _)| *found == name).unwrap().1;
-            [x + w / 2.0, y + h / 2.0]
+        let mut setup = PartyDialog::new(DialogKind::Setup, Some(&party), true, [276.0, 200.0]);
+        let at = |dialog: &PartyDialog, name: &str| {
+            let [x, y, _, h] = dialog.button_boxes().into_iter().find(|(found, _)| *found == name).unwrap().1;
+            // The radio's box runs past the window's edge: aim inside it.
+            [x + 10.0, y + h / 2.0]
         };
-        // Each choice, OK and Cancel by their boxes.
+        // Each choice, stacked, OK and Cancel by their boxes.
         for (name, hit) in [
-            ("exp_even", SetupHit::Choice(0, true)),
-            ("exp_each", SetupHit::Choice(0, false)),
-            ("pickup_party", SetupHit::Choice(1, true)),
-            ("pickup_each", SetupHit::Choice(1, false)),
-            ("share_shared", SetupHit::Choice(2, true)),
-            ("share_individual", SetupHit::Choice(2, false)),
-            ("ok", SetupHit::Ok),
-            ("cancel", SetupHit::Cancel),
+            ("exp_each", DialogHit::Choice(0, false)),
+            ("exp_even", DialogHit::Choice(0, true)),
+            ("pickup_each", DialogHit::Choice(1, false)),
+            ("pickup_party", DialogHit::Choice(1, true)),
+            ("share_individual", DialogHit::Choice(2, false)),
+            ("share_shared", DialogHit::Choice(2, true)),
+            ("ok", DialogHit::Ok),
+            ("cancel", DialogHit::Cancel),
         ] {
             assert_eq!(setup.hit(at(&setup, name)), Some(hit), "{name}");
         }
+        let corner = |dialog: &PartyDialog, name: &str| {
+            let [x, y, ..] = dialog.button_boxes().into_iter().find(|(found, _)| *found == name).unwrap().1;
+            [x - 276.0, y - 200.0]
+        };
+        assert_eq!(corner(&setup, "exp_each"), [20.0, 42.0]);
+        assert_eq!(corner(&setup, "share_shared"), [20.0, 192.0]);
+        assert_eq!((corner(&setup, "ok"), corner(&setup, "cancel")), ([38.0, 221.0], [84.0, 221.0]));
         // Nothing changed: OK only closes.
-        assert_eq!(setup.click(SetupHit::Ok), Some(SetupAction::Close));
-        assert_eq!(setup.click(SetupHit::Choice(2, true)), None);
-        assert_eq!(setup.click(SetupHit::Ok), Some(SetupAction::Send(Settings { exp_even: false, pickup: true, share: true })));
-        assert_eq!(setup.click(SetupHit::Cancel), Some(SetupAction::Close));
-
-        // A member can't move them.
-        let mut member_setup = Setup::new(&party, false, [770.0, 180.0]);
-        member_setup.click(SetupHit::Choice(0, true));
+        assert_eq!(setup.click(DialogHit::Ok), Some(DialogAction::Close));
+        assert_eq!(setup.click(DialogHit::Choice(2, true)), None);
+        assert_eq!(setup.click(DialogHit::Ok), Some(DialogAction::Send(Settings { exp_even: false, pickup: true, share: true })));
+        assert_eq!(setup.click(DialogHit::Cancel), Some(DialogAction::Close));
+        // A member's click is refused in the chat, and nothing moves.
+        let mut member_setup = PartyDialog::new(DialogKind::Setup, Some(&party), false, [0.0, 0.0]);
+        assert_eq!(member_setup.click(DialogHit::Choice(0, true)), Some(DialogAction::LeaderOnly));
         assert_eq!(member_setup.settings, party.settings());
-        assert_eq!(member_setup.click(SetupHit::Ok), Some(SetupAction::Close));
+        assert_eq!(member_setup.click(DialogHit::Ok), Some(DialogAction::Close));
+    }
+
+    #[test]
+    fn creates_and_invites() {
+        let mut create = PartyDialog::new(DialogKind::Create, None, false, [0.0, 0.0]);
+        let at = |dialog: &PartyDialog, name: &str| {
+            let [x, y, _, h] = dialog.button_boxes().into_iter().find(|(found, _)| *found == name).unwrap().1;
+            [x + 10.0, y + h / 2.0]
+        };
+        assert_eq!(create.hit(at(&create, "party_name_box")), Some(DialogHit::Edit));
+        assert_eq!(create.hit(at(&create, "pickup_party")), Some(DialogHit::Choice(1, true)));
+        assert_eq!(create.hit(at(&create, "share_individual")), Some(DialogHit::Choice(2, false)));
+        assert!(create.button_boxes().iter().all(|(name, _)| !name.starts_with("exp")));
+        assert_eq!(create.click(DialogHit::Ok), Some(DialogAction::EmptyName(2073)));
+        create.type_text("Crabs and a name far too long");
+        assert_eq!(create.name, "Crabs and a name far to");
+        create.name = "Crabs".into();
+        assert_eq!(create.click(DialogHit::Ok), Some(DialogAction::Make("Crabs".into(), false, false)));
+        create.click(DialogHit::Choice(1, true));
+        create.click(DialogHit::Choice(2, true));
+        assert_eq!(create.click(DialogHit::Ok), Some(DialogAction::Make("Crabs".into(), true, true)));
+        let mut invite = PartyDialog::new(DialogKind::Invite, None, true, [0.0, 0.0]);
+        assert_eq!(invite.hit(at(&invite, "party_name_box")), Some(DialogHit::Edit));
+        assert_eq!(invite.hit(at(&invite, "ok")), Some(DialogHit::Ok));
+        assert_eq!(invite.click(DialogHit::Ok), Some(DialogAction::EmptyName(2072)));
+        invite.type_text("LaneA2");
+        assert_eq!(invite.click(DialogHit::Ok), Some(DialogAction::Invite("LaneA2".into())));
+        // Docked right of the party window, or at the game's place without it.
+        assert_eq!(docked_at(Some(([300.0, 200.0], 273.0)), [1024.0, 768.0]), [575.0, 200.0]);
+        assert_eq!(docked_at(None, [1024.0, 768.0]), [392.0, 192.0]);
     }
 
     #[test]

@@ -1127,7 +1127,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.catalog.iter().flat_map(|catalog| catalog.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.ranking.iter().flat_map(|board| board.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.dressroom.iter().flat_map(|room| room.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
-        .chain(game.party_setup.iter().flat_map(|setup| setup.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.party_dialog.iter().flat_map(|dialog| dialog.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.talks.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.friend_setup.iter().flat_map(|setup| setup.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.block_list.iter().flat_map(|list| list.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))

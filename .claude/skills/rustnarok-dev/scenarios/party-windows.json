@@ -1,0 +1,63 @@
+{
+  "about": "The party's docked windows (issue #484): Create Party (130×220) right of the party window refuses an empty name, then makes a party with Party Share and Shared picked, which 0x07d8 confirms; Party Invitation (150×100) refuses an empty name, then invites the second and says so; Party Setup (130×245, six stacked choices) docks right of the party window and goes half see-through while the party window is dragged; a member's click on a choice is refused in the chat; the leader's change goes out on OK.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0,
+    "env": {
+      "RUSTNAROK_CLIENT_PARTY": "accept"
+    }
+  },
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"type": "/leave"}, {"key": "Enter"}, {"as": "second", "type": "/leave"}, {"as": "second", "key": "Enter"}, {"wait": 1500},
+    {"say": "@recall {second}"}, {"as": "second", "settle": 2000},
+    {"key": "Alt+Z"}, {"wait": 400},
+
+    {"click_on": {"button": "create"}}, {"wait": 300},
+    {"expect": {"windows_open": ["PartyCreate"]}},
+    {"click_on": {"button": "ok"}}, {"wait": 300},
+    {"expect": {"chat": "You must enter the name of the party.", "windows_open": ["PartyCreate"]}},
+    {"click_on": {"button": "party_name_box"}},
+    {"type": "QADocked"},
+    {"click_on": {"button": "pickup_party"}},
+    {"click_on": {"button": "share_shared"}},
+    {"move": [1000, 740]},
+    {"shot": "create-window", "crop": [300, 200, 420, 330]},
+    {"click_on": {"button": "ok"}},
+    {"wait_for": {"event": "PartyMade", "ms": 5000}}, {"wait": 1000},
+    {"expect": {"windows_closed": ["PartyCreate"], "state": {"party.name": "QADocked", "party.pickup_shared": true, "party.item_shared": true}}},
+
+    {"click_on": {"button": "invite"}}, {"wait": 300},
+    {"expect": {"windows_open": ["PartyInviteName"]}},
+    {"click_on": {"button": "ok"}}, {"wait": 300},
+    {"expect": {"chat": "You must enter a character name.", "windows_open": ["PartyInviteName"]}},
+    {"type": "{second}"},
+    {"move": [1000, 740]},
+    {"shot": "invite-window", "crop": [300, 200, 440, 330]},
+    {"click_on": {"button": "ok"}},
+    {"wait_for": {"packet": "0x02c5", "ms": 5000}}, {"wait": 500},
+    {"expect": {"chat": "has received an invitation to join your party.", "windows_closed": ["PartyInviteName"], "state": {"party.members": ["{first}", "{second}"]}}},
+
+    {"click_on": {"button": "setup"}}, {"wait": 300},
+    {"expect": {"windows_open": ["PartySetup"]}},
+    {"move": [1000, 740]},
+    {"shot": "setup-window", "crop": [300, 200, 420, 330]},
+    {"drag": [[400, 207], [360, 167]], "held": true}, {"wait": 300},
+    {"shot": "setup-dragged", "crop": [250, 150, 470, 340]},
+    {"cmd": {"cmd": "release"}}, {"wait": 300},
+    {"click_on": {"button": "pickup_each"}},
+    {"click_on": {"button": "ok"}},
+    {"wait_for": {"packet": "0x07d8", "ms": 5000}}, {"wait": 500},
+    {"expect": {"windows_closed": ["PartySetup"], "state": {"party.pickup_shared": false}}},
+
+    {"as": "second", "expect": {"windows_open": ["Party"]}},
+    {"as": "second", "click_on": {"button": "setup"}}, {"as": "second", "wait": 300},
+    {"as": "second", "click_on": {"button": "pickup_party"}}, {"as": "second", "wait": 300},
+    {"as": "second", "expect": {"chat": "Only the Party Leader can change this setting.", "windows_open": ["PartySetup"]}},
+    {"as": "second", "click_on": {"button": "cancel"}},
+
+    {"as": "second", "type": "/leave"}, {"as": "second", "key": "Enter"}, {"type": "/leave"}, {"key": "Enter"}, {"wait": 800}
+  ]
+}

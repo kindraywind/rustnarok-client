@@ -603,6 +603,8 @@ const PARTY_ALLOWING: usize = 1326;
 const PARTY_NEW_LEADER: usize = 1552;
 const PARTY_SETUP_LINE: [u8; 3] = [0xFF, 0xFF, 0x00];
 const PARTY_NOTICE: [u8; 3] = [0xFF, 0xFF, 0x64];
+/// "Only the Party Leader can change this setting." in the chat.
+const PARTY_LEADER_ONLY_LINE: [u8; 3] = [0x64, 0xFF, 0xFF];
 /// "Can't re-assign party leader", for an offline member.
 const LEADER_OFFLINE: usize = 1534;
 const PARTY_LEAVE_ASKS: usize = 357;
@@ -616,10 +618,8 @@ const DROP_AMMO_WORN: usize = 657;
 /// Nothing is dropped on the ground this soon after asking to wear something.
 const WEAR_PAUSE: Duration = Duration::from_secs(2);
 const LEADER_QUESTION: usize = 1533;
-const PARTY_CREATE: usize = 2054;
 /// What a locked chat room asks ("Please enter Password.").
 const ROOM_PASSWORD: usize = 15;
-const PARTY_INVITE: usize = 2056;
 /// An item without a picture of its own shows the apple's.
 const FALLBACK_ITEM_SPRITE: &str = "사과";
 
@@ -1408,7 +1408,7 @@ struct Game {
     /// Whether the player refuses party invitations (None until the server says).
     refusing_party: Option<bool>,
     /// The party setup window, and the member whose leadership is being asked about.
-    party_setup: Option<party::Setup>,
+    party_dialog: Option<party::PartyDialog>,
     leader_asked: Option<u32>,
     /// A party question up: leaving, disbanding, expelling a member, or "only the leader can invite".
     party_asked: Option<PartyQuestion>,
@@ -2014,10 +2014,6 @@ enum Asked {
     /// An inventory item into the cart, and a cart item out.
     ToCart(u16),
     FromCart(u16),
-    /// The new party's name.
-    PartyName,
-    /// Whom to invite into the party.
-    Invite,
     /// The password of a chat room, by ID.
     RoomPassword(u32),
     /// An inventory item, into the mail being written.
@@ -2947,6 +2943,42 @@ impl Game {
         }
     }
 
+    /// What a docked party window's click or Enter came to.
+    fn party_dialog_action(&mut self, action: party::DialogAction, messages: &[String]) {
+        let message = |id: usize| messages.get(id).cloned().unwrap_or_default();
+        match action {
+            party::DialogAction::Close => self.party_dialog = None,
+            party::DialogAction::Send(settings) => {
+                self.party_dialog = None;
+                let _ = self.session.party_options(settings.exp_even, settings.pickup, settings.share);
+            }
+            party::DialogAction::LeaderOnly => self.chat_line(message(party::LEADER_ONLY), PARTY_LEADER_ONLY_LINE),
+            party::DialogAction::EmptyName(line) => self.chat_line(message(line), CHAT_ERROR),
+            party::DialogAction::Make(name, pickup, share) => {
+                self.party_dialog = None;
+                let _ = self.session.make_party(&name, pickup, share);
+            }
+            party::DialogAction::Invite(name) => {
+                self.party_dialog = None;
+                if self.session.invite_to_party(&name).is_ok() {
+                    self.chat_line(rustnarok_client::messages::fill(&message(party::INVITATION_SENT), &[&name]), CHAT_ITEM);
+                }
+            }
+        }
+    }
+
+    /// Opens a docked party window (closing any other), right of the party window, or closes it when it's the one
+    /// open.
+    fn toggle_party_dialog(&mut self, kind: party::DialogKind) {
+        if self.party_dialog.as_ref().is_some_and(|dialog| dialog.kind == kind) {
+            self.party_dialog = None;
+            return;
+        }
+        let leader = self.party.as_ref().is_some_and(|party| party.leader() == Some(self.account_id));
+        let at = party::docked_at(self.party_window.frame.open.then_some((self.party_window.frame.position, self.party_window.size()[0])), screen());
+        self.party_dialog = Some(party::PartyDialog::new(kind, self.party.as_ref(), leader, at));
+    }
+
     /// A party question answered (OK: `yes`).
     fn answer_party(&mut self, yes: bool, messages: &[String]) {
         let Some(asked) = self.party_asked.take() else { return };
@@ -2974,8 +3006,8 @@ impl Game {
     /// CZ_REQ_LEAVE_GROUP; the invite window closes.
     fn leave_party(&mut self) {
         let _ = self.session.leave_party();
-        if self.amount.as_ref().is_some_and(|amount| matches!(amount.what, Asked::Invite)) {
-            self.amount = None;
+        if self.party_dialog.as_ref().is_some_and(|dialog| dialog.kind == party::DialogKind::Invite) {
+            self.party_dialog = None;
         }
     }
 
@@ -3739,6 +3771,7 @@ impl Game {
             || self.bank.as_ref().is_some_and(|bank| bank.typing)
             || self.trade.as_ref().is_some_and(|trade| trade.typing)
             || self.booking.as_ref().is_some_and(|window| window.focus.is_some())
+            || self.party_dialog.as_ref().is_some_and(|dialog| dialog.typing)
             || self.storage.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
             || self.talks.typing()
@@ -3791,7 +3824,7 @@ impl Game {
         self.ranking = None;
         self.dressroom = None;
         self.dress_figure = None;
-        self.party_setup = None;
+        self.party_dialog = None;
         self.talks = whisper::Talks::default();
         self.friend_setup = None;
         self.block_list = None;
@@ -3855,7 +3888,7 @@ impl Game {
             || self.navi_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
             || self.booking.as_ref().and_then(|window| window.hit(cursor)).is_some()
             || self.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some()
-            || self.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some()
+            || self.party_dialog.as_ref().and_then(|dialog| dialog.hit(cursor)).is_some()
             || self.talks.hit(cursor).is_some()
             || self.friend_setup.as_ref().is_some_and(|setup| setup.hit(cursor).is_some())
             || self.block_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
@@ -3906,8 +3939,6 @@ impl Game {
             Asked::Take(index) => self.storage.get(index).map(|item| item.amount),
             Asked::Shop(_)
             | Asked::ShopOut(_)
-            | Asked::PartyName
-            | Asked::Invite
             | Asked::RoomPassword(_)
             | Asked::VendPrice(_)
             | Asked::BuyingPrice(..)
@@ -3930,8 +3961,6 @@ impl Game {
         let Some(amount) = self.amount.take().filter(|_| ok) else { return };
         let name = amount.typed.trim();
         let _ = match amount.what {
-            Asked::PartyName if !name.is_empty() => self.session.make_party(name, false, false),
-            Asked::Invite if !name.is_empty() => self.session.invite_to_party(name),
             Asked::RoomPassword(id) => self.session.enter_chat_room(id, name),
             // A name for the pet asks once more: it can be renamed only once.
             Asked::PetName if !name.is_empty() => {
@@ -3950,7 +3979,7 @@ impl Game {
                 self.homunculus_rename = Some(name.to_owned());
                 Ok(())
             }
-            Asked::PartyName | Asked::Invite | Asked::PetName | Asked::HomunculusName => Ok(()),
+            Asked::PetName | Asked::HomunculusName => Ok(()),
             // A position's title or tax: the request carries its other values as they are.
             Asked::PositionTitle(id) if !name.is_empty() => match &self.guild {
                 Some(guild) => self.session.change_position(&guild.position(id), name),
@@ -4040,9 +4069,7 @@ impl Game {
                 have if amount > have => Ok(()),
                 _ => self.session.drop_item(index, amount as u16),
             },
-            Asked::PartyName
-            | Asked::Invite
-            | Asked::RoomPassword(_)
+            Asked::RoomPassword(_)
             | Asked::PetName
             | Asked::HomunculusName
             | Asked::PositionTitle(_)
@@ -4384,7 +4411,10 @@ impl Game {
         push(Enchant, self.enchant.is_some());
         push(Stylist, self.stylist.is_some());
         push(Materials, self.materials.is_some());
-        push(PartySetup, self.party_setup.is_some());
+        let docked = self.party_dialog.as_ref().map(|dialog| dialog.kind);
+        push(PartySetup, docked == Some(party::DialogKind::Setup));
+        push(PartyCreate, docked == Some(party::DialogKind::Create));
+        push(PartyInviteName, docked == Some(party::DialogKind::Invite));
         push(Whisper, !self.talks.is_empty());
         push(FriendSetup, self.friend_setup.is_some());
         push(BlockList, self.block_list.is_some());
@@ -4719,7 +4749,7 @@ impl Game {
                 self.stylist = None;
             }
             Materials => self.materials = None,
-            PartySetup => self.party_setup = None,
+            PartySetup | PartyCreate | PartyInviteName => self.party_dialog = None,
             DressRoom => {
                 self.dressroom = None;
                 self.dress_figure = None;
@@ -6831,6 +6861,7 @@ impl App {
                 }
                 None if game.storage.typing => game.storage.type_text(text),
                 None if game.booking.as_ref().is_some_and(|window| window.focus.is_some()) => game.booking.as_mut().unwrap().type_text(text),
+                None if game.party_dialog.as_ref().is_some_and(|dialog| dialog.typing) => game.party_dialog.as_mut().unwrap().type_text(text),
                 None if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
                     let window = game.navi_window.as_mut().unwrap();
                     window.text.push_str(text);
@@ -7722,16 +7753,14 @@ impl App {
                     }
                 }
             }
-            // The party setup window: choices, OK and Cancel.
-            Scene::Game(game) if game.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some() => {
-                let setup = game.party_setup.as_mut().unwrap();
-                match setup.hit(cursor).and_then(|hit| setup.click(hit)) {
-                    Some(party::SetupAction::Send(settings)) => {
-                        game.party_setup = None;
-                        let _ = game.session.party_options(settings.exp_even, settings.pickup, settings.share);
-                    }
-                    Some(party::SetupAction::Close) => game.party_setup = None,
-                    None => {}
+            // The party's docked windows (setup, create, invite): choices, the edit box, OK and Cancel.
+            Scene::Game(game) if game.party_dialog.as_ref().and_then(|dialog| dialog.hit(cursor)).is_some() => {
+                let dialog = game.party_dialog.as_mut().unwrap();
+                let hit = dialog.hit(cursor);
+                dialog.typing = hit == Some(party::DialogHit::Edit) || (dialog.typing && hit != Some(party::DialogHit::Window));
+                let action = hit.and_then(|hit| dialog.click(hit));
+                if let Some(action) = action {
+                    game.party_dialog_action(action, &self.messages);
                 }
             }
             // Dismissing the mercenary: OK lets it go.
@@ -8355,22 +8384,19 @@ impl App {
                         Some(party::Hit::Button(party::Button::Sort)) => game.member_windows.sort(&party::Grid::new(screen())),
                         // ponytail: the agency does nothing yet.
                         Some(party::Hit::Button(party::Button::Agency)) => {}
-                        Some(party::Hit::Button(party::Button::Create)) => game.amount = Some(window::Amount::name(Asked::PartyName, PARTY_CREATE)),
+                        Some(party::Hit::Button(party::Button::Create)) => game.toggle_party_dialog(party::DialogKind::Create),
                         // The leader's press opens or closes the invite window; anyone else is told only the leader invites.
                         Some(party::Hit::Button(party::Button::Invite)) => {
                             if game.party.as_ref().and_then(party::Party::leader) != Some(game.account_id) {
                                 game.party_asked = Some(PartyQuestion::OnlyLeader);
-                            } else if game.amount.as_ref().is_some_and(|amount| matches!(amount.what, Asked::Invite)) {
-                                game.amount = None;
                             } else {
-                                game.amount = Some(window::Amount::name(Asked::Invite, PARTY_INVITE));
+                                game.toggle_party_dialog(party::DialogKind::Invite);
                             }
                         }
                         Some(party::Hit::Button(party::Button::Leave)) => game.party_asked = Some(PartyQuestion::Leave),
                         Some(party::Hit::Button(party::Button::Setup)) => {
-                            if let Some(party) = &game.party {
-                                let leader = party.leader() == Some(game.account_id);
-                                game.party_setup = Some(party::Setup::new(party, leader, game.party_window.frame.position));
+                            if game.party.is_some() {
+                                game.toggle_party_dialog(party::DialogKind::Setup);
                             }
                         }
                         Some(party::Hit::Button(party::Button::FriendSetup)) => game.open_friend_setup(),
@@ -10334,7 +10360,20 @@ impl App {
             Scene::Game(game) if game.party_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_party(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
-            Scene::Game(game) if game.party_setup.is_some() && *key == Key::Named(NamedKey::Escape) => game.party_setup = None,
+            // A docked party window's edit box: Enter is OK, Esc closes the window.
+            Scene::Game(game) if game.party_dialog.as_ref().is_some_and(|dialog| dialog.typing) => {
+                let dialog = game.party_dialog.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Enter) => {
+                        let action = dialog.ok();
+                        game.party_dialog_action(action, &self.messages);
+                    }
+                    Key::Named(NamedKey::Escape) => game.party_dialog = None,
+                    Key::Named(NamedKey::Backspace) => drop(dialog.name.pop()),
+                    _ => dialog.type_text(event.text.as_deref().unwrap_or_default()),
+                }
+            }
+            Scene::Game(game) if game.party_dialog.is_some() && *key == Key::Named(NamedKey::Escape) => game.party_dialog = None,
             Scene::Game(game) if game.ranking.is_some() && *key == Key::Named(NamedKey::Escape) => game.ranking = None,
             Scene::Game(game) if game.dressroom.is_some() && *key == Key::Named(NamedKey::Escape) => {
                 game.dressroom = None;
@@ -11143,7 +11182,7 @@ impl App {
                     first_since: None,
                     top_ten: HashSet::new(),
                     blocked: HashSet::new(),
-                    party_setup: None,
+                    party_dialog: None,
                     leader_asked: None,
                     party_asked: None,
                     row_press: None,
@@ -12996,7 +13035,7 @@ impl App {
                     3 => game.chat_line(message(1873), CHAT_ERROR),
                     _ if account == game.account_id => {
                         game.party = None;
-                        game.party_setup = None;
+                        game.party_dialog = None;
                         game.member_windows.retain(None);
                         write_small_windows(&game.me.name, "");
                         game.small_saved.clear();
@@ -14511,6 +14550,12 @@ impl App {
             for (file, volume) in game.world.ambient.due(at, now) {
                 audio.play(grf, &file, volume);
             }
+        }
+        // The party's docked window stays right of the party window.
+        if game.party_window.frame.open
+            && let Some(dialog) = &mut game.party_dialog
+        {
+            dialog.frame.position = party::docked_at(Some((game.party_window.frame.position, game.party_window.size()[0])), screen());
         }
         // The mercenary and the homunculus follow the player unless told otherwise.
         if let Some(id) = game.mercenary.as_ref().map(|hired| hired.id) {
@@ -16371,8 +16416,11 @@ impl App {
         if let Some(menu) = &game.escape {
             menu.draw(shop_layer.window(), &assets.chrome, &assets.escape, messages, pointer, game.can_resurrect());
         }
-        if let Some(setup) = &game.party_setup {
-            setup.draw(shop_layer.window(), &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), messages, pointer);
+        // The party's docked window, half see-through while the party window is dragged.
+        if let Some(dialog) = &game.party_dialog {
+            let mut docked = Layer { faded: game.party_window.frame.faded(), ..Layer::default() };
+            dialog.draw(&mut docked, &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), font, messages, caret, pointer);
+            layers.push(docked);
         }
         game.talks.draw(shop_layer.window(), &assets.chrome, font, messages, pointer);
         if let Some(setup) = &game.friend_setup {
