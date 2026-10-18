@@ -3822,7 +3822,10 @@ impl App {
                 }
             }
             // The store search: the kind, the fields, searching, paging, and a row twice to find its store.
-            Scene::Game(game) if game.catalog.as_ref().and_then(|catalog| catalog.hit(cursor)).is_some() => {
+            // A store it opened stands over it.
+            Scene::Game(game)
+                if game.catalog.as_ref().and_then(|catalog| catalog.hit(cursor)).is_some() && !game.shop.as_ref().is_some_and(|shop| shop.covers(cursor)) =>
+            {
                 let hit = game.catalog.as_ref().and_then(|catalog| catalog.hit(cursor));
                 game.click_catalog(hit.unwrap(), &self.items, &self.messages);
             }
@@ -9837,6 +9840,11 @@ impl App {
             tooltip.texts.push((text.clone(), [left + 8.0, top + 6.0], [0, 0, 0]));
             tooltip.texts.push((text, [left + 7.0, top + 5.0], [0x00, 0xFF, 0x00]));
         }
+        // The store search under the shops it opens from afar.
+        let mut catalog_layer = Layer::default();
+        if let Some(catalog) = &game.catalog {
+            catalog.draw(&mut catalog_layer, &assets.chrome, &assets.catalog, icons, items, font, messages, (pointer.0, pointer.1, caret));
+        }
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
         if let Some((list, _)) = &game.pick {
@@ -10055,9 +10063,6 @@ impl App {
         if let Some(setup) = &game.party_setup {
             setup.draw(&mut shop_layer, &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), messages, pointer);
         }
-        if let Some(catalog) = &game.catalog {
-            catalog.draw(&mut shop_layer, &assets.chrome, &assets.catalog, icons, items, font, messages, (pointer.0, pointer.1, caret));
-        }
         if let Some(board) = &game.ranking {
             board.draw(&mut shop_layer, &assets.chrome, font, messages, &game.char_names, pointer.0);
         }
@@ -10086,7 +10091,7 @@ impl App {
         if let Some(world_map) = &game.world_map {
             world_map.draw(&mut world_layer, &assets.chrome, font, &worlds.0, map_names, &map_key(&game.map), pointer.0);
         }
-        layers.extend([shop_layer, overlay, menu_layer, tooltip, world_layer]);
+        layers.extend([catalog_layer, shop_layer, overlay, menu_layer, tooltip, world_layer]);
         let composed = compose(gpu, font, layers);
         let mut sprites = flatten(&composed);
 
