@@ -1047,6 +1047,11 @@ impl SpriteSet {
     pub fn texture(&self, key: ImageKey) -> &Texture {
         &self.textures[&key]
     }
+
+    /// A texture decoded earlier, if it still is (a copy left behind a unit whose look has changed since).
+    pub fn texture_of(&self, key: ImageKey) -> Option<&Texture> {
+        self.textures.get(&key)
+    }
 }
 
 /// Which of `count` frames of the layer's action `index` plays at `timing`, at the layer's own frame delay (4 when
@@ -1756,6 +1761,34 @@ pub struct Actor {
     pub held: Option<Instant>,
     /// ChangeSize's percent, when that status is on. It multiplies the size table's factor.
     pub size_percent: Option<i32>,
+    /// The statuses on that leave copies of the unit behind it (the quickens and the like), and the copies.
+    blurs: Vec<u16>,
+    pub ghosts: Vec<Ghost>,
+    /// Cursed Circle: the body darkened.
+    pub cursed: bool,
+}
+
+/// The effect that leaves copies of a unit behind it while a status is on (the quickens, Overthrust...).
+pub const AFTERIMAGE: u32 = 166;
+/// Cursed Circle's statuses, which darken the body to this.
+pub const CURSED_CIRCLE: [u16; 2] = [416, 417];
+pub const CURSED_TINT: [u8; 3] = [64, 64, 64];
+/// A copy is left every 5 ticks, and fades by 16 of 255 a tick until under 16.
+const GHOST_EVERY: f32 = 5.0;
+const GHOST_FADE: f32 = 16.0;
+
+/// A copy of the unit left behind while it blurs: when, where its feet were, and the frame it showed.
+pub struct Ghost {
+    pub left: Instant,
+    pub feet: [f32; 3],
+    pub placed: Vec<Placed>,
+}
+
+/// How see-through a copy left `age` ago is drawn: 255 less 16 a tick, out of 255; gone (0) once under 16.
+// ponytail: the copies keep the unit's own colours; how the game tints them isn't pinned down.
+pub fn ghost_alpha(age: Duration) -> f32 {
+    let alpha = 255.0 - GHOST_FADE * (age.as_secs_f32() / TICK).floor();
+    if alpha < GHOST_FADE { 0.0 } else { alpha / 255.0 }
 }
 
 impl Actor {
@@ -1798,6 +1831,31 @@ impl Actor {
             heard: None,
             held: None,
             size_percent: None,
+            blurs: Vec::new(),
+            ghosts: Vec::new(),
+            cursed: false,
+        }
+    }
+
+    /// The colour the body is drawn in: Cursed Circle's dark, else the body and health states' (see `status_tint`).
+    pub fn body_tint(&self) -> Option<[u8; 3]> {
+        if self.cursed { Some(CURSED_TINT) } else { status_tint(self.body_state, self.health_state) }
+    }
+
+    /// A status that leaves copies behind it comes on or goes off.
+    pub fn blur(&mut self, status: u16, on: bool) {
+        self.blurs.retain(|&each| each != status);
+        if on {
+            self.blurs.push(status);
+        }
+    }
+
+    /// Leaves a copy of the frame drawn at `feet` every 5 ticks while a blurring status is on; old copies go.
+    pub fn leave_ghost(&mut self, now: Instant, feet: [f32; 3], placed: &[Placed]) {
+        self.ghosts.retain(|ghost| ghost_alpha(now.saturating_duration_since(ghost.left)) > 0.0);
+        let due = self.ghosts.last().is_none_or(|ghost| now.saturating_duration_since(ghost.left).as_secs_f32() >= GHOST_EVERY * TICK);
+        if !self.blurs.is_empty() && due && !placed.is_empty() {
+            self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec() });
         }
     }
 
@@ -2744,5 +2802,36 @@ mod tests {
         // Flagged, standing: by the unmounted body's anchor, 20 lower; in an attack, by the mounted one.
         let riding = test_player(true, Some(unmounted()));
         assert_eq!((top(&riding, 0), top(&riding, 8), top(&riding, 64), top(&riding, 88)), (-50.0, -50.0, -50.0, -70.0));
+    }
+
+    #[test]
+    fn leaves_fading_copies_while_a_status_blurs() {
+        let start = Instant::now();
+        let at = |ticks: f32| start + Duration::from_secs_f32(ticks * TICK);
+        // 255 less 16 a tick: gone once under 16, after the 15th tick.
+        assert_eq!(ghost_alpha(Duration::ZERO), 1.0);
+        assert_eq!(ghost_alpha(Duration::from_secs_f32(1.5 * TICK)), 239.0 / 255.0);
+        assert_eq!(ghost_alpha(Duration::from_secs_f32(14.5 * TICK)), 31.0 / 255.0);
+        assert_eq!(ghost_alpha(Duration::from_secs_f32(15.5 * TICK)), 0.0);
+        let mut actor = Actor::new("Knight".into(), None, [0, 0], 0, 150);
+        let placed: Vec<Placed> = vec![((0, 0, 0, [255; 4], 0), [0.0; 2], [1.0; 2], 0.0)];
+        // No blurring status: no copies.
+        actor.leave_ghost(at(0.0), [0.0; 3], &placed);
+        assert!(actor.ghosts.is_empty());
+        // Two-Hand Quicken on: a copy now, none two ticks on, another after five.
+        actor.blur(2, true);
+        actor.leave_ghost(at(0.0), [0.0; 3], &placed);
+        actor.leave_ghost(at(2.0), [1.0; 3], &placed);
+        actor.leave_ghost(at(5.0), [2.0; 3], &placed);
+        assert_eq!(actor.ghosts.iter().map(|ghost| ghost.feet[0]).collect::<Vec<_>>(), [0.0, 2.0]);
+        // Off: no more copies, and the old ones fade away.
+        actor.blur(2, false);
+        actor.leave_ghost(at(10.0), [3.0; 3], &placed);
+        assert_eq!(actor.ghosts.len(), 2);
+        actor.leave_ghost(at(21.0), [3.0; 3], &placed);
+        assert!(actor.ghosts.is_empty());
+        // Cursed Circle darkens the body over any other state.
+        actor.cursed = true;
+        assert_eq!(actor.body_tint(), Some(CURSED_TINT));
     }
 }

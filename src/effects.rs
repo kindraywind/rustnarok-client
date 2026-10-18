@@ -57,6 +57,8 @@ pub struct Table {
     skills: HashMap<(u16, String), Vec<u32>>,
     items: HashMap<u32, u32>,
     sounds: HashMap<u32, Vec<Sound>>,
+    /// What a status (by EFST id) plays again and again on its unit while it's on.
+    statuses: HashMap<u16, Vec<u32>>,
 }
 
 /// A sound an effect plays (a file under data\wav\ without .wav), `delay_ms` after it starts; `%d` in the
@@ -81,6 +83,7 @@ impl Table {
             skills: HashMap::new(),
             items: HashMap::new(),
             sounds: HashMap::new(),
+            statuses: HashMap::new(),
         };
         let parameters = |text: &str| -> HashMap<String, String> {
             text.split(';').filter_map(|pair| pair.split_once('=')).map(|(name, value)| (name.to_owned(), value.to_owned())).collect()
@@ -143,10 +146,20 @@ impl Table {
                         table.items.insert(item, id);
                     }
                 }
+                ["status", ..] => {
+                    if let (Some(status), Some(id)) = (number(1), number(2)) {
+                        table.statuses.entry(status as u16).or_default().push(id);
+                    }
+                }
                 _ => {}
             }
         }
         table
+    }
+
+    /// The effects a status (EFST id) keeps playing on its unit while it's on.
+    pub fn status(&self, status: u16) -> &[u32] {
+        self.statuses.get(&status).map_or(&[], Vec::as_slice)
     }
 
     /// The effect of a ZC_NOTIFY_EFFECT type (level ups, refining, ...).
@@ -176,19 +189,21 @@ enum Anchor {
     Unit(Option<u32>),
     At(Vector),
     Lasting(u32, Vector),
+    /// On a unit (None = the player) for as long as its status (EFST id) is on.
+    Status(Option<u32>, u16),
 }
 
 impl Anchor {
     /// Where it is now; `position_of` gives a unit's feet.
     fn place(self, position_of: &impl Fn(Option<u32>) -> Option<Vector>) -> Option<Vector> {
         match self {
-            Anchor::Unit(unit) => position_of(unit),
+            Anchor::Unit(unit) | Anchor::Status(unit, _) => position_of(unit),
             Anchor::At(at) | Anchor::Lasting(_, at) => Some(at),
         }
     }
 
     fn on(self, unit: u32) -> bool {
-        matches!(self, Anchor::Unit(Some(id)) | Anchor::Lasting(id, _) if id == unit)
+        matches!(self, Anchor::Unit(Some(id)) | Anchor::Lasting(id, _) | Anchor::Status(Some(id), _) if id == unit)
     }
 }
 
@@ -200,6 +215,9 @@ pub enum Target {
     Ground,
     /// A skill's unit on the ground (Fire Wall, a warp portal): its parts start again until it goes.
     Lasting(u32),
+    /// A unit (None = the player) under a status (EFST id): its parts follow it and start again until
+    /// `forget_status`.
+    Status(Option<u32>, u16),
 }
 
 struct Playing {
@@ -585,9 +603,10 @@ impl Effects {
         let anchor = |attached: bool| match target {
             Target::Unit(unit) if attached => Anchor::Unit(unit),
             Target::Lasting(unit) => Anchor::Lasting(unit, at),
+            Target::Status(unit, status) => Anchor::Status(unit, status),
             _ => Anchor::At(at),
         };
-        let lasting = matches!(target, Target::Lasting(_));
+        let lasting = matches!(target, Target::Lasting(_) | Target::Status(..));
         // On a ground unit everything starts again, but what says it doesn't.
         let again = |parameters: &HashMap<String, String>| lasting && parameters.get("repeat").is_none_or(|value| value != "false");
         let attached = |parameters: &HashMap<String, String>| parameters.get("attachedEntity").is_some_and(|value| value == "true");
@@ -746,6 +765,15 @@ impl Effects {
         playing.or_else(|| standing_at(&self.standing, unit))
     }
 
+    /// Stops what a status plays on its unit (None = the player).
+    pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
+        let on = |anchor: Anchor| matches!(anchor, Anchor::Status(each, kind) if each == unit && kind == status);
+        self.playing.retain(|playing| !on(playing.anchor));
+        self.floating.retain(|floating| !on(floating.anchor));
+        self.rings.retain(|ring| !on(ring.anchor));
+        self.animations.retain(|animation| !on(animation.anchor));
+    }
+
     pub fn forget(&mut self, unit: u32) {
         self.playing.retain(|playing| !playing.anchor.on(unit));
         self.floating.retain(|floating| !floating.anchor.on(unit));
@@ -872,6 +900,16 @@ fn load_model(grf: &Grf, file: &str) -> Option<Model> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn says_what_a_status_keeps_playing() {
+        let table = Table::load();
+        // The quickens' afterimage, Explosion Spirits' aura with it, Steel Body's glow; Kyrie and Provoke nothing.
+        assert_eq!((table.status(2), table.status(161)), (&[166][..], &[166][..]));
+        assert_eq!(table.status(86), [203, 166]);
+        assert!(table.status(87).contains(&254));
+        assert!(table.status(19).is_empty() && table.status(0).is_empty());
+    }
 
     #[test]
     fn finds_a_trap_by_its_model() {
