@@ -1137,6 +1137,12 @@ fn game_state(app: &App, game: &Game) -> Value {
             // The attack asked for with the mouse (null: none), kept up or only while held.
             "attack": game.attack.map(|attack| json!({"target": attack.target, "continuous": attack.continuous})),
             "no_ctrl": game.no_ctrl,
+            // The skill being aimed (null: none), and the last one sent by aiming, at a cell or a unit.
+            "aiming": game.targeting.map(|(skill, level)| json!({"skill": skill, "level": level})),
+            "skill_sent": game.skill_sent.map(|(skill, level, target)| match target {
+                crate::SkillTarget::Cell(cell) => json!({"skill": skill, "level": level, "cell": cell}),
+                crate::SkillTarget::Unit(unit) => json!({"skill": skill, "level": level, "unit": unit}),
+            }),
             // The last cell a mouse walk went to, and how many have gone out.
             "walk_goal": game.walk_goal,
             "walks": game.walks,
@@ -1432,7 +1438,7 @@ mod tests {
         assert_eq!(stats["int"], json!({"value": 9, "bonus": 2, "cost": 2}));
         assert_eq!(stats["str"], json!({"value": 1, "bonus": 0, "cost": 0}));
         assert_eq!(stats["luk"]["cost"], 3);
-        let info = HashMap::from([(19, SkillInfo { resource: "MG_FIREBOLT".into(), name: "Fire Bolt".into(), max_level: 10 })]);
+        let info = HashMap::from([(19, SkillInfo { resource: "MG_FIREBOLT".into(), name: "Fire Bolt".into(), max_level: 10, ..Default::default() })]);
         let skills = [
             net::Skill { id: 19, kind: net::Skill::ENEMY, level: 3, sp: 16, range: 9, upgradable: true },
             net::Skill { id: 9999, kind: 0, level: 0, sp: 0, range: 0, upgradable: false },
