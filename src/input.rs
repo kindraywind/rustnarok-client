@@ -163,9 +163,10 @@ impl App {
                     }
                 }
             }
-            // The option menu keeps the pointer until it's closed, but for the settings windows it opened over it.
-            // ponytail: a click off both does nothing.
-            Scene::Game(game) if game.escape.is_some() && !game.settings_at(cursor) => {
+            // The option menu keeps the pointer until it's closed, but for the settings windows it opened over it and the
+            // menu buttons' "option", which shuts it.
+            // ponytail: a click off them does nothing.
+            Scene::Game(game) if game.escape.is_some() && !game.settings_at(cursor) && game.basic_info.hit(cursor) != Some(basic_info::Hit::Menu("option")) => {
                 match game.escape.as_ref().unwrap().hit(cursor, game.can_resurrect()).flatten() {
                     Some(escape::Choice::SavePoint) => game.save_asked = true,
                     Some(escape::Choice::CharSelect) => {
