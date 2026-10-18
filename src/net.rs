@@ -50,8 +50,14 @@ impl From<io::Error> for LoginError {
 }
 
 /// Logs in at `address`, saying the client is `version` (clientinfo.xml's; rathena only checks it when
-/// `check_client_version` is on).
+/// `check_client_version` is on). A reply too short to read fails the login instead of panicking, which would leave the
+/// login window waiting forever.
 pub fn login(address: &str, version: u32, username: &str, password: &str) -> Result<LoginAccepted, LoginError> {
+    std::panic::catch_unwind(|| request_login(address, version, username, password))
+        .unwrap_or_else(|_| Err(io::Error::new(io::ErrorKind::InvalidData, "unreadable login reply").into()))
+}
+
+fn request_login(address: &str, version: u32, username: &str, password: &str) -> Result<LoginAccepted, LoginError> {
     let mut stream = TcpStream::connect(address)?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     stream.write_all(&encode_login(version, username, password))?;
@@ -385,7 +391,7 @@ impl CharSession {
                 // The char server answers with the bare account ID before any packet.
                 reader.read_exact(&mut [0u8; 4])?;
                 loop {
-                    if let Some(event) = decode_char_packet(&read_packet(&mut reader)?) {
+                    if let Some(event) = decode_or_skip(&read_packet(&mut reader)?, decode_char_packet) {
                         on_event(event);
                     }
                 }
@@ -588,6 +594,16 @@ fn read_packet(reader: &mut impl Read) -> io::Result<Vec<u8>> {
     Ok(packet)
 }
 
+/// Decodes a packet; one the decoder can't read (shorter than its fields) is skipped. A panic would end the reader
+/// thread and leave the game running with nothing more from the server. `read_packet` has taken the whole packet off
+/// the stream, so the next one still starts in the right place.
+fn decode_or_skip<T>(packet: &[u8], decode: fn(&[u8]) -> Option<T>) -> Option<T> {
+    std::panic::catch_unwind(|| decode(packet)).unwrap_or_else(|_| {
+        eprintln!("skipped an unreadable packet {:#06x} ({} bytes)", u16_at(packet, 0), packet.len());
+        None
+    })
+}
+
 fn decode_char_packet(packet: &[u8]) -> Option<CharEvent> {
     match u16::from_le_bytes([packet[0], packet[1]]) {
         HC_ACCEPT_ENTER => Some(CharEvent::Characters {
@@ -751,6 +767,8 @@ const CZ_USE_SKILL_TOGROUND: u16 = 0x0366;
 const ZC_USESKILL_ACK: u16 = 0x0B1A;
 /// A unit's cast was cut off (rathena's clif_skillcastcancel).
 const ZC_DISPEL: u16 = 0x01B9;
+/// The server starts a navigation (rathena's clif_navigateTo).
+const ZC_NAVIGATION_ACTIVE: u16 = 0x08E2;
 /// Reputation points by reputation type, and the server opening the reputation window (rathena's clif_reputation_*).
 const ZC_REPUTE_INFO: u16 = 0x0B8D;
 const ZC_REPUTE_OPEN: u16 = 0x0B8E;
@@ -2909,6 +2927,17 @@ pub enum MapEvent {
         group: u64,
         repute: u32,
     },
+    /// The server starts a navigation (ZC_NAVIGATION_ACTIVE): to a cell (kind 0), a map (1) or a monster (3) on
+    /// `map`; `services` are the digits of rathena's NAV_ flags (ones the airship, tens scrolls, hundreds Kafra);
+    /// `hide_window` keeps the navigation window shut.
+    Navigate {
+        kind: u8,
+        services: u8,
+        hide_window: bool,
+        map: String,
+        cell: [u16; 2],
+        monster: u16,
+    },
     /// A unit's cast was cut off before the skill went (ZC_DISPEL).
     CastCancelled(u32),
     /// A unit starts a skill (ZC_USESKILL_ACK) at a unit or a cell, casting for `cast_ms` first.
@@ -3392,7 +3421,7 @@ impl MapSession {
             let error = loop {
                 match read_packet(&mut reader) {
                     Ok(packet) => {
-                        if let Some(event) = decode_map_packet(&packet) {
+                        if let Some(event) = decode_or_skip(&packet, decode_map_packet) {
                             on_event(event);
                         }
                     }
@@ -5342,6 +5371,14 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         ZC_SKILLINFO_DELETE => MapEvent::SkillRemoved(u16_at(2)),
         ZC_DISPEL => MapEvent::CastCancelled(u32_at(2)),
+        ZC_NAVIGATION_ACTIVE => MapEvent::Navigate {
+            kind: packet[2],
+            services: packet[3],
+            hide_window: packet[4] != 0,
+            map: c_string(&packet[5..21]),
+            cell: [u16_at(21), u16_at(23)],
+            monster: u16_at(25),
+        },
         // A success byte, then 16 bytes an entry: the type (u64) and the points (i64).
         ZC_REPUTE_INFO => MapEvent::Reputation(
             packet
@@ -6372,6 +6409,28 @@ mod tests {
     }
 
     #[test]
+    fn fails_a_login_reply_too_short_to_read() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.read_exact(&mut [0u8; 55]).unwrap();
+            // AC_ACCEPT_LOGIN that ends after its length.
+            let [low, high] = AC_ACCEPT_LOGIN.to_le_bytes();
+            stream.write_all(&[low, high, 4, 0]).unwrap();
+        });
+        assert!(matches!(login(&address, 0, "user", "password"), Err(LoginError::Io(_))));
+    }
+
+    #[test]
+    fn skips_a_packet_too_short_to_read() {
+        let [low, high] = ZC_NOTIFY_CHAT.to_le_bytes();
+        assert!(decode_or_skip(&[low, high, 4, 0], decode_map_packet).is_none());
+        let chat = [low, high, 11, 0, 7, 0, 0, 0, b'h', b'i', 0];
+        assert!(matches!(decode_or_skip(&chat, decode_map_packet), Some(MapEvent::Chat { id: Some(7), .. })));
+    }
+
+    #[test]
     fn decodes_character_info() {
         let mut info = vec![0u8; CHARACTER_INFO_SIZE];
         info[..4].copy_from_slice(&150_001u32.to_le_bytes());
@@ -6425,6 +6484,24 @@ mod tests {
         open.extend(0u32.to_le_bytes());
         assert_eq!(open.len(), packet_length(ZC_REPUTE_OPEN).unwrap() as usize);
         assert!(matches!(decode_map_packet(&open), Some(MapEvent::ReputationOpen { group: 2, repute: 3 })));
+    }
+
+    #[test]
+    fn reads_a_navigation() {
+        let mut packet = ZC_NAVIGATION_ACTIVE.to_le_bytes().to_vec();
+        packet.extend([0, 111, 1]);
+        let mut map = *b"prontera.gat\0\0\0\0";
+        map[12..].fill(0);
+        packet.extend(map);
+        for value in [150u16, 160, 0] {
+            packet.extend(value.to_le_bytes());
+        }
+        assert_eq!(packet.len(), packet_length(ZC_NAVIGATION_ACTIVE).unwrap() as usize);
+        let event = decode_map_packet(&packet);
+        assert!(
+            matches!(&event, Some(MapEvent::Navigate { kind: 0, services: 111, hide_window: true, map, cell: [150, 160], monster: 0 }) if map == "prontera.gat"),
+            "{event:?}"
+        );
     }
 
     #[test]
@@ -8582,9 +8659,13 @@ mod tests {
             let _ = sender.send(event);
         })
         .unwrap();
-        match receiver.recv_timeout(Duration::from_secs(10)).unwrap() {
-            MapEvent::Entered { position, .. } => assert!(position[0] > 0 && position[1] > 0),
-            other => panic!("{other:?}"),
+        // rathena may send the inventory size and such first.
+        loop {
+            match receiver.recv_timeout(Duration::from_secs(10)).unwrap() {
+                MapEvent::Entered { position, .. } => break assert!(position[0] > 0 && position[1] > 0),
+                MapEvent::Disconnected(error) => panic!("{error}"),
+                _ => continue,
+            }
         }
         map.loaded().unwrap();
         // The server answers with what is in view; at least some packet must decode without breaking the stream.
