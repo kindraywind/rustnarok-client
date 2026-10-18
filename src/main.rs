@@ -933,6 +933,10 @@ struct Game {
     /// The right-click menu, and where a right press began (and on whom).
     menu: Option<menu::Menu<Choice>>,
     right_press: Option<([f32; 2], Option<u32>)>,
+    /// The pointer moved since the right button went down: no menu on release.
+    right_moved: bool,
+    /// A monster marked for a companion (the companion, the monster): a second Alt press on it sends the attack.
+    companion_mark: Option<(u32, u32)>,
     /// Open windows from back to front.
     windows: Vec<Panel>,
     damages: Vec<Damage>,
@@ -2568,23 +2572,39 @@ impl Game {
 
     /// Sends the mercenary or homunculus `id` at the monster under the cursor, or to the cell there; the order it now
     /// follows, if any.
-    fn order_companion(&mut self, id: u32, cursor: [f32; 2]) -> Option<mercenary::Order> {
-        if let Some(Owner::Unit(target)) = hovered(&self.hit_boxes, cursor, false)
-            && self.units.get(&target).is_some_and(|actor| actor.kind == MONSTER)
-        {
-            // ponytail: rathena reads non-zero as "keep attacking" and says the client sends 0; 1 keeps it at it.
-            let _ = self.session.act_npc(id, target, 1);
-            return Some(mercenary::Order::Attack(target));
+    /// An Alt press for a companion (the mercenary, or the homunculus): on a monster it attacks it, at once with
+    /// Shift, otherwise the first press marks it and a second on the same one sends the attack; on the ground it goes
+    /// there. False when that companion isn't out (Alt does nothing special then).
+    fn companion_press(&mut self, homunculus: bool, cursor: [f32; 2], shift: bool) -> bool {
+        let id = if homunculus { self.homunculus_id.filter(|id| self.units.contains_key(id)) } else { self.mercenary.as_ref().map(|hired| hired.id) };
+        let Some(id) = id else { return false };
+        let monster = match hovered(&self.hit_boxes, cursor, false) {
+            Some(Owner::Unit(target)) if self.units.get(&target).is_some_and(|actor| actor.kind == MONSTER) => Some(target),
+            _ => None,
+        };
+        let order = match monster {
+            Some(target) => {
+                let (mark, attack) = companion_mark(self.companion_mark, id, target, shift);
+                self.companion_mark = mark;
+                // ponytail: rathena reads non-zero as "keep attacking" and says the client sends 0; 1 keeps it at it.
+                attack.then(|| {
+                    let _ = self.session.act_npc(id, target, 1);
+                    mercenary::Order::Attack(target)
+                })
+            }
+            None => {
+                self.companion_mark = None;
+                self.ground_cell(cursor).filter(|&cell| self.world.gat.walkable(cell)).map(|cell| {
+                    let _ = self.session.move_npc(id, cell.map(|value| value as u16));
+                    mercenary::Order::Move(self.player.cell)
+                })
+            }
+        };
+        if let Some(order) = order {
+            let steering = if homunculus { &mut self.homunculus_steering } else { &mut self.steering };
+            steering.order = Some(order);
         }
-        let height = self.world.cell_position(self.player.cell.map(|value| value as f32))[1];
-        let view = self.camera.view(SCREEN[0] / SCREEN[1]);
-        let point = view.pick([cursor[0] / SCREEN[0], cursor[1] / SCREEN[1]], height)?;
-        let cell = [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32];
-        if !self.world.gat.walkable(cell) {
-            return None;
-        }
-        let _ = self.session.move_npc(id, cell.map(|value| value as u16));
-        Some(mercenary::Order::Move(self.player.cell))
+        true
     }
 
     /// Calls the mercenary or homunculus `id` back to the player when `steering` says so; an attack order lasts while
@@ -3262,6 +3282,18 @@ fn attack_refused(weight: i64, max_weight: i64, riding: bool) -> Option<usize> {
     } else {
         None
     }
+}
+
+/// The player menu opens on the right release only for a still click: the pointer not moved at all, no Shift, the
+/// left button up, off the windows.
+fn menu_opens(moved: bool, shift: bool, left_down: bool, on_window: bool) -> bool {
+    !(moved || shift || left_down || on_window)
+}
+
+/// An Alt press for a companion on a monster: the mark left (companion, monster), and whether the attack goes now
+/// (with Shift, or a second press on the marked one).
+fn companion_mark(mark: Option<(u32, u32)>, companion: u32, target: u32, shift: bool) -> (Option<(u32, u32)>, bool) {
+    if shift || mark == Some((companion, target)) { (None, true) } else { (Some((companion, target)), false) }
 }
 
 /// What an aimed skill could land on: the player, a monster, another player.
@@ -5165,6 +5197,9 @@ impl App {
             if let Some((_, moved)) = &mut game.press_mark {
                 *moved = true;
             }
+            if game.right_press.is_some() {
+                game.right_moved = true;
+            }
             let (inventory_height, equipment_height, info_height) = (game.inventory.height(), game.equipment.height(), game.basic_info.height());
             game.basic_info.frame.drag_to(self.cursor, info_height);
             let hotkeys_height = game.hotkeys.height();
@@ -5251,27 +5286,13 @@ impl App {
 
     /// The right button: Alt moves stacks to storage, a click on a player opens their menu, a press aims the camera.
     fn right_button(&mut self, state: ElementState) {
-        // ponytail: Ctrl + right click orders the mercenary and Alt + right click the homunculus (not a drag, not on a
-        // window), an estimate of the official client's: at a monster it attacks, on the ground it goes there.
-        if let Scene::Game(game) = &mut self.scene
-            && state == ElementState::Released
-            && let Some((start, _)) = game.right_press
-            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
-            && game.window_at(self.cursor).is_none()
-            && !game.chat.contains(self.cursor)
-            && let Some((homunculus, id)) = if self.modifiers.control_key() {
-                game.mercenary.as_ref().map(|hired| (false, hired.id))
-            } else if self.modifiers.alt_key() {
-                game.homunculus_id.filter(|id| game.units.contains_key(id)).map(|id| (true, id))
-            } else {
-                None
-            }
+        // Alt + right press orders the homunculus (when it's out), off the windows.
+        if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
+            && state == ElementState::Pressed
+            && self.modifiers.alt_key()
+            && !game.on_ui(self.cursor, &self.items, assets.message.size)
+            && game.companion_press(true, self.cursor, self.modifiers.shift_key())
         {
-            game.right_press = None;
-            if let Some(order) = game.order_companion(id, self.cursor) {
-                let steering = if homunculus { &mut game.homunculus_steering } else { &mut game.steering };
-                steering.order = Some(order);
-            }
             return;
         }
         // On the character select, a card's menu of moving and renaming (only once the PIN check has passed).
@@ -5360,8 +5381,9 @@ impl App {
             if state == ElementState::Pressed {
                 game.menu = None;
                 game.right_press = Some((self.cursor, on_unit));
-            } else if let Some((start, Some(id))) = game.right_press.take()
-                && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+                game.right_moved = false;
+            } else if let Some((_, Some(id))) = game.right_press.take()
+                && menu_opens(game.right_moved, self.modifiers.shift_key(), self.mouse_down, false)
                 && let Some(actor) = game.units.get(&id)
             {
                 let fill = |id: usize| rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&actor.name]);
@@ -5748,6 +5770,10 @@ impl App {
             let double = double_press(game.press_mark, now);
             game.press_mark = Some((now, false));
             let (shift, ctrl) = (self.modifiers.shift_key(), self.modifiers.control_key());
+            // Alt + left press orders the mercenary (when it's out).
+            if !double && self.modifiers.alt_key() && game.companion_press(false, cursor, shift) {
+                return;
+            }
             // A new press ends the attack under way.
             game.attack = None;
             match game.world_click(cursor, shift) {
@@ -7024,6 +7050,8 @@ impl App {
                     head_emblems: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     skill_sent: None,
+                    right_moved: false,
+                    companion_mark: None,
                     no_ctrl: settings_path("noctrl").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
                     attack: None,
                     last_attack: None,
@@ -11317,6 +11345,8 @@ impl App {
             if game.aim_valid(pointer.0, players_first) { cursor::Kind::TargetValid } else { cursor::Kind::Target }
         } else if on_window {
             if game.on_control(pointer.0) { cursor::Kind::Clickable } else { cursor::Kind::Default }
+        } else if game.companion_mark.is_some_and(|(_, target)| hovered(&game.hit_boxes, pointer.0, false) == Some(Owner::Unit(target))) {
+            cursor::Kind::TargetValid
         } else {
             match hovered(&game.hit_boxes, pointer.0, players_first) {
                 Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
@@ -12061,6 +12091,18 @@ mod tests {
         assert_eq!(share_left(start, length, start), 1.0);
         assert_eq!(share_left(start, length, start + Duration::from_millis(200)), 0.75);
         assert_eq!(share_left(start, length, start + Duration::from_secs(2)), 0.0);
+    }
+
+    #[test]
+    fn opens_menus_and_orders_companions() {
+        assert!(menu_opens(false, false, false, false));
+        assert!(!menu_opens(true, false, false, false) && !menu_opens(false, true, false, false));
+        assert!(!menu_opens(false, false, true, false) && !menu_opens(false, false, false, true));
+        // Without Shift the first press marks the monster and the second sends the attack; with Shift at once.
+        assert_eq!(companion_mark(None, 1, 9, false), (Some((1, 9)), false));
+        assert_eq!(companion_mark(Some((1, 9)), 1, 9, false), (None, true));
+        assert_eq!(companion_mark(Some((1, 8)), 1, 9, false), (Some((1, 9)), false));
+        assert_eq!(companion_mark(None, 1, 9, true), (None, true));
     }
 
     #[test]

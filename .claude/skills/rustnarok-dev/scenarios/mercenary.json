@@ -1,5 +1,5 @@
 {
-  "about": "A mercenary (issue #47): a Bowman Scroll hires Mina, who shows with her bow and follows; the window (Ctrl+R) and the skill list; Ctrl + right click sends her at a Poring; Ctrl+T stops her following; Dismiss asks, then lets her go. RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's mercenary (rathena's `mercenary` table) and zero its `mercenary_owner` row, or a mercenary from an earlier run is already there and the scroll does nothing.",
+  "about": "A mercenary (issue #47): a Bowman Scroll hires Mina, who shows with her bow and follows; the window (Ctrl+R) and the skill list; Alt+Shift+click sends her at a Poring (Alt+click twice would too); Ctrl+T stops her following; Dismiss asks, then lets her go. RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's mercenary (rathena's `mercenary` table) and zero its `mercenary_owner` row, or a mercenary from an earlier run is already there and the scroll does nothing.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -139,8 +139,7 @@
         "kind": "monster",
         "name": "Poring"
       },
-      "button": "right",
-      "mods": "Ctrl"
+      "mods": "Alt+Shift"
     },
     {
       "wait_for": {
