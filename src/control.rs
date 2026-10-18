@@ -1651,6 +1651,13 @@ fn game_state(app: &App, game: &Game) -> Value {
         "route": game.navigation_route,
         "shown": game.minimap_shown(),
         "arrow": crate::minimap::arrow_angle(game.player.rot),
+        // The NPCs in view with a quest mark over their heads.
+        "quest_heads": game
+            .quest_marks
+            .iter()
+            .filter(|(_, _, effect, _)| crate::head_marks::quest_action(*effect).is_some())
+            .filter_map(|(npc, ..)| game.units.get(npc).map(|actor| actor.name.clone()))
+            .collect::<Vec<_>>(),
         // NPCs' quest marks ([x, y, colour]) and the store search mark.
         "quests": game.quest_marks.iter().map(|(_, cell, _, color)| json!([cell[0], cell[1], color])).collect::<Vec<_>>(),
         "store": game.store_mark,

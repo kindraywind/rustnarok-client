@@ -1182,6 +1182,9 @@ struct Game {
     marks: Vec<(u8, Mark)>,
     /// NPCs' quest marks (ZC_QUEST_NOTIFY_EFFECT): the NPC, its cell, the effect and the mark's colour.
     quest_marks: Vec<(u32, [i32; 2], u16, u16)>,
+    /// When each NPC's quest mark over its head started looping: made again by a new effect or colour, or the NPC
+    /// coming back into view.
+    quest_started: HashMap<u32, Instant>,
     /// Where the store picked in the Universal Catalog stands.
     store_mark: Option<[i32; 2]>,
     /// The box asking how many, and what for.
@@ -11172,6 +11175,7 @@ impl App {
                     cutin: None,
                     marks: Vec::new(),
                     quest_marks: Vec::new(),
+                    quest_started: HashMap::new(),
                     store_mark: None,
                     amount: None,
                     escape: None,
@@ -11494,6 +11498,7 @@ impl App {
                 game.marks.clear();
                 // rathena sends the quest marks again on arrival.
                 game.quest_marks.clear();
+                game.quest_started.clear();
                 game.store_mark = None;
                 game.signs.clear();
                 // The server ends the search on leaving the map.
@@ -11625,6 +11630,10 @@ impl App {
                 // again, the old copy fading where it was.
                 game.leave_behind(unit.id);
                 let known = game.units.contains_key(&unit.id);
+                // An NPC with a quest mark coming into view starts its mark's loop again.
+                if !known && game.quest_marks.iter().any(|&(npc, ..)| npc == unit.id) {
+                    game.quest_started.insert(unit.id, Instant::now());
+                }
                 let cue = arrival(unit.spawned, known, unit.id == game.account_id, unit.kind, unit.option);
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
                 actor.body_state = unit.body_state;
@@ -13892,7 +13901,14 @@ impl App {
                 }
                 game.store_mark = cell.map(|cell| cell.map(i32::from));
             }
-            MapEvent::QuestMark { npc, cell, effect, color } => minimap::set_quest_mark(&mut game.quest_marks, npc, cell.map(i32::from), effect, color),
+            // A quest mark: its loop starts again only for a new effect or colour.
+            MapEvent::QuestMark { npc, cell, effect, color } => {
+                let same = game.quest_marks.iter().any(|&(each, _, was_effect, was_color)| each == npc && was_effect == effect && was_color == color);
+                if !same {
+                    game.quest_started.insert(npc, Instant::now());
+                }
+                minimap::set_quest_mark(&mut game.quest_marks, npc, cell.map(i32::from), effect, color);
+            }
             // A compass mark, by its id whichever NPC sent it.
             MapEvent::Mark { kind, cell, id, color, .. } => {
                 if let Some(gpu) = gpu {
@@ -15319,6 +15335,16 @@ impl App {
                 shown.push((feet, sprite.frame_at(gpu, *action, 0, Timing::Loop(elapsed))));
             }
         }
+        // NPCs' quest marks loop over their heads while they're in view.
+        let mut quest_shown = Vec::new();
+        if let Some(sprite) = &mut game.emotion_sprite {
+            for &(npc, _, effect, _) in &game.quest_marks {
+                let (Some(action), Some(feet)) = (head_marks::quest_action(effect), feet_of.get(&npc)) else { continue };
+                let started = game.quest_started.get(&npc).copied().unwrap_or(now);
+                let elapsed = now.saturating_duration_since(started).as_secs_f32() * 1000.0;
+                quest_shown.push((head_marks::quest_anchor(*feet), sprite.frame_at(gpu, action, 0, Timing::Loop(elapsed))));
+            }
+        }
         // The MVP sprite plays once over the winner, where emotions hang, following them.
         let mut mvp_shown = Vec::new();
         if let Some(sprite) = &mut game.mvp_sprite {
@@ -15354,6 +15380,13 @@ impl App {
         if let Some(sprite) = &game.emotion_sprite {
             billboards.extend(shown.into_iter().flat_map(|(feet, placements)| {
                 let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
+                placements.into_iter().map(move |(key, position, size, angle)| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                })
+            }));
+        }
+        if let Some(sprite) = &game.emotion_sprite {
+            billboards.extend(quest_shown.into_iter().flat_map(|(anchor, placements)| {
                 placements.into_iter().map(move |(key, position, size, angle)| {
                     (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
                 })

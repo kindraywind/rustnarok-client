@@ -70,6 +70,22 @@ pub fn anchor(feet: [f32; 3], height: f32) -> [f32; 3] {
     [feet[0], feet[1] + height, feet[2]]
 }
 
+/// The emotion sprite's action for an NPC's quest effect (ZC_QUEST_NOTIFY_EFFECT): 0–5 are actions 80–85, 6–10 are
+/// 93–97; any other effect has no head mark.
+pub fn quest_action(effect: u16) -> Option<usize> {
+    match effect {
+        0..=5 => Some(80 + usize::from(effect)),
+        6..=10 => Some(93 + usize::from(effect - 6)),
+        _ => None,
+    }
+}
+
+/// Where a quest mark hangs: where emotions do, 3 units toward world −x, so its offset on screen turns with the camera.
+pub fn quest_anchor(feet: [f32; 3]) -> [f32; 3] {
+    let [x, y, z] = anchor(feet, ANCHOR);
+    [x - 3.0, y, z]
+}
+
 /// Whether a sprite played once over a head (an emotion, the MVP sprite) still shows `elapsed` after it started,
 /// lasting its action's `length_ms`.
 pub fn playing(elapsed: std::time::Duration, length_ms: f32) -> bool {
@@ -79,6 +95,14 @@ pub fn playing(elapsed: std::time::Duration, length_ms: f32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picks_the_quest_marks_action() {
+        assert_eq!((0..=5).map(quest_action).collect::<Vec<_>>(), (80..=85).map(Some).collect::<Vec<_>>());
+        assert_eq!((6..=10).map(quest_action).collect::<Vec<_>>(), (93..=97).map(Some).collect::<Vec<_>>());
+        assert_eq!([11, 9999].map(quest_action), [None, None]);
+        assert_eq!(quest_anchor([10.0, 1.0, 5.0]), [7.0, 21.0, 5.0]);
+    }
 
     #[test]
     fn hangs_marks_over_the_feet() {
