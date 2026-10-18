@@ -980,6 +980,8 @@ pub struct Actor {
     pub sitting: bool,
     /// When a dying unit is removed.
     pub remove_at: Option<Instant>,
+    /// A dead player: lying there until revived (players aren't removed when they die).
+    pub dead: bool,
     /// The pushcart it pulls, drawn behind it.
     pub cart: Option<SpriteSet>,
     /// The action and frame last seen, so a frame's sound plays once each time it comes up.
@@ -1010,6 +1012,7 @@ impl Actor {
             ready: false,
             sitting: false,
             remove_at: None,
+            dead: false,
             cart: None,
             heard: None,
             held: None,
@@ -1035,6 +1038,7 @@ impl Actor {
     /// Back on its feet: whatever it was holding (dead on the ground) ends.
     pub fn revive(&mut self) {
         self.shot = None;
+        self.dead = false;
     }
 
     pub fn play(&mut self, action: usize, start: Instant, duration_ms: f32, hold: bool) {

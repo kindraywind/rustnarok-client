@@ -784,6 +784,9 @@ fn game_state(app: &App, game: &Game) -> Value {
             if actor.remove_at.is_some() {
                 unit["dying"] = true.into();
             }
+            if actor.dead {
+                unit["dead"] = true.into();
+            }
             unit
         })
         .collect();

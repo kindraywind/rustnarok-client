@@ -303,6 +303,18 @@ fn rank_frames(rank: u32, players: u32) -> Vec<usize> {
 /// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
 const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
 
+/// A unit that died falls when the killing hit lands. A player lies there until revived (ZC_RESURRECTION) or gone;
+/// any other body goes after a moment.
+fn fall(actor: &mut Actor, lands: Instant) {
+    let (.., die) = actor::combat_actions(actor.kind);
+    actor.play(die, lands, 800.0, true);
+    if actor.kind == PLAYER {
+        actor.dead = true;
+    } else {
+        actor.remove_at = Some(lands + CORPSE_TIME);
+    }
+}
+
 /// What a map's flags tell a player of this job on arrival: the messages to print.
 fn arrival_notices(flags: u32, job: u16) -> Vec<usize> {
     let mut notices = Vec::new();
@@ -6130,11 +6142,7 @@ impl App {
                     game.escape = Some(escape::Menu { dead: true });
                 }
                 match (reason, dying) {
-                    (1, Some(actor)) => {
-                        let (.., die) = actor::combat_actions(actor.kind);
-                        actor.play(die, lands, 800.0, true);
-                        actor.remove_at = key.map(|_| lands + CORPSE_TIME);
-                    }
+                    (1, Some(actor)) => fall(actor, lands),
                     _ => {
                         game.units.remove(&id);
                         game.unit_hp.remove(&id);
@@ -9948,6 +9956,21 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dead_players_lie_there_until_revived() {
+        let now = Instant::now();
+        let mut player = Actor::new("Someone".into(), None, [10, 10], 0, 150);
+        player.kind = PLAYER;
+        fall(&mut player, now);
+        assert!(player.dead && player.remove_at.is_none(), "a player's body stays");
+        player.revive();
+        assert!(!player.dead);
+        let mut monster = Actor::new("Poring".into(), None, [10, 10], 0, 150);
+        monster.kind = MONSTER;
+        fall(&mut monster, now);
+        assert_eq!(monster.remove_at, Some(now + CORPSE_TIME));
+    }
 
     #[test]
     fn spells_the_pvp_counter() {

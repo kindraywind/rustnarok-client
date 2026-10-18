@@ -1,0 +1,66 @@
+{
+  "about": "A revived player stays seen (issue #154): the second dies and, after a body's time, is revived; the first still has them on screen, lying and then standing.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 150 250"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "say": "@die"
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "shot": "lying-dead"
+    },
+    {
+      "as": "second",
+      "say": "@alive"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "click_on": {
+        "unit": "{second}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "revived-seen"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "as": "second",
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    }
+  ]
+}
