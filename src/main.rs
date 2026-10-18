@@ -5788,7 +5788,7 @@ impl App {
                     }
                     Panel::BasicInfo => {
                         let hit = game.basic_info.hit(cursor).unwrap();
-                        match game.basic_info.click(hit).map(|button| basic_info::MENU[button]) {
+                        match game.basic_info.click(hit) {
                             Some("equip") => {
                                 game.equipment.frame.toggle();
                                 game.raise(Panel::Equipment);
@@ -5837,6 +5837,22 @@ impl App {
                                 let action = game.mail.toggle();
                                 game.mail_action(action);
                             }
+                            Some("quest") => {
+                                game.quest_window.frame.toggle();
+                                game.sync_esc();
+                            }
+                            // The game settings and the shortcut settings, as the game menu opens them (#68).
+                            Some("option") => {
+                                game.graphics_window = if game.graphics_window.is_some() { None } else { Some(options::GraphicsWindow::new()) };
+                                game.sync_esc();
+                            }
+                            Some("keyboard") => {
+                                game.shortcuts_window = if game.shortcuts_window.is_some() { None } else { Some(options::ShortcutsWindow::new()) };
+                                game.sync_esc();
+                            }
+                            // ponytail: navigation and repute have no window yet (the navigation and reputation
+                            // windows); their buttons do nothing.
+                            Some("navigation" | "repute") => {}
                             Some("map") => {
                                 game.world_map = match (game.world_map.take(), &self.gpu) {
                                     (None, Some(gpu)) => worldmap::WorldMap::open(gpu, &self.grf, &self.worlds.0, self.worlds.1, &map_key(&game.map)),
@@ -11900,6 +11916,8 @@ impl App {
             game.quest_icon = false;
         }
         game.basic_info.fourth = basic_info::fourth_job(game.me.job);
+        game.basic_info.doram = basic_info::doram(game.me.job);
+        game.basic_info.features = basic_info::Features { battle: !self.battlegrounds.is_empty(), shop: true };
         game.banners.current(control::now());
         game.level_ups
             .seen(game.status_window.frame.open && !game.status_window.frame.minimized, game.skill_window.frame.open && !game.skill_window.frame.minimized);
