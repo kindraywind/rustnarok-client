@@ -461,6 +461,14 @@ const PARTY_ALLOWING: usize = 1326;
 /// "You can't modify Party Setup."
 const PARTY_SETUP_REFUSED: usize = 373;
 const LEADER_CHOICE: usize = 1532;
+/// "Item cannot be dropped from the hotkey bar."
+const HOTKEY_ITEM_STAYS: usize = 1696;
+/// Dropping on the ground with the equipment window open, the mail window open, or the ammunition worn.
+const DROP_EQUIPMENT_OPEN: usize = 189;
+const DROP_MAIL_OPEN: usize = 2736;
+const DROP_AMMO_WORN: usize = 657;
+/// Nothing is dropped on the ground this soon after asking to wear something.
+const WEAR_PAUSE: Duration = Duration::from_secs(2);
 const LEADER_QUESTION: usize = 1533;
 const PARTY_CREATE: usize = 2054;
 /// What a locked chat room asks ("Please enter Password.").
@@ -845,6 +853,8 @@ struct Game {
     hotkeys: hotkeys::Hotkeys,
     /// An item or skill being dragged: what, where the drag began, and whether it has moved yet.
     dragging: Option<(Dragged, [f32; 2], bool)>,
+    /// A right press let go of the drag: the left button's release does nothing.
+    drag_cancelled: bool,
     skills: Vec<net::Skill>,
     skill_window: skills::SkillWindow,
     /// A Talkie Box's message waiting to be placed, and the boxes saying theirs (where each stands).
@@ -985,6 +995,8 @@ struct Game {
     expansion_asked: Option<u32>,
     /// The item the player last put in or took out of the Swap Equipment set: its answer gets a line.
     switch_asked: Option<u16>,
+    /// When something was last asked to be worn.
+    last_wear: Option<Instant>,
     /// A bind-on-equip item (inventory index) waiting for OK to be worn; the broken items' indexes before the
     /// inventory came again (None: there was none yet, at login).
     bind_asked: Option<u16>,
@@ -1148,8 +1160,9 @@ struct Game {
     auto_skill: Option<(u16, u16)>,
     /// The player's attack reach in cells.
     attack_range: i32,
-    /// What to do once the walk toward it ends (and when it ended).
+    /// What to do once the walk toward it ends (and when it ended), and where its walk went and when (None: none yet).
     pending: Option<(Pending, Option<Instant>)>,
+    pending_walk: Option<([i32; 2], Instant)>,
 }
 
 /// Where the camera eases toward, steered with the right mouse button and the wheel.
@@ -1625,6 +1638,24 @@ enum Asked {
     },
 }
 
+impl Asked {
+    /// A count of items to move, not a name or a price.
+    fn moves_items(&self) -> bool {
+        matches!(
+            self,
+            Asked::Shop(_)
+                | Asked::Store(_)
+                | Asked::Drop(_)
+                | Asked::Take(_)
+                | Asked::Trade(_)
+                | Asked::ToCart(_)
+                | Asked::FromCart(_)
+                | Asked::Mail(_)
+                | Asked::Material(_)
+        )
+    }
+}
+
 /// What the right-click menu offers.
 #[derive(Clone, Copy, PartialEq)]
 enum Choice {
@@ -1715,6 +1746,8 @@ enum Dragged {
     Carted(u16),
     /// What a hotkey slot holds, by slot.
     Hotkey(usize),
+    /// A worn item, by inventory index, out of the equipment window.
+    Worn(u16),
 }
 
 /// What a sprite on the map belongs to.
@@ -1993,20 +2026,52 @@ impl Game {
         let _ = self.session.talk(id);
     }
 
-    /// Picks up an item, walking over first when it's out of reach.
-    fn pick_up(&mut self, id: u32) {
+    /// Picks up an item, facing it: at once from the next cell, else walking there with the pickup pending.
+    fn pick_up(&mut self, id: u32, now: Instant) {
         if self.store_open() {
             return;
         }
-        let Some(item) = self.ground.get(&id) else { return };
-        let at = item.at;
+        let Some(at) = self.ground.get(&id).map(|item| item.at) else { return };
         self.player.face(at);
-        if !within_pickup(self.player.cell, at) {
-            self.pending = Some((Pending::PickUp(id), None));
-            let _ = self.session.walk(at.map(|value| value as u16));
-        } else {
-            self.pending = None;
-            let _ = self.session.pick_up(id);
+        // Another press on the item while walking to it keeps that walk.
+        if !(self.player.moving() && self.pending.is_some_and(|(pending, _)| pending == Pending::PickUp(id))) {
+            self.pending_walk = None;
+        }
+        self.pending = Some((Pending::PickUp(id), None));
+        self.pending_step(now);
+    }
+
+    /// A pickup or skill waiting on a walk, each frame. A pickup goes out as soon as the player's cell is next to the
+    /// item, still walking; a walk the move limit held back is asked for again.
+    fn pending_step(&mut self, now: Instant) {
+        match self.pending {
+            Some((Pending::PickUp(id), arrived)) => {
+                let Some(at) = self.ground.get(&id).map(|item| item.at) else {
+                    self.pending = None;
+                    return;
+                };
+                match pickup_step(self.player.cell, at, self.pending_walk.map(|(cell, _)| cell)) {
+                    PickStep::PickUp => {
+                        self.pending = None;
+                        self.player.face(at);
+                        let _ = self.session.pick_up(id);
+                    }
+                    PickStep::Walk if may_move(self.last_move, now) => {
+                        self.last_move = Some(now);
+                        self.pending_walk = Some((at, now));
+                        let _ = self.session.walk(at.map(|value| value as u16));
+                    }
+                    // Stopped out of reach after walking there: it can't be reached.
+                    PickStep::Wait if arrived.zip(self.pending_walk).is_some_and(|(stopped, (_, sent))| stopped > sent) => self.pending = None,
+                    _ => {}
+                }
+            }
+            Some((Pending::Skill { id, level, target }, _)) if self.pending_walk.is_none() => {
+                self.pending = None;
+                self.targeting = Some((id, level));
+                self.aim_skill(target);
+            }
+            _ => {}
         }
     }
 
@@ -2248,8 +2313,15 @@ impl Game {
         } else if let Some(stop) =
             world::find_path(&self.world.gat, self.player.cell, goal).and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, range)))
         {
+            // Within the move limit the walk waits: `pending_step` aims again on a later frame.
+            let now = Instant::now();
             self.pending = Some((Pending::Skill { id, level, target }, None));
-            let _ = self.session.walk(stop.map(|value| value as u16));
+            self.pending_walk = None;
+            if may_move(self.last_move, now) {
+                self.last_move = Some(now);
+                self.pending_walk = Some((stop, now));
+                let _ = self.session.walk(stop.map(|value| value as u16));
+            }
         }
     }
 
@@ -2756,6 +2828,11 @@ impl Game {
                 }
                 Ok(())
             }
+            // None or less into storage or the cart is one.
+            what @ (Asked::Store(_) | Asked::ToCart(_)) => {
+                self.give(what, amount.value().max(1));
+                Ok(())
+            }
             what if amount.value() > 0 => {
                 self.give(what, amount.value());
                 Ok(())
@@ -2781,10 +2858,11 @@ impl Game {
                 let have = self.storage.get(index).map_or(0, |item| u32::from(item.amount));
                 self.session.take_from_storage(index, amount.min(have))
             }
-            Asked::Drop(index) => {
-                let have = self.inventory.get(index).map_or(0, |item| item.amount);
-                self.session.drop_item(index, (amount.min(u32::from(have))) as u16)
-            }
+            // More than there is drops nothing.
+            Asked::Drop(index) => match self.inventory.get(index).map_or(0, |item| u32::from(item.amount)) {
+                have if amount > have => Ok(()),
+                _ => self.session.drop_item(index, amount as u16),
+            },
             Asked::PartyName
             | Asked::Invite
             | Asked::RoomPassword(_)
@@ -3492,6 +3570,25 @@ impl Game {
         self.window_at(cursor).and_then(esc_panel)
     }
 
+    /// Asks to wear an item.
+    fn wear(&mut self, index: u16, location: u32) {
+        self.last_wear = Some(control::now());
+        let _ = self.session.wear(index, location);
+    }
+
+    /// An inventory item let go over the world: dropped, unless something open or a fresh wear holds it back.
+    fn drop_on_ground(&mut self, index: u16, messages: &[String]) {
+        let since_wear = self.last_wear.map(|at| control::now().saturating_duration_since(at));
+        let busy = self.trade.is_some() || self.dialog.is_some() || self.shop.is_some();
+        let mail = self.mail.list.frame.open || self.mail.compose.is_some() || self.mail.letter.is_some();
+        let ammo = self.inventory.get(index).is_some_and(|item| item.kind == net::ITEM_AMMO && item.worn != 0);
+        match ground_drop_refused(since_wear, busy, self.equipment.frame.open, self.storage.frame.open, mail, ammo) {
+            None => self.move_item(Asked::Drop(index)),
+            Some(Some(id)) => self.chat_line(messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+            Some(None) => {}
+        }
+    }
+
     /// Uses an inventory item: consumables are used, equipment is put on.
     fn use_item(&mut self, index: u16) {
         if self.store_open() {
@@ -3513,7 +3610,8 @@ impl Game {
             // An item that binds once worn asks first.
             net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR if item.identified && item.bind == 1 => self.bind_asked = Some(index),
             net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR | net::ITEM_PET_ARMOR | net::ITEM_AMMO if item.identified => {
-                let _ = self.session.wear(index, item.location);
+                let location = item.location;
+                self.wear(index, location);
             }
             // A card asks what it can go into.
             net::ITEM_CARD => {
@@ -3569,7 +3667,7 @@ impl Game {
     fn answer_bind(&mut self, yes: bool) {
         let Some(index) = self.bind_asked.take().filter(|_| yes) else { return };
         if let Some(location) = self.inventory.get(index).map(|item| item.location) {
-            let _ = self.session.wear(index, location);
+            self.wear(index, location);
         }
     }
 
@@ -4490,6 +4588,26 @@ fn within_pickup(from: [i32; 2], at: [i32; 2]) -> bool {
     (at[0] - from[0]).abs().max((at[1] - from[1]).abs()) <= 1
 }
 
+/// What a pending pickup does this frame.
+#[derive(Debug, PartialEq)]
+enum PickStep {
+    PickUp,
+    Walk,
+    Wait,
+}
+
+/// A pending pickup: picked up once the player's cell is next to the item, walking or not; out of reach, a walk
+/// there unless the last one already went there.
+fn pickup_step(player: [i32; 2], item: [i32; 2], walked_to: Option<[i32; 2]>) -> PickStep {
+    if within_pickup(player, item) {
+        PickStep::PickUp
+    } else if walked_to != Some(item) {
+        PickStep::Walk
+    } else {
+        PickStep::Wait
+    }
+}
+
 /// The cursor over an NPC: a warp portal's, or talking.
 fn npc_cursor(job: u16) -> cursor::Kind {
     if job == WARP_JOB { cursor::Kind::Warp } else { cursor::Kind::Talk }
@@ -4558,6 +4676,12 @@ const DOUBLE_PRESS: Duration = Duration::from_millis(500);
 
 fn may_move(last: Option<Instant>, now: Instant) -> bool {
     last.is_none_or(|last| now.saturating_duration_since(last) >= MOVE_GAP)
+}
+
+/// Whether the held button walks toward the pointer now: held, nothing pending (an item being picked up), and
+/// MOVE_GAP since the last try.
+fn follows_pointer(held: bool, pending: bool, last_try: Option<Instant>, now: Instant) -> bool {
+    held && !pending && last_try.is_none_or(|last| now.saturating_duration_since(last) > MOVE_GAP)
 }
 
 /// Whether a press now, after the last one (when, and whether the pointer moved since), is a double press.
@@ -6711,6 +6835,17 @@ impl App {
 
     /// The right button: Alt moves stacks to storage, a click on a player opens their menu, a press aims the camera.
     fn right_button(&mut self, state: ElementState) {
+        // A right press lets go of a held drag and closes the box asking how many of an item.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Pressed
+        {
+            let dropped = game.dragging.take().is_some();
+            game.drag_cancelled |= dropped;
+            let closed = game.amount.take_if(|amount| amount.what.moves_items()).is_some();
+            if dropped || closed {
+                return;
+            }
+        }
         // Alt + right press orders the homunculus (when it's out), off the windows.
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
             && state == ElementState::Pressed
@@ -7063,11 +7198,12 @@ impl App {
         let dragged = match &mut self.scene {
             Scene::Game(game) if state == ElementState::Released => {
                 let item = game.dragging.take();
-                // An item or a skill let go over a hotkey slot goes there.
+                // An item, a skill or a hotkey let go over a hotkey slot goes there (`hotkeys::drop_on`).
                 if let Some((dragged, _, true)) = item
                     && let Some(hotkeys::Hit::Slot(slot)) = game.hotkeys.hit(self.cursor)
                 {
                     let key = match dragged {
+                        Dragged::Hotkey(from) if from != slot => game.hotkeys.keys[from],
                         Dragged::Item(index) => game.inventory.get(index).map(|item| net::Hotkey { skill: false, id: item.id, count: item.amount as i16 }),
                         // At the level picked in the skill window.
                         Dragged::Skill(id) => game.skills.iter().find(|skill| skill.id == id).map(|skill| net::Hotkey {
@@ -7075,32 +7211,31 @@ impl App {
                             id: u32::from(id),
                             count: game.skill_window.use_level(id, skill.level) as i16,
                         }),
-                        Dragged::Stored(_) | Dragged::Carted(_) | Dragged::Hotkey(_) => None,
+                        Dragged::Stored(_) | Dragged::Carted(_) | Dragged::Hotkey(_) | Dragged::Worn(_) => None,
                     };
                     if let Some(key) = key {
-                        game.hotkeys.keys[slot] = Some(key);
-                        let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, Some(key));
+                        for (slot, key) in hotkeys::drop_on(&game.hotkeys.keys, key, slot) {
+                            game.hotkeys.keys[slot] = key;
+                            let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, key);
+                        }
                     }
                 }
-                // A hotkey moved along the bar trades places with what's there; let go off the bar, it's taken off.
-                if let Some((Dragged::Hotkey(from), _, true)) = item {
-                    let to = match game.hotkeys.hit(self.cursor) {
-                        Some(hotkeys::Hit::Slot(to)) => Some(to),
-                        Some(_) => Some(from),
-                        None => None,
-                    };
-                    match to {
-                        Some(to) if to != from => {
-                            game.hotkeys.keys.swap(from, to);
-                            for slot in [from, to] {
-                                let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, game.hotkeys.keys[slot]);
-                            }
-                        }
-                        Some(_) => {}
-                        None => {
+                // A skill hotkey let go off the slots, on the bar or over the world, is taken off. An item hotkey stays:
+                // over the world it can't be dropped. Over another window nothing happens.
+                if let Some((Dragged::Hotkey(from), _, true)) = item
+                    && let Some(key) = game.hotkeys.keys[from]
+                {
+                    let on_bar = game.hotkeys.hit(self.cursor);
+                    let elsewhere = on_bar.is_none() && game.window_at(self.cursor).is_some();
+                    match on_bar {
+                        Some(hotkeys::Hit::Slot(_)) => {}
+                        _ if elsewhere => {}
+                        _ if key.skill => {
                             game.hotkeys.keys[from] = None;
                             let _ = game.session.set_hotkey(game.hotkeys.tab(), from as u16, None);
                         }
+                        Some(_) => {}
+                        None => game.chat_line(self.messages.get(HOTKEY_ITEM_STAYS).cloned().unwrap_or_default(), CHAT_ERROR),
                     }
                 }
                 // An item let go over the storage goes in; a stored one let go over the inventory comes out.
@@ -7159,7 +7294,19 @@ impl App {
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
                     // Let go over the world: dropped at the player's feet, asking how many of a stack.
                     (Some((Dragged::Item(index), _, true)), None) if !game.on_ui(self.cursor, &self.items, message_size) && !game.store_open() => {
-                        game.move_item(Asked::Drop(index))
+                        game.drop_on_ground(index, &self.messages)
+                    }
+                    // Onto the equipment window, wherever: worn. Off it onto the inventory: taken off. Not while trading.
+                    (Some((Dragged::Item(index), _, true)), Some(Panel::Equipment))
+                        if !game.equipment.swapping
+                            && game.equipment.owner.is_none()
+                            && game.trade.is_none()
+                            && game.inventory.get(index).is_some_and(|item| item.location != 0 && item.worn == 0) =>
+                    {
+                        game.use_item(index)
+                    }
+                    (Some((Dragged::Worn(index), _, true)), Some(Panel::Inventory)) if game.trade.is_none() => {
+                        let _ = game.session.take_off(index);
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Cart)) => game.move_item(Asked::ToCart(index)),
                     (Some((Dragged::Carted(index), _, true)), Some(Panel::Inventory)) => game.move_item(Asked::FromCart(index)),
@@ -7213,7 +7360,7 @@ impl App {
                     | game.basic_info.frame.drop_drag()
                     | game.hotkeys.frame.drop_drag()
                     | game.skill_window.frame.drop_drag();
-                windows || item.is_some_and(|(_, _, moved)| moved)
+                windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
             }
             _ => false,
         };
@@ -7303,7 +7450,12 @@ impl App {
                     }
                 }
                 WorldClick::Talk(id) => game.talk_to(id),
-                WorldClick::PickUp(id) if !game.player.sitting => game.pick_up(id),
+                // Held, the button follows the pointer again once the item is picked up.
+                WorldClick::PickUp(id) if !game.player.sitting => {
+                    game.pick_up(id, now);
+                    game.walk_held = true;
+                    game.last_walk_try = Some(now);
+                }
                 WorldClick::Warp(cell) if !ctrl => {
                     game.walk_toward(cell, now);
                     game.walk_held = true;
@@ -7495,6 +7647,12 @@ impl App {
             }
             if let (Panel::Cart, Some(inventory::Hit::Item(index))) = (id, game.cart.hit(cursor)) {
                 game.dragging = Some((Dragged::Carted(index), cursor, false));
+            }
+            if let (Panel::Equipment, Some(equipment::Hit::Slot(index))) = (id, game.equipment.hit(cursor, &game.inventory.items))
+                && game.equipment.owner.is_none()
+                && !game.equipment.swapping
+            {
+                game.dragging = Some((Dragged::Worn(index), cursor, false));
             }
             if id == Panel::Storage
                 && let Some(assets) = &self.assets
@@ -8557,6 +8715,7 @@ impl App {
                     basic_info: BasicInfo::default(),
                     hotkeys: hotkeys::Hotkeys::default(),
                     dragging: None,
+                    drag_cancelled: false,
                     skills: Vec::new(),
                     skill_window: {
                         let mut window = skills::SkillWindow::default();
@@ -8649,6 +8808,7 @@ impl App {
                     friend_asked: None,
                     expansion_asked: None,
                     switch_asked: None,
+                    last_wear: None,
                     bind_asked: None,
                     broken_before: None,
                     pet_id: None,
@@ -8802,6 +8962,7 @@ impl App {
                     }),
                     attack_range: 1,
                     pending: None,
+                    pending_walk: None,
                     auto_say: std::env::var("RUSTNAROK_CLIENT_SAY").ok(),
                     last_move: None,
                     walk_goal: None,
@@ -9369,15 +9530,24 @@ impl App {
                     game.player.walk_on(from, path, control::now());
                 }
             }
+            // A knockback (ZC_HIGHJUMP) slides the unit there; the stop that follows at the same cell leaves the slide
+            // running.
             MapEvent::Stop { id, position } | MapEvent::Slide { id, position } => {
                 let cell = position.map(i32::from);
-                if id == game.account_id {
-                    game.player.stop_at(cell);
-                    if let Some((_, arrived)) = &mut game.pending {
-                        *arrived = Some(Instant::now());
+                let slide = matches!(event, MapEvent::Slide { .. });
+                let now = control::now();
+                let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
+                if let Some(actor) = actor {
+                    if slide {
+                        actor.slide_to(cell, now);
+                    } else if actor.sliding_to() != Some(cell) {
+                        actor.stop_at(cell);
                     }
-                } else if let Some(actor) = game.units.get_mut(&id) {
-                    actor.stop_at(cell);
+                }
+                if id == game.account_id
+                    && let Some((_, arrived)) = &mut game.pending
+                {
+                    *arrived = Some(Instant::now());
                 }
             }
             // In a chat room, talk goes to its window.
@@ -13158,7 +13328,7 @@ impl App {
         }
         // A dragged item's or skill's icon follows the pointer.
         let dragged_icon = match game.dragging {
-            Some((Dragged::Item(index), _, true)) => {
+            Some((Dragged::Item(index) | Dragged::Worn(index), _, true)) => {
                 game.inventory.get(index).and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)))
             }
             Some((Dragged::Skill(id), _, true)) => skill_info.get(&id).map(skills::icon_path),
@@ -13799,9 +13969,8 @@ impl ApplicationHandler<NetEvent> for App {
                 // try, not over a window, nor while an attack or a pickup is on its way.
                 let now = Instant::now();
                 game.attack_step(now);
-                if game.walk_held
-                    && game.pending.is_none()
-                    && game.last_walk_try.is_none_or(|last| now.saturating_duration_since(last) > MOVE_GAP)
+                game.pending_step(now);
+                if follows_pointer(game.walk_held, game.pending.is_some(), game.last_walk_try, now)
                     && let Some(assets) = &self.assets
                     && !game.on_ui(self.cursor, &self.items, assets.message.size)
                     && let Some(cell) = game.ground_cell(self.cursor)
@@ -13903,7 +14072,7 @@ impl ApplicationHandler<NetEvent> for App {
                         && let Some((&id, _)) = game.ground.iter().min_by_key(|(_, item)| distance(item.at))
                     {
                         game.auto_pick_up = false;
-                        game.pick_up(id);
+                        game.pick_up(id, now);
                     }
                     if game.entered.elapsed() >= Duration::from_secs(3)
                         && !game.skills.is_empty()
@@ -13933,17 +14102,13 @@ impl ApplicationHandler<NetEvent> for App {
                         }
                     }
                 }
-                if let Some((pending, Some(arrived))) = game.pending
+                // A skill walked into range goes off once the walk has settled.
+                if let Some((Pending::Skill { id, level, target }, Some(arrived))) = game.pending
                     && arrived.elapsed() >= ATTACK_SETTLE
                 {
                     game.pending = None;
-                    match pending {
-                        Pending::PickUp(id) => game.pick_up(id),
-                        Pending::Skill { id, level, target } => {
-                            game.targeting = Some((id, level));
-                            game.aim_skill(target);
-                        }
-                    }
+                    game.targeting = Some((id, level));
+                    game.aim_skill(target);
                 }
                 if let Some(gpu) = &self.gpu {
                     gpu.window.request_redraw();
@@ -14242,9 +14407,41 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
     1.0 - (now.saturating_duration_since(start).as_secs_f32() / length.as_secs_f32().max(f32::EPSILON)).min(1.0)
 }
 
+/// Why an item can't be dropped on the ground now: `Some(None)` quietly, `Some(Some(message))` saying so; `None` when
+/// it can. In order: a wear asked for under 2 s ago, a deal or talk under way, the equipment window, the storage, the
+/// mail window, the ammunition worn.
+fn ground_drop_refused(since_wear: Option<Duration>, busy: bool, equipment: bool, storage: bool, mail: bool, ammo: bool) -> Option<Option<usize>> {
+    if since_wear.is_some_and(|since| since < WEAR_PAUSE) || busy {
+        Some(None)
+    } else if equipment {
+        Some(Some(DROP_EQUIPMENT_OPEN))
+    } else if storage {
+        Some(None)
+    } else if mail {
+        Some(Some(DROP_MAIL_OPEN))
+    } else if ammo {
+        Some(Some(DROP_AMMO_WORN))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn some_things_open_keep_items_off_the_ground() {
+        let refused = |since: Option<u64>, open: [bool; 5]| ground_drop_refused(since.map(Duration::from_millis), open[0], open[1], open[2], open[3], open[4]);
+        assert_eq!(refused(None, [false; 5]), None);
+        assert_eq!(refused(Some(2000), [false; 5]), None);
+        assert_eq!(refused(Some(1999), [false; 5]), Some(None));
+        assert_eq!(refused(None, [true, true, false, false, false]), Some(None), "a trade first, quietly");
+        assert_eq!(refused(None, [false, true, true, true, true]), Some(Some(DROP_EQUIPMENT_OPEN)));
+        assert_eq!(refused(None, [false, false, true, true, true]), Some(None), "the storage, quietly");
+        assert_eq!(refused(None, [false, false, false, true, true]), Some(Some(DROP_MAIL_OPEN)));
+        assert_eq!(refused(None, [false, false, false, false, true]), Some(Some(DROP_AMMO_WORN)));
+    }
 
     #[test]
     fn saves_where_the_windows_were_left() {
@@ -14611,6 +14808,34 @@ mod tests {
             [attack_refused(900, 1000, false), attack_refused(899, 1000, false), attack_refused(0, 1000, true)],
             [Some(OVERWEIGHT), None, Some(RIDING_NO_ATTACK)]
         );
+    }
+
+    #[test]
+    fn picks_up_on_the_way() {
+        // Four cells away and walking there: nothing until the player's cell is next to the item.
+        assert_eq!(pickup_step([10, 10], [14, 10], None), PickStep::Walk);
+        assert_eq!(pickup_step([11, 10], [14, 10], Some([14, 10])), PickStep::Wait);
+        assert_eq!(pickup_step([12, 11], [14, 10], Some([14, 10])), PickStep::Wait);
+        assert_eq!(pickup_step([13, 11], [14, 10], Some([14, 10])), PickStep::PickUp);
+        assert_eq!(pickup_step([14, 10], [14, 10], None), PickStep::PickUp);
+        // A walk the move limit held back is asked for again on a later frame, once.
+        let start = Instant::now();
+        let (mut walked, mut last) = (None, Some(start));
+        let mut walks = Vec::new();
+        for ms in [100, 200, 299, 300, 350, 700] {
+            let now = start + Duration::from_millis(ms);
+            if pickup_step([10, 10], [14, 10], walked) == PickStep::Walk && may_move(last, now) {
+                (walked, last) = (Some([14, 10]), Some(now));
+                walks.push(ms);
+            }
+        }
+        assert_eq!(walks, [300]);
+        // The held button follows the pointer only once nothing is pending, MOVE_GAP after its last try.
+        assert!(!follows_pointer(true, true, None, start));
+        assert!(follows_pointer(true, false, None, start));
+        assert!(!follows_pointer(true, false, Some(start), start + Duration::from_millis(300)));
+        assert!(follows_pointer(true, false, Some(start), start + Duration::from_millis(301)));
+        assert!(!follows_pointer(false, false, None, start));
     }
 
     #[test]
