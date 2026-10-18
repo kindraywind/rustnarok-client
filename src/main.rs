@@ -2891,6 +2891,7 @@ const PARTY_MODE: &str = "party_mode";
 const VEND_SIZE: &str = "vend_size";
 const SKILL_LIST_SIZE: &str = "skill_list_size";
 const ITEM_PLACE: &str = "item_info";
+const QUEST_PLACE: &str = "quest";
 
 /// The sizes' lines of the window places: the inventory's and the cart's columns and rows, the storage's rows, an NPC
 /// shop's goods width and rows, then its deal's rows.

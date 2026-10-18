@@ -731,6 +731,8 @@ pub struct QuestInfo {
     pub npc: Option<[i32; 2]>,
     /// Only a cooldown timer (`CoolTimeQuest = 1`).
     pub cooldown: bool,
+    /// Its type icon (`IconName`, under renew_questui), when it names one.
+    pub icon: String,
 }
 
 /// A quest's words: title, description (its lines joined), summary, its NPC cell when listed, whether it's a cooldown
@@ -755,7 +757,7 @@ fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
         };
         if let Ok(id) = u32::try_from(id) {
             let cooldown = entry.get::<i64>("CoolTimeQuest").unwrap_or(0) == 1;
-            quests.insert(id, QuestInfo { title: text("Title"), description, summary: text("Summary"), npc, cooldown });
+            quests.insert(id, QuestInfo { title: text("Title"), description, summary: text("Summary"), npc, cooldown, icon: text("IconName") });
         }
     }
     Ok(quests)
