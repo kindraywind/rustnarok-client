@@ -6,8 +6,9 @@
 
 **A native Ragnarok Online client for macOS, written from scratch in Rust. It builds on Linux and Windows too.**
 
-The windows, fonts, sounds and behavior of the official client, drawn from the player's own game data at runtime.
-As good as the original, and better where it can be.
+No Wine, no wrapper, no official client underneath: an open-source reimplementation of the whole client, from the
+network protocol to the last window. The windows, fonts, sounds and behavior of the official client, drawn from the
+player's own game data at runtime. As good as the original, and better where it can be.
 
 [![Rust](https://img.shields.io/badge/Rust-nightly-E8401C?logo=rust&logoColor=white)](rust-toolchain.toml)
 [![macOS](https://img.shields.io/badge/macOS-native-111111?logo=apple&logoColor=white)](#-quick-start)
@@ -15,6 +16,7 @@ As good as the original, and better where it can be.
 [![PACKETVER](https://img.shields.io/badge/PACKETVER-20220406-E8401C)](#-server)
 [![rathena](https://img.shields.io/badge/server-rathena-2F7D32)](https://github.com/kindraywind/rathena/tree/rustnarok)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#-status)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#-licenses)
 [![Clean room](https://img.shields.io/badge/clean%20room-no%20game%20data%20in%20git-1F6FEB)](#-conventions)
 
 [Quick start](#-quick-start) · [What works](#-what-works) · [An AI plays it](#-an-ai-plays-it) · [Server](#-server) · [Development](#-development) · [Not done yet](#-not-done-yet)
@@ -37,8 +39,8 @@ As good as the original, and better where it can be.
 <td width="50%" valign="top">
 
 ### 🦀 Rust all the way down
-wgpu for the picture, cpal for the sound, an embedded Lua 5.1 for the client's data tables. No official client code,
-no wrapper.
+wgpu for the picture, cpal for the sound, an embedded Lua 5.1 for the client's data tables. No Wine, no wrapper, no
+official client code: every part is written anew.
 
 </td>
 <td width="50%" valign="top">
@@ -296,6 +298,9 @@ PNG), `lua_dump`, `messages`, `job_name`, `act_sounds`, `str_dump`, `map_info`, 
 - [ ] Weapon hit sounds; RSM2 models; lightmap edge smoothing.
 
 ## 📜 Licenses
+
+Open source under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. Contributions are
+taken under the same terms.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the code in `src/grf/mixcrypt.rs` that comes from elsewhere.
 

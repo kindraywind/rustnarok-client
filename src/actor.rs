@@ -747,6 +747,8 @@ impl SpriteSet {
             headgear,
             head_hidden: [look.head_top, look.head_mid, look.head_bottom].iter().any(|view| HEAD_HIDING.contains(view)),
             outfit: outfit(job),
+            madogear: MADOGEAR_BODIES.contains(&job),
+            female: look.sex == 0,
         };
         let (weapon, glow) = weapon.unwrap_or_default();
         Some(Self {
@@ -1102,7 +1104,15 @@ struct Dressing {
     head_hidden: bool,
     /// An outfit body: no weapon or shield.
     outfit: bool,
+    /// A Madogear body: never a shield, and no garment for a woman.
+    madogear: bool,
+    female: bool,
 }
+
+/// Sprite jobs on a Madogear.
+const MADOGEAR_BODIES: [u16; 3] = [4086, 4087, 4112];
+/// A player's dead action (all eight directions).
+const DEAD_ACTIONS: std::ops::RangeInclusive<usize> = 64..=71;
 
 impl Dressing {
     /// The layers to draw in action `index` (direction included) at body frame `frame`, back to front.
@@ -1121,6 +1131,9 @@ impl Dressing {
         if self.head_hidden {
             order.retain(|&part| part != Part::Head);
         }
+        // The dead and a woman on a Madogear wear no garment; a Madogear carries no shield.
+        let robe_off = DEAD_ACTIONS.contains(&index) || self.madogear && self.female;
+        order.retain(|&part| !(part == Part::Robe && robe_off || part == Part::Shield && self.madogear));
         order
     }
 }
@@ -1134,11 +1147,34 @@ struct Shot {
     hold: bool,
 }
 
-/// How a one-shot action plays: stretched over a duration, or at its ACT pace times a scale.
-#[derive(Clone, Copy)]
+/// How a flinch plays for d = the hit's target motion / 288 (`delay`: the action's ACT frame delay). Over 1, at the ACT's
+/// pace with the last frame held until d times its length; up to 1, a player's frames last d times their delay and
+/// anyone else's d × 24 ms each; at 0, as the ACT has it.
+fn flinch_pace(d: f32, player: bool, delay: f32) -> Pace {
+    match d {
+        d if d > 1.0 => Pace::Hold(d),
+        d if d > 0.0 && player => Pace::Act(d),
+        d if d > 0.0 => Pace::Act(d / delay),
+        _ => Pace::Act(1.0),
+    }
+}
+
+/// Whether a hit that lands makes its target flinch, by what it plays now: not a player in its own swing, nor a monster
+/// or NPC in one of its special idle actions (5 to 8). A monster's own attack is cut.
+pub fn flinches(kind: u8, playing: usize) -> bool {
+    match kind {
+        0 => playing != combat_actions(kind).0,
+        _ => !(5..=8).contains(&playing),
+    }
+}
+
+/// How a one-shot action plays: stretched over a duration, at its ACT pace times a scale, or at its ACT pace with the
+/// last frame held until its length times a factor.
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Pace {
     Stretch(f32),
     Act(f32),
+    Hold(f32),
 }
 
 /// The client's damage numbers (data\sprite\이팩트\숫자.spr), one image per digit, and its MISS label (msg.spr).
@@ -1471,6 +1507,10 @@ pub fn view_direction(rot: f32, yaw: f32, round: bool) -> u8 {
 
 /// Other units show this long after the server moves them.
 pub const REMOTE_DELAY: Duration = Duration::from_millis(72);
+/// A knockback slides the unit to its new cell over this long.
+const SLIDE: Duration = Duration::from_millis(200);
+// ponytail: farther than this many cells a move (a pet put back at its owner, say) jumps instead of sliding.
+const SLIDE_REACH: f32 = 5.0;
 /// A walk heard of after it ended replays at 13/10 the speed.
 const LATE_PACE: f32 = 10.0 / 13.0;
 
@@ -1532,6 +1572,8 @@ pub struct Actor {
     pub rot: f32,
     /// The facing came from the server (appearing, turning) rather than from walking or turning to a target.
     pub facing_from_server: bool,
+    /// Sliding (a knockback): the path is one straight move that doesn't turn the unit.
+    sliding: bool,
     /// Players only: 0 looking straight ahead, 1 and 2 turned to the sides.
     pub head_direction: u16,
     animation_started: Instant,
@@ -1589,6 +1631,7 @@ impl Actor {
             direction,
             rot: rot_of(direction),
             facing_from_server: true,
+            sliding: false,
             head_direction: 0,
             animation_started: now,
             shot: None,
@@ -1654,13 +1697,27 @@ impl Actor {
         self.remove_at = Some(from + Duration::from_micros((f64::from(ms) * 1000.0).round() as u64));
     }
 
-    pub fn play_at_pace(&mut self, action: usize, start: Instant, scale: f32, hold: bool) {
-        self.shot = Some(Shot { action, started: start, pace: Pace::Act(scale.max(0.01)), hold });
+    /// Flinches (action `action`) from a hit with the target motion `motion` (rathena's dMotion); see `flinch_pace`.
+    pub fn flinch(&mut self, action: usize, start: Instant, motion: f32) {
+        let index = action * 8 + usize::from(self.direction % 8);
+        let delay = self.sprites.as_ref().and_then(|sprites| sprites.layers[0].act.delays.get(index).copied()).unwrap_or(4.0).max(1.0);
+        self.shot = Some(Shot { action, started: start, pace: flinch_pace(motion / 288.0, self.kind == 0, delay), hold: false });
     }
 
-    /// Whether a one-shot action (an attack, a skill's pose, a flinch, dying) is playing now.
-    pub fn in_action(&self, now: Instant) -> bool {
-        !matches!(self.animation(now).0, IDLE | WALK | SIT | READY)
+    /// In its own attack swing now.
+    pub fn swinging(&self, now: Instant) -> bool {
+        self.animation(now).0 == combat_actions(self.kind).0
+    }
+
+    /// Stops walking once the step under way is done (a slide goes on).
+    pub fn stop_after_step(&mut self) {
+        if !self.sliding {
+            self.path.truncate(1);
+        }
+    }
+
+    pub fn play_at_pace(&mut self, action: usize, start: Instant, scale: f32, hold: bool) {
+        self.shot = Some(Shot { action, started: start, pace: Pace::Act(scale.max(0.01)), hold });
     }
 
     /// World units walked since the unit appeared, the step under way included.
@@ -1702,14 +1759,25 @@ impl Actor {
         self.facing_from_server = true;
     }
 
-    /// Walks `path` from the cell it's on (or on from the step under way).
-    pub fn walk(&mut self, path: Vec<[i32; 2]>) {
-        let now = Instant::now();
-        self.start_walking(now);
-        if self.path.is_empty() {
-            self.leg = (self.cell.map(|value| value as f32), now);
+    /// Walks `path` on from `from`, where the server starts it. A walk changed midway starts from the cell the step
+    /// under way ends on, so that step plays out first and the new path follows; from anywhere else the unit heads
+    /// to `from` from where it is now.
+    pub fn walk_on(&mut self, from: [i32; 2], path: Vec<[i32; 2]>, now: Instant) {
+        if !self.moving() {
+            self.cell = from;
         }
-        self.path = arrivals(self.leg.0, self.leg.1, &path, self.step_ms, 1.0);
+        self.start_walking(now);
+        if let Some(at) = self.path.iter().position(|&(cell, _)| cell == from) {
+            self.path.truncate(at + 1);
+            let arrives = self.path[at].1;
+            self.path.extend(arrivals(from.map(|value| value as f32), arrives, &path, self.step_ms, 1.0));
+        } else {
+            let start = self.update(now);
+            self.cell = start.map(|value| value.round() as i32);
+            self.leg = (start, now);
+            let path: Vec<_> = (self.cell != from || path.is_empty()).then_some(from).into_iter().chain(path).collect();
+            self.path = arrivals(start, now, &path, self.step_ms, 1.0);
+        }
     }
 
     /// Walks `path` as the server has it: from `from` and its sixteenths of a cell `sub` (8: the centre), beginning at
@@ -1729,6 +1797,11 @@ impl Actor {
     }
 
     fn start_walking(&mut self, now: Instant) {
+        // A walk cuts a slide short at its end cell.
+        if let Some(cell) = self.sliding_to() {
+            self.stop_at(cell);
+            self.leg = (cell.map(|value| value as f32), now);
+        }
         self.ready = false;
         self.sitting = false;
         // Walking looks straight ahead again.
@@ -1744,6 +1817,7 @@ impl Actor {
 
     pub fn stop_at(&mut self, cell: [i32; 2]) {
         self.cell = cell;
+        self.sliding = false;
         if !self.path.is_empty() {
             self.animation_started = Instant::now();
         }
@@ -1757,10 +1831,12 @@ impl Actor {
     /// Advances along the path; returns the (fractional) cell the actor is at now.
     pub fn update(&mut self, now: Instant) -> [f32; 2] {
         while let Some(&(next, arrives)) = self.path.first() {
-            let step = [next[0] - self.cell[0], next[1] - self.cell[1]];
-            self.direction = world::direction(step);
-            self.rot = angle_of(step);
-            self.facing_from_server = false;
+            if !self.sliding {
+                let step = [next[0] - self.cell[0], next[1] - self.cell[1]];
+                self.direction = world::direction(step);
+                self.rot = angle_of(step);
+                self.facing_from_server = false;
+            }
             if now < arrives {
                 break;
             }
@@ -1771,9 +1847,27 @@ impl Actor {
             self.leg = (next.map(|value| value as f32), arrives);
             if self.path.is_empty() {
                 self.animation_started = now;
+                self.sliding = false;
             }
         }
         self.position(now)
+    }
+
+    /// Slides straight to `cell` from where it is drawn, over 200 ms, facing as it was (a knockback). A long way jumps.
+    pub fn slide_to(&mut self, cell: [i32; 2], now: Instant) {
+        let from = self.position(now);
+        if f32::hypot(cell[0] as f32 - from[0], cell[1] as f32 - from[1]) > SLIDE_REACH {
+            self.stop_at(cell);
+            return;
+        }
+        self.leg = (from, now);
+        self.path = vec![(cell, now + SLIDE)];
+        self.sliding = true;
+    }
+
+    /// The cell a slide under way ends on.
+    pub fn sliding_to(&self) -> Option<[i32; 2]> {
+        self.path.last().map(|&(cell, _)| cell).filter(|_| self.sliding)
     }
 
     /// Current animation and how far into it: a one-shot action while it plays, else idle or walk.
@@ -1790,10 +1884,16 @@ impl Actor {
                         return (shot.action, Timing::Once(elapsed, scale));
                     }
                 }
+                Pace::Hold(factor) => {
+                    let length = self.sprites.as_ref().and_then(|sprites| sprites.index_ms(shot.action * 8 + usize::from(self.direction % 8))).unwrap_or(0.0);
+                    if elapsed < length * factor {
+                        return (shot.action, Timing::Once(elapsed, 1.0));
+                    }
+                }
                 Pace::Stretch(_) => {}
             }
         }
-        let action = if self.moving() {
+        let action = if self.moving() && !self.sliding {
             WALK
         } else if self.sitting {
             SIT
@@ -2083,6 +2183,27 @@ mod tests {
     }
 
     #[test]
+    fn leaves_off_garments_and_shields_where_the_game_does() {
+        let dressing = |madogear: bool, female: bool| Dressing {
+            head_first: Vec::new(),
+            robe_over_body: Vec::new(),
+            robe_over_headgear: false,
+            headgear: Vec::new(),
+            head_hidden: false,
+            outfit: false,
+            madogear,
+            female,
+        };
+        let has = |dressing: &Dressing, index: usize, part: Part| dressing.order(index, 0).contains(&part);
+        let knight = dressing(false, false);
+        // Standing with a garment; lying dead without it.
+        assert!(has(&knight, 0, Part::Robe) && !has(&knight, 64, Part::Robe) && !has(&knight, 71, Part::Robe));
+        // A shield in an attack, but never on a Madogear; a woman on one has no garment, a man does.
+        assert!(has(&knight, 80, Part::Shield) && !has(&dressing(true, false), 80, Part::Shield));
+        assert!(!has(&dressing(true, true), 0, Part::Robe) && has(&dressing(true, false), 0, Part::Robe));
+    }
+
+    #[test]
     fn stacks_layers_back_to_front() {
         use Part::*;
         let hats = [(HeadMid, 100), (HeadTop, 200), (HeadBottom, 300)];
@@ -2110,6 +2231,31 @@ mod tests {
         assert_eq!(actor.direction, 5);
         assert_eq!(actor.update(at(400)), [12.0, 11.0]);
         assert!(!actor.moving());
+    }
+
+    #[test]
+    fn turns_midway_without_a_jump() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut actor = Actor::new("a".into(), None, [10, 10], 0, 100);
+        actor.walk_on([10, 10], vec![[11, 10], [12, 10], [13, 10]], start);
+        assert_near(actor.update(at(150)), [11.5, 10.0]);
+        // Turned north mid-step: the server starts the new path from 12,10, where this step ends.
+        actor.walk_on([12, 10], vec![[12, 11], [12, 12]], at(150));
+        assert_near(actor.update(at(160)), [11.6, 10.0]);
+        assert_near(actor.update(at(250)), [12.0, 10.5]);
+        assert_eq!(actor.direction, 4);
+        assert_near(actor.update(at(401)), [12.0, 12.0]);
+        assert!(!actor.moving());
+        // From a cell we've already left (we ran ahead): back to it from where we are, then on.
+        let mut actor = Actor::new("a".into(), None, [10, 10], 0, 100);
+        actor.walk_on([10, 10], vec![[11, 10], [12, 10]], start);
+        actor.update(at(150));
+        actor.walk_on([11, 10], vec![[11, 11]], at(150));
+        assert_near(actor.update(at(175)), [11.25, 10.0]);
+        assert_eq!(actor.direction, 2);
+        assert_near(actor.update(at(200)), [11.0, 10.0]);
+        assert_near(actor.update(at(300)), [11.0, 11.0]);
     }
 
     #[test]
@@ -2158,6 +2304,20 @@ mod tests {
     }
 
     #[test]
+    fn flinches_by_who_and_for_how_long() {
+        // A Poring's 480: held to 1.67 times the action; a player's 288 or less: frames shortened; 0: as it is.
+        assert_eq!(flinch_pace(480.0 / 288.0, false, 3.0), Pace::Hold(480.0 / 288.0));
+        assert_eq!(flinch_pace(0.5, true, 3.0), Pace::Act(0.5));
+        assert_eq!(flinch_pace(0.5, false, 4.0), Pace::Act(0.125), "d x 24 ms a frame");
+        assert_eq!(flinch_pace(0.0, false, 4.0), Pace::Act(1.0));
+        // A player mid-swing doesn't flinch; a monster mid-attack does, but not in a special idle.
+        assert!(!flinches(0, 5));
+        assert!(flinches(0, WALK));
+        assert!(flinches(5, 2));
+        assert!(!flinches(5, 6));
+    }
+
+    #[test]
     fn walks_in_step_with_the_server() {
         let start = Instant::now();
         let ms = |at: Instant| at.duration_since(start).as_secs_f32() * 1000.0;
@@ -2180,6 +2340,24 @@ mod tests {
         assert_eq!(local_time((1000, start), 1500), start + Duration::from_millis(500));
         assert_eq!(local_time((1000, now), 900), now - Duration::from_millis(100));
         assert_eq!(local_time((u32::MAX - 10, start), 5), start + Duration::from_millis(16));
+    }
+
+    #[test]
+    fn slides_back_over_a_fifth_of_a_second() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut actor = Actor::new("a".into(), None, [10, 10], 4, 150);
+        actor.slide_to([10, 13], start);
+        // Straight there in 200 ms, still facing the way it did, and not walking.
+        assert_near(actor.update(at(0)), [10.0, 10.0]);
+        assert_near(actor.update(at(100)), [10.0, 11.5]);
+        assert_eq!((actor.direction, actor.sliding_to()), (4, Some([10, 13])));
+        assert_eq!(actor.animation(at(100)).0, IDLE);
+        assert_near(actor.update(at(200)), [10.0, 13.0]);
+        assert_eq!((actor.cell, actor.sliding_to(), actor.moving()), ([10, 13], None, false));
+        // Farther than five cells: a jump.
+        actor.slide_to([10, 20], at(300));
+        assert_eq!((actor.cell, actor.moving()), ([10, 20], false));
     }
 
     fn assert_near(a: [f32; 2], b: [f32; 2]) {

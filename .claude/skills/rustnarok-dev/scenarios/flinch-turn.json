@@ -1,0 +1,31 @@
+{
+  "about": "Being hit and turning (issue #345): a Poporing (dMotion 672, d = 2.33) hit by the player flinches and holds its last hurt frame until 2.33 times the action's length: shots at the hit (300 ms after the attack packet on the paused clock) and at 900 ms. Then, turned north by two Shift + clicks there (the first may turn only the head), a Shift + click 45° to the right turns only the head; a second one turns the body.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"say": "@monster 1031 1"}, {"wait": 1500},
+    {"click_unit": {"kind": "monster", "name": "Poporing"}},
+    {"wait_for": {"packet": "0x08c8", "pause": true, "ms": 8000}},
+    {"move": [1000, 750]},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 300}},
+    {"shot": "flinch-a", "crop": [262, 134, 500, 440], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "pause"}},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 600}},
+    {"shot": "flinch-b", "crop": [262, 134, 500, 440], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "resume"}},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"click_on": {"cell": [170, 364]}, "mods": "Shift"}, {"wait": 700},
+    {"click_on": {"cell": [170, 364]}, "mods": "Shift"}, {"wait": 700},
+    {"expect": {"state": {"player.direction": 4}}},
+    {"click_on": {"cell": [174, 364]}, "mods": "Shift"}, {"wait": 700},
+    {"expect": {"state": {"player.direction": 4}}},
+    {"move": [1000, 750]},
+    {"shot": "turn-head", "crop": [412, 234, 200, 200], "threshold": 5},
+    {"click_on": {"cell": [174, 364]}, "mods": "Shift"}, {"wait": 700},
+    {"expect": {"state": {"player.direction": 5}}},
+    {"shot": "turn-body", "crop": [412, 234, 200, 200], "threshold": 5}
+  ]
+}
