@@ -862,6 +862,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         || game.guild_invite.is_some()
         || game.cashshop_buy_asked
         || game.save_asked
+        || game.trade_asked.is_some()
         || game.adopt_asked.is_some()
         || game.queue_asked.is_some();
     let question_buttons = app.assets.as_ref().filter(|_| question).into_iter().flat_map(|assets| {
@@ -1077,6 +1078,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(
             game.guild.iter().flat_map(|guild| game.guild_window.button_boxes(guild)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
+        .chain(game.trade.iter().flat_map(|trade| trade.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(question_buttons)
         .chain(["plus", "minus", "mini"].map(|name| json!({"kind": "button", "name": format!("minimap_{name}"), "box": crate::minimap::button_box(name)})))
         .chain(game.minimap_window.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))

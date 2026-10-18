@@ -2887,8 +2887,9 @@ pub enum MapEvent {
         partner: bool,
     },
     TradeCancelled,
+    /// The deal's end: 0 done, 1 failed.
     TradeDone {
-        ok: bool,
+        result: u8,
     },
     /// Someone whispered to the player.
     Whisper {
@@ -6385,7 +6386,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_ACK_ADD_EXCHANGE_ITEM => MapEvent::TradeAdded { index: u16_at(2), result: packet[4] },
         ZC_CONCLUDE_EXCHANGE_ITEM => MapEvent::TradeLocked { partner: packet[2] != 0 },
         ZC_CANCEL_EXCHANGE_ITEM => MapEvent::TradeCancelled,
-        ZC_EXEC_EXCHANGE_ITEM => MapEvent::TradeDone { ok: packet[2] == 0 },
+        ZC_EXEC_EXCHANGE_ITEM => MapEvent::TradeDone { result: packet[2] },
         ZC_SHOW_IMAGE => MapEvent::Cutin { image: c_string(&packet[2..66]), place: packet[66] },
         ZC_COMPASS => MapEvent::Mark {
             npc: u32_at(2),

@@ -893,6 +893,8 @@ pub enum Command {
     Achievements,
     /// /noshift: a click on a player attacks without Shift, on or off.
     NoShift,
+    /// /notrade, /nt: deal requests are refused at once, on or off.
+    NoTrade,
     /// /camera: the camera sticks to the player instead of gliding after them, on or off.
     Camera,
     /// /zoom: the camera can go further out outdoors, on or off.
@@ -942,6 +944,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/achievement" => Command::Achievements,
         "/memo" => Command::Memo,
         "/noshift" => Command::NoShift,
+        "/notrade" | "/nt" => Command::NoTrade,
         "/noctrl" | "/nc" => Command::NoCtrl,
         "/snap" => Command::Snap,
         "/itemsnap" => Command::ItemSnap,
@@ -1167,6 +1170,7 @@ mod tests {
         assert_eq!(command("/where"), Some(Command::Where));
         assert_eq!(command("/memo"), Some(Command::Memo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
+        assert_eq!([command("/notrade"), command("/nt")], [Some(Command::NoTrade), Some(Command::NoTrade)]);
         assert_eq!([command("/noctrl"), command("/nc")], [Some(Command::NoCtrl), Some(Command::NoCtrl)]);
         assert_eq!([command("/snap"), command("/itemsnap"), command("/skillsnap")], [Some(Command::Snap), Some(Command::ItemSnap), Some(Command::SkillSnap)]);
         assert_eq!(command("/camera"), Some(Command::Camera));

@@ -331,15 +331,17 @@ const EFFECTS_OFF: usize = 24;
 /// (70 + the result), how it ended (75 done, 76 failed, 74 cancelled), too heavy.
 const TRADE_ASKS: usize = 93;
 const TRADE_NO_ONE: usize = 71;
-const TRADE_OVERLAP: usize = 51;
-const TRADE_FULL: usize = 297;
-const TRADE_ANSWERS: usize = 70;
 const TRADE_DONE: usize = 75;
 const TRADE_FAILED: usize = 76;
 const TRADE_CANCELLED: usize = 74;
 const TRADE_HEAVY: usize = 73;
 /// "Request a deal with %s".
-const TRADE_CHOICE: usize = 87;
+/// "Request a deal with (%s)".
+const TRADE_CHOICE: usize = 391;
+/// "Trade : ", the deal window's caption.
+const TRADE_CAPTION: usize = 206;
+/// "Please finish the task in progress (NPC conversation, ...) and try again.", in white.
+const TASK_IN_PROGRESS: usize = 1923;
 /// "Check %s's Equipment Info"; the Show Equipment box's answers, on and off.
 const VIEW_CHOICE: usize = 1360;
 /// "Send an adoption request to %s"; the questions to the one asked: "(name)" + " wishes to adopt you. Do you
@@ -1101,6 +1103,11 @@ struct Game {
     cashshop_buy_asked: bool,
     trade_asked: Option<(String, u32, u16)>,
     trade_with: String,
+    /// /notrade: deal requests are refused at once.
+    no_trade: bool,
+    /// Dev switch `RUSTNAROK_CLIENT_TRADE_GIVE`: the items still to put in, one per answer, then the zeny to lock with.
+    trade_give: VecDeque<(u16, u32)>,
+    trade_give_zeny: Option<u32>,
     /// The status window, and its height (its background's).
     status_window: status::StatusWindow,
     status_height: f32,
@@ -2980,6 +2987,12 @@ impl Game {
                 self.chat_line(line, CHAT_ITEM);
                 Ok(())
             }
+            // ponytail: no line of the client's own for /notrade is known; a plain one, as /noshift prints.
+            chat::Command::NoTrade => {
+                self.no_trade = !self.no_trade;
+                self.chat_line(format!("notrade: {}", if self.no_trade { "On" } else { "Off" }), CHAT_ITEM);
+                Ok(())
+            }
             // ponytail: the client's own line for /noshift isn't in this data; a plain one.
             chat::Command::NoShift => {
                 self.no_shift = !self.no_shift;
@@ -3429,7 +3442,7 @@ impl Game {
                 let have = self.inventory.get(index).map_or(0, |item| u32::from(item.amount));
                 match &mut self.trade {
                     Some(trade) => {
-                        trade.pending.insert(index, amount.min(have));
+                        trade.pending = Some((index, amount.min(have)));
                         self.session.add_to_trade(index, amount.min(have))
                     }
                     None => Ok(()),
@@ -3461,17 +3474,15 @@ impl Game {
         None
     }
 
-    /// An inventory item let go on the deal: it goes in unless the deal is locked, holds it already or is full.
+    /// An inventory item let go on the deal: it goes in unless the deal is locked, holds it already, is full or still
+    /// waits on the last add.
     fn offer(&mut self, index: u16, all: bool) -> Option<usize> {
         let trade = self.trade.as_ref()?;
         if !trade.open_for_items() {
             return None;
         }
-        if trade.pending.contains_key(&index) {
-            return Some(TRADE_OVERLAP);
-        }
-        if trade.items[0].len() + trade.pending.len() >= trade::MOST_ITEMS {
-            return Some(TRADE_FULL);
+        if let Some(refused) = trade.refuse_offer(index) {
+            return refused;
         }
         match self.inventory.get(index).map(|item| u32::from(item.amount)) {
             Some(amount) if all => self.give(Asked::Trade(index), amount),
@@ -3507,23 +3518,22 @@ impl Game {
         }
     }
 
-    /// Locks our side of the deal in, with the zeny typed (no more than carried).
+    /// Locks our side of the deal in, with the zeny typed (no more than carried; 0 too).
     fn lock_trade(&mut self, zeny: u32) {
         let carried = self.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
         let zeny = zeny.min(carried);
         if let Some(trade) = &mut self.trade {
             trade.typed = zeny.to_string();
         }
-        if zeny > 0 {
-            let _ = self.session.add_to_trade(0, zeny);
-        }
+        let _ = self.session.add_to_trade(0, zeny);
         let _ = self.session.lock_trade();
     }
 
-    /// Dev switch `RUSTNAROK_CLIENT_TRADE_GIVE`: once a deal opens, puts those in and locks.
+    /// Dev switch `RUSTNAROK_CLIENT_TRADE_GIVE`: once a deal opens, puts those in (one add at a time) and locks.
     fn auto_trade(&mut self) {
         let Ok(give) = std::env::var("RUSTNAROK_CLIENT_TRADE_GIVE") else { return };
         let mut zeny = 0;
+        self.trade_give.clear();
         for part in give.split(',') {
             if let Some(amount) = part.strip_prefix('z') {
                 zeny = amount.parse().unwrap_or(0);
@@ -3531,10 +3541,20 @@ impl Game {
                 && let (Ok(id), Ok(amount)) = (id.parse::<u32>(), amount.parse::<u32>())
                 && let Some(index) = self.inventory.items.iter().find(|item| item.id == id && item.worn == 0).map(|item| item.index)
             {
-                self.give(Asked::Trade(index), amount);
+                self.trade_give.push_back((index, amount));
             }
         }
-        self.lock_trade(zeny);
+        self.trade_give_zeny = Some(zeny);
+        self.auto_trade_next();
+    }
+
+    /// The dev switch's next add, or the lock once they're all in.
+    fn auto_trade_next(&mut self) {
+        if let Some((index, amount)) = self.trade_give.pop_front() {
+            self.give(Asked::Trade(index), amount);
+        } else if let Some(zeny) = self.trade_give_zeny.take() {
+            self.lock_trade(zeny);
+        }
     }
 
     /// Asks a player seen by name for a deal (`/deal name`), or says there's no one of that name.
@@ -3741,7 +3761,6 @@ impl Game {
         push(Bank, self.bank.is_some());
         push(CashShop, self.cashshop.is_some());
         push(PickList, self.pick.is_some());
-        push(Trade, self.trade.is_some());
         push(CardPicture, self.card_view.is_some());
         push(ItemInfo, self.item_window.is_some());
         push(ChatRoom, self.room.is_some());
@@ -3777,7 +3796,6 @@ impl Game {
         push(GuildInvite, self.guild_invite.is_some());
         push(PartyInvite, self.party_invite.is_some());
         push(FriendAsked, self.friend_asked.is_some());
-        push(TradeAsked, self.trade_asked.is_some());
         push(DealChoice, self.deal_choice.is_some());
         push(BattleQueue, self.queue_window.frame.open);
         push(AdoptAsked, self.adopt_asked.is_some());
@@ -3811,6 +3829,13 @@ impl Game {
         }
         if matches!(self.queue_asked, Some(QueueAsked::Lobby(..))) {
             names.push("BattleLobby".into());
+        }
+        // Esc reaches neither the deal nor its request.
+        if self.trade.is_some() {
+            names.push("Trade".into());
+        }
+        if self.trade_asked.is_some() {
+            names.push("TradeAsked".into());
         }
         names.extend(self.talks.window_names());
         if let Some(dialog) = &self.dialog {
@@ -3888,7 +3913,6 @@ impl Game {
             || self.guild_invite.is_some()
             || self.party_invite.is_some()
             || self.friend_asked.is_some()
-            || self.trade_asked.is_some()
             || self.deal_choice.is_some()
             || self.amount.is_some()
             || self.adopt_asked.is_some()
@@ -3966,10 +3990,6 @@ impl Game {
         }
         if let Some((account, character, _)) = self.friend_asked.take() {
             let _ = self.session.answer_friend(account, character, false);
-            return;
-        }
-        if self.trade_asked.take().is_some() {
-            let _ = self.session.answer_trade(false);
             return;
         }
         if let Some((parent, partner, _, _)) = self.adopt_asked.take() {
@@ -4068,9 +4088,11 @@ impl Game {
             }
             CashShop => self.close_cashshop(),
             PickList => self.answer_pick(None),
+            // Only while typing the zeny: Esc stops that, the deal stays.
             Trade => {
-                let _ = self.session.cancel_trade();
-                self.trade = None;
+                if let Some(trade) = &mut self.trade {
+                    trade.typing = false;
+                }
             }
             ItemInfo => {
                 self.item_window = None;
@@ -4158,10 +4180,6 @@ impl Game {
                     let _ = self.session.answer_friend(account, character, false);
                 }
             }
-            TradeAsked => {
-                self.trade_asked = None;
-                let _ = self.session.answer_trade(false);
-            }
             DealChoice => self.deal_choice = None,
             BattleQueue => self.queue_window.frame.open = false,
             AdoptAsked => {
@@ -4248,8 +4266,12 @@ impl Game {
     }
 
     /// Uses an inventory item: consumables are used, equipment is put on.
-    fn use_item(&mut self, index: u16) {
+    fn use_item(&mut self, index: u16, messages: &[String]) {
         if self.store_open() {
+            return;
+        }
+        if let Some(Some(id)) = trade::refusal(self.trade.is_some(), trade::ItemAction::Use) {
+            self.chat_line(messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
             return;
         }
         let Some(item) = self.inventory.get(index) else { return };
@@ -4498,14 +4520,14 @@ impl Game {
     }
 
     /// Presses a hotkey slot: uses the item it holds (the first stack of it carried).
-    fn press_hotkey(&mut self, slot: usize) {
+    fn press_hotkey(&mut self, slot: usize, messages: &[String]) {
         if let Some(Some(net::Hotkey { skill: true, id, count })) = self.hotkeys.keys.get(slot).copied() {
             return self.use_skill(id as u16, count.max(1) as u16);
         }
         if let Some(Some(net::Hotkey { skill: false, id, .. })) = self.hotkeys.keys.get(slot).copied()
             && let Some(index) = self.inventory.items.iter().find(|item| item.id == id && item.worn == 0).map(|item| item.index)
         {
-            self.use_item(index);
+            self.use_item(index, messages);
         }
     }
 
@@ -6537,6 +6559,10 @@ impl App {
             }
             // The right-click menu takes the next click, wherever it lands.
             Scene::Game(game) if game.menu.is_some() => match game.menu.take().unwrap().hit(cursor).flatten() {
+                // Not while talking to an NPC or in its shop.
+                Some(Choice::Trade(_)) if game.dialog.is_some() || game.shop.is_some() => {
+                    game.chat_line(self.messages.get(TASK_IN_PROGRESS).cloned().unwrap_or_default(), CHAT_WHITE);
+                }
                 Some(Choice::Trade(id)) => {
                     game.trade_with = game.units.get(&id).map(|actor| actor.name.clone()).unwrap_or_default();
                     let _ = game.session.request_trade(id);
@@ -7197,9 +7223,9 @@ impl App {
                     Some(trade::Action::Exchange) => {
                         let _ = game.session.finish_trade();
                     }
+                    // The window stays until the server's 0x00ee.
                     Some(trade::Action::Cancel) => {
                         let _ = game.session.cancel_trade();
-                        game.trade = None;
                     }
                     None => {}
                 }
@@ -7268,7 +7294,7 @@ impl App {
                         if let hotkeys::Hit::Slot(slot) = hit
                             && game.hotkeys.clicks.double(slot as u16)
                         {
-                            game.press_hotkey(slot);
+                            game.press_hotkey(slot, &self.messages);
                         }
                     }
                     Panel::BasicInfo => {
@@ -7350,7 +7376,7 @@ impl App {
                             let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
                             game.chat.type_whole(&item_link(item.id, &name));
                         } else if let Some(index) = game.inventory.click(hit) {
-                            game.use_item(index);
+                            game.use_item(index, &self.messages);
                         }
                     }
                     Panel::Equipment => {
@@ -7378,6 +7404,9 @@ impl App {
                             Some(index) if game.equipment.swapping => {
                                 game.switch_asked = Some(index);
                                 let _ = game.session.switch_remove(index);
+                            }
+                            Some(_) if trade::refusal(game.trade.is_some(), trade::ItemAction::Unequip).is_some() => {
+                                game.chat_line(self.messages.get(trade::NO_USE).cloned().unwrap_or_default(), CHAT_ERROR);
                             }
                             Some(index) if !game.store_open() => drop(game.session.take_off(index)),
                             _ => {}
@@ -7982,7 +8011,9 @@ impl App {
                     let commands = PET_CHOICES.into_iter().filter(|&(_, command)| command != net::PET_UNEQUIP || accessory);
                     choices.extend(commands.map(|(label, command)| Some((fill(label), Choice::Pet(command)))));
                 } else {
-                    choices.push(Some((fill(TRADE_CHOICE), Choice::Trade(id))));
+                    if game.trade.is_none() {
+                        choices.push(Some((fill(TRADE_CHOICE), Choice::Trade(id))));
+                    }
                     // The guild's master can invite, and ask another guild for an alliance or set it as an antagonist.
                     // ponytail: where the two sit in the menu is an estimate.
                     if game.guild.as_ref().is_some_and(|guild| guild.master && guild.members.iter().all(|member| member.account != id)) {
@@ -8218,6 +8249,7 @@ impl App {
                 }
                 // A shop's offer let go over its deal goes in; a deal row let go over its goods comes out.
                 if let Some((Dragged::ShopOffer(row) | Dragged::ShopDeal(row), _, true)) = item
+                    && game.trade.is_none()
                     && let Some(shop) = &mut game.shop
                 {
                     let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u64;
@@ -8291,6 +8323,9 @@ impl App {
                             game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                         }
                     }
+                    // While trading, nothing goes into the storage, the cart, the equipment window or an NPC's list.
+                    (Some((Dragged::Item(_) | Dragged::Worn(_), _, true)), Some(Panel::Storage | Panel::Cart | Panel::Equipment))
+                        if trade::refusal(game.trade.is_some(), trade::ItemAction::DropOn).is_some() => {}
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
                     // Let go over the world: dropped at the player's feet, asking how many of a stack. The drop lock holds it.
                     (Some((Dragged::Item(index), _, true)), None)
@@ -8307,7 +8342,7 @@ impl App {
                             && game.trade.is_none()
                             && game.inventory.get(index).is_some_and(|item| item.location != 0 && item.worn == 0) =>
                     {
-                        game.use_item(index)
+                        game.use_item(index, &self.messages)
                     }
                     (Some((Dragged::Worn(index), _, true)), Some(Panel::Inventory)) if game.trade.is_none() => {
                         let _ = game.session.take_off(index);
@@ -8594,7 +8629,8 @@ impl App {
             && let Some(trade) = &mut game.trade
             && let Some(hit) = trade.hit(cursor)
         {
-            if hit == trade::Hit::Title(TitleHit::Title) {
+            // Any part that isn't a control moves it.
+            if hit == trade::Hit::Window {
                 trade.frame.start_drag(cursor);
             }
             return;
@@ -9101,7 +9137,7 @@ impl App {
                 }
             }
             // Only the showing bar's keys come here (see shortcuts::action).
-            shortcuts::Action::Hotbar { slot, .. } => game.press_hotkey(usize::from(slot)),
+            shortcuts::Action::Hotbar { slot, .. } => game.press_hotkey(usize::from(slot), &self.messages),
             // ponytail: no window yet (memorial, commands, ground cursor, tip, party board, hunting, flags). The key is eaten.
             shortcuts::Action::Memorial
             | shortcuts::Action::Commands
@@ -9447,7 +9483,12 @@ impl App {
                     Key::Named(NamedKey::Backspace) => {
                         trade.typed.pop();
                     }
-                    _ => trade.type_text(event.text.as_deref().unwrap_or_default()),
+                    _ => {
+                        if let Some(id) = trade.type_text(event.text.as_deref().unwrap_or_default()) {
+                            let line = rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&"1,000,000,000"]);
+                            game.chat_line(line, CHAT_ERROR);
+                        }
+                    }
                 }
             }
             // The navigation window's search field: each change searches again.
@@ -9970,6 +10011,9 @@ impl App {
                     cashshop_buy_asked: false,
                     trade_asked: None,
                     trade_with: String::new(),
+                    no_trade: false,
+                    trade_give: VecDeque::new(),
+                    trade_give_zeny: None,
                     menu: None,
                     weather: weather::Weather::default(),
                     right_press: None,
@@ -12042,6 +12086,10 @@ impl App {
                     member.dead = dead;
                 }
             }
+            // Refused at once under /notrade: no window, no line.
+            MapEvent::TradeAsked { .. } if game.no_trade => {
+                let _ = game.session.answer_trade(false);
+            }
             MapEvent::TradeAsked { name, id, level } => {
                 game.trade_with = name.clone();
                 game.trade_asked = Some((name, id, level));
@@ -12051,17 +12099,17 @@ impl App {
                     let _ = game.session.answer_trade(true);
                 }
             }
-            // The deal is on: the window opens with the inventory beside it.
+            // The deal is on: its window opens (the inventory stays as it is).
             MapEvent::TradeAnswer { result: 3, id, level } => {
                 game.trade_asked = None;
-                game.trade = Some(trade::Trade::new(format!("{}  Lv{level} ({})", game.trade_with, trade::id_code(id))));
-                game.inventory.frame.open = true;
-                game.raise(Panel::Inventory);
+                let caption = self.messages.get(TRADE_CAPTION).cloned().unwrap_or_default();
+                game.trade = Some(trade::Trade::new(caption, format!("{} Lv{level} ({})", game.trade_with, trade::c_code(id)), screen()));
                 game.auto_trade();
             }
             MapEvent::TradeAnswer { result, .. } => {
-                if result <= 4 {
-                    game.chat_line(self.messages.get(TRADE_ANSWERS + usize::from(result)).cloned().unwrap_or_default(), CHAT_ERROR);
+                if let Some(line) = trade::answer_line(result) {
+                    let text = rustnarok_client::messages::fill(self.messages.get(line).map_or("", String::as_str), &[&game.trade_with]);
+                    game.chat_line(text, CHAT_ERROR);
                 }
             }
             MapEvent::TradeItem(item) => {
@@ -12077,7 +12125,7 @@ impl App {
             // Ours went in: it leaves the inventory until the deal ends (the server gives it back if cancelled).
             MapEvent::TradeAdded { index, result } => {
                 if let Some(trade) = &mut game.trade
-                    && let Some(amount) = trade.pending.remove(&index)
+                    && let Some((_, amount)) = trade.pending.take_if(|(pending, _)| *pending == index)
                     && result == 0
                     && let Some(item) = game.inventory.get(index)
                 {
@@ -12086,13 +12134,15 @@ impl App {
                 }
                 let id = match result {
                     1 => Some(TRADE_HEAVY),
-                    2 => Some(TRADE_CANCELLED),
                     3 => Some(1938),
                     4 => Some(1939),
                     _ => None,
                 };
                 if let Some(id) = id {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+                if game.trade.is_some() {
+                    game.auto_trade_next();
                 }
             }
             MapEvent::TradeLocked { partner } => {
@@ -12104,14 +12154,23 @@ impl App {
                     }
                 }
             }
+            // Cancelled: the deal and any request box close.
             MapEvent::TradeCancelled => {
                 game.trade = None;
+                game.trade_asked = None;
                 game.chat_line(self.messages.get(TRADE_CANCELLED).cloned().unwrap_or_default(), CHAT_ERROR);
             }
-            MapEvent::TradeDone { ok } => {
+            // 0 done (cyan), 1 failed (red); any other result says nothing.
+            MapEvent::TradeDone { result } => {
                 game.trade = None;
-                let (id, color) = if ok { (TRADE_DONE, CHAT_ITEM) } else { (TRADE_FAILED, CHAT_ERROR) };
-                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+                let line = match result {
+                    0 => Some((TRADE_DONE, CHAT_ITEM)),
+                    1 => Some((TRADE_FAILED, CHAT_ERROR)),
+                    _ => None,
+                };
+                if let Some((id, color)) = line {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+                }
             }
             // Whispers, yellow both ways (the client's "(From name)" wording). A 1:1 window opens when that sender's box is on.
             MapEvent::Whisper { from, text } => game.receive_whisper(from, text),
@@ -14783,13 +14842,13 @@ impl App {
         if let Some(trade) = &game.trade {
             trade.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);
         }
-        // Someone asks for a deal: who, their ID in letters and level, OK or cancel.
+        // Someone asks for a deal: who, their C-Code and level, OK or cancel.
         if let Some((name, id, level)) = &game.trade_asked {
             let dialog = dialog_position(&assets.message);
             shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
-            let lines = [format!("({name}){}", message(TRADE_ASKS)), format!("PN: {}     Lv.{level}", trade::id_code(*id))];
+            let lines = [format!("({name}){}", message(TRADE_ASKS)), format!("C-Code : {}     Lv.{level}", trade::c_code(*id))];
             for (row, line) in lines.into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
@@ -15502,7 +15561,7 @@ impl ApplicationHandler<NetEvent> for App {
                         && game.entered.elapsed() >= at
                     {
                         game.auto_keys.remove(0);
-                        game.press_hotkey(slot);
+                        game.press_hotkey(slot, &self.messages);
                     }
                     if game.entered.elapsed() > Duration::from_millis(2500) && std::mem::take(&mut game.auto_wear) {
                         let wearable: Vec<(u16, u32)> = game

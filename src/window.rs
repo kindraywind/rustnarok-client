@@ -218,10 +218,7 @@ impl Frame {
 
     /// The title bar: rounded caps around a stretched middle, the three buttons and the title with its white shadow.
     pub fn draw_title<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, title: &str, cursor: [f32; 2]) {
-        let [left, middle, right] = &chrome.title;
-        layer.sprites.push((left, self.at([0.0, 0.0]), left.size));
-        layer.sprites.push((middle, self.at([left.size[0], 0.0]), [self.width - left.size[0] - right.size[0], TITLE_HEIGHT]));
-        layer.sprites.push((right, self.at([self.width - right.size[0], 0.0]), right.size));
+        self.draw_bar(layer, chrome);
         for (button, place) in [BASE_BUTTON, self.minimize_button(), self.close_button()].into_iter().enumerate() {
             let hovering = contains(self.at(place), BUTTON_SIZE, cursor);
             let image = &chrome.buttons[button][usize::from(hovering)];
@@ -229,6 +226,14 @@ impl Frame {
         }
         layer.texts.push((title.to_owned(), self.at(offset(TITLE_TEXT, [1.0, 1.0])), [255, 255, 255]));
         layer.texts.push((title.to_owned(), self.at(TITLE_TEXT), [0, 0, 0]));
+    }
+
+    /// The bar alone: rounded caps around a stretched middle.
+    pub fn draw_bar<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome) {
+        let [left, middle, right] = &chrome.title;
+        layer.sprites.push((left, self.at([0.0, 0.0]), left.size));
+        layer.sprites.push((middle, self.at([left.size[0], 0.0]), [self.width - left.size[0] - right.size[0], TITLE_HEIGHT]));
+        layer.sprites.push((right, self.at([self.width - right.size[0], 0.0]), right.size));
     }
 
     /// The title over a background that brings its own bar: the close button and the title only.
