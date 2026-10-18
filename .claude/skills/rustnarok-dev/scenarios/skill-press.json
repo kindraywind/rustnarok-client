@@ -1,0 +1,32 @@
+{
+  "about": "Aiming rules (issue #359): an Acolyte puts Heal on the hotbar. One click on the slot does nothing; a double click aims it (balloons: the name at the top, 'Select a Target.' at the bottom). Esc doesn't end the aim (a second Esc closes the game menu it opened). A press on the ground isn't taken by a unit skill: the aim just ends, with no walk. Aimed again, a press on yourself heals. The scenario takes the hotkey off and goes back to Novice.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"say": "@job 4"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500}, {"say": "@heal"}, {"wait": 400},
+    {"key": "Alt+S"}, {"wait": 400},
+    {"drag_on": [{"skill": 28}, {"hotkey": 0}]}, {"wait": 300},
+    {"expect": {"hotkeys": {"0": 28}}},
+    {"key": "Alt+S"}, {"wait": 300},
+    {"click_on": {"hotkey": 0}}, {"wait": 700},
+    {"expect": {"state": {"player.aiming": null}}},
+    {"click_on": {"hotkey": 0}, "count": 2}, {"wait": 300},
+    {"expect": {"state": {"player.aiming.skill": 28}}},
+    {"move": [1000, 600]},
+    {"shot": "aim-balloons", "threshold": 3},
+    {"key": "Escape"}, {"wait": 300},
+    {"expect": {"state": {"player.aiming.skill": 28}}},
+    {"key": "Escape"}, {"wait": 300},
+    {"click_on": {"cell": [176, 356]}}, {"wait": 500},
+    {"expect": {"state": {"player.aiming": null, "player.skill_sent": null, "player.walk_goal": null}}},
+    {"key": "F1"}, {"wait": 300},
+    {"click": [512, 360]}, {"wait_for": {"sent": "0x0438", "ms": 3000}}, {"wait": 300},
+    {"expect": {"state": {"player.aiming": null, "player.skill_sent.skill": 28}}},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"drag_on": [{"hotkey": 0}, {"point": [700, 500]}]}, {"wait": 300},
+    {"expect": {"hotkeys": {"0": null}}},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}
