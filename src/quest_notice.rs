@@ -78,7 +78,7 @@ impl Banners {
         for (row, (text, _)) in self.0.iter().enumerate() {
             let size = [font.width(text) + 16.0, 20.0];
             let corner = [((screen()[0] - size[0]) / 2.0).floor(), banner_top() + row as f32 * BANNER_STEP];
-            layer.sprites.push((&assets.banner, corner, size));
+            layer.sprites.push((&assets.banner, [corner[0] + 1.0, corner[1] + 1.0], [size[0] - 2.0, size[1] - 2.0]));
             for (edge, piece) in overhead::border(size) {
                 layer.sprites.push((&assets.banner_edge, [corner[0] + edge[0], corner[1] + edge[1]], piece));
             }
@@ -108,8 +108,8 @@ pub struct Assets {
 impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let image = |name: &str| gpu.try_load_texture(grf, &format!("{UI}basic_interface\\{name}.bmp"), false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
-        // ponytail: the banner's box drawn translucent like the chat balloon, in (92, 92, 92).
-        Self { icon: [image("quest_off"), image("quest_on")], banner: gpu.solid([92, 92, 92, 160]), banner_edge: gpu.solid([92, 92, 92, 255]) }
+        // The banner's box as the announcement bar's: black at a quarter opacity inside a grey border.
+        Self { icon: [image("quest_off"), image("quest_on")], banner: gpu.solid([0, 0, 0, 0x40]), banner_edge: gpu.solid([92, 92, 92, 255]) }
     }
 }
 
