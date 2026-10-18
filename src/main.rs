@@ -7525,7 +7525,11 @@ impl App {
             && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
             && game.quest_window.tracker
             && game.window_at(self.cursor).is_none()
-            && let Some(id) = quest_tracker::title_at(&quest_tracker::blocks(&game.quests, &self.quest_texts, &self.messages), &self.font, self.cursor)
+            && let Some(id) = quest_tracker::title_at(
+                &quest_tracker::blocks(&game.quests, &self.quest_texts, &game.quest_window.hidden, &self.messages),
+                &self.font,
+                self.cursor,
+            )
         {
             game.right_press = None;
             let label = |message: usize| self.messages.get(message).cloned().unwrap_or_default();
@@ -9530,7 +9534,7 @@ impl App {
                     quests: Vec::new(),
                     quest_window: quest::QuestWindow {
                         tracker: settings_path("quest_tracker").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
-                        ..Default::default()
+                        ..quest::QuestWindow::load()
                     },
                     achievement_totals: net::AchievementTotals::default(),
                     achievements: HashMap::new(),
@@ -13945,7 +13949,7 @@ impl App {
         }
         // The quest tracker, under the minimap.
         if game.quest_window.tracker {
-            quest_tracker::draw(&mut chat_layer, &quest_tracker::blocks(&game.quests, quest_texts, messages));
+            quest_tracker::draw(&mut chat_layer, &quest_tracker::blocks(&game.quests, quest_texts, &game.quest_window.hidden, messages));
         }
         // An NPC's illustration, over the world and under the windows.
         let mut cutin_layer = Layer::default();

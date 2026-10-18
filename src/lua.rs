@@ -708,9 +708,12 @@ pub struct QuestInfo {
     pub summary: String,
     /// ponytail: `NpcPosX`/`NpcPosY` on the quest itself. The real list can nest several NPCs, each with a sprite.
     pub npc: Option<[i32; 2]>,
+    /// Only a cooldown timer (`CoolTimeQuest = 1`).
+    pub cooldown: bool,
 }
 
-/// A quest's words: title, description (its lines joined), summary, and its NPC cell when listed.
+/// A quest's words: title, description (its lines joined), summary, its NPC cell when listed, whether it's a cooldown
+/// timer.
 pub fn quest_info(grf: &Grf) -> io::Result<HashMap<u32, QuestInfo>> {
     quest_infos(&run(grf, &[QUEST_INFO])?)
 }
@@ -730,7 +733,8 @@ fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
             _ => None,
         };
         if let Ok(id) = u32::try_from(id) {
-            quests.insert(id, QuestInfo { title: text("Title"), description, summary: text("Summary"), npc });
+            let cooldown = entry.get::<i64>("CoolTimeQuest").unwrap_or(0) == 1;
+            quests.insert(id, QuestInfo { title: text("Title"), description, summary: text("Summary"), npc, cooldown });
         }
     }
     Ok(quests)
@@ -1731,6 +1735,7 @@ mod tests {
             r#"QuestInfoList = {
                 [7001] = { Title = "Hunting Porings", Description = { "Hunt", "ten Porings." }, Summary = "Poring x10" },
                 [7002] = { Title = "See Kafra", Description = { "Talk." }, Summary = "Kafra", NpcPosX = 150, NpcPosY = 180 },
+                [7003] = { Title = "Wait", CoolTimeQuest = 1 },
             }"#,
         )
         .exec()
@@ -1740,6 +1745,7 @@ mod tests {
         assert_eq!(quests[&7001].description, "Hunt ten Porings.");
         assert_eq!(quests[&7001].npc, None);
         assert_eq!(quests[&7002].npc, Some([150, 180]));
+        assert!(!quests[&7001].cooldown && quests[&7003].cooldown, "a cooldown timer");
     }
 
     #[test]
