@@ -113,7 +113,7 @@ impl App {
             },
             Scene::Game(game) if game.deal_choice.is_some() => {
                 let npc = game.deal_choice.unwrap();
-                let dialog = dialog_position(&assets.message);
+                let dialog = deal_box_position();
                 let pressed = DEAL_BUTTONS.iter().position(|&place| hit(offset(dialog, place), assets.shop_buttons()[0]));
                 match pressed {
                     Some(choice @ 0..=1) => {
