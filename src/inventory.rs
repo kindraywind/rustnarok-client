@@ -33,6 +33,11 @@ const TABS: usize = 4;
 const GRIP: f32 = 15.0;
 /// Favourites, after Item, Equip and Etc.
 const FAVORITES_TAB: usize = 3;
+const EQUIPMENT_TAB: usize = 1;
+/// A Swap Equipment item's mark: its backing drawn at this alpha, then the mark, from the icon's corner.
+const SWAP_ALPHA: f32 = 34.0 / 255.0;
+/// The name box: its corner this far above the cell.
+const NAME_BOX_ABOVE: f32 = 16.0;
 /// "Compare equips" and "Lock item drop".
 const COMPARE: usize = 2842;
 const LOCK_DROP: usize = 2843;
@@ -105,22 +110,43 @@ fn strip_height(tab: f32) -> f32 {
     1.0 + TABS as f32 * (tab - 1.0)
 }
 pub const UNIDENTIFIED: [u8; 3] = [0xAA, 0xAA, 0xAA];
-/// Broken and bound items' names.
-// ponytail: rathena's comment says the client shows bound items in yellow; the exact colors aren't knowable.
-pub const BROKEN: [u8; 3] = [0xFF, 0x50, 0x50];
+/// A bound item's name.
 pub const BOUND: [u8; 3] = [0xFF, 0xFF, 0x00];
+/// An item's name by how many enchants it has, 1 to 4.
+const ENCHANTED: [[u8; 3]; 4] = [[0xAD, 0xFF, 0x2F], [0x00, 0xBF, 0xFF], [0xFF, 0xA5, 0x00], [0x94, 0x00, 0xD3]];
 
-/// The color of an item's name: broken red, bound yellow, unidentified grey.
-pub fn name_color(item: &InventoryItem) -> [u8; 3] {
-    if item.broken {
-        BROKEN
-    } else if item.bind == 2 {
-        BOUND
-    } else if item.identified {
-        [255; 3]
-    } else {
-        UNIDENTIFIED
+/// The colour of an item's name in its name box, the first that fits: unidentified grey; by its enchants; bound
+/// yellow; else white. A broken item has none of its own.
+pub fn name_color(item: &InventoryItem, items: &HashMap<u32, ItemInfo>) -> [u8; 3] {
+    if !item.identified {
+        return UNIDENTIFIED;
     }
+    match enchants(item, items) {
+        0 if item.bind == 2 => BOUND,
+        0 => [255; 3],
+        count => ENCHANTED[count.min(4) - 1],
+    }
+}
+
+/// An item's enchants: the cards past its slots that are known items. Pet eggs and accessories, forged and brewed
+/// pieces have none.
+fn enchants(item: &InventoryItem, items: &HashMap<u32, ItemInfo>) -> usize {
+    if matches!(item.kind, net::ITEM_PET_EGG | net::ITEM_PET_ARMOR) || maker(&item.cards).is_some() {
+        return 0;
+    }
+    let slots = items.get(&item.id).map_or(0, |info| usize::from(info.slots));
+    item.cards.iter().skip(slots).filter(|card| **card != 0 && items.contains_key(card)).count()
+}
+
+/// Ctrl + right press on a cell: whether to say there's no Magnifier (any tab, any item), and whether to ask to
+/// identify it (only an unidentified one on the Eqp tab, also right after that line; the server turns it down).
+pub fn ctrl_identify(tab: usize, identified: bool, magnifier: bool) -> (bool, bool) {
+    (!magnifier, tab == EQUIPMENT_TAB && !identified)
+}
+
+/// The amount's corner in its cell: under 1000 at (18, 19), longer at (4, 19).
+fn amount_at(amount: u16) -> [f32; 2] {
+    if amount < 1000 { [18.0, 19.0] } else { [4.0, 19.0] }
 }
 
 /// The egg of the pet that's out: rathena marks it broken and still lists it when it resends the inventory. An egg
@@ -148,8 +174,12 @@ pub struct Assets {
     cell: Texture,
     count: Texture,
     resize: Texture,
-    /// Marks an item in the Swap Equipment set.
+    /// Marks an item in the Swap Equipment set, and the faint box under that mark.
     switch: Texture,
+    switch_back: Texture,
+    /// A new item's mark, and the enchant grades' icons 1 to 4.
+    new_mark: Texture,
+    grades: [Texture; 4],
 }
 
 impl Assets {
@@ -171,6 +201,14 @@ impl Assets {
             count: image(format!("{UI}inventory\\icon_num.bmp")),
             resize: image(format!("{UI}btn_resize.bmp")),
             switch: image(format!("{UI}swap_equipment\\ico_change.bmp")),
+            switch_back: crate::render::load_image(grf, &format!("{UI}swap_equipment\\bg_change.bmp"))
+                .map(|mut image| {
+                    image.pixels_mut().for_each(|pixel| pixel.0[3] = (f32::from(pixel.0[3]) * SWAP_ALPHA).round() as u8);
+                    gpu.texture(&image, false)
+                })
+                .unwrap_or_else(|_| gpu.solid([0, 0, 0, 0])),
+            new_mark: image(format!("{basic}new_item.bmp")),
+            grades: std::array::from_fn(|grade| image(format!("{UI}grade_enchant\\grade_icon{}.bmp", grade + 1))),
         }
     }
 }
@@ -256,6 +294,10 @@ pub struct Inventory {
     /// First row shown.
     scroll: usize,
     clicks: Clicks,
+    /// Items that came since the inventory was last closed (by index): they carry the new mark.
+    new_marks: HashSet<u16>,
+    /// Open at the last `note_open`: closing it clears the marks.
+    was_open: bool,
     /// Lock item drop, and compare the worn item while pointing at an unworn one.
     pub lock_drop: bool,
     pub compare: bool,
@@ -284,6 +326,8 @@ impl Default for Inventory {
             tab: 0,
             scroll: 0,
             clicks: Clicks::default(),
+            new_marks: HashSet::new(),
+            was_open: false,
             lock_drop: false,
             compare: false,
             columns: COLUMNS,
@@ -508,12 +552,15 @@ impl Inventory {
         self.items.clear();
     }
 
+    /// Items as they come: the inventory keeps the order they arrive in, the cart sorts them by index.
     pub fn extend(&mut self, items: Vec<InventoryItem>) {
         self.items.extend(items);
-        self.items.sort_by_key(|item| item.index);
+        if self.is_cart {
+            self.items.sort_by_key(|item| item.index);
+        }
     }
 
-    /// Picked-up items join their stack, or take a new slot.
+    /// Picked-up items join their stack where it is, or take a new slot at the end.
     pub fn add(&mut self, item: InventoryItem) {
         match self.items.iter_mut().find(|existing| existing.index == item.index) {
             Some(existing) => existing.amount += item.amount,
@@ -538,11 +585,40 @@ impl Inventory {
         }
     }
 
-    /// Where an item is worn now (0: taken off).
+    /// Where an item is worn now (0: taken off). One taken off goes to the end of the inventory's list.
     pub fn set_worn(&mut self, index: u16, location: u32) {
-        if let Some(item) = self.items.iter_mut().find(|item| item.index == index) {
-            item.worn = location;
+        let Some(position) = self.items.iter().position(|item| item.index == index) else { return };
+        let taken_off = self.items[position].worn != 0 && location == 0;
+        self.items[position].worn = location;
+        if taken_off && !self.is_cart {
+            let item = self.items.remove(position);
+            self.items.push(item);
         }
+    }
+
+    /// An item that came through a pickup: marked new until the inventory closes.
+    pub fn mark_new(&mut self, index: u16) {
+        self.new_marks.insert(index);
+    }
+
+    /// Each frame: the inventory closing clears the new marks, when its open tab lists something.
+    pub fn note_open(&mut self) {
+        if self.was_open && !self.frame.open && self.listed().next().is_some() {
+            self.new_marks.clear();
+        }
+        self.was_open = self.frame.open;
+    }
+
+    /// The items carrying the new mark, by index (for the test driver).
+    pub fn new_marked(&self) -> Vec<u16> {
+        let mut marked: Vec<u16> = self.new_marks.iter().copied().collect();
+        marked.sort_unstable();
+        marked
+    }
+
+    /// The open tab.
+    pub fn open_tab(&self) -> usize {
+        self.tab
     }
 
     pub fn get(&self, index: u16) -> Option<&InventoryItem> {
@@ -821,27 +897,49 @@ impl Inventory {
             layer.sprites.push((&assets.cell, at(place), assets.cell.size));
         }
 
-        // Items: icon, and how many unless it's equipment; the hovered one's name in a tooltip.
+        // Items. The inventory's cells: the new mark, the icon, the amount on everything (outlined), the enchant
+        // grade, the Swap Equipment mark; the cart's: the icon, how many unless it's equipment. The hovered one's name
+        // in a box above the cell (the cart's beside it).
         for (cell, item) in self.listed().skip(self.scroll * self.columns).take(self.rows * self.columns).enumerate() {
             let place = at([grid[0] + (cell % self.columns) as f32 * CELL, grid[1] + (cell / self.columns) as f32 * CELL]);
             let info = items.get(&item.id);
+            if !self.is_cart && self.new_marks.contains(&item.index) {
+                layer.sprites.push((&assets.new_mark, place, assets.new_mark.size));
+            }
             if let Some(Some(icon)) = info.and_then(|info| icons.get(&icon_path(info, item.identified))) {
                 layer.sprites.push((icon, offset(place, [ICON_OFFSET, ICON_OFFSET]), icon.size));
             }
-            // ponytail: the mark's corner isn't knowable.
-            if item.switch != 0 {
-                layer.sprites.push((&assets.switch, place, assets.switch.size));
-            }
-            if tab_of(item.kind) != 1 {
-                let amount = item.amount.to_string();
-                let corner = offset(place, [CELL - 1.0 - font.width(&amount), 15.0]);
-                layer.texts.push((amount.clone(), offset(corner, [-1.0, -1.0]), [255; 3]));
+            let amount = item.amount.to_string();
+            if self.is_cart {
+                // ponytail: the mark's corner isn't knowable.
+                if item.switch != 0 {
+                    layer.sprites.push((&assets.switch, place, assets.switch.size));
+                }
+                if tab_of(item.kind) != 1 {
+                    let corner = offset(place, [CELL - 1.0 - font.width(&amount), 15.0]);
+                    layer.texts.push((amount.clone(), offset(corner, [-1.0, -1.0]), [255; 3]));
+                    layer.texts.push((amount, corner, [0, 0, 0]));
+                }
+            } else {
+                let corner = offset(place, amount_at(item.amount));
+                for step in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+                    layer.texts.push((amount.clone(), offset(corner, step), [255; 3]));
+                }
                 layer.texts.push((amount, corner, [0, 0, 0]));
+                if let Some(grade) = assets.grades.get(usize::from(item.grade).wrapping_sub(1)) {
+                    layer.sprites.push((grade, offset(place, [4.0, 16.0]), grade.size));
+                }
+                if item.switch != 0 {
+                    let corner = offset(place, [ICON_OFFSET, ICON_OFFSET]);
+                    layer.sprites.push((&assets.switch_back, corner, assets.switch_back.size));
+                    layer.sprites.push((&assets.switch, corner, assets.switch.size));
+                }
             }
             if contains(place, [CELL, CELL], cursor) {
                 let name = full_name(items, cards, messages, makers, item, true);
                 let text = messages::fill(message(messages::ITEM_AMOUNT), &[&name, &item.amount]);
-                window::tooltip(tooltip, chrome, font, &text, offset(place, [35.0, 0.0]), name_color(item));
+                let corner = if self.is_cart { offset(place, [35.0, 0.0]) } else { offset(place, [0.0, -NAME_BOX_ABOVE]) };
+                window::tooltip(tooltip, chrome, font, &text, corner, name_color(item, items));
             }
         }
 
@@ -1090,14 +1188,87 @@ mod tests {
         assert_eq!(newly_broken(&[], &items).iter().map(|item| item.index).collect::<Vec<_>>(), [4]);
         assert!(newly_broken(&[4], &items).is_empty());
         assert!(hidden_egg(&egg) && !hidden_egg(&knife));
-        assert_eq!([&knife, &shirt].map(name_color), [BROKEN, BOUND]);
+        // A broken item has no colour of its own; a bound one is yellow.
+        let items = HashMap::new();
+        assert_eq!([name_color(&knife, &items), name_color(&shirt, &items)], [[255; 3], BOUND]);
+    }
+
+    #[test]
+    fn colours_names_unidentified_then_by_enchants_then_bound() {
+        let info = |slots| ItemInfo { slots, ..Default::default() };
+        let items: HashMap<u32, ItemInfo> = [(2301, info(1)), (4700, info(0)), (4001, info(0))].into_iter().collect();
+        let shirt = |cards: [u32; 4]| InventoryItem { id: 2301, kind: net::ITEM_ARMOR, identified: true, cards, ..Default::default() };
+        // One slot (a card there doesn't count); two enchants after it.
+        assert_eq!(name_color(&shirt([4001, 0, 0, 0]), &items), [255; 3]);
+        assert_eq!(name_color(&shirt([4001, 4700, 4700, 0]), &items), [0x00, 0xBF, 0xFF]);
+        assert_eq!(name_color(&shirt([0, 4700, 0, 0]), &items), [0xAD, 0xFF, 0x2F]);
+        // An unknown card isn't an enchant; unidentified beats enchants, enchants beat bound.
+        assert_eq!(name_color(&shirt([0, 9999, 0, 0]), &items), [255; 3]);
+        assert_eq!(name_color(&InventoryItem { identified: false, ..shirt([0, 4700, 4700, 4700]) }, &items), UNIDENTIFIED);
+        assert_eq!(name_color(&InventoryItem { bind: 2, ..shirt([0, 4700, 4700, 4700]) }, &items), [0xFF, 0xA5, 0x00]);
+        assert_eq!(name_color(&InventoryItem { bind: 2, ..shirt([0; 4]) }, &items), BOUND);
+        // Forged pieces have none.
+        assert_eq!(name_color(&shirt([0x00FF, 4700, 4700, 0]), &items), [255; 3]);
+        // The amount's place.
+        assert_eq!((amount_at(999), amount_at(1000)), ([18.0, 19.0], [4.0, 19.0]));
+    }
+
+    #[test]
+    fn keeps_the_order_items_came_in() {
+        let mut inventory = Inventory::new(true);
+        // A login list as it came, not by index.
+        inventory.extend(vec![item(5, net::ITEM_HEALING, 1), item(2, net::ITEM_HEALING, 1)]);
+        // A new slot goes to the end; a stack stays where it is.
+        inventory.add(item(1, net::ITEM_HEALING, 1));
+        inventory.add(item(5, net::ITEM_HEALING, 3));
+        let order = |inventory: &Inventory| inventory.items.iter().map(|item| item.index).collect::<Vec<_>>();
+        assert_eq!(order(&inventory), [5, 2, 1]);
+        assert_eq!(inventory.get(5).unwrap().amount, 4);
+        // A weapon taken off goes to the end.
+        inventory.extend(vec![InventoryItem { worn: 2, ..item(9, net::ITEM_WEAPON, 1) }, item(7, net::ITEM_HEALING, 1)]);
+        inventory.set_worn(9, 0);
+        assert_eq!(order(&inventory), [5, 2, 1, 7, 9]);
+        // The cart keeps index order.
+        let mut cart = Inventory::cart();
+        cart.extend(vec![item(5, net::ITEM_HEALING, 1), item(2, net::ITEM_HEALING, 1)]);
+        assert_eq!(order(&cart), [2, 5]);
+    }
+
+    #[test]
+    fn clears_new_marks_when_closed_on_a_listed_tab() {
+        let mut inventory = Inventory::new(true);
+        inventory.extend(vec![item(1, net::ITEM_HEALING, 1)]);
+        inventory.mark_new(1);
+        inventory.note_open();
+        // Closed on the empty Eqp tab: the marks stay.
+        inventory.click(Hit::Tab(1));
+        inventory.frame.open = false;
+        inventory.note_open();
+        assert!(inventory.new_marks.contains(&1));
+        // Open again on Use, then closed: gone.
+        inventory.frame.open = true;
+        inventory.note_open();
+        inventory.click(Hit::Tab(0));
+        inventory.frame.open = false;
+        inventory.note_open();
+        assert!(inventory.new_marks.is_empty());
+    }
+
+    #[test]
+    fn identifies_with_ctrl_only_on_the_eqp_tab() {
+        // No Magnifier: the line on any tab; an unidentified piece on Eqp is still asked for.
+        assert_eq!(ctrl_identify(0, false, false), (true, false));
+        assert_eq!(ctrl_identify(1, false, false), (true, true));
+        assert_eq!(ctrl_identify(FAVORITES_TAB, false, true), (false, false));
+        assert_eq!(ctrl_identify(1, false, true), (false, true));
+        assert_eq!(ctrl_identify(1, true, true), (false, false));
     }
 
     #[test]
     fn keeps_stacks_and_tabs() {
         let mut inventory = Inventory::new(true);
         inventory.extend(vec![item(3, net::ITEM_HEALING, 5), item(2, net::ITEM_WEAPON, 1), item(4, 3, 9)]);
-        assert_eq!(inventory.items.iter().map(|item| item.index).collect::<Vec<_>>(), [2, 3, 4]);
+        assert_eq!(inventory.items.iter().map(|item| item.index).collect::<Vec<_>>(), [3, 2, 4], "as they came");
         inventory.add(item(3, net::ITEM_HEALING, 2));
         assert_eq!(inventory.get(3).unwrap().amount, 7);
         inventory.remove(4, 9);

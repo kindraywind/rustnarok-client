@@ -8631,11 +8631,14 @@ impl App {
                 let line = match action {
                     InventoryRight::QuickMove => game.quick_move(index),
                     InventoryRight::Favorite => game.session.move_favorite(index, item.favorite).err().and(None),
-                    InventoryRight::Identify if item.identified => None,
-                    InventoryRight::Identify if game.inventory.items.iter().any(|carried| MAGNIFIERS.contains(&carried.id)) => {
-                        game.session.identify_one(index).err().and(None)
+                    InventoryRight::Identify => {
+                        let magnifier = game.inventory.items.iter().any(|carried| MAGNIFIERS.contains(&carried.id));
+                        let (warn, ask) = inventory::ctrl_identify(game.inventory.open_tab(), item.identified, magnifier);
+                        if ask {
+                            let _ = game.session.identify_one(index);
+                        }
+                        warn.then_some(NO_MAGNIFIER)
                     }
-                    InventoryRight::Identify => Some(NO_MAGNIFIER),
                 };
                 if let Some(line) = line {
                     game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR);
@@ -11918,6 +11921,7 @@ impl App {
                         game.pickup_popup = Some(popup);
                         game.new_items = true;
                         game.chat_line(line, CHAT_ITEM);
+                        game.inventory.mark_new(item.index);
                         game.inventory.add(net::InventoryItem { amount, ..item });
                     }
                     None => {
@@ -15435,6 +15439,7 @@ impl App {
         if game.inventory.frame.open {
             game.new_items = false;
         }
+        game.inventory.note_open();
         if game.quest_window.frame.open {
             game.quest_icon = false;
         }
