@@ -1,11 +1,16 @@
 {
-  "about": "Skill motions (issue #367): a Swordman's Bash on a training dummy swings the attack (action 10 for a bare-handed Swordman), not the skill pose (12); the number lands on the swing's hit frame. Paused when the skill packet comes, then 150 ms on. The scenario takes the hotkey off and goes back to Novice.",
+  "about": "Skill motions (issue #367): a Swordman's Bash on a training dummy swings the attack (action 10 for a Swordman with a Knife; 5 bare-handed), not the skill pose (12); the number lands on the swing's hit frame. Paused when the skill packet comes, then 150 ms on. The scenario takes the hotkey off, clears the items (the Knife it gives) and goes back to Novice.",
   "account": "",
   "slot": 0,
   "steps": [
     {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
     {"say": "@killmonster2"}, {"wait": 500},
-    {"say": "@job 1"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500}, {"say": "@heal"}, {"wait": 400},
+    {"say": "@job 1"}, {"wait": 500}, {"say": "@set BaseLevel 99"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500}, {"say": "@heal"}, {"wait": 400},
+    {"say": "@itemreset"}, {"wait": 800}, {"say": "@item 1201"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 400}, {"click_on": {"button": "tab:equip"}}, {"wait": 300},
+    {"click_on": {"inventory_item": 1201}, "count": 2}, {"wait": 800},
+    {"expect": {"inventory_has": [{"id": 1201, "worn": 2}]}},
+    {"key": "Alt+E"}, {"wait": 300},
     {"key": "Alt+S"}, {"wait": 400},
     {"drag_on": [{"skill": 5}, {"hotkey": 0}]}, {"wait": 300},
     {"key": "Alt+S"}, {"wait": 300},
@@ -23,6 +28,7 @@
     {"say": "@killmonster2"}, {"wait": 500},
     {"drag_on": [{"hotkey": 0}, {"point": [700, 500]}]}, {"wait": 300},
     {"expect": {"hotkeys": {"0": null}}},
+    {"say": "@itemreset"}, {"wait": 500},
     {"say": "@job 0"}, {"wait": 500}
   ]
 }

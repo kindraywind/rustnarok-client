@@ -65,11 +65,7 @@
     },
     {
       "click_on": {
-        "unit": "{second}",
-        "offset": [
-          20,
-          52
-        ]
+        "menu_item": "party"
       }
     },
     {

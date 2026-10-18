@@ -56,7 +56,9 @@ python3 -I $D quit
 ```
 
 Coordinates are the client's logical 1024×768. A driven client ignores the real mouse and keyboard. A GM account
-(`group_id` 99 in rathena's `login` table) can spawn what a test needs (`@monster`, `@item`, `@warp`).
+(`group_id` 99 in rathena's `login` table) can spawn what a test needs (`@monster`, `@item`, `@warp`). A scenario sets the level it needs with
+`@set BaseLevel <n>` (absolute, unlike `@blvl`): the ones that spend SP (skill-hits, skill-motions, status-loops) and
+aura-high leave the first character at base 99.
 
 ## Visual verification: before and after
 
