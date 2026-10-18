@@ -702,7 +702,19 @@ const ZC_NOTIFY_UNREADMAIL: u16 = 0x09E7;
 const ZC_BROADCAST: u16 = 0x009A;
 const ZC_MAPPROPERTY_R2: u16 = 0x099B;
 const CZ_BLOCKING_PLAY_CANCEL: u16 = 0x0447;
+const ZC_NOTIFY_MAPPROPERTY2: u16 = 0x01D6;
+const ZC_NOTIFY_RANKING: u16 = 0x019A;
+const CZ_REQ_PVPPOINT: u16 = 0x020F;
+const ZC_ACK_PVPPOINT: u16 = 0x0210;
 /// ZC_MAPPROPERTY_R2's flags (rathena's `clif_map_property`).
+pub const MAP_PVP: u32 = 1;
+pub const MAP_GVG: u32 = 1 << 1;
+/// Guild emblems over players' heads (a GvG map).
+pub const MAP_SIEGE: u32 = 1 << 2;
+pub const MAP_NO_LOCK_ON: u32 = 1 << 4;
+/// Show the PvP rank counter.
+pub const MAP_COUNT_PK: u32 = 1 << 5;
+pub const MAP_BATTLEFIELD: u32 = 1 << 7;
 pub const MAP_NO_COSTUME: u32 = 1 << 8;
 pub const MAP_SUN_MOON_STAR_MIRACLE: u32 = 1 << 10;
 const ZC_BROADCAST2: u16 = 0x01C3;
@@ -1677,6 +1689,20 @@ pub enum MapEvent {
     MapProperty {
         property: u16,
         flags: u32,
+    },
+    /// The map's type (rathena's `e_map_type`; it only sends 19, a battleground).
+    MapType(u16),
+    /// A player's PvP rank among the players on the map (rank 0 or 0 players: no counter).
+    PvpRank {
+        account: u32,
+        rank: u32,
+        players: u32,
+    },
+    /// The player's PvP record (/pvpinfo).
+    PvpInfo {
+        wins: u32,
+        losses: u32,
+        points: i32,
     },
     /// A server announcement, its color resolved; `size` is ZC_BROADCAST2's font size.
     Broadcast {
@@ -3657,6 +3683,11 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Asks for the player's PvP record; the answer is `PvpInfo`.
+    pub fn pvp_info(&mut self, character: u32, account: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_pvp_info(character, account))
+    }
+
     /// Tells the server the client is ready after a map property (CZ_BLOCKING_PLAY_CANCEL).
     pub fn ready_to_play(&mut self) -> io::Result<()> {
         self.stream.write_all(&encode_blocking_play_cancel())
@@ -4070,6 +4101,15 @@ fn encode_hatch(index: u16) -> [u8; 4] {
     let mut packet = [0u8; 4];
     packet[..2].copy_from_slice(&CZ_SELECT_PETEGG.to_le_bytes());
     packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_REQ_PVPPOINT: the character and account (rathena reads neither).
+fn encode_pvp_info(character: u32, account: u32) -> [u8; 10] {
+    let mut packet = [0u8; 10];
+    packet[..2].copy_from_slice(&CZ_REQ_PVPPOINT.to_le_bytes());
+    packet[2..6].copy_from_slice(&character.to_le_bytes());
+    packet[6..].copy_from_slice(&account.to_le_bytes());
     packet
 }
 
@@ -4632,6 +4672,9 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_NOTIFY_UNREADMAIL => MapEvent::MailUnread(packet[2] != 0),
         // "blue" (and "ssss" for the War of Emperium) at the start are color hints, not words.
         ZC_MAPPROPERTY_R2 => MapEvent::MapProperty { property: u16_at(2), flags: u32_at(4) },
+        ZC_NOTIFY_MAPPROPERTY2 => MapEvent::MapType(u16_at(2)),
+        ZC_NOTIFY_RANKING => MapEvent::PvpRank { account: u32_at(2), rank: u32_at(6), players: u32_at(10) },
+        ZC_ACK_PVPPOINT => MapEvent::PvpInfo { wins: u32_at(10), losses: u32_at(14), points: u32_at(18) as i32 },
         ZC_BROADCAST => {
             let (text, color, kind) = decode_broadcast(&packet[4..]);
             MapEvent::Broadcast { text, color, kind, size: None }
@@ -5963,6 +6006,28 @@ mod tests {
         assert!(matches!(decode_map_packet(&packet), Some(MapEvent::MapProperty { property: 3, flags }) if flags == MAP_NO_COSTUME | 1));
         assert_eq!(packet_length(ZC_MAPPROPERTY_R2), Some(8));
         assert_eq!(encode_blocking_play_cancel(), [0x47, 0x04]);
+        assert!(matches!(decode_map_packet(&[0xD6, 0x01, 19, 0]), Some(MapEvent::MapType(19))));
+        // clif_pvpset: ours and another player's.
+        let rank = |account: u32, rank: u32, players: u32| {
+            [&ZC_NOTIFY_RANKING.to_le_bytes()[..], &account.to_le_bytes(), &rank.to_le_bytes(), &players.to_le_bytes()].concat()
+        };
+        assert!(matches!(decode_map_packet(&rank(2_000_000, 3, 12)), Some(MapEvent::PvpRank { account: 2_000_000, rank: 3, players: 12 })));
+        assert!(matches!(decode_map_packet(&rank(2_000_001, u32::MAX, 12)), Some(MapEvent::PvpRank { account: 2_000_001, rank: u32::MAX, .. })));
+        // clif_PVPInfo: pvp_point is an int16 that can go below 0.
+        let info = [
+            &ZC_ACK_PVPPOINT.to_le_bytes()[..],
+            &150_000u32.to_le_bytes(),
+            &2_000_000u32.to_le_bytes(),
+            &0u32.to_le_bytes(),
+            &1u32.to_le_bytes(),
+            &(-3i32).to_le_bytes(),
+        ]
+        .concat();
+        assert!(matches!(decode_map_packet(&info), Some(MapEvent::PvpInfo { wins: 0, losses: 1, points: -3 })));
+        assert_eq!(encode_pvp_info(150_000, 2_000_000), [0x0F, 0x02, 0xF0, 0x49, 0x02, 0, 0x80, 0x84, 0x1E, 0]);
+        for (header, length) in [(ZC_NOTIFY_MAPPROPERTY2, 4), (ZC_NOTIFY_RANKING, 14), (CZ_REQ_PVPPOINT, 10), (ZC_ACK_PVPPOINT, 22)] {
+            assert_eq!(packet_length(header), Some(length), "{header:#06x}");
+        }
         assert_eq!(packet_length(CZ_BLOCKING_PLAY_CANCEL), Some(2));
     }
 
