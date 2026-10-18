@@ -1508,6 +1508,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["cutin_window"] = cutin_window.into();
     // The inventory window's size and its columns and rows of cells.
     state["inventory_window"] = json!({"size": game.inventory.window_size(), "cells": game.inventory.size()});
+    // The inventory items with the new mark, by index.
+    state["inventory_new"] = game.inventory.new_marked().into();
     state["opened_page"] = game.opened_page.clone().into();
     // Our milliseconds a cell.
     state["player"]["step_ms"] = game.player.step_ms.into();
