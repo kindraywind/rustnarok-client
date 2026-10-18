@@ -6,36 +6,59 @@ use rustnarok_client::text::Font;
 use crate::render::{Gpu, Texture};
 use crate::{Layer, SCREEN, UI, contains};
 
-// ponytail: layout over dialog_bg.bmp; calibrate against the real client.
-/// Log heights the size button cycles through: three lines and up.
-const HEIGHTS: [f32; 5] = [42.0, 84.0, 126.0, 168.0, 210.0];
+/// F10's steps: the input bar alone, then logs of 3, 6, 9, 12 and 15 lines.
+const STEPS: [usize; 6] = [0, 1, 4, 7, 10, 13];
+/// The step a new window has: 96 tall.
+const DEFAULT_STEP: usize = 1;
+const WIDTH: f32 = 600.0;
 const LINE: f32 = 14.0;
-const LEFT: f32 = 3.0;
-const BODY_WIDTH: f32 = 594.0;
-const TAB_HEIGHT: f32 = 17.0;
-const TAB_WIDTH: f32 = 75.0;
-/// The grab strip at the top of the log, and its bottom padding.
-const HANDLE: f32 = 14.0;
-const PADDING: f32 = 5.0;
-const TEXT_LEFT: f32 = LEFT + 6.0;
-/// The input bar: the whisper name box, its list button, the message field and the two buttons at the right.
+const TAB_HEIGHT: f32 = 16.0;
+const TAB_WIDTH: f32 = 110.0;
+/// The log box under the tabs, window-local; it is the window's height less 44 tall.
+const LOG_BOX: [f32; 2] = [5.0, 18.0];
+const LOG_WIDTH: f32 = 592.0;
+const LOG_UNDER: f32 = 44.0;
+/// A line's text in the log box, and its black copy one down and right.
+const LINE_TEXT: [f32; 2] = [2.0, 3.0];
+/// The input bar, its bottom 24: the whisper name box, its list button, the message box and the two buttons, from
+/// the bar's top left.
 const INPUT_HEIGHT: f32 = 24.0;
+const NAME_BOX: ([f32; 2], [f32; 2]) = ([6.0, 4.0], [90.0, 16.0]);
 const LIST_BUTTON: [f32; 2] = [97.0, 3.0];
-const MESSAGE_LEFT: f32 = 113.0;
-const NAME_LEFT: f32 = 6.0;
-const FILTER_BUTTON: [f32; 2] = [576.0, 7.0];
-const SIZE_BUTTON: [f32; 2] = [588.0, 7.0];
+const MESSAGE_BOX: ([f32; 2], [f32; 2]) = ([110.0, 4.0], [460.0, 16.0]);
+const FILTER_BUTTON: [f32; 2] = [572.0, 7.0];
+const SIZE_BUTTON: [f32; 2] = [586.0, 7.0];
 const BUTTON_SIZE: [f32; 2] = [11.0, 11.0];
+/// The stick, battle-option and option buttons right after the two tabs.
+const FUNCTION_BUTTONS: [[f32; 2]; 3] = [[2.0 * TAB_WIDTH + 4.0, 4.0], [2.0 * TAB_WIDTH + 19.0, 5.0], [2.0 * TAB_WIDTH + 34.0, 5.0]];
 const TAB_MESSAGES: [usize; 2] = [1291, 1292];
+/// Party chat: the player's own lines and the others'.
+pub const PARTY_OURS: [u8; 3] = [255, 200, 0];
+pub const PARTY: [u8; 3] = [255, 200, 200];
 const DARK: [u8; 4] = [0, 0, 0, 0x80];
 const DARKER: [u8; 4] = [0, 0, 0, 0xBF];
 const TAB_BORDER: [u8; 4] = [0x95, 0x95, 0x95, 0xFF];
+
+/// The window's height at step `step`: the input bar alone at 0, else the tabs, the log and the bar.
+fn height(step: usize) -> f32 {
+    if step == 0 { INPUT_HEIGHT } else { INPUT_HEIGHT + TAB_HEIGHT + LINE * (step + 3) as f32 }
+}
+
+/// The lines the log box shows at step `step`: those whose 14 rows fit in it.
+fn rows(step: usize) -> usize {
+    if step == 0 { 0 } else { ((height(step) - LOG_UNDER - LINE_TEXT[1]) / LINE) as usize }
+}
+
+/// Where line `row` of the log box puts its text, window-local; the black copy goes one down and right.
+fn line_at(row: usize) -> [f32; 2] {
+    [LOG_BOX[0] + LINE_TEXT[0], LOG_BOX[1] + LINE_TEXT[1] + LINE * row as f32]
+}
 
 pub struct Assets {
     input: Texture,
     list: Texture,
     base: Texture,
-    /// Chat mode, battle options, stick, battle option, minimize, lock: the buttons at the top right.
+    /// The stick, battle-option and option buttons after the tabs.
     functions: Vec<Texture>,
     dark: Texture,
     darker: Texture,
@@ -51,10 +74,8 @@ impl Assets {
             input: image("dialog_bg"),
             list: image("dialog_btn0"),
             base: image("sys_base_off"),
-            functions: ["chatmode_on", "battle_option2_a", "stickoff", "battle_option_a", "wnd_mini_b", "lock_dragwnd"]
-                .iter()
-                .map(|name| image(name))
-                .collect(),
+            // ponytail: which images the three buttons are.
+            functions: ["stickoff", "battle_option_a", "battle_option2_a"].iter().map(|name| image(name)).collect(),
             dark: gpu.solid(DARK),
             darker: gpu.solid(DARKER),
             white: gpu.solid([255; 4]),
@@ -63,7 +84,6 @@ impl Assets {
     }
 }
 
-#[derive(Default)]
 pub struct Chat {
     /// Every line so far with its color.
     pub lines: Vec<(String, [u8; 3])>,
@@ -73,6 +93,7 @@ pub struct Chat {
     /// The whisper name box, and whether typing goes there.
     pub whisper: String,
     pub naming: bool,
+    /// Which of F10's steps the window is at.
     size: usize,
     /// Lines scrolled back from the newest.
     scroll: usize,
@@ -80,18 +101,41 @@ pub struct Chat {
     pub hidden: bool,
 }
 
+impl Default for Chat {
+    fn default() -> Self {
+        Self {
+            lines: Vec::new(),
+            input: String::new(),
+            preedit: String::new(),
+            whisper: String::new(),
+            naming: false,
+            size: STEPS.iter().position(|&step| step == DEFAULT_STEP).unwrap_or(0),
+            scroll: 0,
+            hidden: false,
+        }
+    }
+}
+
 impl Chat {
-    fn log_height(&self) -> f32 {
-        HEIGHTS[self.size]
+    fn step(&self) -> usize {
+        STEPS[self.size]
     }
 
-    /// The top of the window (its tabs).
+    pub fn height(&self) -> f32 {
+        height(self.step())
+    }
+
+    /// The top of the window; its bottom stays at the screen's.
     fn top(&self) -> f32 {
-        SCREEN[1] - INPUT_HEIGHT - PADDING - self.log_height() - HANDLE - TAB_HEIGHT
+        SCREEN[1] - self.height()
+    }
+
+    fn bar_top(&self) -> f32 {
+        SCREEN[1] - INPUT_HEIGHT
     }
 
     pub fn contains(&self, cursor: [f32; 2]) -> bool {
-        !self.hidden && contains([0.0, self.top()], [600.0, SCREEN[1] - self.top()], cursor)
+        !self.hidden && contains([0.0, self.top()], [WIDTH, self.height()], cursor)
     }
 
     /// Alt+F10: the log and the input bar leave the screen, or come back.
@@ -99,17 +143,18 @@ impl Chat {
         self.hidden = !self.hidden;
     }
 
-    /// F10: the next log height, the same cycle as the size button.
+    /// F10: the next size, the same cycle as the size button.
     pub fn cycle_size(&mut self) {
-        self.size = (self.size + 1) % HEIGHTS.len();
+        self.size = (self.size + 1) % STEPS.len();
         self.scroll = 0;
     }
 
-    /// Whether a press here is the window's alone: its tabs, its grab strip and the input bar. The log's lines let
-    /// presses through to the world (the wheel still scrolls them).
+    /// Whether a press here is the window's alone: its tabs, the strips around the log and the input bar. The log
+    /// box's lines let presses through to the world (the wheel still scrolls them).
     pub fn blocks(&self, cursor: [f32; 2]) -> bool {
-        let log_top = self.top() + TAB_HEIGHT + HANDLE;
-        self.contains(cursor) && !contains([0.0, log_top], [600.0, self.log_height()], cursor)
+        let log = [LOG_BOX[0], self.top() + LOG_BOX[1]];
+        let log_size = [LOG_WIDTH, (self.height() - LOG_UNDER).max(0.0)];
+        self.contains(cursor) && !contains(log, log_size, cursor)
     }
 
     pub fn push(&mut self, text: String, color: [u8; 3]) {
@@ -122,19 +167,19 @@ impl Chat {
 
     /// Scrolls the log by `rows` lines (negative: back in time).
     pub fn scroll_by(&mut self, rows: i32) {
-        let shown = (self.log_height() / LINE) as usize;
-        let most = self.lines.len().saturating_sub(shown);
+        let most = self.lines.len().saturating_sub(self::rows(self.step()));
         self.scroll = (self.scroll as i32 - rows).clamp(0, most as i32) as usize;
     }
 
-    /// A click on the window: the size button cycles the log height; the boxes of the input bar take the caret.
+    /// A click on the window: the size button cycles the size; the boxes of the input bar take the caret.
     pub fn click(&mut self, cursor: [f32; 2]) {
-        let bar_top = SCREEN[1] - INPUT_HEIGHT;
-        if contains([SIZE_BUTTON[0], bar_top + SIZE_BUTTON[1]], BUTTON_SIZE, cursor) {
+        let bar = [0.0, self.bar_top()];
+        let at = |offset: [f32; 2]| [bar[0] + offset[0], bar[1] + offset[1]];
+        if contains(at(SIZE_BUTTON), BUTTON_SIZE, cursor) {
             self.cycle_size();
-        } else if contains([0.0, bar_top], [LIST_BUTTON[0], INPUT_HEIGHT], cursor) {
+        } else if contains(at(NAME_BOX.0), NAME_BOX.1, cursor) {
             self.naming = true;
-        } else if contains([MESSAGE_LEFT, bar_top], [FILTER_BUTTON[0] - MESSAGE_LEFT, INPUT_HEIGHT], cursor) {
+        } else if contains(at(MESSAGE_BOX.0), MESSAGE_BOX.1, cursor) {
             self.naming = false;
         }
     }
@@ -159,64 +204,68 @@ impl Chat {
         self.naming = false;
     }
 
-    pub fn draw<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, messages: &[String], caret: bool) {
+    /// The window; the input bar only while the line is `open`.
+    pub fn draw<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, messages: &[String], open: bool, caret: bool) {
         if self.hidden {
             return;
         }
         let top = self.top();
-        // Tabs: the general log is the open one.
-        for (tab, &message) in TAB_MESSAGES.iter().enumerate() {
-            let left = LEFT + tab as f32 * TAB_WIDTH;
-            let (fill, border) = if tab == 0 { (&assets.dark, &assets.white) } else { (&assets.darker, &assets.tab_border) };
-            layer.sprites.push((fill, [left, top + 1.0], [TAB_WIDTH, TAB_HEIGHT - 1.0]));
-            layer.sprites.push((border, [left, top], [TAB_WIDTH, 1.0]));
-            layer.sprites.push((border, [left, top], [1.0, TAB_HEIGHT]));
-            layer.sprites.push((border, [left + TAB_WIDTH - 1.0, top], [1.0, TAB_HEIGHT]));
-            let label = messages.get(message).map_or("", String::as_str);
-            let x = (left + (TAB_WIDTH - font.width(label)) / 2.0).round();
-            layer.texts.push((label.to_owned(), [x + 1.0, top + 2.0], [0, 0, 0]));
-            layer.texts.push((label.to_owned(), [x, top + 1.0], [255; 3]));
-        }
-        let mut x = LEFT + BODY_WIDTH;
-        for function in assets.functions.iter().rev() {
-            x -= function.size[0] + 3.0;
-            layer.sprites.push((function, [x, top + 4.0], function.size));
-        }
+        if self.step() > 0 {
+            // Tabs: the general log is the open one.
+            for (tab, &message) in TAB_MESSAGES.iter().enumerate() {
+                let left = tab as f32 * TAB_WIDTH;
+                let (fill, border) = if tab == 0 { (&assets.dark, &assets.white) } else { (&assets.darker, &assets.tab_border) };
+                layer.sprites.push((fill, [left, top + 1.0], [TAB_WIDTH, TAB_HEIGHT - 1.0]));
+                layer.sprites.push((border, [left, top], [TAB_WIDTH, 1.0]));
+                layer.sprites.push((border, [left, top], [1.0, TAB_HEIGHT]));
+                layer.sprites.push((border, [left + TAB_WIDTH - 1.0, top], [1.0, TAB_HEIGHT]));
+                let label = messages.get(message).map_or("", String::as_str);
+                let x = (left + (TAB_WIDTH - font.width(label)) / 2.0).round();
+                layer.texts.push((label.to_owned(), [x + 1.0, top + 2.0], [0, 0, 0]));
+                layer.texts.push((label.to_owned(), [x, top + 1.0], [255; 3]));
+            }
+            for (function, corner) in assets.functions.iter().zip(FUNCTION_BUTTONS) {
+                layer.sprites.push((function, [corner[0], top + corner[1]], function.size));
+            }
 
-        // The log: translucent black between white edges, newest line at the bottom.
-        let body_top = top + TAB_HEIGHT;
-        let body_height = HANDLE + self.log_height() + PADDING;
-        layer.sprites.push((&assets.dark, [LEFT, body_top], [BODY_WIDTH, body_height]));
-        layer.sprites.push((&assets.white, [LEFT, body_top], [1.0, body_height]));
-        layer.sprites.push((&assets.white, [LEFT + BODY_WIDTH - 1.0, body_top], [1.0, body_height]));
-        layer.sprites.push((&assets.white, [LEFT + TAB_WIDTH * 2.0, body_top], [BODY_WIDTH - TAB_WIDTH * 2.0, 1.0]));
-        let shown = (self.log_height() / LINE) as usize;
-        let end = self.lines.len().saturating_sub(self.scroll);
-        let start = end.saturating_sub(shown);
-        let first_row = shown - (end - start);
-        for (row, (line, color)) in self.lines[start..end].iter().enumerate() {
-            let y = body_top + HANDLE + (first_row + row) as f32 * LINE - 1.0;
-            layer.texts.push((line.clone(), [TEXT_LEFT + 1.0, y + 1.0], [0, 0, 0]));
-            layer.texts.push((line.clone(), [TEXT_LEFT, y], *color));
+            // The log: translucent black between white edges, newest line at the bottom.
+            let corner = [LOG_BOX[0], top + LOG_BOX[1]];
+            let size = [LOG_WIDTH, self.height() - LOG_UNDER];
+            layer.sprites.push((&assets.dark, corner, size));
+            layer.sprites.push((&assets.white, corner, [1.0, size[1]]));
+            layer.sprites.push((&assets.white, [corner[0] + size[0] - 1.0, corner[1]], [1.0, size[1]]));
+            layer.sprites.push((&assets.white, [2.0 * TAB_WIDTH, corner[1]], [corner[0] + size[0] - 2.0 * TAB_WIDTH, 1.0]));
+            let shown = rows(self.step());
+            let end = self.lines.len().saturating_sub(self.scroll);
+            let start = end.saturating_sub(shown);
+            let first_row = shown - (end - start);
+            for (row, (line, color)) in self.lines[start..end].iter().enumerate() {
+                let [x, y] = line_at(first_row + row);
+                layer.texts.push((line.clone(), [x + 1.0, top + y + 1.0], [0, 0, 0]));
+                layer.texts.push((line.clone(), [x, top + y], *color));
+            }
+        }
+        if !open {
+            return;
         }
 
         // The input bar with what's being typed and the caret.
-        let bar_top = SCREEN[1] - INPUT_HEIGHT;
+        let bar_top = self.bar_top();
         layer.sprites.push((&assets.input, [0.0, bar_top], assets.input.size));
         layer.sprites.push((&assets.list, [LIST_BUTTON[0], bar_top + LIST_BUTTON[1]], assets.list.size));
         for button in [FILTER_BUTTON, SIZE_BUTTON] {
             layer.sprites.push((&assets.base, [button[0], bar_top + button[1]], assets.base.size));
         }
-        let text_top = bar_top + (INPUT_HEIGHT - font.line_height()) / 2.0;
+        let text_top = bar_top + NAME_BOX.0[1] + ((NAME_BOX.1[1] - font.line_height()) / 2.0).round();
         let (name, typed) = if self.naming {
             (format!("{}{}", self.whisper, self.preedit), self.input.clone())
         } else {
             (self.whisper.clone(), format!("{}{}", self.input, self.preedit))
         };
-        layer.texts.push((name.clone(), [NAME_LEFT, text_top], [0, 0, 0]));
-        layer.texts.push((typed.clone(), [MESSAGE_LEFT, text_top], [0, 0, 0]));
+        layer.texts.push((name.clone(), [NAME_BOX.0[0], text_top], [0, 0, 0]));
+        layer.texts.push((typed.clone(), [MESSAGE_BOX.0[0], text_top], [0, 0, 0]));
         if caret {
-            let end = if self.naming { NAME_LEFT + font.width(&name) } else { MESSAGE_LEFT + font.width(&typed) };
+            let end = if self.naming { NAME_BOX.0[0] + font.width(&name) } else { MESSAGE_BOX.0[0] + font.width(&typed) };
             layer.sprites.push((&assets.darker, [end + 1.0, text_top + 1.0], [1.0, font.line_height() - 2.0]));
         }
     }
@@ -301,12 +350,64 @@ mod tests {
     #[test]
     fn lets_presses_through_the_log() {
         let chat = Chat::default();
-        let log_top = SCREEN[1] - INPUT_HEIGHT - PADDING - HEIGHTS[0];
+        let log_top = SCREEN[1] - 96.0 + LOG_BOX[1];
         // The log's lines: the window has them, the world too.
         assert!(chat.contains([300.0, log_top + 10.0]) && !chat.blocks([300.0, log_top + 10.0]));
         // The input bar and the tabs are the window's alone.
         assert!(chat.blocks([300.0, SCREEN[1] - 10.0]) && chat.blocks([20.0, chat.top() + 5.0]));
         assert!(!chat.contains([700.0, log_top + 10.0]) && !chat.blocks([700.0, log_top + 10.0]));
+    }
+
+    #[test]
+    fn steps_through_six_sizes() {
+        let mut chat = Chat::default();
+        let mut heights = Vec::new();
+        for _ in 0..7 {
+            heights.push((chat.height(), rows(chat.step()), chat.top()));
+            chat.cycle_size();
+        }
+        let tall = [96.0, 138.0, 180.0, 222.0, 264.0, 24.0, 96.0];
+        assert_eq!(heights.iter().map(|&(height, ..)| height).collect::<Vec<_>>(), tall);
+        assert_eq!(heights.iter().map(|&(_, rows, _)| rows).collect::<Vec<_>>(), [3, 6, 9, 12, 15, 0, 3]);
+        // The bottom edge stays put.
+        assert!(heights.iter().all(|&(height, _, top)| top + height == SCREEN[1]));
+        // The input bar alone: no log to let presses through.
+        let mut alone = Chat::default();
+        (0..5).for_each(|_| alone.cycle_size());
+        assert_eq!(alone.height(), 24.0);
+        assert!(alone.blocks([300.0, SCREEN[1] - 10.0]) && !alone.contains([300.0, SCREEN[1] - 30.0]));
+    }
+
+    #[test]
+    fn puts_lines_14_apart() {
+        assert_eq!([line_at(0), line_at(1), line_at(2)], [[7.0, 21.0], [7.0, 35.0], [7.0, 49.0]]);
+        // The last of 15 lines still ends inside the 220-tall box of the 264 window.
+        assert!(line_at(14)[1] + LINE <= LOG_BOX[1] + height(13) - LOG_UNDER);
+    }
+
+    #[test]
+    fn places_the_input_bar_controls() {
+        let h = 96.0;
+        let bar = h - INPUT_HEIGHT;
+        let local = |offset: [f32; 2]| [offset[0], bar + offset[1]];
+        assert_eq!((local(NAME_BOX.0), NAME_BOX.1), ([6.0, h - 20.0], [90.0, 16.0]));
+        assert_eq!(local(LIST_BUTTON), [97.0, h - 21.0]);
+        assert_eq!((local(MESSAGE_BOX.0), MESSAGE_BOX.1), ([110.0, h - 20.0], [460.0, 16.0]));
+        assert_eq!([local(FILTER_BUTTON), local(SIZE_BUTTON)], [[572.0, h - 17.0], [586.0, h - 17.0]]);
+        assert_eq!(FUNCTION_BUTTONS, [[224.0, 4.0], [239.0, 5.0], [254.0, 5.0]]);
+        // The boxes take the caret, the size button the size.
+        let mut chat = Chat::default();
+        chat.click([50.0, SCREEN[1] - 12.0]);
+        assert!(chat.naming);
+        chat.click([300.0, SCREEN[1] - 12.0]);
+        assert!(!chat.naming);
+        chat.click([590.0, SCREEN[1] - 12.0]);
+        assert_eq!(chat.height(), 138.0);
+    }
+
+    #[test]
+    fn colors_party_chat() {
+        assert_eq!([PARTY_OURS, PARTY], [[255, 200, 0], [255, 200, 200]]);
     }
 
     #[test]

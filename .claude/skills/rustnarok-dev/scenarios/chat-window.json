@@ -1,0 +1,242 @@
+{
+  "about": "The chat window (issue #215): F10 steps through the input bar alone and logs 96, 138, 180, 222 and 264 tall, bottom edge in place; log lines 14 apart from x 7, 110-wide tabs with the stick, battle-option and option buttons right after them. Battle mode (/bm) closes the line and the input bar goes with it.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "move": [
+        600,
+        300
+      ]
+    },
+    {
+      "say": "One line"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "Two lines"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "Three lines"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "Four lines"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_height": 96
+        }
+      }
+    },
+    {
+      "shot": "chat-96",
+      "crop": [
+        0,
+        488,
+        620,
+        280
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_height": 138
+        }
+      }
+    },
+    {
+      "shot": "chat-138",
+      "crop": [
+        0,
+        488,
+        620,
+        280
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_height": 180
+        }
+      }
+    },
+    {
+      "shot": "chat-180",
+      "crop": [
+        0,
+        488,
+        620,
+        280
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_height": 222
+        }
+      }
+    },
+    {
+      "shot": "chat-222",
+      "crop": [
+        0,
+        488,
+        620,
+        280
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_height": 264
+        }
+      }
+    },
+    {
+      "shot": "chat-264",
+      "crop": [
+        0,
+        488,
+        620,
+        280
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_height": 24
+        }
+      }
+    },
+    {
+      "shot": "chat-24",
+      "crop": [
+        0,
+        488,
+        620,
+        280
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_height": 96
+        }
+      }
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "type": "/bm"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_line_open": false
+        }
+      }
+    },
+    {
+      "shot": "chat-battle-mode",
+      "crop": [
+        0,
+        488,
+        620,
+        280
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_line_open": true
+        }
+      }
+    },
+    {
+      "type": "/bm"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    }
+  ]
+}
