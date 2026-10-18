@@ -1,0 +1,59 @@
+{
+  "about": "Window keys: Alt+E opens the inventory and Alt+S the skills, whichever data the client runs on (older data's hotkey tables are laid out otherwise; the client falls back to its built-in defaults then).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Inventory",
+          "Skills"
+        ]
+      }
+    },
+    {
+      "shot": "alt-e-alt-s"
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Inventory",
+          "Skills"
+        ]
+      }
+    }
+  ]
+}
