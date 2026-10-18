@@ -90,6 +90,8 @@ pub enum WindowId {
     GraphicsSettings,
     ShortcutSettings,
     WorldMap,
+    /// The big minimap of the current map.
+    Minimap,
     Quests,
     Menu,
     Capturing,
@@ -186,6 +188,7 @@ impl WindowId {
             Self::GraphicsSettings => "GraphicsSettings",
             Self::ShortcutSettings => "ShortcutSettings",
             Self::WorldMap => "WorldMap",
+            Self::Minimap => "Minimap",
             Self::Quests => "Quests",
             Self::Menu => "Menu",
             Self::Capturing => "Capturing",

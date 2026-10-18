@@ -129,6 +129,43 @@ fn name_field(name: &str) -> Vec<u8> {
 }
 
 /// CZ_REG_CHANGE_GUILD_POSITIONINFO with one position: ID, permissions, rank (rathena ignores it; the ID), tax, title.
+/// A room's settings as CZ_CREATE_CHATROOM and CZ_CHANGE_CHATROOM carry them: the length, the limit, public (1) or
+/// private (0), the 8-byte password, the title.
+pub fn encode_room(packet_type: u16, title: &str, limit: u16, public: bool, password: &str) -> Vec<u8> {
+    let title = encode_text(title);
+    let mut secret = password.as_bytes().to_vec();
+    secret.resize(8, 0);
+    let mut packet = packet_type.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((15 + title.len()) as u16).to_le_bytes());
+    packet.extend_from_slice(&limit.to_le_bytes());
+    packet.push(u8::from(public));
+    packet.extend_from_slice(&secret);
+    packet.extend_from_slice(&title);
+    packet
+}
+
+/// A name in 24 bytes, as the room packets carry it.
+fn name_24(name: &str) -> Vec<u8> {
+    let mut name = encode_text(name);
+    name.resize(24, 0);
+    name
+}
+
+/// The owner hands the room to `name` (CZ_REQ_ROLE_CHANGE: role 0, the name).
+pub fn encode_room_owner(name: &str) -> Vec<u8> {
+    let mut packet = CZ_REQ_ROLE_CHANGE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&0u32.to_le_bytes());
+    packet.extend(name_24(name));
+    packet
+}
+
+/// The owner kicks `name` out (CZ_REQ_EXPEL_MEMBER).
+pub fn encode_room_kick(name: &str) -> Vec<u8> {
+    let mut packet = CZ_REQ_EXPEL_MEMBER.to_le_bytes().to_vec();
+    packet.extend(name_24(name));
+    packet
+}
+
 pub fn encode_position_change(position: &GuildPosition, title: &str) -> Vec<u8> {
     let mut packet = CZ_REG_CHANGE_GUILD_POSITIONINFO.to_le_bytes().to_vec();
     packet.extend_from_slice(&44u16.to_le_bytes());
@@ -1236,6 +1273,11 @@ const ZC_RESURRECTION: u16 = 0x0148;
 const CZ_CREATE_CHATROOM: u16 = 0x00D5;
 const CZ_REQ_ENTER_ROOM: u16 = 0x00D9;
 const CZ_EXIT_ROOM: u16 = 0x00E3;
+/// The owner changes the room, hands it over, or kicks a member (rathena's clif_parse_ChatRoomStatusChange,
+/// clif_parse_ChangeChatOwner, clif_parse_KickFromChat).
+const CZ_CHANGE_CHATROOM: u16 = 0x00DE;
+const CZ_REQ_ROLE_CHANGE: u16 = 0x00E0;
+const CZ_REQ_EXPEL_MEMBER: u16 = 0x00E2;
 const ZC_ROOM_NEWENTRY: u16 = 0x00D7;
 const ZC_DESTROY_ROOM: u16 = 0x00D8;
 const ZC_ACK_CREATE_CHATROOM: u16 = 0x00D6;
@@ -3998,16 +4040,20 @@ impl MapSession {
 
     /// Opens a chat room over the player's head.
     pub fn make_chat_room(&mut self, title: &str, limit: u16, public: bool, password: &str) -> io::Result<()> {
-        let title = encode_text(title);
-        let mut secret = password.as_bytes().to_vec();
-        secret.resize(8, 0);
-        let mut packet = CZ_CREATE_CHATROOM.to_le_bytes().to_vec();
-        packet.extend_from_slice(&((15 + title.len()) as u16).to_le_bytes());
-        packet.extend_from_slice(&limit.to_le_bytes());
-        packet.push(u8::from(public));
-        packet.extend_from_slice(&secret);
-        packet.extend_from_slice(&title);
-        self.stream.write_all(&packet)
+        self.stream.write_all(&encode_room(CZ_CREATE_CHATROOM, title, limit, public, password))
+    }
+
+    /// The owner changes the room's title, size, password and public setting.
+    pub fn change_chat_room(&mut self, title: &str, limit: u16, public: bool, password: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_room(CZ_CHANGE_CHATROOM, title, limit, public, password))
+    }
+
+    pub fn hand_over_chat_room(&mut self, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_room_owner(name))
+    }
+
+    pub fn kick_from_chat_room(&mut self, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_room_kick(name))
     }
 
     pub fn enter_chat_room(&mut self, id: u32, password: &str) -> io::Result<()> {
@@ -6502,6 +6548,19 @@ mod tests {
             matches!(&event, Some(MapEvent::Navigate { kind: 0, services: 111, hide_window: true, map, cell: [150, 160], monster: 0 }) if map == "prontera.gat"),
             "{event:?}"
         );
+    }
+
+    #[test]
+    fn writes_the_room_owners_requests() {
+        let change = encode_room(CZ_CHANGE_CHATROOM, "QA", 12, false, "pw");
+        assert_eq!(&change[..7], [0xDE, 0x00, 17, 0, 12, 0, 0]);
+        assert_eq!((&change[7..15], &change[15..]), (&b"pw\0\0\0\0\0\0"[..], &b"QA"[..]));
+        let owner = encode_room_owner("LaneA2");
+        assert_eq!(owner.len(), packet_length(CZ_REQ_ROLE_CHANGE).unwrap() as usize);
+        assert_eq!((&owner[..6], &owner[6..12]), (&[0xE0, 0x00, 0, 0, 0, 0][..], &b"LaneA2"[..]));
+        let kick = encode_room_kick("LaneA1");
+        assert_eq!(kick.len(), packet_length(CZ_REQ_EXPEL_MEMBER).unwrap() as usize);
+        assert_eq!((&kick[..2], &kick[2..8], kick[8]), (&[0xE2, 0x00][..], &b"LaneA1"[..], 0));
     }
 
     #[test]

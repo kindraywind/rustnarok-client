@@ -44,6 +44,11 @@ const BUTTON: [f32; 2] = [42.0, 20.0];
 const LIMITS: [u16; 5] = [20, 12, 8, 4, 2];
 /// "Create Chat Room", "Private", "Public", "Chat Room".
 const MAKE_TITLE: usize = 125;
+/// "Room Setup": the owner's button, and the make window's title when it changes the room.
+const ROOM_SETUP: usize = 126;
+/// The owner's button in the room window, at the right of the line.
+// ponytail: the button's look and place.
+const SETUP_BUTTON: ([f32; 2], [f32; 2]) = ([ROOM_WIDTH - 82.0, TITLE_HEIGHT + ROOM_LIST + 5.0], [78.0, 20.0]);
 const PRIVATE: usize = 200;
 const PUBLIC: usize = 201;
 
@@ -199,6 +204,10 @@ pub struct Room {
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum RoomHit {
     Title(TitleHit),
+    /// The owner's Room Setup button.
+    Setup,
+    /// A name in the member list, by its row.
+    Member(usize),
     Window,
 }
 
@@ -213,12 +222,51 @@ impl Room {
         TITLE_HEIGHT + ROOM_LIST + ROOM_SEND
     }
 
-    pub fn hit(&self, cursor: [f32; 2]) -> Option<RoomHit> {
-        let local = self.frame.local(cursor, self.height())?;
-        Some(self.frame.title_hit(local).map_or(RoomHit::Window, RoomHit::Title))
+    /// Whether `name` owns the room.
+    pub fn owned_by(&self, name: &str) -> bool {
+        self.members.iter().any(|(member, owner)| member == name && *owner)
     }
 
-    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, font: &Font, pointer: [f32; 2], caret: bool) {
+    /// What `cursor` is on; the setup button only for the owner (`me`).
+    pub fn hit(&self, cursor: [f32; 2], me: &str) -> Option<RoomHit> {
+        let local = self.frame.local(cursor, self.height())?;
+        if let Some(hit) = self.frame.title_hit(local) {
+            return Some(RoomHit::Title(hit));
+        }
+        if self.owned_by(me) && contains(SETUP_BUTTON.0, SETUP_BUTTON.1, local) {
+            return Some(RoomHit::Setup);
+        }
+        let row = ((local[1] - TITLE_HEIGHT - 5.0) / LINE).floor();
+        if local[0] >= MESSAGES_WIDTH && row >= 0.0 && (row as usize) < self.members.len() && local[1] < TITLE_HEIGHT + ROOM_LIST {
+            return Some(RoomHit::Member(row as usize));
+        }
+        Some(RoomHit::Window)
+    }
+
+    /// The owner's choices for member `row`: hand over, kick (none for the owner's own name or a non-owner).
+    pub fn member_choices(&self, row: usize, me: &str) -> Option<String> {
+        let (name, _) = self.members.get(row)?;
+        (self.owned_by(me) && name != me).then(|| name.clone())
+    }
+
+    /// The setup button and the member rows on screen (for the test driver).
+    pub fn button_boxes(&self, me: &str) -> Vec<(String, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized {
+            return Vec::new();
+        }
+        let mut boxes = Vec::new();
+        if self.owned_by(me) {
+            let [x, y] = self.frame.at(SETUP_BUTTON.0);
+            boxes.push(("room_setup".to_owned(), [x, y, SETUP_BUTTON.1[0], SETUP_BUTTON.1[1]]));
+        }
+        for (row, (name, _)) in self.members.iter().enumerate() {
+            let [x, y] = self.frame.at([MESSAGES_WIDTH + 2.0, TITLE_HEIGHT + 5.0 + row as f32 * LINE]);
+            boxes.push((format!("room_member_{name}"), [x, y, ROOM_WIDTH - MESSAGES_WIDTH - 4.0, LINE]));
+        }
+        boxes
+    }
+
+    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, font: &Font, messages: &[String], me: &str, pointer: [f32; 2], caret: bool) {
         let at = |local: [f32; 2]| self.frame.at(local);
         self.frame.draw_title(layer, chrome, &self.sign.text(), pointer);
         if self.frame.minimized {
@@ -244,6 +292,15 @@ impl Room {
         }
         let typed = if caret { format!("{}|", self.input) } else { self.input.clone() };
         layer.texts.push((typed, at([5.0, TITLE_HEIGHT + ROOM_LIST + ((ROOM_SEND - font.line_height()) / 2.0).floor()]), [0, 0, 0]));
+        // The owner's Room Setup button: a framed label.
+        if self.owned_by(me) {
+            let ([x, y], [w, h]) = SETUP_BUTTON;
+            for (corner, size) in [([x, y], [w, 1.0]), ([x, y + h - 1.0], [w, 1.0]), ([x, y], [1.0, h]), ([x + w - 1.0, y], [1.0, h])] {
+                layer.sprites.push((&chrome.border, at(corner), size));
+            }
+            let label = messages.get(ROOM_SETUP).map_or("Room Setup", String::as_str);
+            layer.texts.push((label.to_owned(), at([x + ((w - font.width(label)) / 2.0).round(), y + ((h - font.line_height()) / 2.0).floor()]), [0, 0, 0]));
+        }
     }
 }
 
@@ -255,6 +312,8 @@ pub struct Make {
     pub password: String,
     /// Typing goes to the password, not the title.
     pub on_password: bool,
+    /// It changes the room the player owns, not a new one.
+    pub editing: bool,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -270,11 +329,17 @@ pub enum MakeHit {
 
 impl Default for Make {
     fn default() -> Self {
-        Self { title: String::new(), limit: 0, public: true, password: String::new(), on_password: false }
+        Self { title: String::new(), limit: 0, public: true, password: String::new(), on_password: false, editing: false }
     }
 }
 
 impl Make {
+    /// The window filled from the room's sign, to change it (the password isn't known: it starts empty).
+    pub fn from_sign(sign: &Sign) -> Self {
+        let limit = LIMITS.iter().position(|&limit| limit == sign.limit).unwrap_or(0);
+        Self { title: sign.title.clone(), limit, public: sign.kind != 0, editing: true, ..Self::default() }
+    }
+
     fn corner() -> [f32; 2] {
         [((screen()[0] - MAKE_SIZE[0]) / 2.0).floor(), ((screen()[1] - MAKE_SIZE[1]) / 2.0).floor()]
     }
@@ -353,7 +418,7 @@ impl Make {
             frame.open = true;
             frame
         };
-        frame.draw_title(layer, chrome, message(MAKE_TITLE), pointer.0);
+        frame.draw_title(layer, chrome, message(if self.editing { ROOM_SETUP } else { MAKE_TITLE }), pointer.0);
         layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [MAKE_SIZE[0], MAKE_SIZE[1] - TITLE_HEIGHT - MAKE_FOOTER]));
         let [title, limit, mode] = Self::places();
         let field = |layer: &mut Layer<'a>, place: [f32; 2], width: f32, text: String| {
@@ -406,6 +471,25 @@ mod tests {
         // The chat room board's edges: tiles every 12 px from 12 up to the right corner at 126; the bottom row at 28.
         assert_eq!(edge_tiles(), (1..=10).map(|step| step as f32 * 12.0).collect::<Vec<_>>());
         assert_eq!(BOTTOM_ROW, SIGN[1] - 6.0);
+    }
+
+    #[test]
+    fn gives_the_owner_its_tools() {
+        let sign = Sign { id: 7, limit: 12, users: 2, kind: 0, title: "QA room".into() };
+        let room = Room::new(sign.clone(), vec![("LaneA1".into(), true), ("LaneA2".into(), false)]);
+        assert!(room.owned_by("LaneA1") && !room.owned_by("LaneA2"));
+        // The owner's menu is for the others; the others have none.
+        assert_eq!(room.member_choices(1, "LaneA1"), Some("LaneA2".into()));
+        assert_eq!([room.member_choices(0, "LaneA1"), room.member_choices(0, "LaneA2")], [None, None]);
+        // The setup button and the member rows hit; the button only for the owner.
+        let boxes = room.button_boxes("LaneA1");
+        let middle = |area: [f32; 4]| [area[0] + area[2] / 2.0, area[1] + area[3] / 2.0];
+        assert_eq!(room.hit(middle(boxes[0].1), "LaneA1"), Some(RoomHit::Setup));
+        assert_eq!(room.hit(middle(boxes[0].1), "LaneA2"), Some(RoomHit::Window));
+        assert_eq!((boxes[2].0.as_str(), room.hit(middle(boxes[2].1), "LaneA1")), ("room_member_LaneA2", Some(RoomHit::Member(1))));
+        // Room Setup starts from the room: its title, size and privacy.
+        let make = Make::from_sign(&sign);
+        assert_eq!((make.title.as_str(), make.limit(), make.public, make.editing), ("QA room", 12, false, true));
     }
 
     #[test]
