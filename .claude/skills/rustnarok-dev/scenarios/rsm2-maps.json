@@ -1,0 +1,18 @@
+{
+  "about": "RSM 2 models on maps (issue #439): rag_fes (165, 249) and nif_dun02 (261, 78), where dozens of .rsm2 instances stand near the player, show them in place: the y flip, no centring, each node posed by its first keys. nif_dun02 is visited hidden (@hide), out of its monsters' reach.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp rag_fes 165 249"}, {"settle": 4000},
+    {"expect": {"map": "rag_fes.gat", "state_at_least": {"rsm2_models": 1000}}},
+    {"move": [1000, 740]},
+    {"shot": "rag-fes", "threshold": 5},
+    {"say": "@hide"}, {"wait": 300},
+    {"say": "@warp nif_dun02 261 78"}, {"settle": 4000},
+    {"expect": {"map": "nif_dun02.gat", "state_at_least": {"rsm2_models": 1000}}},
+    {"move": [1000, 740]},
+    {"shot": "nif-dun02", "threshold": 5},
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@hide"}, {"wait": 300}, {"say": "@heal"}
+  ]
+}

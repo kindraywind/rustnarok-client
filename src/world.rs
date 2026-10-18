@@ -434,6 +434,8 @@ pub struct MeshVertex {
 
 pub struct World {
     pub gat: Gat,
+    /// How many RSM 2 model instances stand on the map.
+    pub rsm_2_models: usize,
     /// The map's ambient sound sources.
     pub ambient: crate::ambient::Ambient,
     textures: Vec<Texture>,
@@ -495,7 +497,7 @@ impl World {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let (model_vertices, model_draws, model_texture_names) = model_mesh(grf, &rsw, &gnd);
+        let (model_vertices, model_draws, model_texture_names, rsm_2_models) = model_mesh(grf, &rsw, &gnd);
         let model_textures = model_texture_names
             .iter()
             .map(|name| {
@@ -650,6 +652,7 @@ impl World {
         let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
         let ambient = crate::ambient::Ambient::new(rsw.sounds.iter().map(|source| crate::ambient::Source::placed(source, half)).collect());
         Ok(Self {
+            rsm_2_models,
             ambient,
             gat,
             textures,
@@ -964,7 +967,8 @@ fn ground_mesh(gnd: &Gnd, columns: usize, atlas_size: [f32; 2]) -> (Vec<GroundVe
 
 /// Every RSW model instance baked into world space, grouped by texture; returns vertices, draws and texture names.
 /// Models' vertices, the ranges of them each texture draws, and the textures.
-type ModelMesh = (Vec<GroundVertex>, Vec<(usize, Range<u32>)>, Vec<String>);
+/// Also how many RSM 2 instances were placed.
+type ModelMesh = (Vec<GroundVertex>, Vec<(usize, Range<u32>)>, Vec<String>, usize);
 
 fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
     let mut texture_index: HashMap<String, usize> = HashMap::new();
@@ -972,18 +976,16 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
     let mut models: HashMap<&str, Option<(Rsm, Vec<model::Triangle>)>> = HashMap::new();
     // RSW positions are relative to the map's center.
     let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
+    let mut rsm_2 = 0;
 
     for instance in &rsw.models {
-        // RSM 2 on maps needs its own placement and animation (#439); the reader is there, they stay out until then.
-        if instance.file.to_lowercase().ends_with(".rsm2") {
-            continue;
-        }
         let entry = models.entry(instance.file.as_str()).or_insert_with(|| {
             let rsm = Rsm::parse(&grf.read(&format!("data\\model\\{}", instance.file)).ok()?).ok()?;
             let triangles = rsm.triangles();
             Some((rsm, triangles))
         });
         let Some((rsm, triangles)) = entry else { continue };
+        rsm_2 += usize::from(rsm.version >= (2, 0));
 
         let [rx, ry, rz] = instance.rotation.map(f32::to_radians);
         let placement = [
@@ -1025,7 +1027,7 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
         vertices.extend(triangles);
         draws.push((texture, start..vertices.len() as u32));
     }
-    (vertices, draws, names)
+    (vertices, draws, names, rsm_2)
 }
 
 /// Cells walked from `from` to `to` (excluding `from`), 8-directional; diagonals need both sides open, as on the server.

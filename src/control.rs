@@ -1477,6 +1477,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         }).collect::<serde_json::Map<_, _>>(),
         "chat_height": game.chat.height(),
     });
+    // The RSM 2 model instances standing on the map.
+    state["rsm2_models"] = game.world.rsm_2_models.into();
     // The skill units on the ground standing as models (their UNT_ numbers).
     state["standing_models"] = game.effects.standing_kinds().into();
     state["cutin_window"] = cutin_window.into();
