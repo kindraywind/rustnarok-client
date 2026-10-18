@@ -46,13 +46,19 @@ pub fn wears_head_emblem(player: bool, job: u16, guild: u32, cloaked: bool, ours
     !ours && guild != 0 && !cloaked && (player || GUARDIANS.contains(&job))
 }
 
-/// The emblem's box over a unit (left, top, right, bottom): `floor(10·W/640)·s` left of and `floor(100·H/480)·s`
-/// above its feet on screen, `s` its sprite scale; it doesn't grow with the zoom.
-pub fn head_emblem_box(feet: [f32; 2], screen: [f32; 2], scale: f32) -> [f32; 4] {
-    let left = feet[0] - (10.0 * screen[0] / 640.0).floor() * scale;
-    let top = feet[1] - (100.0 * screen[1] / 480.0).floor() * scale;
+/// The emblem's box over a unit (left, top, right, bottom): `floor(10·W/640)·p` left of and `floor(100·H/480)·p`
+/// above its feet on screen, `p` its perspective factor (`perspective`); it doesn't grow with the zoom.
+pub fn head_emblem_box(feet: [f32; 2], screen: [f32; 2], perspective: f32) -> [f32; 4] {
+    let left = feet[0] - (10.0 * screen[0] / 640.0).floor() * perspective;
+    let top = feet[1] - (100.0 * screen[1] / 480.0).floor() * perspective;
     [left, top, left + EMBLEM_SIZE[0], top + EMBLEM_SIZE[1]]
 }
+/// A unit's perspective factor from the screen pixels a sprite pixel takes where it stands, on a screen `height`
+/// high: sprites are drawn 1.34·height/768 screen pixels a sprite pixel at a factor of 1.
+pub fn perspective(screen_per_sprite: f32, height: f32) -> f32 {
+    screen_per_sprite * 768.0 / (1.34 * height)
+}
+
 const INFO_LEFT: f32 = 52.0;
 /// Member columns: name, position, job, level.
 const COLUMNS: [(usize, f32); 4] = [(407, 10.0), (503, 150.0), (504, 250.0), (408, 340.0)];
@@ -757,6 +763,10 @@ mod tests {
         assert_eq!(head_emblem_box([500.0, 400.0], [1024.0, 768.0], 0.8), [487.2, 272.0, 511.2, 296.0]);
         assert_eq!(head_emblem_box([500.0, 400.0], [1280.0, 720.0], 1.0), [480.0, 250.0, 504.0, 274.0]);
         assert_eq!(head_emblem_box([500.0, 400.0], [1280.0, 720.0], 0.8), [484.0, 280.0, 508.0, 304.0]);
+        // At the default camera a sprite pixel is about 1.389 screen pixels at 768 high: a factor of about 1.037,
+        // so the box's top is about 166 px over the feet.
+        let p = perspective(1.389, 768.0);
+        assert!((p - 1.0366).abs() < 1e-3 && (400.0 - head_emblem_box([500.0, 400.0], [1024.0, 768.0], p)[1] - 165.9).abs() < 0.2);
         assert!(wears_head_emblem(true, 0, 5, false, false));
         assert!(!wears_head_emblem(true, 0, 5, false, true), "not ourselves");
         assert!(!wears_head_emblem(true, 0, 0, false, false), "no guild");

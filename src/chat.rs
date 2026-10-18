@@ -31,6 +31,11 @@ const LINE_TEXT: [f32; 2] = [2.0, 3.0];
 const INPUT_HEIGHT: f32 = 24.0;
 const NAME_BOX: ([f32; 2], [f32; 2]) = ([6.0, 4.0], [90.0, 16.0]);
 const LIST_BUTTON: [f32; 2] = [97.0, 3.0];
+/// The whisper-name list that drops from the list button. It grows upward: the bar sits on the screen's bottom.
+// ponytail: this button's job is the session's recent whisper names. The list opens upward so it stays on screen.
+const LIST_BUTTON_SIZE: [f32; 2] = [12.0, 18.0];
+const LIST_ROW: f32 = 16.0;
+const LIST_WIDTH: f32 = 140.0;
 const MESSAGE_BOX: ([f32; 2], [f32; 2]) = ([110.0, 4.0], [460.0, 16.0]);
 const SEND_TO_BUTTON: [f32; 2] = [572.0, 7.0];
 const SIZE_BUTTON: [f32; 2] = [586.0, 7.0];
@@ -268,6 +273,9 @@ pub struct Chat {
     /// The whisper name box, and whether typing goes there.
     pub whisper: String,
     pub naming: bool,
+    /// Players whispered with this session, newest first, and whether their list is open.
+    pub recent: Vec<String>,
+    list_open: bool,
     /// Which of F10's steps the window is at.
     size: usize,
     pub tabs: [Tab; 2],
@@ -302,6 +310,8 @@ impl Chat {
             preedit: String::new(),
             whisper: String::new(),
             naming: false,
+            recent: Vec::new(),
+            list_open: false,
             size: STEPS.iter().position(|&step| step == DEFAULT_STEP).unwrap_or(0),
             tabs: [Tab { kinds: public, scroll: 0 }, Tab { kinds: battle, scroll: 0 }],
             tab: 0,
@@ -375,7 +385,7 @@ impl Chat {
                 Hit::Size
             } else if in_bar(SEND_TO_BUTTON, BUTTON_SIZE) {
                 Hit::SendTo
-            } else if in_bar(LIST_BUTTON, [12.0, 18.0]) {
+            } else if in_bar(LIST_BUTTON, LIST_BUTTON_SIZE) {
                 Hit::List
             } else if in_bar(NAME_BOX.0, NAME_BOX.1) {
                 Hit::Name
@@ -496,9 +506,62 @@ impl Chat {
         tab.scroll = (tab.scroll as i32 - rows).clamp(0, most as i32) as usize;
     }
 
+    /// Remembers a player whispered with this session.
+    pub fn note_recent(&mut self, name: &str) {
+        crate::whisper::note_recent(&mut self.recent, name);
+    }
+
+    /// A row of the open recent-name list.
+    pub fn on_list(&self, cursor: [f32; 2]) -> bool {
+        self.list_row(cursor).is_some()
+    }
+
+    /// The list button and each open row, for the test driver.
+    pub fn list_boxes(&self) -> Vec<(String, [f32; 4])> {
+        if self.hidden {
+            return Vec::new();
+        }
+        let mut boxes = vec![("whisper_list".into(), self.list_button_box())];
+        if self.list_open {
+            for (index, name) in self.recent.iter().enumerate() {
+                boxes.push((format!("recent:{name}"), self.row_box(index)));
+            }
+        }
+        boxes
+    }
+
+    fn list_button_box(&self) -> [f32; 4] {
+        let origin = self.at([LIST_BUTTON[0], self.height() - INPUT_HEIGHT + LIST_BUTTON[1]]);
+        [origin[0], origin[1], LIST_BUTTON_SIZE[0], LIST_BUTTON_SIZE[1]]
+    }
+
+    fn row_box(&self, index: usize) -> [f32; 4] {
+        let [x, y, _, _] = self.list_button_box();
+        [x, y - (index as f32 + 1.0) * LIST_ROW, LIST_WIDTH, LIST_ROW]
+    }
+
+    fn list_row(&self, cursor: [f32; 2]) -> Option<usize> {
+        if !self.list_open {
+            return None;
+        }
+        self.recent.iter().enumerate().find(|(index, _)| contains_box(self.row_box(*index), cursor)).map(|(index, _)| index)
+    }
+
     /// A click on the window: a tab shows its log; the buttons do what they say; the boxes of the input bar take the
-    /// caret.
+    /// caret. The list button drops the recent names; a row fills the name box.
     pub fn click(&mut self, cursor: [f32; 2]) {
+        // Rows sit above the button and can fall outside the window, so they come before `hit`.
+        if let Some(index) = self.list_row(cursor) {
+            self.whisper = self.recent[index].clone();
+            self.naming = false;
+            self.list_open = false;
+            return;
+        }
+        if self.hit(cursor) == Some(Hit::List) {
+            self.list_open = !self.list_open;
+            return;
+        }
+        self.list_open = false;
         match self.hit(cursor) {
             Some(Hit::Tab(tab)) => self.tab = tab,
             // ponytail: "stick" puts the window back at the screen's bottom left.
@@ -560,13 +623,15 @@ impl Chat {
         let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, kinds_text(&kinds)));
     }
 
-    /// The whisper-name list next to the battle-mode line (#179). Closed until that list exists.
+    /// The recent-name list next to the whisper name box is open.
     pub fn whisper_list_open(&self) -> bool {
-        false
+        self.list_open
     }
 
-    /// Closes the whisper-name list (#179).
-    pub fn close_whisper_list(&mut self) {}
+    /// Closes the recent-name list.
+    pub fn close_whisper_list(&mut self) {
+        self.list_open = false;
+    }
 
     /// Closes the battle-mode line (#179): the typed text goes, the line closes.
     pub fn close_battle_line(&mut self) {
@@ -673,8 +738,19 @@ impl Chat {
             let end = if self.naming { name_x + font.width(&name) } else { message_x + font.width(&typed) };
             layer.sprites.push((&assets.darker, [end + 1.0, text_top + 1.0], [1.0, font.line_height() - 2.0]));
         }
+        if self.list_open {
+            for (index, recent) in self.recent.iter().enumerate() {
+                let [x, y, w, h] = self.row_box(index);
+                layer.sprites.push((&assets.darker, [x, y], [w, h]));
+                layer.texts.push((recent.clone(), [x + 4.0, y + 1.0], [255, 255, 255]));
+            }
+        }
         link_boxes
     }
+}
+
+fn contains_box(box_: [f32; 4], cursor: [f32; 2]) -> bool {
+    contains([box_[0], box_[1]], [box_[2], box_[3]], cursor)
 }
 
 /// The tab settings window: a box per kind of line for the tab it was opened from.
@@ -792,6 +868,9 @@ pub enum Command {
     DressRoom,
     /// /blacksmith, /alchemist, /taekwon, /pk: a ranking's top ten (0 to 3).
     Ranking(u16),
+    /// /away: the away-message box.
+    // ponytail: /away is the command that opens it; the client's own command isn't identified.
+    Away,
     /// /navigation, /navi: the navigation window, open or closed.
     Navigation,
 }
@@ -826,6 +905,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/taekwon" => Command::Ranking(2),
         // Only the bare /pk: /pk on and /pk off are another command.
         "/pk" if name.is_empty() => Command::Ranking(3),
+        "/away" => Command::Away,
         "/navigation" | "/navi" => Command::Navigation,
         _ => return None,
     })
@@ -903,6 +983,21 @@ mod tests {
         assert_eq!(chat.send_to, SendTo::Party);
         chat.click([590.0, screen()[1] - 12.0]);
         assert_eq!(chat.height(), 138.0);
+    }
+
+    #[test]
+    fn recent_names_fill_the_whisper_box() {
+        let mut chat = fresh();
+        chat.note_recent("Drops");
+        chat.note_recent("Poring");
+        let [x, y, w, h] = chat.list_boxes().into_iter().find(|(name, _)| name == "whisper_list").unwrap().1;
+        chat.click([x + w / 2.0, y + h / 2.0]);
+        assert!(chat.whisper_list_open());
+        let [x, y, w, h] = chat.list_boxes().into_iter().find(|(name, _)| name == "recent:Poring").unwrap().1;
+        chat.click([x + w / 2.0, y + h / 2.0]);
+        assert_eq!(chat.whisper, "Poring");
+        assert!(!chat.whisper_list_open());
+        chat.close_whisper_list();
     }
 
     #[test]
@@ -1014,6 +1109,7 @@ mod tests {
         }
         assert_eq!(command("/pk on"), None);
         assert_eq!([command("/navigation"), command("/navi")], [Some(Command::Navigation), Some(Command::Navigation)]);
+        assert_eq!(command("/away"), Some(Command::Away));
         assert_eq!(command("/ex"), Some(Command::BlockList));
         assert_eq!(command("/ex Poring"), Some(Command::Whispers { name: "Poring".into(), allow: false }));
         assert_eq!(command("/in \"Big Poring\" "), Some(Command::Whispers { name: "Big Poring".into(), allow: true }));

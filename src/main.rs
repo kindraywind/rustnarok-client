@@ -118,6 +118,7 @@ mod trade;
 mod vend;
 mod versus;
 mod weather;
+mod whisper;
 mod window;
 mod world;
 mod worldmap;
@@ -1182,6 +1183,13 @@ struct Game {
     /// The party setup window, and the member whose leadership is being asked about.
     party_setup: Option<party::Setup>,
     leader_asked: Option<u32>,
+    /// 1:1 whisper windows, when an incoming whisper opens one, the friend setup, the block list and the away message.
+    talks: whisper::Talks,
+    whisper_open: whisper::OpenSettings,
+    friend_setup: Option<whisper::FriendSetup>,
+    block_list: Option<whisper::BlockList>,
+    away: whisper::Away,
+    away_prompt: Option<whisper::AwayPrompt>,
     mercenary_skills: Vec<net::Skill>,
     mercenary_window: mercenary::Window,
     mercenary_skill_list: mercenary::SkillList,
@@ -2651,9 +2659,167 @@ impl Game {
             let _ = self.session.chat(&self.me.name, text);
         } else {
             let _ = self.session.whisper(&to, text);
-            self.whispered.push_back((to, text.to_owned()));
+            self.whispered.push_back((to.clone(), text.to_owned()));
+            self.chat.note_recent(&to);
+            self.talks.push_line(&to, format!("(To {to}) : {text}"));
         }
         None
+    }
+
+    /// An incoming whisper: always a main-chat line, a 1:1 window when that sender's box is on, and one away reply.
+    fn receive_whisper(&mut self, from: String, text: String) {
+        let line = format!("(From {from}) : {text}");
+        self.chat_line_kind(line.clone(), WHISPER_COLOR, chat::Kind::Whisper);
+        self.chat.note_recent(&from);
+        let friend = self.friends.iter().any(|friend| friend.name.eq_ignore_ascii_case(&from));
+        if self.whisper_open.opens(friend) {
+            self.talks.ensure(&from);
+            self.sync_esc();
+        }
+        self.talks.push_line(&from, line);
+        if let Some(reply) = self.away.reply(&from) {
+            let _ = self.session.whisper(&from, &reply);
+            self.whispered.push_back((from.clone(), reply.clone()));
+            self.chat.note_recent(&from);
+            self.talks.push_line(&from, format!("(To {from}) : {reply}"));
+            // ponytail: a plain line; the client's wording for an automatic answer isn't identified.
+            self.chat_line_kind(format!("Away: answered {from}."), WHISPER_COLOR, chat::Kind::Whisper);
+        }
+    }
+
+    /// Typing in a 1:1 window whispers that partner, the same packet as the chat's name box.
+    fn send_focused_talk(&mut self) {
+        let Some((partner, text)) = self.talks.take_input() else { return };
+        let _ = self.session.whisper(&partner, &text);
+        self.whispered.push_back((partner.clone(), text.clone()));
+        self.chat.note_recent(&partner);
+        self.talks.push_line(&partner, format!("(To {partner}) : {text}"));
+    }
+
+    fn open_friend_setup(&mut self) {
+        if self.friend_setup.take().is_some() {
+            self.sync_esc();
+            return;
+        }
+        self.friend_setup = Some(whisper::FriendSetup::new(self.whisper_open, self.party_window.frame.position));
+        self.sync_esc();
+    }
+
+    fn apply_whisper_open(&mut self, settings: whisper::OpenSettings) {
+        self.whisper_open = settings;
+        // A driven client (a scenario) doesn't keep the boxes, so the next run still starts with both off.
+        if !control::driven() {
+            settings.save();
+        }
+    }
+
+    /// OK on the away box sets the message (empty clears it). Cancel leaves the old one.
+    fn finish_away(&mut self, text: &str) {
+        self.away_prompt = None;
+        self.away.set(text);
+        // ponytail: the client's line for setting an away message isn't identified.
+        let line = match self.away.text() {
+            Some(message) => format!("Away message: {message}"),
+            None => "Away message off.".to_owned(),
+        };
+        self.chat_line(line, CHAT_ITEM);
+        self.sync_esc();
+    }
+
+    /// The pointer is on a whisper window, the friend setup, the block list or the away box.
+    fn whisper_at(&self, cursor: [f32; 2]) -> bool {
+        self.away_prompt.as_ref().is_some_and(|prompt| prompt.hit(cursor).is_some())
+            || self.talks.hit(cursor).is_some()
+            || self.block_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
+            || self.friend_setup.as_ref().is_some_and(|setup| setup.hit(cursor).is_some())
+    }
+
+    /// A click on a whisper window, the friend setup, the block list or the away box.
+    fn whisper_click(&mut self, cursor: [f32; 2]) -> bool {
+        if let Some(hit) = self.away_prompt.as_ref().and_then(|prompt| prompt.hit(cursor)) {
+            match hit {
+                whisper::AwayHit::Ok => {
+                    let text = self.away_prompt.take().map(|prompt| prompt.typed).unwrap_or_default();
+                    self.finish_away(&text);
+                }
+                whisper::AwayHit::Cancel => {
+                    self.away_prompt = None;
+                    self.sync_esc();
+                }
+                whisper::AwayHit::Box => {}
+            }
+            return true;
+        }
+        if let Some((index, hit)) = self.talks.hit(cursor) {
+            match self.talks.click(index, hit, cursor) {
+                whisper::TalkClick::Save(partner, lines) => match whisper::save_log(std::path::Path::new(screenshot::FOLDER), &partner, &lines) {
+                    Ok(path) => self.chat_line(format!("Chat saved: {}", path.display()), CHAT_ITEM),
+                    Err(_) => self.chat_line("Chat was not saved.".into(), CHAT_ERROR),
+                },
+                whisper::TalkClick::Friend(partner) => {
+                    let _ = self.session.add_friend(&partner);
+                }
+                whisper::TalkClick::Closed => self.sync_esc(),
+                whisper::TalkClick::None => {}
+            }
+            return true;
+        }
+        if let Some(hit) = self.block_list.as_ref().and_then(|list| list.hit(cursor)) {
+            match hit {
+                whisper::BlockHit::Allow(name) => {
+                    if self.session.set_whisper(&name, true).is_ok() {
+                        self.whisper_asked.push_back(name);
+                    }
+                }
+                whisper::BlockHit::Title(TitleHit::Close) => {
+                    self.block_list = None;
+                    self.sync_esc();
+                }
+                whisper::BlockHit::Title(TitleHit::Title) => {
+                    if let Some(list) = &mut self.block_list {
+                        list.frame.start_drag(cursor);
+                    }
+                }
+                whisper::BlockHit::Title(title) => {
+                    if let Some(list) = &mut self.block_list {
+                        list.frame.click_title(title);
+                        if !list.frame.open {
+                            self.block_list = None;
+                            self.sync_esc();
+                        }
+                    }
+                }
+                whisper::BlockHit::Window => {}
+            }
+            return true;
+        }
+        if let Some(hit) = self.friend_setup.as_ref().and_then(|setup| setup.hit(cursor)) {
+            match hit {
+                whisper::SetupHit::Title(TitleHit::Title) => {
+                    if let Some(setup) = &mut self.friend_setup {
+                        setup.frame.start_drag(cursor);
+                    }
+                }
+                whisper::SetupHit::Title(title) => {
+                    let close = title == TitleHit::Close;
+                    if let Some(setup) = &mut self.friend_setup {
+                        setup.frame.click_title(title);
+                        if close || !setup.frame.open {
+                            self.friend_setup = None;
+                            self.sync_esc();
+                        }
+                    }
+                }
+                other => {
+                    let changed = self.friend_setup.as_mut().and_then(|setup| setup.click(other));
+                    if let Some(whisper::SetupClick::Changed(settings)) = changed {
+                        self.apply_whisper_open(settings);
+                    }
+                }
+            }
+            return true;
+        }
+        false
     }
 
     /// Answers a chat command the client handles itself; replies from the server come back as map events.
@@ -2758,6 +2924,12 @@ impl Game {
                 sent
             }
             chat::Command::BlockList => self.session.whisper_list(),
+            chat::Command::Away => {
+                let typed = self.away.text().unwrap_or("").to_owned();
+                self.away_prompt = Some(whisper::AwayPrompt::new(typed));
+                self.sync_esc();
+                Ok(())
+            }
             chat::Command::AllWhispers { allow } => self.session.set_whisper_all(allow),
             chat::Command::Effect => {
                 *effects_on = !*effects_on;
@@ -2810,6 +2982,8 @@ impl Game {
             || self.trade.as_ref().is_some_and(|trade| trade.typing)
             || self.storage.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
+            || self.talks.typing()
+            || self.away_prompt.is_some()
             || self.minimap_window.naming()
             // Battle mode off: the line is always open, so letters stay out of the shortcut layer.
             || self.chat_mode.chat_line_open()
@@ -2859,6 +3033,10 @@ impl Game {
         self.dressroom = None;
         self.dress_figure = None;
         self.party_setup = None;
+        self.talks = whisper::Talks::default();
+        self.friend_setup = None;
+        self.block_list = None;
+        self.away_prompt = None;
         self.escape = None;
         self.room_make = None;
         self.viewing = None;
@@ -2915,6 +3093,11 @@ impl Game {
             || self.navi_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
             || self.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some()
             || self.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some()
+            || self.talks.hit(cursor).is_some()
+            || self.friend_setup.as_ref().is_some_and(|setup| setup.hit(cursor).is_some())
+            || self.block_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
+            || self.away_prompt.as_ref().is_some_and(|prompt| prompt.hit(cursor).is_some())
+            || self.chat.on_list(cursor)
             || self.member_windows.hit(cursor).is_some()
             || self.party_window.compact && party::compact_hit(cursor, self.party.as_ref()).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
@@ -3367,6 +3550,10 @@ impl Game {
         push(Stylist, self.stylist.is_some());
         push(Materials, self.materials.is_some());
         push(PartySetup, self.party_setup.is_some());
+        push(Whisper, !self.talks.is_empty());
+        push(FriendSetup, self.friend_setup.is_some());
+        push(BlockList, self.block_list.is_some());
+        push(AwayMessage, self.away_prompt.is_some());
         push(DressRoom, self.dressroom.is_some());
         push(Ranking, self.ranking.is_some());
         push(Reputation, self.reputation_window.is_some());
@@ -3444,6 +3631,7 @@ impl Game {
         if matches!(self.queue_asked, Some(QueueAsked::Lobby(..))) {
             names.push("BattleLobby".into());
         }
+        names.extend(self.talks.window_names());
         if let Some(dialog) = &self.dialog {
             names.push(if dialog.warp.is_some() { "WarpList" } else { "NpcDialog" }.into());
         }
@@ -3453,6 +3641,12 @@ impl Game {
     /// A text box inside a window has the caret. The always-on chat line is not one of these.
     fn focused_text(&self) -> Option<escape::WindowId> {
         use escape::WindowId::*;
+        if self.away_prompt.is_some() {
+            return Some(AwayMessage);
+        }
+        if self.talks.typing() {
+            return Some(Whisper);
+        }
         if self.dialog.as_ref().is_some_and(|dialog| dialog.input.is_some()) {
             return Some(if self.dialog.as_ref().unwrap().warp.is_some() { WarpList } else { NpcDialog });
         }
@@ -3778,8 +3972,21 @@ impl Game {
                     let _ = self.session.answer_lobby(false, &name);
                 }
             }
+            Whisper => {
+                if self.talks.typing() {
+                    self.talks.blur();
+                } else {
+                    self.talks.close_front();
+                }
+            }
+            FriendSetup => self.friend_setup = None,
+            BlockList => self.block_list = None,
+            AwayMessage => self.away_prompt = None,
         }
         escape::remove(&mut self.esc_order, id);
+        if id == escape::WindowId::Whisper && !self.talks.is_empty() {
+            escape::touch(&mut self.esc_order, escape::WindowId::Whisper);
+        }
     }
 
     /// The window under a press, so Esc closes the one the player just touched.
@@ -3799,6 +4006,18 @@ impl Game {
         }
         if self.world_map.is_some() {
             return Some(WorldMap);
+        }
+        if self.away_prompt.as_ref().is_some_and(|prompt| prompt.hit(cursor).is_some()) {
+            return Some(AwayMessage);
+        }
+        if self.talks.hit(cursor).is_some() {
+            return Some(Whisper);
+        }
+        if self.block_list.as_ref().is_some_and(|list| list.hit(cursor).is_some()) {
+            return Some(BlockList);
+        }
+        if self.friend_setup.as_ref().is_some_and(|setup| setup.hit(cursor).is_some()) {
+            return Some(FriendSetup);
         }
         if self.minimap_window.covers(cursor) {
             return Some(Minimap);
@@ -5885,6 +6104,9 @@ impl App {
                 }
                 None => {}
             },
+            Scene::Game(game) if game.whisper_at(cursor) => {
+                game.whisper_click(cursor);
+            }
             // The audio settings: checkboxes and arrows (the sliders go on press).
             Scene::Game(game) if game.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
                 let window = game.audio_window.as_mut().unwrap();
@@ -7018,6 +7240,7 @@ impl App {
                                 game.party_setup = Some(party::Setup::new(party, leader, game.party_window.frame.position));
                             }
                         }
+                        Some(party::Hit::Button(party::Button::FriendSetup)) => game.open_friend_setup(),
                         Some(party::Hit::LastRow) => game.party_window.compact = !game.party_window.compact,
                         _ => {}
                     },
@@ -7056,7 +7279,7 @@ impl App {
                     chat::SettingsHit::Window => {}
                 }
             }
-            Scene::Game(game) if game.chat.blocks(cursor) => {
+            Scene::Game(game) if game.chat.on_list(cursor) || game.chat.blocks(cursor) => {
                 game.chat.click(cursor);
                 // ponytail: a click on the chat bar opens the battle-mode line; Enter is the key the spec names.
                 game.chat_mode.open_line();
@@ -7169,6 +7392,14 @@ impl App {
             game.homunculus_window.frame.drag_to(self.cursor, homunculus::Window::height());
             let homunculus_skills_height = homunculus::SkillList::height(game.homunculus_skills.len());
             game.homunculus_skill_list.frame.drag_to(self.cursor, homunculus_skills_height);
+            game.talks.drag_to(self.cursor);
+            if let Some(setup) = &mut game.friend_setup {
+                setup.frame.drag_to(self.cursor, whisper::FriendSetup::height());
+            }
+            if let Some(list) = &mut game.block_list {
+                let height = list.height();
+                list.frame.drag_to(self.cursor, height);
+            }
             if let Some(view) = &mut game.card_view {
                 view.drag_to(self.cursor);
             }
@@ -7778,6 +8009,9 @@ impl App {
                     | game.basic_info.frame.drop_drag()
                     | game.hotkeys.frame.drop_drag()
                     | game.skill_window.frame.drop_drag()
+                    | game.talks.drop_drag()
+                    | game.friend_setup.as_mut().is_some_and(|setup| setup.frame.drop_drag())
+                    | game.block_list.as_mut().is_some_and(|list| list.frame.drop_drag())
                     | game.minimap_window.frame.drop_drag();
                 windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
             }
@@ -8375,6 +8609,7 @@ impl App {
                     game.raise(Panel::Party);
                 }
             }
+            shortcuts::Action::FriendSetup => game.open_friend_setup(),
             shortcuts::Action::Party => {
                 game.party_window.frame.toggle();
                 game.raise(Panel::Party);
@@ -8863,6 +9098,31 @@ impl App {
             // Earlier arms are windows that want the key. Esc is game_escape, which closes an open battle-mode
             // line first. Here the chat line has the key. Off: the line is always open and letters type. On: Enter
             // opens it, Enter on an empty line closes it, and a closed line sends letters and digits to shortcuts.
+            Scene::Game(game) if game.away_prompt.is_some() => match key {
+                Key::Named(NamedKey::Enter) => {
+                    let text = game.away_prompt.take().map(|prompt| prompt.typed).unwrap_or_default();
+                    game.finish_away(&text);
+                }
+                Key::Named(NamedKey::Backspace) => {
+                    if let Some(prompt) = &mut game.away_prompt {
+                        prompt.typed.pop();
+                    }
+                }
+                _ if !self.modifiers.alt_key() && !self.modifiers.super_key() && !self.modifiers.control_key() => {
+                    if let Some(prompt) = &mut game.away_prompt {
+                        prompt.type_text(event.text.as_deref().unwrap_or_default());
+                    }
+                }
+                _ => {}
+            },
+            Scene::Game(game) if game.talks.typing() => match key {
+                Key::Named(NamedKey::Enter) => game.send_focused_talk(),
+                Key::Named(NamedKey::Backspace) => game.talks.backspace(),
+                _ if !self.modifiers.alt_key() && !self.modifiers.super_key() && !self.modifiers.control_key() => {
+                    game.talks.type_text(event.text.as_deref().unwrap_or_default());
+                }
+                _ => {}
+            },
             Scene::Game(game) => {
                 let kind = battle_key(key);
                 let take = game.chat_mode.take_key(kind, game.chat.input.trim().is_empty(), game.chat.naming);
@@ -9388,6 +9648,12 @@ impl App {
                     blocked: HashSet::new(),
                     party_setup: None,
                     leader_asked: None,
+                    talks: whisper::Talks::default(),
+                    whisper_open: whisper::OpenSettings::load(),
+                    friend_setup: None,
+                    block_list: None,
+                    away: whisper::Away::default(),
+                    away_prompt: None,
                     mercenary_skills: Vec::new(),
                     mercenary_window: mercenary::Window::default(),
                     mercenary_skill_list: mercenary::SkillList::default(),
@@ -11432,8 +11698,8 @@ impl App {
                 let (id, color) = if ok { (TRADE_DONE, CHAT_ITEM) } else { (TRADE_FAILED, CHAT_ERROR) };
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
             }
-            // Whispers, yellow both ways (the client's "(From name)" wording).
-            MapEvent::Whisper { from, text } => game.chat_line_kind(format!("(From {from}) : {text}"), WHISPER_COLOR, chat::Kind::Whisper),
+            // Whispers, yellow both ways (the client's "(From name)" wording). A 1:1 window opens when that sender's box is on.
+            MapEvent::Whisper { from, text } => game.receive_whisper(from, text),
             MapEvent::WhisperResult(result) => {
                 let (to, text) = game.whispered.pop_front().unwrap_or_default();
                 let line = match result {
@@ -11757,6 +12023,9 @@ impl App {
                 if result == 0 {
                     if allow {
                         game.blocked.remove(&name);
+                        if let Some(list) = &mut game.block_list {
+                            list.remove(&name);
+                        }
                     } else {
                         game.blocked.insert(name.clone());
                     }
@@ -11764,15 +12033,11 @@ impl App {
                 let id = if allow { ALLOW_RESULTS } else { BLOCK_RESULTS } + usize::from(result.min(2));
                 game.chat_line(format!("{name}{}", self.messages.get(id).cloned().unwrap_or_default()), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
             }
-            MapEvent::WhisperList(names) if names.is_empty() => {
-                game.blocked.clear();
-                game.chat_line(self.messages.get(BLOCKED_NONE).cloned().unwrap_or_default(), CHAT_ITEM)
-            }
             MapEvent::WhisperList(names) => {
                 game.blocked = names.iter().cloned().collect();
-                for name in names {
-                    game.chat_line(name, CHAT_ITEM);
-                }
+                let empty = self.messages.get(BLOCKED_NONE).cloned().unwrap_or_default();
+                game.block_list = Some(whisper::BlockList::new(names, empty));
+                game.sync_esc();
             }
             MapEvent::WhisperAll { allow, result } => {
                 let id = if allow { ALLOW_ALL_RESULTS } else { BLOCK_ALL_RESULTS } + usize::from(result != 0);
@@ -13263,9 +13528,9 @@ impl App {
                 else {
                     continue;
                 };
-                // The unit's sprite scale: screen pixels a sprite pixel.
-                let scale = (at_feet[1] - above[1]) / 100.0;
-                let [left, top, right, bottom] = guild::head_emblem_box(at_feet, screen(), scale);
+                // The unit's perspective factor, from the screen pixels a sprite pixel takes at its feet.
+                let perspective = guild::perspective((at_feet[1] - above[1]) / 100.0, screen()[1]);
+                let [left, top, right, bottom] = guild::head_emblem_box(at_feet, screen(), perspective);
                 base.sprites.push((emblem, [left.round(), top.round()], guild::EMBLEM_SIZE));
                 game.head_emblems.push((actor.name.clone(), actor.guild, [left, top, right, bottom]));
             }
@@ -14234,6 +14499,16 @@ impl App {
         }
         if let Some(setup) = &game.party_setup {
             setup.draw(&mut shop_layer, &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), messages, pointer);
+        }
+        game.talks.draw(&mut shop_layer, &assets.chrome, font, messages, pointer);
+        if let Some(setup) = &game.friend_setup {
+            setup.draw(&mut shop_layer, &assets.chrome, messages, pointer.0);
+        }
+        if let Some(list) = &game.block_list {
+            list.draw(&mut shop_layer, &assets.chrome, pointer.0);
+        }
+        if let Some(prompt) = &game.away_prompt {
+            prompt.draw(&mut shop_layer, &assets.chrome, messages, pointer);
         }
         if let Some(board) = &game.ranking {
             board.draw(&mut shop_layer, &assets.chrome, font, messages, &game.char_names, pointer.0);
