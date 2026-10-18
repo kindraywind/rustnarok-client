@@ -67,14 +67,18 @@ def connect(timeout):
 
 
 def send(command, timeout=60):
-    with connect(timeout) as s:
-        s.sendall((json.dumps(command) + "\n").encode())
-        data = b""
-        while not data.endswith(b"\n"):
-            chunk = s.recv(1 << 20)
-            if not chunk:
-                break
-            data += chunk
+    """The client's answer; a client that doesn't answer in time fails the command, not the run."""
+    try:
+        with connect(timeout) as s:
+            s.sendall((json.dumps(command) + "\n").encode())
+            data = b""
+            while not data.endswith(b"\n"):
+                chunk = s.recv(1 << 20)
+                if not chunk:
+                    break
+                data += chunk
+    except (socket.timeout, OSError) as error:
+        return {"ok": False, "error": f"no answer: {error}"}
     return json.loads(data)
 
 

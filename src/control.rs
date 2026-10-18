@@ -1271,6 +1271,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "inventory_items": game.inventory.items.len(),
         "skills": game.skills.len(),
         "status_icons": game.status_icons.iter().map(|(id, _, ends)| json!({"id": id, "left_ms": ends.map(|end| end.saturating_duration_since(now).as_millis() as u64)})).collect::<Vec<_>>(),
+        // What the mouse cursor shows.
+        "cursor": format!("{:?}", app.cursor_look.kind()),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
     });
     // The ranking board.
