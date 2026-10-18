@@ -683,6 +683,16 @@ struct Game {
     mercenary_skill_list: mercenary::SkillList,
     steering: mercenary::Steering,
     dismiss_asked: bool,
+    /// The player's homunculus: its unit (once the server says it's ours), what it's like, its skills, its windows,
+    /// how it's steered, the name being asked about, and its hunger before the last update.
+    homunculus: Option<net::Homunculus>,
+    homunculus_id: Option<u32>,
+    homunculus_skills: Vec<net::Skill>,
+    homunculus_window: homunculus::Window,
+    homunculus_skill_list: homunculus::SkillList,
+    homunculus_steering: mercenary::Steering,
+    homunculus_rename: Option<String>,
+    homunculus_hunger: Option<u16>,
     /// Each party member's minimap color.
     party_dots: HashMap<u32, Texture>,
     /// Chat rooms over their owners' heads (by owner), and where their signs were last drawn (room ID, password).
@@ -829,7 +839,7 @@ fn seen_direction(direction: u8, yaw: f32) -> u8 {
 /// A pet: its monster's sprite, moving by its accessory's ACT when it wears one the data has.
 fn pet_sprites(grf: &Grf, name: &str, act: Option<&String>) -> Option<SpriteSet> {
     let worn = act.and_then(|act| SpriteSet::with_act(grf, &format!("data\\sprite\\몬스터\\{name}"), &format!("data\\sprite\\몬스터\\{act}")));
-    worn.or_else(|| SpriteSet::single(grf, name, true))
+    worn.or_else(|| SpriteSet::single(grf, name, MONSTER))
 }
 
 /// The titles of the achievements done whose rewards were taken, by ID, with their names.
@@ -925,6 +935,8 @@ enum Panel {
     Pet,
     Mercenary,
     MercenarySkills,
+    Homunculus,
+    HomunculusSkills,
 }
 
 /// What the box asking how many is for.
@@ -960,6 +972,8 @@ enum Asked {
     Material(u16),
     /// The pet's new name.
     PetName,
+    /// The homunculus's new name.
+    HomunculusName,
     /// A Talkie Box's message, before it's placed at the cell.
     TalkieBox {
         level: u16,
@@ -1195,6 +1209,11 @@ impl Game {
             Panel::Pet => self.pet.as_ref().is_some_and(|pet| self.pet_window.hit(cursor, pet).is_some()),
             Panel::Mercenary => self.mercenary.is_some() && self.mercenary_window.hit(cursor).is_some(),
             Panel::MercenarySkills => self.mercenary.is_some() && self.mercenary_skill_list.hit(cursor, &self.mercenary_skills).is_some(),
+            Panel::Homunculus => self.homunculus.as_ref().is_some_and(|homunculus| self.homunculus_window.hit(cursor, homunculus).is_some()),
+            Panel::HomunculusSkills => self
+                .homunculus
+                .as_ref()
+                .is_some_and(|homunculus| self.homunculus_skill_list.hit(cursor, &self.homunculus_skills, homunculus.skill_points).is_some()),
         })
     }
 
@@ -1210,7 +1229,7 @@ impl Game {
             self.chat_line(self.skill_delay_line.clone(), CHAT_ERROR);
             return;
         }
-        let Some(skill) = self.skills.iter().find(|skill| skill.id == id) else { return self.use_mercenary_skill(id, level) };
+        let Some(skill) = self.skills.iter().find(|skill| skill.id == id) else { return self.use_companion_skill(id, level) };
         // With a store open only the mercenary's skills go.
         if self.store_open() {
             return;
@@ -1245,9 +1264,9 @@ impl Game {
             return;
         }
         let Some((id, level)) = self.targeting.take() else { return };
-        // The mercenary casts its own skills from where it stands; out of its range the server does nothing.
+        // The mercenary and the homunculus cast their own skills from where they stand; out of its range the server does nothing.
         // With a store open the server still takes them on a unit but refuses every skill on the ground.
-        if self.mercenary_skills.iter().any(|skill| skill.id == id) {
+        if self.mercenary_skills.iter().chain(&self.homunculus_skills).any(|skill| skill.id == id) {
             let _ = match target {
                 SkillTarget::Unit(unit) => self.session.use_skill(id, level, unit),
                 SkillTarget::Cell(_) if self.store_open() => return,
@@ -1516,6 +1535,7 @@ impl Game {
             | Asked::BuyingPrice(..)
             | Asked::BuyingAmount(_)
             | Asked::PetName
+            | Asked::HomunculusName
             | Asked::TalkieBox { .. } => None,
         };
         match amount {
@@ -1545,7 +1565,12 @@ impl Game {
                 self.aim_skill(SkillTarget::Cell(cell));
                 Ok(())
             }
-            Asked::PartyName | Asked::Invite | Asked::PetName => Ok(()),
+            // The same once-only question for the homunculus.
+            Asked::HomunculusName if !name.is_empty() => {
+                self.homunculus_rename = Some(name.to_owned());
+                Ok(())
+            }
+            Asked::PartyName | Asked::Invite | Asked::PetName | Asked::HomunculusName => Ok(()),
             Asked::BuyingPrice(index, item_id) => {
                 if let Some(setup) = &mut self.buying_setup {
                     setup.set_price(index, item_id, amount.value());
@@ -1605,6 +1630,7 @@ impl Game {
             | Asked::Invite
             | Asked::RoomPassword(_)
             | Asked::PetName
+            | Asked::HomunculusName
             | Asked::BuyingPrice(..)
             | Asked::BuyingAmount(_)
             | Asked::TalkieBox { .. } => Ok(()),
@@ -1930,6 +1956,84 @@ impl Game {
         }
     }
 
+    /// Sends the mercenary or homunculus `id` at the monster under the cursor, or to the cell there; the order it now
+    /// follows, if any.
+    fn order_companion(&mut self, id: u32, cursor: [f32; 2]) -> Option<mercenary::Order> {
+        if let Some(Owner::Unit(target)) = hovered(&self.hit_boxes, cursor, false)
+            && self.units.get(&target).is_some_and(|actor| actor.kind == MONSTER)
+        {
+            // ponytail: rathena reads non-zero as "keep attacking" and says the client sends 0; 1 keeps it at it.
+            let _ = self.session.act_npc(id, target, 1);
+            return Some(mercenary::Order::Attack(target));
+        }
+        let height = self.world.cell_position(self.player.cell.map(|value| value as f32))[1];
+        let view = self.camera.view(SCREEN[0] / SCREEN[1]);
+        let point = view.pick([cursor[0] / SCREEN[0], cursor[1] / SCREEN[1]], height)?;
+        let cell = [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32];
+        if !self.world.gat.walkable(cell) {
+            return None;
+        }
+        let _ = self.session.move_npc(id, cell.map(|value| value as u16));
+        Some(mercenary::Order::Move(self.player.cell))
+    }
+
+    /// Calls the mercenary or homunculus `id` back to the player when `steering` says so; an attack order lasts while
+    /// its target is there.
+    fn follow_player(&mut self, id: u32, homunculus: bool, now: Instant) {
+        let Some(cell) = self.units.get(&id).map(|actor| actor.cell) else { return };
+        let steering = if homunculus { &mut self.homunculus_steering } else { &mut self.steering };
+        if let Some(mercenary::Order::Attack(target)) = steering.order
+            && self.units.get(&target).is_none_or(|actor| actor.remove_at.is_some())
+        {
+            steering.order = None;
+        }
+        if steering.should_call(cell, self.player.cell, now) {
+            let _ = self.session.move_to_owner(id);
+        }
+    }
+
+    /// Uses a skill of the mercenary's or the homunculus's.
+    fn use_companion_skill(&mut self, id: u16, level: u16) {
+        if self.homunculus_skills.iter().any(|skill| skill.id == id) {
+            self.use_homunculus_skill(id, level);
+        } else {
+            self.use_mercenary_skill(id, level);
+        }
+    }
+
+    /// Uses one of the homunculus's skills: on the homunculus at once when it's a self skill, otherwise aimed.
+    fn use_homunculus_skill(&mut self, id: u16, level: u16) {
+        let (Some(unit), Some(skill)) = (self.homunculus_id, self.homunculus_skills.iter().find(|skill| skill.id == id)) else { return };
+        let level = level.clamp(1, skill.level.max(1));
+        if skill.kind & net::Skill::SELF != 0 {
+            let _ = self.session.use_skill(id, level, unit);
+        } else if skill.kind & (net::Skill::ENEMY | net::Skill::GROUND | net::Skill::FRIEND) != 0 {
+            self.targeting = Some((id, level));
+        }
+    }
+
+    /// The homunculus is gone: its windows close when asked to. On a map change the server sends it again, so they
+    /// stay as they were.
+    fn forget_homunculus(&mut self, close: bool) {
+        self.homunculus = None;
+        self.homunculus_id = None;
+        self.homunculus_skills.clear();
+        self.homunculus_steering = mercenary::Steering::default();
+        self.homunculus_rename = None;
+        self.homunculus_hunger = None;
+        if close {
+            self.homunculus_window.frame.open = false;
+            self.homunculus_skill_list.frame.open = false;
+        }
+    }
+
+    /// Answers the rename question: OK names the homunculus.
+    fn answer_homunculus_name(&mut self, yes: bool) {
+        if let Some(name) = self.homunculus_rename.take().filter(|_| yes) {
+            let _ = self.session.rename_homunculus(&name);
+        }
+    }
+
     /// Uses one of the mercenary's skills: on the mercenary at once when it's a self skill, otherwise aimed.
     fn use_mercenary_skill(&mut self, id: u16, level: u16) {
         let (Some(mercenary), Some(skill)) = (&self.mercenary, self.mercenary_skills.iter().find(|skill| skill.id == id)) else { return };
@@ -2209,6 +2313,7 @@ struct Assets {
     context_menu: menu::Assets,
     weather: weather::Assets,
     mercenary: mercenary::Assets,
+    homunculus: homunculus::Assets,
     party: party::Assets,
     chatroom: chatroom::Assets,
     escape: escape::Assets,
@@ -2313,6 +2418,7 @@ impl Assets {
             context_menu: menu::Assets::load(gpu),
             weather: weather::Assets::load(gpu, grf),
             mercenary: mercenary::Assets::load(gpu, grf),
+            homunculus: homunculus::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
             escape: escape::Assets::load(gpu, grf),
@@ -3496,6 +3602,15 @@ impl App {
                     }
                 }
             }
+            // Naming the homunculus: OK sends the name.
+            Scene::Game(game) if game.homunculus_rename.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.answer_homunculus_name(yes);
+                    }
+                }
+            }
             // A pet question: OK feeds it or renames it.
             Scene::Game(game) if game.pet_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
@@ -3808,6 +3923,29 @@ impl App {
                         Some(mercenary::SkillHit::Skill(id)) => game.use_mercenary_skill(id, u16::MAX),
                         _ => {}
                     },
+                    Panel::Homunculus => match game.homunculus.as_ref().and_then(|homunculus| game.homunculus_window.hit(cursor, homunculus)) {
+                        Some(homunculus::Hit::Title(title)) => game.homunculus_window.frame.click_title(title),
+                        Some(homunculus::Hit::Feed) => {
+                            let _ = game.session.homunculus_command(net::HOMUNCULUS_FEED);
+                        }
+                        Some(homunculus::Hit::Skills) => {
+                            game.homunculus_skill_list.frame.toggle();
+                            game.raise(Panel::HomunculusSkills);
+                        }
+                        Some(homunculus::Hit::Rename) => game.amount = Some(window::Amount::name(Asked::HomunculusName, homunculus::RENAME_PROMPT)),
+                        _ => {}
+                    },
+                    Panel::HomunculusSkills => {
+                        let points = game.homunculus.as_ref().map_or(0, |homunculus| homunculus.skill_points);
+                        match game.homunculus_skill_list.hit(cursor, &game.homunculus_skills, points) {
+                            Some(homunculus::SkillHit::Title(title)) => game.homunculus_skill_list.frame.click_title(title),
+                            Some(homunculus::SkillHit::Skill(id)) => game.use_skill(id, u16::MAX),
+                            Some(homunculus::SkillHit::Raise(id)) => {
+                                let _ = game.session.skill_up(id);
+                            }
+                            _ => {}
+                        }
+                    }
                     Panel::Pet => match game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) {
                         Some(pet::Hit::Title(title)) => game.pet_window.frame.click_title(title),
                         Some(pet::Hit::Rename) => game.amount = Some(window::Amount::name(Asked::PetName, PET_NAME_RULE)),
@@ -4017,6 +4155,9 @@ impl App {
             game.mercenary_window.frame.drag_to(self.cursor, mercenary::Window::height());
             let skills_height = mercenary::SkillList::height(game.mercenary_skills.len());
             game.mercenary_skill_list.frame.drag_to(self.cursor, skills_height);
+            game.homunculus_window.frame.drag_to(self.cursor, homunculus::Window::height());
+            let homunculus_skills_height = homunculus::SkillList::height(game.homunculus_skills.len());
+            game.homunculus_skill_list.frame.drag_to(self.cursor, homunculus_skills_height);
             if let Some(window) = &mut game.item_window {
                 window.drag_to(self.cursor);
             }
@@ -4054,36 +4195,26 @@ impl App {
 
     /// The right button: Alt moves stacks to storage, a click on a player opens their menu, a press aims the camera.
     fn right_button(&mut self, state: ElementState) {
-        // ponytail: Ctrl + right click (not a drag, not on a window) orders the mercenary, an estimate of the official
-        // client's: at a monster it attacks, on the ground it goes there.
+        // ponytail: Ctrl + right click orders the mercenary and Alt + right click the homunculus (not a drag, not on a
+        // window), an estimate of the official client's: at a monster it attacks, on the ground it goes there.
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Released
-            && self.modifiers.control_key()
-            && let Some(id) = game.mercenary.as_ref().map(|hired| hired.id)
             && let Some((start, _)) = game.right_press
             && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
             && game.window_at(self.cursor).is_none()
             && !game.chat.contains(self.cursor)
+            && let Some((homunculus, id)) = if self.modifiers.control_key() {
+                game.mercenary.as_ref().map(|hired| (false, hired.id))
+            } else if self.modifiers.alt_key() {
+                game.homunculus_id.filter(|id| game.units.contains_key(id)).map(|id| (true, id))
+            } else {
+                None
+            }
         {
             game.right_press = None;
-            let monster = match hovered(&game.hit_boxes, self.cursor, false) {
-                Some(Owner::Unit(target)) if game.units.get(&target).is_some_and(|actor| actor.kind == MONSTER) => Some(target),
-                _ => None,
-            };
-            if let Some(target) = monster {
-                // ponytail: rathena reads non-zero as "keep attacking" and says the client sends 0; 1 keeps it at it.
-                let _ = game.session.act_npc(id, target, 1);
-                game.steering.order = Some(mercenary::Order::Attack(target));
-                return;
-            }
-            let height = game.world.cell_position(game.player.cell.map(|value| value as f32))[1];
-            let view = game.camera.view(SCREEN[0] / SCREEN[1]);
-            if let Some(point) = view.pick([self.cursor[0] / SCREEN[0], self.cursor[1] / SCREEN[1]], height) {
-                let cell = [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32];
-                if game.world.gat.walkable(cell) {
-                    let _ = game.session.move_npc(id, cell.map(|value| value as u16));
-                    game.steering.order = Some(mercenary::Order::Move(game.player.cell));
-                }
+            if let Some(order) = game.order_companion(id, self.cursor) {
+                let steering = if homunculus { &mut game.homunculus_steering } else { &mut game.steering };
+                steering.order = Some(order);
             }
             return;
         }
@@ -4367,6 +4498,8 @@ impl App {
                     | game.pet_window.frame.drop_drag()
                     | game.mercenary_window.frame.drop_drag()
                     | game.mercenary_skill_list.frame.drop_drag()
+                    | game.homunculus_window.frame.drop_drag()
+                    | game.homunculus_skill_list.frame.drop_drag()
                     | game.storage.frame.drop_drag()
                     | game.inventory.frame.drop_drag()
                     | game.equipment.frame.drop_drag()
@@ -4561,6 +4694,21 @@ impl App {
                 Panel::Pet if game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) == Some(pet::Hit::Title(TitleHit::Title)) => {
                     game.pet_window.frame.start_drag(cursor)
                 }
+                Panel::Homunculus
+                    if game.homunculus.as_ref().and_then(|homunculus| game.homunculus_window.hit(cursor, homunculus))
+                        == Some(homunculus::Hit::Title(TitleHit::Title)) =>
+                {
+                    game.homunculus_window.frame.start_drag(cursor)
+                }
+                Panel::HomunculusSkills
+                    if game.homunculus_skill_list.hit(
+                        cursor,
+                        &game.homunculus_skills,
+                        game.homunculus.as_ref().map_or(0, |homunculus| homunculus.skill_points),
+                    ) == Some(homunculus::SkillHit::Title(TitleHit::Title)) =>
+                {
+                    game.homunculus_skill_list.frame.start_drag(cursor)
+                }
                 Panel::Mercenary if game.mercenary_window.hit(cursor) == Some(mercenary::Hit::Title(TitleHit::Title)) => {
                     game.mercenary_window.frame.start_drag(cursor)
                 }
@@ -4697,6 +4845,8 @@ impl App {
                 PhysicalKey::Code(KeyCode::KeyW) if game.cart.cart.is_some() => Some((Panel::Cart, &mut game.cart.frame)),
                 // Alt+J, the game's own key for the pet window, while there's a pet.
                 PhysicalKey::Code(KeyCode::KeyJ) if game.pet.is_some() => Some((Panel::Pet, &mut game.pet_window.frame)),
+                // Alt+R, the game's key for the homunculus window, while there's a homunculus.
+                PhysicalKey::Code(KeyCode::KeyR) if game.homunculus.is_some() => Some((Panel::Homunculus, &mut game.homunculus_window.frame)),
                 _ => None,
             };
             if let Some((id, frame)) = window {
@@ -4710,6 +4860,11 @@ impl App {
                 if id == Panel::Pet && game.pet_window.frame.open {
                     let _ = game.session.pet_command(net::PET_INFO);
                 }
+                return;
+            }
+            // Alt+T, the game's follow switch for the homunculus.
+            if event.physical_key == PhysicalKey::Code(KeyCode::KeyT) && game.homunculus.is_some() {
+                game.homunculus_steering.following = !game.homunculus_steering.following;
                 return;
             }
             // Alt+L: the emotion list; Alt+M: the macro window.
@@ -4892,6 +5047,9 @@ impl App {
             Scene::Game(game) if game.party_setup.is_some() && *key == Key::Named(NamedKey::Escape) => game.party_setup = None,
             Scene::Game(game) if game.dismiss_asked && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_dismiss(*key == Key::Named(NamedKey::Enter), &self.messages);
+            }
+            Scene::Game(game) if game.homunculus_rename.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.answer_homunculus_name(*key == Key::Named(NamedKey::Enter));
             }
             Scene::Game(game) if game.pet_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_pet(*key == Key::Named(NamedKey::Enter));
@@ -5435,6 +5593,14 @@ impl App {
                     mercenary_skill_list: mercenary::SkillList::default(),
                     steering: mercenary::Steering::default(),
                     dismiss_asked: false,
+                    homunculus: None,
+                    homunculus_id: None,
+                    homunculus_skills: Vec::new(),
+                    homunculus_window: homunculus::Window::default(),
+                    homunculus_skill_list: homunculus::SkillList::default(),
+                    homunculus_steering: mercenary::Steering::default(),
+                    homunculus_rename: None,
+                    homunculus_hunger: None,
                     vend_setup: None,
                     my_shop: None,
                     buying_setup: None,
@@ -5480,6 +5646,8 @@ impl App {
                         Panel::Pet,
                         Panel::Mercenary,
                         Panel::MercenarySkills,
+                        Panel::Homunculus,
+                        Panel::HomunculusSkills,
                     ],
                     damages: Vec::new(),
                     status,
@@ -5629,7 +5797,7 @@ impl App {
                 MERCENARY if (6017..=6046).contains(&unit.job) => job_names.get(&unit.job).and_then(|name| SpriteSet::mercenary(grf, unit.job, name)),
                 // Hidden NPCs (script triggers) have no sprite in the client either.
                 _ if HIDDEN_JOBS.contains(&unit.job) => None,
-                _ => job_names.get(&unit.job).and_then(|name| SpriteSet::single(grf, name, unit.kind == MONSTER)),
+                _ => job_names.get(&unit.job).and_then(|name| SpriteSet::single(grf, name, unit.kind)),
             };
             let mut actor = Actor::new(unit.name.clone(), sprites, unit.position.map(i32::from), unit.direction, unit.speed);
             actor.kind = unit.kind;
@@ -5863,6 +6031,7 @@ impl App {
                 // The new map's weather comes once it has loaded, and the mercenary's news.
                 game.weather.clear();
                 game.forget_mercenary(false);
+                game.forget_homunculus(false);
                 // Back at the save point: up again.
                 if game.escape.as_ref().is_some_and(|menu| menu.dead) {
                     game.escape = None;
@@ -6156,6 +6325,48 @@ impl App {
                 game.chat_line(format!("{before}{exp}{after}"), CHAT_ITEM);
             }
             MapEvent::MvpOverweight => game.chat_line(self.messages.get(MVP_OVERWEIGHT).cloned().unwrap_or_default(), CHAT_ERROR),
+            MapEvent::HomunculusState { state: net::HOMUNCULUS_OWNED, id, .. } => game.homunculus_id = Some(id),
+            MapEvent::HomunculusState { state: net::HOMUNCULUS_INTIMACY, value, .. } => {
+                if let Some(homunculus) = &mut game.homunculus {
+                    homunculus.intimacy = value as u16;
+                }
+            }
+            MapEvent::HomunculusState { state: net::HOMUNCULUS_HUNGER, value, .. } => {
+                let hunger = value.min(u32::from(u16::MAX)) as u16;
+                if homunculus::starving_now(game.homunculus_hunger, hunger) {
+                    game.chat_line(self.messages.get(homunculus::STARVING).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+                game.homunculus_hunger = Some(hunger);
+                if let Some(homunculus) = &mut game.homunculus {
+                    homunculus.hunger = hunger;
+                }
+            }
+            MapEvent::HomunculusState { .. } => {}
+            MapEvent::HomunculusInfo(info) => {
+                game.homunculus_hunger = Some(info.hunger);
+                game.homunculus = Some(info);
+            }
+            MapEvent::HomunculusChanged { kind, value } => {
+                if let Some(homunculus) = &mut game.homunculus {
+                    homunculus.set(kind, value);
+                }
+            }
+            MapEvent::HomunculusSkills(list) => game.homunculus_skills = list,
+            MapEvent::HomunculusSkill(update) => match game.homunculus_skills.iter_mut().find(|skill| skill.id == update.id) {
+                Some(skill) => {
+                    skill.level = update.level;
+                    skill.sp = update.sp;
+                    skill.range = update.range;
+                    skill.upgradable = update.upgradable;
+                }
+                None => game.homunculus_skills.push(update),
+            },
+            // ponytail: the table has no homunculus line for this; the pet's "food not available" says it.
+            MapEvent::HomunculusFed { ok: false, food } => {
+                let name = inventory::item_name(&self.items, food, true, 0);
+                game.chat_line(messages::fill(self.messages.get(PET_NO_FOOD).map_or("", String::as_str), &[&name]), CHAT_ERROR);
+            }
+            MapEvent::HomunculusFed { ok: true, .. } => {}
             MapEvent::MercenaryInfo(hired) => game.mercenary = Some(hired),
             MapEvent::MercenarySkills(list) => game.mercenary_skills = list,
             MapEvent::MercenaryChanged { kind, value } => {
@@ -7796,18 +8007,12 @@ impl App {
         let players_first = game.players_first(self.modifiers.shift_key());
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
 
-        // The mercenary follows the player unless told otherwise; an attack order lasts while its target is there.
-        if let Some(id) = game.mercenary.as_ref().map(|hired| hired.id)
-            && let Some(cell) = game.units.get(&id).map(|actor| actor.cell)
-        {
-            if let Some(mercenary::Order::Attack(target)) = game.steering.order
-                && game.units.get(&target).is_none_or(|actor| actor.remove_at.is_some())
-            {
-                game.steering.order = None;
-            }
-            if game.steering.should_call(cell, game.player.cell, now) {
-                let _ = game.session.move_to_owner(id);
-            }
+        // The mercenary and the homunculus follow the player unless told otherwise.
+        if let Some(id) = game.mercenary.as_ref().map(|hired| hired.id) {
+            game.follow_player(id, false, now);
+        }
+        if let Some(id) = game.homunculus_id {
+            game.follow_player(id, true, now);
         }
 
         // Fireworks weather sets off fireworks around the player.
@@ -8413,6 +8618,7 @@ impl App {
             .into_iter()
             .chain(game.guild.as_ref().map(|guild| game.guild_window.icons(guild, skill_info)).unwrap_or_default())
             .chain(mercenary::SkillList::icons(&game.mercenary_skills, skill_info))
+            .chain(homunculus::SkillList::icons(&game.homunculus_skills, skill_info))
             .chain(game.hotkeys.keys.iter().flatten().filter(|key| key.skill).filter_map(|key| skill_info.get(&(key.id as u16)).map(skills::icon_path)));
         let status_paths =
             game.status_icons.iter().filter_map(|(kind, ..)| status_icon_files.get(kind).map(|(_, file)| format!("data\\texture\\effect\\{file}")));
@@ -8582,6 +8788,18 @@ impl App {
                     if game.mercenary.is_some() {
                         let list = &game.mercenary_skill_list;
                         list.draw(&mut layer, &assets.chrome, &assets.skills, icons, font, messages, &game.mercenary_skills, skill_info, pointer.0);
+                    }
+                }
+                Panel::Homunculus => {
+                    if let Some(homunculus) = &game.homunculus {
+                        game.homunculus_window.draw(&mut layer, &assets.chrome, &assets.homunculus, font, messages, homunculus, pointer);
+                    }
+                }
+                Panel::HomunculusSkills => {
+                    if let Some(homunculus) = &game.homunculus {
+                        let list = &game.homunculus_skill_list;
+                        let skills = &game.homunculus_skills;
+                        list.draw(&mut layer, &assets.chrome, &assets.skills, icons, font, messages, skills, homunculus.skill_points, skill_info, pointer);
                     }
                 }
                 Panel::Status => {
@@ -8807,6 +9025,7 @@ impl App {
         // colors.
         let colored_question = match (game.expansion_asked, &game.pet_asked) {
             _ if game.dismiss_asked => Some(message(mercenary::DISMISS_QUESTION).to_owned()),
+            _ if game.homunculus_rename.is_some() => Some(messages::fill(message(homunculus::RENAME_QUESTION), &[game.homunculus_rename.as_ref().unwrap()])),
             _ if game.leader_asked.is_some() => Some(message(LEADER_QUESTION).to_owned()),
             _ if game.bind_asked.is_some() => Some(message(BIND_ASKS).to_owned()),
             (Some(voucher), _) => {

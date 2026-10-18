@@ -23,6 +23,8 @@
 //!   "new", "change" or "none"); in the game the map, the player, open windows, the NPC dialog, the aimed
 //!   skill, units and ground items (with their sprites' screen boxes and the areas a click picks them in), counts and
 //!   status icons. Everything comes from what the client itself knows, whatever server it plays on.
+//!   `homunculus` is `{id, name, level, hunger, intimacy, hp, skill_points, vaporized, following}` or null; the skill
+//!   list's level up buttons are targets named `raise:<skill id>`.
 //! - `wait` `{ms?, packet?, event?, fresh?, pause?, do?}`: sleeps `ms`; with a `packet` id ("0x08c8") or an `event`
 //!   (a `MapEvent`/`CharEvent` variant like "Act", or "LoginAccepted"/"LoginRefused"), waits up to `ms` (10 s by
 //!   default) for one seen since the previous command, so a quick answer isn't missed between two calls. `fresh`
@@ -795,6 +797,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         Panel::Pet => game.pet.is_some() && game.pet_window.frame.open,
         Panel::Mercenary => game.mercenary.is_some() && game.mercenary_window.frame.open,
         Panel::MercenarySkills => game.mercenary.is_some() && game.mercenary_skill_list.frame.open,
+        Panel::Homunculus => game.homunculus.is_some() && game.homunculus_window.frame.open,
+        Panel::HomunculusSkills => game.homunculus.is_some() && game.homunculus_skill_list.frame.open,
     };
     let jobs = app.skill_trees.lineage(game.me.job);
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
@@ -873,6 +877,24 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .iter()
                 .flat_map(|_| game.mercenary_skill_list.skill_boxes(&game.mercenary_skills))
                 .map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})),
+        )
+        .chain(
+            game.homunculus
+                .iter()
+                .flat_map(|homunculus| game.homunculus_window.button_boxes(homunculus))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(
+            game.homunculus
+                .iter()
+                .flat_map(|_| game.homunculus_skill_list.skill_boxes(&game.homunculus_skills))
+                .map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})),
+        )
+        .chain(
+            game.homunculus
+                .iter()
+                .flat_map(|homunculus| game.homunculus_skill_list.raise_boxes(&game.homunculus_skills, homunculus.skill_points))
+                .map(|(id, area)| json!({"kind": "button", "name": format!("raise:{id}"), "box": area})),
         )
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
@@ -1017,6 +1039,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         }),
         "refusing_party": game.refusing_party,
         "mercenary": game.mercenary.as_ref().map(|hired| json!({"id": hired.id, "name": hired.name, "level": hired.level, "hp": hired.hp, "loyalty": hired.loyalty, "summons": hired.summons, "kills": hired.kills, "following": game.steering.following, "order": game.steering.order.map(|order| format!("{order:?}"))})),
+        "homunculus": game.homunculus.as_ref().map(|homunculus| homunculus_state(homunculus, game.homunculus_id, game.homunculus_steering.following)),
         "pet": game.pet.as_ref().map(|pet| json!({"id": game.pet_id, "name": pet.name, "level": pet.level, "hunger": pet.hunger, "intimacy": pet.intimacy, "accessory": pet.accessory, "renamed": pet.renamed})),
         "ground_items": ground,
         "inventory_items": game.inventory.items.len(),
@@ -1026,6 +1049,21 @@ fn game_state(app: &App, game: &Game) -> Value {
     });
     orbs(&mut state["player"], None);
     state
+}
+
+/// The player's homunculus as the game state reports it.
+fn homunculus_state(homunculus: &net::Homunculus, id: Option<u32>, following: bool) -> Value {
+    json!({
+        "id": id,
+        "name": homunculus.name,
+        "level": homunculus.level,
+        "hunger": homunculus.hunger,
+        "intimacy": homunculus.intimacy,
+        "hp": homunculus.hp,
+        "skill_points": homunculus.skill_points,
+        "vaporized": homunculus.vaporized(),
+        "following": following,
+    })
 }
 
 #[cfg(test)]
