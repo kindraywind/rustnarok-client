@@ -212,6 +212,8 @@ pub enum Command {
     PvpInfo,
     /// /noshift: a click on a player attacks without Shift, on or off.
     NoShift,
+    /// /battlechat: typed lines go to the battleground team, on or off.
+    BattleChat,
     /// /dressroom: the dress room.
     DressRoom,
     /// /blacksmith, /alchemist, /taekwon, /pk: a ranking's top ten (0 to 3).
@@ -235,6 +237,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/memo" => Command::Memo,
         "/pvpinfo" => Command::PvpInfo,
         "/noshift" => Command::NoShift,
+        "/battlechat" => Command::BattleChat,
         "/dressroom" => Command::DressRoom,
         "/blacksmith" => Command::Ranking(0),
         "/alchemist" => Command::Ranking(1),
@@ -261,6 +264,7 @@ mod tests {
         assert_eq!(command("/memo"), Some(Command::Memo));
         assert_eq!(command("/pvpinfo"), Some(Command::PvpInfo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
+        assert_eq!(command("/battlechat"), Some(Command::BattleChat));
         assert_eq!(command("/dressroom"), Some(Command::DressRoom));
         for (text, kind) in [("/blacksmith", 0), ("/alchemist", 1), ("/taekwon", 2), ("/pk", 3)] {
             assert_eq!(command(text), Some(Command::Ranking(kind)), "{text}");

@@ -46,6 +46,7 @@ mod actor;
 mod announce;
 mod bank;
 mod basic_info;
+mod battleground;
 mod buying;
 mod cashshop;
 mod catalog;
@@ -821,6 +822,10 @@ struct Game {
     /// The map's property and flags (net::MAP_*), and its type, as the server last sent them.
     map_property: Option<(u16, u32)>,
     map_type: Option<u16>,
+    /// The battleground's camps, score, teammates' dots and battle chat; forgotten on a map change.
+    battle: battleground::Battle,
+    /// The minimap dot for teammates, and the marks over heads: our camp's, the other's.
+    camp_looks: Option<(Texture, [Texture; 2])>,
     /// The player's PvP rank and the players on the map, while the server counts them.
     pvp_rank: Option<(u32, u32)>,
     /// The counter's digits (rankfont), the clock's (timefont) and the first-place banner (timeattack), loaded when first
@@ -1345,13 +1350,13 @@ impl Game {
     fn side(&self) -> versus::Side {
         let party = self.party.iter().flat_map(|party| &party.members).filter(|member| member.info.online).map(|member| member.info.account).collect();
         let flags = self.map_property.map_or(0, |(_, flags)| flags);
-        versus::Side { flags, party, guild: self.guild.as_ref().map_or(0, |guild| guild.id), allies: Vec::new() }
+        versus::Side { flags, party, guild: self.guild.as_ref().map_or(0, |guild| guild.id), allies: Vec::new(), camp: self.battle.camp(self.account_id) }
     }
 
     /// Another player as `versus` sees them.
     fn opponent(&self, id: u32) -> Option<versus::Other> {
         let actor = self.units.get(&id).filter(|actor| actor.kind == PLAYER)?;
-        Some(versus::Other { account: id, guild: actor.guild, dead: actor.dead || actor.remove_at.is_some() })
+        Some(versus::Other { account: id, guild: actor.guild, dead: actor.dead || actor.remove_at.is_some(), camp: self.battle.camps.get(&id).copied() })
     }
 
     fn players_first(&self, shift: bool) -> bool {
@@ -1639,6 +1644,11 @@ impl Game {
             }
             return None;
         }
+        // With /battlechat on, a line goes to the battleground team (not to the party, the guild or a whisper).
+        if self.battle.chat {
+            let _ = self.session.battle_chat(&self.me.name, text);
+            return None;
+        }
         if to.is_empty() && (guild || text.starts_with('$')) {
             let _ = self.session.guild_chat(&self.me.name, text.trim_start_matches('$'));
             return None;
@@ -1674,6 +1684,11 @@ impl Game {
             chat::Command::Memo => self.session.remember_warp_point(),
             chat::Command::PvpInfo => self.session.pvp_info(self.me.id, self.account_id),
             chat::Command::Ranking(kind) => self.session.ask_ranking(kind),
+            chat::Command::BattleChat => {
+                let id = self.battle.toggle_chat();
+                self.chat_line(message(id), CHAT_ITEM);
+                Ok(())
+            }
             chat::Command::DressRoom => {
                 self.open_dressroom();
                 Ok(())
@@ -6304,6 +6319,8 @@ impl App {
                     head_emblems: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     map_type: None,
+                    battle: battleground::Battle::default(),
+                    camp_looks: None,
                     pvp_rank: None,
                     rank_font: None,
                     time_font: None,
@@ -6937,6 +6954,7 @@ impl App {
                 game.weather.clear();
                 game.pvp_rank = None;
                 game.map_type = None;
+                game.battle = battleground::Battle::default();
                 game.last_rank = 0;
                 game.first_since = None;
                 game.top_ten.clear();
@@ -7954,6 +7972,24 @@ impl App {
                 let _ = game.session.ready_to_play();
             }
             MapEvent::MapType(kind) => game.map_type = Some(kind),
+            // A battleground: teammates' HP bars as party members', their dots, everyone's camp, the score, the team chat.
+            MapEvent::BattleHp { account, hp, max } => {
+                if account != game.account_id {
+                    game.unit_hp.insert(account, (hp, max));
+                }
+            }
+            MapEvent::BattlePosition { account, cell } => game.battle.place(account, cell),
+            MapEvent::BattleCamp { account, camp } => {
+                game.battle.camps.insert(account, camp);
+                if game.camp_looks.is_none()
+                    && let Some(gpu) = gpu
+                {
+                    let solid = |[r, g, b]: [u8; 3]| gpu.solid([r, g, b, 255]);
+                    game.camp_looks = Some((solid(battleground::OUR_COLOR), [solid(battleground::OUR_COLOR), solid(battleground::THEIR_COLOR)]));
+                }
+            }
+            MapEvent::BattleScore(score) => game.battle.score = Some(score),
+            MapEvent::BattleChat { text, .. } => game.chat_line(text, battleground::CHAT_COLOR),
             MapEvent::DressRoom => game.open_dressroom(),
             // The board opens (or shows the new ranking); the names it lacks are asked for once each.
             MapEvent::Ranking { kind, ids, points, mine } => {
@@ -9613,6 +9649,19 @@ impl App {
                 base.sprites.push((emblem, [corner(line)[0] - guild::EMBLEM_SIZE[0] - 2.0, top], guild::EMBLEM_SIZE));
             }
         }
+        // ponytail: nothing says how camps look; a square in the camp's color over each player's head, and the score
+        // as "A : B" under the minimap (the top middle is the announcements').
+        if let (Some(ours), Some((_, marks))) = (game.battle.camp(game.account_id), &game.camp_looks) {
+            for (id, camp) in &game.battle.camps {
+                let Some(above) = feet_of.get(id).and_then(|&feet| sprite_point(feet, -100.0)) else { continue };
+                let mark = &marks[usize::from(*camp != ours)];
+                base.sprites.push((mark, [above[0] - 4.0, above[1] - 12.0], [8.0, 8.0]));
+            }
+        }
+        if let Some([a, b]) = game.battle.score {
+            let score = format!("{a} : {b}");
+            base.outlined(&score, [(SCREEN[0] - 12.0 - font.width(&score)).floor(), 166.0]);
+        }
         // On a siege map (not a battleground) other players in a guild, and the guardians, carry its emblem over their
         // heads; it follows the unit but doesn't grow with the zoom.
         game.head_emblems.clear();
@@ -9848,7 +9897,11 @@ impl App {
                 gpu.solid([r, g, b, 255])
             });
         }
-        let dots: Vec<_> = members.iter().map(|(account, cell)| (*cell, &game.party_dots[account])).collect();
+        // On a battleground, teammates in our camp's color.
+        let mut dots: Vec<_> = members.iter().map(|(account, cell)| (*cell, &game.party_dots[account])).collect();
+        if let Some((team_dot, _)) = &game.camp_looks {
+            dots.extend(game.battle.dots.values().map(|&[x, y]| ([i32::from(x), i32::from(y)], team_dot)));
+        }
         let boss = game.boss.as_ref().map(|(_, cell)| *cell);
         minimap::draw(&mut chat_layer, &assets.minimap, game.minimap.as_ref(), size, game.player.cell, game.player.direction, &marks, &dots, boss);
         // Status icons down the right, each with the clock of its time (orange in the last minute).

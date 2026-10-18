@@ -143,6 +143,16 @@ pub fn encode_member_move(account: u32, character: u32, position: u32) -> Vec<u8
     packet
 }
 
+/// CZ_BATTLEFIELD_CHAT: the line as the guild chat writes it, "Name : message" and a NUL.
+pub fn encode_battle_chat(name: &str, message: &str) -> Vec<u8> {
+    let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
+    let mut packet = CZ_BATTLEFIELD_CHAT.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((4 + text.len() + 1) as u16).to_le_bytes());
+    packet.extend_from_slice(&text);
+    packet.push(0);
+    packet
+}
+
 /// Decodes a NUL-terminated EUC-KR field.
 pub fn c_string(bytes: &[u8]) -> String {
     let end = bytes.iter().position(|&byte| byte == 0).unwrap_or(bytes.len());
@@ -724,6 +734,12 @@ const ZC_BROADCAST: u16 = 0x009A;
 const ZC_MAPPROPERTY_R2: u16 = 0x099B;
 const CZ_BLOCKING_PLAY_CANCEL: u16 = 0x0447;
 const ZC_NOTIFY_MAPPROPERTY2: u16 = 0x01D6;
+const ZC_BATTLEFIELD_NOTIFY_HP2: u16 = 0x0A0E;
+const ZC_BATTLEFIELD_NOTIFY_POSITION: u16 = 0x02DF;
+const ZC_BATTLEFIELD_NOTIFY_CAMPINFO: u16 = 0x02DD;
+const ZC_BATTLEFIELD_NOTIFY_POINT: u16 = 0x02DE;
+const ZC_BATTLEFIELD_CHAT: u16 = 0x02DC;
+const CZ_BATTLEFIELD_CHAT: u16 = 0x02DB;
 const ZC_DRESSROOM_OPEN: u16 = 0x0A02;
 const CZ_REQ_RANKING: u16 = 0x097C;
 const ZC_UPDATE_RANKING_POINT: u16 = 0x097E;
@@ -1851,6 +1867,29 @@ pub enum MapEvent {
     },
     /// The map's type (rathena's `e_map_type`; it only sends 19, a battleground).
     MapType(u16),
+    /// A teammate's HP on a battleground (ZC_BATTLEFIELD_NOTIFY_HP2).
+    BattleHp {
+        account: u32,
+        hp: i32,
+        max: i32,
+    },
+    /// A teammate's cell on the minimap (ZC_BATTLEFIELD_NOTIFY_POSITION); none when they left.
+    BattlePosition {
+        account: u32,
+        cell: Option<[u16; 2]>,
+    },
+    /// A player's camp, rathena's team ID (ZC_BATTLEFIELD_NOTIFY_CAMPINFO).
+    BattleCamp {
+        account: u32,
+        camp: u16,
+    },
+    /// Camp A's points and camp B's (ZC_BATTLEFIELD_NOTIFY_POINT).
+    BattleScore([u16; 2]),
+    /// A line of the team's chat, whole ("Name : hello"), and who said it (account 0: the server).
+    BattleChat {
+        account: u32,
+        text: String,
+    },
     /// A player's PvP rank among the players on the map (rank 0 or 0 players: no counter).
     PvpRank {
         account: u32,
@@ -3955,6 +3994,11 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Says something to the battleground team.
+    pub fn battle_chat(&mut self, name: &str, message: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_battle_chat(name, message))
+    }
+
     /// Says something to the guild.
     pub fn guild_chat(&mut self, name: &str, message: &str) -> io::Result<()> {
         let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
@@ -5198,6 +5242,15 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // "blue" (and "ssss" for the War of Emperium) at the start are color hints, not words.
         ZC_MAPPROPERTY_R2 => MapEvent::MapProperty { property: u16_at(2), flags: u32_at(4) },
         ZC_NOTIFY_MAPPROPERTY2 => MapEvent::MapType(u16_at(2)),
+        ZC_BATTLEFIELD_NOTIFY_HP2 => MapEvent::BattleHp { account: u32_at(2), hp: u32_at(6) as i32, max: u32_at(10) as i32 },
+        // Someone leaving comes with x = y = 0xFFFF.
+        ZC_BATTLEFIELD_NOTIFY_POSITION => {
+            let cell = [u16_at(32), u16_at(34)];
+            MapEvent::BattlePosition { account: u32_at(2), cell: (cell != [0xFFFF; 2]).then_some(cell) }
+        }
+        ZC_BATTLEFIELD_NOTIFY_CAMPINFO => MapEvent::BattleCamp { account: u32_at(2), camp: u16_at(30) },
+        ZC_BATTLEFIELD_NOTIFY_POINT => MapEvent::BattleScore([u16_at(2), u16_at(4)]),
+        ZC_BATTLEFIELD_CHAT => MapEvent::BattleChat { account: u32_at(4), text: c_string(packet.get(32..).unwrap_or_default()) },
         // The view at 2 rathena always sends 0 and calls ignored.
         ZC_DRESSROOM_OPEN => MapEvent::DressRoom,
         ZC_ACK_RANKING2 => MapEvent::Ranking {
@@ -7519,6 +7572,50 @@ mod tests {
         assert_eq!(&request[..20], &[0x61, 0x01, 44, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0]);
         assert_eq!(&request[20..], &name_field("Officer")[..]);
         assert_eq!(encode_member_move(7, 8, 19), [0x55, 0x01, 16, 0, 7, 0, 0, 0, 8, 0, 0, 0, 19, 0, 0, 0]);
+    }
+
+    #[test]
+    fn decodes_battlegrounds() {
+        let mut hp = ZC_BATTLEFIELD_NOTIFY_HP2.to_le_bytes().to_vec();
+        for value in [2_000_001u32, 30, 40] {
+            hp.extend_from_slice(&value.to_le_bytes());
+        }
+        assert!(matches!(decode_map_packet(&hp), Some(MapEvent::BattleHp { account: 2_000_001, hp: 30, max: 40 })));
+
+        // A teammate's place, and the same packet when they leave (empty name, job 0, 0xFFFF).
+        let position = |name: &str, job: u16, cell: [u16; 2]| {
+            let mut packet = ZC_BATTLEFIELD_NOTIFY_POSITION.to_le_bytes().to_vec();
+            packet.extend_from_slice(&2_000_001u32.to_le_bytes());
+            packet.extend_from_slice(&name_field(name));
+            for value in [job, cell[0], cell[1]] {
+                packet.extend_from_slice(&value.to_le_bytes());
+            }
+            packet
+        };
+        assert!(matches!(
+            decode_map_packet(&position("LaneA2", 4001, [62, 119])),
+            Some(MapEvent::BattlePosition { account: 2_000_001, cell: Some([62, 119]) })
+        ));
+        assert!(matches!(decode_map_packet(&position("", 0, [0xFFFF; 2])), Some(MapEvent::BattlePosition { cell: None, .. })));
+
+        let mut camp = ZC_BATTLEFIELD_NOTIFY_CAMPINFO.to_le_bytes().to_vec();
+        camp.extend_from_slice(&2_000_001u32.to_le_bytes());
+        camp.extend_from_slice(&name_field("LaneA2"));
+        camp.extend_from_slice(&3u16.to_le_bytes());
+        assert!(matches!(decode_map_packet(&camp), Some(MapEvent::BattleCamp { account: 2_000_001, camp: 3 })));
+        assert!(matches!(decode_map_packet(&[0xDE, 0x02, 3, 0, 1, 0]), Some(MapEvent::BattleScore([3, 1]))));
+
+        // A team line as clif_bg_message writes it: length, account, name, the whole line.
+        let mut chat = ZC_BATTLEFIELD_CHAT.to_le_bytes().to_vec();
+        chat.extend_from_slice(&[0, 0]);
+        chat.extend_from_slice(&2_000_001u32.to_le_bytes());
+        chat.extend_from_slice(&name_field("LaneA2"));
+        chat.extend_from_slice(b"LaneA2 : hello team\0");
+        let length = chat.len() as u16;
+        chat[2..4].copy_from_slice(&length.to_le_bytes());
+        assert!(matches!(decode_map_packet(&chat), Some(MapEvent::BattleChat { account: 2_000_001, text }) if text == "LaneA2 : hello team"));
+
+        assert_eq!(encode_battle_chat("Me", "hi"), [0xDB, 0x02, 12, 0, b'M', b'e', b' ', b':', b' ', b'h', b'i', 0]);
     }
 
     #[test]
