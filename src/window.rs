@@ -7,7 +7,7 @@ use crate::render::{Gpu, Texture};
 use crate::{Layer, SCREEN, UI, contains, offset};
 
 pub const TITLE_HEIGHT: f32 = 17.0;
-const BUTTON_SIZE: [f32; 2] = [11.0, 11.0];
+pub const BUTTON_SIZE: [f32; 2] = [11.0, 11.0];
 const BASE_BUTTON: [f32; 2] = [3.0, 3.0];
 const TITLE_TEXT: [f32; 2] = [17.0, 1.0];
 const BORDER: [u8; 4] = [0xCC, 0xCC, 0xCC, 0xFF];
@@ -71,7 +71,8 @@ impl Frame {
         self.open = !self.open;
     }
 
-    fn close_button(&self) -> [f32; 2] {
+    /// The close button's corner inside the window.
+    pub fn close_button(&self) -> [f32; 2] {
         [self.width - 14.0, 3.0]
     }
 

@@ -1,0 +1,286 @@
+{
+ "about": "Garments: a backpack worn with a hat (the bag goes over the hat), and ribbon wings drawn from the picture every job shares (they used to be missing), facing away, to the side and to the camera. Costume garments, so each replaces whatever costume garment an earlier scenario left on.",
+ "account": "",
+ "slot": 0,
+ "env": {
+  "RUSTNAROK_CLIENT_CAMERA": "0,45,65"
+ },
+ "steps": [
+  {
+   "say": "@warp pay_fild04 184 210"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "say": "@killmonster2"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@heal"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "say": "@itemreset"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "say": "@item 2220 1"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "say": "@item 20512 1"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "say": "@item 20541 1"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "click": [
+    11,
+    225
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "click_on": {
+    "inventory_item": 2220
+   },
+   "count": 2
+  },
+  {
+   "wait_for": {
+    "event": "Equipped",
+    "ms": 5000
+   }
+  },
+  {
+   "click_on": {
+    "inventory_item": 20512
+   },
+   "count": 2
+  },
+  {
+   "wait_for": {
+    "event": "Equipped",
+    "ms": 5000
+   }
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "click": [
+    512,
+    338
+   ]
+  },
+  {
+   "wait": 1200
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "player.direction": 4,
+     "player.moving": false
+    }
+   }
+  },
+  {
+   "shot": "garment-bag-back",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "click": [
+    442,
+    390
+   ]
+  },
+  {
+   "wait": 1200
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "player.direction": 2,
+     "player.moving": false
+    }
+   }
+  },
+  {
+   "shot": "garment-bag-side",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "click_on": {
+    "inventory_item": 20541
+   },
+   "count": 2
+  },
+  {
+   "wait_for": {
+    "event": "Equipped",
+    "ms": 5000
+   }
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "click": [
+    512,
+    442
+   ]
+  },
+  {
+   "wait": 1200
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "player.direction": 0,
+     "player.moving": false
+    }
+   }
+  },
+  {
+   "shot": "garment-wings-front",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "click": [
+    512,
+    338
+   ]
+  },
+  {
+   "wait": 1200
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "player.direction": 4,
+     "player.moving": false
+    }
+   }
+  },
+  {
+   "shot": "garment-wings-back",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  }
+ ]
+}

@@ -1,0 +1,22 @@
+# Build, test and lint on Linux. Game data never goes in the repository, so the tests that read data.grf skip
+# themselves here (Grf::for_tests). macOS is checked locally (verify.sh); Windows was checked once, in PR #128, to save
+# Actions minutes (Windows counts double, macOS tenfold): add `strategy.matrix.os` again to check them on every PR.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # ALSA for the sound (cpal); fontconfig and a Hangul font for the text tests.
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config fontconfig fonts-nanum
+      # The nightly rust-toolchain.toml pins.
+      - run: rustup toolchain install --profile minimal && rustup component add clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - run: cargo test --release
+      - run: cargo clippy --release --all-targets -- -D warnings

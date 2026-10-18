@@ -7,8 +7,9 @@
 //! tool is a control command, sent with its arguments as they are.
 
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -116,7 +117,7 @@ struct Server {
 impl Server {
     /// One command, on a connection of its own.
     fn request(&self, command: &Value) -> Result<Value, String> {
-        let stream = UnixStream::connect(&self.socket).map_err(|_| "no client is running; call launch first".to_owned())?;
+        let stream = connect(&self.socket).map_err(|_| "no client is running; call launch first".to_owned())?;
         let _ = stream.set_read_timeout(Some(Duration::from_secs(120)));
         (&stream).write_all(format!("{command}\n").as_bytes()).map_err(|error| error.to_string())?;
         let mut line = String::new();
@@ -155,7 +156,7 @@ impl Server {
         }
         let account_file = arguments["account_file"].as_str();
         let slot = arguments["slot"].as_u64();
-        let game = std::env::current_exe().map_err(|error| error.to_string())?.with_file_name("rustnarok-client");
+        let game = std::env::current_exe().map_err(|error| error.to_string())?.with_file_name(format!("rustnarok-client{}", std::env::consts::EXE_SUFFIX));
         let log_path = self.socket.with_extension("log");
         let log = std::fs::File::create(&log_path).map_err(|error| format!("{}: {error}", log_path.display()))?;
         let mut command = Command::new(&game);
@@ -231,6 +232,21 @@ impl Server {
         }
         if answered { "the client quit".into() } else { "no client was running".into() }
     }
+}
+
+#[cfg(unix)]
+fn connect(socket: &Path) -> std::io::Result<UnixStream> {
+    UnixStream::connect(socket)
+}
+
+/// On Windows the control "socket" is a file naming a localhost port and the token to open with (src/control.rs).
+#[cfg(windows)]
+fn connect(socket: &Path) -> std::io::Result<std::net::TcpStream> {
+    let contents = std::fs::read_to_string(socket)?;
+    let (address, token) = contents.split_once(' ').ok_or(std::io::ErrorKind::InvalidData)?;
+    let mut stream = std::net::TcpStream::connect(address)?;
+    writeln!(stream, "{token}")?;
+    Ok(stream)
 }
 
 /// The `username<which>:` and `password<which>:` lines of an account file.

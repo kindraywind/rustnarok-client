@@ -1,5 +1,6 @@
 //! Dev-only remote control, for test automation: with `RUSTNAROK_CLIENT_CONTROL=<path>` the client listens on that Unix socket
-//! (owner only, no TCP port) for newline-delimited JSON commands and answers each with one line of JSON
+//! (owner only, no TCP port; on Windows, a localhost port that `path` names with a token, see `bind`) for
+//! newline-delimited JSON commands and answers each with one line of JSON
 //! (`{"ok": true, ...}` or `{"ok": false, "error": ...}`). Without the variable none of this runs. A driven client
 //! ignores the real mouse and keyboard, opens behind the window in use and draws on screen only while it has the focus
 //! (click it to watch); screenshots don't need that.
@@ -18,9 +19,10 @@
 //!   character, after modifiers like "Alt+" or "Ctrl+".
 //! - `type` `{text}`: into the focused field; non-ASCII runs (Hangul) come in as the input method's commit.
 //! - `say` `{text}`: a chat line or a GM command.
-//! - `state`: the scene and the login server; in the game the map, the player, open windows, the NPC dialog, the aimed
-//!   skill, units and ground items (with their screen boxes), counts and status icons. Everything comes from what the
-//!   client itself knows, whatever server it plays on.
+//! - `state`: the scene and the login server; at character select the characters, selected slot and `pin` ("ask",
+//!   "new", "change" or "none"); in the game the map, the player, open windows, the NPC dialog, the aimed
+//!   skill, units and ground items (with their sprites' screen boxes and the areas a click picks them in), counts and
+//!   status icons. Everything comes from what the client itself knows, whatever server it plays on.
 //! - `wait` `{ms?, packet?, event?, fresh?, pause?, do?}`: sleeps `ms`; with a `packet` id ("0x08c8") or an `event`
 //!   (a `MapEvent`/`CharEvent` variant like "Act", or "LoginAccepted"/"LoginRefused"), waits up to `ms` (10 s by
 //!   default) for one seen since the previous command, so a quick answer isn't missed between two calls. `fresh`
@@ -32,8 +34,11 @@
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Cursor, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(windows)]
+use std::net::{TcpListener as Listener, TcpStream as Stream};
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener as Listener, UnixStream as Stream};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -80,6 +85,12 @@ pub enum Command {
     },
     Key {
         key: String,
+    },
+    /// The wheel at a point: `rows` notches, positive toward the player (scrolls down).
+    Wheel {
+        x: f32,
+        y: f32,
+        rows: i32,
     },
     Type {
         text: String,
@@ -194,25 +205,54 @@ static SHOT: Mutex<Option<RgbaImage>> = Mutex::new(None);
 /// Opens the control socket when `RUSTNAROK_CLIENT_CONTROL` names one.
 pub fn listen(proxy: EventLoopProxy<NetEvent>) {
     let Some(path) = std::env::var_os("RUSTNAROK_CLIENT_CONTROL") else { return };
-    let _ = std::fs::remove_file(&path);
-    let listener = UnixListener::bind(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    // Whoever can connect plays the logged-in character.
-    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    let path = Path::new(&path);
+    let (listener, token) = bind(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     let _ = net::PACKET_HOOK.set(packet_seen);
     ON.store(true, Ordering::Relaxed);
     eprintln!("control socket at {}", path.display());
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            let proxy = proxy.clone();
-            std::thread::spawn(move || serve(stream, &proxy));
+            let (proxy, token) = (proxy.clone(), token.clone());
+            std::thread::spawn(move || serve(stream, &proxy, token.as_deref()));
         }
     });
 }
 
+/// Whoever can connect plays the logged-in character, so only the owner may: through a Unix socket only they can
+/// open...
+#[cfg(unix)]
+fn bind(path: &Path) -> std::io::Result<(Listener, Option<String>)> {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::remove_file(path);
+    let listener = Listener::bind(path)?;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    Ok((listener, None))
+}
+
+/// ...or, on Windows (no Unix sockets in Python there), a localhost port written to `path` as "127.0.0.1:port token": a
+/// connection's first line must be the token, which only those who can read `path` know and a web page's request to
+/// localhost can't send.
+#[cfg(windows)]
+fn bind(path: &Path) -> std::io::Result<(Listener, Option<String>)> {
+    use std::hash::BuildHasher;
+    let listener = Listener::bind("127.0.0.1:0")?;
+    // SipHash under the keys std seeds from the OS's random source.
+    let random = std::collections::hash_map::RandomState::new();
+    let token = format!("{:016x}{:016x}", random.hash_one(1), random.hash_one(2));
+    std::fs::write(path, format!("{} {token}", listener.local_addr()?))?;
+    Ok((listener, Some(token)))
+}
+
 /// Answers one connection's commands in order. `wait` and `trace` are answered here, the rest on the event loop.
-fn serve(stream: UnixStream, proxy: &EventLoopProxy<NetEvent>) {
+fn serve(stream: Stream, proxy: &EventLoopProxy<NetEvent>, token: Option<&str>) {
     let Ok(mut writer) = stream.try_clone() else { return };
-    for line in BufReader::new(stream).lines() {
+    let mut lines = BufReader::new(stream).lines();
+    if let Some(token) = token
+        && lines.next().and_then(Result::ok).as_deref() != Some(token)
+    {
+        return;
+    }
+    for line in lines {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
             continue;
@@ -389,6 +429,11 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
                 point(app, to);
                 press(app, event_loop, button, ElementState::Released);
             });
+            Ok(Value::Null)
+        }
+        Command::Wheel { x, y, rows } => {
+            point(app, [x, y]);
+            app.wheel(rows);
             Ok(Value::Null)
         }
         Command::Key { key } => {
@@ -649,6 +694,7 @@ fn state(app: &App) -> Value {
                 .map(|character| json!({"slot": character.slot, "name": character.name, "job": character.job, "level": character.base_level, "map": character.map}))
                 .collect();
             state["selected"] = select.selected.into();
+            state["pin"] = select.pin_pad.as_ref().map_or("none", |pad| pad.kind()).into();
             state["moving"] = select.moving.into();
             state["targets"] = select
                 .card_boxes()
@@ -664,10 +710,27 @@ fn state(app: &App) -> Value {
 }
 
 fn game_state(app: &App, game: &Game) -> Value {
-    let screen = |owner: Owner| game.hit_boxes.iter().find(|(seen, ..)| *seen == owner).map(|(_, rect, _)| rect.map(|side| side.round() as i32));
+    let target = |owner: Owner| game.hit_boxes.iter().find(|target| target.owner == owner);
+    let screen = |owner: Owner| target(owner).map(|target| target.sprite.map(|side| side.round() as i32));
+    let area = |owner: Owner| target(owner).map(|target| target.area.map(|side| side.round() as i32));
     let me = game.player.cell;
     let distance = |cell: [i32; 2]| (cell[0] - me[0]).abs().max((cell[1] - me[1]).abs());
     let status = |id: u16| game.status.get(&id).copied();
+    // What circles a unit: spheres (or coins), shields, charms and their element ("water", "earth", "fire", "wind"
+    // or null), souls.
+    let orbs = |value: &mut Value, unit: Option<u32>| {
+        let orbs = game.spirits.get(&unit).copied().unwrap_or_default();
+        let (element, charms) = orbs.charms;
+        value["spirits"] = orbs.spheres.into();
+        value["shields"] = orbs.shields.into();
+        value["charms"] = charms.into();
+        value["charm"] = element.checked_sub(1).and_then(|element| crate::CHARM_NAMES.get(usize::from(element))).copied().into();
+        value["souls"] = orbs.souls.into();
+    };
+    // A combo window's milliseconds left, on the drawing's clock (0: none).
+    let combo_ms = |unit: Option<u32>| {
+        game.combos.get(&unit).map_or(0, |(start, length)| length.saturating_sub(crate::control::now().saturating_duration_since(*start)).as_millis() as u64)
+    };
     let mut units: Vec<_> = game.units.iter().collect();
     units.sort_by_key(|(_, actor)| distance(actor.cell));
     let units: Vec<Value> = units
@@ -682,10 +745,11 @@ fn game_state(app: &App, game: &Game) -> Value {
                 MERCENARY => json!("mercenary"),
                 other => json!(other),
             };
-            let spirits = game.spirits.get(&Some(id)).copied().unwrap_or(0);
-            let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "spirits": spirits});
+            let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "combo_ms": combo_ms(Some(id)), "held": crate::locked_with(&game.locks, id)});
+            orbs(&mut unit, Some(id));
             if let Some(rect) = screen(Owner::Unit(id)) {
                 unit["screen"] = json!(rect);
+                unit["area"] = json!(area(Owner::Unit(id)));
             }
             if let Some(hp) = game.unit_hp.get(&id) {
                 unit["hp"] = json!(hp);
@@ -704,7 +768,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .iter()
         .map(|(&id, item)| {
             let name = inventory::item_name(&app.items, item.item, item.identified, 0);
-            json!({"id": id, "item": item.item, "name": name, "amount": item.amount, "cell": item.at, "screen": screen(Owner::Item(id))})
+            json!({"id": id, "item": item.item, "name": name, "amount": item.amount, "cell": item.at, "screen": screen(Owner::Item(id)), "area": area(Owner::Item(id))})
         })
         .collect();
     let open = |panel: &Panel| match panel {
@@ -717,8 +781,11 @@ fn game_state(app: &App, game: &Game) -> Value {
         Panel::Party => game.party_window.frame.open,
         Panel::Status => game.status_window.frame.open,
         Panel::Guild => game.guild.is_some() && game.guild_window.frame.open,
+        Panel::Clan => game.clan.is_some() && game.clan_window.frame.open,
         Panel::Cart => game.cart.cart.is_some() && game.cart.frame.open,
         Panel::Pet => game.pet.is_some() && game.pet_window.frame.open,
+        Panel::Mercenary => game.mercenary.is_some() && game.mercenary_window.frame.open,
+        Panel::MercenarySkills => game.mercenary.is_some() && game.mercenary_skill_list.frame.open,
     };
     let jobs = app.skill_trees.lineage(game.me.job);
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
@@ -753,6 +820,24 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .filter(|(_, _, kind)| *kind == crate::chatroom::BUYING_STORE)
                 .map(|&(rect, ..)| json!({"kind": "button", "name": "buying_sign", "box": [rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]]})),
         )
+        .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
+        .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.achievement_window
+                .button_boxes(&app.achievement_info, &game.achievements)
+                .into_iter()
+                .chain(game.equipment.button_boxes())
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(
+            game.mercenary.iter().flat_map(|_| game.mercenary_window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(
+            game.mercenary
+                .iter()
+                .flat_map(|_| game.mercenary_skill_list.skill_boxes(&game.mercenary_skills))
+                .map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})),
+        )
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
     let overlays = [
@@ -760,9 +845,14 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("WarpList", game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_some())),
         ("Shop", game.shop.is_some()),
         ("Refine", game.refine.is_some()),
+        ("Materials", game.materials.is_some()),
+        ("Roulette", game.roulette.is_some()),
+        ("MonsterInfo", game.monster_window.is_some()),
+        ("Achievements", game.achievement_window.frame.open),
         ("InventoryExpansion", game.expansion_asked.is_some()),
         ("PetAsked", game.pet_asked.is_some()),
         ("OtherEquipment", game.viewing.is_some()),
+        ("SwapEquipment", game.equipment.frame.open && game.equipment.swapping),
         ("Bank", game.bank.is_some()),
         ("PickList", game.pick.is_some()),
         ("DealChoice", game.deal_choice.is_some()),
@@ -806,18 +896,22 @@ fn game_state(app: &App, game: &Game) -> Value {
         })
     });
     let now = Instant::now();
-    json!({
+    let mut state = json!({
         "map": game.map,
+        // The weather effect IDs showing.
+        "weather": game.weather.ids(),
         "player": {
             "name": game.me.name,
             "account_id": game.account_id,
             "char_id": game.me.id,
             "job": game.me.job,
             "cell": game.player.cell,
-            "spirits": game.spirits.get(&None).copied().unwrap_or(0),
             "direction": game.player.direction,
             "moving": game.player.moving(),
             "casting": game.casts.contains_key(&None),
+            "combo_ms": combo_ms(None),
+            // How many units Blade Stop or Cursed Circle locks the player with.
+            "held": crate::locked_with(&game.locks, game.account_id),
             "hp": status(net::STATUS_HP),
             "max_hp": status(net::STATUS_MAX_HP),
             "sp": status(net::STATUS_SP),
@@ -832,22 +926,45 @@ fn game_state(app: &App, game: &Game) -> Value {
         // boxes, pick list rows, menu choices and window buttons (by name), each with its box on screen.
         "targets": targets,
         // What's carried: index, item, how many, identified, worn where (0: not worn).
-        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "cards": item.cards})).collect::<Vec<_>>(),
+        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires, "switch": item.switch})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
         "dialog": dialog,
+        // Achievements: whether each is done and its reward taken; the title worn (0: none).
+        "achievements": game.achievements.iter().map(|(id, achievement)| (id.to_string(), json!({"completed": achievement.completed, "rewarded": achievement.rewarded}))).collect::<serde_json::Map<_, _>>(),
+        "title": game.equipment.title,
+        // Skills blocked after use: milliseconds left by skill ID, on the drawing's clock (still while a shot pauses it).
+        "cooldowns": game.cooldowns.blocked(crate::control::now()).map(|(skill, left)| (skill.to_string(), json!(left.as_millis() as u64))).collect::<serde_json::Map<_, _>>(),
+        // The Lucky Roulette: points, bonus, prizes known, the wheel spinning, the prize waiting (or null).
+        "roulette": game.roulette.as_ref().map(|window| {
+            let now = crate::control::now();
+            let [gold, silver, bronze] = window.points;
+            let prize = window.shown_prize(now).map(|(row, column)| json!({"row": row, "column": column, "item": window.item_at((row, column))}));
+            json!({"gold": gold, "silver": silver, "bronze": bronze, "bonus": window.bonus, "prizes": window.prizes.len(), "spinning": window.spinning(now), "prize": prize})
+        }),
+        // Sense's window (null when closed), and the boss the Convex Mirror shows (null when none).
+        "monster_info": game.monster_window.as_ref().map(|window| {
+            let info = &window.info;
+            json!({"class": info.class, "level": info.level, "hp": info.hp, "size": info.size, "race": info.race, "element": info.element})
+        }),
+        "boss": game.boss.as_ref().map(|(name, cell)| json!({"name": name, "cell": cell})),
+        // What Talkie Boxes are saying now.
+        "talkie": game.talkie_spots.keys().filter_map(|id| game.speech.get(&Some(*id)).map(|(text, ..)| text.clone())).collect::<Vec<_>>(),
         // A taming item waiting for its monster.
         "capturing": game.capturing,
         "aimed_skill": game.targeting.map(|(id, level)| json!({"id": id, "level": level, "name": app.skill_info.get(&id).map(|info| info.name.as_str())})),
         "units": units,
         // The player's pet as the server last told it, or null.
+        "mercenary": game.mercenary.as_ref().map(|hired| json!({"id": hired.id, "name": hired.name, "level": hired.level, "hp": hired.hp, "loyalty": hired.loyalty, "summons": hired.summons, "kills": hired.kills, "following": game.steering.following, "order": game.steering.order.map(|order| format!("{order:?}"))})),
         "pet": game.pet.as_ref().map(|pet| json!({"id": game.pet_id, "name": pet.name, "level": pet.level, "hunger": pet.hunger, "intimacy": pet.intimacy, "accessory": pet.accessory, "renamed": pet.renamed})),
         "ground_items": ground,
         "inventory_items": game.inventory.items.len(),
         "skills": game.skills.len(),
         "status_icons": game.status_icons.iter().map(|(id, _, ends)| json!({"id": id, "left_ms": ends.map(|end| end.saturating_duration_since(now).as_millis() as u64)})).collect::<Vec<_>>(),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
-    })
+    });
+    orbs(&mut state["player"], None);
+    state
 }
 
 #[cfg(test)]
@@ -857,6 +974,7 @@ mod tests {
     #[test]
     fn parses_commands() {
         let parse = |line: &str| serde_json::from_str::<Command>(line);
+        assert_eq!(parse(r#"{"cmd":"wheel","x":390,"y":360,"rows":-2}"#).unwrap(), Command::Wheel { x: 390.0, y: 360.0, rows: -2 });
         assert_eq!(
             parse(r#"{"cmd":"click","x":512,"y":300.5,"button":"right"}"#).unwrap(),
             Command::Click { x: 512.0, y: 300.5, button: Button::Right, mods: String::new(), count: None }
@@ -881,5 +999,15 @@ mod tests {
         assert!(parse_key("Hyper+Q").is_err() && parse_key("F13").is_err());
 
         assert_eq!([base64(b"Man"), base64(b"Ma"), base64(b"M")], ["TWFu", "TWE=", "TQ=="]);
+
+        use crate::pin::{PinPad, PinStep};
+        let pin_kind = |step: PinStep| PinPad::new(0, step, false).kind();
+        assert_eq!(pin_kind(PinStep::Ask), "ask");
+        assert_eq!(pin_kind(PinStep::NewFirst), "new");
+        assert_eq!(pin_kind(PinStep::NewConfirm { first: "1357".into() }), "new");
+        assert_eq!(pin_kind(PinStep::ChangeOld), "change");
+        assert_eq!(pin_kind(PinStep::ChangeNewFirst { old: "1357".into() }), "change");
+        assert_eq!(pin_kind(PinStep::ChangeNewConfirm { old: "1357".into(), first: "2468".into() }), "change");
+        assert_eq!(None::<PinPad>.as_ref().map_or("none", |pad| pad.kind()), "none");
     }
 }

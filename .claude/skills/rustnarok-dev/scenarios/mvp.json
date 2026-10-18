@@ -12,6 +12,6 @@
     {"wait": 800}, {"move": [900, 700]},
     {"expect": {"chat": "Your reward item is"}},
     {"shot": "mvp-banner", "crop": [380, 60, 300, 360], "threshold": 40},
-    {"say": "@job 0"}, {"wait": 500}
+    {"say": "@vit -99"}, {"wait": 500}, {"say": "@job 0"}, {"wait": 500}
   ]
 }

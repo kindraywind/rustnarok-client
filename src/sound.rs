@@ -29,8 +29,8 @@ const MOST_EFFECTS: usize = 24;
 /// The loudest a volume goes (as /bv and /v take it).
 pub const MAX_VOLUME: u8 = 127;
 
-/// The player's sound settings: music and effects each on or off, with a volume of 0 to `MAX_VOLUME`; kept in
-/// Application Support.
+/// The player's sound settings: music and effects each on or off, with a volume of 0 to `MAX_VOLUME`; kept with the
+/// other settings (`settings_path`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     pub on: [bool; 2],
@@ -45,7 +45,7 @@ impl Default for Settings {
 
 impl Settings {
     fn path() -> Option<PathBuf> {
-        Some(PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/rustnarok-client/sound"))
+        crate::settings_path("sound")
     }
 
     pub fn load() -> Self {
@@ -325,7 +325,7 @@ mod tests {
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf` (and the music in `BGM`, if it's there).
     #[test]
     fn decodes_the_clients_sounds() {
-        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let Some(grf) = Grf::for_tests() else { return };
         let attack = decode(grf.read("data\\wav\\poring_attack.wav").unwrap(), "wav").unwrap();
         assert!(attack.samples.len() > 2_000, "{}", attack.samples.len());
         let music = music_table(&grf);

@@ -31,6 +31,19 @@ pub struct Grf {
 }
 
 impl Grf {
+    /// The game data for tests that read it (`RUSTNAROK_CLIENT_GRF`, or `./data.grf`), or None, to skip them, where there's
+    /// none (as on CI: game data stays out of the repository).
+    pub fn for_tests() -> Option<Self> {
+        let path = std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into());
+        match Self::open(&path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                eprintln!("skipped: no {path}");
+                None
+            }
+            grf => Some(grf.unwrap_or_else(|error| panic!("{path}: {error}"))),
+        }
+    }
+
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         let mut file = File::open(path)?;
         let mut header = [0u8; HEADER_SIZE as usize];
@@ -163,7 +176,7 @@ mod tests {
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn reads_plain_and_encrypted_files() {
-        let grf = super::Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let Some(grf) = super::Grf::for_tests() else { return };
 
         // flags 1: plain zlib.
         let plain = grf.read("data/texture/유저인터페이스/login_interface/bg_login.tga").unwrap();

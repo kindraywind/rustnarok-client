@@ -1,6 +1,7 @@
 //! Characters: layered player sprites (body + head with dye palettes) and movement along a path of cells.
 
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::time::Instant;
 
 use rustnarok_client::grf::Grf;
@@ -34,7 +35,8 @@ pub const READY: usize = 4;
 pub fn combat_actions(kind: u8) -> (usize, usize, usize) {
     match kind {
         // ponytail: players always use their first attack motion; the weapon decides it in the client.
-        0 => (5, 6, 8),
+        // Mercenaries (9) are laid out like players.
+        0 | 9 => (5, 6, 8),
         _ => (2, 3, 4),
     }
 }
@@ -50,71 +52,97 @@ pub enum Timing {
 /// ACT delays are in units of 25 ms.
 const DELAY_UNIT_MS: f32 = 25.0;
 
-// ponytail: standard jobs only; the client's Lua job tables cover the rest once a Lua VM is in.
-/// Body sprite name under data\sprite\인간족\몸통\ for a job ID.
-pub fn job_sprite_name(job: u16) -> Option<&'static str> {
-    Some(match job {
-        0 | 4001 => "초보자",
-        1 | 4002 => "검사",
-        2 | 4003 => "마법사",
-        3 | 4004 => "궁수",
-        4 | 4005 => "성직자",
-        5 | 4006 => "상인",
-        6 | 4007 => "도둑",
-        7 => "기사",
-        8 => "프리스트",
-        9 => "위저드",
-        10 => "제철공",
-        11 => "헌터",
-        12 => "어세신",
-        13 => "페코페코_기사",
-        14 => "크루세이더",
-        15 => "몽크",
-        16 => "세이지",
-        17 => "로그",
-        18 => "연금술사",
-        19 => "바드",
-        20 => "무희",
-        21 => "신페코크루세이더",
-        23 => "슈퍼노비스",
-        24 => "건너",
-        25 => "닌자",
-        4008 => "로드나이트",
-        4009 => "하이프리",
-        4010 => "하이위저드",
-        4011 => "화이트스미스",
-        4012 => "스나이퍼",
-        4013 => "어쌔신크로스",
-        4014 => "로드페코",
-        4015 => "팔라딘",
-        4016 => "챔피온",
-        4017 => "프로페서",
-        4018 => "스토커",
-        4019 => "크리에이터",
-        4020 => "클라운",
-        4046 => "태권소년",
-        4047 => "권성",
-        4049 => "소울링커",
-        4054 => "룬나이트",
-        4055 => "워록",
-        4056 => "레인져",
-        4057 => "아크비숍",
-        4058 => "미케닉",
-        4059 => "길로틴크로스",
-        4067 => "소서러",
-        4068 => "민스트럴",
-        4070 => "슈라",
-        4071 => "제네릭",
-        4072 => "쉐도우체이서",
-        4218 | 4220 => "summoner",
-        4308 => "spirit_handler",
-        _ => return None,
-    })
+/// A job's sprite names: its body (also its .imf and garment motions), its weapons' folder and file prefix, and its
+/// body dyes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct JobSprites {
+    pub body: &'static str,
+    pub weapon: &'static str,
+    pub palette: &'static str,
+}
+
+/// The sprite names of a job (src/job_sprites.txt), mounted and costume bodies included.
+pub fn job_sprites(job: u16) -> Option<JobSprites> {
+    static TABLE: LazyLock<HashMap<u16, JobSprites>> = LazyLock::new(|| parse_job_sprites(include_str!("job_sprites.txt")));
+    TABLE.get(&job).copied()
+}
+
+/// Lines of job, body, weapon and palette names, tab-separated; `#` starts a comment line.
+fn parse_job_sprites(text: &'static str) -> HashMap<u16, JobSprites> {
+    text.lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            let job = fields.next()?.parse().ok()?;
+            Some((job, JobSprites { body: fields.next()?, weapon: fields.next()?, palette: fields.next()? }))
+        })
+        .collect()
+}
+
+/// Option bits (rathena's OPTION_*) that put a player in another body: outfits, mounts and the Star Gladiator's
+/// union.
+const WEDDING: u32 = 0x1000;
+const UNION: u32 = 0x8000;
+const XMAS: u32 = 0x1_0000;
+const SUMMER: u32 = 0x4_0000;
+const HANBOK: u32 = 0x800_0000;
+const OKTOBERFEST: u32 = 0x1000_0000;
+const RIDING: u32 = 0x20;
+/// The five dragon colours.
+const DRAGONS: [u32; 5] = [0x8_0000, 0x80_0000, 0x100_0000, 0x200_0000, 0x400_0000];
+const WOLF_RIDING: u32 = 0x20_0000;
+const MADOGEAR: u32 = 0x40_0000;
+/// All of them: the only option bits a look keeps.
+pub const BODY_OPTIONS: u32 =
+    WEDDING | UNION | XMAS | SUMMER | HANBOK | OKTOBERFEST | RIDING | DRAGONS[0] | DRAGONS[1] | DRAGONS[2] | DRAGONS[3] | DRAGONS[4] | WOLF_RIDING | MADOGEAR;
+
+/// The job whose body a player of `job` is drawn with under `option`: a wedding or holiday outfit (not in the union),
+/// else its mount's or union's body, else its own.
+pub fn sprite_job(job: u16, option: u32) -> u16 {
+    if option & WEDDING != 0 {
+        return 22;
+    }
+    if option & UNION == 0
+        && let Some(&(_, outfit)) = [(XMAS, 26), (SUMMER, 27), (HANBOK, 28), (OKTOBERFEST, 29)].iter().find(|(bit, _)| option & bit != 0)
+    {
+        return outfit;
+    }
+    let bodies: [(u32, &[(u16, u16)]); 9] = [
+        (RIDING, &[(7, 13), (14, 21), (4008, 4014), (4015, 4022), (4030, 4036), (4037, 4044), (4066, 4082), (4073, 4083), (4102, 4110), (4258, 4281)]),
+        (DRAGONS[0], &[(4054, 4080), (4060, 4081), (4096, 4109), (4252, 4280)]),
+        (DRAGONS[1], &[(4054, 4088), (4060, 4089)]),
+        (DRAGONS[2], &[(4054, 4090), (4060, 4091)]),
+        (DRAGONS[3], &[(4054, 4092), (4060, 4093)]),
+        (DRAGONS[4], &[(4054, 4094), (4060, 4095)]),
+        (WOLF_RIDING, &[(4056, 4084), (4062, 4085), (4098, 4111), (4257, 4278)]),
+        (MADOGEAR, &[(4058, 4086), (4064, 4087), (4100, 4112), (4253, 4279)]),
+        (UNION, &[(4047, 4048), (4226, 4238), (4239, 4243), (4241, 4244), (4302, 4316)]),
+    ];
+    bodies.iter().filter(|(bit, _)| option & bit != 0).flat_map(|(_, pairs)| pairs.iter()).find(|(from, _)| *from == job).map_or(job, |&(_, to)| to)
+}
+
+/// Outfit bodies (wedding and holidays) show no weapon or shield.
+fn outfit(job: u16) -> bool {
+    matches!(job, 22 | 26..=30)
+}
+
+/// How big a player of `job` is drawn: babies smaller (Doram babies 0.8, the first baby jobs 0.75, the rest 0.82).
+fn body_scale(job: u16) -> f32 {
+    let baby = matches!(
+        job,
+        4023..=4045 | 4096..=4112 | 4158..=4182 | 4191 | 4193..=4196 | 4205..=4210 | 4220 | 4222..=4238 | 4241 | 4242 | 4244 | 4247 | 4248 | 4352 | 4354
+    );
+    match job {
+        _ if !baby => 1.0,
+        _ if is_doram(job) => 0.8,
+        4023..=4029 | 4045 | 4191 => 0.75,
+        _ => 0.82,
+    }
 }
 
 /// Doram jobs live under 도람족 instead of 인간족.
 pub fn is_doram(job: u16) -> bool {
-    matches!(job, 4218 | 4220 | 4308)
+    matches!(job, 4217..=4221 | 4308 | 4315)
 }
 
 struct Layer {
@@ -133,6 +161,8 @@ enum Part {
     HeadMid,
     HeadTop,
     Weapon,
+    /// The weapon's glow (`_검광`), right over it.
+    WeaponGlow,
     Shield,
     Robe,
 }
@@ -158,6 +188,8 @@ pub struct Look {
     pub head_mid: u16,
     pub head_bottom: u16,
     pub robe: u16,
+    /// The option bits that change the body (`BODY_OPTIONS`): outfits and mounts.
+    pub option: u32,
 }
 
 /// The attack motion for a player's job and weapon type: action 5, 10 or 11.
@@ -437,13 +469,20 @@ pub struct SpriteSet {
     layers: Vec<Layer>,
     /// Laid out like a player's body: standing and sitting frames go by head direction.
     player: bool,
+    /// A player's: where its garment, head and headgear go among its layers.
+    dressing: Option<Dressing>,
+    /// How big it's drawn (babies are smaller).
+    scale: f32,
     textures: HashMap<ImageKey, Texture>,
 }
 
 impl SpriteSet {
     pub fn player(grf: &Grf, look: &Look, tables: &LookTables) -> Option<Self> {
         let sex = if look.sex == 0 { "여" } else { "남" };
-        let class = job_sprite_name(look.job)?;
+        // Outfits and mounts change the body; the weapons and dyes go by it too.
+        let job = sprite_job(look.job, look.option);
+        let names = job_sprites(job)?;
+        let class = names.body;
         let race = if is_doram(look.job) { "도람족" } else { "인간족" };
         // Doram palettes sit in their own folder.
         let palettes = if is_doram(look.job) { "data\\palette\\도람족\\머리" } else { "data\\palette\\머리" };
@@ -457,11 +496,12 @@ impl SpriteSet {
         };
         // Color 0 is the sprite's own palette.
         let dye = |path: String, color: u16| -> Option<Palette> { (color > 0).then(|| grf.read(&path).ok().and_then(|bytes| sprite::parse_palette(&bytes)))? };
+        let body_palettes = if is_doram(look.job) { "data\\palette\\도람족\\body" } else { "data\\palette\\몸" };
         // ponytail: there is no head sprite 0; rathena allows hair 0, so show the first style.
         let hair = look.hair.max(1);
         let body = load(
             format!("data\\sprite\\{race}\\몸통\\{sex}\\{class}_{sex}"),
-            dye(format!("data\\palette\\몸\\{class}_{sex}_{}.pal", look.clothes_color), look.clothes_color),
+            dye(format!("{body_palettes}\\{}_{sex}_{}.pal", names.palette, look.clothes_color), look.clothes_color),
             Part::Body,
         )?;
         let head = load(
@@ -469,10 +509,11 @@ impl SpriteSet {
             dye(format!("{palettes}\\머리{hair}_{sex}_{}.pal", look.hair_color), look.hair_color),
             Part::Head,
         );
-        // A headgear filling several slots shows once.
+        // A headgear filling several slots shows once. Doram wear their own cut of some.
         let headgear = |view: u16, part: Part| {
             let name = tables.headgears.get(&view)?;
-            load(format!("data\\sprite\\악세사리\\{sex}\\{sex}{name}"), None, part)
+            let doram = is_doram(look.job).then(|| load(format!("data\\sprite\\악세사리\\{sex}_doram\\{sex}{name}"), None, part)).flatten();
+            doram.or_else(|| load(format!("data\\sprite\\악세사리\\{sex}\\{sex}{name}"), None, part))
         };
         let bottom = headgear(look.head_bottom, Part::HeadBottom);
         let mid = (look.head_mid != look.head_bottom).then(|| headgear(look.head_mid, Part::HeadMid)).flatten();
@@ -480,7 +521,8 @@ impl SpriteSet {
         let weapon = (look.weapon > 0).then(|| {
             let view = tables.view(look.weapon);
             let name = tables.weapons.get(&view).cloned().unwrap_or_else(|| format!("_{view}"));
-            load(format!("data\\sprite\\{race}\\{class}\\{class}_{sex}{name}"), None, Part::Weapon)
+            let path = format!("data\\sprite\\{race}\\{0}\\{0}_{sex}{name}", names.weapon);
+            (load(path.clone(), None, Part::Weapon), load(format!("{path}_검광"), None, Part::WeaponGlow))
         });
         // The four classic shields have names; newer ones are named by their view ID.
         let shield = (look.shield > 0).then(|| {
@@ -493,15 +535,94 @@ impl SpriteSet {
             };
             load(format!("data\\sprite\\방패\\{class}\\{class}_{sex}{name}"), None, Part::Shield)
         });
-        let robe = tables.robes.get(&look.robe).and_then(|name| load(format!("data\\sprite\\로브\\{name}\\{sex}\\{class}_{sex}"), None, Part::Robe));
+        // Most garments share one picture for every job (Doram have their own); how it moves is per job.
+        let robe = tables.robes.get(&look.robe).and_then(|name| {
+            let per_job = format!("data\\sprite\\로브\\{name}\\{sex}\\{class}_{sex}");
+            let shared = format!("data\\sprite\\로브\\{name}\\{name}{}.spr", if is_doram(look.job) { "_doram" } else { "" });
+            Some(Layer {
+                spr: Spr::parse(&grf.read(&shared).or_else(|_| grf.read(&format!("{per_job}.spr"))).ok()?).ok()?,
+                act: Act::parse(&grf.read(&format!("{per_job}.act")).ok()?).ok()?,
+                palette: None,
+                part: Part::Robe,
+            })
+        });
+
+        let rules = tables.layers.as_ref();
+        let robe_over_body = match &robe {
+            Some(_) => body
+                .act
+                .actions
+                .iter()
+                .enumerate()
+                .map(|(index, frames)| {
+                    // Without the tables: over the body only facing away.
+                    let fallback = (3..=5).contains(&(index % 8));
+                    (0..frames.len())
+                        .map(|frame| rules.and_then(|rules| rules.robe_over_body(look.robe, look.sex, job, index, frame)).unwrap_or(fallback))
+                        .collect()
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        let place = |view: u16, slot: u8, default: i32| -> [Option<i32>; 8] {
+            std::array::from_fn(|direction| {
+                let place = rules.and_then(|rules| rules.headgear_priority(direction, slot, view)).unwrap_or(default);
+                (place != -1).then_some(place)
+            })
+        };
+        let headgear =
+            [(&bottom, Part::HeadBottom, look.head_bottom, 2, 300), (&mid, Part::HeadMid, look.head_mid, 4, 100), (&top, Part::HeadTop, look.head_top, 3, 200)]
+                .into_iter()
+                .filter(|(layer, ..)| layer.is_some())
+                .map(|(_, part, view, slot, default)| {
+                    let offsets = std::array::from_fn(|direction| {
+                        is_doram(look.job).then(|| rules?.doram_headgear_offset(view, direction, look.sex)).flatten().unwrap_or_default()
+                    });
+                    Worn { part, places: place(view, slot, default), offsets }
+                })
+                .collect();
+        let dressing = Dressing {
+            head_first: grf.read(&format!("data\\imf\\{class}_{sex}.imf")).ok().and_then(|bytes| sprite::parse_imf(&bytes).ok()).unwrap_or_default(),
+            robe_over_body,
+            robe_over_headgear: robe.is_some() && rules.is_some_and(|rules| rules.robe_over_headgear(look.robe)),
+            headgear,
+            head_hidden: [look.head_top, look.head_mid, look.head_bottom].iter().any(|view| HEAD_HIDING.contains(view)),
+            outfit: outfit(job),
+        };
+        let (weapon, glow) = weapon.unwrap_or_default();
         Some(Self {
-            layers: [Some(body), head, bottom, mid, top, weapon.flatten(), shield.flatten(), robe].into_iter().flatten().collect(),
+            layers: [Some(body), head, bottom, mid, top, weapon, glow, shield.flatten(), robe].into_iter().flatten().collect(),
             player: true,
+            dressing: Some(dressing),
+            scale: body_scale(job),
             textures: HashMap::new(),
         })
     }
 
     /// An NPC or monster: one sprite named in the client's `JobNameTable`.
+    /// A mercenary (jobs 6017 to 6046): its body by the job name table's path under the human bodies (`여\활용병`), laid
+    /// out like a player's, and the weapon of its kind (the unit carries none).
+    pub fn mercenary(grf: &Grf, job: u16, name: &str) -> Option<Self> {
+        // ponytail: the weapons' glow sprites (`_검광`) are left out.
+        let weapon = match job {
+            6017..=6026 => "활용병_활",
+            6027..=6036 => "창용병_창",
+            6037..=6046 => "검용병_검",
+            _ => return None,
+        };
+        let load = |path: String, part: Part| -> Option<Layer> {
+            Some(Layer {
+                spr: Spr::parse(&grf.read(&format!("{path}.spr")).ok()?).ok()?,
+                act: Act::parse(&grf.read(&format!("{path}.act")).ok()?).ok()?,
+                palette: None,
+                part,
+            })
+        };
+        let body = load(format!("data\\sprite\\인간족\\몸통\\{name}"), Part::Body)?;
+        let weapon = load(format!("data\\sprite\\인간족\\용병\\{weapon}"), Part::Weapon);
+        Some(Self { layers: [Some(body), weapon].into_iter().flatten().collect(), player: true, dressing: None, scale: 1.0, textures: HashMap::new() })
+    }
+
     pub fn single(grf: &Grf, name: &str, monster: bool) -> Option<Self> {
         let folders = if monster { ["몬스터", "npc"] } else { ["npc", "몬스터"] };
         folders.iter().find_map(|folder| Self::at(grf, &format!("data\\sprite\\{folder}\\{name}")))
@@ -522,6 +643,8 @@ impl SpriteSet {
                 part: Part::Body,
             }],
             player: false,
+            dressing: None,
+            scale: 1.0,
             textures: HashMap::new(),
         })
     }
@@ -568,51 +691,48 @@ impl SpriteSet {
         };
         let body_frame = &body_frames[frame_index];
 
-        // Layering by the direction seen: a shield turned away goes behind, a garment shows
-        // behind the body unless the character faces away, headgear goes over the head and the weapon between them.
-        let direction = index % 8;
-        let shield_behind = (2..=5).contains(&direction);
-        let facing_away = (3..=5).contains(&direction);
-        let mut order = Vec::new();
-        if shield_behind {
-            order.push(Part::Shield);
-        }
-        if !facing_away {
-            order.push(Part::Robe);
-        }
-        order.extend([Part::Body, Part::Head, Part::HeadMid, Part::HeadTop, Part::Weapon, Part::HeadBottom]);
-        if !shield_behind {
-            order.push(Part::Shield);
-        }
-        if facing_away {
-            order.push(Part::Robe);
-        }
+        let frames_of =
+            |part: Part| self.layers.iter().position(|layer| layer.part == part).and_then(|number| Some((number, self.layers[number].act.actions.get(index)?)));
+        // The head's frames count the frames of what's worn on it.
+        let head_count = frames_of(Part::Head).map(|(_, frames)| frames.len()).filter(|&count| count > 0).unwrap_or(body_frames.len());
+        let order = match &self.dressing {
+            Some(dressing) => dressing.order(index, frame_index),
+            None => vec![Part::Body, Part::Weapon],
+        };
 
         let mut placed = Vec::new();
         for part in order {
-            let Some((number, layer)) = self.layers.iter().enumerate().find(|(_, layer)| layer.part == part) else { continue };
-            let frame = if part == Part::Body {
-                body_frame
-            } else {
-                // Single-action sprites (some weapons) repeat their one action.
-                let Some(frames) = layer.act.actions.get(index % layer.act.actions.len().max(1)).filter(|frames| !frames.is_empty()) else { continue };
-                let chosen = match (look, part) {
-                    (Some(look), Part::Robe) => look.min(frames.len() - 1),
-                    (Some(look), part) if part.on_head() => {
-                        let group = (frames.len() / 3).max(1);
-                        (animated(layer, group) + group * look) % frames.len()
-                    }
-                    _ if part.on_head() => frame_index % frames.len(),
-                    _ => animated(layer, frames.len()),
-                };
-                &frames[chosen]
+            let Some((number, frames)) = frames_of(part) else { continue };
+            let layer = &self.layers[number];
+            // The head goes with the body's frame (standing or sitting, the head direction's), as do weapons and
+            // shields; garments and headgear too unless they have frames to play in turn (garments then from the
+            // first group while standing or sitting).
+            let own = |count: usize| animated(layer, count);
+            let frame = match part {
+                Part::Body => Some(frame_index),
+                Part::Robe => layer_frame(frames.len(), head_count, if look.is_some() { 0 } else { frame_index }, frame_index, own),
+                Part::HeadBottom | Part::HeadMid | Part::HeadTop => layer_frame(frames.len(), head_count, frame_index, frame_index, own),
+                Part::Head | Part::Weapon | Part::WeaponGlow | Part::Shield => (frame_index < frames.len()).then_some(frame_index),
             };
-            let shift = if part.on_head() { sprite::head_shift(body_frame, frame) } else { [0, 0] };
-            placed.extend(
-                sprite::place(&layer.spr, frame, shift)
-                    .into_iter()
-                    .map(|placement| ((number, placement.kind, placement.image, placement.color), placement.position, placement.size)),
-            );
+            let Some(frame) = frame.and_then(|frame| frames.get(frame)) else { continue };
+            let mut shift = if part.on_head() { sprite::head_shift(body_frame, frame) } else { [0, 0] };
+            // Headgear moved for its wearer, by the way the head looks (turned one way or the other off the body's).
+            if let Some(Worn { offsets, .. }) = self.dressing.as_ref().and_then(|dressing| dressing.headgear.iter().find(|worn| worn.part == part)) {
+                let turn = match look {
+                    Some(1) => 1,
+                    Some(2) => 7,
+                    _ => 0,
+                };
+                let [x, y] = offsets[(index + turn) % 8];
+                shift = [shift[0] + x, shift[1] + y];
+            }
+            placed.extend(sprite::place(&layer.spr, frame, shift).into_iter().map(|placement| {
+                (
+                    (number, placement.kind, placement.image, placement.color),
+                    placement.position.map(|value| value * self.scale),
+                    placement.size.map(|value| value * self.scale),
+                )
+            }));
         }
         placed
     }
@@ -662,6 +782,116 @@ fn animated(layer: &Layer, index: usize, count: usize, timing: Timing) -> usize 
             (elapsed_ms / frame_ms) as usize % count
         }
         Timing::Span(progress) => ((progress * count as f32) as usize).min(count - 1),
+    }
+}
+
+/// Which of a garment's or headgear's `count` frames shows with the body at frame `base`. One with n frames to each of
+/// the head's `head_count` plays them in turn (`own(n)`: which of n frames its own clock is at) within group `group`, so
+/// balloons bob and wings flap; any other shows frame `base`. None when it has no such frame.
+fn layer_frame(count: usize, head_count: usize, group: usize, base: usize, own: impl Fn(usize) -> usize) -> Option<usize> {
+    let n = count / head_count.max(1);
+    let frame = if n > 1 && count.is_multiple_of(head_count) { own(n) + n * group } else { base };
+    (frame < count).then_some(frame)
+}
+
+/// Where a garment goes among a character's layers.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum RobeAt {
+    /// Behind everything.
+    Behind,
+    /// Over the body, under the head.
+    OverBody,
+    /// Over the body and the headgear too (bags).
+    OverHeadgear,
+}
+
+/// Garments over the headgear go at this place among the layers (headgear: middle 100, upper 200, lower 300).
+const OVER_HEADGEAR: i32 = 400;
+
+/// A character's layers back to front, facing `direction` (0 the camera, turning clockwise): a garment behind, a shield
+/// turned away, the body and head (the head behind the body in some frames facing away: `head_first`) with a garment
+/// over the body between them, the weapon and a shield turned this way (when `armed`), then the headgear by its
+/// place (`headgear`: part and place; the body's layers are 1, 2, ... so a negative place goes behind them all), and a
+/// garment worn over the headgear.
+fn stack(direction: usize, armed: bool, head_first: bool, robe: RobeAt, headgear: &[(Part, i32)]) -> Vec<Part> {
+    let turned_away = (2..=5).contains(&direction);
+    let mut body = vec![Part::Body];
+    if robe == RobeAt::OverBody {
+        body.push(Part::Robe);
+    }
+    let mut walk = Vec::new();
+    if robe == RobeAt::Behind {
+        walk.push(Part::Robe);
+    }
+    if armed && turned_away {
+        walk.push(Part::Shield);
+    }
+    if head_first {
+        walk.push(Part::Head);
+        walk.extend(body);
+    } else {
+        walk.extend(body);
+        walk.push(Part::Head);
+    }
+    if armed {
+        walk.extend([Part::Weapon, Part::WeaponGlow]);
+        if !turned_away {
+            walk.push(Part::Shield);
+        }
+    }
+    let mut placed: Vec<(i32, Part)> = (1..).zip(walk).chain(headgear.iter().map(|&(part, place)| (place, part))).collect();
+    if robe == RobeAt::OverHeadgear {
+        placed.push((OVER_HEADGEAR, Part::Robe));
+    }
+    placed.sort_by_key(|&(place, _)| place);
+    placed.into_iter().map(|(_, part)| part).collect()
+}
+
+/// Headgear views that hide the head under them.
+const HEAD_HIDING: [u16; 7] = [331, 1931, 2171, 2494, 2587, 2606, 2607];
+
+/// A headgear layer's place among the layers facing each way (None hides it there), and how far it's moved facing
+/// each way (Doram wear some headgear a little off).
+struct Worn {
+    part: Part,
+    places: [Option<i32>; 8],
+    offsets: [[i32; 2]; 8],
+}
+
+/// What places a player's garment, head and headgear among its layers.
+struct Dressing {
+    /// By action and frame: the head goes behind the body (the job's .imf).
+    head_first: Vec<Vec<bool>>,
+    /// By action and body frame: the garment goes over the body rather than behind everything.
+    robe_over_body: Vec<Vec<bool>>,
+    /// Over the body, the garment goes over the headgear too.
+    robe_over_headgear: bool,
+    /// Each headgear layer: its place and how far it's moved, facing each way.
+    headgear: Vec<Worn>,
+    /// The headgear hides the head.
+    head_hidden: bool,
+    /// An outfit body: no weapon or shield.
+    outfit: bool,
+}
+
+impl Dressing {
+    /// The layers to draw in action `index` (direction included) at body frame `frame`, back to front.
+    fn order(&self, index: usize, frame: usize) -> Vec<Part> {
+        let direction = index % 8;
+        let at = |table: &[Vec<bool>]| table.get(index).and_then(|frames| frames.get(frame)).copied().unwrap_or(false);
+        let robe = match (at(&self.robe_over_body), self.robe_over_headgear) {
+            (false, _) => RobeAt::Behind,
+            (true, false) => RobeAt::OverBody,
+            (true, true) => RobeAt::OverHeadgear,
+        };
+        let headgear: Vec<(Part, i32)> = self.headgear.iter().filter_map(|worn| Some((worn.part, worn.places[direction]?))).collect();
+        // Weapons and shields show in the battle stance and the weapon attacks.
+        let armed = !self.outfit && matches!(index, 32..=39 | 80..=95);
+        let mut order = stack(direction, armed, at(&self.head_first), robe, &headgear);
+        if self.head_hidden {
+            order.retain(|&part| part != Part::Head);
+        }
+        order
     }
 }
 
@@ -746,6 +976,8 @@ pub struct Actor {
     pub cart: Option<SpriteSet>,
     /// The action and frame last seen, so a frame's sound plays once each time it comes up.
     heard: Option<(usize, usize)>,
+    /// Locked by Blade Stop or Cursed Circle since then: the animation holds that frame.
+    pub held: Option<Instant>,
 }
 
 impl Actor {
@@ -772,6 +1004,7 @@ impl Actor {
             remove_at: None,
             cart: None,
             heard: None,
+            held: None,
         }
     }
 
@@ -855,6 +1088,8 @@ impl Actor {
 
     /// Current animation and how far into it: a one-shot action while it plays, else idle or walk.
     pub fn animation(&self, now: Instant) -> (usize, Timing) {
+        // ponytail: a locked unit holding its frame is an estimate of how the official client shows it.
+        let now = self.held.map_or(now, |at| at.min(now));
         if let Some(shot) = self.shot.as_ref().filter(|shot| shot.started <= now) {
             let progress = now.saturating_duration_since(shot.started).as_secs_f32() * 1000.0 / shot.duration_ms;
             if progress < 1.0 || shot.hold {
@@ -881,7 +1116,7 @@ mod tests {
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn standing_players_hold_their_head_still() {
-        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let Some(grf) = Grf::for_tests() else { return };
         let tables = rustnarok_client::lua::look_tables(&grf).unwrap();
         let novice = SpriteSet::player(&grf, &Look { hair: 1, ..Default::default() }, &tables).unwrap();
         for action in [IDLE, SIT] {
@@ -894,21 +1129,98 @@ mod tests {
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
     fn dresses_a_player() {
-        let grf = Grf::open(std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into())).unwrap();
+        let Some(grf) = Grf::for_tests() else { return };
         let tables = rustnarok_client::lua::look_tables(&grf).unwrap();
         let look = Look { hair: 1, weapon: 1, shield: 1, head_top: 16, head_mid: 12, head_bottom: 52, robe: 3, ..Default::default() };
         let novice = SpriteSet::player(&grf, &look, &tables).unwrap();
         let parts: Vec<Part> = novice.layers.iter().map(|layer| layer.part).collect();
-        assert_eq!(parts, [Part::Body, Part::Head, Part::HeadBottom, Part::HeadMid, Part::HeadTop, Part::Weapon, Part::Shield, Part::Robe]);
-        // Facing the camera the garment goes first, behind the body (the dagger and guard hide behind it then).
+        assert_eq!(parts, [Part::Body, Part::Head, Part::HeadBottom, Part::HeadMid, Part::HeadTop, Part::Weapon, Part::WeaponGlow, Part::Shield, Part::Robe]);
+        // Facing the camera the garment goes first, behind the body.
         let layers = |index: usize| -> Vec<usize> { novice.place(index, 0, Timing::Loop(0.0)).iter().map(|((layer, ..), ..)| *layer).collect() };
-        assert_eq!(layers(0), [7, 0, 1, 3, 4, 2]);
-        // Facing away it goes last, over the hat. The dagger and guard only show in the battle stance (and the
-        // dagger in its attack motion).
-        assert_eq!(layers(4).last(), Some(&7));
+        assert_eq!(layers(0), [8, 0, 1, 3, 4, 2]);
+        // Facing away it goes over the body, under the head and the hats. The dagger and guard only show in the battle
+        // stance (and the dagger in its attack motion), under the hats.
+        assert_eq!(layers(4), [0, 8, 1, 3, 4, 2]);
         let ready = layers(READY * 8);
-        assert!(ready.contains(&5) && ready.contains(&6), "{ready:?}");
+        assert_eq!(ready[ready.len() - 3..], [3, 4, 2], "{ready:?}");
+        assert!(ready.contains(&5) && ready.contains(&7), "{ready:?}");
         assert!(layers(attack_action(0, 0, 1) * 8).contains(&5));
+        // A garment drawn once for every job (its picture shared, its motion per job) shows.
+        let ribbon = SpriteSet::player(&grf, &Look { hair: 1, robe: 42, ..Default::default() }, &tables).unwrap();
+        assert!(ribbon.layers.iter().any(|layer| layer.part == Part::Robe));
+        // An animated wing flaps while its wearer stands still.
+        let winged = SpriteSet::player(&grf, &Look { hair: 1, robe: 61, ..Default::default() }, &tables).unwrap();
+        assert_ne!(winged.place(0, 0, Timing::Loop(0.0)), winged.place(0, 0, Timing::Loop(100.0)));
+    }
+
+    #[test]
+    fn picks_each_layers_frame() {
+        // Standing with the head turned (base and group 1): a 3-frame hat shows frame 1 whatever its clock says; a
+        // 24-frame balloon plays frames 8 to 15, and a 24-frame wing (group 0) frames 0 to 7.
+        assert_eq!(layer_frame(3, 3, 1, 1, |_| 2), Some(1));
+        assert_eq!(layer_frame(24, 3, 1, 1, |n| n - 1), Some(15));
+        assert_eq!(layer_frame(24, 3, 0, 1, |_| 3), Some(3));
+        // Walking: in step with the body; a layer short of the body's frame doesn't show.
+        assert_eq!(layer_frame(8, 8, 5, 5, |_| 0), Some(5));
+        assert_eq!(layer_frame(4, 8, 5, 5, |_| 0), None);
+        assert_eq!(layer_frame(16, 8, 5, 5, |n| n - 1), Some(11));
+    }
+
+    #[test]
+    fn names_each_jobs_sprites() {
+        let table = parse_job_sprites("# job\tbody\tweapon\tpalette\n4014\t로드페코\t페코페코_기사\t로드페코\nbad line\n");
+        assert_eq!(table.len(), 1);
+        assert_eq!(table[&4014], JobSprites { body: "로드페코", weapon: "페코페코_기사", palette: "로드페코" });
+        // The table in the repository: a transcendent knight's weapons are a knight's, a Doram's dyes their own.
+        assert_eq!(job_sprites(4008).map(|names| (names.body, names.weapon)), Some(("로드나이트", "기사")));
+        assert_eq!(job_sprites(4218).map(|names| names.palette), Some("묘족"));
+        assert!(job_sprites(4023).is_some() && job_sprites(4080).is_some() && job_sprites(31).is_none());
+    }
+
+    #[test]
+    fn mounts_and_outfits_change_the_body() {
+        assert_eq!(sprite_job(7, 0), 7);
+        assert_eq!(sprite_job(7, RIDING), 13);
+        assert_eq!(sprite_job(4008, RIDING), 4014);
+        assert_eq!(sprite_job(4066, RIDING), 4082);
+        // Riding means nothing to a job without a mount.
+        assert_eq!(sprite_job(4054, RIDING), 4054);
+        assert_eq!(sprite_job(4054, DRAGONS[0]), 4080);
+        assert_eq!(sprite_job(4060, DRAGONS[3]), 4093);
+        assert_eq!(sprite_job(4056, WOLF_RIDING), 4084);
+        assert_eq!(sprite_job(4058, MADOGEAR), 4086);
+        assert_eq!(sprite_job(4047, UNION), 4048);
+        // Outfits come first: a wedding over everything, holidays unless in the union.
+        assert_eq!(sprite_job(7, WEDDING | RIDING), 22);
+        assert_eq!(sprite_job(7, XMAS | RIDING), 26);
+        assert_eq!(sprite_job(4047, XMAS | UNION), 4048);
+        assert!(outfit(sprite_job(1, HANBOK)) && !outfit(sprite_job(1, 0)));
+        // Hiding, carts and the like don't change the body.
+        assert_eq!(BODY_OPTIONS & (0x2 | 0x8 | 0x40), 0);
+    }
+
+    #[test]
+    fn babies_are_smaller() {
+        assert_eq!(body_scale(4008), 1.0);
+        assert_eq!(body_scale(4023), 0.75);
+        assert_eq!(body_scale(4030), 0.82);
+        assert_eq!(body_scale(4036), 0.82);
+        assert_eq!(body_scale(4220), 0.8);
+        assert_eq!(body_scale(4218), 1.0);
+    }
+
+    #[test]
+    fn stacks_layers_back_to_front() {
+        use Part::*;
+        let hats = [(HeadMid, 100), (HeadTop, 200), (HeadBottom, 300)];
+        // Facing the camera with a cape behind: the cape, body, head, then headgear over all of it.
+        assert_eq!(stack(0, false, false, RobeAt::Behind, &hats), [Robe, Body, Head, HeadMid, HeadTop, HeadBottom]);
+        // In the battle stance the weapon, its glow and a shield turned this way go between the head and the headgear.
+        assert_eq!(stack(0, true, false, RobeAt::Behind, &hats), [Robe, Body, Head, Weapon, WeaponGlow, Shield, HeadMid, HeadTop, HeadBottom]);
+        // Turned away: the shield first, the garment over the body under the head.
+        assert_eq!(stack(4, true, false, RobeAt::OverBody, &hats), [Shield, Body, Robe, Head, Weapon, WeaponGlow, HeadMid, HeadTop, HeadBottom]);
+        // The head behind the body, a bag over the headgear, and a headgear placed behind everything.
+        assert_eq!(stack(3, false, true, RobeAt::OverHeadgear, &[(HeadTop, 200), (HeadBottom, -100)]), [HeadBottom, Head, Body, HeadTop, Robe]);
     }
 
     #[test]

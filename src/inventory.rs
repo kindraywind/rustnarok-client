@@ -35,6 +35,34 @@ pub const BASE_SLOTS: usize = 100;
 /// Where the client first opens it.
 const DEFAULT_POSITION: [f32; 2] = [0.0, 172.0];
 pub const UNIDENTIFIED: [u8; 3] = [0xAA, 0xAA, 0xAA];
+/// Broken and bound items' names.
+// ponytail: rathena's comment says the client shows bound items in yellow; the exact colors aren't knowable.
+pub const BROKEN: [u8; 3] = [0xFF, 0x50, 0x50];
+pub const BOUND: [u8; 3] = [0xFF, 0xFF, 0x00];
+
+/// The color of an item's name: broken red, bound yellow, unidentified grey.
+pub fn name_color(item: &InventoryItem) -> [u8; 3] {
+    if item.broken {
+        BROKEN
+    } else if item.bind == 2 {
+        BOUND
+    } else if item.identified {
+        [255; 3]
+    } else {
+        UNIDENTIFIED
+    }
+}
+
+/// The egg of the pet that's out: rathena marks it broken and still lists it when it resends the inventory. An egg
+/// is armor worn nowhere.
+pub fn hidden_egg(item: &InventoryItem) -> bool {
+    item.broken && item.kind == net::ITEM_ARMOR && item.location == 0
+}
+
+/// What a resent list has broken that wasn't before (`before`: the broken items' indexes then).
+pub fn newly_broken<'a>(before: &[u16], items: &'a [InventoryItem]) -> Vec<&'a InventoryItem> {
+    items.iter().filter(|item| item.broken && !hidden_egg(item) && !before.contains(&item.index)).collect()
+}
 
 /// The window's own bitmaps, all from data.grf.
 pub struct Assets {
@@ -43,6 +71,8 @@ pub struct Assets {
     cell: Texture,
     count: Texture,
     resize: Texture,
+    /// Marks an item in the Swap Equipment set.
+    switch: Texture,
 }
 
 impl Assets {
@@ -55,6 +85,7 @@ impl Assets {
             cell: image(format!("{basic}itemwin_mid.bmp")),
             count: image(format!("{UI}inventory\\icon_num.bmp")),
             resize: image(format!("{UI}btn_resize.bmp")),
+            switch: image(format!("{UI}swap_equipment\\ico_change.bmp")),
         }
     }
 }
@@ -287,6 +318,10 @@ impl Inventory {
             if let Some(Some(icon)) = info.and_then(|info| icons.get(&icon_path(info, item.identified))) {
                 layer.sprites.push((icon, offset(place, [ICON_OFFSET, ICON_OFFSET]), icon.size));
             }
+            // ponytail: the mark's corner isn't knowable.
+            if item.switch != 0 {
+                layer.sprites.push((&assets.switch, place, assets.switch.size));
+            }
             if tab_of(item.kind) != 1 {
                 let amount = item.amount.to_string();
                 let corner = offset(place, [CELL - 1.0 - font.width(&amount), 15.0]);
@@ -296,7 +331,7 @@ impl Inventory {
             if contains(place, [CELL, CELL], cursor) {
                 let name = item_name(items, item.id, item.identified, item.refine);
                 let text = messages::fill(message(messages::ITEM_AMOUNT), &[&name, &item.amount]);
-                window::tooltip(tooltip, chrome, font, &text, offset(place, [35.0, 0.0]), if item.identified { [255; 3] } else { UNIDENTIFIED });
+                window::tooltip(tooltip, chrome, font, &text, offset(place, [35.0, 0.0]), name_color(item));
             }
         }
 
@@ -324,6 +359,19 @@ mod tests {
 
     fn item(index: u16, kind: u8, amount: u16) -> InventoryItem {
         InventoryItem { index, id: 501, kind, amount, identified: true, ..Default::default() }
+    }
+
+    #[test]
+    fn tells_broken_and_bound_items() {
+        let knife = InventoryItem { index: 4, id: 1201, kind: net::ITEM_WEAPON, location: 2, identified: true, broken: true, ..Default::default() };
+        let egg = InventoryItem { index: 5, id: 9001, kind: net::ITEM_ARMOR, broken: true, identified: true, ..Default::default() };
+        let shirt = InventoryItem { index: 6, id: 2301, kind: net::ITEM_ARMOR, location: 16, identified: true, bind: 2, ..Default::default() };
+        let items = [knife.clone(), egg.clone(), shirt.clone()];
+        // Only the knife is newly broken: the egg is the pet's, and one broken before stays quiet.
+        assert_eq!(newly_broken(&[], &items).iter().map(|item| item.index).collect::<Vec<_>>(), [4]);
+        assert!(newly_broken(&[4], &items).is_empty());
+        assert!(hidden_egg(&egg) && !hidden_egg(&knife));
+        assert_eq!([&knife, &shirt].map(name_color), [BROKEN, BOUND]);
     }
 
     #[test]

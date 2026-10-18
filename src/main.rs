@@ -5,13 +5,14 @@
 //! Dev switches: `RUSTNAROK_CLIENT_GRF` (data.grf path), `RUSTNAROK_CLIENT_SERVER` (login server, over the data folder's
 //! clientinfo.xml and the default 127.0.0.1:6900),
 //! `RUSTNAROK_CLIENT_LOGIN=user:password` (fill in and submit on start), `RUSTNAROK_CLIENT_AUTOSTART=<slot>` (then pick the first
-//! server and play that slot; any other value stops at character select), `RUSTNAROK_CLIENT_WALK=x,y` (walk there a second after entering the map),
+//! server and play that slot; any other value stops at character select), `RUSTNAROK_CLIENT_PIN=<4 digits>` (enter that PIN when
+//! the char server asks), `RUSTNAROK_CLIENT_WALK=x,y` (walk there a second after entering the map),
 //! `RUSTNAROK_CLIENT_TALK=<name>[:<n>]` (talk to that NPC, pressing "next" or "close" up to n times), `RUSTNAROK_CLIENT_ATTACK=1` (attack the
 //! nearest monster in view), `RUSTNAROK_CLIENT_SAY=<text>[|<text>...]` (type each into the chat a second after entering, e.g.
 //! GM commands or /organize; `RUSTNAROK_CLIENT_SAY_AT` seconds in instead),
 //! `RUSTNAROK_CLIENT_PICKUP=1` (pick up the nearest item once one lies around), `RUSTNAROK_CLIENT_INVENTORY=1` (open the inventory),
 //! `RUSTNAROK_CLIENT_CURSOR=x,y` (where the pointer starts, to see hover labels in screenshots),
-//! `RUSTNAROK_CLIENT_CAMERA=yaw,pitch,zoom` (start the camera turned, in degrees and zoom units),
+//! `RUSTNAROK_CLIENT_CAMERA=yaw,pitch,zoom` (the camera turned, in degrees and zoom units, on every map),
 //! `RUSTNAROK_CLIENT_WEAR=1` (put on every piece of equipment carried, once the inventory is in), `RUSTNAROK_CLIENT_EQUIPMENT=1` (open
 //! the equipment window), `RUSTNAROK_CLIENT_SHOT_LOADING=1` (screenshot the loading screen instead of the game),
 //! `RUSTNAROK_CLIENT_SKILLS=1` (open the skill window), `RUSTNAROK_CLIENT_SKILL=<id>:<level>` (use a skill 3 seconds in, on oneself
@@ -37,6 +38,7 @@
 //! `none` for the archive alone),
 //! `RUSTNAROK_CLIENT_SCREENSHOT=out.png` (save a settled frame and quit; in the game after `RUSTNAROK_CLIENT_SHOT_DELAY` seconds, 2 by default).
 
+mod achievement;
 mod actor;
 mod bank;
 mod basic_info;
@@ -45,6 +47,7 @@ mod char_make;
 mod char_select;
 mod chat;
 mod chatroom;
+mod clan;
 mod control;
 mod cursor;
 mod effects;
@@ -58,15 +61,22 @@ mod inventory;
 mod iteminfo;
 mod macros;
 mod mail;
+mod material;
 mod menu;
+mod mercenary;
 mod minimap;
+mod monster_info;
 mod options;
+mod overhead;
 mod party;
 mod pet;
 mod pick_list;
+mod picking;
+mod pin;
 mod quest;
 mod refine;
 mod render;
+mod roulette;
 mod shop;
 mod skills;
 mod sound;
@@ -74,6 +84,7 @@ mod status;
 mod storage;
 mod trade;
 mod vend;
+mod weather;
 mod window;
 mod world;
 mod worldmap;
@@ -236,6 +247,8 @@ const GUILD_CHOICE: usize = 382;
 const GUILD_INVITED: usize = 377;
 const GUILD_ONLINE: usize = 485;
 const GUILD_CHAT: [u8; 3] = [180, 255, 180];
+// ponytail: clan chat's color isn't in the data files; calibrate against the official client.
+const CLAN_CHAT: [u8; 3] = [180, 220, 255];
 /// Friends: "Register as a Friend", "(%s) wishes to be friends with you...", how adding went (821 + the result, but
 /// 819 and 820 for full lists), "%s has logged in/out".
 const FRIEND_CHOICE: usize = 358;
@@ -327,9 +340,8 @@ const MENU_CANCEL: [f32; 2] = [230.0, 91.0];
 const MENU_SELECTION: [u8; 4] = [0xCD, 0xE0, 0xFF, 0xFF];
 /// A player's action while casting or using a skill.
 const SKILL_ACTION: usize = 12;
-/// Words over a head stay this long; bubbles and cast bars sit this many cells above the feet (90/35).
+/// Words over a head stay this long.
 const SPEECH_TIME: Duration = Duration::from_secs(5);
-const OVERHEAD: f32 = 90.0 / 35.0;
 /// Emotions sit this many sprite pixels above the feet, over the head.
 const EMOTION_HEIGHT: f32 = 70.0;
 /// Spirit spheres and coins: how far from the body they circle, how high, how fast (radians a second), and how
@@ -341,8 +353,18 @@ const SPIRIT_TURN: f32 = 1.5;
 const SPIRIT_TILT: f32 = 0.4;
 /// The sphere picture's ball is about 22px across in a 94px square.
 const SPHERE_SCALE: f32 = 0.5;
-const SPEECH_WIDTH: f32 = 250.0;
-const SPEECH_LINE: f32 = 17.0;
+/// Shields, souls and charms circle at their own heights, so two kinds on one unit don't overlap; the shield and
+/// charm pictures are scaled down to about a sphere's size, and souls are spheres tinted pale violet.
+// ponytail: heights, sizes and tints are estimates; calibrate against the real client.
+const SHIELD_HEIGHT: f32 = 22.0;
+const SHIELD_SCALE: f32 = 0.22;
+const SOUL_HEIGHT: f32 = 64.0;
+const SOUL_TINT: [f32; 4] = [0.85, 0.7, 1.0, 1.0];
+const CHARM_HEIGHT: f32 = 84.0;
+const CHARM_SCALE: f32 = 0.4;
+/// Charm tints by element: water, earth, fire, wind.
+const CHARM_TINTS: [[f32; 4]; 4] = [[0.5, 0.7, 1.0, 1.0], [0.75, 0.55, 0.35, 1.0], [1.0, 0.45, 0.35, 1.0], [0.5, 1.0, 0.55, 1.0]];
+const CHARM_NAMES: [&str; 4] = ["water", "earth", "fire", "wind"];
 /// Heal, Highness Heal and Coluceo Heal report how much they healed.
 const HEAL_SKILLS: [u16; 3] = [28, 2043, 2044];
 const CAST_BAR: [f32; 2] = [60.0, 6.0];
@@ -353,6 +375,35 @@ const STATUS_ICON: f32 = 32.0;
 const STATUS_STEP: [f32; 2] = [45.0, 36.0];
 /// Steps of the clock drawn over a status icon.
 const CLOCK_STEPS: usize = 32;
+/// A skill still blocked: "There is a Delay after using a Skill.", and the words after a cooldown's seconds left.
+const SKILL_DELAY: usize = 219;
+/// The Talkie Box (a Hunter's trap holding a message), and the box asking for its message.
+// ponytail: 436 "Please type a message for the Talkie Box"; 435 may be the official one.
+const TALKIE_BOX: u16 = 125;
+const TALKIE_ASKS: usize = 436;
+/// Equipment: a break ("[%s]'s %s has been damaged.", Weapon, Armor), the item's damaged line, and binding (the
+/// question before, the line after).
+const DAMAGED: usize = 1301;
+const DAMAGED_WEAPON: usize = 1302;
+const DAMAGED_ARMOR: usize = 1303;
+const ITEM_DAMAGED: usize = 699;
+const BIND_ASKS: usize = 1327;
+const BOUND: usize = 1328;
+/// Rentals: " The [%s] item will disappear in %d minutes.", the same in seconds, and " [%s] item has been deleted
+/// from the Inventory.".
+const RENTAL_MINUTES: usize = 1256;
+const RENTAL_SECONDS: usize = 1270;
+const RENTAL_ENDED: usize = 1258;
+/// EFST_BLADESTOP, EFST_CURSEDCIRCLE_ATKER and EFST_CURSEDCIRCLE_TARGET: a unit locked with another.
+const LOCK_ICONS: [u16; 3] = [85, 416, 417];
+/// "<item> have been placed on / removed from the Swap Equipment window."
+const SWITCH_ADDED: usize = 3143;
+const SWITCH_REMOVED: usize = 3144;
+/// The Convex Mirror: no boss here, the boss will show on the minimap; its status icon (EFST_CASH_BOSS_ALARM).
+const NO_BOSS: usize = 1223;
+const BOSS_SHOWN: usize = 1225;
+const BOSS_ALARM: u16 = 253;
+const COOLDOWN_LEFT: usize = 3230;
 /// The spark of a landed hit, and a warp portal's rings.
 const EF_HIT1: u32 = 0;
 const EF_WARPZONE2: u32 = 321;
@@ -371,9 +422,10 @@ const SLOT_MISSED: usize = 3;
 const SLOT_HOLD_MS: f32 = 1500.0;
 const TAMED: usize = 1574;
 const NOT_TAMED: usize = 1575;
-/// HP/SP bars under characters: border, background, HP (low HP), SP.
+/// HP/SP bars under characters: border, background, HP, low HP (under a quarter), SP; and monsters' HP bars.
 const BAR_WIDTH: f32 = 60.0;
-const BAR_COLORS: [[u8; 4]; 5] = [[0x10, 0x18, 0x9C, 255], [0x42, 0x42, 0x42, 255], [0x10, 0xEF, 0x21, 255], [0xFF, 0x00, 0x00, 255], [0x18, 0x63, 0xDE, 255]];
+const BAR_COLORS: [[u8; 4]; 5] = [[0x14, 0x19, 0x9B, 255], [0x44, 0x44, 0x44, 255], [0x16, 0xEA, 0x25, 255], [0xEA, 0x16, 0x16, 255], [0x1D, 0x65, 0xDB, 255]];
+const MONSTER_BAR_COLORS: [[u8; 4]; 4] = [[0x10, 0x18, 0x9C, 255], [0x42, 0x41, 0x42, 255], [0xFF, 0x00, 0xE7, 255], [0xFF, 0xFF, 0x00, 255]];
 /// Damage numbers rise and shrink over this long.
 const DAMAGE_DURATION: f32 = 1.5;
 const MISS_DURATION: f32 = 0.8;
@@ -395,16 +447,17 @@ const HIDDEN_JOBS: [u16; 2] = [111, 139];
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
 const WARP_JOB: u16 = 45;
 
-// The camera as tuned against the official client: zoom 125 (62.5 cells) and 50 degrees up by default.
-// ponytail: the zoom-out limit (5x) is a guess; calibrate against the real client.
-const ZOOM: f32 = 125.0;
+// The camera by default: 300 world units (60 cells) from the player, 45 degrees up, with world.rs's 15 degree field
+// of view. Zooming and tilting go further either way than the defaults need.
+// ponytail: the zoom-out limit (5x) is a guess; narrow it if the far view breaks.
+const ZOOM: f32 = 120.0;
 const ZOOM_MIN: f32 = 65.0;
 const ZOOM_MAX: f32 = 325.0;
 const ZOOM_MAX_INDOOR: f32 = 162.5;
 const ZOOM_STEP: f32 = 15.0;
 /// World units per zoom unit.
 const UNITS_PER_ZOOM: f32 = 2.5;
-const PITCH: f32 = 50.0;
+const PITCH: f32 = 45.0;
 const PITCH_RANGE: [f32; 2] = [10.0, 90.0];
 const PITCH_RANGE_INDOOR: [f32; 2] = [40.0, 60.0];
 const YAW_RANGE: [f32; 2] = [-360.0, 360.0];
@@ -450,15 +503,18 @@ struct Game {
     /// The emotion sprite, and the emotions showing: by unit (None = the player), the sprite action and when.
     emotion_sprite: Option<SpriteSet>,
     emotions: HashMap<Option<u32>, (usize, Instant)>,
-    /// Spirit spheres or coins: by unit (None = the player), how many; the sphere's picture, the coin's sprite.
-    spirits: HashMap<Option<u32>, u16>,
+    /// What circles units (None = the player): spheres or coins, shields, charms, souls; the sphere's, the shield's
+    /// and the charm's pictures, the coin's sprite.
+    spirits: HashMap<Option<u32>, Orbs>,
     sphere: Option<Texture>,
+    shield: Option<Texture>,
+    charm: Option<Texture>,
     coin_sprite: Option<SpriteSet>,
     digits: Option<Digits>,
     /// The NPC conversation on screen.
     dialog: Option<Dialog>,
-    /// Last frame's clickable units and items: what, screen rectangle (left, top, right, bottom) and distance.
-    hit_boxes: Vec<(Owner, [f32; 4], f32)>,
+    /// Last frame's clickable units and items.
+    hit_boxes: Vec<picking::Target<Owner>>,
     /// Items lying around, by ground ID.
     ground: HashMap<u32, FloorItem>,
     /// Ground item sprites by resource name.
@@ -471,6 +527,12 @@ struct Game {
     dragging: Option<(Dragged, [f32; 2], bool)>,
     skills: Vec<net::Skill>,
     skill_window: skills::SkillWindow,
+    /// A Talkie Box's message waiting to be placed, and the boxes saying theirs (where each stands).
+    talkie_text: Option<String>,
+    talkie_spots: HashMap<u32, world::Vector>,
+    /// Skills blocked after use, and the line one still blocked prints when used.
+    cooldowns: skills::Cooldowns,
+    skill_delay_line: String,
     /// A skill waiting for its target: ID and level.
     targeting: Option<(u16, u16)>,
     /// A taming item waiting for its monster; the slot machine, and the result it plays (action, since when).
@@ -479,6 +541,10 @@ struct Game {
     slot: Option<(usize, Instant)>,
     /// Units casting (None = the player): when it began and how long it takes.
     casts: HashMap<Option<u32>, (Instant, Duration)>,
+    /// Units that may use their next combo skill (None = the player): when the window opened and how long it lasts.
+    combos: HashMap<Option<u32>, (Instant, Duration)>,
+    /// Units locked together by Blade Stop or Cursed Circle: source and target.
+    locks: Vec<(u32, u32)>,
     /// Words over heads (chat, skill names), by unit (None = the player): text, color, when said.
     speech: HashMap<Option<u32>, (String, [u8; 3], Instant)>,
     /// Status effects on the player with an icon: the client's EFST id, when it began and ends (None: no end).
@@ -502,6 +568,10 @@ struct Game {
     /// The quest log and its window.
     quests: Vec<net::Quest>,
     quest_window: quest::QuestWindow,
+    /// The achievements: the totals, the player's by ID, and their window.
+    achievement_totals: net::AchievementTotals,
+    achievements: HashMap<u32, net::Achievement>,
+    achievement_window: achievement::AchievementWindow,
     /// The item description window, and how many lines its text wraps to.
     item_window: Option<iteminfo::ItemWindow>,
     item_lines: usize,
@@ -518,6 +588,13 @@ struct Game {
     /// The deal under way; someone asking for one (name, character ID, level); whom we asked.
     trade: Option<trade::Trade>,
     refine: Option<refine::Refine>,
+    /// The material window (Change Material, Four Spirit Analysis).
+    materials: Option<material::Materials>,
+    /// The Lucky Roulette's window.
+    roulette: Option<roulette::Roulette>,
+    /// Sense's window, and the map's boss as the Convex Mirror shows it (name and cell).
+    monster_window: Option<monster_info::MonsterWindow>,
+    boss: Option<(String, [i32; 2])>,
     viewing: Option<Viewed>,
     bank: Option<bank::Bank>,
     trade_asked: Option<(String, u32, u16)>,
@@ -545,6 +622,9 @@ struct Game {
     guild_invite: Option<(u32, String)>,
     /// Dev switch RUSTNAROK_CLIENT_GUILD=window ran.
     guild_shown: bool,
+    /// The clan we're in, and its window.
+    clan: Option<clan::Clan>,
+    clan_window: clan::ClanWindow,
     /// Guild emblems by guild ID: the version last asked for, and the image that came.
     emblems: HashMap<u32, (u32, Option<Texture>)>,
     /// What shows with players' names (party, guild, position) by account ID, and the unit last pointed at: a
@@ -556,12 +636,26 @@ struct Game {
     friend_asked: Option<(u32, u32, String)>,
     /// The server asks whether to use this voucher to grow the inventory.
     expansion_asked: Option<u32>,
+    /// The item the player last put in or took out of the Swap Equipment set: its answer gets a line.
+    switch_asked: Option<u16>,
+    /// A bind-on-equip item (inventory index) waiting for OK to be worn; the broken items' indexes before the
+    /// inventory came again (None: there was none yet, at login).
+    bind_asked: Option<u16>,
+    broken_before: Option<Vec<u16>>,
     /// The player's pet: its unit (once the server says it's ours), what it's like, its window, and a question about
     /// it waiting for OK.
     pet_id: Option<u32>,
     pet: Option<net::Pet>,
     pet_window: pet::PetWindow,
     pet_asked: Option<PetAsked>,
+    /// The player's mercenary, its skills, its window and skill list, how it's steered, and whether dismissing it is
+    /// being asked.
+    mercenary: Option<net::Mercenary>,
+    mercenary_skills: Vec<net::Skill>,
+    mercenary_window: mercenary::Window,
+    mercenary_skill_list: mercenary::SkillList,
+    steering: mercenary::Steering,
+    dismiss_asked: bool,
     /// Each party member's minimap color.
     party_dots: HashMap<u32, Texture>,
     /// Chat rooms over their owners' heads (by owner), and where their signs were last drawn (room ID, password).
@@ -577,6 +671,8 @@ struct Game {
     macro_lines: [String; macros::COUNT],
     /// Dev switch RUSTNAROK_CLIENT_ROOM ran.
     room_tried: bool,
+    /// The map's weather, from the server's weather effects until the map changes.
+    weather: weather::Weather,
     /// The right-click menu, and where a right press began (and on whom).
     menu: Option<menu::Menu<Choice>>,
     right_press: Option<([f32; 2], Option<u32>)>,
@@ -621,7 +717,15 @@ struct CameraGoal {
 
 impl CameraGoal {
     fn new(indoor: bool) -> Self {
-        Self { yaw: if indoor { YAW_INDOOR } else { 0.0 }, pitch: PITCH, zoom: ZOOM, indoor, dragging: None, last_press: None }
+        let mut goal = Self { yaw: if indoor { YAW_INDOOR } else { 0.0 }, pitch: PITCH, zoom: ZOOM, indoor, dragging: None, last_press: None };
+        // RUSTNAROK_CLIENT_CAMERA holds on every map, warps included.
+        if let Some([yaw, pitch, zoom]) = std::env::var("RUSTNAROK_CLIENT_CAMERA").ok().and_then(|camera| {
+            let values: Vec<f32> = camera.split(',').filter_map(|value| value.parse().ok()).collect();
+            <[f32; 3]>::try_from(values).ok()
+        }) {
+            (goal.yaw, goal.pitch, goal.zoom) = (yaw, pitch, zoom);
+        }
+        goal
     }
 
     /// The camera already in place, for a fresh map.
@@ -701,6 +805,18 @@ fn pet_sprites(grf: &Grf, name: &str, act: Option<&String>) -> Option<SpriteSet>
     worn.or_else(|| SpriteSet::single(grf, name, true))
 }
 
+/// The titles of the achievements done whose rewards were taken, by ID, with their names.
+fn earned_titles(achievements: &HashMap<u32, net::Achievement>, info: &HashMap<u32, lua::AchievementInfo>, names: &HashMap<u32, String>) -> Vec<(u32, String)> {
+    let mut titles: Vec<u32> = achievements
+        .values()
+        .filter(|achievement| achievement.completed && achievement.rewarded)
+        .filter_map(|achievement| info.get(&achievement.id).map(|info| info.reward_title).filter(|&title| title != 0))
+        .collect();
+    titles.sort_unstable();
+    titles.dedup();
+    titles.into_iter().map(|title| (title, names.get(&title).cloned().unwrap_or_else(|| title.to_string()))).collect()
+}
+
 fn character_look(character: &Character) -> Look {
     Look {
         job: character.job,
@@ -714,6 +830,7 @@ fn character_look(character: &Character) -> Look {
         head_mid: character.head_mid,
         head_bottom: character.head_bottom,
         robe: character.robe,
+        option: character.option & actor::BODY_OPTIONS,
     }
 }
 
@@ -730,6 +847,7 @@ fn unit_look(unit: &net::Unit) -> Look {
         head_mid: unit.head_mid,
         head_bottom: unit.head_bottom,
         robe: unit.robe,
+        option: unit.option & actor::BODY_OPTIONS,
     }
 }
 
@@ -775,8 +893,11 @@ enum Panel {
     Party,
     Status,
     Guild,
+    Clan,
     Cart,
     Pet,
+    Mercenary,
+    MercenarySkills,
 }
 
 /// What the box asking how many is for.
@@ -808,8 +929,15 @@ enum Asked {
     RoomPassword(u32),
     /// An inventory item, into the mail being written.
     Mail(u16),
+    /// An inventory item, into the material window.
+    Material(u16),
     /// The pet's new name.
     PetName,
+    /// A Talkie Box's message, before it's placed at the cell.
+    TalkieBox {
+        level: u16,
+        cell: [i32; 2],
+    },
 }
 
 /// What the right-click menu offers.
@@ -950,6 +1078,30 @@ impl Game {
         let _ = if text { self.session.input_text(dialog.npc, &value) } else { self.session.input_number(dialog.npc, value.trim().parse().unwrap_or(0)) };
     }
 
+    /// Whether players win over monsters under the pointer: Shift held, or aiming a skill for players, but not both.
+    // ponytail: "a skill for players" is one the server flags as for friends (Heal, Blessing); a skill table may list
+    // more.
+    fn players_first(&self, shift: bool) -> bool {
+        let support =
+            self.targeting.and_then(|(id, _)| self.skills.iter().find(|skill| skill.id == id)).is_some_and(|skill| skill.kind & net::Skill::FRIEND != 0);
+        shift != support
+    }
+
+    /// A monster coming into view brings its HP bar if it's hurt, and loses it if not.
+    fn monster_hp(&mut self, unit: &net::Unit) {
+        if unit.kind != MONSTER {
+            return;
+        }
+        match unit.hp {
+            Some([hp, max]) => {
+                self.unit_hp.insert(unit.id, (hp, max));
+            }
+            None => {
+                self.unit_hp.remove(&unit.id);
+            }
+        }
+    }
+
     fn attack(&mut self, target: u32) {
         if let Some(goal) = self.units.get(&target).map(|actor| actor.cell) {
             self.attack_from(target, self.player.cell, goal);
@@ -1006,8 +1158,11 @@ impl Game {
             Panel::Party => self.party_window.frame.open && self.party_window.hit(cursor, self.party.as_ref(), &self.friends, self.account_id).is_some(),
             Panel::Status => self.status_window.frame.open && self.status_window.frame.local(cursor, self.status_height).is_some(),
             Panel::Guild => self.guild.is_some() && self.guild_window.frame.local(cursor, self.guild_window.height()).is_some(),
+            Panel::Clan => self.clan.is_some() && self.clan_window.frame.local(cursor, self.clan_window.height()).is_some(),
             Panel::Cart => self.cart.cart.is_some() && self.cart.hit(cursor).is_some(),
             Panel::Pet => self.pet.as_ref().is_some_and(|pet| self.pet_window.hit(cursor, pet).is_some()),
+            Panel::Mercenary => self.mercenary.is_some() && self.mercenary_window.hit(cursor).is_some(),
+            Panel::MercenarySkills => self.mercenary.is_some() && self.mercenary_skill_list.hit(cursor, &self.mercenary_skills).is_some(),
         })
     }
 
@@ -1020,7 +1175,13 @@ impl Game {
         if self.store_open() {
             return;
         }
-        let Some(skill) = self.skills.iter().find(|skill| skill.id == id) else { return };
+        // ponytail: a blocked skill says so and sends nothing (the server drops it without a word unless @showdelay is
+        // on); whether the real client asks the server anyway isn't known.
+        if self.cooldowns.left(id, control::now()).is_some() {
+            self.chat_line(self.skill_delay_line.clone(), CHAT_ERROR);
+            return;
+        }
+        let Some(skill) = self.skills.iter().find(|skill| skill.id == id) else { return self.use_mercenary_skill(id, level) };
         let level = level.clamp(1, skill.level.max(1));
         if skill.kind & net::Skill::SELF != 0 {
             let _ = self.session.use_skill(id, level, self.account_id);
@@ -1047,7 +1208,21 @@ impl Game {
         if self.store_open() {
             return;
         }
+        // A Talkie Box asks for its message first.
+        if let (Some((TALKIE_BOX, level)), SkillTarget::Cell(cell), None) = (self.targeting, target, &self.talkie_text) {
+            self.targeting = None;
+            self.amount = Some(window::Amount::name(Asked::TalkieBox { level, cell }, TALKIE_ASKS));
+            return;
+        }
         let Some((id, level)) = self.targeting.take() else { return };
+        // The mercenary casts its own skills from where it stands; out of its range the server does nothing.
+        if self.mercenary_skills.iter().any(|skill| skill.id == id) {
+            let _ = match target {
+                SkillTarget::Unit(unit) => self.session.use_skill(id, level, unit),
+                SkillTarget::Cell(cell) => self.session.use_skill_at(id, level, cell.map(|value| value.max(0) as u16)),
+            };
+            return;
+        }
         let goal = match target {
             SkillTarget::Unit(unit) if unit == self.account_id => Some(self.player.cell),
             SkillTarget::Unit(unit) => self.units.get(&unit).map(|actor| actor.cell),
@@ -1059,7 +1234,7 @@ impl Game {
             self.pending = None;
             let _ = match target {
                 SkillTarget::Unit(unit) => self.session.use_skill(id, level, unit),
-                SkillTarget::Cell(cell) => self.session.use_skill_at(id, level, cell.map(|value| value as u16)),
+                SkillTarget::Cell(cell) => self.send_skill_at(id, level, cell.map(|value| value as u16)),
             };
         } else if let Some(stop) =
             world::find_path(&self.world.gat, self.player.cell, goal).and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, range)))
@@ -1162,6 +1337,17 @@ impl Game {
             let _ = self.session.make_guild(self.me.id, name.trim().trim_matches('"'));
             return None;
         }
+        // ponytail: /cl sends to the clan until the chat window has the send-to choice (messages 85, 86, 437, 2361).
+        if text == "/cl" {
+            return None;
+        }
+        if let Some(message) = text.strip_prefix("/cl ") {
+            let message = message.trim();
+            if !message.is_empty() {
+                let _ = self.session.clan_chat(&self.me.name, message);
+            }
+            return None;
+        }
         if to.is_empty() && (guild || text.starts_with('$')) {
             let _ = self.session.guild_chat(&self.me.name, text.trim_start_matches('$'));
             return None;
@@ -1215,6 +1401,10 @@ impl Game {
                 self.chat_line(message(if *effects_on { EFFECTS_ON } else { EFFECTS_OFF }), CHAT_ITEM);
                 Ok(())
             }
+            chat::Command::Achievements => {
+                self.achievement_window.frame.toggle();
+                Ok(())
+            }
             chat::Command::EmotionList => {
                 self.toggle_emotion_list();
                 Ok(())
@@ -1254,6 +1444,10 @@ impl Game {
             || self.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some())
             || self.mail.hit(cursor).is_some()
             || self.quest_window.hit(cursor, &self.quests).is_some()
+            || self.achievement_window.covers(cursor)
+            || self.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || roulette::icon_hit(cursor)
+            || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.chat.contains(cursor)
             || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -1262,7 +1456,7 @@ impl Game {
     /// Moves an item between the inventory and storage, asking how many when there's more than one.
     fn move_item(&mut self, asked: Asked) {
         let amount = match asked {
-            Asked::Store(index) | Asked::Drop(index) | Asked::Trade(index) | Asked::ToCart(index) | Asked::Mail(index) => {
+            Asked::Store(index) | Asked::Drop(index) | Asked::Trade(index) | Asked::ToCart(index) | Asked::Mail(index) | Asked::Material(index) => {
                 self.inventory.get(index).map(|item| item.amount)
             }
             Asked::FromCart(index) => self.cart.get(index).map(|item| item.amount),
@@ -1274,7 +1468,8 @@ impl Game {
             | Asked::VendPrice(_)
             | Asked::BuyingPrice(..)
             | Asked::BuyingAmount(_)
-            | Asked::PetName => None,
+            | Asked::PetName
+            | Asked::TalkieBox { .. } => None,
         };
         match amount {
             Some(1) => self.give(asked, 1),
@@ -1294,6 +1489,13 @@ impl Game {
             // A name for the pet asks once more: it can be renamed only once.
             Asked::PetName if !name.is_empty() => {
                 self.pet_asked = Some(PetAsked::Rename(name.to_owned()));
+                Ok(())
+            }
+            // The message is in: the box goes where it was aimed (walking there first if need be).
+            Asked::TalkieBox { level, cell } => {
+                self.talkie_text = Some(name.to_owned());
+                self.targeting = Some((TALKIE_BOX, level));
+                self.aim_skill(SkillTarget::Cell(cell));
                 Ok(())
             }
             Asked::PartyName | Asked::Invite | Asked::PetName => Ok(()),
@@ -1352,7 +1554,13 @@ impl Game {
                 let have = self.inventory.get(index).map_or(0, |item| item.amount);
                 self.session.drop_item(index, (amount.min(u32::from(have))) as u16)
             }
-            Asked::PartyName | Asked::Invite | Asked::RoomPassword(_) | Asked::PetName | Asked::BuyingPrice(..) | Asked::BuyingAmount(_) => Ok(()),
+            Asked::PartyName
+            | Asked::Invite
+            | Asked::RoomPassword(_)
+            | Asked::PetName
+            | Asked::BuyingPrice(..)
+            | Asked::BuyingAmount(_)
+            | Asked::TalkieBox { .. } => Ok(()),
             Asked::VendPrice(index) => {
                 if let Some(setup) = &mut self.vend_setup {
                     setup.prices.insert(index, amount);
@@ -1366,6 +1574,14 @@ impl Game {
             Asked::FromCart(index) => {
                 let have = self.cart.get(index).map_or(0, |item| u32::from(item.amount));
                 self.session.take_from_cart(index, amount.min(have))
+            }
+            // Nothing goes to the server until the window's OK.
+            Asked::Material(index) => {
+                let have = self.inventory.get(index).map_or(0, |item| item.amount);
+                if let Some(window) = &mut self.materials {
+                    window.add(index, amount.min(u32::from(have)) as u16, have);
+                }
+                Ok(())
             }
             Asked::Mail(index) => {
                 let have = self.inventory.get(index).map_or(0, |item| item.amount);
@@ -1505,16 +1721,21 @@ impl Game {
         self.speech.insert(unit, (text, color, Instant::now()));
     }
 
-    /// A unit starts or uses a skill: players strike the skill pose and call its name.
-    fn skill_motion(&mut self, source: u32, skill: u16, duration: f32, info: &HashMap<u16, SkillInfo>) {
+    /// A unit starts or uses a skill: players strike the skill pose, and units call its name (see `overhead::shouts`).
+    fn skill_motion(&mut self, source: u32, skill: u16, level: i32, packet: overhead::Shout, duration: f32, info: &HashMap<u16, SkillInfo>) {
         let me = self.account_id;
         let Some(actor) = (if source == me { Some(&mut self.player) } else { self.units.get_mut(&source) }) else { return };
-        if actor.kind != PLAYER || actor.remove_at.is_some() {
+        if actor.remove_at.is_some() {
             return;
         }
-        actor.play(SKILL_ACTION, Instant::now(), duration.max(100.0), false);
-        actor.stand_ready();
-        if let Some(info) = info.get(&skill) {
+        let monster = actor.kind == MONSTER;
+        if actor.kind == PLAYER {
+            actor.play(SKILL_ACTION, Instant::now(), duration.max(100.0), false);
+            actor.stand_ready();
+        }
+        if overhead::shouts(skill, level, monster, packet)
+            && let Some(info) = info.get(&skill)
+        {
             let unit = (source != me).then_some(source);
             self.say(unit, format!("{} !!", info.name), CHAT_WHITE);
         }
@@ -1543,6 +1764,8 @@ impl Game {
             }
             // An egg (armor worn nowhere) hatches from the egg list only.
             net::ITEM_ARMOR if item.location == 0 => {}
+            // An item that binds once worn asks first.
+            net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR if item.identified && item.bind == 1 => self.bind_asked = Some(index),
             net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR | net::ITEM_PET_ARMOR | net::ITEM_AMMO if item.identified => {
                 let _ = self.session.wear(index, item.location);
             }
@@ -1588,6 +1811,28 @@ impl Game {
         };
     }
 
+    /// Answers the bind question: OK wears the item.
+    fn answer_bind(&mut self, yes: bool) {
+        let Some(index) = self.bind_asked.take().filter(|_| yes) else { return };
+        if let Some(location) = self.inventory.get(index).map(|item| item.location) {
+            let _ = self.session.wear(index, location);
+        }
+    }
+
+    /// A ground skill goes out; a Talkie Box carries the message typed for it.
+    fn send_skill_at(&mut self, id: u16, level: u16, cell: [u16; 2]) -> std::io::Result<()> {
+        match self.talkie_text.take().filter(|_| id == TALKIE_BOX) {
+            Some(text) => self.session.use_skill_at_with_text(id, level, cell, &text),
+            None => self.session.use_skill_at(id, level, cell),
+        }
+    }
+
+    /// Closes the roulette's window; the server answers nothing.
+    fn close_roulette(&mut self) {
+        let _ = self.session.roulette(net::RouletteRequest::Close);
+        self.roulette = None;
+    }
+
     /// Opens the pet window (or brings it up) with fresh news of the pet.
     fn open_pet_window(&mut self) {
         self.pet_window.frame.open = true;
@@ -1613,6 +1858,41 @@ impl Game {
         };
     }
 
+    /// The mercenary is gone (dismissed, its contract over, dead): its windows close. On a map change the server sends
+    /// it again, so they stay as they were.
+    fn forget_mercenary(&mut self, close: bool) {
+        self.mercenary = None;
+        self.mercenary_skills.clear();
+        self.steering = mercenary::Steering::default();
+        self.dismiss_asked = false;
+        if close {
+            self.mercenary_window.frame.open = false;
+            self.mercenary_skill_list.frame.open = false;
+        }
+    }
+
+    /// Answers the dismiss question: OK lets the mercenary go.
+    fn answer_dismiss(&mut self, yes: bool, messages: &[String]) {
+        self.dismiss_asked = false;
+        if yes && self.mercenary.is_some() {
+            let _ = self.session.mercenary_command(net::MERCENARY_DISMISS);
+            self.forget_mercenary(true);
+            // ponytail: rathena answers nothing; when the official client prints this isn't knowable.
+            self.chat_line(messages.get(mercenary::RELEASED).cloned().unwrap_or_default(), CHAT_ITEM);
+        }
+    }
+
+    /// Uses one of the mercenary's skills: on the mercenary at once when it's a self skill, otherwise aimed.
+    fn use_mercenary_skill(&mut self, id: u16, level: u16) {
+        let (Some(mercenary), Some(skill)) = (&self.mercenary, self.mercenary_skills.iter().find(|skill| skill.id == id)) else { return };
+        let level = level.clamp(1, skill.level.max(1));
+        if skill.kind & net::Skill::SELF != 0 {
+            let _ = self.session.use_skill(id, level, mercenary.id);
+        } else if skill.kind & (net::Skill::ENEMY | net::Skill::GROUND | net::Skill::FRIEND) != 0 {
+            self.targeting = Some((id, level));
+        }
+    }
+
     /// Presses a hotkey slot: uses the item it holds (the first stack of it carried).
     fn press_hotkey(&mut self, slot: usize) {
         if let Some(Some(net::Hotkey { skill: true, id, count })) = self.hotkeys.keys.get(slot).copied() {
@@ -1622,6 +1902,17 @@ impl Game {
             && let Some(index) = self.inventory.items.iter().find(|item| item.id == id && item.worn == 0).map(|item| item.index)
         {
             self.use_item(index);
+        }
+    }
+
+    /// Units locked together hold still on the frame they had when caught; the others move again.
+    fn hold_locked(&mut self) {
+        let now = control::now();
+        let me = self.account_id;
+        let locks = &self.locks;
+        let actors = std::iter::once((me, &mut self.player)).chain(self.units.iter_mut().map(|(id, actor)| (*id, actor)));
+        for (id, actor) in actors {
+            actor.held = (locked_with(locks, id) > 0).then(|| actor.held.unwrap_or(now));
         }
     }
 
@@ -1849,6 +2140,7 @@ struct Assets {
     message: Texture,
     char_select: char_select::Assets,
     char_make: char_make::Assets,
+    pin: pin::Assets,
     skills: skills::Assets,
     shop: shop::Assets,
     pick_list: pick_list::Assets,
@@ -1857,19 +2149,25 @@ struct Assets {
     refine: refine::Assets,
     bank: bank::Assets,
     context_menu: menu::Assets,
+    weather: weather::Assets,
+    mercenary: mercenary::Assets,
     party: party::Assets,
     chatroom: chatroom::Assets,
     escape: escape::Assets,
     options: options::Assets,
     quest: quest::Assets,
+    achievement: achievement::Assets,
     status: status::Assets,
     pet: pet::Assets,
+    roulette: roulette::Assets,
     item_window: iteminfo::Assets,
     guild: guild::Assets,
+    clan: clan::Assets,
     vend: vend::Assets,
     /// The cast bar's fill, the speech bubble's box and border, the aimed skill's box, and status icons' clocks
     /// (white, then orange in the last minute) by step.
     cast_fill: Texture,
+    combo_fill: Texture,
     speech_fill: Texture,
     speech_border: Texture,
     target_fill: Texture,
@@ -1887,6 +2185,7 @@ struct Assets {
     close: ButtonImages,
     menu_selection: Texture,
     bars: [Texture; 5],
+    monster_bars: [Texture; 4],
     chrome: window::Chrome,
     inventory: inventory::Assets,
     equipment: equipment::Assets,
@@ -1945,6 +2244,7 @@ impl Assets {
             message: image(format!("{UI}win_msgbox.bmp")),
             char_select: char_select::Assets::load(gpu, grf, font, messages),
             char_make: char_make::Assets::load(gpu, grf),
+            pin: pin::Assets::load(gpu, grf),
             skills: skills::Assets::load(gpu, grf),
             shop: shop::Assets::load(gpu, grf),
             pick_list: pick_list::Assets::load(gpu, grf),
@@ -1953,19 +2253,25 @@ impl Assets {
             refine: refine::Assets::load(gpu, grf),
             bank: bank::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
+            weather: weather::Assets::load(gpu, grf),
+            mercenary: mercenary::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
             quest: quest::Assets::load(gpu, grf),
+            achievement: achievement::Assets::load(gpu, grf),
             status: status::Assets::load(gpu, grf),
             pet: pet::Assets::load(gpu, grf),
+            roulette: roulette::Assets::load(gpu, grf),
             item_window: iteminfo::Assets::load(gpu, grf),
             guild: guild::Assets::load(gpu, grf),
+            clan: clan::Assets::load(gpu, grf),
             vend: vend::Assets::load(gpu, grf),
             cast_fill: gpu.solid([0x00, 0xFF, 0x00, 0xFF]),
+            combo_fill: gpu.solid([0xFF, 0xA0, 0x00, 0xFF]),
             speech_fill: gpu.solid([0, 0, 0, 102]),
-            speech_border: gpu.solid([0x52, 0x52, 0x52, 0xFF]),
+            speech_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
             target_fill: gpu.solid([0, 0, 0, 128]),
             clocks: [[255, 255, 255, 166], [255, 150, 50, 166]]
                 .map(|color| (0..=CLOCK_STEPS).map(|step| gpu.texture(&clock(step as f32 / CLOCK_STEPS as f32, color), false)).collect()),
@@ -1982,6 +2288,7 @@ impl Assets {
             close: button(UI, "btn_close"),
             menu_selection: gpu.solid(MENU_SELECTION),
             bars: BAR_COLORS.map(|color| gpu.solid(color)),
+            monster_bars: MONSTER_BAR_COLORS.map(|color| gpu.solid(color)),
             chrome: window::Chrome::load(gpu, grf),
             inventory: inventory::Assets::load(gpu, grf),
             equipment: equipment::Assets::load(gpu, grf),
@@ -2006,9 +2313,23 @@ fn login_position(window: &Texture) -> [f32; 2] {
     [((SCREEN[0] - window.size[0]) / 2.0).floor(), LOGIN_TOP]
 }
 
+/// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
+/// folder elsewhere.
+fn settings_path(name: &str) -> Option<std::path::PathBuf> {
+    let home = || Some(std::path::PathBuf::from(std::env::var_os("HOME")?));
+    let folder = if cfg!(target_os = "macos") {
+        home()?.join("Library/Application Support")
+    } else if cfg!(windows) {
+        std::env::var_os("APPDATA")?.into()
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME").filter(|folder| !folder.is_empty()).map(Into::into).or_else(|| Some(home()?.join(".config")))?
+    };
+    Some(folder.join("rustnarok-client").join(name))
+}
+
 /// Where the saved login ID is kept.
 fn saved_id_path() -> Option<std::path::PathBuf> {
-    Some(std::path::PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/rustnarok-client/saved_id"))
+    settings_path("saved_id")
 }
 
 fn saved_id() -> Option<String> {
@@ -2046,6 +2367,42 @@ fn button_sprite(pointer: ([f32; 2], bool), position: [f32; 2], images: &ButtonI
         (false, _) => &images[0],
     };
     (image, position, image.size)
+}
+
+/// What circles a unit: spirit spheres (or coins), Millennium Shield shields, charms (element 1-4 and how many) and
+/// souls.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Orbs {
+    spheres: u16,
+    shields: u16,
+    charms: (u16, u16),
+    souls: u16,
+}
+
+/// Changes what circles a unit; a unit left with nothing leaves the map.
+fn change_orbs(spirits: &mut HashMap<Option<u32>, Orbs>, unit: Option<u32>, change: impl FnOnce(&mut Orbs)) {
+    let orbs = spirits.entry(unit).or_default();
+    change(orbs);
+    if orbs.charms.1 == 0 {
+        orbs.charms = (0, 0);
+    }
+    if *orbs == Orbs::default() {
+        spirits.remove(&unit);
+    }
+}
+
+/// The Royal Guard line, whose rage spheres rathena sends as shields (and as spheres when one comes into view).
+// ponytail: both packets go into the one sphere count for these jobs.
+fn guard_job(job: u16) -> bool {
+    matches!(job, 4066 | 4073 | 4082 | 4083 | 4102 | 4110 | 4258 | 4281)
+}
+
+/// Where `count` things circling a body at `height` are now: each one's center, and whether it's on the near side.
+fn orbit(count: u16, height: f32, turned: f32) -> impl Iterator<Item = ([f32; 2], bool)> {
+    (0..count).map(move |place| {
+        let angle = turned * SPIRIT_TURN + f32::from(place) * std::f32::consts::TAU / f32::from(count);
+        ([angle.cos() * SPIRIT_RADIUS, -height + angle.sin() * SPIRIT_RADIUS * SPIRIT_TILT], angle.sin() > 0.0)
+    })
 }
 
 /// Jobs whose spirits are coins: Gunslinger, Rebellion, their baby forms, Night Watch; anyone else's are spheres.
@@ -2225,6 +2582,9 @@ struct App {
     job_names: HashMap<u16, String>,
     /// Pets' tables and what they say.
     pets: pet::Data,
+    /// The achievements (the translation's achievements.lub) and the titles they give, by ID.
+    achievement_info: HashMap<u32, lua::AchievementInfo>,
+    title_names: HashMap<u32, String>,
     /// Item names and resources by item ID, and the client's numbered messages.
     items: HashMap<u32, ItemInfo>,
     messages: Vec<String>,
@@ -2277,8 +2637,10 @@ struct App {
     account: Option<LoginAccepted>,
     /// The character chosen to play, until its map is entered.
     playing: Option<Character>,
-    /// Connected to the map server, waiting to enter: session and map name.
+    /// Connected to the map server, waiting to enter: session and map name; and what the server sent meanwhile (the
+    /// achievements, at login), handled once the game is on.
     entering: Option<(MapSession, String)>,
+    early_events: Vec<MapEvent>,
     fields: [String; 2],
     /// Remember the ID for next time (the login window's save box).
     save_id: bool,
@@ -2370,6 +2732,9 @@ impl App {
 
     fn start_game(&mut self) {
         let Scene::CharSelect(select) = &self.scene else { return };
+        if !select.unlocked() {
+            return;
+        }
         let Some(character) = select.selected_character().cloned() else { return };
         match self.char_session.as_mut().map(|session| session.select(character.slot)) {
             Some(Ok(())) => {
@@ -2393,6 +2758,9 @@ impl App {
     /// Does what a click or key on the character select asked for.
     fn select_action(&mut self, action: char_select::Action) {
         use char_select::Action;
+        if !matches!(action, Action::Close) && matches!(&self.scene, Scene::CharSelect(select) if !select.unlocked()) {
+            return;
+        }
         let sent = match action {
             Action::Start => return self.start_game(),
             Action::Make(slot) => {
@@ -2420,6 +2788,37 @@ impl App {
         match sent {
             Some(Ok(())) => self.wait(),
             _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
+        }
+    }
+
+    /// Runs autostart (`RUSTNAROK_CLIENT_AUTOSTART=<slot>`) and `RUSTNAROK_CLIENT_MAKE`/`DELETE` once PIN state 0 is in.
+    fn finish_char_select_entry(&mut self) {
+        let first = !std::mem::replace(&mut self.scripted, true);
+        if !first {
+            return;
+        }
+        if std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok().and_then(|slot| slot.parse::<usize>().ok()).is_some() {
+            self.start_game();
+        }
+        self.run_select_switches();
+    }
+
+    fn apply_pin_action(&mut self, action: pin::PinAction) {
+        let sent = match action {
+            pin::PinAction::None => return,
+            pin::PinAction::Check { seed, pin } => self.char_session.as_mut().map(|session| session.check_pin(seed, &pin)),
+            pin::PinAction::Make { seed, pin } => self.char_session.as_mut().map(|session| session.make_pin(seed, &pin)),
+            pin::PinAction::Change { seed, old_pin, new_pin } => self.char_session.as_mut().map(|session| session.change_pin(seed, &old_pin, &new_pin)),
+            pin::PinAction::Message(id) => {
+                let text = self.message_text(id);
+                let back = std::mem::replace(&mut self.scene, Scene::Login);
+                self.message(text, back);
+                return;
+            }
+            pin::PinAction::Close => return self.back_to_login(),
+        };
+        if !matches!(sent, Some(Ok(()))) {
+            self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login);
         }
     }
 
@@ -2598,6 +2997,7 @@ impl App {
     fn click(&mut self, event_loop: &ActiveEventLoop) {
         let Some(assets) = &self.assets else { return };
         let cursor = self.cursor;
+        let shift = self.modifiers.shift_key();
         let hit = |position: [f32; 2], images: &ButtonImages| contains(position, images[0].size, cursor);
         // A click anywhere but the storage's search field takes the caret from it.
         if let Scene::Game(game) = &mut self.scene {
@@ -2648,9 +3048,18 @@ impl App {
                 }
             }
             Scene::CharSelect(select) => {
-                let action = if select.menu.is_some() { select.click_menu(cursor) } else { select.hit(cursor).and_then(|hit| select.click(hit)) };
-                if let Some(action) = action {
-                    self.select_action(action);
+                if let Some(pad) = &mut select.pin_pad {
+                    if let Some(button) = pad.hit(cursor) {
+                        let action = pad.press(button);
+                        self.apply_pin_action(action);
+                    }
+                } else if select.unlocked() {
+                    let action = if select.menu.is_some() { select.click_menu(cursor) } else { select.hit(cursor).and_then(|hit| select.click(hit)) };
+                    if let Some(action) = action {
+                        self.select_action(action);
+                    }
+                } else if select.hit(cursor) == Some(char_select::Hit::Close) {
+                    self.select_action(char_select::Action::Close);
                 }
             }
             Scene::CharMake(make, _) => {
@@ -2711,6 +3120,12 @@ impl App {
                 }
             }
             // The quest window: tabs, quests, their locks, and the picked one's details.
+            Scene::Game(game) if game.achievement_window.covers(cursor) => {
+                let hit = game.achievement_window.hit(cursor, &self.achievement_info, &game.achievements).unwrap();
+                if let Some(id) = game.achievement_window.click(hit) {
+                    let _ = game.session.claim_achievement(id);
+                }
+            }
             Scene::Game(game) if game.quest_window.hit(cursor, &game.quests).is_some() => {
                 let hit = game.quest_window.hit(cursor, &game.quests).unwrap();
                 if let Some((id, active)) = game.quest_window.click(hit, &game.quests) {
@@ -2897,6 +3312,15 @@ impl App {
                     }
                 }
             }
+            // Wearing an item that binds: OK wears it.
+            Scene::Game(game) if game.bind_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.answer_bind(yes);
+                    }
+                }
+            }
             // Growing the inventory: OK or cancel.
             Scene::Game(game) if game.expansion_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
@@ -2904,6 +3328,15 @@ impl App {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
                         game.expansion_asked = None;
                         let _ = game.session.answer_expansion(yes);
+                    }
+                }
+            }
+            // Dismissing the mercenary: OK lets it go.
+            Scene::Game(game) if game.dismiss_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.answer_dismiss(yes, &self.messages);
                     }
                 }
             }
@@ -2973,6 +3406,41 @@ impl App {
                     hit => {
                         viewed.window.click(hit);
                     }
+                }
+            }
+            // Sense's window: its close button.
+            Scene::Game(game) if game.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                if game.monster_window.as_ref().unwrap().hit(cursor) == Some(true) {
+                    game.monster_window = None;
+                }
+            }
+            // The Lucky Roulette: START spins, Get Prize claims (neither while the wheel spins), close lets it go.
+            Scene::Game(game) if game.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let window = game.roulette.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                match window.click(hit, control::now()) {
+                    Some(roulette::Action::Spin) => _ = game.session.roulette(net::RouletteRequest::Spin),
+                    Some(roulette::Action::Claim) => _ = game.session.roulette(net::RouletteRequest::Claim),
+                    Some(roulette::Action::Busy) => game.chat_line(self.messages.get(roulette::SPINNING).cloned().unwrap_or_default(), CHAT_ERROR),
+                    Some(roulette::Action::Close) => game.close_roulette(),
+                    None => {}
+                }
+            }
+            // Its icon asks for it.
+            Scene::Game(game) if roulette::icon_hit(cursor) => {
+                if game.roulette.is_none() {
+                    let _ = game.session.roulette(net::RouletteRequest::Open);
+                }
+            }
+            // The material window: OK sends what's in; Cancel and the close button send nothing in (rathena forgets the
+            // window either way).
+            Scene::Game(game) if game.materials.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let window = game.materials.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                if let Some(ok) = window.click(hit) {
+                    let entries = if ok { window.entries.clone() } else { Vec::new() };
+                    let _ = game.session.send_materials(window.kind, ok, &entries);
+                    game.materials = None;
                 }
             }
             Scene::Game(game) if game.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
@@ -3079,6 +3547,7 @@ impl App {
                             Some("bank") => {
                                 let _ = game.session.open_bank(game.account_id);
                             }
+                            Some("achievement") => game.achievement_window.frame.toggle(),
                             Some("mail") => {
                                 let action = game.mail.toggle();
                                 game.mail_action(action);
@@ -3104,8 +3573,28 @@ impl App {
                         if hit == equipment::Hit::ShowBox {
                             let _ = game.session.show_equipment(!game.equipment.shown);
                         }
-                        if let Some(index) = game.equipment.click(hit) {
-                            let _ = game.session.take_off(index);
+                        // The title changes when the server answers.
+                        if let equipment::Hit::WearTitle(title) = hit {
+                            let _ = game.session.change_title(title);
+                        }
+                        if hit == equipment::Hit::TakeOffAll {
+                            let _ = game.session.take_off_all();
+                        }
+                        if hit == equipment::Hit::SwitchAll {
+                            match game.equipment.switch_all(&game.inventory.items, control::now()) {
+                                Ok(true) => drop(game.session.switch_all()),
+                                Ok(false) => {}
+                                Err(id) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+                            }
+                        }
+                        // In the swap view, a double click takes the item out of the set.
+                        match game.equipment.click(hit) {
+                            Some(index) if game.equipment.swapping => {
+                                game.switch_asked = Some(index);
+                                let _ = game.session.switch_remove(index);
+                            }
+                            Some(index) => drop(game.session.take_off(index)),
+                            None => {}
                         }
                     }
                     Panel::Cart => {
@@ -3124,6 +3613,25 @@ impl App {
                         Some(guild::Hit::LevelUp(skill)) => {
                             let _ = game.session.skill_up(skill);
                         }
+                        _ => {}
+                    },
+                    Panel::Clan => {
+                        if let Some(clan::Hit::Title(title)) = game.clan.as_ref().and_then(|_| game.clan_window.hit(cursor)) {
+                            game.clan_window.frame.click_title(title);
+                        }
+                    }
+                    Panel::Mercenary => match game.mercenary_window.hit(cursor) {
+                        Some(mercenary::Hit::Title(title)) => game.mercenary_window.frame.click_title(title),
+                        Some(mercenary::Hit::Skills) => {
+                            game.mercenary_skill_list.frame.toggle();
+                            game.raise(Panel::MercenarySkills);
+                        }
+                        Some(mercenary::Hit::Dismiss) => game.dismiss_asked = true,
+                        _ => {}
+                    },
+                    Panel::MercenarySkills => match game.mercenary_skill_list.hit(cursor, &game.mercenary_skills) {
+                        Some(mercenary::SkillHit::Title(title)) => game.mercenary_skill_list.frame.click_title(title),
+                        Some(mercenary::SkillHit::Skill(id)) => game.use_mercenary_skill(id, u16::MAX),
                         _ => {}
                     },
                     Panel::Pet => match game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) {
@@ -3218,7 +3726,7 @@ impl App {
             // Taming: a monster under the pointer is the one to try (rathena checks the distance); anything else keeps
             // aiming.
             Scene::Game(game) if game.capturing => {
-                if let Some(Owner::Unit(id)) = hovered_any(&game.hit_boxes, cursor)
+                if let Some(Owner::Unit(id)) = hovered_unit(&game.hit_boxes, cursor, false)
                     && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER)
                 {
                     game.capturing = false;
@@ -3229,7 +3737,7 @@ impl App {
                 // An aimed skill goes to the unit under the pointer, or the cell for ground skills.
                 let (id, _) = game.targeting.unwrap();
                 let ground = game.skills.iter().find(|skill| skill.id == id).is_some_and(|skill| skill.kind & net::Skill::GROUND != 0);
-                let unit = match hovered_any(&game.hit_boxes, cursor) {
+                let unit = match hovered_unit(&game.hit_boxes, cursor, game.players_first(shift)) {
                     Some(Owner::Unit(unit)) => Some((unit, game.units.get(&unit).map(|actor| actor.cell))),
                     Some(Owner::Player) => Some((game.account_id, Some(game.player.cell))),
                     _ => None,
@@ -3251,8 +3759,8 @@ impl App {
                 if game.store_open() {
                     return;
                 }
-                // Whatever is under the cursor (nearest first): talk to NPCs, attack monsters, pick items up.
-                match hovered(&game.hit_boxes, cursor) {
+                // Whatever is under the cursor (see `picking::pick`): talk to NPCs, attack monsters, pick items up.
+                match hovered(&game.hit_boxes, cursor, shift) {
                     Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
                         Some(NPC) => {
                             let _ = game.session.talk(id);
@@ -3321,9 +3829,14 @@ impl App {
             game.status_window.frame.drag_to(self.cursor, status_height);
             let guild_height = game.guild_window.height();
             game.guild_window.frame.drag_to(self.cursor, guild_height);
+            let clan_height = game.clan_window.height();
+            game.clan_window.frame.drag_to(self.cursor, clan_height);
             let cart_height = game.cart.height();
             game.cart.frame.drag_to(self.cursor, cart_height);
             game.pet_window.frame.drag_to(self.cursor, pet::PetWindow::height());
+            game.mercenary_window.frame.drag_to(self.cursor, mercenary::Window::height());
+            let skills_height = mercenary::SkillList::height(game.mercenary_skills.len());
+            game.mercenary_skill_list.frame.drag_to(self.cursor, skills_height);
             if let Some(window) = &mut game.item_window {
                 window.drag_to(self.cursor);
             }
@@ -3340,6 +3853,13 @@ impl App {
             }
             game.mail.drag_to(self.cursor);
             game.quest_window.frame.drag_to(self.cursor, 466.0);
+            game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
+            if let Some(window) = &mut game.roulette {
+                window.frame.drag_to(self.cursor, roulette::HEIGHT);
+            }
+            if let Some(window) = &mut game.monster_window {
+                window.frame.drag_to(self.cursor, monster_info::MonsterWindow::height());
+            }
             if let Some(window) = &mut game.audio_window
                 && window.drag_to(self.cursor, &mut self.sound)
                 && let Some(audio) = &mut self.audio
@@ -3355,9 +3875,43 @@ impl App {
 
     /// The right button: Alt moves stacks to storage, a click on a player opens their menu, a press aims the camera.
     fn right_button(&mut self, state: ElementState) {
-        // On the character select, a card's menu of moving and renaming.
+        // ponytail: Ctrl + right click (not a drag, not on a window) orders the mercenary, an estimate of the official
+        // client's: at a monster it attacks, on the ground it goes there.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+            && self.modifiers.control_key()
+            && let Some(id) = game.mercenary.as_ref().map(|hired| hired.id)
+            && let Some((start, _)) = game.right_press
+            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+            && game.window_at(self.cursor).is_none()
+            && !game.chat.contains(self.cursor)
+        {
+            game.right_press = None;
+            let monster = match hovered(&game.hit_boxes, self.cursor, false) {
+                Some(Owner::Unit(target)) if game.units.get(&target).is_some_and(|actor| actor.kind == MONSTER) => Some(target),
+                _ => None,
+            };
+            if let Some(target) = monster {
+                // ponytail: rathena reads non-zero as "keep attacking" and says the client sends 0; 1 keeps it at it.
+                let _ = game.session.act_npc(id, target, 1);
+                game.steering.order = Some(mercenary::Order::Attack(target));
+                return;
+            }
+            let height = game.world.cell_position(game.player.cell.map(|value| value as f32))[1];
+            let view = game.camera.view(SCREEN[0] / SCREEN[1]);
+            if let Some(point) = view.pick([self.cursor[0] / SCREEN[0], self.cursor[1] / SCREEN[1]], height) {
+                let cell = [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32];
+                if game.world.gat.walkable(cell) {
+                    let _ = game.session.move_npc(id, cell.map(|value| value as u16));
+                    game.steering.order = Some(mercenary::Order::Move(game.player.cell));
+                }
+            }
+            return;
+        }
+        // On the character select, a card's menu of moving and renaming (only once the PIN check has passed).
         if let Scene::CharSelect(select) = &mut self.scene
             && state == ElementState::Pressed
+            && select.unlocked()
         {
             select.open_menu(self.cursor, &self.font, &self.messages);
         }
@@ -3376,12 +3930,15 @@ impl App {
                 },
                 _ => None,
             };
-            // A right click (not a drag) on another player (or our pet) opens the menu of what can be done with them.
-            let on_unit = match hovered(&game.hit_boxes, self.cursor) {
+            // A right click (not a drag) on another player (or our pet) opens the menu of what can be done with them;
+            // the monsters and items around don't get in the way.
+            let with_menu = game.hit_boxes.iter().copied().filter(|target| match target.owner {
+                Owner::Unit(id) => game.units.get(&id).is_some_and(|actor| actor.kind == PLAYER) || game.pet_id == Some(id),
+                _ => false,
+            });
+            let on_unit = match picking::pick(with_menu, self.cursor, true) {
                 _ if game.window_at(self.cursor).is_some() || game.chat.contains(self.cursor) => None,
-                Some(Owner::Unit(id)) if game.units.get(&id).is_some_and(|actor| actor.kind == PLAYER) => Some(id),
-                // And on our pet, its commands.
-                Some(Owner::Unit(id)) if game.pet_id == Some(id) => Some(id),
+                Some(Owner::Unit(id)) => Some(id),
                 _ => None,
             };
             if state == ElementState::Pressed {
@@ -3442,7 +3999,9 @@ impl App {
                 _ => None,
             };
             if let Some(item) = described {
-                let shown = iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards };
+                let damaged = item.broken.then(|| self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
+                let shown =
+                    iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires };
                 let position = game.item_window.as_ref().map(|window| window.position);
                 let mut window = iteminfo::ItemWindow::new(shown);
                 if let Some(position) = position {
@@ -3461,6 +4020,50 @@ impl App {
     }
 
     /// The left button went down or up: a press grabs, a release drops or clicks.
+    /// The wheel turned `rows` notches (positive: toward the player): it scrolls what the pointer is over, or zooms.
+    fn wheel(&mut self, rows: i32) {
+        if let Scene::Game(game) = &mut self.scene {
+            // Over the inventory the wheel scrolls it; elsewhere it zooms (away from you zooms out).
+            let on_shop = game.shop.as_ref().is_some_and(|shop| shop.covers(self.cursor));
+            let on_pick = game.pick.as_ref().is_some_and(|(list, _)| list.covers(self.cursor));
+            let on_item = game.item_window.as_ref().is_some_and(|window| window.hit(self.cursor, &self.items).is_some());
+            let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.cart.items).is_some());
+            let on_buying_setup = game.buying_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.inventory.items).is_some());
+            match game.window_at(self.cursor) {
+                _ if on_setup => {
+                    let count = game.cart.items.len();
+                    game.vend_setup.as_mut().unwrap().scroll_by(rows, count);
+                }
+                _ if on_buying_setup => {
+                    let inv = &game.inventory.items;
+                    game.buying_setup.as_mut().unwrap().scroll_by(rows, inv);
+                }
+                _ if on_item => {
+                    let lines = game.item_lines;
+                    game.item_window.as_mut().unwrap().scroll_by(rows, lines);
+                }
+                _ if on_shop => game.shop.as_mut().unwrap().scroll_by(self.cursor, rows),
+                _ if on_pick => game.pick.as_mut().unwrap().0.scroll_by(rows),
+                _ if game.achievement_window.covers(self.cursor) => game.achievement_window.scroll_by(rows, &self.achievement_info),
+                Some(Panel::Inventory) => game.inventory.scroll_by(rows),
+                Some(Panel::Cart) => game.cart.scroll_by(rows),
+                Some(Panel::Guild) => {
+                    if let Some(guild) = &game.guild {
+                        game.guild_window.scroll_by(rows, guild);
+                    }
+                }
+                Some(Panel::Storage) => {
+                    if let Some(assets) = &self.assets {
+                        game.storage.scroll_by(rows, &assets.storage, &self.items);
+                    }
+                }
+                Some(_) => {}
+                None if game.chat.contains(self.cursor) => game.chat.scroll_by(rows),
+                None => game.camera_goal.wheel(-rows as f32),
+            }
+        }
+    }
+
     fn left_button(&mut self, event_loop: &ActiveEventLoop, state: ElementState) {
         self.mouse_down = state == ElementState::Pressed;
         let dragged = match &mut self.scene {
@@ -3510,8 +4113,10 @@ impl App {
                 let on_trade = game.trade.as_ref().is_some_and(|trade| trade.hit(self.cursor).is_some());
                 let on_mail = matches!(game.mail.hit(self.cursor), Some(mail::Hit::Compose(_)));
                 let on_refine = game.refine.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+                let on_materials = game.materials.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 match (item, game.window_at(self.cursor)) {
                     (Some((Dragged::Item(index), _, true)), _) if on_mail => game.move_item(Asked::Mail(index)),
+                    (Some((Dragged::Item(index), _, true)), _) if on_materials => game.move_item(Asked::Material(index)),
                     // Into the refine machine: the server lists what refines it.
                     (Some((Dragged::Item(index), _, true)), _) if on_refine => {
                         let _ = game.session.refine_select(index);
@@ -3527,13 +4132,23 @@ impl App {
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Cart)) => game.move_item(Asked::ToCart(index)),
                     (Some((Dragged::Carted(index), _, true)), Some(Panel::Inventory)) => game.move_item(Asked::FromCart(index)),
                     (Some((Dragged::Stored(index), _, true)), Some(Panel::Inventory)) => game.move_item(Asked::Take(index)),
+                    // Onto the swap view: into the Swap Equipment set, where it would be worn.
+                    (Some((Dragged::Item(index), _, true)), Some(Panel::Equipment)) if game.equipment.swapping => {
+                        if let Some(item) = game.inventory.get(index) {
+                            game.switch_asked = Some(index);
+                            let _ = game.session.switch_add(index, item.location);
+                        }
+                    }
                     _ => {}
                 }
                 let trade_moved = game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
                     | game.room.as_mut().is_some_and(|room| room.frame.drop_drag())
                     | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
                     | game.mail.drop_drag()
-                    | game.quest_window.frame.drop_drag();
+                    | game.quest_window.frame.drop_drag()
+                    | game.achievement_window.frame.drop_drag()
+                    | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag());
                 // A slider let go keeps its volume for next time.
                 let slid = game.audio_window.as_mut().is_some_and(options::AudioWindow::drop_drag);
                 if slid {
@@ -3544,8 +4159,11 @@ impl App {
                     | game.party_window.frame.drop_drag()
                     | game.status_window.frame.drop_drag()
                     | game.guild_window.frame.drop_drag()
+                    | game.clan_window.frame.drop_drag()
                     | game.cart.frame.drop_drag()
                     | game.pet_window.frame.drop_drag()
+                    | game.mercenary_window.frame.drop_drag()
+                    | game.mercenary_skill_list.frame.drop_drag()
                     | game.storage.frame.drop_drag()
                     | game.inventory.frame.drop_drag()
                     | game.equipment.frame.drop_drag()
@@ -3625,6 +4243,31 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && let Some(window) = &mut game.monster_window
+            && window.hit(cursor) == Some(false)
+        {
+            if window.frame.local(cursor, monster_info::MonsterWindow::height()).and_then(|local| window.frame.title_hit(local)) == Some(TitleHit::Title) {
+                window.frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.roulette.as_ref().and_then(|window| window.hit(cursor))
+        {
+            if hit == roulette::Hit::Title(TitleHit::Title) {
+                game.roulette.as_mut().unwrap().frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && game.achievement_window.covers(cursor)
+        {
+            if game.achievement_window.hit(cursor, &self.achievement_info, &game.achievements) == Some(achievement::Hit::Title(TitleHit::Title)) {
+                game.achievement_window.frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
             && let Some(hit) = game.quest_window.hit(cursor, &game.quests)
         {
             if hit == quest::Hit::Title(TitleHit::Title) {
@@ -3694,9 +4337,20 @@ impl App {
                 Panel::Guild if game.guild.as_ref().and_then(|guild| game.guild_window.hit(cursor, guild)) == Some(guild::Hit::Title(TitleHit::Title)) => {
                     game.guild_window.frame.start_drag(cursor)
                 }
+                Panel::Clan if game.clan.is_some() && game.clan_window.hit(cursor) == Some(clan::Hit::Title(TitleHit::Title)) => {
+                    game.clan_window.frame.start_drag(cursor)
+                }
                 Panel::Cart if game.cart.hit(cursor) == Some(inventory::Hit::Title(TitleHit::Title)) => game.cart.frame.start_drag(cursor),
                 Panel::Pet if game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) == Some(pet::Hit::Title(TitleHit::Title)) => {
                     game.pet_window.frame.start_drag(cursor)
+                }
+                Panel::Mercenary if game.mercenary_window.hit(cursor) == Some(mercenary::Hit::Title(TitleHit::Title)) => {
+                    game.mercenary_window.frame.start_drag(cursor)
+                }
+                Panel::MercenarySkills
+                    if game.mercenary_skill_list.hit(cursor, &game.mercenary_skills) == Some(mercenary::SkillHit::Title(TitleHit::Title)) =>
+                {
+                    game.mercenary_skill_list.frame.start_drag(cursor)
                 }
                 Panel::Equipment if game.equipment.hit(cursor, &game.inventory.items) == Some(equipment::Hit::Title(TitleHit::Title)) => {
                     game.equipment.frame.start_drag(cursor)
@@ -3749,17 +4403,49 @@ impl App {
             return;
         }
         let key = &event.logical_key;
-        // Ctrl+Cmd+F, as Macs have it: fullscreen (the canvas scaled to fit, bars on the sides), or back.
-        if self.modifiers.super_key()
-            && self.modifiers.control_key()
-            && event.physical_key == PhysicalKey::Code(KeyCode::KeyF)
-            && let Some(gpu) = &self.gpu
-        {
+        // Ctrl+Cmd+F, as Macs have it, or Alt+Enter elsewhere: fullscreen (the canvas scaled to fit, bars on the sides), or back.
+        let fullscreen = if cfg!(target_os = "macos") {
+            self.modifiers.super_key() && self.modifiers.control_key() && event.physical_key == PhysicalKey::Code(KeyCode::KeyF)
+        } else {
+            self.modifiers.alt_key() && *key == Key::Named(NamedKey::Enter)
+        };
+        if fullscreen && let Some(gpu) = &self.gpu {
             gpu.window.set_fullscreen(gpu.window.fullscreen().is_none().then_some(winit::window::Fullscreen::Borderless(None)));
+            return;
+        }
+        // Ctrl+G opens or closes the clan window while in a clan.
+        if let Scene::Game(game) = &mut self.scene
+            && self.modifiers.control_key()
+            && !self.modifiers.alt_key()
+            && !self.modifiers.super_key()
+            && event.physical_key == PhysicalKey::Code(KeyCode::KeyG)
+        {
+            if game.clan.is_some() {
+                game.clan_window.frame.toggle();
+                game.raise(Panel::Clan);
+            }
             return;
         }
         // Alt+E and Alt+Q open the inventory and the equipment anywhere in the game (by physical key: Option+letter
         // types dead keys on a Mac).
+        // Ctrl+R, the game's key for the mercenary window, and Ctrl+T, its follow switch, while there's a mercenary.
+        if let Scene::Game(game) = &mut self.scene
+            && self.modifiers.control_key()
+            && game.mercenary.is_some()
+        {
+            match event.physical_key {
+                PhysicalKey::Code(KeyCode::KeyR) => {
+                    game.mercenary_window.frame.toggle();
+                    game.raise(Panel::Mercenary);
+                    return;
+                }
+                PhysicalKey::Code(KeyCode::KeyT) => {
+                    game.steering.following = !game.steering.following;
+                    return;
+                }
+                _ => {}
+            }
+        }
         if let Scene::Game(game) = &mut self.scene
             && self.modifiers.alt_key()
         {
@@ -3880,6 +4566,25 @@ impl App {
                 Key::Named(NamedKey::Escape) => self.scene = Scene::Login,
                 _ => {}
             },
+            Scene::CharSelect(select) if select.pin_pad.is_some() => {
+                let pad = select.pin_pad.as_mut().unwrap();
+                // ponytail: the official pad is mouse-only (message 1906); also accept digit keys so scenarios can `type` a PIN.
+                let action = match key {
+                    Key::Named(NamedKey::Backspace) => {
+                        pad.backspace();
+                        pin::PinAction::None
+                    }
+                    Key::Named(NamedKey::Enter) => pad.press(pin::PinButton::Ok),
+                    Key::Named(NamedKey::Escape) => pad.press(pin::PinButton::Cancel),
+                    _ => event
+                        .text
+                        .as_deref()
+                        .and_then(|text| text.chars().next())
+                        .filter(char::is_ascii_digit)
+                        .map_or(pin::PinAction::None, |digit| pad.push_digit(digit)),
+                };
+                self.apply_pin_action(action);
+            }
             Scene::CharSelect(select) => match key {
                 Key::Named(NamedKey::ArrowLeft) => select.step(-1),
                 Key::Named(NamedKey::ArrowRight) => select.step(1),
@@ -3934,9 +4639,15 @@ impl App {
                 }
             }
             // The question holds the player busy until it's answered.
+            Scene::Game(game) if game.bind_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.answer_bind(*key == Key::Named(NamedKey::Enter));
+            }
             Scene::Game(game) if game.expansion_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.expansion_asked = None;
                 let _ = game.session.answer_expansion(*key == Key::Named(NamedKey::Enter));
+            }
+            Scene::Game(game) if game.dismiss_asked && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.answer_dismiss(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
             Scene::Game(game) if game.pet_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_pet(*key == Key::Named(NamedKey::Enter));
@@ -4064,6 +4775,8 @@ impl App {
                 Key::Named(NamedKey::Escape) if game.world_map.is_some() => game.world_map = None,
                 Key::Named(NamedKey::Escape) if game.pick.is_some() => game.answer_pick(None),
                 Key::Named(NamedKey::Escape) if game.capturing => game.capturing = false,
+                Key::Named(NamedKey::Escape) if game.roulette.is_some() => game.close_roulette(),
+                Key::Named(NamedKey::Escape) if game.monster_window.is_some() => game.monster_window = None,
                 Key::Named(NamedKey::Escape) if game.targeting.is_some() => game.targeting = None,
                 Key::Named(NamedKey::Escape) if !game.chat.typing().is_empty() => game.chat.typing().clear(),
                 Key::Named(NamedKey::Escape) => game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: false }) },
@@ -4124,9 +4837,10 @@ impl App {
             NetEvent::Char(CharEvent::Characters { slots, characters }) => {
                 let figures = characters.iter().map(|character| SpriteSet::player(&self.grf, &character_look(character), &self.look_tables)).collect();
                 let mut select = char_select::Select::new(characters, figures, usize::from(slots));
-                // A list sent again (after a deletion) keeps the cursor where it was.
+                // A list sent again (after a deletion) keeps the cursor and PIN verification where they were.
                 if let Scene::CharSelect(previous) = self.scene.base() {
                     select.selected = previous.selected;
+                    select.pin_verified = previous.pin_verified;
                 } else if let Some(slot) = self.played_slot.take() {
                     // Back from the game: the character just played.
                     select.selected = slot;
@@ -4138,17 +4852,15 @@ impl App {
                 {
                     select.selected = slot;
                 }
+                let verified = select.pin_verified;
                 match &mut self.scene {
                     // After a rename its message stays up over the new list.
                     Scene::Message(_, back) if matches!(**back, Scene::CharSelect(_)) => **back = Scene::CharSelect(Box::new(select)),
                     scene => *scene = Scene::CharSelect(Box::new(select)),
                 }
-                let first = !std::mem::replace(&mut self.scripted, true);
-                if autostart.is_some() && first {
-                    self.start_game();
-                }
-                if first {
-                    self.run_select_switches();
+                // Autostart and MAKE/DELETE wait for PIN state 0 (`finish_char_select_entry`).
+                if verified {
+                    self.finish_char_select_entry();
                 }
             }
             NetEvent::Char(CharEvent::DeleteReserved { id, result, seconds }) => {
@@ -4255,8 +4967,57 @@ impl App {
                 match MapSession::connect(&ticket, self.client_tick(), move |event| {
                     let _ = proxy.send_event(NetEvent::Map(event));
                 }) {
-                    Ok(session) => self.entering = Some((session, map)),
+                    Ok(session) => {
+                        self.entering = Some((session, map));
+                        self.early_events.clear();
+                    }
                     Err(_) => self.message("맵 서버에 접속할 수 없습니다.", Scene::Login),
+                }
+            }
+            NetEvent::Char(CharEvent::Pin { seed, state }) => {
+                self.settle();
+                let Scene::CharSelect(select) = self.scene.base_mut() else { return };
+                let outcome = pin::PinPad::apply_server(&mut select.pin_pad, seed, state);
+                match outcome {
+                    pin::PinServerOutcome::Passed { message } => {
+                        select.pin_verified = true;
+                        self.finish_char_select_entry();
+                        if let Some(id) = message
+                            && matches!(self.scene, Scene::CharSelect(_))
+                        {
+                            let text = self.message_text(id);
+                            let back = std::mem::replace(&mut self.scene, Scene::Login);
+                            self.message(text, back);
+                        }
+                    }
+                    pin::PinServerOutcome::Prompt => {
+                        select.pin_verified = false;
+                        if state == 1 && !select.auto_pin_tried {
+                            select.auto_pin_tried = true;
+                            if let Ok(auto_pin) = std::env::var("RUSTNAROK_CLIENT_PIN")
+                                && auto_pin.len() == 4
+                                && auto_pin.bytes().all(|byte| byte.is_ascii_digit())
+                                && let Some(pad) = &mut select.pin_pad
+                            {
+                                let mut action = pin::PinAction::None;
+                                for digit in auto_pin.chars() {
+                                    action = pad.push_digit(digit);
+                                }
+                                self.apply_pin_action(action);
+                            }
+                        }
+                    }
+                    pin::PinServerOutcome::Message { id, tries_left } => {
+                        select.pin_verified = false;
+                        let text = messages::fill(&self.message_text(id), &[&tries_left]);
+                        let back = std::mem::replace(&mut self.scene, Scene::Login);
+                        self.message(text, back);
+                    }
+                    pin::PinServerOutcome::LockedOut(id) => {
+                        self.char_session = None;
+                        let text = self.message_text(id);
+                        self.message(text, Scene::Login);
+                    }
                 }
             }
             NetEvent::Char(CharEvent::Refused(code)) => {
@@ -4280,17 +5041,13 @@ impl App {
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
                 let _ = session.loaded();
+                // The player's own title comes with their own name tag.
+                let _ = session.ask_name(account.account_id);
                 let look = character_look(&me);
                 let sprites = SpriteSet::player(&self.grf, &look, &self.look_tables);
                 let mut player = Actor::new(me.name.clone(), sprites, position.map(i32::from), direction, 150);
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
-                let mut camera_goal = CameraGoal::new(self.indoor.contains(&map_key(&map)));
-                if let Some([yaw, pitch, zoom]) = std::env::var("RUSTNAROK_CLIENT_CAMERA").ok().and_then(|camera| {
-                    let values: Vec<f32> = camera.split(',').filter_map(|value| value.parse().ok()).collect();
-                    <[f32; 3]>::try_from(values).ok()
-                }) {
-                    (camera_goal.yaw, camera_goal.pitch, camera_goal.zoom) = (yaw, pitch, zoom);
-                }
+                let camera_goal = CameraGoal::new(self.indoor.contains(&map_key(&map)));
                 let camera = camera_goal.camera(world.cell_position(position.map(f32::from)));
                 let now = Instant::now();
                 let minimap = minimap::load_map(gpu, &self.grf, &map);
@@ -4326,6 +5083,8 @@ impl App {
                     emotions: HashMap::new(),
                     spirits: HashMap::new(),
                     sphere: gpu.try_load_texture(&self.grf, "data\\texture\\effect\\기구.bmp", true).ok(),
+                    shield: render::load_image(&self.grf, "data\\texture\\effect\\shield.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
+                    charm: render::load_image(&self.grf, "data\\texture\\effect\\charm.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
                     coin_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\동전"),
                     digits: Digits::load(gpu, &self.grf),
                     dialog: None,
@@ -4352,8 +5111,14 @@ impl App {
                     slot_sprite: SpriteSet::at(&self.grf, "data\\sprite\\slotmachine"),
                     slot: None,
                     casts: HashMap::new(),
+                    combos: HashMap::new(),
+                    locks: Vec::new(),
                     speech: HashMap::new(),
                     status_icons: Vec::new(),
+                    cooldowns: skills::Cooldowns::default(),
+                    talkie_text: None,
+                    talkie_spots: HashMap::new(),
+                    skill_delay_line: self.messages.get(SKILL_DELAY).cloned().unwrap_or_default(),
                     effects: effects::Effects::default(),
                     deal_choice: None,
                     shop: None,
@@ -4366,6 +5131,9 @@ impl App {
                     world_map: None,
                     quests: Vec::new(),
                     quest_window: quest::QuestWindow::default(),
+                    achievement_totals: net::AchievementTotals::default(),
+                    achievements: HashMap::new(),
+                    achievement_window: achievement::AchievementWindow::default(),
                     item_window: None,
                     item_lines: 0,
                     whispered: VecDeque::new(),
@@ -4375,11 +5143,16 @@ impl App {
                     item_skill: None,
                     trade: None,
                     refine: None,
+                    materials: None,
+                    roulette: None,
+                    monster_window: None,
+                    boss: None,
                     viewing: None,
                     bank: None,
                     trade_asked: None,
                     trade_with: String::new(),
                     menu: None,
+                    weather: weather::Weather::default(),
                     right_press: None,
                     party: None,
                     status_window: {
@@ -4400,10 +5173,19 @@ impl App {
                     friends: Vec::new(),
                     friend_asked: None,
                     expansion_asked: None,
+                    switch_asked: None,
+                    bind_asked: None,
+                    broken_before: None,
                     pet_id: None,
                     pet: None,
                     pet_window: pet::PetWindow::default(),
                     pet_asked: None,
+                    mercenary: None,
+                    mercenary_skills: Vec::new(),
+                    mercenary_window: mercenary::Window::default(),
+                    mercenary_skill_list: mercenary::SkillList::default(),
+                    steering: mercenary::Steering::default(),
+                    dismiss_asked: false,
                     vend_setup: None,
                     my_shop: None,
                     buying_setup: None,
@@ -4420,6 +5202,8 @@ impl App {
                     guild_window: guild::GuildWindow::default(),
                     guild_invite: None,
                     guild_shown: false,
+                    clan: None,
+                    clan_window: clan::ClanWindow::default(),
                     emblems: HashMap::new(),
                     name_tags: HashMap::new(),
                     pointed: None,
@@ -4441,8 +5225,11 @@ impl App {
                         Panel::Party,
                         Panel::Status,
                         Panel::Guild,
+                        Panel::Clan,
                         Panel::Cart,
                         Panel::Pet,
+                        Panel::Mercenary,
+                        Panel::MercenarySkills,
                     ],
                     damages: Vec::new(),
                     status,
@@ -4478,6 +5265,9 @@ impl App {
                         Some([x.parse().ok()?, y.parse().ok()?])
                     }),
                 }));
+                for event in std::mem::take(&mut self.early_events) {
+                    self.map_event(event);
+                }
             }
             Err(error) => self.message(format!("맵을 불러올 수 없습니다: {map} ({error})"), Scene::Login),
         }
@@ -4559,7 +5349,12 @@ impl App {
             return;
         }
 
-        let Scene::Game(game) = &mut self.scene else { return };
+        let Scene::Game(game) = &mut self.scene else {
+            if self.entering.is_some() {
+                self.early_events.push(event);
+            }
+            return;
+        };
         let (grf, job_names, look_tables, pets) = (&self.grf, &self.job_names, &self.look_tables, &self.pets);
         // Which kind of pick a making list is (read before the event is taken apart).
         let event_kind = match &event {
@@ -4581,6 +5376,7 @@ impl App {
             let sprites = match unit.kind {
                 PLAYER => SpriteSet::player(grf, &unit_look(unit), look_tables),
                 PET => job_names.get(&unit.job).and_then(|name| pet_sprites(grf, name, pets.tables.accessory_acts.get(&unit.head_bottom))),
+                MERCENARY if (6017..=6046).contains(&unit.job) => job_names.get(&unit.job).and_then(|name| SpriteSet::mercenary(grf, unit.job, name)),
                 // Hidden NPCs (script triggers) have no sprite in the client either.
                 _ if HIDDEN_JOBS.contains(&unit.job) => None,
                 _ => job_names.get(&unit.job).and_then(|name| SpriteSet::single(grf, name, unit.kind == MONSTER)),
@@ -4616,6 +5412,7 @@ impl App {
                 }
                 actor.guild = unit.guild;
                 game.want_emblem(unit.guild, unit.emblem);
+                game.monster_hp(&unit);
             }
             MapEvent::Turn { id, direction, head_direction } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
@@ -4635,6 +5432,7 @@ impl App {
                     actor.walk(path);
                 }
                 game.want_emblem(unit.guild, unit.emblem);
+                game.monster_hp(&unit);
             }
             // The bank: open on the server's word, then ask the balance; refusals by rathena's reasons.
             // ponytail: which message goes with which reason is read off their words.
@@ -4678,6 +5476,7 @@ impl App {
                     head_mid: equipped.head_mid,
                     head_bottom: equipped.head_bottom,
                     robe: equipped.robe,
+                    option: 0,
                 };
                 game.viewing = Some(Viewed {
                     window: equipment::Equipment::of(equipped.name),
@@ -4697,6 +5496,12 @@ impl App {
             MapEvent::ExpansionAsked { result, .. } | MapEvent::ExpansionDone(result) => {
                 let id = EXPANSION_RESULTS.get(usize::from(result)).copied().unwrap_or(EXPANSION_RESULTS[1]);
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
+            }
+            // Change Material or Four Spirit Analysis: the material window, with the inventory beside it.
+            MapEvent::MaterialWindow(kind) => {
+                game.materials = Some(material::Materials::new(kind));
+                game.inventory.frame.open = true;
+                game.raise(Panel::Inventory);
             }
             // The refine window opens with the inventory beside it.
             MapEvent::RefineOpen => {
@@ -4728,17 +5533,28 @@ impl App {
                 }
             }
             MapEvent::Spirits { id, count } => {
-                let key = (id != game.account_id).then_some(id);
-                if count > 0 {
-                    game.spirits.insert(key, count);
-                } else {
-                    game.spirits.remove(&key);
-                }
+                change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.spheres = count);
             }
+            // A Royal Guard's rage spheres come as shields too.
+            MapEvent::Shields { id, count } => {
+                let job = if id == game.account_id { Some(game.me.job) } else { game.units.get(&id).map(|actor| actor.job) };
+                let guard = job.is_some_and(guard_job);
+                change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| {
+                    *if guard { &mut orbs.spheres } else { &mut orbs.shields } = count
+                });
+            }
+            MapEvent::Charms { id, kind, count } => {
+                change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| {
+                    orbs.charms = if (1..=4).contains(&kind) { (kind, count) } else { (0, 0) }
+                });
+            }
+            MapEvent::Souls { id, count } => change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.souls = count),
             MapEvent::Vanish { id, reason } => {
                 if id != game.account_id {
                     game.spirits.remove(&Some(id));
                 }
+                lock_pair(&mut game.locks, id, id, false);
+                game.hold_locked();
                 // A body keeps what plays on it (the killing hit's effects) until it goes.
                 if reason != 1 {
                     game.effects.forget(id);
@@ -4774,7 +5590,7 @@ impl App {
                     player.walk(path);
                 }
             }
-            MapEvent::Stop { id, position } => {
+            MapEvent::Stop { id, position } | MapEvent::Slide { id, position } => {
                 let cell = position.map(i32::from);
                 if id == game.account_id {
                     game.player.stop_at(cell);
@@ -4794,6 +5610,9 @@ impl App {
                 game.chat_line(message, color.unwrap_or(if id.is_none() { CHAT_SELF } else { CHAT_WHITE }));
             }
             MapEvent::MapChange { map, position } => {
+                // The new map's weather comes once it has loaded, and the mercenary's news.
+                game.weather.clear();
+                game.forget_mercenary(false);
                 // Back at the save point: up again.
                 if game.escape.as_ref().is_some_and(|menu| menu.dead) {
                     game.escape = None;
@@ -4801,9 +5620,16 @@ impl App {
                 game.player.revive();
                 // The NPC is left behind: its shop and its buy-or-sell question close (the server doesn't say so).
                 game.close_shop();
-                // rathena forgets the refine window on a map change.
+                // rathena forgets the refine window on a map change; the material window and the roulette go too.
                 game.refine = None;
+                game.roulette = None;
+                // The mirror's status ends with the warp.
+                game.boss = None;
+                game.materials = None;
                 game.deal_choice = None;
+                game.combos.clear();
+                game.locks.clear();
+                game.hold_locked();
                 if map == game.map {
                     // A teleport on the same map: no loading, but the server takes the player off the map until
                     // the load is acknowledged (it drops everything else till then) and sends what's in view again.
@@ -4814,6 +5640,24 @@ impl App {
                 } else {
                     self.show_loading(LoadTarget::Change { map, position });
                 }
+            }
+            MapEvent::ComboWindow { id, ms } => {
+                game.combos.insert((id != game.account_id).then_some(id), (control::now(), Duration::from_millis(u64::from(ms))));
+            }
+            // Locked units turn to face each other.
+            // ponytail: the facing is an estimate.
+            MapEvent::BladeStop { source, target, on } => {
+                lock_pair(&mut game.locks, source, target, on);
+                let me = game.account_id;
+                let cell = |game: &Game, id: u32| if id == me { Some(game.player.cell) } else { game.units.get(&id).map(|actor| actor.cell) };
+                if on && let (Some(from), Some(to)) = (cell(game, source), cell(game, target)) {
+                    for (id, toward) in [(source, to), (target, from)] {
+                        if let Some(actor) = if id == me { Some(&mut game.player) } else { game.units.get_mut(&id) } {
+                            actor.face(toward);
+                        }
+                    }
+                }
+                game.hold_locked();
             }
             MapEvent::NpcSay { npc, text } => game.dialog_for(npc).lines.push(show_links(&text)),
             MapEvent::NpcNext { npc } => game.dialog_for(npc).button = DialogButton::Next,
@@ -4861,6 +5705,10 @@ impl App {
                 game.status.insert(id, value);
             }
             MapEvent::Statuses(values) => game.status.extend(values),
+            // -1 takes the bar away.
+            MapEvent::UnitHp { id, hp, max_hp } if hp < 0 || max_hp <= 0 => {
+                game.unit_hp.remove(&id);
+            }
             MapEvent::UnitHp { id, hp, max_hp } => {
                 game.unit_hp.insert(id, (hp, max_hp));
             }
@@ -4903,8 +5751,71 @@ impl App {
                     _ => game.chat_line(message(messages::CANT_CARRY), CHAT_ERROR),
                 }
             }
-            MapEvent::InventoryStart { kind: 0 } => game.inventory.clear(),
-            MapEvent::InventoryItems { kind: 0, items } => game.inventory.extend(items),
+            // The inventory again: what broke since says so; the out pet's egg (marked broken) stays hidden.
+            MapEvent::InventoryStart { kind: 0 } => {
+                let had = !game.inventory.items.is_empty();
+                game.broken_before = had.then(|| game.inventory.items.iter().filter(|item| item.broken).map(|item| item.index).collect());
+                game.inventory.clear();
+            }
+            MapEvent::InventoryItems { kind: 0, items } => {
+                // ponytail: rathena never sends ZC_EQUIPITEM_DAMAGED, so the client notices a break in the resent list.
+                if let Some(before) = &game.broken_before {
+                    let message = |id: usize| self.messages.get(id).map_or("", String::as_str);
+                    let lines: Vec<String> = inventory::newly_broken(before, &items)
+                        .into_iter()
+                        .map(|item| {
+                            let place = message(if item.kind == net::ITEM_WEAPON { DAMAGED_WEAPON } else { DAMAGED_ARMOR });
+                            messages::fill(message(DAMAGED), &[&game.me.name, &place])
+                        })
+                        .collect();
+                    for line in lines {
+                        game.chat_line(line, CHAT_ERROR);
+                    }
+                }
+                game.inventory.extend(items.into_iter().filter(|item| !inventory::hidden_egg(item)).collect());
+            }
+            MapEvent::BoundOnEquip(index) => {
+                if let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index) {
+                    item.bind = 2;
+                    let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
+                    game.chat_line(messages::fill(self.messages.get(BOUND).map_or("", String::as_str), &[&name]), CHAT_ITEM);
+                }
+            }
+            // ponytail: no line fits a refusal; it says nothing.
+            MapEvent::TookOffAll { .. } => {}
+            MapEvent::SwitchSet(set) => {
+                for item in &mut game.inventory.items {
+                    item.switch = set.iter().find(|(index, _)| *index == item.index).map_or(0, |(_, places)| *places);
+                }
+            }
+            // The player's own add and remove get a line.
+            // ponytail: whether the client also says so for items a switch moves isn't knowable; it doesn't.
+            MapEvent::SwitchAdded { index, places, result } => {
+                let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
+                let asked = game.switch_asked.take_if(|asked| *asked == index).is_some();
+                let name = game.inventory.items.iter_mut().find(|item| item.index == index && result == 0).map(|item| {
+                    item.switch = places;
+                    inventory::item_name(&self.items, item.id, item.identified, item.refine)
+                });
+                match result {
+                    0 if asked => game.chat_line(format!("{}{}", name.unwrap_or_default(), message(SWITCH_ADDED)), CHAT_ITEM),
+                    0 => {}
+                    1 => game.chat_line(message(1773), CHAT_ERROR),
+                    _ => game.chat_line(message(372), CHAT_ERROR),
+                }
+            }
+            MapEvent::SwitchRemoved { index, .. } => {
+                let asked = game.switch_asked.take_if(|asked| *asked == index).is_some();
+                let name = game.inventory.items.iter_mut().find(|item| item.index == index).map(|item| {
+                    item.switch = 0;
+                    inventory::item_name(&self.items, item.id, item.identified, item.refine)
+                });
+                if let Some(name) = name.filter(|_| asked) {
+                    game.chat_line(format!("{name}{}", self.messages.get(SWITCH_REMOVED).cloned().unwrap_or_default()), CHAT_ITEM);
+                }
+            }
+            // The wear and take-off answers that follow move the items.
+            MapEvent::Switched { .. } => {}
             // The storage opens with the inventory beside it.
             MapEvent::InventoryStart { kind: 2 } => {
                 game.storage.open();
@@ -4991,7 +5902,18 @@ impl App {
                 game.chat_line(format!("{before}{exp}{after}"), CHAT_ITEM);
             }
             MapEvent::MvpOverweight => game.chat_line(self.messages.get(MVP_OVERWEIGHT).cloned().unwrap_or_default(), CHAT_ERROR),
+            MapEvent::MercenaryInfo(hired) => game.mercenary = Some(hired),
+            MapEvent::MercenarySkills(list) => game.mercenary_skills = list,
+            MapEvent::MercenaryChanged { kind, value } => {
+                if let Some(hired) = &mut game.mercenary {
+                    hired.set(kind, value);
+                }
+            }
             MapEvent::Message { id, value, skill, color } => {
+                // The contract is over, or the mercenary died: it's gone.
+                if [mercenary::EXPIRED, mercenary::DIED].contains(&id) {
+                    game.forget_mercenary(true);
+                }
                 let template = self.messages.get(id).map_or("", String::as_str);
                 let text = match (value, skill) {
                     (Some(value), _) => messages::fill(template, &[&value]),
@@ -5377,7 +6299,12 @@ impl App {
                 }
                 game.want_emblem(guild, emblem);
             }
-            MapEvent::NameTag(id, tag) => _ = game.name_tags.insert(id, tag),
+            MapEvent::NameTag(id, tag) => {
+                if id == game.account_id {
+                    game.equipment.title = tag.title;
+                }
+                game.name_tags.insert(id, tag);
+            }
             MapEvent::GuildNotice { subject, text } => {
                 if !subject.is_empty() {
                     game.chat_line(format!("[{subject}] {text}"), GUILD_CHAT);
@@ -5426,6 +6353,28 @@ impl App {
                     guild.members.retain(|member| member.character != character);
                 }
             }
+            // The clan: its info at login or on joining, how many are online, leaving, and its chat.
+            MapEvent::ClanInfo { id, name, master, map, allies, hostile } => {
+                let clan = game.clan.get_or_insert_with(clan::Clan::default);
+                clan.id = id;
+                clan.name = name;
+                clan.master = master;
+                clan.map = map;
+                clan.allies = allies;
+                clan.hostile = hostile;
+            }
+            // rathena sends the info (0x098A) before the first count; a count without a clan is ignored.
+            MapEvent::ClanOnlineCount { online, max } => {
+                if let Some(clan) = &mut game.clan {
+                    clan.online = online;
+                    clan.max = max;
+                }
+            }
+            MapEvent::ClanLeft => {
+                game.clan = None;
+                game.clan_window.frame.open = false;
+            }
+            MapEvent::ClanChat(text) => game.chat_line(text, CLAN_CHAT),
             // Friends: the list, who's online (said in the chat), asking and answering.
             MapEvent::Friends(friends) => game.friends = friends,
             MapEvent::FriendOnline { account, character, online } => {
@@ -5759,6 +6708,101 @@ impl App {
                 let (line, color) = if caught { (TAMED, CHAT_ITEM) } else { (NOT_TAMED, CHAT_ERROR) };
                 game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), color);
             }
+            // Achievements: the whole list, or one changed; a newly done one says so.
+            MapEvent::Achievements { totals, list } => {
+                game.achievement_totals = totals;
+                game.achievements = list.into_iter().map(|achievement| (achievement.id, achievement)).collect();
+                game.equipment.titles = earned_titles(&game.achievements, &self.achievement_info, &self.title_names);
+            }
+            MapEvent::AchievementUpdate { totals, achievement } => {
+                game.achievement_totals = totals;
+                if let Some(achievement) = achievement {
+                    // ponytail: a chat line when one is done; how the real client tells it isn't known.
+                    if achievement.completed && !game.achievements.get(&achievement.id).is_some_and(|known| known.completed) {
+                        let info = self.achievement_info.get(&achievement.id);
+                        let name = info.map_or_else(|| achievement.id.to_string(), |info| info.title.clone());
+                        game.chat_line(messages::fill(self.messages.get(achievement::ACHIEVED).map_or("", String::as_str), &[&name]), CHAT_ITEM);
+                    }
+                    game.achievements.insert(achievement.id, achievement);
+                    game.equipment.titles = earned_titles(&game.achievements, &self.achievement_info, &self.title_names);
+                }
+            }
+            // A claim's result shows in the achievement's update.
+            MapEvent::AchievementReward { .. } => {}
+            MapEvent::TitleChanged { ok: true, title } => game.equipment.title = title,
+            MapEvent::TitleChanged { .. } => {}
+            // The Lucky Roulette: opened (asked or by @roulette), its prizes, a spin, a claim.
+            MapEvent::RouletteOpen { prize, bonus, points } => {
+                let window = game.roulette.get_or_insert_with(roulette::Roulette::new);
+                (window.prize, window.bonus, window.points) = (prize, bonus, points);
+                if window.prizes.is_empty() {
+                    let _ = game.session.roulette(net::RouletteRequest::Prizes);
+                }
+            }
+            MapEvent::RoulettePrizes(prizes) => {
+                if let Some(window) = &mut game.roulette {
+                    window.prizes = prizes;
+                }
+            }
+            // ponytail: the wheel's sound plays as it starts; when the real client plays it isn't known.
+            MapEvent::RouletteSpun { result, row, column, bonus, points } => {
+                if let Some(window) = &mut game.roulette {
+                    (window.bonus, window.points) = (bonus, points);
+                    if result == 0 || result == 3 {
+                        window.spun(row, column, control::now());
+                        if let Some(audio) = &mut self.audio {
+                            audio.play(grf, "roulette.wav", 1.0);
+                        }
+                    }
+                }
+                if let Some(id) = roulette::spin_message(result) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
+            MapEvent::RouletteClaimed { result, bonus } => {
+                if let Some(window) = &mut game.roulette {
+                    window.bonus = bonus;
+                    if result == 0 {
+                        window.prize = None;
+                    }
+                }
+                if let Some(id) = roulette::claim_message(result) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
+            // Sense: the window, named after a unit on screen of that class (the packet has no name).
+            // ponytail: where the real client takes the name from isn't knowable.
+            MapEvent::MonsterInfo(info) => {
+                let name = game.units.values().find(|actor| actor.job == info.class).map(|actor| actor.name.clone()).unwrap_or_default();
+                game.monster_window = Some(monster_info::MonsterWindow::new(info, name));
+            }
+            // The Convex Mirror: none here; the boss found, moving; dead, back in a while.
+            // ponytail: the lines in the server lines' yellow.
+            MapEvent::BossInfo { kind, cell, hours, minutes, name } => {
+                let message = |id: usize| self.messages.get(id).map_or("", String::as_str);
+                match kind {
+                    0 => game.chat_line(message(NO_BOSS).to_owned(), CHAT_BROADCAST),
+                    2 => {
+                        game.chat_line(messages::fill(message(BOSS_SHOWN), &[&name]), CHAT_BROADCAST);
+                        game.boss = Some((name, cell));
+                    }
+                    1 => game.boss = Some((name, cell)),
+                    _ => {
+                        game.boss = None;
+                        let line = messages::fill(message(monster_info::boss_line(hours, minutes)), &[&name, &hours, &minutes]);
+                        game.chat_line(line, CHAT_BROADCAST);
+                    }
+                }
+            }
+            // A Talkie Box went off: its words over it, like speech.
+            // ponytail: a box never seen (a hidden trap) puts them in the chat; where the real client shows them isn't known.
+            MapEvent::TalkieBox { unit, text } => match game.effects.ground_unit_at(unit) {
+                Some(at) => {
+                    game.talkie_spots.insert(unit, at);
+                    game.say(Some(unit), text, CHAT_WHITE);
+                }
+                None => game.chat_line(text, CHAT_WHITE),
+            },
             MapEvent::IdentifyList(indexes) => {
                 let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
                 if items.is_empty() {
@@ -5907,10 +6951,10 @@ impl App {
                 if cast_ms > 0 {
                     game.casts.insert((source != me).then_some(source), (Instant::now(), Duration::from_millis(u64::from(cast_ms))));
                 }
-                game.skill_motion(source, skill, cast_ms as f32, &self.skill_info);
+                game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info);
                 skill_effects(game, skill, "beginCastEffectId", source);
             }
-            MapEvent::SkillHit { skill, act, .. } => {
+            MapEvent::SkillHit { skill, level, act } => {
                 game.casts.remove(&(act.source != game.account_id).then_some(act.source));
                 let me = game.account_id;
                 let target_cell = if act.target == me { Some(game.player.cell) } else { game.units.get(&act.target).map(|actor| actor.cell) };
@@ -5924,7 +6968,7 @@ impl App {
                         source.play(actor::combat_actions(source.kind).0, Instant::now(), act.source_speed.max(100) as f32, false);
                     }
                 }
-                game.skill_motion(act.source, skill, act.source_speed as f32, &self.skill_info);
+                game.skill_motion(act.source, skill, i32::from(level as i16), overhead::Shout::Hit, act.source_speed as f32, &self.skill_info);
                 if act.damage != 0 && !(act.source == act.target && act.kind == 6) {
                     game.show_hit(&act);
                     // Hit by hit: what comes at the target first (a bolt's arrows), then what shows as it lands.
@@ -5953,7 +6997,7 @@ impl App {
                 {
                     caster.face(cell);
                 }
-                game.skill_motion(source, skill, 400.0, &self.skill_info);
+                game.skill_motion(source, skill, amount, overhead::Shout::Used, 400.0, &self.skill_info);
                 if HEAL_SKILLS.contains(&skill) {
                     game.damages.push(Damage {
                         target: (target != me).then_some(target),
@@ -5966,7 +7010,7 @@ impl App {
                 skill_effects(game, skill, "effectId", target);
                 skill_effects(game, skill, "effectIdOnCaster", source);
             }
-            MapEvent::GroundSkill { skill, source, cell, .. } => {
+            MapEvent::GroundSkill { skill, source, level, cell } => {
                 game.casts.remove(&(source != game.account_id).then_some(source));
                 if let Some(gpu) = gpu {
                     for effect in table.skill(skill, "effectId") {
@@ -5978,7 +7022,7 @@ impl App {
                 if let Some(caster) = caster {
                     caster.face([i32::from(cell[0]), i32::from(cell[1])]);
                 }
-                game.skill_motion(source, skill, 400.0, &self.skill_info);
+                game.skill_motion(source, skill, i32::from(level as i16), overhead::Shout::Hit, 400.0, &self.skill_info);
             }
             MapEvent::SkillUnit { id, kind, cell } => {
                 if let Some(gpu) = gpu {
@@ -5987,6 +7031,8 @@ impl App {
                 }
             }
             MapEvent::SkillUnitGone { id } => game.effects.forget(id),
+            // Cooldowns: kept across map changes (the server doesn't repeat them), sent again after a relog.
+            MapEvent::SkillCooldown { skill, ms } => game.cooldowns.set(skill, ms, control::now()),
             MapEvent::SkillFailed { ok: true, .. } => {}
             MapEvent::SkillFailed { skill, detail, cause, .. } => {
                 game.casts.remove(&None);
@@ -6032,6 +7078,16 @@ impl App {
                 }
             }
             MapEvent::StatusIcon { kind, id, on, left_ms, .. } => {
+                // The mirror's 10 minutes are over: the boss leaves the minimap.
+                if id == game.account_id && kind == BOSS_ALARM && !on {
+                    game.boss = None;
+                }
+                // A lock's status ending lets go of the unit's pairs too: rathena sends no ZC_BLADESTOP release for
+                // Cursed Circle (its caster's count of caught units stays 0).
+                if !on && LOCK_ICONS.contains(&kind) {
+                    lock_pair(&mut game.locks, id, id, false);
+                    game.hold_locked();
+                }
                 if id == game.account_id {
                     game.status_icons.retain(|(icon, ..)| *icon != kind);
                     if on && self.status_icon_files.contains_key(&kind) {
@@ -6044,6 +7100,17 @@ impl App {
             // Potions and the like: green HP or blue SP over the player.
             MapEvent::Recovered { kind, amount } => {
                 game.damages.push(Damage { target: None, amount, start: Instant::now(), kind: DamageKind::Heal { sp: kind == net::STATUS_SP }, flinch: None });
+            }
+            // Mounting, dismounting or an outfit puts a player in another body.
+            MapEvent::OptionChange { id, option } => {
+                let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
+                if let Some(actor) = actor
+                    && let Some(look) = &mut actor.look
+                    && look.option != option & actor::BODY_OPTIONS
+                {
+                    look.option = option & actor::BODY_OPTIONS;
+                    actor.sprites = SpriteSet::player(grf, look, look_tables);
+                }
             }
             MapEvent::LookChange { id, kind, value, extra } => {
                 // A skill's ground unit becoming another (rathena's Warp Portal opens this way): the new one's effect.
@@ -6077,6 +7144,21 @@ impl App {
                     _ => game.chat_line(message(372), CHAT_ERROR),
                 }
             }
+            // A rental ended: its warning, its time up and gone from the inventory (the take-off and delete that may follow
+            // find nothing then).
+            // ponytail: rathena's comment says minutes; under a minute it's said in seconds.
+            MapEvent::RentalTime { item, seconds } => {
+                let name = inventory::item_name(&self.items, item, true, 0);
+                let (id, count) = if seconds < 60 { (RENTAL_SECONDS, seconds) } else { (RENTAL_MINUTES, seconds / 60) };
+                game.chat_line(messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name, &count]).trim_start().to_owned(), CHAT_ITEM);
+            }
+            MapEvent::RentalExpired { index, item } => {
+                let name = inventory::item_name(&self.items, item, true, 0);
+                game.chat_line(messages::fill(self.messages.get(RENTAL_ENDED).map_or("", String::as_str), &[&name]).trim_start().to_owned(), CHAT_ITEM);
+                game.inventory.remove(index, u16::MAX);
+            }
+            // An item no longer carried (a rental that ended) comes off without a word.
+            MapEvent::Unequipped { index, failed: false, .. } if game.inventory.get(index).is_none() => {}
             MapEvent::Unequipped { index, failed: false, .. } => {
                 let name = game.inventory.get(index).map(|item| inventory::item_name(&self.items, item.id, item.identified, item.refine)).unwrap_or_default();
                 game.inventory.set_worn(index, 0);
@@ -6092,6 +7174,8 @@ impl App {
                     game.play_effect(gpu, grf, table, effect, user);
                 }
             }
+            // Weather comes as effects on the player: it shows until the map changes.
+            MapEvent::Effect { id, effect } if id == game.account_id && weather::is_weather(effect) => game.weather.start(effect, control::now()),
             MapEvent::Effect { id, effect } => {
                 if let Some(gpu) = gpu {
                     game.play_effect(gpu, grf, table, effect, id);
@@ -6300,7 +7384,11 @@ impl App {
                 }
             }
             Scene::CharSelect(select) => {
-                select.draw(&mut base, &assets.char_select, font, &self.messages, &self.pc_job_names, &self.map_names, &self.icons, base_pointer, &poses)
+                let select_pointer = if select.pin_pad.is_some() { ([-1.0; 2], false) } else { base_pointer };
+                select.draw(&mut base, &assets.char_select, font, &self.messages, &self.pc_job_names, &self.map_names, &self.icons, select_pointer, &poses);
+                if let Some(pad) = &select.pin_pad {
+                    pad.draw(&mut base, &assets.chrome, &assets.pin, font, &self.messages, base_pointer);
+                }
             }
             Scene::CharMake(make, _) => {
                 let caret = matches!(self.scene, Scene::CharMake(..)) && blink_phase.is_multiple_of(2);
@@ -6378,11 +7466,33 @@ impl App {
             (&self.grf, &self.items, &self.messages, &mut self.icons, &mut self.cursor_look, &self.pc_job_names);
         let (audio, sound) = (&mut self.audio, &self.sound);
         let (worlds, map_names, quest_texts) = (&self.worlds, &self.map_names, &self.quest_texts);
+        let (achievement_info, title_names) = (&self.achievement_info, &self.title_names);
         let (skill_info, skill_trees, status_icon_files) = (&self.skill_info, &self.skill_trees, &self.status_icon_files);
         let font = &self.font;
         let now = control::now();
         let pointer = (self.cursor, self.mouse_down);
+        let players_first = game.players_first(self.modifiers.shift_key());
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
+
+        // The mercenary follows the player unless told otherwise; an attack order lasts while its target is there.
+        if let Some(id) = game.mercenary.as_ref().map(|hired| hired.id)
+            && let Some(cell) = game.units.get(&id).map(|actor| actor.cell)
+        {
+            if let Some(mercenary::Order::Attack(target)) = game.steering.order
+                && game.units.get(&target).is_none_or(|actor| actor.remove_at.is_some())
+            {
+                game.steering.order = None;
+            }
+            if game.steering.should_call(cell, game.player.cell, now) {
+                let _ = game.session.move_to_owner(id);
+            }
+        }
+
+        // Fireworks weather sets off fireworks around the player.
+        for [dx, dy] in game.weather.fireworks_due(now) {
+            let cell = [game.player.cell[0] + dx, game.player.cell[1] + dy].map(|value| value.max(0) as u16);
+            game.play_effect_at(gpu, grf, &self.effect_table, weather::FIREWORK, cell);
+        }
 
         // Bodies that finished dying leave; hits that land make their target flinch.
         game.units.retain(|_, actor| actor.remove_at.is_none_or(|at| at > now));
@@ -6458,7 +7568,8 @@ impl App {
             _ => Vec::new(),
         };
         let mut labels = Vec::new();
-        let mut feet_of = HashMap::new();
+        // Talkie Boxes saying their words stand where their traps were.
+        let mut feet_of = game.talkie_spots.clone();
         for (&id, actor) in &mut game.units {
             let cell = actor.update(now);
             let feet = game.world.cell_position(cell);
@@ -6501,9 +7612,12 @@ impl App {
             frames.push((Owner::Item(id), feet, sprites.frame(gpu, 0, 0, 0, Timing::Loop(0.0))));
         }
 
-        // Clickable areas: each unit's and item's sprite bounds on screen, in logical pixels.
+        // Clickable areas: each unit's and item's sprite bounds and the cell under it on screen, in logical pixels.
+        // The dead and the hidden can't be clicked.
+        let to_screen = |[x, y]: [f32; 2]| [x * SCREEN[0], y * SCREEN[1]];
         game.hit_boxes = frames
             .iter()
+            .filter(|(owner, ..)| !matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.remove_at.is_some() || actor.hidden)))
             .filter_map(|(owner, feet, placements)| {
                 let (mut low, mut high) = ([f32::MAX; 2], [f32::MIN; 2]);
                 for (_, position, size) in placements {
@@ -6514,8 +7628,27 @@ impl App {
                     }
                 }
                 let [left, top, right, bottom] = view.sprite_rect(*feet, low, high)?;
-                let distance = (0..3).map(|axis| (feet[axis] - view.eye[axis]).powi(2)).sum::<f32>();
-                Some((*owner, [left * SCREEN[0], top * SCREEN[1], right * SCREEN[0], bottom * SCREEN[1]], distance))
+                let sprite = [left * SCREEN[0], top * SCREEN[1], right * SCREEN[0], bottom * SCREEN[1]];
+                let half = world::CELL / 2.0;
+                let corners: Option<Vec<_>> = [[-half, -half], [half, -half], [half, half], [-half, half]]
+                    .iter()
+                    .map(|[dx, dz]| view.project([feet[0] + dx, feet[1], feet[2] + dz]).map(to_screen))
+                    .collect();
+                let cell = corners.map_or(sprite, |corners| picking::bounds(&corners));
+                let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]).powi(2)).sum::<f32>();
+                let kind = match owner {
+                    Owner::Player => picking::Kind::Player,
+                    Owner::Item(_) => picking::Kind::Item,
+                    Owner::Unit(id) => match game.units.get(id).map(|actor| actor.kind) {
+                        Some(MONSTER) => picking::Kind::Monster,
+                        Some(NPC) => picking::Kind::Npc,
+                        Some(HOMUNCULUS) => picking::Kind::Homunculus,
+                        Some(PLAYER) => picking::Kind::Player,
+                        _ => picking::Kind::Other,
+                    },
+                };
+                let min = if kind == picking::Kind::Item { picking::ITEM_MIN } else { picking::UNIT_MIN };
+                Some(picking::Target { owner: *owner, kind, sprite, area: picking::area(sprite, cell, min), depth })
             })
             .collect();
 
@@ -6547,7 +7680,7 @@ impl App {
         let turned = now.duration_since(game.entered).as_secs_f32();
         let coin = game.coin_sprite.as_mut().map(|sprite| sprite.frame_at(gpu, 0, 0, Timing::Loop(turned * 1000.0))).unwrap_or_default();
         let mut spirits: [Vec<Billboard>; 2] = [Vec::new(), Vec::new()];
-        for (unit, &count) in &game.spirits {
+        for (unit, orbs) in &game.spirits {
             let (feet, job) = match unit {
                 None => (player_feet, game.me.job),
                 Some(id) => match (feet_of.get(id), game.units.get(id)) {
@@ -6555,10 +7688,22 @@ impl App {
                     _ => continue,
                 },
             };
-            for place in 0..count {
-                let angle = turned * SPIRIT_TURN + f32::from(place) * std::f32::consts::TAU / f32::from(count);
-                let center = [angle.cos() * SPIRIT_RADIUS, -SPIRIT_HEIGHT + angle.sin() * SPIRIT_RADIUS * SPIRIT_TILT];
-                let side = &mut spirits[usize::from(angle.sin() > 0.0)];
+            // Shields at the waist, souls over the spheres, charms over the head.
+            let (element, charms) = orbs.charms;
+            let pictures = [
+                (game.shield.as_ref(), orbs.shields, SHIELD_HEIGHT, SHIELD_SCALE, [1.0; 4]),
+                (game.sphere.as_ref(), orbs.souls, SOUL_HEIGHT, SPHERE_SCALE, SOUL_TINT),
+                (game.charm.as_ref(), charms, CHARM_HEIGHT, CHARM_SCALE, CHARM_TINTS[usize::from(element.clamp(1, 4) - 1)]),
+            ];
+            for (picture, count, height, scale, tint) in pictures {
+                let Some(picture) = picture else { continue };
+                let size = picture.size.map(|side| side * scale);
+                for (center, near) in orbit(count, height, turned) {
+                    spirits[usize::from(near)].push((picture, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, tint));
+                }
+            }
+            for (center, near) in orbit(orbs.spheres, SPIRIT_HEIGHT, turned) {
+                let side = &mut spirits[usize::from(near)];
                 if coin_job(job) {
                     if let Some(sprite) = &game.coin_sprite {
                         side.extend(
@@ -6724,7 +7869,8 @@ impl App {
         // names below); the server tells those each time the pointer comes onto them, as what it sends unasked can be
         // stale.
         let mut guild_line = None;
-        let pointed = match hovered(&game.hit_boxes, pointer.0) {
+        let mut title_line = None;
+        let pointed = match hovered(&game.hit_boxes, pointer.0, players_first) {
             Some(Owner::Unit(id)) if game.units.get(&id).is_some_and(|actor| !actor.hidden && actor.kind != NPC && actor.sprites.is_some()) => Some(id),
             _ => None,
         };
@@ -6737,6 +7883,10 @@ impl App {
                 Some(tag) if !tag.party.is_empty() => format!("{} ({})", actor.name, tag.party),
                 _ => actor.name.clone(),
             };
+            // ponytail: the title over the name; where the real client shows it isn't known.
+            if let Some(title) = tag.and_then(|tag| title_names.get(&tag.title)) {
+                title_line = Some((format!("[{title}]"), feet));
+            }
             if let Some(tag) = tag.filter(|tag| !tag.guild.is_empty()) {
                 guild_line = Some((name.clone(), format!("{} [{}]", tag.guild, tag.position), feet, actor.guild));
             }
@@ -6747,31 +7897,41 @@ impl App {
         }
         game.pointed = pointed;
         // The item under the pointer shows its name and amount.
-        if let Some(Owner::Item(id)) = hovered(&game.hit_boxes, pointer.0)
+        if let Some(Owner::Item(id)) = hovered(&game.hit_boxes, pointer.0, players_first)
             && let Some(item) = game.ground.get(&id)
         {
             let name = inventory::item_name(items, item.item, item.identified, 0);
             labels.push((messages::fill(message(messages::ITEM_AMOUNT), &[&name, &item.amount]), game.world.cell_position(item.cell)));
         }
 
-        // In-world overlays: names, HP bars, chat.
+        // In-world overlays: under the feet (in sprite pixels, the way sprites are drawn) HP bars and names under them;
+        // over the head cast bars and what's said.
+        let sprite_point = |feet: [f32; 3], y: f32| view.sprite_rect(feet, [0.0, y], [0.0, y]).map(|[x, y, ..]| [x * SCREEN[0], y * SCREEN[1]]);
         let mut base = Layer::default();
         for (name, feet) in &labels {
             let name = name.split('#').next().unwrap_or_default();
-            if let Some(point) = view.project(*feet) {
-                let x = (point[0] * SCREEN[0] - font.width(name) / 2.0).round();
-                base.outlined(name, [x, (point[1] * SCREEN[1] + 4.0).round()]);
+            if let Some(point) = sprite_point(*feet, overhead::NAME_BELOW) {
+                base.outlined(name, overhead::label_corner(point, font.width(name), font.line_height(), SCREEN));
             }
         }
-        if let Some((name, line, feet, guild_id)) = &guild_line
-            && let Some(point) = view.project(*feet)
+        // ponytail: a player's title, then their guild, on lines under the name; where titles go isn't known.
+        let mut under_name = 1.0;
+        if let Some((title, feet)) = &title_line
+            && let Some(point) = sprite_point(*feet, overhead::NAME_BELOW)
         {
-            let top = (point[1] * SCREEN[1] + 4.0).round();
-            let left = |text: &str| (point[0] * SCREEN[0] - font.width(text) / 2.0).round();
-            base.outlined(line, [left(line), top + font.line_height()]);
-            // ponytail: the emblem left of the wider line, at the top; calibrate against the real client.
+            let [x, y] = overhead::label_corner(point, font.width(title), font.line_height(), SCREEN);
+            base.outlined(title, [x, y + font.line_height()]);
+            under_name += 1.0;
+        }
+        if let Some((name, line, feet, guild_id)) = &guild_line
+            && let Some(point) = sprite_point(*feet, overhead::NAME_BELOW)
+        {
+            let corner = |text: &str| overhead::label_corner(point, font.width(text), font.line_height(), SCREEN);
+            let top = corner(name)[1] + under_name * font.line_height();
+            base.outlined(line, [corner(line)[0], top]);
+            // ponytail: the emblem left of the guild line; calibrate against the real client.
             if let Some(emblem) = game.emblems.get(guild_id).and_then(|(_, emblem)| emblem.as_ref()) {
-                base.sprites.push((emblem, [left(name).min(left(line)) - guild::EMBLEM_SIZE[0] - 2.0, top], guild::EMBLEM_SIZE));
+                base.sprites.push((emblem, [corner(line)[0] - guild::EMBLEM_SIZE[0] - 2.0, top], guild::EMBLEM_SIZE));
             }
         }
         let ratio = |value: Option<&i64>, maximum: Option<&i64>| match (value, maximum) {
@@ -6780,39 +7940,38 @@ impl App {
         };
         let hp = ratio(game.status.get(&net::STATUS_HP), game.status.get(&net::STATUS_MAX_HP));
         let sp = ratio(game.status.get(&net::STATUS_SP), game.status.get(&net::STATUS_MAX_SP));
-        let mut bars = vec![(player_feet, hp, sp)];
-        // A monster's bar goes away when it dies.
-        let alive = |id: &u32| game.units.get(id).is_some_and(|actor| actor.remove_at.is_none());
-        bars.extend(
-            game.unit_hp
-                .iter()
-                .filter(|(id, _)| alive(id))
-                .filter_map(|(id, &(hp, max))| Some((*feet_of.get(id)?, (max > 0).then(|| (hp as f32 / max as f32).clamp(0.0, 1.0)), None))),
-        );
-        for (feet, hp, sp) in bars {
-            let (Some(hp), Some(point)) = (hp, view.project(feet)) else { continue };
-            let [x, y] = [(point[0] * SCREEN[0] - BAR_WIDTH / 2.0).round(), (point[1] * SCREEN[1] + 3.0).round()];
+        let [border, background, green, red, blue] = &assets.bars;
+        let mut bars = vec![(player_feet, hp, sp, [border, background, green, red])];
+        // Monsters' bars in their own colors; a dying unit's bar shows empty until it's gone.
+        bars.extend(game.unit_hp.iter().filter_map(|(id, &(hp, max))| {
+            let actor = game.units.get(id)?;
+            let hp = if actor.remove_at.is_some() { 0 } else { hp };
+            let colors = if actor.kind == MONSTER { assets.monster_bars.each_ref() } else { [border, background, green, red] };
+            Some((*feet_of.get(id)?, (max > 0).then(|| (hp as f32 / max as f32).clamp(0.0, 1.0)), None, colors))
+        }));
+        for (feet, hp, sp, [border, background, fill, low]) in bars {
+            let (Some(hp), Some(point)) = (hp, sprite_point(feet, overhead::BAR_BELOW)) else { continue };
+            let [x, y] = [point[0].trunc() - BAR_WIDTH / 2.0, point[1].trunc()];
             let height = if sp.is_some() { 9.0 } else { 5.0 };
-            let [border, background, green, red, blue] = &assets.bars;
             base.sprites.push((border, [x, y], [BAR_WIDTH, height]));
             base.sprites.push((background, [x + 1.0, y + 1.0], [BAR_WIDTH - 2.0, height - 2.0]));
-            base.sprites.push((if hp < 0.25 { red } else { green }, [x + 1.0, y + 1.0], [((BAR_WIDTH - 2.0) * hp).round(), 3.0]));
+            base.sprites.push((if hp < 0.25 { low } else { fill }, [x + 1.0, y + 1.0], [((BAR_WIDTH - 2.0) * hp).floor(), 3.0]));
             if let Some(sp) = sp {
                 base.sprites.push((border, [x, y + 4.0], [BAR_WIDTH, 1.0]));
-                base.sprites.push((blue, [x + 1.0, y + 5.0], [((BAR_WIDTH - 2.0) * sp).round(), 3.0]));
+                base.sprites.push((blue, [x + 1.0, y + 5.0], [((BAR_WIDTH - 2.0) * sp).floor(), 3.0]));
             }
         }
 
         // Over heads: cast bars filling green, and the words said there.
         game.casts.retain(|_, (start, length)| now.duration_since(*start) < *length);
         game.speech.retain(|_, (.., said)| now.duration_since(*said) < SPEECH_TIME);
+        game.talkie_spots.retain(|id, _| game.speech.contains_key(&Some(*id)));
         let head = |unit: &Option<u32>| -> Option<[f32; 2]> {
             let feet = match unit {
                 None => player_feet,
                 Some(id) => *feet_of.get(id)?,
             };
-            let point = view.project([feet[0], feet[1] + OVERHEAD * world::CELL, feet[2]])?;
-            Some([(point[0] * SCREEN[0]).round(), (point[1] * SCREEN[1]).round()])
+            sprite_point(feet, -overhead::HEAD).map(|point| point.map(f32::round))
         };
         let [border, background, ..] = &assets.bars;
         for (unit, (start, length)) in &game.casts {
@@ -6822,6 +7981,20 @@ impl App {
             base.sprites.push((border, [left, y], CAST_BAR));
             base.sprites.push((background, [left + 1.0, y + 1.0], [CAST_BAR[0] - 2.0, CAST_BAR[1] - 2.0]));
             base.sprites.push((&assets.cast_fill, [left + 1.0, y + 1.0], [((CAST_BAR[0] - 2.0) * done).round(), CAST_BAR[1] - 2.0]));
+        }
+        // Combo windows: a bar under the cast bar's place, emptying as the window runs out.
+        // ponytail: how the official client shows a combo window isn't knowable from rathena.
+        game.combos.retain(|_, (start, length)| now.duration_since(*start) < *length);
+        for (unit, &(start, length)) in &game.combos {
+            let Some([x, y]) = head(unit) else { continue };
+            let [left, top] = [x - CAST_BAR[0] / 2.0, y + CAST_BAR[1] + 1.0];
+            base.sprites.push((border, [left, top], CAST_BAR));
+            base.sprites.push((background, [left + 1.0, top + 1.0], [CAST_BAR[0] - 2.0, CAST_BAR[1] - 2.0]));
+            base.sprites.push((
+                &assets.combo_fill,
+                [left + 1.0, top + 1.0],
+                [((CAST_BAR[0] - 2.0) * share_left(start, length, now)).round(), CAST_BAR[1] - 2.0],
+            ));
         }
         // Chat room signs over their owners' heads, like speech (not the room we're in).
         game.sign_rects.clear();
@@ -6835,19 +8008,16 @@ impl App {
             game.sign_rects.push((rect, sign.id, sign.kind));
         }
         for (unit, (text, color, _)) in &game.speech {
-            let Some([x, y]) = head(unit) else { continue };
-            let lines = window::wrap(font, text, SPEECH_WIDTH, 8);
-            let width = lines.iter().map(|line| font.width(line)).fold(0.0, f32::max).ceil() + 14.0;
-            let height = 8.0 + SPEECH_LINE * lines.len() as f32;
-            let corner = [(x - width / 2.0).floor(), y - height - 2.0];
-            base.sprites.push((&assets.speech_fill, corner, [width, height]));
-            for (edge, size) in
-                [([0.0, 0.0], [width, 1.0]), ([0.0, height - 1.0], [width, 1.0]), ([0.0, 0.0], [1.0, height]), ([width - 1.0, 0.0], [1.0, height])]
-            {
-                base.sprites.push((&assets.speech_border, offset(corner, edge), size));
+            let Some(anchor) = head(unit) else { continue };
+            let lines = overhead::lines(text);
+            let size = overhead::size(lines.iter().map(|line| font.width(line)).fold(0.0, f32::max), lines.len());
+            let corner = overhead::corner(anchor, size, SCREEN);
+            base.sprites.push((&assets.speech_fill, corner, size));
+            for (edge, piece) in overhead::border(size) {
+                base.sprites.push((&assets.speech_border, offset(corner, edge), piece));
             }
             for (row, line) in lines.into_iter().enumerate() {
-                let place = offset(corner, [7.0, 3.0 + row as f32 * SPEECH_LINE]);
+                let place = offset(corner, [overhead::TEXT_AT[0], overhead::TEXT_AT[1] + row as f32 * overhead::LINE_STEP]);
                 base.texts.push((line.clone(), offset(place, [1.0, 1.0]), [0, 0, 0]));
                 base.texts.push((line, place, *color));
             }
@@ -6920,12 +8090,16 @@ impl App {
             .icons(skill_trees, &jobs, skill_info)
             .into_iter()
             .chain(game.guild.as_ref().map(|guild| game.guild_window.icons(guild, skill_info)).unwrap_or_default())
+            .chain(mercenary::SkillList::icons(&game.mercenary_skills, skill_info))
             .chain(game.hotkeys.keys.iter().flatten().filter(|key| key.skill).filter_map(|key| skill_info.get(&(key.id as u16)).map(skills::icon_path)));
         let status_paths =
             game.status_icons.iter().filter_map(|(kind, ..)| status_icon_files.get(kind).map(|(_, file)| format!("data\\texture\\effect\\{file}")));
         let shop_icons = game.shop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default();
         let mut pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
         pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
+        pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
+        pick_icons.extend(game.achievement_window.icons(achievement_info));
+        pick_icons.extend(game.roulette.as_ref().map(|window| window.icons(items)).unwrap_or_default());
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         if game.vend_setup.is_some() {
@@ -6969,7 +8143,8 @@ impl App {
             });
         }
         let dots: Vec<_> = members.iter().map(|(account, cell)| (*cell, &game.party_dots[account])).collect();
-        minimap::draw(&mut chat_layer, &assets.minimap, game.minimap.as_ref(), size, game.player.cell, game.player.direction, &marks, &dots);
+        let boss = game.boss.as_ref().map(|(_, cell)| *cell);
+        minimap::draw(&mut chat_layer, &assets.minimap, game.minimap.as_ref(), size, game.player.cell, game.player.direction, &marks, &dots, boss);
         // Status icons down the right, each with the clock of its time (orange in the last minute).
         let per_column = ((SCREEN[1] - STATUS_TOP) / STATUS_STEP[1]) as usize;
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
@@ -7016,8 +8191,14 @@ impl App {
         if let Some(member) = game.party.as_mut().and_then(|party| party.member(account)) {
             member.hp = Some(own_hp);
         }
-        let mut layers = vec![base, cutin_layer, chat_layer];
+        // Weather over the map, under the names and windows.
+        let mut weather_layer = Layer::default();
+        if self.effects_on {
+            game.weather.draw(&mut weather_layer, &assets.weather, now);
+        }
+        let mut layers = vec![weather_layer, base, cutin_layer, chat_layer];
         let mut preview = Some(preview);
+        let cooling = skills::Cooling { cooldowns: &game.cooldowns, clocks: &assets.clocks[0], now: control::now(), note: message(COOLDOWN_LEFT) };
         for &id in &game.windows {
             let mut layer = Layer::default();
             match id {
@@ -7032,6 +8213,7 @@ impl App {
                     &game.inventory.items,
                     font,
                     pointer.0,
+                    &cooling,
                 ),
                 Panel::Skills => game.skill_window.draw(
                     &mut layer,
@@ -7045,6 +8227,7 @@ impl App {
                     &game.skills,
                     game.skill_points(),
                     pointer,
+                    &cooling,
                 ),
                 Panel::BasicInfo => {
                     let info = basic_info::Info {
@@ -7052,6 +8235,7 @@ impl App {
                         job: pc_job_names.get(&game.me.job).map_or("", String::as_str),
                         status: &game.status,
                         unread_mail: game.mail.unread,
+                        reward_waiting: game.achievements.values().any(|achievement| achievement::claimable(Some(achievement))),
                     };
                     game.basic_info.draw(&mut layer, &assets.chrome, &assets.basic_info, font, messages, &info, pointer.0);
                 }
@@ -7063,6 +8247,19 @@ impl App {
                 Panel::Pet => {
                     if let Some(pet) = &game.pet {
                         game.pet_window.draw(&mut layer, &assets.chrome, &assets.pet, font, messages, pet, pointer);
+                    }
+                }
+                Panel::Mercenary => {
+                    if let Some(hired) = &game.mercenary {
+                        let job = game.units.get(&hired.id).map_or(0, |actor| actor.job);
+                        let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs());
+                        game.mercenary_window.draw(&mut layer, &assets.chrome, &assets.mercenary, font, messages, hired, job, unix, pointer);
+                    }
+                }
+                Panel::MercenarySkills => {
+                    if game.mercenary.is_some() {
+                        let list = &game.mercenary_skill_list;
+                        list.draw(&mut layer, &assets.chrome, &assets.skills, icons, font, messages, &game.mercenary_skills, skill_info, pointer.0);
                     }
                 }
                 Panel::Status => {
@@ -7085,6 +8282,11 @@ impl App {
                             emblem,
                             pointer,
                         );
+                    }
+                }
+                Panel::Clan => {
+                    if let Some(clan) = &game.clan {
+                        game.clan_window.draw(&mut layer, &assets.chrome, &assets.clan, messages, clan, pointer.0);
                     }
                 }
                 Panel::Party => {
@@ -7191,6 +8393,28 @@ impl App {
             store.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
         }
         game.quest_window.draw(&mut shop_layer, &assets.chrome, &assets.quest, font, messages, &game.quests, quest_texts, pointer.0);
+        game.achievement_window.draw(
+            &mut shop_layer,
+            &assets.chrome,
+            &assets.achievement,
+            icons,
+            font,
+            messages,
+            achievement_info,
+            &game.achievements,
+            &game.achievement_totals,
+            title_names,
+            items,
+            pointer,
+        );
+        // ponytail: the roulette's icon stands left of the minimap; where the real client puts it isn't known.
+        roulette::draw_icon(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.roulette, font, messages, pointer.0);
+        if let Some(window) = &game.monster_window {
+            window.draw(&mut shop_layer, &assets.chrome, font, messages, pointer.0);
+        }
+        if let Some(window) = &game.roulette {
+            window.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.roulette, icons, items, font, messages, control::now(), pointer);
+        }
         if let Some(list) = &game.emotion_list {
             list.draw(&mut shop_layer, &assets.chrome, font, messages, game.emotion_sprite.as_ref(), &emotion_icons, pointer.0);
         }
@@ -7224,6 +8448,9 @@ impl App {
         if let Some(window) = &game.refine {
             window.draw(&mut shop_layer, &assets.chrome, &assets.refine, icons, items, &game.inventory.items, messages, font, pointer);
         }
+        if let Some(window) = &game.materials {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, &game.inventory.items, messages, font, pointer);
+        }
         if let Some(trade) = &game.trade {
             trade.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);
         }
@@ -7252,6 +8479,8 @@ impl App {
         // Growing the inventory (which voucher, from how many slots to how many) or a pet question, in the message's
         // colors.
         let colored_question = match (game.expansion_asked, &game.pet_asked) {
+            _ if game.dismiss_asked => Some(message(mercenary::DISMISS_QUESTION).to_owned()),
+            _ if game.bind_asked.is_some() => Some(message(BIND_ASKS).to_owned()),
             (Some(voucher), _) => {
                 let now = inventory::BASE_SLOTS + usize::from(game.inventory.expansion);
                 let name = inventory::item_name(items, voucher, true, 0);
@@ -7303,7 +8532,8 @@ impl App {
             amount.draw(&mut shop_layer, &assets.chrome, &assets.message, [&assets.ok, &assets.cancel], messages, pointer);
         }
         if let Some(window) = &game.item_window {
-            let lines = window.lines(items, &|text, width| wrap_colored(font, text, width));
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
+            let lines = window.lines(items, messages, now, &|text, width| wrap_colored(font, text, width));
             game.item_lines = lines.len();
             window.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
         }
@@ -7340,7 +8570,7 @@ impl App {
         } else if on_window {
             cursor::Kind::Default
         } else {
-            match hovered(&game.hit_boxes, pointer.0) {
+            match hovered(&game.hit_boxes, pointer.0, players_first) {
                 Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
                     Some(MONSTER) => cursor::Kind::Attack,
                     Some(NPC) => cursor::Kind::Talk,
@@ -7417,18 +8647,14 @@ fn flatten<'a>(composed: &'a [Composed<'a>]) -> Vec<Sprite<'a>> {
         .collect()
 }
 
-/// The nearest unit or item whose sprite is under the pointer, the player aside (only skills aim at oneself).
-fn hovered(hit_boxes: &[(Owner, [f32; 4], f32)], cursor: [f32; 2]) -> Option<Owner> {
-    hovered_any(&hit_boxes.iter().filter(|(owner, ..)| *owner != Owner::Player).copied().collect::<Vec<_>>(), cursor)
+/// The unit or item the pointer is on (see `picking::pick`), the player aside (only skills aim at oneself).
+fn hovered(hit_boxes: &[picking::Target<Owner>], cursor: [f32; 2], players_first: bool) -> Option<Owner> {
+    picking::pick(hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player), cursor, players_first)
 }
 
-/// The nearest unit (the player included) or item whose sprite is under the pointer.
-fn hovered_any(hit_boxes: &[(Owner, [f32; 4], f32)], cursor: [f32; 2]) -> Option<Owner> {
-    hit_boxes
-        .iter()
-        .filter(|(_, [left, top, right, bottom], _)| cursor[0] >= *left && cursor[0] < *right && cursor[1] >= *top && cursor[1] < *bottom)
-        .min_by(|a, b| a.2.total_cmp(&b.2))
-        .map(|(owner, ..)| *owner)
+/// The unit the pointer is on, the player included: what skills and taming aim at.
+fn hovered_unit(hit_boxes: &[picking::Target<Owner>], cursor: [f32; 2], players_first: bool) -> Option<Owner> {
+    picking::pick(hit_boxes.iter().copied().filter(|target| !matches!(target.owner, Owner::Item(_))), cursor, players_first)
 }
 
 impl ApplicationHandler<NetEvent> for App {
@@ -7504,44 +8730,8 @@ impl ApplicationHandler<NetEvent> for App {
                     MouseScrollDelta::LineDelta(_, y) => -y.signum() as i32,
                     MouseScrollDelta::PixelDelta(position) => -position.y.signum() as i32,
                 };
-                if let Scene::Game(game) = &mut self.scene {
-                    // Over the inventory the wheel scrolls it; elsewhere it zooms (away from you zooms out).
-                    let on_shop = game.shop.as_ref().is_some_and(|shop| shop.covers(self.cursor));
-                    let on_pick = game.pick.as_ref().is_some_and(|(list, _)| list.covers(self.cursor));
-                    let on_item = game.item_window.as_ref().is_some_and(|window| window.hit(self.cursor, &self.items).is_some());
-                    let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.cart.items).is_some());
-                    let on_buying_setup = game.buying_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.inventory.items).is_some());
-                    match game.window_at(self.cursor) {
-                        _ if on_setup => {
-                            let count = game.cart.items.len();
-                            game.vend_setup.as_mut().unwrap().scroll_by(rows, count);
-                        }
-                        _ if on_buying_setup => {
-                            let inv = &game.inventory.items;
-                            game.buying_setup.as_mut().unwrap().scroll_by(rows, inv);
-                        }
-                        _ if on_item => {
-                            let lines = game.item_lines;
-                            game.item_window.as_mut().unwrap().scroll_by(rows, lines);
-                        }
-                        _ if on_shop => game.shop.as_mut().unwrap().scroll_by(self.cursor, rows),
-                        _ if on_pick => game.pick.as_mut().unwrap().0.scroll_by(rows),
-                        Some(Panel::Inventory) => game.inventory.scroll_by(rows),
-                        Some(Panel::Cart) => game.cart.scroll_by(rows),
-                        Some(Panel::Guild) => {
-                            if let Some(guild) = &game.guild {
-                                game.guild_window.scroll_by(rows, guild);
-                            }
-                        }
-                        Some(Panel::Storage) => {
-                            if let Some(assets) = &self.assets {
-                                game.storage.scroll_by(rows, &assets.storage, &self.items);
-                            }
-                        }
-                        Some(_) => {}
-                        None if game.chat.contains(self.cursor) => game.chat.scroll_by(rows),
-                        None => game.camera_goal.wheel(-rows as f32),
-                    }
+                self.wheel(rows);
+                if let Some(gpu) = &self.gpu {
                     gpu.window.request_redraw();
                 }
             }
@@ -7763,8 +8953,10 @@ fn main() {
             eprintln!("{found} files from the data folder at {overlay}");
         }
     }
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut event_loop = EventLoop::<NetEvent>::with_user_event();
     // A client driven over the control socket opens without taking the keyboard from the app in use.
+    #[cfg(target_os = "macos")]
     winit::platform::macos::EventLoopBuilderExtMacOS::with_activate_ignoring_other_apps(
         &mut event_loop,
         std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_none(),
@@ -7772,6 +8964,9 @@ fn main() {
     let event_loop = event_loop.build().expect("event loop");
     control::listen(event_loop.create_proxy());
     let pets = pet::Data::load(&grf);
+    // ponytail: without the translation's achievements.lub the window lists nothing and names achievements by ID.
+    let achievement_info = lua::achievements(&grf).unwrap_or_default();
+    let title_names = lua::titles(&grf).unwrap_or_default();
     let job_names = lua::job_names(&grf).unwrap_or_else(|error| {
         eprintln!("no NPC/monster sprite names: {error}");
         HashMap::new()
@@ -7813,6 +9008,8 @@ fn main() {
         grf,
         job_names,
         pets,
+        achievement_info,
+        title_names,
         items,
         messages,
         icons: HashMap::new(),
@@ -7852,6 +9049,7 @@ fn main() {
         account: None,
         playing: None,
         entering: None,
+        early_events: Vec::new(),
         fields: [saved_id().unwrap_or_default(), String::new()],
         save_id: saved_id().is_some(),
         focus: usize::from(saved_id().is_some()),
@@ -7900,9 +9098,71 @@ fn main() {
     event_loop.run_app(&mut app).expect("run");
 }
 
+/// Locks a pair of units (Blade Stop, Cursed Circle), or lets go of every pair that holds either of them.
+fn lock_pair(locks: &mut Vec<(u32, u32)>, source: u32, target: u32, on: bool) {
+    if !on {
+        locks.retain(|&(a, b)| ![a, b].iter().any(|id| *id == source || *id == target));
+    } else if !locks.contains(&(source, target)) {
+        locks.push((source, target));
+    }
+}
+
+/// How many units a unit is locked with.
+fn locked_with(locks: &[(u32, u32)], id: u32) -> usize {
+    locks.iter().filter(|&&(source, target)| source == id || target == id).count()
+}
+
+/// The share of a window (a combo's) still left.
+fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
+    1.0 - (now.saturating_duration_since(start).as_secs_f32() / length.as_secs_f32().max(f32::EPSILON)).min(1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_what_circles_a_unit() {
+        let mut spirits = HashMap::new();
+        change_orbs(&mut spirits, None, |orbs| orbs.spheres = 5);
+        change_orbs(&mut spirits, None, |orbs| orbs.charms = (3, 2));
+        change_orbs(&mut spirits, Some(7), |orbs| orbs.souls = 4);
+        assert_eq!(spirits[&None], Orbs { spheres: 5, charms: (3, 2), ..Orbs::default() });
+        // A 0 clears only its kind; a unit with nothing left leaves.
+        change_orbs(&mut spirits, None, |orbs| orbs.charms = (3, 0));
+        assert_eq!(spirits[&None], Orbs { spheres: 5, ..Orbs::default() });
+        change_orbs(&mut spirits, Some(7), |orbs| orbs.souls = 0);
+        assert!(!spirits.contains_key(&Some(7)));
+        change_orbs(&mut spirits, None, |orbs| orbs.spheres = 0);
+        assert!(spirits.is_empty());
+        assert!(guard_job(4066) && !guard_job(4054));
+        // A glow on black: black goes clear, a dim red stays red, half as opaque.
+        let image = render::glow(image::RgbaImage::from_pixel(1, 1, image::Rgba([128, 0, 0, 255])));
+        assert_eq!(image.get_pixel(0, 0).0, [255, 0, 0, 128]);
+        assert_eq!(render::glow(image::RgbaImage::new(1, 1)).get_pixel(0, 0).0, [0; 4]);
+    }
+
+    #[test]
+    fn locks_and_lets_go_of_pairs() {
+        // Cursed Circle: one Sura (1) catches two units; the release names the last one and the Sura.
+        let mut locks = Vec::new();
+        lock_pair(&mut locks, 1, 2, true);
+        lock_pair(&mut locks, 1, 3, true);
+        lock_pair(&mut locks, 1, 3, true);
+        assert_eq!((locked_with(&locks, 1), locked_with(&locks, 2), locked_with(&locks, 4)), (2, 1, 0));
+        lock_pair(&mut locks, 3, 1, false);
+        assert!(locks.is_empty());
+        // Blade Stop: either side lets go of the pair.
+        lock_pair(&mut locks, 5, 6, true);
+        lock_pair(&mut locks, 6, 0, false);
+        assert!(locks.is_empty());
+        // A combo window empties as it runs out.
+        let start = Instant::now();
+        let length = Duration::from_millis(800);
+        assert_eq!(share_left(start, length, start), 1.0);
+        assert_eq!(share_left(start, length, start + Duration::from_millis(200)), 0.75);
+        assert_eq!(share_left(start, length, start + Duration::from_secs(2)), 0.0);
+    }
 
     #[test]
     fn coins_for_the_gunslinger_line() {

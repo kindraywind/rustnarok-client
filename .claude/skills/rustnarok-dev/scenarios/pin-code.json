@@ -1,0 +1,70 @@
+{
+  "about": "PIN code at character select: shuffled pad, wrong PIN rejected, right PIN unlocks character select (issue #59).",
+  "account": "3",
+  "start": "char_select",
+  "steps": [
+    {
+      "expect": {
+        "state": {
+          "scene": "char_select",
+          "pin": "ask"
+        }
+      }
+    },
+    {
+      "shot": "pin-pad"
+    },
+    {
+      "type": "0000"
+    },
+    {
+      "wait_for": {
+        "packet": "0x08b9"
+      }
+    },
+    {
+      "expect": {
+        "state": {
+          "scene": "message",
+          "text": "Password is incorrect."
+        }
+      }
+    },
+    {
+      "shot": "pin-wrong"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "expect": {
+        "state": {
+          "scene": "char_select",
+          "pin": "ask"
+        }
+      }
+    },
+    {
+      "type": "1357"
+    },
+    {
+      "wait_for": {
+        "packet": "0x08b9"
+      }
+    },
+    {
+      "expect": {
+        "state": {
+          "scene": "char_select",
+          "pin": "none"
+        }
+      }
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "settle": 1500
+    }
+  ]
+}

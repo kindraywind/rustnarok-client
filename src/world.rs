@@ -214,7 +214,11 @@ struct GroundOutput {
     return vec4(texel.rgb * light, 1.0);
 }
 
-struct SpriteOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) tint: vec4<f32> };
+// `depth` is the feet's, the same for every layer of a sprite: depth worked out per corner differed between layers
+// by rounding, so a headgear or head could fall behind the layer under it and vanish in some frames.
+struct SpriteOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) tint: vec4<f32>,
+                      @location(2) @interpolate(flat) depth: f32 };
+struct SpriteFragment { @location(0) color: vec4<f32>, @builtin(frag_depth) depth: f32 };
 
 @vertex fn sprite_vs(@location(0) feet: vec3<f32>, @location(1) offset: vec2<f32>, @location(2) uv: vec2<f32>,
                      @location(3) tint: vec4<f32>) -> SpriteOutput {
@@ -227,19 +231,21 @@ fn sprite_vertex(feet: vec3<f32>, offset: vec2<f32>, uv: vec2<f32>, tint: vec4<f
     var clip = globals.view_projection * vec4(world, 1.0);
     // The whole sprite takes its feet's depth, pulled slightly forward so it stands on the ground.
     let feet_clip = globals.view_projection * vec4(feet, 1.0);
-    clip.z = (feet_clip.z / feet_clip.w - 0.0005) * clip.w;
+    let depth = feet_clip.z / feet_clip.w - 0.0005;
+    clip.z = depth * clip.w;
     var out: SpriteOutput;
     out.position = clip;
     out.uv = uv;
     out.tint = tint;
+    out.depth = depth;
     return out;
 }
 
-@fragment fn sprite_fs(in: SpriteOutput) -> @location(0) vec4<f32> {
+@fragment fn sprite_fs(in: SpriteOutput) -> SpriteFragment {
     let texel = textureSample(image, image_sampler, in.uv);
     // Shadows and RGBA sprite images are translucent; palette sprites are fully opaque or clear.
     if (texel.a < 0.02) { discard; }
-    return texel * in.tint;
+    return SpriteFragment(texel * in.tint, in.depth);
 }
 
 // Effect shapes placed in the world (cylinders): texture repeats across, colored and faded by the vertex.
@@ -263,6 +269,7 @@ struct MeshOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec
                      @location(3) tint: vec4<f32>) -> SpriteOutput {
     var out = sprite_vertex(feet, offset, uv, tint);
     out.position.z = max(out.position.z - 0.01 * out.position.w, 0.0);
+    out.depth = max(out.depth - 0.01, 0.0);
     return out;
 }
 ";

@@ -1,6 +1,8 @@
-//! The equipment window (Alt+Q): what the player wears on the client's slot bitmap, with the character in the middle.
+//! The equipment window (Alt+Q): what the player wears on the client's slot bitmap, with the character in the middle;
+//! and the titles the player's achievements gave, to wear one.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use image::imageops;
 use rustnarok_client::grf::Grf;
@@ -33,10 +35,18 @@ const COLUMN_WIDTH: f32 = 115.0;
 const PREVIEW_FEET: [f32; 2] = [140.0, PANEL_TOP + 114.0];
 /// Where the client first opens it.
 const DEFAULT_POSITION: [f32; 2] = [480.0, 200.0];
-/// The general and the special (costume and shadow gear) tabs.
-const TAB_LABELS: [usize; 2] = [3158, 3159];
-const TAB_TEXT: [[f32; 2]; 2] = [[8.0, TITLE_HEIGHT + 3.0], [90.0, TITLE_HEIGHT + 3.0]];
-const TAB_WIDTH: [f32; 2] = [80.0, 80.0];
+/// The general and the special (costume and shadow gear) tabs, and the titles (the player's own window only).
+// ponytail: equipwin_bg3.bmp draws two tabs; the third's label goes beside them.
+const TAB_LABELS: [usize; 3] = [3158, 3159, 3160];
+const TAB_TEXT: [[f32; 2]; 3] = [[8.0, TITLE_HEIGHT + 3.0], [90.0, TITLE_HEIGHT + 3.0], [172.0, TITLE_HEIGHT + 3.0]];
+const TAB_WIDTH: [f32; 3] = [80.0, 80.0, 80.0];
+const TITLES_TAB: usize = 2;
+/// "Disable Title", first in the titles' list, and the list's rows.
+const NO_TITLE: usize = 2686;
+const TITLE_ROW: f32 = 18.0;
+/// Take Off All, in the footer's right corner, and its name.
+const TAKE_OFF: [f32; 2] = [40.0, 20.0];
+const TAKE_OFF_NAME: usize = 3955;
 const SHOW_EQUIPMENT_MESSAGE: usize = 1362;
 /// "%s's Equipment": another player's window.
 const OTHERS_TITLE: usize = 1361;
@@ -44,6 +54,14 @@ const OTHERS_TITLE: usize = 1361;
 // ponytail: beside the player's own; the real client's place isn't known.
 const OTHERS_POSITION: [f32; 2] = [500.0, 220.0];
 const TITLE_MESSAGE: usize = 104;
+/// The Swap Equipment view: its title, and the switch button's label and size.
+const SWAP_TITLE: usize = 2986;
+const CHANGE_LABEL: usize = 3111;
+const CHANGE: [f32; 2] = [118.0, 20.0];
+/// "There is no item to replace.": the switch refused for an empty set.
+pub const NOTHING_TO_SWITCH: usize = 3009;
+/// ALL_EQSWITCH's cooldown (skill_db.yml): rathena drops a switch asked sooner.
+const SWITCH_COOLDOWN: Duration = Duration::from_secs(10);
 const GREY: [u8; 3] = [0x80, 0x80, 0x80];
 
 /// Equip location bits (rathena's equip_pos) and where each shows: column (0 left, 1 right) and row.
@@ -80,8 +98,14 @@ pub struct Assets {
     footer: Texture,
     /// The Show Equipment box: off, on.
     checkbox: [Texture; 2],
-    /// Swap equipment and take everything off.
+    /// Swap equipment and take everything off; Take Off All pointed at.
     buttons: [Texture; 2],
+    take_off_hover: Texture,
+    /// The Swap Equipment view: its general and special panels (with their own strip and footer), the swap button
+    /// pointed at, and the switch button: normal, pointed at, greyed.
+    swap_panels: [Texture; 2],
+    swap_hover: Texture,
+    change: [Texture; 3],
 }
 
 impl Assets {
@@ -96,6 +120,10 @@ impl Assets {
             footer: footer.map_or_else(|_| gpu.solid([0xF0; 4]), |footer| gpu.texture(&footer, false)),
             checkbox: ["0", "1"].map(|look| image(format!("{UI}checkbox_{look}.bmp"))),
             buttons: [image(format!("{basic}btn_e_change_a.bmp")), image(format!("{basic}btn_e_off_a.bmp"))],
+            take_off_hover: image(format!("{basic}btn_e_off_b.bmp")),
+            swap_panels: ["bg2", "special"].map(|panel| image(format!("{UI}swap_equipment\\equipwin_{panel}_change.bmp"))),
+            swap_hover: image(format!("{basic}btn_e_change_b.bmp")),
+            change: ["normal", "over", "disable"].map(|look| image(format!("{UI}swap_equipment\\btn_change2_{look}.bmp"))),
         }
     }
 }
@@ -108,6 +136,13 @@ pub enum Hit {
     Slot(u16),
     /// The Show Equipment box and its label.
     ShowBox,
+    /// A title to wear (0: none).
+    WearTitle(u32),
+    TakeOffAll,
+    /// The swap button: the Swap Equipment view and back.
+    Swap,
+    /// The view's switch button.
+    SwitchAll,
     Window,
 }
 
@@ -119,12 +154,44 @@ pub struct Equipment {
     pub owner: Option<String>,
     /// Whether others may see what the player wears (the Show Equipment box), as the server last said.
     pub shown: bool,
+    /// The titles the player's achievements gave (ID, name), and the one worn (0: none).
+    pub titles: Vec<(u32, String)>,
+    pub title: u32,
+    /// The Swap Equipment view: the slots show the set instead of what's worn.
+    pub swapping: bool,
+    /// When the last switch was asked.
+    switched: Option<Instant>,
 }
 
 impl Default for Equipment {
     fn default() -> Self {
-        Self { frame: Frame::new(DEFAULT_POSITION, WIDTH), tab: 0, clicks: Clicks::default(), owner: None, shown: false }
+        Self {
+            frame: Frame::new(DEFAULT_POSITION, WIDTH),
+            tab: 0,
+            clicks: Clicks::default(),
+            owner: None,
+            shown: false,
+            titles: Vec::new(),
+            title: 0,
+            swapping: false,
+            switched: None,
+        }
     }
+}
+
+/// Take Off All's corner inside the window.
+fn take_off_at() -> [f32; 2] {
+    [WIDTH - 45.0, PANEL_TOP + PANEL_HEIGHT + 4.0]
+}
+
+/// The swap button's corner, and the switch button's (in the view's footer).
+// ponytail: the switch button's place isn't knowable; it takes the Show Equipment box's.
+fn swap_at() -> [f32; 2] {
+    [WIDTH - 90.0, PANEL_TOP + PANEL_HEIGHT + 4.0]
+}
+
+fn change_at() -> [f32; 2] {
+    [6.0, PANEL_TOP + PANEL_HEIGHT + 4.0]
 }
 
 /// A slot's top-left corner and size inside the window.
@@ -145,9 +212,33 @@ impl Equipment {
         HEIGHT
     }
 
-    /// The worn item in each slot of the current tab, with the slot's place.
-    fn slots<'i>(&self, worn: &'i [InventoryItem]) -> impl Iterator<Item = (usize, usize, &'i InventoryItem)> {
-        SLOTS[self.tab].iter().filter_map(move |&(location, column, row)| Some((column, row, worn.iter().find(|item| item.worn & location != 0)?)))
+    /// The item in each slot of the current tab, with the slot's place: what's worn, or the swap set's.
+    fn slots<'i>(&self, items: &'i [InventoryItem]) -> impl Iterator<Item = (usize, usize, &'i InventoryItem)> {
+        let swapping = self.swapping;
+        let place = move |item: &InventoryItem| if swapping { item.switch } else { item.worn };
+        SLOTS
+            .get(self.tab)
+            .into_iter()
+            .flatten()
+            .filter_map(move |&(location, column, row)| Some((column, row, items.iter().find(|item| place(item) & location != 0)?)))
+    }
+
+    /// Whether a switch was asked within the cooldown.
+    fn cooling(&self, now: Instant) -> bool {
+        self.switched.is_some_and(|at| now.duration_since(at) < SWITCH_COOLDOWN)
+    }
+
+    /// The switch button pressed: true to send the switch (the cooldown starts), false within the cooldown, and
+    /// NOTHING_TO_SWITCH for an empty set.
+    pub fn switch_all(&mut self, items: &[InventoryItem], now: Instant) -> Result<bool, usize> {
+        if items.iter().all(|item| item.switch == 0) {
+            return Err(NOTHING_TO_SWITCH);
+        }
+        if self.cooling(now) {
+            return Ok(false);
+        }
+        self.switched = Some(now);
+        Ok(true)
     }
 
     pub fn hit(&self, cursor: [f32; 2], items: &[InventoryItem]) -> Option<Hit> {
@@ -158,13 +249,30 @@ impl Equipment {
         // ponytail: the tab strip's hit areas are guessed from equipwin_bg3.bmp's divider.
         if local[1] < PANEL_TOP {
             return Some(
-                (0..2).find(|&tab| contains([TAB_TEXT[tab][0] - 4.0, TITLE_HEIGHT], [TAB_WIDTH[tab], TABS_HEIGHT], local)).map_or(Hit::Window, Hit::Tab),
+                (0..self.tabs())
+                    .find(|&tab| contains([TAB_TEXT[tab][0] - 4.0, TITLE_HEIGHT], [TAB_WIDTH[tab], TABS_HEIGHT], local))
+                    .map_or(Hit::Window, Hit::Tab),
             );
+        }
+        // The titles: "none" first, then each one.
+        if self.tab == TITLES_TAB && local[1] < PANEL_TOP + PANEL_HEIGHT {
+            let row = ((local[1] - PANEL_TOP - 4.0) / TITLE_ROW).max(0.0) as usize;
+            let picked = std::iter::once(0).chain(self.titles.iter().map(|(id, _)| *id)).nth(row);
+            return Some(picked.map_or(Hit::Window, Hit::WearTitle));
         }
         // ponytail: the box's label is taken to run 120px from the box.
         let footer_top = PANEL_TOP + PANEL_HEIGHT;
-        if self.owner.is_none() && contains([6.0, footer_top + 6.0], [120.0, 14.0], local) {
+        if self.owner.is_none() && contains(swap_at(), TAKE_OFF, local) {
+            return Some(Hit::Swap);
+        }
+        if self.swapping && contains(change_at(), CHANGE, local) {
+            return Some(Hit::SwitchAll);
+        }
+        if self.owner.is_none() && !self.swapping && contains([6.0, footer_top + 6.0], [120.0, 14.0], local) {
             return Some(Hit::ShowBox);
+        }
+        if self.owner.is_none() && !self.swapping && contains(take_off_at(), TAKE_OFF, local) {
+            return Some(Hit::TakeOffAll);
         }
         Some(
             self.slots(items)
@@ -176,16 +284,53 @@ impl Equipment {
         )
     }
 
-    /// Reacts to a click; returns the item to take off on a double click.
+    /// Reacts to a click; returns the item double-clicked: to take off, or in the swap view to take out of the set.
     pub fn click(&mut self, hit: Hit) -> Option<u16> {
         match hit {
             Hit::Title(hit) => self.frame.click_title(hit),
             Hit::Tab(tab) => self.tab = tab,
             // Someone else's items stay on.
             Hit::Slot(index) if self.owner.is_none() => return self.clicks.double(index).then_some(index),
-            Hit::Slot(_) | Hit::ShowBox | Hit::Window => {}
+            // The set has no titles.
+            Hit::Swap => {
+                self.swapping = !self.swapping;
+                self.tab = self.tab.min(self.tabs() - 1);
+            }
+            Hit::Slot(_) | Hit::ShowBox | Hit::WearTitle(_) | Hit::TakeOffAll | Hit::SwitchAll | Hit::Window => {}
         }
         None
+    }
+
+    /// How many tabs show: the titles only on the player's own window, out of the swap view.
+    fn tabs(&self) -> usize {
+        if self.owner.is_none() && !self.swapping { TAB_LABELS.len() } else { TITLES_TAB }
+    }
+
+    /// The tabs and the titles on screen, named for scripted clicks: `equipment_tab:<n>`, `title:<id>` (0: none).
+    pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized {
+            return Vec::new();
+        }
+        let place = |local: [f32; 2], size: [f32; 2]| {
+            let [x, y] = self.frame.at(local);
+            [x, y, size[0], size[1]]
+        };
+        let tabs = (0..self.tabs()).map(|tab| (format!("equipment_tab:{tab}"), place([TAB_TEXT[tab][0] - 4.0, TITLE_HEIGHT], [TAB_WIDTH[tab], TABS_HEIGHT])));
+        let mut boxes: Vec<_> = tabs.collect();
+        if self.owner.is_none() {
+            boxes.push(("swap".to_owned(), place(swap_at(), TAKE_OFF)));
+        }
+        if self.owner.is_none() && !self.swapping {
+            boxes.push(("take_off_all".to_owned(), place(take_off_at(), TAKE_OFF)));
+        }
+        if self.swapping {
+            boxes.push(("switch_all".to_owned(), place(change_at(), CHANGE)));
+        }
+        if self.tab == TITLES_TAB {
+            let ids = std::iter::once(0).chain(self.titles.iter().map(|(id, _)| *id));
+            boxes.extend(ids.enumerate().map(|(row, id)| (format!("title:{id}"), place([0.0, PANEL_TOP + 4.0 + row as f32 * TITLE_ROW], [WIDTH, TITLE_ROW]))));
+        }
+        boxes
     }
 
     /// Where the character preview stands on screen, while it shows.
@@ -216,6 +361,7 @@ impl Equipment {
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
         let title = match &self.owner {
             Some(name) => rustnarok_client::messages::fill(message(OTHERS_TITLE), &[name]),
+            None if self.swapping => message(SWAP_TITLE).to_owned(),
             None => message(TITLE_MESSAGE).to_owned(),
         };
         self.frame.draw_title(layer, chrome, &title, cursor);
@@ -223,16 +369,33 @@ impl Equipment {
             return;
         }
 
-        // Tabs, the slot panel and the character standing on its shadow.
+        // Tabs, the slot panel and the character standing on its shadow. The swap view's pink panel comes with its own
+        // strip, under the tabs, and its own footer.
+        // ponytail: the view takes the window's place; whether the real one opens beside it isn't knowable.
+        let swap_panel = assets.swap_panels.get(self.tab).filter(|_| self.swapping);
+        if let Some(panel) = swap_panel {
+            layer.sprites.push((panel, at([0.0, TITLE_HEIGHT]), panel.size));
+        }
         layer.sprites.push((&assets.tabs, at([0.0, TITLE_HEIGHT]), assets.tabs.size));
-        for (tab, &label) in TAB_LABELS.iter().enumerate() {
+        for (tab, &label) in TAB_LABELS.iter().enumerate().take(self.tabs()) {
             // Kept inside its tab, however long the translation's title is.
             let title = window::fit(font, message(label), TAB_WIDTH[tab] - 6.0);
             layer.texts.push((title, at(TAB_TEXT[tab]), if tab == self.tab { [0, 0, 0] } else { GREY }));
         }
-        let panel = &assets.panels[self.tab];
-        layer.sprites.push((panel, at([0.0, PANEL_TOP]), panel.size));
+        match assets.panels.get(self.tab) {
+            _ if swap_panel.is_some() => {}
+            Some(panel) => layer.sprites.push((panel, at([0.0, PANEL_TOP]), panel.size)),
+            None => layer.sprites.push((&chrome.white, at([0.0, PANEL_TOP]), [WIDTH, PANEL_HEIGHT])),
+        }
         layer.sprites.extend(preview);
+        // The titles: none, then each earned one; the worn one black, the others grey.
+        if self.tab == TITLES_TAB {
+            let rows = std::iter::once((0, message(NO_TITLE).to_owned())).chain(self.titles.iter().cloned());
+            for (row, (id, name)) in rows.enumerate().take((PANEL_HEIGHT / TITLE_ROW) as usize) {
+                let color = if id == self.title { [0, 0, 0] } else { GREY };
+                layer.texts.push((window::fit(font, &name, WIDTH - 20.0), at([10.0, PANEL_TOP + 6.0 + row as f32 * TITLE_ROW]), color));
+            }
+        }
 
         for (column, row, item) in self.slots(worn) {
             let (corner, size) = slot_area(column, row);
@@ -259,15 +422,88 @@ impl Equipment {
         // Footer: the "show my equipment" box and the two buttons, on the player's own window.
         // ponytail: someone else's window shows the footer empty; what the real client shows there isn't known.
         let footer_top = PANEL_TOP + PANEL_HEIGHT;
-        layer.sprites.push((&assets.footer, at([0.0, footer_top]), assets.footer.size));
+        if swap_panel.is_none() {
+            layer.sprites.push((&assets.footer, at([0.0, footer_top]), assets.footer.size));
+        }
         if self.owner.is_some() {
+            return;
+        }
+        let [swap, take_off] = &assets.buttons;
+        let swap = if contains(at(swap_at()), TAKE_OFF, cursor) { &assets.swap_hover } else { swap };
+        layer.sprites.push((swap, at(swap_at()), swap.size));
+        // The swap view: the switch button, greyed for the cooldown.
+        if self.swapping {
+            let [normal, over, greyed] = &assets.change;
+            let pointed = contains(at(change_at()), CHANGE, cursor);
+            let button = if self.cooling(crate::control::now()) {
+                greyed
+            } else if pointed {
+                over
+            } else {
+                normal
+            };
+            layer.sprites.push((button, at(change_at()), CHANGE));
+            let label = message(CHANGE_LABEL);
+            let x = change_at()[0] + (CHANGE[0] - font.width(label)) / 2.0;
+            layer.texts.push((label.to_owned(), at([x, change_at()[1] + 3.0]), [0, 0, 0]));
             return;
         }
         let checkbox = &assets.checkbox[usize::from(self.shown)];
         layer.sprites.push((checkbox, at([6.0, footer_top + 8.0]), checkbox.size));
         layer.texts.push((message(SHOW_EQUIPMENT_MESSAGE).to_owned(), at([19.0, footer_top + 6.0]), [0, 0, 0]));
-        let [swap, take_off] = &assets.buttons;
-        layer.sprites.push((swap, at([WIDTH - 90.0, footer_top + 4.0]), swap.size));
-        layer.sprites.push((take_off, at([WIDTH - 45.0, footer_top + 4.0]), take_off.size));
+        // ponytail: _a and _b read as normal and pointed at; the button's look isn't otherwise knowable.
+        let pointed = contains(at(take_off_at()), TAKE_OFF, cursor);
+        layer.sprites.push((if pointed { &assets.take_off_hover } else { take_off }, at(take_off_at()), TAKE_OFF));
+        if pointed {
+            window::tooltip(tooltip, chrome, font, message(TAKE_OFF_NAME), offset(cursor, [12.0, 12.0]), [255; 3]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn takes_off_all_from_its_button() {
+        let mut window = Equipment::default();
+        window.frame.open = true;
+        let [x, y] = window.frame.at(take_off_at());
+        assert_eq!(window.hit([x + 20.0, y + 10.0], &[]), Some(Hit::TakeOffAll));
+        assert!(window.button_boxes().iter().any(|(name, _)| name == "take_off_all"));
+        // Someone else's window has no such button.
+        let other = Equipment::of("Someone".into());
+        assert_ne!(other.hit(other.frame.at(offset(take_off_at(), [20.0, 10.0])), &[]), Some(Hit::TakeOffAll));
+    }
+
+    #[test]
+    fn swaps_the_set_in() {
+        let knife = InventoryItem { index: 3, id: 1201, location: 2, worn: 2, ..Default::default() };
+        let sword = InventoryItem { index: 4, id: 1101, location: 2, switch: 2, ..Default::default() };
+        let mut window = Equipment { tab: TITLES_TAB, ..Equipment::default() };
+        window.frame.open = true;
+        let items = [knife.clone(), sword.clone()];
+        let [x, y] = window.frame.at(offset(swap_at(), [20.0, 10.0]));
+        assert_eq!(window.hit([x, y], &items), Some(Hit::Swap));
+        window.click(Hit::Swap);
+        // The swap view shows the set; it has no titles tab.
+        assert!(window.swapping);
+        assert_eq!(window.tab, 1);
+        window.tab = 0;
+        let shown: Vec<u16> = window.slots(&items).map(|(.., item)| item.index).collect();
+        assert_eq!(shown, [4]);
+        assert!(window.button_boxes().iter().any(|(name, _)| name == "switch_all"));
+        assert!(!window.button_boxes().iter().any(|(name, _)| name == "take_off_all"));
+        let [x, y] = window.frame.at(offset(change_at(), [50.0, 10.0]));
+        assert_eq!(window.hit([x, y], &items), Some(Hit::SwitchAll));
+        // An empty set is refused; a switch blocks the next for 10 seconds.
+        let now = Instant::now();
+        assert_eq!(window.switch_all(&[knife], now), Err(NOTHING_TO_SWITCH));
+        assert_eq!(window.switch_all(&items, now), Ok(true));
+        assert_eq!(window.switch_all(&items, now + Duration::from_secs(9)), Ok(false));
+        assert_eq!(window.switch_all(&items, now + Duration::from_secs(10)), Ok(true));
+        // Back to what's worn.
+        window.click(Hit::Swap);
+        assert_eq!(window.slots(&items).map(|(.., item)| item.index).collect::<Vec<_>>(), [3]);
     }
 }

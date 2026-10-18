@@ -2,6 +2,7 @@
 //! line, their levels, and the points left to put in.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::{SkillInfo, SkillTrees};
@@ -109,6 +110,63 @@ fn steppable(skill: &Skill) -> bool {
 fn box_corner(place: usize) -> [f32; 2] {
     let [column, row] = [place % COLUMNS, place / COLUMNS];
     [SIDE + column as f32 * CELL[0] + (CELL[0] - BOX) / 2.0, GRID_TOP + row as f32 * CELL[1] + 6.0]
+}
+
+/// Skills blocked for a while after use (ZC_SKILL_POSTDELAY): when each block began and how long it lasts. A block
+/// past its end is gone: the server says nothing then.
+#[derive(Default)]
+pub struct Cooldowns(HashMap<u16, (Instant, Duration)>);
+
+impl Cooldowns {
+    /// A block of `ms` starts at `now`; 0 lifts it.
+    pub fn set(&mut self, skill: u16, ms: u32, now: Instant) {
+        if ms == 0 {
+            self.0.remove(&skill);
+        } else {
+            self.0.insert(skill, (now, Duration::from_millis(u64::from(ms))));
+        }
+    }
+
+    /// How long the skill stays blocked (None: it isn't).
+    pub fn left(&self, skill: u16, now: Instant) -> Option<Duration> {
+        let &(start, length) = self.0.get(&skill)?;
+        Some((start + length).saturating_duration_since(now)).filter(|left| !left.is_zero())
+    }
+
+    /// How much of the block has passed, 0 to 1 (None: not blocked).
+    pub fn share(&self, skill: u16, now: Instant) -> Option<f32> {
+        let left = self.left(skill, now)?;
+        let length = self.0[&skill].1.as_secs_f32().max(0.001);
+        Some((1.0 - left.as_secs_f32() / length).clamp(0.0, 1.0))
+    }
+
+    /// The blocked skills and how long each has left.
+    pub fn blocked(&self, now: Instant) -> impl Iterator<Item = (u16, Duration)> + '_ {
+        self.0.keys().filter_map(move |&skill| Some((skill, self.left(skill, now)?)))
+    }
+}
+
+/// What the hotkey bar and the skill window need to show cooldowns: the blocks, the clock's pictures by step, the
+/// time, and the words after the seconds left (message 3230, " seconds left before it become usable again.").
+pub struct Cooling<'a> {
+    pub cooldowns: &'a Cooldowns,
+    pub clocks: &'a [Texture],
+    pub now: Instant,
+    pub note: &'a str,
+}
+
+impl<'a> Cooling<'a> {
+    /// Draws the clock over a blocked skill's icon, veiling the part of its time still left; returns the line saying
+    /// how long that is.
+    // ponytail: the status icons' clock over the icon and the line under the name; how the real client shows a
+    // cooldown isn't known.
+    pub fn draw(&self, layer: &mut Layer<'a>, skill: u16, corner: [f32; 2], size: [f32; 2]) -> Option<String> {
+        let left = 1.0 - self.cooldowns.share(skill, self.now)?;
+        let last = self.clocks.len().checked_sub(1)?;
+        layer.sprites.push((&self.clocks[((left * last as f32).ceil() as usize).min(last)], corner, size));
+        let seconds = self.cooldowns.left(skill, self.now)?.as_secs_f32().ceil() as u32;
+        Some(format!("{seconds}{}", self.note))
+    }
 }
 
 pub fn icon_path(info: &SkillInfo) -> String {
@@ -251,6 +309,7 @@ impl SkillWindow {
         skills: &[Skill],
         points: i64,
         pointer: ([f32; 2], bool),
+        cooling: &Cooling<'a>,
     ) {
         if !self.frame.open {
             return;
@@ -287,6 +346,7 @@ impl SkillWindow {
             // A learned skill's box shows the level it's used at.
             let shown = if level > 0 { self.use_level(id, level) } else { 0 };
             draw_box(layer, assets, icons, font, at(corner), skill_info, &name, shown);
+            let cooldown = if level > 0 { cooling.draw(layer, id, at(offset(corner, [2.0, 2.0])), [24.0, 24.0]) } else { None };
             if known.is_some_and(steppable) {
                 for (arrow, at) in assets.arrows.iter().zip(ARROWS) {
                     layer.sprites.push((arrow, self.frame.at(offset(corner, at)), arrow.size));
@@ -302,6 +362,9 @@ impl SkillWindow {
             if hit == Some(Hit::Skill(id)) {
                 let max = skill_info.map_or(0, |info| info.max_level);
                 window::tooltip(tooltip, chrome, font, &format!("{name} Lv {level}/{max}"), offset(pointer.0, [12.0, 12.0]), [255; 3]);
+                if let Some(cooldown) = &cooldown {
+                    window::tooltip(tooltip, chrome, font, cooldown, offset(pointer.0, [12.0, 35.0]), [255; 3]);
+                }
             }
         }
 
@@ -319,6 +382,24 @@ impl SkillWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_cooldowns_down() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut cooldowns = Cooldowns::default();
+        cooldowns.set(8, 10_000, start);
+        assert_eq!(cooldowns.left(8, at(2_500)), Some(Duration::from_millis(7_500)));
+        assert_eq!(cooldowns.share(8, at(2_500)), Some(0.25));
+        assert_eq!(cooldowns.blocked(at(2_500)).collect::<Vec<_>>(), [(8, Duration::from_millis(7_500))]);
+        // Past its end it's gone, as is one lifted with 0; one never set isn't blocked.
+        assert_eq!(cooldowns.left(8, at(10_000)), None);
+        assert_eq!(cooldowns.share(8, at(12_000)), None);
+        cooldowns.set(8, 10_000, start);
+        cooldowns.set(8, 0, at(1_000));
+        assert_eq!(cooldowns.left(8, at(1_000)), None);
+        assert_eq!(cooldowns.left(7, start), None);
+    }
 
     #[test]
     fn places_skills_seven_a_row() {
