@@ -79,6 +79,35 @@ pub struct Camera {
     pub ground: f32,
 }
 
+/// The cell where a ray from `eye` first meets the ground (each cell's corner heights blended), up to the far plane.
+/// None past the map's edge.
+// ponytail: steps of a quarter cell, then halving; exact per-cell tests if cliffs ever pick wrong.
+fn ground_hit(gat: &Gat, eye: Vector, direction: Vector) -> Option<[i32; 2]> {
+    let direction = normalize(direction);
+    let at = |t: f32| [0, 1, 2].map(|axis| eye[axis] + direction[axis] * t);
+    let under = |point: Vector| point[1] < -gat.height_at([point[0] / CELL, point[2] / CELL]);
+    let step = CELL / 4.0;
+    let mut t = 0.0;
+    while t < FAR {
+        if under(at(t + step)) {
+            let (mut above, mut below) = (t, t + step);
+            for _ in 0..12 {
+                let middle = (above + below) / 2.0;
+                if under(at(middle)) {
+                    below = middle;
+                } else {
+                    above = middle;
+                }
+            }
+            let hit = at(below);
+            let cell = [(hit[0] / CELL).floor() as i32, (hit[2] / CELL).floor() as i32];
+            return (cell[0] >= 0 && cell[1] >= 0 && (cell[0] as usize) < gat.width && (cell[1] as usize) < gat.height).then_some(cell);
+        }
+        t += step;
+    }
+    None
+}
+
 /// A frame's camera: view-projection plus the basis billboards and picking need.
 pub struct View {
     pub view_projection: Matrix,
@@ -117,14 +146,17 @@ impl Camera {
 }
 
 impl View {
-    /// Where the ray through a point on screen (`0..1` each axis, y down) meets the horizontal plane at `height`.
-    pub fn pick(&self, screen: [f32; 2], height: f32) -> Option<Vector> {
+    /// The ray from the eye through a point on screen (`0..1` each axis, y down), one unit of view depth long.
+    fn ray(&self, screen: [f32; 2]) -> Vector {
         let tangent = (FIELD_OF_VIEW.to_radians() / 2.0).tan();
         let x = (screen[0] * 2.0 - 1.0) * tangent * self.aspect;
         let y = (1.0 - screen[1] * 2.0) * tangent;
-        let direction = [0, 1, 2].map(|axis| self.forward[axis] + self.right[axis] * x + self.up[axis] * y);
-        let distance = (height - self.eye[1]) / direction[1];
-        (distance > 0.0).then(|| [0, 1, 2].map(|axis| self.eye[axis] + direction[axis] * distance))
+        [0, 1, 2].map(|axis| self.forward[axis] + self.right[axis] * x + self.up[axis] * y)
+    }
+
+    /// The cell drawn under a point on screen (`0..1` each axis, y down); see `ground_hit`.
+    pub fn pick_ground(&self, screen: [f32; 2], gat: &Gat) -> Option<[i32; 2]> {
+        ground_hit(gat, self.eye, self.ray(screen))
     }
 
     /// Screen rectangle (`0..1`, y down: left, top, right, bottom) of a sprite-pixel box anchored at `feet`.
@@ -1191,7 +1223,35 @@ mod tests {
         // East is to the right, north is up the screen.
         assert!(view.project([110.0, 0.0, 100.0]).unwrap()[0] > 0.5);
         assert!(view.project([100.0, 0.0, 110.0]).unwrap()[1] < 0.5);
-        let picked = view.pick([0.5, 0.5], 0.0).unwrap();
-        assert!((picked[0] - 100.0).abs() < 1e-2 && (picked[2] - 100.0).abs() < 1e-2, "{picked:?}");
+        // The middle of the screen picks the target's cell on flat ground.
+        let flat = Gat { width: 40, height: 40, cells: vec![([0.0; 4], 0); 1600] };
+        assert_eq!(view.pick_ground([0.5, 0.5], &flat), Some([20, 20]));
+    }
+
+    #[test]
+    fn picks_the_ground_drawn_under_the_pointer() {
+        // Ten by ten cells of flat ground; a pit at (5, 5), ten deep (negative heights are up); a block at (5, 6),
+        // twenty high.
+        let ground = |block: bool| {
+            let mut gat = Gat { width: 10, height: 10, cells: vec![([0.0; 4], 0); 100] };
+            gat.cells[5 * 10 + 5].0 = [10.0; 4];
+            if block {
+                gat.cells[6 * 10 + 5].0 = [-20.0; 4];
+            }
+            gat
+        };
+        let (flat, gat) = (ground(false), ground(true));
+        let toward = |from: Vector, to: Vector| subtract(to, from);
+        let eye = [25.0, 50.0, -20.0];
+        // Flat ground: where the ray meets y = 0.
+        assert_eq!(ground_hit(&flat, eye, toward(eye, [37.0, 0.0, 41.0])), Some([7, 8]));
+        // The block stops a ray bound for the cell behind it, at its near side.
+        assert_eq!(ground_hit(&flat, eye, toward(eye, [25.0, 0.0, 35.0])), Some([5, 7]));
+        assert_eq!(ground_hit(&gat, eye, toward(eye, [25.0, 0.0, 35.0])), Some([5, 6]));
+        // A steep ray over the pit reaches its floor.
+        let above = [27.5, 100.0, 20.0];
+        assert_eq!(ground_hit(&gat, above, toward(above, [27.5, -10.0, 27.5])), Some([5, 5]));
+        // Off the map's edge: none.
+        assert_eq!(ground_hit(&gat, eye, toward(eye, [25.0, 0.0, -10.0])), None);
     }
 }
