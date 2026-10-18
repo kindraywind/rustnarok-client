@@ -1254,6 +1254,9 @@ fn game_state(app: &App, game: &Game) -> Value {
             json!({"hair": look.hair, "hair_color": look.hair_color, "clothes_color": look.clothes_color, "stage": room.stage, "direction": room.direction})
         }),
         "head_emblems": game.head_emblems.iter().map(|(name, guild, area)| json!({"name": name, "guild": guild, "box": area})).collect::<Vec<_>>(),
+        // The bars under units: by whose ("player", "homunculus", "mercenary", "elemental", "pet", else the unit ID), the
+        // box and each row's fill (null when its maximum isn't known).
+        "bars": game.bars_drawn.iter().map(|(whose, area, fills)| (whose.clone(), json!({"box": area, "fills": fills}))).collect::<serde_json::Map<_, _>>(),
         "map_property": game.map_property.map(|(property, flags)| json!({"type": property, "flags": flags})),
         "map_type": game.map_type,
         // The PvP counter as it shows (rank, players), or null.

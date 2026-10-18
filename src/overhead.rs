@@ -60,6 +60,27 @@ pub fn cast_fill(done: f32) -> f32 {
 pub const BAR_BELOW: f32 = 19.0 / SCREEN_PER_SPRITE;
 pub const NAME_BELOW: f32 = 32.0 / SCREEN_PER_SPRITE;
 pub const NAME_TEXT_TOP: f32 = 4.0;
+/// Bars under units are 60 px wide: a 3 px row a value, with 1 px of border around and between the rows.
+pub const BAR_WIDTH: f32 = 60.0;
+
+/// A row's fill: trunc(58 · value / max) px; none when the maximum is 0.
+pub fn bar_fill(value: i64, max: i64) -> Option<f32> {
+    (max > 0).then(|| ((BAR_WIDTH as i64 - 2) * value.clamp(0, max) / max) as f32)
+}
+
+/// A bar under a unit as rectangles from its top left: the border, the background, the lines between rows, then each
+/// row's fill. A row is its value, its maximum, its color, and the color it takes under a quarter full.
+pub fn gage<T: Copy>(rows: &[(i64, i64, T, T)], border: T, background: T) -> Vec<(T, [f32; 4])> {
+    let height = 1.0 + 4.0 * rows.len() as f32;
+    let mut rects = vec![(border, [0.0, 0.0, BAR_WIDTH, height]), (background, [1.0, 1.0, BAR_WIDTH - 2.0, height - 2.0])];
+    rects.extend((1..rows.len()).map(|row| (border, [0.0, 4.0 * row as f32, BAR_WIDTH, 1.0])));
+    for (row, &(value, max, color, low)) in rows.iter().enumerate() {
+        if let Some(width) = bar_fill(value, max) {
+            rects.push((if value * 4 < max { low } else { color }, [1.0, 1.0 + 4.0 * row as f32, width, 3.0]));
+        }
+    }
+    rects
+}
 /// Bytes per balloon line (a double-byte character counts two).
 const LINE_BYTES: usize = 35;
 /// The balloon's padding around its text: left, top; and the step from line to line.
@@ -133,6 +154,33 @@ pub fn border([width, height]: [f32; 2]) -> Vec<([f32; 2], [f32; 2])> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bar's fills: (color, top, width).
+    fn fills(rows: &[(i64, i64, char, char)]) -> Vec<(char, f32, f32)> {
+        gage(rows, '#', '.').into_iter().filter(|(color, _)| !"#.".contains(*color)).map(|(color, [_, top, width, _])| (color, top, width)).collect()
+    }
+
+    #[test]
+    fn stacks_bars_a_row_a_value() {
+        // A homunculus: HP, SP, hunger over 100, 60×13 with border lines at 4 and 8.
+        let homunculus = |hp, sp, hunger| [(hp, 200, 'g', 'r'), (sp, 80, 'b', 'b'), (hunger, 100, 'h', 'r')];
+        let rects = gage(&homunculus(200, 0, 100), '#', '.');
+        assert_eq!(&rects[..4], [('#', [0.0, 0.0, 60.0, 13.0]), ('.', [1.0, 1.0, 58.0, 11.0]), ('#', [0.0, 4.0, 60.0, 1.0]), ('#', [0.0, 8.0, 60.0, 1.0])]);
+        assert_eq!(fills(&homunculus(200, 0, 100)), [('g', 1.0, 58.0), ('b', 5.0, 0.0), ('h', 9.0, 58.0)]);
+        // 50 % HP; 20 % HP and hunger 24 both take the low color; SP never does.
+        assert_eq!(fills(&homunculus(100, 40, 25)), [('g', 1.0, 29.0), ('b', 5.0, 29.0), ('h', 9.0, 14.0)]);
+        assert_eq!(fills(&homunculus(40, 4, 24)), [('r', 1.0, 11.0), ('b', 5.0, 2.0), ('r', 9.0, 13.0)]);
+        // A pet: hunger alone, 60×5.
+        assert_eq!(gage(&[(30, 100, 'h', 'r')], '#', '.')[..2], [('#', [0.0, 0.0, 60.0, 5.0]), ('.', [1.0, 1.0, 58.0, 3.0])]);
+        assert_eq!(fills(&[(30, 100, 'h', 'r')]), [('h', 1.0, 17.0)]);
+        // A mercenary whose maximum HP isn't known: the frame, no HP fill.
+        assert_eq!(gage(&[(10, 0, 'g', 'r'), (5, 10, 'b', 'b')], '#', '.')[0], ('#', [0.0, 0.0, 60.0, 9.0]));
+        assert_eq!(fills(&[(10, 0, 'g', 'r'), (5, 10, 'b', 'b')]), [('b', 5.0, 29.0)]);
+        // A 4th job's own bar: HP, SP and the third row, 60×13; over the maximum fills it.
+        let fourth = [(900, 1000, 'g', 'r'), (100, 100, 'b', 'b'), (150, 100, 'a', 'a')];
+        assert_eq!(gage(&fourth, '#', '.')[0], ('#', [0.0, 0.0, 60.0, 13.0]));
+        assert_eq!(fills(&fourth), [('g', 1.0, 52.0), ('b', 5.0, 58.0), ('a', 9.0, 58.0)]);
+    }
 
     #[test]
     fn sizes_the_cast_bar() {

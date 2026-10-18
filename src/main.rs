@@ -641,9 +641,17 @@ const SLOT_MISSED: usize = 3;
 const SLOT_HOLD_MS: f32 = 1500.0;
 const TAMED: usize = 1574;
 const NOT_TAMED: usize = 1575;
-/// HP/SP bars under characters: border, background, HP, low HP (under a quarter), SP; and monsters' HP bars.
-const BAR_WIDTH: f32 = 60.0;
-const BAR_COLORS: [[u8; 4]; 5] = [[0x14, 0x19, 0x9B, 255], [0x44, 0x44, 0x44, 255], [0x16, 0xEA, 0x25, 255], [0xEA, 0x16, 0x16, 255], [0x1D, 0x65, 0xDB, 255]];
+/// HP/SP bars under characters: border, background, HP, low HP (under a quarter), SP, hunger, a 4th job's third row;
+/// and monsters' HP bars.
+const BAR_COLORS: [[u8; 4]; 7] = [
+    [0x14, 0x19, 0x9B, 255],
+    [0x44, 0x44, 0x44, 255],
+    [0x16, 0xEA, 0x25, 255],
+    [0xEA, 0x16, 0x16, 255],
+    [0x1D, 0x65, 0xDB, 255],
+    [0xFF, 0xE4, 0xE1, 255],
+    [0xFF, 0xC0, 0x60, 255],
+];
 const MONSTER_BAR_COLORS: [[u8; 4]; 4] = [[0x10, 0x18, 0x9C, 255], [0x42, 0x41, 0x42, 255], [0xFF, 0x00, 0xE7, 255], [0xFF, 0xFF, 0x00, 255]];
 /// A multi-hit's hits come this far apart.
 const MULTI_HIT_DELAY: Duration = Duration::from_millis(200);
@@ -994,6 +1002,9 @@ struct Game {
     dress_figure: Option<SpriteSet>,
     /// The emblems drawn over heads this frame: whose, their guild, the box (for the test driver).
     head_emblems: Vec<(String, u32, [f32; 4])>,
+    /// The bars drawn under units this frame: whose ("player", a summon's kind, else the unit ID), the box, each row's
+    /// fill (for the test driver).
+    bars_drawn: Vec<(String, [f32; 4], Vec<Option<f32>>)>,
     /// /noshift: a click on a player attacks without Shift (saved).
     no_shift: bool,
     /// /noctrl: a click on a monster keeps attacking without Ctrl (saved; on unless turned off).
@@ -1057,6 +1068,8 @@ struct Game {
     homunculus_steering: mercenary::Steering,
     homunculus_rename: Option<String>,
     homunculus_hunger: Option<u16>,
+    /// The player's elemental: its unit, HP, max HP, SP and max SP.
+    elemental: Option<(u32, [u32; 4])>,
     /// Chat rooms over their owners' heads (by owner), and where their signs were last drawn (room ID, password).
     signs: HashMap<u32, chatroom::Sign>,
     sign_rects: Vec<([f32; 4], u32, u8)>,
@@ -4040,7 +4053,7 @@ struct Assets {
     next: ButtonImages,
     close: ButtonImages,
     menu_selection: Texture,
-    bars: [Texture; 5],
+    bars: [Texture; 7],
     monster_bars: [Texture; 4],
     chrome: window::Chrome,
     inventory: inventory::Assets,
@@ -8574,6 +8587,7 @@ impl App {
                     names_asked: HashSet::new(),
                     dress_figure: None,
                     head_emblems: Vec::new(),
+                    bars_drawn: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     skill_sent: None,
                     right_moved: false,
@@ -8608,6 +8622,7 @@ impl App {
                     dismiss_asked: false,
                     homunculus: None,
                     homunculus_id: None,
+                    elemental: None,
                     homunculus_skills: Vec::new(),
                     homunculus_window: homunculus::Window::default(),
                     homunculus_skill_list: homunculus::SkillList::default(),
@@ -9702,6 +9717,14 @@ impl App {
             }
             MapEvent::HomunculusFed { ok: true, .. } => {}
             MapEvent::MercenaryInfo(hired) => game.mercenary = Some(hired),
+            MapEvent::ElementalInfo { id, values } => game.elemental = Some((id, values)),
+            MapEvent::ElementalChanged { kind, value } => {
+                if let Some((_, values)) = &mut game.elemental
+                    && let Some(slot) = kind.checked_sub(net::MERCENARY_HP).and_then(|at| values.get_mut(usize::from(at)))
+                {
+                    *slot = value;
+                }
+            }
             MapEvent::MercenarySkills(list) => game.mercenary_skills = list,
             MapEvent::MercenaryChanged { kind, value } => {
                 if let Some(hired) = &mut game.mercenary {
@@ -12419,34 +12442,61 @@ impl App {
                 game.head_emblems.push((actor.name.clone(), actor.guild, [left, top, right, bottom]));
             }
         }
-        let ratio = |value: Option<&i64>, maximum: Option<&i64>| match (value, maximum) {
-            (Some(&value), Some(&maximum)) if maximum > 0 => Some((value as f32 / maximum as f32).clamp(0.0, 1.0)),
-            _ => None,
-        };
-        let hp = ratio(game.status.get(&net::STATUS_HP), game.status.get(&net::STATUS_MAX_HP));
-        let sp = ratio(game.status.get(&net::STATUS_SP), game.status.get(&net::STATUS_MAX_SP));
-        let [border, background, green, red, blue] = &assets.bars;
+        let status = |id| game.status.get(&id).copied().unwrap_or(0);
+        let [border, background, green, red, blue, hunger, third] = &assets.bars;
+        // Each bar: whose, where, its rows (value, maximum, color, low color), its border and background.
         let mut bars = Vec::new();
         if game.show_bars {
-            bars.push((player_feet, hp, sp, [border, background, green, red]));
+            let mut rows =
+                vec![(status(net::STATUS_HP), status(net::STATUS_MAX_HP), green, red), (status(net::STATUS_SP), status(net::STATUS_MAX_SP), blue, blue)];
+            // ponytail: a 4th job's third row taken as its AP.
+            if basic_info::fourth_job(game.me.job) {
+                rows.push((status(net::STATUS_AP), status(net::STATUS_MAX_AP), third, third));
+            }
+            bars.push(("player".to_string(), player_feet, rows, [border, background]));
+        }
+        // The player's own summons while in sight: HP, SP, and a homunculus's or pet's hunger.
+        // ponytail: hunger fills over a maximum of 100.
+        let pair = |value: u32, max: u32| (i64::from(value), i64::from(max));
+        let hp_sp = |[hp, max_hp, sp, max_sp]: [u32; 4]| {
+            let ((hp, max_hp), (sp, max_sp)) = (pair(hp, max_hp), pair(sp, max_sp));
+            vec![(hp, max_hp, green, red), (sp, max_sp, blue, blue)]
+        };
+        let mut summons = Vec::new();
+        if let (Some(id), Some(homunculus)) = (game.homunculus_id, &game.homunculus) {
+            let mut rows = hp_sp([homunculus.hp, homunculus.max_hp, homunculus.sp, homunculus.max_sp]);
+            rows.push((i64::from(homunculus.hunger), 100, hunger, red));
+            summons.push(("homunculus", id, rows));
+        }
+        if let Some(hired) = &game.mercenary {
+            summons.push(("mercenary", hired.id, hp_sp([hired.hp, hired.max_hp, hired.sp, hired.max_sp])));
+        }
+        if let Some((id, values)) = game.elemental {
+            summons.push(("elemental", id, hp_sp(values)));
+        }
+        if let (Some(id), Some(pet)) = (game.pet_id, &game.pet) {
+            summons.push(("pet", id, vec![(i64::from(pet.hunger), 100, hunger, red)]));
+        }
+        for (kind, id, rows) in summons {
+            if let Some(&feet) = feet_of.get(&id) {
+                bars.push((kind.to_string(), feet, rows, [border, background]));
+            }
         }
         // Monsters' bars in their own colors; a dying unit's bar shows empty until it's gone.
         bars.extend(game.unit_hp.iter().filter_map(|(id, &(hp, max))| {
             let actor = game.units.get(id)?;
             let hp = if actor.remove_at.is_some() { 0 } else { hp };
-            let colors = if actor.kind == MONSTER { assets.monster_bars.each_ref() } else { [border, background, green, red] };
-            Some((*feet_of.get(id)?, (max > 0).then(|| (hp as f32 / max as f32).clamp(0.0, 1.0)), None, colors))
+            let [border, background, fill, low] = if actor.kind == MONSTER { assets.monster_bars.each_ref() } else { [border, background, green, red] };
+            Some((id.to_string(), *feet_of.get(id)?, vec![(i64::from(hp), i64::from(max), fill, low)], [border, background]))
         }));
-        for (feet, hp, sp, [border, background, fill, low]) in bars {
-            let (Some(hp), Some(point)) = (hp, sprite_point(feet, overhead::BAR_BELOW)) else { continue };
-            let [x, y] = [point[0].trunc() - BAR_WIDTH / 2.0, point[1].trunc()];
-            let height = if sp.is_some() { 9.0 } else { 5.0 };
-            base.sprites.push((border, [x, y], [BAR_WIDTH, height]));
-            base.sprites.push((background, [x + 1.0, y + 1.0], [BAR_WIDTH - 2.0, height - 2.0]));
-            base.sprites.push((if hp < 0.25 { low } else { fill }, [x + 1.0, y + 1.0], [((BAR_WIDTH - 2.0) * hp).floor(), 3.0]));
-            if let Some(sp) = sp {
-                base.sprites.push((border, [x, y + 4.0], [BAR_WIDTH, 1.0]));
-                base.sprites.push((blue, [x + 1.0, y + 5.0], [((BAR_WIDTH - 2.0) * sp).floor(), 3.0]));
+        game.bars_drawn.clear();
+        for (whose, feet, rows, [border, background]) in bars {
+            let Some(point) = sprite_point(feet, overhead::BAR_BELOW) else { continue };
+            let [x, y] = [point[0].trunc() - overhead::BAR_WIDTH / 2.0, point[1].trunc()];
+            let rects = overhead::gage(&rows, border, background);
+            game.bars_drawn.push((whose, [x, y, rects[0].1[2], rects[0].1[3]], rows.iter().map(|&(value, max, ..)| overhead::bar_fill(value, max)).collect()));
+            for (texture, [left, top, width, height]) in rects {
+                base.sprites.push((texture, [x + left, y + top], [width, height]));
             }
         }
 
