@@ -1,11 +1,11 @@
 {
-  "about": "Favourites tab, lock item drop, compare equips, and a card's picture (issue #319); with compare on, a Sword's description shows the worn one flush left of it; a card's picture is 300 x 417 at (192, 0) and its button shuts it again; a right press on the card in a carded Knife's description opens the card's own window at (280, 278), a left click doesn't (issue #467).",
+  "about": "Favourites tab, lock item drop, compare equips, and a card's picture (issue #319); with compare on, a Sword's description shows the worn one flush left of it; a card's picture is 300 x 417 at (192, 0), over the description, and its close button shuts it; a right press on the card in a carded Knife's description opens the card's own window at (280, 278), a left click doesn't (issue #467).",
   "account": "",
   "slot": 0,
   "steps": [
     {"say": "@warp iz_int01 18 26"},
     {"settle": 1500},
-    {"say": "@heal"},
+    {"say": "@set BaseLevel 2"}, {"wait": 300}, {"say": "@heal"},
     {"wait": 300},
     {"say": "@itemreset"},
     {"wait": 800},
@@ -55,7 +55,7 @@
     {"wait": 400},
     {"expect": {"windows_open": ["CardPicture"], "state": {"card_view.card": 4001, "card_view.box": [192.0, 0.0, 300.0, 417.0]}}},
     {"move": [1000, 750]}, {"shot": "poring-card", "crop": [180, 0, 400, 430]},
-    {"click_on": {"button": "card_picture"}}, {"wait": 300},
+    {"click_on": {"button": "card_picture_close"}}, {"wait": 300},
     {"expect": {"windows_closed": ["CardPicture"]}},
     {"say": "@item2 1201 1 1 0 0 4001 0 0 0"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"click_on": {"button": "tab:equip"}}, {"wait": 200},
@@ -66,6 +66,7 @@
     {"expect": {"state": {"item_window": 1201, "card_window_box.0": 280.0, "card_window_box.1": 278.0}}},
     {"move": [1000, 750]}, {"shot": "card-window", "crop": [270, 110, 300, 480]},
     {"say": "@itemreset"},
-    {"wait": 500}
+    {"wait": 500},
+    {"say": "@set BaseLevel 1"}, {"wait": 300}
   ]
 }

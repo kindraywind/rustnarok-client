@@ -697,6 +697,12 @@ impl CardView {
         [self.position[0], self.position[1], CARD_VIEW[0], CARD_VIEW[1]]
     }
 
+    /// Its close button, for the test driver.
+    pub fn close_box(&self) -> [f32; 4] {
+        let [x, y] = offset(self.position, CARD_CLOSE);
+        [x, y, 11.0, 11.0]
+    }
+
     pub fn start_drag(&mut self, cursor: [f32; 2]) {
         self.drag = Some(offset(cursor, self.position.map(|value| -value)));
     }
