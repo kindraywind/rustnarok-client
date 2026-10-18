@@ -1694,6 +1694,66 @@ pub fn local_time((tick, at): (u32, Instant), server_tick: u32) -> Instant {
     if ms >= 0 { at + apart } else { at.checked_sub(apart).unwrap_or(at) }
 }
 
+/// A tick the server sends this far behind our clock counts as late; four late in a row step the clock back this much.
+const CLOCK_STEP: i64 = 144;
+const LATE_IN_A_ROW: u8 = 4;
+
+/// Our guess of the server's tick: set outright on entering a map and by the first ZC_NOTIFY_TIME after a map load,
+/// then nudged by every tick the server sends (ZC_NOTIFY_TIME, move entries, our own walks).
+#[derive(Default)]
+pub struct ServerClock {
+    at: Option<(u32, Instant)>,
+    late: u8,
+}
+
+impl ServerClock {
+    pub fn set(&mut self, tick: u32, at: Instant) {
+        self.at = Some((tick, at));
+        self.late = 0;
+    }
+
+    /// The server's tick at `at`, by our guess.
+    pub fn tick(&self, at: Instant) -> Option<u32> {
+        let (tick, then) = self.at?;
+        let ms = if at >= then { at.duration_since(then).as_millis() as i64 } else { -(then.duration_since(at).as_millis() as i64) };
+        Some(tick.wrapping_add(ms as u32))
+    }
+
+    /// A tick heard at `at`: one ahead of our guess sets it at once; more than 144 ms behind on four packets in a row
+    /// steps it back 144 ms; anything else starts that count again.
+    pub fn heard(&mut self, tick: u32, at: Instant) {
+        let Some(guess) = self.tick(at) else { return self.set(tick, at) };
+        let ahead = i64::from(tick.wrapping_sub(guess) as i32);
+        if ahead > 0 {
+            self.set(tick, at);
+        } else if -ahead > CLOCK_STEP {
+            self.late += 1;
+            if self.late == LATE_IN_A_ROW
+                && let Some((tick, then)) = self.at
+            {
+                self.set(tick.wrapping_sub(CLOCK_STEP as u32), then);
+            }
+        } else {
+            self.late = 0;
+        }
+    }
+
+    /// When the server's `tick` is on our clock.
+    pub fn local(&self, tick: u32) -> Option<Instant> {
+        self.at.map(|clock| local_time(clock, tick))
+    }
+}
+
+/// A walk changed under way: where the unit is drawn and when it last moved, and the end of the step under way (the
+/// node and when the path reaches it), which it closes on a share of the way each frame.
+#[derive(Clone, Copy)]
+struct Blend {
+    at: [f32; 2],
+    last: Instant,
+    to: [i32; 2],
+    end: Instant,
+}
+
 /// Something on the map that moves cell by cell.
 pub struct Actor {
     pub name: String,
@@ -1726,6 +1786,8 @@ pub struct Actor {
     pub facing_from_server: bool,
     /// Sliding (a knockback): the path is one straight move that doesn't turn the unit.
     sliding: bool,
+    /// A walk changed under way, gliding into its new path.
+    blend: Option<Blend>,
     /// Players only: 0 looking straight ahead, 1 and 2 turned to the sides.
     pub head_direction: u16,
     animation_started: Instant,
@@ -1806,6 +1868,7 @@ impl Actor {
             cell,
             path: Vec::new(),
             leg: (cell.map(|value| value as f32), now),
+            blend: None,
             step_ms: f32::from(speed.max(1)),
             distance: 0.0,
             direction,
@@ -1961,6 +2024,9 @@ impl Actor {
 
     /// Where the unit is at `now`, in cells: between two while walking.
     pub fn position(&self, now: Instant) -> [f32; 2] {
+        if let Some(blend) = self.blend {
+            return blend.at;
+        }
         let Some(&(next, _)) = self.path.first() else { return self.cell.map(|value| value as f32) };
         let (from, progress) = (self.leg.0, self.progress(now));
         [from[0] + (next[0] as f32 - from[0]) * progress, from[1] + (next[1] as f32 - from[1]) * progress]
@@ -1983,30 +2049,12 @@ impl Actor {
         self.facing_from_server = true;
     }
 
-    /// Walks `path` on from `from`, where the server starts it. A walk changed midway starts from the cell the step
-    /// under way ends on, so that step plays out first and the new path follows; from anywhere else the unit heads
-    /// to `from` from where it is now.
-    pub fn walk_on(&mut self, from: [i32; 2], path: Vec<[i32; 2]>, now: Instant) {
-        if !self.moving() {
-            self.cell = from;
-        }
-        self.start_walking(now);
-        if let Some(at) = self.path.iter().position(|&(cell, _)| cell == from) {
-            self.path.truncate(at + 1);
-            let arrives = self.path[at].1;
-            self.path.extend(arrivals(from.map(|value| value as f32), arrives, &path, self.step_ms, 1.0));
-        } else {
-            let start = self.update(now);
-            self.cell = start.map(|value| value.round() as i32);
-            self.leg = (start, now);
-            let path: Vec<_> = (self.cell != from || path.is_empty()).then_some(from).into_iter().chain(path).collect();
-            self.path = arrivals(start, now, &path, self.step_ms, 1.0);
-        }
-    }
-
     /// Walks `path` as the server has it: from `from` and its sixteenths of a cell `sub` (8: the centre), beginning at
-    /// `begin`. A walk that would be over already plays from now at 13/10 the speed.
-    pub fn walk_from(&mut self, from: [i32; 2], sub: [u8; 2], path: Vec<[i32; 2]>, begin: Instant, now: Instant) {
+    /// `begin`. A walk that would be over already plays from now at 13/10 the speed. A unit already `known` on the map
+    /// stays where it's drawn and glides into the new path by the end of the step under way; a new one starts at
+    /// `from`.
+    pub fn walk_from(&mut self, from: [i32; 2], sub: [u8; 2], path: Vec<[i32; 2]>, begin: Instant, now: Instant, known: bool) {
+        let drawn = self.position(now);
         self.start_walking(now);
         self.cell = from;
         let start = [0, 1].map(|axis| from[axis] as f32 + (f32::from(sub[axis]) - 8.0) / 16.0);
@@ -2018,6 +2066,15 @@ impl Actor {
         }
         self.leg = (start, begin);
         self.path = steps;
+        self.blend = self.path.first().filter(|_| known).map(|&(to, end)| Blend { at: drawn, last: now, to, end });
+    }
+
+    /// Put on `cell` at once (a knockback): no slide, and what it was doing goes on.
+    pub fn place_at(&mut self, cell: [i32; 2], now: Instant) {
+        self.cell = cell;
+        self.leg = (cell.map(|value| value as f32), now);
+        self.blend = None;
+        self.sliding = false;
     }
 
     fn start_walking(&mut self, now: Instant) {
@@ -2042,6 +2099,7 @@ impl Actor {
     pub fn stop_at(&mut self, cell: [i32; 2]) {
         self.cell = cell;
         self.sliding = false;
+        self.blend = None;
         if !self.path.is_empty() {
             self.animation_started = Instant::now();
         }
@@ -2079,10 +2137,22 @@ impl Actor {
                 self.sliding = false;
             }
         }
+        // A changed walk closes (now − last) / (end − last) of what's left of the way on the end of the step under way,
+        // and from there follows the path.
+        if let Some(blend) = &mut self.blend {
+            if now >= blend.end {
+                self.blend = None;
+            } else {
+                let share = (now.saturating_duration_since(blend.last).as_secs_f32() / blend.end.saturating_duration_since(blend.last).as_secs_f32().max(1e-6))
+                    .min(1.0);
+                blend.at = [0, 1].map(|axis| blend.at[axis] + (blend.to[axis] as f32 - blend.at[axis]) * share);
+                blend.last = now;
+            }
+        }
         self.position(now)
     }
 
-    /// Slides straight to `cell` from where it is drawn, over 200 ms, facing as it was (a knockback). A long way jumps.
+    /// Slides straight to `cell` from where it is drawn, over 200 ms, facing as it was. A long way jumps.
     pub fn slide_to(&mut self, cell: [i32; 2], now: Instant) {
         let from = self.position(now);
         if f32::hypot(cell[0] as f32 - from[0], cell[1] as f32 - from[1]) > SLIDE_REACH {
@@ -2464,7 +2534,7 @@ mod tests {
     fn walks_cell_by_cell_at_its_speed() {
         let mut actor = Actor::new("a".into(), None, [10, 10], 0, 100);
         let start = Instant::now();
-        actor.walk_from([10, 10], [8, 8], vec![[11, 10], [12, 11]], start, start);
+        actor.walk_from([10, 10], [8, 8], vec![[11, 10], [12, 11]], start, start, false);
         let at = |ms: u64| start + Duration::from_millis(ms);
         assert_eq!(actor.update(at(50)), [10.5, 10.0]);
         assert_eq!(actor.direction, 6);
@@ -2477,28 +2547,50 @@ mod tests {
     }
 
     #[test]
-    fn turns_midway_without_a_jump() {
+    fn glides_into_a_new_path() {
         let start = Instant::now();
         let at = |ms: u64| start + Duration::from_millis(ms);
         let mut actor = Actor::new("a".into(), None, [10, 10], 0, 100);
-        actor.walk_on([10, 10], vec![[11, 10], [12, 10], [13, 10]], start);
+        actor.walk_from([10, 10], [8, 8], vec![[11, 10], [12, 10], [13, 10]], start, start, false);
         assert_near(actor.update(at(150)), [11.5, 10.0]);
-        // Turned north mid-step: the server starts the new path from 12,10, where this step ends.
-        actor.walk_on([12, 10], vec![[12, 11], [12, 12]], at(150));
-        assert_near(actor.update(at(160)), [11.6, 10.0]);
-        assert_near(actor.update(at(250)), [12.0, 10.5]);
-        assert_eq!(actor.direction, 4);
-        assert_near(actor.update(at(401)), [12.0, 12.0]);
-        assert!(!actor.moving());
-        // From a cell we've already left (we ran ahead): back to it from where we are, then on.
-        let mut actor = Actor::new("a".into(), None, [10, 10], 0, 100);
-        actor.walk_on([10, 10], vec![[11, 10], [12, 10]], start);
-        actor.update(at(150));
-        actor.walk_on([11, 10], vec![[11, 11]], at(150));
-        assert_near(actor.update(at(175)), [11.25, 10.0]);
-        assert_eq!(actor.direction, 2);
-        assert_near(actor.update(at(200)), [11.0, 10.0]);
-        assert_near(actor.update(at(300)), [11.0, 11.0]);
+        // The server turned it north at 11,10 at 100 ms: it stays where it's drawn and closes on 11,11 by 200 ms.
+        actor.walk_from([11, 10], [8, 8], vec![[11, 11], [11, 12]], at(100), at(150), true);
+        assert_near(actor.position(at(150)), [11.5, 10.0]);
+        assert_near(actor.update(at(175)), [11.25, 10.5]);
+        assert_near(actor.update(at(200)), [11.0, 11.0]);
+        assert_near(actor.update(at(250)), [11.0, 11.5]);
+        // A unit new to the client is put on the source.
+        let mut fresh = Actor::new("b".into(), None, [11, 10], 0, 100);
+        fresh.walk_from([11, 10], [8, 8], vec![[11, 11]], at(100), at(150), false);
+        assert_near(fresh.update(at(150)), [11.0, 10.5]);
+        // A knockback: on its new cell at once.
+        actor.place_at([14, 12], at(260));
+        assert_near(actor.position(at(260)), [14.0, 12.0]);
+    }
+
+    #[test]
+    fn keeps_the_server_clock() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut clock = ServerClock::default();
+        clock.set(10_000, start);
+        assert_eq!(clock.tick(at(500)), Some(10_500));
+        // A packet ahead sets it at once.
+        clock.heard(10_600, at(500));
+        assert_eq!(clock.tick(at(500)), Some(10_600));
+        // Three late ones don't move it; one in time starts the count again.
+        for _ in 0..3 {
+            clock.heard(10_400, at(500));
+        }
+        clock.heard(10_550, at(500));
+        for _ in 0..3 {
+            clock.heard(10_400, at(500));
+        }
+        assert_eq!(clock.tick(at(500)), Some(10_600));
+        // The fourth late one in a row steps it back 144 ms.
+        clock.heard(10_400, at(500));
+        assert_eq!(clock.tick(at(500)), Some(10_456));
+        assert_eq!(clock.local(10_456), Some(at(500)));
     }
 
     #[test]
@@ -2578,12 +2670,12 @@ mod tests {
         let times: Vec<f32> = arrivals([10.25, 10.0], start, &path, 150.0, 1.0).into_iter().map(|(_, at)| ms(at)).collect();
         assert!(times.iter().zip([112.0, 324.0, 474.0]).all(|(a, b)| (a - b).abs() < 0.01), "{times:?}");
         let mut actor = Actor::new("a".into(), None, [10, 10], 0, 150);
-        actor.walk_from([10, 10], [12, 8], path.to_vec(), start, start);
+        actor.walk_from([10, 10], [12, 8], path.to_vec(), start, start, false);
         assert_near(actor.update(start), [10.25, 10.0]);
         assert_near(actor.update(start + Duration::from_millis(56)), [10.625, 10.0]);
         // Heard of after it ended: replayed from now at 13/10 the speed.
         let now = start + Duration::from_secs(10);
-        actor.walk_from([10, 10], [12, 8], path.to_vec(), start, now);
+        actor.walk_from([10, 10], [12, 8], path.to_vec(), start, now, false);
         assert_near(actor.update(now), [10.25, 10.0]);
         let first = 112.0 * 10.0 / 13.0;
         assert_near(actor.update(now + Duration::from_secs_f32(first / 1000.0)), [11.0, 10.0]);

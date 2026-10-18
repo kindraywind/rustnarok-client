@@ -331,6 +331,8 @@ const CHARACTER_INFO_SIZE: usize = 175;
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Character {
     pub id: u32,
+    /// Milliseconds a cell.
+    pub speed: u16,
     pub exp: i64,
     pub zeny: i32,
     pub job_exp: i64,
@@ -701,6 +703,7 @@ fn decode_character(info: &[u8]) -> Character {
         max_hp: i64_at(58),
         sp: i64_at(66),
         max_sp: i64_at(74),
+        speed: i16_at(82),
         job: i16_at(84),
         hair: i16_at(86),
         weapon: i16_at(90),
@@ -1345,6 +1348,8 @@ const NORMAL_ITEM_SIZE: usize = 34;
 const EQUIP_ITEM_SIZE: usize = 68;
 
 /// Status IDs in ZC_PAR_CHANGE (rathena's SP_*).
+/// Milliseconds a cell (rathena's SP_SPEED).
+pub const STATUS_SPEED: u16 = 0;
 pub const STATUS_HP: u16 = 5;
 pub const STATUS_MAX_HP: u16 = 6;
 pub const STATUS_SP: u16 = 7;
@@ -1747,12 +1752,19 @@ pub enum MapEvent {
         from: [u16; 2],
         to: [u16; 2],
         start_time: u32,
+        /// Where in its start cell the walk starts, in sixteenths (8: the centre).
+        sub: [u8; 2],
     },
     Stop {
         id: u32,
         position: [u16; 2],
     },
-    /// A unit is at a cell now, moved there at once (a knockback, Taekwon Jump, Snap, a pet put by its owner).
+    /// A unit is knocked back to a cell (ZC_HIGHJUMP, rathena's `clif_blown`).
+    Knocked {
+        id: u32,
+        position: [u16; 2],
+    },
+    /// A unit is at a cell now, moved there at once (Taekwon Jump, Snap, a pet put by its owner).
     Slide {
         id: u32,
         position: [u16; 2],
@@ -5404,10 +5416,11 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_NOTIFY_VANISH => MapEvent::Vanish { id: u32_at(2), reason: packet[6] },
         ZC_NOTIFY_PLAYERMOVE => {
             let (from, to) = decode_move(&packet[6..12]);
-            MapEvent::PlayerMove { from, to, start_time: u32_at(2) }
+            MapEvent::PlayerMove { from, to, start_time: u32_at(2), sub: [packet[11] >> 4, packet[11] & 0x0F] }
         }
         ZC_STOPMOVE => MapEvent::Stop { id: u32_at(2), position: [u16_at(6), u16_at(8)] },
-        ZC_HIGHJUMP | ZC_FASTMOVE => MapEvent::Slide { id: u32_at(2), position: [u16_at(6), u16_at(8)] },
+        ZC_HIGHJUMP => MapEvent::Knocked { id: u32_at(2), position: [u16_at(6), u16_at(8)] },
+        ZC_FASTMOVE => MapEvent::Slide { id: u32_at(2), position: [u16_at(6), u16_at(8)] },
         ZC_COMBODELAY => MapEvent::ComboWindow { id: u32_at(2), ms: u32_at(6) },
         ZC_BLADESTOP => MapEvent::BladeStop { source: u32_at(2), target: u32_at(6), on: u32_at(10) != 0 },
         ZC_CHANGE_DIRECTION => MapEvent::Turn { id: u32_at(2), direction: sprite_direction(packet[8]), head_direction: u16_at(6) },
@@ -7966,10 +7979,9 @@ mod tests {
         let lock = |on: u32| [&ZC_BLADESTOP.to_le_bytes()[..], &2000010u32.to_le_bytes(), &110000u32.to_le_bytes(), &on.to_le_bytes()].concat();
         let Some(MapEvent::BladeStop { source: 2000010, target: 110000, on: true }) = decode_map_packet(&lock(1)) else { panic!() };
         let Some(MapEvent::BladeStop { on: false, .. }) = decode_map_packet(&lock(0)) else { panic!() };
-        for header in [ZC_HIGHJUMP, ZC_FASTMOVE] {
-            let slide = [&header.to_le_bytes()[..], &2000010u32.to_le_bytes(), &170u16.to_le_bytes(), &370u16.to_le_bytes()].concat();
-            let Some(MapEvent::Slide { id: 2000010, position: [170, 370] }) = decode_map_packet(&slide) else { panic!() };
-        }
+        let moved = |header: u16| [&header.to_le_bytes()[..], &2000010u32.to_le_bytes(), &170u16.to_le_bytes(), &370u16.to_le_bytes()].concat();
+        let Some(MapEvent::Knocked { id: 2000010, position: [170, 370] }) = decode_map_packet(&moved(ZC_HIGHJUMP)) else { panic!() };
+        let Some(MapEvent::Slide { id: 2000010, position: [170, 370] }) = decode_map_packet(&moved(ZC_FASTMOVE)) else { panic!() };
         assert_eq!([ZC_COMBODELAY, ZC_BLADESTOP, ZC_HIGHJUMP, ZC_FASTMOVE].map(packet_length), [Some(10), Some(14), Some(10), Some(10)]);
     }
 

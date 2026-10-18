@@ -1485,6 +1485,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["standing_models"] = game.effects.standing_kinds().into();
     state["cutin_window"] = cutin_window.into();
     state["opened_page"] = game.opened_page.clone().into();
+    // Our milliseconds a cell.
+    state["player"]["step_ms"] = game.player.step_ms.into();
     // The effect sounds played in the last five seconds (`no_sound` in a scenario checks these).
     state["sounds_recent"] = recent_sounds().into();
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.

@@ -1,0 +1,16 @@
+{
+  "about": "Our own walking speed (issue #442): after @speed 100 the server says 100 ms a cell (ZC_PAR_CHANGE 0), and a 10-cell walk north up Prontera's street takes 1 s from the walk packet, on the server's clock; @speed with no number puts the speed back at the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@speed 100"}, {"wait": 800},
+    {"expect": {"state": {"player.step_ms": 100.0}}},
+    {"click_on": {"cell": [156, 190]}}, {"wait_for": {"packet": "0x0087", "ms": 2000}},
+    {"wait": 700},
+    {"expect": {"state": {"player.moving": true}}},
+    {"wait": 700},
+    {"expect": {"state": {"player.cell": [156, 190], "player.moving": false}}},
+    {"say": "@speed"}, {"wait": 500}
+  ]
+}
