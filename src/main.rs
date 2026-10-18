@@ -51,6 +51,7 @@ mod battle_queue;
 mod battleground;
 mod buying;
 mod cashshop;
+mod cast_square;
 mod catalog;
 mod char_make;
 mod char_select;
@@ -437,9 +438,24 @@ const PARTY_CREATE: usize = 2054;
 /// What a locked chat room asks ("Please enter Password.").
 const ROOM_PASSWORD: usize = 15;
 const PARTY_INVITE: usize = 2056;
-/// A dropped item starts this many cells up and falls one cell per 40ms.
-const DROP_HEIGHT: f32 = 5.0;
-const DROP_MS_PER_CELL: f32 = 40.0;
+/// An item without a picture of its own shows the apple's.
+const FALLBACK_ITEM_SPRITE: &str = "사과";
+
+/// How high a just-dropped item is over the ground, `ticks` (24 ms each) after it appears: it starts 15 units up, hops
+/// a little, then falls and lands after about 0.42 s.
+fn item_fall_height(ticks: f32) -> f32 {
+    (15.0 + 0.6 * ticks - 0.083 * ticks * ticks).max(0.0)
+}
+
+/// An item on the ground glints yellow for 2 ticks every 92 (48 ms every 2.208 s), counted from when it appeared.
+fn item_glints(ticks: f32) -> bool {
+    (ticks as i32).rem_euclid(92) >= 90
+}
+
+/// The sprite an item lies on the ground as (identified or not), the apple when the data has none.
+fn ground_sprite(items: &HashMap<u32, ItemInfo>, item: u32, identified: bool) -> &str {
+    items.get(&item).map(|info| info.resource(identified)).filter(|resource| !resource.is_empty()).unwrap_or(FALLBACK_ITEM_SPRITE)
+}
 /// Items cast 0.4 of a character's shadow.
 const ITEM_SHADOW: f32 = 0.4;
 
@@ -518,6 +534,8 @@ const MENU_CANCEL: [f32; 2] = [230.0, 91.0];
 const MENU_SELECTION: [u8; 4] = [0xCD, 0xE0, 0xFF, 0xFF];
 /// A player's action while casting or using a skill.
 const SKILL_ACTION: usize = 12;
+/// How far over the ground the magic square under a ground cast floats, so the ground doesn't cover it.
+const CAST_SQUARE_LIFT: f32 = 0.2;
 /// Words over a head stay this long.
 const SPEECH_TIME: Duration = Duration::from_secs(5);
 /// Spirit spheres and coins: how far from the body they circle, how high, how fast (radians a second), and how
@@ -655,6 +673,10 @@ const UNITS_PER_ZOOM: f32 = 2.5;
 /// How near and far the camera goes, outdoors and indoors; a wheel step, and how often the wheel counts.
 const DISTANCE_RANGE: [f32; 2] = [230.0, 400.0];
 const DISTANCE_RANGE_INDOOR: [f32; 2] = [230.0, 300.0];
+/// With /zoom on, outdoors the camera goes out to this; its lines: on, off.
+const ZOOM_OUT_DISTANCE: f32 = 730.0;
+const ZOOM_OUT_ON: usize = 3511;
+const ZOOM_OUT_OFF: usize = 3512;
 const WHEEL_STEP: f32 = 24.3;
 const WHEEL_GAP: Duration = Duration::from_millis(15);
 /// Shift + wheel tilts this many degrees a step.
@@ -729,7 +751,7 @@ struct Game {
     walks: u32,
     walk_held: bool,
     last_walk_try: Option<Instant>,
-    press_mark: Option<(Instant, bool)>,
+    press_mark: Option<(Instant, [f32; 2], bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
     shadow: Option<SpriteSet>,
@@ -778,6 +800,8 @@ struct Game {
     slot: Option<(usize, Instant)>,
     /// Units casting (None = the player): when it began and how long it takes.
     casts: HashMap<Option<u32>, (Instant, Duration)>,
+    /// The magic squares under ground skills being cast, by caster (None = the player); each goes with its cast.
+    cast_squares: HashMap<Option<u32>, cast_square::Square>,
     /// Units that may use their next combo skill (None = the player): when the window opened and how long it lasts.
     combos: HashMap<Option<u32>, (Instant, Duration)>,
     /// Units locked together by Blade Stop or Cursed Circle: source and target.
@@ -1063,24 +1087,26 @@ struct CameraGoal {
     indoor: bool,
     /// The right button is down: where the pointer was last.
     dragging: Option<[f32; 2]>,
-    /// The last right press, and whether the pointer moved since.
-    last_press: Option<(Instant, bool)>,
+    /// The last right press: when, where, and whether the pointer moved off since.
+    last_press: Option<(Instant, [f32; 2], bool)>,
     /// The parts of a tilt and a zoom step dragged but not yet whole.
     carry: [f32; 2],
     last_wheel: Option<Instant>,
     /// The map's own camera table, which then sets the limits (and no double click resets).
     limits: Option<rustnarok_client::map::Viewpoint>,
+    /// /zoom: outdoors the camera goes out to ZOOM_OUT_DISTANCE.
+    zoom_out: bool,
 }
 
 impl CameraGoal {
     #[cfg(test)]
     fn new(indoor: bool) -> Self {
-        Self::arrive(indoor, None, [PITCH, ZOOM * UNITS_PER_ZOOM])
+        Self::arrive(indoor, None, [PITCH, ZOOM * UNITS_PER_ZOOM], false)
     }
 
     /// The goal on arriving on a map: the map's own table's start, or the tilt and distance the player left on this
     /// kind of map (within its limits); turned 0 outdoors, YAW_INDOOR indoors.
-    fn arrive(indoor: bool, limits: Option<rustnarok_client::map::Viewpoint>, saved: [f32; 2]) -> Self {
+    fn arrive(indoor: bool, limits: Option<rustnarok_client::map::Viewpoint>, saved: [f32; 2], zoom_out: bool) -> Self {
         let mut goal = Self {
             yaw: if indoor { YAW_INDOOR } else { 0.0 },
             pitch: PITCH,
@@ -1091,6 +1117,7 @@ impl CameraGoal {
             carry: [0.0; 2],
             last_wheel: None,
             limits,
+            zoom_out,
         };
         match limits {
             Some(table) => {
@@ -1125,9 +1152,15 @@ impl CameraGoal {
         self.zoom * UNITS_PER_ZOOM
     }
 
-    /// Moves the camera to `distance` world units, within the map's range.
+    /// Moves the camera to `distance` world units, within the map's range: its own table's, or the kind of map's
+    /// (further out outdoors with /zoom).
     fn set_distance(&mut self, distance: f32) {
-        let [near, far] = self.limits.map_or(if self.indoor { DISTANCE_RANGE_INDOOR } else { DISTANCE_RANGE }, |table| table.distance);
+        let [near, far] = match self.limits {
+            Some(table) => table.distance,
+            None if self.indoor => DISTANCE_RANGE_INDOOR,
+            None if self.zoom_out => [DISTANCE_RANGE[0], ZOOM_OUT_DISTANCE],
+            None => DISTANCE_RANGE,
+        };
         self.zoom = distance.clamp(near, far) / UNITS_PER_ZOOM;
     }
 
@@ -1139,7 +1172,7 @@ impl CameraGoal {
     /// Right button down. A second press within CAMERA_DOUBLE_CLICK with the pointer not moved at all resets: the
     /// distance with Ctrl, the tilt with Shift, otherwise (outdoors only) the turn, to the nearest whole circle.
     fn press(&mut self, cursor: [f32; 2], now: Instant, ctrl: bool, shift: bool) {
-        if self.limits.is_none() && self.last_press.is_some_and(|(at, moved)| !moved && now.saturating_duration_since(at) < CAMERA_DOUBLE_CLICK) {
+        if self.limits.is_none() && self.last_press.is_some_and(|(at, _, moved)| !moved && now.saturating_duration_since(at) < CAMERA_DOUBLE_CLICK) {
             if ctrl {
                 self.zoom = ZOOM;
             }
@@ -1150,14 +1183,14 @@ impl CameraGoal {
                 self.yaw = (self.yaw / 360.0).round() * 360.0;
             }
         }
-        self.last_press = Some((now, false));
+        self.last_press = Some((now, cursor, false));
         self.dragging = Some(cursor);
     }
 
-    /// The pointer moved: the next right press isn't a double click.
-    fn pointer_moved(&mut self) {
-        if let Some((_, moved)) = &mut self.last_press {
-            *moved = true;
+    /// The pointer moved to `cursor`: off the last press, the next right press isn't a double click.
+    fn pointer_moved(&mut self, cursor: [f32; 2]) {
+        if let Some((_, from, moved)) = &mut self.last_press {
+            *moved |= moved_off(*from, cursor);
         }
     }
 
@@ -1614,6 +1647,8 @@ struct FloorItem {
     /// The server's cell, and where in it the item lies (fractional cells).
     at: [i32; 2],
     cell: [f32; 2],
+    /// When it appeared: it glints from then on.
+    seen: Instant,
     /// Set while it falls after being dropped.
     dropped: Option<Instant>,
 }
@@ -2227,6 +2262,18 @@ impl Game {
                     let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.camera_snap { "1" } else { "0" }));
                 }
                 let line = messages.get(if self.camera_snap { CAMERA_ON } else { CAMERA_OFF }).cloned().unwrap_or_default();
+                self.chat_line(line, CHAT_ITEM);
+                Ok(())
+            }
+            chat::Command::Zoom => {
+                let on = !self.camera_goal.zoom_out;
+                if let Some(path) = settings_path("zoomout") {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if on { "1" } else { "0" }));
+                }
+                self.camera_goal.zoom_out = on;
+                let distance = self.camera_goal.distance();
+                self.camera_goal.set_distance(distance);
+                let line = messages.get(if on { ZOOM_OUT_ON } else { ZOOM_OUT_OFF }).cloned().unwrap_or_default();
                 self.chat_line(line, CHAT_ITEM);
                 Ok(())
             }
@@ -3830,6 +3877,8 @@ struct Assets {
     homunculus: homunculus::Assets,
     party: party::Assets,
     chatroom: chatroom::Assets,
+    /// The magic square under a ground cast.
+    magic_target: Option<Texture>,
     escape: escape::Assets,
     options: options::Assets,
     quest: quest::Assets,
@@ -3948,6 +3997,7 @@ impl Assets {
             homunculus: homunculus::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
+            magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
             quest: quest::Assets::load(gpu, grf),
@@ -4054,6 +4104,11 @@ fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
 
 /// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
 /// folder elsewhere.
+/// Whether /zoom is on (saved; off unless turned on).
+fn zoom_out_saved() -> bool {
+    settings_path("zoomout").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1")
+}
+
 pub(crate) fn settings_path(name: &str) -> Option<std::path::PathBuf> {
     let home = || Some(std::path::PathBuf::from(std::env::var_os("HOME")?));
     let folder = if cfg!(target_os = "macos") {
@@ -4302,8 +4357,18 @@ fn may_move(last: Option<Instant>, now: Instant) -> bool {
 }
 
 /// Whether a press now, after the last one (when, and whether the pointer moved since), is a double press.
-fn double_press(last: Option<(Instant, bool)>, now: Instant) -> bool {
-    last.is_some_and(|(at, moved)| !moved && now.saturating_duration_since(at) < DOUBLE_PRESS)
+fn double_press(last: Option<(Instant, [f32; 2], bool)>, now: Instant) -> bool {
+    last.is_some_and(|(at, _, moved)| !moved && now.saturating_duration_since(at) < DOUBLE_PRESS)
+}
+
+/// How far the pointer may wander from a press and still count as still there (a double click, a click not a
+/// drag), in canvas pixels: a hand's tremor on a mouse or trackpad, which a scaled window turns into fractions.
+// ponytail: an estimate; one canvas pixel was too strict on a scaled window.
+const POINTER_SLACK: f32 = 2.0;
+
+/// Whether the pointer at `to` has moved off a press at `from`.
+fn moved_off(from: [f32; 2], to: [f32; 2]) -> bool {
+    (to[0] - from[0]).abs().max((to[1] - from[1]).abs()) >= POINTER_SLACK
 }
 
 fn offset(origin: [f32; 2], offset: [f32; 2]) -> [f32; 2] {
@@ -6253,10 +6318,11 @@ impl App {
     /// The pointer moved: windows and items being dragged follow it.
     fn pointer_moved(&mut self) {
         if let Scene::Game(game) = &mut self.scene {
-            if let Some((_, moved)) = &mut game.press_mark {
-                *moved = true;
+            let cursor = self.cursor;
+            if let Some((_, from, moved)) = &mut game.press_mark {
+                *moved |= moved_off(*from, cursor);
             }
-            if game.right_press.is_some() {
+            if game.right_press.is_some_and(|(from, _)| moved_off(from, cursor)) {
                 game.right_moved = true;
             }
             let (inventory_height, equipment_height, info_height) = (game.inventory.height(), game.equipment.height(), game.basic_info.height());
@@ -6336,7 +6402,7 @@ impl App {
             if let Some(window) = &mut game.shortcuts_window {
                 window.drag_to(self.cursor);
             }
-            game.camera_goal.pointer_moved();
+            game.camera_goal.pointer_moved(cursor);
             game.camera_goal.drag(self.cursor, self.modifiers);
             if let Some((_, start, moved)) = &mut game.dragging {
                 *moved |= (self.cursor[0] - start[0]).abs() + (self.cursor[1] - start[1]).abs() > 4.0;
@@ -6714,7 +6780,7 @@ impl App {
                     };
                     if let Some(key) = key {
                         game.hotkeys.keys[slot] = Some(key);
-                        let _ = game.session.set_hotkey(0, slot as u16, Some(key));
+                        let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, Some(key));
                     }
                 }
                 // A hotkey moved along the bar trades places with what's there; let go off the bar, it's taken off.
@@ -6728,13 +6794,13 @@ impl App {
                         Some(to) if to != from => {
                             game.hotkeys.keys.swap(from, to);
                             for slot in [from, to] {
-                                let _ = game.session.set_hotkey(0, slot as u16, game.hotkeys.keys[slot]);
+                                let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, game.hotkeys.keys[slot]);
                             }
                         }
                         Some(_) => {}
                         None => {
                             game.hotkeys.keys[from] = None;
-                            let _ = game.session.set_hotkey(0, from as u16, None);
+                            let _ = game.session.set_hotkey(game.hotkeys.tab(), from as u16, None);
                         }
                     }
                 }
@@ -6914,7 +6980,7 @@ impl App {
         {
             let now = Instant::now();
             let double = double_press(game.press_mark, now);
-            game.press_mark = Some((now, false));
+            game.press_mark = Some((now, cursor, false));
             let (shift, ctrl) = (self.modifiers.shift_key(), self.modifiers.control_key());
             // Alt + left press orders the mercenary (when it's out).
             if !double && self.modifiers.alt_key() && game.companion_press(false, cursor, shift) {
@@ -7301,6 +7367,7 @@ impl App {
                 ctrl: self.modifiers.control_key(),
                 repeat: event.repeat,
                 text_focus,
+                bar: if game.hotkeys.tab() == 0 { 1 } else { 2 },
             },
         );
         fired.is_some_and(|fired| self.perform_shortcut(fired))
@@ -7439,6 +7506,7 @@ impl App {
                 game.raise(Panel::Status);
             }
             shortcuts::Action::RotateHotkeys => game.hotkeys.rotate(),
+            shortcuts::Action::SwitchHotkeys => game.hotkeys.switch(),
             shortcuts::Action::Costume => {
                 if game.equipment.frame.open && game.equipment.showing_costume() {
                     game.equipment.frame.open = false;
@@ -7448,16 +7516,16 @@ impl App {
                     game.raise(Panel::Equipment);
                 }
             }
-            shortcuts::Action::Hotbar { bar: 1, slot } => game.press_hotkey(usize::from(slot)),
-            // ponytail: no window yet (memorial, commands, ground cursor, tip, party board, hunting, flags, hotbar 2). The key is eaten.
+            // Only the showing bar's keys come here (see shortcuts::action).
+            shortcuts::Action::Hotbar { slot, .. } => game.press_hotkey(usize::from(slot)),
+            // ponytail: no window yet (memorial, commands, ground cursor, tip, party board, hunting, flags). The key is eaten.
             shortcuts::Action::Memorial
             | shortcuts::Action::Commands
             | shortcuts::Action::GroundCursor
             | shortcuts::Action::Tip
             | shortcuts::Action::PartyBoard
             | shortcuts::Action::Hunting
-            | shortcuts::Action::Flag(_)
-            | shortcuts::Action::Hotbar { .. } => {}
+            | shortcuts::Action::Flag(_) => {}
             shortcuts::Action::Macro(_)
             | shortcuts::Action::Screenshot
             | shortcuts::Action::Minimap
@@ -8103,7 +8171,7 @@ impl App {
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
                 player.sync_companions(me.option, &self.grf);
                 let indoor = self.indoor.contains(&map_key(&map));
-                let camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
+                let camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor), zoom_out_saved());
                 let camera = camera_goal.camera(world.cell_position(position.map(f32::from)));
                 let now = Instant::now();
                 let minimap = minimap::load_map(&self.grf, &map);
@@ -8181,6 +8249,7 @@ impl App {
                     slot_sprite: SpriteSet::at(&self.grf, "data\\sprite\\slotmachine"),
                     slot: None,
                     casts: HashMap::new(),
+                    cast_squares: HashMap::new(),
                     combos: HashMap::new(),
                     locks: Vec::new(),
                     speech: HashMap::new(),
@@ -8444,7 +8513,7 @@ impl App {
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
                 let indoor = self.indoor.contains(&map_key(&map));
-                game.camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
+                game.camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor), zoom_out_saved());
                 game.camera = game.camera_goal.camera(world.cell_position(position.map(f32::from)));
                 game.minimap = minimap::load_map(&self.grf, &map);
                 game.minimap_crop = None;
@@ -9106,13 +9175,11 @@ impl App {
             }
             MapEvent::AttackRange(range) => game.attack_range = i32::from(range),
             MapEvent::GroundItem(item) => {
-                let info = self.items.get(&item.item);
-                if let Some(info) = info {
-                    let resource = info.resource(item.identified).to_owned();
-                    game.item_sprites.entry(resource.clone()).or_insert_with(|| SpriteSet::at(grf, &format!("data\\sprite\\아이템\\{resource}")));
-                }
+                let resource = ground_sprite(&self.items, item.item, item.identified).to_owned();
+                game.item_sprites.entry(resource.clone()).or_insert_with(|| SpriteSet::at(grf, &format!("data\\sprite\\아이템\\{resource}")));
                 let [x, y] = item.cell;
-                let [sub_x, sub_y] = item.sub.map(|sub| f32::from(sub) / 12.0);
+                // Sixteenths of a cell from its low corner (8 is the middle).
+                let [sub_x, sub_y] = item.sub.map(|sub| f32::from(sub) / 16.0);
                 game.ground.insert(
                     item.id,
                     FloorItem {
@@ -9121,6 +9188,7 @@ impl App {
                         amount: item.amount,
                         at: [i32::from(x), i32::from(y)],
                         cell: [f32::from(x) - 0.5 + sub_x, f32::from(y) - 0.5 + sub_y],
+                        seen: Instant::now(),
                         dropped: item.falling.then(Instant::now),
                     },
                 );
@@ -10692,12 +10760,7 @@ impl App {
                 }
             }
             MapEvent::InventoryExpansion(slots) => game.inventory.expansion = slots,
-            MapEvent::Hotkeys { tab: 0, keys, .. } => {
-                for (slot, key) in keys.into_iter().enumerate().take(game.hotkeys.keys.len()) {
-                    game.hotkeys.keys[slot] = key;
-                }
-            }
-            MapEvent::Hotkeys { .. } => {}
+            MapEvent::Hotkeys { tab, keys, .. } => game.hotkeys.set_tab(tab, keys),
             MapEvent::Skills(skills) => game.skills = skills,
             MapEvent::SkillChanged(changed) => match game.skills.iter_mut().find(|skill| skill.id == changed.id) {
                 // ZC_SKILLINFO_UPDATE doesn't say the kind.
@@ -10719,7 +10782,15 @@ impl App {
                     caster.face(goal.unwrap_or([i32::from(cell[0]), i32::from(cell[1])]));
                 }
                 if cast_ms > 0 {
-                    game.casts.insert((source != me).then_some(source), (Instant::now(), Duration::from_millis(u64::from(cast_ms))));
+                    let (start, length) = (Instant::now(), Duration::from_millis(u64::from(cast_ms)));
+                    game.casts.insert((source != me).then_some(source), (start, length));
+                    // A cast at a cell: the magic square there. The packet has no level: ours is the skill tree's.
+                    // ponytail: our level is the highest learned, not the one picked; others' is level 10.
+                    let level = (source == me).then(|| game.skills.iter().find(|known| known.id == skill).map(|known| known.level)).flatten();
+                    match (target == 0).then(|| cast_square::Square::new(skill, level, cell, start, length)).flatten() {
+                        Some(square) => game.cast_squares.insert((source != me).then_some(source), square),
+                        None => game.cast_squares.remove(&(source != me).then_some(source)),
+                    };
                 }
                 game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info);
                 skill_effects(game, skill, "beginCastEffectId", source);
@@ -10805,6 +10876,12 @@ impl App {
             // Cooldowns: kept across map changes (the server doesn't repeat them), sent again after a relog.
             MapEvent::SkillCooldown { skill, ms } => game.cooldowns.set(skill, ms, control::now()),
             MapEvent::SkillFailed { ok: true, .. } => {}
+            // A cut-off cast: its bar and its magic square go.
+            MapEvent::CastCancelled(source) => {
+                let caster = (source != game.account_id).then_some(source);
+                game.casts.remove(&caster);
+                game.cast_squares.remove(&caster);
+            }
             MapEvent::SkillFailed { skill, detail, cause, .. } => {
                 game.casts.remove(&None);
                 // The client's messages for why: a skill's own reason, else the general cause.
@@ -11510,12 +11587,10 @@ impl App {
         }
         // Items on the ground; just-dropped ones fall into place.
         for (&id, item) in &game.ground {
-            let Some(info) = items.get(&item.item) else { continue };
-            let Some(Some(sprites)) = game.item_sprites.get_mut(info.resource(item.identified)) else { continue };
-            let mut feet = game.world.cell_position(item.cell);
+            let Some(Some(sprites)) = game.item_sprites.get_mut(ground_sprite(items, item.item, item.identified)) else { continue };
+            let mut feet = game.world.ground_under(game.world.cell_position(item.cell));
             if let Some(dropped) = item.dropped {
-                let fallen = now.duration_since(dropped).as_secs_f32() * 1000.0 / DROP_MS_PER_CELL;
-                feet[1] += (DROP_HEIGHT - fallen).max(0.0) * world::CELL;
+                feet[1] += item_fall_height(now.saturating_duration_since(dropped).as_secs_f32() / 0.024);
             }
             frames.push((Owner::Item(id), feet, sprites.frame(gpu, 0, 0, 0, Timing::Loop(0.0))));
         }
@@ -11646,7 +11721,7 @@ impl App {
             Owner::Unit(id) => game.units[id].sprites.as_ref(),
             Owner::Item(id) => {
                 let item = &game.ground[id];
-                game.item_sprites.get(items[&item.item].resource(item.identified)).and_then(Option::as_ref)
+                game.item_sprites.get(ground_sprite(items, item.item, item.identified)).and_then(Option::as_ref)
             }
         };
         // Spirit spheres, or coins for the Gunslinger line, circling the body at chest height: the far half of the
@@ -11704,11 +11779,14 @@ impl App {
         }));
         billboards.extend(frames.iter().flat_map(|(owner, feet, placements)| {
             let sprites = sprites_of(owner).unwrap();
-            let alpha = match owner {
-                Owner::Unit(id) => game.units.get(id).map_or(1.0, |actor| actor.alpha(now)),
-                _ => 1.0,
+            let tint = match owner {
+                Owner::Unit(id) => [1.0, 1.0, 1.0, game.units.get(id).map_or(1.0, |actor| actor.alpha(now))],
+                Owner::Item(id) if game.ground.get(id).is_some_and(|item| item_glints(now.saturating_duration_since(item.seen).as_secs_f32() / 0.024)) => {
+                    [1.0, 1.0, 0.0, 1.0]
+                }
+                _ => [1.0; 4],
             };
-            placements.iter().map(move |(key, position, size, angle)| (sprites.texture(*key), *feet, *position, *size, [1.0, 1.0, 1.0, alpha], *angle))
+            placements.iter().map(move |(key, position, size, angle)| (sprites.texture(*key), *feet, *position, *size, tint, *angle))
         }));
         for draw in &companion_draws {
             let actor = match draw.owner {
@@ -12957,8 +13035,28 @@ impl App {
             None => Some(player_feet),
             Some(id) => feet_of.get(&id).copied(),
         };
-        let (effect_quads, effect_meshes) =
+        let (effect_quads, mut effect_meshes) =
             if effects_on { (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit)) } else { (Vec::new(), Vec::new()) };
+        // Magic squares under ground casts, for as long as their casts last; flat on the ground, a little over it.
+        game.cast_squares.retain(|caster, square| square.alive(now) && game.casts.contains_key(caster));
+        if let Some(texture) = &assets.magic_target {
+            for square in game.cast_squares.values() {
+                let steps = square.width.ceil() as usize;
+                let vertices = square
+                    .triangles(now, steps)
+                    .into_iter()
+                    .map(|(cell, uv)| {
+                        let ground = game.world.cell_position(cell);
+                        world::MeshVertex {
+                            position: [cell[0] * world::CELL + world::CELL / 2.0, ground[1] + CAST_SQUARE_LIFT, cell[1] * world::CELL + world::CELL / 2.0],
+                            uv,
+                            tint: [1.0; 4],
+                        }
+                    })
+                    .collect();
+                effect_meshes.push((texture, vertices, true));
+            }
+        }
         let frame = WorldFrame {
             world: &game.world,
             view: &view,
@@ -13625,6 +13723,21 @@ mod tests {
     }
 
     #[test]
+    fn drops_items_with_a_hop_and_lets_them_glint() {
+        // 15 units up, a little higher at about 87 ms, on the ground by about 0.42 s, and staying there.
+        assert_eq!(item_fall_height(0.0), 15.0);
+        assert!(item_fall_height(3.6) > 16.0 && item_fall_height(3.6) < 16.1);
+        assert!(item_fall_height(17.4) > 0.0 && item_fall_height(17.6) == 0.0 && item_fall_height(100.0) == 0.0);
+        // A yellow glint for 2 ticks in every 92.
+        assert_eq!([0.0, 89.9, 90.0, 91.9, 92.0, 182.5].map(item_glints), [false, false, true, true, false, true]);
+        // No picture of its own: the apple.
+        let mut items = HashMap::new();
+        assert_eq!(ground_sprite(&items, 501, true), FALLBACK_ITEM_SPRITE);
+        items.insert(501, ItemInfo { resource: "빨간포션".into(), ..ItemInfo::default() });
+        assert_eq!((ground_sprite(&items, 501, true), ground_sprite(&items, 501, false)), ("빨간포션", FALLBACK_ITEM_SPRITE));
+    }
+
+    #[test]
     fn units_out_of_sight_fade_quickly() {
         let now = Instant::now();
         let mut unit = Actor::new("Poring".into(), None, [10, 10], 0, 150);
@@ -13752,10 +13865,19 @@ mod tests {
         assert!((follow_step(Duration::from_secs_f32(1.0 / 60.0)) - 0.1).abs() < 1e-4);
         assert!((follow_step(Duration::from_secs_f32(2.0 / 60.0)) - 0.19).abs() < 1e-4);
         // The view left on each kind of map, within that kind's limits.
-        let outdoors = CameraGoal::arrive(false, None, [80.0, 500.0]);
+        let outdoors = CameraGoal::arrive(false, None, [80.0, 500.0], false);
         assert_eq!((outdoors.pitch, outdoors.distance(), outdoors.yaw), (65.0, 400.0, 0.0));
-        let indoors = CameraGoal::arrive(true, None, [20.0, 400.0]);
+        let indoors = CameraGoal::arrive(true, None, [20.0, 400.0], false);
         assert_eq!((indoors.pitch, indoors.distance(), indoors.yaw), (35.0, 300.0, YAW_INDOOR));
+        // /zoom: outdoors out to 730, indoors no further.
+        let mut far = CameraGoal::arrive(false, None, [45.0, 511.3], true);
+        assert!((far.distance() - 511.3).abs() < 0.01);
+        far.set_distance(1000.0);
+        assert_eq!(far.distance(), ZOOM_OUT_DISTANCE);
+        far.zoom_out = false;
+        far.set_distance(far.distance());
+        assert_eq!(far.distance(), 400.0);
+        assert_eq!(CameraGoal::arrive(true, None, [45.0, 511.3], true).distance(), 300.0);
         // A map's own table starts it, and holds it.
         let table = rustnarok_client::map::Viewpoint {
             distance: [210.0, 260.0],
@@ -13765,7 +13887,7 @@ mod tests {
             pitch: [35.0, 45.0],
             pitch_in: 40.0,
         };
-        let mut own = CameraGoal::arrive(false, Some(table), [80.0, 500.0]);
+        let mut own = CameraGoal::arrive(false, Some(table), [80.0, 500.0], true);
         assert_eq!((own.pitch, own.distance(), own.yaw), (40.0, 250.0, 50.0));
         own.steer(100.0, 0.0, false, false, false);
         assert_eq!(own.yaw, 65.0);
@@ -13820,9 +13942,13 @@ mod tests {
         outdoors.press([5.0, 5.0], now + Duration::from_millis(300), false, false);
         assert_eq!(outdoors.yaw, 360.0);
         outdoors.yaw = 30.0;
-        outdoors.pointer_moved();
-        outdoors.press([5.0, 5.0], now + Duration::from_millis(400), false, false);
+        outdoors.pointer_moved([9.0, 5.0]);
+        outdoors.press([9.0, 5.0], now + Duration::from_millis(400), false, false);
         assert_eq!(outdoors.yaw, 30.0, "moved: not a double click");
+        // A hand's tremor between the presses still makes one.
+        outdoors.pointer_moved([9.6, 5.4]);
+        outdoors.press([9.6, 5.4], now + Duration::from_millis(500), false, false);
+        assert_eq!(outdoors.yaw, 0.0, "a tremor isn't a move");
         // Indoors: the turn stays within 25 to 65 and isn't reset; the tilt is fixed at 60 without Ctrl.
         let mut indoors = CameraGoal::new(true);
         indoors.steer(100.0, 0.0, false, false, false);
@@ -13910,9 +14036,12 @@ mod tests {
         assert!(!may_move(Some(start), at(299)));
         assert!(may_move(Some(start), at(300)));
         // A second press: double only when soon and the pointer stayed still.
-        assert!(double_press(Some((start, false)), at(400)));
-        assert!(!double_press(Some((start, true)), at(400)));
-        assert!(!double_press(Some((start, false)), at(500)));
+        assert!(double_press(Some((start, [0.0; 2], false)), at(400)));
+        assert!(!double_press(Some((start, [0.0; 2], true)), at(400)));
+        assert!(!double_press(Some((start, [0.0; 2], false)), at(500)));
+        // A tremor isn't a move; two pixels are.
+        assert!(!moved_off([100.0, 100.0], [101.4, 99.2]));
+        assert!(moved_off([100.0, 100.0], [100.0, 102.0]));
         assert!(!double_press(None, start));
     }
 

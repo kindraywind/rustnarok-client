@@ -1,0 +1,186 @@
+{
+  "about": "Magic square under a ground cast (issue #206) at prt_fild06: the player turns Wizard (level 99 for the SP) and casts Storm Gust at its own cell with @useskill; for the cast the turning, pulsing square lies on the ground, 11 cells wide (the 9x9 area and a cell each side). It goes when the cast ends in the storm, and at once when a second cast is cut off by @die (ZC_DISPEL). The player goes back to a level 1 Novice with its skills reset.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild06 190 170"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@job 9"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@allskill"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@blvl 98"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "expect": {
+        "state": {
+          "cast_squares": []
+        }
+      }
+    },
+    {
+      "say": "@useskill 89 10 {first}"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b1a",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state": {
+          "cast_squares.0.width": 11
+        }
+      }
+    },
+    {
+      "shot": "storm-gust-cast",
+      "crop": [
+        212,
+        134,
+        600,
+        500
+      ],
+      "threshold": 10
+    },
+    {
+      "wait_for": {
+        "packet": "0x09ca",
+        "ms": 15000
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "cast_squares": []
+        }
+      }
+    },
+    {
+      "shot": "storm-gust-done",
+      "crop": [
+        212,
+        134,
+        600,
+        500
+      ],
+      "threshold": 20
+    },
+    {
+      "wait": 6000
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@useskill 89 10 {first}"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b1a",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "cast_squares.0.width": 11
+        }
+      }
+    },
+    {
+      "say": "@die"
+    },
+    {
+      "wait_for": {
+        "packet": "0x01b9",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "cast_squares": []
+        }
+      }
+    },
+    {
+      "shot": "storm-gust-cancelled",
+      "crop": [
+        212,
+        134,
+        600,
+        500
+      ],
+      "threshold": 10
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@skillreset"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@job 0"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@blvl -98"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

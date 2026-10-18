@@ -1146,6 +1146,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "grade": item.grade, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires, "switch": item.switch, "favorite": item.favorite})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
+        // The hotbar showing: 0 (hotbar 1) or 1.
+        "hotkey_tab": game.hotkeys.tab(),
         // Bound shortcuts: action name to the chord ("Alt+V", "F1"). Unbound rows are left out.
         "shortcuts": app.keybinds.labels(),
         "dialog": dialog,
@@ -1257,6 +1259,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "cursor": format!("{:?}", app.cursor_look.kind()),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
         "chat_line_open": game.chat_mode.chat_line_open(),
+        // The magic squares under ground casts: the target cell and the width in cells.
+        "cast_squares": game.cast_squares.values().map(|square| json!({"cell": square.cell, "width": square.width})).collect::<Vec<_>>(),
         // How many units show each status mark (the player too).
         "marks": std::iter::once(&game.player).chain(game.units.values()).flat_map(|actor| crate::head_marks::marks(actor.body_state, actor.health_state)).fold(
             serde_json::Map::new(),
