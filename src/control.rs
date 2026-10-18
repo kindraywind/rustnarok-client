@@ -1058,6 +1058,13 @@ fn game_state(app: &App, game: &Game) -> Value {
             })
         }),
         "refusing_party": game.refusing_party,
+        // The players in sight a plain click's cursor marks as enemies.
+        "enemies": game
+            .units
+            .iter()
+            .filter(|&(&id, actor)| actor.kind == PLAYER && game.opponent(id).is_some_and(|other| game.side().attack_cursor(&other, false, false)))
+            .map(|(_, actor)| actor.name.clone())
+            .collect::<Vec<_>>(),
         "map_property": game.map_property.map(|(property, flags)| json!({"type": property, "flags": flags})),
         "map_type": game.map_type,
         // The PvP counter as it shows (rank, players), or null.

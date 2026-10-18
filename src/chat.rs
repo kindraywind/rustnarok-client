@@ -210,6 +210,8 @@ pub enum Command {
     Achievements,
     /// /pvpinfo: the player's PvP wins, losses and points.
     PvpInfo,
+    /// /noshift: a click on a player attacks without Shift, on or off.
+    NoShift,
 }
 
 /// The command typed, if `text` is one; a name is the rest of the line, quotes taken off.
@@ -228,6 +230,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/achievement" => Command::Achievements,
         "/memo" => Command::Memo,
         "/pvpinfo" => Command::PvpInfo,
+        "/noshift" => Command::NoShift,
         _ => return None,
     })
 }
@@ -247,6 +250,7 @@ mod tests {
         assert_eq!(command("/where"), Some(Command::Where));
         assert_eq!(command("/memo"), Some(Command::Memo));
         assert_eq!(command("/pvpinfo"), Some(Command::PvpInfo));
+        assert_eq!(command("/noshift"), Some(Command::NoShift));
         assert_eq!(command("/ex"), Some(Command::BlockList));
         assert_eq!(command("/ex Poring"), Some(Command::Whispers { name: "Poring".into(), allow: false }));
         assert_eq!(command("/in \"Big Poring\" "), Some(Command::Whispers { name: "Big Poring".into(), allow: true }));
