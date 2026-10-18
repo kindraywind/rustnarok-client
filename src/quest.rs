@@ -35,6 +35,11 @@ const GREY: [u8; 3] = [0x70, 0x70, 0x70];
 const TITLE: usize = 1317;
 const DESCRIPTION: usize = 3401;
 const HUNTS: usize = 2191;
+/// "Show Quest": the tracker on screen, on or off, under the list.
+// ponytail: the checkbox's place under the rows is an estimate.
+const SHOW_TRACKER: usize = 2019;
+const SHOW_AT: [f32; 2] = [14.0, 440.0];
+const CHECK: [f32; 2] = [12.0, 12.0];
 const TIME_LIMIT: usize = 2194;
 
 /// A quest's words, from questid2display.txt.
@@ -45,8 +50,14 @@ pub struct QuestText {
     pub summary: String,
 }
 
+/// The quests' words: the translation's quest info Lua where there is one, else questid2display.txt.
 pub fn texts(grf: &Grf) -> HashMap<u32, QuestText> {
-    grf.read("data\\questid2display.txt").map(|bytes| parse_texts(&encoding_rs::EUC_KR.decode(&bytes).0)).unwrap_or_default()
+    let mut texts: HashMap<u32, QuestText> =
+        grf.read("data\\questid2display.txt").map(|bytes| parse_texts(&encoding_rs::EUC_KR.decode(&bytes).0)).unwrap_or_default();
+    for (id, [title, description, summary]) in rustnarok_client::lua::quest_info(grf).unwrap_or_default() {
+        texts.insert(id, QuestText { title, description, summary });
+    }
+    texts
 }
 
 /// questid2display.txt: per quest `id#title#icon#image#`, then its description and summary, each ending in `#`.
@@ -69,6 +80,8 @@ pub struct Assets {
     lock: [Texture; 2],
     detail: Texture,
     detail_icon: Texture,
+    /// The checkbox, off and on.
+    check: [Texture; 2],
 }
 
 impl Assets {
@@ -81,6 +94,8 @@ impl Assets {
             lock: ["bt_lock", "bt_lock_open"].map(image),
             detail: image("bg_questsub"),
             detail_icon: image("img_questiocn"),
+            check: ["checkbox_0", "checkbox_1"]
+                .map(|name| gpu.try_load_texture(grf, &format!("{UI}{name}.bmp"), false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]))),
         }
     }
 }
@@ -92,6 +107,8 @@ pub enum Hit {
     /// A quest, by its place among those the tab shows.
     Row(usize),
     Lock(usize),
+    /// The "Show Quest" checkbox.
+    ShowTracker,
     DetailClose,
     Window,
 }
@@ -101,11 +118,13 @@ pub struct QuestWindow {
     pub tab: usize,
     /// The quest whose details show.
     pub picked: Option<u32>,
+    /// The quest tracker shows on screen.
+    pub tracker: bool,
 }
 
 impl Default for QuestWindow {
     fn default() -> Self {
-        Self { frame: Frame::new(POSITION, WIDTH), tab: 0, picked: None }
+        Self { frame: Frame::new(POSITION, WIDTH), tab: 0, picked: None, tracker: true }
     }
 }
 
@@ -154,6 +173,9 @@ impl QuestWindow {
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
         }
+        if contains(SHOW_AT, [120.0, CHECK[1]], local) {
+            return Some(Hit::ShowTracker);
+        }
         let place = ((local[1] - ROWS_AT[1]) / ROW_STEP).floor();
         if local[1] < ROWS_AT[1] || place >= ROWS as f32 || place as usize >= self.shown(quests).len() {
             return Some(Hit::Window);
@@ -180,6 +202,7 @@ impl QuestWindow {
                 let quest = *self.shown(quests).get(place)?;
                 return Some((quest.id, !quest.active));
             }
+            Hit::ShowTracker => self.tracker = !self.tracker,
             Hit::DetailClose => self.picked = None,
             Hit::Window => {}
         }
@@ -222,6 +245,10 @@ impl QuestWindow {
             let lock = &assets.lock[usize::from(quest.active)];
             layer.sprites.push((lock, at([ROWS_AT[0] + LOCK_AT[0], top + LOCK_AT[1]]), lock.size));
         }
+        // Whether the tracker shows.
+        let check = &assets.check[usize::from(self.tracker)];
+        layer.sprites.push((check, at(SHOW_AT), CHECK));
+        layer.texts.push((message(SHOW_TRACKER).to_owned(), at([SHOW_AT[0] + CHECK[0] + 4.0, SHOW_AT[1] - 1.0]), [0, 0, 0]));
         // The picked quest beside the list: its title and summary, description, hunts and time limit.
         let Some(quest) = self.picked.and_then(|id| quests.iter().find(|quest| quest.id == id)) else { return };
         let corner = self.detail_corner();

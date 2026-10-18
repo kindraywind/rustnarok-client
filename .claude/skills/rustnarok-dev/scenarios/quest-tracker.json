@@ -1,0 +1,166 @@
+{
+  "about": "Quest tracker (issue #219): a test NPC (quests.txt) gives two quests, a hunt for ten Drops (4275) and one without hunts (1001); the tracker under the minimap lists both, the hunt with '( 0 / 10 )'. Killing a Drops (the character raised for it) updates the line to '( 1 / 10 )'. The NPC erases the quests, the character is put back and the NPC unloaded.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@unloadnpcfile {scenarios}/quests.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {scenarios}/quests.txt"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokQuests"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "clear"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "type": "give"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_tracker.0.id": 1001,
+          "quest_tracker.1.id": 4275,
+          "quest_tracker.1.hunts.0": "Drops ( 0 / 10 )"
+        }
+      }
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "quest-tracker",
+      "crop": [
+        680,
+        140,
+        344,
+        300
+      ],
+      "threshold": 5
+    },
+    {
+      "say": "@blvl 49"
+    },
+    {
+      "say": "@str 98"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@monster 1113 1"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "click_on": {
+        "unit": "Drops"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x09fa",
+        "ms": 20000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_tracker.1.hunts.0": "Drops ( 1 / 10 )"
+        }
+      }
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "quest-tracker-hunted",
+      "crop": [
+        680,
+        140,
+        344,
+        300
+      ],
+      "threshold": 5
+    },
+    {
+      "type": "clear"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_tracker": []
+        }
+      }
+    },
+    {
+      "say": "@str -98"
+    },
+    {
+      "say": "@blvl -49"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@unloadnpcfile {scenarios}/quests.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

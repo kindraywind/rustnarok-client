@@ -1,0 +1,15 @@
+// Two quests for the quest-tracker scenario (issue #219): a hunt (4275, ten Drops) and one without hunts (1001). Load it
+// with @loadnpc <absolute path>, take it out with @unloadnpcfile <absolute path>. Whisper npc:RustnarokQuests "give" or
+// "clear".
+-	script	RustnarokQuests	-1,{
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "give") {
+		setquest 4275;
+		setquest 1001;
+	} else if (@whispervar0$ == "clear") {
+		erasequest 4275;
+		erasequest 1001;
+	}
+	end;
+}
