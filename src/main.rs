@@ -1172,9 +1172,6 @@ impl Game {
 
     /// Starts using a skill: skills on oneself go off at once, the others wait for a target.
     fn use_skill(&mut self, id: u16, level: u16) {
-        if self.store_open() {
-            return;
-        }
         // ponytail: a blocked skill says so and sends nothing (the server drops it without a word unless @showdelay is
         // on); whether the real client asks the server anyway isn't known.
         if self.cooldowns.left(id, control::now()).is_some() {
@@ -1182,6 +1179,10 @@ impl Game {
             return;
         }
         let Some(skill) = self.skills.iter().find(|skill| skill.id == id) else { return self.use_mercenary_skill(id, level) };
+        // With a store open only the mercenary's skills go.
+        if self.store_open() {
+            return;
+        }
         let level = level.clamp(1, skill.level.max(1));
         if skill.kind & net::Skill::SELF != 0 {
             let _ = self.session.use_skill(id, level, self.account_id);
@@ -1205,9 +1206,6 @@ impl Game {
 
     /// Uses the aimed skill on what was clicked, walking into its range first.
     fn aim_skill(&mut self, target: SkillTarget) {
-        if self.store_open() {
-            return;
-        }
         // A Talkie Box asks for its message first.
         if let (Some((TALKIE_BOX, level)), SkillTarget::Cell(cell), None) = (self.targeting, target, &self.talkie_text) {
             self.targeting = None;
@@ -1216,11 +1214,16 @@ impl Game {
         }
         let Some((id, level)) = self.targeting.take() else { return };
         // The mercenary casts its own skills from where it stands; out of its range the server does nothing.
+        // With a store open the server still takes them on a unit but refuses every skill on the ground.
         if self.mercenary_skills.iter().any(|skill| skill.id == id) {
             let _ = match target {
                 SkillTarget::Unit(unit) => self.session.use_skill(id, level, unit),
+                SkillTarget::Cell(_) if self.store_open() => return,
                 SkillTarget::Cell(cell) => self.session.use_skill_at(id, level, cell.map(|value| value.max(0) as u16)),
             };
+            return;
+        }
+        if self.store_open() {
             return;
         }
         let goal = match target {
