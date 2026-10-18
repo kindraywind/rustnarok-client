@@ -55,6 +55,8 @@ const SKILL_INFO_F: &str = "data\\luafiles514\\lua files\\skillinfoz\\skillinfo_
 const SKILL_TREE: &str = "data\\luafiles514\\lua files\\skillinfoz\\skilltreeview.lub";
 const EFST_IDS: &str = "data\\luafiles514\\lua files\\stateicon\\efstids.lub";
 const STATE_ICON_IMAGES: &str = "data\\luafiles514\\lua files\\stateicon\\stateiconimginfo.lub";
+/// What each status icon says when pointed at (`StateIconList`).
+const STATE_ICON_INFO: &str = "data\\luafiles514\\lua files\\stateicon\\stateiconinfo.lub";
 /// Laphine synthesis boxes (`tblLapineDdukddakBox`).
 const SYNTHESIS_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\lapineddukddakbox.lub";
 /// Laphine upgrade boxes (`tblLapineUpgradeBox`).
@@ -674,6 +676,42 @@ pub fn status_icons(grf: &Grf) -> io::Result<HashMap<u16, (u8, String)>> {
         }
     }
     Ok(icons)
+}
+
+/// What a status icon says when pointed at: its lines, each with its colour (none: plain), one of them "%s" for the
+/// time left when the effect has a time limit.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StateInfo {
+    pub lines: Vec<(String, Option<[u8; 3]>)>,
+    pub time_limit: bool,
+}
+
+pub fn state_info(grf: &Grf) -> io::Result<HashMap<u16, StateInfo>> {
+    state_infos(&run(grf, &[EFST_IDS, STATE_ICON_INFO])?)
+}
+
+/// `StateIconList` by EFST.
+fn state_infos(lua: &Lua) -> io::Result<HashMap<u16, StateInfo>> {
+    let list: mlua::Table = lua.globals().get("StateIconList").map_err(lua_error)?;
+    let mut infos = HashMap::new();
+    for pair in list.pairs::<i64, mlua::Table>() {
+        let Ok((efst, entry)) = pair else { continue };
+        let Ok(descript) = entry.get::<mlua::Table>("descript") else { continue };
+        let lines = descript
+            .sequence_values::<mlua::Table>()
+            .flatten()
+            .map(|line| {
+                let text = line.get::<mlua::String>(1).map(|text| decode(&text)).unwrap_or_default();
+                let color =
+                    line.get::<mlua::Table>(2).ok().and_then(|color| Some([color.get::<u8>(1).ok()?, color.get::<u8>(2).ok()?, color.get::<u8>(3).ok()?]));
+                (text, color)
+            })
+            .collect();
+        if let Ok(efst) = u16::try_from(efst) {
+            infos.insert(efst, StateInfo { lines, time_limit: entry.get::<i64>("haveTimeLimit").unwrap_or(0) == 1 });
+        }
+    }
+    Ok(infos)
 }
 
 /// A field's box on a world map's picture (in its pixels: left, top, right, bottom), by its map's name (lowercase,
@@ -1342,6 +1380,30 @@ fn hotkey_table(lua: &Lua, name: &str, table: u8, user: bool) -> io::Result<Vec<
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
+
+    #[test]
+    fn reads_what_status_icons_say() {
+        let lua = super::new_lua().unwrap();
+        lua.load(
+            r#"EFST_IDs = { EFST_BLESSING = 10, EFST_AUTOBERSERK = 107 }
+            COLOR_TITLE_BUFF = { 155, 202, 155 }
+            COLOR_TIME = { 255, 176, 98 }
+            StateIconList = {}
+            StateIconList[EFST_IDs.EFST_BLESSING] = { haveTimeLimit = 1, posTimeLimitStr = 2,
+                descript = { { "Blessing", COLOR_TITLE_BUFF }, { "%s", COLOR_TIME }, { "Increases STR, DEX and INT" } } }
+            StateIconList[EFST_IDs.EFST_AUTOBERSERK] = { descript = { { "Berserk", COLOR_TITLE_BUFF } } }"#,
+        )
+        .exec()
+        .unwrap();
+        let infos = super::state_infos(&lua).unwrap();
+        let blessing = &infos[&10];
+        assert!(blessing.time_limit);
+        assert_eq!(
+            blessing.lines,
+            [("Blessing".into(), Some([155, 202, 155])), ("%s".into(), Some([255, 176, 98])), ("Increases STR, DEX and INT".into(), None)]
+        );
+        assert!(!infos[&107].time_limit);
+    }
 
     #[test]
     fn reads_the_battleground_list() {
