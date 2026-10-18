@@ -437,9 +437,24 @@ const PARTY_CREATE: usize = 2054;
 /// What a locked chat room asks ("Please enter Password.").
 const ROOM_PASSWORD: usize = 15;
 const PARTY_INVITE: usize = 2056;
-/// A dropped item starts this many cells up and falls one cell per 40ms.
-const DROP_HEIGHT: f32 = 5.0;
-const DROP_MS_PER_CELL: f32 = 40.0;
+/// An item without a picture of its own shows the apple's.
+const FALLBACK_ITEM_SPRITE: &str = "사과";
+
+/// How high a just-dropped item is over the ground, `ticks` (24 ms each) after it appears: it starts 15 units up, hops
+/// a little, then falls and lands after about 0.42 s.
+fn item_fall_height(ticks: f32) -> f32 {
+    (15.0 + 0.6 * ticks - 0.083 * ticks * ticks).max(0.0)
+}
+
+/// An item on the ground glints yellow for 2 ticks every 92 (48 ms every 2.208 s), counted from when it appeared.
+fn item_glints(ticks: f32) -> bool {
+    (ticks as i32).rem_euclid(92) >= 90
+}
+
+/// The sprite an item lies on the ground as (identified or not), the apple when the data has none.
+fn ground_sprite(items: &HashMap<u32, ItemInfo>, item: u32, identified: bool) -> &str {
+    items.get(&item).map(|info| info.resource(identified)).filter(|resource| !resource.is_empty()).unwrap_or(FALLBACK_ITEM_SPRITE)
+}
 /// Items cast 0.4 of a character's shadow.
 const ITEM_SHADOW: f32 = 0.4;
 
@@ -1587,6 +1602,8 @@ struct FloorItem {
     /// The server's cell, and where in it the item lies (fractional cells).
     at: [i32; 2],
     cell: [f32; 2],
+    /// When it appeared: it glints from then on.
+    seen: Instant,
     /// Set while it falls after being dropped.
     dropped: Option<Instant>,
 }
@@ -9077,13 +9094,11 @@ impl App {
             }
             MapEvent::AttackRange(range) => game.attack_range = i32::from(range),
             MapEvent::GroundItem(item) => {
-                let info = self.items.get(&item.item);
-                if let Some(info) = info {
-                    let resource = info.resource(item.identified).to_owned();
-                    game.item_sprites.entry(resource.clone()).or_insert_with(|| SpriteSet::at(grf, &format!("data\\sprite\\아이템\\{resource}")));
-                }
+                let resource = ground_sprite(&self.items, item.item, item.identified).to_owned();
+                game.item_sprites.entry(resource.clone()).or_insert_with(|| SpriteSet::at(grf, &format!("data\\sprite\\아이템\\{resource}")));
                 let [x, y] = item.cell;
-                let [sub_x, sub_y] = item.sub.map(|sub| f32::from(sub) / 12.0);
+                // Sixteenths of a cell from its low corner (8 is the middle).
+                let [sub_x, sub_y] = item.sub.map(|sub| f32::from(sub) / 16.0);
                 game.ground.insert(
                     item.id,
                     FloorItem {
@@ -9092,6 +9107,7 @@ impl App {
                         amount: item.amount,
                         at: [i32::from(x), i32::from(y)],
                         cell: [f32::from(x) - 0.5 + sub_x, f32::from(y) - 0.5 + sub_y],
+                        seen: Instant::now(),
                         dropped: item.falling.then(Instant::now),
                     },
                 );
@@ -11473,12 +11489,10 @@ impl App {
         }
         // Items on the ground; just-dropped ones fall into place.
         for (&id, item) in &game.ground {
-            let Some(info) = items.get(&item.item) else { continue };
-            let Some(Some(sprites)) = game.item_sprites.get_mut(info.resource(item.identified)) else { continue };
-            let mut feet = game.world.cell_position(item.cell);
+            let Some(Some(sprites)) = game.item_sprites.get_mut(ground_sprite(items, item.item, item.identified)) else { continue };
+            let mut feet = game.world.ground_under(game.world.cell_position(item.cell));
             if let Some(dropped) = item.dropped {
-                let fallen = now.duration_since(dropped).as_secs_f32() * 1000.0 / DROP_MS_PER_CELL;
-                feet[1] += (DROP_HEIGHT - fallen).max(0.0) * world::CELL;
+                feet[1] += item_fall_height(now.saturating_duration_since(dropped).as_secs_f32() / 0.024);
             }
             frames.push((Owner::Item(id), feet, sprites.frame(gpu, 0, 0, 0, Timing::Loop(0.0))));
         }
@@ -11609,7 +11623,7 @@ impl App {
             Owner::Unit(id) => game.units[id].sprites.as_ref(),
             Owner::Item(id) => {
                 let item = &game.ground[id];
-                game.item_sprites.get(items[&item.item].resource(item.identified)).and_then(Option::as_ref)
+                game.item_sprites.get(ground_sprite(items, item.item, item.identified)).and_then(Option::as_ref)
             }
         };
         // Spirit spheres, or coins for the Gunslinger line, circling the body at chest height: the far half of the
@@ -11667,11 +11681,14 @@ impl App {
         }));
         billboards.extend(frames.iter().flat_map(|(owner, feet, placements)| {
             let sprites = sprites_of(owner).unwrap();
-            let alpha = match owner {
-                Owner::Unit(id) => game.units.get(id).map_or(1.0, |actor| actor.alpha(now)),
-                _ => 1.0,
+            let tint = match owner {
+                Owner::Unit(id) => [1.0, 1.0, 1.0, game.units.get(id).map_or(1.0, |actor| actor.alpha(now))],
+                Owner::Item(id) if game.ground.get(id).is_some_and(|item| item_glints(now.saturating_duration_since(item.seen).as_secs_f32() / 0.024)) => {
+                    [1.0, 1.0, 0.0, 1.0]
+                }
+                _ => [1.0; 4],
             };
-            placements.iter().map(move |(key, position, size, angle)| (sprites.texture(*key), *feet, *position, *size, [1.0, 1.0, 1.0, alpha], *angle))
+            placements.iter().map(move |(key, position, size, angle)| (sprites.texture(*key), *feet, *position, *size, tint, *angle))
         }));
         for draw in &companion_draws {
             let actor = match draw.owner {
@@ -13568,6 +13585,21 @@ mod tests {
         assert_eq!(monster.alpha(now), 1.0);
         assert!((monster.alpha(now + Duration::from_millis(3060)) - 0.5).abs() < 0.001);
         assert_eq!(monster.alpha(now + Duration::from_millis(7000)), 0.0);
+    }
+
+    #[test]
+    fn drops_items_with_a_hop_and_lets_them_glint() {
+        // 15 units up, a little higher at about 87 ms, on the ground by about 0.42 s, and staying there.
+        assert_eq!(item_fall_height(0.0), 15.0);
+        assert!(item_fall_height(3.6) > 16.0 && item_fall_height(3.6) < 16.1);
+        assert!(item_fall_height(17.4) > 0.0 && item_fall_height(17.6) == 0.0 && item_fall_height(100.0) == 0.0);
+        // A yellow glint for 2 ticks in every 92.
+        assert_eq!([0.0, 89.9, 90.0, 91.9, 92.0, 182.5].map(item_glints), [false, false, true, true, false, true]);
+        // No picture of its own: the apple.
+        let mut items = HashMap::new();
+        assert_eq!(ground_sprite(&items, 501, true), FALLBACK_ITEM_SPRITE);
+        items.insert(501, ItemInfo { resource: "빨간포션".into(), ..ItemInfo::default() });
+        assert_eq!((ground_sprite(&items, 501, true), ground_sprite(&items, 501, false)), ("빨간포션", FALLBACK_ITEM_SPRITE));
     }
 
     #[test]

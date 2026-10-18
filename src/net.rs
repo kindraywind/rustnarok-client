@@ -2986,7 +2986,7 @@ pub struct GroundItem {
     pub item: u32,
     pub identified: bool,
     pub cell: [u16; 2],
-    /// Where in the cell, in twelfths.
+    /// Where in the cell, in sixteenths from its low corner.
     pub sub: [u8; 2],
     pub amount: u16,
     /// Just dropped: it falls into place.
