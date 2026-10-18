@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """QA driver for rustnarok-client over its control socket (src/control.rs).
 
-Accounts come from RUSTNAROK_CLIENT_ACCOUNTS (default ~/.config/rustnarok/accounts.txt); the server from
+Accounts come from RUSTNAROK_CLIENT_ACCOUNTS, else this checkout's docs/personal/accounts.txt (a lane's), else
+~/.config/rustnarok/accounts.txt; the server from
 RUSTNAROK_CLIENT_SERVER (default 127.0.0.1:6900). Screenshots and the client log go under docs/personal/, which
 is gitignored: game images never go in the repository.
 
@@ -24,7 +25,11 @@ SOCK = os.path.join(REPO, "qa.sock")
 TODAY = time.strftime("%Y-%m-%d")
 SHOTS = os.path.join(REPO, "docs", "personal", "shots", TODAY)
 LOG = os.path.join(REPO, "docs", "personal", "client.log")
-ACCOUNTS = os.environ.get("RUSTNAROK_CLIENT_ACCOUNTS", os.path.expanduser("~/.config/rustnarok/accounts.txt"))
+# A checkout's own accounts (a lane's, from lane.sh) come before the shared default, so lanes don't log each other out.
+_LOCAL_ACCOUNTS = os.path.join(REPO, "docs", "personal", "accounts.txt")
+ACCOUNTS = os.environ.get("RUSTNAROK_CLIENT_ACCOUNTS") or (
+    _LOCAL_ACCOUNTS if os.path.exists(_LOCAL_ACCOUNTS) else os.path.expanduser("~/.config/rustnarok/accounts.txt")
+)
 
 
 CLIENTS = {"first": ("qa.sock", "client.log"), "second": ("qa2.sock", "client2.log")}

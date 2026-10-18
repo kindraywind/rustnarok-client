@@ -109,7 +109,11 @@ def player_name(state):
 def launch(binary, scenario):
     # Scenarios start from the same server state: RUSTNAROK_CLIENT_SCENARIO_RESET is a shell command (each developer's
     # own, for their server) run before every launch, e.g. clearing the test characters' saved hotkey bars.
+    # A lane's own reset script (docs/personal/scenario-reset.sh, from lane.sh) when the variable isn't set.
     reset = os.environ.get("RUSTNAROK_CLIENT_SCENARIO_RESET")
+    local_reset = os.path.join(REPO, "docs", "personal", "scenario-reset.sh")
+    if not reset and os.path.exists(local_reset):
+        reset = f"sh '{local_reset}'"
     if reset:
         subprocess.run(reset, shell=True, check=True)
     drive.use("first")

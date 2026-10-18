@@ -92,28 +92,67 @@ completes them again), set `char.inventory_slots` back to 100, `char.pet_id` to 
 egg), `char.title_id` to 0, `char.clan_id` to 0 (a clan a stopped run left the character in; e.g. `UPDATE char SET clan_id=0`), `char.class` to 0 and their `inventory` rows' `equip`, `attribute` and `equip_switch` to 0 (gear a stopped run
 left worn, broken or in the Swap Equipment set), and delete their rentals (`inventory` rows with an `expire_time`: they warn in every scenario) (a job left behind completes job achievements at login). A
 scenario that changes something saved on the character (`@job`, `@vit`) changes it back at its end. `mask` keeps animated rectangles (water, portals) out of the diff; `threshold` sets how much change a shot may take
-before the report flags it. `python3 -I $V suite` checks every scenario and writes `report.md` beside the sheets. Each starts
-a fresh client and pauses the clock for every shot. Add one for the feature you touch, and keep it: the set grows into
-the game's visual regression suite.
+before the report flags it. Each scenario starts a fresh client and pauses the clock for every shot. Add one for the
+feature you touch, and keep it: the set grows into the game's visual regression suite.
+
+`python3 -I $V suite` checks every scenario and writes `report.md` beside the sheets, but it takes about half an hour
+now: **don't run it per PR** (see "Merge bar"). `check` and `suite` play `origin/main` as it is *now*: rebase onto it
+first, or main's own newer fixes show up as your branch's regressions.
 
 Animated things (water, warp portals, effects) differ between two runs of the same code: about 0.6% on an interior
 map. Crop shots to what the change touches when that noise gets in the way. Read the sheets: an unexpected change elsewhere is a regression; no change where you meant one is a fix that didn't
 land. Put the sheets for the changed shots in the PR.
 
+## Several tickets at once: lanes
+
+A lane is a git worktree of its own for one ticket, so several people or sessions can each build, run clients and play
+scenarios at the same time against one rathena:
+
+```bash
+L=.claude/skills/rustnarok-dev/lane.sh
+$L new issue-123 --accounts ~/.config/rustnarok/lanes/a.accounts --reset ~/.config/rustnarok/lanes/a.reset
+cd ../rustnarok-client-lanes/issue-123      # work, build, verify.sh, visual.py check here as usual
+$L list                                     # each lane: branch, merged or open, clients running
+$L rm issue-123                             # when its PR is merged: quits its clients, removes it, deletes the branch
+$L prune                                    # every merged lane with no client running
+```
+
+- `new` branches off a fresh `origin/main` (`--branch` to name it) into `../rustnarok-client-lanes/<name>`
+  (`RUSTNAROK_LANES` to move them) and links in the game data and your `local-*` skills from the main checkout. The lane
+  builds into its own `target/` (the first build takes a few minutes).
+- **Each lane needs its own test accounts**: two clients on one account log each other out. Give every lane a pair
+  (GM, each with a character in slot 0), an accounts file like the main one, and a reset script for its characters.
+  `--accounts` and `--reset` copy them to the lane's `docs/personal/accounts.txt` and `docs/personal/scenario-reset.sh`,
+  which `drive.py` and `visual.py` use when the variables aren't set. Sockets, logs, shots and `visual.py`'s baseline
+  are per checkout already. With rathena, a pair is two rows in `login` (`group_id` 99) and a character each
+  (`RUSTNAROK_CLIENT_MAKE=0:<name>` on a launch makes it).
+- **The server is shared**: map-wide commands (`@killmonster2`, weather flags, `@broadcast`) reach every lane on that
+  map. Concurrent scenarios on different maps don't meet; two on one map may.
+- `rm` refuses a lane with uncommitted work unless `--force`, and keeps a branch that isn't merged.
+
+## Merge bar
+
+Merge when `verify.sh` ends `VERIFY: PASS` and `visual.py check` passes on **the feature's own scenario** (plus a
+scenario the change directly touches, e.g. `party.json` for party work), on a branch rebased onto current
+`origin/main`. No full suite per PR: fixing what breaks later is cheaper than waiting on regression runs (the project
+lead's call, 2026-10-18).
+
 ## Issue to PR
 
-0. **Pick it up visibly**: assign yourself, react 👀 on the issue
+0. **Pick it up visibly**: check it's free **right before** claiming, as its own step (no assignee, no "Taking this"
+   comment): another developer may have taken it minutes ago. Then assign yourself, react 👀 on the issue
    (`gh api -X POST repos/kindraywind/rustnarok-client/issues/<n>/reactions -f content=eyes`) and comment that you've
    taken it. Comment again as it moves — what you found, the plan, the PR — in the issue's language.
 1. Reproduce it in the running client and screenshot it. **A UI bug report needs a screenshot.** Attach it to the
    issue on GitHub (drag it into the comment box); never commit it.
 2. Check the protocol facts against rathena before planning; plan before writing code.
-3. Branch off a fresh `origin/main`, build, run `verify.sh` until `VERIFY: PASS`.
+3. Branch off a fresh `origin/main` (or `lane.sh new`), build, run `verify.sh` until `VERIFY: PASS`.
 4. QA in the client: the fix, then try to break it (edges, Esc, resizing, other windows open, the second account).
    Screenshot before and after.
 5. Open the PR answering the three questions, each with evidence:
    1. **Was there a real issue, and did we solve it?** It reproduced on main (a failing scenario expectation or a
       before-screenshot) and the root cause is named. If it can't be reproduced, say so; don't claim a fix.
    2. **How was the fix verified?** `verify.sh` and the issue's scenario passing on the branch, after-screenshots.
-   3. **How do we know nothing regressed?** `visual.py suite` on the branch against main: every scenario's
-      expectations pass, and any changed shot outside the fix is explained.
+   3. **How do we know nothing regressed?** The merge bar: unit tests, and the feature's own scenario (plus any it
+      directly touches) passing with `check` against current main. Say what else you checked.
+6. Merge it (`gh pr merge --merge --delete-branch`), then `lane.sh rm` its lane.
