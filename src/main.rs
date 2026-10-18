@@ -802,6 +802,9 @@ struct Game {
     /// The emotion sprite, and the emotions showing: by unit (None = the player), the sprite action and when.
     emotion_sprite: Option<SpriteSet>,
     emotions: HashMap<Option<u32>, (usize, Instant)>,
+    /// The MVP sprite, and over which MVP winners it shows (None = the player) since when.
+    mvp_sprite: Option<SpriteSet>,
+    mvps: HashMap<Option<u32>, Instant>,
     /// The status marks' sprites (stun, sleep, curse, the ice block) by name.
     mark_sprites: HashMap<&'static str, SpriteSet>,
     /// What circles units (None = the player): spheres or coins, shields, charms, souls; the sphere's, the shield's
@@ -8514,6 +8517,8 @@ impl App {
                     shadow: SpriteSet::at(&self.grf, "data\\sprite\\shadow"),
                     emotion_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\emotion"),
                     emotions: HashMap::new(),
+                    mvp_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\mvp"),
+                    mvps: HashMap::new(),
                     mark_sprites: ["status-stun", "status-sleep", "status-curse", "얼음땡"]
                         .into_iter()
                         .filter_map(|name| Some((name, SpriteSet::at(&self.grf, &format!("data\\sprite\\이팩트\\{name}"))?)))
@@ -9721,12 +9726,13 @@ impl App {
                 let name = inventory::item_name(&self.items, item, true, 0);
                 game.chat_line(messages::fill(template, &[&player, &grade::grade_letter(next), &name]), CHAT_BROADCAST);
             }
-            // ponytail: the banner effect alone; the data also has a sprite, data\sprite\이팩트\mvp.spr, the real
-            // client may show with it.
+            // The banner effect, and the MVP sprite over the winner.
+            // ponytail: ZC_MVP starts the sprite and it plays once through, like an emotion; neither is pinned down.
             MapEvent::Mvp(id) => {
                 if let Some(gpu) = gpu {
                     game.play_effect(gpu, grf, table, EF_MVP, id);
                 }
+                game.mvps.insert((id != game.account_id).then_some(id), control::now());
             }
             // ponytail: the reward lines in the items' cyan; the real client's color is unknown.
             MapEvent::MvpItem(item) => {
@@ -12263,8 +12269,7 @@ impl App {
         // Emotions play once over heads.
         let mut shown = Vec::new();
         if let Some(sprite) = &mut game.emotion_sprite {
-            game.emotions
-                .retain(|_, (action, start)| now.duration_since(*start).as_secs_f32() * 1000.0 < sprite.index_ms(*action).unwrap_or(emotion::SHOWN_MS));
+            game.emotions.retain(|_, (action, start)| head_marks::playing(now.duration_since(*start), sprite.index_ms(*action).unwrap_or(emotion::SHOWN_MS)));
             for (unit, (action, start)) in &game.emotions {
                 let feet = match unit {
                     None => player_feet,
@@ -12275,6 +12280,16 @@ impl App {
                 };
                 let elapsed = now.duration_since(*start).as_secs_f32() * 1000.0;
                 shown.push((feet, sprite.frame_at(gpu, *action, 0, Timing::Loop(elapsed))));
+            }
+        }
+        // The MVP sprite plays once over the winner, where emotions hang, following them.
+        let mut mvp_shown = Vec::new();
+        if let Some(sprite) = &mut game.mvp_sprite {
+            let length = sprite.index_ms(0).unwrap_or(emotion::SHOWN_MS);
+            game.mvps.retain(|_, start| head_marks::playing(now.duration_since(*start), length));
+            for (unit, start) in &game.mvps {
+                let Some(feet) = unit.map_or(Some(player_feet), |id| feet_of.get(&id).copied()) else { continue };
+                mvp_shown.push((feet, sprite.frame_at(gpu, 0, 0, Timing::Loop(now.duration_since(*start).as_secs_f32() * 1000.0))));
             }
         }
         // Status marks: stun stars, sleep, curse and silence's "..." over heads, the ice block at a frozen unit's feet.
@@ -12301,6 +12316,14 @@ impl App {
         }
         if let Some(sprite) = &game.emotion_sprite {
             billboards.extend(shown.into_iter().flat_map(|(feet, placements)| {
+                let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
+                placements.into_iter().map(move |(key, position, size, angle)| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                })
+            }));
+        }
+        if let Some(sprite) = &game.mvp_sprite {
+            billboards.extend(mvp_shown.into_iter().flat_map(|(feet, placements)| {
                 let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
                 placements.into_iter().map(move |(key, position, size, angle)| {
                     (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })

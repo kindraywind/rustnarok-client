@@ -1265,6 +1265,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         // The bars under units: by whose ("player", "homunculus", "mercenary", "elemental", "pet", else the unit ID), the
         // box and each row's fill (null when its maximum isn't known).
         "bars": game.bars_drawn.iter().map(|(whose, area, fills)| (whose.clone(), json!({"box": area, "fills": fills}))).collect::<serde_json::Map<_, _>>(),
+        // Who has the MVP sprite over their head now.
+        "mvp_sprites": game.mvps.keys().map(|unit| unit.map_or(game.me.name.clone(), |id| game.units.get(&id).map(|actor| actor.name.clone()).unwrap_or_default())).collect::<Vec<_>>(),
         "map_property": game.map_property.map(|(property, flags)| json!({"type": property, "flags": flags})),
         "map_type": game.map_type,
         // The PvP counter as it shows (rank, players), or null.
