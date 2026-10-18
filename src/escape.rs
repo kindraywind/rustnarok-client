@@ -440,14 +440,29 @@ impl Menu {
         Some(self.choices(resurrect).into_iter().enumerate().find(|(row, _)| contains(self.button_corner(*row), BUTTON, cursor)).map(|(_, choice)| choice))
     }
 
-    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, messages: &[String], pointer: ([f32; 2], bool), resurrect: bool) {
+    /// The title: "Game Options" and the player's C-Code, the same code a trade request shows.
+    pub fn title(message: &str, character: u32) -> String {
+        format!("{message} ({})", crate::trade::c_code(character))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        messages: &[String],
+        character: u32,
+        pointer: ([f32; 2], bool),
+        resurrect: bool,
+    ) {
         let corner = self.corner();
         let height = self.height(resurrect);
         layer.sprites.push((&chrome.white, corner, [WIDTH, height]));
         layer.sprites.push((&assets.title, corner, [WIDTH, assets.title.size[1]]));
         let mut frame = Frame::new(corner, WIDTH);
         frame.open = true;
-        frame.draw_title(layer, chrome, messages.get(TITLE_MESSAGE).map_or("", String::as_str), pointer.0);
+        frame.draw_title(layer, chrome, &Self::title(messages.get(TITLE_MESSAGE).map_or("", String::as_str), character), pointer.0);
         let hovered = self.hit(pointer.0, resurrect).flatten();
         for (row, choice) in self.choices(resurrect).into_iter().enumerate() {
             let images = &assets.buttons.iter().find(|(which, _)| *which == choice).unwrap().1;
@@ -460,6 +475,11 @@ impl Menu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn titles_the_menu_with_the_c_code() {
+        assert_eq!(Menu::title("Game Options", 150004), "Game Options (33338133-30)");
+    }
 
     #[test]
     fn esc_list_is_newest_open_or_pressed_first() {

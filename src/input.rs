@@ -163,35 +163,36 @@ impl App {
                     }
                 }
             }
-            // The option menu keeps the pointer until it's closed.
-            Scene::Game(game) if game.escape.is_some() => match game.escape.as_ref().unwrap().hit(cursor, game.can_resurrect()).flatten() {
-                Some(escape::Choice::SavePoint) => game.save_asked = true,
-                Some(escape::Choice::CharSelect) => {
-                    game.escape = None;
-                    let _ = game.session.restart(true);
+            // The option menu keeps the pointer until it's closed, but for the settings windows it opened over it.
+            // ponytail: a click off both does nothing.
+            Scene::Game(game) if game.escape.is_some() && !game.settings_at(cursor) => {
+                match game.escape.as_ref().unwrap().hit(cursor, game.can_resurrect()).flatten() {
+                    Some(escape::Choice::SavePoint) => game.save_asked = true,
+                    Some(escape::Choice::CharSelect) => {
+                        game.escape = None;
+                        let _ = game.session.restart(true);
+                    }
+                    Some(escape::Choice::Exit) => {
+                        game.escape = None;
+                        let _ = game.session.quit();
+                    }
+                    Some(escape::Choice::Return) => game.escape = None,
+                    Some(escape::Choice::Resurrect) => {
+                        game.escape = None;
+                        let _ = game.session.standing_resurrection();
+                    }
+                    // Game settings and shortcut settings open or shut their window; the menu stays up.
+                    Some(escape::Choice::GameSettings) => {
+                        game.graphics_window = toggled(game.graphics_window.take(), options::GraphicsWindow::new);
+                        game.sync_esc();
+                    }
+                    Some(escape::Choice::Shortcuts) => {
+                        game.shortcuts_window = toggled(game.shortcuts_window.take(), options::ShortcutsWindow::new);
+                        game.sync_esc();
+                    }
+                    None => {}
                 }
-                Some(escape::Choice::Exit) => {
-                    game.escape = None;
-                    let _ = game.session.quit();
-                }
-                Some(escape::Choice::Return) => game.escape = None,
-                Some(escape::Choice::Resurrect) => {
-                    game.escape = None;
-                    let _ = game.session.standing_resurrection();
-                }
-                // Game settings and shortcut settings are the windows from #68.
-                Some(escape::Choice::GameSettings) => {
-                    game.escape = None;
-                    game.graphics_window = Some(options::GraphicsWindow::new());
-                    escape::touch(&mut game.esc_order, escape::WindowId::GraphicsSettings);
-                }
-                Some(escape::Choice::Shortcuts) => {
-                    game.escape = None;
-                    game.shortcuts_window = Some(options::ShortcutsWindow::new());
-                    escape::touch(&mut game.esc_order, escape::WindowId::ShortcutSettings);
-                }
-                None => {}
-            },
+            }
             Scene::Game(game) if game.whisper_at(cursor) => {
                 game.whisper_click(cursor);
             }
@@ -1237,10 +1238,9 @@ impl App {
                                 game.quest_window.toggle();
                                 game.sync_esc();
                             }
-                            // The game settings and the shortcut settings, as the game menu opens them (#68).
+                            // The game menu, as Esc opens it (the dead layout when dead); the shortcut settings.
                             Some("option") => {
-                                game.graphics_window = if game.graphics_window.is_some() { None } else { Some(options::GraphicsWindow::new()) };
-                                game.sync_esc();
+                                game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: game.player.dead }) };
                             }
                             Some("keyboard") => {
                                 game.shortcuts_window = if game.shortcuts_window.is_some() { None } else { Some(options::ShortcutsWindow::new()) };

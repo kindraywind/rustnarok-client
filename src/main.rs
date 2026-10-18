@@ -3261,6 +3261,11 @@ fn compared_windows(inventory: &Inventory, items: &HashMap<u32, ItemInfo>, messa
         .collect()
 }
 
+/// A window that a button opens and shuts: shut when it's open, else a new one.
+fn toggled<T>(window: Option<T>, open: impl FnOnce() -> T) -> Option<T> {
+    if window.is_some() { None } else { Some(open()) }
+}
+
 /// Where Alt + right click sends a stack: the first that's open of the storage, a trade, the cart.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum QuickTo {
