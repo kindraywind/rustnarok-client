@@ -1065,6 +1065,10 @@ fn game_state(app: &App, game: &Game) -> Value {
             .filter(|&(&id, actor)| actor.kind == PLAYER && game.opponent(id).is_some_and(|other| game.side().attack_cursor(&other, false, false)))
             .map(|(_, actor)| actor.name.clone())
             .collect::<Vec<_>>(),
+        // Seconds held at first place while the clock shows, else null.
+        "first_place_seconds": game.first_since.filter(|_| game.pvp_rank.is_some_and(|(_, players)| players > 1)).map(|since| crate::control::now().saturating_duration_since(since).as_secs()),
+        "top_rank_auras": game.units.iter().filter(|(id, _)| game.top_ten.contains(id)).map(|(_, actor)| actor.name.clone())
+            .chain(game.top_ten.contains(&game.account_id).then(|| game.me.name.clone())).collect::<Vec<_>>(),
         "map_property": game.map_property.map(|(property, flags)| json!({"type": property, "flags": flags})),
         "map_type": game.map_type,
         // The PvP counter as it shows (rank, players), or null.
