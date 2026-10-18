@@ -20,7 +20,8 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": 
   {"click_unit": {"kind": "pet", "name": "Poring"}, "button": "right", "mods": "shift"}  (the middle of the nearest
     unit of that kind, and name if given, on screen)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
-  {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command)
+  {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command; or "sent":
+    "0x0447": a packet the client sent the map server)
   {"expect": {"chat": "Item created.", "inventory_items": 5, "hp_at_least": 40, "map": "iz_int01.gat",
               "windows_open": ["Inventory"], "windows_closed": ["Skills"], "units_at_least": {"monster": 10},
               "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null},

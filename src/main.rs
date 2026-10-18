@@ -279,6 +279,25 @@ const PARTY_CHAT_OURS: [u8; 3] = [200, 200, 100];
 const PARTY_CHAT: [u8; 3] = [230, 215, 200];
 /// "%s has acquired %s.", a member's pickup.
 const PARTY_PICKUP: usize = 1276;
+/// "Costume equipments are not visible on this map."
+const NO_COSTUME_NOTICE: usize = 1772;
+/// "In this Map,Effect of Mirace of Sun and Moon is nullified."
+const NO_MIRACLE_NOTICE: usize = 2381;
+const MAP_NOTICE: [u8; 3] = [0x64, 0xFF, 0xFF];
+/// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
+const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
+
+/// What a map's flags tell a player of this job on arrival: the messages to print.
+fn arrival_notices(flags: u32, job: u16) -> Vec<usize> {
+    let mut notices = Vec::new();
+    if flags & net::MAP_NO_COSTUME != 0 {
+        notices.push(NO_COSTUME_NOTICE);
+    }
+    if flags & net::MAP_SUN_MOON_STAR_MIRACLE == 0 && STAR_GLADIATORS.contains(&job) {
+        notices.push(NO_MIRACLE_NOTICE);
+    }
+    notices
+}
 const PARTY_REFUSING: usize = 1325;
 const PARTY_ALLOWING: usize = 1326;
 /// "You can't modify Party Setup."
@@ -6777,6 +6796,13 @@ impl App {
                 let text = rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]);
                 game.chat_line(text, if result == 2 { CHAT_ITEM } else { CHAT_ERROR });
             }
+            // A map's property: its notices, then the "ready" the server waits for.
+            MapEvent::MapProperty { flags, .. } => {
+                for id in arrival_notices(flags, game.me.job) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), MAP_NOTICE);
+                }
+                let _ = game.session.ready_to_play();
+            }
             MapEvent::PartyChat { account, text } => game.chat_line(text, if account == game.account_id { PARTY_CHAT_OURS } else { PARTY_CHAT }),
             MapEvent::PartyPosition { account, cell } => {
                 if let Some(member) = game.party.as_mut().and_then(|party| party.member(account)) {
@@ -9498,6 +9524,17 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tells_what_a_map_turns_off() {
+        let miracle = net::MAP_SUN_MOON_STAR_MIRACLE;
+        assert_eq!(arrival_notices(miracle, 0), Vec::<usize>::new(), "prontera: nothing");
+        assert_eq!(arrival_notices(miracle | net::MAP_NO_COSTUME, 4047), [NO_COSTUME_NOTICE]);
+        assert_eq!(arrival_notices(0, 4047), [NO_MIRACLE_NOTICE], "a Star Gladiator where the Miracle is off");
+        assert_eq!(arrival_notices(0, 4302), [NO_MIRACLE_NOTICE], "a Sky Emperor too");
+        assert_eq!(arrival_notices(0, 4008), Vec::<usize>::new(), "anyone else: nothing");
+        assert_eq!(arrival_notices(net::MAP_NO_COSTUME, 4316), [NO_COSTUME_NOTICE, NO_MIRACLE_NOTICE]);
+    }
 
     #[test]
     fn keeps_what_circles_a_unit() {
