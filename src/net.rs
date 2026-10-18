@@ -152,6 +152,14 @@ pub fn encode_trait_raise(trait_id: u16) -> Vec<u8> {
     packet
 }
 
+/// CZ_SHORTCUTKEYBAR_ROTATE2: a hotkey bar (the server's tab) and the row it draws first, for the server to keep.
+pub fn encode_hotkey_rotation(tab: u16, rowshift: u8) -> Vec<u8> {
+    let mut packet = CZ_SHORTCUTKEYBAR_ROTATE2.to_le_bytes().to_vec();
+    packet.extend_from_slice(&tab.to_le_bytes());
+    packet.push(rowshift);
+    packet
+}
+
 /// A name in 24 bytes, as the room packets carry it.
 fn name_24(name: &str) -> Vec<u8> {
     let mut name = encode_text(name);
@@ -798,6 +806,7 @@ const ZC_REQ_WEAR_EQUIP_ACK: u16 = 0x0999;
 const CZ_REQ_TAKEOFF_EQUIP: u16 = 0x00AB;
 const ZC_SHORTCUT_KEY_LIST: u16 = 0x0B20;
 const CZ_SHORTCUT_KEY_CHANGE: u16 = 0x0B21;
+const CZ_SHORTCUTKEYBAR_ROTATE2: u16 = 0x0B22;
 /// Hotkey entries: skill flag, item or skill ID, amount or level.
 const HOTKEY_SIZE: usize = 7;
 const ZC_REQ_TAKEOFF_EQUIP_ACK: u16 = 0x099A;
@@ -3662,6 +3671,11 @@ impl MapSession {
         packet.extend_from_slice(&cell[0].to_le_bytes());
         packet.extend_from_slice(&cell[1].to_le_bytes());
         self.stream.write_all(&packet)
+    }
+
+    /// Keeps a hotkey bar's rotation on the server.
+    pub fn rotate_hotkeys(&mut self, tab: u16, rowshift: u8) -> io::Result<()> {
+        self.stream.write_all(&encode_hotkey_rotation(tab, rowshift))
     }
 
     /// Puts something on a hotkey slot (or clears it).
@@ -6540,6 +6554,13 @@ mod tests {
             matches!(&event, Some(MapEvent::Navigate { kind: 0, services: 111, hide_window: true, map, cell: [150, 160], monster: 0 }) if map == "prontera.gat"),
             "{event:?}"
         );
+    }
+
+    #[test]
+    fn writes_a_hotkey_bar_rotation() {
+        let packet = encode_hotkey_rotation(1, 3);
+        assert_eq!(packet, [0x22, 0x0B, 1, 0, 3]);
+        assert_eq!(packet.len(), packet_length(CZ_SHORTCUTKEYBAR_ROTATE2).unwrap() as usize);
     }
 
     #[test]

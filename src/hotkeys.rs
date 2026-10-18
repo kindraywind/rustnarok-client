@@ -1,4 +1,5 @@
-//! The hotkey bar (F1-F9, F12 shows or hides it): items and skills kept at hand, rows of nine.
+//! The hotkey bar (F1-F9, F12 shows or hides it): items and skills kept at hand, rows of nine, and a row of two quick
+//! item slots under them that a button opens. Each of the two bars keeps its own row rotation (Ctrl+F12) on the server.
 
 use std::collections::HashMap;
 
@@ -16,6 +17,12 @@ const WIDTH: f32 = 290.0;
 const ROW_HEIGHT: f32 = 33.0;
 pub const PER_ROW: usize = 9;
 const ROWS: usize = 4;
+/// The server keeps 38 slots a bar: four rows of nine, then the two quick item slots.
+const SLOTS: usize = ROWS * PER_ROW + 2;
+const QUICK: [usize; 2] = [ROWS * PER_ROW, ROWS * PER_ROW + 1];
+/// The quick row's open and close button at (247, h − 10).
+// ponytail: the button's picture isn't known; the plus and minus buttons stand in, 11 square.
+const QUICK_BUTTON: [f32; 2] = [247.0, -10.0];
 const SLOT: [f32; 2] = [24.0, 24.0];
 const SLOT_STEP: f32 = 29.0;
 const FIRST_SLOT: [f32; 2] = [16.0, 4.0];
@@ -37,6 +44,9 @@ const DEFAULT_ROWS: usize = 2;
 
 pub struct Assets {
     frame: Texture,
+    /// The quick item row's frame.
+    // ponytail: this data has no shortcut_frame_item.bmp; the row's frame stands in.
+    quick_frame: Texture,
     /// The bar switch for hotbar 1 and 2.
     switch: [Texture; 2],
     minus: Texture,
@@ -52,6 +62,9 @@ impl Assets {
         let image = |path: String| gpu.try_load_texture(grf, &path, false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
         Self {
             frame: image(format!("{UI}shortcut\\shortcut_frame.bmp")),
+            quick_frame: gpu
+                .try_load_texture(grf, &format!("{UI}shortcut\\shortcut_frame_item.bmp"), false)
+                .unwrap_or_else(|_| image(format!("{UI}shortcut\\shortcut_frame.bmp"))),
             hover: gpu.solid(HOVER_COLOR),
             switch: ["shortcut_1_bts", "shortcut_2_bts"].map(|name| image(format!("{UI}{name}.bmp"))),
             minus: image(format!("{UI}shortcut\\btn_minus_normal.bmp")),
@@ -68,13 +81,15 @@ pub enum Hit {
     Plus,
     /// The bar switch: hotbar 1 or 2.
     Switch,
+    /// Opens or closes the quick item row.
+    Quick,
     Slot(usize),
     Window,
 }
 
 pub struct Hotkeys {
     pub frame: Frame,
-    /// Every slot of the bar showing (four rows of nine and two spare): the server's tab `tab`.
+    /// Every slot of the bar showing (four rows of nine and the two quick slots): the server's tab `tab`.
     pub keys: Vec<Option<Hotkey>>,
     /// The other bar's slots.
     other: Vec<Option<Hotkey>>,
@@ -82,8 +97,11 @@ pub struct Hotkeys {
     tab: u16,
     /// How many rows show.
     rows: usize,
-    /// Which row is drawn first. Ctrl+F12 walks this.
-    first: usize,
+    /// Which row each bar (the server's tab) draws first. Ctrl+F12 walks the showing bar's.
+    first: [usize; 2],
+    /// The quick item row shows under the rows.
+    // ponytail: closed until opened, each session.
+    pub quick: bool,
     /// A slot is used by a double click; a single press only starts a drag.
     pub clicks: window::Clicks,
 }
@@ -94,19 +112,33 @@ impl Default for Hotkeys {
         frame.open = true;
         Self {
             frame,
-            keys: vec![None; ROWS * PER_ROW],
-            other: vec![None; ROWS * PER_ROW],
+            keys: vec![None; SLOTS],
+            other: vec![None; SLOTS],
             tab: 0,
             rows: DEFAULT_ROWS,
-            first: 0,
+            first: [0; 2],
+            quick: false,
             clicks: window::Clicks::default(),
         }
     }
 }
 
 impl Hotkeys {
+    /// 33 a row plus 10, and 33 more with the quick row.
     pub fn height(&self) -> f32 {
-        ROW_HEIGHT * self.rows as f32 + 10.0
+        ROW_HEIGHT * (self.rows + usize::from(self.quick)) as f32 + 10.0
+    }
+
+    fn quick_button(&self) -> [f32; 2] {
+        [QUICK_BUTTON[0], self.height() + QUICK_BUTTON[1]]
+    }
+
+    /// The slots showing: key index and icon corner in the bar, row by row, then the quick row's two.
+    // ponytail: the quick slots sit at x 16 and 45 like a row's first two.
+    fn shown(&self) -> Vec<(usize, [f32; 2])> {
+        let rows = (0..self.rows * PER_ROW).map(|visible| (self.key_index(visible), slot_corner(visible)));
+        let quick = QUICK.into_iter().enumerate().filter(|_| self.quick).map(|(column, index)| (index, slot_corner(self.rows * PER_ROW + column)));
+        rows.chain(quick).collect()
     }
 
     /// Where the minus and plus buttons sit: by the last row.
@@ -128,9 +160,10 @@ impl Hotkeys {
         if contains(SWITCH, SWITCH_SIZE, local) {
             return Some(Hit::Switch);
         }
-        Some(
-            (0..self.rows * PER_ROW).find(|&slot| contains(hover_corner(slot), SLOT, local)).map(|slot| Hit::Slot(self.key_index(slot))).unwrap_or(Hit::Window),
-        )
+        if contains(self.quick_button(), STEP_BUTTON, local) {
+            return Some(Hit::Quick);
+        }
+        Some(self.shown().into_iter().find(|&(_, corner)| contains(hover_corner(corner), SLOT, local)).map_or(Hit::Window, |(index, _)| Hit::Slot(index)))
     }
 
     /// Whether a press here moves the bar: on its margins (left of the slots, right of them or above them), not on a
@@ -151,22 +184,38 @@ impl Hotkeys {
         self.tab ^= 1;
     }
 
-    /// The server's list for tab `tab` (0 or 1): the bar showing or the other one.
-    pub fn set_tab(&mut self, tab: u16, keys: Vec<Option<Hotkey>>) {
+    /// The server's list for tab `tab` (0 or 1), the bar showing or the other one, with that bar's rotation.
+    pub fn set_tab(&mut self, tab: u16, rotate: u8, keys: Vec<Option<Hotkey>>) {
         let bar = if tab == self.tab { &mut self.keys } else { &mut self.other };
         for (slot, key) in bar.iter_mut().zip(keys) {
             *slot = key;
         }
+        if let Some(first) = self.first.get_mut(usize::from(tab)) {
+            *first = usize::from(rotate) % ROWS;
+        }
     }
 
-    /// Ctrl+F12: the next row of the four is the one drawn first.
-    pub fn rotate(&mut self) {
-        self.first = (self.first + 1) % ROWS;
+    /// Ctrl+F12: the next row of the four is the one the showing bar draws first. The bar's tab and its rotation, to
+    /// keep on the server.
+    pub fn rotate(&mut self) -> (u16, u8) {
+        let first = &mut self.first[usize::from(self.tab)];
+        *first = (*first + 1) % ROWS;
+        (self.tab, *first as u8)
     }
 
-    /// The key index under a visible slot, once `first` has rotated the rows.
+    /// The row the showing bar draws first.
+    fn rotation(&self) -> usize {
+        self.first[usize::from(self.tab)]
+    }
+
+    /// Each bar's rotation, hotbar 1's first.
+    pub fn rotations(&self) -> [usize; 2] {
+        self.first
+    }
+
+    /// The key index under a visible slot, once the bar's rotation has turned the rows.
     fn key_index(&self, visible: usize) -> usize {
-        let row = (self.first + visible / PER_ROW) % ROWS;
+        let row = (self.rotation() + visible / PER_ROW) % ROWS;
         row * PER_ROW + visible % PER_ROW
     }
 
@@ -175,6 +224,7 @@ impl Hotkeys {
             Hit::Minus => self.rows = self.rows.saturating_sub(1).max(1),
             Hit::Plus => self.rows = (self.rows + 1).min(ROWS),
             Hit::Switch => self.switch(),
+            Hit::Quick => self.quick = !self.quick,
             Hit::Slot(_) | Hit::Window => {}
         }
     }
@@ -200,18 +250,23 @@ impl Hotkeys {
         for row in 0..self.rows {
             let top = row as f32 * ROW_HEIGHT;
             layer.sprites.push((&assets.frame, self.frame.at([0.0, top]), assets.frame.size));
-            let number = ((self.first + row) % ROWS + 1).to_string();
+            let number = ((self.rotation() + row) % ROWS + 1).to_string();
             layer.texts.push((number, self.frame.at([ROW_NUMBER[0], top + ROW_NUMBER[1]]), ROW_NUMBER_COLOR));
+        }
+        if self.quick {
+            layer.sprites.push((&assets.quick_frame, self.frame.at([0.0, self.rows as f32 * ROW_HEIGHT]), assets.quick_frame.size));
         }
         layer.sprites.push((&assets.switch[usize::from(self.tab)], self.frame.at(SWITCH), SWITCH_SIZE));
         let [minus, plus] = self.step_buttons();
         layer.sprites.push((&assets.minus, self.frame.at(minus), STEP_BUTTON));
         layer.sprites.push((&assets.plus, self.frame.at(plus), STEP_BUTTON));
-        for visible in 0..self.rows * PER_ROW {
-            let key = self.keys.get(self.key_index(visible)).and_then(|key| *key);
-            let corner = self.frame.at(slot_corner(visible));
+        let toggle = if self.quick { &assets.minus } else { &assets.plus };
+        layer.sprites.push((toggle, self.frame.at(self.quick_button()), STEP_BUTTON));
+        for (index, local) in self.shown() {
+            let key = self.keys.get(index).and_then(|key| *key);
+            let corner = self.frame.at(local);
             // The slot under the pointer: a box under its icon.
-            let hover = self.frame.at(hover_corner(visible));
+            let hover = self.frame.at(hover_corner(local));
             if contains(hover, SLOT, cursor) {
                 layer.sprites.push((&assets.hover, hover, SLOT));
             }
@@ -257,12 +312,17 @@ impl Hotkeys {
             return Vec::new();
         }
         let [minus, plus] = self.step_buttons();
-        [("hotkey_minus", minus, STEP_BUTTON), ("hotkey_plus", plus, STEP_BUTTON), ("hotkey_switch", SWITCH, SWITCH_SIZE)]
-            .map(|(name, local, size)| {
-                let [x, y] = self.frame.at(local);
-                (name, [x, y, size[0], size[1]])
-            })
-            .to_vec()
+        [
+            ("hotkey_minus", minus, STEP_BUTTON),
+            ("hotkey_plus", plus, STEP_BUTTON),
+            ("hotkey_switch", SWITCH, SWITCH_SIZE),
+            ("hotkey_quick", self.quick_button(), STEP_BUTTON),
+        ]
+        .map(|(name, local, size)| {
+            let [x, y] = self.frame.at(local);
+            (name, [x, y, size[0], size[1]])
+        })
+        .to_vec()
     }
 
     /// The bar row a shown slot is on.
@@ -275,10 +335,11 @@ impl Hotkeys {
         if !self.frame.open {
             return Vec::new();
         }
-        (0..self.rows * PER_ROW)
-            .map(|visible| {
-                let corner = self.frame.at(hover_corner(visible));
-                (self.key_index(visible), [corner[0], corner[1], SLOT[0], SLOT[1]])
+        self.shown()
+            .into_iter()
+            .map(|(index, local)| {
+                let corner = self.frame.at(hover_corner(local));
+                (index, [corner[0], corner[1], SLOT[0], SLOT[1]])
             })
             .collect()
     }
@@ -304,9 +365,8 @@ fn slot_corner(slot: usize) -> [f32; 2] {
     [FIRST_SLOT[0] + (slot % PER_ROW) as f32 * SLOT_STEP, (slot / PER_ROW) as f32 * ROW_HEIGHT + FIRST_SLOT[1]]
 }
 
-/// A slot's hover (and hit) box corner: a pixel under the icon.
-fn hover_corner(slot: usize) -> [f32; 2] {
-    let [x, y] = slot_corner(slot);
+/// A slot's hover (and hit) box corner from its icon's: a pixel lower.
+fn hover_corner([x, y]: [f32; 2]) -> [f32; 2] {
     [x, y + HOVER_DROP]
 }
 
@@ -325,7 +385,8 @@ mod tests {
     #[test]
     fn puts_the_hover_box_under_the_slot() {
         // Column c, row r: (16 + 29c, 5 + 33r), 24 square.
-        assert_eq!((hover_corner(0), hover_corner(3), hover_corner(PER_ROW + 2)), ([16.0, 5.0], [103.0, 5.0], [74.0, 38.0]));
+        let hover = |slot| hover_corner(slot_corner(slot));
+        assert_eq!((hover(0), hover(3), hover(PER_ROW + 2)), ([16.0, 5.0], [103.0, 5.0], [74.0, 38.0]));
         assert_eq!(SLOT, [24.0, 24.0]);
     }
 
@@ -349,7 +410,7 @@ mod tests {
     fn lays_out_the_games_bar() {
         // Slots: icons at (16 + 29c, 4 + 33r), hit boxes a pixel lower.
         assert_eq!((slot_corner(0), slot_corner(8), slot_corner(9), slot_corner(20)), ([16.0, 4.0], [248.0, 4.0], [16.0, 37.0], [74.0, 70.0]));
-        assert_eq!(hover_corner(10), [45.0, 38.0]);
+        assert_eq!(hover_corner(slot_corner(10)), [45.0, 38.0]);
         assert_eq!(count_place([16.0, 4.0], 7.0), [36.0, 21.0]);
         let mut bar = Hotkeys::default();
         bar.frame.open = true;
@@ -379,15 +440,61 @@ mod tests {
         let key = |id: u32| Some(Hotkey { skill: true, id, count: 1 });
         let mut bar = Hotkeys::default();
         // The server's two tabs: the first shows.
-        bar.set_tab(1, vec![key(2)]);
-        bar.set_tab(0, vec![key(1)]);
+        bar.set_tab(1, 0, vec![key(2)]);
+        bar.set_tab(0, 0, vec![key(1)]);
         assert_eq!((bar.tab(), bar.keys[0]), (0, key(1)));
         // The switch shows hotbar 2, and a list for it lands on the bar showing.
         bar.click(Hit::Switch);
         assert_eq!((bar.tab(), bar.keys[0]), (1, key(2)));
-        bar.set_tab(1, vec![key(3)]);
+        bar.set_tab(1, 0, vec![key(3)]);
         assert_eq!(bar.keys[0], key(3));
         bar.switch();
-        assert_eq!((bar.tab(), bar.keys[0], bar.keys.len()), (0, key(1), ROWS * PER_ROW));
+        assert_eq!((bar.tab(), bar.keys[0], bar.keys.len()), (0, key(1), SLOTS));
+    }
+
+    #[test]
+    fn keeps_each_bars_rotation() {
+        let key = |id: u32| Some(Hotkey { skill: true, id, count: 1 });
+        let mut bar = Hotkeys::default();
+        bar.frame.open = true;
+        // The server's rotations: hotbar 1 at 2, hotbar 2 at 1; all 38 slots kept.
+        let mut keys = vec![None; SLOTS];
+        keys[18] = key(5);
+        keys[37] = key(6);
+        bar.set_tab(0, 2, keys);
+        bar.set_tab(1, 1, vec![None; SLOTS]);
+        assert_eq!((bar.rotations(), bar.keys[37]), ([2, 1], key(6)));
+        // Hotbar 1 draws its third row first: slot 18 is the first shown.
+        assert_eq!(bar.slot_boxes()[0].0, 18);
+        // Ctrl+F12 turns the bar showing and says what to keep; the other bar keeps its own.
+        assert_eq!(bar.rotate(), (0, 3));
+        assert_eq!(bar.rotate(), (0, 0));
+        bar.switch();
+        assert_eq!(bar.rotate(), (1, 2));
+        assert_eq!(bar.rotations(), [0, 2]);
+        assert_eq!(bar.slot_boxes()[0].0, 18, "hotbar 2 now starts at its third row");
+    }
+
+    #[test]
+    fn opens_the_quick_item_row() {
+        let mut bar = Hotkeys::default();
+        bar.frame.open = true;
+        let at = |bar: &Hotkeys, local: [f32; 2]| bar.frame.at(local);
+        // Closed: two rows, the button at (247, h − 10) under them.
+        assert_eq!((bar.height(), bar.quick_button()), (76.0, [247.0, 66.0]));
+        assert_eq!(bar.hit(at(&bar, [250.0, 70.0])), Some(Hit::Quick));
+        assert_eq!(bar.slot_boxes().len(), 2 * PER_ROW);
+        bar.click(Hit::Quick);
+        // Open: 33 taller, the two quick slots (36, 37) in the row under the last, the button moved down.
+        assert_eq!((bar.height(), bar.quick_button()), (109.0, [247.0, 99.0]));
+        let quick: Vec<(usize, [f32; 4])> = bar.slot_boxes().into_iter().skip(2 * PER_ROW).collect();
+        assert_eq!(quick, [(36, [246.0, 71.0, 24.0, 24.0]), (37, [275.0, 71.0, 24.0, 24.0])]);
+        assert_eq!(bar.hit(at(&bar, [50.0, 75.0])), Some(Hit::Slot(37)));
+        assert_eq!(bar.slot_row(37), Some(2));
+        // The quick slots don't turn with the rows.
+        bar.rotate();
+        assert_eq!(bar.slot_boxes()[2 * PER_ROW].0, 36);
+        bar.click(Hit::Quick);
+        assert_eq!(bar.height(), 76.0);
     }
 }
