@@ -1,0 +1,26 @@
+{
+  "about": "Knockback (issue #305): a Swordsman's Magnum Break knocks the Porings around back two cells; each slides there over 200 ms, facing as it was, instead of jumping. Magnum Break goes twice (the first can miss), and the clock pauses when the second one's knockback (ZC_HIGHJUMP 0x01ff) comes, and shots step 50 ms apart. The character is a Swordsman with every skill for the run and a Novice again at the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp gef_fild07 61 229"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 300},
+    {"say": "@job 1"}, {"wait": 500},
+    {"say": "@allskill"}, {"wait": 500},
+    {"say": "@heal"}, {"wait": 300},
+    {"say": "@monster 1002 10"}, {"wait": 1500},
+    {"say": "@useskill 7 10 McpTester3"}, {"wait": 2500},
+    {"say": "@heal"}, {"wait": 300},
+    {"say": "@monster 1002 6"}, {"wait": 800},
+    {"say": "@useskill 7 10 McpTester3"},
+    {"wait_for": {"packet": "0x01ff", "pause": true, "ms": 6000}},
+    {"shot": "knockback-0", "crop": [262, 184, 500, 400], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 100}},
+    {"shot": "knockback-100", "crop": [262, 184, 500, 400], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 100}},
+    {"shot": "knockback-200", "crop": [262, 184, 500, 400], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 500},
+    {"say": "@killmonster2"}, {"wait": 300},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}

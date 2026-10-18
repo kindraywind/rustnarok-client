@@ -86,6 +86,9 @@ def launch(n="", slot="0", binary=None, env_extra=None, quiet=False):
     user, password = account(n)
     env = dict(os.environ)
     env.update(env_extra or {})
+    # The player's own UserKeys.lua in the settings folder would move keys the scenarios press. A scenario's env
+    # (or the shell) can still name one.
+    env.setdefault("RUSTNAROK_CLIENT_USERKEYS", os.devnull)
     env.update(
         RUSTNAROK_CLIENT_CONTROL=SOCK,
         RUSTNAROK_CLIENT_SERVER=os.environ.get("RUSTNAROK_CLIENT_SERVER", "127.0.0.1:6900"),

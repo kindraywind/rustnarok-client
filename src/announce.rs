@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
-use crate::{Layer, screen};
+use crate::{Layer, overhead, screen};
 
 /// The bar's top, below the top of the screen.
 const TOP: f32 = 51.0;
@@ -20,7 +20,9 @@ const INSET: f32 = 6.0;
 const LINE_GAP: f32 = 4.0;
 const MESSAGE_GAP: f32 = 10.0;
 pub const SIZE: u16 = 12;
-const BOX: [u8; 4] = [0x5C, 0x5C, 0x5C, 0xFF];
+/// Each box: black at a quarter opacity inside a 1 px grey border with cut corners.
+const FILL: [u8; 4] = [0, 0, 0, 0x40];
+const EDGE: [u8; 4] = [0x5C, 0x5C, 0x5C, 0xFF];
 
 struct Announcement {
     text: String,
@@ -34,7 +36,8 @@ struct Announcement {
 #[derive(Default)]
 pub struct Bar {
     messages: VecDeque<Announcement>,
-    background: Option<Texture>,
+    /// The fill and the border.
+    background: Option<[Texture; 2]>,
 }
 
 /// `text` cut into lines of at most `LINE_BYTES` bytes as EUC-KR counts them (2 for a Hangul letter), whole letters.
@@ -74,7 +77,7 @@ impl Bar {
 
     /// Renders the lines not drawn yet.
     pub fn prepare(&mut self, gpu: &Gpu, font: &Font) {
-        self.background.get_or_insert_with(|| gpu.solid(BOX));
+        self.background.get_or_insert_with(|| [gpu.solid(FILL), gpu.solid(EDGE)]);
         for message in self.messages.iter_mut().filter(|message| message.lines.is_none()) {
             let lines = wrap(&message.text).iter().map(|line| gpu.texture(&font.render_sized(line, message.color, f32::from(message.size)), false)).collect();
             message.lines = Some(lines);
@@ -82,14 +85,17 @@ impl Bar {
     }
 
     pub fn draw<'a>(&'a self, layer: &mut Layer<'a>) {
-        let Some(background) = &self.background else { return };
+        let Some([fill, edge]) = &self.background else { return };
         let mut top = TOP;
         for message in &self.messages {
             let Some(lines) = &message.lines else { continue };
             let width = lines.iter().map(|line| line.size[0]).fold(0.0, f32::max) + 2.0 * INSET;
             let height: f32 = lines.iter().map(|line| line.size[1] + LINE_GAP).sum::<f32>() + 2.0 * INSET - LINE_GAP;
             let left = ((screen()[0] - width) / 2.0).floor();
-            layer.sprites.push((background, [left, top], [width, height]));
+            layer.sprites.push((fill, [left + 1.0, top + 1.0], [width - 2.0, height - 2.0]));
+            for (at, size) in overhead::border([width, height]) {
+                layer.sprites.push((edge, [left + at[0], top + at[1]], size));
+            }
             let mut y = top + INSET;
             for line in lines {
                 layer.sprites.push((line, [left + INSET, y], line.size));

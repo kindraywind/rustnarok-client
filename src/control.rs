@@ -988,11 +988,23 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .chain(game.shop.iter().flat_map(crate::shop::Shop::button_boxes))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
-        .chain(game.sign_rects.iter().filter(|(_, _, kind)| *kind != crate::chatroom::SHOP).map(|&(rect, _, kind)| {
-            let name = if kind == crate::chatroom::BUYING_STORE { "buying_sign" } else { "room_sign" };
+        .chain(game.sign_rects.iter().map(|&(rect, _, kind)| {
+            let name = match kind {
+                crate::chatroom::BUYING_STORE => "buying_sign",
+                crate::chatroom::SHOP => "shop_sign",
+                _ => "room_sign",
+            };
             json!({"kind": "button", "name": name, "box": [rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]]})
         }))
-        .chain(game.dialog_links.iter().chain(&game.chat_links).map(|(area, item)| json!({"kind": "item_link", "id": item.id, "box": area})))
+        .chain(game.dialog_links.iter().chain(&game.chat_links).map(|(area, target)| match target {
+            crate::links::Target::Item(item) => json!({"kind": "item_link", "id": item.id, "box": area}),
+            crate::links::Target::Navi { map, .. } => json!({"kind": "navi_link", "map": map, "box": area}),
+        }))
+        .chain(
+            game.navi_window.iter().flat_map(crate::navigation::Window::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(game.chat.settings.iter().flat_map(crate::chat::Settings::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.chat.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1013,6 +1025,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             game.party_window
                 .button_boxes(game.party.as_ref(), &game.friends, game.account_id)
                 .into_iter()
+                .chain(game.member_windows.button_boxes(game.party.as_ref()))
+                .chain(game.party_window.compact.then(|| crate::party::compact_boxes(game.party.as_ref())).into_iter().flatten())
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.inventory.tab_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1089,6 +1103,10 @@ fn game_state(app: &App, game: &Game) -> Value {
             .filter(|(_, open)| *open)
             .map(|(name, _)| name.to_owned()),
     );
+    windows.extend(game.member_windows.names(game.party.as_ref()));
+    if game.party_window.compact && game.party.is_some() {
+        windows.push("PartyList".to_owned());
+    }
     let dialog = game.dialog.as_ref().map(|dialog| {
         json!({
             "npc": dialog.npc,
@@ -1113,6 +1131,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "char_id": game.me.id,
             "job": game.me.job,
             "cell": game.player.cell,
+            // Where it's drawn, in cells: between two while walking.
+            "position": game.player.position(self::now()),
             "direction": game.player.direction,
             "moving": game.player.moving(),
             // The falcon (25 above the ground) and the warg (on the ground), or null. Riding leaves the warg null.
@@ -1233,6 +1253,13 @@ fn game_state(app: &App, game: &Game) -> Value {
                 "name": party.name,
                 "leader": leader,
                 "members": party.members.iter().map(|member| member.info.name.clone()).collect::<Vec<_>>(),
+                // Members whose last party HP (0x080E) is under their max, so a scenario can see a hit land.
+                "wounded": party
+                    .members
+                    .iter()
+                    .filter(|member| member.hp.is_some_and(|[hp, max]| hp < max))
+                    .map(|member| member.info.name.clone())
+                    .collect::<Vec<_>>(),
                 "exp_shared": party.exp_shared,
                 "pickup_shared": party.pickup_shared,
                 "item_shared": party.item_shared,
@@ -1258,6 +1285,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         // The bars under units: by whose ("player", "homunculus", "mercenary", "elemental", "pet", else the unit ID), the
         // box and each row's fill (null when its maximum isn't known).
         "bars": game.bars_drawn.iter().map(|(whose, area, fills)| (whose.clone(), json!({"box": area, "fills": fills}))).collect::<serde_json::Map<_, _>>(),
+        // Who has the MVP sprite over their head now.
+        "mvp_sprites": game.mvps.keys().map(|unit| unit.map_or(game.me.name.clone(), |id| game.units.get(&id).map(|actor| actor.name.clone()).unwrap_or_default())).collect::<Vec<_>>(),
         "map_property": game.map_property.map(|(property, flags)| json!({"type": property, "flags": flags})),
         "map_type": game.map_type,
         // The PvP counter as it shows (rank, players), or null.
@@ -1280,8 +1309,22 @@ fn game_state(app: &App, game: &Game) -> Value {
         }),
         // What the mouse cursor shows.
         "cursor": format!("{:?}", app.cursor_look.kind()),
-        "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
+        "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, ..)| text.as_str()).collect::<Vec<_>>(),
+        // The chat window: the tab shown, each tab's last lines, where typed lines go, the lock.
+        "chat_tab": game.chat.tab,
+        "chat_tabs": (0..2).map(|tab| game.chat.tab_lines(tab).iter().rev().take(5).rev().map(|(text, ..)| text.clone()).collect::<Vec<_>>()).collect::<Vec<_>>(),
+        "chat_send_to": format!("{:?}", game.chat.send_to),
+        "chat_locked": game.chat.locked,
+        "chat_corner": game.chat.corner_moved(),
+        "chat_input": game.chat.input,
         "chat_line_open": game.chat_mode.chat_line_open(),
+        // The navigation under way: where to, and how long the trail on this map is.
+        "navigation": game.navigation.as_ref().map(|active| json!({
+            "map": active.target.map,
+            "cell": active.target.cell,
+            "monster": active.target.monster,
+            "trail": active.trail.len(),
+        })),
         // Reputation points by reputation type.
         "reputation": game.reputation.iter().map(|(kind, points)| (kind.to_string(), json!(points))).collect::<serde_json::Map<_, _>>(),
         // The item information window's item, if it's open.

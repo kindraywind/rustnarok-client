@@ -70,6 +70,12 @@ pub fn anchor(feet: [f32; 3], height: f32) -> [f32; 3] {
     [feet[0], feet[1] + height, feet[2]]
 }
 
+/// Whether a sprite played once over a head (an emotion, the MVP sprite) still shows `elapsed` after it started,
+/// lasting its action's `length_ms`.
+pub fn playing(elapsed: std::time::Duration, length_ms: f32) -> bool {
+    elapsed.as_secs_f32() * 1000.0 < length_ms
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,6 +85,15 @@ mod tests {
         assert_eq!(anchor([10.0, 2.0, 30.0], ANCHOR), [10.0, 22.0, 30.0]);
         assert_eq!([Mark::Stun.height(), Mark::Sleep.height(), Mark::Silence.height()], [20.0; 3]);
         assert_eq!((Mark::Curse.height(), Mark::Freeze.height()), (15.0, 0.0));
+    }
+
+    #[test]
+    fn plays_sprites_over_heads_once() {
+        // The MVP sprite hangs 20 units over the winner's feet, for its action's frames × delay × 24 ms.
+        assert_eq!(anchor([5.0, 1.0, 7.0], ANCHOR), [5.0, 21.0, 7.0]);
+        let length = 10.0 * 4.0 * 24.0;
+        assert!(playing(std::time::Duration::from_millis(959), length));
+        assert!(!playing(std::time::Duration::from_millis(960), length));
     }
 
     #[test]

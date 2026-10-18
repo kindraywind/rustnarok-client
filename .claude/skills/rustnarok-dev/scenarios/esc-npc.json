@@ -1,0 +1,26 @@
+{
+  "about": "Esc leaves NPC conversations alone (issue #293): during a talk (a page with Next, then a menu) Esc neither closes the window nor opens the game menu, and nothing is sent; with the inventory opened during the talk, Esc closes the inventory and the talk goes on. The NPC (npc/talk.txt) is loaded with @loadnpc and unloaded at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/talk.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/talk.txt"}, {"wait": 1000},
+    {"click_unit": {"kind": "npc", "name": "Talk Clerk"}}, {"wait": 1000},
+    {"expect": {"windows_open": ["NpcDialog"]}},
+    {"key": "Escape"}, {"wait": 300},
+    {"expect": {"windows_open": ["NpcDialog"], "state": {"escape": null}}},
+    {"shot": "esc-npc-page", "crop": [212, 384, 600, 384], "threshold": 5},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"key": "Escape"}, {"wait": 300},
+    {"expect": {"windows_open": ["NpcDialog"], "windows_closed": ["Inventory"], "state": {"escape": null}}},
+    {"key": "Enter"}, {"wait": 800},
+    {"key": "Escape"}, {"wait": 300},
+    {"expect": {"windows_open": ["NpcDialog"], "state": {"escape": null}}},
+    {"shot": "esc-npc-menu", "crop": [212, 384, 600, 384], "threshold": 5},
+    {"key": "ArrowDown"}, {"key": "Enter"}, {"wait": 800},
+    {"key": "Enter"}, {"wait": 500},
+    {"expect": {"windows_closed": ["NpcDialog"]}},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/talk.txt"}, {"wait": 500}
+  ]
+}

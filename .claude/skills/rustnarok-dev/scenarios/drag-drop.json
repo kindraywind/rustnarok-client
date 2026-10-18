@@ -1,0 +1,33 @@
+{
+  "about": "Dragging (issue #343): a knife dragged onto the equipment window is worn and dragged back to the inventory is taken off; a potion hotkey moved one slot along its row moves (no swap), and let go over the field it stays; dropping a potion on the field with the equipment window open is refused (189).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 300},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 1201 1"}, {"wait": 600},
+    {"say": "@item 501 5"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"key": "Alt+Q"}, {"wait": 600},
+    {"click": [12, 224]}, {"wait": 300},
+    {"drag_on": [{"inventory_item": 1201}, {"point": [620, 300]}]}, {"wait": 1000},
+    {"expect": {"inventory_has": [{"id": 1201, "worn": 2}]}},
+    {"move": [1000, 750]},
+    {"shot": "dnd-worn", "crop": [0, 170, 770, 230]},
+    {"drag_on": [{"point": [530, 306]}, {"point": [150, 240]}]}, {"wait": 1000},
+    {"expect": {"inventory_has": [{"id": 1201, "worn": 0}]}},
+    {"click": [12, 200]}, {"wait": 300},
+    {"drag_on": [{"inventory_item": 501}, {"hotkey": 0}]}, {"wait": 500},
+    {"drag_on": [{"hotkey": 0}, {"hotkey": 1}]}, {"wait": 500},
+    {"expect": {"hotkeys": {"0": null, "1": 501}}},
+    {"drag_on": [{"hotkey": 1}, {"point": [700, 600]}]}, {"wait": 500},
+    {"expect": {"hotkeys": {"1": 501}, "chat": "Item cannot be dropped from the hotkey bar."}},
+    {"drag_on": [{"inventory_item": 501}, {"point": [700, 600]}]}, {"wait": 500},
+    {"expect": {"chat": "Please move your equipment to the inventory.", "inventory_has": [{"id": 501, "amount": 5}]}},
+    {"move": [1000, 750]},
+    {"shot": "dnd-hotbar", "crop": [0, 0, 780, 400]},
+    {"shot": "dnd-refused", "crop": [0, 680, 600, 88]},
+    {"say": "@itemreset"}, {"wait": 500}
+  ]
+}

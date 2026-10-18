@@ -1,0 +1,23 @@
+{
+  "about": "Teleporting and logging out (issue #302): the second character, two cells east of us, jumps away with @jump and leaves blue rings and the teleport sound where it stood; it comes back and is kicked (a logout), leaving the fainter rings. The clock pauses when each vanish packet (0x0080) comes and the shot is 150 ms on.",
+  "account": "",
+  "slot": 0,
+  "second": {"account": "2", "slot": 0},
+  "steps": [
+    {"say": "@warp gef_fild07 61 229"}, {"settle": 1500},
+    {"as": "second", "say": "@warp gef_fild07 63 229"}, {"wait": 2500},
+    {"move": [1000, 750]},
+    {"as": "second", "say": "@jump"},
+    {"wait_for": {"packet": "0x0080", "pause": true, "ms": 5000}},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 150}},
+    {"shot": "vanish-teleport", "crop": [262, 134, 500, 440], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 2000},
+    {"as": "second", "say": "@warp gef_fild07 63 229"}, {"wait": 2500},
+    {"move": [1000, 750]},
+    {"say": "@kick McpTester4"},
+    {"wait_for": {"packet": "0x0080", "pause": true, "ms": 5000}},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 150}},
+    {"shot": "vanish-logout", "crop": [262, 134, 500, 440], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 500}
+  ]
+}
