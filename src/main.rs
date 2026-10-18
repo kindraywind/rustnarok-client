@@ -599,23 +599,35 @@ const HIDDEN_JOBS: [u16; 2] = [111, 139];
 const WARP_JOB: u16 = 45;
 
 // The camera by default: 300 world units (60 cells) from the player, 45 degrees up, with world.rs's 15 degree field
-// of view. Zooming and tilting go further either way than the defaults need.
-// ponytail: the zoom-out limit (5x) is a guess; narrow it if the far view breaks.
+// of view. Distances are in world units (a cell is 5); the goal keeps the client's zoom units (× 2.5).
 const ZOOM: f32 = 120.0;
-const ZOOM_MIN: f32 = 65.0;
-const ZOOM_MAX: f32 = 325.0;
-const ZOOM_MAX_INDOOR: f32 = 162.5;
-const ZOOM_STEP: f32 = 15.0;
 /// World units per zoom unit.
 const UNITS_PER_ZOOM: f32 = 2.5;
+/// How near and far the camera goes, outdoors and indoors; a wheel step, and how often the wheel counts.
+const DISTANCE_RANGE: [f32; 2] = [230.0, 400.0];
+const DISTANCE_RANGE_INDOOR: [f32; 2] = [230.0, 300.0];
+const WHEEL_STEP: f32 = 24.3;
+const WHEEL_GAP: Duration = Duration::from_millis(15);
+/// Shift + wheel tilts this many degrees a step.
+const WHEEL_TILT: f32 = 5.0;
 const PITCH: f32 = 45.0;
-const PITCH_RANGE: [f32; 2] = [10.0, 90.0];
-const PITCH_RANGE_INDOOR: [f32; 2] = [40.0, 60.0];
-const YAW_RANGE: [f32; 2] = [-360.0, 360.0];
-/// Indoors the camera keeps a fixed slant you can only adjust a little.
-const YAW_INDOOR: f32 = 40.0;
-const YAW_RANGE_INDOOR: [f32; 2] = [25.0, 60.0];
+/// A double right-click with Shift tilts back to this.
+const PITCH_RESET: f32 = 50.0;
+/// Indoors the camera keeps a fixed slant you can only turn a little.
+const YAW_INDOOR: f32 = 45.0;
+const YAW_RANGE_INDOOR: [f32; 2] = [25.0, 65.0];
 const CAMERA_DOUBLE_CLICK: Duration = Duration::from_millis(500);
+
+/// How far the camera tilts: outdoors 50 to 65 degrees (25 to 65 with Ctrl), indoors fixed at 60 (35 to 55 with
+/// Ctrl).
+fn pitch_range(indoor: bool, ctrl: bool) -> [f32; 2] {
+    match (indoor, ctrl) {
+        (false, false) => [50.0, 65.0],
+        (false, true) => [25.0, 65.0],
+        (true, false) => [60.0, 60.0],
+        (true, true) => [35.0, 55.0],
+    }
+}
 /// "Disconnected from the server."
 const DISCONNECTED_MESSAGE: usize = 3;
 /// The loading screen's progress bar.
@@ -973,12 +985,25 @@ struct CameraGoal {
     indoor: bool,
     /// The right button is down: where the pointer was last.
     dragging: Option<[f32; 2]>,
-    last_press: Option<(Instant, [f32; 2])>,
+    /// The last right press, and whether the pointer moved since.
+    last_press: Option<(Instant, bool)>,
+    /// The parts of a tilt and a zoom step dragged but not yet whole.
+    carry: [f32; 2],
+    last_wheel: Option<Instant>,
 }
 
 impl CameraGoal {
     fn new(indoor: bool) -> Self {
-        let mut goal = Self { yaw: if indoor { YAW_INDOOR } else { 0.0 }, pitch: PITCH, zoom: ZOOM, indoor, dragging: None, last_press: None };
+        let mut goal = Self {
+            yaw: if indoor { YAW_INDOOR } else { 0.0 },
+            pitch: PITCH,
+            zoom: ZOOM,
+            indoor,
+            dragging: None,
+            last_press: None,
+            carry: [0.0; 2],
+            last_wheel: None,
+        };
         // RUSTNAROK_CLIENT_CAMERA holds on every map, warps included.
         if let Some([yaw, pitch, zoom]) = std::env::var("RUSTNAROK_CLIENT_CAMERA").ok().and_then(|camera| {
             let values: Vec<f32> = camera.split(',').filter_map(|value| value.parse().ok()).collect();
@@ -994,50 +1019,93 @@ impl CameraGoal {
         Camera { target, distance: self.zoom * UNITS_PER_ZOOM, pitch: self.pitch.to_radians(), yaw: self.yaw.to_radians() }
     }
 
-    /// Right button down; a quick second press resets the tilt (Shift), the zoom (Ctrl) or the turn.
-    fn press(&mut self, cursor: [f32; 2], modifiers: ModifiersState) {
-        let now = Instant::now();
-        if let Some((at, place)) = self.last_press
-            && now.duration_since(at) < CAMERA_DOUBLE_CLICK
-            && (place[0] - cursor[0]).abs() < 10.0
-            && (place[1] - cursor[1]).abs() < 10.0
-        {
-            if modifiers.shift_key() {
-                self.pitch = PITCH;
-            }
-            if modifiers.control_key() {
+    /// The distance to the player in world units.
+    fn distance(&self) -> f32 {
+        self.zoom * UNITS_PER_ZOOM
+    }
+
+    /// Moves the camera to `distance` world units, within the map's range.
+    fn set_distance(&mut self, distance: f32) {
+        let [near, far] = if self.indoor { DISTANCE_RANGE_INDOOR } else { DISTANCE_RANGE };
+        self.zoom = distance.clamp(near, far) / UNITS_PER_ZOOM;
+    }
+
+    /// Right button down. A second press within CAMERA_DOUBLE_CLICK with the pointer not moved at all resets: the
+    /// distance with Ctrl, the tilt with Shift, otherwise (outdoors only) the turn, to the nearest whole circle.
+    fn press(&mut self, cursor: [f32; 2], now: Instant, ctrl: bool, shift: bool) {
+        if self.last_press.is_some_and(|(at, moved)| !moved && now.saturating_duration_since(at) < CAMERA_DOUBLE_CLICK) {
+            if ctrl {
                 self.zoom = ZOOM;
-            } else {
-                self.yaw = if self.indoor { YAW_INDOOR } else { 0.0 };
+            }
+            if shift {
+                self.pitch = PITCH_RESET;
+            }
+            if !ctrl && !shift && !self.indoor {
+                self.yaw = (self.yaw / 360.0).round() * 360.0;
             }
         }
-        self.last_press = Some((now, cursor));
+        self.last_press = Some((now, false));
         self.dragging = Some(cursor);
     }
 
-    /// Dragging turns the view; with Shift it tilts, with Ctrl it zooms.
+    /// The pointer moved: the next right press isn't a double click.
+    fn pointer_moved(&mut self) {
+        if let Some((_, moved)) = &mut self.last_press {
+            *moved = true;
+        }
+    }
+
+    /// Dragging with the right button down (see `steer`).
     fn drag(&mut self, cursor: [f32; 2], modifiers: ModifiersState) {
         // Only while the right button is down: `replace` would start a drag on any move.
         let Some(last) = self.dragging else { return };
         self.dragging = Some(cursor);
-        let [dx, dy] = [cursor[0] - last[0], cursor[1] - last[1]];
-        if modifiers.shift_key() {
-            let [low, high] = if self.indoor { PITCH_RANGE_INDOOR } else { PITCH_RANGE };
-            self.pitch = (self.pitch + dy / SCREEN[1] * 300.0).clamp(low, high);
-        } else if modifiers.control_key() {
-            self.zoom = self.clamp_zoom(self.zoom - dy * ZOOM_STEP / 10.0);
-        } else {
-            let [low, high] = if self.indoor { YAW_RANGE_INDOOR } else { YAW_RANGE };
-            self.yaw = (self.yaw + dx / SCREEN[0] * 720.0).clamp(low, high);
+        self.steer(cursor[0] - last[0], cursor[1] - last[1], modifiers.control_key(), modifiers.shift_key(), modifiers.alt_key());
+    }
+
+    /// A drag of `dx`, `dy` pixels: turns a degree a pixel (indoors within YAW_RANGE_INDOOR), except with Shift; with
+    /// Shift it tilts and with Ctrl it zooms, half a degree or unit a pixel (dragging down tilts down and comes
+    /// closer), in whole steps (the rest carries over). Ctrl turns too; Alt does nothing.
+    fn steer(&mut self, dx: f32, dy: f32, ctrl: bool, shift: bool, alt: bool) {
+        if alt {
+            return;
+        }
+        let steps = |carry: &mut f32| {
+            *carry += dy / 2.0;
+            let whole = carry.trunc();
+            *carry -= whole;
+            whole
+        };
+        if !shift {
+            self.yaw += dx;
+            if self.indoor {
+                self.yaw = self.yaw.clamp(YAW_RANGE_INDOOR[0], YAW_RANGE_INDOOR[1]);
+            }
+        }
+        if shift {
+            let [low, high] = pitch_range(self.indoor, ctrl);
+            self.pitch = (self.pitch + steps(&mut self.carry[0])).clamp(low, high);
+        }
+        if ctrl {
+            let closer = steps(&mut self.carry[1]);
+            self.set_distance(self.distance() - closer);
         }
     }
 
-    fn wheel(&mut self, notches: f32) {
-        self.zoom = self.clamp_zoom(self.zoom + notches * ZOOM_STEP);
-    }
-
-    fn clamp_zoom(&self, zoom: f32) -> f32 {
-        zoom.clamp(ZOOM_MIN, if self.indoor { ZOOM_MAX_INDOOR } else { ZOOM_MAX })
+    /// A wheel turn (`rows` > 0: toward the user), counted at most once per WHEEL_GAP: one WHEEL_STEP however far
+    /// it turned, away from the user farther; with Shift it tilts instead (away from the user flatter).
+    fn wheel(&mut self, rows: i32, now: Instant, ctrl: bool, shift: bool) {
+        if rows == 0 || self.last_wheel.is_some_and(|last| now.saturating_duration_since(last) < WHEEL_GAP) {
+            return;
+        }
+        self.last_wheel = Some(now);
+        let toward = rows.signum() as f32;
+        if shift {
+            let [low, high] = pitch_range(self.indoor, ctrl);
+            self.pitch = (self.pitch + toward * WHEEL_TILT).clamp(low, high);
+        } else {
+            self.set_distance(self.distance() - toward * WHEEL_STEP);
+        }
     }
 
     /// Moves the camera part of the way to the goal; turning past half a circle wraps both around.
@@ -5277,6 +5345,7 @@ impl App {
             if let Some(window) = &mut game.shortcuts_window {
                 window.drag_to(self.cursor);
             }
+            game.camera_goal.pointer_moved();
             game.camera_goal.drag(self.cursor, self.modifiers);
             if let Some((_, start, moved)) = &mut game.dragging {
                 *moved |= (self.cursor[0] - start[0]).abs() + (self.cursor[1] - start[1]).abs() > 4.0;
@@ -5462,7 +5531,7 @@ impl App {
                 game.give(asked, u32::from(amount));
             } else if state == ElementState::Pressed && (game.targeting.take().is_some() | std::mem::take(&mut game.capturing)) {
             } else if state == ElementState::Pressed {
-                game.camera_goal.press(self.cursor, self.modifiers);
+                game.camera_goal.press(self.cursor, Instant::now(), self.modifiers.control_key(), self.modifiers.shift_key());
             } else {
                 game.camera_goal.dragging = None;
             }
@@ -5472,6 +5541,15 @@ impl App {
     /// The left button went down or up: a press grabs, a release drops or clicks.
     /// The wheel turned `rows` notches (positive: toward the player): it scrolls what the pointer is over, or zooms.
     fn wheel(&mut self, rows: i32) {
+        // Over a window the wheel zooms only with Ctrl (and never while aiming).
+        if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
+            && self.modifiers.control_key()
+            && game.targeting.is_none()
+            && game.on_ui(self.cursor, &self.items, assets.message.size)
+        {
+            game.camera_goal.wheel(rows, Instant::now(), true, self.modifiers.shift_key());
+            return;
+        }
         if let Scene::Game(game) = &mut self.scene {
             // Over the inventory the wheel scrolls it; elsewhere it zooms (away from you zooms out).
             let on_shop = game.shop.as_ref().is_some_and(|shop| shop.covers(self.cursor));
@@ -5529,7 +5607,7 @@ impl App {
                     let learned = game.skills.iter().find(|skill| skill.id == id).map_or(level, |skill| skill.level);
                     game.targeting = Some((id, aim_level(level, learned, rows, separate)));
                 }
-                None => game.camera_goal.wheel(-rows as f32),
+                None => game.camera_goal.wheel(rows, Instant::now(), self.modifiers.control_key(), self.modifiers.shift_key()),
             }
         }
     }
@@ -12094,6 +12172,60 @@ mod tests {
     }
 
     #[test]
+    fn steers_the_camera_at_the_games_rates() {
+        let now = Instant::now();
+        let mut outdoors = CameraGoal::new(false);
+        // A degree a pixel, unlimited outdoors; Alt does nothing.
+        outdoors.steer(360.0, 0.0, false, false, false);
+        outdoors.steer(90.0, 0.0, false, false, true);
+        assert_eq!(outdoors.yaw, 360.0);
+        // Shift tilts half a degree a pixel, 50 to 65 (25 to 65 with Ctrl); a pixel at a time carries over.
+        outdoors.steer(0.0, 200.0, false, true, false);
+        assert_eq!(outdoors.pitch, 65.0);
+        outdoors.steer(0.0, -400.0, false, true, false);
+        assert_eq!(outdoors.pitch, 50.0);
+        outdoors.steer(0.0, 1.0, true, true, false);
+        outdoors.steer(0.0, 1.0, true, true, false);
+        assert_eq!(outdoors.pitch, 51.0);
+        outdoors.steer(0.0, -400.0, true, true, false);
+        assert_eq!(outdoors.pitch, 25.0);
+        // Ctrl zooms (down comes closer) and turns too; 230 to 400 units.
+        outdoors.steer(10.0, 400.0, true, false, false);
+        assert_eq!((outdoors.distance(), outdoors.yaw), (230.0, 370.0));
+        outdoors.steer(0.0, -1000.0, true, false, false);
+        assert_eq!(outdoors.distance(), 400.0);
+        // The wheel: one step however far, at most every 15 ms; with Shift it tilts.
+        outdoors.wheel(3, now, false, false);
+        assert!((outdoors.distance() - 375.7).abs() < 0.01);
+        outdoors.wheel(1, now + Duration::from_millis(5), false, false);
+        assert!((outdoors.distance() - 375.7).abs() < 0.01);
+        // (Shift alone keeps to 50..65: the 25 it had comes up to 50.)
+        outdoors.wheel(-1, now + Duration::from_millis(20), false, true);
+        assert_eq!(outdoors.pitch, 50.0);
+        // A double right-click with the pointer still: Ctrl the distance, Shift the tilt, otherwise the turn.
+        outdoors.press([5.0, 5.0], now, false, false);
+        outdoors.press([5.0, 5.0], now + Duration::from_millis(200), true, true);
+        assert_eq!((outdoors.distance(), outdoors.pitch), (300.0, PITCH_RESET));
+        outdoors.press([5.0, 5.0], now + Duration::from_millis(300), false, false);
+        assert_eq!(outdoors.yaw, 360.0);
+        outdoors.yaw = 30.0;
+        outdoors.pointer_moved();
+        outdoors.press([5.0, 5.0], now + Duration::from_millis(400), false, false);
+        assert_eq!(outdoors.yaw, 30.0, "moved: not a double click");
+        // Indoors: the turn stays within 25 to 65 and isn't reset; the tilt is fixed at 60 without Ctrl.
+        let mut indoors = CameraGoal::new(true);
+        indoors.steer(100.0, 0.0, false, false, false);
+        assert_eq!(indoors.yaw, 65.0);
+        indoors.steer(0.0, -50.0, false, true, false);
+        assert_eq!(indoors.pitch, 60.0);
+        indoors.press([5.0, 5.0], now, false, false);
+        indoors.press([5.0, 5.0], now + Duration::from_millis(100), false, false);
+        assert_eq!(indoors.yaw, 65.0);
+        indoors.steer(0.0, -1000.0, true, false, false);
+        assert_eq!(indoors.distance(), 300.0);
+    }
+
+    #[test]
     fn opens_menus_and_orders_companions() {
         assert!(menu_opens(false, false, false, false));
         assert!(!menu_opens(true, false, false, false) && !menu_opens(false, true, false, false));
@@ -12203,7 +12335,7 @@ mod tests {
         goal.drag([100.0, 100.0], none);
         goal.drag([200.0, 100.0], none);
         assert_eq!((goal.yaw, goal.dragging), (0.0, None));
-        goal.press([200.0, 100.0], none);
+        goal.press([200.0, 100.0], Instant::now(), false, false);
         goal.drag([300.0, 100.0], none);
         assert!(goal.yaw > 0.0);
     }

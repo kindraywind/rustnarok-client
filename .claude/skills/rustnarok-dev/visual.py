@@ -9,7 +9,7 @@
 
 A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": {...}, "steps": [...]} with steps such as
   {"say": "@warp prontera 156 180"}  {"settle": 1500}  {"wait": 1500}  {"key": "Alt+E"}  {"type": "hello"}
-  {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]]}  {"move": [x, y]} (or a target)
+  {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]], "button": "right", "mods": "Ctrl"}  {"move": [x, y]} (or a target)
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
     (targets by name from the control socket's `targets`: inventory_item (item id), pick_item (a pick list's row, item
     id), menu_item (part of a right-click menu choice's label), button (a window button's name, e.g. "feed"),
@@ -364,7 +364,11 @@ def step_on_client(action, shots_dir, name):
         return drive.send({"cmd": "drag", "from": start, "to": end})
     if "drag" in action:
         start, end = action["drag"]
-        return drive.send({"cmd": "drag", "from": start, "to": end})
+        command = {"cmd": "drag", "from": start, "to": end}
+        for key in ("button", "mods"):
+            if key in action:
+                command[key] = action[key]
+        return drive.send(command)
     if "cmd" in action:
         return drive.send(action["cmd"])
     if "wait_for" in action:
