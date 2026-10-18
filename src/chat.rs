@@ -753,11 +753,16 @@ pub enum Command {
     /// /where: the map and the player's cell.
     Where,
     /// /ex or /in and a name: block or allow that one's whispers.
-    Whispers { name: String, allow: bool },
+    Whispers {
+        name: String,
+        allow: bool,
+    },
     /// /ex alone: the names blocked.
     BlockList,
     /// /exall, /inall: block or allow everyone's whispers.
-    AllWhispers { allow: bool },
+    AllWhispers {
+        allow: bool,
+    },
     /// /effect: effects off or on.
     Effect,
     /// /emo, /emotion: the emotion list, open or closed.
@@ -776,6 +781,11 @@ pub enum Command {
     Zoom,
     /// /noctrl, /nc: a click on a monster keeps attacking without Ctrl, on or off.
     NoCtrl,
+    /// /snap, /itemsnap, /skillsnap: the cursor jumps to the middle of a monster, of an item, or of a monster while
+    /// aiming a skill; each on or off.
+    Snap,
+    ItemSnap,
+    SkillSnap,
     /// /battlemode, /bm: battle mode. The chat line closes and letter keys are shortcuts.
     BattleMode,
     /// /battlechat: typed lines go to the battleground team, on or off.
@@ -806,6 +816,9 @@ pub fn command(text: &str) -> Option<Command> {
         "/pvpinfo" => Command::PvpInfo,
         "/noshift" => Command::NoShift,
         "/noctrl" | "/nc" => Command::NoCtrl,
+        "/snap" => Command::Snap,
+        "/itemsnap" => Command::ItemSnap,
+        "/skillsnap" => Command::SkillSnap,
         "/camera" => Command::Camera,
         "/zoom" => Command::Zoom,
         "/battlemode" | "/bm" => Command::BattleMode,
@@ -993,6 +1006,7 @@ mod tests {
         assert_eq!(command("/pvpinfo"), Some(Command::PvpInfo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
         assert_eq!([command("/noctrl"), command("/nc")], [Some(Command::NoCtrl), Some(Command::NoCtrl)]);
+        assert_eq!([command("/snap"), command("/itemsnap"), command("/skillsnap")], [Some(Command::Snap), Some(Command::ItemSnap), Some(Command::SkillSnap)]);
         assert_eq!(command("/camera"), Some(Command::Camera));
         assert_eq!(command("/zoom"), Some(Command::Zoom));
         assert_eq!(command("/bm"), Some(Command::BattleMode));

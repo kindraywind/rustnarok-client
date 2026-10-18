@@ -750,6 +750,53 @@ fn warp_pick_rect(view: &world::View, feet: world::Vector) -> Option<[f32; 4]> {
     view.sprite_rect(feet, [-WARP_PICK[0], -WARP_PICK[1]], WARP_PICK)
 }
 
+/// /snap, /itemsnap and /skillsnap.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Snaps {
+    snap: bool,
+    item: bool,
+    skill: bool,
+}
+
+impl Snaps {
+    /// As saved; a first run has only /skillsnap on.
+    fn load() -> Self {
+        let saved =
+            |name: &str, default: bool| settings_path(name).and_then(|path| std::fs::read_to_string(path).ok()).map_or(default, |text| text.trim() == "1");
+        Self { snap: saved("snap", false), item: saved("itemsnap", false), skill: saved("skillsnap", true) }
+    }
+}
+
+/// What is under the pointer, for snapping.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SnapTo {
+    Monster,
+    Item,
+    OurHomunculus,
+    Other,
+}
+
+/// Where the cursor is drawn when it snaps: the middle of the pick box under the pointer (a monster with /skillsnap
+/// while a skill waits for a unit, with /snap otherwise; an item with /itemsnap; our homunculus while aiming Potion
+/// Pitcher). None: it stays at the pointer.
+// ponytail: Potion Pitcher's snap to our homunculus goes by /skillsnap too.
+fn snap_point(under: Option<(SnapTo, picking::Rect)>, aiming_unit: bool, pitcher: bool, snaps: Snaps) -> Option<[f32; 2]> {
+    let (kind, [left, top, right, bottom]) = under?;
+    let snaps_here = match kind {
+        SnapTo::Monster => {
+            if aiming_unit {
+                snaps.skill
+            } else {
+                snaps.snap
+            }
+        }
+        SnapTo::Item => snaps.item,
+        SnapTo::OurHomunculus => pitcher && snaps.skill,
+        SnapTo::Other => false,
+    };
+    snaps_here.then_some([(left + right) / 2.0, (top + bottom) / 2.0])
+}
+
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
 const WARP_JOB: u16 = 45;
 
@@ -1078,6 +1125,10 @@ struct Game {
     no_shift: bool,
     /// /noctrl: a click on a monster keeps attacking without Ctrl (saved; on unless turned off).
     no_ctrl: bool,
+    /// /snap, /itemsnap, /skillsnap (saved; only /skillsnap on unless changed).
+    snaps: Snaps,
+    /// Where the cursor is drawn: the pointer, or the middle of what it snapped to.
+    cursor_at: [f32; 2],
     /// /camera: the camera sticks to the player (saved; off unless turned on); the earthquake's shake this frame.
     camera_snap: bool,
     quake_flip: bool,
@@ -2601,6 +2652,21 @@ impl Game {
                     let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.no_shift { "1" } else { "0" }));
                 }
                 self.chat_line(format!("noshift: {}", if self.no_shift { "On" } else { "Off" }), CHAT_ITEM);
+                Ok(())
+            }
+            // ponytail: plain on/off lines, as /noshift prints.
+            chat::Command::Snap | chat::Command::ItemSnap | chat::Command::SkillSnap => {
+                let (name, on) = match command {
+                    chat::Command::Snap => ("snap", &mut self.snaps.snap),
+                    chat::Command::ItemSnap => ("itemsnap", &mut self.snaps.item),
+                    _ => ("skillsnap", &mut self.snaps.skill),
+                };
+                *on = !*on;
+                let on = *on;
+                if let Some(path) = settings_path(name) {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if on { "1" } else { "0" }));
+                }
+                self.chat_line(format!("{name}: {}", if on { "On" } else { "Off" }), CHAT_ITEM);
                 Ok(())
             }
             chat::Command::Where => {
@@ -8990,6 +9056,8 @@ impl App {
                     camera_snap: settings_path("camerasnap").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     quake_flip: false,
                     no_ctrl: settings_path("noctrl").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
+                    snaps: Snaps::load(),
+                    cursor_at: [-1.0; 2],
                     attack: None,
                     last_attack: None,
                     riding: false,
@@ -13911,8 +13979,29 @@ impl App {
             let middle = [screen()[0] / 2.0, screen()[1] / 2.0];
             sprites.extend(slot_frame.into_iter().map(|(key, offset, size, _)| (sprite.texture(key), [middle[0] + offset[0], middle[1] + offset[1]], size)));
         }
+        // The cursor drawn at the middle of what it snaps to (clicks still go by the pointer).
+        let aiming_unit = game.targeting.is_some_and(|(id, _)| {
+            game.skills.iter().chain(&game.item_skill).find(|skill| skill.id == id).is_none_or(|skill| skill.kind & net::Skill::GROUND == 0)
+        });
+        let picked =
+            if game.targeting.is_some() { hovered_unit(&game.hit_boxes, pointer.0, players_first) } else { hovered(&game.hit_boxes, pointer.0, players_first) };
+        let under = picked.filter(|_| !on_window).and_then(|owner| {
+            let area = game.hit_boxes.iter().find(|target| target.owner == owner)?.area;
+            let kind = match owner {
+                Owner::Item(_) => SnapTo::Item,
+                Owner::Unit(id) => match game.units.get(&id).map(|actor| actor.kind) {
+                    Some(MONSTER) => SnapTo::Monster,
+                    Some(HOMUNCULUS) if game.homunculus_id == Some(id) => SnapTo::OurHomunculus,
+                    _ => SnapTo::Other,
+                },
+                Owner::Player => SnapTo::Other,
+            };
+            Some((kind, area))
+        });
+        let pitcher = game.targeting.is_some_and(|(id, _)| id == POTION_PITCHER);
+        game.cursor_at = snap_point(under, aiming_unit, pitcher, game.snaps).unwrap_or(pointer.0);
         cursor_look.press(pointer.1);
-        sprites.extend(cursor_look.draw(gpu, pointer.0));
+        sprites.extend(cursor_look.draw(gpu, game.cursor_at));
 
         game.effects.advance(gpu, now, yaw);
         // With /effect off, effects still play on, unseen, and their sounds come due without being heard.
@@ -14735,6 +14824,27 @@ mod tests {
         assert!((width - 166.0).abs() < 8.0 && (height - 109.0).abs() < 6.0, "{width} {height}");
         let far = size(400.0);
         assert!(far[0] < width * 0.8 && far[1] < height * 0.8, "{far:?}");
+    }
+
+    #[test]
+    fn snaps_the_cursor_to_the_middle_of_what_it_points_at() {
+        let first_run = Snaps { snap: false, item: false, skill: true };
+        let all = Snaps { snap: true, item: true, skill: true };
+        let box_at = |kind: SnapTo| Some((kind, [10.0, 20.0, 50.0, 100.0]));
+        // Aiming a skill at a unit: a monster with /skillsnap; not aiming: only with /snap.
+        assert_eq!(snap_point(box_at(SnapTo::Monster), true, false, first_run), Some([30.0, 60.0]));
+        assert_eq!(snap_point(box_at(SnapTo::Monster), false, false, first_run), None);
+        assert_eq!(snap_point(box_at(SnapTo::Monster), false, false, all), Some([30.0, 60.0]));
+        assert_eq!(snap_point(box_at(SnapTo::Monster), true, false, Snaps { skill: false, ..all }), None);
+        // Items with /itemsnap; pets, players and the like never; our homunculus only for Potion Pitcher.
+        assert_eq!(
+            (snap_point(box_at(SnapTo::Item), false, false, first_run), snap_point(box_at(SnapTo::Item), false, false, all)),
+            (None, Some([30.0, 60.0]))
+        );
+        assert_eq!(snap_point(box_at(SnapTo::Other), true, false, all), None);
+        assert_eq!(snap_point(box_at(SnapTo::OurHomunculus), true, false, all), None);
+        assert_eq!(snap_point(box_at(SnapTo::OurHomunculus), true, true, first_run), Some([30.0, 60.0]));
+        assert_eq!(snap_point(None, true, false, all), None);
     }
 
     #[test]
