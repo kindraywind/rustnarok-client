@@ -40,7 +40,8 @@ Two players: "second": {"account": "2", "slot": 0, "env": {...}} starts a second
 "as": "second" (a shot too) acts on it. The first account should be a GM (`@recall` brings the second over).
 "{first}" and "{second}" in any string (dict keys too: {"state": {"guild.members.{second}": 1}}) are the two
 characters' names, so a scenario runs on anyone's server;
-"{repo}" is the repository's absolute path (`@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/merge.txt`).
+"{repo}" is the repository's absolute path (`@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/merge.txt`), and
+"{scenarios}" the scenarios folder's (`@loadnpc {scenarios}/battleground-team.txt`).
 Each scenario starts a fresh client; the clock is paused for every shot so frames repeat.
 Everything lands under docs/personal/visual/<date>/<HHMMSS>/ (gitignored): game images never go in the repository.
 """
@@ -136,7 +137,7 @@ def with_names(value, names):
     if isinstance(value, str):
         for client, name in names.items():
             value = value.replace("{" + client + "}", name)
-        return value.replace("{repo}", REPO)
+        return value.replace("{repo}", REPO).replace("{scenarios}", os.path.join(HERE, "scenarios"))
     if isinstance(value, list):
         return [with_names(item, names) for item in value]
     if isinstance(value, dict):

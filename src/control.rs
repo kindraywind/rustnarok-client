@@ -1206,6 +1206,20 @@ fn game_state(app: &App, game: &Game) -> Value {
         "results": catalog.rows.len(),
         "rows": catalog.rows.iter().map(|row| json!({"item": row.item, "shop": row.shop, "account": row.account, "price": row.price, "amount": row.amount})).collect::<Vec<_>>(),
     })));
+    // On a battleground (its map type, or our camp known): the camp, the score, teammates with a dot and an HP bar.
+    let battle = &game.battle;
+    let on_battleground = game.map_type == Some(crate::battleground::MAP_TYPE) || battle.camp(game.account_id).is_some();
+    state["battleground"] = json!(on_battleground.then(|| {
+        let team = battle.teammates(game.account_id);
+        json!({
+            "joined": battle.camp(game.account_id).is_some(),
+            "camp": battle.camp(game.account_id),
+            "score": battle.score,
+            "dots": battle.dots.len(),
+            "hp": team.iter().filter(|account| game.unit_hp.contains_key(account)).count(),
+            "battle_chat": battle.chat,
+        })
+    }));
     orbs(&mut state["player"], None);
     state
 }
