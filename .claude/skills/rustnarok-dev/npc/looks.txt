@@ -1,0 +1,9 @@
+// An NPC with a player's class (4008, a Lord Knight) that takes a Poring's look when talked to (issue #444):
+// setnpcdisplay sends ZC_NPCSPRITE_CHANGE. Loaded and unloaded by scenarios/unit-looks.json.
+prontera,159,182,4	script	Display Clerk	4008,{
+	mes "[Display Clerk]";
+	mes "Watch.";
+	close2;
+	setnpcdisplay "Display Clerk", 1002;
+	end;
+}
