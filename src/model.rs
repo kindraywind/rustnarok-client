@@ -238,7 +238,8 @@ impl Rsm {
     /// list, 2.3 names each node's textures there. A node has its offset matrix and translation, vertices, UVs and
     /// faces (each with its length), then its scale, rotation and position keys and, in 2.3, texture animations. Some
     /// files end with an empty count.
-    // ponytail: only the first rotation key is used, as for RSM 1; the rest of the animation is #439's.
+    // ponytail: the first scale, rotation and position keys pose each node, composed as RSM 1's (parent, position,
+    // rotation, scale, then the offset matrix for the node's own vertices); the clock that plays the rest is to come.
     fn parse_2(reader: &mut Reader, version: (u8, u8)) -> io::Result<Self> {
         if version < (2, 2) {
             return Err(io::Error::new(io::ErrorKind::Unsupported, format!("RSM {}.{} isn't supported yet", version.0, version.1)));
@@ -278,7 +279,7 @@ impl Rsm {
                 [columns[6], columns[7], columns[8], 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ];
-            let translation1 = reader.vector()?;
+            let translation = reader.vector()?;
             let vertices = (0..reader.count()?).map(|_| reader.vector()).collect::<io::Result<_>>()?;
             let uvs = (0..reader.count()?)
                 .map(|_| {
@@ -296,16 +297,27 @@ impl Rsm {
                 reader.take(length.saturating_sub(14))?;
                 faces.push(Face { vertices, uvs, texture });
             }
-            let scale_keys = reader.count()?;
-            reader.take(scale_keys * 20)?;
+            // Keys: a frame, then the scale or the position and a word, or the rotation as a quaternion.
+            let mut scale = None;
+            for _ in 0..reader.count()? {
+                reader.i32()?;
+                let key = reader.vector()?;
+                reader.take(4)?;
+                scale.get_or_insert(key);
+            }
             let mut keyframe_rotation = None;
             for _ in 0..reader.count()? {
                 reader.i32()?; // frame
                 let rotation = [reader.f32()?, reader.f32()?, reader.f32()?, reader.f32()?];
                 keyframe_rotation.get_or_insert(rotation);
             }
-            let position_keys = reader.count()?;
-            reader.take(position_keys * 20)?;
+            let mut position = None;
+            for _ in 0..reader.count()? {
+                reader.i32()?;
+                let key = reader.vector()?;
+                reader.take(4)?;
+                position.get_or_insert(key);
+            }
             if version >= (2, 3) {
                 for _ in 0..reader.count()? {
                     reader.i32()?; // texture
@@ -321,11 +333,12 @@ impl Rsm {
                 parent,
                 textures: node_textures,
                 offset,
-                translation1,
-                translation2: [0.0; 3],
+                // The node's place (its first position key, else its translation) moves its children too.
+                translation1: [0.0; 3],
+                translation2: position.unwrap_or(translation),
                 rotation_angle: 0.0,
                 rotation_axis: [0.0, 1.0, 0.0],
-                scale: [1.0; 3],
+                scale: scale.unwrap_or([1.0; 3]),
                 vertices,
                 uvs,
                 faces,
