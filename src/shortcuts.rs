@@ -123,14 +123,25 @@ pub fn action(shortcuts: &Shortcuts, event: &KeyEvent<'_>) -> Option<Action> {
 }
 
 impl Shortcuts {
-    /// Defaults from the grf, or the built-in copy of those defaults when the file isn't there,
+    /// Defaults from the grf, or the built-in copy of those defaults when the file isn't there or its tables aren't
+    /// the ones this client knows (older data lays them out otherwise: no window opens the inventory),
     /// then `UserKeys.lua` from the save folder (`RUSTNAROK_CLIENT_USERKEYS` names another file).
     pub fn load(grf: &Grf) -> Self {
-        let mut shortcuts = lua::hotkey_defaults(grf).ok().filter(|rows| !rows.is_empty()).map(|rows| Self::from_rows(&rows)).unwrap_or_else(Self::builtin);
+        let mut shortcuts = lua::hotkey_defaults(grf)
+            .ok()
+            .filter(|rows| !rows.is_empty())
+            .map(|rows| Self::from_rows(&rows))
+            .filter(Self::knows_the_tables)
+            .unwrap_or_else(Self::builtin);
         if let Some(path) = userkeys_path() {
             let _ = shortcuts.apply_user_file(&path);
         }
         shortcuts
+    }
+
+    /// Whether the data's tables are laid out as this client reads them: something opens the inventory.
+    fn knows_the_tables(&self) -> bool {
+        self.bindings.iter().any(|binding| binding.action == Action::Inventory && binding.key.is_some())
     }
 
     /// The game's usual defaults, used when hotkey_v2.lub can't be read.
@@ -999,6 +1010,14 @@ mod tests {
         assert_eq!(fire(&shortcuts, &insert, false, false, false, false, true), Some(Action::Sit));
         let shot = Key::Named(NamedKey::PrintScreen);
         assert_eq!(fire(&shortcuts, &shot, false, false, false, false, true), Some(Action::Screenshot));
+    }
+
+    #[test]
+    fn tells_tables_laid_out_otherwise() {
+        assert!(Shortcuts::builtin().knows_the_tables());
+        // Older data: its window table holds what this client takes for macros, and nothing opens the inventory.
+        let older = Shortcuts { bindings: Shortcuts::builtin().bindings.into_iter().filter(|binding| binding.action != Action::Inventory).collect() };
+        assert!(!older.knows_the_tables());
     }
 
     #[test]
