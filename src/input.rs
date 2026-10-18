@@ -365,6 +365,7 @@ impl App {
                     let _ = game.session.view_equipment(id);
                 }
                 // Their name in the chat's name box, as the friend list's whisper does.
+                Some(Choice::Uninstall(kind)) => drop(game.session.uninstall(kind)),
                 Some(Choice::Whisper(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         game.chat.whisper = actor.name.clone();
@@ -1295,8 +1296,34 @@ impl App {
                         if let equipment::Hit::WearTitle(title) = hit {
                             let _ = game.session.change_title(title);
                         }
+                        if hit == equipment::Hit::ViewCostume {
+                            let _ = game.session.show_costumes(!game.equipment.costumes_shown);
+                        }
                         if hit == equipment::Hit::TakeOffAll {
-                            let _ = game.session.take_off_all();
+                            match game.equipment.unequip_all(&game.inventory.items) {
+                                Some(equipment::UnequipAll::General) => drop(game.session.take_off_all()),
+                                Some(equipment::UnequipAll::Pieces(pieces)) => {
+                                    for index in pieces {
+                                        let _ = game.session.take_off(index);
+                                    }
+                                }
+                                None => {}
+                            }
+                        }
+                        // One thing to take off goes at once; a cart and a mount ask which.
+                        if hit == equipment::Hit::Dismount {
+                            match game.equipment.dismounts()[..] {
+                                [(kind, _)] => drop(game.session.uninstall(kind)),
+                                ref both => {
+                                    let lines =
+                                        both.iter().map(|&(kind, id)| Some((self.messages.get(id).cloned().unwrap_or_default(), Choice::Uninstall(kind))));
+                                    game.menu = Some(menu::Menu::new(offset(cursor, [1.0, 1.0]), lines.collect(), &self.font));
+                                }
+                            }
+                        }
+                        if hit == equipment::Hit::CartItems {
+                            game.cart.frame.toggle();
+                            game.raise(Panel::Cart);
                         }
                         if hit == equipment::Hit::SwitchAll {
                             match game.equipment.switch_all(&game.inventory.items, control::now()) {

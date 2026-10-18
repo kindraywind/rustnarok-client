@@ -441,6 +441,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }),
         // Other settings come in ZC_CONFIG too (calling, auto-feeding); only the box's is read.
         ZC_CONFIG if u32_at(2) == CONFIG_OPEN_EQUIPMENT => MapEvent::ShowEquipment { shown: u32_at(6) != 0, answer: true },
+        ZC_CONFIG if u32_at(2) == CONFIG_HIDE_COSTUMES => MapEvent::CostumesShown(u32_at(6) == 0),
         ZC_CONFIG if u32_at(2) == CONFIG_PET_AUTOFEED => MapEvent::PetAutoFeed(u32_at(6) != 0),
         ZC_CONFIG_NOTIFY => MapEvent::ShowEquipment { shown: packet[2] != 0, answer: false },
         ZC_ACK_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE => MapEvent::ExpansionAsked { result: packet[2], voucher: u32_at(3) },

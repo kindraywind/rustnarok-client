@@ -1210,8 +1210,12 @@ const ZC_EQUIPWIN_MICROSCOPE: u16 = 0x0B37;
 const CZ_CONFIG: u16 = 0x02D8;
 const ZC_CONFIG: u16 = 0x02D9;
 const ZC_CONFIG_NOTIFY: u16 = 0x02DA;
-/// CZ_CONFIG's setting for the Show Equipment box (rathena's CONFIG_OPEN_EQUIPMENT_WINDOW).
+/// CZ_CONFIG's setting for the Show Equipment box (rathena's CONFIG_OPEN_EQUIPMENT_WINDOW), and for hiding costumes
+/// (CONFIG_DISABLE_SHOWCOSTUMES: non-zero hides them) with the value the View Costume box sends to hide them.
 const CONFIG_OPEN_EQUIPMENT: u32 = 0;
+const CONFIG_HIDE_COSTUMES: u32 = 5;
+const HIDE_COSTUMES: u32 = 0x3C00;
+const CZ_UNINSTALLATION: u16 = 0x0B35;
 /// CZ_CONFIG's setting for a pet eating by itself (rathena's CONFIG_PET_AUTOFEED).
 const CONFIG_PET_AUTOFEED: u32 = 2;
 const CZ_REQ_OPEN_BANKING: u16 = 0x09B6;
@@ -2289,11 +2293,21 @@ fn encode_cashshop_close() -> Vec<u8> {
 
 /// CZ_CONFIG: a setting (rathena's e_config_type) on or off.
 fn encode_config(setting: u32, on: bool) -> [u8; 10] {
+    encode_config_value(setting, u32::from(on))
+}
+
+fn encode_config_value(setting: u32, value: u32) -> [u8; 10] {
     let mut packet = [0u8; 10];
     packet[..2].copy_from_slice(&CZ_CONFIG.to_le_bytes());
     packet[2..6].copy_from_slice(&setting.to_le_bytes());
-    packet[6..].copy_from_slice(&u32::from(on).to_le_bytes());
+    packet[6..].copy_from_slice(&value.to_le_bytes());
     packet
+}
+
+/// CZ_UNINSTALLATION: what to take off.
+fn encode_uninstall(kind: u8) -> [u8; 3] {
+    let [low, high] = CZ_UNINSTALLATION.to_le_bytes();
+    [low, high, kind]
 }
 
 /// A market's entry: item, type, price, stock, weight, where it's worn.

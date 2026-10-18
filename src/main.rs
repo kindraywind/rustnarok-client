@@ -2118,6 +2118,8 @@ enum Choice {
     EndRelation(u32, bool),
     /// Whisper this player: their name in the chat's name box.
     Whisper(u32),
+    /// Take off the cart or the mount (CZ_UNINSTALLATION's kind).
+    Uninstall(u8),
     /// Write them a mail.
     Mail(u32),
     /// Block their whispers.

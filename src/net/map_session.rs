@@ -303,6 +303,16 @@ impl MapSession {
         self.stream.write_all(&encode_config(CONFIG_OPEN_EQUIPMENT, shown))
     }
 
+    /// The View Costume box: whether costumes show on the player's sprite.
+    pub fn show_costumes(&mut self, shown: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_config_value(CONFIG_HIDE_COSTUMES, if shown { 0 } else { HIDE_COSTUMES }))
+    }
+
+    /// Takes off the cart, falcon, mount, Madogear or dragon (CZ_UNINSTALLATION's kind).
+    pub fn uninstall(&mut self, kind: u8) -> io::Result<()> {
+        self.stream.write_all(&encode_uninstall(kind))
+    }
+
     /// The inventory's expansion: may it grow, yes, no (the last needs no answer).
     pub fn ask_expansion(&mut self) -> io::Result<()> {
         self.stream.write_all(&CZ_REQ_OPEN_MSGBOX_EXTEND_BODYITEM_SIZE.to_le_bytes())
