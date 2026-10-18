@@ -44,6 +44,8 @@ pub enum Action {
     Emotions,
     Sit,
     Minimap,
+    /// The big minimap of the current map (`MSI_HK_SINGLEMAP_ONOFF`).
+    MinimapWindow,
     Macros,
     Commands,
     CloseWindows,
@@ -653,6 +655,10 @@ fn exe_action(exe: &str, table: u8, index: u16) -> Action {
     if name.contains("CART") {
         return Action::Cart;
     }
+    // The big minimap. Checked before MAP, which is the world map (`MSI_HK_MAPWND_ONOFF`).
+    if name.contains("SINGLEMAP") {
+        return Action::MinimapWindow;
+    }
     if name.contains("MAP") {
         return Action::WorldMap;
     }
@@ -681,6 +687,7 @@ pub fn action_name(action: Action) -> String {
         Action::Emotions => "emotions",
         Action::Sit => "sit",
         Action::Minimap => "minimap",
+        Action::MinimapWindow => "minimap_window",
         Action::Macros => "macros",
         Action::Commands => "commands",
         Action::CloseWindows => "close_windows",
@@ -922,6 +929,9 @@ mod tests {
         assert_eq!(exe_action("MSI_HK_CHANGE_SKILLBAR", 0, 0), Action::SwitchHotkeys);
         assert_eq!(exe_action("MSI_HK_SWAP_EQUIPMENT", 0, 0), Action::Unused);
         assert_eq!(exe_action("MSI_HK_SKILLBAR_ONOFF", 0, 0), Action::HotkeyBar);
+        assert_eq!(exe_action("MSI_HK_SINGLEMAP_ONOFF", 2, 43), Action::MinimapWindow);
+        assert_eq!(exe_action("MSI_HK_MAPWND_ONOFF", 2, 8), Action::WorldMap);
+        assert_eq!(exe_action("MSI_HK_MINIMAP_ONOFF", 2, 13), Action::Minimap);
     }
 
     #[test]

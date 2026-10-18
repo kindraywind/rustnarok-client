@@ -84,6 +84,7 @@ mod material;
 mod menu;
 mod mercenary;
 mod minimap;
+mod minimap_window;
 mod monster_info;
 mod navigation;
 mod options;
@@ -869,10 +870,14 @@ struct Game {
     /// The map's overview picture, for the minimap, and the part of it showing (with what it was cut for).
     minimap: Option<image::RgbaImage>,
     minimap_crop: Option<((u32, u32, u32, minimap::View), Texture)>,
-    /// Ctrl+Tab walks this: opaque, see-through, hidden.
+    /// Ctrl+Tab walks this: opaque, see-through, hidden. Kept with the settings (`minimap_view`).
     minimap_view: minimap::View,
     /// The minimap's zoom (1 to 4), kept with the settings.
     minimap_zoom: f32,
+    /// ponytail: the navigation route (#276) reads this. The route itself is not drawn here.
+    navigation_route: bool,
+    /// The big minimap of the current map.
+    minimap_window: minimap_window::Window,
     /// Guild members' cells on this map; party members' minimap colours by their place in the party.
     guild_places: HashMap<u32, [i32; 2]>,
     party_colors: Vec<Texture>,
@@ -1637,8 +1642,8 @@ fn change_look(look: &mut Look, kind: u8, value: u32, extra: u32) -> bool {
 }
 
 /// A map name as the indoor table lists it.
-/// An NPC's mark on the minimap: (NPC, mark ID), cell, image, and until when (None while the NPC keeps it).
-type Mark = ((u32, u8), [i32; 2], Texture, Option<Instant>);
+/// An NPC's mark on the minimap: (NPC, mark ID), cell, image, until when (None while the NPC keeps it), and when it was set.
+type Mark = ((u32, u8), [i32; 2], Texture, Option<Instant>, Instant);
 /// The Universal Catalog's mark, apart from the NPCs'.
 const CATALOG_MARK: (u32, u8) = (u32::MAX, 0);
 
@@ -2230,8 +2235,8 @@ impl Game {
         }
     }
 
-    /// Every window's frame, by name, for saving where each was left.
-    fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 16] {
+    /// Every window's frame, by name, for saving where each was left. `minimap` is the game's MINIMAPWNDINFO.
+    fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 17] {
         [
             ("hotkeys", &mut self.hotkeys.frame),
             ("basic_info", &mut self.basic_info.frame),
@@ -2249,6 +2254,7 @@ impl Game {
             ("mercenary_skills", &mut self.mercenary_skill_list.frame),
             ("homunculus", &mut self.homunculus_window.frame),
             ("homunculus_skills", &mut self.homunculus_skill_list.frame),
+            ("minimap", &mut self.minimap_window.frame),
         ]
     }
 
@@ -2326,6 +2332,9 @@ impl Game {
 
     /// The item link under the pointer: the NPC window's, else the chat log's where no window covers it.
     fn link_at(&self, cursor: [f32; 2]) -> Option<&links::Target> {
+        if self.minimap_window.covers(cursor) {
+            return None;
+        }
         links::at(&self.dialog_links, cursor).or_else(|| self.window_at(cursor).is_none().then(|| links::at(&self.chat_links, cursor)).flatten())
     }
 
@@ -2755,6 +2764,7 @@ impl Game {
             || self.trade.as_ref().is_some_and(|trade| trade.typing)
             || self.storage.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
+            || self.minimap_window.naming()
             // Battle mode off: the line is always open, so letters stay out of the shortcut layer.
             || self.chat_mode.chat_line_open()
     }
@@ -2792,6 +2802,7 @@ impl Game {
         }
         self.emotion_list = None;
         self.world_map = None;
+        self.minimap_window.close();
         self.audio_window = None;
         self.graphics_window = None;
         self.shortcuts_window = None;
@@ -2838,6 +2849,7 @@ impl Game {
             || self.level_ups.hit(cursor).is_some()
             || (self.quest_icon && quest_notice::on_icon(cursor))
             || minimap::button_at(cursor).is_some()
+            || self.minimap_window.covers(cursor)
             || (asking && contains(dialog_position_of(message), message, cursor))
             || self.dialog.is_some()
             || self.amount.is_some()
@@ -3340,6 +3352,7 @@ impl Game {
         push(GraphicsSettings, self.graphics_window.is_some());
         push(ShortcutSettings, self.shortcuts_window.is_some());
         push(WorldMap, self.world_map.is_some());
+        push(Minimap, self.minimap_window.frame.open);
         push(Quests, self.quest_window.frame.open);
         push(Menu, self.menu.is_some());
         push(Capturing, self.capturing);
@@ -3432,6 +3445,9 @@ impl Game {
         }
         if self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) {
             return Some(Catalog);
+        }
+        if self.minimap_window.naming() {
+            return Some(Minimap);
         }
         None
     }
@@ -3658,6 +3674,13 @@ impl Game {
             GraphicsSettings => self.graphics_window = None,
             ShortcutSettings => self.shortcuts_window = None,
             WorldMap => self.world_map = None,
+            Minimap => {
+                if self.minimap_window.naming() {
+                    self.minimap_window.cancel_name();
+                } else {
+                    self.minimap_window.close();
+                }
+            }
             Quests => self.quest_window.frame.open = false,
             Menu => self.menu = None,
             Capturing => self.capturing = false,
@@ -3730,6 +3753,9 @@ impl Game {
         }
         if self.world_map.is_some() {
             return Some(WorldMap);
+        }
+        if self.minimap_window.covers(cursor) {
+            return Some(Minimap);
         }
         self.window_at(cursor).and_then(esc_panel)
     }
@@ -4576,6 +4602,18 @@ fn parse_window_places(text: &str) -> HashMap<&str, ([f32; 2], bool)> {
 /// Whether /zoom is on (saved; off unless turned on).
 fn zoom_out_saved() -> bool {
     settings_path("zoomout").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1")
+}
+
+/// Opens or closes the big minimap. With no overview picture, says `no_picture` and leaves it closed.
+/// ponytail: said when opening is asked and the map has no overview, and when a warp closes an open window
+/// because the new map has none. A picture that fails to decode counts as none.
+fn toggle_big_minimap(game: &mut Game, gpu: &render::Gpu, no_picture: String) {
+    let map = map_key(&game.map);
+    let image = game.minimap.clone();
+    if !game.minimap_window.toggle(gpu, image.as_ref(), &map) {
+        game.chat_line(no_picture, CHAT_ERROR);
+    }
+    game.sync_esc();
 }
 
 pub(crate) fn settings_path(name: &str) -> Option<std::path::PathBuf> {
@@ -6150,8 +6188,15 @@ impl App {
                     _ => {}
                 }
             }
-            // The minimap's bottom row: zoom in and out (kept with the settings), the world map.
-            // ponytail: object and view-on have nothing to do yet; mini opens the world map until there's a big minimap.
+            // The big minimap: a click on it, before the small one's buttons (it can cover them).
+            Scene::Game(game) if game.minimap_window.hit(cursor, [game.world.gat.width as u32, game.world.gat.height as u32]).is_some() => {
+                let size = [game.world.gat.width as u32, game.world.gat.height as u32];
+                if let Some(hit) = game.minimap_window.hit(cursor, size) {
+                    game.minimap_window.click(hit);
+                    game.sync_esc();
+                }
+            }
+            // The minimap's bottom row: zoom (kept with the settings), the big map, the route flag.
             Scene::Game(game) if game.window_at(cursor).is_none() && minimap::button_at(cursor).is_some() => match minimap::button_at(cursor) {
                 Some(button @ ("plus" | "minus")) => {
                     game.minimap_zoom = if button == "plus" { minimap::zoom_in(game.minimap_zoom) } else { minimap::zoom_out(game.minimap_zoom) };
@@ -6160,11 +6205,15 @@ impl App {
                     }
                 }
                 Some("mini") => {
-                    game.world_map = match (game.world_map.take(), &self.gpu) {
-                        (None, Some(gpu)) => worldmap::WorldMap::open(gpu, &self.grf, &self.worlds.0, self.worlds.1, &map_key(&game.map)),
-                        _ => None,
-                    };
+                    if let Some(gpu) = &self.gpu {
+                        let no_picture = self.messages.get(minimap_window::NO_PICTURE).cloned().unwrap_or_default();
+                        toggle_big_minimap(game, gpu, no_picture);
+                    }
                 }
+                // ponytail: #276 draws the navigation route when this is on. The route itself is not drawn here.
+                Some("object") => game.navigation_route = !game.navigation_route,
+                // ponytail: viewon shows the camera's view wedge on the minimap. That wedge isn't drawn.
+                Some("viewon") => {}
                 _ => {}
             },
             // The new-quest icon: the quest window.
@@ -7058,6 +7107,7 @@ impl App {
             }
             game.mail.drag_to(self.cursor);
             game.quest_window.frame.drag_to(self.cursor, 466.0);
+            game.minimap_window.frame.drag_to(self.cursor, minimap_window::HEIGHT);
             game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
             if let Some(window) = &mut game.roulette {
                 window.frame.drag_to(self.cursor, roulette::HEIGHT);
@@ -7653,7 +7703,8 @@ impl App {
                     | game.equipment.frame.drop_drag()
                     | game.basic_info.frame.drop_drag()
                     | game.hotkeys.frame.drop_drag()
-                    | game.skill_window.frame.drop_drag();
+                    | game.skill_window.frame.drop_drag()
+                    | game.minimap_window.frame.drop_drag();
                 windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
             }
             _ => false,
@@ -7787,6 +7838,18 @@ impl App {
                 }
                 _ => {}
             }
+            return;
+        }
+        // The big minimap is above the other windows, under the world map.
+        if let Scene::Game(game) = &mut self.scene
+            && game.world_map.is_none()
+            && game.minimap_window.covers(cursor)
+        {
+            let size = [game.world.gat.width as u32, game.world.gat.height as u32];
+            if game.minimap_window.hit(cursor, size) == Some(minimap_window::Hit::Title(TitleHit::Title)) {
+                game.minimap_window.frame.start_drag(cursor);
+            }
+            game.press_esc(cursor);
             return;
         }
         if let Scene::Game(game) = &mut self.scene {
@@ -8200,6 +8263,14 @@ impl App {
         if fired == shortcuts::Action::Minimap {
             if let Scene::Game(game) = &mut self.scene {
                 game.minimap_view = game.minimap_view.next();
+                minimap::save_view(game.minimap_view);
+            }
+            return true;
+        }
+        if fired == shortcuts::Action::MinimapWindow {
+            let no_picture = self.messages.get(minimap_window::NO_PICTURE).cloned().unwrap_or_default();
+            if let (Scene::Game(game), Some(gpu)) = (&mut self.scene, &self.gpu) {
+                toggle_big_minimap(game, gpu, no_picture);
             }
             return true;
         }
@@ -8344,6 +8415,7 @@ impl App {
             shortcuts::Action::Macro(_)
             | shortcuts::Action::Screenshot
             | shortcuts::Action::Minimap
+            | shortcuts::Action::MinimapWindow
             | shortcuts::Action::ChatMode
             | shortcuts::Action::Unused => {}
         }
@@ -8703,6 +8775,14 @@ impl App {
                     _ => catalog.type_text(event.text.as_deref().unwrap_or_default()),
                 }
             }
+            // Naming a memo on the big minimap. Esc cancels it (game_escape) before this.
+            Scene::Game(game) if game.minimap_window.naming() => match key {
+                Key::Named(NamedKey::Enter) => {
+                    game.minimap_window.store();
+                }
+                Key::Named(NamedKey::Backspace) => game.minimap_window.backspace(),
+                _ => game.minimap_window.type_text(event.text.as_deref().unwrap_or_default()),
+            },
             Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Escape)) => game.deal_choice = None,
             // Earlier arms are windows that want the key. Esc is game_escape, which closes an open battle-mode
             // line first. Here the chat line has the key. Off: the line is always open and letters type. On: Enter
@@ -9014,6 +9094,7 @@ impl App {
                     (net::STATUS_JOB_EXP, me.job_exp),
                     (net::STATUS_ZENY, i64::from(me.zeny)),
                 ]);
+                let minimap_map = map_key(&map);
                 self.scene = Scene::Game(Box::new(Game {
                     saved_places: String::new(),
                     session,
@@ -9027,11 +9108,13 @@ impl App {
                     camera_goal,
                     minimap,
                     minimap_crop: None,
-                    minimap_view: minimap::View::default(),
+                    minimap_view: minimap::saved_view(),
                     minimap_zoom: settings_path("minimap_zoom")
                         .and_then(|path| std::fs::read_to_string(path).ok())
                         .and_then(|text| text.trim().parse::<f32>().ok())
                         .map_or(1.0, |zoom| zoom.clamp(1.0, minimap::MOST_ZOOM)),
+                    navigation_route: false,
+                    minimap_window: minimap_window::Window::new(gpu, &minimap_map),
                     guild_places: HashMap::new(),
                     party_colors: Vec::new(),
                     show_bars: true,
@@ -9363,6 +9446,7 @@ impl App {
 
     /// Loads another map on the same map server.
     fn change_map(&mut self, map: String, position: [u16; 2]) {
+        let no_picture = self.messages.get(minimap_window::NO_PICTURE).cloned().unwrap_or_default();
         let (Scene::Game(game), Some(gpu)) = (&mut self.scene, &self.gpu) else { return };
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
@@ -9371,6 +9455,12 @@ impl App {
                 game.camera = game.camera_goal.camera(world.cell_position(position.map(f32::from)));
                 game.minimap = minimap::load_map(&self.grf, &map);
                 game.minimap_crop = None;
+                let image = game.minimap.clone();
+                // ponytail: said when a warp leaves the big map open on a map with no overview. A picture that fails to decode counts as none.
+                if game.minimap_window.change_map(gpu, image.as_ref(), &map_key(&map)) {
+                    game.chat_line(no_picture, CHAT_ERROR);
+                    game.sync_esc();
+                }
                 game.guild_places.clear();
                 game.world = world;
                 game.map = map;
@@ -11636,7 +11726,7 @@ impl App {
                     catalog.mark = cell;
                 }
                 if let (Some(cell), Some(gpu)) = (cell, gpu) {
-                    game.marks.push((CATALOG_MARK, cell.map(i32::from), gpu.solid([0xFF, 0xFF, 0x00, 255]), None));
+                    game.marks.push((CATALOG_MARK, cell.map(i32::from), gpu.solid([0xFF, 0xFF, 0x00, 255]), None, control::now()));
                 }
             }
             MapEvent::Mark { npc, kind, cell, id, color } => {
@@ -11644,8 +11734,8 @@ impl App {
                 if kind != 2
                     && let Some(gpu) = gpu
                 {
-                    let until = (kind == 0).then(|| Instant::now() + Duration::from_secs(15));
-                    game.marks.push(((npc, id), cell.map(i32::from), gpu.solid([color[0], color[1], color[2], 255]), until));
+                    let until = (kind == 0).then(|| control::now() + Duration::from_secs(15));
+                    game.marks.push(((npc, id), cell.map(i32::from), gpu.solid([color[0], color[1], color[2], 255]), until, control::now()));
                 }
             }
             MapEvent::InventoryExpansion(slots) => game.inventory.expansion = slots,
@@ -13397,8 +13487,8 @@ impl App {
             tooltip.texts.push((text.clone(), offset(corner, [4.0, 2.0]), [0, 0, 0]));
         }
         let size = [game.world.gat.width as u32, game.world.gat.height as u32];
-        // NPC marks blink, shown half of each second.
-        game.marks.retain(|(.., until)| until.is_none_or(|until| until > now));
+        // NPC marks last until they're taken down. Each blinks from the moment it was set.
+        game.marks.retain(|(_, _, _, until, _)| until.is_none_or(|until| until > now));
         // The pickup popup's five seconds; an open inventory has been seen.
         if game.pickup_popup.as_ref().is_some_and(|popup| !popup.alive(control::now())) {
             game.pickup_popup = None;
@@ -13415,9 +13505,12 @@ impl App {
         game.banners.current(control::now());
         game.level_ups
             .seen(game.status_window.frame.open && !game.status_window.frame.minimized, game.skill_window.frame.open && !game.skill_window.frame.minimized);
-        // ponytail: the marks blink together, half of each second since entering the map, not each from its own time.
-        let blink_on = minimap::blink_on(game.entered.elapsed().as_millis());
-        let marks: Vec<_> = game.marks.iter().filter(|_| blink_on).map(|(_, cell, color, _)| (*cell, color)).collect();
+        let marks: Vec<_> = game
+            .marks
+            .iter()
+            .filter(|(_, _, _, _, set)| minimap::mark_visible(0, now.saturating_duration_since(*set).as_millis()))
+            .map(|(_, cell, color, _, _)| (*cell, color))
+            .collect();
         // Party members on this map, coloured by their place in the party list.
         if game.party_colors.is_empty() {
             game.party_colors = (0..16).map(|place| gpu.solid(minimap::party_color(place))).collect();
@@ -13456,7 +13549,16 @@ impl App {
         let trail = game.navigation.as_ref().map_or(&[][..], |active| active.trail.as_slice());
         let goal = navi_next.map(|cell| cell.map(i32::from));
         let markers = minimap::Markers { cell: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss, trail, goal };
-        minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.minimap_zoom, &markers);
+        minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.minimap_zoom, &markers, minimap::Pointer { at: pointer.0, down: pointer.1 });
+        if !game.minimap_window.covers(pointer.0)
+            && game.window_at(pointer.0).is_none()
+            && let Some(name) = minimap::button_at(pointer.0)
+        {
+            let text = messages.get(minimap::tooltip_id(name)).map(String::as_str).unwrap_or("");
+            if !text.is_empty() {
+                window::tooltip(&mut tooltip, &assets.chrome, font, text, offset(pointer.0, [12.0, 12.0]), [255; 3]);
+            }
+        }
         // Status icons down the right, each with the clock of its time (orange in the last minute).
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
             let (_, file) = status_icon_files.get(kind)?;
@@ -14094,7 +14196,32 @@ impl App {
             world_map.draw(&mut world_layer, &assets.chrome, font, &worlds.0, map_names, &map_key(&game.map), pointer.0);
         }
         game.dialog_links = dialog_links;
-        layers.extend([catalog_layer, shop_layer, overlay, menu_layer, tooltip, world_layer]);
+        let mut minimap_layer = Layer::default();
+        {
+            let show_quests = game.minimap_window.show_quests;
+            let show_boss = game.minimap_window.show_boss;
+            minimap_layer.faded = game.minimap_window.frame.faded();
+            let quest_cells: Vec<[i32; 2]> = if show_quests {
+                game.quests.iter().filter(|quest| quest.active).filter_map(|quest| quest_texts.get(&quest.id).and_then(|text| text.npc)).collect()
+            } else {
+                Vec::new()
+            };
+            let title = map_names.get(&map_key(&game.map)).cloned().unwrap_or_else(|| map_key(&game.map));
+            let naming_caret = (now.saturating_duration_since(game.entered).as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+            let boss_pin = show_boss.then_some(boss).flatten();
+            game.minimap_window.draw(
+                &mut minimap_layer,
+                &assets.chrome,
+                &assets.minimap,
+                messages,
+                &title,
+                size,
+                &minimap_window::Pins { player: game.player.cell, yaw, marks: &marks, party: &dots, guild: &guild, boss: boss_pin, quests: &quest_cells },
+                pointer.0,
+                naming_caret,
+            );
+        }
+        layers.extend([catalog_layer, shop_layer, minimap_layer, overlay, menu_layer, tooltip, world_layer]);
         let composed = compose(gpu, font, layers);
         let (mut sprites, alphas) = flatten(&composed);
 

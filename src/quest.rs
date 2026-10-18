@@ -48,14 +48,16 @@ pub struct QuestText {
     pub title: String,
     pub description: String,
     pub summary: String,
+    /// The quest NPC's cell on the big minimap, when the quest info lists one.
+    pub npc: Option<[i32; 2]>,
 }
 
 /// The quests' words: the translation's quest info Lua where there is one, else questid2display.txt.
 pub fn texts(grf: &Grf) -> HashMap<u32, QuestText> {
     let mut texts: HashMap<u32, QuestText> =
         grf.read("data\\questid2display.txt").map(|bytes| parse_texts(&encoding_rs::EUC_KR.decode(&bytes).0)).unwrap_or_default();
-    for (id, [title, description, summary]) in rustnarok_client::lua::quest_info(grf).unwrap_or_default() {
-        texts.insert(id, QuestText { title, description, summary });
+    for (id, info) in rustnarok_client::lua::quest_info(grf).unwrap_or_default() {
+        texts.insert(id, QuestText { title: info.title, description: info.description, summary: info.summary, npc: info.npc });
     }
     texts
 }
@@ -66,7 +68,7 @@ fn parse_texts(text: &str) -> HashMap<u32, QuestText> {
     fields
         .chunks_exact(6)
         .filter_map(|entry| {
-            Some((entry[0].parse().ok()?, QuestText { title: entry[1].to_owned(), description: entry[4].to_owned(), summary: entry[5].to_owned() }))
+            Some((entry[0].parse().ok()?, QuestText { title: entry[1].to_owned(), description: entry[4].to_owned(), summary: entry[5].to_owned(), npc: None }))
         })
         .collect()
 }
@@ -301,7 +303,7 @@ mod tests {
     #[test]
     fn reads_quest_texts() {
         let texts = parse_texts("1#Ransom#SG_FEEL#QUE_NOIMAGE#\nTurtle#\nCarapace#\n\n101#Professor#SG_FEEL#QUE_NOIMAGE#\nGo up.#\nTalk#\n");
-        assert_eq!(texts[&101], QuestText { title: "Professor".into(), description: "Go up.".into(), summary: "Talk".into() });
+        assert_eq!(texts[&101], QuestText { title: "Professor".into(), description: "Go up.".into(), summary: "Talk".into(), npc: None });
         assert_eq!(texts[&1].summary, "Carapace");
     }
 }

@@ -44,6 +44,34 @@ pub fn blink_on(age_ms: u128) -> bool {
     age_ms % 1000 < 500
 }
 
+/// A mark set at `set_ms` shows at `now_ms`: on for 500ms from the moment it was set, then off, and so on.
+pub fn mark_visible(set_ms: u128, now_ms: u128) -> bool {
+    blink_on(now_ms.saturating_sub(set_ms))
+}
+
+/// Which of `i_<name>_1/2/3.bmp` to draw: 0 at rest, 1 under the pointer, 2 held down.
+/// ponytail: `_1` at rest, `_2` under the pointer, `_3` pressed; a capture of the client would confirm which file is which.
+pub fn button_frame(hovered: bool, pressed: bool) -> usize {
+    if pressed {
+        2
+    } else if hovered {
+        1
+    } else {
+        0
+    }
+}
+
+/// `messages[2855]` through `[2859]`: object, plus, minus, mini, viewon.
+pub fn tooltip_id(name: &str) -> usize {
+    2855 + BUTTONS.iter().position(|(each, _)| *each == name).unwrap_or(0)
+}
+
+/// The pointer, for the bottom row's hover and press.
+pub struct Pointer {
+    pub at: [f32; 2],
+    pub down: bool,
+}
+
 /// One zoom step in: z + (z/3 + z) * 0.25, at most 4.
 pub fn zoom_in(zoom: f32) -> f32 {
     (zoom + (zoom / 3.0 + zoom) * 0.25).min(MOST_ZOOM)
@@ -110,7 +138,8 @@ pub fn button_at(cursor: [f32; 2]) -> Option<&'static str> {
 pub struct Assets {
     /// The player arrow turned TURNS ways.
     arrows: Vec<Texture>,
-    buttons: Vec<Texture>,
+    /// Each bottom-row button at rest, under the pointer, and held (`i_<name>_1/2/3.bmp`).
+    buttons: Vec<[Texture; 3]>,
     arrow_shadow: Texture,
     dot_back: Texture,
     guild: Texture,
@@ -150,7 +179,7 @@ impl Assets {
         let image = |path: String| gpu.try_load_texture(grf, &path, false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
         Self {
             arrows: (0..TURNS).map(|turn| gpu.texture(&rotate(&arrow, turn as f32 * std::f32::consts::TAU / TURNS as f32), false)).collect(),
-            buttons: BUTTONS.iter().map(|(name, _)| image(format!("{UI}minimap\\i_{name}_1.bmp"))).collect(),
+            buttons: BUTTONS.iter().map(|(name, _)| [1, 2, 3].map(|state| image(format!("{UI}minimap\\i_{name}_{state}.bmp")))).collect(),
             arrow_shadow: gpu.solid(rgba(0x77333333)),
             dot_back: gpu.solid(rgba(0x99ffffff)),
             guild: gpu.texture(&disc(2, rgba(0xffffa6d2)), false),
@@ -159,6 +188,32 @@ impl Assets {
             trail: gpu.texture(&disc(1, rgba(0xffff4040)), false),
             goal: gpu.texture(&disc(3, rgba(0xffff2020)), false),
         }
+    }
+
+    /// The player arrow for the camera's yaw (180° less the yaw, in TURNS steps).
+    pub fn player_arrow(&self, yaw: f32) -> &Texture {
+        let turn = ((180.0 - yaw).rem_euclid(360.0) / 360.0 * TURNS as f32).round() as usize % TURNS as usize;
+        &self.arrows[turn]
+    }
+
+    pub fn arrow_shadow(&self) -> &Texture {
+        &self.arrow_shadow
+    }
+
+    pub fn guild_ring(&self) -> &Texture {
+        &self.guild_ring
+    }
+
+    pub fn guild_dot(&self) -> &Texture {
+        &self.guild
+    }
+
+    pub fn party_back(&self) -> &Texture {
+        &self.dot_back
+    }
+
+    pub fn boss_mark(&self) -> &Texture {
+        &self.boss
     }
 }
 
@@ -191,6 +246,28 @@ impl View {
             Self::Hidden => "hidden",
         }
     }
+
+    /// The text `save_view` writes. Anything else is left unread.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim() {
+            "opaque" => Some(Self::Shown),
+            "see_through" => Some(Self::Translucent),
+            "hidden" => Some(Self::Hidden),
+            _ => None,
+        }
+    }
+}
+
+/// The see-through mode last saved (`minimap_view`, next to `minimap_zoom`), or see-through when there is none.
+pub fn saved_view() -> View {
+    crate::settings_path("minimap_view").and_then(|path| std::fs::read_to_string(path).ok()).and_then(|text| View::parse(&text)).unwrap_or_default()
+}
+
+/// Keeps the see-through mode with the settings, as the game keeps `M_MINIMAPARGB`.
+pub fn save_view(view: View) {
+    if let Some(path) = crate::settings_path("minimap_view") {
+        let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, view.name()));
+    }
 }
 
 /// The overview picture of a map (data\texture\유저인터페이스\map\<map>.bmp), if the client has one.
@@ -214,8 +291,9 @@ pub struct Markers<'a> {
 }
 
 /// Draws the minimap: the overview's window (already cropped, `overview`), then the markers through it, then the
-/// bottom row; nothing of the map while hidden.
-pub fn draw<'a>(layer: &mut Layer<'a>, assets: &'a Assets, overview: Option<&'a Texture>, size: [u32; 2], zoom: f32, markers: &Markers<'a>) {
+/// bottom row; nothing of the map while hidden. A button uses its hover image under `pointer` and its pressed image
+/// while the button is held there.
+pub fn draw<'a>(layer: &mut Layer<'a>, assets: &'a Assets, overview: Option<&'a Texture>, size: [u32; 2], zoom: f32, markers: &Markers<'a>, pointer: Pointer) {
     let player = share(markers.cell, size);
     let window = window(player, zoom);
     if let Some(overview) = overview {
@@ -263,7 +341,10 @@ pub fn draw<'a>(layer: &mut Layer<'a>, assets: &'a Assets, overview: Option<&'a 
         }
     }
     // The bottom row: the buttons and the coordinates, black under white.
-    for ((_, from_right), button) in BUTTONS.iter().zip(&assets.buttons) {
+    let over = button_at(pointer.at);
+    for ((name, from_right), frames) in BUTTONS.iter().zip(&assets.buttons) {
+        let hovered = over == Some(*name);
+        let button = &frames[button_frame(hovered, hovered && pointer.down)];
         layer.sprites.push((button, [screen()[0] - from_right, ROW], [BUTTON, BUTTON]));
     }
     let text = coordinates(markers.cell);
@@ -320,9 +401,28 @@ mod tests {
         assert_eq!(party_color(2), [0, 0, 0, 0xff]);
         assert_eq!(party_color(16), [0x32, 0x32, 0x32, 0xff]);
         assert!(blink_on(0) && blink_on(1499) && !blink_on(500) && !blink_on(1999));
+        // Each mark keeps its own clock: one set at 0 is off at 600, one set at 500 is still on.
+        assert!(mark_visible(0, 0) && mark_visible(0, 499) && !mark_visible(0, 500));
+        assert!(mark_visible(500, 600) && !mark_visible(0, 600));
+        assert!(mark_visible(0, 1100) && !mark_visible(500, 1100));
+        assert_eq!((button_frame(false, false), button_frame(true, false), button_frame(true, true)), (0, 1, 2));
+        assert_eq!((tooltip_id("object"), tooltip_id("plus"), tooltip_id("minus"), tooltip_id("mini"), tooltip_id("viewon")), (2855, 2856, 2857, 2858, 2859));
         // A see-through crop keeps two thirds of the alpha.
         let image = RgbaImage::from_pixel(8, 8, Rgba([1, 2, 3, 255]));
         let part = crop(&image, [0.5, 0.5], 2.0, SEE_THROUGH);
         assert_eq!((part.width(), part.height(), part.get_pixel(0, 0).0[3]), (4, 4, SEE_THROUGH));
+    }
+
+    #[test]
+    fn the_see_through_mode_survives_a_reload() {
+        assert_eq!(View::parse(View::Hidden.name()), Some(View::Hidden));
+        assert_eq!(View::parse(View::Shown.name()), Some(View::Shown));
+        assert_eq!(View::parse(View::Translucent.name()), Some(View::Translucent));
+        assert_eq!(View::parse("nope"), None);
+        let path = std::env::temp_dir().join(format!("rustnarok-minimap-view-{}", std::process::id()));
+        std::fs::write(&path, View::Hidden.name()).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(View::parse(&text), Some(View::Hidden));
+        let _ = std::fs::remove_file(&path);
     }
 }
