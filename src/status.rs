@@ -10,7 +10,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, UI, contains};
+use crate::{Layer, UI, contains, offset};
 
 const WIDTH: f32 = 280.0;
 /// The window's height, title bar and background, with the trait panel shut and open.
@@ -87,6 +87,8 @@ pub enum Hit {
 
 pub struct StatusWindow {
     pub frame: Frame,
+    /// A raise (a stat's or a trait's) waits for the server's answer: until it comes, clicks ask nothing.
+    pub waiting: bool,
     /// The trait panel under the stats is open.
     pub traits_open: bool,
 }
@@ -95,14 +97,64 @@ impl Default for StatusWindow {
     /// Open for every job the first time; the choice isn't saved.
     // ponytail: a new login makes a new window, so the panel opens again then, not only once per run.
     fn default() -> Self {
-        Self { frame: Frame::new(POSITION, WIDTH).collapsing(), traits_open: true }
+        Self { frame: Frame::new(POSITION, WIDTH).collapsing(), waiting: false, traits_open: true }
     }
 }
 
-/// Whether a trait's "+" shows: it has a cost and the trait points cover it.
+/// Whether a trait's "+" shows: a trait point or more and a cost that isn't 0 (not compared with the points).
 pub fn can_raise_trait(status: &HashMap<u16, i64>, trait_id: u16) -> bool {
     let cost = status.get(&(TRAIT_COST + trait_id - TRAIT_POW)).copied().unwrap_or(0);
-    cost > 0 && cost <= status.get(&TRAIT_POINTS).copied().unwrap_or(0)
+    cost != 0 && status.get(&TRAIT_POINTS).copied().unwrap_or(0) >= 1
+}
+
+/// Whether a click on a trait's "+" asks: trait points and a cost above 0.
+fn trait_raise_sends(status: &HashMap<u16, i64>, trait_id: u16) -> bool {
+    let cost = status.get(&(TRAIT_COST + trait_id - TRAIT_POW)).copied().unwrap_or(0);
+    cost > 0 && status.get(&TRAIT_POINTS).copied().unwrap_or(0) > 0
+}
+
+/// The labels' areas (80 × 12, window-local corners) and their messages: the stats and what they make, and with the
+/// trait panel open the traits and theirs. Resting on one shows its message 16 left and 13 up of the corner.
+const LABEL_SIZE: [f32; 2] = [80.0, 12.0];
+const LABEL_TIP: [f32; 2] = [-16.0, -13.0];
+const STAT_LABELS: [([f32; 2], usize); 16] = [
+    ([6.0, 25.0], 3112),
+    ([6.0, 41.0], 3113),
+    ([6.0, 57.0], 3114),
+    ([6.0, 73.0], 3115),
+    ([6.0, 89.0], 3116),
+    ([6.0, 105.0], 3117),
+    ([108.0, 24.0], 3118),
+    ([108.0, 40.0], 3124),
+    ([108.0, 56.0], 3120),
+    ([108.0, 72.0], 3121),
+    ([108.0, 88.0], 3123),
+    ([108.0, 104.0], 3122),
+    ([194.0, 24.0], 3119),
+    ([194.0, 40.0], 3125),
+    ([194.0, 56.0], 3126),
+    ([194.0, 72.0], 3127),
+];
+const TRAIT_LABELS: [([f32; 2], usize); 13] = [
+    ([6.0, 146.0], 3614),
+    ([6.0, 162.0], 3615),
+    ([6.0, 178.0], 3616),
+    ([6.0, 194.0], 3617),
+    ([6.0, 210.0], 3618),
+    ([6.0, 226.0], 3619),
+    ([108.0, 145.0], 3620),
+    ([108.0, 161.0], 3621),
+    ([108.0, 177.0], 3624),
+    ([108.0, 193.0], 3625),
+    ([108.0, 209.0], 3626),
+    ([194.0, 145.0], 3622),
+    ([194.0, 161.0], 3623),
+];
+
+/// The label under a window-local point: where its tooltip goes and its message.
+fn label_at(local: [f32; 2], traits_open: bool) -> Option<([f32; 2], usize)> {
+    let panel: &[_] = if traits_open { &TRAIT_LABELS } else { &[] };
+    STAT_LABELS.iter().chain(panel).find(|(corner, _)| contains(*corner, LABEL_SIZE, local)).map(|&(corner, id)| (offset(corner, LABEL_TIP), id))
 }
 
 /// Where a trait's "+" sits in the window (by row, POW first).
@@ -168,7 +220,7 @@ impl StatusWindow {
         }
         if self.traits_open {
             for row in 0..TRAIT_ROWS as u16 {
-                if can_raise_trait(status, TRAIT_POW + row) && contains(trait_plus(row), ARROW_BOX, local) {
+                if trait_raise_sends(status, TRAIT_POW + row) && contains(trait_plus(row), ARROW_BOX, local) {
                     return Some(Hit::RaiseTrait(TRAIT_POW + row));
                 }
             }
@@ -213,11 +265,15 @@ impl StatusWindow {
         boxes
     }
 
-    /// A click: a stat to raise (by status id), or a trait to raise.
+    /// A click: a stat to raise (by status id), or a trait to raise, unless a raise still waits for its answer.
     pub fn click(&mut self, hit: Hit) -> Option<u16> {
         match hit {
             Hit::Title(title) => self.frame.click_title(title),
-            Hit::Raise(stat) | Hit::RaiseTrait(stat) => return Some(stat),
+            Hit::Raise(_) | Hit::RaiseTrait(_) if self.waiting => {}
+            Hit::Raise(stat) | Hit::RaiseTrait(stat) => {
+                self.waiting = true;
+                return Some(stat);
+            }
             Hit::Traits => self.traits_open = !self.traits_open,
             Hit::Window => {}
         }
@@ -228,6 +284,7 @@ impl StatusWindow {
     pub fn draw<'a>(
         &self,
         layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
         assets: &'a Assets,
         font: &Font,
@@ -248,6 +305,18 @@ impl StatusWindow {
         let background = &assets.backgrounds[usize::from(self.traits_open)];
         layer.sprites.push((background, at([0.0, TITLE_HEIGHT]), background.size));
         let hit = self.hit(pointer.0, status);
+        // A label's description where the pointer rests on it: split at its "\n", in its colours.
+        // ponytail: it shows at once, like this client's other tooltips.
+        if let Some((corner, id)) = self.frame.local(pointer.0, self.height()).and_then(|local| label_at(local, self.traits_open)) {
+            let mut color = [255; 3];
+            let lines: Vec<_> = messages
+                .get(id)
+                .map_or("", String::as_str)
+                .split("\\n")
+                .flat_map(|line| crate::wrap_plain(font, line, f32::INFINITY, 0.0, &mut color, false))
+                .collect();
+            crate::window::tooltip_lines(tooltip, chrome, font, &lines, at(corner));
+        }
         let right = |layer: &mut Layer<'a>, text: String, [edge, top]: [f32; 2]| {
             layer.texts.push((text.clone(), at([edge - font.width(&text), top]), TEXT));
         };
@@ -310,10 +379,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn raises_traits_only_when_points_cover_them() {
-        // POW costs 2 and STA 4, with 3 trait points: POW's "+" shows, STA's doesn't, a trait with no cost neither.
+    fn shows_a_traits_plus_with_any_trait_point() {
+        // POW costs 2 and STA 4, with 3 trait points: both "+" show (the cost isn't compared); one with no cost doesn't.
         let status = HashMap::from([(TRAIT_POINTS, 3), (TRAIT_COST, 2), (TRAIT_COST + 1, 4)]);
-        assert!(can_raise_trait(&status, TRAIT_POW) && !can_raise_trait(&status, TRAIT_POW + 1) && !can_raise_trait(&status, TRAIT_POW + 2));
+        assert!(can_raise_trait(&status, TRAIT_POW) && can_raise_trait(&status, TRAIT_POW + 1) && !can_raise_trait(&status, TRAIT_POW + 2));
+        assert!(trait_raise_sends(&status, TRAIT_POW + 1));
+        // No trait points: none shows, none asks.
+        let none = HashMap::from([(TRAIT_POINTS, 0), (TRAIT_COST, 2)]);
+        assert!(!can_raise_trait(&none, TRAIT_POW) && !trait_raise_sends(&none, TRAIT_POW));
+    }
+
+    #[test]
+    fn waits_for_each_raises_answer() {
+        let mut window = StatusWindow::default();
+        assert_eq!(window.click(Hit::Raise(STATUS_STR)), Some(STATUS_STR));
+        // A second before the answer asks nothing, a trait's neither.
+        assert_eq!(window.click(Hit::Raise(STATUS_STR)), None);
+        assert_eq!(window.click(Hit::RaiseTrait(TRAIT_POW)), None);
+        // The answer, taken or refused, lets the next go.
+        window.waiting = false;
+        assert_eq!(window.click(Hit::RaiseTrait(TRAIT_POW)), Some(TRAIT_POW));
+        assert!(window.waiting);
+    }
+
+    #[test]
+    fn finds_the_label_under_the_pointer() {
+        // Str's area from (6, 25): its message 16 left and 13 up of the corner.
+        assert_eq!(label_at([7.0, 26.0], true), Some(([-10.0, 12.0], 3112)));
+        assert_eq!(label_at([85.0, 36.0], true), Some(([-10.0, 12.0], 3112)));
+        assert_eq!(label_at([86.0, 26.0], true), None);
+        assert_eq!(label_at([200.0, 75.0], false), Some(([178.0, 59.0], 3127)));
+        // Res only while the panel is open.
+        assert_eq!(label_at([200.0, 150.0], true), Some(([178.0, 132.0], 3622)));
+        assert_eq!(label_at([200.0, 150.0], false), None);
     }
 
     #[test]

@@ -12264,6 +12264,11 @@ impl App {
                 }
             }
             MapEvent::Statuses(values) => game.status.extend(values),
+            // The raise's answer, taken or refused, lets the next one go.
+            MapEvent::RaiseAnswer(value) => {
+                game.status_window.waiting = false;
+                game.status.extend(value);
+            }
             // -1 takes the bar away.
             MapEvent::UnitHp { id, hp, max_hp } if hp < 0 || max_hp <= 0 => {
                 game.unit_hp.remove(&id);
@@ -16178,7 +16183,7 @@ impl App {
                 }
                 Panel::Status => {
                     let guild = game.guild.as_ref().map_or("", |guild| guild.name.as_str());
-                    game.status_window.draw(&mut layer, &assets.chrome, &assets.status, font, messages, &game.status, guild, pointer);
+                    game.status_window.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.status, font, messages, &game.status, guild, pointer);
                 }
                 Panel::Guild => {
                     if let Some(guild) = &game.guild {

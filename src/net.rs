@@ -2721,6 +2721,9 @@ pub enum MapEvent {
         emblem: u32,
     },
     GuildInfo(GuildInfo),
+    /// A stat or trait raise answered (ZC_STATUS_CHANGE_ACK): its new value when it went up, none when refused.
+    // ponytail: 0x0B25 would answer a trait too, but it isn't in this server's version.
+    RaiseAnswer(Option<(u16, i64)>),
     GuildMembers(Vec<GuildMember>),
     /// Position names, by position ID.
     GuildPositions(Vec<(u32, String)>),
@@ -6431,8 +6434,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             MapEvent::Statuses(values)
         }
         ZC_STATUS_CHANGE => MapEvent::Statuses(vec![(u16_at(2), i64::from(packet[4]))]),
-        ZC_STATUS_CHANGE_ACK if packet[4] != 0 => MapEvent::Statuses(vec![(u16_at(2), i64::from(packet[5]))]),
-        ZC_STATUS_CHANGE_ACK => MapEvent::Statuses(Vec::new()),
+        ZC_STATUS_CHANGE_ACK => MapEvent::RaiseAnswer((packet[4] != 0).then(|| (u16_at(2), i64::from(packet[5])))),
         ZC_COUPLESTATUS => {
             let id = u32_at(2) as u16;
             MapEvent::Statuses(vec![(id, i64::from(u32_at(6) as i32)), (id + STATUS_BONUS, i64::from(u32_at(10) as i32))])
@@ -6843,6 +6845,9 @@ mod tests {
 
     #[test]
     fn decodes_guild_pages() {
+        // A raise's answer: the new value when taken, nothing when refused.
+        let Some(MapEvent::RaiseAnswer(Some((13, 5)))) = decode_map_packet(&[0xBC, 0x00, 13, 0, 1, 5]) else { panic!() };
+        let Some(MapEvent::RaiseAnswer(None)) = decode_map_packet(&[0xBC, 0x00, 13, 0, 0, 4]) else { panic!() };
         let packet = |id: u16, body: &[u8]| {
             let mut packet = id.to_le_bytes().to_vec();
             packet.extend_from_slice(&((4 + body.len()) as u16).to_le_bytes());

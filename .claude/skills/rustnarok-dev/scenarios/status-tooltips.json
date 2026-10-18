@@ -1,0 +1,15 @@
+{
+  "about": "Status window label tooltips (issue #473): the window opens with its trait panel; resting on the Str label shows its description 16 px left of and 13 px above the label's area, split at its line breaks and in its colours; resting on Res (in the trait panel) shows Res's.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"key": "Alt+A"}, {"wait": 400},
+    {"expect": {"windows_open": ["Status"]}},
+    {"move": [211, 330]}, {"wait": 300},
+    {"shot": "tooltip-str", "crop": [150, 280, 420, 280]},
+    {"move": [399, 450]}, {"wait": 300},
+    {"shot": "tooltip-res", "crop": [150, 280, 520, 280]},
+    {"key": "Alt+A"}, {"wait": 300}
+  ]
+}

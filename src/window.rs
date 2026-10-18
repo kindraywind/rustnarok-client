@@ -267,6 +267,21 @@ pub fn tooltip<'a>(layer: &mut Layer<'a>, chrome: &'a Chrome, font: &Font, text:
     layer.texts.push((text.to_owned(), offset(corner, [4.0, 4.0]), color));
 }
 
+/// The tooltip box with lines of coloured pieces, each line a line height under the last.
+pub fn tooltip_lines<'a>(layer: &mut Layer<'a>, chrome: &'a Chrome, font: &Font, lines: &[Vec<([u8; 3], String)>], corner: [f32; 2]) {
+    let width = lines.iter().map(|line| line.iter().map(|(_, piece)| font.width(piece)).sum::<f32>()).fold(0.0, f32::max);
+    layer.sprites.push((&chrome.tooltip, corner, [width.ceil() + 8.0, 8.0 + lines.len() as f32 * font.line_height()]));
+    for (row, line) in lines.iter().enumerate() {
+        let mut x = 4.0;
+        for (color, piece) in line {
+            let place = offset(corner, [x, 4.0 + row as f32 * font.line_height()]);
+            layer.texts.push((piece.clone(), offset(place, [1.0, 1.0]), [0, 0, 0]));
+            layer.texts.push((piece.clone(), place, *color));
+            x += font.width(piece);
+        }
+    }
+}
+
 /// The text cut short with "..." to fit `width`.
 pub fn fit(font: &Font, text: &str, width: f32) -> String {
     if font.width(text) <= width {
