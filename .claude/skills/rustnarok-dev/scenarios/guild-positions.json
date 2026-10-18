@@ -130,6 +130,12 @@
       }
     },
     {
+      "wait_for": {
+        "packet": "0x0afd",
+        "ms": 5000
+      }
+    },
+    {
       "wait": 300
     },
     {
@@ -153,15 +159,6 @@
           "guild.members.{second}": 1
         }
       }
-    },
-    {
-      "wait_for": {
-        "packet": "0x0afd",
-        "ms": 5000
-      }
-    },
-    {
-      "wait": 300
     },
     {
       "expect": {
