@@ -847,6 +847,11 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Asks which guild window tabs the player may open; ZC_ACK_GUILD_MENUINTERFACE answers.
+    pub fn guild_menu(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_REQ_GUILD_MENUINTERFACE.to_le_bytes())
+    }
+
     /// Asks for a guild's emblem; a guild without one doesn't answer.
     pub fn guild_emblem(&mut self, guild: u32) -> io::Result<()> {
         let mut packet = CZ_REQ_GUILD_EMBLEM_IMG.to_le_bytes().to_vec();

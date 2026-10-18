@@ -2189,6 +2189,7 @@ impl App {
                 guild.mode = mode;
                 game.want_emblem(id, emblem);
             }
+            MapEvent::GuildMenu(menu) => game.guild_window.menu = menu,
             MapEvent::GuildInfo(info) => {
                 if let Some(guild) = &mut game.guild {
                     // We lead it when its master's name is ours, too.
@@ -2255,6 +2256,7 @@ impl App {
                     if guild == 0 {
                         game.guild = None;
                         game.guild_window.frame.open = false;
+                        game.guild_window.menu = guild::MENU_UNKNOWN;
                     } else if game.guild.as_ref().is_none_or(|ours| ours.id != guild) {
                         game.guild = Some(guild::Guild { id: guild, ..Default::default() });
                     }
@@ -2341,6 +2343,7 @@ impl App {
                     if gone {
                         game.guild = None;
                         game.guild_window.frame.open = false;
+                        game.guild_window.menu = guild::MENU_UNKNOWN;
                     }
                     game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), guild_companion::YELLOW);
                 }
@@ -2358,6 +2361,7 @@ impl App {
                 if us {
                     game.guild = None;
                     game.guild_window.frame.open = false;
+                    game.guild_window.menu = guild::MENU_UNKNOWN;
                 } else if let Some(guild) = &mut game.guild {
                     guild.members.retain(|member| member.character != character);
                 }

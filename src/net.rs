@@ -1332,6 +1332,9 @@ const ZC_DEL_QUEST: u16 = 0x02B4;
 const ZC_ACTIVE_QUEST: u16 = 0x02B7;
 const CZ_ACTIVE_QUEST: u16 = 0x02B6;
 const CZ_REQ_GUILD_MENU: u16 = 0x014F;
+/// Which guild window tabs the player may open (bits by tab).
+const CZ_REQ_GUILD_MENUINTERFACE: u16 = 0x014D;
+const ZC_ACK_GUILD_MENUINTERFACE: u16 = 0x014E;
 const CZ_REQ_LEAVE_GUILD: u16 = 0x0159;
 const CZ_REG_CHANGE_GUILD_POSITIONINFO: u16 = 0x0161;
 const CZ_GUILD_NOTICE: u16 = 0x016E;

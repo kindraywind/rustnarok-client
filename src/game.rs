@@ -1338,9 +1338,24 @@ impl Game {
         self.effects.play(gpu, grf, table, effect, effects::Target::Ground, at, Instant::now());
     }
 
+    /// Alt+G and the menu's guild button: the guild window shut, or open (on its last tab, at its last place) with its
+    /// pages asked for.
+    pub(crate) fn toggle_guild_window(&mut self) {
+        if self.guild_window.frame.open {
+            self.guild_window.frame.open = false;
+            return;
+        }
+        self.guild_window.open(screen());
+        self.raise(Panel::Guild);
+        self.ask_guild_pages();
+    }
+
     /// The guild window's pages: the guild's info and its members, and the open tab's (positions, skills, the expel
-    /// list; the notice comes by itself).
+    /// list; the notice comes by itself). Which tabs open is asked for first, until the server has said.
     pub(crate) fn ask_guild_pages(&mut self) {
+        if self.guild.is_some() && self.guild_window.menu == guild::MENU_UNKNOWN {
+            let _ = self.session.guild_menu();
+        }
         if self.guild.is_some() {
             let tab = self.guild_window.tab as u32;
             for page in [0, 1].into_iter().chain((2..=4).contains(&tab).then_some(tab)) {
