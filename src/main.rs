@@ -30,6 +30,7 @@
 //! `RUSTNAROK_CLIENT_FRIEND=accept` (befriend whoever asks), `RUSTNAROK_CLIENT_GUILD=accept,window` (join the first guild that invites, open the guild window),
 //! `RUSTNAROK_CLIENT_PARTY=accept,window,friends` (join the first party that invites, open the party window),
 //! `RUSTNAROK_CLIENT_WHISPER=<name>|<text>[;...]` (whisper those a second in, through the chat's name box),
+//! `RUSTNAROK_CLIENT_SETTINGS=<folder>` (keep the settings in that folder instead of the user's),
 //! `RUSTNAROK_CLIENT_CONTROL=<socket>` (take commands from a test driver on that Unix socket; see control.rs),
 //! `RUSTNAROK_CLIENT_CLICKS=[r]x,y[>x,y][;...]` (click, or drag, one a second from `RUSTNAROK_CLIENT_CLICKS_AT` seconds in, 4 by
 //! default; `r` for the right button),
@@ -5132,6 +5133,10 @@ pub(crate) fn keeps_windows() -> bool {
 }
 
 pub(crate) fn settings_path(name: &str) -> Option<std::path::PathBuf> {
+    // Dev switch: another folder (a test run's own, so what it saves stays there).
+    if let Some(folder) = std::env::var_os("RUSTNAROK_CLIENT_SETTINGS").filter(|folder| !folder.is_empty()) {
+        return Some(std::path::PathBuf::from(folder).join(name));
+    }
     let home = || Some(std::path::PathBuf::from(std::env::var_os("HOME")?));
     let folder = if cfg!(target_os = "macos") {
         home()?.join("Library/Application Support")

@@ -1,7 +1,8 @@
 {
-  "about": "Favourites tab, lock item drop, compare equips, and a card's picture (issue #319).",
+  "about": "Favourites tab, lock item drop, compare equips, and a card's picture (issue #319). It runs on a settings folder of its own, so the lock and Compare start off and stay out of other runs (issue #404).",
   "account": "",
   "slot": 0,
+  "env": {"RUSTNAROK_CLIENT_SETTINGS": "{fresh}"},
   "steps": [
     {"say": "@warp iz_int01 18 26"},
     {"settle": 1500},

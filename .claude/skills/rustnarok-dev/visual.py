@@ -45,7 +45,9 @@ Two players: "second": {"account": "2", "slot": 0, "env": {...}} starts a second
 "{first}" and "{second}" in any string (dict keys too: {"state": {"guild.members.{second}": 1}}) are the two
 characters' names, so a scenario runs on anyone's server;
 "{repo}" is the repository's absolute path (`@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/merge.txt`), and
-"{scenarios}" the scenarios folder's (`@loadnpc {scenarios}/battleground-team.txt`).
+"{scenarios}" the scenarios folder's (`@loadnpc {scenarios}/battleground-team.txt`). In a client's "env", "{fresh}" is
+a new empty folder for that launch: "env": {"RUSTNAROK_CLIENT_SETTINGS": "{fresh}"} starts it on default settings and
+keeps what it saves (the inventory's drop lock, chat tabs...) away from every other run.
 Each scenario starts a fresh client; the clock is paused for every shot so frames repeat.
 Everything lands under docs/personal/visual/<date>/<HHMMSS>/ (gitignored): game images never go in the repository.
 """
@@ -53,6 +55,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -96,8 +99,12 @@ def launch_one(binary, player):
     """One client as `player` ({"account", "slot", "start", "env"}), on the client `drive.use` points at."""
     at_select = player.get("start") == "char_select"
     slot = "select" if at_select else str(player.get("slot", "0"))
+    env = player.get("env", {})
+    if any("{fresh}" in value for value in env.values()):
+        fresh = tempfile.mkdtemp(prefix="rustnarok-settings-")
+        env = {key: value.replace("{fresh}", fresh) for key, value in env.items()}
     for attempt in range(6):
-        drive.launch(player.get("account", ""), slot, binary=binary, env_extra=player.get("env", {}), quiet=True)
+        drive.launch(player.get("account", ""), slot, binary=binary, env_extra=env, quiet=True)
         try:
             return wait_for_char_select() if at_select else wait_for_game()
         except RuntimeError:
