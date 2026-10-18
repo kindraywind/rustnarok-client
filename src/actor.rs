@@ -103,7 +103,35 @@ pub const OPTION_WUG: u32 = 0x10_0000;
 pub const OPTION_WUGRIDER: u32 = WOLF_RIDING;
 /// All of them: the only option bits a look keeps.
 /// rathena's OPTION_HIDE, OPTION_CLOAK and OPTION_CHASEWALK: the unit is out of sight.
-pub const UNSEEN_OPTIONS: u32 = 0x2 | 0x4 | 0x4000;
+pub const UNSEEN_OPTIONS: u32 = OPTION_HIDE | OPTION_CLOAK | OPTION_CHASEWALK;
+/// rathena's option bits that keep a unit out of sight: Hiding, Cloaking, a GM's @hide, Chase Walk.
+pub const OPTION_HIDE: u32 = 0x2;
+pub const OPTION_CLOAK: u32 = 0x4;
+pub const OPTION_INVISIBLE: u32 = 0x40;
+pub const OPTION_CHASEWALK: u32 = 0x4000;
+const HIDDEN_OPTIONS: u32 = UNSEEN_OPTIONS | OPTION_INVISIBLE;
+
+/// How much of a unit shows.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Seen {
+    Whole,
+    /// Its shadow only: our own character in Hiding.
+    Shadow,
+    Nothing,
+}
+
+/// What shows of a unit with these option bits: others hidden in any way not at all; our own character in Hiding
+/// as a shadow, cloaked, chase-walking or GM-hidden not at all.
+// ponytail: our own Chase Walk is taken as Cloaking (nothing); the issue names Hide and Cloak.
+pub fn seen(option: u32, own: bool) -> Seen {
+    if option & HIDDEN_OPTIONS == 0 {
+        Seen::Whole
+    } else if own && option & (OPTION_CLOAK | OPTION_INVISIBLE | OPTION_CHASEWALK) == 0 {
+        Seen::Shadow
+    } else {
+        Seen::Nothing
+    }
+}
 pub const BODY_OPTIONS: u32 =
     WEDDING | UNION | XMAS | SUMMER | HANBOK | OKTOBERFEST | RIDING | DRAGONS[0] | DRAGONS[1] | DRAGONS[2] | DRAGONS[3] | DRAGONS[4] | WOLF_RIDING | MADOGEAR;
 
@@ -1168,6 +1196,8 @@ pub struct Actor {
     pub dead: bool,
     /// Hiding, cloaking or chase-walking (the unit's option has UNSEEN_OPTIONS).
     pub cloaked: bool,
+    /// The option bits that hide it (`seen`).
+    pub hide_option: u32,
     /// rathena's opt1 and opt2: the body and health state that colour the sprite.
     pub body_state: u16,
     pub health_state: u16,
@@ -1211,6 +1241,7 @@ impl Actor {
             remove_at: None,
             dead: false,
             cloaked: false,
+            hide_option: 0,
             body_state: 0,
             health_state: 0,
             cart: None,
@@ -1364,6 +1395,20 @@ impl Actor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hides_by_option_bits() {
+        assert_eq!(seen(0, false), Seen::Whole);
+        for bit in [OPTION_HIDE, OPTION_CLOAK, OPTION_INVISIBLE, OPTION_CHASEWALK] {
+            assert_eq!(seen(bit, false), Seen::Nothing, "others with {bit:#x}");
+        }
+        assert_eq!(seen(OPTION_HIDE, true), Seen::Shadow);
+        assert_eq!(
+            (seen(OPTION_CLOAK, true), seen(OPTION_INVISIBLE, true), seen(OPTION_HIDE | OPTION_CLOAK, true)),
+            (Seen::Nothing, Seen::Nothing, Seen::Nothing)
+        );
+        assert_eq!(seen(0x8, true), Seen::Whole, "other option bits (a cart) don't hide");
+    }
 
     #[test]
     fn looks_for_sprites_by_kind() {

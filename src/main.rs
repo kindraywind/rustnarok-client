@@ -8449,6 +8449,7 @@ impl App {
             actor.look = (unit.kind == PLAYER).then(|| unit_look(unit));
             actor.hidden = HIDDEN_JOBS.contains(&unit.job) || unit.job == WARP_JOB;
             actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
+            actor.hide_option = unit.option;
             actor.head_direction = unit.head_direction;
             actor.guild = unit.guild;
             actor
@@ -10767,6 +10768,7 @@ impl App {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor {
                     actor.cloaked = option & actor::UNSEEN_OPTIONS != 0;
+                    actor.hide_option = option;
                     actor.body_state = body;
                     actor.health_state = health;
                 }
@@ -11270,7 +11272,9 @@ impl App {
         let mut carts = Vec::new();
         let mut companion_draws: Vec<CompanionDraw> = Vec::new();
         let cart_timing = |action: usize, timing: Timing| if action == actor::WALK { timing } else { Timing::Loop(0.0) };
-        if let Some(cart) = &mut game.player.cart {
+        if let Some(cart) = &mut game.player.cart
+            && actor::seen(game.player.hide_option, true) == actor::Seen::Whole
+        {
             carts.push((
                 Owner::Player,
                 behind(player_feet, direction),
@@ -11279,11 +11283,18 @@ impl App {
         }
         let player_tint = actor::status_tint(game.player.body_state, game.player.health_state);
         let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
-        if let Some(sprites) = &mut game.player.sprites {
-            sprites.set_tint(player_tint);
-            let mut placed = sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing);
-            scale_frame(&mut placed, player_scale);
-            frames.push((Owner::Player, player_feet, placed));
+        // Our own character in Hiding shows its shadow alone (a frame with no sprite); cloaked or GM-hidden, nothing.
+        match actor::seen(game.player.hide_option, true) {
+            actor::Seen::Whole => {
+                if let Some(sprites) = &mut game.player.sprites {
+                    sprites.set_tint(player_tint);
+                    let mut placed = sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing);
+                    scale_frame(&mut placed, player_scale);
+                    frames.push((Owner::Player, player_feet, placed));
+                }
+            }
+            actor::Seen::Shadow => frames.push((Owner::Player, player_feet, Vec::new())),
+            actor::Seen::Nothing => {}
         }
         if !game.player.cloaked {
             if let Some(falcon) = &mut game.player.falcon {
@@ -11327,6 +11338,10 @@ impl App {
             let walking = actor.moving();
             let cell = actor.update(now);
             actor.step_companions(actor::world_xz(cell), walking);
+            // Hidden players aren't drawn at all: no sprite, shadow, name or bar, nothing to click.
+            if actor::seen(actor.hide_option, false) != actor::Seen::Whole {
+                continue;
+            }
             let feet = game.world.cell_position(cell);
             feet_of.insert(id, feet);
             if let Some(sound) = actor.sound_now(now) {
@@ -11388,6 +11403,7 @@ impl App {
         game.hit_boxes = frames
             .iter()
             .filter(|(owner, ..)| !matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.remove_at.is_some() || actor.hidden)))
+            .filter(|(_, _, placements)| !placements.is_empty())
             .filter_map(|(owner, feet, placements)| {
                 let (mut low, mut high) = ([f32::MAX; 2], [f32::MIN; 2]);
                 for (_, position, size) in placements {

@@ -1,0 +1,187 @@
+{
+  "about": "Hidden players (issue #198): the second becomes a Thief (raised for the SP) and uses Hiding: it disappears for the first (no sprite, shadow, name or unit in the state) while its own screen shows only its shadow; Hiding again brings it back. Ends a Novice.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "as": "second",
+      "say": "@warp prt_fild08 172 360"
+    },
+    {
+      "as": "second",
+      "settle": 1500
+    },
+    {
+      "as": "second",
+      "say": "@job 6"
+    },
+    {
+      "as": "second",
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@allskill"
+    },
+    {
+      "as": "second",
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@blvl 49"
+    },
+    {
+      "as": "second",
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@heal"
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "units.0.name": "{second}"
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "before-hiding",
+      "crop": [
+        412,
+        284,
+        200,
+        200
+      ],
+      "threshold": 5
+    },
+    {
+      "as": "second",
+      "say": "@useskill 51 1 self"
+    },
+    {
+      "as": "second",
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state": {
+          "units.0.kind": "npc"
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "hidden-for-others",
+      "crop": [
+        412,
+        284,
+        200,
+        200
+      ],
+      "threshold": 5
+    },
+    {
+      "as": "second",
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "as": "second",
+      "shot": "hidden-own-shadow",
+      "crop": [
+        412,
+        284,
+        200,
+        200
+      ],
+      "threshold": 5
+    },
+    {
+      "as": "second",
+      "say": "@useskill 51 1 self"
+    },
+    {
+      "as": "second",
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state": {
+          "units.0.name": "{second}"
+        }
+      }
+    },
+    {
+      "as": "second",
+      "say": "@blvl -49"
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "say": "@skreset"
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "say": "@job 0"
+    },
+    {
+      "as": "second",
+      "wait": 500
+    }
+  ]
+}
