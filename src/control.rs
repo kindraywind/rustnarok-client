@@ -1244,6 +1244,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     }));
     // The partner's name, as the last I Miss You told it.
     state["partner"] = json!(game.partner);
+    // The pickup popup's line while it shows.
+    state["pickup_popup"] = json!(game.pickup_popup.as_ref().map(|popup| popup.text.clone()));
     orbs(&mut state["player"], None);
     state
 }
