@@ -1,0 +1,195 @@
+{
+  "about": "Bars under the player's own summons (issue #327): an Alchemist's homunculus has HP, SP and hunger (60×13), a hatched pet hunger alone (60×5), a mercenary HP and SP (60×9); a 4th job's own bar gets a third row (60×13; at base level 99 its maximum AP is 0, so the third row stays empty). RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's homunculus and mercenary (see homunculus.json, mercenary.json) and set its pet_id to 0.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp morocc 160 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "say": "@job 18"
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@makehomun 6001"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0ba4",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@homhungry 24"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "bars.homunculus.box.2": 60,
+          "bars.homunculus.box.3": 13,
+          "bars.homunculus.fills.0": 58,
+          "bars.homunculus.fills.2": 13,
+          "bars.player.box.3": 9
+        }
+      }
+    },
+    {
+      "shot": "summon-bars-homunculus",
+      "crop": [
+        412,
+        334,
+        200,
+        200
+      ],
+      "threshold": 20
+    },
+    {
+      "say": "@makeegg 1002"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 12153"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "say": "@hatch"
+    },
+    {
+      "wait_for": {
+        "event": "PetEggs",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "pick_item": 9001
+      },
+      "count": 2
+    },
+    {
+      "wait_for": {
+        "event": "PetInfo",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@pethungry 30"
+    },
+    {
+      "wait_for": {
+        "event": "PetInfo",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "inventory_item": 12153
+      },
+      "count": 2
+    },
+    {
+      "wait_for": {
+        "packet": "0x029b",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "bars.pet.box.3": 5,
+          "bars.pet.fills.0": 17,
+          "bars.mercenary.box.3": 9,
+          "bars.mercenary.fills.0": 58,
+          "bars.homunculus.box.3": 13
+        }
+      }
+    },
+    {
+      "shot": "summon-bars",
+      "crop": [
+        312,
+        234,
+        400,
+        300
+      ],
+      "threshold": 20
+    },
+    {
+      "say": "@job 4252"
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "bars.player.box.3": 13
+        }
+      }
+    },
+    {
+      "shot": "summon-bars-4th-job",
+      "crop": [
+        412,
+        334,
+        200,
+        150
+      ],
+      "threshold": 20
+    },
+    {
+      "say": "@job 0"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

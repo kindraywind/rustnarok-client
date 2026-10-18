@@ -933,6 +933,8 @@ const ZC_MER_INIT: u16 = 0x029B;
 const ZC_MER_SKILLINFO_LIST: u16 = 0x029D;
 const ZC_MER_PAR_CHANGE: u16 = 0x02A2;
 const CZ_MER_COMMAND: u16 = 0x029F;
+const ZC_EL_INIT: u16 = 0x081D;
+const ZC_EL_PAR_CHANGE: u16 = 0x081E;
 const CZ_REQUEST_MOVENPC: u16 = 0x0232;
 const CZ_REQUEST_ACTNPC: u16 = 0x0233;
 const CZ_REQUEST_MOVETOOWNER: u16 = 0x0234;
@@ -1247,6 +1249,9 @@ pub const STATUS_SKILL_POINT: u16 = 12;
 /// Tenths of a weight unit.
 pub const STATUS_WEIGHT: u16 = 24;
 pub const STATUS_MAX_WEIGHT: u16 = 25;
+/// A 4th job's AP and its maximum.
+pub const STATUS_AP: u16 = 232;
+pub const STATUS_MAX_AP: u16 = 233;
 /// Status points left; Str to Luk (13-18) and the points each needs to go up (32-37).
 pub const STATUS_POINTS: u16 = 9;
 pub const STATUS_STR: u16 = 13;
@@ -2284,6 +2289,16 @@ pub enum MapEvent {
     MercenarySkills(Vec<Skill>),
     /// One of the mercenary's values changed (a MERCENARY_* kind).
     MercenaryChanged {
+        kind: u16,
+        value: u32,
+    },
+    /// The player's elemental, summoned or on a map load: its unit, HP, max HP, SP and max SP.
+    ElementalInfo {
+        id: u32,
+        values: [u32; 4],
+    },
+    /// One of the elemental's values changed: MERCENARY_HP to MERCENARY_MAX_SP.
+    ElementalChanged {
         kind: u16,
         value: u32,
     },
@@ -5786,6 +5801,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // ZC_SKILLINFO_LIST's entries.
         ZC_MER_SKILLINFO_LIST => MapEvent::MercenarySkills(packet[4..].chunks_exact(SKILL_SIZE).map(decode_skill).collect()),
         ZC_MER_PAR_CHANGE => MapEvent::MercenaryChanged { kind: u16_at(2), value: u32_at(4) },
+        ZC_EL_INIT => MapEvent::ElementalInfo { id: u32_at(2), values: [u32_at(6), u32_at(10), u32_at(14), u32_at(18)] },
+        ZC_EL_PAR_CHANGE => MapEvent::ElementalChanged { kind: u16_at(2), value: u32_at(4) },
         ZC_CHANGESTATE_MER => MapEvent::HomunculusState { state: packet[3], id: u32_at(4), value: u32_at(8) },
         // Name, flags, level, hunger, intimacy, the eight values, HP, SP, EXP, skill points, range.
         ZC_PROPERTY_HOMUN => MapEvent::HomunculusInfo(Homunculus {
@@ -7398,6 +7415,16 @@ mod tests {
         for (header, length) in [(CZ_MER_COMMAND, 3), (CZ_REQUEST_MOVENPC, 9), (CZ_REQUEST_ACTNPC, 11), (CZ_REQUEST_MOVETOOWNER, 6), (ZC_MER_PAR_CHANGE, 8)] {
             assert_eq!(packet_length(header), Some(length), "{header:#06x}");
         }
+    }
+
+    #[test]
+    fn decodes_elementals() {
+        // clif_elemental_info, then clif_elemental_updatestatus with its SP.
+        let init = [&ZC_EL_INIT.to_le_bytes()[..], &[7u32, 300, 400, 50, 60].map(u32::to_le_bytes).concat()].concat();
+        let Some(MapEvent::ElementalInfo { id: 7, values: [300, 400, 50, 60] }) = decode_map_packet(&init) else { panic!() };
+        let change = [&ZC_EL_PAR_CHANGE.to_le_bytes()[..], &MERCENARY_SP.to_le_bytes(), &10u32.to_le_bytes()].concat();
+        let Some(MapEvent::ElementalChanged { kind: MERCENARY_SP, value: 10 }) = decode_map_packet(&change) else { panic!() };
+        assert_eq!([init.len(), change.len()].map(|length| Some(length as i32)), [ZC_EL_INIT, ZC_EL_PAR_CHANGE].map(packet_length));
     }
 
     #[test]
