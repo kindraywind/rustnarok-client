@@ -143,6 +143,43 @@ pub fn encode_member_move(account: u32, character: u32, position: u32) -> Vec<u8
     packet
 }
 
+/// A battleground's name as rathena keeps it (`name.resize(NAME_LENGTH)`): 23 bytes and a NUL in 24.
+fn queue_name_field(name: &str) -> Vec<u8> {
+    let mut field = encoding_rs::EUC_KR.encode(name).0.into_owned();
+    field.truncate(NAME_LENGTH - 1);
+    field.resize(NAME_LENGTH, 0);
+    field
+}
+
+/// The name as rathena's replies carry it, to match them against the list.
+pub fn queue_name(name: &str) -> String {
+    c_string(&queue_name_field(name))
+}
+
+/// CZ_REQ_ENTRY_QUEUE_APPLY: how, and the battleground.
+pub fn encode_queue_apply(kind: u16, name: &str) -> Vec<u8> {
+    let mut packet = CZ_REQ_ENTRY_QUEUE_APPLY.to_le_bytes().to_vec();
+    packet.extend_from_slice(&kind.to_le_bytes());
+    packet.extend_from_slice(&queue_name_field(name));
+    packet
+}
+
+/// CZ_REQ_ENTRY_QUEUE_CANCEL and CZ_REQ_ENTRY_QUEUE_RANKING: the battleground's name.
+fn encode_queue_name(command: u16, name: &str) -> Vec<u8> {
+    let mut packet = command.to_le_bytes().to_vec();
+    packet.extend_from_slice(&queue_name_field(name));
+    packet
+}
+
+/// CZ_REPLY_LOBBY_ADMISSION: 1 enters, 2 declines; the names (rathena reads only the answer).
+pub fn encode_lobby_reply(accept: bool, name: &str) -> Vec<u8> {
+    let mut packet = CZ_REPLY_LOBBY_ADMISSION.to_le_bytes().to_vec();
+    packet.push(if accept { 1 } else { 2 });
+    packet.extend_from_slice(&queue_name_field(name));
+    packet.extend_from_slice(&queue_name_field(name));
+    packet
+}
+
 /// CZ_BATTLEFIELD_CHAT: the line as the guild chat writes it, "Name : message" and a NUL.
 pub fn encode_battle_chat(name: &str, message: &str) -> Vec<u8> {
     let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
@@ -740,6 +777,20 @@ const ZC_BATTLEFIELD_NOTIFY_CAMPINFO: u16 = 0x02DD;
 const ZC_BATTLEFIELD_NOTIFY_POINT: u16 = 0x02DE;
 const ZC_BATTLEFIELD_CHAT: u16 = 0x02DC;
 const CZ_BATTLEFIELD_CHAT: u16 = 0x02DB;
+const CZ_REQ_ENTRY_QUEUE_APPLY: u16 = 0x08D7;
+const ZC_ACK_ENTRY_QUEUE_APPLY: u16 = 0x08D8;
+const ZC_NOTIFY_ENTRY_QUEUE_APPLY: u16 = 0x08D9;
+const CZ_REQ_ENTRY_QUEUE_CANCEL: u16 = 0x08DA;
+const ZC_ACK_ENTRY_QUEUE_CANCEL: u16 = 0x08DB;
+const ZC_NOTIFY_LOBBY_ADMISSION: u16 = 0x08DF;
+const CZ_REPLY_LOBBY_ADMISSION: u16 = 0x08E0;
+const ZC_REPLY_ACK_LOBBY_ADMISSION: u16 = 0x08E1;
+const CZ_REQ_ENTRY_QUEUE_RANKING: u16 = 0x090A;
+const ZC_ENTRY_QUEUE_INIT: u16 = 0x090E;
+/// How one applies to a battleground's queue: alone, as a party, as a guild.
+pub const QUEUE_ALONE: u16 = 1;
+pub const QUEUE_PARTY: u16 = 2;
+pub const QUEUE_GUILD: u16 = 4;
 const ZC_DRESSROOM_OPEN: u16 = 0x0A02;
 const CZ_REQ_RANKING: u16 = 0x097C;
 const ZC_UPDATE_RANKING_POINT: u16 = 0x097E;
@@ -1883,6 +1934,32 @@ pub enum MapEvent {
         account: u32,
         camp: u16,
     },
+    /// Applying to a battleground's queue, answered (ZC_ACK_ENTRY_QUEUE_APPLY): rathena's `e_bg_queue_apply_ack`.
+    BattleQueue {
+        result: u8,
+        name: String,
+    },
+    /// How many are queued for it (ZC_NOTIFY_ENTRY_QUEUE_APPLY).
+    QueueNumber {
+        name: String,
+        number: u32,
+    },
+    /// Leaving the queue, answered (ZC_ACK_ENTRY_QUEUE_CANCEL): 1 left, 0 wasn't in it.
+    QueueLeft {
+        result: u8,
+        name: String,
+    },
+    /// Both teams are full: enter? (ZC_NOTIFY_LOBBY_ADMISSION)
+    QueueReady {
+        name: String,
+    },
+    /// Entering, answered (ZC_REPLY_ACK_LOBBY_ADMISSION).
+    QueueAccepted {
+        result: u8,
+        name: String,
+    },
+    /// Forget the queue: declined, expired, or gone in (ZC_ENTRY_QUEUE_INIT).
+    QueueReset,
     /// Camp A's points and camp B's (ZC_BATTLEFIELD_NOTIFY_POINT).
     BattleScore([u16; 2]),
     /// A line of the team's chat, whole ("Name : hello"), and who said it (account 0: the server).
@@ -3994,6 +4071,25 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Applies to a battleground's queue (`QUEUE_ALONE`, `QUEUE_PARTY`, `QUEUE_GUILD`).
+    pub fn apply_to_queue(&mut self, kind: u16, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_queue_apply(kind, name))
+    }
+
+    pub fn leave_queue(&mut self, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_queue_name(CZ_REQ_ENTRY_QUEUE_CANCEL, name))
+    }
+
+    /// How many are queued for it (answered with ZC_NOTIFY_ENTRY_QUEUE_APPLY).
+    pub fn ask_queue_number(&mut self, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_queue_name(CZ_REQ_ENTRY_QUEUE_RANKING, name))
+    }
+
+    /// Enters the battle, or not.
+    pub fn answer_lobby(&mut self, accept: bool, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_lobby_reply(accept, name))
+    }
+
     /// Says something to the battleground team.
     pub fn battle_chat(&mut self, name: &str, message: &str) -> io::Result<()> {
         self.stream.write_all(&encode_battle_chat(name, message))
@@ -5250,6 +5346,12 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         ZC_BATTLEFIELD_NOTIFY_CAMPINFO => MapEvent::BattleCamp { account: u32_at(2), camp: u16_at(30) },
         ZC_BATTLEFIELD_NOTIFY_POINT => MapEvent::BattleScore([u16_at(2), u16_at(4)]),
+        ZC_ACK_ENTRY_QUEUE_APPLY => MapEvent::BattleQueue { result: packet[2], name: c_string(&packet[3..27]) },
+        ZC_NOTIFY_ENTRY_QUEUE_APPLY => MapEvent::QueueNumber { name: c_string(&packet[2..26]), number: u32_at(26) },
+        ZC_ACK_ENTRY_QUEUE_CANCEL => MapEvent::QueueLeft { result: packet[2], name: c_string(&packet[3..27]) },
+        ZC_NOTIFY_LOBBY_ADMISSION => MapEvent::QueueReady { name: c_string(&packet[2..26]) },
+        ZC_REPLY_ACK_LOBBY_ADMISSION => MapEvent::QueueAccepted { result: packet[2], name: c_string(&packet[3..27]) },
+        ZC_ENTRY_QUEUE_INIT => MapEvent::QueueReset,
         ZC_BATTLEFIELD_CHAT => MapEvent::BattleChat { account: u32_at(4), text: c_string(packet.get(32..).unwrap_or_default()) },
         // The view at 2 rathena always sends 0 and calls ignored.
         ZC_DRESSROOM_OPEN => MapEvent::DressRoom,
@@ -7572,6 +7674,49 @@ mod tests {
         assert_eq!(&request[..20], &[0x61, 0x01, 44, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0]);
         assert_eq!(&request[20..], &name_field("Officer")[..]);
         assert_eq!(encode_member_move(7, 8, 19), [0x55, 0x01, 16, 0, 7, 0, 0, 0, 8, 0, 0, 0, 19, 0, 0, 0]);
+    }
+
+    #[test]
+    fn decodes_the_battleground_queue() {
+        let named = |command: u16, result: Option<u8>, name: &str, tail: &[u8]| {
+            let mut packet = command.to_le_bytes().to_vec();
+            packet.extend(result);
+            packet.extend_from_slice(&name_field(name));
+            packet.extend_from_slice(tail);
+            packet
+        };
+        let kvm = "KVM (Level 80 and up)";
+        assert!(
+            matches!(decode_map_packet(&named(ZC_ACK_ENTRY_QUEUE_APPLY, Some(1), kvm, &[])), Some(MapEvent::BattleQueue { result: 1, name }) if name == kvm)
+        );
+        assert!(matches!(
+            decode_map_packet(&named(ZC_NOTIFY_ENTRY_QUEUE_APPLY, None, kvm, &3u32.to_le_bytes())),
+            Some(MapEvent::QueueNumber { name, number: 3 }) if name == kvm
+        ));
+        assert!(matches!(decode_map_packet(&named(ZC_ACK_ENTRY_QUEUE_CANCEL, Some(1), kvm, &[])), Some(MapEvent::QueueLeft { result: 1, .. })));
+        assert!(
+            matches!(decode_map_packet(&named(ZC_NOTIFY_LOBBY_ADMISSION, None, kvm, &name_field(kvm))), Some(MapEvent::QueueReady { name }) if name == kvm)
+        );
+        assert!(matches!(
+            decode_map_packet(&named(ZC_REPLY_ACK_LOBBY_ADMISSION, Some(1), "bat_c01", &name_field("bat_c01"))),
+            Some(MapEvent::QueueAccepted { result: 1, name }) if name == "bat_c01"
+        ));
+        assert!(matches!(decode_map_packet(&[0x0E, 0x09]), Some(MapEvent::QueueReset)));
+        for (command, length) in
+            [(ZC_ACK_ENTRY_QUEUE_APPLY, 27), (ZC_NOTIFY_ENTRY_QUEUE_APPLY, 30), (ZC_NOTIFY_LOBBY_ADMISSION, 50), (ZC_REPLY_ACK_LOBBY_ADMISSION, 51)]
+        {
+            assert_eq!(packet_length(command), Some(length));
+        }
+
+        // A 24-character name keeps 23 bytes and a NUL, as rathena cuts it.
+        let apply = encode_queue_apply(QUEUE_ALONE, "KVM (Level 59 and below)");
+        assert_eq!((apply.len(), &apply[..4]), (28, &[0xD7, 0x08, 1, 0][..]));
+        assert_eq!(&apply[4..], &name_field("KVM (Level 59 and below")[..]);
+        assert_eq!(queue_name("KVM (Level 59 and below)"), "KVM (Level 59 and below");
+        assert_eq!(encode_queue_name(CZ_REQ_ENTRY_QUEUE_CANCEL, kvm)[..2], [0xDA, 0x08]);
+        assert_eq!(encode_queue_name(CZ_REQ_ENTRY_QUEUE_RANKING, kvm).len(), 26);
+        let reply = encode_lobby_reply(false, kvm);
+        assert_eq!((reply.len(), reply[2]), (51, 2));
     }
 
     #[test]

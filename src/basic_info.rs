@@ -173,6 +173,14 @@ impl BasicInfo {
         None
     }
 
+    /// The strip that opens and closes the menu (for the test driver).
+    pub fn toggle_box(&self) -> Option<[f32; 4]> {
+        (self.frame.open && !self.frame.minimized).then(|| {
+            let [x, y] = self.frame.at([0.0, MENU_TOGGLE_TOP]);
+            [x, y, WIDTH, MENU_TOP - MENU_TOGGLE_TOP]
+        })
+    }
+
     pub fn menu_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
         if !self.frame.open || !self.menu_open || self.frame.minimized {
             return Vec::new();
