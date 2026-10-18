@@ -15,7 +15,7 @@
 //! - `move` `{x, y}`, `click` `{x, y, button?: "left"|"right", mods?: "Alt+Shift", count?}`, `drag` `{from: [x, y],
 //!   to: [x, y], button?, mods?}`: the pointer and buttons, through the same code as the mouse.
 //! - `key` `{key, repeat?, hold?}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End",
-//!   "PageUp", "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12", "PrintScreen" or one
+//!   "PageUp", "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12", "PrintScreen", "ScrollLock" or one
 //!   character, after modifiers like "Alt+" or "Ctrl+". `repeat` is an auto-repeat; shortcuts ignore it. `hold` is
 //!   milliseconds to keep the key down, auto-repeating after the first press.
 //! - `type` `{text}`: into the focused field; non-ASCII runs (Hangul) come in as the input method's commit.
@@ -197,6 +197,7 @@ pub struct Request {
 }
 
 /// What `App::key` reads of a key press: winit's `KeyEvent` can't be made outside winit, so commands make these.
+#[derive(Clone)]
 pub struct KeyPress {
     pub state: ElementState,
     pub logical_key: Key,
@@ -512,7 +513,12 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             key.repeat = repeat;
             hold(app, mods, |app| {
                 app.key(&key);
-                let Some(ms) = held_ms.filter(|ms| *ms > 0) else { return };
+                // Let go as a keyboard does, before the modifiers (Print Screen acts on its release).
+                let release = KeyPress { state: ElementState::Released, repeat: false, ..key.clone() };
+                let Some(ms) = held_ms.filter(|ms| *ms > 0) else {
+                    app.key(&release);
+                    return;
+                };
                 // Auto-repeats while the key stays down. Shortcuts fire on the first press only.
                 key.repeat = true;
                 let end = Instant::now() + Duration::from_millis(ms);
@@ -520,6 +526,7 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
                     std::thread::sleep(Duration::from_millis(50));
                     app.key(&key);
                 }
+                app.key(&release);
             });
             Ok(Value::Null)
         }
@@ -630,6 +637,7 @@ fn parse_key(name: &str) -> Result<(ModifiersState, KeyPress), String> {
         "pageup" => (NamedKey::PageUp, KeyCode::PageUp),
         "pagedown" => (NamedKey::PageDown, KeyCode::PageDown),
         "printscreen" | "print" | "snapshot" => (NamedKey::PrintScreen, KeyCode::PrintScreen),
+        "scrolllock" => (NamedKey::ScrollLock, KeyCode::ScrollLock),
         "backspace" => (NamedKey::Backspace, KeyCode::Backspace),
         "space" => (NamedKey::Space, KeyCode::Space),
         "up" | "arrowup" => (NamedKey::ArrowUp, KeyCode::ArrowUp),
