@@ -1,5 +1,5 @@
 {
-  "about": "The camera keeps the player's view (issue #176): zoomed out to 400 units on one field, it stays at 400 on another field; an indoor map has its own view (300 by default), and going back outdoors brings the 400 back. A double Ctrl+right-click puts it back to 300 at the end. A client the harness drives keeps its view to itself (nothing is written to the player's settings).",
+  "about": "The camera keeps the player's view (issue #176): zoomed out to 400 units on one field, it stays at 400 on another field; an indoor map (prt_in; iz_int01 isn't in the client's indoor table) has its own view (300 by default), and going back outdoors brings the 400 back. A double Ctrl+right-click puts it back to 300 at the end. A client the harness drives keeps its view to itself (nothing is written to the player's settings).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -11,8 +11,8 @@
     {"expect": {"state": {"camera.distance": 400}}},
     {"move": [1000, 750]},
     {"shot": "kept-zoom", "threshold": 20},
-    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
-    {"expect": {"state": {"camera.distance": 300}}},
+    {"say": "@warp prt_in"}, {"settle": 1500},
+    {"expect": {"state": {"camera.indoor": true, "camera.distance": 300}}},
     {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
     {"expect": {"state": {"camera.distance": 400}}},
     {"click": [700, 400], "button": "right", "mods": "Ctrl", "count": 2}, {"wait": 300},

@@ -1167,7 +1167,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "camera": json!({
             "yaw": game.camera_goal.yaw.rem_euclid(360.0).round(),
             "pitch": game.camera_goal.pitch.round(),
-            "distance": (game.camera_goal.distance() * 10.0).round() / 10.0,
+            "distance": (f64::from(game.camera_goal.distance()) * 10.0).round() / 10.0,
+            "indoor": game.camera_goal.indoor,
         }),
         // What the mouse cursor shows.
         "cursor": format!("{:?}", app.cursor_look.kind()),
