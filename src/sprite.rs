@@ -175,9 +175,14 @@ pub struct Layer {
     pub mirror: bool,
     pub color: [u8; 4],
     pub scale: [f32; 2],
+    /// Degrees, turning the image clockwise about its middle.
     pub angle: i32,
     /// 0 palette image, 1 RGBA image.
     pub kind: u32,
+    /// The image size the ACT gives itself (version 2.5 on), for centring; older ACTs use the image's.
+    pub size: Option<[i32; 2]>,
+    /// ACTs before 2.0 give the image's top-left, not its middle.
+    pub top_left: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -214,7 +219,8 @@ impl Act {
                     let offset = [reader.i32()?, reader.i32()?];
                     let image = reader.i32()?;
                     let mirror = reader.i32()? != 0;
-                    let mut layer = Layer { offset, image, mirror, color: [255; 4], scale: [1.0; 2], angle: 0, kind: 0 };
+                    let mut layer =
+                        Layer { offset, image, mirror, color: [255; 4], scale: [1.0; 2], angle: 0, kind: 0, size: None, top_left: version < (2, 0) };
                     if version >= (2, 0) {
                         layer.color = reader.take(4)?.try_into().unwrap();
                         let x = reader.f32()?;
@@ -222,7 +228,7 @@ impl Act {
                         layer.angle = reader.i32()?;
                         layer.kind = reader.i32()? as u32;
                         if version >= (2, 5) {
-                            reader.take(8)?; // explicit width and height
+                            layer.size = Some([reader.i32()?, reader.i32()?]);
                         }
                     }
                     layers.push(layer);
@@ -263,9 +269,11 @@ pub struct Placement {
     pub size: [f32; 2],
     /// RGBA tint the layer multiplies its image by (the shadow is half transparent this way).
     pub color: [u8; 4],
+    /// Degrees clockwise about the image's middle.
+    pub angle: i32,
 }
 
-/// Places a frame's layers, shifted by `shift` (used to attach heads to bodies).
+/// Places a frame's layers, shifted by `shift` (used to attach heads to bodies) in the layer's own zoomed pixels.
 pub fn place(spr: &Spr, frame: &Frame, shift: [i32; 2]) -> Vec<Placement> {
     frame
         .layers
@@ -273,19 +281,31 @@ pub fn place(spr: &Spr, frame: &Frame, shift: [i32; 2]) -> Vec<Placement> {
         .filter_map(|layer| {
             let image = usize::try_from(layer.image).ok()?;
             let [width, height] = spr.size(layer.kind, image)?;
-            let size = [width as f32 * layer.scale[0], height as f32 * layer.scale[1]];
-            // Offsets are image centers; the client rounds the top-left to whole pixels.
-            let left = (layer.offset[0] + shift[0]) as f32 - (size[0] / 2.0).floor();
-            let top = (layer.offset[1] + shift[1]) as f32 - (size[1] / 2.0).floor();
+            let [zoom_x, zoom_y] = layer.scale;
+            if zoom_x == 0.0 || zoom_y == 0.0 {
+                return None;
+            }
+            let centring = layer.size.unwrap_or([width as i32, height as i32]);
+            let left = (corner(layer, 0, centring[0], zoom_x) + shift[0] as f32) * zoom_x;
+            let top = (corner(layer, 1, centring[1], zoom_y) + shift[1] as f32) * zoom_y;
+            let size = [width as f32 * zoom_x, height as f32 * zoom_y];
             Some(Placement {
                 kind: layer.kind,
                 image,
                 position: [if layer.mirror { left + size[0] } else { left }, top],
                 size: [if layer.mirror { -size[0] } else { size[0] }, size[1]],
                 color: layer.color,
+                angle: layer.angle,
             })
         })
         .collect()
+}
+
+/// A layer's image corner along one axis, in its zoomed pixels: the layer point less half the image, the odd pixel
+/// going to the left or top, truncated toward zero.
+fn corner(layer: &Layer, axis: usize, size: i32, zoom: f32) -> f32 {
+    let offset = layer.offset[axis] as f32;
+    if layer.top_left { offset } else { ((offset - ((size + 1) / 2) as f32 * zoom) / zoom).trunc() }
 }
 
 /// The shift that puts a head frame's anchor on the body frame's anchor.
@@ -326,6 +346,43 @@ mod tests {
         let shift = head_shift(standing, &head_act.actions[0][0]);
         let head_placements = place(&head, &head_act.actions[0][0], shift);
         assert!(head_placements.iter().all(|placement| placement.position[1] < placements[0].position[1] + 10.0));
+    }
+
+    /// A sprite with one palette image per size, for placing layers without the game data.
+    fn images(sizes: &[[u16; 2]]) -> Spr {
+        let indexed = sizes.iter().map(|&[width, height]| IndexedImage { width, height, pixels: vec![0; usize::from(width) * usize::from(height)] }).collect();
+        Spr { indexed, rgba: Vec::new(), palette: [[0; 4]; 256] }
+    }
+
+    fn layer(offset: [i32; 2], image: i32, mirror: bool, scale: [f32; 2]) -> Layer {
+        Layer { offset, image, mirror, color: [255; 4], scale, angle: 0, kind: 0, size: None, top_left: false }
+    }
+
+    #[test]
+    fn centres_layers_with_the_odd_pixel_on_the_left_and_top() {
+        let spr = images(&[[10, 8], [11, 9]]);
+        let frame = |layers: Vec<Layer>| Frame { layers, event: -1, anchors: Vec::new() };
+        let place_one = |layer: Layer, shift: [i32; 2]| place(&spr, &frame(vec![layer]), shift).remove(0);
+
+        // Even sizes: half each way. Odd sizes: the extra column and row go left and up.
+        assert_eq!(place_one(layer([0, 0], 0, false, [1.0; 2]), [0, 0]).position, [-5.0, -4.0]);
+        assert_eq!(place_one(layer([0, 0], 1, false, [1.0; 2]), [0, 0]).position, [-6.0, -5.0]);
+        assert_eq!(place_one(layer([3, -2], 1, false, [1.0; 2]), [0, 0]).position, [-3.0, -7.0]);
+        // A mirrored layer covers the same span, drawn right to left.
+        let mirrored = place_one(layer([0, 0], 1, true, [1.0; 2]), [0, 0]);
+        assert_eq!((mirrored.position, mirrored.size), ([5.0, -5.0], [-11.0, 9.0]));
+        // Zoomed: the corner is worked out in the layer's own pixels, truncated toward zero, then zoomed; so is a
+        // head's shift.
+        let zoomed = place_one(layer([7, 0], 1, false, [1.5, 2.0]), [2, 1]);
+        assert_eq!(zoomed.position, [(((7.0 - 6.0 * 1.5) / 1.5_f32).trunc() + 2.0) * 1.5, (-5.0 + 1.0) * 2.0]);
+        assert_eq!(zoomed.size, [16.5, 18.0]);
+        // ACT 2.5 sizes centre the image; the image's own size is drawn.
+        let sized = place_one(Layer { size: Some([20, 20]), ..layer([0, 0], 0, false, [1.0; 2]) }, [0, 0]);
+        assert_eq!((sized.position, sized.size), ([-10.0, -10.0], [10.0, 8.0]));
+        // Old ACTs give the top-left.
+        assert_eq!(place_one(Layer { top_left: true, ..layer([4, 6], 1, false, [1.0; 2]) }, [0, 0]).position, [4.0, 6.0]);
+        // A layer zoomed to nothing isn't drawn.
+        assert!(place(&spr, &frame(vec![layer([0, 0], 0, false, [0.0, 1.0])]), [0, 0]).is_empty());
     }
 
     #[test]

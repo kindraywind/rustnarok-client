@@ -1,0 +1,14 @@
+{
+  "about": "Sprite layers (issue #190): four NPCs of our own (npc/sprite-layers.txt) with monster looks whose ACT layers are turned or zoomed (Moonlight Flower, Big Bell, Timeholder, Chimera Fillia), standing near prontera 156 180 facing the camera. Each layer is centred with its odd pixel on the left and top, turned about its middle and drawn one screen pixel wider and taller, half a pixel right and down of the ground. The NPCs live only in the map server's memory, and the scenario unloads them at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/sprite-layers.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/sprite-layers.txt"}, {"wait": 1500},
+    {"expect": {"chat": "Script loaded."}},
+    {"move": [1000, 750]},
+    {"shot": "sprite-layers", "crop": [230, 0, 560, 320]},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/sprite-layers.txt"}, {"wait": 500}
+  ]
+}

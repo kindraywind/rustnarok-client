@@ -527,7 +527,7 @@ impl Window {
 
         layer.sprites.push((&assets.shadow, at([PREVIEW_FEET[0] - 24.0, PREVIEW_FEET[1] - 8.0]), [48.0, 16.0]));
         if let Some(figure) = &self.figure {
-            layer.sprites.extend(placements.iter().map(|(key, position, size)| (figure.texture(*key), at(offset(PREVIEW_FEET, *position)), *size)));
+            layer.sprites.extend(placements.iter().map(|(key, position, size, _)| (figure.texture(*key), at(offset(PREVIEW_FEET, *position)), *size)));
         }
         for (index, step) in [(0, 1i8), (1, -1)] {
             let image = &assets.rotate[index][pressed(Hit::Rotate(step)).min(2)];
