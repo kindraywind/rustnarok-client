@@ -24,6 +24,7 @@
     {"type": "/cl hello clan"}, {"key": "Enter"}, {"wait_for": {"packet": "0x098e", "ms": 5000}},
     {"expect": {"chat": "hello clan"}},
     {"shot": "clan-chat", "crop": [0, 600, 620, 168]},
+    {"key": "Ctrl+G"}, {"wait": 400}, {"expect": {"windows_closed": ["Clan"]}},
     {"click_on": {"unit": "Devon Aire"}}, {"wait_for": {"packet": "0x00b5", "ms": 5000}},
     {"key": "Enter"}, {"wait_for": {"packet": "0x00b7", "ms": 5000}},
     {"key": "Down"}, {"key": "Down"}, {"key": "Enter"}, {"wait_for": {"packet": "0x00b5", "ms": 5000}},
