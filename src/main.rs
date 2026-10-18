@@ -129,6 +129,7 @@ mod status;
 mod status_tip;
 mod storage;
 mod stylist;
+mod taming;
 mod trade;
 mod vend;
 mod versus;
@@ -852,11 +853,6 @@ const TARGET_MESSAGE: usize = 234;
 /// frame stays, and the chat lines.
 // ponytail: the slot machine at the screen's middle and the lines in the chat; how and where the real client shows
 // the result isn't known.
-const SLOT_CAUGHT: usize = 2;
-const SLOT_MISSED: usize = 3;
-const SLOT_HOLD_MS: f32 = 1500.0;
-const TAMED: usize = 1574;
-const NOT_TAMED: usize = 1575;
 /// HP/SP bars under characters: border, background, HP, low HP (under a quarter), SP, hunger, a 4th job's third row;
 /// and monsters' HP bars.
 const BAR_COLORS: [[u8; 4]; 7] = [
@@ -1173,7 +1169,8 @@ struct Game {
     /// A taming item waiting for its monster; the slot machine, and the result it plays (action, since when).
     capturing: bool,
     slot_sprite: Option<SpriteSet>,
-    slot: Option<(usize, Instant)>,
+    /// The taming slot machine, open on a monster.
+    slot: Option<taming::Machine>,
     /// Units casting (None = the player): when it began and how long it takes.
     casts: HashMap<Option<u32>, (Instant, Duration)>,
     /// The last web page an NPC's link opened, under the control socket (which doesn't open it).
