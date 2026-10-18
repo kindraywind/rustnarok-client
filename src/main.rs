@@ -668,15 +668,29 @@ const DEAL_BUTTONS: [[f32; 2]; 3] = [[143.0, 96.0], [189.0, 96.0], [235.0, 96.0]
 const DEAL_MESSAGE: usize = 92;
 const RIGHT_BUTTON: [f32; 2] = [235.0, 96.0];
 const FIELD_PADDING: f32 = 3.0;
-// ponytail: the login window's places (2018+ clients) are estimates; calibrate against the real client.
-/// The login window (bg_login.tga): centered, 60% down; its ID and password fields, the save box, the round
-/// start button and the close mark drawn into the bitmap.
-const LOGIN_TOP: f32 = 460.0;
-const LOGIN_FIELDS: [[f32; 2]; 2] = [[17.0, 39.0], [17.0, 61.0]];
-const LOGIN_FIELD_SIZE: [f32; 2] = [127.0, 18.0];
-const LOGIN_SAVE: ([f32; 2], [f32; 2]) = ([57.0, 85.0], [34.0, 10.0]);
-const LOGIN_START: [f32; 2] = [192.0, 33.0];
-const LOGIN_EXIT: ([f32; 2], [f32; 2]) = ([270.0, 13.0], [24.0, 23.0]);
+/// The login window (bg_login.tga) and its parts, window-local: the account drop-down, the ID and password boxes, the
+/// Save ID box and its label, Opening and Sign Up under them, the round Login button, the close X.
+const LOGIN_DROP: ([f32; 2], [f32; 2]) = ([13.0, 10.0], [160.0, 22.0]);
+const LOGIN_FIELDS: [[f32; 2]; 2] = [[15.0, 40.0], [15.0, 64.0]];
+const LOGIN_FIELD_SIZE: [f32; 2] = [153.0, 16.0];
+const LOGIN_SAVE: ([f32; 2], [f32; 2]) = ([56.0, 85.0], [12.0, 12.0]);
+const LOGIN_SAVE_LABEL: ([f32; 2], [f32; 2]) = ([73.0, 87.0], [72.0, 22.0]);
+const LOGIN_OPENING: ([f32; 2], [f32; 2]) = ([13.0, 104.0], [67.0, 21.0]);
+const LOGIN_SIGN_UP: ([f32; 2], [f32; 2]) = ([87.0, 104.0], [84.0, 21.0]);
+const LOGIN_START: [f32; 2] = [192.0, 32.0];
+const LOGIN_START_SIZE: [f32; 2] = [84.0, 84.0];
+const LOGIN_EXIT: ([f32; 2], [f32; 2]) = ([273.0, 15.0], [19.0, 19.0]);
+/// The drop-down's two accounts, the Save ID label, Opening and Sign Up, and their colours.
+const LOGIN_ACCOUNTS: [usize; 2] = [3250, 3251];
+const SAVE_ID_LABEL: usize = 3411;
+const OPENING_LABEL: usize = 3431;
+const SIGN_UP_LABEL: usize = 3414;
+const SAVE_ID_COLOR: [u8; 3] = [0x33, 0x33, 0x33];
+const LOGIN_BUTTON_COLOR: [u8; 3] = [0x31, 0x31, 0x31];
+/// An ID under 4 bytes and a password under 6 aren't sent: "%d or more" lines.
+const ID_TOO_SHORT: (usize, usize) = (3029, 4);
+const PASSWORD_TOO_SHORT: (usize, usize) = (3030, 6);
+const BUTTON_SOUND: &str = "버튼소리.wav";
 const SERVER_LIST: [f32; 2] = [10.0, 22.0];
 const SERVER_ROW: [f32; 2] = [260.0, 18.0];
 const SELECTION_COLOR: [u8; 4] = [0xC6, 0xDE, 0xF7, 0xFF];
@@ -5643,8 +5657,11 @@ type ButtonImages = [Texture; 3];
 struct Assets {
     background: Texture,
     login: Texture,
-    /// The save-ID box, off and on.
+    /// The save-ID box, off and on; Opening, Sign Up and the close X (normal, over, press).
     save: [Texture; 2],
+    opening: ButtonImages,
+    sign_up: ButtonImages,
+    exit: ButtonImages,
     service: Texture,
     message: Texture,
     char_select: char_select::Assets,
@@ -5760,7 +5777,10 @@ impl Assets {
         Self {
             background: gpu.load_texture(grf, &format!("{UI}bgi_temp.bmp"), true),
             login: image(format!("{login}bg_login.tga")),
-            save: ["chk_saveoff", "chk_saveon"].map(|name| image(format!("{login}{name}.bmp"))),
+            save: ["checkbox_off", "checkbox_on"].map(|name| image(format!("{login}{name}.bmp"))),
+            opening: ["normal", "over", "press"].map(|state| image(format!("{login}bt_close_{state}.bmp"))),
+            sign_up: ["normal", "over", "press"].map(|state| image(format!("{login}bt_join_{state}.bmp"))),
+            exit: ["normal", "over", "press"].map(|state| image(format!("{login}bt_close2_{state}.bmp"))),
             service: image(format!("{login}win_service.bmp")),
             message: image(format!("{UI}win_msgbox.bmp")),
             char_select: char_select::Assets::load(gpu, grf, font, messages),
@@ -5851,8 +5871,58 @@ impl Assets {
     }
 }
 
-fn login_position(window: &Texture) -> [f32; 2] {
-    [((screen()[0] - window.size[0]) / 2.0).floor(), LOGIN_TOP]
+/// The login window's top-left: (W − 640) / 2 + 185 across, 300·H/480 down.
+fn login_position() -> [f32; 2] {
+    escape::menu_origin(screen())
+}
+
+/// A part of the login window.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum LoginPart {
+    Drop,
+    /// A row of the open drop-down's list.
+    Account(usize),
+    Field(usize),
+    Save,
+    Opening,
+    SignUp,
+    Start,
+    Exit,
+}
+
+/// The open drop-down's rows, under it.
+// ponytail: the list's rows take the drop-down's size, one under the other.
+fn account_row(row: usize) -> [f32; 2] {
+    offset(LOGIN_DROP.0, [0.0, (row + 1) as f32 * LOGIN_DROP.1[1]])
+}
+
+/// The login window's part under a window-local point (the drop-down's list over the rest while it's open).
+fn login_part(local: [f32; 2], list_open: bool) -> Option<LoginPart> {
+    if let Some(row) = (0..LOGIN_ACCOUNTS.len()).find(|&row| list_open && contains(account_row(row), LOGIN_DROP.1, local)) {
+        return Some(LoginPart::Account(row));
+    }
+    let parts = [
+        (LOGIN_DROP, LoginPart::Drop),
+        ((LOGIN_FIELDS[0], LOGIN_FIELD_SIZE), LoginPart::Field(0)),
+        ((LOGIN_FIELDS[1], LOGIN_FIELD_SIZE), LoginPart::Field(1)),
+        (LOGIN_SAVE, LoginPart::Save),
+        (LOGIN_OPENING, LoginPart::Opening),
+        (LOGIN_SIGN_UP, LoginPart::SignUp),
+        ((LOGIN_START, LOGIN_START_SIZE), LoginPart::Start),
+        (LOGIN_EXIT, LoginPart::Exit),
+    ];
+    parts.into_iter().find(|((corner, size), _)| contains(*corner, *size, local)).map(|(_, part)| part)
+}
+
+/// What stops a login before it's sent: the line to show and its number (4 for an ID, 6 for a password).
+fn login_refusal(id: &str, password: &str) -> Option<(usize, usize)> {
+    if id.len() < ID_TOO_SHORT.1 {
+        Some(ID_TOO_SHORT)
+    } else if password.len() < PASSWORD_TOO_SHORT.1 {
+        Some(PASSWORD_TOO_SHORT)
+    } else {
+        None
+    }
 }
 
 fn shortcut_to_bind(key: options::ShortcutKey) -> Option<shortcuts::ShortcutKey> {
@@ -6736,6 +6806,10 @@ struct App {
     fields: [String; 2],
     /// Remember the ID for next time (the login window's save box).
     save_id: bool,
+    /// The login window's account drop-down: the pick (of LOGIN_ACCOUNTS), and whether its list is open.
+    // ponytail: the pick isn't sent with the login (rathena has no account class).
+    account_kind: usize,
+    account_list: bool,
     focus: usize,
     cursor: [f32; 2],
     mouse_down: bool,
@@ -6775,10 +6849,22 @@ impl App {
         self.scene = Scene::Message(text.into(), Box::new(back));
     }
 
+    /// The Login button or Enter: the button's sound, then an ID under 4 bytes or a password under 6 says so and stays;
+    /// else the login goes out.
     fn submit_login(&mut self) {
-        if self.fields[0].is_empty() {
+        if let Some(audio) = &mut self.audio {
+            audio.play(&self.grf, BUTTON_SOUND, 1.0);
+        }
+        if let Some((id, least)) = login_refusal(&self.fields[0], &self.fields[1]) {
+            let text = rustnarok_client::messages::fill(&self.message_text(id), &[&least]);
+            self.message(text, Scene::Login);
             return;
         }
+        self.send_login();
+    }
+
+    /// Sends the login (the dev switch's too, which skips the button's checks).
+    fn send_login(&mut self) {
         self.wait();
         let proxy = self.proxy.clone();
         let [id, password] = self.fields.clone();
@@ -7109,7 +7195,7 @@ impl App {
         };
     }
 
-    fn click(&mut self, event_loop: &ActiveEventLoop) {
+    fn click(&mut self, _event_loop: &ActiveEventLoop) {
         let Some(assets) = &self.assets else { return };
         let cursor = self.cursor;
         let shift = self.modifiers.shift_key();
@@ -7130,16 +7216,27 @@ impl App {
         }
         match &mut self.scene {
             Scene::Login => {
-                let login = login_position(&assets.login);
-                if hit(offset(login, LOGIN_START), &assets.connect) {
-                    self.submit_login();
-                } else if contains(offset(login, LOGIN_EXIT.0), LOGIN_EXIT.1, cursor) {
-                    event_loop.exit();
-                } else if contains(offset(login, LOGIN_SAVE.0), LOGIN_SAVE.1, cursor) {
-                    self.save_id = !self.save_id;
-                } else if let Some(field) = LOGIN_FIELDS.iter().position(|&field| contains(offset(login, field), LOGIN_FIELD_SIZE, cursor)) {
-                    self.focus = field;
-                    self.blink_start = Instant::now();
+                let local = offset(cursor, login_position().map(|value| -value));
+                let part = login_part(local, self.account_list);
+                self.account_list = false;
+                match part {
+                    Some(LoginPart::Start) => self.submit_login(),
+                    // The close X keeps the Save ID choice, then asks before quitting.
+                    Some(LoginPart::Exit) => {
+                        if std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none() {
+                            remember_id(self.save_id.then_some(self.fields[0].as_str()));
+                        }
+                        self.ask(QUIT_MESSAGE, Then::Quit);
+                    }
+                    Some(LoginPart::Save) => self.save_id = !self.save_id,
+                    Some(LoginPart::Drop) => self.account_list = true,
+                    Some(LoginPart::Account(row)) => self.account_kind = row,
+                    Some(LoginPart::Field(field)) => {
+                        self.focus = field;
+                        self.blink_start = Instant::now();
+                    }
+                    // ponytail: a rathena server has no page for Opening or Sign Up to open.
+                    Some(LoginPart::Opening | LoginPart::SignUp) | None => {}
                 }
             }
             // The server list: pick one, OK goes on to the login window, Cancel leaves the game.
@@ -14597,11 +14694,33 @@ impl App {
         let mut caret = None;
         match self.scene.base() {
             Scene::Login => {
-                let login = login_position(&assets.login);
+                let login = login_position();
+                let message = |id: usize| self.messages.get(id).map_or("", String::as_str);
                 base.sprites.push((&assets.login, login, assets.login.size));
                 base.sprites.push(button_sprite(base_pointer, offset(login, LOGIN_START), &assets.connect));
+                base.sprites.push(button_sprite(base_pointer, offset(login, LOGIN_EXIT.0), &assets.exit));
                 let save = &assets.save[usize::from(self.save_id)];
                 base.sprites.push((save, offset(login, LOGIN_SAVE.0), save.size));
+                let label_top = |(corner, size): ([f32; 2], [f32; 2])| corner[1] + ((size[1] - font.line_height()) / 2.0).floor();
+                base.texts.push((message(SAVE_ID_LABEL).to_owned(), [login[0] + LOGIN_SAVE_LABEL.0[0], login[1] + LOGIN_SAVE_LABEL.0[1]], SAVE_ID_COLOR));
+                // Opening and Sign Up, their labels centred.
+                for ((corner, size), images, label) in [(LOGIN_OPENING, &assets.opening, OPENING_LABEL), (LOGIN_SIGN_UP, &assets.sign_up, SIGN_UP_LABEL)] {
+                    base.sprites.push(button_sprite(base_pointer, offset(login, corner), images));
+                    let text = message(label);
+                    let left = corner[0] + ((size[0] - font.width(text)) / 2.0).floor();
+                    base.texts.push((text.to_owned(), offset(login, [left, label_top((corner, size))]), LOGIN_BUTTON_COLOR));
+                }
+                // The account drop-down shows its pick; open, its two accounts under it.
+                let (corner, size) = LOGIN_DROP;
+                base.texts.push((message(LOGIN_ACCOUNTS[self.account_kind]).to_owned(), offset(login, [corner[0] + 5.0, label_top(LOGIN_DROP)]), TEXT_COLOR));
+                if self.account_list {
+                    for (row, &id) in LOGIN_ACCOUNTS.iter().enumerate() {
+                        let at = offset(login, account_row(row));
+                        base.sprites.push((&assets.chrome.border, at, size));
+                        base.sprites.push((&assets.chrome.white, offset(at, [1.0, 1.0]), [size[0] - 2.0, size[1] - 2.0]));
+                        base.texts.push((message(id).to_owned(), offset(at, [5.0, ((size[1] - font.line_height()) / 2.0).floor()]), TEXT_COLOR));
+                    }
+                }
                 for (index, value) in self.fields.iter().enumerate() {
                     let shown = if index == 1 { "*".repeat(value.len()) } else { value.clone() };
                     // Long input scrolls: keep the tail that fits the box.
@@ -16998,7 +17117,7 @@ impl ApplicationHandler<NetEvent> for App {
 
         if let Some((id, password)) = std::env::var("RUSTNAROK_CLIENT_LOGIN").ok().as_deref().and_then(|login| login.split_once(':')) {
             self.fields = [id.into(), password.into()];
-            self.submit_login();
+            self.send_login();
         }
     }
 
@@ -17496,6 +17615,8 @@ fn main() {
         map_loaded: false,
         fields: [saved_id().unwrap_or_default(), String::new()],
         save_id: saved_id().is_some(),
+        account_kind: 0,
+        account_list: false,
         focus: usize::from(saved_id().is_some()),
         cursor: std::env::var("RUSTNAROK_CLIENT_CURSOR")
             .ok()
@@ -18382,6 +18503,38 @@ mod tests {
         assert_eq!(attack_goal(&units, &walls, 3354), Some([156, 190]));
         walls.remove(&3354);
         assert_eq!(attack_goal(&units, &walls, 3354), None);
+    }
+
+    #[test]
+    fn places_the_login_window_and_its_parts() {
+        let place = |screen: [f32; 2]| escape::menu_origin(screen);
+        assert_eq!(
+            [[640.0, 480.0], [800.0, 600.0], [1024.0, 768.0], [1920.0, 1080.0]].map(place),
+            [[185.0, 300.0], [265.0, 375.0], [377.0, 480.0], [825.0, 675.0]]
+        );
+        assert_eq!(login_part([20.0, 15.0], false), Some(LoginPart::Drop));
+        assert_eq!(login_part([16.0, 41.0], false), Some(LoginPart::Field(0)));
+        assert_eq!(login_part([167.0, 79.0], false), Some(LoginPart::Field(1)));
+        assert_eq!(login_part([168.0, 64.0], false), None);
+        assert_eq!(login_part([57.0, 86.0], false), Some(LoginPart::Save));
+        assert_eq!(login_part([14.0, 105.0], false), Some(LoginPart::Opening));
+        assert_eq!(login_part([170.0, 124.0], false), Some(LoginPart::SignUp));
+        assert_eq!(login_part([193.0, 33.0], false), Some(LoginPart::Start));
+        assert_eq!(login_part([274.0, 16.0], false), Some(LoginPart::Exit));
+        // The open drop-down's rows lie over the boxes under it.
+        assert_eq!(login_part([20.0, 40.0], true), Some(LoginPart::Account(0)));
+        assert_eq!(login_part([20.0, 60.0], true), Some(LoginPart::Account(1)));
+        assert_eq!(login_part([20.0, 66.0], true), Some(LoginPart::Account(1)));
+        assert_eq!(login_part([20.0, 66.0], false), Some(LoginPart::Field(1)));
+    }
+
+    #[test]
+    fn refuses_short_ids_and_passwords() {
+        assert_eq!(login_refusal("abc", "secret1"), Some((3029, 4)));
+        assert_eq!(login_refusal("abcd", "12345"), Some((3030, 6)));
+        assert_eq!(login_refusal("abcd", "123456"), None);
+        // Bytes, not characters: two Korean letters are 6 bytes.
+        assert_eq!(login_refusal("가나", "123456"), None);
     }
 
     #[test]
