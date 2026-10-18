@@ -3598,8 +3598,8 @@ impl App {
                                 game.switch_asked = Some(index);
                                 let _ = game.session.switch_remove(index);
                             }
-                            Some(index) => drop(game.session.take_off(index)),
-                            None => {}
+                            Some(index) if !game.store_open() => drop(game.session.take_off(index)),
+                            _ => {}
                         }
                     }
                     Panel::Cart => {
@@ -4126,7 +4126,9 @@ impl App {
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
                     // Let go over the world: dropped at the player's feet, asking how many of a stack.
-                    (Some((Dragged::Item(index), _, true)), None) if !game.on_ui(self.cursor, &self.items) => game.move_item(Asked::Drop(index)),
+                    (Some((Dragged::Item(index), _, true)), None) if !game.on_ui(self.cursor, &self.items) && !game.store_open() => {
+                        game.move_item(Asked::Drop(index))
+                    }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Cart)) => game.move_item(Asked::ToCart(index)),
                     (Some((Dragged::Carted(index), _, true)), Some(Panel::Inventory)) => game.move_item(Asked::FromCart(index)),
                     (Some((Dragged::Stored(index), _, true)), Some(Panel::Inventory)) => game.move_item(Asked::Take(index)),
