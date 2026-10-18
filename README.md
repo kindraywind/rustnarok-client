@@ -14,11 +14,21 @@ As good as the original, and better where it can be.
 [![wgpu](https://img.shields.io/badge/GPU-wgpu%20%C2%B7%20Metal-5A4FCF)](https://wgpu.rs)
 [![PACKETVER](https://img.shields.io/badge/PACKETVER-20220406-E8401C)](#-server)
 [![rathena](https://img.shields.io/badge/server-rathena-2F7D32)](https://github.com/kindraywind/rathena/tree/rustnarok)
+[![Status](https://img.shields.io/badge/status-alpha-orange)](#-status)
 [![Clean room](https://img.shields.io/badge/clean%20room-no%20game%20data%20in%20git-1F6FEB)](#-conventions)
 
 [Quick start](#-quick-start) · [What works](#-what-works) · [An AI plays it](#-an-ai-plays-it) · [Server](#-server) · [Development](#-development) · [Not done yet](#-not-done-yet)
 
 </div>
+
+## 🧭 Status
+
+> [!WARNING]
+> **Alpha, in early development.** Expect bugs, and features that don't yet behave like the official client's; there
+> is more to fix and align. Contributions are welcome: open an [issue](https://github.com/kindraywind/rustnarok-client/issues)
+> or a pull request, following the [conventions](#-conventions).
+>
+> This is a learning project: a study of how a game client is built, not a product.
 
 ---
 
