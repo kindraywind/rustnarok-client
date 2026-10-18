@@ -439,6 +439,24 @@ const DROP_MS_PER_CELL: f32 = 40.0;
 /// Items cast a quarter of a character's shadow.
 const ITEM_SHADOW: f32 = 0.25;
 
+/// The size a unit is drawn at. The size table applies to monsters (1 when the job isn't listed).
+/// ChangeSize's percent multiplies that. 100 leaves it. None leaves the table factor.
+fn unit_draw_scale(sizes: &HashMap<u16, f32>, kind: u8, job: u16, change_percent: Option<i32>) -> f32 {
+    let factor = if kind == MONSTER { sizes.get(&job).copied().unwrap_or(1.0) } else { 1.0 };
+    lua::sprite_scale(factor, change_percent)
+}
+
+/// Grows a frame around the feet. 1 leaves it.
+fn scale_frame(placed: &mut [actor::Placed], scale: f32) {
+    if scale == 1.0 {
+        return;
+    }
+    for (_, position, size) in placed {
+        *position = position.map(|value| value * scale);
+        *size = size.map(|value| value * scale);
+    }
+}
+
 // ponytail: dialog layout eyeballed from the classic client; calibrate against a screenshot of the real one.
 /// Offsets inside the 280x120 dialog bitmaps (win_login, win_service, win_msgbox).
 const LEFT_BUTTON: [f32; 2] = [189.0, 96.0];
@@ -4443,6 +4461,8 @@ struct App {
     grf: Grf,
     /// NPC and monster sprite names by job ID, from the client's Lua tables.
     job_names: HashMap<u16, String>,
+    /// Sprite scale by monster job. A job that isn't listed is drawn at 1×.
+    monster_sizes: HashMap<u16, f32>,
     /// Pets' tables and what they say.
     pets: pet::Data,
     /// The achievements (the translation's achievements.lub) and the titles they give, by ID.
@@ -10707,7 +10727,15 @@ impl App {
                     }
                 }
             }
-            MapEvent::StatusIcon { kind, id, on, left_ms, .. } => {
+            MapEvent::StatusIcon { kind, id, on, left_ms, value, .. } => {
+                // ChangeSize's percent multiplies the size table when the status is on.
+                if kind == actor::CHANGE_SIZE || kind == actor::CHANGE_SIZE_MONSTER {
+                    let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
+                    if let Some(actor) = actor {
+                        // The short status packet carries no percent. 0 would shrink the sprite away.
+                        actor.size_percent = (on && value != 0).then_some(value);
+                    }
+                }
                 // The mirror's 10 minutes are over: the boss leaves the minimap.
                 if id == game.account_id && kind == BOSS_ALARM && !on {
                     game.boss = None;
@@ -11158,6 +11186,7 @@ impl App {
         let (achievement_info, title_names) = (&self.achievement_info, &self.title_names);
         let (skill_info, skill_trees, status_icon_files) = (&self.skill_info, &self.skill_trees, &self.status_icon_files);
         let state_infos = &self.state_infos;
+        let monster_sizes = &self.monster_sizes;
         let font = &self.font;
         let now = control::now();
         let pointer = (self.cursor, self.mouse_down);
@@ -11249,9 +11278,12 @@ impl App {
             ));
         }
         let player_tint = actor::status_tint(game.player.body_state, game.player.health_state);
+        let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
         if let Some(sprites) = &mut game.player.sprites {
             sprites.set_tint(player_tint);
-            frames.push((Owner::Player, player_feet, sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing)));
+            let mut placed = sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing);
+            scale_frame(&mut placed, player_scale);
+            frames.push((Owner::Player, player_feet, placed));
         }
         if !game.player.cloaked {
             if let Some(falcon) = &mut game.player.falcon {
@@ -11315,9 +11347,12 @@ impl App {
                 ));
             }
             let tint = crate::actor::status_tint(actor.body_state, actor.health_state);
+            let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent);
             if let Some(sprites) = &mut actor.sprites {
                 sprites.set_tint(tint);
-                frames.push((Owner::Unit(id), feet, sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing)));
+                let mut placed = sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing);
+                scale_frame(&mut placed, scale);
+                frames.push((Owner::Unit(id), feet, placed));
             }
             if !actor.cloaked {
                 if let Some(falcon) = &mut actor.falcon {
@@ -11416,7 +11451,11 @@ impl App {
         if let Some(shadow) = &game.shadow {
             for (owner, feet, _) in &frames {
                 let dead = matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.remove_at.is_some()));
-                let scale = if matches!(owner, Owner::Item(_)) { ITEM_SHADOW } else { 1.0 };
+                let scale = match owner {
+                    Owner::Item(_) => ITEM_SHADOW,
+                    Owner::Player => player_scale,
+                    Owner::Unit(id) => game.units.get(id).map(|actor| unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent)).unwrap_or(1.0),
+                };
                 if !dead {
                     billboards.extend(shadow_placements.iter().map(|(key, position, size)| {
                         (shadow.texture(*key), *feet, position.map(|value| value * scale), size.map(|value| value * scale), [1.0; 4])
@@ -13102,6 +13141,7 @@ fn main() {
         eprintln!("no NPC/monster sprite names: {error}");
         HashMap::new()
     });
+    let monster_sizes = lua::monster_sizes(&grf);
     let items = lua::item_info(&grf).unwrap_or_else(|error| {
         eprintln!("no item names: {error}");
         HashMap::new()
@@ -13186,6 +13226,7 @@ fn main() {
     let mut app = App {
         grf,
         job_names,
+        monster_sizes,
         pets,
         achievement_info,
         synthesis_boxes,
