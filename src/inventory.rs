@@ -113,7 +113,7 @@ pub const UNIDENTIFIED: [u8; 3] = [0xAA, 0xAA, 0xAA];
 /// A bound item's name.
 pub const BOUND: [u8; 3] = [0xFF, 0xFF, 0x00];
 /// An item's name by how many enchants it has, 1 to 4.
-const ENCHANTED: [[u8; 3]; 4] = [[0xAD, 0xFF, 0x2F], [0x00, 0xBF, 0xFF], [0xFF, 0xA5, 0x00], [0x94, 0x00, 0xD3]];
+pub const ENCHANTED: [[u8; 3]; 4] = [[0xAD, 0xFF, 0x2F], [0x00, 0xBF, 0xFF], [0xFF, 0xA5, 0x00], [0x94, 0x00, 0xD3]];
 
 /// The colour of an item's name in its name box, the first that fits: unidentified grey; by its enchants; bound
 /// yellow; else white. A broken item has none of its own.
@@ -130,7 +130,7 @@ pub fn name_color(item: &InventoryItem, items: &HashMap<u32, ItemInfo>) -> [u8; 
 
 /// An item's enchants: the cards past its slots that are known items. Pet eggs and accessories, forged and brewed
 /// pieces have none.
-fn enchants(item: &InventoryItem, items: &HashMap<u32, ItemInfo>) -> usize {
+pub fn enchants(item: &InventoryItem, items: &HashMap<u32, ItemInfo>) -> usize {
     if matches!(item.kind, net::ITEM_PET_EGG | net::ITEM_PET_ARMOR) || maker(&item.cards).is_some() {
         return 0;
     }
