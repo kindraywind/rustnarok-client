@@ -107,6 +107,8 @@ pub fn job_sprite_name(job: u16) -> Option<&'static str> {
         4070 => "슈라",
         4071 => "제네릭",
         4072 => "쉐도우체이서",
+        4211 => "kagerou",
+        4212 => "oboro",
         4218 | 4220 => "summoner",
         4308 => "spirit_handler",
         _ => return None,

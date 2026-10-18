@@ -1,0 +1,32 @@
+{
+  "about": "Shields, charms and souls (issue #98): a Kagerou's Fire Charms (3015) circle over the head, three of them; an Ice Charm (3016) replaces them with one water charm; Cast Ninja Spell (3020) uses it up. @soulball 5 puts five souls around the player. A Rune Knight's Millennium Shield (2011) gives 2 to 4 shields at the waist. The shields are saved in sc_data and last 15 minutes: the scenario reset should delete the test characters' `sc_data` rows.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@job 4211"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500}, {"say": "@heal"}, {"wait": 400},
+    {"say": "@item 6512 3"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@item 6513 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@useskill 3015 1 self"}, {"wait_for": {"packet": "0x08cf", "ms": 6000}},
+    {"say": "@useskill 3015 1 self"}, {"wait_for": {"packet": "0x08cf", "ms": 6000}},
+    {"say": "@useskill 3015 1 self"}, {"wait_for": {"packet": "0x08cf", "ms": 6000}}, {"wait": 300},
+    {"expect": {"state": {"player.charms": 3, "player.charm": "fire"}}},
+    {"shot": "fire-charms", "crop": [362, 234, 300, 240], "threshold": 5},
+    {"say": "@useskill 3016 1 self"}, {"wait_for": {"packet": "0x08cf", "ms": 6000}}, {"wait": 300},
+    {"expect": {"state": {"player.charms": 1, "player.charm": "water"}}},
+    {"say": "@useskill 3020 1 self"}, {"wait_for": {"packet": "0x08cf", "ms": 6000}}, {"wait": 300},
+    {"expect": {"state": {"player.charms": 0, "player.charm": null}}},
+    {"say": "@soulball 5"}, {"wait_for": {"packet": "0x0b73", "ms": 5000}}, {"wait": 300},
+    {"expect": {"state": {"player.souls": 5}}},
+    {"shot": "souls", "crop": [362, 234, 300, 240], "threshold": 5},
+    {"say": "@soulball 0"}, {"wait_for": {"packet": "0x0b73", "ms": 5000}}, {"wait": 300},
+    {"expect": {"state": {"player.souls": 0}}},
+    {"say": "@job 4054"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500}, {"say": "@heal"}, {"wait": 400},
+    {"say": "@useskill 2011 1 self"}, {"wait_for": {"packet": "0x0440", "ms": 6000}}, {"wait": 300},
+    {"expect": {"state_at_least": {"player.shields": 2}}},
+    {"shot": "shields", "crop": [362, 234, 300, 240], "threshold": 5},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}
