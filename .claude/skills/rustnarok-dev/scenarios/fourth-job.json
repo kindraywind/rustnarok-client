@@ -1,0 +1,167 @@
+{
+  "about": "4th job windows (issue #321): a Dragon Knight (@job 4252, base level 199) with 10 trait points and some AP (our NPC's healap). The basic info window is 149 tall with three bars, HP, SP and AP, at the game's rows; the status window's Trait Status bar opens the panel with POW to CRT, their costs and P.ATK to C.RATE, and POW's \"+\" raises it by one (points drop). Back to a level 1 Novice; the lane reset clears the traits.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/fourth-job.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/fourth-job.txt"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@job 4252"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@blvl 199"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@traitpoint 10"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokAP"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "ap"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "player.traits.ap": 1,
+          "player.traits.max_ap": 1,
+          "player.traits.points": 10
+        }
+      }
+    },
+    {
+      "shot": "fourth-basic-info",
+      "crop": [
+        0,
+        0,
+        230,
+        170
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "Alt+A"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "traits"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "move": [
+        600,
+        700
+      ]
+    },
+    {
+      "shot": "trait-panel",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "raise_pow"
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "player.traits.pow": 1
+        }
+      }
+    },
+    {
+      "move": [
+        600,
+        700
+      ]
+    },
+    {
+      "shot": "trait-raised",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "traits"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+A"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@blvl -300"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@job 0"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/fourth-job.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

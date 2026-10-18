@@ -7380,7 +7380,12 @@ impl App {
                     Panel::Status => {
                         let hit = game.status_window.hit(cursor, &assets.status, &game.status);
                         if let Some(stat) = hit.and_then(|hit| game.status_window.click(hit)) {
-                            let _ = game.session.raise_stat(stat);
+                            // A trait (4th jobs) has its own request.
+                            if (status::TRAIT_POW..status::TRAIT_POW + 6).contains(&stat) {
+                                let _ = game.session.raise_trait(stat);
+                            } else {
+                                let _ = game.session.raise_stat(stat);
+                            }
                         }
                     }
                     Panel::Party => match game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id) {

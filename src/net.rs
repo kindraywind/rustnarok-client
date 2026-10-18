@@ -144,6 +144,14 @@ pub fn encode_room(packet_type: u16, title: &str, limit: u16, public: bool, pass
     packet
 }
 
+/// CZ_ADVANCED_STATUS_CHANGE: the trait (status id) and how much, one.
+pub fn encode_trait_raise(trait_id: u16) -> Vec<u8> {
+    let mut packet = CZ_ADVANCED_STATUS_CHANGE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&trait_id.to_le_bytes());
+    packet.extend_from_slice(&1u16.to_le_bytes());
+    packet
+}
+
 /// A name in 24 bytes, as the room packets carry it.
 fn name_24(name: &str) -> Vec<u8> {
     let mut name = encode_text(name);
@@ -1260,6 +1268,8 @@ pub fn encode_standing_resurrection() -> [u8; 2] {
 const CZ_REQ_EMOTION: u16 = 0x00BF;
 const ZC_EMOTION: u16 = 0x00C0;
 const CZ_STATUS_CHANGE: u16 = 0x00BB;
+/// Puts trait points into a 4th job's trait (rathena's clif_parse_advanced_status_change).
+const CZ_ADVANCED_STATUS_CHANGE: u16 = 0x0B24;
 const ZC_STATUS_CHANGE_ACK: u16 = 0x00BC;
 const ZC_STATUS: u16 = 0x00BD;
 const ZC_STATUS_CHANGE: u16 = 0x00BE;
@@ -4011,6 +4021,11 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Puts one trait point into a 4th job's trait (rathena's SP_POW and on).
+    pub fn raise_trait(&mut self, trait_id: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_trait_raise(trait_id))
+    }
+
     /// Back to the save point (after dying), or to character select.
     pub fn restart(&mut self, char_select: bool) -> io::Result<()> {
         let mut packet = CZ_RESTART.to_le_bytes().to_vec();
@@ -6525,6 +6540,13 @@ mod tests {
             matches!(&event, Some(MapEvent::Navigate { kind: 0, services: 111, hide_window: true, map, cell: [150, 160], monster: 0 }) if map == "prontera.gat"),
             "{event:?}"
         );
+    }
+
+    #[test]
+    fn writes_a_trait_raise() {
+        let packet = encode_trait_raise(219);
+        assert_eq!(packet, [0x24, 0x0B, 219, 0, 1, 0]);
+        assert_eq!(packet.len(), packet_length(CZ_ADVANCED_STATUS_CHANGE).unwrap() as usize);
     }
 
     #[test]

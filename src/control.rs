@@ -955,6 +955,14 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .chain(game.skill_window.tab_boxes(&jobs).into_iter().map(|(job, area)| (format!("skill_tab:{job}"), area)))
                 .filter(|(_, area)| on_top(Panel::Skills, area))
                 .chain(game.status_window.raise_boxes(&game.status).into_iter().filter(|(_, area)| on_top(Panel::Status, area)))
+                .chain(
+                    app.assets
+                        .as_ref()
+                        .map(|assets| game.status_window.trait_boxes(&assets.status, &game.status))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|(_, area)| on_top(Panel::Status, area)),
+                )
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.basic_info.menu_boxes().into_iter().map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
@@ -1191,6 +1199,11 @@ fn game_state(app: &App, game: &Game) -> Value {
             "status_points": status(net::STATUS_POINTS),
             "skill_points": game.skill_points(),
             "stats": stats_state(&game.status),
+            // A 4th job's traits, trait points and AP.
+            "traits": json!({
+                "pow": status(219), "sta": status(220), "wis": status(221), "spl": status(222), "con": status(223), "crt": status(224),
+                "points": status(231), "ap": status(232), "max_ap": status(233),
+            }),
             "skills": skills_state(&game.skills, &app.skill_info),
             "screen": screen(Owner::Player),
             "look": player_look(game.player.look.as_ref().unwrap_or(&Look::default())),

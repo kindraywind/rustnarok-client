@@ -1,0 +1,9 @@
+// 4th job windows (issue #321): whisper npc:RustnarokAP "ap" to give AP (healap). Loaded and unloaded by
+// scenarios/fourth-job.json.
+-	script	RustnarokAP	-1,{
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "ap")
+		healap 40;
+	end;
+}

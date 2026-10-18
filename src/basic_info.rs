@@ -65,6 +65,9 @@ pub struct Layout {
     pub levels: [[f32; 2]; 2],
     pub exp_bars: [[f32; 2]; 2],
     pub extra: f32,
+    /// 4th jobs: the AP row's label and bar, and the three labels' messages (HP, SP, AP).
+    pub ap: Option<([f32; 2], [f32; 2])>,
+    pub label_messages: Option<[usize; 3]>,
 }
 
 const NORMAL: Layout = Layout {
@@ -78,21 +81,29 @@ const NORMAL: Layout = Layout {
     levels: [[17.0, 84.0], [17.0, 96.0]],
     exp_bars: [[85.0, 89.0], [85.0, 101.0]],
     extra: 116.0,
+    ap: None,
+    label_messages: None,
 };
 
-// ponytail: the 4th jobs' window keeps the places it had over w_basewin_bg2.bmp.
+// ponytail: the x places the 4th jobs' window doesn't give (levels, exp bars, the percentages) and the name and job
+// follow the 134-tall window's.
 const FOURTH: Layout = Layout {
-    height: 150.0,
+    height: 149.0,
     mini: 71.0,
-    name: [10.0, 20.0],
-    job: [10.0, 33.0],
-    labels: [[15.0, 50.0], [15.0, 65.0]],
+    name: [9.0, 22.0],
+    job: [9.0, 36.0],
+    labels: [[9.0, 51.0], [9.0, 65.0]],
     bars: [[35.0, 53.0], [35.0, 68.0]],
-    percent: None,
-    levels: [[15.0, 101.0], [15.0, 112.0]],
-    exp_bars: [[84.0, 103.0], [84.0, 115.0]],
-    extra: 134.0,
+    percent: Some(173.0),
+    levels: [[17.0, 99.0], [17.0, 111.0]],
+    exp_bars: [[85.0, 104.0], [85.0, 116.0]],
+    extra: 131.0,
+    ap: Some(([9.0, 80.0], [35.0, 83.0])),
+    label_messages: Some([3068, 3069, 3628]),
 };
+/// AP and its most (rathena's SP_AP, SP_MAXAP).
+const STATUS_AP: u16 = 232;
+const STATUS_MAX_AP: u16 = 233;
 
 pub fn layout(fourth: bool) -> &'static Layout {
     if fourth { &FOURTH } else { &NORMAL }
@@ -308,8 +319,7 @@ impl BasicInfo {
         let values: Vec<i32> = text.split_whitespace().map(|value| value.parse().ok()).collect::<Option<_>>()?;
         let [x, y, w, h, shown] = values[..] else { return None };
         let [x, y, w, h] = [x, y, w, h].map(|value| value as f32);
-        // ponytail: the game's heights are 55, 134, 71 and 149; this window's 4th-job height (150) is kept too.
-        let sizes = [NORMAL.mini, NORMAL.height, FOURTH.mini, 149.0, FOURTH.height];
+        let sizes = [NORMAL.mini, NORMAL.height, FOURTH.mini, FOURTH.height];
         let on_screen = x >= 0.0 && y >= 0.0 && x + w <= screen[0] && y + h <= screen[1];
         (w == WIDTH && sizes.contains(&h) && on_screen).then_some(([x, y], h == NORMAL.mini || h == FOURTH.mini, shown != 0))
     }
@@ -465,7 +475,12 @@ impl BasicInfo {
                 text(layer, short, [x, 20.0], BLACK);
             }
             let mut x = 9.0;
-            for (part, low) in [(format!("HP {hp} / {max_hp}"), hp * 4 < max_hp), (" | ".to_owned(), false), (format!("SP {sp} / {max_sp}"), sp * 4 < max_sp)] {
+            let mut parts = vec![(format!("HP {hp} / {max_hp}"), hp * 4 < max_hp), (" | ".to_owned(), false), (format!("SP {sp} / {max_sp}"), sp * 4 < max_sp)];
+            // ponytail: a 4th job's AP after SP on the same line.
+            if layout.ap.is_some() {
+                parts.extend([(" | ".to_owned(), false), (format!("AP {} / {}", value(STATUS_AP), value(STATUS_MAX_AP)), false)]);
+            }
+            for (part, low) in parts {
                 let width = font.width(&part);
                 text(layer, part, [x, 36.0], if low { RED } else { BLACK });
                 x += width;
@@ -478,9 +493,15 @@ impl BasicInfo {
         text(layer, title, TITLE, BLACK);
         text(layer, info.name.to_owned(), layout.name, BLACK);
         text(layer, info.job.to_owned(), layout.job, BLACK);
-        for (bar, (now, most)) in [(hp, max_hp), (sp, max_sp)].into_iter().enumerate() {
-            let corner = layout.bars[bar];
-            text(layer, ["HP", "SP"][bar].to_owned(), layout.labels[bar], BLACK);
+        // HP and SP, and AP for 4th jobs, each a bar the same way.
+        // ponytail: the AP fill uses the HP and SP pieces.
+        let mut rows = vec![(layout.labels[0], layout.bars[0], hp, max_hp), (layout.labels[1], layout.bars[1], sp, max_sp)];
+        if let Some((label, corner)) = layout.ap {
+            rows.push((label, corner, value(STATUS_AP), value(STATUS_MAX_AP)));
+        }
+        for (bar, (label, corner, now, most)) in rows.into_iter().enumerate() {
+            let name = layout.label_messages.and_then(|ids| messages.get(ids[bar]).filter(|text| !text.is_empty()).cloned());
+            text(layer, name.unwrap_or_else(|| ["HP", "SP", "AP"][bar].to_owned()), label, BLACK);
             // Over the most, the bar isn't drawn at all: no back, no fill, no numbers.
             if now <= most {
                 layer.sprites.push((&assets.bar_back, at(corner), BAR_SIZE));
@@ -495,7 +516,7 @@ impl BasicInfo {
             }
             let percent = percent_text(now, most);
             let x = layout.percent.unwrap_or(WIDTH - 20.0 - font.width(&percent));
-            text(layer, percent, [x, layout.labels[bar][1]], BLACK);
+            text(layer, percent, [x, label[1]], BLACK);
         }
 
         let levels = [
@@ -570,12 +591,18 @@ mod tests {
             (normal.height, normal.mini, normal.name, normal.bars[1], normal.levels[1], normal.exp_bars[0]),
             (134.0, 55.0, [9.0, 22.0], [35.0, 68.0], [17.0, 96.0], [85.0, 89.0])
         );
-        assert_eq!((layout(true).height, layout(true).mini), (150.0, 71.0));
+        // A 4th job's: 149 tall, a third bar for AP, the rows where w_basewin_bg2 has them.
+        let fourth = layout(true);
+        assert_eq!((fourth.height, fourth.mini, fourth.labels, fourth.ap), (149.0, 71.0, [[9.0, 51.0], [9.0, 65.0]], Some(([9.0, 80.0], [35.0, 83.0]))));
+        assert_eq!((fourth.levels, fourth.exp_bars, fourth.extra), ([[17.0, 99.0], [17.0, 111.0]], [[85.0, 104.0], [85.0, 116.0]], 131.0));
+        assert_eq!(fourth.label_messages, Some([3068, 3069, 3628]));
+        // The AP bar fills as the others: 30 of 120 AP.
+        assert_eq!(bar_fill(30, 120), Some((31.0, false)));
         // The menu toggle follows the window's height.
         let mut window = BasicInfo::default();
         assert_eq!(window.height(), 134.0 + MENU_AT);
         window.fourth = true;
-        assert_eq!(window.height(), 150.0 + MENU_AT);
+        assert_eq!(window.height(), 149.0 + MENU_AT);
     }
 
     #[test]
@@ -598,7 +625,7 @@ mod tests {
         assert_eq!(window.menu_boxes().len(), 14);
         assert_eq!(window.height(), 134.0 + 23.0 + 3.0 * 43.0);
         window.fourth = true;
-        assert_eq!(window.button_corner(0), [9.0, 173.0]);
+        assert_eq!(window.button_corner(0), [9.0, 172.0]);
     }
 
     #[test]
