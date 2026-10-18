@@ -1361,7 +1361,8 @@ impl CameraGoal {
     /// Right button down. A second press within CAMERA_DOUBLE_CLICK with the pointer not moved at all resets: the
     /// distance with Ctrl, the tilt with Shift, otherwise (outdoors only) the turn, to the nearest whole circle.
     fn press(&mut self, cursor: [f32; 2], now: Instant, ctrl: bool, shift: bool) {
-        if self.limits.is_none() && self.last_press.is_some_and(|(at, _, moved)| !moved && now.saturating_duration_since(at) < CAMERA_DOUBLE_CLICK) {
+        let double = self.last_press.is_some_and(|(at, _, moved)| !moved && now.saturating_duration_since(at) < CAMERA_DOUBLE_CLICK);
+        if self.limits.is_none() && double {
             if ctrl {
                 self.zoom = ZOOM;
             }
@@ -1372,7 +1373,8 @@ impl CameraGoal {
                 self.yaw = (self.yaw / 360.0).round() * 360.0;
             }
         }
-        self.last_press = Some((now, cursor, false));
+        // After a double click the next press starts a new pair.
+        self.last_press = (!double).then_some((now, cursor, false));
         self.dragging = Some(cursor);
     }
 
@@ -5206,6 +5208,21 @@ fn follows_pointer(held: bool, pending: bool, last_try: Option<Instant>, now: In
     held && !pending && last_try.is_none_or(|last| now.saturating_duration_since(last) > MOVE_GAP)
 }
 
+/// A press now, after the last one counted (when, where, and whether the pointer moved off since): whether it's a
+/// double press, and the press the next one counts from. Presses come in pairs: after a double press the next one
+/// starts afresh, so pressing on in one spot acts on every other press.
+fn press_pair(last: Option<(Instant, [f32; 2], bool)>, now: Instant, cursor: [f32; 2]) -> (bool, Option<(Instant, [f32; 2], bool)>) {
+    let double = double_press(last, now);
+    (double, (!double).then_some((now, cursor, false)))
+}
+
+/// Whether the button held down after a double press on the ground goes on following the pointer: as after a first
+/// press, not with Ctrl or Shift, nor sitting.
+// ponytail: only when the double press was on the ground.
+fn double_holds(ctrl: bool, shift: bool, sitting: bool) -> bool {
+    !ctrl && !shift && !sitting
+}
+
 /// Whether a press now, after the last one (when, and whether the pointer moved since), is a double press.
 fn double_press(last: Option<(Instant, [f32; 2], bool)>, now: Instant) -> bool {
     last.is_some_and(|(at, _, moved)| !moved && now.saturating_duration_since(at) < DOUBLE_PRESS)
@@ -8099,8 +8116,8 @@ impl App {
             && !game.capturing
         {
             let now = Instant::now();
-            let double = double_press(game.press_mark, now);
-            game.press_mark = Some((now, cursor, false));
+            let (double, mark) = press_pair(game.press_mark, now, cursor);
+            game.press_mark = mark;
             let (shift, ctrl) = (self.modifiers.shift_key(), self.modifiers.control_key());
             // Alt + left press orders the mercenary (when it's out).
             if !double && self.modifiers.alt_key() && game.companion_press(false, cursor, shift) {
@@ -8109,6 +8126,12 @@ impl App {
             // A new press ends the attack under way.
             game.attack = None;
             match game.world_click(cursor, shift) {
+                // A double press does nothing, but held on the ground the button goes on following the pointer.
+                WorldClick::Ground if double => {
+                    if double_holds(ctrl, shift, game.player.sitting) {
+                        game.walk_held = true;
+                    }
+                }
                 _ if double => {}
                 // A monster with Shift (without /noshift): nothing.
                 WorldClick::Attack(id) if shift && !game.no_shift && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER) => {}
@@ -15745,7 +15768,11 @@ mod tests {
         outdoors.press([5.0, 5.0], now, false, false);
         outdoors.press([5.0, 5.0], now + Duration::from_millis(200), true, true);
         assert_eq!((outdoors.distance(), outdoors.pitch), (300.0, PITCH_RESET));
+        // After a double click the next press starts a new pair: the third press of a triple click doesn't reset,
+        // the fourth (its pair) turns back.
         outdoors.press([5.0, 5.0], now + Duration::from_millis(300), false, false);
+        assert_eq!(outdoors.yaw, 370.0);
+        outdoors.press([5.0, 5.0], now + Duration::from_millis(350), false, false);
         assert_eq!(outdoors.yaw, 360.0);
         outdoors.yaw = 30.0;
         outdoors.pointer_moved([9.0, 5.0]);
@@ -15907,6 +15934,23 @@ mod tests {
         assert!(!moved_off([100.0, 100.0], [101.4, 99.2]));
         assert!(moved_off([100.0, 100.0], [100.0, 102.0]));
         assert!(!double_press(None, start));
+        // Four presses in place 200 ms apart: fresh, double, fresh, double.
+        let mut mark = None;
+        let doubles: Vec<bool> = (0..4)
+            .map(|n| {
+                let (double, next) = press_pair(mark, at(200 * n), [5.0, 5.0]);
+                mark = next;
+                double
+            })
+            .collect();
+        assert_eq!(doubles, [false, true, false, true]);
+        // A move off the press between two presses makes both fresh.
+        let (_, first) = press_pair(None, start, [5.0, 5.0]);
+        assert!(!press_pair(first.map(|(at, from, _)| (at, from, true)), at(200), [9.0, 5.0]).0);
+        // Held after a double press on the ground, the button follows the pointer; not with Ctrl, Shift or sitting.
+        assert!(
+            double_holds(false, false, false) && !double_holds(true, false, false) && !double_holds(false, true, false) && !double_holds(false, false, true)
+        );
     }
 
     #[test]

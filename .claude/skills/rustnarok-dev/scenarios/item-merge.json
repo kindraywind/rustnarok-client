@@ -13,6 +13,7 @@
     {"say": "@item 16395 3"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"say": "@item 16393 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"say": "@item 16393 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"wait": 600},
     {"click_unit": {"kind": "npc", "name": "Merge Test"}}, {"wait_for": {"packet": "0x096d", "ms": 8000}}, {"wait": 300},
     {"expect": {"windows_open": ["ItemMerge"], "state": {"merge.rows": 4}}},
     {"move": [1000, 750]},
