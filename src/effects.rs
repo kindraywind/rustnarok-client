@@ -49,7 +49,7 @@ pub struct Table {
     rings: HashMap<u32, Vec<HashMap<String, String>>>,
     sprites: HashMap<u32, Vec<SpritePart>>,
     /// Camera shakes, which the client does in code (FUNC effects): how long after the start, and for how long.
-    quakes: HashMap<u32, (Duration, Duration)>,
+    quakes: HashMap<u32, Vec<(Duration, Duration)>>,
     /// What skills' units on the ground show while they're there, by rathena's UNT_ number: an effect, a model.
     units: HashMap<u32, u32>,
     /// Units whose effect plays once and is kept rather than starting again.
@@ -72,6 +72,10 @@ pub struct Table {
     /// What a status (by EFST id) plays again and again on its unit while it's on.
     statuses: HashMap<u16, Vec<u32>>,
 }
+
+/// How long a standard camera shake and a short one last.
+pub const QUAKE_LONG: Duration = Duration::from_millis(650);
+pub const QUAKE_SHORT: Duration = Duration::from_millis(200);
 
 /// Where a skill's effect plays.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -144,7 +148,8 @@ impl Table {
                 }
                 ["func", _, "quake", ..] => {
                     if let (Some(id), Some(delay), Some(length)) = (number(1), number(3), number(4)) {
-                        table.quakes.insert(id, (Duration::from_millis(delay.into()), Duration::from_millis(length.into())));
+                        let length = if length == 200 { QUAKE_SHORT } else { QUAKE_LONG };
+                        table.quakes.entry(id).or_default().push((Duration::from_millis(delay.into()), length));
                     }
                 }
                 ["unit", ..] => {
@@ -560,8 +565,10 @@ pub struct Effects {
     models: HashMap<String, Option<Rc<Model>>>,
     /// Models standing on skills' ground units: the model, the unit and where.
     standing: Vec<(Rc<Model>, u32, Vector)>,
-    /// Camera shakes: from, until.
-    quakes: Vec<(Instant, Instant)>,
+    /// Camera shakes waiting to start (when, how long), the end of the running shake, and the sign flip.
+    quakes: Vec<(Instant, Duration)>,
+    quake_until: Option<Instant>,
+    quake_flip: bool,
     /// Sounds waiting for their moment: when, the file (under data\wav\), and where.
     sounds: Vec<(Instant, String, Vector)>,
     /// The skill unit type of each ground unit shown, for what it shows when it changes (a trap going off).
@@ -748,9 +755,7 @@ impl Effects {
             self.sprites.entry(animation.sprite.clone()).or_insert_with(|| SpriteSet::at(grf, &animation.sprite));
             self.animations.push(animation);
         }
-        if let Some(&(delay, length)) = table.quakes.get(&id) {
-            self.quakes.push((now + delay, now + delay + length));
-        }
+        self.play_quakes(table, id, now);
         for part in table.parts.get(&id).into_iter().flatten() {
             let file = match part.random {
                 Some((from, to)) => part.file.replace("%d", &pick(from, to).to_string()),
@@ -761,6 +766,19 @@ impl Effects {
             if let Some(loaded) = loaded {
                 self.playing.push(Playing { loaded, start: now, anchor: anchor(part.attached), again: lasting && !part.once });
             }
+        }
+    }
+
+    /// Queues a camera shake starting at `start` for `length` (`QUAKE_SHORT` or `QUAKE_LONG`).
+    pub fn start_quake(&mut self, start: Instant, length: Duration) {
+        let length = if length == QUAKE_SHORT { QUAKE_SHORT } else { QUAKE_LONG };
+        self.quakes.push((start, length));
+    }
+
+    /// Queues the camera shakes of effect `id` starting from `now`.
+    pub fn play_quakes(&mut self, table: &Table, id: u32, now: Instant) {
+        for &(delay, length) in table.quakes.get(&id).into_iter().flatten() {
+            self.start_quake(now + delay, length);
         }
     }
 
@@ -790,10 +808,23 @@ impl Effects {
         kinds
     }
 
-    /// How far an earthquake shakes the camera now (0: none).
-    pub fn quake(&self, now: Instant) -> f32 {
-        // ponytail: a third of a cell, by eye; the client's own amplitude isn't measured.
-        if self.quakes.iter().any(|(from, until)| (*from..*until).contains(&now)) { CELL / 3.0 } else { 0.0 }
+    /// The camera shake this frame at `now`: `[sideways, distance, pitch_degrees]`, with the sign flipping each frame
+    /// and fresh noise each frame; `None` when no shake runs.
+    pub fn quake(&mut self, now: Instant) -> Option<[f32; 3]> {
+        let (mut due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.quakes).into_iter().partition(|(start, _)| *start <= now);
+        self.quakes = later;
+        due.sort_by_key(|&(start, _)| start);
+        for (start, length) in due {
+            self.quake_until = Some(start + length);
+        }
+        if self.quake_until.is_none_or(|until| now >= until) {
+            self.quake_until = None;
+            return None;
+        }
+        self.quake_flip = !self.quake_flip;
+        let sign = if self.quake_flip { 1.0 } else { -1.0 };
+        let noise = || (pick(0, 4) as i32 - 2) as f32;
+        Some([sign * 1.0 + noise() / 10.0, sign * 0.24 + noise() / 10.0, sign * 0.2 + noise() / 15.0])
     }
 
     /// The sounds whose moment came: the file (under data\wav\), and where.
@@ -839,7 +870,6 @@ impl Effects {
             now < playing.start + length
         });
         self.playing.extend(tails);
-        self.quakes.retain(|(_, until)| now < *until);
 
         // ponytail: sprites face south as seen; the few effect sprites drawn in 8 directions would face their unit.
         let facing = usize::from(crate::seen_direction(0.0, yaw, true));
@@ -1125,7 +1155,7 @@ mod tests {
         assert_eq!((animation.action, animation.frame_ms, animation.repeat, animation.offset), (Some(0), Some(30.0), true, [0.0, -120.0]));
         assert_eq!(animation.end, Some(now + Duration::from_millis(1500)));
         // Earth Spike shakes the camera; Fire Bolt's arrows fall before each hit.
-        assert_eq!(table.quakes[&79], (Duration::ZERO, Duration::from_millis(200)));
+        assert_eq!(table.quakes[&79], [(Duration::ZERO, QUAKE_SHORT)]);
         assert_eq!(table.skill(19, "beforeHitEffectId"), [31]);
         // Chase Walk's footprints: the catalog's textures, played on the ground.
         assert_eq!(table.floaters[&326][0]["file"], "effect/foot_l_b.tga");
@@ -1134,5 +1164,53 @@ mod tests {
         assert_eq!([127, 126, 133, 129, 128].map(|kind| table.units[&kind]), [25, 315, 141, 316, 317]);
         assert!(table.parts[&315][0].once && !table.parts[&25][0].once);
         assert_eq!(table.models[&145], "외부소품\\트랩01");
+    }
+
+    #[test]
+    fn shakes_restarts_and_multi_shake_effects() {
+        let table = Table::load();
+        // 563 (EF_SCREEN_QUAKE): 20 shakes at ticks 0, 5, ..., 95 (every 80 ms), each 650 ms.
+        let expected_563: Vec<(Duration, Duration)> = (0..20).map(|step| (Duration::from_millis(step * 80), QUAKE_LONG)).collect();
+        assert_eq!(table.quakes[&563], expected_563);
+        // 666 (EF_NPC_EARTHQUAKE): 3 shakes at ticks 0, 35 and 70 (0, 560 and 1120 ms), each 650 ms.
+        assert_eq!(
+            table.quakes[&666],
+            [(Duration::ZERO, QUAKE_LONG), (Duration::from_millis(35 * 16), QUAKE_LONG), (Duration::from_millis(70 * 16), QUAKE_LONG)]
+        );
+
+        // A short shake lasts 200 ms; a standard shake lasts 650 ms, and another shake while it runs restarts the clock.
+        let start = Instant::now();
+        let mut effects = Effects::default();
+        effects.start_quake(start, QUAKE_SHORT);
+        assert!(effects.quake(start + Duration::from_millis(199)).is_some());
+        assert!(effects.quake(start + QUAKE_SHORT).is_none());
+
+        effects.start_quake(start, QUAKE_LONG);
+        assert!(effects.quake(start + Duration::from_millis(400)).is_some());
+        effects.start_quake(start + Duration::from_millis(400), QUAKE_LONG);
+        assert!(effects.quake(start + Duration::from_millis(1049)).is_some());
+        assert!(effects.quake(start + Duration::from_millis(1050)).is_none());
+
+        // Each rendered frame flips the sign and stays within the noise ranges.
+        let mut effects = Effects::default();
+        effects.start_quake(start, QUAKE_LONG);
+        for frame in 0..40 {
+            let [side, distance, pitch] = effects.quake(start + Duration::from_millis(frame * 16)).unwrap();
+            let sign = if frame % 2 == 0 { 1.0 } else { -1.0 };
+            assert!((0.8 - 1e-5..=1.2 + 1e-5).contains(&(side * sign)), "side {side} at frame {frame}");
+            assert!((0.04 - 1e-5..=0.44 + 1e-5).contains(&(distance * sign)), "distance {distance} at frame {frame}");
+            assert!((0.2 - 2.0 / 15.0 - 1e-5..=0.2 + 2.0 / 15.0 + 1e-5).contains(&(pitch * sign)), "pitch {pitch} at frame {frame}");
+        }
+
+        // 563 runs through tick 95 + 650 ms (2170 ms); 666 through tick 70 + 650 ms (1770 ms).
+        let mut effects = Effects::default();
+        effects.play_quakes(&table, 563, start);
+        assert!(effects.quake(start + Duration::from_millis(2169)).is_some());
+        assert!(effects.quake(start + Duration::from_millis(2170)).is_none());
+
+        let mut effects = Effects::default();
+        effects.play_quakes(&table, 666, start);
+        assert!(effects.quake(start + Duration::from_millis(1769)).is_some());
+        assert!(effects.quake(start + Duration::from_millis(1770)).is_none());
     }
 }

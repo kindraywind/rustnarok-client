@@ -1532,6 +1532,12 @@ impl Game {
                 self.chat_line(message(if graphics.effects_on { EFFECTS_ON } else { EFFECTS_OFF }), CHAT_ITEM);
                 Ok(())
             }
+            // ponytail: /quake's chat lines use the message table's 2805 ("Screen shake ON") and 2806 ("Screen shake OFF").
+            chat::Command::Quake => {
+                graphics.quake = !graphics.quake;
+                self.chat_line(message(if graphics.quake { QUAKE_ON } else { QUAKE_OFF }), CHAT_ITEM);
+                Ok(())
+            }
             // /aura: the max-level aura in full or simplified (its motes only); not while /aura2 has it off.
             chat::Command::Aura => {
                 graphics.aura = !graphics.aura;

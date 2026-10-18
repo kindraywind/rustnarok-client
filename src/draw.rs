@@ -336,15 +336,9 @@ impl App {
         let player_feet = game.world.cell_position(player_cell);
         game.camera_goal.drag_frame();
         game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame), player_feet, game.camera_snap);
-        // An earthquake shakes the view sideways and in and out, the other way each frame.
-        let quake = if self.graphics.effects_on { game.effects.quake(now) } else { 0.0 };
-        if quake > 0.0 {
-            game.quake_flip = !game.quake_flip;
-            let shake = if game.quake_flip { quake } else { -quake };
-            game.camera.target[0] += game.camera.yaw.cos() * shake;
-            game.camera.target[2] -= game.camera.yaw.sin() * shake;
-            game.camera.distance += shake;
-        }
+        // An earthquake shakes the view sideways, in and out and in tilt, the other way each frame, and snaps back when it ends.
+        let quake = game.effects.quake(now).filter(|_| self.graphics.quake);
+        game.camera_goal.shake(&mut game.camera, player_feet, quake);
         // The eye stays above the ground under it.
         let horizontal = game.camera.distance * game.camera.pitch.cos();
         let eye = [game.camera.target[0] - horizontal * game.camera.yaw.sin(), game.camera.target[2] - horizontal * game.camera.yaw.cos()];

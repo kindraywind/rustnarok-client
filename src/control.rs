@@ -1471,6 +1471,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             "pitch": game.camera_goal.pitch.round(),
             "distance": (f64::from(game.camera_goal.distance()) * 10.0).round() / 10.0,
             "indoor": game.camera_goal.indoor,
+            "shaking": game.camera_goal.shaking,
         }),
         // What the mouse cursor shows.
         "cursor": format!("{:?}", app.cursor_look.kind()),
