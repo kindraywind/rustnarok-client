@@ -1,44 +1,57 @@
-//! The party and friends: who's in them, and their window (Alt+Z): each member's level, name, map and HP, or each
-//! friend's name; the buttons to make a party, invite, leave or set it up (or to talk to or drop a friend); and the
-//! count at the bottom, with the tab picked. A member dragged out of the list keeps a small HP window, and the
-//! "In the last row" option stacks one for every member.
+//! The party and friends: who's in them, and their window (Alt+Z): each member's job icon, level, name and map, HP
+//! and whether they're online, or each friend's name; the buttons to make a party, invite, leave or set it up (or to
+//! talk to or drop a friend); the tabs and the count at the bottom. The window has two sizes. A member dragged out of
+//! the list keeps a small HP window.
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::net::{Friend, PartyMember};
 use rustnarok_client::text::Font;
 
+use std::collections::HashMap;
+
+use image::RgbaImage;
+
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, offset};
 
-// ponytail: a 240px list of 38px rows, mesbtn buttons and a btnbar footer; calibrate against
-// the real client.
-const WIDTH: f32 = 240.0;
-const ROW: f32 = 38.0;
-const LIST_HEIGHT: f32 = 120.0;
+/// The window's two size modes: its size, its rows' height, and where a row's content starts in the row.
+const MODES: [([f32; 2], f32, [f32; 2]); 2] = [([273.0, 326.0], 34.0, [5.0, 5.0]), ([243.0, 179.0], 27.0, [4.0, 1.0])];
+/// The rows start under the title; they fit in h − 58, the white body ends 38 above the bottom.
+const LIST_UNDER: f32 = 58.0;
+const BODY_UNDER: f32 = 38.0;
+/// The button bar 40 above the bottom, 20 tall; the footer 16 above it, 12 tall.
+const BAR_ABOVE: f32 = 40.0;
 const BAR_HEIGHT: f32 = 20.0;
-const FOOTER_HEIGHT: f32 = 21.0;
-/// The "In the last row" switch under the footer (`messages[3145]`).
-const OPTION_HEIGHT: f32 = 18.0;
-const LAST_ROW: usize = 3145;
+const FOOTER_ABOVE: f32 = 16.0;
+const FOOTER_HEIGHT: f32 = 12.0;
+/// The scrollbar along the rows' right edge.
+const SCROLLBAR: f32 = 15.0;
 const BUTTON: [f32; 2] = [26.0, 20.0];
-const HP_BAR: [f32; 2] = [75.0, 5.0];
+const ICON: f32 = 25.0;
+const STATUS: [f32; 2] = [26.0, 11.0];
+const LEVEL_TEXT: [u8; 3] = [0x37, 0x3A, 0x49];
+const OFFLINE_TEXT: [u8; 3] = [0x86, 0x8A, 0xA3];
+const BODY_BORDER: [u8; 4] = [0xC0, 0xC0, 0xC0, 0xFF];
+// ponytail: the hovered row's band colour is a choice.
+const HOVER: [u8; 4] = [0x70, 0x9F, 0xED, 0xFF];
+/// The party's most (rathena's MAX_PARTY).
+const MOST_IN_PARTY: usize = 12;
+const PARTY_ART: &str = "renewalparty\\";
 /// A small member window. ponytail: 120×32 with a 100×5 bar in the party window's colours; the client's bitmaps
 /// would replace the size and the flat fill.
 pub const MEMBER_SIZE: [f32; 2] = [120.0, 32.0];
 pub const MEMBER_HP: [f32; 2] = [100.0, 5.0];
 const MEMBER_HP_AT: [f32; 2] = [8.0, 20.0];
 const CLOSE_AT: [f32; 2] = [106.0, 3.0];
-const MOST: usize = 12;
 const MOST_FRIENDS: usize = 40;
-const FRIEND_ROW: f32 = 18.0;
+const FRIEND_ROW: f32 = 23.0;
 const FRIEND: [u8; 3] = [0x10, 0x25, 0x50];
 const FRIENDS_MESSAGE: usize = 102;
-const POSITION: [f32; 2] = [770.0, 180.0];
+const POSITION: [f32; 2] = [300.0, 200.0];
 /// "Party", "Cap", and what the buttons do.
 const TITLE_MESSAGE: usize = 103;
 const CAP_MESSAGE: usize = 3231;
-const LEVEL: [u8; 3] = [0xE3, 0x75, 0x22];
 const NAME: [u8; 3] = [0x33, 0x33, 0x33];
 const LEADER: [u8; 3] = [0x08, 0x31, 0x7B];
 const MAP: [u8; 3] = [0x77, 0x77, 0x77];
@@ -52,6 +65,8 @@ pub struct Member {
     /// Where they are on the minimap, when on the player's map.
     pub cell: Option<[i32; 2]>,
     pub dead: bool,
+    /// Their colour on the minimap and in the window: their place in the list when they were added.
+    pub color: usize,
 }
 
 #[derive(Default)]
@@ -71,11 +86,13 @@ impl Party {
         self.members.iter_mut().find(|member| member.info.account == account)
     }
 
-    /// A member joined or changed: the entry is replaced, keeping what's known of their HP and place.
+    /// A member joined or changed: the entry is replaced, keeping what's known of their HP, place and colour; someone
+    /// new takes the colour of their place in the list now.
     pub fn upsert(&mut self, info: PartyMember) {
+        let place = self.members.len();
         match self.member(info.account) {
             Some(member) => member.info = info,
-            None => self.members.push(Member { info, ..Member::default() }),
+            None => self.members.push(Member { info, color: place, ..Member::default() }),
         }
     }
 
@@ -162,14 +179,22 @@ pub enum Hit {
     Friend(usize),
     /// The footer's tabs: friends or party.
     Tab(bool),
-    /// The "In the last row" switch.
-    LastRow,
     Window,
 }
 
 pub struct Assets {
-    bar: Texture,
-    footer: Texture,
+    /// The button bar's left end, middle and right end.
+    bar: [Texture; 3],
+    /// The window's body edge, the hovered row, the party count's box, and the size button in mode 1 (normal,
+    /// hovered, pressed).
+    body_border: Texture,
+    hover: Texture,
+    member_count: Texture,
+    maximum: [Texture; 3],
+    /// The crown and the status icons (us, online, offline); the HP bar's border, background, fill and low fill.
+    crown: Texture,
+    status: [Texture; 3],
+    bar_colors: [Texture; 4],
     /// Each button's normal, hovered and pressed images.
     buttons: Vec<(Button, [Texture; 3])>,
     radio: [Texture; 2],
@@ -183,8 +208,14 @@ impl Assets {
         let basic = format!("{UI}basic_interface\\");
         let image = |name: String| gpu.load_texture(grf, &name, false);
         Self {
-            bar: image(format!("{basic}mesbtn_mid.bmp")),
-            footer: image(format!("{basic}btnbar_mid.bmp")),
+            bar: ["mesbtn_left", "mesbtn_mid", "mesbtn_right"].map(|name| image(format!("{basic}{name}.bmp"))),
+            body_border: gpu.solid(BODY_BORDER),
+            hover: gpu.solid(HOVER),
+            member_count: image(format!("{UI}{PARTY_ART}bg_partymember.bmp")),
+            maximum: ["out", "over", "press"].map(|look| image(format!("{UI}{PARTY_ART}btn_titlebar_maximum_{look}.bmp"))),
+            crown: image(format!("{UI}{PARTY_ART}ico_partycrown.bmp")),
+            status: ["me", "on", "off"].map(|name| image(format!("{UI}{PARTY_ART}icon_party_{name}.bmp"))),
+            bar_colors: [[0x14, 0x19, 0x9B, 255], [0x44, 0x44, 0x44, 255], [0x16, 0xEA, 0x25, 255], [0xEA, 0x16, 0x16, 255]].map(|color| gpu.solid(color)),
             buttons: [Button::Create, Button::Invite, Button::Leave, Button::Setup, Button::Whisper, Button::Delete, Button::FriendSetup]
                 .into_iter()
                 .map(|button| (button, ["", "_a", "_b"].map(|look| image(format!("{basic}{}{look}.bmp", button.image())))))
@@ -378,34 +409,135 @@ fn member_bar(online: bool, hp: Option<[i32; 2]>) -> MemberBar {
     }
 }
 
+/// A job's icon in the party window, alive or dead: its path (an offline member's is that path with "|grey").
+pub fn job_icon(job: u16, dead: bool) -> String {
+    format!("{UI}{PARTY_ART}icon_jobs_{job}{}.bmp", if dead { "_die" } else { "" })
+}
+
+/// An offline member's icon: each pixel the mean of its channels, at least 120; the magenta key kept.
+pub fn greyed(mut image: RgbaImage) -> RgbaImage {
+    for pixel in image.pixels_mut() {
+        let [r, g, b, a] = pixel.0;
+        if a == 0 || [r, g, b] == [255, 0, 255] {
+            continue;
+        }
+        let grey = ((u16::from(r) + u16::from(g) + u16::from(b)) / 3).max(120) as u8;
+        pixel.0 = [grey, grey, grey, a];
+    }
+    image
+}
+
+/// Loads the job icons the window shows into `icons` (an offline member's greyed).
+pub fn load_icons(icons: &mut HashMap<String, Option<Texture>>, gpu: &Gpu, grf: &Grf, party: Option<&Party>) {
+    for member in party.map_or(&[][..], |party| &party.members) {
+        let path = job_icon(member.info.job, member.dead);
+        if member.info.online {
+            icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, false).ok());
+        } else {
+            icons.entry(format!("{path}|grey")).or_insert_with(|| crate::render::load_image(grf, &path).ok().map(|image| gpu.texture(&greyed(image), false)));
+        }
+    }
+}
+
+/// The window's title: "Party(name)", "Party" before a name is known, or "Friend(n/40)".
+pub fn title(messages: &[String], friends: Option<usize>, party: Option<&str>) -> String {
+    let message = |id: usize| messages.get(id).map_or("", String::as_str);
+    match (friends, party) {
+        (Some(count), _) => format!("{}({count}/{MOST_FRIENDS})", message(FRIENDS_MESSAGE)),
+        (None, Some(name)) if !name.is_empty() => format!("{}({name})", message(TITLE_MESSAGE)),
+        _ => message(TITLE_MESSAGE).to_owned(),
+    }
+}
+
+/// Whether a member's row shows the HP bar: ours always; another's only online and on screen.
+pub fn shows_bar(account: u32, me: u32, online: bool, on_screen: bool) -> bool {
+    account == me || (online && on_screen)
+}
+
+/// Who's looking at the party window: our account, our HP and max, whether a member is on screen, and the maps'
+/// display names.
+pub type Whose<'f> = (u32, [i32; 2], &'f dyn Fn(u32) -> bool, &'f dyn Fn(&str) -> String);
+
 pub struct PartyWindow {
     pub frame: Frame,
     /// The friends tab is open (else the party's); the friend picked.
     pub friends: bool,
     pub picked: Option<usize>,
-    /// ponytail: on, every member is drawn in the small window's look, stacked along the bottom of the screen
-    /// ("in the last row", `messages[3145]`). Off hides that stack. The real client may dock it somewhere else.
-    pub compact: bool,
+    /// The size mode (0: 273×326, 1: 243×179), and rows scrolled past.
+    pub mode: usize,
+    scroll: usize,
 }
 
 impl Default for PartyWindow {
     fn default() -> Self {
-        Self { frame: Frame::new(POSITION, WIDTH), friends: false, picked: None, compact: false }
+        Self { frame: Frame::new(POSITION, MODES[0].0[0]), friends: false, picked: None, mode: 0, scroll: 0 }
+    }
+}
+
+/// Where a row's parts go, window-local, for a window `width` wide with rows `height` tall and the content offset
+/// `[mx, my]`, its top at `top`: the icon, the crown, the level, the HP bar, the status icon; and how wide the name
+/// may be.
+struct RowPlaces {
+    icon: [f32; 2],
+    crown: [f32; 2],
+    level: [f32; 2],
+    bar: [f32; 2],
+    status: [f32; 2],
+    name_width: f32,
+}
+
+fn row_places(width: f32, height: f32, [mx, my]: [f32; 2], top: f32) -> RowPlaces {
+    RowPlaces {
+        icon: [mx, top + my],
+        crown: [mx + 2.0, top + my - 8.0],
+        level: [mx + 28.0, top + my + 3.0],
+        bar: [47.0, top + (0.76 * height).trunc()],
+        status: [(0.8 * width).trunc(), top + (0.65 * height).trunc()],
+        name_width: (0.8 * width - 80.0).trunc(),
     }
 }
 
 impl PartyWindow {
-    fn list_height(&self, party: Option<&Party>, friends: &[Friend]) -> f32 {
-        let rows = if self.friends { friends.len() as f32 * FRIEND_ROW } else { party.map_or(0.0, |party| party.members.len() as f32 * ROW) };
-        rows.max(LIST_HEIGHT)
+    pub fn size(&self) -> [f32; 2] {
+        MODES[self.mode].0
     }
 
-    pub fn height(&self, party: Option<&Party>, friends: &[Friend]) -> f32 {
-        TITLE_HEIGHT + self.list_height(party, friends) + BAR_HEIGHT + FOOTER_HEIGHT + OPTION_HEIGHT
+    fn row_height(&self) -> f32 {
+        if self.friends { FRIEND_ROW } else { MODES[self.mode].1 }
     }
 
-    fn option_top(&self, party: Option<&Party>, friends: &[Friend]) -> f32 {
-        self.height(party, friends) - OPTION_HEIGHT
+    /// Rows that fit: (h − 58) / H.
+    fn visible_rows(&self) -> usize {
+        ((self.size()[1] - LIST_UNDER) / self.row_height()) as usize
+    }
+
+    pub fn height(&self) -> f32 {
+        self.size()[1]
+    }
+
+    /// The title bar's minimize button switches the size mode instead of folding the window.
+    pub fn click_title(&mut self, hit: TitleHit) {
+        if hit == TitleHit::Minimize {
+            self.set_mode(1 - self.mode);
+        } else {
+            self.frame.click_title(hit);
+        }
+    }
+
+    pub fn set_mode(&mut self, mode: usize) {
+        self.mode = mode.min(1);
+        self.frame.set_width(self.size()[0]);
+        self.scroll = 0;
+    }
+
+    /// The wheel over the rows.
+    pub fn scroll_by(&mut self, rows: i32, count: usize) {
+        let most = count.saturating_sub(self.visible_rows());
+        self.scroll = (self.scroll as i32 + rows).clamp(0, most as i32) as usize;
+    }
+
+    fn row_top(&self, row: usize) -> f32 {
+        TITLE_HEIGHT + row as f32 * self.row_height()
     }
 
     /// The buttons shown: for friends, whispering and dropping; making a party without one; inviting (the leader),
@@ -421,62 +553,80 @@ impl PartyWindow {
         }
     }
 
+    /// A button's place on the bar. ponytail: the buttons keep their order from the bar's left end; their places are
+    /// another issue.
+    fn button_at(&self, place: usize) -> [f32; 2] {
+        [7.0 + place as f32 * BUTTON[0], self.size()[1] - BAR_ABOVE]
+    }
+
+    /// The footer's tabs: friends at x 4, 48 wide; party at x 64.
+    // ponytail: the party tab's hit is 48 wide; drawn, it's its text's width + 13.
+    fn tab_at(friends: bool) -> [f32; 2] {
+        [if friends { 4.0 } else { 64.0 }, 48.0]
+    }
+
+    /// The members or friends shown, with their rows.
+    fn shown<'p, T>(&self, all: &'p [T]) -> impl Iterator<Item = (usize, &'p T)> {
+        all.iter().skip(self.scroll).take(self.visible_rows()).enumerate()
+    }
+
     /// The buttons (`setup`, `invite`, `leave`, ...) and each member's row (`member:<name>`) on screen, for the test
     /// driver.
-    pub fn button_boxes(&self, party: Option<&Party>, friends: &[Friend], me: u32) -> Vec<(String, [f32; 4])> {
+    pub fn button_boxes(&self, party: Option<&Party>, me: u32) -> Vec<(String, [f32; 4])> {
         if !self.frame.open || self.frame.minimized {
             return Vec::new();
         }
-        let bar_top = TITLE_HEIGHT + self.list_height(party, friends);
         let place = |local: [f32; 2], size: [f32; 2]| {
             let [x, y] = self.frame.at(local);
             [x, y, size[0], size[1]]
         };
-        let buttons = self
+        let mut boxes: Vec<(String, [f32; 4])> = self
             .buttons(party, me)
             .into_iter()
             .enumerate()
-            .map(|(index, button)| (format!("{button:?}").to_lowercase(), place([index as f32 * BUTTON[0], bar_top], BUTTON)));
+            .map(|(index, button)| (format!("{button:?}").to_lowercase(), place(self.button_at(index), BUTTON)))
+            .collect();
         let members = party.filter(|_| !self.friends).map_or(&[][..], |party| &party.members);
-        let rows = members
-            .iter()
-            .enumerate()
-            .map(|(row, member)| (format!("member:{}", member.info.name), place([0.0, TITLE_HEIGHT + row as f32 * ROW], [WIDTH, ROW])));
-        let option = ("last_row".to_owned(), place([0.0, self.option_top(party, friends)], [WIDTH, OPTION_HEIGHT]));
-        buttons.chain(rows).chain(std::iter::once(option)).collect()
+        let width = self.size()[0];
+        boxes.extend(
+            self.shown(members).map(|(row, member)| (format!("member:{}", member.info.name), place([0.0, self.row_top(row)], [width, self.row_height()]))),
+        );
+        boxes.push(("party_mode".to_owned(), place(self.frame.minimize_button(), window::BUTTON_SIZE)));
+        boxes
     }
 
     pub fn hit(&self, cursor: [f32; 2], party: Option<&Party>, friends: &[Friend], me: u32) -> Option<Hit> {
-        let local = self.frame.local(cursor, self.height(party, friends))?;
+        let [width, height] = self.size();
+        let local = self.frame.local(cursor, height)?;
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
         }
-        let bar_top = TITLE_HEIGHT + self.list_height(party, friends);
         for (place, button) in self.buttons(party, me).into_iter().enumerate() {
-            if contains([place as f32 * BUTTON[0], bar_top], BUTTON, local) {
+            if contains(self.button_at(place), BUTTON, local) {
                 return Some(Hit::Button(button));
             }
         }
-        // The footer's two tabs, friends first, then the compact-list switch under them.
-        let footer_top = bar_top + BAR_HEIGHT;
-        if local[1] >= footer_top + FOOTER_HEIGHT {
-            return Some(Hit::LastRow);
-        }
-        if local[1] >= footer_top && local[0] < 140.0 {
-            return Some(Hit::Tab(local[0] < 70.0));
-        }
-        if local[1] < bar_top {
-            let row = local[1] - TITLE_HEIGHT;
-            if self.friends && ((row / FRIEND_ROW) as usize) < friends.len() {
-                return Some(Hit::Friend((row / FRIEND_ROW) as usize));
+        let footer = height - FOOTER_ABOVE;
+        for friends_tab in [true, false] {
+            let [x, w] = Self::tab_at(friends_tab);
+            if contains([x, footer], [w, FOOTER_HEIGHT], local) {
+                return Some(Hit::Tab(friends_tab));
             }
-            if let Some(member) = party.filter(|_| !self.friends).and_then(|party| party.members.get((row / ROW) as usize)) {
+        }
+        let list_bottom = TITLE_HEIGHT + self.visible_rows() as f32 * self.row_height();
+        if local[1] >= TITLE_HEIGHT && local[1] < list_bottom && local[0] < width - SCROLLBAR {
+            let row = ((local[1] - TITLE_HEIGHT) / self.row_height()) as usize + self.scroll;
+            if self.friends && row < friends.len() {
+                return Some(Hit::Friend(row));
+            }
+            if let Some(member) = party.filter(|_| !self.friends).and_then(|party| party.members.get(row)) {
                 return Some(Hit::Member(member.info.account));
             }
         }
         Some(Hit::Window)
     }
 
+    /// The window. `on_screen` tells whether a member's character is on screen; `our_hp` is the player's HP and max.
     #[allow(clippy::too_many_arguments)]
     pub fn draw<'a>(
         &self,
@@ -484,11 +634,12 @@ impl PartyWindow {
         tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
         assets: &'a Assets,
+        icons: &'a HashMap<String, Option<Texture>>,
         font: &Font,
         messages: &[String],
         party: Option<&Party>,
         friends: &[Friend],
-        (me, map_names): (u32, &dyn Fn(&str) -> String),
+        (me, our_hp, on_screen, map_names): Whose<'_>,
         pointer: ([f32; 2], bool),
     ) {
         if !self.frame.open {
@@ -496,111 +647,133 @@ impl PartyWindow {
         }
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
         let at = |local: [f32; 2]| self.frame.at(local);
-        let title = if self.friends {
-            format!("{} ({}/{MOST_FRIENDS})", message(FRIENDS_MESSAGE), friends.len())
-        } else {
-            party.map_or_else(|| message(TITLE_MESSAGE).to_owned(), |party| format!("{} ({})", message(TITLE_MESSAGE), party.name))
-        };
+        let [width, height] = self.size();
+        let title = title(messages, self.friends.then_some(friends.len()), party.map(|party| party.name.as_str()));
         self.frame.draw_title(layer, chrome, &title, pointer.0);
+        // Mode 1's size button turns it back.
+        if self.mode == 1 {
+            let place = self.frame.minimize_button();
+            let hovered = contains(at(place), window::BUTTON_SIZE, pointer.0);
+            let image = &assets.maximum[usize::from(hovered) + usize::from(hovered && pointer.1)];
+            layer.sprites.push((image, at(place), image.size));
+        }
         if self.frame.minimized {
             return;
         }
         let hit = self.hit(pointer.0, party, friends, me);
-        let list_height = self.list_height(party, friends);
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, list_height]));
-        for x in [0.0, WIDTH - 1.0] {
-            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, list_height]));
-        }
+        // The white body, outlined, from under the title to 38 above the bottom.
+        let body = height - BODY_UNDER - TITLE_HEIGHT;
+        layer.sprites.push((&assets.body_border, at([0.0, TITLE_HEIGHT]), [width, body]));
+        layer.sprites.push((&chrome.white, at([1.0, TITLE_HEIGHT]), [width - 2.0, body - 1.0]));
+        let row_height = self.row_height();
 
         // Friends: each name, the picked one in blue.
         if self.friends {
-            for (row, friend) in friends.iter().enumerate() {
-                let top = TITLE_HEIGHT + row as f32 * FRIEND_ROW;
-                if self.picked == Some(row) {
-                    layer.sprites.push((&assets.picked, at([1.0, top]), [WIDTH - 2.0, FRIEND_ROW]));
+            for (row, friend) in self.shown(friends) {
+                let top = self.row_top(row);
+                if self.picked == Some(row + self.scroll) {
+                    layer.sprites.push((&assets.picked, at([1.0, top]), [width - 2.0, row_height]));
                 }
-                layer.texts.push((friend.name.clone(), at([18.0, top + 2.0]), if friend.online { FRIEND } else { OFFLINE }));
+                layer.texts.push((friend.name.clone(), at([18.0, top + 5.0]), if friend.online { FRIEND } else { OFFLINE_TEXT }));
             }
         }
-        // Each member: level, name and map, then the HP bar and numbers while they're online.
+        // Each member: the job icon, the crown, "Lv.N" and "Name(Map)", the HP bar where it shows, the status icon.
         let members = if self.friends { &[][..] } else { party.map_or(&[][..], |party| &party.members) };
-        for (row, member) in members.iter().enumerate() {
-            let top = TITLE_HEIGHT + row as f32 * ROW;
+        for (row, member) in self.shown(members) {
+            let top = self.row_top(row);
             let info = &member.info;
-            let mut x = 8.0;
-            let level = format!("Lv {}", info.level);
-            layer.texts.push((level.clone(), at([x, top + 4.0]), if info.online { LEVEL } else { OFFLINE }));
-            x += font.width(&level) + 5.0;
-            let name = window::fit(font, &info.name, 100.0);
-            layer.texts.push((
-                name.clone(),
-                at([x, top + 4.0]),
-                if !info.online {
-                    OFFLINE
-                } else if info.leader {
-                    LEADER
-                } else {
-                    NAME
-                },
-            ));
-            x += font.width(&name) + 5.0;
-            let map = window::fit(font, &map_names(&info.map), WIDTH - x - 4.0);
-            layer.texts.push((map, at([x, top + 4.0]), MAP));
-            if info.online
-                && let Some([hp, max]) = member.hp
-            {
-                let bar = [8.0, top + 22.0];
-                let [border, background, healthy, low] = &assets.hp;
-                layer.sprites.push((border, at(bar), [HP_BAR[0] + 2.0, HP_BAR[1] + 2.0]));
-                layer.sprites.push((background, at(offset(bar, [1.0, 1.0])), HP_BAR));
-                let fill = if hp_low(hp, max) { low } else { healthy };
-                layer.sprites.push((fill, at(offset(bar, [1.0, 1.0])), [hp_fill(hp, max, HP_BAR[0]), HP_BAR[1]]));
-                layer.texts.push((format!("{hp}/{max}"), at([8.0 + HP_BAR[0] + 8.0, top + 18.0]), NAME));
+            let places = row_places(width, row_height, MODES[self.mode].2, top);
+            if hit == Some(Hit::Member(info.account)) {
+                layer.sprites.push((&assets.hover, at([0.0, top + 2.0]), [width, row_height]));
             }
+            let icon = job_icon(info.job, member.dead);
+            let key = if info.online { icon } else { format!("{icon}|grey") };
+            if let Some(Some(icon)) = icons.get(&key) {
+                layer.sprites.push((icon, at(places.icon), [ICON, ICON]));
+            }
+            if info.leader {
+                layer.sprites.push((&assets.crown, at(places.crown), assets.crown.size));
+            }
+            let text = if info.online { LEVEL_TEXT } else { OFFLINE_TEXT };
+            let level = format!("Lv.{}", info.level);
+            layer.texts.push((level.clone(), at(places.level), text));
+            let map = map_names(&info.map);
+            let whole = if info.online && !map.is_empty() { format!("{}({map})", info.name) } else { info.name.clone() };
+            let name = window::fit(font, &whole, places.name_width);
+            let color = if info.online {
+                let [r, g, b, _] = crate::minimap::party_color(member.color);
+                [r, g, b]
+            } else {
+                OFFLINE_TEXT
+            };
+            let name_at = [places.level[0] + font.width(&level) + 5.0, places.level[1]];
+            layer.texts.push((name.clone(), at(name_at), color));
+            if name != whole && hit == Some(Hit::Member(info.account)) {
+                window::tooltip(tooltip, chrome, font, &format!("{level} {whole}"), offset(pointer.0, [12.0, 12.0]), [255; 3]);
+            }
+            let hp = if info.account == me { Some(our_hp) } else { member.hp };
+            if shows_bar(info.account, me, info.online, on_screen(info.account))
+                && let Some([hp, max]) = hp
+            {
+                let [border, background, fill, low] = &assets.bar_colors;
+                let rows = [(i64::from(hp), i64::from(max), fill, low)];
+                for (texture, [x, y, w, h]) in crate::overhead::gage(&rows, border, background, crate::overhead::party_fill) {
+                    layer.sprites.push((texture, at([places.bar[0] + x, places.bar[1] + y]), [w, h]));
+                }
+                layer.texts.push((format!("{hp}/{max}"), at([places.bar[0] + 66.0, places.bar[1] - 2.0]), [0, 0, 0]));
+            }
+            let status = &assets.status[if info.account == me {
+                0
+            } else if info.online {
+                1
+            } else {
+                2
+            }];
+            layer.sprites.push((status, at(places.status), STATUS));
+        }
+        // The scrollbar when the rows don't all fit. ponytail: a plain track and thumb in the window's colours.
+        let count = if self.friends { friends.len() } else { members.len() };
+        let shown = self.visible_rows();
+        if count > shown {
+            let track = height - LIST_UNDER;
+            layer.sprites.push((&assets.body_border, at([width - SCROLLBAR, TITLE_HEIGHT]), [SCROLLBAR, track]));
+            let thumb = (track * shown as f32 / count as f32).max(10.0);
+            let top = TITLE_HEIGHT + (track - thumb) * self.scroll as f32 / (count - shown) as f32;
+            layer.sprites.push((&assets.picked, at([width - SCROLLBAR + 2.0, top]), [SCROLLBAR - 4.0, thumb]));
         }
 
-        // The button bar, then the footer with the party tab picked and the count.
-        let bar_top = TITLE_HEIGHT + list_height;
-        layer.sprites.push((&assets.bar, at([0.0, bar_top]), [WIDTH, BAR_HEIGHT]));
+        // The button bar: its ends and the middle tiled between, then the buttons.
+        let bar_top = height - BAR_ABOVE;
+        let [left, middle, right] = &assets.bar;
+        layer.sprites.push((left, at([0.0, bar_top]), [left.size[0], BAR_HEIGHT]));
+        layer.sprites.push((middle, at([left.size[0], bar_top]), [width - left.size[0] - right.size[0], BAR_HEIGHT]));
+        layer.sprites.push((right, at([width - right.size[0], bar_top]), [right.size[0], BAR_HEIGHT]));
         for (place, button) in self.buttons(party, me).into_iter().enumerate() {
             let look = match hit {
                 Some(Hit::Button(hovered)) if hovered == button => 1 + usize::from(pointer.1),
                 _ => 0,
             };
-            let corner = at([place as f32 * BUTTON[0], bar_top]);
-            layer.sprites.push((&assets.button(button)[look], corner, BUTTON));
+            layer.sprites.push((&assets.button(button)[look], at(self.button_at(place)), BUTTON));
             if look > 0 {
                 window::tooltip(tooltip, chrome, font, message(button.message()), offset(pointer.0, [12.0, 12.0]), [255; 3]);
             }
         }
-        let footer_top = bar_top + BAR_HEIGHT;
-        layer.sprites.push((&assets.footer, at([0.0, footer_top]), [WIDTH, FOOTER_HEIGHT]));
-        let text_top = footer_top + ((FOOTER_HEIGHT - font.line_height()) / 2.0).floor();
-        let mut x = 6.0;
-        for (label, on) in [(FRIENDS_MESSAGE, self.friends), (TITLE_MESSAGE, !self.friends)] {
-            let radio = &assets.radio[usize::from(on)];
-            layer.sprites.push((radio, at([x, footer_top + ((FOOTER_HEIGHT - radio.size[1]) / 2.0).floor()]), radio.size));
-            x += radio.size[0] + 3.0;
-            layer.texts.push((message(label).to_owned(), at([x, text_top]), [0, 0, 0]));
-            x += font.width(message(label)) + 10.0;
+        // The footer: the two tabs (the open one in black), and the party's count in its box.
+        // ponytail: under the button bar the window's white body, outlined, behind the tabs; the tabs are words only,
+        // the open one black, the other grey.
+        let under = bar_top + BAR_HEIGHT;
+        layer.sprites.push((&assets.body_border, at([0.0, under]), [width, height - under]));
+        layer.sprites.push((&chrome.white, at([1.0, under]), [width - 2.0, height - under - 1.0]));
+        let footer = height - FOOTER_ABOVE;
+        for (friends_tab, label) in [(true, FRIENDS_MESSAGE), (false, TITLE_MESSAGE)] {
+            let color = if friends_tab == self.friends { [0, 0, 0] } else { OFFLINE_TEXT };
+            layer.texts.push((message(label).to_owned(), at([Self::tab_at(friends_tab)[0] + 6.0, footer - 1.0]), color));
         }
-        if !self.friends {
-            let count = format!("{} {}/{MOST}", message(CAP_MESSAGE), party.map_or(0, |party| party.members.len()));
-            layer.texts.push((count.clone(), at([WIDTH - 10.0 - font.width(&count), text_top]), [0, 0, 0]));
+        if !self.friends && !members.is_empty() {
+            layer.texts.push((message(CAP_MESSAGE).to_owned(), at([width - 96.0, footer]), [0, 0, 0]));
+            layer.sprites.push((&assets.member_count, at([width - 58.0, footer - 2.0]), assets.member_count.size));
+            layer.texts.push((format!("{}/{MOST_IN_PARTY}", members.len()), at([width - 51.0, footer]), [255; 3]));
         }
-        // The compact list's switch. ponytail: a radio in the party window's own colours, labelled messages[3145].
-        let option_top = footer_top + FOOTER_HEIGHT;
-        layer.sprites.push((&chrome.white, at([0.0, option_top]), [WIDTH, OPTION_HEIGHT]));
-        layer.sprites.push((&chrome.border, at([0.0, option_top]), [WIDTH, 1.0]));
-        for x in [0.0, WIDTH - 1.0] {
-            layer.sprites.push((&chrome.border, at([x, option_top]), [1.0, OPTION_HEIGHT]));
-        }
-        layer.sprites.push((&chrome.border, at([0.0, option_top + OPTION_HEIGHT - 1.0]), [WIDTH, 1.0]));
-        let radio = &assets.radio[usize::from(self.compact)];
-        let radio_y = option_top + ((OPTION_HEIGHT - radio.size[1]) / 2.0).floor();
-        layer.sprites.push((radio, at([6.0, radio_y]), radio.size));
-        let label = message(LAST_ROW).trim_end();
-        layer.texts.push((label.to_owned(), at([6.0 + radio.size[0] + 4.0, option_top + 2.0]), [0, 0, 0]));
     }
 }
 
@@ -739,65 +912,17 @@ impl MemberWindows {
         boxes
     }
 
-    /// The compact stack (when `compact`), then each dragged-out window on top. The bar reads
-    /// `Member::hp`, which `MapEvent::PartyHp` (ZC_NOTIFY_HP_TO_GROUPM, 0x080E) fills for the party window too.
+    /// Each dragged-out window. The bar reads `Member::hp`, which `MapEvent::PartyHp` (ZC_NOTIFY_HP_TO_GROUPM,
+    /// 0x080E) fills for the party window too.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw<'a>(
-        &self,
-        layer: &mut Layer<'a>,
-        chrome: &'a Chrome,
-        assets: &'a Assets,
-        font: &Font,
-        party: Option<&Party>,
-        here: &str,
-        compact: bool,
-        pointer: [f32; 2],
-    ) {
+    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, font: &Font, party: Option<&Party>, here: &str, pointer: [f32; 2]) {
         let Some(party) = party else { return };
-        if compact {
-            let top = compact_top(party.members.len());
-            for (row, member) in party.members.iter().enumerate() {
-                draw_member(layer, chrome, assets, font, member, [top[0], top[1] + row as f32 * MEMBER_SIZE[1]], here, false, pointer);
-            }
-        }
         for window in &self.open {
             if let Some(member) = party.members.iter().find(|member| member.info.account == window.account) {
                 draw_member(layer, chrome, assets, font, member, window.position, here, true, pointer);
             }
         }
     }
-}
-
-/// Where the compact stack starts. ponytail: its bottom sits 48px above the screen, clear of the chat line.
-pub fn compact_top(count: usize) -> [f32; 2] {
-    let height = count as f32 * MEMBER_SIZE[1];
-    [8.0, (crate::screen()[1] - 48.0 - height).max(0.0)]
-}
-
-/// The compact row under the pointer, when the stack is showing.
-pub fn compact_hit(cursor: [f32; 2], party: Option<&Party>) -> Option<u32> {
-    let party = party?;
-    if party.members.is_empty() {
-        return None;
-    }
-    let top = compact_top(party.members.len());
-    let row = (cursor[1] - top[1]) / MEMBER_SIZE[1];
-    if cursor[0] < top[0] || cursor[0] >= top[0] + MEMBER_SIZE[0] || row < 0.0 {
-        return None;
-    }
-    party.members.get(row as usize).map(|member| member.info.account)
-}
-
-/// Each compact row, for the test driver.
-pub fn compact_boxes(party: Option<&Party>) -> Vec<(String, [f32; 4])> {
-    let Some(party) = party else { return Vec::new() };
-    let top = compact_top(party.members.len());
-    party
-        .members
-        .iter()
-        .enumerate()
-        .map(|(row, member)| (format!("party_list:{}", member.info.name), [top[0], top[1] + row as f32 * MEMBER_SIZE[1], MEMBER_SIZE[0], MEMBER_SIZE[1]]))
-        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -935,8 +1060,70 @@ mod tests {
         assert!(!party.offers_leader(1, 9), "not to a stranger");
         let mut window = PartyWindow::default();
         window.frame.open = true;
-        let names: Vec<String> = window.button_boxes(Some(&party), &[], 1).into_iter().map(|(name, _)| name).collect();
-        assert_eq!(names, ["setup", "invite", "leave", "member:M1", "member:M2", "member:M3", "last_row"]);
+        let names: Vec<String> = window.button_boxes(Some(&party), 1).into_iter().map(|(name, _)| name).collect();
+        assert_eq!(names, ["setup", "invite", "leave", "member:M1", "member:M2", "member:M3", "party_mode"]);
+    }
+
+    #[test]
+    fn lays_out_rows_in_both_modes() {
+        // Mode 0: 273×326, 34 px rows from y 17, content at (5, 5).
+        let row = row_places(273.0, 34.0, MODES[0].2, 17.0);
+        assert_eq!((row.icon, row.crown, row.level), ([5.0, 22.0], [7.0, 14.0], [33.0, 25.0]));
+        assert_eq!((row.bar, row.status, row.name_width), ([47.0, 42.0], [218.0, 39.0], 138.0));
+        // Mode 1: 243×179, 27 px rows, content at (4, 1).
+        let row = row_places(243.0, 27.0, MODES[1].2, 17.0);
+        assert_eq!((row.icon, row.crown, row.level), ([4.0, 18.0], [6.0, 10.0], [32.0, 21.0]));
+        assert_eq!((row.bar, row.status, row.name_width), ([47.0, 37.0], [194.0, 34.0], 114.0));
+        // Seven rows fit at 326, the title button switches the mode and back.
+        let mut window = PartyWindow::default();
+        assert_eq!((window.visible_rows(), window.height()), (7, 326.0));
+        window.click_title(TitleHit::Minimize);
+        assert_eq!((window.mode, window.visible_rows(), window.height(), window.frame.minimized), (1, 4, 179.0, false));
+        window.click_title(TitleHit::Minimize);
+        assert_eq!(window.mode, 0);
+        // The friends tab's rows are 23 px.
+        window.friends = true;
+        assert_eq!(window.visible_rows(), 11);
+        // More rows than fit scroll, no further than the last.
+        window.scroll_by(5, 15);
+        assert_eq!(window.scroll, 4);
+        window.scroll_by(-9, 15);
+        assert_eq!(window.scroll, 0);
+    }
+
+    #[test]
+    fn shows_bars_colours_titles_and_grey_icons() {
+        // The bar: ours always; another's online and on screen only.
+        assert!(shows_bar(1, 1, true, false));
+        assert!(shows_bar(2, 1, true, true));
+        assert!(!shows_bar(2, 1, true, false), "off screen");
+        assert!(!shows_bar(2, 1, false, true), "offline");
+        // Colours come from the place at the add and stay when someone leaves.
+        let mut party = Party::default();
+        for account in 1..=3 {
+            party.upsert(member(account, account == 1));
+        }
+        party.members.retain(|member| member.info.account != 2);
+        party.upsert(member(4, false));
+        party.upsert(PartyMember { level: 50, ..member(3, false) });
+        assert_eq!(party.members.iter().map(|member| (member.info.account, member.color)).collect::<Vec<_>>(), [(1, 0), (3, 2), (4, 2)]);
+        // The title.
+        let messages: Vec<String> = (0..=103)
+            .map(|id| match id {
+                102 => "Friend".to_owned(),
+                103 => "Party".to_owned(),
+                _ => String::new(),
+            })
+            .collect();
+        assert_eq!(title(&messages, None, Some("Crabs")), "Party(Crabs)");
+        assert_eq!(title(&messages, None, Some("")), "Party");
+        assert_eq!(title(&messages, None, None), "Party");
+        assert_eq!(title(&messages, Some(3), None), "Friend(3/40)");
+        // Offline icons: each pixel the mean, at least 120; magenta and clear ones kept.
+        let image = RgbaImage::from_fn(4, 1, |x, _| image::Rgba([[30, 60, 90, 255], [200, 210, 220, 255], [255, 0, 255, 255], [9, 9, 9, 0]][x as usize]));
+        let grey = greyed(image);
+        assert_eq!(grey.pixels().map(|pixel| pixel.0).collect::<Vec<_>>(), [[120, 120, 120, 255], [210, 210, 210, 255], [255, 0, 255, 255], [9, 9, 9, 0]]);
+        assert!(job_icon(4257, true).ends_with("renewalparty\\icon_jobs_4257_die.bmp"));
     }
 
     #[test]
@@ -996,7 +1183,7 @@ mod tests {
     #[test]
     fn hp_fill_width_matches_the_party_bar() {
         assert_eq!(hp_fill(50, 100, MEMBER_HP[0]), 50.0);
-        assert_eq!(hp_fill(5, 10, HP_BAR[0]), (HP_BAR[0] * 0.5).round());
+        assert_eq!(hp_fill(5, 10, 60.0), 30.0);
         assert_eq!(hp_fill(1, 100, MEMBER_HP[0]), 1.0);
         assert_eq!(hp_fill(0, 100, MEMBER_HP[0]), 0.0);
         assert_eq!(hp_fill(10, 0, MEMBER_HP[0]), 0.0);

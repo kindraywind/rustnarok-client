@@ -2548,13 +2548,12 @@ impl Game {
         aim_use(ground, unit, if ground { self.ground_cell(cursor) } else { None })
     }
 
-    /// A party member's small window (or a row of the compact list) under the pointer, for aiming a skill.
+    /// A party member's small window under the pointer, for aiming a skill.
     /// The close button is left out: that still closes the window.
     fn party_member_at(&self, cursor: [f32; 2]) -> Option<u32> {
         match self.member_windows.hit(cursor) {
             Some((account, party::MemberHit::Body)) => Some(account),
             Some(_) => None,
-            None if self.party_window.compact => party::compact_hit(cursor, self.party.as_ref()),
             None => None,
         }
     }
@@ -2765,6 +2764,7 @@ impl Game {
         }
         let mut places = window_places(frames.iter().map(|(name, frame)| (*name, frame.position, frame.minimized)));
         // Sizes ride along as lines of their own ("inventory_size columns rows 0", "shop_size width rows 0").
+        places += &format!("{PARTY_MODE} 0 {} 0\n", self.party_window.mode);
         if let Some(sizes) = self.shop.as_ref().and_then(shop::Shop::sizes) {
             self.shop_sizes = sizes;
         }
@@ -2796,6 +2796,9 @@ impl Game {
         }
         if let Some(&([columns, rows], _)) = saved.get(CART_SIZE) {
             self.cart.set_size([columns as usize, rows as usize]);
+        }
+        if let Some(&([_, mode], _)) = saved.get(PARTY_MODE) {
+            self.party_window.set_mode(mode as usize);
         }
         if let Some(&([_, rows], _)) = saved.get(STORAGE_SIZE) {
             self.storage.set_rows(rows as usize);
@@ -3738,7 +3741,6 @@ impl Game {
             || self.away_prompt.as_ref().is_some_and(|prompt| prompt.hit(cursor).is_some())
             || self.chat.on_list(cursor)
             || self.member_windows.hit(cursor).is_some()
-            || self.party_window.compact && party::compact_hit(cursor, self.party.as_ref()).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
             || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
@@ -5675,6 +5677,8 @@ const CART_SIZE: &str = "cart_size";
 const STORAGE_SIZE: &str = "storage_size";
 const SHOP_SIZE: &str = "shop_size";
 const SHOP_DEAL_SIZE: &str = "shop_deal_size";
+/// The party window's size mode, kept with the places.
+const PARTY_MODE: &str = "party_mode";
 const VEND_SIZE: &str = "vend_size";
 const SKILL_LIST_SIZE: &str = "skill_list_size";
 
@@ -7938,9 +7942,7 @@ impl App {
                 }
             }
             // A small party window: its close button removes it. A click on the body was a drag (handled on press).
-            Scene::Game(game)
-                if game.member_windows.hit(cursor).is_some() || game.party_window.compact && party::compact_hit(cursor, game.party.as_ref()).is_some() =>
-            {
+            Scene::Game(game) if game.member_windows.hit(cursor).is_some() => {
                 if let Some((account, party::MemberHit::Close)) = game.member_windows.hit(cursor) {
                     game.member_windows.close(account);
                 }
@@ -8168,7 +8170,7 @@ impl App {
                         }
                     }
                     Panel::Party => match game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id) {
-                        Some(party::Hit::Title(title)) => game.party_window.frame.click_title(title),
+                        Some(party::Hit::Title(title)) => game.party_window.click_title(title),
                         Some(party::Hit::Tab(friends)) => {
                             game.party_window.friends = friends;
                             game.party_window.picked = None;
@@ -8198,7 +8200,6 @@ impl App {
                             }
                         }
                         Some(party::Hit::Button(party::Button::FriendSetup)) => game.open_friend_setup(),
-                        Some(party::Hit::LastRow) => game.party_window.compact = !game.party_window.compact,
                         _ => {}
                     },
                     Panel::Storage => {
@@ -8356,7 +8357,7 @@ impl App {
             if let Some(shop) = &mut game.shop {
                 shop.drag_to(self.cursor);
             }
-            let party_height = game.party_window.height(game.party.as_ref(), &game.friends);
+            let party_height = game.party_window.height();
             game.party_window.frame.drag_to(self.cursor, party_height);
             game.member_windows.drag_to(self.cursor);
             let status_height = game.status_height;
@@ -8871,6 +8872,10 @@ impl App {
                     if let Some(assets) = &self.assets {
                         game.storage.scroll_by(rows, &assets.storage, &self.items);
                     }
+                }
+                Some(Panel::Party) => {
+                    let count = if game.party_window.friends { game.friends.len() } else { game.party.as_ref().map_or(0, |party| party.members.len()) };
+                    game.party_window.scroll_by(rows, count);
                 }
                 Some(_) => {}
                 // Three rows a notch.
@@ -9503,12 +9508,6 @@ impl App {
             if hit == party::MemberHit::Body {
                 game.member_windows.press_window(account, cursor);
             }
-            return;
-        }
-        if let Scene::Game(game) = &mut self.scene
-            && game.party_window.compact
-            && party::compact_hit(cursor, game.party.as_ref()).is_some()
-        {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
@@ -12752,10 +12751,13 @@ impl App {
                 let mut party = game.party.take().unwrap_or_default();
                 let old = std::mem::take(&mut party.members);
                 party.name = name;
+                // The list rebuilds the colours too: each member's place in it.
                 party.members = members
                     .into_iter()
-                    .map(|info| party::Member {
+                    .enumerate()
+                    .map(|(place, info)| party::Member {
                         info: info.clone(),
+                        color: place,
                         ..old.iter().find(|member| member.info.account == info.account).cloned().unwrap_or_default()
                     })
                     .collect();
@@ -15401,6 +15403,7 @@ impl App {
         for path in skill_icons.chain(status_paths).chain(shop_icons).chain(pick_icons).chain(game.storage.icons(items)).chain(trade_icons) {
             icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, false).ok());
         }
+        party::load_icons(icons, gpu, grf, game.party.as_ref());
         let mut tooltip = Layer::default();
         let mut chat_layer = Layer::default();
         let open = game.chat_mode.chat_line_open();
@@ -15445,20 +15448,20 @@ impl App {
             .filter(|(_, _, _, _, set)| minimap::mark_visible(0, now.saturating_duration_since(*set).as_millis()))
             .map(|(_, cell, color, _, _)| (*cell, color))
             .collect();
-        // Party members on this map, coloured by their place in the party list.
+        // Party members on this map, in their colours (their places in the list when they were added).
         if game.party_colors.is_empty() {
-            game.party_colors = (0..16).map(|place| gpu.solid(minimap::party_color(place))).collect();
+            game.party_colors = (0..17).map(|place| gpu.solid(minimap::party_color(place))).collect();
         }
         let here = game.map.trim_end_matches(".gat").to_owned();
         let members: Vec<_> = game
             .party
             .iter()
-            .flat_map(|party| party.members.iter().enumerate())
-            .filter(|(_, member)| member.info.account != game.account_id && member.info.online && member.info.map.trim_end_matches(".gat") == here)
-            .filter_map(|(place, member)| Some((place, member.info.account, member.cell?)))
+            .flat_map(|party| party.members.iter())
+            .filter(|member| member.info.account != game.account_id && member.info.online && member.info.map.trim_end_matches(".gat") == here)
+            .filter_map(|member| Some((member.color, member.info.account, member.cell?)))
             .collect();
         // On a battleground, teammates in our camp's color.
-        let mut dots: Vec<_> = members.iter().map(|&(place, _, cell)| (cell, &game.party_colors[place.min(15)])).collect();
+        let mut dots: Vec<_> = members.iter().map(|&(place, _, cell)| (cell, &game.party_colors[place.min(16)])).collect();
         if let Some((team_dot, _)) = &game.camp_looks {
             dots.extend(game.battle.dots.values().map(|&[x, y]| ([i32::from(x), i32::from(y)], team_dot)));
         }
@@ -15694,16 +15697,19 @@ impl App {
                 }
                 Panel::Party => {
                     let stem = |map: &str| map.trim_end_matches(".gat").to_owned();
+                    let our_hp = [net::STATUS_HP, net::STATUS_MAX_HP].map(|id| game.status.get(&id).copied().unwrap_or(0) as i32);
+                    let on_screen = |account: u32| game.units.contains_key(&account);
                     game.party_window.draw(
                         &mut layer,
                         &mut tooltip,
                         &assets.chrome,
                         &assets.party,
+                        icons,
                         font,
                         messages,
                         game.party.as_ref(),
                         &game.friends,
-                        (game.account_id, &stem),
+                        (game.account_id, our_hp, &on_screen, &stem),
                         pointer,
                     );
                 }
@@ -15726,18 +15732,9 @@ impl App {
             layer.faded = game.panel_faded(id);
             layers.push(layer);
         }
-        // Party members dragged out of the list, and the compact stack, over the other windows.
+        // Party members dragged out of the list, over the other windows.
         let mut member_layer = Layer::default();
-        game.member_windows.draw(
-            &mut member_layer,
-            &assets.chrome,
-            &assets.party,
-            font,
-            game.party.as_ref(),
-            here.as_str(),
-            game.party_window.compact,
-            pointer.0,
-        );
+        game.member_windows.draw(&mut member_layer, &assets.chrome, &assets.party, font, game.party.as_ref(), here.as_str(), pointer.0);
         layers.push(member_layer);
         // A dragged item's or skill's icon follows the pointer.
         let dragged_icon = match game.dragging {
