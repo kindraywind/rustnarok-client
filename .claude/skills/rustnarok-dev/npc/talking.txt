@@ -1,0 +1,22 @@
+// A talk that ends in close, a progress bar, and a warp away (issue #448). Loaded and unloaded by
+// scenarios/npc-talking.json.
+iz_int01,22,28,4	script	Close Clerk	4_M_01,{
+	mes "[Close Clerk]";
+	mes "That's all.";
+	close;
+}
+iz_int01,24,28,4	script	Bar Clerk	4_M_01,{
+	mes "[Bar Clerk]";
+	mes "Hold on.";
+	progressbar "ffff00", 3;
+	mes "Done.";
+	close;
+}
+iz_int01,26,28,4	script	Warp Clerk	4_M_01,{
+	cutin "kafra_01", 2;
+	mes "[Warp Clerk]";
+	mes "Off you go.";
+	next;
+	warp "izlude", 128, 114;
+	end;
+}

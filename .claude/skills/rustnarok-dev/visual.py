@@ -25,7 +25,7 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": 
     unit of that kind, and name if given, on screen)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
   {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command; or "sent":
-    "0x0447": a packet the client sent the map server)
+    "0x0447": a packet the client sent the map server; {"wait_for": {...}, "none": true} passes only if nothing came)
   {"expect": {"chat": "Item created.", "inventory_items": 5, "hp_at_least": 40, "map": "iz_int01.gat",
               "windows_open": ["Inventory"], "windows_closed": ["Skills"], "units_at_least": {"monster": 10},
               "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null},
@@ -396,6 +396,8 @@ def step_on_client(action, shots_dir, name):
         command = {"cmd": "wait", **action["wait_for"]}
         command.setdefault("ms", 5000)
         reply = drive.send(command, timeout=command["ms"] / 1000 + 10)
+        if action.get("none"):
+            return [f"wait_for {action['wait_for']}: came ({reply.get('seen')})"] if reply.get("ok") else None
         return None if reply.get("ok") else [f"wait_for {action['wait_for']}: {reply.get('error')}"]
     if "expect" in action:
         return expect(action["expect"], drive.send({"cmd": "state"}))

@@ -774,6 +774,10 @@ const ZC_MENU_LIST: u16 = 0x00B7;
 const ZC_OPEN_EDITDLG: u16 = 0x0142;
 const ZC_OPEN_EDITDLGSTR: u16 = 0x01D4;
 const ZC_CLEAR_DIALOG: u16 = 0x08D6;
+const ZC_PROGRESS: u16 = 0x02F0;
+const CZ_PROGRESS: u16 = 0x02F1;
+const ZC_PROGRESS_CANCEL: u16 = 0x02F2;
+const ZC_PROGRESS_ACTOR: u16 = 0x09D1;
 const ZC_NOTIFY_ACT: u16 = 0x08C8;
 const ZC_PAR_CHANGE: u16 = 0x00B0;
 const ZC_LONGLONGPAR_CHANGE: u16 = 0x0ACB;
@@ -1797,6 +1801,17 @@ pub enum MapEvent {
     NpcClear {
         npc: u32,
     },
+    /// A script's progress bar on the player, this many seconds (its colour isn't used).
+    Progress {
+        seconds: u32,
+    },
+    /// The same bar on another unit.
+    ProgressActor {
+        unit: u32,
+        seconds: u32,
+    },
+    /// The player's progress bar is taken away.
+    ProgressCancel,
     NpcMenu {
         npc: u32,
         items: Vec<String>,
@@ -3572,6 +3587,11 @@ impl MapSession {
         packet.extend_from_slice(&target.to_le_bytes());
         packet.push(action);
         self.stream.write_all(&packet)
+    }
+
+    /// The player's progress bar ended: its time is up, or the server took it away.
+    pub fn progress_done(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_PROGRESS.to_le_bytes())
     }
 
     fn send_id(&mut self, header: u16, id: u32) -> io::Result<()> {
@@ -5400,6 +5420,9 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_WAIT_DIALOG => MapEvent::NpcNext { npc: u32_at(2) },
         ZC_CLOSE_DIALOG => MapEvent::NpcClose { npc: u32_at(2) },
         ZC_CLEAR_DIALOG => MapEvent::NpcClear { npc: u32_at(2) },
+        ZC_PROGRESS => MapEvent::Progress { seconds: u32_at(6) },
+        ZC_PROGRESS_ACTOR => MapEvent::ProgressActor { unit: u32_at(2), seconds: u32_at(10) },
+        ZC_PROGRESS_CANCEL => MapEvent::ProgressCancel,
         ZC_MENU_LIST => MapEvent::NpcMenu { npc: u32_at(4), items: c_string(&packet[8..]).split(':').map(str::to_owned).collect() },
         ZC_OPEN_EDITDLG => MapEvent::NpcInput { npc: u32_at(2), text: false },
         ZC_OPEN_EDITDLGSTR => MapEvent::NpcInput { npc: u32_at(2), text: true },
@@ -6747,6 +6770,20 @@ mod tests {
         assert_eq!((act.source, act.target, act.source_speed, act.damage, act.hits, act.kind), (2_000_000, 110_000_001, 1_288, 42, 1, 10));
         assert_eq!(packet_length(ZC_NOTIFY_ACT), Some(34));
         assert_eq!(packet_length(ZC_HP_INFO), Some(14));
+    }
+
+    #[test]
+    fn decodes_progress_bars() {
+        // progressbar "ffff00", 3: the colour, then the seconds.
+        let bar = [0xf0, 0x02, 0, 0xff, 0xff, 0, 3, 0, 0, 0];
+        assert!(matches!(decode_map_packet(&bar), Some(MapEvent::Progress { seconds: 3 })));
+        let mut actor = vec![0xd1, 0x09];
+        actor.extend_from_slice(&110_000_007u32.to_le_bytes());
+        actor.extend_from_slice(&0x00ff_ff00u32.to_le_bytes());
+        actor.extend_from_slice(&5u32.to_le_bytes());
+        assert!(matches!(decode_map_packet(&actor), Some(MapEvent::ProgressActor { unit: 110_000_007, seconds: 5 })));
+        assert!(matches!(decode_map_packet(&[0xf2, 0x02]), Some(MapEvent::ProgressCancel)));
+        assert_eq!([ZC_PROGRESS, ZC_PROGRESS_ACTOR, ZC_PROGRESS_CANCEL].map(packet_length), [Some(10), Some(14), Some(2)]);
     }
 
     #[test]

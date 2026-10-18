@@ -635,6 +635,8 @@ const RENAME_PROMPT: usize = 2026;
 const QUIT_MESSAGE: usize = 17;
 const DELETE_QUESTION: usize = 19;
 const BIRTHDATE_MESSAGE: usize = 1815;
+/// Talking to another NPC while one's window is open.
+const TALK_REFUSED: usize = 4027;
 
 /// NPC dialogs are drawn as shapes, like the client draws them.
 /// A player's action while casting or using a skill.
@@ -1062,6 +1064,8 @@ struct Game {
     slot: Option<(usize, Instant)>,
     /// Units casting (None = the player): when it began and how long it takes.
     casts: HashMap<Option<u32>, (Instant, Duration)>,
+    /// The player's progress bar (a script's `progressbar`).
+    progress: ProgressBar,
     /// The magic squares under ground skills being cast, by caster (None = the player); each goes with its cast.
     cast_squares: HashMap<Option<u32>, cast_square::Square>,
     /// Units that may use their next combo skill (None = the player): when the window opened and how long it lasts.
@@ -2105,7 +2109,7 @@ struct FloorItem {
 impl Game {
     fn dialog_for(&mut self, npc: u32) -> &mut Dialog {
         if self.dialog.as_ref().is_none_or(|dialog| dialog.npc != npc) {
-            self.dialog = Some(Dialog { npc, lines: Vec::new(), wipe: false, button: DialogButton::None, menu: None, input: None, warp: None });
+            self.dialog = Some(Dialog { npc, talking: false, lines: Vec::new(), wipe: false, button: DialogButton::None, menu: None, input: None, warp: None });
             self.say.restart();
         }
         self.dialog.as_mut().unwrap()
@@ -2410,14 +2414,40 @@ impl Game {
 
     /// Talks to an NPC, turned to face it; only standing still or sitting (walking or attacking, nothing).
     /// rathena answers when it's too far.
-    fn talk_to(&mut self, id: u32) {
+    /// Talks to an NPC, facing it. While a say window is open another talk is refused with a chat line.
+    fn talk_to(&mut self, id: u32, messages: &[String]) {
         if !may_talk(self.player.moving(), self.attack.is_some(), self.player.sitting) {
             return;
         }
         if let Some(cell) = self.units.get(&id).map(|actor| actor.cell) {
             self.turn_to(cell);
         }
+        if self.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()) {
+            if let Some(line) = messages.get(TALK_REFUSED) {
+                self.chat_line(line.clone(), CHAT_ERROR);
+            }
+            return;
+        }
         let _ = self.session.talk(id);
+    }
+
+    fn talk_blocks(&self) -> bool {
+        talk_holds(self.dialog.as_ref().is_some_and(|dialog| dialog.talking), self.casts.contains_key(&None))
+    }
+
+    /// The pointer is on an NPC window: the say window, the menu or an input box.
+    fn on_npc_window(&self, cursor: [f32; 2]) -> bool {
+        let Some(dialog) = &self.dialog else { return false };
+        (dialog.warp.is_none() && self.say.contains(cursor))
+            || dialog.menu.as_ref().is_some_and(|menu| self.npc_menu.local(cursor, menu.size()[1]).is_some())
+            || dialog.input.as_ref().is_some_and(|input| input.contains(screen(), cursor))
+    }
+
+    /// CZ_PROGRESS when the player's progress bar ends now: its time ran out, or the server took it away.
+    fn end_progress(&mut self, cancelled: bool) {
+        if self.progress.ends(Instant::now(), cancelled) {
+            let _ = self.session.progress_done();
+        }
     }
 
     /// Picks up an item, facing it: at once from the next cell, else walking there with the pickup pending.
@@ -3451,7 +3481,8 @@ impl Game {
             || minimap::button_at(cursor).is_some()
             || self.minimap_window.covers(cursor)
             || (asking && contains(dialog_position_of(message), message, cursor))
-            || self.dialog.is_some()
+            || self.on_npc_window(cursor)
+            || self.talk_blocks()
             || self.amount.is_some()
             || self.escape.is_some()
             || self.world_map.is_some()
@@ -4505,7 +4536,7 @@ impl Game {
     /// An inventory item let go over the world: dropped, unless something open or a fresh wear holds it back.
     fn drop_on_ground(&mut self, index: u16, messages: &[String]) {
         let since_wear = self.last_wear.map(|at| control::now().saturating_duration_since(at));
-        let busy = self.trade.is_some() || self.dialog.is_some() || self.shop.is_some();
+        let busy = self.trade.is_some() || self.talk_blocks() || self.shop.is_some();
         let mail = self.mail.list.frame.open || self.mail.compose.is_some() || self.mail.letter.is_some();
         let ammo = self.inventory.get(index).is_some_and(|item| item.kind == net::ITEM_AMMO && item.worn != 0);
         match ground_drop_refused(since_wear, busy, self.equipment.frame.open, self.storage.frame.open, mail, ammo) {
@@ -4932,8 +4963,45 @@ enum Picking {
     Merge,
 }
 
+/// The talking state an NPC packet sets, for that NPC: a page, Next or a menu holds the player; the script's close
+/// frees them. Other packets (the input boxes among them) leave it.
+fn npc_holds(event: &MapEvent) -> Option<(u32, bool)> {
+    match *event {
+        MapEvent::NpcSay { npc, .. } | MapEvent::NpcNext { npc } | MapEvent::NpcMenu { npc, .. } => Some((npc, true)),
+        MapEvent::NpcClose { npc } => Some((npc, false)),
+        _ => None,
+    }
+}
+
+/// Talking to an NPC holds the player (no walking, attacking, picking up, other NPCs or ground drops), except while
+/// their cast bar is up.
+fn talk_holds(talking: bool, cast_bar: bool) -> bool {
+    talking && !cast_bar
+}
+
+/// When the player's progress bar runs out.
+#[derive(Default)]
+struct ProgressBar(Option<Instant>);
+
+impl ProgressBar {
+    fn start(&mut self, now: Instant, length: Duration) {
+        self.0 = Some(now + length);
+    }
+
+    /// Whether the bar ends now, its time up or `cancelled`: true once.
+    fn ends(&mut self, now: Instant, cancelled: bool) -> bool {
+        let ended = self.0.is_some_and(|end| cancelled || now >= end);
+        if ended {
+            self.0 = None;
+        }
+        ended
+    }
+}
+
 struct Dialog {
     npc: u32,
+    /// Set by a page, Next or a menu, ended by the script's close: the player is held while talking.
+    talking: bool,
     lines: Vec<String>,
     /// Next was pressed: the text stays until the next page wipes it.
     wipe: bool,
@@ -7885,7 +7953,7 @@ impl App {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
             }
-            Scene::Game(game) if game.dialog.is_some() => {
+            Scene::Game(game) if game.dialog.is_some() && (game.on_npc_window(cursor) || game.talk_blocks()) => {
                 // NPC windows take the click; the map doesn't react while talking.
                 let dialog = game.dialog.as_mut().unwrap();
                 if dialog.input.as_ref().is_some_and(|input| hit(input.ok_on(screen()), &assets.ok)) {
@@ -8241,7 +8309,7 @@ impl App {
                 && let Some(Owner::Unit(id)) = hovered_unit(&game.hit_boxes, self.cursor, false)
                 && game.units.get(&id).is_some_and(|actor| actor.kind == NPC && actor.job != WARP_JOB)
             {
-                game.talk_to(id);
+                game.talk_to(id, &self.messages);
             }
             // A right click on an inventory item with a modifier: Alt sends the stack to what's open, Shift moves it
             // into the favourites or out, Ctrl identifies it with a Magnifier.
@@ -8792,7 +8860,7 @@ impl App {
                 match game.aim_target(cursor, game.players_first(shift)) {
                     Some(SkillTarget::Unit(id)) if game.units.get(&id).is_some_and(|actor| actor.kind == NPC && actor.job != WARP_JOB) => {
                         game.targeting = None;
-                        game.talk_to(id);
+                        game.talk_to(id, &self.messages);
                     }
                     Some(SkillTarget::Unit(id)) if game.aim_takes_unit(id, shift) => match heavy {
                         Some(line) => {
@@ -8850,7 +8918,7 @@ impl App {
                         }
                     }
                 }
-                WorldClick::Talk(id) => game.talk_to(id),
+                WorldClick::Talk(id) => game.talk_to(id, &self.messages),
                 // Held, the button follows the pointer again once the item is picked up.
                 WorldClick::PickUp(id) if !game.player.sitting => {
                     game.pick_up(id, now);
@@ -10358,6 +10426,7 @@ impl App {
                     slot_sprite: SpriteSet::at(&self.grf, "data\\sprite\\slotmachine"),
                     slot: None,
                     casts: HashMap::new(),
+                    progress: ProgressBar::default(),
                     cast_squares: HashMap::new(),
                     combos: HashMap::new(),
                     locks: Vec::new(),
@@ -10776,6 +10845,15 @@ impl App {
             actor.guild = unit.guild;
             actor
         };
+        match npc_holds(&event) {
+            Some((npc, true)) => game.dialog_for(npc).talking = true,
+            Some((npc, false)) => {
+                if let Some(dialog) = game.dialog.as_mut().filter(|dialog| dialog.npc == npc) {
+                    dialog.talking = false;
+                }
+            }
+            None => {}
+        }
         match event {
             MapEvent::Unit(unit) => {
                 // A warp portal shows its rings while it's there (EF_WARPZONE2).
@@ -11220,6 +11298,9 @@ impl App {
                 game.chat_line(message, color.unwrap_or(if id.is_none() { CHAT_SELF } else { CHAT_WHITE }));
             }
             MapEvent::MapChange { map, position } => {
+                // A map change or teleport leaves the NPC behind: its windows and picture go, and nothing is sent.
+                game.dialog = None;
+                game.cutin = None;
                 // The new map's weather comes once it has loaded, and the mercenary's news, its type and the PvP count.
                 game.weather.clear();
                 game.pvp_rank = None;
@@ -11309,6 +11390,7 @@ impl App {
             MapEvent::NpcClose { npc } if game.dialog.as_ref().is_none_or(|dialog| dialog.npc != npc) => {
                 let _ = game.session.close_dialog(npc);
             }
+            // The script is done: Close shows, and the player is free while it does.
             MapEvent::NpcClose { npc } => game.dialog_for(npc).button = DialogButton::Close,
             // The text goes and the view is back at the top; the window, its button, the menu and the cut-in stay.
             MapEvent::NpcClear { npc } => {
@@ -11340,6 +11422,7 @@ impl App {
                 items.push(message(WARP_CANCEL));
                 game.dialog = Some(Dialog {
                     npc: 0,
+                    talking: false,
                     lines: Vec::new(),
                     wipe: false,
                     button: DialogButton::None,
@@ -13183,6 +13266,22 @@ impl App {
                     game.toggle_navigation();
                     game.sync_esc();
                 }
+            }
+            // A script's progress bar is the player's cast bar; on another unit it's that unit's.
+            MapEvent::Progress { seconds } => {
+                let (start, length) = (Instant::now(), Duration::from_secs(u64::from(seconds)));
+                game.casts.insert(None, (start, length));
+                game.progress.start(start, length);
+            }
+            MapEvent::ProgressActor { unit, seconds } => {
+                if game.units.contains_key(&unit) {
+                    game.casts.insert(Some(unit), (Instant::now(), Duration::from_secs(u64::from(seconds))));
+                }
+            }
+            MapEvent::ProgressCancel => {
+                game.casts.remove(&None);
+                game.player.stop_holding(SKILL_ACTION);
+                game.end_progress(true);
             }
             MapEvent::CastCancelled(source) => {
                 let caster = (source != game.account_id).then_some(source);
@@ -16047,6 +16146,7 @@ impl ApplicationHandler<NetEvent> for App {
                     {
                         let _ = game.session.talk(id);
                     }
+                    game.end_progress(false);
                     if game.auto_next > 0 && game.dialog.as_ref().is_some_and(|dialog| dialog.button != DialogButton::None) {
                         game.auto_next -= 1;
                         game.press_dialog_button(false);
@@ -17105,6 +17205,32 @@ mod tests {
             message_lines(&font, question, MESSAGE_WIDTH),
             ["한 번 삭제된 캐릭터 및 관련 정보는", "다시 복구되지 않습니다.", "캐릭터를 삭제하시겠습니까?"]
         );
+    }
+
+    #[test]
+    fn talking_holds_from_a_page_to_the_close() {
+        let npc = 110_000_005;
+        assert_eq!(npc_holds(&MapEvent::NpcSay { npc, text: "Hi".into() }), Some((npc, true)));
+        assert_eq!(npc_holds(&MapEvent::NpcNext { npc }), Some((npc, true)));
+        assert_eq!(npc_holds(&MapEvent::NpcMenu { npc, items: vec!["Yes".into()] }), Some((npc, true)));
+        assert_eq!(npc_holds(&MapEvent::NpcClose { npc }), Some((npc, false)));
+        assert_eq!(npc_holds(&MapEvent::NpcInput { npc, text: false }), None);
+        // The cast bar (a progress bar) lets map clicks through.
+        assert!(talk_holds(true, false) && !talk_holds(true, true) && !talk_holds(false, false));
+    }
+
+    #[test]
+    fn ends_a_progress_bar_once() {
+        let start = Instant::now();
+        let mut bar = ProgressBar::default();
+        assert!(!bar.ends(start, true), "no bar, nothing to end");
+        bar.start(start, Duration::from_secs(3));
+        assert!(!bar.ends(start + Duration::from_millis(2999), false));
+        assert!(bar.ends(start + Duration::from_secs(3), false));
+        assert!(!bar.ends(start + Duration::from_secs(4), false));
+        // Taken away by the server: once, too.
+        bar.start(start, Duration::from_secs(3));
+        assert!(bar.ends(start, true) && !bar.ends(start, true));
     }
 
     #[test]
