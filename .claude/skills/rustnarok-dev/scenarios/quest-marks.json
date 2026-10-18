@@ -1,0 +1,30 @@
+{
+  "about": "Quest marks from 0x0446 (issue #532): a test NPC with questinfo QTYPE_QUEST and a green mark shows the looping \"!\" balloon over its head (the emotion sprite's action 80), a green plus on the minimap that turns into an edge arrow when zoomed past it, and its quest_0_2 icon on the big map; talking to it (showevent QTYPE_NONE) takes them all away.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/quest-marks.txt"}, {"wait": 300},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/quest-marks.txt"}, {"wait": 500},
+    {"say": "@warp prontera 158 181"}, {"settle": 2500}, {"wait": 1000},
+    {"expect": {"state": {"minimap.quests": [[162, 184, 2], [156, 300, 1]], "minimap.quest_heads": ["QAMarkNear"]}}},
+    {"move": [1000, 740]},
+    {"shot": "quest-head-mark", "threshold": 4},
+    {"shot": "quest-minimap-mark", "crop": [870, 10, 154, 160]},
+    {"click_on": {"button": "minimap_plus"}}, {"click_on": {"button": "minimap_plus"}}, {"click_on": {"button": "minimap_plus"}},
+    {"click_on": {"button": "minimap_plus"}}, {"click_on": {"button": "minimap_plus"}}, {"click_on": {"button": "minimap_plus"}},
+    {"wait": 200}, {"move": [1000, 740]},
+    {"shot": "quest-edge-arrow", "crop": [870, 10, 154, 160]},
+    {"click_on": {"button": "minimap_mini"}}, {"wait": 400},
+    {"expect": {"windows_open": ["Minimap"]}},
+    {"move": [300, 700]},
+    {"shot": "quest-big-map", "crop": [488, 190, 516, 559]},
+    {"click_on": {"button": "minimap_mini"}}, {"wait": 300},
+    {"click_on": {"unit": "QAMarkNear"}}, {"wait": 800},
+    {"expect": {"state": {"minimap.quests": [[156, 300, 1]], "minimap.quest_heads": []}}},
+    {"move": [1000, 740]},
+    {"shot": "quest-mark-gone", "threshold": 4},
+    {"click_on": {"button": "minimap_minus"}}, {"click_on": {"button": "minimap_minus"}}, {"click_on": {"button": "minimap_minus"}},
+    {"click_on": {"button": "minimap_minus"}}, {"click_on": {"button": "minimap_minus"}}, {"click_on": {"button": "minimap_minus"}},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/quest-marks.txt"}
+  ]
+}
