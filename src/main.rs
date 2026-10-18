@@ -877,6 +877,8 @@ struct Game {
     /// The item description window, and how many lines its text wraps to.
     item_window: Option<iteminfo::ItemWindow>,
     item_lines: usize,
+    /// A card's picture, opened from its info.
+    card_view: Option<iteminfo::CardView>,
     /// Whispers sent and not yet answered: to whom, and what.
     whispered: VecDeque<(String, String)>,
     /// Names whose whispers we asked to block or allow, not yet answered (the answer doesn't name them).
@@ -2537,6 +2539,7 @@ impl Game {
         self.graphics_window = None;
         self.shortcuts_window = None;
         self.item_window = None;
+        self.card_view = None;
         self.monster_window = None;
         self.ranking = None;
         self.dressroom = None;
@@ -2602,6 +2605,7 @@ impl Game {
             || self.cashshop_buy_asked
             || self.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some())
             || self.item_window.as_ref().is_some_and(|window| window.hit(cursor, items).is_some())
             || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
             || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
@@ -3046,6 +3050,7 @@ impl Game {
         push(CashShop, self.cashshop.is_some());
         push(PickList, self.pick.is_some());
         push(Trade, self.trade.is_some());
+        push(CardPicture, self.card_view.is_some());
         push(ItemInfo, self.item_window.is_some());
         push(ChatRoom, self.room.is_some());
         push(RoomMake, self.room_make.is_some());
@@ -3339,7 +3344,11 @@ impl Game {
                 let _ = self.session.cancel_trade();
                 self.trade = None;
             }
-            ItemInfo => self.item_window = None,
+            ItemInfo => {
+                self.item_window = None;
+                self.card_view = None;
+            }
+            CardPicture => self.card_view = None,
             ChatRoom => {
                 let _ = self.session.leave_chat_room();
             }
@@ -4474,6 +4483,28 @@ fn inventory_right(alt: bool, shift: bool, ctrl: bool) -> Option<InventoryRight>
     }
 }
 
+/// With compare on, the worn items that share a slot with the inventory item under the pointer.
+fn compared_windows(inventory: &Inventory, items: &HashMap<u32, ItemInfo>, messages: &[String], cursor: [f32; 2]) -> Vec<iteminfo::ItemWindow> {
+    if !inventory.compare || !inventory.frame.open {
+        return Vec::new();
+    }
+    let Some((index, area)) = inventory.item_boxes().into_iter().find(|(_, area)| contains([area[0], area[1]], [area[2], area[3]], cursor)) else {
+        return Vec::new();
+    };
+    let Some(hovered) = inventory.get(index) else { return Vec::new() };
+    inventory::compared_worn(hovered, &inventory.items)
+        .into_iter()
+        .enumerate()
+        .map(|(place, item)| {
+            let damaged = item.broken.then(|| messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
+            let mut window = iteminfo::ItemWindow::new(iteminfo::Shown::of(item, damaged));
+            window.worn = true;
+            window.place_beside(area, place, items);
+            window
+        })
+        .collect()
+}
+
 /// Where Alt + right click sends a stack: the first that's open of the storage, a trade, the cart.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum QuickTo {
@@ -4809,6 +4840,8 @@ struct App {
     battlegrounds: Vec<lua::Battleground>,
     /// The cards' words in item names.
     card_names: inventory::CardNames,
+    /// Card illustration names (`num2cardillustnametable.txt`).
+    card_pictures: iteminfo::CardPictures,
     /// What each reform item can turn into, from the client's reform list.
     reforms: HashMap<u32, Vec<lua::ReformInfo>>,
     /// Enchant tables from the client's Lua, by table number.
@@ -5325,7 +5358,15 @@ impl App {
             // An item link in the chat log or the NPC window: the item's information.
             Scene::Game(game) if game.link_at(cursor).is_some() => {
                 let item = game.link_at(cursor).cloned().unwrap();
-                let shown = iteminfo::Shown { item: item.id, identified: true, refine: item.refine, cards: item.cards, damaged: None, expires: 0 };
+                let shown = iteminfo::Shown {
+                    item: item.id,
+                    identified: true,
+                    refine: item.refine,
+                    cards: item.cards,
+                    damaged: None,
+                    expires: 0,
+                    card: self.card_pictures.name(item.id).is_some(),
+                };
                 let position = game.item_window.as_ref().map(|window| window.position);
                 let mut window = iteminfo::ItemWindow::new(shown);
                 if let Some(position) = position {
@@ -5526,10 +5567,44 @@ impl App {
                     game.signs.remove(&game.account_id);
                 }
             }
-            // The item description window: its close button.
+            // A card's picture: its close button. A click anywhere on it stays there.
+            Scene::Game(game) if game.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some()) => {
+                if game.card_view.as_ref().unwrap().hit(cursor) == Some(iteminfo::ViewHit::Close) {
+                    game.card_view = None;
+                }
+            }
+            // The item description window: its close button, a card's picture, or a card in a slot.
             Scene::Game(game) if game.item_window.as_ref().is_some_and(|window| window.hit(cursor, &self.items).is_some()) => {
-                if game.item_window.as_ref().unwrap().hit(cursor, &self.items) == Some(iteminfo::Hit::Close) {
-                    game.item_window = None;
+                match game.item_window.as_ref().unwrap().hit(cursor, &self.items) {
+                    Some(iteminfo::Hit::Close) => {
+                        game.item_window = None;
+                        game.card_view = None;
+                    }
+                    Some(iteminfo::Hit::View) => {
+                        let item = game.item_window.as_ref().unwrap().shown.item;
+                        if let Some(name) = self.card_pictures.name(item) {
+                            game.card_view = Some(iteminfo::CardView::new(iteminfo::cardbmp_path(name)));
+                            escape::touch(&mut game.esc_order, escape::WindowId::CardPicture);
+                        }
+                    }
+                    Some(iteminfo::Hit::Card(id)) => {
+                        let position = game.item_window.as_ref().map(|window| offset(window.position, [20.0, 20.0]));
+                        let mut window = iteminfo::ItemWindow::new(iteminfo::Shown {
+                            item: id,
+                            identified: true,
+                            refine: 0,
+                            cards: [0; 4],
+                            damaged: None,
+                            expires: 0,
+                            card: true,
+                        });
+                        if let Some(position) = position {
+                            window.position = position;
+                        }
+                        game.item_window = Some(window);
+                        game.card_view = None;
+                    }
+                    _ => {}
                 }
             }
             // The right-click menu takes the next click, wherever it lands.
@@ -6578,6 +6653,9 @@ impl App {
             game.homunculus_window.frame.drag_to(self.cursor, homunculus::Window::height());
             let homunculus_skills_height = homunculus::SkillList::height(game.homunculus_skills.len());
             game.homunculus_skill_list.frame.drag_to(self.cursor, homunculus_skills_height);
+            if let Some(view) = &mut game.card_view {
+                view.drag_to(self.cursor);
+            }
             if let Some(window) = &mut game.item_window {
                 window.drag_to(self.cursor);
             }
@@ -6872,8 +6950,7 @@ impl App {
             };
             if let Some(item) = described {
                 let damaged = item.broken.then(|| self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
-                let shown =
-                    iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires };
+                let shown = iteminfo::Shown::of(&item, damaged);
                 let position = game.item_window.as_ref().map(|window| window.position);
                 let mut window = iteminfo::ItemWindow::new(shown);
                 if let Some(position) = position {
@@ -6932,6 +7009,7 @@ impl App {
                     let inv = &game.inventory.items;
                     game.buying_setup.as_mut().unwrap().scroll_by(rows, inv);
                 }
+                _ if game.card_view.as_ref().is_some_and(|view| view.hit(self.cursor).is_some()) => {}
                 _ if on_item => {
                     let lines = game.item_lines;
                     game.item_window.as_mut().unwrap().scroll_by(rows, lines);
@@ -7081,7 +7159,11 @@ impl App {
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
                     // Let go over the world: dropped at the player's feet, asking how many of a stack.
-                    (Some((Dragged::Item(index), _, true)), None) if !game.on_ui(self.cursor, &self.items, message_size) && !game.store_open() => {
+                    (Some((Dragged::Item(index), _, true)), None)
+                        if inventory::may_ground_drop(game.inventory.lock_drop)
+                            && !game.on_ui(self.cursor, &self.items, message_size)
+                            && !game.store_open() =>
+                    {
                         game.move_item(Asked::Drop(index))
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Cart)) => game.move_item(Asked::ToCart(index)),
@@ -7098,6 +7180,7 @@ impl App {
                 }
                 let trade_moved = game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
                     | game.room.as_mut().is_some_and(|room| room.frame.drop_drag())
+                    | game.card_view.as_mut().is_some_and(|view| view.drop_drag())
                     | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
                     | game.mail.drop_drag()
                     | game.quest_window.frame.drop_drag()
@@ -7252,7 +7335,9 @@ impl App {
             game.sync_esc();
             // A button on the game menu is not a press on the window under it.
             let on_menu = game.escape.as_ref().is_some_and(|menu| menu.hit(cursor, game.can_resurrect()).is_some());
-            if !on_menu && game.item_window.as_ref().is_some_and(|window| window.hit(cursor, &self.items).is_some()) {
+            if !on_menu && game.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some()) {
+                escape::touch(&mut game.esc_order, escape::WindowId::CardPicture);
+            } else if !on_menu && game.item_window.as_ref().is_some_and(|window| window.hit(cursor, &self.items).is_some()) {
                 escape::touch(&mut game.esc_order, escape::WindowId::ItemInfo);
             } else if !on_menu {
                 game.press_esc(cursor);
@@ -7267,6 +7352,16 @@ impl App {
                 }
                 return;
             }
+        }
+        // A card's picture sits over the item info.
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(view) = &mut game.card_view
+            && let Some(hit) = view.hit(cursor)
+        {
+            if hit == iteminfo::ViewHit::Grip {
+                view.start_drag(cursor);
+            }
+            return;
         }
         // The item description window goes by its top (the NPC window's links are over it).
         if let Scene::Game(game) = &mut self.scene
@@ -8457,7 +8552,11 @@ impl App {
                     hit_boxes: Vec::new(),
                     ground: HashMap::new(),
                     item_sprites: HashMap::new(),
-                    inventory: Inventory::new(std::env::var_os("RUSTNAROK_CLIENT_INVENTORY").is_some()),
+                    inventory: {
+                        let mut inventory = Inventory::new(std::env::var_os("RUSTNAROK_CLIENT_INVENTORY").is_some());
+                        inventory.apply_boxes(inventory::Boxes::load());
+                        inventory
+                    },
                     equipment: {
                         let mut equipment = Equipment::default();
                         equipment.frame.open = std::env::var_os("RUSTNAROK_CLIENT_EQUIPMENT").is_some();
@@ -8508,6 +8607,7 @@ impl App {
                     achievements: HashMap::new(),
                     achievement_window: achievement::AchievementWindow::default(),
                     item_window: None,
+                    card_view: None,
                     item_lines: 0,
                     whispered: VecDeque::new(),
                     whisper_asked: VecDeque::new(),
@@ -9149,7 +9249,7 @@ impl App {
                     item.grade = grade;
                     item.broken = broken;
                     let damaged = item.broken.then(|| damaged_line.clone());
-                    iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires }
+                    iteminfo::Shown::of(item, damaged)
                 });
                 // ponytail: that the preview is the item info window is a guess.
                 if let Some(shown) = shown {
@@ -12667,8 +12767,11 @@ impl App {
         pick_icons.extend(game.upgrade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.achievement_window.icons(achievement_info));
         pick_icons.extend(game.roulette.as_ref().map(|window| window.icons(items)).unwrap_or_default());
+        let compared = compared_windows(&game.inventory, items, messages, pointer.0);
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
+        trade_icons.extend(compared.iter().flat_map(|window| window.images(items)));
+        trade_icons.extend(game.card_view.iter().map(|view| view.path.clone()));
         if game.vend_setup.is_some() {
             trade_icons.extend(vend::icons(items, game.cart.items.iter().map(|item| (item.id, item.identified))));
         }
@@ -13310,6 +13413,14 @@ impl App {
             game.item_lines = lines.len();
             window.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
         }
+        if let Some(view) = &game.card_view {
+            view.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, pointer.0);
+        }
+        let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
+        for window in &compared {
+            let lines = window.lines(items, messages, unix_now, &|text, width| wrap_colored(font, text, width));
+            window.draw(&mut tooltip, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
+        }
         if game.save_asked {
             let dialog = dialog_position(&assets.message);
             let question = messages.get(escape::SAVE_QUESTION).map_or("Do you really want to go back to your savepoint?", String::as_str);
@@ -13867,6 +13978,7 @@ fn main() {
         HashMap::new()
     });
     let card_names = inventory::CardNames::load(&grf);
+    let card_pictures = iteminfo::CardPictures::load(&grf);
     let battlegrounds = lua::entry_queue(&grf).unwrap_or_else(|error| {
         eprintln!("no battleground list: {error}");
         Vec::new()
@@ -13957,6 +14069,7 @@ fn main() {
         items,
         battlegrounds,
         card_names,
+        card_pictures,
         reforms,
         enchant_tables,
         styling_shop,
