@@ -4,7 +4,8 @@
 # Usage: tools/bundle.sh [folder to put it in, the repository by default]
 set -euo pipefail
 cd "$(dirname "$0")/.."
-cargo build --release
+# Not incremental (Cargo.toml): the app gets the full optimization across modules.
+CARGO_INCREMENTAL=0 cargo build --release
 app="${1:-.}/Ragnarok.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
