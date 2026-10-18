@@ -1,5 +1,5 @@
 {
-  "about": "The inventory's corner grip: twelve kinds of potions fill the Item tab; it opens 7 columns by 6 rows; the grip dragged 40 px right and 70 down makes it 8 columns (whole cells) but no taller, and the items reflow into it; dragged back and up it is 7 by 6 again.",
+  "about": "The inventory's corner grip: twelve kinds of potions fill the Item tab; it opens at (0, 120), 280 wide: 7 columns by 6 rows under three-character tabs, one height (255); the grip dragged 40 px right and 70 down snaps it to 312 (8 columns) and no taller, and the items reflow into it; dragged back and up it is 280 by 255 again (issue #464).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -10,13 +10,16 @@
     {"say": "@item 509 1"}, {"say": "@item 510 1"}, {"say": "@item 511 1"}, {"say": "@item 512 1"}, {"wait": 1500},
     {"key": "Alt+E"}, {"wait": 500},
     {"move": [900, 700]},
-    {"shot": "inventory-default", "crop": [0, 150, 360, 300]},
-    {"drag": [[278, 423], [318, 493]]}, {"wait": 300},
+    {"expect": {"state": {"inventory_window.size": [280.0, 255.0], "inventory_window.cells": [7, 6]}}},
+    {"shot": "inventory-default", "crop": [0, 110, 360, 300]},
+    {"drag": [[275, 370], [315, 440]]}, {"wait": 300},
+    {"expect": {"state": {"inventory_window.size": [312.0, 255.0], "inventory_window.cells": [8, 6]}}},
     {"move": [900, 700]},
-    {"shot": "inventory-resized", "crop": [0, 150, 360, 300]},
-    {"drag": [[310, 423], [270, 353]]}, {"wait": 300},
+    {"shot": "inventory-resized", "crop": [0, 110, 360, 300]},
+    {"drag": [[307, 370], [267, 300]]}, {"wait": 300},
+    {"expect": {"state": {"inventory_window.size": [280.0, 255.0], "inventory_window.cells": [7, 6]}}},
     {"move": [900, 700]},
-    {"shot": "inventory-back", "crop": [0, 150, 360, 300]},
+    {"shot": "inventory-back", "crop": [0, 110, 360, 300]},
     {"key": "Alt+E"}, {"wait": 300},
     {"say": "@itemreset"}, {"wait": 500}
   ]

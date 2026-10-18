@@ -8041,6 +8041,9 @@ impl App {
                         {
                             let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
                             game.chat.type_whole(&item_link(item.id, &name));
+                        } else if hit == inventory::Hit::Expand {
+                            // The same question a voucher opens comes back from the server.
+                            let _ = game.session.ask_expansion();
                         } else if let Some(index) = game.inventory.click(hit) {
                             game.use_item(index, &self.messages);
                         }
@@ -8851,8 +8854,8 @@ impl App {
                 }
                 _ if on_pick => game.pick.as_mut().unwrap().0.scroll_by(rows),
                 _ if game.achievement_window.covers(self.cursor) => game.achievement_window.scroll_by(rows, &self.achievement_info),
-                Some(Panel::Inventory) => game.inventory.scroll_by(rows),
-                Some(Panel::Cart) => game.cart.scroll_by(rows),
+                Some(Panel::Inventory) => game.inventory.wheel(rows),
+                Some(Panel::Cart) => game.cart.wheel(rows),
                 Some(Panel::Skills) => {
                     let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
                     let sheet =
@@ -10740,6 +10743,7 @@ impl App {
                     inventory: {
                         let mut inventory = Inventory::new(std::env::var_os("RUSTNAROK_CLIENT_INVENTORY").is_some());
                         inventory.apply_boxes(inventory::Boxes::load());
+                        inventory.set_tab_labels(&self.messages, &self.font);
                         inventory
                     },
                     equipment: {

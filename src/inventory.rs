@@ -12,7 +12,7 @@ use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, offset};
 
-// ponytail: sizes and offsets of the classic inventory over its bitmaps; calibrate against the real client.
+// ponytail: sizes and offsets of the classic cart window over its bitmaps; calibrate against the real client.
 /// Columns it opens with, and how far its corner grip takes them (248 to 312 wide in 32 px steps).
 const COLUMNS: usize = 7;
 const COLUMN_LIMITS: std::ops::RangeInclusive<usize> = 6..=8;
@@ -36,16 +36,74 @@ const FAVORITES_TAB: usize = 3;
 /// "Compare equips" and "Lock item drop".
 const COMPARE: usize = 2842;
 const LOCK_DROP: usize = 2843;
-/// The two boxes in the footer, and how wide each one is (box plus its label).
-// ponytail: where the boxes sit isn't knowable; they share the footer, after the count.
-const CHECK_X: f32 = 90.0;
-const CHECK_SPAN: f32 = 86.0;
 /// The first cell.
 const GRID: [f32; 2] = [TAB_COLUMN + MARGIN, TITLE_HEIGHT + 8.0];
 const ICON_OFFSET: f32 = 4.0;
 pub const BASE_SLOTS: usize = 100;
-/// Where the client first opens it.
+/// Where the client first opens the cart.
 const DEFAULT_POSITION: [f32; 2] = [0.0, 172.0];
+
+// The player's inventory (the cart above keeps its older look).
+/// Where it first opens, and the size it asks for then.
+const INVENTORY_POSITION: [f32; 2] = [0.0, 120.0];
+const INVENTORY_SIZE: [f32; 2] = [280.0, 120.0];
+/// The first cell's corner, and the width right of the cells: 40 + 32·columns + 16 wide.
+const CELLS_AT: [f32; 2] = [40.0, TITLE_HEIGHT];
+const CELLS_RIGHT: f32 = 16.0;
+/// The footer, and the title and footer together.
+const INVENTORY_FOOTER: f32 = 21.0;
+const CHROME_HEIGHT: f32 = TITLE_HEIGHT + INVENTORY_FOOTER;
+/// How far a size may be asked for before it snaps.
+const WIDTH_RANGE: [f32; 2] = [232.0, 320.0];
+const HEIGHT_RANGE: [f32; 2] = [102.0, 240.0];
+/// The tab strip, 17 wide; each tab as tall as its longest label's characters stacked, plus this.
+const STRIP_AT: [f32; 2] = [3.0, 18.0];
+const STRIP_WIDTH: f32 = 17.0;
+const TAB_PADDING: f32 = 10.0;
+/// Use, Eqp, Etc, Fav.
+const TAB_LABELS: [usize; TABS] = [1465, 2050, 1471, 2051];
+const TAB_BORDER: [u8; 4] = [0xC3, 0xC3, 0xC3, 0xFF];
+/// The line between the strip and the cells.
+const STRIP_LINE: [u8; 4] = [0xC0, 0xC0, 0xC0, 0xFF];
+const STRIP_LINE_X: f32 = 20.0;
+/// Footer controls: their corners, x from the left and y up from the bottom.
+const EXPAND_AT: [f32; 2] = [23.0, 17.0];
+const COUNT_AT: [f32; 2] = [35.0, 15.0];
+const LOCK_AT: [f32; 2] = [79.0, 16.0];
+const COMPARE_AT: [f32; 2] = [103.0, 17.0];
+/// "Expand inventory limit".
+const EXPAND_TIP: usize = 3560;
+/// The count: what's carried, red once it reaches the limit.
+const COUNT_COLOR: [u8; 3] = [0x23, 0x23, 0x23];
+const FULL_COLOR: [u8; 3] = [0xFF, 0x00, 0x00];
+/// The wheel moves this many rows a notch (fewer when fewer show).
+const WHEEL_ROWS: usize = 3;
+
+/// The inventory's width asked for, snapped: 248, 280 or 312 (6, 7 or 8 columns).
+pub fn snap_width(asked: f32) -> f32 {
+    match asked.clamp(WIDTH_RANGE[0], WIDTH_RANGE[1]) {
+        width if width <= 248.0 => 248.0,
+        width if width < 312.0 => 280.0,
+        _ => 312.0,
+    }
+}
+
+/// The inventory's height asked for, snapped down to `strip` + 38 + 32·k, and at least `strip` + 38.
+pub fn snap_height(asked: f32, strip: f32) -> f32 {
+    let least = strip + CHROME_HEIGHT;
+    let height = asked.clamp(HEIGHT_RANGE[0], HEIGHT_RANGE[1]).max(least);
+    least + CELL * ((height - least) / CELL).floor()
+}
+
+/// The columns and rows of cells an inventory this big holds.
+fn cells_of([width, height]: [f32; 2]) -> [usize; 2] {
+    [((width - CELLS_AT[0]) / CELL) as usize, ((height - CHROME_HEIGHT) / CELL).max(0.0) as usize]
+}
+
+/// How tall the tab strip is for tabs `tab` px tall: neighbours share a border line.
+fn strip_height(tab: f32) -> f32 {
+    1.0 + TABS as f32 * (tab - 1.0)
+}
 pub const UNIDENTIFIED: [u8; 3] = [0xAA, 0xAA, 0xAA];
 /// Broken and bound items' names.
 // ponytail: rathena's comment says the client shows bound items in yellow; the exact colors aren't knowable.
@@ -79,14 +137,19 @@ pub fn newly_broken<'a>(before: &[u16], items: &'a [InventoryItem]) -> Vec<&'a I
 /// The window's own bitmaps, all from data.grf.
 pub struct Assets {
     footer: [Texture; 3],
+    /// The inventory's own: its footer, the side pieces, the tabs' fill and lines, and the footer icons.
+    plain_footer: [Texture; 3],
+    side: [Texture; 2],
+    tab_border: Texture,
+    strip_line: Texture,
+    lock: [Texture; 2],
+    compare: [Texture; 2],
     tabs: [Texture; TABS],
     cell: Texture,
     count: Texture,
     resize: Texture,
     /// Marks an item in the Swap Equipment set.
     switch: Texture,
-    /// Off, then on.
-    checkbox: [Texture; 2],
 }
 
 impl Assets {
@@ -95,6 +158,12 @@ impl Assets {
         let image = |path: String| gpu.load_texture(grf, &path, false);
         Self {
             footer: ["left", "mid", "right"].map(|part| image(format!("{basic}btnbar_{part}2.bmp"))),
+            plain_footer: ["left", "mid", "right"].map(|part| image(format!("{basic}btnbar_{part}.bmp"))),
+            side: ["left", "right"].map(|part| image(format!("{basic}itemwin_{part}.bmp"))),
+            tab_border: gpu.solid(TAB_BORDER),
+            strip_line: gpu.solid(STRIP_LINE),
+            lock: ["off", "on"].map(|look| image(format!("{UI}inventory\\item_drop_lock_{look}.bmp"))),
+            compare: ["off", "on"].map(|look| image(format!("{UI}inventory\\item_compare_{look}.bmp"))),
             // ponytail: the data's three strips (tab_itm_01..03). The favourites tab reuses the etc strip, and the
             // column is split into four equal hit areas. A four-tab strip would replace both.
             tabs: std::array::from_fn(|tab| image(format!("{basic}tab_itm_0{}.bmp", tab.min(2) + 1))),
@@ -102,7 +171,6 @@ impl Assets {
             count: image(format!("{UI}inventory\\icon_num.bmp")),
             resize: image(format!("{UI}btn_resize.bmp")),
             switch: image(format!("{UI}swap_equipment\\ico_change.bmp")),
-            checkbox: ["0", "1"].map(|look| image(format!("{UI}checkbox_{look}.bmp"))),
         }
     }
 }
@@ -167,6 +235,8 @@ pub enum Hit {
     LockDrop,
     /// Compare equips.
     Compare,
+    /// Ask to grow the inventory.
+    Expand,
     /// The corner grip.
     Resize,
     Window,
@@ -192,10 +262,15 @@ pub struct Inventory {
     /// Columns and rows of cells shown.
     columns: usize,
     rows: usize,
-    /// Held by the corner grip: where the press was, and the columns and rows then.
-    resizing: Option<([f32; 2], [usize; 2])>,
+    /// Held by the corner grip: where the press was, and the columns and rows then (and the size, for the inventory).
+    resizing: Option<([f32; 2], [usize; 2], [f32; 2])>,
     /// How many rows the grip takes it to.
     row_limits: std::ops::RangeInclusive<usize>,
+    /// The cart window, which keeps the older look; else the player's inventory.
+    is_cart: bool,
+    /// The inventory's height, as snapped, and its tabs' height.
+    inventory_height: f32,
+    tab_height: f32,
 }
 
 impl Default for Inventory {
@@ -205,7 +280,7 @@ impl Default for Inventory {
             expansion: 0,
             title: messages::INVENTORY,
             cart: None,
-            frame: Frame::new(DEFAULT_POSITION, width(COLUMNS)).collapsing(),
+            frame: Frame::new(INVENTORY_POSITION, INVENTORY_SIZE[0]).collapsing(),
             tab: 0,
             scroll: 0,
             clicks: Clicks::default(),
@@ -215,9 +290,16 @@ impl Default for Inventory {
             rows: *ROWS.start(),
             resizing: None,
             row_limits: ROWS,
+            is_cart: false,
+            inventory_height: INVENTORY_SIZE[1],
+            tab_height: DEFAULT_TAB_HEIGHT,
         }
+        .resized(INVENTORY_SIZE)
     }
 }
+
+/// Tabs for three-character labels at a 15 px line, until the labels are known (`set_tab_labels`).
+const DEFAULT_TAB_HEIGHT: f32 = 3.0 * 15.0 + TAB_PADDING;
 
 /// The window's width for `columns` of cells.
 fn width(columns: usize) -> f32 {
@@ -393,9 +475,32 @@ impl Inventory {
         inventory
     }
 
-    /// The cart: the inventory's look, 2 to 5 rows.
+    /// The cart: the older inventory look, 2 to 5 rows.
     pub fn cart() -> Self {
-        Self { rows: *CART_ROWS.start(), row_limits: CART_ROWS, ..Self::default() }
+        let mut cart = Self { rows: *CART_ROWS.start(), row_limits: CART_ROWS, is_cart: true, columns: COLUMNS, ..Self::default() };
+        cart.frame = Frame::new(DEFAULT_POSITION, width(COLUMNS)).collapsing();
+        cart
+    }
+
+    /// The tabs' height from their labels, written down one character under the other.
+    pub fn set_tab_labels(&mut self, messages: &[String], font: &Font) {
+        let longest = TAB_LABELS.iter().map(|&id| messages.get(id).map_or(0, |label| label.chars().count())).max().unwrap_or(0);
+        self.tab_height = longest as f32 * font.line_height() + TAB_PADDING;
+        self.set_size(self.size());
+    }
+
+    /// The inventory snapped to a size asked for.
+    fn resized(mut self, asked: [f32; 2]) -> Self {
+        self.resize_inventory(asked);
+        self
+    }
+
+    fn resize_inventory(&mut self, [width, height]: [f32; 2]) {
+        let size = [snap_width(width), snap_height(height, strip_height(self.tab_height))];
+        [self.columns, self.rows] = cells_of(size);
+        self.inventory_height = size[1];
+        self.frame.set_width(size[0]);
+        self.scroll_by(0);
     }
 
     /// A fresh listing from the server replaces what we had.
@@ -456,10 +561,10 @@ impl Inventory {
             Hit::Title(hit)
         } else if !self.frame.minimized && contains([self.width() - GRIP, self.height() - GRIP], [GRIP; 2], local) {
             Hit::Resize
+        } else if !self.is_cart {
+            self.inventory_hit(local)
         } else if contains(TABS_AT, tabs, local) {
             Hit::Tab((((local[1] - TABS_AT[1]) / (tabs[1] / TABS as f32)) as usize).min(TABS - 1))
-        } else if let Some(hit) = self.check_at(local) {
-            hit
         } else if let Some(item) = self.cell_at(local).and_then(|cell| self.listed().nth(self.scroll * self.columns + cell)) {
             Hit::Item(item.index)
         } else {
@@ -467,24 +572,39 @@ impl Inventory {
         })
     }
 
-    /// The lock and compare boxes, in the player's inventory only (the cart shares this window).
-    fn check_at(&self, local: [f32; 2]) -> Option<Hit> {
-        if self.cart.is_some() {
-            return None;
+    /// The inventory's tabs, footer controls and cells (the cart goes by the older layout).
+    fn inventory_hit(&self, local: [f32; 2]) -> Hit {
+        if let Some(tab) = (0..TABS).find(|&tab| contains(self.tab_corner(tab), [STRIP_WIDTH, self.tab_height], local)) {
+            return Hit::Tab(tab);
         }
-        let top = TITLE_HEIGHT + self.body_height();
-        if !(top..top + FOOTER_HEIGHT).contains(&local[1]) || local[0] < CHECK_X {
-            return None;
+        if let Some((_, hit)) = self.footer_controls().into_iter().find(|(area, _)| contains([area[0], area[1]], [area[2], area[3]], local)) {
+            return hit;
         }
-        match ((local[0] - CHECK_X) / CHECK_SPAN).floor() as i32 {
-            0 => Some(Hit::LockDrop),
-            1 => Some(Hit::Compare),
-            _ => None,
+        match self.cell_at(local).and_then(|cell| self.listed().nth(self.scroll * self.columns + cell)) {
+            Some(item) => Hit::Item(item.index),
+            None => Hit::Window,
         }
     }
 
+    /// A tab's corner in the strip: neighbours share a border line.
+    fn tab_corner(&self, tab: usize) -> [f32; 2] {
+        [STRIP_AT[0], STRIP_AT[1] + tab as f32 * (self.tab_height - 1.0)]
+    }
+
+    /// The footer's icons, window-local: expand, the drop lock, compare.
+    fn footer_controls(&self) -> [([f32; 4], Hit); 3] {
+        let bottom = self.height();
+        let place = |[x, up]: [f32; 2], [width, height]: [f32; 2]| [x, bottom - up, width, height];
+        [(place(EXPAND_AT, [11.0, 14.0]), Hit::Expand), (place(LOCK_AT, [14.0, 11.0]), Hit::LockDrop), (place(COMPARE_AT, [12.0, 12.0]), Hit::Compare)]
+    }
+
     fn cell_at(&self, local: [f32; 2]) -> Option<usize> {
-        let [x, y] = [local[0] - GRID[0], local[1] - GRID[1]];
+        // The inventory's cells take x from 40 to its width less 20.
+        if !self.is_cart && !(CELLS_AT[0]..self.width() - 20.0).contains(&local[0]) {
+            return None;
+        }
+        let grid = self.grid();
+        let [x, y] = [local[0] - grid[0], local[1] - grid[1]];
         let [column, row] = [(x / CELL).floor(), (y / CELL).floor()];
         (x >= 0.0 && y >= 0.0 && (column as usize) < self.columns && (row as usize) < self.rows).then(|| row as usize * self.columns + column as usize)
     }
@@ -493,35 +613,47 @@ impl Inventory {
     pub fn click(&mut self, hit: Hit) -> Option<u16> {
         match hit {
             Hit::Title(hit) => self.frame.click_title(hit),
+            // The inventory keeps its scroll row across tabs, as far as the new tab goes.
             Hit::Tab(tab) => {
                 self.tab = tab;
-                self.scroll = 0;
+                if self.is_cart {
+                    self.scroll = 0;
+                }
+                self.scroll_by(0);
             }
             Hit::Item(index) => return self.clicks.double(index).then_some(index),
-            Hit::LockDrop => {
-                self.lock_drop = !self.lock_drop;
-                self.boxes().save();
-            }
+            // Not kept: off at every start.
+            Hit::LockDrop => self.lock_drop = !self.lock_drop,
             Hit::Compare => {
                 self.compare = !self.compare;
                 self.boxes().save();
             }
-            Hit::Resize | Hit::Window => {}
+            Hit::Resize | Hit::Window | Hit::Expand => {}
         }
         None
     }
 
     pub fn height(&self) -> f32 {
-        TITLE_HEIGHT + self.body_height() + FOOTER_HEIGHT
+        if self.is_cart { TITLE_HEIGHT + self.body_height() + FOOTER_HEIGHT } else { self.inventory_height }
     }
 
     fn width(&self) -> f32 {
-        width(self.columns)
+        if self.is_cart { width(self.columns) } else { CELLS_AT[0] + self.columns as f32 * CELL + CELLS_RIGHT }
+    }
+
+    /// The first cell's corner.
+    fn grid(&self) -> [f32; 2] {
+        if self.is_cart { GRID } else { CELLS_AT }
     }
 
     /// Rows of cells plus 8px above and 10px below them; the tab strip is exactly this tall.
     fn body_height(&self) -> f32 {
         self.rows as f32 * CELL + 18.0
+    }
+
+    /// Its width and height on screen.
+    pub fn window_size(&self) -> [f32; 2] {
+        [self.width(), self.height()]
     }
 
     /// Its columns and rows of cells.
@@ -531,6 +663,9 @@ impl Inventory {
 
     /// Takes `columns` and `rows` as far as the grip would go; the items reflow.
     pub fn set_size(&mut self, [columns, rows]: [usize; 2]) {
+        if !self.is_cart {
+            return self.resize_inventory([CELLS_AT[0] + columns as f32 * CELL + CELLS_RIGHT, CHROME_HEIGHT + rows as f32 * CELL]);
+        }
         self.columns = columns.clamp(*COLUMN_LIMITS.start(), *COLUMN_LIMITS.end());
         self.rows = rows.clamp(*self.row_limits.start(), *self.row_limits.end());
         self.frame.set_width(self.width());
@@ -539,13 +674,18 @@ impl Inventory {
 
     /// Held by the corner grip at `cursor`.
     pub fn start_resize(&mut self, cursor: [f32; 2]) {
-        self.resizing = Some((cursor, self.size()));
+        self.resizing = Some((cursor, self.size(), [self.width(), self.height()]));
     }
 
     /// While held by its grip, the corner follows the pointer from the press in whole cells (the window stays
     /// opaque); returns whether it's held.
     pub fn resize_to(&mut self, cursor: [f32; 2]) -> bool {
-        let Some((from, [columns, rows])) = self.resizing else { return false };
+        let Some((from, [columns, rows], [width, height])) = self.resizing else { return false };
+        // The inventory: the size asked for by the pointer, snapped (see `snap_width` and `snap_height`).
+        if !self.is_cart {
+            self.resize_inventory([width + cursor[0] - from[0], height + cursor[1] - from[1]]);
+            return true;
+        }
         let step = |start: usize, moved: f32| (start as f32 + moved / CELL).round().max(0.0) as usize;
         self.set_size([step(columns, cursor[0] - from[0]), step(rows, cursor[1] - from[1])]);
         true
@@ -560,8 +700,8 @@ impl Inventory {
         Boxes { lock_drop: self.lock_drop, compare: self.compare }
     }
 
+    /// The saved boxes: compare. The drop lock starts off every time.
     pub fn apply_boxes(&mut self, boxes: Boxes) {
-        self.lock_drop = boxes.lock_drop;
         self.compare = boxes.compare;
     }
 
@@ -569,6 +709,16 @@ impl Inventory {
     pub fn tab_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
         if !self.frame.open || self.frame.minimized {
             return Vec::new();
+        }
+        if !self.is_cart {
+            return ["tab:item", "tab:equip", "tab:etc", "tab:favorite"]
+                .into_iter()
+                .enumerate()
+                .map(|(tab, name)| {
+                    let [x, y] = self.frame.at(self.tab_corner(tab));
+                    (name, [x, y, STRIP_WIDTH, self.tab_height])
+                })
+                .collect();
         }
         let height = self.body_height() / TABS as f32;
         ["tab:item", "tab:equip", "tab:etc", "tab:favorite"]
@@ -583,16 +733,19 @@ impl Inventory {
 
     /// The lock and compare boxes on screen.
     pub fn check_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
-        if !self.frame.open || self.frame.minimized || self.cart.is_some() {
+        if !self.frame.open || self.frame.minimized || self.is_cart {
             return Vec::new();
         }
-        let y = self.frame.at([0.0, TITLE_HEIGHT + self.body_height()])[1];
-        ["lock_drop", "compare"]
+        self.footer_controls()
             .into_iter()
-            .enumerate()
-            .map(|(index, name)| {
-                let x = self.frame.at([CHECK_X + index as f32 * CHECK_SPAN, 0.0])[0];
-                (name, [x, y, CHECK_SPAN, FOOTER_HEIGHT])
+            .map(|([x, y, width, height], hit)| {
+                let name = match hit {
+                    Hit::Expand => "expand",
+                    Hit::LockDrop => "lock_drop",
+                    _ => "compare",
+                };
+                let [x, y] = self.frame.at([x, y]);
+                (name, [x, y, width, height])
             })
             .collect()
     }
@@ -607,7 +760,8 @@ impl Inventory {
             .take(self.rows * self.columns)
             .enumerate()
             .map(|(cell, item)| {
-                let corner = self.frame.at([GRID[0] + (cell % self.columns) as f32 * CELL, GRID[1] + (cell / self.columns) as f32 * CELL]);
+                let grid = self.grid();
+                let corner = self.frame.at([grid[0] + (cell % self.columns) as f32 * CELL, grid[1] + (cell / self.columns) as f32 * CELL]);
                 (item.index, [corner[0], corner[1], CELL, CELL])
             })
             .collect()
@@ -616,6 +770,12 @@ impl Inventory {
     pub fn scroll_by(&mut self, rows: i32) {
         let total_rows = self.listed().count().div_ceil(self.columns);
         self.scroll = (self.scroll as i32 + rows).clamp(0, total_rows.saturating_sub(self.rows) as i32) as usize;
+    }
+
+    /// The wheel: the inventory moves min(3, rows − 1) rows a notch, the cart one.
+    pub fn wheel(&mut self, notches: i32) {
+        let step = if self.is_cart { 1 } else { WHEEL_ROWS.min(self.rows.saturating_sub(1)).max(1) };
+        self.scroll_by(notches * step as i32);
     }
 
     /// Draws the window into `layer` and the hovered item's name into `tooltip`.
@@ -643,22 +803,27 @@ impl Inventory {
             return;
         }
 
-        // Body: the striped tab column with its strip, the white item area between borders, and the cells.
-        layer.sprites.push((&assets.footer[1], at([0.0, TITLE_HEIGHT]), [TAB_COLUMN, self.body_height()]));
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [TABS_AT[0], self.body_height()]));
-        layer.sprites.push((&assets.tabs[self.tab], at(TABS_AT), assets.tabs[self.tab].size));
-        layer.sprites.push((&chrome.white, at([TAB_COLUMN, TITLE_HEIGHT]), [self.width() - TAB_COLUMN, self.body_height()]));
-        for x in [TAB_COLUMN, self.width() - 1.0] {
-            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, self.body_height()]));
+        if self.is_cart {
+            // Body: the striped tab column with its strip, the white item area between borders, and the cells.
+            layer.sprites.push((&assets.footer[1], at([0.0, TITLE_HEIGHT]), [TAB_COLUMN, self.body_height()]));
+            layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [TABS_AT[0], self.body_height()]));
+            layer.sprites.push((&assets.tabs[self.tab], at(TABS_AT), assets.tabs[self.tab].size));
+            layer.sprites.push((&chrome.white, at([TAB_COLUMN, TITLE_HEIGHT]), [self.width() - TAB_COLUMN, self.body_height()]));
+            for x in [TAB_COLUMN, self.width() - 1.0] {
+                layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, self.body_height()]));
+            }
+        } else {
+            self.draw_inventory_body(layer, chrome, assets, messages, font);
         }
+        let grid = self.grid();
         for cell in 0..self.rows * self.columns {
-            let place = [GRID[0] + (cell % self.columns) as f32 * CELL, GRID[1] + (cell / self.columns) as f32 * CELL];
+            let place = [grid[0] + (cell % self.columns) as f32 * CELL, grid[1] + (cell / self.columns) as f32 * CELL];
             layer.sprites.push((&assets.cell, at(place), assets.cell.size));
         }
 
         // Items: icon, and how many unless it's equipment; the hovered one's name in a tooltip.
         for (cell, item) in self.listed().skip(self.scroll * self.columns).take(self.rows * self.columns).enumerate() {
-            let place = at([GRID[0] + (cell % self.columns) as f32 * CELL, GRID[1] + (cell / self.columns) as f32 * CELL]);
+            let place = at([grid[0] + (cell % self.columns) as f32 * CELL, grid[1] + (cell / self.columns) as f32 * CELL]);
             let info = items.get(&item.id);
             if let Some(Some(icon)) = info.and_then(|info| icons.get(&icon_path(info, item.identified))) {
                 layer.sprites.push((icon, offset(place, [ICON_OFFSET, ICON_OFFSET]), icon.size));
@@ -680,6 +845,9 @@ impl Inventory {
             }
         }
 
+        if !self.is_cart {
+            return self.draw_inventory_footer(layer, tooltip, chrome, assets, messages, font, cursor);
+        }
         // Footer: rounded bar with the item count and the resize grip.
         let footer_top = TITLE_HEIGHT + self.body_height();
         let [left, middle, right] = &assets.footer;
@@ -695,18 +863,86 @@ impl Inventory {
             layer.texts.push((text.clone(), at([self.width() - 20.0 - font.width(&text), footer_top + 8.0]), [0, 0, 0]));
         }
         layer.sprites.push((&assets.resize, at([self.width() - GRIP, self.height() - GRIP]), assets.resize.size));
-        // The player's inventory: lock item drop, then compare equips.
-        if self.cart.is_none() {
-            for (index, (on, id)) in [(self.lock_drop, LOCK_DROP), (self.compare, COMPARE)].into_iter().enumerate() {
-                let check = &assets.checkbox[usize::from(on)];
-                let x = CHECK_X + index as f32 * CHECK_SPAN;
-                let y = footer_top + ((FOOTER_HEIGHT - check.size[1]) / 2.0).floor();
-                layer.sprites.push((check, at([x, y]), check.size));
-                let label = window::fit(font, message(id), CHECK_SPAN - check.size[0] - 4.0);
-                layer.texts.push((label, at([x + check.size[0] + 2.0, y]), [0, 0, 0]));
+    }
+
+    /// The inventory under its title bar: the side pieces every 8 px, the tab strip, the line beside it, white beside
+    /// and under the cells (which the caller draws).
+    fn draw_inventory_body<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, messages: &[String], font: &Font) {
+        let at = |local: [f32; 2]| self.frame.at(local);
+        let [width, height] = [self.width(), self.height()];
+        let body = height - CHROME_HEIGHT;
+        let [left, right] = &assets.side;
+        for step in 0..(body / 8.0).ceil() as usize {
+            let y = TITLE_HEIGHT + step as f32 * 8.0;
+            if height > INVENTORY_SIZE[1] {
+                layer.sprites.push((left, at([0.0, y]), left.size));
+            }
+            layer.sprites.push((right, at([width - right.size[0], y]), right.size));
+        }
+        // The tabs, top to bottom: white with a grey border, all but the open one closed on the cells' side; the label
+        // one character under the other.
+        // ponytail: each label centred across its tab, from 5 px down.
+        for (tab, &label) in TAB_LABELS.iter().enumerate() {
+            let [x, y] = self.tab_corner(tab);
+            layer.sprites.push((&assets.tab_border, at([x, y]), [STRIP_WIDTH, self.tab_height]));
+            let inner_right = if tab == self.tab { STRIP_WIDTH - 1.0 } else { STRIP_WIDTH - 2.0 };
+            layer.sprites.push((&chrome.white, at([x + 1.0, y + 1.0]), [inner_right, self.tab_height - 2.0]));
+            let label = messages.get(label).map_or("", String::as_str);
+            for (row, character) in label.chars().enumerate() {
+                let text = character.to_string();
+                let left = x + ((STRIP_WIDTH - font.width(&text)) / 2.0).floor();
+                layer.texts.push((text, at([left, y + TAB_PADDING / 2.0 + row as f32 * font.line_height()]), [0, 0, 0]));
+            }
+        }
+        layer.sprites.push((&assets.strip_line, at([STRIP_LINE_X, TITLE_HEIGHT]), [1.0, body]));
+        layer.sprites.push((&chrome.white, at([STRIP_LINE_X, TITLE_HEIGHT]), [CELLS_AT[0] - STRIP_LINE_X, body]));
+        let below = TITLE_HEIGHT + self.rows as f32 * CELL;
+        layer.sprites.push((&chrome.white, at([STRIP_LINE_X, below]), [width - 24.0, height - INVENTORY_FOOTER - below]));
+    }
+
+    /// The inventory's footer: the plain bar, the expand icon, the count (red when full), the drop lock and compare,
+    /// each with its tooltip.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_inventory_footer<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        messages: &[String],
+        font: &Font,
+        cursor: [f32; 2],
+    ) {
+        let at = |local: [f32; 2]| self.frame.at(local);
+        let [width, height] = [self.width(), self.height()];
+        let top = height - INVENTORY_FOOTER;
+        let [left, middle, right] = &assets.plain_footer;
+        layer.sprites.push((left, at([0.0, top]), left.size));
+        layer.sprites.push((middle, at([left.size[0], top]), [width - left.size[0] - right.size[0], INVENTORY_FOOTER]));
+        layer.sprites.push((right, at([width - right.size[0], top]), right.size));
+        let [expand, lock, compare] = self.footer_controls().map(|(area, _)| area);
+        layer.sprites.push((&assets.count, at([expand[0], expand[1]]), assets.count.size));
+        layer.sprites.push((&assets.lock[usize::from(self.lock_drop)], at([lock[0], lock[1]]), [lock[2], lock[3]]));
+        layer.sprites.push((&assets.compare[usize::from(self.compare)], at([compare[0], compare[1]]), [compare[2], compare[3]]));
+        let [carried, most] = [self.items.len(), BASE_SLOTS + usize::from(self.expansion)];
+        let count = at([COUNT_AT[0], height - COUNT_AT[1]]);
+        let carried_text = carried.to_string();
+        layer.texts.push((carried_text.clone(), count, count_color(carried, most)));
+        layer.texts.push((format!("/{most}"), offset(count, [font.width(&carried_text), 0.0]), [0, 0, 0]));
+        layer.sprites.push((&assets.resize, at([width - GRIP, height - GRIP]), assets.resize.size));
+        let message = |id: usize| messages.get(id).map_or("", String::as_str);
+        for (area, tip) in [(expand, EXPAND_TIP), (lock, LOCK_DROP), (compare, COMPARE)] {
+            let corner = at([area[0], area[1]]);
+            if contains(corner, [area[2], area[3]], cursor) {
+                window::tooltip(tooltip, chrome, font, message(tip), offset(corner, [area[2] + 4.0, 0.0]), [255; 3]);
             }
         }
     }
+}
+
+/// The count's colour: red once what's carried reaches the limit.
+fn count_color(carried: usize, most: usize) -> [u8; 3] {
+    if carried >= most { FULL_COLOR } else { COUNT_COLOR }
 }
 
 #[cfg(test)]
@@ -724,21 +960,33 @@ mod tests {
     }
 
     #[test]
+    fn snaps_the_inventory_to_the_games_sizes() {
+        assert_eq!([240.0, 290.0, 330.0].map(snap_width), [248.0, 280.0, 312.0]);
+        assert_eq!([100.0, 170.0, 300.0].map(|height| snap_height(height, 82.0)), [120.0, 152.0, 216.0]);
+        assert_eq!([100.0, 255.0, 400.0].map(|height| snap_height(height, 217.0)), [255.0; 3]);
+        assert_eq!([cells_of([248.0, 120.0]), cells_of([280.0, 152.0]), cells_of([312.0, 216.0]), cells_of([280.0, 255.0])], [[6, 2], [7, 3], [8, 5], [7, 6]]);
+        // A first start: at (0, 120), 280 wide, the cells right under the title bar.
+        let inventory = Inventory::new(true);
+        assert_eq!((inventory.frame.position, inventory.width(), inventory.grid()), ([0.0, 120.0], 280.0, [40.0, 17.0]));
+        assert_eq!(inventory.height(), 255.0, "three-character tabs: one height");
+    }
+
+    #[test]
     fn resizes_by_its_corner_grip() {
-        let mut inventory = Inventory::default();
-        inventory.frame.open = true;
+        let mut inventory = Inventory::new(true);
+        inventory.tab_height = 21.25;
+        inventory.set_size([7, 2]);
+        assert_eq!((inventory.width(), inventory.height()), (280.0, 120.0));
         let corner = inventory.frame.at([inventory.width() - 5.0, inventory.height() - 5.0]);
         assert_eq!(inventory.hit(corner), Some(Hit::Resize));
-        // From 7 x 6: 40 px right makes 8 columns (whole cells, from the press); its height never changes.
-        let height = inventory.height();
+        // The corner follows the pointer from the press, then snaps: 40 right and 70 down is 312 by 184.
         inventory.start_resize(corner);
-        assert!(inventory.resize_to([corner[0] + 40.0, corner[1] - 70.0]));
-        assert_eq!(inventory.size(), [8, 6]);
-        assert_eq!((inventory.width(), inventory.height()), (width(8), height));
-        inventory.resize_to([corner[0] - 300.0, corner[1] + 500.0]);
-        assert_eq!(inventory.size(), [6, 6]);
+        assert!(inventory.resize_to([corner[0] + 40.0, corner[1] + 70.0]));
+        assert_eq!((inventory.size(), inventory.width(), inventory.height()), ([8, 4], 312.0, 184.0));
+        inventory.resize_to([corner[0] - 300.0, corner[1] - 500.0]);
+        assert_eq!(inventory.size(), [6, 2]);
         assert!(inventory.stop_resize() && !inventory.resize_to(corner));
-        // Items reflow into the columns shown, and the scroll stays in range.
+        // The cart keeps its whole-cell steps and 2 to 5 rows; items reflow, and the scroll stays in range.
         let mut cart = Inventory::cart();
         cart.items = (0..20).map(|index| InventoryItem { index, id: 501, kind: net::ITEM_HEALING, amount: 1, ..Default::default() }).collect();
         cart.set_size([6, 2]);
@@ -746,6 +994,50 @@ mod tests {
         assert_eq!(cart.scroll, 2, "20 items in 6 columns: 4 rows, 2 shown");
         cart.set_size([8, 5]);
         assert_eq!(cart.scroll, 0);
+        assert_eq!(cart.width(), width(8));
+    }
+
+    #[test]
+    fn hits_cells_from_40_to_its_width_less_20() {
+        let mut inventory = Inventory::new(true);
+        inventory.extend((0..60).map(|index| item(index, net::ITEM_HEALING, 1)).collect());
+        let width = inventory.width();
+        let at = |x: f32| inventory.hit(inventory.frame.at([x, 20.0]));
+        assert!(matches!(at(40.0), Some(Hit::Item(_))) && matches!(at(width - 21.0), Some(Hit::Item(_))));
+        assert_eq!((at(39.0), at(width - 20.0)), (Some(Hit::Window), Some(Hit::Window)));
+        // The tabs stack in the strip; the footer's icons.
+        assert_eq!(inventory.hit(inventory.frame.at([10.0, 18.0 + 54.0 + 5.0])), Some(Hit::Tab(1)));
+        let bottom = inventory.height();
+        assert_eq!(inventory.hit(inventory.frame.at([25.0, bottom - 10.0])), Some(Hit::Expand));
+        assert_eq!(inventory.hit(inventory.frame.at([82.0, bottom - 10.0])), Some(Hit::LockDrop));
+        assert_eq!(inventory.hit(inventory.frame.at([106.0, bottom - 10.0])), Some(Hit::Compare));
+    }
+
+    #[test]
+    fn keeps_the_scroll_row_across_tabs() {
+        let mut inventory = Inventory::new(true);
+        // 60 potions (9 rows of 7) and 30 etc items (5 rows).
+        inventory.extend((0..60).map(|index| item(index, net::ITEM_HEALING, 1)).chain((60..90).map(|index| item(index, 3, 1))).collect());
+        inventory.click(Hit::Tab(2));
+        inventory.wheel(1);
+        assert_eq!(inventory.scroll, 0, "5 rows of etc fit in 6");
+        inventory.click(Hit::Tab(0));
+        inventory.wheel(1);
+        assert_eq!(inventory.scroll, 3, "the wheel moves 3 rows");
+        inventory.click(Hit::Tab(2));
+        assert_eq!(inventory.scroll, 0, "kept, as far as etc's rows go");
+        inventory.click(Hit::Tab(0));
+        inventory.scroll_by(2);
+        inventory.click(Hit::Tab(1));
+        inventory.click(Hit::Tab(0));
+        assert_eq!(inventory.scroll, 0, "the empty equipment tab took it back to the top");
+        // Two rows showing: the wheel moves one.
+        inventory.tab_height = 21.25;
+        inventory.set_size([7, 2]);
+        inventory.wheel(1);
+        assert_eq!(inventory.scroll, 1);
+        // The count turns red at the limit.
+        assert_eq!((count_color(99, 100), count_color(100, 100)), (COUNT_COLOR, FULL_COLOR));
     }
 
     #[test]
@@ -845,6 +1137,13 @@ mod tests {
         assert_eq!(inventory.hit(first_cell), Some(Hit::Item(1)));
         inventory.click(Hit::Tab(0));
         assert_eq!(inventory.hit(first_cell), Some(Hit::Window));
+    }
+
+    #[test]
+    fn keeps_compare_but_not_the_drop_lock() {
+        let mut inventory = Inventory::new(true);
+        inventory.apply_boxes(Boxes { lock_drop: true, compare: true });
+        assert!(!inventory.lock_drop && inventory.compare);
     }
 
     #[test]
