@@ -46,6 +46,7 @@ mod actor;
 mod announce;
 mod bank;
 mod basic_info;
+mod battle_queue;
 mod battleground;
 mod buying;
 mod cashshop;
@@ -822,6 +823,10 @@ struct Game {
     /// The map's property and flags (net::MAP_*), and its type, as the server last sent them.
     map_property: Option<(u16, u32)>,
     map_type: Option<u16>,
+    /// The battleground queue's window, the battleground queued for (and how many wait), and its question up.
+    queue_window: battle_queue::QueueWindow,
+    queued: Option<(String, Option<u32>)>,
+    queue_asked: Option<QueueAsked>,
     /// The battleground's camps, score, teammates' dots and battle chat; forgotten on a map change.
     battle: battleground::Battle,
     /// The minimap dot for teammates, and the marks over heads: our camp's, the other's.
@@ -1179,6 +1184,14 @@ enum Choice {
     GuildMove(usize, u32),
     /// Leave the guild (asks first).
     GuildLeave,
+}
+
+/// A battleground queue question waiting for OK: applying (how, for which), leaving the queue, or entering the
+/// battle (until the time to answer runs out).
+enum QueueAsked {
+    Apply(u16, String),
+    Cancel(String),
+    Lobby(String, Instant),
 }
 
 /// A pet question waiting for OK: feed it, or rename it (to this).
@@ -2608,6 +2621,7 @@ struct Assets {
     weather: weather::Assets,
     dressroom: dressroom::Assets,
     catalog: catalog::Assets,
+    battle_queue: battle_queue::Assets,
     mercenary: mercenary::Assets,
     homunculus: homunculus::Assets,
     party: party::Assets,
@@ -2721,6 +2735,7 @@ impl Assets {
             weather: weather::Assets::load(gpu, grf),
             dressroom: dressroom::Assets::load(gpu, grf),
             catalog: catalog::Assets::load(gpu, grf),
+            battle_queue: battle_queue::Assets::load(gpu, grf, &lua::entry_queue(grf).unwrap_or_default()),
             mercenary: mercenary::Assets::load(gpu, grf),
             homunculus: homunculus::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
@@ -3084,6 +3099,8 @@ struct App {
     title_names: HashMap<u32, String>,
     /// Item names and resources by item ID, and the client's numbered messages.
     items: HashMap<u32, ItemInfo>,
+    /// The battlegrounds the queue window lists.
+    battlegrounds: Vec<lua::Battleground>,
     /// What each reform item can turn into, from the client's reform list.
     reforms: HashMap<u32, Vec<lua::ReformInfo>>,
     /// Enchant tables from the client's Lua, by table number.
@@ -3894,6 +3911,38 @@ impl App {
                     }
                 }
             }
+            // A queue question: OK applies, leaves the queue or enters the battle; Cancel doesn't (or declines entering).
+            Scene::Game(game) if game.queue_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        let _ = match game.queue_asked.take().unwrap() {
+                            QueueAsked::Apply(kind, name) if yes => game.session.apply_to_queue(kind, &name),
+                            QueueAsked::Cancel(name) if yes => game.session.leave_queue(&name),
+                            QueueAsked::Lobby(name, _) => game.session.answer_lobby(yes, &name),
+                            _ => Ok(()),
+                        };
+                    }
+                }
+            }
+            // The queue window: a battleground picked, applying, cancelling.
+            Scene::Game(game) if game.queue_window.frame.open && game.queue_window.hit(cursor, &self.battlegrounds, game.queued.is_some()).is_some() => {
+                match game.queue_window.hit(cursor, &self.battlegrounds, game.queued.is_some()) {
+                    Some(battle_queue::Hit::Title(title)) => game.queue_window.frame.click_title(title),
+                    Some(battle_queue::Hit::Row(row)) => game.queue_window.picked = Some(row),
+                    Some(battle_queue::Hit::Apply(kind)) => {
+                        if let Some(entry) = game.queue_window.picked.and_then(|row| self.battlegrounds.get(row)) {
+                            game.queue_asked = Some(QueueAsked::Apply(kind, entry.name.clone()));
+                        }
+                    }
+                    Some(battle_queue::Hit::Cancel) => {
+                        if let Some((name, _)) = &game.queued {
+                            game.queue_asked = Some(QueueAsked::Cancel(name.clone()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
             // The store search: the kind, the fields, searching, paging, and a row twice to find its store.
             // A store it opened stands over it.
             Scene::Game(game)
@@ -4322,6 +4371,15 @@ impl App {
                             Some("party") => {
                                 game.party_window.frame.toggle();
                                 game.raise(Panel::Party);
+                            }
+                            // The battleground queue; while queued, how many wait is asked again.
+                            Some("battle") => {
+                                game.queue_window.frame.toggle();
+                                if game.queue_window.frame.open
+                                    && let Some((name, _)) = &game.queued
+                                {
+                                    let _ = game.session.ask_queue_number(name);
+                                }
                             }
                             Some("status") => {
                                 game.status_window.frame.toggle();
@@ -6320,6 +6378,9 @@ impl App {
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     map_type: None,
                     battle: battleground::Battle::default(),
+                    queue_window: battle_queue::QueueWindow::default(),
+                    queued: None,
+                    queue_asked: None,
                     camp_looks: None,
                     pvp_rank: None,
                     rank_font: None,
@@ -7989,6 +8050,37 @@ impl App {
                 }
             }
             MapEvent::BattleScore(score) => game.battle.score = Some(score),
+            // The queue: applied (a line by result; 0 has rathena's own), how many wait, left, the battle ready.
+            MapEvent::BattleQueue { result, name } => {
+                if result == 1 {
+                    game.queued = Some((name, None));
+                }
+                if let Some(id) = battle_queue::apply_result(result) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 1 { CHAT_ITEM } else { CHAT_ERROR });
+                }
+            }
+            MapEvent::QueueNumber { name, number } => game.queued = Some((name, Some(number))),
+            MapEvent::QueueLeft { result, .. } => {
+                if result == 1 {
+                    game.queued = None;
+                }
+                let id = battle_queue::cancel_result(result);
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
+            }
+            MapEvent::QueueReady { name } => {
+                game.queue_asked = Some(QueueAsked::Lobby(name, Instant::now() + Duration::from_secs(battle_queue::LOBBY_SECONDS)));
+            }
+            // ponytail: no sound for it; which one rathena's "gong" is isn't knowable.
+            MapEvent::QueueAccepted { result: 1, .. } => {
+                game.chat_line(self.messages.get(battle_queue::LOBBY_ACCEPTED).cloned().unwrap_or_default(), CHAT_ITEM);
+            }
+            MapEvent::QueueAccepted { .. } => {}
+            MapEvent::QueueReset => {
+                game.queued = None;
+                if matches!(game.queue_asked, Some(QueueAsked::Lobby(..))) {
+                    game.queue_asked = None;
+                }
+            }
             MapEvent::BattleChat { text, .. } => game.chat_line(text, battleground::CHAT_COLOR),
             MapEvent::DressRoom => game.open_dressroom(),
             // The board opens (or shows the new ranking); the names it lacks are asked for once each.
@@ -10341,6 +10433,32 @@ impl App {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }
+        // The battleground queue, and its question: applying, leaving, or entering with the time left.
+        if game.queue_window.frame.open {
+            game.queue_window.draw(&mut shop_layer, &assets.chrome, &assets.battle_queue, font, messages, &self.battlegrounds, game.queued.as_ref(), pointer);
+        }
+        let queue_question = match &game.queue_asked {
+            Some(QueueAsked::Apply(kind, _)) => {
+                let index = [net::QUEUE_ALONE, net::QUEUE_PARTY, net::QUEUE_GUILD].iter().position(|each| each == kind).unwrap_or(0);
+                Some(message(battle_queue::APPLY_ASKS[index]).to_owned())
+            }
+            Some(QueueAsked::Cancel(_)) => Some(message(battle_queue::CANCEL_ASKS).to_owned()),
+            Some(QueueAsked::Lobby(_, until)) => {
+                let left = until.saturating_duration_since(Instant::now()).as_secs();
+                let note = battle_queue::LOBBY_NOTE.iter().map(|&id| message(id)).collect::<Vec<_>>().join(" ");
+                Some(format!("{} {note} {}", message(battle_queue::LOBBY_ASKS), messages::fill(message(battle_queue::LOBBY_TIME), &[&left])))
+            }
+            None => None,
+        };
+        if let Some(question) = queue_question {
+            let dialog = dialog_position(&assets.message);
+            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
+            for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
+                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
         // A party invites us: its name and the question, OK or cancel.
         if let Some((_, name)) = &game.party_invite {
             let dialog = dialog_position(&assets.message);
@@ -10844,6 +10962,10 @@ fn main() {
         eprintln!("no item names: {error}");
         HashMap::new()
     });
+    let battlegrounds = lua::entry_queue(&grf).unwrap_or_else(|error| {
+        eprintln!("no battleground list: {error}");
+        Vec::new()
+    });
     // ItemDBNameTbl is shared with the enchant window: it calls lua::item_db_names on the same file.
     let item_names = grf.read(lua::ITEM_DB_NAMES).and_then(lua::item_db_names).unwrap_or_else(|error| {
         eprintln!("no item name table: {error}");
@@ -10901,6 +11023,7 @@ fn main() {
         upgrade_boxes,
         title_names,
         items,
+        battlegrounds,
         reforms,
         enchant_tables,
         styling_shop,

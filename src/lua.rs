@@ -67,6 +67,59 @@ const WORLD_VIEW: [&str; 4] = [
     "data\\luafiles514\\lua files\\worldviewdata\\worldviewdata_table.lub",
 ];
 
+/// The battlegrounds the queue window lists (`EntryQueueList`); a translation's copy in the data folder has rathena's
+/// names.
+const ENTRY_QUEUE: &str = "data\\luafiles514\\lua files\\entryqueue\\entryqueuelist.lub";
+
+/// A battleground the queue window lists.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Battleground {
+    /// Sent to the server; rathena's `Name` in battleground_db.
+    pub name: String,
+    pub display: String,
+    /// Team sizes: ours and theirs.
+    pub sizes: [u16; 2],
+    /// Applying alone, as a party, as a guild.
+    pub applies: [bool; 3],
+    /// Who may enter: 1 up to a level, 2 from a level, 3 a range; the levels.
+    pub condition: (u8, [u32; 2]),
+    /// What a win, a draw and a loss bring.
+    pub rewards: [String; 3],
+    pub goal: String,
+    /// Its picture (battle_field\bat_a01.bmp).
+    pub picture: String,
+}
+
+pub fn entry_queue(grf: &Grf) -> io::Result<Vec<Battleground>> {
+    battlegrounds(&run(grf, &[ENTRY_QUEUE])?)
+}
+
+/// `EntryQueueList` in order.
+fn battlegrounds(lua: &Lua) -> io::Result<Vec<Battleground>> {
+    let list: mlua::Table = lua.globals().get("EntryQueueList").map_err(lua_error)?;
+    let mut entries: Vec<(i64, Battleground)> = Vec::new();
+    for pair in list.pairs::<i64, mlua::Table>() {
+        let (index, entry) = pair.map_err(lua_error)?;
+        let text = |key: &str| entry.get::<mlua::String>(key).map(|text| decode(&text)).unwrap_or_default();
+        let number = |key: &str| entry.get::<u32>(key).unwrap_or(0);
+        entries.push((
+            index,
+            Battleground {
+                name: text("BattleFieldName"),
+                display: text("DisplayBattleFieldName"),
+                sizes: [number("AllianceNum") as u16, number("EnemyNum") as u16],
+                applies: [number("PrivateApply") == 1, number("PartyApply") == 1, number("GuildApply") == 1],
+                condition: (number("EnterCondType") as u8, [number("EnterCondValue1"), number("EnterCondValue2")]),
+                rewards: [text("RewardWin"), text("RewardDraw"), text("RewardLose")],
+                goal: text("VictoryCond"),
+                picture: text("MiniMapFile"),
+            },
+        ));
+    }
+    entries.sort_by_key(|(index, _)| *index);
+    Ok(entries.into_iter().map(|(_, battleground)| battleground).collect())
+}
+
 /// Runs client Lua files in order; precompiled ones are converted from the client's 32-bit bytecode first.
 fn run(grf: &Grf, files: &[&str]) -> io::Result<Lua> {
     let lua = new_lua()?;
@@ -1222,6 +1275,29 @@ fn read_reform(entry: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> Option<Ref
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
+
+    #[test]
+    fn reads_the_battleground_list() {
+        let lua = super::new_lua().unwrap();
+        lua.load(
+            r#"EntryQueueList = {
+                [2] = { BattleFieldName = "KVM (Level 80 and up)", DisplayBattleFieldName = "KVM", AllianceNum = 5, EnemyNum = 5,
+                    PrivateApply = 1, PartyApply = 1, GuildApply = 0, EnterCondType = 2, EnterCondValue1 = 80, EnterCondValue2 = 0,
+                    RewardWin = "5 Badges", RewardDraw = "2", RewardLose = "1", VictoryCond = "More kills", MiniMapFile = "bat_c01.bmp" },
+                [1] = { BattleFieldName = "Tierra Gorge", AllianceNum = 6, EnemyNum = 6, EnterCondType = 3, EnterCondValue1 = 60,
+                    EnterCondValue2 = 79 },
+            }
+            function ReadEntryQueueList() for k, v in pairs(EntryQueueList) do AddEntryQueue(k, v) end end"#,
+        )
+        .exec()
+        .unwrap();
+        let list = super::battlegrounds(&lua).unwrap();
+        assert_eq!(list.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(), ["Tierra Gorge", "KVM (Level 80 and up)"]);
+        let kvm = &list[1];
+        assert_eq!((kvm.sizes, kvm.applies, kvm.condition), ([5, 5], [true, true, false], (2, [80, 0])));
+        assert_eq!((kvm.rewards[0].as_str(), kvm.goal.as_str(), kvm.picture.as_str()), ("5 Badges", "More kills", "bat_c01.bmp"));
+        assert_eq!(list[0].condition, (3, [60, 79]));
+    }
 
     #[test]
     fn finds_the_achievement_table_under_either_name() {

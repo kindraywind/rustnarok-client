@@ -758,7 +758,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         game.combos.get(&unit).map_or(0, |(start, length)| length.saturating_sub(crate::control::now().saturating_duration_since(*start)).as_millis() as u64)
     };
     // The message box's OK and Cancel while a question is up.
-    let question = game.guild_asked.is_some() || game.guild_invite.is_some() || game.cashshop_buy_asked;
+    let question = game.guild_asked.is_some() || game.guild_invite.is_some() || game.cashshop_buy_asked || game.queue_asked.is_some();
     let question_buttons = app.assets.as_ref().filter(|_| question).into_iter().flat_map(|assets| {
         let dialog = crate::dialog_position(&assets.message);
         [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)].map(|(name, place, button)| {
@@ -859,6 +859,16 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.basic_info.menu_boxes().into_iter().map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
+        .chain(game.basic_info.toggle_box().map(|area| json!({"kind": "button", "name": "menu", "box": area})))
+        .chain(
+            game.queue_window
+                .frame
+                .open
+                .then(|| game.queue_window.button_boxes(&app.battlegrounds, game.queued.is_some()))
+                .into_iter()
+                .flatten()
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::item_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
@@ -1018,6 +1028,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("FriendAsked", game.friend_asked.is_some()),
         ("GuildInvite", game.guild_invite.is_some()),
         ("LeaveAsked", matches!(game.guild_asked, Some(crate::GuildAsked::Leave))),
+        ("BattleQueue", game.queue_window.frame.open),
+        ("BattleLobby", matches!(game.queue_asked, Some(crate::QueueAsked::Lobby(..)))),
         ("VendSetup", game.vend_setup.is_some()),
         ("MyShop", game.my_shop.is_some()),
         ("BuyingStoreSetup", game.buying_setup.is_some()),
@@ -1206,6 +1218,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         "results": catalog.rows.len(),
         "rows": catalog.rows.iter().map(|row| json!({"item": row.item, "shop": row.shop, "account": row.account, "price": row.price, "amount": row.amount})).collect::<Vec<_>>(),
     })));
+    // The battleground queued for, how many wait, and whether entering is being asked.
+    state["battle_queue"] = json!(
+        game.queued
+            .as_ref()
+            .map(|(name, number)| { json!({"name": name, "number": number, "asked": matches!(game.queue_asked, Some(crate::QueueAsked::Lobby(..)))}) })
+    );
     // On a battleground (its map type, or our camp known): the camp, the score, teammates with a dot and an HP bar.
     let battle = &game.battle;
     let on_battleground = game.map_type == Some(crate::battleground::MAP_TYPE) || battle.camp(game.account_id).is_some();
