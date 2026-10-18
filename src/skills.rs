@@ -21,6 +21,8 @@ pub const CELL: [f32; 2] = [62.0, 58.0];
 pub const BOX: f32 = 28.0;
 /// Where the level up button sits by a skill's box.
 pub const UP: [f32; 2] = [BOX + 1.0, 2.0];
+/// How much around it a click takes.
+const LEVEL_UP: [f32; 2] = [24.0, 24.0];
 const SIDE: f32 = 13.0;
 const WIDTH: f32 = SIDE * 2.0 + COLUMNS as f32 * CELL[0];
 const TAB_HEIGHT: f32 = 20.0;
@@ -104,6 +106,16 @@ const ARROW: [f32; 2] = [11.0, 11.0];
 /// Whether a skill gets level arrows: learned past level 1, and used rather than passive.
 fn steppable(skill: &Skill) -> bool {
     skill.level > 1 && skill.kind != 0
+}
+
+/// Where a job's tab sits in the window.
+fn tab_corner(tab: usize) -> [f32; 2] {
+    [SIDE + tab as f32 * TAB_WIDTH, TITLE_HEIGHT]
+}
+
+/// Whether a skill's level up button shows: points left, and the server says it can rise.
+fn upgradable(skills: &[Skill], id: u16, points: i64) -> bool {
+    points > 0 && skills.iter().any(|skill| skill.id == id && skill.upgradable)
 }
 
 /// Where a skill's box sits in the window.
@@ -233,16 +245,11 @@ impl SkillWindow {
             return Some(Hit::Title(hit));
         }
         if local[1] < TITLE_HEIGHT + TAB_HEIGHT {
-            return Some(
-                (0..jobs.len())
-                    .find(|&tab| contains([SIDE + tab as f32 * TAB_WIDTH, TITLE_HEIGHT], [TAB_WIDTH, TAB_HEIGHT], local))
-                    .map_or(Hit::Window, Hit::Tab),
-            );
+            return Some((0..jobs.len()).find(|&tab| contains(tab_corner(tab), [TAB_WIDTH, TAB_HEIGHT], local)).map_or(Hit::Window, Hit::Tab));
         }
         for &(place, id) in self.tree(trees, jobs) {
             let corner = box_corner(place);
-            let upgradable = points > 0 && skills.iter().any(|skill| skill.id == id && skill.upgradable);
-            if upgradable && contains(offset(corner, UP), [24.0, 24.0], local) {
+            if upgradable(skills, id, points) && contains(offset(corner, UP), LEVEL_UP, local) {
                 return Some(Hit::LevelUp(id));
             }
             if let Some(skill) = skills.iter().find(|skill| skill.id == id).filter(|skill| steppable(skill))
@@ -283,6 +290,35 @@ impl SkillWindow {
             .map(|&(place, id)| {
                 let corner = self.frame.at(box_corner(place));
                 (id, [corner[0], corner[1], BOX, BOX])
+            })
+            .collect()
+    }
+
+    /// The open tab's level up buttons on screen (for the test driver): skill and box.
+    pub fn raise_boxes(&self, trees: &SkillTrees, jobs: &[u16], skills: &[Skill], points: i64) -> Vec<(u16, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized {
+            return Vec::new();
+        }
+        self.tree(trees, jobs)
+            .iter()
+            .filter(|&&(_, id)| upgradable(skills, id, points))
+            .map(|&(place, id)| {
+                let [x, y] = self.frame.at(offset(box_corner(place), UP));
+                (id, [x, y, LEVEL_UP[0], LEVEL_UP[1]])
+            })
+            .collect()
+    }
+
+    /// The job tabs on screen (for the test driver): job and box.
+    pub fn tab_boxes(&self, jobs: &[u16]) -> Vec<(u16, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized {
+            return Vec::new();
+        }
+        jobs.iter()
+            .enumerate()
+            .map(|(tab, &job)| {
+                let [x, y] = self.frame.at(tab_corner(tab));
+                (job, [x, y, TAB_WIDTH, TAB_HEIGHT])
             })
             .collect()
     }
@@ -432,5 +468,31 @@ mod tests {
         let heal = Skill { id: 28, kind: Skill::FRIEND, level: 10, sp: 13, range: 9, upgradable: false };
         assert!(!steppable(&passive) && steppable(&heal));
         assert!(!steppable(&Skill { level: 1, ..heal }));
+    }
+
+    #[test]
+    fn names_the_level_up_buttons_a_click_takes() {
+        // Novice (0) then Mage (2): Basic Skill in the first tab; Fire Bolt and Cold Bolt in the second.
+        let trees = SkillTrees { trees: HashMap::from([(0, vec![(0, 1)]), (2, vec![(0, 19), (2, 14)])]), parents: HashMap::new() };
+        let jobs = [0, 2];
+        let skill = |id: u16, level: u16, upgradable: bool| Skill { id, kind: Skill::ENEMY, level, sp: 12, range: 9, upgradable };
+        let skills = [skill(1, 9, false), skill(19, 0, true), skill(14, 10, false)];
+        let mut window = SkillWindow::default();
+        assert!(window.raise_boxes(&trees, &jobs, &skills, 5).is_empty() && window.tab_boxes(&jobs).is_empty());
+        window.frame.open = true;
+        let center = |area: [f32; 4]| [area[0] + area[2] / 2.0, area[1] + area[3] / 2.0];
+        // The Mage tab opens by default; only Fire Bolt can still rise, and its box is the one the click test takes.
+        let boxes = window.raise_boxes(&trees, &jobs, &skills, 5);
+        assert_eq!(boxes.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [19]);
+        assert_eq!(window.hit(center(boxes[0].1), &trees, &jobs, &skills, 5), Some(Hit::LevelUp(19)));
+        assert!(window.raise_boxes(&trees, &jobs, &skills, 0).is_empty());
+        // The tabs, by job: the Novice tab's box switches to it.
+        let tabs = window.tab_boxes(&jobs);
+        assert_eq!(tabs.iter().map(|(job, _)| *job).collect::<Vec<_>>(), [0, 2]);
+        assert_eq!(window.hit(center(tabs[0].1), &trees, &jobs, &skills, 5), Some(Hit::Tab(0)));
+        window.click(Hit::Tab(0));
+        assert!(window.raise_boxes(&trees, &jobs, &skills, 5).is_empty());
+        window.frame.minimized = true;
+        assert!(window.tab_boxes(&jobs).is_empty());
     }
 }
