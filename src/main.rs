@@ -423,8 +423,6 @@ const NO_COSTUME_NOTICE: usize = 1772;
 /// "In this Map,Effect of Mirace of Sun and Moon is nullified."
 const NO_MIRACLE_NOTICE: usize = 2381;
 const MAP_NOTICE: [u8; 3] = [0x64, 0xFF, 0xFF];
-/// "You have won %d times and have lost %d times in PVP. Current points %d."
-const PVP_RECORD: usize = 853;
 /// "[Point] You have been rewarded with %d … rank points. Your point total is %d.", by ranking.
 const RANK_POINTS_BLACKSMITH: usize = 901;
 const RANK_POINTS_ALCHEMIST: usize = 902;
@@ -459,10 +457,11 @@ fn counter_glyphs(rank: u32, players: u32, screen: [f32; 2]) -> Vec<(usize, [f32
     glyphs
 }
 
-/// The first-place clock's glyphs (timefont actions): ss, mm:ss, hh:mm:ss or dd:hh:mm:ss.
+/// The first-place clock's glyphs (timefont actions): mm:ss, hh:mm:ss or dd:hh:mm:ss, every part two digits.
 fn clock_glyphs(seconds: u64) -> Vec<usize> {
     let parts = [seconds / 86_400, seconds / 3600 % 24, seconds / 60 % 60, seconds % 60];
-    let first = parts.iter().position(|&part| part > 0).unwrap_or(3).min(3);
+    // Minutes and seconds at the least.
+    let first = parts.iter().position(|&part| part > 0).unwrap_or(2).min(2);
     let mut glyphs = Vec::new();
     for (n, part) in parts[first..].iter().enumerate() {
         if n > 0 {
@@ -2891,7 +2890,6 @@ impl Game {
             }
             chat::Command::Who => self.session.user_count(),
             chat::Command::Memo => self.session.remember_warp_point(),
-            chat::Command::PvpInfo => self.session.pvp_info(self.me.id, self.account_id),
             chat::Command::Ranking(kind) => self.session.ask_ranking(kind),
             chat::Command::BattleChat => {
                 let id = self.battle.toggle_chat();
@@ -11630,10 +11628,6 @@ impl App {
                     game.last_rank = rank;
                 }
             }
-            MapEvent::PvpInfo { wins, losses, points } => {
-                let text = rustnarok_client::messages::fill(self.messages.get(PVP_RECORD).map_or("", String::as_str), &[&wins, &losses, &points]);
-                game.chat_line(text, CHAT_ITEM);
-            }
             MapEvent::PartyChat { account, text } => game.chat_line(text, if account == game.account_id { PARTY_CHAT_OURS } else { PARTY_CHAT }),
             MapEvent::PartyPosition { account, cell } => {
                 if let Some(member) = game.party.as_mut().and_then(|party| party.member(account)) {
@@ -13638,7 +13632,7 @@ impl App {
             if basic_info::fourth_job(game.me.job) {
                 rows.push((status(net::STATUS_AP), status(net::STATUS_MAX_AP), third, third));
             }
-            bars.push(("player".to_string(), player_feet, rows, [border, background]));
+            bars.push(("player".to_string(), player_feet, rows, [border, background], overhead::bar_fill as overhead::Fill));
         }
         // The player's own summons while in sight: HP, SP, and a homunculus's or pet's hunger.
         // ponytail: hunger fills over a maximum of 100.
@@ -13664,22 +13658,25 @@ impl App {
         }
         for (kind, id, rows) in summons {
             if let Some(&feet) = feet_of.get(&id) {
-                bars.push((kind.to_string(), feet, rows, [border, background]));
+                bars.push((kind.to_string(), feet, rows, [border, background], overhead::bar_fill));
             }
         }
-        // Monsters' bars in their own colors; a dying unit's bar shows empty until it's gone.
+        // Monsters' bars in their own colors; a dying unit's bar shows empty until it's gone. Party members and
+        // battleground teammates fill by whole percents.
         bars.extend(game.unit_hp.iter().filter_map(|(id, &(hp, max))| {
             let actor = game.units.get(id)?;
             let hp = if actor.remove_at.is_some() { 0 } else { hp };
-            let [border, background, fill, low] = if actor.kind == MONSTER { assets.monster_bars.each_ref() } else { [border, background, green, red] };
-            Some((id.to_string(), *feet_of.get(id)?, vec![(i64::from(hp), i64::from(max), fill, low)], [border, background]))
+            let monster = actor.kind == MONSTER;
+            let [border, background, fill, low] = if monster { assets.monster_bars.each_ref() } else { [border, background, green, red] };
+            let filled: overhead::Fill = if monster { overhead::bar_fill } else { overhead::party_fill };
+            Some((id.to_string(), *feet_of.get(id)?, vec![(i64::from(hp), i64::from(max), fill, low)], [border, background], filled))
         }));
         game.bars_drawn.clear();
-        for (whose, feet, rows, [border, background]) in bars {
+        for (whose, feet, rows, [border, background], filled) in bars {
             let Some(point) = sprite_point(feet, overhead::BAR_BELOW) else { continue };
             let [x, y] = [point[0].trunc() - overhead::BAR_WIDTH / 2.0, point[1].trunc()];
-            let rects = overhead::gage(&rows, border, background);
-            game.bars_drawn.push((whose, [x, y, rects[0].1[2], rects[0].1[3]], rows.iter().map(|&(value, max, ..)| overhead::bar_fill(value, max)).collect()));
+            let rects = overhead::gage(&rows, border, background, filled);
+            game.bars_drawn.push((whose, [x, y, rects[0].1[2], rects[0].1[3]], rows.iter().map(|&(value, max, ..)| filled(value, max)).collect()));
             for (texture, [left, top, width, height]) in rects {
                 base.sprites.push((texture, [x + left, y + top], [width, height]));
             }
@@ -15628,11 +15625,13 @@ mod tests {
     #[test]
     fn spells_the_first_place_clock() {
         let colon = GLYPH_SEPARATOR;
-        assert_eq!(clock_glyphs(59), [5, 9]);
+        assert_eq!(clock_glyphs(59), [0, 0, colon, 5, 9]);
         assert_eq!(clock_glyphs(61), [0, 1, colon, 0, 1]);
         assert_eq!(clock_glyphs(3 * 3600 + 2 * 60 + 1), [0, 3, colon, 0, 2, colon, 0, 1]);
         assert_eq!(clock_glyphs(2 * 86_400), [0, 2, colon, 0, 0, colon, 0, 0, colon, 0, 0]);
-        assert_eq!(clock_glyphs(0), [0, 0]);
+        assert_eq!(clock_glyphs(0), [0, 0, colon, 0, 0]);
+        assert_eq!(clock_glyphs(3661), [0, 1, colon, 0, 1, colon, 0, 1]);
+        assert_eq!(clock_glyphs(90_061), [0, 1, colon, 0, 1, colon, 0, 1, colon, 0, 1]);
     }
 
     #[test]
