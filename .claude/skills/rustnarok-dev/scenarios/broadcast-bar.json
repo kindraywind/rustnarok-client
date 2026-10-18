@@ -1,0 +1,68 @@
+{
+  "about": "The announcement bar (issue #142): four quick broadcasts (@broadcast, @kamib blue, @kamic orange) keep the newest three across the top for 20 seconds, as well as in the chat.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@broadcast One"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@kamib Two"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@kamic FF8800 Three"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@broadcast Four"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "announcements": [
+            "Two",
+            "Three",
+            "{first}: Four"
+          ]
+        },
+        "chat": "{first}: One"
+      }
+    },
+    {
+      "shot": "broadcast-bar",
+      "crop": [
+        0,
+        40,
+        1024,
+        200
+      ]
+    },
+    {
+      "wait": 21000
+    },
+    {
+      "expect": {
+        "state": {
+          "announcements": []
+        }
+      }
+    }
+  ]
+}
