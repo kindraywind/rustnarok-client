@@ -79,6 +79,7 @@ mod inventory;
 mod iteminfo;
 mod laphine;
 mod level_up;
+mod line_edit;
 mod links;
 mod macros;
 mod mail;
@@ -329,6 +330,8 @@ const AURA_OFF_FIRST: usize = 2996;
 const EFFECTS_OFF: usize = 24;
 /// Deals: "requests a deal", no one of that name, "can't overlap items", "no more than 10 kinds", how asking went
 /// (70 + the result), how it ended (75 done, 76 failed, 74 cancelled), too heavy.
+/// "Invalid Command", in yellow.
+const INVALID_COMMAND: usize = 95;
 const TRADE_ASKS: usize = 93;
 const TRADE_NO_ONE: usize = 71;
 const TRADE_DONE: usize = 75;
@@ -2764,11 +2767,14 @@ impl Game {
     /// Sends what's typed: whispered when the name box has a name, to the party with a leading % (or `party`, Ctrl
     /// held). Returns a message to show when it can't.
     fn send_chat(&mut self, party: bool, guild: bool, messages: &[String], graphics: &mut options::GraphicsSettings) -> Option<usize> {
-        let text = std::mem::take(&mut self.chat.input);
-        let (text, to) = (text.trim(), self.chat.whisper.trim().to_owned());
-        if text.is_empty() {
+        let typed = std::mem::take(&mut self.chat.input);
+        if typed.is_empty() {
             return None;
         }
+        self.chat.sent(&typed);
+        // A line of only spaces is text, and goes as it is.
+        let text = if typed.trim().is_empty() { typed.as_str() } else { typed.trim() };
+        let to = self.chat.whisper.trim().to_owned();
         if let Some(command) = chat::command(text) {
             self.client_command(command, messages, graphics);
             return None;
@@ -2839,6 +2845,11 @@ impl Game {
         // The client's own commands (message 136): /deal, /거래 or /교환 and a name ask for a deal.
         if let Some(name) = ["/deal ", "/거래 ", "/교환 "].iter().find_map(|command| text.strip_prefix(command)) {
             return (!self.ask_trade(name.trim())).then_some(TRADE_NO_ONE);
+        }
+        // A / line nothing above knows: "Invalid Command", and nothing goes out (not as chat, not as a whisper).
+        if text.starts_with('/') {
+            self.chat_line(messages.get(INVALID_COMMAND).cloned().unwrap_or_default(), CHAT_BROADCAST);
+            return None;
         }
         if to.is_empty() {
             let _ = self.session.chat(&self.me.name, text);
@@ -5139,6 +5150,19 @@ fn shortcut_to_bind(key: options::ShortcutKey) -> Option<shortcuts::ShortcutKey>
     match key {
         options::ShortcutKey::NamedF(number) => shortcuts::function_key(number),
         options::ShortcutKey::Char(character) => Some(shortcuts::ShortcutKey::Char(character.to_ascii_lowercase())),
+    }
+}
+
+/// The system clipboard's text up to its first line break, for a one-line box.
+fn clipboard_line() -> String {
+    let text = arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()).unwrap_or_default();
+    text.lines().next().unwrap_or_default().chars().filter(|character| !character.is_control()).collect()
+}
+
+/// Puts text on the system clipboard (nothing for an empty selection).
+fn set_clipboard(text: &str) {
+    if !text.is_empty() {
+        let _ = arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(text.to_owned()));
     }
 }
 
@@ -9735,16 +9759,41 @@ impl App {
                         if typing || !matches!(kind, battle_mode::KeyKind::Char(_)) {
                             match key {
                                 Key::Named(NamedKey::Tab) if typing => game.chat.naming = !game.chat.naming,
+                                // Shift+Insert pastes, Shift+Delete cuts; Ctrl (or Cmd) with A, C, X, V edit.
+                                Key::Named(NamedKey::Insert) if typing && self.modifiers.shift_key() => game.chat.type_text(&clipboard_line()),
+                                Key::Named(NamedKey::Delete) if typing && self.modifiers.shift_key() => set_clipboard(&game.chat.cut()),
+                                Key::Character(letter)
+                                    if typing
+                                        && (self.modifiers.control_key() || self.modifiers.super_key())
+                                        && matches!(letter.to_lowercase().as_str(), "a" | "c" | "x" | "v") =>
+                                {
+                                    match letter.to_lowercase().as_str() {
+                                        "a" => game.chat.select_all(),
+                                        "c" => set_clipboard(&game.chat.selected()),
+                                        "x" => set_clipboard(&game.chat.cut()),
+                                        _ => game.chat.type_text(&clipboard_line()),
+                                    }
+                                }
                                 Key::Named(NamedKey::Insert) => game.toggle_sit(),
+                                // The caret: Left, Right, Home, End (Shift selects); Up / Down recall.
+                                Key::Named(named @ (NamedKey::ArrowLeft | NamedKey::ArrowRight | NamedKey::Home | NamedKey::End)) if typing => {
+                                    let to = match named {
+                                        NamedKey::ArrowLeft => line_edit::Move::Left,
+                                        NamedKey::ArrowRight => line_edit::Move::Right,
+                                        NamedKey::Home => line_edit::Move::Home,
+                                        _ => line_edit::Move::End,
+                                    };
+                                    game.chat.go(to, self.modifiers.shift_key());
+                                }
+                                Key::Named(named @ (NamedKey::ArrowUp | NamedKey::ArrowDown)) if typing => game.chat.recall(*named == NamedKey::ArrowUp),
+                                Key::Named(NamedKey::Delete) if typing => game.chat.delete(),
                                 // PageUp / PageDown page the log; with Ctrl, to its top or bottom.
                                 Key::Named(key @ (NamedKey::PageUp | NamedKey::PageDown)) if game.chat_mode.chat_line_open() => {
                                     game.chat.page(*key == NamedKey::PageDown, self.modifiers.control_key());
                                 }
-                                Key::Named(NamedKey::Enter) if typing && game.chat.naming => game.chat.naming = false,
+                                // Enter sends from either box.
                                 Key::Named(NamedKey::Enter) if typing => self.send_chat_input(self.modifiers.control_key(), self.modifiers.alt_key()),
-                                Key::Named(NamedKey::Backspace) if typing => {
-                                    game.chat.typing().pop();
-                                }
+                                Key::Named(NamedKey::Backspace) if typing => game.chat.backspace(),
                                 _ if typing && !self.modifiers.alt_key() && !self.modifiers.super_key() && !self.modifiers.control_key() => {
                                     let typed: String = event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()).collect();
                                     game.chat.type_text(&typed);
