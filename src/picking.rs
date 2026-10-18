@@ -20,6 +20,8 @@ pub enum Kind {
     Foe,
     /// Pets, mercenaries and the rest.
     Other,
+    /// Ice Wall and the traps a hand can break: between monsters and items, Shift or not.
+    SkillUnit,
 }
 
 impl Kind {
@@ -28,6 +30,7 @@ impl Kind {
     fn rank(self, players_first: bool) -> u16 {
         match (self, players_first) {
             (Kind::Monster, false) | (Kind::Player, true) | (Kind::Foe, _) => 400,
+            (Kind::SkillUnit, _) => 350,
             (Kind::Item, _) => 300,
             (Kind::Npc, false) | (Kind::Homunculus, _) | (Kind::Monster, true) => 200,
             (Kind::Player, false) | (Kind::Npc, true) => 100,
@@ -113,6 +116,20 @@ mod tests {
         assert_eq!(pick_at(&[monster, guildmate], [130.0, 140.0]), Some(1));
         assert_eq!(pick_at(&[monster, foe], [130.0, 140.0]), Some(3));
         assert_eq!(pick_at(&[monster, target(3, Kind::Foe, box_at(110.0), 90.0)], [130.0, 140.0]), Some(1));
+    }
+
+    #[test]
+    fn a_wall_or_trap_ranks_between_monsters_and_items() {
+        let cell = [100.0, 100.0, 140.0, 130.0];
+        let monster = target(1, Kind::Monster, cell, 50.0);
+        let wall = target(2, Kind::SkillUnit, cell, 10.0);
+        let item = target(3, Kind::Item, cell, 1.0);
+        assert_eq!(pick_at(&[wall, monster, item], [120.0, 115.0]), Some(1));
+        assert_eq!(pick_at(&[item, wall], [120.0, 115.0]), Some(2));
+        // Shift doesn't change its rank: it still beats an item, and a player now wins.
+        let player = target(4, Kind::Player, cell, 60.0);
+        assert_eq!(pick(vec![item, wall, player], [120.0, 115.0], true, MIDDLE), Some(4));
+        assert_eq!(pick(vec![item, wall], [120.0, 115.0], true, MIDDLE), Some(2));
     }
 
     #[test]

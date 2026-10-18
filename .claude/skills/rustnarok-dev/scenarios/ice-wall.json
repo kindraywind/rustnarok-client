@@ -1,0 +1,20 @@
+{
+  "about": "Attacking Ice Wall (issue #295): a Wizard (@job 9, @allskill) casts Ice Wall from the skill window three cells north on a field (towns have noicewall); pointing at a wall cell shows the attack cursor, and a click attacks the wall (CZ_REQUEST_ACT 0x0437). The character is a Novice again at the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp gef_fild07 61 229"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 300},
+    {"say": "@job 9"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500},
+    {"say": "@heal"}, {"wait": 500},
+    {"key": "Alt+S"}, {"wait": 500},
+    {"click_on": {"skill": 87}, "count": 2}, {"wait": 300},
+    {"key": "Alt+S"}, {"wait": 300},
+    {"click_on": {"cell": [61, 232]}}, {"wait_for": {"event": "SkillUnit", "ms": 5000}}, {"wait": 500},
+    {"move": {"cell": [61, 232]}}, {"wait": 300},
+    {"expect": {"state": {"cursor": "Attack"}}},
+    {"click_on": {"cell": [61, 232]}}, {"wait_for": {"sent": "0x0437", "ms": 3000}}, {"wait": 300},
+    {"shot": "ice-wall-attack", "crop": [262, 134, 500, 450], "threshold": 10},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}

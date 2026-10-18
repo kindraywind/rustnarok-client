@@ -912,6 +912,21 @@ fn turning_cursor(dragging: bool, shift: bool, alt: bool) -> bool {
 const WARP_PICK: [f32; 2] = [59.7, 39.3];
 
 /// A warp portal's pick box on screen (`0..1`, y down: left, top, right, bottom).
+/// Where an attack's target is: a unit still there, or a skill's unit on the ground; none ends the attack.
+fn attack_goal(units: &HashMap<u32, Actor>, skill_units: &HashMap<u32, (u32, [u16; 2])>, target: u32) -> Option<[i32; 2]> {
+    units
+        .get(&target)
+        .filter(|actor| actor.remove_at.is_none())
+        .map(|actor| actor.cell)
+        .or_else(|| skill_units.get(&target).map(|(_, cell)| cell.map(i32::from)))
+}
+
+/// Skill units on the ground a plain attack breaks (rathena's `battle_check_target` takes them): Ice Wall, Blast Mine,
+/// Claymore Trap, Reverberation, Poem of Netherworld and the four Windhawk traps.
+fn attackable_ground_unit(kind: u32) -> bool {
+    matches!(kind, 0x8d | 0x8f | 0x98 | 0xda | 0xde | 0x5174..=0x5177)
+}
+
 fn warp_pick_rect(view: &world::View, feet: world::Vector) -> Option<[f32; 4]> {
     view.sprite_rect(feet, [-WARP_PICK[0], -WARP_PICK[1]], WARP_PICK)
 }
@@ -1092,6 +1107,8 @@ struct Game {
     npc_menu: window::Frame,
     /// Last frame's clickable units and items.
     hit_boxes: Vec<picking::Target<Owner>>,
+    /// Skills' units on the ground in view: their unit kind and cell.
+    skill_units: HashMap<u32, (u32, [u16; 2])>,
     /// Items lying around, by ground ID.
     ground: HashMap<u32, FloorItem>,
     /// Ground item sprites by resource name.
@@ -2153,6 +2170,8 @@ enum Owner {
     Player,
     Unit(u32),
     Item(u32),
+    /// A skill's unit on the ground that can be attacked (`attackable_ground_unit`).
+    SkillUnit(u32),
 }
 
 struct FloorItem {
@@ -2333,7 +2352,7 @@ impl Game {
     /// to when it changed. A target gone (or dying) ends it; after the packet the server keeps at it (or swings once).
     fn attack_step(&mut self, now: Instant) {
         let Some(mut attack) = self.attack else { return };
-        let Some(goal) = self.units.get(&attack.target).filter(|actor| actor.remove_at.is_none()).map(|actor| actor.cell) else {
+        let Some(goal) = attack_goal(&self.units, &self.skill_units, attack.target) else {
             self.attack = None;
             return;
         };
@@ -2435,6 +2454,8 @@ impl Game {
                 _ => WorldClick::Ground,
             },
             Some(Owner::Item(id)) => WorldClick::PickUp(id),
+            // Ice Wall or a trap: attacked like a monster.
+            Some(Owner::SkillUnit(id)) => WorldClick::Attack(id),
             _ => WorldClick::Ground,
         }
     }
@@ -10476,6 +10497,7 @@ impl App {
                     say: npc_say::SayWindow::default(),
                     npc_menu: npc_menu::frame(),
                     hit_boxes: Vec::new(),
+                    skill_units: HashMap::new(),
                     ground: HashMap::new(),
                     item_sprites: HashMap::new(),
                     inventory: {
@@ -10820,6 +10842,7 @@ impl App {
                 game.world = world;
                 game.map = map;
                 game.units.clear();
+                game.skill_units.clear();
                 game.spirits.clear();
                 game.ground.clear();
                 game.marks.clear();
@@ -11470,6 +11493,7 @@ impl App {
                     // the load is acknowledged (it drops everything else till then) and sends what's in view again.
                     game.player.stop_at(position.map(i32::from));
                     game.units.clear();
+                    game.skill_units.clear();
                     game.ground.clear();
                     let _ = game.session.loaded();
                 } else {
@@ -13370,12 +13394,16 @@ impl App {
                 game.skill_motion(source, skill, i32::from(level as i16), overhead::Shout::Hit, 1.0, &self.skill_info, look_tables);
             }
             MapEvent::SkillUnit { id, kind, cell } => {
+                game.skill_units.insert(id, (kind, cell));
                 if let Some(gpu) = gpu {
                     let at = game.world.cell_position(cell.map(f32::from));
                     game.effects.play_unit(gpu, grf, table, kind, id, at, Instant::now());
                 }
             }
-            MapEvent::SkillUnitGone { id } => game.effects.forget(id),
+            MapEvent::SkillUnitGone { id } => {
+                game.skill_units.remove(&id);
+                game.effects.forget(id);
+            }
             // Cooldowns: kept across map changes (the server doesn't repeat them), sent again after a relog.
             MapEvent::SkillCooldown { skill, ms } => game.cooldowns.set(skill, ms, control::now()),
             MapEvent::SkillFailed { ok: true, .. } => {}
@@ -14226,6 +14254,7 @@ impl App {
                 let kind = match owner {
                     Owner::Player => picking::Kind::Player,
                     Owner::Item(_) => picking::Kind::Item,
+                    Owner::SkillUnit(_) => picking::Kind::SkillUnit,
                     Owner::Unit(id) => match game.units.get(id).map(|actor| actor.kind) {
                         Some(MONSTER) => picking::Kind::Monster,
                         Some(NPC) => picking::Kind::Npc,
@@ -14240,6 +14269,23 @@ impl App {
                 Some(picking::Target { owner: *owner, kind, sprite, area: picking::area(sprite, min), depth })
             })
             .collect();
+
+        // Ice Wall and the traps a hand can break: their cell, grown to an item's least box.
+        // ponytail: drawn as effects, they have no sprite to pick by; the cell is the box, as for warps.
+        for (&id, &(_, cell)) in game.skill_units.iter().filter(|(_, (kind, _))| attackable_ground_unit(*kind)) {
+            let feet = game.world.cell_position(cell.map(f32::from));
+            if let Some([left, top, right, bottom]) = warp_pick_rect(&view, feet) {
+                let sprite = picking::bounds(&[to_screen([left, top]), to_screen([right, bottom])]);
+                let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]) * view.forward[axis]).sum::<f32>();
+                game.hit_boxes.push(picking::Target {
+                    owner: Owner::SkillUnit(id),
+                    kind: picking::Kind::SkillUnit,
+                    sprite,
+                    area: picking::area(sprite, picking::ITEM_MIN),
+                    depth,
+                });
+            }
+        }
 
         // Warp portals have no sprite: their pick box is drawn around the feet. They rank as NPCs.
         for (&id, actor) in game.units.iter().filter(|(_, actor)| actor.job == WARP_JOB) {
@@ -14291,6 +14337,7 @@ impl App {
                 let dead = matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.shadowless(now)));
                 let scale = match owner {
                     Owner::Item(_) => ITEM_SHADOW,
+                    Owner::SkillUnit(_) => 0.0,
                     Owner::Player => cast(&game.player, player_scale),
                     Owner::Unit(id) => {
                         game.units.get(id).map(|actor| cast(actor, unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent))).unwrap_or(1.0)
@@ -14339,6 +14386,7 @@ impl App {
         let sprites_of = |owner: &Owner| match owner {
             Owner::Player => game.player.sprites.as_ref(),
             Owner::Unit(id) => game.units[id].sprites.as_ref(),
+            Owner::SkillUnit(_) => None,
             Owner::Item(id) => {
                 let item = &game.ground[id];
                 game.item_sprites.get(ground_sprite(items, item.item, item.identified)).and_then(Option::as_ref)
@@ -14400,7 +14448,7 @@ impl App {
         let cart_of = |owner: &Owner| match owner {
             Owner::Player => game.player.cart.as_ref().map(|cart| &cart.sprites),
             Owner::Unit(id) => game.units.get(id).and_then(|actor| actor.cart.as_ref()).map(|cart| &cart.sprites),
-            Owner::Item(_) => None,
+            Owner::Item(_) | Owner::SkillUnit(_) => None,
         };
         billboards.extend(carts.iter().flat_map(|(owner, feet, placements)| {
             let cart = cart_of(owner).unwrap();
@@ -14412,7 +14460,7 @@ impl App {
         let stand_of = |owner: &Owner| match owner {
             Owner::Player => (true, game.player.dead),
             Owner::Unit(id) => game.units.get(id).map_or((false, false), |actor| (actor.kind == PLAYER, actor.dead || actor.remove_at.is_some())),
-            Owner::Item(_) => (false, false),
+            Owner::Item(_) | Owner::SkillUnit(_) => (false, false),
         };
         billboards.extend(frames.iter().flat_map(|(owner, feet, placements)| {
             let sprites = sprites_of(owner).unwrap();
@@ -14447,7 +14495,7 @@ impl App {
                     Some(actor) => actor,
                     None => continue,
                 },
-                Owner::Item(_) => continue,
+                Owner::Item(_) | Owner::SkillUnit(_) => continue,
             };
             let Some(sprites) = (if draw.warg { actor.warg.as_ref() } else { actor.falcon.as_ref() }).and_then(actor::Companion::sprites) else { continue };
             billboards.extend(draw.placed.iter().enumerate().map(|(index, (key, position, size, angle))| {
@@ -15875,6 +15923,7 @@ impl App {
                     _ => cursor::Kind::Default,
                 },
                 Some(Owner::Item(_)) => cursor::Kind::Pick,
+                Some(Owner::SkillUnit(_)) => cursor::Kind::Attack,
                 // Past the map's edge counts as somewhere that can't be walked.
                 _ => match ground {
                     Some(cell) if game.world.gat.walkable(cell) => cursor::Kind::Default,
@@ -15908,6 +15957,8 @@ impl App {
                     Some(HOMUNCULUS) if game.homunculus_id == Some(id) => SnapTo::OurHomunculus,
                     _ => SnapTo::Other,
                 },
+                // Ice Wall and traps are attacked like monsters.
+                Owner::SkillUnit(_) => SnapTo::Monster,
                 Owner::Player => SnapTo::Other,
             };
             Some((kind, area))
@@ -17417,6 +17468,19 @@ mod tests {
         // Taken away by the server: once, too.
         bar.start(start, Duration::from_secs(3));
         assert!(bar.ends(start, true) && !bar.ends(start, true));
+    }
+
+    #[test]
+    fn attacks_walls_and_traps_on_their_cells() {
+        // Which ground units a click attacks.
+        assert!([0x8d, 0x8f, 0x98, 0xda, 0xde, 0x5174, 0x5177].into_iter().all(attackable_ground_unit));
+        assert!(![0x7e, 0x86, 0x8c, 0x90, 0x5173, 0x5178].into_iter().any(attackable_ground_unit));
+        // The attack goes for the wall's cell, and ends once the wall is gone.
+        let units = HashMap::new();
+        let mut walls = HashMap::from([(3354, (0x8d, [156, 190]))]);
+        assert_eq!(attack_goal(&units, &walls, 3354), Some([156, 190]));
+        walls.remove(&3354);
+        assert_eq!(attack_goal(&units, &walls, 3354), None);
     }
 
     #[test]
