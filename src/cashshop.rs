@@ -157,6 +157,7 @@ impl CashShop {
     }
 
     fn cap_free_spend(&mut self) {
+        self.clamp_cart_scroll();
         self.set_free_spend(self.free_to_spend);
     }
 
@@ -169,6 +170,7 @@ impl CashShop {
             self.cash_points = cash;
             self.free_points = free;
             self.cart.clear();
+            self.cart_scroll = 0;
             self.set_free_spend(0);
         }
     }
@@ -184,12 +186,39 @@ impl CashShop {
             return false;
         }
         self.selected_tab = tab;
+        self.goods_scroll = 0;
         true
     }
 
-    pub fn scroll_goods(&mut self, _rows: i32) {}
+    fn goods_most(&self) -> usize {
+        self.tabs[self.selected_tab].len().div_ceil(GOOD_COLUMNS).saturating_sub(GOOD_ROWS)
+    }
 
-    pub fn scroll_cart(&mut self, _lines: i32) {}
+    fn cart_most(&self) -> usize {
+        self.cart.len().saturating_sub(CART_ROWS)
+    }
+
+    pub fn scroll_goods(&mut self, rows: i32) {
+        self.goods_scroll = (self.goods_scroll as i64 + i64::from(rows)).clamp(0, self.goods_most() as i64) as usize;
+    }
+
+    pub fn scroll_cart(&mut self, lines: i32) {
+        self.cart_scroll = (self.cart_scroll as i64 + i64::from(lines)).clamp(0, self.cart_most() as i64) as usize;
+    }
+
+    /// The wheel turned over the window: goods scroll over the grid, the cart over its list.
+    pub fn scroll_at(&mut self, cursor: [f32; 2], rows: i32) {
+        let Some(local) = self.frame.local(cursor, HEIGHT) else { return };
+        if contains(CART, CART_SIZE, local) {
+            self.scroll_cart(rows);
+        } else if contains(GOODS, [GOOD_SIZE[0] * GOOD_COLUMNS as f32, GOOD_SIZE[1] * GOOD_ROWS as f32], local) {
+            self.scroll_goods(rows);
+        }
+    }
+
+    fn clamp_cart_scroll(&mut self) {
+        self.cart_scroll = self.cart_scroll.min(self.cart_most());
+    }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         let local = self.frame.local(cursor, HEIGHT)?;
@@ -203,17 +232,17 @@ impl CashShop {
         }
         for cell in 0..GOOD_ROWS * GOOD_COLUMNS {
             let place = offset(GOODS, [(cell % GOOD_COLUMNS) as f32 * GOOD_SIZE[0], (cell / GOOD_COLUMNS) as f32 * GOOD_SIZE[1]]);
-            if contains(place, GOOD_SIZE, local) && cell < self.tabs[self.selected_tab].len() {
+            if contains(place, GOOD_SIZE, local) && self.goods_scroll * GOOD_COLUMNS + cell < self.tabs[self.selected_tab].len() {
                 return Some(Hit::Item(cell));
             }
         }
-        for row in 0..self.cart.len().min(CART_ROWS) {
+        for row in 0..self.cart.len().saturating_sub(self.cart_scroll).min(CART_ROWS) {
             let y = CART[1] + 20.0 + row as f32 * CART_ROW;
             if contains([CART[0] + CART_SIZE[0] - 42.0, y], [18.0, 18.0], local) {
-                return Some(Hit::CartAmount(row, false));
+                return Some(Hit::CartAmount(row + self.cart_scroll, false));
             }
             if contains([CART[0] + CART_SIZE[0] - 21.0, y], [18.0, 18.0], local) {
-                return Some(Hit::CartAmount(row, true));
+                return Some(Hit::CartAmount(row + self.cart_scroll, true));
             }
         }
         Some(if contains(FREE_FIELD, FREE_SIZE, local) {
@@ -234,7 +263,7 @@ impl CashShop {
             Hit::Title(title) => self.frame.click_title(title),
             Hit::Tab(tab) => _ = self.select_tab(tab),
             Hit::Item(cell) => {
-                if let Some(&(item, price)) = self.tabs[self.selected_tab].get(cell) {
+                if let Some(&(item, price)) = self.tabs[self.selected_tab].get(self.goods_scroll * GOOD_COLUMNS + cell) {
                     let amount =
                         self.cart.iter().find(|line| line.0 == item && usize::from(line.2) == self.selected_tab).map_or(1, |line| line.1.saturating_add(1));
                     self.add_to_cart(item, amount.min(99), self.selected_tab as u16, price);
@@ -278,6 +307,7 @@ impl CashShop {
     pub fn item_boxes(&self) -> Vec<(u32, [f32; 4])> {
         self.tabs[self.selected_tab]
             .iter()
+            .skip(self.goods_scroll * GOOD_COLUMNS)
             .take(GOOD_ROWS * GOOD_COLUMNS)
             .enumerate()
             .map(|(cell, &(item, _))| {
@@ -330,7 +360,7 @@ impl CashShop {
             let place = offset(GOODS, [(cell % GOOD_COLUMNS) as f32 * GOOD_SIZE[0], (cell / GOOD_COLUMNS) as f32 * GOOD_SIZE[1]]);
             let fill = if hit == Some(Hit::Item(cell)) { &assets.selected } else { &assets.fill };
             layer.sprites.push((fill, at(place), offset(GOOD_SIZE, [-2.0, -2.0])));
-            let Some(&(item, price)) = self.tabs[self.selected_tab].get(cell) else { continue };
+            let Some(&(item, price)) = self.tabs[self.selected_tab].get(self.goods_scroll * GOOD_COLUMNS + cell) else { continue };
             if let Some(Some(icon)) = items.get(&item).and_then(|info| icons.get(&inventory::icon_path(info, true))) {
                 layer.sprites.push((icon, at(offset(place, [4.0, 14.0])), icon.size));
             }
@@ -340,7 +370,7 @@ impl CashShop {
         }
         layer.sprites.push((&assets.fill, at(CART), CART_SIZE));
         layer.texts.push((message(CART_MESSAGE).to_owned(), at(offset(CART, [5.0, 3.0])), [0, 0, 0]));
-        for (row, &(item, amount, _, price)) in self.cart.iter().take(CART_ROWS).enumerate() {
+        for (row, &(item, amount, _, price)) in self.cart.iter().skip(self.cart_scroll).take(CART_ROWS).enumerate() {
             let place = offset(CART, [5.0, 20.0 + row as f32 * CART_ROW]);
             let name = inventory::item_name(items, item, true, 0);
             layer.texts.push((crate::window::fit(font, &name, 140.0), at(place), [0, 0, 0]));
@@ -541,7 +571,7 @@ mod tests {
         assert_eq!(shop.item_boxes().len(), GOOD_ROWS * GOOD_COLUMNS);
         shop.scroll_goods(2);
         let boxes = shop.item_boxes();
-        assert_eq!(boxes.len(), GOOD_ROWS * GOOD_COLUMNS);
+        assert_eq!(boxes.len(), 14);
         assert_eq!(boxes[0].0, shop.tabs[0][shop.goods_scroll * GOOD_COLUMNS].0);
         assert_eq!(boxes.last().unwrap().0, shop.tabs[0][19].0);
     }

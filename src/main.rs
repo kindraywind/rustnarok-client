@@ -4139,7 +4139,9 @@ impl App {
             let on_item = game.item_window.as_ref().is_some_and(|window| window.hit(self.cursor, &self.items).is_some());
             let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.cart.items).is_some());
             let on_buying_setup = game.buying_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.inventory.items).is_some());
+            let on_cashshop = game.cashshop.as_ref().is_some_and(|shop| shop.hit(self.cursor).is_some());
             match game.window_at(self.cursor) {
+                _ if on_cashshop => game.cashshop.as_mut().unwrap().scroll_at(self.cursor, rows),
                 _ if on_setup => {
                     let count = game.cart.items.len();
                     game.vend_setup.as_mut().unwrap().scroll_by(rows, count);
