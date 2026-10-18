@@ -1003,6 +1003,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(
             game.navi_window.iter().flat_map(crate::navigation::Window::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
+        .chain(game.chat.settings.iter().flat_map(crate::chat::Settings::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.chat.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1293,7 +1295,14 @@ fn game_state(app: &App, game: &Game) -> Value {
         }),
         // What the mouse cursor shows.
         "cursor": format!("{:?}", app.cursor_look.kind()),
-        "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
+        "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, ..)| text.as_str()).collect::<Vec<_>>(),
+        // The chat window: the tab shown, each tab's last lines, where typed lines go, the lock.
+        "chat_tab": game.chat.tab,
+        "chat_tabs": (0..2).map(|tab| game.chat.tab_lines(tab).iter().rev().take(5).rev().map(|(text, ..)| text.clone()).collect::<Vec<_>>()).collect::<Vec<_>>(),
+        "chat_send_to": format!("{:?}", game.chat.send_to),
+        "chat_locked": game.chat.locked,
+        "chat_corner": game.chat.corner_moved(),
+        "chat_input": game.chat.input,
         "chat_line_open": game.chat_mode.chat_line_open(),
         // The navigation under way: where to, and how long the trail on this map is.
         "navigation": game.navigation.as_ref().map(|active| json!({
