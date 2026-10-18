@@ -578,6 +578,9 @@ const NAVI_ARROW_RISE: f32 = 12.0;
 const NAVI_SERVICES: u8 = 111;
 /// How many cells toward where it heads the arrow looks.
 const NAVI_ARROW_LOOK: f32 = 3.0;
+/// The room owner's menu: "Give Master Authority", "Kick Character Out".
+const ROOM_HAND_OVER: usize = 128;
+const ROOM_KICK: usize = 127;
 /// Words over a head stay this long.
 const SPEECH_TIME: Duration = Duration::from_secs(5);
 /// Spirit spheres and coins: how far from the body they circle, how high, how fast (radians a second), and how
@@ -748,6 +751,53 @@ const WARP_PICK: [f32; 2] = [59.7, 39.3];
 /// A warp portal's pick box on screen (`0..1`, y down: left, top, right, bottom).
 fn warp_pick_rect(view: &world::View, feet: world::Vector) -> Option<[f32; 4]> {
     view.sprite_rect(feet, [-WARP_PICK[0], -WARP_PICK[1]], WARP_PICK)
+}
+
+/// /snap, /itemsnap and /skillsnap.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Snaps {
+    snap: bool,
+    item: bool,
+    skill: bool,
+}
+
+impl Snaps {
+    /// As saved; a first run has only /skillsnap on.
+    fn load() -> Self {
+        let saved =
+            |name: &str, default: bool| settings_path(name).and_then(|path| std::fs::read_to_string(path).ok()).map_or(default, |text| text.trim() == "1");
+        Self { snap: saved("snap", false), item: saved("itemsnap", false), skill: saved("skillsnap", true) }
+    }
+}
+
+/// What is under the pointer, for snapping.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SnapTo {
+    Monster,
+    Item,
+    OurHomunculus,
+    Other,
+}
+
+/// Where the cursor is drawn when it snaps: the middle of the pick box under the pointer (a monster with /skillsnap
+/// while a skill waits for a unit, with /snap otherwise; an item with /itemsnap; our homunculus while aiming Potion
+/// Pitcher). None: it stays at the pointer.
+// ponytail: Potion Pitcher's snap to our homunculus goes by /skillsnap too.
+fn snap_point(under: Option<(SnapTo, picking::Rect)>, aiming_unit: bool, pitcher: bool, snaps: Snaps) -> Option<[f32; 2]> {
+    let (kind, [left, top, right, bottom]) = under?;
+    let snaps_here = match kind {
+        SnapTo::Monster => {
+            if aiming_unit {
+                snaps.skill
+            } else {
+                snaps.snap
+            }
+        }
+        SnapTo::Item => snaps.item,
+        SnapTo::OurHomunculus => pitcher && snaps.skill,
+        SnapTo::Other => false,
+    };
+    snaps_here.then_some([(left + right) / 2.0, (top + bottom) / 2.0])
 }
 
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
@@ -1080,6 +1130,10 @@ struct Game {
     no_shift: bool,
     /// /noctrl: a click on a monster keeps attacking without Ctrl (saved; on unless turned off).
     no_ctrl: bool,
+    /// /snap, /itemsnap, /skillsnap (saved; only /skillsnap on unless changed).
+    snaps: Snaps,
+    /// Where the cursor is drawn: the pointer, or the middle of what it snapped to.
+    cursor_at: [f32; 2],
     /// /camera: the camera sticks to the player (saved; off unless turned on); the earthquake's shake this frame.
     camera_snap: bool,
     quake_flip: bool,
@@ -1720,6 +1774,9 @@ enum Choice {
     Pet(u8),
     /// Hand the party to this member (by account).
     Leader(u32),
+    /// The room's owner hands the room to this member, or kicks them out (by their row in the member list).
+    RoomOwner(usize),
+    RoomKick(usize),
     /// A tracked quest: its details in the quest window, or put it aside.
     QuestInfo(u32),
     QuestAside(u32),
@@ -2626,6 +2683,21 @@ impl Game {
                 self.chat_line(format!("noshift: {}", if self.no_shift { "On" } else { "Off" }), CHAT_ITEM);
                 Ok(())
             }
+            // ponytail: plain on/off lines, as /noshift prints.
+            chat::Command::Snap | chat::Command::ItemSnap | chat::Command::SkillSnap => {
+                let (name, on) = match command {
+                    chat::Command::Snap => ("snap", &mut self.snaps.snap),
+                    chat::Command::ItemSnap => ("itemsnap", &mut self.snaps.item),
+                    _ => ("skillsnap", &mut self.snaps.skill),
+                };
+                *on = !*on;
+                let on = *on;
+                if let Some(path) = settings_path(name) {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if on { "1" } else { "0" }));
+                }
+                self.chat_line(format!("{name}: {}", if on { "On" } else { "Off" }), CHAT_ITEM);
+                Ok(())
+            }
             chat::Command::Where => {
                 // ponytail: the map and the cell, plainly; match the official client's wording from a screenshot.
                 let [x, y] = self.player.cell;
@@ -2806,7 +2878,7 @@ impl Game {
             || self.item_window.as_ref().is_some_and(|window| window.hit(cursor, items).is_some())
             || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
             || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
-            || self.room.as_ref().is_some_and(|room| room.hit(cursor).is_some())
+            || self.room.as_ref().is_some_and(|room| room.hit(cursor, &self.me.name).is_some())
             || self.room_make.as_ref().is_some_and(|make| make.hit(cursor).is_some())
             || self.vend_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.cart.items).is_some())
             || self.my_shop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
@@ -3063,7 +3135,13 @@ impl Game {
         if let Some(make) = &self.room_make
             && !make.title.trim().is_empty()
         {
-            let _ = self.session.make_chat_room(make.title.trim(), make.limit(), make.public, &make.password);
+            if make.editing {
+                // The server's ZC_CHANGE_CHATROOM brings the changed sign.
+                let _ = self.session.change_chat_room(make.title.trim(), make.limit(), make.public, &make.password);
+                self.room_make = None;
+            } else {
+                let _ = self.session.make_chat_room(make.title.trim(), make.limit(), make.public, &make.password);
+            }
         }
     }
 
@@ -5909,6 +5987,16 @@ impl App {
                 Some(Choice::Pet(net::PET_INFO)) => game.open_pet_window(),
                 Some(Choice::Pet(command)) => game.pet_command(command),
                 Some(Choice::Leader(account)) => game.leader_asked = Some(account),
+                Some(Choice::RoomOwner(row)) => {
+                    if let Some(name) = game.room.as_ref().and_then(|room| room.member_choices(row, &game.me.name)) {
+                        let _ = game.session.hand_over_chat_room(&name);
+                    }
+                }
+                Some(Choice::RoomKick(row)) => {
+                    if let Some(name) = game.room.as_ref().and_then(|room| room.member_choices(row, &game.me.name)) {
+                        let _ = game.session.kick_from_chat_room(&name);
+                    }
+                }
                 Some(Choice::QuestInfo(id)) => {
                     game.quest_window.frame.open = true;
                     game.quest_window.tab = 0;
@@ -5960,13 +6048,15 @@ impl App {
                 }
             }
             // The room we're in: closing it leaves.
-            Scene::Game(game) if game.room.as_ref().is_some_and(|room| room.hit(cursor).is_some()) => {
+            Scene::Game(game) if game.room.as_ref().is_some_and(|room| room.hit(cursor, &game.me.name).is_some()) => {
                 let room = game.room.as_mut().unwrap();
-                match room.hit(cursor) {
+                match room.hit(cursor, &game.me.name) {
                     Some(chatroom::RoomHit::Title(TitleHit::Close)) => {
                         let _ = game.session.leave_chat_room();
                     }
                     Some(chatroom::RoomHit::Title(title)) => room.frame.click_title(title),
+                    // The owner's Room Setup: the make window, filled from the room.
+                    Some(chatroom::RoomHit::Setup) => game.room_make = Some(chatroom::Make::from_sign(&room.sign)),
                     _ => {}
                 }
             }
@@ -7051,6 +7141,21 @@ impl App {
         {
             select.open_menu(self.cursor, &self.font, &self.messages);
         }
+        // The room owner's right click on another member's name: hand the room over, or kick them out.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+            && let Some((start, None)) = game.right_press
+            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+            && let Some(room) = &game.room
+            && let Some(chatroom::RoomHit::Member(row)) = room.hit(self.cursor, &game.me.name)
+            && room.member_choices(row, &game.me.name).is_some()
+        {
+            game.right_press = None;
+            let label = |message: usize| self.messages.get(message).cloned().unwrap_or_default();
+            let choices = vec![Some((label(ROOM_HAND_OVER), Choice::RoomOwner(row))), Some((label(ROOM_KICK), Choice::RoomKick(row)))];
+            game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
+            return;
+        }
         // The leader's right click (not a drag) on another member's row in the party window: hand the party over.
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Released
@@ -7748,7 +7853,7 @@ impl App {
         // The chat room's window is over the others too.
         if let Scene::Game(game) = &mut self.scene
             && let Some(room) = &mut game.room
-            && let Some(hit) = room.hit(cursor)
+            && let Some(hit) = room.hit(cursor, &game.me.name)
         {
             if hit == chatroom::RoomHit::Title(TitleHit::Title) {
                 room.frame.start_drag(cursor);
@@ -9113,6 +9218,8 @@ impl App {
                     camera_snap: settings_path("camerasnap").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     quake_flip: false,
                     no_ctrl: settings_path("noctrl").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
+                    snaps: Snaps::load(),
+                    cursor_at: [-1.0; 2],
                     attack: None,
                     last_attack: None,
                     riding: false,
@@ -13696,7 +13803,7 @@ impl App {
             shop_layer.texts.push((message(DEAL_MESSAGE).to_owned(), offset(dialog, MESSAGE_TEXT), TEXT_COLOR));
         }
         if let Some(room) = &game.room {
-            room.draw(&mut shop_layer, &assets.chrome, font, pointer.0, caret);
+            room.draw(&mut shop_layer, &assets.chrome, font, messages, &game.me.name, pointer.0, caret);
         }
         if let Some(setup) = &game.vend_setup {
             setup.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, &game.cart.items, font, messages, pointer, caret);
@@ -14046,8 +14153,29 @@ impl App {
             let middle = [screen()[0] / 2.0, screen()[1] / 2.0];
             sprites.extend(slot_frame.into_iter().map(|(key, offset, size, _)| (sprite.texture(key), [middle[0] + offset[0], middle[1] + offset[1]], size)));
         }
+        // The cursor drawn at the middle of what it snaps to (clicks still go by the pointer).
+        let aiming_unit = game.targeting.is_some_and(|(id, _)| {
+            game.skills.iter().chain(&game.item_skill).find(|skill| skill.id == id).is_none_or(|skill| skill.kind & net::Skill::GROUND == 0)
+        });
+        let picked =
+            if game.targeting.is_some() { hovered_unit(&game.hit_boxes, pointer.0, players_first) } else { hovered(&game.hit_boxes, pointer.0, players_first) };
+        let under = picked.filter(|_| !on_window).and_then(|owner| {
+            let area = game.hit_boxes.iter().find(|target| target.owner == owner)?.area;
+            let kind = match owner {
+                Owner::Item(_) => SnapTo::Item,
+                Owner::Unit(id) => match game.units.get(&id).map(|actor| actor.kind) {
+                    Some(MONSTER) => SnapTo::Monster,
+                    Some(HOMUNCULUS) if game.homunculus_id == Some(id) => SnapTo::OurHomunculus,
+                    _ => SnapTo::Other,
+                },
+                Owner::Player => SnapTo::Other,
+            };
+            Some((kind, area))
+        });
+        let pitcher = game.targeting.is_some_and(|(id, _)| id == POTION_PITCHER);
+        game.cursor_at = snap_point(under, aiming_unit, pitcher, game.snaps).unwrap_or(pointer.0);
         cursor_look.press(pointer.1);
-        sprites.extend(cursor_look.draw(gpu, pointer.0));
+        sprites.extend(cursor_look.draw(gpu, game.cursor_at));
 
         game.effects.advance(gpu, now, yaw);
         // With /effect off, effects still play on, unseen, and their sounds come due without being heard.
@@ -14873,6 +15001,27 @@ mod tests {
         assert!((width - 166.0).abs() < 8.0 && (height - 109.0).abs() < 6.0, "{width} {height}");
         let far = size(400.0);
         assert!(far[0] < width * 0.8 && far[1] < height * 0.8, "{far:?}");
+    }
+
+    #[test]
+    fn snaps_the_cursor_to_the_middle_of_what_it_points_at() {
+        let first_run = Snaps { snap: false, item: false, skill: true };
+        let all = Snaps { snap: true, item: true, skill: true };
+        let box_at = |kind: SnapTo| Some((kind, [10.0, 20.0, 50.0, 100.0]));
+        // Aiming a skill at a unit: a monster with /skillsnap; not aiming: only with /snap.
+        assert_eq!(snap_point(box_at(SnapTo::Monster), true, false, first_run), Some([30.0, 60.0]));
+        assert_eq!(snap_point(box_at(SnapTo::Monster), false, false, first_run), None);
+        assert_eq!(snap_point(box_at(SnapTo::Monster), false, false, all), Some([30.0, 60.0]));
+        assert_eq!(snap_point(box_at(SnapTo::Monster), true, false, Snaps { skill: false, ..all }), None);
+        // Items with /itemsnap; pets, players and the like never; our homunculus only for Potion Pitcher.
+        assert_eq!(
+            (snap_point(box_at(SnapTo::Item), false, false, first_run), snap_point(box_at(SnapTo::Item), false, false, all)),
+            (None, Some([30.0, 60.0]))
+        );
+        assert_eq!(snap_point(box_at(SnapTo::Other), true, false, all), None);
+        assert_eq!(snap_point(box_at(SnapTo::OurHomunculus), true, false, all), None);
+        assert_eq!(snap_point(box_at(SnapTo::OurHomunculus), true, true, first_run), Some([30.0, 60.0]));
+        assert_eq!(snap_point(None, true, false, all), None);
     }
 
     #[test]
