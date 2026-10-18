@@ -1102,6 +1102,12 @@ mod tests {
         // Base level up plays the angel (EF_ANGEL), on the unit.
         let angel = table.misc(0).unwrap();
         assert_eq!(angel, 371);
+        // A super novice's job level up (type 8): EF_JOBLVUP50.
+        assert_eq!(table.misc(8), Some(337));
+        // The teleport's violet rings and the logout's four purple ones.
+        let textures = |effect: u32| table.rings[&effect].iter().map(|ring| ring["textureName"].as_str()).collect::<Vec<_>>();
+        assert_eq!(textures(304), ["Magic_Violet"; 4]);
+        assert_eq!(textures(314), ["ring_purple"; 4]);
         let part = &table.parts[&angel][0];
         assert_eq!((part.file.as_str(), part.attached), ("angel", true));
         assert_eq!(table.item(501), Some(204));

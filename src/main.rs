@@ -882,15 +882,20 @@ fn name_color(kind: u8, job: u16, level: u16, ours: bool, own_level: i64) -> [u8
     }
 }
 
-/// The effect a unit leaves where it vanished, by rathena's `clr_type`: 3 teleported (EF_TELEPORTATION), 2 logged out
-/// (its fainter rings); nothing for a GM hidden from sight (OPTION_INVISIBLE), nor for going out of sight or dying.
+/// The character after a warp: standing on `position`'s centre, facing the way it did on entering the map server.
+fn after_warp(player: &mut Actor, position: [u16; 2], entered_facing: u8) {
+    player.stop_at(position.map(i32::from));
+    player.sitting = false;
+    player.set_direction(entered_facing);
+}
+
+/// The effect a unit leaves where it vanished, by rathena's `clr_type`: 3 teleported (EF_TELEPORTATION2, its violet
+/// rings) unless a GM hidden from sight (OPTION_INVISIBLE), 2 logged out (EF_EXIT2, purple rings, hidden GMs too);
+/// nothing for going out of sight or dying.
 // ponytail: the 300 and 600 the game passes with these aren't used.
 fn vanish_effect(reason: u8, option: u32) -> Option<u32> {
-    if option & actor::OPTION_INVISIBLE != 0 {
-        return None;
-    }
     match reason {
-        3 => Some(304),
+        3 if option & actor::OPTION_INVISIBLE == 0 => Some(304),
         2 => Some(314),
         _ => None,
     }
@@ -1026,6 +1031,8 @@ struct Game {
     me: Character,
     account_id: u32,
     player: Actor,
+    /// The way the character faced on entering the map server: it faces so again after every warp.
+    entered_facing: u8,
     units: HashMap<u32, Actor>,
     camera: Camera,
     camera_goal: CameraGoal,
@@ -2519,13 +2526,19 @@ impl Game {
         }
     }
 
-    /// Talks to an NPC, turned to face it; only standing still or sitting (walking or attacking, nothing).
-    /// rathena answers when it's too far.
+    /// A unit fading out whose ID comes back: its fading copy moves aside (`leave_behind`).
     fn leave_behind(&mut self, id: u32) {
         leave_behind(&mut self.units, id);
     }
 
-    /// Talks to an NPC, facing it. While a say window is open another talk is refused with a chat line.
+    /// After a warp (to this map or another) the character stands on the cell's centre, facing the way it did on
+    /// entering the map server.
+    fn put_after_warp(&mut self, position: [u16; 2]) {
+        after_warp(&mut self.player, position, self.entered_facing);
+    }
+
+    /// Talks to an NPC, turned to face it; only standing still or sitting (walking or attacking, nothing). rathena
+    /// answers when it's too far. While a say window is open another talk is refused with a chat line.
     fn talk_to(&mut self, id: u32, messages: &[String]) {
         if !may_talk(self.player.moving(), self.attack.is_some(), self.player.sitting) {
             return;
@@ -10482,6 +10495,7 @@ impl App {
                     me,
                     account_id: account.account_id,
                     player,
+                    entered_facing: direction,
                     units: HashMap::new(),
                     camera,
                     camera_goal,
@@ -10881,7 +10895,7 @@ impl App {
                 game.capturing = false;
                 // The server announces the pet again on load.
                 (game.pet_id, game.pet) = (None, None);
-                game.player.stop_at(position.map(i32::from));
+                game.put_after_warp(position);
                 let _ = game.session.loaded();
             }
             Err(error) => game.chat_line(format!("맵을 불러올 수 없습니다: {map} ({error})"), CHAT_ERROR),
@@ -11523,7 +11537,7 @@ impl App {
                 if map == game.map {
                     // A teleport on the same map: no loading, but the server takes the player off the map until
                     // the load is acknowledged (it drops everything else till then) and sends what's in view again.
-                    game.player.stop_at(position.map(i32::from));
+                    game.put_after_warp(position);
                     game.units.clear();
                     game.ground.clear();
                     let _ = game.session.loaded();
@@ -16852,7 +16866,18 @@ mod tests {
         assert_eq!(vanish_effect(3, 0), Some(304));
         assert_eq!(vanish_effect(3, actor::OPTION_INVISIBLE), None);
         assert_eq!(vanish_effect(2, 0), Some(314));
+        assert_eq!(vanish_effect(2, actor::OPTION_INVISIBLE), Some(314), "a hidden GM's logout shows");
         assert_eq!((vanish_effect(0, 0), vanish_effect(1, 0)), (None, None));
+    }
+
+    #[test]
+    fn faces_the_way_it_entered_after_a_warp() {
+        // Entered facing north-east (5), then sat facing south: a warp (same map or not) stands it facing 5 again.
+        let mut player = Actor::new("Me".into(), None, [10, 10], 5, 150);
+        player.set_direction(0);
+        player.sitting = true;
+        after_warp(&mut player, [40, 41], 5);
+        assert_eq!((player.cell, player.direction, player.sitting, player.moving()), ([40, 41], 5, false, false));
     }
 
     #[test]

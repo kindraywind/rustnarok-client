@@ -279,6 +279,7 @@ misc	3	154
 misc	5	305
 misc	6	306
 misc	7	338
+misc	8	337
 misc	9	582
 skill	5	hitEffectId	1
 skill	5	beginCastEffectId	16
@@ -1590,18 +1591,20 @@ ring	253	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;red=0.3;green=
 ring	253	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;red=0.3;green=0.3;blue=1;bottomSize=1.1;duration=1500;fade=true;height=2;rotate=true;textureName=ring_blue;topSize=3
 ring	261	alphaMax=0.5;blendMode=8;animation=4;duplicate=4;timeBetweenDupli=100;bottomSize=2;duration=1500;fade=true;height=2;rotate=true;textureName=ring_yellow;topSize=5;attachedEntity=true
 ring	263	alphaMax=0.3;blendMode=8;animation=4;duplicate=4;timeBetweenDupli=100;bottomSize=3;duration=1000;fade=true;height=2;rotate=true;textureName=ring_yellow;topSize=6;attachedEntity=true
-ring	304	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.3;duration=1500;fade=true;green=0.6;height=35;red=0.6;rotate=true;textureName=ring_blue;topSize=0.3;wav=effect/ef_teleportation
-ring	304	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.6;duration=1500;fade=true;green=0.6;height=25;red=0.6;rotate=true;textureName=ring_blue;topSize=0.8
-ring	304	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.8;duration=1500;fade=true;green=0.6;height=13;red=0.6;rotate=true;textureName=ring_blue;topSize=1
-ring	304	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=1500;fade=true;green=0.6;height=5;red=0.6;rotate=true;textureName=ring_blue;topSize=1.3
+# ponytail: the teleport keeps its rings' shape; violet and purple are the textures' own colours (white).
+ring	304	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.3;duration=1500;fade=true;green=1;height=35;red=1;rotate=true;textureName=Magic_Violet;topSize=0.3;wav=effect/ef_teleportation
+ring	304	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.6;duration=1500;fade=true;green=1;height=25;red=1;rotate=true;textureName=Magic_Violet;topSize=0.8
+ring	304	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.8;duration=1500;fade=true;green=1;height=13;red=1;rotate=true;textureName=Magic_Violet;topSize=1
+ring	304	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=1500;fade=true;green=1;height=5;red=1;rotate=true;textureName=Magic_Violet;topSize=1.3
 ring	312	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=0.95;duration=1500;fade=true;green=1;height=8;red=0.7;rotate=true;textureName=ring_white;topSize=0.95;wav=_heal_effect
 ring	312	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1;duration=1500;fade=true;green=1;height=8;red=0.7;rotate=true;textureName=ring_white;topSize=1
 ring	313	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1.1;duration=1500;fade=true;green=1;height=15;red=0.7;rotate=true;textureName=ring_white;topSize=1.1;wav=_heal_effect
 ring	313	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1;duration=1500;fade=true;green=1;height=13;red=0.7;rotate=true;textureName=ring_white;topSize=1;wav=_heal_effect
 ring	313	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1.1;duration=1500;fade=true;green=1;height=2;red=0.7;rotate=true;textureName=ring_white;topSize=3
-ring	314	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.3;duration=1500;fade=true;green=0.5;height=35;red=0.5;rotate=true;textureName=ring_blue;topSize=0.3;wav=effect/ef_teleportation
-ring	314	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.4;duration=1500;fade=true;green=0.5;height=23;red=0.5;rotate=true;textureName=ring_blue;topSize=0.6
-ring	314	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.5;duration=1500;fade=true;green=0.5;height=5;red=0.5;rotate=true;textureName=ring_blue;topSize=0.7
+ring	314	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.3;duration=1500;fade=true;green=1;height=35;red=1;rotate=true;textureName=ring_purple;topSize=0.3;wav=effect/ef_teleportation
+ring	314	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.6;duration=1500;fade=true;green=1;height=25;red=1;rotate=true;textureName=ring_purple;topSize=0.8
+ring	314	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.8;duration=1500;fade=true;green=1;height=13;red=1;rotate=true;textureName=ring_purple;topSize=1
+ring	314	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=1500;fade=true;green=1;height=5;red=1;rotate=true;textureName=ring_purple;topSize=1.3
 ring	315	alphaMax=0.4;animation=0;attachedEntity=true;blendMode=2;blue=0.5;bottomSize=0.6;duration=50000;fade=true;green=0.1;height=7;red=0.5;rotate=true;textureName=alpha_down;topSize=0.6
 ring	315	alphaMax=0.4;animation=0;attachedEntity=true;blendMode=2;blue=0.5;bottomSize=0.65;duration=50000;delayOffset=50;fade=true;green=0.1;height=6;red=0.5;rotate=true;textureName=alpha_down;topSize=0.65
 ring	315	alphaMax=0.4;animation=0;attachedEntity=true;blendMode=2;blue=0.5;bottomSize=0.7;duration=50000;delayOffset=100;fade=true;green=0.1;height=7;red=0.5;rotate=true;textureName=alpha_down;topSize=0.7
