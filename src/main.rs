@@ -1202,8 +1202,9 @@ struct CameraGoal {
     dragging: Option<[f32; 2]>,
     /// The last right press: when, where, and whether the pointer moved off since.
     last_press: Option<(Instant, [f32; 2], bool)>,
-    /// The parts of a tilt and a zoom step dragged but not yet whole.
-    carry: [f32; 2],
+    /// The pointer's vertical movement this frame with the right button down, and whether Ctrl and Shift were held:
+    /// tilt and zoom are applied once a frame (`drag_frame`).
+    dragged: (f32, bool, bool),
     last_wheel: Option<Instant>,
     /// The map's own camera table, which then sets the limits (and no double click resets).
     limits: Option<rustnarok_client::map::Viewpoint>,
@@ -1227,7 +1228,7 @@ impl CameraGoal {
             indoor,
             dragging: None,
             last_press: None,
-            carry: [0.0; 2],
+            dragged: (0.0, false, false),
             last_wheel: None,
             limits,
             zoom_out,
@@ -1239,8 +1240,8 @@ impl CameraGoal {
                 goal.set_distance(table.distance_in);
             }
             None => {
-                // The widest tilt each kind of map allows (with Ctrl, and indoors fixed 60 too).
-                let [low, high] = if indoor { [35.0, 60.0] } else { [25.0, 65.0] };
+                // The widest tilt each kind of map allows: with Ctrl outdoors, 35 to 55 indoors.
+                let [low, high] = if indoor { [35.0, 55.0] } else { [25.0, 65.0] };
                 goal.pitch = saved[0].clamp(low, high);
                 goal.set_distance(saved[1]);
             }
@@ -1315,19 +1316,15 @@ impl CameraGoal {
         self.steer(cursor[0] - last[0], cursor[1] - last[1], modifiers.control_key(), modifiers.shift_key(), modifiers.alt_key());
     }
 
-    /// A drag of `dx`, `dy` pixels: turns a degree a pixel (indoors within YAW_RANGE_INDOOR), except with Shift; with
-    /// Shift it tilts and with Ctrl it zooms, half a degree or unit a pixel (dragging down tilts down and comes
-    /// closer), in whole steps (the rest carries over). Ctrl turns too; Alt does nothing.
+    /// A drag of `dx`, `dy` pixels: turns a degree a pixel (indoors within YAW_RANGE_INDOOR), except with Shift. With
+    /// Shift it tilts and with Ctrl it zooms, once a frame (`drag_frame`). Ctrl turns too; Alt does nothing.
     fn steer(&mut self, dx: f32, dy: f32, ctrl: bool, shift: bool, alt: bool) {
         if alt {
             return;
         }
-        let steps = |carry: &mut f32| {
-            *carry += dy / 2.0;
-            let whole = carry.trunc();
-            *carry -= whole;
-            whole
-        };
+        if shift || ctrl {
+            self.dragged = (self.dragged.0 + dy, ctrl, shift);
+        }
         if !shift {
             self.yaw += dx;
             if let Some(table) = self.limits {
@@ -1336,13 +1333,19 @@ impl CameraGoal {
                 self.yaw = self.yaw.clamp(YAW_RANGE_INDOOR[0], YAW_RANGE_INDOOR[1]);
             }
         }
+    }
+
+    /// The frame's tilt or zoom drag: half a degree or unit a pixel of the frame's vertical movement, whole steps only
+    /// (the rest is dropped, so a very slow drag does nothing). Dragging down tilts down and comes closer.
+    fn drag_frame(&mut self) {
+        let (dy, ctrl, shift) = std::mem::replace(&mut self.dragged, (0.0, false, false));
+        let steps = (dy / 2.0).trunc();
         if shift {
             let [low, high] = self.pitch_limits(ctrl);
-            self.pitch = (self.pitch + steps(&mut self.carry[0])).clamp(low, high);
+            self.pitch = (self.pitch + steps).clamp(low, high);
         }
         if ctrl {
-            let closer = steps(&mut self.carry[1]);
-            self.set_distance(self.distance() - closer);
+            self.set_distance(self.distance() - steps);
         }
     }
 
@@ -1393,13 +1396,22 @@ struct SavedView {
     changed: Option<Instant>,
 }
 
+/// A first run's view: outdoors 400 units away, indoors 300, tilted 45.
+const FIRST_DISTANCE: [f32; 2] = [400.0, 300.0];
+
 impl Default for SavedView {
     fn default() -> Self {
-        Self { views: [[PITCH, ZOOM * UNITS_PER_ZOOM]; 2], changed: None }
+        Self { views: FIRST_DISTANCE.map(|distance| [PITCH, distance]), changed: None }
     }
 }
 
 impl SavedView {
+    /// The view a client the harness drives starts from, every run: 300 units both ways.
+    // ponytail: the scenarios' fixed pixel clicks were placed at 300; a driven client keeps it outdoors too.
+    fn harness() -> Self {
+        Self { views: [[PITCH, ZOOM * UNITS_PER_ZOOM]; 2], changed: None }
+    }
+
     /// From the saved text: outdoor tilt and distance, then indoor; anything missing stays the default.
     fn parse(text: &str) -> Self {
         let mut saved = Self::default();
@@ -12118,6 +12130,7 @@ impl App {
             *arrived = Some(now);
         }
         let player_feet = game.world.cell_position(player_cell);
+        game.camera_goal.drag_frame();
         game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame), player_feet, game.camera_snap);
         // An earthquake shakes the view sideways and in and out, the other way each frame.
         let quake = if self.graphics.effects_on { game.effects.quake(now) } else { 0.0 };
@@ -14382,10 +14395,11 @@ fn main() {
     let viewpoints = rustnarok_client::map::viewpoints(&grf).unwrap_or_default();
     // A client the harness drives starts from the default view and keeps it to itself.
     let driven = std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_some();
-    let saved_view = settings_path("camera")
-        .filter(|_| !driven)
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .map_or_else(SavedView::default, |text| SavedView::parse(&text));
+    let saved_view = if driven {
+        SavedView::harness()
+    } else {
+        settings_path("camera").and_then(|path| std::fs::read_to_string(path).ok()).map_or_else(SavedView::default, |text| SavedView::parse(&text))
+    };
     let pc_job_names = lua::pc_job_names(&grf).unwrap_or_default();
     let map_names = rustnarok_client::map::map_names(&grf).unwrap_or_default();
     let skill_descriptions = lua::skill_descriptions(&grf).unwrap_or_else(|error| {
@@ -14898,6 +14912,14 @@ mod tests {
         assert_eq!((saved.of(false), saved.of(true)), ([50.0, 350.0], [45.0, 280.0]));
         assert_eq!(SavedView::parse(&saved.text()), SavedView { changed: None, ..saved });
         assert_eq!(SavedView::parse("junk"), SavedView::default());
+        // A first run: 400 outdoors, 300 indoors, tilted 45; the harness's client 300 both ways.
+        assert_eq!(SavedView::default().views, [[45.0, 400.0], [45.0, 300.0]]);
+        assert_eq!(SavedView::harness().views, [[45.0, 300.0]; 2]);
+        // Arriving, a saved tilt is kept within 25 to 65 outdoors and 35 to 55 indoors.
+        assert_eq!(CameraGoal::arrive(true, None, [60.0, 300.0], false).pitch, 55.0);
+        assert_eq!(CameraGoal::arrive(false, None, [60.0, 400.0], false).pitch, 60.0);
+        assert_eq!(CameraGoal::arrive(true, None, [20.0, 300.0], false).pitch, 35.0);
+        assert_eq!(CameraGoal::arrive(false, None, [45.0, 400.0], false).distance(), 400.0);
         let now = Instant::now();
         saved.follow(&outdoors, now, false);
         assert_eq!((saved.of(false), saved.of(true)), ([65.0, 400.0], [45.0, 280.0]));
@@ -14914,20 +14936,33 @@ mod tests {
         outdoors.steer(360.0, 0.0, false, false, false);
         outdoors.steer(90.0, 0.0, false, false, true);
         assert_eq!(outdoors.yaw, 360.0);
-        // Shift tilts half a degree a pixel, 50 to 65 (25 to 65 with Ctrl); a pixel at a time carries over.
-        outdoors.steer(0.0, 200.0, false, true, false);
+        // Shift tilts half a degree a pixel, once a frame, 50 to 65 (25 to 65 with Ctrl).
+        let drag = |goal: &mut CameraGoal, dx: f32, dy: f32, ctrl: bool, shift: bool| {
+            goal.steer(dx, dy, ctrl, shift, false);
+            goal.drag_frame();
+        };
+        drag(&mut outdoors, 0.0, 200.0, false, true);
         assert_eq!(outdoors.pitch, 65.0);
-        outdoors.steer(0.0, -400.0, false, true, false);
+        drag(&mut outdoors, 0.0, -400.0, false, true);
         assert_eq!(outdoors.pitch, 50.0);
+        // A pixel a frame drops its half degree each frame: ten frames, no tilt. Five in one frame: two steps.
+        for _ in 0..10 {
+            drag(&mut outdoors, 0.0, 1.0, true, true);
+        }
+        assert_eq!(outdoors.pitch, 50.0);
+        drag(&mut outdoors, 0.0, 5.0, true, true);
+        assert_eq!(outdoors.pitch, 52.0);
+        // Moves within one frame add up before the halving.
         outdoors.steer(0.0, 1.0, true, true, false);
         outdoors.steer(0.0, 1.0, true, true, false);
-        assert_eq!(outdoors.pitch, 51.0);
-        outdoors.steer(0.0, -400.0, true, true, false);
+        outdoors.drag_frame();
+        assert_eq!(outdoors.pitch, 53.0);
+        drag(&mut outdoors, 0.0, -400.0, true, true);
         assert_eq!(outdoors.pitch, 25.0);
         // Ctrl zooms (down comes closer) and turns too; 230 to 400 units.
-        outdoors.steer(10.0, 400.0, true, false, false);
+        drag(&mut outdoors, 10.0, 400.0, true, false);
         assert_eq!((outdoors.distance(), outdoors.yaw), (230.0, 370.0));
-        outdoors.steer(0.0, -1000.0, true, false, false);
+        drag(&mut outdoors, 0.0, -1000.0, true, false);
         assert_eq!(outdoors.distance(), 400.0);
         // The wheel: one step however far, at most every 15 ms; with Shift it tilts.
         outdoors.wheel(3, now, false, false);
@@ -14956,11 +14991,13 @@ mod tests {
         indoors.steer(100.0, 0.0, false, false, false);
         assert_eq!(indoors.yaw, 65.0);
         indoors.steer(0.0, -50.0, false, true, false);
+        indoors.drag_frame();
         assert_eq!(indoors.pitch, 60.0);
         indoors.press([5.0, 5.0], now, false, false);
         indoors.press([5.0, 5.0], now + Duration::from_millis(100), false, false);
         assert_eq!(indoors.yaw, 65.0);
         indoors.steer(0.0, -1000.0, true, false, false);
+        indoors.drag_frame();
         assert_eq!(indoors.distance(), 300.0);
     }
 
