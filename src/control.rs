@@ -103,6 +103,24 @@ pub enum Command {
     Say {
         text: String,
     },
+    /// A button goes down at a point and stays down until `mouse_up`.
+    MouseDown {
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        button: Button,
+    },
+    MouseUp {
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        button: Button,
+    },
+    /// Where a map cell's middle is on screen: `{"point": [x, y]}`.
+    CellPoint {
+        x: i32,
+        y: i32,
+    },
     State,
     Wait {
         ms: Option<u64>,
@@ -424,6 +442,18 @@ pub fn run(app: &mut App, event_loop: &ActiveEventLoop, Request { command, reply
 fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Result<Value, String> {
     match command {
         Command::Screenshot { crop, scale } => screenshot(app, event_loop, crop, scale),
+        Command::MouseDown { x, y, button } | Command::MouseUp { x, y, button } => {
+            let state = if matches!(command, Command::MouseDown { .. }) { ElementState::Pressed } else { ElementState::Released };
+            point(app, [x, y]);
+            press(app, event_loop, button, state);
+            Ok(Value::Null)
+        }
+        Command::CellPoint { x, y } => {
+            let Scene::Game(game) = &app.scene else { return Err("not in the game".into()) };
+            let view = game.camera.view(crate::SCREEN[0] / crate::SCREEN[1]);
+            let point = view.project(game.world.cell_position([x as f32, y as f32])).ok_or("the cell is behind the camera")?;
+            Ok(json!({"ok": true, "point": [point[0] * crate::SCREEN[0], point[1] * crate::SCREEN[1]]}))
+        }
         Command::Move { x, y } => {
             point(app, [x, y]);
             Ok(Value::Null)
@@ -1026,6 +1056,9 @@ fn game_state(app: &App, game: &Game) -> Value {
             "direction": game.player.direction,
             "moving": game.player.moving(),
             "casting": game.casts.contains_key(&None),
+            // The last cell a mouse walk went to, and how many have gone out.
+            "walk_goal": game.walk_goal,
+            "walks": game.walks,
             "combo_ms": combo_ms(None),
             // How many units Blade Stop or Cursed Circle locks the player with.
             "held": crate::locked_with(&game.locks, game.account_id),
