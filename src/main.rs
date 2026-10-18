@@ -726,6 +726,16 @@ fn vanish_effect(reason: u8, option: u32) -> Option<u32> {
     }
 }
 
+/// Over a monster: the attack cursor when a click would attack it (not with Shift held, unless /noshift is on).
+fn monster_cursor(shift: bool, no_shift: bool) -> cursor::Kind {
+    if shift && !no_shift { cursor::Kind::Default } else { cursor::Kind::Attack }
+}
+
+/// The turning cursor only while the right button turns the camera: not when Shift tilts it, nor with Alt.
+fn turning_cursor(dragging: bool, shift: bool, alt: bool) -> bool {
+    dragging && !shift && !alt
+}
+
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
 const WARP_JOB: u16 = 45;
 
@@ -13693,7 +13703,8 @@ impl App {
         // The cursor shows what a click would do.
         let on_window = game.on_ui(pointer.0, items, assets.message.size);
         let ground = view.pick_ground([pointer.0[0] / screen()[0], pointer.0[1] / screen()[1]], &game.world.gat);
-        cursor_look.set(if game.camera_goal.dragging.is_some() {
+        let (shift, alt) = (self.modifiers.shift_key(), self.modifiers.alt_key());
+        cursor_look.set(if turning_cursor(game.camera_goal.dragging.is_some(), shift, alt) {
             cursor::Kind::Rotate
         } else if pointer.1 && game.attack.is_some_and(|attack| attack.held) {
             cursor::Kind::Attack
@@ -13708,7 +13719,7 @@ impl App {
         } else {
             match hovered(&game.hit_boxes, pointer.0, players_first) {
                 Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
-                    Some(MONSTER) => cursor::Kind::Attack,
+                    Some(MONSTER) => monster_cursor(shift, game.no_shift),
                     Some(NPC) => npc_cursor(game.units[&id].job),
                     Some(PLAYER) if game.opponent(id).is_some_and(|other| game.side().attack_cursor(&other, players_first, false)) => cursor::Kind::Attack,
                     Some(HOMUNCULUS | MERCENARY | ELEMENTAL) if versus::companion_cursor(game.side().flags) => cursor::Kind::Attack,
@@ -14496,6 +14507,16 @@ mod tests {
         assert_eq!(vanish_effect(3, actor::OPTION_INVISIBLE), None);
         assert_eq!(vanish_effect(2, 0), Some(314));
         assert_eq!((vanish_effect(0, 0), vanish_effect(1, 0)), (None, None));
+    }
+
+    #[test]
+    fn shows_the_attack_and_turning_cursors_only_when_they_apply() {
+        assert_eq!(monster_cursor(false, false), cursor::Kind::Attack);
+        assert_eq!(monster_cursor(true, false), cursor::Kind::Default);
+        assert_eq!(monster_cursor(true, true), cursor::Kind::Attack);
+        // The right button held: no key and Ctrl turn (Ctrl isn't asked); Shift tilts; Alt doesn't.
+        assert!(turning_cursor(true, false, false) && !turning_cursor(true, true, false) && !turning_cursor(true, false, true));
+        assert!(!turning_cursor(false, false, false));
     }
 
     #[test]
