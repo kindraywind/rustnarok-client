@@ -1308,6 +1308,10 @@ pub struct Unit {
     pub name: String,
     /// Sitting when it came into view.
     pub sitting: bool,
+    /// rathena's opt1 (OPT1_*): stone, freeze, and the rest.
+    pub body_state: u16,
+    /// rathena's opt2 (OPT2_*): poison, curse, and the rest.
+    pub health_state: u16,
     /// Option bits (rathena's OPTION_*: mounts, outfits, hiding, ...).
     pub option: u32,
     /// A player's guild and its emblem's version (0 for none).
@@ -2793,9 +2797,13 @@ pub enum MapEvent {
         id: u8,
         color: [u8; 3],
     },
-    /// A unit's option bits changed (ZC_STATE_CHANGE): mounting, outfits, hiding, ...
+    /// A unit's body state, health state and option bits changed (ZC_STATE_CHANGE).
     OptionChange {
         id: u32,
+        /// rathena's opt1.
+        body: u16,
+        /// rathena's opt2.
+        health: u16,
         option: u32,
     },
     /// A unit's looks changed (`kind` is a `LOOK_*`); for weapons `extra` is the shield.
@@ -5177,7 +5185,9 @@ fn decode_unit(packet: &[u8], layout: &UnitLayout, position: ([u16; 2], u8)) -> 
         level: u16_at(layout.level),
         name: c_string(&packet[layout.name..(layout.name + 24).min(packet.len())]),
         sitting: layout.state.is_some_and(|state| packet.get(state) == Some(&2)),
-        // effectState, after bodyState and healthState.
+        // bodyState and healthState sit in front of effectState on every entry packet.
+        body_state: u16_at(15),
+        health_state: u16_at(17),
         option: u32_at(packet, 19),
         // GUID and GEmblemVer follow the robe.
         guild: u32_at(packet, layout.robe + 2),
@@ -6208,8 +6218,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 .collect(),
         },
         ZC_SPRITE_CHANGE => MapEvent::LookChange { id: u32_at(2), kind: packet[6], value: u32_at(7), extra: u32_at(11) },
-        // AID, bodyState, healthState, then effectState.
-        ZC_STATE_CHANGE => MapEvent::OptionChange { id: u32_at(2), option: u32_at(10) },
+        // clif_changeoption_target: AID, bodyState, healthState, effectState, PK mode.
+        ZC_STATE_CHANGE => MapEvent::OptionChange { id: u32_at(2), body: u16_at(6), health: u16_at(8), option: u32_at(10) },
         ZC_REQ_WEAR_EQUIP_ACK => MapEvent::Equipped { index: u16_at(2), location: u32_at(4), result: packet[10] },
         // Since 2011 the flag is inverted: 0 means it came off.
         ZC_REQ_TAKEOFF_EQUIP_ACK => MapEvent::Unequipped { index: u16_at(2), location: u32_at(4), failed: packet[8] != 0 },
@@ -6302,11 +6312,15 @@ mod tests {
         // clif_changeoption_target: AID, bodyState, healthState, effectState, PK mode.
         let mut packet = ZC_STATE_CHANGE.to_le_bytes().to_vec();
         packet.extend_from_slice(&2_000_002u32.to_le_bytes());
-        packet.extend_from_slice(&[0, 0, 0, 0]);
+        packet.extend_from_slice(&1u16.to_le_bytes());
+        packet.extend_from_slice(&0x0081u16.to_le_bytes());
         packet.extend_from_slice(&0x80_0020u32.to_le_bytes());
         packet.push(0);
         assert_eq!(packet.len(), packet_length(ZC_STATE_CHANGE).unwrap() as usize);
-        let Some(MapEvent::OptionChange { id: 2_000_002, option: 0x80_0020 }) = decode_map_packet(&packet) else { panic!() };
+        let Some(MapEvent::OptionChange { id: 2_000_002, body: 1, health: 0x0081, option: 0x80_0020 }) = decode_map_packet(&packet) else { panic!() };
+        // The state ending comes as zeros.
+        packet[6..10].fill(0);
+        let Some(MapEvent::OptionChange { body: 0, health: 0, .. }) = decode_map_packet(&packet) else { panic!() };
     }
 
     #[test]
@@ -6401,10 +6415,13 @@ mod tests {
         // Players carry their guild and emblem version after the robe.
         let mut stand = vec![0u8; 108];
         stand[..2].copy_from_slice(&ZC_NOTIFY_STANDENTRY.to_le_bytes());
+        stand[15..17].copy_from_slice(&2u16.to_le_bytes());
+        stand[17..19].copy_from_slice(&2u16.to_le_bytes());
         stand[49..53].copy_from_slice(&7u32.to_le_bytes());
         stand[53..55].copy_from_slice(&3u16.to_le_bytes());
         let Some(MapEvent::Unit(unit)) = decode_map_packet(&stand) else { panic!() };
         assert_eq!((unit.guild, unit.emblem), (7, 3));
+        assert_eq!((unit.body_state, unit.health_state), (2, 2));
         assert_eq!(unit.hp, None);
 
         // A hurt monster comes with its HP after the level and font; -1 when not told.

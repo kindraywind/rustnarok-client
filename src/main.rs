@@ -8401,6 +8401,8 @@ impl App {
                     game.effects.play(gpu, grf, table, EF_WARPZONE2, effects::Target::Unit(Some(unit.id)), at, Instant::now());
                 }
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
+                actor.body_state = unit.body_state;
+                actor.health_state = unit.health_state;
                 actor.stop_at(unit.position.map(i32::from));
                 actor.direction = unit.direction;
                 actor.head_direction = unit.head_direction;
@@ -8423,6 +8425,8 @@ impl App {
             }
             MapEvent::UnitWalk { unit, to, .. } => {
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
+                actor.body_state = unit.body_state;
+                actor.health_state = unit.health_state;
                 let from = unit.position.map(i32::from);
                 actor.guild = unit.guild;
                 if actor.cell != from && !actor.moving() {
@@ -10670,11 +10674,13 @@ impl App {
             MapEvent::Recovered { kind, amount } => {
                 game.damages.push(Damage { target: None, amount, start: Instant::now(), kind: DamageKind::Heal { sp: kind == net::STATUS_SP }, flinch: None });
             }
-            // Mounting, dismounting or an outfit puts a player in another body.
-            MapEvent::OptionChange { id, option } => {
+            // Mounting, dismounting or an outfit puts a player in another body. Body and health state colour it.
+            MapEvent::OptionChange { id, option, body, health } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor {
                     actor.cloaked = option & actor::UNSEEN_OPTIONS != 0;
+                    actor.body_state = body;
+                    actor.health_state = health;
                 }
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor
@@ -11176,7 +11182,9 @@ impl App {
                 cart.frame_at(gpu, usize::from(seen_direction(direction, yaw)), 0, cart_timing(action, timing)),
             ));
         }
+        let player_tint = actor::status_tint(game.player.body_state, game.player.health_state);
         if let Some(sprites) = &mut game.player.sprites {
+            sprites.set_tint(player_tint);
             frames.push((Owner::Player, player_feet, sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing)));
         }
         // The dress room's figure: rebuilt when a pick changes, standing the way it's turned.
@@ -11198,7 +11206,11 @@ impl App {
             _ => Vec::new(),
         };
         let preview_placements = match (preview_feet, &mut game.player.sprites) {
-            (Some(_), Some(sprites)) => sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
+            (Some(_), Some(sprites)) => {
+                // The equipment figure keeps the sprite's own colours.
+                sprites.set_tint(None);
+                sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0))
+            }
             _ => Vec::new(),
         };
         let stylist_placements = game.stylist.as_mut().map(|window| window.pose(gpu)).unwrap_or_default();
@@ -11226,7 +11238,9 @@ impl App {
                     cart.frame_at(gpu, usize::from(seen_direction(direction, yaw)), 0, cart_timing(action, timing)),
                 ));
             }
+            let tint = crate::actor::status_tint(actor.body_state, actor.health_state);
             if let Some(sprites) = &mut actor.sprites {
+                sprites.set_tint(tint);
                 frames.push((Owner::Unit(id), feet, sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing)));
             }
         }

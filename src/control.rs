@@ -23,7 +23,8 @@
 //! - `state`: the scene and the login server; at character select the characters, selected slot and `pin` ("ask",
 //!   "new", "change" or "none"); in the game the map, the player, open windows, the NPC dialog, the aimed
 //!   skill, units and ground items (with their sprites' screen boxes and the areas a click picks them in), counts and
-//!   status icons. Everything comes from what the client itself knows, whatever server it plays on.
+//!   status icons. Each unit's `tint` is `[r, g, b]` while a status colours it, or null. Everything comes from what
+//!   the client itself knows, whatever server it plays on.
 //!   `player` has `status_points` and `skill_points` left, `stats` (`str` to `luk`: `{value, bonus, cost}`, cost being
 //!   the points one more takes) and `skills` (`[{id, name, level, max_level, upgradable}]`, level 0: not learned yet).
 //!   While the status window (Alt+A) is open, the arrows that raise a stat are targets named `raise_str` to
@@ -872,6 +873,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             if actor.dead {
                 unit["dead"] = true.into();
             }
+            unit["tint"] = json!(crate::actor::status_tint(actor.body_state, actor.health_state));
             unit
         })
         .collect();
