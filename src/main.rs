@@ -379,6 +379,9 @@ const BOUND: usize = 1328;
 const RENTAL_MINUTES: usize = 1256;
 const RENTAL_SECONDS: usize = 1270;
 const RENTAL_ENDED: usize = 1258;
+/// Item merge: done, and the total too big.
+const MERGED: usize = 2171;
+const MERGE_TOO_MANY: usize = 2173;
 /// EFST_BLADESTOP, EFST_CURSEDCIRCLE_ATKER and EFST_CURSEDCIRCLE_TARGET: a unit locked with another.
 const LOCK_ICONS: [u16; 3] = [85, 416, 417];
 /// "<item> have been placed on / removed from the Swap Equipment window."
@@ -1719,6 +1722,7 @@ impl Game {
             // An egg list left unanswered is let go (rathena drops it on the next skill).
             (Picking::Hatch, Some(egg)) => self.session.hatch(egg.index),
             (Picking::Hatch, None) => Ok(()),
+            (Picking::Merge, _) => self.session.cancel_merge(),
         };
     }
 
@@ -1929,6 +1933,8 @@ enum Picking {
     SkillSelect(u32),
     /// The egg to hatch.
     Hatch,
+    /// Stacks of one item to merge (several picked; OK and Cancel are handled apart).
+    Merge,
 }
 
 struct Dialog {
@@ -3267,10 +3273,27 @@ impl App {
                 }
             }
             Scene::Game(game) if game.pick.as_ref().is_some_and(|(list, _)| list.covers(cursor)) => {
-                let (list, _) = game.pick.as_mut().unwrap();
+                let (list, picking) = game.pick.as_mut().unwrap();
                 let hit = list.hit(cursor).unwrap();
-                if let Some(answer) = list.click(hit) {
-                    game.answer_pick(answer);
+                // Item merge: rows pick and unpick, OK sends the picked stacks and waits for the answer.
+                let refused = match (*picking, hit) {
+                    (Picking::Merge, pick_list::Hit::Row(row)) => list.toggle(row).err(),
+                    (Picking::Merge, pick_list::Hit::Ok) => match list.merge_request() {
+                        Ok(indexes) => {
+                            let _ = game.session.merge_items(&indexes);
+                            None
+                        }
+                        Err(line) => Some(line),
+                    },
+                    _ => {
+                        if let Some(answer) = list.click(hit) {
+                            game.answer_pick(answer);
+                        }
+                        None
+                    }
+                };
+                if let Some(line) = refused {
+                    game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
             }
             Scene::Game(game) if game.shop.as_ref().is_some_and(|shop| shop.covers(cursor)) => {
@@ -5297,6 +5320,10 @@ impl App {
                 game.boss = None;
                 game.materials = None;
                 game.deal_choice = None;
+                // The merge window closes without a word.
+                if matches!(game.pick, Some((_, Picking::Merge))) {
+                    game.pick = None;
+                }
                 game.combos.clear();
                 game.locks.clear();
                 game.hold_locked();
@@ -6440,6 +6467,26 @@ impl App {
             }
             MapEvent::RepairList(items) | MapEvent::UpgradeList(items) if items.is_empty() => {}
             MapEvent::RepairList(items) => game.pick = Some((pick_list::PickList::new(REPAIR_TITLE, items), Picking::Repair)),
+            MapEvent::MergeOpen(indexes) => {
+                let stacks = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
+                game.pick = Some((pick_list::PickList::merging(stacks), Picking::Merge));
+            }
+            // Merged: the stack that kept everything has its new amount (the others' deletions came first).
+            // ponytail: which line the official client prints for each result isn't knowable.
+            MapEvent::Merged { index, amount, result } => {
+                let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
+                if result == 0 {
+                    if let Some(stack) = game.inventory.items.iter_mut().find(|item| item.index == index) {
+                        stack.amount = amount;
+                    }
+                    game.chat_line(message(MERGED), CHAT_ITEM);
+                    if matches!(game.pick, Some((_, Picking::Merge))) {
+                        game.pick = None;
+                    }
+                } else {
+                    game.chat_line(message(MERGE_TOO_MANY), CHAT_ERROR);
+                }
+            }
             MapEvent::UpgradeList(items) => game.pick = Some((pick_list::PickList::new(UPGRADE_TITLE, items), Picking::Upgrade)),
             MapEvent::Repaired { ok, .. } => {
                 let (id, color) = if ok { (REPAIRED, CHAT_ITEM) } else { (NOT_REPAIRED, CHAT_ERROR) };
