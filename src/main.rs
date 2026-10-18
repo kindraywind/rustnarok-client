@@ -7564,8 +7564,8 @@ impl App {
                 let take = game.chat_mode.take_key(kind, game.chat.input.trim().is_empty(), game.chat.naming);
                 match take {
                     battle_mode::Take::Opened => game.chat.naming = false,
-                    // ponytail: Enter on an empty line leaves the draft (it is blank). Esc clears it in close_battle_line.
-                    battle_mode::Take::Closed => game.chat.preedit.clear(),
+                    // A blank line is not a message. Drop the spaces so the next Enter opens an empty line.
+                    battle_mode::Take::Closed => game.chat.close_battle_line(),
                     battle_mode::Take::Shortcut | battle_mode::Take::Type => {
                         let typing = take == battle_mode::Take::Type;
                         // shortcuts::action already ran. A letter it fired never reaches here. An unbound letter

@@ -317,13 +317,15 @@ mod tests {
         assert_eq!(press(&mut mode, KeyKind::Escape, false, false, false, &bindings), Delivery::Closed);
         assert!(!mode.chat_line_open());
         assert_eq!(draft, "hi");
-        // A window that wants Esc keeps the line open.
+        // A window that wants Esc keeps the line open. The next Esc closes it.
         mode.open_line();
         assert_eq!(press(&mut mode, KeyKind::Escape, false, false, true, &bindings), Delivery::Window);
         assert!(mode.chat_line_open());
-        // Esc while closed is a shortcut key (the quit menu), not another close.
         assert_eq!(mode.take_key(KeyKind::Escape, false, false), Take::Closed);
-        assert_eq!(press(&mut mode, KeyKind::Escape, draft.trim().is_empty(), false, false, &bindings), Delivery::Ignored);
+        assert!(!mode.chat_line_open());
+        // Esc while closed is a shortcut key (the quit menu), not another close.
+        assert_eq!(mode.take_key(KeyKind::Escape, true, false), Take::Shortcut);
+        assert_eq!(press(&mut mode, KeyKind::Escape, true, false, false, &bindings), Delivery::Ignored);
         assert!(!mode.chat_line_open());
     }
 
