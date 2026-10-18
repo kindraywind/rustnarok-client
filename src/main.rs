@@ -2884,14 +2884,6 @@ fn remember_id(id: Option<&str>) {
     };
 }
 
-/// An item's name without its slot count ("Knife [3]" -> "Knife").
-fn without_slots(name: &str) -> &str {
-    match name.strip_suffix(']').and_then(|rest| rest.rsplit_once(" [")) {
-        Some((bare, slots)) if slots.chars().all(|digit| digit.is_ascii_digit()) => bare.trim_end(),
-        _ => name,
-    }
-}
-
 /// A message's last sentence (after its last ". "), or all of it.
 fn last_sentence(text: &str) -> &str {
     text.rsplit_once(". ").map_or(text, |(_, last)| last)
@@ -3142,6 +3134,8 @@ struct App {
     items: HashMap<u32, ItemInfo>,
     /// The battlegrounds the queue window lists.
     battlegrounds: Vec<lua::Battleground>,
+    /// The cards' words in item names.
+    card_names: inventory::CardNames,
     /// What each reform item can turn into, from the client's reform list.
     reforms: HashMap<u32, Vec<lua::ReformInfo>>,
     /// Enchant tables from the client's Lua, by table number.
@@ -7233,22 +7227,32 @@ impl App {
                 }
             }
             MapEvent::PickedUp { result, item } => {
-                let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
                 let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
                 let held = game.inventory.get(item.index).map_or(0, |held| held.amount);
+                // A forged or brewed item names its maker: asked for once.
+                if let Some(maker) = inventory::maker(&item.cards)
+                    && !game.char_names.contains_key(&maker)
+                    && game.names_asked.insert(maker)
+                {
+                    let _ = game.session.ask_char_name(maker);
+                }
+                let name = |slots: bool| inventory::full_name(&self.items, &self.card_names, &self.messages, &game.char_names, &item, slots);
                 match pickup::obtained(result, item.amount, held) {
                     Some(amount) => {
-                        let line = messages::fill(&message(messages::GOT_ITEM), &[&name, &amount]);
+                        let line = messages::fill(&message(messages::GOT_ITEM), &[&name(true), &amount]);
                         // The popup: the name without its slot count, how many came, the icon.
-                        let text = format!("{}{}", without_slots(&name), messages::fill(&message(pickup::OBTAINED), &[&amount]));
+                        let text = format!("{}{}", name(false), messages::fill(&message(pickup::OBTAINED), &[&amount]));
                         let icon = self.items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)).unwrap_or_default();
                         game.pickup_popup = Some(pickup::Popup::new(text, icon, self.font.width(&line), control::now()));
                         game.new_items = true;
                         game.chat_line(line, CHAT_ITEM);
                         game.inventory.add(net::InventoryItem { amount, ..item });
                     }
-                    None if result == 2 => game.chat_line(message(messages::CANT_CARRY_WEIGHT), CHAT_ERROR),
-                    None => game.chat_line(message(messages::CANT_CARRY), CHAT_ERROR),
+                    None => {
+                        if let Some(id) = pickup::failure_line(result) {
+                            game.chat_line(message(id), CHAT_ERROR);
+                        }
+                    }
                 }
             }
             // The inventory again: what broke since says so; the out pet's egg (marked broken) stays hidden.
@@ -9331,6 +9335,7 @@ impl App {
             (&self.grf, &self.items, &self.messages, &mut self.icons, &mut self.cursor_look, &self.pc_job_names);
         let (audio, sound) = (&mut self.audio, &self.sound);
         let (worlds, map_names, quest_texts) = (&self.worlds, &self.map_names, &self.quest_texts);
+        let card_names = &self.card_names;
         let (achievement_info, title_names) = (&self.achievement_info, &self.title_names);
         let (skill_info, skill_trees, status_icon_files) = (&self.skill_info, &self.skill_trees, &self.status_icon_files);
         let font = &self.font;
@@ -10212,10 +10217,30 @@ impl App {
                     };
                     game.basic_info.draw(&mut layer, &assets.chrome, &assets.basic_info, font, messages, &info, pointer.0);
                 }
-                Panel::Inventory => game.inventory.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.inventory, icons, items, messages, font, pointer.0),
-                Panel::Cart if game.cart.cart.is_some() => {
-                    game.cart.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.inventory, icons, items, messages, font, pointer.0)
-                }
+                Panel::Inventory => game.inventory.draw(
+                    &mut layer,
+                    &mut tooltip,
+                    &assets.chrome,
+                    &assets.inventory,
+                    icons,
+                    items,
+                    messages,
+                    font,
+                    pointer.0,
+                    (card_names, &game.char_names),
+                ),
+                Panel::Cart if game.cart.cart.is_some() => game.cart.draw(
+                    &mut layer,
+                    &mut tooltip,
+                    &assets.chrome,
+                    &assets.inventory,
+                    icons,
+                    items,
+                    messages,
+                    font,
+                    pointer.0,
+                    (card_names, &game.char_names),
+                ),
                 Panel::Cart => {}
                 Panel::Pet => {
                     if let Some(pet) = &game.pet {
@@ -10302,6 +10327,7 @@ impl App {
                     pointer.0,
                     &game.inventory.items,
                     preview.take().unwrap_or_default(),
+                    (card_names, &game.char_names),
                 ),
             }
             layers.push(layer);
@@ -10436,6 +10462,7 @@ impl App {
                 pointer.0,
                 &viewed.items,
                 viewed_preview,
+                (card_names, &game.char_names),
             );
         }
         if let Some(window) = &game.refine {
@@ -11092,6 +11119,7 @@ fn main() {
         eprintln!("no item names: {error}");
         HashMap::new()
     });
+    let card_names = inventory::CardNames::load(&grf);
     let battlegrounds = lua::entry_queue(&grf).unwrap_or_else(|error| {
         eprintln!("no battleground list: {error}");
         Vec::new()
@@ -11154,6 +11182,7 @@ fn main() {
         title_names,
         items,
         battlegrounds,
+        card_names,
         reforms,
         enchant_tables,
         styling_shop,
