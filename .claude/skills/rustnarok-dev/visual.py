@@ -51,8 +51,10 @@ Everything lands under docs/personal/visual/<date>/<HHMMSS>/ (gitignored): game 
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -123,6 +125,12 @@ def launch(binary, scenario):
         reset = f"sh '{local_reset}'"
     if reset:
         subprocess.run(reset, shell=True, check=True)
+    # Fresh client settings (saved options, window places) for each scenario, shared by its clients and relaunches:
+    # what one scenario saves never reaches the next, nor the player's own settings.
+    previous = os.environ.get("RUSTNAROK_CLIENT_SETTINGS", "")
+    if os.path.basename(previous).startswith("rustnarok-settings-"):
+        shutil.rmtree(previous, ignore_errors=True)
+    os.environ["RUSTNAROK_CLIENT_SETTINGS"] = tempfile.mkdtemp(prefix="rustnarok-settings-")
     drive.use("first")
     names = {"first": player_name(launch_one(binary, scenario))}
     # A second player, for anything between two: its steps say "as": "second".
