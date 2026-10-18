@@ -1038,6 +1038,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             })
         }),
         "refusing_party": game.refusing_party,
+        // The texts in the announcement bar, oldest first.
+        "announcements": game.announcements.texts(),
         "mercenary": game.mercenary.as_ref().map(|hired| json!({"id": hired.id, "name": hired.name, "level": hired.level, "hp": hired.hp, "loyalty": hired.loyalty, "summons": hired.summons, "kills": hired.kills, "following": game.steering.following, "order": game.steering.order.map(|order| format!("{order:?}"))})),
         "homunculus": game.homunculus.as_ref().map(|homunculus| homunculus_state(homunculus, game.homunculus_id, game.homunculus_steering.following)),
         "pet": game.pet.as_ref().map(|pet| json!({"id": game.pet_id, "name": pet.name, "level": pet.level, "hunger": pet.hunger, "intimacy": pet.intimacy, "accessory": pet.accessory, "renamed": pet.renamed})),
