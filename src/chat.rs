@@ -76,6 +76,8 @@ pub struct Chat {
     size: usize,
     /// Lines scrolled back from the newest.
     scroll: usize,
+    /// Alt+F10 hides the window. Typing still goes to the line.
+    pub hidden: bool,
 }
 
 impl Chat {
@@ -89,7 +91,18 @@ impl Chat {
     }
 
     pub fn contains(&self, cursor: [f32; 2]) -> bool {
-        contains([0.0, self.top()], [600.0, SCREEN[1] - self.top()], cursor)
+        !self.hidden && contains([0.0, self.top()], [600.0, SCREEN[1] - self.top()], cursor)
+    }
+
+    /// Alt+F10: the log and the input bar leave the screen, or come back.
+    pub fn toggle_hidden(&mut self) {
+        self.hidden = !self.hidden;
+    }
+
+    /// F10: the next log height, the same cycle as the size button.
+    pub fn cycle_size(&mut self) {
+        self.size = (self.size + 1) % HEIGHTS.len();
+        self.scroll = 0;
     }
 
     pub fn push(&mut self, text: String, color: [u8; 3]) {
@@ -111,8 +124,7 @@ impl Chat {
     pub fn click(&mut self, cursor: [f32; 2]) {
         let bar_top = SCREEN[1] - INPUT_HEIGHT;
         if contains([SIZE_BUTTON[0], bar_top + SIZE_BUTTON[1]], BUTTON_SIZE, cursor) {
-            self.size = (self.size + 1) % HEIGHTS.len();
-            self.scroll = 0;
+            self.cycle_size();
         } else if contains([0.0, bar_top], [LIST_BUTTON[0], INPUT_HEIGHT], cursor) {
             self.naming = true;
         } else if contains([MESSAGE_LEFT, bar_top], [FILTER_BUTTON[0] - MESSAGE_LEFT, INPUT_HEIGHT], cursor) {
@@ -126,6 +138,9 @@ impl Chat {
     }
 
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, messages: &[String], caret: bool) {
+        if self.hidden {
+            return;
+        }
         let top = self.top();
         // Tabs: the general log is the open one.
         for (tab, &message) in TAB_MESSAGES.iter().enumerate() {
@@ -214,6 +229,8 @@ pub enum Command {
     NoShift,
     /// /noctrl, /nc: a click on a monster keeps attacking without Ctrl, on or off.
     NoCtrl,
+    /// /battlechat: typed lines go to the battleground team, on or off.
+    BattleChat,
     /// /dressroom: the dress room.
     DressRoom,
     /// /blacksmith, /alchemist, /taekwon, /pk: a ranking's top ten (0 to 3).
@@ -238,6 +255,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/pvpinfo" => Command::PvpInfo,
         "/noshift" => Command::NoShift,
         "/noctrl" | "/nc" => Command::NoCtrl,
+        "/battlechat" => Command::BattleChat,
         "/dressroom" => Command::DressRoom,
         "/blacksmith" => Command::Ranking(0),
         "/alchemist" => Command::Ranking(1),
@@ -265,6 +283,7 @@ mod tests {
         assert_eq!(command("/pvpinfo"), Some(Command::PvpInfo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
         assert_eq!([command("/noctrl"), command("/nc")], [Some(Command::NoCtrl), Some(Command::NoCtrl)]);
+        assert_eq!(command("/battlechat"), Some(Command::BattleChat));
         assert_eq!(command("/dressroom"), Some(Command::DressRoom));
         for (text, kind) in [("/blacksmith", 0), ("/alchemist", 1), ("/taekwon", 2), ("/pk", 3)] {
             assert_eq!(command(text), Some(Command::Ranking(kind)), "{text}");

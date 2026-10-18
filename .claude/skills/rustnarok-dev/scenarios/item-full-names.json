@@ -1,0 +1,61 @@
+{
+  "about": "Full item names (issue #220): @item2 gives a +7 Knife with a Lucky card (4001); the pickup line names it '+7 Lucky Knife [3]' and the popup '+7 Lucky Knife - 1 obtained.' (no slots).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@item2 1201 1 1 7 0 4001 0 0 0"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b41",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "+7 Lucky Knife [3]",
+        "state": {
+          "pickup_popup": "+7 Lucky Knife - 1 obtained."
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "full-name",
+      "crop": [
+        0,
+        640,
+        620,
+        128
+      ],
+      "threshold": 5
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}
