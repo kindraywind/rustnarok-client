@@ -238,6 +238,22 @@ const TRADE_HEAVY: usize = 73;
 const TRADE_CHOICE: usize = 87;
 /// "Check %s's Equipment Info"; the Show Equipment box's answers, on and off.
 const VIEW_CHOICE: usize = 1360;
+/// "Send an adoption request to %s"; the questions to the one asked: "(name)" + " wishes to adopt you. Do you
+/// accept?", then what a baby class gives up.
+const ADOPT_CHOICE: usize = 887;
+const ADOPT_ASKS: usize = 794;
+const ADOPT_ASKS_AGAIN: usize = 888;
+/// Asking to adopt, refused: a child already, under level 70, the one asked is married.
+const ADOPT_REFUSALS: [usize; 3] = [899, 900, 916];
+/// "%s and %s have divorced from each other."
+const DIVORCED: usize = 836;
+/// The Wedding Rings (a man's, a woman's) and I Miss You, which the ring gives.
+const WEDDING_RINGS: [u32; 2] = [2634, 2635];
+const CALL_PARTNER: u16 = 336;
+/// The wedding effect.
+// ponytail: the effect ZC_CONGRATULATION plays isn't knowable; 347 (EF_COLORPAPER) is the one whose sound the
+// client's table names effect\wedding.
+const WEDDING_EFFECT: u32 = 347;
 /// Pets: the egg list's title, the menu (status, feed, performance, back to the egg, accessory off, by command), the
 /// questions (feeding; the name, then renaming once), no food, and neglect.
 // ponytail: the menu's order is a guess; the strings sit together like one.
@@ -758,6 +774,10 @@ struct Game {
     party: Option<party::Party>,
     party_window: party::PartyWindow,
     party_invite: Option<(u32, String)>,
+    /// The partner's name, as the last I Miss You told it (while the player has the ring's skill).
+    partner: Option<String>,
+    /// Being asked to be adopted: by whom (parent, partner accounts; the name), and whether it's the second question.
+    adopt_asked: Option<(u32, u32, String, bool)>,
     /// Setting up our shop, and our open shop.
     vend_setup: Option<vend::Setup>,
     my_shop: Option<vend::MyShop>,
@@ -1180,6 +1200,8 @@ enum Choice {
     Pet(u8),
     /// Hand the party to this member (by account).
     Leader(u32),
+    /// Ask this party member (by account) to be adopted.
+    Adopt(u32),
     /// The guild master moves a member (by its place in the member list) to a position.
     GuildMove(usize, u32),
     /// Leave the guild (asks first).
@@ -2856,6 +2878,11 @@ fn remember_id(id: Option<&str>) {
     };
 }
 
+/// A message's last sentence (after its last ". "), or all of it.
+fn last_sentence(text: &str) -> &str {
+    text.rsplit_once(". ").map_or(text, |(_, last)| last)
+}
+
 fn dialog_position(dialog: &Texture) -> [f32; 2] {
     [((SCREEN[0] - dialog.size[0]) / 2.0).floor(), ((SCREEN[1] - dialog.size[1]) / 1.5).floor()]
 }
@@ -3776,6 +3803,9 @@ impl App {
                         let _ = game.session.invite_to_party(&actor.name.clone());
                     }
                 }
+                Some(Choice::Adopt(id)) => {
+                    let _ = game.session.ask_adoption(id);
+                }
                 Some(Choice::GuildInvite(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         let _ = game.session.invite_to_guild(&actor.name.clone());
@@ -4040,6 +4070,22 @@ impl App {
                     if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
                         let (account, character, _) = game.friend_asked.take().unwrap();
                         let _ = game.session.answer_friend(account, character, accept);
+                    }
+                }
+            }
+            // Asked to be adopted: OK asks again, then accepts; Cancel at either step refuses.
+            Scene::Game(game) if game.adopt_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        let (parent, partner, name, again) = game.adopt_asked.take().unwrap();
+                        if yes && !again {
+                            // What a baby class gives up doesn't fit the box: the whole of it in the chat, the box asks.
+                            game.chat_line(self.messages.get(ADOPT_ASKS_AGAIN).cloned().unwrap_or_default(), CHAT_ERROR);
+                            game.adopt_asked = Some((parent, partner, name, true));
+                        } else {
+                            let _ = game.session.answer_adoption(parent, partner, yes);
+                        }
                     }
                 }
             }
@@ -4569,7 +4615,7 @@ impl App {
                         }
                     }
                     Panel::Skills => {
-                        let jobs = self.skill_trees.lineage(game.me.job);
+                        let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
                         let points = game.skill_points();
                         let hit = game.skill_window.hit(cursor, &self.skill_trees, &jobs, &game.skills, points);
                         match hit.and_then(|hit| game.skill_window.click(hit)) {
@@ -4926,6 +4972,13 @@ impl App {
                         && party.members.iter().all(|member| member.info.account != id)
                     {
                         choices.extend([None, Some((fill(PARTY_ASK), Choice::Invite(id)))]);
+                    }
+                    // Married (wearing the ring): a party member can be asked to be adopted.
+                    // ponytail: where it sits in the menu is an estimate.
+                    if game.party.as_ref().is_some_and(|party| party.members.iter().any(|member| member.info.account == id))
+                        && game.inventory.items.iter().any(|item| item.worn != 0 && WEDDING_RINGS.contains(&item.id))
+                    {
+                        choices.extend([None, Some((fill(ADOPT_CHOICE), Choice::Adopt(id)))]);
                     }
                     // ponytail: last, under a line; where the real client lists it isn't known.
                     choices.extend([None, Some((fill(VIEW_CHOICE), Choice::ViewEquipment(id)))]);
@@ -5392,7 +5445,7 @@ impl App {
                 }
             }
             if id == Panel::Skills {
-                let jobs = self.skill_trees.lineage(game.me.job);
+                let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
                 match game.skill_window.hit(cursor, &self.skill_trees, &jobs, &game.skills, game.skill_points()) {
                     Some(skills::Hit::Skill(skill)) if game.skills.iter().any(|known| known.id == skill && known.level > 0 && known.kind != 0) => {
                         game.dragging = Some((Dragged::Skill(skill), cursor, false));
@@ -6350,6 +6403,8 @@ impl App {
                         window
                     },
                     party_invite: None,
+                    partner: None,
+                    adopt_asked: None,
                     party_dots: HashMap::new(),
                     friends: Vec::new(),
                     friend_asked: None,
@@ -8937,6 +8992,31 @@ impl App {
                     game.play_effect(gpu, grf, table, effect, id);
                 }
             }
+            // Marriage: the wedding, the partner's name, divorce; adoption: being asked, and refusals.
+            MapEvent::Congratulation(id) => {
+                if let Some(gpu) = gpu {
+                    game.play_effect(gpu, grf, table, WEDDING_EFFECT, id);
+                }
+            }
+            // ponytail: the name comes to everyone near whoever called, without who; taken as ours while we have the
+            // ring's skill, so another couple calling nearby overwrites it.
+            MapEvent::PartnerName(name) => {
+                if !name.is_empty() && game.skills.iter().any(|skill| skill.id == CALL_PARTNER) {
+                    game.partner = Some(name);
+                }
+            }
+            // ponytail: the line names the player, then the partner; the order is an estimate.
+            MapEvent::Divorced(partner) => {
+                let line = rustnarok_client::messages::fill(self.messages.get(DIVORCED).map_or("", String::as_str), &[&game.me.name, &partner]);
+                game.chat_line(line, CHAT_WHITE);
+                game.partner = None;
+            }
+            MapEvent::AdoptAsked { parent, partner, name } => game.adopt_asked = Some((parent, partner, name, false)),
+            MapEvent::AdoptRefused(reason) => {
+                if let Some(&id) = ADOPT_REFUSALS.get(reason as usize) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
             MapEvent::DealChoice { npc } => {
                 game.dialog = None;
                 game.deal_choice = Some(npc);
@@ -9923,10 +10003,10 @@ impl App {
                 icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, false).ok());
             }
         }
-        let jobs = skill_trees.lineage(game.me.job);
+        let jobs = skills::tabs(skill_trees, game.me.job, &game.skills);
         let skill_icons = game
             .skill_window
-            .icons(skill_trees, &jobs, skill_info)
+            .icons(skill_trees, &jobs, &game.skills, skill_info)
             .into_iter()
             .chain(game.guild.as_ref().map(|guild| game.guild_window.icons(guild, skill_info)).unwrap_or_default())
             .chain(mercenary::SkillList::icons(&game.mercenary_skills, skill_info))
@@ -10451,6 +10531,19 @@ impl App {
             None => None,
         };
         if let Some(question) = queue_question {
+            let dialog = dialog_position(&assets.message);
+            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
+            for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
+                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
+        // Asked to be adopted: who asks, then whether they're sure (what a baby class gives up is in the chat).
+        // ponytail: the second question (888) is an estimate, and so is splitting it: the box holds three lines, so it
+        // shows the last sentence.
+        if let Some((_, _, name, again)) = &game.adopt_asked {
+            let question = if *again { last_sentence(message(ADOPT_ASKS_AGAIN)).to_owned() } else { format!("({name}){}", message(ADOPT_ASKS)) };
             let dialog = dialog_position(&assets.message);
             shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
@@ -11185,6 +11278,12 @@ mod tests {
         assert_eq!(rank_line(0, 11), Some(RANK_DOWN), "a first rank outside the top ten");
         assert_eq!(rank_line(0, 3), Some(RANK_UP));
         assert_eq!(rank_line(5, 3), None);
+    }
+
+    #[test]
+    fn keeps_a_messages_last_sentence() {
+        assert_eq!(last_sentence("Stats are limited. Are you sure?"), "Are you sure?");
+        assert_eq!(last_sentence("Are you sure?"), "Are you sure?");
     }
 
     #[test]

@@ -180,6 +180,22 @@ pub fn encode_lobby_reply(accept: bool, name: &str) -> Vec<u8> {
     packet
 }
 
+/// CZ_REQ_JOIN_BABY: the player to adopt.
+pub fn encode_adopt_request(account: u32) -> Vec<u8> {
+    let mut packet = CZ_REQ_JOIN_BABY.to_le_bytes().to_vec();
+    packet.extend_from_slice(&account.to_le_bytes());
+    packet
+}
+
+/// CZ_JOIN_BABY: the parents' accounts as ZC_REQ_BABY gave them, and 1 yes or 0 no.
+pub fn encode_adopt_answer(parent: u32, partner: u32, accept: bool) -> Vec<u8> {
+    let mut packet = CZ_JOIN_BABY.to_le_bytes().to_vec();
+    for value in [parent, partner, u32::from(accept)] {
+        packet.extend_from_slice(&value.to_le_bytes());
+    }
+    packet
+}
+
 /// CZ_BATTLEFIELD_CHAT: the line as the guild chat writes it, "Name : message" and a NUL.
 pub fn encode_battle_chat(name: &str, message: &str) -> Vec<u8> {
     let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
@@ -771,6 +787,13 @@ const ZC_BROADCAST: u16 = 0x009A;
 const ZC_MAPPROPERTY_R2: u16 = 0x099B;
 const CZ_BLOCKING_PLAY_CANCEL: u16 = 0x0447;
 const ZC_NOTIFY_MAPPROPERTY2: u16 = 0x01D6;
+const ZC_CONGRATULATION: u16 = 0x01EA;
+const ZC_COUPLENAME: u16 = 0x01E6;
+const ZC_DIVORCE: u16 = 0x0205;
+const ZC_REQ_BABY: u16 = 0x01F6;
+const ZC_BABYMSG: u16 = 0x0216;
+const CZ_REQ_JOIN_BABY: u16 = 0x01F9;
+const CZ_JOIN_BABY: u16 = 0x01F7;
 const ZC_BATTLEFIELD_NOTIFY_HP2: u16 = 0x0A0E;
 const ZC_BATTLEFIELD_NOTIFY_POSITION: u16 = 0x02DF;
 const ZC_BATTLEFIELD_NOTIFY_CAMPINFO: u16 = 0x02DD;
@@ -1919,6 +1942,20 @@ pub enum MapEvent {
     },
     /// The map's type (rathena's `e_map_type`; it only sends 19, a battleground).
     MapType(u16),
+    /// The wedding effect on a unit (ZC_CONGRATULATION).
+    Congratulation(u32),
+    /// Someone nearby called their partner: the partner's name, empty when offline (ZC_COUPLENAME).
+    PartnerName(String),
+    /// Divorced from this partner (ZC_DIVORCE).
+    Divorced(String),
+    /// A parent (account) asks, with their partner (account), to adopt the player (ZC_REQ_BABY).
+    AdoptAsked {
+        parent: u32,
+        partner: u32,
+        name: String,
+    },
+    /// Asking to adopt, refused (ZC_BABYMSG): 0 a child already, 1 under level 70, 2 the one asked is married.
+    AdoptRefused(u32),
     /// A teammate's HP on a battleground (ZC_BATTLEFIELD_NOTIFY_HP2).
     BattleHp {
         account: u32,
@@ -4091,6 +4128,16 @@ impl MapSession {
         self.stream.write_all(&encode_lobby_reply(accept, name))
     }
 
+    /// Asks a party member (account) to be adopted by the player and their partner.
+    pub fn ask_adoption(&mut self, account: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_adopt_request(account))
+    }
+
+    /// Answers a request to be adopted, with the two accounts it gave.
+    pub fn answer_adoption(&mut self, parent: u32, partner: u32, accept: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_adopt_answer(parent, partner, accept))
+    }
+
     /// Says something to the battleground team.
     pub fn battle_chat(&mut self, name: &str, message: &str) -> io::Result<()> {
         self.stream.write_all(&encode_battle_chat(name, message))
@@ -5351,6 +5398,11 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // "blue" (and "ssss" for the War of Emperium) at the start are color hints, not words.
         ZC_MAPPROPERTY_R2 => MapEvent::MapProperty { property: u16_at(2), flags: u32_at(4) },
         ZC_NOTIFY_MAPPROPERTY2 => MapEvent::MapType(u16_at(2)),
+        ZC_CONGRATULATION => MapEvent::Congratulation(u32_at(2)),
+        ZC_COUPLENAME => MapEvent::PartnerName(c_string(&packet[2..26])),
+        ZC_DIVORCE => MapEvent::Divorced(c_string(&packet[2..26])),
+        ZC_REQ_BABY => MapEvent::AdoptAsked { parent: u32_at(2), partner: u32_at(6), name: c_string(&packet[10..34]) },
+        ZC_BABYMSG => MapEvent::AdoptRefused(u32_at(2)),
         ZC_BATTLEFIELD_NOTIFY_HP2 => MapEvent::BattleHp { account: u32_at(2), hp: u32_at(6) as i32, max: u32_at(10) as i32 },
         // Someone leaving comes with x = y = 0xFFFF.
         ZC_BATTLEFIELD_NOTIFY_POSITION => {
@@ -7739,6 +7791,33 @@ mod tests {
         assert_eq!(encode_queue_name(CZ_REQ_ENTRY_QUEUE_RANKING, kvm).len(), 26);
         let reply = encode_lobby_reply(false, kvm);
         assert_eq!((reply.len(), reply[2]), (51, 2));
+    }
+
+    #[test]
+    fn decodes_marriage_and_adoption() {
+        assert!(matches!(decode_map_packet(&[0xEA, 0x01, 0x81, 0x84, 0x1E, 0x00]), Some(MapEvent::Congratulation(2_000_001))));
+        let named = |command: u16, name: &str| {
+            let mut packet = command.to_le_bytes().to_vec();
+            packet.extend_from_slice(&name_field(name));
+            packet
+        };
+        assert!(matches!(decode_map_packet(&named(ZC_COUPLENAME, "LaneA2")), Some(MapEvent::PartnerName(name)) if name == "LaneA2"));
+        assert!(matches!(decode_map_packet(&named(ZC_COUPLENAME, "")), Some(MapEvent::PartnerName(name)) if name.is_empty()));
+        assert!(matches!(decode_map_packet(&named(ZC_DIVORCE, "LaneA2")), Some(MapEvent::Divorced(name)) if name == "LaneA2"));
+        let mut asked = ZC_REQ_BABY.to_le_bytes().to_vec();
+        asked.extend_from_slice(&2_000_003u32.to_le_bytes());
+        asked.extend_from_slice(&2_000_004u32.to_le_bytes());
+        asked.extend_from_slice(&name_field("LaneA1"));
+        assert!(matches!(
+            decode_map_packet(&asked),
+            Some(MapEvent::AdoptAsked { parent: 2_000_003, partner: 2_000_004, name }) if name == "LaneA1"
+        ));
+        assert!(matches!(decode_map_packet(&[0x16, 0x02, 1, 0, 0, 0]), Some(MapEvent::AdoptRefused(1))));
+        assert_eq!(packet_length(ZC_BABYMSG), Some(6));
+
+        assert_eq!(encode_adopt_request(2_000_000), [0xF9, 0x01, 0x80, 0x84, 0x1E, 0x00]);
+        assert_eq!(encode_adopt_answer(7, 8, true), [0xF7, 0x01, 7, 0, 0, 0, 8, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(encode_adopt_answer(7, 8, false)[10..], [0, 0, 0, 0]);
     }
 
     #[test]

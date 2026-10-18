@@ -758,7 +758,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         game.combos.get(&unit).map_or(0, |(start, length)| length.saturating_sub(crate::control::now().saturating_duration_since(*start)).as_millis() as u64)
     };
     // The message box's OK and Cancel while a question is up.
-    let question = game.guild_asked.is_some() || game.guild_invite.is_some() || game.cashshop_buy_asked || game.queue_asked.is_some();
+    let question =
+        game.guild_asked.is_some() || game.guild_invite.is_some() || game.cashshop_buy_asked || game.adopt_asked.is_some() || game.queue_asked.is_some();
     let question_buttons = app.assets.as_ref().filter(|_| question).into_iter().flat_map(|assets| {
         let dialog = crate::dialog_position(&assets.message);
         [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)].map(|(name, place, button)| {
@@ -827,7 +828,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         Panel::Homunculus => game.homunculus.is_some() && game.homunculus_window.frame.open,
         Panel::HomunculusSkills => game.homunculus.is_some() && game.homunculus_skill_list.frame.open,
     };
-    let jobs = app.skill_trees.lineage(game.me.job);
+    let jobs = crate::skills::tabs(&app.skill_trees, game.me.job, &game.skills);
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
     // The leader question's OK and Cancel, in the message box.
     let leader_question: Vec<(&str, [f32; 4])> = match (&app.assets, game.leader_asked) {
@@ -847,7 +848,9 @@ fn game_state(app: &App, game: &Game) -> Value {
         .into_iter()
         .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
-        .chain(game.skill_window.skill_boxes(&app.skill_trees, &jobs).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
+        .chain(
+            game.skill_window.skill_boxes(&app.skill_trees, &jobs, &game.skills).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})),
+        )
         .chain(
             game.skill_window
                 .raise_boxes(&app.skill_trees, &jobs, &game.skills, game.skill_points())
@@ -1027,6 +1030,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("PartyInvite", game.party_invite.is_some()),
         ("FriendAsked", game.friend_asked.is_some()),
         ("GuildInvite", game.guild_invite.is_some()),
+        ("AdoptAsked", game.adopt_asked.is_some()),
         ("LeaveAsked", matches!(game.guild_asked, Some(crate::GuildAsked::Leave))),
         ("BattleQueue", game.queue_window.frame.open),
         ("BattleLobby", matches!(game.queue_asked, Some(crate::QueueAsked::Lobby(..)))),
@@ -1238,6 +1242,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "battle_chat": battle.chat,
         })
     }));
+    // The partner's name, as the last I Miss You told it.
+    state["partner"] = json!(game.partner);
     orbs(&mut state["player"], None);
     state
 }
