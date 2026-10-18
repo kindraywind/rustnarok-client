@@ -1154,65 +1154,130 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
     (vertices, draws, names, rsm_2, animated)
 }
 
-/// Cells walked from `from` to `to` (excluding `from`), 8-directional; diagonals need both sides open, as on the server.
+/// Cells walked from `from` to `to` (excluding `from`), 8-directional; diagonals need both sides open. The server's
+/// search, step for step, so both walk the same cells: A* at 10 a straight step and 14 a diagonal, with 10 times the
+/// Manhattan distance left as the estimate, neighbours tried from south-east round anticlockwise, and a binary heap on
+/// that sum alone, ties falling where the heap leaves them. A walk across open ground takes its diagonal steps first.
 pub fn find_path(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]>> {
-    use std::cmp::Reverse;
-    use std::collections::{BinaryHeap, HashMap};
+    use std::collections::HashMap;
 
+    struct Node {
+        cell: [i32; 2],
+        parent: Option<usize>,
+        cost: i32,
+        sum: i32,
+        open: bool,
+    }
     if from == to {
         return Some(Vec::new());
     }
     if !gat.walkable(to) {
         return None;
     }
-    let estimate = |cell: [i32; 2]| {
-        let (dx, dy) = ((cell[0] - to[0]).abs(), (cell[1] - to[1]).abs());
-        10 * dx.max(dy) + 4 * dx.min(dy)
-    };
-    let mut open = BinaryHeap::from([Reverse((estimate(from), 0, from))]);
-    let mut came_from: HashMap<[i32; 2], [i32; 2]> = HashMap::new();
-    let mut cost: HashMap<[i32; 2], i32> = HashMap::from([(from, 0)]);
+    let estimate = |cell: [i32; 2]| 10 * ((cell[0] - to[0]).abs() + (cell[1] - to[1]).abs());
+    let mut nodes = vec![Node { cell: from, parent: None, cost: 0, sum: estimate(from), open: true }];
+    let mut known = HashMap::from([(from, 0)]);
+    let mut heap = vec![0];
     // rathena caps searches too; this keeps a click across the map from stalling a frame.
     let mut budget = 20_000;
-    while let Some(Reverse((_, spent, cell))) = open.pop() {
+    while !heap.is_empty() && budget > 0 {
+        budget -= 1;
+        let current = heap_pop(&mut heap, &nodes, |node| node.sum);
+        nodes[current].open = false;
+        let (cell, spent) = (nodes[current].cell, nodes[current].cost);
         if cell == to {
-            let mut path = vec![to];
-            while let Some(&previous) = came_from.get(path.last().unwrap()) {
-                if previous == from {
-                    break;
-                }
-                path.push(previous);
+            let mut path = vec![];
+            let mut at = current;
+            while let Some(parent) = nodes[at].parent {
+                path.push(nodes[at].cell);
+                at = parent;
             }
             path.reverse();
             return Some(path);
         }
-        budget -= 1;
-        if budget == 0 || spent > cost[&cell] {
-            if budget == 0 {
-                return None;
+        let open = |dx: i32, dy: i32| gat.walkable([cell[0] + dx, cell[1] + dy]);
+        let (north, south, east, west) = (open(0, 1), open(0, -1), open(1, 0), open(-1, 0));
+        let ways = [
+            (1, -1, south && east),
+            (1, 0, east),
+            (1, 1, north && east),
+            (0, 1, north),
+            (-1, 1, north && west),
+            (-1, 0, west),
+            (-1, -1, south && west),
+            (0, -1, south),
+        ];
+        for (dx, dy, allowed) in ways {
+            let diagonal = dx != 0 && dy != 0;
+            if !allowed || (diagonal && !open(dx, dy)) {
+                continue;
             }
-            continue;
-        }
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                let next = [cell[0] + dx, cell[1] + dy];
-                let diagonal = dx != 0 && dy != 0;
-                if (dx == 0 && dy == 0)
-                    || !gat.walkable(next)
-                    || (diagonal && !(gat.walkable([cell[0] + dx, cell[1]]) && gat.walkable([cell[0], cell[1] + dy])))
-                {
-                    continue;
+            let next = [cell[0] + dx, cell[1] + dy];
+            let cost = spent + if diagonal { 14 } else { 10 };
+            match known.get(&next) {
+                Some(&index) if cost < nodes[index].cost => {
+                    let node = &mut nodes[index];
+                    (node.cost, node.parent, node.sum) = (cost, Some(current), cost + estimate(next));
+                    if node.open {
+                        let at = heap.iter().position(|&queued| queued == index).expect("an open node is queued");
+                        heap_rise(&mut heap, &nodes, |node| node.sum, 0, at);
+                        heap_sink(&mut heap, &nodes, |node| node.sum, at);
+                    } else {
+                        node.open = true;
+                        heap_push(&mut heap, &nodes, |node| node.sum, index);
+                    }
                 }
-                let next_cost = spent + if diagonal { 14 } else { 10 };
-                if cost.get(&next).is_none_or(|&known| next_cost < known) {
-                    cost.insert(next, next_cost);
-                    came_from.insert(next, cell);
-                    open.push(Reverse((next_cost + estimate(next), next_cost, next)));
+                Some(_) => {}
+                None => {
+                    known.insert(next, nodes.len());
+                    nodes.push(Node { cell: next, parent: Some(current), cost, sum: cost + estimate(next), open: true });
+                    heap_push(&mut heap, &nodes, |node| node.sum, nodes.len() - 1);
                 }
             }
         }
     }
     None
+}
+
+// The server's binary heap of indices into `items`, smallest `key` on top; its exact moves decide which of equal keys
+// comes out first.
+fn heap_push<T>(heap: &mut Vec<usize>, items: &[T], key: impl Fn(&T) -> i32, item: usize) {
+    heap.push(item);
+    let last = heap.len() - 1;
+    heap_rise(heap, items, key, 0, last);
+}
+
+/// Takes the top off: the last item goes on top and sinks to a leaf, then rises.
+fn heap_pop<T>(heap: &mut Vec<usize>, items: &[T], key: impl Fn(&T) -> i32) -> usize {
+    let top = heap.swap_remove(0);
+    if !heap.is_empty() {
+        heap_sink(heap, items, key, 0);
+    }
+    top
+}
+
+/// Moves the item at `at` up while its parent's key is larger, no higher than `top`.
+fn heap_rise<T>(heap: &mut [usize], items: &[T], key: impl Fn(&T) -> i32, top: usize, mut at: usize) {
+    while at > top {
+        let parent = (at - 1) / 2;
+        if key(&items[heap[parent]]) <= key(&items[heap[at]]) {
+            break;
+        }
+        heap.swap(parent, at);
+        at = parent;
+    }
+}
+
+/// Moves the item at `from` down to a leaf, always by the smaller child (the right one on a tie), then back up.
+fn heap_sink<T>(heap: &mut [usize], items: &[T], key: impl Fn(&T) -> i32, from: usize) {
+    let mut at = from;
+    while 2 * at + 1 < heap.len() {
+        let (left, right) = (2 * at + 1, 2 * at + 2);
+        let child = if right >= heap.len() || key(&items[heap[left]]) < key(&items[heap[right]]) { left } else { right };
+        heap.swap(at, child);
+        at = child;
+    }
+    heap_rise(heap, items, key, from, at);
 }
 
 /// Whether a player at `from` can hit `to` with `range` (rathena's `check_distance_client`: circular, and a cell longer on straight lines).
@@ -1347,6 +1412,21 @@ mod tests {
         assert!(find_path(&gat, [0, 0], [1, 1]).is_none());
         assert_eq!(direction([0, 1]), 4);
         assert_eq!(direction([1, -1]), 7);
+    }
+
+    #[test]
+    fn paths_are_the_servers() {
+        // The server's own search gives these (rows listed bottom first): on open ground the diagonal steps come
+        // first, and round a wall the ties fall as its heap leaves them.
+        let gat = |rows: &[&str]| Gat {
+            width: rows[0].len(),
+            height: rows.len(),
+            cells: rows.iter().flat_map(|row| row.bytes().map(|byte| ([0.0; 4], if byte == b'0' { 0 } else { 1 }))).collect(),
+        };
+        let open = gat(&["0000000000"; 8]);
+        assert_eq!(find_path(&open, [1, 1], [7, 5]).unwrap(), [[2, 2], [3, 3], [4, 4], [5, 5], [6, 5], [7, 5]]);
+        let walled = gat(&["0000000000", "0000000000", "0001110000", "0000010000", "0000010000", "0000000000", "0000000000", "0000000000"]);
+        assert_eq!(find_path(&walled, [1, 1], [8, 4]).unwrap(), [[2, 1], [3, 1], [4, 1], [5, 1], [6, 1], [7, 2], [8, 3], [8, 4]]);
     }
 
     #[test]
