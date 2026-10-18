@@ -230,6 +230,10 @@ impl App {
         let font = &self.font;
         let now = control::now();
         let pointer = (self.cursor, self.mouse_down);
+        let pet_window = &mut game.pet_window;
+        pet_window.auto_label = font.width(messages.get(pet::AUTO_FEED_LABEL).map_or("", String::as_str));
+        // ponytail: the box only hides; rathena itself refuses feeding by itself to a pet it doesn't allow.
+        pet_window.auto_allowed = pet_window.egg.is_some_and(|egg| self.pets.auto_eggs.contains(&egg));
         let players_first = game.players_first(self.modifiers.shift_key());
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
 
@@ -1656,7 +1660,8 @@ impl App {
                 Panel::Cart => {}
                 Panel::Pet => {
                     if let Some(pet) = &game.pet {
-                        game.pet_window.draw(&mut layer, &assets.chrome, &assets.pet, font, messages, pet, pointer);
+                        let blink = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+                        game.pet_window.draw(&mut layer, &assets.chrome, &assets.pet, font, messages, pet, pointer, blink);
                     }
                 }
                 Panel::Mercenary => {
@@ -2026,6 +2031,7 @@ impl App {
             }
             (None, Some(PetAsked::Feed)) => Some(message(PET_FEED_ASKS).to_owned()),
             (None, Some(PetAsked::Rename(name))) => Some(messages::fill(message(PET_RENAME_ASKS), &[name])),
+            (None, Some(PetAsked::Refused(why))) => Some(message(*why).to_owned()),
             (None, None) => None,
         };
         if let Some(question) = colored_question {

@@ -11,6 +11,7 @@ impl App {
         // A click anywhere but the storage's search field takes the caret from it.
         if let Scene::Game(game) = &mut self.scene {
             game.storage.typing = false;
+            game.pet_window.typing = false;
             if let Some(trade) = &mut game.trade {
                 trade.typing = false;
             }
@@ -421,8 +422,13 @@ impl App {
                     let _ = game.session.set_antagonist(id);
                 }
                 // Feeding asks first; the status opens the pet window.
-                Some(Choice::Pet(net::PET_FEED)) => game.pet_asked = Some(PetAsked::Feed),
-                Some(Choice::Pet(net::PET_INFO)) => game.open_pet_window(),
+                Some(Choice::Pet(net::PET_FEED)) => game.ask_feed(&self.messages),
+                // Check Pet Status asks for the news and opens or shuts the window.
+                Some(Choice::Pet(net::PET_INFO)) => {
+                    let _ = game.session.pet_command(net::PET_INFO);
+                    game.pet_window.frame.toggle();
+                    game.raise(Panel::Pet);
+                }
                 Some(Choice::Pet(command)) => game.pet_command(command),
                 Some(Choice::Member(choice, account)) => game.member_choice(choice, account, &self.messages),
                 Some(Choice::RoomOwner(row)) => {
@@ -828,7 +834,7 @@ impl App {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
-                        game.answer_pet(yes);
+                        game.answer_pet(yes, &self.pets, &self.items, &self.messages);
                     }
                 }
             }
@@ -1403,12 +1409,31 @@ impl App {
                             _ => {}
                         }
                     }
-                    Panel::Pet => match game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) {
-                        Some(pet::Hit::Title(title)) => game.pet_window.frame.click_title(title),
-                        Some(pet::Hit::Rename) => game.amount = Some(window::Amount::name(Asked::PetName, PET_NAME_RULE)),
-                        Some(pet::Hit::Feed) => game.pet_asked = Some(PetAsked::Feed),
-                        _ => {}
-                    },
+                    Panel::Pet => {
+                        let hit = game.pet.as_ref().and_then(|_| game.pet_window.hit(cursor));
+                        // Any click but the arrow's shuts the command list.
+                        if hit != Some(pet::Hit::OpenList) {
+                            game.pet_window.list_open = false;
+                        }
+                        match hit {
+                            Some(pet::Hit::Close) => game.pet_window.frame.open = false,
+                            Some(pet::Hit::Rename) => game.ask_rename(),
+                            Some(pet::Hit::NameBox) => {
+                                let name = game.pet.as_ref().map(|pet| game.pet_window.name(pet).to_owned()).unwrap_or_default();
+                                game.pet_window.name_text = Some(name);
+                                game.pet_window.typing = true;
+                            }
+                            Some(pet::Hit::OpenList) => game.pet_window.list_open = !game.pet_window.list_open,
+                            Some(pet::Hit::Command(row)) => match pet::LIST.get(row).map(|&(_, command)| command) {
+                                Some(net::PET_FEED) => game.ask_feed(&self.messages),
+                                Some(command) => game.pet_command(command),
+                                None => {}
+                            },
+                            // The box follows the server's answer.
+                            Some(pet::Hit::AutoFeed) => drop(game.session.pet_auto_feed(!game.pet_window.auto_feed)),
+                            Some(pet::Hit::Window) | None => {}
+                        }
+                    }
                     Panel::Status => {
                         let hit = game.status_window.hit(cursor, &game.status);
                         if let Some(stat) = hit.and_then(|hit| game.status_window.click(hit)) {
@@ -1971,15 +1996,8 @@ impl App {
                 };
                 let fill = |id: usize| rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]);
                 let choices: Vec<(usize, Choice)> = match target {
-                    // Our pet: its commands, the accessory's while it wears one.
-                    MenuFor::Pet(_) => {
-                        let accessory = game.pet.as_ref().is_some_and(|pet| pet.accessory != 0);
-                        PET_CHOICES
-                            .into_iter()
-                            .filter(|&(_, command)| command != net::PET_UNEQUIP || accessory)
-                            .map(|(label, command)| (label, Choice::Pet(command)))
-                            .collect()
-                    }
+                    // Our pet: its five commands.
+                    MenuFor::Pet(_) => PET_CHOICES.into_iter().map(|(label, command)| (label, Choice::Pet(command))).collect(),
                     MenuFor::Homunculus(_) => HOMUNCULUS_CHOICES.to_vec(),
                     MenuFor::Stall => vec![(CLOSE_STALL_CHOICE, Choice::CloseStall)],
                     MenuFor::Player(id) => {
@@ -2899,9 +2917,7 @@ impl App {
                 // The corner grip resizes.
                 Panel::Inventory if game.inventory.hit(cursor) == Some(inventory::Hit::Resize) => game.inventory.start_resize(cursor),
                 Panel::Cart if game.cart.hit(cursor) == Some(inventory::Hit::Resize) => game.cart.start_resize(cursor),
-                Panel::Pet if game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) == Some(pet::Hit::Title(TitleHit::Title)) => {
-                    game.pet_window.frame.start_drag(cursor)
-                }
+                Panel::Pet if game.pet.is_some() && game.pet_window.hit(cursor) == Some(pet::Hit::Window) => game.pet_window.frame.start_drag(cursor),
                 Panel::Homunculus
                     if game.homunculus.as_ref().and_then(|homunculus| game.homunculus_window.hit(cursor, homunculus))
                         == Some(homunculus::Hit::Title(TitleHit::Title)) =>
@@ -3135,12 +3151,10 @@ impl App {
             shortcuts::Action::Chat => game.chat.toggle_hidden(),
             shortcuts::Action::ChatSize => game.chat.cycle_size(),
             shortcuts::Action::HpSp => game.show_bars = !game.show_bars,
+            // Alt+J opens or shuts the window and asks nothing.
             shortcuts::Action::Pet if game.pet.is_some() => {
                 game.pet_window.frame.toggle();
                 game.raise(Panel::Pet);
-                if game.pet_window.frame.open {
-                    let _ = game.session.pet_command(net::PET_INFO);
-                }
             }
             shortcuts::Action::Pet => {}
             shortcuts::Action::Homunculus if game.homunculus.is_some() => {
@@ -3484,7 +3498,7 @@ impl App {
                 game.answer_homunculus_name(*key == Key::Named(NamedKey::Enter));
             }
             Scene::Game(game) if game.pet_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
-                game.answer_pet(*key == Key::Named(NamedKey::Enter));
+                game.answer_pet(*key == Key::Named(NamedKey::Enter), &self.pets, &self.items, &self.messages);
             }
             Scene::Game(game) if game.cashshop_buy_asked && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.cashshop_buy_asked = false;
@@ -3627,6 +3641,21 @@ impl App {
                 }
                 window.search(&self.navi_tables);
             }
+            // The pet's name box: Enter keeps what's typed, Esc puts the name back.
+            Scene::Game(game) if game.pet_window.typing => match key {
+                Key::Named(NamedKey::Enter) => game.pet_window.typing = false,
+                Key::Named(NamedKey::Escape) => {
+                    game.pet_window.name_text = None;
+                    game.pet_window.typing = false;
+                }
+                Key::Named(NamedKey::Backspace) => {
+                    game.pet_window.name_text.get_or_insert_with(String::new).pop();
+                }
+                _ => {
+                    let typed: String = event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()).collect();
+                    game.pet_window.name_text.get_or_insert_with(String::new).push_str(&typed);
+                }
+            },
             Scene::Game(game) if game.storage.typing => match key {
                 Key::Named(NamedKey::Enter) => game.storage.typing = false,
                 Key::Named(NamedKey::Escape) => {

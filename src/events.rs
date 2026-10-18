@@ -1510,6 +1510,9 @@ impl App {
                         game.chat_line(line, CHAT_ERROR);
                     }
                 }
+                if let Some(egg) = items.iter().find(|item| inventory::hidden_egg(item)) {
+                    game.pet_window.egg = Some(egg.id);
+                }
                 game.inventory.extend(items.into_iter().filter(|item| !inventory::hidden_egg(item)).collect());
             }
             MapEvent::BoundOnEquip(index) => {
@@ -2755,6 +2758,7 @@ impl App {
                 }
             }
             MapEvent::PetState { .. } => {}
+            MapEvent::PetAutoFeed(on) => game.pet_window.auto_feed = on,
             MapEvent::PetInfo(pet) => {
                 // Its picture, loaded when it's another monster's.
                 if game.pet_window.picture.as_ref().is_none_or(|(monster, _)| *monster != pet.monster) {
@@ -2766,10 +2770,13 @@ impl App {
             }
             MapEvent::PetFed { ok: false, food } => {
                 let name = inventory::item_name(&self.items, food, true, 0);
-                game.chat_line(messages::fill(self.messages.get(PET_NO_FOOD).map_or("", String::as_str), &[&name]), CHAT_ERROR);
+                game.chat_line(messages::fill(self.messages.get(PET_NO_FOOD).map_or("", String::as_str), &[&name]), PET_NO_FOOD_COLOR);
             }
-            // Fed (its hunger came just before): it says so.
-            MapEvent::PetFed { ok: true, .. } => {
+            // Fed (its hunger came just before): the food and how many are left, and the pet says so.
+            MapEvent::PetFed { ok: true, food } => {
+                let name = inventory::item_name(&self.items, food, true, 0);
+                let left: u32 = game.inventory.items.iter().filter(|item| item.id == food).map(|item| u32::from(item.amount)).sum();
+                game.chat_line(messages::fill(self.messages.get(PET_FED).map_or("", String::as_str), &[&name, &left]), PET_FED_COLOR);
                 if let Some(pet) = &game.pet {
                     let _ = game.session.pet_act(&net::PetAct::Talk { monster: pet.monster, act: pet::ACT_FEEDING, hunger: pet::hunger_band(pet.hunger) });
                 }

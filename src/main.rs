@@ -379,7 +379,8 @@ const WEDDING_EFFECT: u32 = 347;
 /// questions (feeding; the name, then renaming once), no food, and neglect.
 // ponytail: the menu's order is a guess; the strings sit together like one.
 const PET_EGGS: usize = 599;
-const PET_CHOICES: [(usize, u8); 5] = [(592, net::PET_FEED), (593, net::PET_PERFORM), (594, net::PET_RETURN), (595, net::PET_UNEQUIP), (596, net::PET_INFO)];
+/// Our pet's menu: Check Pet Status, Feed Pet, Performance, Unequip Accessory, Return to Egg; all five always.
+const PET_CHOICES: [(usize, u8); 5] = [(596, net::PET_INFO), (592, net::PET_FEED), (593, net::PET_PERFORM), (595, net::PET_UNEQUIP), (594, net::PET_RETURN)];
 /// A player's menu: "Open 1:1 Chat", "Send a mail", "Block Chat (Toggle)", "Kick %s".
 const WHISPER_CHOICE: usize = 360;
 const MAIL_CHOICE: usize = 2808;
@@ -390,9 +391,12 @@ const HOMUNCULUS_CHOICES: [(usize, Choice); 3] = [(1112, Choice::HomunculusStatu
 /// Ourselves with a stall open: "Close stall".
 const CLOSE_STALL_CHOICE: usize = 3493;
 const PET_FEED_ASKS: usize = 601;
-const PET_NAME_RULE: usize = 682;
-const PET_RENAME_ASKS: usize = 683;
+const PET_RENAME_ASKS: usize = 2931;
 const PET_NO_FOOD: usize = 591;
+/// "Your pet has been fed. %s (%d) remaining", and the lines' colours.
+const PET_FED: usize = 2578;
+const PET_FED_COLOR: [u8; 3] = [0x64, 0xFF, 0xFF];
+const PET_NO_FOOD_COLOR: [u8; 3] = [0xF5, 0x1E, 0x1E];
 const PET_NEGLECTED: usize = 1188;
 const EQUIPMENT_SHOWN: usize = 1359;
 const EQUIPMENT_HIDDEN: usize = 1358;
@@ -2049,8 +2053,6 @@ enum Asked {
     Mail(u16),
     /// An inventory item, into the material window.
     Material(u16),
-    /// The pet's new name.
-    PetName,
     /// A guild position's new title, and its tax (the master's).
     PositionTitle(u32),
     PositionTax(u32),
@@ -2208,6 +2210,9 @@ enum QueueAsked {
 enum PetAsked {
     Feed,
     Rename(String),
+    /// A new name turned down: the line why (either button closes it).
+    // ponytail: drawn as the question box; the game's has OK alone.
+    Refused(usize),
 }
 
 /// Another player's equipment window: the window, what they wear, and their figure for its preview.
@@ -3917,6 +3922,7 @@ impl App {
                     }
                 }
                 None if game.storage.typing => game.storage.type_text(text),
+                None if game.pet_window.typing => game.pet_window.name_text.get_or_insert_with(String::new).push_str(text),
                 None if game.booking.as_ref().is_some_and(|window| window.focus.is_some()) => game.booking.as_mut().unwrap().type_text(text),
                 None if game.party_dialog.as_ref().is_some_and(|dialog| dialog.typing) => game.party_dialog.as_mut().unwrap().type_text(text),
                 None if game.reason_box.is_some() => game.reason_box.as_mut().unwrap().type_text(text),
@@ -5692,8 +5698,8 @@ mod tests {
         assert!(player_choices(7, all).contains(&(458, Choice::RoomKick(2))));
         // While trading there's no deal to ask for.
         assert_eq!(labels(PlayerTies { trading: true, friend: true, ..PlayerTies::default() }), [360, 2808, 1360, 3820]);
-        // The pet's status comes last; the homunculus has three entries.
-        assert_eq!(PET_CHOICES.map(|(label, _)| label), [592, 593, 594, 595, 596]);
+        // The pet's status comes first, all five always; the homunculus has three entries.
+        assert_eq!(PET_CHOICES.map(|(label, _)| label), [596, 592, 593, 595, 594]);
         assert_eq!(HOMUNCULUS_CHOICES.map(|(label, _)| label), [1112, 1113, 1114]);
     }
 

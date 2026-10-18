@@ -1,6 +1,6 @@
 //! The client's Lua data tables (compiled Lua 5.1 in data.grf), run in an embedded Lua 5.1.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 
 use mlua::Lua;
@@ -333,6 +333,8 @@ pub struct PetTables {
     pub illustrations: HashMap<u16, String>,
     /// The ACT an accessory moves its pet by, e.g. 10013 → "poring_책가방.act".
     pub accessory_acts: HashMap<u16, String>,
+    /// What it eats (`PetFoodTable`): an item ID, e.g. 1002 → 531.
+    pub food: HashMap<u16, u32>,
 }
 
 pub fn pet_tables(grf: &Grf) -> io::Result<PetTables> {
@@ -341,7 +343,43 @@ pub fn pet_tables(grf: &Grf) -> io::Result<PetTables> {
     lua.load("setmetatable(jobtbl, { __index = function() return -1 end })").exec().map_err(lua_error)?;
     exec(&lua, grf, &[PET_INFO])?;
     let table = |name: &str| names(&lua.globals().get::<mlua::Table>(name).map_err(lua_error)?);
-    Ok(PetTables { names: table("PetNameTable")?, illustrations: table("PetIllustNameTable")?, accessory_acts: table("PetAccActNameTable")? })
+    // A translation may leave the food table out.
+    let food = lua
+        .globals()
+        .get::<mlua::Table>("PetFoodTable")
+        .map(|table| {
+            table.pairs::<i64, i64>().flatten().filter_map(|(monster, item)| Some((u16::try_from(monster).ok()?, u32::try_from(item).ok()?))).collect()
+        })
+        .unwrap_or_default();
+    Ok(PetTables { names: table("PetNameTable")?, illustrations: table("PetIllustNameTable")?, accessory_acts: table("PetAccActNameTable")?, food })
+}
+
+/// The client's pet evolution list (it may be missing).
+const PET_EVOLUTION: &str = "system\\PetEvolutionCln_true.lub";
+
+/// The eggs whose pets may eat by themselves: the list's `InsertPetAutoFeeding(egg)` calls.
+pub fn pet_auto_feeding(grf: &Grf) -> io::Result<HashSet<u32>> {
+    auto_feeding(grf.read(PET_EVOLUTION)?)
+}
+
+/// Runs the pet evolution list with `InsertPetAutoFeeding` collecting its eggs (the list's other calls do nothing).
+pub fn auto_feeding(source: Vec<u8>) -> io::Result<HashSet<u32>> {
+    let lua = new_lua()?;
+    let eggs = std::rc::Rc::new(std::cell::RefCell::new(HashSet::new()));
+    let found = eggs.clone();
+    let insert = lua
+        .create_function(move |_, egg: i64| {
+            if let Ok(egg) = u32::try_from(egg) {
+                found.borrow_mut().insert(egg);
+            }
+            Ok(())
+        })
+        .map_err(lua_error)?;
+    lua.globals().set("InsertPetAutoFeeding", insert).map_err(lua_error)?;
+    lua.load("setmetatable(_G, { __index = function() return function() end end })").exec().map_err(lua_error)?;
+    exec_bytes(&lua, PET_EVOLUTION, source)?;
+    let eggs = eggs.borrow().clone();
+    Ok(eggs)
 }
 
 /// An achievement as the client's table (achievements.lub) describes it.

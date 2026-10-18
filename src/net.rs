@@ -1212,6 +1212,8 @@ const ZC_CONFIG: u16 = 0x02D9;
 const ZC_CONFIG_NOTIFY: u16 = 0x02DA;
 /// CZ_CONFIG's setting for the Show Equipment box (rathena's CONFIG_OPEN_EQUIPMENT_WINDOW).
 const CONFIG_OPEN_EQUIPMENT: u32 = 0;
+/// CZ_CONFIG's setting for a pet eating by itself (rathena's CONFIG_PET_AUTOFEED).
+const CONFIG_PET_AUTOFEED: u32 = 2;
 const CZ_REQ_OPEN_BANKING: u16 = 0x09B6;
 const ZC_ACK_OPEN_BANKING: u16 = 0x09B7;
 const CZ_REQ_BANKING_CHECK: u16 = 0x09AB;
