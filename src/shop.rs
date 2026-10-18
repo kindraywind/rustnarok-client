@@ -13,12 +13,14 @@ use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, offset};
 
-// ponytail: 280px windows of 32px rows; calibrate against the real client.
 const WIDTH: f32 = 280.0;
 const ROW: f32 = 32.0;
-/// Rows each window shows: the goods and the deal.
-const ROWS: [usize; 2] = [7, 2];
-const POSITIONS: [[f32; 2]; 2] = [[100.0, 100.0], [100.0 + WIDTH + 10.0, 100.0 + 5.0 * ROW]];
+/// Rows each window shows: the goods (280×312) and the deal (280×152).
+const ROWS: [usize; 2] = [8, 3];
+/// The goods on the inventory's spot, the deal beside and under it.
+const POSITIONS: [[f32; 2]; 2] = [[0.0, 120.0], [280.0, 280.0]];
+/// Where prices end, from the right edge.
+const PRICE_RIGHT: f32 = 18.0;
 const PADDING: f32 = 5.0;
 const LEFT: f32 = 16.0;
 const FOOTER: f32 = 27.0;
@@ -26,7 +28,7 @@ const BUTTON: [f32; 2] = [42.0, 20.0];
 const SELECTED: [u8; 4] = [0x34, 0x6A, 0xE1, 0x80];
 /// Titles: the goods when buying and selling, the deal when buying and selling.
 const TITLES: [[usize; 2]; 2] = [[186, 185], [166, 168]];
-/// "합계 : %d z".
+/// "합계 : %d z": a market's total.
 const TOTAL_MESSAGE: usize = 3699;
 /// Barters: "%s %d ea" (an item it costs), "money" (zeny it costs), and the deal window's title.
 const COSTS_MESSAGE: usize = 3553;
@@ -74,6 +76,8 @@ impl Assets {
 pub struct Offer {
     pub item: u32,
     pub price: u32,
+    /// The price before a discount (buying) or overcharge (selling); 0 or `price` when there's none.
+    pub listed: u32,
     /// Selling: the inventory entry and how many are carried.
     pub index: u16,
     pub have: u16,
@@ -300,6 +304,8 @@ impl Shop {
                     return self.pick(window, row);
                 }
             }
+            // An NPC shop's Buy or Sell with nothing in the deal just closes it.
+            Hit::Deal if self.deal.is_empty() && self.plain() => return Some(Action::Close),
             Hit::Deal => return (!self.deal.is_empty()).then_some(Action::Deal),
             Hit::Cancel => return Some(Action::Close),
             Hit::Window(_) => {}
@@ -553,9 +559,9 @@ impl Shop {
                     continue;
                 }
                 let (name_top, price_top) = if offer.stock.is_some() { (3.0, 3.0) } else { (10.0, 10.0) };
-                layer.texts.push((window::fit(font, &name, 115.0), frame.at([LEFT + 32.0, top + name_top]), [0, 0, 0]));
-                let price = format!("{} z", group(u64::from(offer.price) * u64::from(amount.unwrap_or(1))));
-                layer.texts.push((price.clone(), frame.at([WIDTH - 4.0 - font.width(&price), top + price_top]), [0, 0, 0]));
+                let (price, name_width) = price_text(offer.listed, offer.price);
+                layer.texts.push((window::fit(font, &name, name_width), frame.at([LEFT + 32.0, top + name_top]), [0, 0, 0]));
+                layer.texts.push((price.clone(), frame.at([WIDTH - PRICE_RIGHT - font.width(&price), top + price_top]), [0, 0, 0]));
                 if let (Some(stock), 0) = (offer.stock, window) {
                     let left = group(u64::from(stock));
                     layer.texts.push((left.clone(), frame.at([WIDTH - 4.0 - font.width(&left), top + 17.0]), GREY));
@@ -571,10 +577,12 @@ impl Shop {
             if window == 1 {
                 let total = if barter {
                     window::fit(font, &self.costs_text(items, messages, &self.deal.iter().map(|&(offer, amount)| (offer, amount)).collect::<Vec<_>>()), 150.0)
-                } else {
+                } else if self.market.is_some() {
                     rustnarok_client::messages::fill(message(TOTAL_MESSAGE), &[&group(self.total())])
+                } else {
+                    format!("Total : {} Zeny", group(self.total()))
                 };
-                layer.texts.push((total, frame.at([10.0, footer + 7.0]), [0, 0, 0]));
+                layer.texts.push((total, frame.at([12.0, height - 21.0]), [0, 0, 0]));
                 let (deal, cancel) = self.deal_button(1);
                 let deal_images = &assets.buttons[if barter { 3 } else { usize::from(self.selling) }];
                 layer.sprites.push((&deal_images[look(Hit::Deal)], frame.at(deal), BUTTON));
@@ -601,6 +609,21 @@ impl Shop {
             })
             .collect()
     }
+}
+
+/// A row's unit price, " 1,234 Z", or with a discount or overcharge " 1500 -> 1,200 Z" (the original not grouped); and
+/// how wide its name may be: 100 px, narrower for a longer original price.
+fn price_text(listed: u32, price: u32) -> (String, f32) {
+    if listed == 0 || listed == price {
+        return (format!(" {} Z", group(u64::from(price))), 100.0);
+    }
+    let width = match listed.to_string().len() {
+        0..=2 => 80.0,
+        3 => 70.0,
+        4 => 55.0,
+        _ => 45.0,
+    };
+    (format!(" {listed} -> {} Z", group(u64::from(price))), width)
 }
 
 /// A number with thousands separated by commas, as the client shows prices.
@@ -644,6 +667,17 @@ mod tests {
         assert_eq!(market.deal, [(0, 3)]);
         market.bought(&[(1010, 2)]);
         assert_eq!((market.offers[0].stock, market.deal.is_empty()), (Some(1), true));
+    }
+
+    #[test]
+    fn shows_unit_and_discounted_prices() {
+        assert_eq!(price_text(0, 1200), (" 1,200 Z".to_owned(), 100.0));
+        assert_eq!(price_text(1200, 1200), (" 1,200 Z".to_owned(), 100.0));
+        assert_eq!(price_text(1500, 1200), (" 1500 -> 1,200 Z".to_owned(), 55.0));
+        assert_eq!(price_text(40, 30).1, 80.0);
+        // An NPC shop's Buy with nothing in the deal closes it.
+        let mut shop = Shop::new(false, vec![offer(501, 50, 0, 0)]);
+        assert_eq!(shop.click(Hit::Deal), Some(Action::Close));
     }
 
     #[test]

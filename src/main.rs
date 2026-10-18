@@ -3681,7 +3681,8 @@ impl Game {
             }
         }
         // An NPC's window and the warp list aren't Esc's to close: they end with their own buttons.
-        push(Shop, self.shop.is_some());
+        // An NPC shop isn't Esc's to close.
+        push(Shop, self.shop.as_ref().is_some_and(|shop| !shop.plain()));
         push(Refine, self.refine.is_some());
         push(GradeEnchant, self.grade.is_some());
         push(LaphineSynthesis, self.synthesis.is_some());
@@ -4142,8 +4143,9 @@ impl Game {
         if self.menu.is_some() {
             return Some(Menu);
         }
+        // An NPC shop isn't Esc's to close.
         if self.shop.as_ref().is_some_and(|shop| shop.covers(cursor)) {
-            return Some(Shop);
+            return self.shop.as_ref().filter(|shop| !shop.plain()).map(|_| Shop);
         }
         if self.world_map.is_some() {
             return Some(WorldMap);
@@ -7143,6 +7145,10 @@ impl App {
                 match shop.click(hit) {
                     Some(shop::Action::Deal) => {
                         let _ = shop.send(&mut game.session);
+                        // An NPC shop closes as the deal goes.
+                        if shop.plain() {
+                            game.shop = None;
+                        }
                     }
                     Some(shop::Action::Close) => game.close_shop(),
                     Some(shop::Action::Ask(row, _)) => game.amount = Some(window::Amount::new(Asked::Shop(row), None)),
@@ -7861,9 +7867,21 @@ impl App {
                 }
                 game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             }
-            // A right click on an item (inventory, storage or what's worn) describes it.
+            // A right click on an item (inventory, storage, what's worn, a shop's row) describes it.
+            let shop_row = match game.shop.as_ref().and_then(|shop| shop.hit(self.cursor)) {
+                Some(shop::Hit::Row(window, row)) => game.shop.as_ref().and_then(|shop| shop.offer_at(window, row)),
+                _ => None,
+            };
             let described = match game.window_at(self.cursor) {
                 _ if state != ElementState::Pressed || self.modifiers.alt_key() => None,
+                _ if shop_row.is_some() => shop_row.map(|offer| net::InventoryItem {
+                    id: offer.item,
+                    kind: offer.kind,
+                    amount: 1,
+                    identified: offer.identified,
+                    refine: offer.refine,
+                    ..Default::default()
+                }),
                 Some(Panel::Inventory) => match game.inventory.hit(self.cursor) {
                     Some(inventory::Hit::Item(index)) => game.inventory.get(index).cloned(),
                     _ => None,
@@ -9296,6 +9314,11 @@ impl App {
                 _ => game.minimap_window.type_text(event.text.as_deref().unwrap_or_default()),
             },
             Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Escape)) => game.deal_choice = None,
+            // Enter is the deal-type box's default button: Buy.
+            Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Enter)) => {
+                let npc = game.deal_choice.take().unwrap();
+                let _ = game.session.choose_deal(npc, false);
+            }
             // Earlier arms are windows that want the key. Esc is game_escape, which closes an open battle-mode
             // line first. Here the chat line has the key. Off: the line is always open and letters type. On: Enter
             // opens it, Enter on an empty line closes it, and a closed line sends letters and digits to shortcuts.
@@ -12661,7 +12684,14 @@ impl App {
             MapEvent::ShopGoods(goods) => {
                 let offers = goods
                     .into_iter()
-                    .map(|goods| shop::Offer { item: goods.item, price: goods.discounted, kind: goods.kind, identified: true, ..Default::default() })
+                    .map(|goods| shop::Offer {
+                        item: goods.item,
+                        price: goods.discounted,
+                        listed: goods.price,
+                        kind: goods.kind,
+                        identified: true,
+                        ..Default::default()
+                    })
                     .collect();
                 game.shop = Some(shop::Shop::new(false, offers));
                 game.auto_deal();
@@ -12669,11 +12699,12 @@ impl App {
             MapEvent::ShopWants(wants) => {
                 let offers = wants
                     .into_iter()
-                    .filter_map(|(index, _, price)| {
+                    .filter_map(|(index, listed, price)| {
                         let item = game.inventory.get(index)?;
                         Some(shop::Offer {
                             item: item.id,
                             price,
+                            listed,
                             index,
                             have: item.amount,
                             kind: item.kind,
@@ -12744,17 +12775,11 @@ impl App {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
             }
             MapEvent::Bought(result) | MapEvent::Sold(result) => {
-                // The client's words for how it went.
-                let (id, color) = match result {
-                    0 => (54, CHAT_ITEM),
-                    1 => (55, CHAT_ERROR),
-                    2 => (56, CHAT_ERROR),
-                    4 => (230, CHAT_ERROR),
-                    5 => (281, CHAT_ERROR),
-                    7 => (1797, CHAT_ERROR),
-                    _ => (57, CHAT_ERROR),
-                };
-                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+                // The client's words for how it went (some results say nothing).
+                let sold = matches!(event, MapEvent::Sold(_));
+                if let Some((id, color)) = deal_result(sold, result) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+                }
                 game.shop = None;
             }
             MapEvent::MiscEffect { id, kind } => {
@@ -15567,6 +15592,26 @@ fn locked_with(locks: &[(u32, u32)], id: u32) -> usize {
 /// The share of a window (a combo's) still left.
 fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
     1.0 - (now.saturating_duration_since(start).as_secs_f32() / length.as_secs_f32().max(f32::EPSILON)).min(1.0)
+}
+
+/// What an NPC deal's result says, and in which colour (None: nothing). Selling: done or failed. Buying: done, zeny,
+/// weight, the item limits, RODEX, the exchange results.
+fn deal_result(sold: bool, result: u8) -> Option<(usize, [u8; 3])> {
+    match (sold, result) {
+        (_, 0) => Some((54, CHAT_ITEM)),
+        (true, 1) => Some((57, CHAT_ERROR)),
+        (true, _) => None,
+        (false, 1) => Some((55, CHAT_ERROR)),
+        (false, 2) => Some((56, CHAT_ERROR)),
+        (false, 3) => Some((221, CHAT_ERROR)),
+        (false, 9) => Some((1940, CHAT_ERROR)),
+        (false, 10) => Some((2917, CHAT_ITEM)),
+        (false, 11) => Some((3554, CHAT_ERROR)),
+        (false, 12) => Some((3555, CHAT_ITEM)),
+        (false, 13) => Some((3557, CHAT_ERROR)),
+        (false, 14) => Some((3556, CHAT_ERROR)),
+        (false, _) => None,
+    }
 }
 
 /// Turning on the spot toward rathena direction `target` (0 north, counting counter-clockwise): the body and the head
