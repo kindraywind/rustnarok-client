@@ -38,7 +38,8 @@ diff; `threshold` (percent, default 1) is how much change a shot takes before th
 `settle` waits until the map has loaded again, then the given ms (GM commands sent while it loads are lost).
 Two players: "second": {"account": "2", "slot": 0, "env": {...}} starts a second client; a step with
 "as": "second" (a shot too) acts on it. The first account should be a GM (`@recall` brings the second over).
-"{first}" and "{second}" in any string are the two characters' names, so a scenario runs on anyone's server;
+"{first}" and "{second}" in any string (dict keys too: {"state": {"guild.members.{second}": 1}}) are the two
+characters' names, so a scenario runs on anyone's server;
 "{repo}" is the repository's absolute path (`@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/merge.txt`).
 Each scenario starts a fresh client; the clock is paused for every shot so frames repeat.
 Everything lands under docs/personal/visual/<date>/<HHMMSS>/ (gitignored): game images never go in the repository.
@@ -139,7 +140,7 @@ def with_names(value, names):
     if isinstance(value, list):
         return [with_names(item, names) for item in value]
     if isinstance(value, dict):
-        return {key: with_names(item, names) for key, item in value.items()}
+        return {with_names(key, names): with_names(item, names) for key, item in value.items()}
     return value
 
 

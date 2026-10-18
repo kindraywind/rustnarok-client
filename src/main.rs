@@ -264,6 +264,15 @@ const ANTAGONIST_CHOICE: usize = 403;
 /// "(guild) Guild is asking for an Alliance with them. Do you accept?", "Are you sure that you want to delete it?"
 const ALLY_ASKS: usize = 393;
 const DELETE_ASKS: usize = 356;
+/// "Are you sure that you want to leave?", and the lines when someone leaves: "You left the guild.", "%s has left the
+/// guild.", "Withdrawal Reason: %s". The member menu's "Leave Guild".
+const LEAVE_ASKS: usize = 357;
+const LEFT_GUILD: usize = 489;
+const MEMBER_LEFT: usize = 364;
+const LEFT_BECAUSE: usize = 365;
+const LEAVE_CHOICE: usize = 508;
+/// "Position Title", over the question for a new one.
+const POSITION_TITLE: usize = 511;
 const GUILD_INVITED: usize = 377;
 const GUILD_ONLINE: usize = 485;
 const GUILD_CHAT: [u8; 3] = [180, 255, 180];
@@ -1129,6 +1138,9 @@ enum Asked {
     Material(u16),
     /// The pet's new name.
     PetName,
+    /// A guild position's new title, and its tax (the master's).
+    PositionTitle(u32),
+    PositionTax(u32),
     /// The homunculus's new name.
     HomunculusName,
     /// A Talkie Box's message, before it's placed at the cell.
@@ -1158,6 +1170,10 @@ enum Choice {
     Pet(u8),
     /// Hand the party to this member (by account).
     Leader(u32),
+    /// The guild master moves a member (by its place in the member list) to a position.
+    GuildMove(usize, u32),
+    /// Leave the guild (asks first).
+    GuildLeave,
 }
 
 /// A pet question waiting for OK: feed it, or rename it (to this).
@@ -1769,6 +1785,8 @@ impl Game {
             | Asked::BuyingAmount(_)
             | Asked::PetName
             | Asked::HomunculusName
+            | Asked::PositionTitle(_)
+            | Asked::PositionTax(_)
             | Asked::TalkieBox { .. } => None,
         };
         match amount {
@@ -1804,6 +1822,16 @@ impl Game {
                 Ok(())
             }
             Asked::PartyName | Asked::Invite | Asked::PetName | Asked::HomunculusName => Ok(()),
+            // A position's title or tax: the request carries its other values as they are.
+            Asked::PositionTitle(id) if !name.is_empty() => match &self.guild {
+                Some(guild) => self.session.change_position(&guild.position(id), name),
+                None => Ok(()),
+            },
+            Asked::PositionTax(id) if !name.is_empty() => match &self.guild {
+                Some(guild) => self.session.change_position(&net::GuildPosition { tax: amount.value(), ..guild.position(id) }, &guild.title(id)),
+                None => Ok(()),
+            },
+            Asked::PositionTitle(_) | Asked::PositionTax(_) => Ok(()),
             Asked::BuyingPrice(index, item_id) => {
                 if let Some(setup) = &mut self.buying_setup {
                     setup.set_price(index, item_id, amount.value());
@@ -1864,6 +1892,8 @@ impl Game {
             | Asked::RoomPassword(_)
             | Asked::PetName
             | Asked::HomunculusName
+            | Asked::PositionTitle(_)
+            | Asked::PositionTax(_)
             | Asked::BuyingPrice(..)
             | Asked::BuyingAmount(_)
             | Asked::TalkieBox { .. } => Ok(()),
@@ -2397,6 +2427,8 @@ enum GuildAsked {
     Ally { id: u32, guild: String },
     /// End the relation with this guild.
     End { id: u32, antagonist: bool },
+    /// Leave the guild.
+    Leave,
 }
 
 /// What a pick list's answer is for.
@@ -3728,6 +3760,12 @@ impl App {
                 Some(Choice::Pet(net::PET_INFO)) => game.open_pet_window(),
                 Some(Choice::Pet(command)) => game.pet_command(command),
                 Some(Choice::Leader(account)) => game.leader_asked = Some(account),
+                Some(Choice::GuildMove(row, position)) => {
+                    if let Some(member) = game.guild.as_ref().and_then(|guild| guild.members.get(row)) {
+                        let _ = game.session.move_member(member.account, member.character, position);
+                    }
+                }
+                Some(Choice::GuildLeave) => game.guild_asked = Some(GuildAsked::Leave),
                 Some(Choice::Befriend(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         let _ = game.session.add_friend(&actor.name.clone());
@@ -3813,6 +3851,11 @@ impl App {
                             GuildAsked::Ally { id, .. } => game.session.answer_alliance(id, yes),
                             GuildAsked::End { id, antagonist } if yes => game.session.end_relation(id, antagonist),
                             GuildAsked::End { .. } => Ok(()),
+                            GuildAsked::Leave if yes => match &game.guild {
+                                Some(guild) => game.session.leave_guild(guild.id, game.account_id, game.me.id, ""),
+                                None => Ok(()),
+                            },
+                            GuildAsked::Leave => Ok(()),
                         };
                     }
                 }
@@ -4350,6 +4393,14 @@ impl App {
                             let _ = game.session.skill_up(skill);
                         }
                         Some(guild::Hit::Relation(id, antagonist)) => game.guild_asked = Some(GuildAsked::End { id, antagonist }),
+                        // The master's positions page: a box switches its permission; the title and tax are asked for.
+                        Some(guild::Hit::Permission(id, permission)) => {
+                            if let Some(guild) = &game.guild {
+                                let _ = game.session.change_position(&guild.switched(id, permission), &guild.title(id));
+                            }
+                        }
+                        Some(guild::Hit::PositionTitle(id)) => game.amount = Some(window::Amount::name(Asked::PositionTitle(id), POSITION_TITLE)),
+                        Some(guild::Hit::Tax(id)) => game.amount = Some(window::Amount::new(Asked::PositionTax(id), None)),
                         _ => {}
                     },
                     Panel::Clan => {
@@ -4717,6 +4768,29 @@ impl App {
             let label = self.messages.get(LEADER_CHOICE).cloned().unwrap_or_default();
             game.menu = Some(menu::Menu::new(self.cursor, vec![Some((label, Choice::Leader(account)))], &self.font));
             return;
+        }
+        // A right click on a row of the guild's members page: the master moves someone else, a member leaves.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+            && let Some((start, None)) = game.right_press
+            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+            && game.window_at(self.cursor) == Some(Panel::Guild)
+            && let Some(guild) = &game.guild
+            && let Some(guild::Hit::Member(row)) = game.guild_window.hit(self.cursor, guild)
+        {
+            let choices = guild.member_menu(game.me.id, row);
+            if !choices.is_empty() {
+                game.right_press = None;
+                let entries = choices
+                    .into_iter()
+                    .map(|choice| match choice {
+                        guild::MemberChoice::Move(position) => Some((guild.title(position), Choice::GuildMove(row, position))),
+                        guild::MemberChoice::Leave => Some((self.messages.get(LEAVE_CHOICE).cloned().unwrap_or_default(), Choice::GuildLeave)),
+                    })
+                    .collect();
+                game.menu = Some(menu::Menu::new(self.cursor, entries, &self.font));
+                return;
+            }
         }
         if let Scene::Game(game) = &mut self.scene {
             let assets = self.assets.as_ref();
@@ -7592,6 +7666,22 @@ impl App {
                     guild.positions = positions.into_iter().collect();
                 }
             }
+            MapEvent::GuildPositionChanged(position, title) => {
+                if let Some(guild) = &mut game.guild {
+                    guild.change_position(position, title);
+                }
+            }
+            MapEvent::GuildMemberPosition { character, position, .. } => {
+                if let Some(guild) = &mut game.guild {
+                    guild.move_member(character, position);
+                }
+            }
+            // The line under a player's name; a tag not known yet waits for the whole of it.
+            MapEvent::PositionTitle { account, title } => {
+                if let Some(tag) = game.name_tags.get_mut(&account) {
+                    tag.position = title;
+                }
+            }
             MapEvent::GuildPositionInfo(info) => {
                 if let Some(guild) = &mut game.guild {
                     guild.position_info = info;
@@ -7703,12 +7793,24 @@ impl App {
                 let id = 378 + usize::from(result.min(3));
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 2 { CHAT_ITEM } else { CHAT_ERROR });
             }
-            MapEvent::GuildLeft { character, .. } => {
+            MapEvent::GuildLeft { character, reason, expelled } => {
                 if character == game.me.id {
                     game.guild = None;
                     game.guild_window.frame.open = false;
+                    if !expelled {
+                        game.chat_line(self.messages.get(LEFT_GUILD).cloned().unwrap_or_default(), GUILD_CHAT);
+                    }
                 } else if let Some(guild) = &mut game.guild {
+                    let name = guild.members.iter().find(|member| member.character == character).map(|member| member.name.clone());
                     guild.members.retain(|member| member.character != character);
+                    // ponytail: the leave lines' color (the guild chat's) is an estimate.
+                    if let Some(name) = name.filter(|_| !expelled) {
+                        let line = |id: usize, value: &str| messages::fill(self.messages.get(id).map_or("", String::as_str), &[&value]);
+                        game.chat_line(line(MEMBER_LEFT, &name), GUILD_CHAT);
+                        if !reason.is_empty() {
+                            game.chat_line(line(LEFT_BECAUSE, &reason), GUILD_CHAT);
+                        }
+                    }
                 }
             }
             // The clan: its info at login or on joining, how many are online, leaving, and its chat.
@@ -10131,6 +10233,7 @@ impl App {
             (Some((_, name)), _) => Some(format!("({name}){}", message(GUILD_INVITED))),
             (_, Some(GuildAsked::Ally { guild, .. })) => Some(format!("({guild}){}", message(ALLY_ASKS))),
             (_, Some(GuildAsked::End { .. })) => Some(message(DELETE_ASKS).to_owned()),
+            (_, Some(GuildAsked::Leave)) => Some(message(LEAVE_ASKS).to_owned()),
             _ => None,
         };
         if let Some(question) = guild_question {

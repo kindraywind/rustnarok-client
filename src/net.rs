@@ -122,6 +122,27 @@ fn name_field(name: &str) -> Vec<u8> {
     field
 }
 
+/// CZ_REG_CHANGE_GUILD_POSITIONINFO with one position: ID, permissions, rank (rathena ignores it; the ID), tax, title.
+pub fn encode_position_change(position: &GuildPosition, title: &str) -> Vec<u8> {
+    let mut packet = CZ_REG_CHANGE_GUILD_POSITIONINFO.to_le_bytes().to_vec();
+    packet.extend_from_slice(&44u16.to_le_bytes());
+    for value in [position.id, position.mode, position.id, position.tax] {
+        packet.extend_from_slice(&value.to_le_bytes());
+    }
+    packet.extend_from_slice(&name_field(title));
+    packet
+}
+
+/// CZ_REQ_CHANGE_MEMBERPOS with one member.
+pub fn encode_member_move(account: u32, character: u32, position: u32) -> Vec<u8> {
+    let mut packet = CZ_REQ_CHANGE_MEMBERPOS.to_le_bytes().to_vec();
+    packet.extend_from_slice(&16u16.to_le_bytes());
+    for value in [account, character, position] {
+        packet.extend_from_slice(&value.to_le_bytes());
+    }
+    packet
+}
+
 /// Decodes a NUL-terminated EUC-KR field.
 pub fn c_string(bytes: &[u8]) -> String {
     let end = bytes.iter().position(|&byte| byte == 0).unwrap_or(bytes.len());
@@ -988,6 +1009,11 @@ const ZC_ACTIVE_QUEST: u16 = 0x02B7;
 const CZ_ACTIVE_QUEST: u16 = 0x02B6;
 const CZ_REQ_GUILD_MENU: u16 = 0x014F;
 const CZ_REQ_LEAVE_GUILD: u16 = 0x0159;
+const CZ_REG_CHANGE_GUILD_POSITIONINFO: u16 = 0x0161;
+const ZC_ACK_CHANGE_GUILD_POSITIONINFO: u16 = 0x0174;
+const CZ_REQ_CHANGE_MEMBERPOS: u16 = 0x0155;
+const ZC_ACK_REQ_CHANGE_MEMBERS: u16 = 0x0156;
+const ZC_GUILD_POSITION: u16 = 0x0AFD;
 const CZ_REQ_MAKE_GUILD: u16 = 0x0165;
 const CZ_JOIN_GUILD: u16 = 0x016B;
 const CZ_GUILD_CHAT: u16 = 0x017E;
@@ -2327,6 +2353,19 @@ pub enum MapEvent {
     GuildPositions(Vec<(u32, String)>),
     /// Positions' permissions and tax (ZC_POSITION_INFO).
     GuildPositionInfo(Vec<GuildPosition>),
+    /// A position changed (ZC_ACK_CHANGE_GUILD_POSITIONINFO): its permissions and tax, and its title.
+    GuildPositionChanged(GuildPosition, String),
+    /// A member moved to another position (ZC_ACK_REQ_CHANGE_MEMBERS).
+    GuildMemberPosition {
+        account: u32,
+        character: u32,
+        position: u32,
+    },
+    /// The position title under a player's name (ZC_GUILD_POSITION); empty without a guild.
+    PositionTitle {
+        account: u32,
+        title: String,
+    },
     /// The guild's skills and the points left to put in them.
     GuildSkills {
         points: u16,
@@ -3893,6 +3932,16 @@ impl MapSession {
         packet.extend_from_slice(&guild.to_le_bytes());
         packet.extend_from_slice(&u32::from(accept).to_le_bytes());
         self.stream.write_all(&packet)
+    }
+
+    /// The master changes a position: its permissions, tax and title.
+    pub fn change_position(&mut self, position: &GuildPosition, title: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_position_change(position, title))
+    }
+
+    /// The master moves a member to another position.
+    pub fn move_member(&mut self, account: u32, character: u32, position: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_member_move(account, character, position))
     }
 
     pub fn leave_guild(&mut self, guild: u32, account: u32, character: u32, reason: &str) -> io::Result<()> {
@@ -5663,6 +5712,15 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_POSITION_ID_NAME_INFO => {
             MapEvent::GuildPositions(packet[4..].chunks_exact(28).map(|entry| (self::u32_at(entry, 0), c_string(&entry[4..28]))).collect())
         }
+        // rathena sends one entry a packet: ID, permissions, rank, tax, title.
+        ZC_ACK_CHANGE_GUILD_POSITIONINFO if packet.len() >= 44 => {
+            MapEvent::GuildPositionChanged(GuildPosition { id: u32_at(4), mode: u32_at(8), tax: u32_at(16) }, c_string(&packet[20..44]))
+        }
+        // One member a packet: account, character, position.
+        ZC_ACK_REQ_CHANGE_MEMBERS if packet.len() >= 16 => {
+            MapEvent::GuildMemberPosition { account: u32_at(4), character: u32_at(8), position: (u32_at(12) as i32).max(0) as u32 }
+        }
+        ZC_GUILD_POSITION => MapEvent::PositionTitle { account: u32_at(4), title: c_string(packet.get(8..).unwrap_or_default()) },
         // Each position: ID, permissions, rank, tax.
         ZC_POSITION_INFO => MapEvent::GuildPositionInfo(
             packet[4..]
@@ -7423,6 +7481,44 @@ mod tests {
         let Some(MapEvent::WarpList { skill: 26, maps }) = decode_map_packet(&list) else { panic!() };
         assert_eq!(maps, ["Random.gat", "prontera.gat"]);
         assert_eq!([ZC_WARPLIST, CZ_SELECT_WARPPOINT, CZ_REMEMBER_WARPPOINT].map(packet_length), [Some(-1), Some(20), Some(2)]);
+    }
+
+    #[test]
+    fn decodes_guild_position_changes() {
+        // One position as clif_guild_positionchanged sends it.
+        let mut changed = ZC_ACK_CHANGE_GUILD_POSITIONINFO.to_le_bytes().to_vec();
+        changed.extend_from_slice(&44u16.to_le_bytes());
+        for value in [1u32, 0x11, 1, 10] {
+            changed.extend_from_slice(&value.to_le_bytes());
+        }
+        changed.extend_from_slice(&name_field("Officer"));
+        let Some(MapEvent::GuildPositionChanged(position, title)) = decode_map_packet(&changed) else { panic!() };
+        assert_eq!((position, title.as_str()), (GuildPosition { id: 1, mode: 0x11, tax: 10 }, "Officer"));
+
+        let mut moved = ZC_ACK_REQ_CHANGE_MEMBERS.to_le_bytes().to_vec();
+        moved.extend_from_slice(&16u16.to_le_bytes());
+        for value in [2_000_001u32, 150_001, 1] {
+            moved.extend_from_slice(&value.to_le_bytes());
+        }
+        assert!(matches!(decode_map_packet(&moved), Some(MapEvent::GuildMemberPosition { account: 2_000_001, character: 150_001, position: 1 })));
+
+        // A title under the name, and none (no guild).
+        let mut titled = ZC_GUILD_POSITION.to_le_bytes().to_vec();
+        titled.extend_from_slice(&32u16.to_le_bytes());
+        titled.extend_from_slice(&2_000_001u32.to_le_bytes());
+        titled.extend_from_slice(&name_field("Officer"));
+        assert!(matches!(decode_map_packet(&titled), Some(MapEvent::PositionTitle { account: 2_000_001, title }) if title == "Officer"));
+        let mut none = ZC_GUILD_POSITION.to_le_bytes().to_vec();
+        none.extend_from_slice(&8u16.to_le_bytes());
+        none.extend_from_slice(&2_000_001u32.to_le_bytes());
+        assert!(matches!(decode_map_packet(&none), Some(MapEvent::PositionTitle { account: 2_000_001, title }) if title.is_empty()));
+
+        // The master's requests: one position, the title padded to 24 bytes; one member.
+        let request = encode_position_change(&GuildPosition { id: 1, mode: 0x01, tax: 10 }, "Officer");
+        assert_eq!(request.len(), 44);
+        assert_eq!(&request[..20], &[0x61, 0x01, 44, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0]);
+        assert_eq!(&request[20..], &name_field("Officer")[..]);
+        assert_eq!(encode_member_move(7, 8, 19), [0x55, 0x01, 16, 0, 7, 0, 0, 0, 8, 0, 0, 0, 19, 0, 0, 0]);
     }
 
     #[test]
