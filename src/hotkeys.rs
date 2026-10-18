@@ -31,6 +31,8 @@ const SWITCH: [f32; 2] = [3.0, 4.0];
 const SWITCH_SIZE: [f32; 2] = [10.0, 26.0];
 const STEP_BUTTON: [f32; 2] = [11.0, 11.0];
 const DEFAULT_POSITION: [f32; 2] = [230.0, 0.0];
+/// The bar is held to move by its margins: left of x 15, from x 276 on, above y 4.
+const MARGIN_RIGHT: f32 = 276.0;
 const DEFAULT_ROWS: usize = 2;
 
 pub struct Assets {
@@ -129,6 +131,13 @@ impl Hotkeys {
         Some(
             (0..self.rows * PER_ROW).find(|&slot| contains(hover_corner(slot), SLOT, local)).map(|slot| Hit::Slot(self.key_index(slot))).unwrap_or(Hit::Window),
         )
+    }
+
+    /// Whether a press here moves the bar: on its margins (left of the slots, right of them or above them), not on a
+    /// slot or a button.
+    pub fn grabbed(&self, cursor: [f32; 2]) -> bool {
+        let Some(local) = self.frame.local(cursor, self.height()) else { return false };
+        self.hit(cursor) == Some(Hit::Window) && (local[0] < FIRST_SLOT[0] - 1.0 || local[0] >= MARGIN_RIGHT || local[1] < FIRST_SLOT[1])
     }
 
     /// The server's tab of the bar showing: 0 for hotbar 1, 1 for hotbar 2.
@@ -352,6 +361,9 @@ mod tests {
         // The minus and plus buttons by the last row: (277, 66 - 28) and (277, 66 - 13).
         assert_eq!(bar.hit(at([280.0, 41.0])), Some(Hit::Minus));
         assert_eq!(bar.hit(at([280.0, 56.0])), Some(Hit::Plus));
+        // Held by its margins it moves; not on a slot, a gap between slots, or a button.
+        assert!(bar.grabbed(at([12.0, 50.0])) && bar.grabbed(at([100.0, 2.0])) && bar.grabbed(at([285.0, 10.0])));
+        assert!(!bar.grabbed(at([20.0, 10.0])) && !bar.grabbed(at([42.0, 10.0])) && !bar.grabbed(at([5.0, 10.0])) && !bar.grabbed(at([280.0, 41.0])));
         bar.click(Hit::Plus);
         bar.click(Hit::Plus);
         bar.click(Hit::Plus);
