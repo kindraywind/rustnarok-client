@@ -1,0 +1,11 @@
+// A party leader's memorial dungeon (issue #275). Loaded with @loadnpc, taken out with @unloadnpcfile.
+// Destroys this party's instance first, then creates Endless Tower (instance_db, party mode).
+prontera,156,181,4	script	Memorial Clerk	4_M_01,{
+	.@id = instance_id(IM_PARTY);
+	if (.@id > 0)
+		instance_destroy(.@id);
+	.@made = instance_create("Endless Tower", IM_PARTY);
+	if (.@made < 0)
+		dispbottom "memorial create failed: " + .@made;
+	end;
+}

@@ -129,6 +129,10 @@ pub enum WindowId {
     BlockList,
     /// The away-message box.
     AwayMessage,
+    /// The memorial dungeon window.
+    Memorial,
+    /// Destroy asks yes or no in the message box.
+    MemorialAsked,
 }
 
 impl WindowId {
@@ -219,6 +223,8 @@ impl WindowId {
             Self::FriendSetup => "FriendSetup",
             Self::BlockList => "BlockList",
             Self::AwayMessage => "AwayMessage",
+            Self::Memorial => "Memorial",
+            Self::MemorialAsked => "MemorialAsked",
         }
     }
 }

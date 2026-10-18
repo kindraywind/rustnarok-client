@@ -880,7 +880,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         || game.trade_asked.is_some()
         || game.booking_asked.is_some()
         || game.adopt_asked.is_some()
-        || game.queue_asked.is_some();
+        || game.queue_asked.is_some()
+        || game.memorial_asked;
     let question_buttons = app.assets.as_ref().filter(|_| question).into_iter().flat_map(|assets| {
         let dialog = crate::dialog_position(&assets.message);
         [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)].map(|(name, place, button)| {
@@ -1023,6 +1024,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .flatten()
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
+        .chain(game.memorial.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::item_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
@@ -1529,6 +1531,21 @@ fn game_state(app: &App, game: &Game) -> Value {
         .map(|window| json!({"posts": window.posts.iter().map(|post| post.name.clone()).collect::<Vec<_>>(), "status": window.status}))
         .into();
     state["booking_asked"] = game.booking_asked.as_ref().map(|(_, _, name, ..)| name.clone()).into();
+    // The memorial dungeon, or null when there isn't one. Seconds left are until each Unix deadline.
+    let unix = crate::memorial::unix_now();
+    state["instance"] = game
+        .memorial
+        .instance
+        .as_ref()
+        .map(|instance| {
+            json!({
+                "name": instance.name,
+                "place": instance.place,
+                "time_left": instance.time_limit.map(|deadline| crate::memorial::seconds_left(deadline, unix)),
+                "idle_left": instance.idle_limit.map(|deadline| crate::memorial::seconds_left(deadline, unix)),
+            })
+        })
+        .into();
     // The RSM 2 model instances standing on the map.
     state["rsm2_models"] = game.world.rsm_2_models.into();
     state["rsm2_moving"] = game.world.rsm_2_moving().into();
