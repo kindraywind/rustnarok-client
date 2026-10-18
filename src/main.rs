@@ -68,6 +68,7 @@ mod equipment;
 mod escape;
 mod grade;
 mod guild;
+mod head_marks;
 mod homunculus;
 mod hotkeys;
 mod inventory;
@@ -518,8 +519,6 @@ const MENU_SELECTION: [u8; 4] = [0xCD, 0xE0, 0xFF, 0xFF];
 const SKILL_ACTION: usize = 12;
 /// Words over a head stay this long.
 const SPEECH_TIME: Duration = Duration::from_secs(5);
-/// Emotions sit this many sprite pixels above the feet, over the head.
-const EMOTION_HEIGHT: f32 = 70.0;
 /// Spirit spheres and coins: how far from the body they circle, how high, how fast (radians a second), and how
 /// much flatter the circle looks than it is.
 // ponytail: estimates; calibrate against the real client.
@@ -712,6 +711,8 @@ struct Game {
     /// The emotion sprite, and the emotions showing: by unit (None = the player), the sprite action and when.
     emotion_sprite: Option<SpriteSet>,
     emotions: HashMap<Option<u32>, (usize, Instant)>,
+    /// The status marks' sprites (stun, sleep, curse, the ice block) by name.
+    mark_sprites: HashMap<&'static str, SpriteSet>,
     /// What circles units (None = the player): spheres or coins, shields, charms, souls; the sphere's, the shield's
     /// and the charm's pictures, the coin's sprite.
     spirits: HashMap<Option<u32>, Orbs>,
@@ -8097,6 +8098,10 @@ impl App {
                     shadow: SpriteSet::at(&self.grf, "data\\sprite\\shadow"),
                     emotion_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\emotion"),
                     emotions: HashMap::new(),
+                    mark_sprites: ["status-stun", "status-sleep", "status-curse", "얼음땡"]
+                        .into_iter()
+                        .filter_map(|name| Some((name, SpriteSet::at(&self.grf, &format!("data\\sprite\\이팩트\\{name}"))?)))
+                        .collect(),
                     spirits: HashMap::new(),
                     sphere: gpu.try_load_texture(&self.grf, "data\\texture\\effect\\기구.bmp", true).ok(),
                     shield: render::load_image(&self.grf, "data\\texture\\effect\\shield.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
@@ -11686,12 +11691,42 @@ impl App {
                 shown.push((feet, sprite.frame_at(gpu, *action, 0, Timing::Loop(elapsed))));
             }
         }
+        // Status marks: stun stars, sleep, curse and silence's "..." over heads, the ice block at a frozen unit's feet.
+        let looped = now.duration_since(game.entered).as_secs_f32() * 1000.0;
+        let mut marked = Vec::new();
+        let states = std::iter::once((player_feet, game.player.body_state, game.player.health_state))
+            .chain(game.units.iter().filter_map(|(id, actor)| feet_of.get(id).map(|&feet| (feet, actor.body_state, actor.health_state))));
+        for (feet, body, health) in states {
+            for mark in head_marks::marks(body, health) {
+                let anchor = head_marks::anchor(feet, mark.height());
+                match mark.sprite() {
+                    Some(name) => {
+                        if let Some(sprite) = game.mark_sprites.get_mut(name) {
+                            marked.push((Some(name), anchor, sprite.frame_at(gpu, 0, 0, Timing::Loop(looped))));
+                        }
+                    }
+                    None => {
+                        if let (Some(sprite), Some(action)) = (&mut game.emotion_sprite, emotion::sprite_action(head_marks::SILENCE_EMOTION)) {
+                            marked.push((None, anchor, sprite.frame_at(gpu, action, 0, Timing::Loop(looped))));
+                        }
+                    }
+                }
+            }
+        }
         if let Some(sprite) = &game.emotion_sprite {
             billboards.extend(shown.into_iter().flat_map(|(feet, placements)| {
-                placements
-                    .into_iter()
-                    .map(move |(key, position, size, angle)| (sprite.texture(key), feet, [position[0], position[1] - EMOTION_HEIGHT], size, [1.0; 4], angle))
+                let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
+                placements.into_iter().map(move |(key, position, size, angle)| (sprite.texture(key), anchor, position, size, [1.0; 4], angle))
             }));
+        }
+        for (name, anchor, placements) in marked {
+            let sprite = match name {
+                Some(name) => game.mark_sprites.get(name),
+                None => game.emotion_sprite.as_ref(),
+            };
+            if let Some(sprite) = sprite {
+                billboards.extend(placements.into_iter().map(|(key, position, size, angle)| (sprite.texture(key), anchor, position, size, [1.0; 4], angle)));
+            }
         }
 
         // Numbers over units, moving as the client's do: hits drift diagonally on an arc, shrinking and fading; misses

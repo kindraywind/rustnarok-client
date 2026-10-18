@@ -1,0 +1,11 @@
+// Head marks (issue #195): five Porings near prt_fild06 190 170, each held in one state for ten
+// minutes: stunned, asleep, cursed, silenced and frozen. Loaded and unloaded by scenarios/head-marks.json.
+prt_fild06,1,1,0	script	HeadMarks	-1,{
+OnInit:
+	setarray .@states, SC_STUN, SC_SLEEP, SC_CURSE, SC_SILENCE, SC_FREEZE;
+	for (.@i = 0; .@i < 5; .@i++) {
+		monster "prt_fild06", 184 + .@i * 3, 166, "--ja--", 1002, 1;
+		sc_start .@states[.@i], 600000, 0, 10000, SCSTART_NOAVOID, $@mobid[0];
+	}
+	end;
+}

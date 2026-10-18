@@ -885,6 +885,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 unit["dead"] = true.into();
             }
             unit["tint"] = json!(crate::actor::status_tint(actor.body_state, actor.health_state));
+            unit["marks"] = json!(crate::head_marks::marks(actor.body_state, actor.health_state).iter().map(|mark| format!("{mark:?}")).collect::<Vec<_>>());
             unit
         })
         .collect();
@@ -1256,6 +1257,15 @@ fn game_state(app: &App, game: &Game) -> Value {
         "cursor": format!("{:?}", app.cursor_look.kind()),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
         "chat_line_open": game.chat_mode.chat_line_open(),
+        // How many units show each status mark (the player too).
+        "marks": std::iter::once(&game.player).chain(game.units.values()).flat_map(|actor| crate::head_marks::marks(actor.body_state, actor.health_state)).fold(
+            serde_json::Map::new(),
+            |mut counts, mark| {
+                let count = counts.get(&format!("{mark:?}")).and_then(serde_json::Value::as_u64).unwrap_or(0);
+                counts.insert(format!("{mark:?}"), json!(count + 1));
+                counts
+            }
+        ),
         // The boards over heads by kind (room, shop, buying): [x, y, width, height].
         "signs": game.sign_rects.iter().map(|&(rect, _, kind)| {
             let name = match kind {
