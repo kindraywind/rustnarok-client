@@ -714,6 +714,10 @@ fn game_state(app: &App, game: &Game) -> Value {
     let me = game.player.cell;
     let distance = |cell: [i32; 2]| (cell[0] - me[0]).abs().max((cell[1] - me[1]).abs());
     let status = |id: u16| game.status.get(&id).copied();
+    // A combo window's milliseconds left, on the drawing's clock (0: none).
+    let combo_ms = |unit: Option<u32>| {
+        game.combos.get(&unit).map_or(0, |(start, length)| length.saturating_sub(crate::control::now().saturating_duration_since(*start)).as_millis() as u64)
+    };
     let mut units: Vec<_> = game.units.iter().collect();
     units.sort_by_key(|(_, actor)| distance(actor.cell));
     let units: Vec<Value> = units
@@ -729,7 +733,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 other => json!(other),
             };
             let spirits = game.spirits.get(&Some(id)).copied().unwrap_or(0);
-            let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "spirits": spirits});
+            let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "spirits": spirits, "combo_ms": combo_ms(Some(id)), "held": crate::locked_with(&game.locks, id)});
             if let Some(rect) = screen(Owner::Unit(id)) {
                 unit["screen"] = json!(rect);
                 unit["area"] = json!(area(Owner::Unit(id)));
@@ -814,6 +818,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("InventoryExpansion", game.expansion_asked.is_some()),
         ("PetAsked", game.pet_asked.is_some()),
         ("OtherEquipment", game.viewing.is_some()),
+        ("SwapEquipment", game.equipment.frame.open && game.equipment.swapping),
         ("Bank", game.bank.is_some()),
         ("PickList", game.pick.is_some()),
         ("DealChoice", game.deal_choice.is_some()),
@@ -869,6 +874,9 @@ fn game_state(app: &App, game: &Game) -> Value {
             "direction": game.player.direction,
             "moving": game.player.moving(),
             "casting": game.casts.contains_key(&None),
+            "combo_ms": combo_ms(None),
+            // How many units Blade Stop or Cursed Circle locks the player with.
+            "held": crate::locked_with(&game.locks, game.account_id),
             "hp": status(net::STATUS_HP),
             "max_hp": status(net::STATUS_MAX_HP),
             "sp": status(net::STATUS_SP),
@@ -883,7 +891,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         // boxes, pick list rows, menu choices and window buttons (by name), each with its box on screen.
         "targets": targets,
         // What's carried: index, item, how many, identified, worn where (0: not worn).
-        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires})).collect::<Vec<_>>(),
+        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires, "switch": item.switch})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
         "dialog": dialog,

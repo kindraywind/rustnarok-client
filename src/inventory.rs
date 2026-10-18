@@ -71,6 +71,8 @@ pub struct Assets {
     cell: Texture,
     count: Texture,
     resize: Texture,
+    /// Marks an item in the Swap Equipment set.
+    switch: Texture,
 }
 
 impl Assets {
@@ -83,6 +85,7 @@ impl Assets {
             cell: image(format!("{basic}itemwin_mid.bmp")),
             count: image(format!("{UI}inventory\\icon_num.bmp")),
             resize: image(format!("{UI}btn_resize.bmp")),
+            switch: image(format!("{UI}swap_equipment\\ico_change.bmp")),
         }
     }
 }
@@ -314,6 +317,10 @@ impl Inventory {
             let info = items.get(&item.id);
             if let Some(Some(icon)) = info.and_then(|info| icons.get(&icon_path(info, item.identified))) {
                 layer.sprites.push((icon, offset(place, [ICON_OFFSET, ICON_OFFSET]), icon.size));
+            }
+            // ponytail: the mark's corner isn't knowable.
+            if item.switch != 0 {
+                layer.sprites.push((&assets.switch, place, assets.switch.size));
             }
             if tab_of(item.kind) != 1 {
                 let amount = item.amount.to_string();
