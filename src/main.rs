@@ -1065,6 +1065,8 @@ struct Game {
     slot: Option<(usize, Instant)>,
     /// Units casting (None = the player): when it began and how long it takes.
     casts: HashMap<Option<u32>, (Instant, Duration)>,
+    /// The last web page an NPC's link opened, under the control socket (which doesn't open it).
+    opened_page: Option<String>,
     /// The player's progress bar (a script's `progressbar`).
     progress: ProgressBar,
     /// The magic squares under ground skills being cast, by caster (None = the player); each goes with its cast.
@@ -5167,8 +5169,9 @@ struct Assets {
     /// The navigation arrows, by direction (south, south-west, … south-east).
     navi_arrows: Vec<Texture>,
     /// Item links' underline in the NPC window.
+    /// NPC text's link underlines: web links', every other link's.
+    url_line: Texture,
     link_line: Texture,
-    navi_line: Texture,
     /// The magic square under a ground cast.
     magic_target: Option<Texture>,
     aura: aura::Textures,
@@ -5280,8 +5283,8 @@ impl Assets {
             chatroom: chatroom::Assets::load(gpu, grf),
             reputation: reputation::Assets::load(gpu, grf),
             navi_arrows: (0..8).map(|turn| image(format!("{UI}navigation_interface\\navi_grid_{turn}.tga"))).collect(),
-            link_line: gpu.solid([links::COLOR[0], links::COLOR[1], links::COLOR[2], 0xFF]),
-            navi_line: gpu.solid([links::NAVI_COLOR[0], links::NAVI_COLOR[1], links::NAVI_COLOR[2], 0xFF]),
+            url_line: gpu.solid([links::URL_COLOR[0], links::URL_COLOR[1], links::URL_COLOR[2], 0xFF]),
+            link_line: gpu.solid([links::NPC_COLOR[0], links::NPC_COLOR[1], links::NPC_COLOR[2], 0xFF]),
             magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
             aura: aura::Textures::load(gpu, grf),
             escape: escape::Assets::load(gpu, grf),
@@ -5890,51 +5893,34 @@ fn message_lines(font: &text::Font, text: &str, width: f32) -> Vec<String> {
         .collect()
 }
 
-/// Links in NPC text (`<NAVI>name<INFO>where</INFO></NAVI>`, `<ITEM>`, `<ITEMLINK>`, `<URL>` alike) as the client
-/// shows them: the name alone in the link's color, then the color before it again.
-// ponytail: no underline and no clicking (navigation, item info) yet.
-fn show_links(text: &str) -> String {
-    // Item and navigation links are marked runs by now (links::mark); URLs are only coloured.
-    const LINKS: [(&str, &str); 1] = [("URL", "0070C0")];
-    let mut shown = String::new();
-    let mut rest = text;
-    'scan: while let Some(open) = rest.find('<') {
-        for (tag, color) in LINKS {
-            let start = format!("<{tag}>");
-            let end = format!("</{tag}>");
-            if let Some(inner) = rest[open..].strip_prefix(start.as_str())
-                && let Some(close) = inner.find(end.as_str())
-            {
-                let name = inner[..close].split("<INFO>").next().unwrap_or_default();
-                shown.push_str(&rest[..open]);
-                // The color in force before the link comes back after it.
-                let before = shown
-                    .rmatch_indices('^')
-                    .find_map(|(at, _)| shown.get(at + 1..at + 7).filter(|code| code.chars().all(|digit| digit.is_ascii_hexdigit())).map(str::to_owned));
-                shown.push_str(&format!("^{color}{name}^{}", before.unwrap_or_else(|| "000000".to_owned())));
-                rest = &inner[close + end.len()..];
-                continue 'scan;
-            }
-        }
-        shown.push_str(&rest[..=open]);
-        rest = &rest[open + 1..];
+/// Opens a web page in the system's browser. A client driven over the control socket only notes it.
+fn open_page(game: &mut Game, page: &str) {
+    if control::driven() {
+        game.opened_page = Some(page.to_owned());
+        return;
     }
-    shown.push_str(rest);
-    shown
+    // The address goes as one argument to a program that takes it as is; no shell reads it.
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    let _ = std::process::Command::new(opener).arg(page).spawn();
 }
-
 fn wrap_colored(font: &text::Font, text: &str, width: f32) -> iteminfo::ColoredLines {
     wrap_linked(font, text, width).into_iter().map(|pieces| pieces.into_iter().map(|(color, piece, _)| (color, piece)).collect()).collect()
 }
 
 /// Colour-coded text wrapped to `width`, item links in their colour and each piece with the link it's part of.
 fn wrap_linked(font: &text::Font, text: &str, width: f32) -> links::LinkedLines {
-    wrap_linked_by(font, text, width, false)
+    wrap_linked_by(font, text, width, false, links::Target::color)
 }
 
 /// `wrap_linked`, breaking between words or (`by_char`, as NPC text does) wherever the next character would pass
-/// `width`.
-fn wrap_linked_by(font: &text::Font, text: &str, width: f32, by_char: bool) -> links::LinkedLines {
+/// `width`, links in `color_of` theirs.
+fn wrap_linked_by(font: &text::Font, text: &str, width: f32, by_char: bool, color_of: fn(&links::Target) -> [u8; 3]) -> links::LinkedLines {
     let mut wrapped: links::LinkedLines = vec![Vec::new()];
     let mut line_width = 0.0;
     let mut color = [0, 0, 0];
@@ -5946,7 +5932,7 @@ fn wrap_linked_by(font: &text::Font, text: &str, width: f32, by_char: bool) -> l
             }
             for (color, piece) in pieces {
                 line_width += font.width(&piece);
-                let color = item.as_ref().map_or(color, links::Target::color);
+                let color = item.as_ref().map_or(color, color_of);
                 wrapped.last_mut().unwrap().push((color, piece, item.clone()));
             }
         }
@@ -6652,6 +6638,12 @@ impl App {
                     let target = navigation::Target { cell: (cell != [0, 0]).then_some(cell), monster: None, name, map };
                     game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
                 }
+                links::Target::Url(address) => {
+                    if let Some(page) = links::page(&address) {
+                        open_page(game, page);
+                    }
+                }
+                links::Target::Tip => {}
             },
             Scene::Game(game) if game.deal_choice.is_some() => {
                 let npc = game.deal_choice.unwrap();
@@ -10450,6 +10442,7 @@ impl App {
                     slot: None,
                     casts: HashMap::new(),
                     progress: ProgressBar::default(),
+                    opened_page: None,
                     cast_squares: HashMap::new(),
                     combos: HashMap::new(),
                     locks: Vec::new(),
@@ -11399,7 +11392,7 @@ impl App {
             // Each text starts a line, and so does each LF in it; the first after Next wipes the old page.
             MapEvent::NpcSay { npc, text } => {
                 let name_of = |item: &links::ItemLink| inventory::item_name(&self.items, item.id, true, item.refine);
-                let text = show_links(&links::mark(&npc_say::unescape(&text), &name_of));
+                let text = links::mark(&npc_say::unescape(&text), &name_of);
                 let dialog = game.dialog_for(npc);
                 if std::mem::take(&mut dialog.wipe) {
                     dialog.lines.clear();
@@ -14865,7 +14858,8 @@ impl App {
         if let Some(dialog) = &game.dialog {
             // A warp list is the menu alone.
             if dialog.warp.is_none() {
-                let lines: links::LinkedLines = dialog.lines.iter().flat_map(|line| wrap_linked_by(font, line, npc_say::WRAP_WIDTH, true)).collect();
+                let lines: links::LinkedLines =
+                    dialog.lines.iter().flat_map(|line| wrap_linked_by(font, line, npc_say::WRAP_WIDTH, true, links::Target::npc_color)).collect();
                 let pitch = font.line_height() + npc_say::LINE_GAP;
                 game.say.text_height = lines.len() as f32 * pitch;
                 game.say.scroll_by(0.0);
@@ -14875,9 +14869,9 @@ impl App {
                     for (color, piece, item) in pieces {
                         let width = font.width(piece);
                         overlay.texts.push((piece.clone(), [x, y], *color));
-                        // Item links underlined, and clickable.
+                        // Links underlined in their colour, and clickable.
                         if let Some(item) = item {
-                            let line = if item.item().is_some() { &assets.link_line } else { &assets.navi_line };
+                            let line = if matches!(item, links::Target::Url(_)) { &assets.url_line } else { &assets.link_line };
                             overlay.sprites.push((line, [x, y + font.line_height() - 1.0], [width, 1.0]));
                             dialog_links.push(([x, y, width, font.line_height()], item.clone()));
                         }
@@ -17264,7 +17258,7 @@ mod tests {
         let font = Font::load();
         // Room for "Hello wor": the word breaks there, its colour carried onto the next line.
         let width = font.width("Hello wor") + 0.5;
-        let lines = wrap_linked_by(&font, "^0000FFHello world^000000 again", width, true);
+        let lines = wrap_linked_by(&font, "^0000FFHello world^000000 again", width, true, links::Target::npc_color);
         let text: Vec<Vec<([u8; 3], &str)>> = lines.iter().map(|pieces| pieces.iter().map(|(color, piece, _)| (*color, piece.as_str())).collect()).collect();
         assert_eq!(text[0], [([0, 0, 0xFF], "Hello wor")]);
         assert_eq!(text[1][0], ([0, 0, 0xFF], "ld"));
@@ -17301,10 +17295,10 @@ mod tests {
     fn shows_npc_links_by_name() {
         let navi = "Let me mark the ^B9062F<NAVI>[Tool Shop]<INFO>prontera,134,221,0,000,0</INFO></NAVI>^000000 for you.";
         // The place is a link to navigate to; the colour codes around it stay for the wrapping to read.
-        let (shown, runs) = links::split(&show_links(&links::mark(navi, &|_| String::new())));
+        let (shown, runs) = links::split(&links::mark(navi, &|_| String::new()));
         assert_eq!(shown, "Let me mark the ^B9062F[Tool Shop]^000000 for you.");
         assert_eq!(runs.iter().map(|(_, target)| target.clone()).collect::<Vec<_>>(), [links::Target::Navi { map: "prontera".into(), cell: [134, 221] }]);
-        let marked = show_links(&links::mark("a <ITEM>Apple<INFO>512</INFO></ITEM> < b", &|_| String::new()));
+        let marked = links::mark("a <ITEM>Apple<INFO>512</INFO></ITEM> < b", &|_| String::new());
         assert_eq!(links::split(&marked).0, "a Apple < b");
     }
 

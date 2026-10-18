@@ -1054,6 +1054,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.dialog_links.iter().chain(&game.chat_links).map(|(area, target)| match target {
             crate::links::Target::Item(item) => json!({"kind": "item_link", "id": item.id, "box": area}),
             crate::links::Target::Navi { map, .. } => json!({"kind": "navi_link", "map": map, "box": area}),
+            crate::links::Target::Url(address) => json!({"kind": "url_link", "address": address, "box": area}),
+            crate::links::Target::Tip => json!({"kind": "tip_link", "box": area}),
         }))
         .chain(
             game.navi_window.iter().flat_map(crate::navigation::Window::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
@@ -1480,6 +1482,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The skill units on the ground standing as models (their UNT_ numbers).
     state["standing_models"] = game.effects.standing_kinds().into();
     state["cutin_window"] = cutin_window.into();
+    state["opened_page"] = game.opened_page.clone().into();
     // The effect sounds played in the last five seconds (`no_sound` in a scenario checks these).
     state["sounds_recent"] = recent_sounds().into();
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
