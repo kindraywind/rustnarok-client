@@ -38,7 +38,8 @@
 //!   clothes color, head top, mid and bottom). The stylist's buttons are targets (`hair_style_<row>`, `hair_color_<row>`,
 //!   `clothes_color_<row>`, `tab_hair`, `tab_accessory`, `buy`, `refresh`, `rotate_left`, `rotate_right`, `close`).
 //! - `wait` `{ms?, packet?, event?, fresh?, pause?, do?}`: sleeps `ms`; with a `packet` id ("0x08c8") or an `event`
-//!   (a `MapEvent`/`CharEvent` variant like "Act", or "LoginAccepted"/"LoginRefused"), waits up to `ms` (10 s by
+//!   (a `MapEvent`/`CharEvent` variant like "Act", "LoginAccepted"/"LoginRefused", or "Sound <file>" for an effect
+//!   sound played, e.g. "Sound _hit_sword.wav"), waits up to `ms` (10 s by
 //!   default) for one seen since the previous command, so a quick answer isn't missed between two calls. `fresh`
 //!   only counts new ones; `do` is a command to run first (and implies `fresh`); `pause` stops the clock on arrival.
 //! - `clock` `{action: "pause"|"resume"|"step", ms?}`: the animation clock; a step freezes it `ms` (16) further on.
@@ -429,6 +430,13 @@ fn trace_ms() -> u128 {
 /// they'd move the pointer, type into the chat line or hold modifiers down.
 pub fn driven() -> bool {
     ON.load(Ordering::Relaxed)
+}
+
+/// Notes an effect sound played (`wait` event `Sound <file>`, the file under data\wav\ as asked for).
+pub fn sound_played(name: &str) {
+    if driven() {
+        record(Seen::Event(format!("Sound {name}")), format!("{:05} == Sound {name}", trace_ms()));
+    }
 }
 
 /// Notes an event from the servers for `wait`: its variant's name, and what it says (a disconnection's reason, say).

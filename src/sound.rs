@@ -24,8 +24,8 @@ struct Sound {
 
 type Samples = Arc<Sound>;
 
-/// How many effects play at once; the oldest stops for a new one.
-const MOST_EFFECTS: usize = 24;
+/// How many effects play at once; past that a new one isn't played.
+const MOST_EFFECTS: usize = 16;
 /// The loudest a volume goes (as /bv and /v take it).
 pub const MAX_VOLUME: u8 = 127;
 
@@ -217,12 +217,10 @@ impl Audio {
         let sound = self.effects.entry(name.to_lowercase()).or_insert_with(|| decode(grf.read(&format!("data\\wav\\{name}")).ok()?, "wav")).clone();
         let Some(sound) = sound else { return };
         let mut mixer = self.mixer.lock().unwrap();
-        let effects = mixer.voices.iter().filter(|voice| !voice.music).count();
-        if effects >= MOST_EFFECTS
-            && let Some(oldest) = mixer.voices.iter().position(|voice| !voice.music)
-        {
-            mixer.voices.remove(oldest);
+        if mixer.voices.iter().filter(|voice| !voice.music).count() >= MOST_EFFECTS {
+            return;
         }
+        crate::control::sound_played(name);
         mixer.voices.push(Voice::new(sound, self.rate, volume, false));
     }
 }
