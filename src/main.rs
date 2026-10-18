@@ -97,6 +97,7 @@ mod refine;
 mod reform;
 mod render;
 mod roulette;
+mod screenshot;
 mod shop;
 mod shortcuts;
 mod skill_descript;
@@ -4476,6 +4477,8 @@ struct App {
     keybinds: shortcuts::Shortcuts,
     /// Print Screen writes the next frame here and keeps running.
     print_screen: Option<std::path::PathBuf>,
+    /// The file a screenshot was just saved to, for its chat line.
+    shot_saved: Option<String>,
     cursor_look: cursor::Cursor,
     /// The client's loading pictures, and the loading screen while it's up.
     loading_images: Vec<String>,
@@ -7121,6 +7124,15 @@ impl App {
         }
     }
 
+    /// The next frame goes to ScreenShot/screen<server><NNN>.jpg in the folder the client runs in.
+    // ponytail: "next to the client" taken as the folder it runs in (where its data is), not the executable's.
+    fn request_screenshot(&mut self) {
+        let server = self.account.as_ref().and_then(|account| account.char_servers.get(self.char_server)).map(|server| server.name.clone()).unwrap_or_default();
+        let folder = std::path::Path::new(screenshot::FOLDER);
+        let _ = std::fs::create_dir_all(folder);
+        self.print_screen = Some(screenshot::next_path(folder, &server));
+    }
+
     /// The shortcut this key fires, if it has one. A repeated key-down does not.
     fn fire_shortcut(&mut self, event: &control::KeyPress) -> bool {
         let Scene::Game(game) = &self.scene else { return false };
@@ -7150,8 +7162,7 @@ impl App {
             return true;
         }
         if fired == shortcuts::Action::Screenshot {
-            let millis = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_millis());
-            self.print_screen = settings_path("screenshots").map(|dir| dir.join(format!("shot-{millis}.png")));
+            self.request_screenshot();
             return true;
         }
         if fired == shortcuts::Action::Minimap {
@@ -7311,7 +7322,25 @@ impl App {
     }
 
     fn key(&mut self, event: &control::KeyPress) {
-        if event.state != ElementState::Pressed {
+        // Print Screen on its release (Windows sends no press for it), Scroll Lock, and on Macs Cmd+Shift+S (they have
+        // no Print Screen; a ponytail choice): a screenshot.
+        let pressed = event.state == ElementState::Pressed && !event.repeat;
+        let shot = match &event.logical_key {
+            Key::Named(NamedKey::PrintScreen) => event.state == ElementState::Released,
+            Key::Named(NamedKey::ScrollLock) => pressed,
+            _ => {
+                cfg!(target_os = "macos")
+                    && pressed
+                    && self.modifiers.super_key()
+                    && self.modifiers.shift_key()
+                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyS)
+            }
+        };
+        if shot {
+            self.request_screenshot();
+            return;
+        }
+        if event.state != ElementState::Pressed || event.logical_key == Key::Named(NamedKey::PrintScreen) {
             return;
         }
         let key = &event.logical_key;
@@ -11047,6 +11076,10 @@ impl App {
 
     fn redraw_game(&mut self, event_loop: &ActiveEventLoop) {
         let (Some(gpu), Some(assets), Scene::Game(game)) = (&mut self.gpu, &self.assets, &mut self.scene) else { return };
+        // ponytail: the client's own line for a saved screenshot isn't in the data; a plain one.
+        if let Some(name) = self.shot_saved.take() {
+            game.chat_line(format!("Screenshot saved: {name}"), CHAT_ITEM);
+        }
         let (grf, items, messages, icons, cursor_look, pc_job_names) =
             (&self.grf, &self.items, &self.messages, &mut self.icons, &mut self.cursor_look, &self.pc_job_names);
         let (audio, sound) = (&mut self.audio, &self.sound);
@@ -12555,7 +12588,10 @@ impl App {
         };
         if let Some(path) = self.print_screen.take() {
             let _ = path.parent().map(std::fs::create_dir_all);
-            let _ = gpu.snapshot(Some(&frame), &sprites).save(&path);
+            let shot = image::DynamicImage::ImageRgba8(gpu.snapshot(Some(&frame), &sprites)).to_rgb8();
+            if shot.save(&path).is_ok() {
+                self.shot_saved = path.file_name().map(|name| name.to_string_lossy().into_owned());
+            }
         }
         let shot_delay = std::env::var("RUSTNAROK_CLIENT_SHOT_DELAY").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(2.0);
         match &self.screenshot {
@@ -13069,6 +13105,7 @@ fn main() {
         shortcuts,
         keybinds,
         print_screen: None,
+        shot_saved: None,
         cursor_look,
         loading_images,
         loading: None,

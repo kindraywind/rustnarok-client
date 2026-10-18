@@ -1,0 +1,46 @@
+{
+  "about": "Screenshots (issue #181): Print Screen (on its release) and Scroll Lock each save the next frame as a JPEG in ScreenShot/ next to the client, numbered screen<server>000.jpg up from the first free number, and say so in the chat. The folder is gitignored.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "key": "PrintScreen"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "chat": "Screenshot saved: screen"
+      }
+    },
+    {
+      "key": "ScrollLock"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "shot": "screenshot-lines",
+      "crop": [
+        0,
+        660,
+        620,
+        108
+      ],
+      "threshold": 5
+    }
+  ]
+}
