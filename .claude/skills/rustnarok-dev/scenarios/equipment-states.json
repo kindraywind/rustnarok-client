@@ -19,7 +19,7 @@
     {"click_on": {"button": "take_off_all"}}, {"wait_for": {"packet": "0x0bae", "ms": 5000}}, {"wait": 600},
     {"expect": {"inventory_has": [{"id": 1201, "worn": 0}, {"id": 2301, "worn": 0}, {"id": 2101, "worn": 0}]}},
     {"move": [1000, 750]},
-    {"shot": "took-off-all", "crop": [470, 190, 300, 210]},
+    {"shot": "took-off-all", "crop": [175, 290, 300, 200]},
     {"key": "Alt+Q"}, {"wait": 300},
     {"say": "@itemreset"}, {"wait": 800},
     {"say": "@itembound 2301 1 4"}, {"wait_for": {"event": "PickedUp", "ms": 5000}}, {"wait": 300},

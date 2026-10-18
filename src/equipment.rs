@@ -15,14 +15,24 @@ use crate::render::{self, Gpu, Sprite, Texture};
 use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, offset};
 
-// ponytail: layout over the bitmaps; calibrate against the real client.
 const WIDTH: f32 = 280.0;
-const TABS_HEIGHT: f32 = 20.0;
-const PANEL_TOP: f32 = TITLE_HEIGHT + TABS_HEIGHT;
+/// The player's own window (equipwin_bg2.bmp's footer at the bottom, its last 7 rows cut), and another player's.
+const HEIGHT: f32 = 187.0;
+const OTHERS_HEIGHT: f32 = 167.0;
+// ponytail: the swap view keeps its own layout and height; the game grows the window to 280×345 with the set's
+// 280×179 panel at (0, 167) under the slots.
+const SWAP_HEIGHT: f32 = 194.0;
+/// The slot panel, under the tab strip; the Costume tab's from 3 higher.
+const PANEL_TOP: f32 = 37.0;
 const PANEL_HEIGHT: f32 = 130.0;
-/// The striped bottom of equipwin_bg2.bmp.
-const FOOTER: [u32; 2] = [130, 27];
-const HEIGHT: f32 = PANEL_TOP + PANEL_HEIGHT + FOOTER[1] as f32;
+const OWN_PANEL_HEIGHT: u32 = 150;
+const COSTUME_TOP: f32 = 34.0;
+/// The body's edge (bottom corners cut) and the tabs' outline, also the line on from the strip at y 34.
+const EDGE: [u8; 4] = [0xC8, 0xC8, 0xC8, 0xFF];
+const TAB_LINE: [u8; 4] = [0xC3, 0xC3, 0xC3, 0xFF];
+/// The tab strip at (0, 17): tabs 17 tall, each its label's width + 15.
+const TAB_HEIGHT: f32 = 17.0;
+const TAB_PADDING: f32 = 15.0;
 const ROW: f32 = 26.0;
 const ICON: f32 = 24.0;
 /// Icons sit 4px in from either side; names fill up to 80px beside them, two lines at most.
@@ -33,26 +43,29 @@ const NAME_LINE: f32 = 12.0;
 const COLUMN_WIDTH: f32 = 115.0;
 /// Where the character stands: the shadow baked into equipwin_bg.bmp.
 const PREVIEW_FEET: [f32; 2] = [140.0, PANEL_TOP + 114.0];
-/// Where the client first opens it.
-const DEFAULT_POSITION: [f32; 2] = [480.0, 200.0];
-/// The general and the special (costume and shadow gear) tabs, and the titles (the player's own window only).
-// ponytail: equipwin_bg3.bmp draws two tabs; the third's label goes beside them.
-const TAB_LABELS: [usize; 3] = [3158, 3159, 3160];
-const TAB_TEXT: [[f32; 2]; 3] = [[8.0, TITLE_HEIGHT + 3.0], [90.0, TITLE_HEIGHT + 3.0], [172.0, TITLE_HEIGHT + 3.0]];
-const TAB_WIDTH: [f32; 3] = [80.0, 80.0, 80.0];
+/// Where it first opens.
+const DEFAULT_POSITION: [f32; 2] = [185.0, 300.0];
+/// General, Costume (costumes and shadow gear) and Title (the player's own window only), and their tooltips.
+const TAB_LABELS: [usize; 3] = [1805, 2419, 2685];
+const TAB_TOOLTIPS: [usize; 3] = [3158, 3159, 3160];
+/// Tab widths until the labels are measured (`set_tab_labels`).
+const TAB_WIDTHS: [f32; 3] = [60.0, 62.0, 42.0];
 const TITLES_TAB: usize = 2;
 /// "Disable Title", first in the titles' list, and the list's rows.
 const NO_TITLE: usize = 2686;
 const TITLE_ROW: f32 = 18.0;
+/// The Title tab: white over the panel, a #646464 frame round the list, the worn title centred at y 40, the list.
+const TITLES_WHITE: [f32; 4] = [1.0, 35.0, WIDTH - 2.0, 131.0];
+const TITLES_FRAME: [f32; 4] = [2.0, 58.0, WIDTH - 4.0, 107.0];
+const TITLES_FRAME_COLOR: [u8; 4] = [0x64, 0x64, 0x64, 0xFF];
+const WORN_TITLE_TOP: f32 = 40.0;
+const TITLES_LIST: [f32; 4] = [3.0, 59.0, WIDTH - 6.0, 105.0];
 /// Take Off All, in the footer's right corner, and its name.
 const TAKE_OFF: [f32; 2] = [40.0, 20.0];
 const TAKE_OFF_NAME: usize = 3955;
 const SHOW_EQUIPMENT_MESSAGE: usize = 1362;
 /// "%s's Equipment": another player's window.
 const OTHERS_TITLE: usize = 1361;
-/// Where another player's window opens.
-// ponytail: beside the player's own; the real client's place isn't known.
-const OTHERS_POSITION: [f32; 2] = [500.0, 220.0];
 const TITLE_MESSAGE: usize = 104;
 /// The Swap Equipment view: its title, and the switch button's label and size.
 const SWAP_TITLE: usize = 2986;
@@ -93,9 +106,13 @@ const SLOTS: [[(u32, usize, usize); 10]; 2] = [
 ];
 
 pub struct Assets {
-    panels: [Texture; 2],
-    tabs: Texture,
-    footer: Texture,
+    /// The one-piece title bar.
+    title: Texture,
+    /// The player's own panel (equipwin_bg2.bmp, cut at the window's bottom), another player's, the Costume tab's.
+    panels: [Texture; 3],
+    edge: Texture,
+    tab_line: Texture,
+    titles_frame: Texture,
     /// The Show Equipment box: off, on.
     checkbox: [Texture; 2],
     /// Swap equipment and take everything off; Take Off All pointed at.
@@ -112,12 +129,18 @@ impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let basic = format!("{UI}basic_interface\\");
         let image = |path: String| gpu.load_texture(grf, &path, false);
-        let footer = render::load_image(grf, &format!("{basic}equipwin_bg2.bmp"))
-            .map(|image| imageops::crop_imm(&image, 0, FOOTER[0], image.width(), FOOTER[1]).to_image());
+        let own = render::load_image(grf, &format!("{basic}equipwin_bg2.bmp"))
+            .map(|image| imageops::crop_imm(&image, 0, 0, image.width(), OWN_PANEL_HEIGHT.min(image.height())).to_image());
         Self {
-            panels: [image(format!("{basic}equipwin_bg.bmp")), image(format!("{basic}equipwin_special.bmp"))],
-            tabs: image(format!("{basic}equipwin_bg3.bmp")),
-            footer: footer.map_or_else(|_| gpu.solid([0xF0; 4]), |footer| gpu.texture(&footer, false)),
+            title: image(format!("{basic}titlebar_fix.bmp")),
+            panels: [
+                own.map_or_else(|_| gpu.solid([0xF0; 4]), |own| gpu.texture(&own, false)),
+                image(format!("{basic}equipwin_bg.bmp")),
+                image(format!("{basic}equipwin_special.bmp")),
+            ],
+            edge: gpu.solid(EDGE),
+            tab_line: gpu.solid(TAB_LINE),
+            titles_frame: gpu.solid(TITLES_FRAME_COLOR),
             checkbox: ["0", "1"].map(|look| image(format!("{UI}checkbox_{look}.bmp"))),
             buttons: [image(format!("{basic}btn_e_change_a.bmp")), image(format!("{basic}btn_e_off_a.bmp"))],
             take_off_hover: image(format!("{basic}btn_e_off_b.bmp")),
@@ -161,6 +184,8 @@ pub struct Equipment {
     pub swapping: bool,
     /// When the last switch was asked.
     switched: Option<Instant>,
+    /// Each tab's width: its label's + 15.
+    tab_widths: [f32; 3],
 }
 
 impl Default for Equipment {
@@ -175,19 +200,32 @@ impl Default for Equipment {
             title: 0,
             swapping: false,
             switched: None,
+            tab_widths: TAB_WIDTHS,
         }
     }
 }
 
 /// Take Off All's corner inside the window.
 fn take_off_at() -> [f32; 2] {
-    [WIDTH - 45.0, PANEL_TOP + PANEL_HEIGHT + 4.0]
+    [WIDTH - 45.0, PANEL_TOP + PANEL_HEIGHT]
 }
 
 /// The swap button's corner, and the switch button's (in the view's footer).
 // ponytail: the switch button's place isn't knowable; it takes the Show Equipment box's.
 fn swap_at() -> [f32; 2] {
-    [WIDTH - 90.0, PANEL_TOP + PANEL_HEIGHT + 4.0]
+    [WIDTH - 90.0, PANEL_TOP + PANEL_HEIGHT]
+}
+
+/// The tabs' boxes in the window: side by side from (0, 17), each as wide as given.
+fn tab_boxes(widths: &[f32]) -> Vec<[f32; 4]> {
+    let mut x = 0.0;
+    widths
+        .iter()
+        .map(|&width| {
+            x += width;
+            [x - width, TITLE_HEIGHT, width, TAB_HEIGHT]
+        })
+        .collect()
 }
 
 fn change_at() -> [f32; 2] {
@@ -201,15 +239,40 @@ fn slot_area(column: usize, row: usize) -> ([f32; 2], [f32; 2]) {
 }
 
 impl Equipment {
-    /// Another player's equipment, open.
-    pub fn of(name: String) -> Self {
-        let mut frame = Frame::new(OTHERS_POSITION, WIDTH);
+    /// Another player's equipment, open, at the game's place for the screen size.
+    pub fn of(name: String, screen: [f32; 2]) -> Self {
+        let mut frame = Frame::new(crate::escape::menu_origin(screen), WIDTH);
         frame.open = true;
         Self { frame, owner: Some(name), ..Self::default() }
     }
 
+    /// Measures the tabs' labels: each tab is its label's width + 15.
+    pub fn set_tab_labels(&mut self, messages: &[String], font: &Font) {
+        self.tab_widths = TAB_LABELS.map(|id| font.width(messages.get(id).map_or("", String::as_str)) + TAB_PADDING);
+    }
+
     pub fn height(&self) -> f32 {
-        HEIGHT
+        if self.frame.minimized {
+            TITLE_HEIGHT
+        } else if self.swapping {
+            SWAP_HEIGHT
+        } else if self.owner.is_some() {
+            OTHERS_HEIGHT
+        } else {
+            HEIGHT
+        }
+    }
+
+    /// Alt+Q and the basic info window's Equip button: open on General; open on another tab (or the swap view), back
+    /// to General; open on General, closed.
+    pub fn toggle_general(&mut self) {
+        if self.frame.open && self.tab == 0 && !self.swapping {
+            self.frame.open = false;
+        } else {
+            self.frame.open = true;
+            self.tab = 0;
+            self.swapping = false;
+        }
     }
 
     /// The item in each slot of the current tab, with the slot's place: what's worn, or the swap set's.
@@ -242,21 +305,17 @@ impl Equipment {
     }
 
     pub fn hit(&self, cursor: [f32; 2], items: &[InventoryItem]) -> Option<Hit> {
-        let local = self.frame.local(cursor, HEIGHT)?;
+        let local = self.frame.local(cursor, self.height())?;
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
         }
-        // ponytail: the tab strip's hit areas are guessed from equipwin_bg3.bmp's divider.
-        if local[1] < PANEL_TOP {
-            return Some(
-                (0..self.tabs())
-                    .find(|&tab| contains([TAB_TEXT[tab][0] - 4.0, TITLE_HEIGHT], [TAB_WIDTH[tab], TABS_HEIGHT], local))
-                    .map_or(Hit::Window, Hit::Tab),
-            );
+        if let Some(tab) = self.tab_at(local) {
+            return Some(Hit::Tab(tab));
         }
         // The titles: "none" first, then each one.
-        if self.tab == TITLES_TAB && local[1] < PANEL_TOP + PANEL_HEIGHT {
-            let row = ((local[1] - PANEL_TOP - 4.0) / TITLE_ROW).max(0.0) as usize;
+        let [x, y, width, height] = TITLES_LIST;
+        if self.tab == TITLES_TAB && contains([x, y], [width, height], local) {
+            let row = ((local[1] - y) / TITLE_ROW) as usize;
             let picked = std::iter::once(0).chain(self.titles.iter().map(|(id, _)| *id)).nth(row);
             return Some(picked.map_or(Hit::Window, Hit::WearTitle));
         }
@@ -317,6 +376,11 @@ impl Equipment {
         if self.owner.is_none() && !self.swapping { TAB_LABELS.len() } else { TITLES_TAB }
     }
 
+    /// The tab under a point in the window.
+    fn tab_at(&self, local: [f32; 2]) -> Option<usize> {
+        tab_boxes(&self.tab_widths[..self.tabs()]).into_iter().position(|[x, y, width, height]| contains([x, y], [width, height], local))
+    }
+
     /// The tabs and the titles on screen, named for scripted clicks: `equipment_tab:<n>`, `title:<id>` (0: none).
     pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
         if !self.frame.open || self.frame.minimized {
@@ -326,8 +390,8 @@ impl Equipment {
             let [x, y] = self.frame.at(local);
             [x, y, size[0], size[1]]
         };
-        let tabs = (0..self.tabs()).map(|tab| (format!("equipment_tab:{tab}"), place([TAB_TEXT[tab][0] - 4.0, TITLE_HEIGHT], [TAB_WIDTH[tab], TABS_HEIGHT])));
-        let mut boxes: Vec<_> = tabs.collect();
+        let tabs = tab_boxes(&self.tab_widths[..self.tabs()]).into_iter().enumerate();
+        let mut boxes: Vec<_> = tabs.map(|(tab, [x, y, width, height])| (format!("equipment_tab:{tab}"), place([x, y], [width, height]))).collect();
         if self.owner.is_none() {
             boxes.push(("swap".to_owned(), place(swap_at(), TAKE_OFF)));
         }
@@ -339,7 +403,9 @@ impl Equipment {
         }
         if self.tab == TITLES_TAB {
             let ids = std::iter::once(0).chain(self.titles.iter().map(|(id, _)| *id));
-            boxes.extend(ids.enumerate().map(|(row, id)| (format!("title:{id}"), place([0.0, PANEL_TOP + 4.0 + row as f32 * TITLE_ROW], [WIDTH, TITLE_ROW]))));
+            let [x, y, width, height] = TITLES_LIST;
+            let rows = (height / TITLE_ROW) as usize;
+            boxes.extend(ids.take(rows).enumerate().map(|(row, id)| (format!("title:{id}"), place([x, y + row as f32 * TITLE_ROW], [width, TITLE_ROW]))));
         }
         boxes
     }
@@ -376,36 +442,66 @@ impl Equipment {
             None if self.swapping => message(SWAP_TITLE).to_owned(),
             None => message(TITLE_MESSAGE).to_owned(),
         };
-        self.frame.draw_title(layer, chrome, &title, cursor);
+        self.frame.draw_fixed_title(layer, chrome, &assets.title, &title, cursor);
         if self.frame.minimized {
             return;
         }
 
-        // Tabs, the slot panel and the character standing on its shadow. The swap view's pink panel comes with its own
-        // strip, under the tabs, and its own footer.
+        // The body: a #C8C8C8 edge with its bottom corners cut, white inside.
+        let height = self.height();
+        layer.sprites.push((&assets.edge, at([0.0, TITLE_HEIGHT]), [WIDTH, height - TITLE_HEIGHT - 1.0]));
+        layer.sprites.push((&assets.edge, at([1.0, height - 1.0]), [WIDTH - 2.0, 1.0]));
+        layer.sprites.push((&chrome.white, at([1.0, TITLE_HEIGHT]), [WIDTH - 2.0, height - 19.0]));
+        // The panel and the character standing on its shadow: the player's own (its footer at the bottom), another
+        // player's, and the Costume tab's over it. The swap view's pink panel comes with its own strip and footer.
         // ponytail: the view takes the window's place; whether the real one opens beside it isn't knowable.
         let swap_panel = assets.swap_panels.get(self.tab).filter(|_| self.swapping);
         if let Some(panel) = swap_panel {
             layer.sprites.push((panel, at([0.0, TITLE_HEIGHT]), panel.size));
+        } else {
+            let panel = &assets.panels[usize::from(self.owner.is_some())];
+            layer.sprites.push((panel, at([0.0, PANEL_TOP]), panel.size));
+            if self.tab == 1 {
+                layer.sprites.push((&assets.panels[2], at([0.0, COSTUME_TOP]), assets.panels[2].size));
+            }
         }
-        layer.sprites.push((&assets.tabs, at([0.0, TITLE_HEIGHT]), assets.tabs.size));
-        for (tab, &label) in TAB_LABELS.iter().enumerate().take(self.tabs()) {
-            // Kept inside its tab, however long the translation's title is.
-            let title = window::fit(font, message(label), TAB_WIDTH[tab] - 6.0);
-            layer.texts.push((title, at(TAB_TEXT[tab]), if tab == self.tab { [0, 0, 0] } else { GREY }));
+        // The tabs: white with a #C3C3C3 outline, the label centred; a line on from them to the right edge.
+        // ponytail: the open tab is told by its black label and no line under it, so it joins the panel.
+        let boxes = tab_boxes(&self.tab_widths[..self.tabs()]);
+        for (tab, &[x, y, width, height]) in boxes.iter().enumerate() {
+            let open = tab == self.tab;
+            layer.sprites.push((&assets.tab_line, at([x, y]), [width, height + 1.0]));
+            layer.sprites.push((&chrome.white, at([x + 1.0, y + 1.0]), [width - 2.0, height - if open { 0.0 } else { 1.0 }]));
+            let label = window::fit(font, message(TAB_LABELS[tab]), width - 4.0);
+            let left = x + ((width - font.width(&label)) / 2.0).floor();
+            layer.texts.push((label, at([left, y + 2.0]), if open { [0, 0, 0] } else { GREY }));
+            if contains(at([x, y]), [width, height], cursor) {
+                window::tooltip(tooltip, chrome, font, message(TAB_TOOLTIPS[tab]), offset(cursor, [12.0, 12.0]), [255; 3]);
+            }
         }
-        match assets.panels.get(self.tab) {
-            _ if swap_panel.is_some() => {}
-            Some(panel) => layer.sprites.push((panel, at([0.0, PANEL_TOP]), panel.size)),
-            None => layer.sprites.push((&chrome.white, at([0.0, PANEL_TOP]), [WIDTH, PANEL_HEIGHT])),
-        }
+        let end = boxes.last().map_or(0.0, |[x, _, width, _]| x + width);
+        layer.sprites.push((&assets.tab_line, at([end, TITLE_HEIGHT + TAB_HEIGHT]), [WIDTH - end, 1.0]));
         layer.sprites.extend(preview);
-        // The titles: none, then each earned one; the worn one black, the others grey.
+        // The titles: white over the panel, the worn one's name centred on top, and the list in its frame: none, then
+        // each earned one; the worn one black, the others grey.
         if self.tab == TITLES_TAB {
+            let [x, y, width, height] = TITLES_WHITE;
+            layer.sprites.push((&chrome.white, at([x, y]), [width, height]));
+            let [x, y, width, height] = TITLES_FRAME;
+            for (corner, size) in
+                [([x, y], [width, 1.0]), ([x, y + height - 1.0], [width, 1.0]), ([x, y], [1.0, height]), ([x + width - 1.0, y], [1.0, height])]
+            {
+                layer.sprites.push((&assets.titles_frame, at(corner), size));
+            }
+            if let Some((_, worn)) = self.titles.iter().find(|(id, _)| *id == self.title) {
+                let worn = window::fit(font, worn, WIDTH - 2.0);
+                layer.texts.push((worn.clone(), at([1.0 + ((WIDTH - 2.0 - font.width(&worn)) / 2.0).floor(), WORN_TITLE_TOP]), [0, 0, 0]));
+            }
+            let [x, y, width, height] = TITLES_LIST;
             let rows = std::iter::once((0, message(NO_TITLE).to_owned())).chain(self.titles.iter().cloned());
-            for (row, (id, name)) in rows.enumerate().take((PANEL_HEIGHT / TITLE_ROW) as usize) {
+            for (row, (id, name)) in rows.enumerate().take((height / TITLE_ROW) as usize) {
                 let color = if id == self.title { [0, 0, 0] } else { GREY };
-                layer.texts.push((window::fit(font, &name, WIDTH - 20.0), at([10.0, PANEL_TOP + 6.0 + row as f32 * TITLE_ROW]), color));
+                layer.texts.push((window::fit(font, &name, width - 10.0), at([x + 5.0, y + 2.0 + row as f32 * TITLE_ROW]), color));
             }
         }
 
@@ -432,11 +528,7 @@ impl Equipment {
         }
 
         // Footer: the "show my equipment" box and the two buttons, on the player's own window.
-        // ponytail: someone else's window shows the footer empty; what the real client shows there isn't known.
         let footer_top = PANEL_TOP + PANEL_HEIGHT;
-        if swap_panel.is_none() {
-            layer.sprites.push((&assets.footer, at([0.0, footer_top]), assets.footer.size));
-        }
         if self.owner.is_some() {
             return;
         }
@@ -484,8 +576,59 @@ mod tests {
         assert_eq!(window.hit([x + 20.0, y + 10.0], &[]), Some(Hit::TakeOffAll));
         assert!(window.button_boxes().iter().any(|(name, _)| name == "take_off_all"));
         // Someone else's window has no such button.
-        let other = Equipment::of("Someone".into());
+        let other = Equipment::of("Someone".into(), [1024.0, 768.0]);
         assert_ne!(other.hit(other.frame.at(offset(take_off_at(), [20.0, 10.0])), &[]), Some(Hit::TakeOffAll));
+    }
+
+    #[test]
+    fn opens_at_the_games_size_and_place() {
+        let mut window = Equipment::default();
+        assert_eq!(window.frame.position, [185.0, 300.0]);
+        assert_eq!(window.height(), 187.0);
+        window.frame.minimized = true;
+        assert_eq!(window.height(), 17.0);
+        let other = Equipment::of("Someone".into(), [1024.0, 768.0]);
+        assert_eq!((other.frame.position, other.height()), ([377.0, 480.0], 167.0));
+        assert_eq!(Equipment::of("Someone".into(), [800.0, 600.0]).frame.position, [265.0, 375.0]);
+        // Another player's window has General and Costume only.
+        assert_eq!(other.tabs(), 2);
+    }
+
+    #[test]
+    fn lays_tabs_side_by_side_from_their_labels() {
+        assert_eq!(tab_boxes(&[60.0, 62.0, 42.0]), [[0.0, 17.0, 60.0, 17.0], [60.0, 17.0, 62.0, 17.0], [122.0, 17.0, 42.0, 17.0]]);
+        let mut window = Equipment::default();
+        window.frame.open = true;
+        window.tab_widths = [50.0, 70.0, 40.0];
+        let [x, y] = window.frame.position;
+        assert_eq!(window.hit([x + 55.0, y + 20.0], &[]), Some(Hit::Tab(1)));
+        assert_eq!(window.hit([x + 165.0, y + 20.0], &[]), Some(Hit::Window));
+        assert_eq!(window.button_boxes()[2], ("equipment_tab:2".to_owned(), [x + 120.0, y + 17.0, 40.0, 17.0]));
+        // The titles' list rows from (3, 59), 18 apart.
+        window.tab = TITLES_TAB;
+        window.titles = vec![(1000, "First".into())];
+        assert_eq!(window.hit([x + 10.0, y + 60.0], &[]), Some(Hit::WearTitle(0)));
+        assert_eq!(window.hit([x + 10.0, y + 78.0], &[]), Some(Hit::WearTitle(1000)));
+        assert_eq!(window.hit([x + 10.0, y + 96.0], &[]), Some(Hit::Window));
+    }
+
+    #[test]
+    fn alt_q_goes_back_to_general_before_closing() {
+        let mut window = Equipment::default();
+        window.toggle_general();
+        assert!(window.frame.open && window.tab == 0);
+        window.tab = TITLES_TAB;
+        window.toggle_general();
+        assert!(window.frame.open && window.tab == 0);
+        window.toggle_general();
+        assert!(!window.frame.open);
+        // Closed on Costume: opens on General.
+        window.tab = 1;
+        window.toggle_general();
+        assert!(window.frame.open && window.tab == 0);
+        window.swapping = true;
+        window.toggle_general();
+        assert!(window.frame.open && !window.swapping);
     }
 
     #[test]

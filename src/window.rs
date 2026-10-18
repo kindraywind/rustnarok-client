@@ -219,13 +219,27 @@ impl Frame {
     /// The title bar: rounded caps around a stretched middle, the three buttons and the title with its white shadow.
     pub fn draw_title<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, title: &str, cursor: [f32; 2]) {
         self.draw_bar(layer, chrome);
+        self.draw_buttons(layer, chrome, cursor);
+        layer.texts.push((title.to_owned(), self.at(offset(TITLE_TEXT, [1.0, 1.0])), [255, 255, 255]));
+        layer.texts.push((title.to_owned(), self.at(TITLE_TEXT), [0, 0, 0]));
+    }
+
+    /// The title bar from one piece (`titlebar_fix.bmp`), the three buttons, and the title black at (16, 3) over white
+    /// at (17, 4).
+    pub fn draw_fixed_title<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, bar: &'a Texture, title: &str, cursor: [f32; 2]) {
+        layer.sprites.push((bar, self.at([0.0, 0.0]), bar.size));
+        self.draw_buttons(layer, chrome, cursor);
+        layer.texts.push((title.to_owned(), self.at([17.0, 4.0]), [255, 255, 255]));
+        layer.texts.push((title.to_owned(), self.at([16.0, 3.0]), [0, 0, 0]));
+    }
+
+    /// The base, minimize and close buttons, lit when pointed at.
+    fn draw_buttons<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, cursor: [f32; 2]) {
         for (button, place) in [BASE_BUTTON, self.minimize_button(), self.close_button()].into_iter().enumerate() {
             let hovering = contains(self.at(place), BUTTON_SIZE, cursor);
             let image = &chrome.buttons[button][usize::from(hovering)];
             layer.sprites.push((image, self.at(place), image.size));
         }
-        layer.texts.push((title.to_owned(), self.at(offset(TITLE_TEXT, [1.0, 1.0])), [255, 255, 255]));
-        layer.texts.push((title.to_owned(), self.at(TITLE_TEXT), [0, 0, 0]));
     }
 
     /// The bar alone: rounded caps around a stretched middle.
