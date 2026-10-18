@@ -9,6 +9,8 @@
     {"wait": 300},
     {"say": "@job 1"},
     {"wait": 500},
+    {"say": "@set BaseLevel 99"},
+    {"wait": 500},
     {"say": "@allskill"},
     {"wait": 500},
     {"say": "@heal"},

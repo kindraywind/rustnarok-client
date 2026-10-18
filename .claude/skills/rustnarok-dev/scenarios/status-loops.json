@@ -10,6 +10,8 @@
     {"as": "second", "settle": 2000},
     {"say": "@job 2"},
     {"wait": 800},
+    {"say": "@set BaseLevel 99"},
+    {"wait": 500},
     {"say": "@allskill"},
     {"wait": 800},
     {"say": "@heal"},
