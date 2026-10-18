@@ -999,6 +999,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             game.guild.iter().flat_map(|guild| game.guild_window.button_boxes(guild)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(question_buttons)
+        .chain(game.level_ups.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.skill_description.iter().map(|window| json!({"kind": "button", "name": "skill_description_close", "box": window.close_box()})))
         .chain(
             game.mercenary
@@ -1267,6 +1268,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["pickup_popup"] = json!(game.pickup_popup.as_ref().map(|popup| popup.text.clone()));
     // A skill's description while it shows: which skill, and its lines.
     state["skill_description"] = json!(game.skill_description.as_ref().map(|window| json!({"skill": window.skill, "lines": window.text()})));
+    // The level up buttons up in the bottom corners.
+    state["level_ups"] = json!({"base": game.level_ups.base, "job": game.level_ups.job});
     // The status icon tooltip's lines while one shows.
     state["status_tip"] = json!(game.status_tip);
     orbs(&mut state["player"], None);
