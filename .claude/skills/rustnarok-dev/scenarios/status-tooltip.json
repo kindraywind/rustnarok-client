@@ -65,6 +65,13 @@
       }
     },
     {
+      "expect": {
+        "state": {
+          "status_tip.0": "Blessing"
+        }
+      }
+    },
+    {
       "shot": "status-tip",
       "crop": [
         700,
