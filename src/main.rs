@@ -2409,7 +2409,10 @@ impl Game {
         if frames.iter().any(|(_, frame)| frame.dragging()) {
             return;
         }
-        let places = window_places(frames.iter().map(|(name, frame)| (*name, frame.position, frame.minimized)));
+        let mut places = window_places(frames.iter().map(|(name, frame)| (*name, frame.position, frame.minimized)));
+        // The inventory's columns and rows ride along as a line of their own ("inventory_size columns rows 0").
+        let [columns, rows] = self.inventory.size();
+        places += &format!("{INVENTORY_SIZE} {columns} {rows} 0\n");
         if places != self.saved_places {
             if let Some(path) = settings_path("windows") {
                 let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, &places));
@@ -2430,6 +2433,9 @@ impl Game {
                 frame.position = window::dragged_to(position, [0.0, 0.0]);
                 frame.minimized = minimized;
             }
+        }
+        if let Some(&([columns, rows], _)) = saved.get(INVENTORY_SIZE) {
+            self.inventory.set_size([columns as usize, rows as usize]);
         }
         self.saved_places = text;
     }
@@ -5088,8 +5094,9 @@ fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
     Some(options::ShortcutKey::NamedF(number))
 }
 
-/// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
-/// folder elsewhere.
+/// The line of the window places that keeps the inventory's size.
+const INVENTORY_SIZE: &str = "inventory_size";
+
 /// The windows' places as saved: a line per window, its name, x, y and 1 when collapsed.
 fn window_places<'a>(frames: impl Iterator<Item = (&'a str, [f32; 2], bool)>) -> String {
     frames.map(|(name, [x, y], minimized)| format!("{name} {x} {y} {}\n", u8::from(minimized))).collect()
@@ -5131,6 +5138,8 @@ pub(crate) fn keeps_windows() -> bool {
     std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_none() || std::env::var_os("RUSTNAROK_CLIENT_KEEP_WINDOWS").is_some()
 }
 
+/// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
+/// folder elsewhere.
 pub(crate) fn settings_path(name: &str) -> Option<std::path::PathBuf> {
     // Dev switch: another settings folder (the test harness gives each scenario a fresh one).
     if let Some(folder) = std::env::var_os("RUSTNAROK_CLIENT_SETTINGS").filter(|folder| !folder.is_empty()) {
@@ -7670,6 +7679,8 @@ impl App {
             let hotkeys_height = game.hotkeys.height();
             game.hotkeys.frame.drag_to(self.cursor, hotkeys_height);
             game.inventory.frame.drag_to(self.cursor, inventory_height);
+            game.inventory.resize_to(self.cursor);
+            game.cart.resize_to(self.cursor);
             game.equipment.frame.drag_to(self.cursor, equipment_height);
             let skills_height = game.skill_window.height();
             game.skill_window.frame.drag_to(self.cursor, skills_height);
@@ -8408,6 +8419,8 @@ impl App {
                     | game.homunculus_skill_list.frame.drop_drag()
                     | game.storage.frame.drop_drag()
                     | game.inventory.frame.drop_drag()
+                    | game.inventory.stop_resize()
+                    | game.cart.stop_resize()
                     | game.equipment.frame.drop_drag()
                     | game.basic_info.frame.drop_drag()
                     | game.hotkeys.frame.drop_drag()
@@ -8844,6 +8857,9 @@ impl App {
                     game.clan_window.frame.start_drag(cursor)
                 }
                 Panel::Cart if game.cart.hit(cursor) == Some(inventory::Hit::Title(TitleHit::Title)) => game.cart.frame.start_drag(cursor),
+                // The corner grip resizes.
+                Panel::Inventory if game.inventory.hit(cursor) == Some(inventory::Hit::Resize) => game.inventory.start_resize(cursor),
+                Panel::Cart if game.cart.hit(cursor) == Some(inventory::Hit::Resize) => game.cart.start_resize(cursor),
                 Panel::Pet if game.pet.as_ref().and_then(|pet| game.pet_window.hit(cursor, pet)) == Some(pet::Hit::Title(TitleHit::Title)) => {
                     game.pet_window.frame.start_drag(cursor)
                 }
