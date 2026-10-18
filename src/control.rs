@@ -23,6 +23,13 @@
 //!   "new", "change" or "none"); in the game the map, the player, open windows, the NPC dialog, the aimed
 //!   skill, units and ground items (with their sprites' screen boxes and the areas a click picks them in), counts and
 //!   status icons. Everything comes from what the client itself knows, whatever server it plays on.
+//!   `player` has `status_points` and `skill_points` left, `stats` (`str` to `luk`: `{value, bonus, cost}`, cost being
+//!   the points one more takes) and `skills` (`[{id, name, level, max_level, upgradable}]`, level 0: not learned yet).
+//!   While the status window (Alt+A) is open, the arrows that raise a stat are targets named `raise_str` to
+//!   `raise_luk` (only those the points pay for); while the skill window (Alt+S) is open, its job tabs are
+//!   `skill_tab:<job id>` and the open tab's level up buttons `raise:<skill id>` (only with points left). Both only
+//!   while a click reaches them: under another window they're left out. After `@reset`, a build is these clicks by
+//!   name.
 //!   `homunculus` is `{id, name, level, hunger, intimacy, hp, skill_points, vaporized, following}` or null; the skill
 //!   list's level up buttons are targets named `raise:<skill id>`. `player.look` is the real look (hair, hair color,
 //!   clothes color, head top, mid and bottom). The stylist's buttons are targets (`hair_style_<row>`, `hair_color_<row>`,
@@ -36,7 +43,7 @@
 //!   events they made in between (`==` lines, with what they say: a disconnection's reason, say).
 //! - `quit`.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Cursor, Write};
 #[cfg(windows)]
 use std::net::{TcpListener as Listener, TcpStream as Stream};
@@ -49,6 +56,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use image::RgbaImage;
 use image::imageops::FilterType;
+use rustnarok_client::lua::SkillInfo;
 use rustnarok_client::net;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -831,6 +839,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         }
         _ => Vec::new(),
     };
+    // Whether a click in the middle of a box reaches that window, not another one over it.
+    let on_top = |panel: Panel, area: &[f32; 4]| game.window_at([area[0] + area[2] / 2.0, area[1] + area[3] / 2.0]) == Some(panel);
     let targets: Vec<Value> = game
         .inventory
         .item_boxes()
@@ -838,6 +848,16 @@ fn game_state(app: &App, game: &Game) -> Value {
         .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
         .chain(game.skill_window.skill_boxes(&app.skill_trees, &jobs).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
+        .chain(
+            game.skill_window
+                .raise_boxes(&app.skill_trees, &jobs, &game.skills, game.skill_points())
+                .into_iter()
+                .map(|(id, area)| (format!("raise:{id}"), area))
+                .chain(game.skill_window.tab_boxes(&jobs).into_iter().map(|(job, area)| (format!("skill_tab:{job}"), area)))
+                .filter(|(_, area)| on_top(Panel::Skills, area))
+                .chain(game.status_window.raise_boxes(&game.status).into_iter().filter(|(_, area)| on_top(Panel::Status, area)))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(game.basic_info.menu_boxes().into_iter().map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::item_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1050,6 +1070,10 @@ fn game_state(app: &App, game: &Game) -> Value {
             "base_level": status(net::STATUS_BASE_LEVEL),
             "job_level": status(net::STATUS_JOB_LEVEL),
             "zeny": status(net::STATUS_ZENY),
+            "status_points": status(net::STATUS_POINTS),
+            "skill_points": game.skill_points(),
+            "stats": stats_state(&game.status),
+            "skills": skills_state(&game.skills, &app.skill_info),
             "screen": screen(Owner::Player),
             "look": player_look(game.player.look.as_ref().unwrap_or(&Look::default())),
         },
@@ -1198,6 +1222,28 @@ fn player_look(look: &Look) -> Value {
     })
 }
 
+/// The six stats as the status window shows them: by short name ("str" to "luk"), the value, the bonus from gear and
+/// what one point more costs.
+fn stats_state(status: &HashMap<u16, i64>) -> Value {
+    let value = |id: u16| status.get(&id).copied().unwrap_or(0);
+    let stats = crate::status::STATS.iter().zip(net::STATUS_STR..).map(|(name, stat)| {
+        let cost = value(net::STATUS_STR_COST + stat - net::STATUS_STR);
+        ((*name).to_owned(), json!({"value": value(stat), "bonus": value(stat + net::STATUS_BONUS), "cost": cost}))
+    });
+    Value::Object(stats.collect())
+}
+
+/// The player's skills as the server lists them (level 0: not learned yet), with their names and top levels.
+fn skills_state(skills: &[net::Skill], info: &HashMap<u16, SkillInfo>) -> Value {
+    skills
+        .iter()
+        .map(|skill| {
+            let info = info.get(&skill.id);
+            json!({"id": skill.id, "name": info.map(|info| info.name.as_str()), "level": skill.level, "max_level": info.map(|info| info.max_level), "upgradable": skill.upgradable})
+        })
+        .collect()
+}
+
 /// The player's homunculus as the game state reports it.
 fn homunculus_state(homunculus: &net::Homunculus, id: Option<u32>, following: bool) -> Value {
     json!({
@@ -1264,6 +1310,34 @@ mod tests {
         assert_eq!(pin_kind(PinStep::ChangeNewFirst { old: "1357".into() }), "change");
         assert_eq!(pin_kind(PinStep::ChangeNewConfirm { old: "1357".into(), first: "2468".into() }), "change");
         assert_eq!(None::<PinPad>.as_ref().map_or("none", |pad| pad.kind()), "none");
+    }
+
+    #[test]
+    fn reports_stats_and_skills() {
+        let status = HashMap::from([
+            (net::STATUS_STR, 1),
+            (net::STATUS_STR + 3, 9),
+            (net::STATUS_STR + 3 + net::STATUS_BONUS, 2),
+            (net::STATUS_STR_COST + 3, 2),
+            (net::STATUS_STR_COST + 5, 3),
+        ]);
+        let stats = stats_state(&status);
+        assert_eq!(stats.as_object().unwrap().len(), 6);
+        assert_eq!(stats["int"], json!({"value": 9, "bonus": 2, "cost": 2}));
+        assert_eq!(stats["str"], json!({"value": 1, "bonus": 0, "cost": 0}));
+        assert_eq!(stats["luk"]["cost"], 3);
+        let info = HashMap::from([(19, SkillInfo { resource: "MG_FIREBOLT".into(), name: "Fire Bolt".into(), max_level: 10 })]);
+        let skills = [
+            net::Skill { id: 19, kind: net::Skill::ENEMY, level: 3, sp: 16, range: 9, upgradable: true },
+            net::Skill { id: 9999, kind: 0, level: 0, sp: 0, range: 0, upgradable: false },
+        ];
+        assert_eq!(
+            skills_state(&skills, &info),
+            json!([
+                {"id": 19, "name": "Fire Bolt", "level": 3, "max_level": 10, "upgradable": true},
+                {"id": 9999, "name": null, "level": 0, "max_level": null, "upgradable": false},
+            ])
+        );
     }
 
     #[test]
