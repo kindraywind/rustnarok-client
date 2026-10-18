@@ -13,13 +13,13 @@ use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, offset};
 
 // ponytail: sizes and offsets of the classic inventory over its bitmaps; calibrate against the real client.
-/// Columns and rows of cells it opens with, and how far its corner grip takes them (the client's 248 to 312 wide in
-/// 32 px steps, and up to 240 high).
-const SIZE: [usize; 2] = [7, 2];
-const COLUMNS: std::ops::RangeInclusive<usize> = 6..=8;
-const ROWS: std::ops::RangeInclusive<usize> = 2..=6;
-/// The cart's own rule: 120 to 216 high, so 2 to 5 rows.
-const CART_ROWS: usize = 5;
+/// Columns it opens with, and how far its corner grip takes them (248 to 312 wide in 32 px steps).
+const COLUMNS: usize = 7;
+const COLUMN_LIMITS: std::ops::RangeInclusive<usize> = 6..=8;
+/// Its tab strip is taller than the 240 px the grip allows, so it's always 6 rows high: the grip only widens it.
+const ROWS: std::ops::RangeInclusive<usize> = 6..=6;
+/// The cart has no tab strip: 120 to 216 high, so 2 to 5 rows.
+const CART_ROWS: std::ops::RangeInclusive<usize> = 2..=5;
 const CELL: f32 = 32.0;
 const FOOTER_HEIGHT: f32 = 29.0;
 /// The tab column, then 16px of white on either side of the cells (27 + 16 + 16 + columns).
@@ -194,8 +194,8 @@ pub struct Inventory {
     rows: usize,
     /// Held by the corner grip: where the press was, and the columns and rows then.
     resizing: Option<([f32; 2], [usize; 2])>,
-    /// The most rows the grip takes it to.
-    most_rows: usize,
+    /// How many rows the grip takes it to.
+    row_limits: std::ops::RangeInclusive<usize>,
 }
 
 impl Default for Inventory {
@@ -205,16 +205,16 @@ impl Default for Inventory {
             expansion: 0,
             title: messages::INVENTORY,
             cart: None,
-            frame: Frame::new(DEFAULT_POSITION, width(SIZE[0])).collapsing(),
+            frame: Frame::new(DEFAULT_POSITION, width(COLUMNS)).collapsing(),
             tab: 0,
             scroll: 0,
             clicks: Clicks::default(),
             lock_drop: false,
             compare: false,
-            columns: SIZE[0],
-            rows: SIZE[1],
+            columns: COLUMNS,
+            rows: *ROWS.start(),
             resizing: None,
-            most_rows: *ROWS.end(),
+            row_limits: ROWS,
         }
     }
 }
@@ -393,9 +393,9 @@ impl Inventory {
         inventory
     }
 
-    /// The cart: the inventory's look, at most 5 rows.
+    /// The cart: the inventory's look, 2 to 5 rows.
     pub fn cart() -> Self {
-        Self { most_rows: CART_ROWS, ..Self::default() }
+        Self { rows: *CART_ROWS.start(), row_limits: CART_ROWS, ..Self::default() }
     }
 
     /// A fresh listing from the server replaces what we had.
@@ -531,8 +531,8 @@ impl Inventory {
 
     /// Takes `columns` and `rows` as far as the grip would go; the items reflow.
     pub fn set_size(&mut self, [columns, rows]: [usize; 2]) {
-        self.columns = columns.clamp(*COLUMNS.start(), *COLUMNS.end());
-        self.rows = rows.clamp(*ROWS.start(), self.most_rows);
+        self.columns = columns.clamp(*COLUMN_LIMITS.start(), *COLUMN_LIMITS.end());
+        self.rows = rows.clamp(*self.row_limits.start(), *self.row_limits.end());
         self.frame.set_width(self.width());
         self.scroll_by(0);
     }
@@ -716,8 +716,9 @@ mod tests {
     #[test]
     fn the_cart_stops_at_five_rows() {
         let mut cart = Inventory::cart();
+        assert_eq!(cart.size(), [7, 2]);
         cart.set_size([8, 9]);
-        assert_eq!(cart.size(), [8, CART_ROWS]);
+        assert_eq!(cart.size(), [8, 5]);
         cart.set_size([1, 1]);
         assert_eq!(cart.size(), [6, 2]);
     }
@@ -728,21 +729,23 @@ mod tests {
         inventory.frame.open = true;
         let corner = inventory.frame.at([inventory.width() - 5.0, inventory.height() - 5.0]);
         assert_eq!(inventory.hit(corner), Some(Hit::Resize));
-        // From 7 x 2: 40 px right and 70 down make 8 x 4 (whole cells, from the press); past the limits it stops.
+        // From 7 x 6: 40 px right makes 8 columns (whole cells, from the press); its height never changes.
+        let height = inventory.height();
         inventory.start_resize(corner);
-        assert!(inventory.resize_to([corner[0] + 40.0, corner[1] + 70.0]));
-        assert_eq!(inventory.size(), [8, 4]);
-        assert_eq!((inventory.width(), inventory.height()), (width(8), TITLE_HEIGHT + 4.0 * CELL + 18.0 + FOOTER_HEIGHT));
+        assert!(inventory.resize_to([corner[0] + 40.0, corner[1] - 70.0]));
+        assert_eq!(inventory.size(), [8, 6]);
+        assert_eq!((inventory.width(), inventory.height()), (width(8), height));
         inventory.resize_to([corner[0] - 300.0, corner[1] + 500.0]);
         assert_eq!(inventory.size(), [6, 6]);
         assert!(inventory.stop_resize() && !inventory.resize_to(corner));
         // Items reflow into the columns shown, and the scroll stays in range.
-        inventory.items = (0..20).map(|index| InventoryItem { index, id: 501, kind: net::ITEM_HEALING, amount: 1, ..Default::default() }).collect();
-        inventory.set_size([6, 2]);
-        inventory.scroll_by(10);
-        assert_eq!(inventory.scroll, 2, "20 items in 6 columns: 4 rows, 2 shown");
-        inventory.set_size([8, 6]);
-        assert_eq!(inventory.scroll, 0);
+        let mut cart = Inventory::cart();
+        cart.items = (0..20).map(|index| InventoryItem { index, id: 501, kind: net::ITEM_HEALING, amount: 1, ..Default::default() }).collect();
+        cart.set_size([6, 2]);
+        cart.scroll_by(10);
+        assert_eq!(cart.scroll, 2, "20 items in 6 columns: 4 rows, 2 shown");
+        cart.set_size([8, 5]);
+        assert_eq!(cart.scroll, 0);
     }
 
     #[test]
