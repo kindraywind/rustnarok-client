@@ -86,6 +86,11 @@ impl Shown {
             card: item.kind == rustnarok_client::net::ITEM_CARD,
         }
     }
+
+    /// The same item to describe: ID, refine and cards (not which stack, how many, or where it was clicked).
+    pub fn same_item(&self, other: &Shown) -> bool {
+        (self.item, self.refine, self.cards) == (other.item, other.refine, other.cards)
+    }
 }
 
 /// "Time Left: %d hours %d minutes".
@@ -412,6 +417,17 @@ impl CardView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_same_item_is_its_id_refine_and_cards() {
+        let shown = |item, refine, cards| Shown { item, identified: true, refine, cards, damaged: None, expires: 0, card: false };
+        let sword = shown(1201, 4, [4035, 0, 0, 0]);
+        // Another stack, unidentified or damaged: still the same.
+        assert!(sword.same_item(&Shown { identified: false, damaged: Some(String::new()), ..shown(1201, 4, [4035, 0, 0, 0]) }));
+        assert!(!sword.same_item(&shown(1201, 5, [4035, 0, 0, 0])));
+        assert!(!sword.same_item(&shown(1201, 4, [0; 4])));
+        assert!(!sword.same_item(&shown(1202, 4, [4035, 0, 0, 0])));
+    }
 
     #[test]
     fn counts_a_rental_down() {

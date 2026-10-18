@@ -1,5 +1,5 @@
 {
-  "about": "An NPC shop (issues #390, the drags from #393): a right click on a row describes the item (Esc closes that). Butterfly Wings dragged onto the Buying Items window ask how many (the box holds 1; 3 are typed), a Magnifier goes in the same way, then the wings dragged back onto the shop's list ask how many to take out (the box holds all 3) and go. Esc leaves the shop open (it opens the game menu; a second Esc closes that); Cancel ends the deal.",
+  "about": "An NPC shop (issues #390, the drags from #393): a right click on a row describes the item (a second one on it closes that, a third opens it again, Esc closes it). Butterfly Wings dragged onto the Buying Items window ask how many (the box holds 1; 3 are typed), a Magnifier goes in the same way (its box covers the Buying Items rows behind it), then the wings dragged back onto the shop's list ask how many to take out (the box holds all 3) and go. Esc leaves the shop open (it opens the game menu; a second Esc closes that); Cancel ends the deal.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -11,10 +11,16 @@
     {"expect": {"windows_open": ["Shop"]}},
     {"click_on": {"pick_item": 645}, "button": "right"}, {"wait": 400},
     {"expect": {"windows_open": ["ItemInfo"]}},
+    {"click_on": {"pick_item": 645}, "button": "right"}, {"wait": 400},
+    {"expect": {"windows_closed": ["ItemInfo"]}},
+    {"click_on": {"pick_item": 645}, "button": "right"}, {"wait": 400},
+    {"expect": {"windows_open": ["ItemInfo"]}},
     {"key": "Escape"}, {"wait": 300},
     {"drag_on": [{"pick_item": 602}, {"point": [420, 340]}]}, {"wait": 400},
     {"key": "Backspace"}, {"type": "3"}, {"key": "Enter"}, {"wait": 300},
     {"drag_on": [{"pick_item": 611}, {"point": [420, 340]}]}, {"wait": 400},
+    {"move": [800, 600]},
+    {"shot": "shop-drag-amount", "crop": [0, 110, 720, 400]},
     {"key": "Enter"}, {"wait": 300},
     {"expect": {"state": {"shop_deal": [{"item": 602, "amount": 3}, {"item": 611, "amount": 1}]}}},
     {"key": "Escape"}, {"wait": 300},

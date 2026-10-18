@@ -5662,16 +5662,24 @@ fn login_error_message(error: &LoginError) -> usize {
     }
 }
 
-/// What a frame shows: images plus text to rasterize (with color), drawn in that order per layer.
+/// What a frame shows: images plus text to rasterize (with color), drawn in that order per layer (per window: see `window`).
 #[derive(Default)]
 struct Layer<'a> {
     sprites: Vec<Sprite<'a>>,
     texts: Vec<(String, [f32; 2], [u8; 3])>,
     /// How see-through it is drawn, 0 (opaque) to 1: a window being dragged.
     faded: f32,
+    /// Where each window after the first starts (sprites, texts): it covers the text of the windows before it.
+    windows: Vec<(usize, usize)>,
 }
 
 impl Layer<'_> {
+    /// Starts another window: what's drawn from here goes over everything drawn so far, text included.
+    fn window(&mut self) -> &mut Self {
+        self.windows.push((self.sprites.len(), self.texts.len()));
+        self
+    }
+
     /// White text with a black outline, as the client draws names and chat over the world.
     fn outlined(&mut self, text: &str, position: [f32; 2]) {
         self.outlined_in(text, position, CHAT_WHITE);
@@ -8000,12 +8008,18 @@ impl App {
             if let Some(item) = described {
                 let damaged = item.broken.then(|| self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
                 let shown = iteminfo::Shown::of(&item, damaged);
-                let position = game.item_window.as_ref().map(|window| window.position);
-                let mut window = iteminfo::ItemWindow::new(shown);
-                if let Some(position) = position {
-                    window.position = position;
+                // The same item again closes its description; another one takes its place.
+                if game.item_window.as_ref().is_some_and(|window| window.shown.same_item(&shown)) {
+                    game.item_window = None;
+                    game.card_view = None;
+                } else {
+                    let position = game.item_window.as_ref().map(|window| window.position);
+                    let mut window = iteminfo::ItemWindow::new(shown);
+                    if let Some(position) = position {
+                        window.position = position;
+                    }
+                    game.item_window = Some(window);
                 }
-                game.item_window = Some(window);
             } else if let Some((asked, amount)) = moved {
                 game.give(asked, u32::from(amount));
             } else if state == ElementState::Pressed && (game.targeting.take().is_some() | std::mem::take(&mut game.capturing)) {
@@ -14112,7 +14126,7 @@ impl App {
             }
             if let Some((items, selected)) = &dialog.menu {
                 let menu = menu_position();
-                overlay.sprites.push((&assets.menu, menu, assets.menu.size));
+                overlay.window().sprites.push((&assets.menu, menu, assets.menu.size));
                 let list = offset(menu, [MENU_CONTENT[0] as f32, MENU_CONTENT[1] as f32]);
                 let first = menu_first_row(*selected, items.len());
                 for (row, item) in items.iter().enumerate().skip(first).take(MENU_ROWS) {
@@ -14600,44 +14614,44 @@ impl App {
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
         if let Some(settings) = &game.chat.settings {
-            settings.draw(&mut shop_layer, &assets.chrome, messages, &game.chat.tabs[settings.tab].kinds, pointer.0);
+            settings.draw(shop_layer.window(), &assets.chrome, messages, &game.chat.tabs[settings.tab].kinds, pointer.0);
         }
         // A skill's description, over the windows.
         if let Some(window) = &game.skill_description {
-            window.draw(&mut shop_layer, &assets.chrome, &assets.skill_descript, font, pointer.0, &cooling, skill_info);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.skill_descript, font, pointer.0, &cooling, skill_info);
         }
         if let Some((list, _)) = &game.pick {
-            list.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, skill_info, messages, font, pointer);
+            list.draw(shop_layer.window(), &assets.chrome, &assets.pick_list, icons, items, skill_info, messages, font, pointer);
         }
         if let Some(shop) = &game.shop {
-            shop.draw(&mut shop_layer, &assets.chrome, &assets.shop, icons, items, messages, font, pointer);
+            shop.draw(shop_layer.window(), &assets.chrome, &assets.shop, icons, items, messages, font, pointer);
         }
         if game.deal_choice.is_some() {
             let dialog = dialog_position(&assets.message);
-            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             for (images, place) in assets.shop_buttons().into_iter().zip(DEAL_BUTTONS) {
                 shop_layer.sprites.push(button_sprite(pointer, offset(dialog, place), images));
             }
             shop_layer.texts.push((message(DEAL_MESSAGE).to_owned(), offset(dialog, MESSAGE_TEXT), TEXT_COLOR));
         }
         if let Some(room) = &game.room {
-            room.draw(&mut shop_layer, &assets.chrome, font, messages, &game.me.name, pointer.0, caret);
+            room.draw(shop_layer.window(), &assets.chrome, font, messages, &game.me.name, pointer.0, caret);
         }
         if let Some(setup) = &game.vend_setup {
-            setup.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, &game.cart.items, font, messages, pointer, caret);
+            setup.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, &game.cart.items, font, messages, pointer, caret);
         }
         if let Some(shop) = &game.my_shop {
-            shop.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
+            shop.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
         }
         if let Some(setup) = &game.buying_setup {
-            setup.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, &game.inventory.items, font, messages, pointer, caret);
+            setup.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, &game.inventory.items, font, messages, pointer, caret);
         }
         if let Some(store) = &game.my_buying_store {
-            store.draw(&mut shop_layer, &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
+            store.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
         }
-        game.quest_window.draw(&mut shop_layer, &assets.chrome, &assets.quest, font, messages, &game.quests, quest_texts, pointer.0);
+        game.quest_window.draw(shop_layer.window(), &assets.chrome, &assets.quest, font, messages, &game.quests, quest_texts, pointer.0);
         game.achievement_window.draw(
-            &mut shop_layer,
+            shop_layer.window(),
             &assets.chrome,
             &assets.achievement,
             icons,
@@ -14651,34 +14665,34 @@ impl App {
             pointer,
         );
         // ponytail: the roulette's icon stands left of the minimap; where the real client puts it isn't known.
-        roulette::draw_icon(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.roulette, font, messages, pointer.0);
+        roulette::draw_icon(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.roulette, font, messages, pointer.0);
         if let Some(window) = &game.monster_window {
-            window.draw(&mut shop_layer, &assets.chrome, font, messages, pointer.0);
+            window.draw(shop_layer.window(), &assets.chrome, font, messages, pointer.0);
         }
         if let Some(window) = &game.roulette {
-            window.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.roulette, icons, items, font, messages, control::now(), pointer);
+            window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.roulette, icons, items, font, messages, control::now(), pointer);
         }
         if let Some(list) = &game.emotion_list {
-            list.draw(&mut shop_layer, &assets.chrome, font, messages, game.emotion_sprite.as_ref(), &emotion_icons, pointer.0);
+            list.draw(shop_layer.window(), &assets.chrome, font, messages, game.emotion_sprite.as_ref(), &emotion_icons, pointer.0);
         }
         if let Some(window) = &game.macro_window {
-            window.draw(&mut shop_layer, &assets.chrome, font, messages, &game.macro_lines, pointer.0, caret);
+            window.draw(shop_layer.window(), &assets.chrome, font, messages, &game.macro_lines, pointer.0, caret);
         }
-        game.mail.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.mail, icons, items, font, messages, pc_job_names, pointer, caret);
+        game.mail.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.mail, icons, items, font, messages, pc_job_names, pointer, caret);
         if let Some(make) = &game.room_make {
-            make.draw(&mut shop_layer, &assets.chrome, &assets.chatroom, messages, pointer, caret);
+            make.draw(shop_layer.window(), &assets.chrome, &assets.chatroom, messages, pointer, caret);
         }
         if let Some(bank) = &game.bank {
             let carried = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
-            bank.draw(&mut shop_layer, &assets.chrome, &assets.bank, messages, font, pointer, caret, carried);
+            bank.draw(shop_layer.window(), &assets.chrome, &assets.bank, messages, font, pointer, caret, carried);
         }
         if let Some(shop) = &game.cashshop {
-            shop.draw(&mut shop_layer, &assets.chrome, &assets.cashshop, icons, items, messages, font, pointer, caret);
+            shop.draw(shop_layer.window(), &assets.chrome, &assets.cashshop, icons, items, messages, font, pointer, caret);
         }
         if let Some(viewed) = &game.viewing {
             let window = &viewed.window;
             window.draw(
-                &mut shop_layer,
+                shop_layer.window(),
                 &mut tooltip,
                 &assets.chrome,
                 &assets.equipment,
@@ -14693,37 +14707,37 @@ impl App {
             );
         }
         if let Some(window) = &game.refine {
-            window.draw(&mut shop_layer, &assets.chrome, &assets.refine, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.refine, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.reform {
-            window.draw(&mut shop_layer, &assets.chrome, &assets.reform, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.reform, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.grade {
-            window.draw(&mut shop_layer, &assets.chrome, &assets.grade, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.grade, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.enchant {
-            window.draw(&mut shop_layer, &assets.chrome, &assets.enchant, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.enchant, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.stylist {
             let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
-            window.draw(&mut shop_layer, &assets.chrome, &assets.stylist, items, &self.styling_shop, job, messages, font, pointer, &stylist_placements);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.stylist, items, &self.styling_shop, job, messages, font, pointer, &stylist_placements);
         }
         if let Some(window) = &game.materials {
-            window.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.pick_list, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.synthesis {
-            window.draw(&mut shop_layer, &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.upgrade {
-            window.draw(&mut shop_layer, &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(trade) = &game.trade {
-            trade.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);
+            trade.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);
         }
         // Someone asks for a deal: who, their ID in letters and level, OK or cancel.
         if let Some((name, id, level)) = &game.trade_asked {
             let dialog = dialog_position(&assets.message);
-            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             let lines = [format!("({name}){}", message(TRADE_ASKS)), format!("PN: {}     Lv.{level}", trade::id_code(*id))];
@@ -14735,7 +14749,7 @@ impl App {
             && let Some(shop) = &game.cashshop
         {
             let dialog = dialog_position(&assets.message);
-            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             let cash = shop.cart_total().saturating_sub(shop.free_to_spend);
@@ -14754,7 +14768,7 @@ impl App {
         };
         if let Some(question) = guild_question {
             let dialog = dialog_position(&assets.message);
-            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
@@ -14779,7 +14793,7 @@ impl App {
         };
         if let Some(question) = colored_question {
             let dialog = dialog_position(&assets.message);
-            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             for (row, pieces) in wrap_colored(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
@@ -14796,7 +14810,7 @@ impl App {
         // Someone asks to be friends.
         if let Some((_, _, name)) = &game.friend_asked {
             let dialog = dialog_position(&assets.message);
-            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             let question = messages::fill(message(FRIEND_ASKS), &[name]);
@@ -14806,7 +14820,16 @@ impl App {
         }
         // The battleground queue, and its question: applying, leaving, or entering with the time left.
         if game.queue_window.frame.open {
-            game.queue_window.draw(&mut shop_layer, &assets.chrome, &assets.battle_queue, font, messages, &self.battlegrounds, game.queued.as_ref(), pointer);
+            game.queue_window.draw(
+                shop_layer.window(),
+                &assets.chrome,
+                &assets.battle_queue,
+                font,
+                messages,
+                &self.battlegrounds,
+                game.queued.as_ref(),
+                pointer,
+            );
         }
         let queue_question = match &game.queue_asked {
             Some(QueueAsked::Apply(kind, _)) => {
@@ -14823,7 +14846,7 @@ impl App {
         };
         if let Some(question) = queue_question {
             let dialog = dialog_position(&assets.message);
-            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
@@ -14836,7 +14859,7 @@ impl App {
         if let Some((_, _, name, again)) = &game.adopt_asked {
             let question = if *again { last_sentence(message(ADOPT_ASKS_AGAIN)).to_owned() } else { format!("({name}){}", message(ADOPT_ASKS)) };
             let dialog = dialog_position(&assets.message);
-            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
@@ -14846,7 +14869,7 @@ impl App {
         // A party invites us: its name and the question, OK or cancel.
         if let Some((_, name)) = &game.party_invite {
             let dialog = dialog_position(&assets.message);
-            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             let question = format!("{name} {}", message(PARTY_INVITED).trim_start());
@@ -14855,16 +14878,16 @@ impl App {
             }
         }
         if let Some(amount) = &game.amount {
-            amount.draw(&mut shop_layer, &assets.chrome, &assets.message, [&assets.ok, &assets.cancel], messages, pointer);
+            amount.draw(shop_layer.window(), &assets.chrome, &assets.message, [&assets.ok, &assets.cancel], messages, pointer);
         }
         if let Some(window) = &game.item_window {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
             let lines = window.lines(items, messages, now, &|text, width| wrap_colored(font, text, width));
             game.item_lines = lines.len();
-            window.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
         }
         if let Some(view) = &game.card_view {
-            view.draw(&mut shop_layer, &assets.chrome, &assets.item_window, icons, pointer.0);
+            view.draw(shop_layer.window(), &assets.chrome, &assets.item_window, icons, pointer.0);
         }
         let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
         for window in &compared {
@@ -14874,7 +14897,7 @@ impl App {
         if game.apply_asked {
             let dialog = dialog_position(&assets.message);
             let question = messages.get(skills::APPLY_QUESTION).map_or("", String::as_str);
-            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             for (row, line) in message_lines(font, question, MESSAGE_WIDTH).into_iter().enumerate() {
@@ -14884,7 +14907,7 @@ impl App {
         if game.save_asked {
             let dialog = dialog_position(&assets.message);
             let question = messages.get(escape::SAVE_QUESTION).map_or("Do you really want to go back to your savepoint?", String::as_str);
-            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             for (row, line) in message_lines(font, question, MESSAGE_WIDTH).into_iter().enumerate() {
@@ -14892,30 +14915,30 @@ impl App {
             }
         }
         if let Some(menu) = &game.escape {
-            menu.draw(&mut shop_layer, &assets.chrome, &assets.escape, messages, pointer, game.can_resurrect());
+            menu.draw(shop_layer.window(), &assets.chrome, &assets.escape, messages, pointer, game.can_resurrect());
         }
         if let Some(setup) = &game.party_setup {
-            setup.draw(&mut shop_layer, &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), messages, pointer);
+            setup.draw(shop_layer.window(), &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), messages, pointer);
         }
-        game.talks.draw(&mut shop_layer, &assets.chrome, font, messages, pointer);
+        game.talks.draw(shop_layer.window(), &assets.chrome, font, messages, pointer);
         if let Some(setup) = &game.friend_setup {
-            setup.draw(&mut shop_layer, &assets.chrome, messages, pointer.0);
+            setup.draw(shop_layer.window(), &assets.chrome, messages, pointer.0);
         }
         if let Some(list) = &game.block_list {
-            list.draw(&mut shop_layer, &assets.chrome, pointer.0);
+            list.draw(shop_layer.window(), &assets.chrome, pointer.0);
         }
         if let Some(prompt) = &game.away_prompt {
-            prompt.draw(&mut shop_layer, &assets.chrome, messages, pointer);
+            prompt.draw(shop_layer.window(), &assets.chrome, messages, pointer);
         }
         if let Some(board) = &game.ranking {
-            board.draw(&mut shop_layer, &assets.chrome, font, messages, &game.char_names, pointer.0);
+            board.draw(shop_layer.window(), &assets.chrome, font, messages, &game.char_names, pointer.0);
         }
         if let Some(window) = &game.navi_window {
             let caret = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
-            window.draw(&mut shop_layer, &assets.chrome, font, messages, game.navigation.as_ref().map(|active| &active.target), pointer.0, caret);
+            window.draw(shop_layer.window(), &assets.chrome, font, messages, game.navigation.as_ref().map(|active| &active.target), pointer.0, caret);
         }
         if let Some(window) = &game.reputation_window {
-            window.draw(&mut shop_layer, &assets.chrome, &assets.reputation, font, messages, &self.reputation_tables, &game.reputation, pointer.0);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.reputation, font, messages, &self.reputation_tables, &game.reputation, pointer.0);
         }
         if let Some(room) = &game.dressroom {
             let feet = room.feet();
@@ -14923,16 +14946,16 @@ impl App {
                 Some(sprites) => dress_placements.iter().map(|(key, position, size, _)| (sprites.texture(*key), offset(feet, *position), *size)).collect(),
                 None => Vec::new(),
             };
-            room.draw(&mut shop_layer, &assets.chrome, &assets.dressroom, font, messages, &game.dress_lists, figure, pointer);
+            room.draw(shop_layer.window(), &assets.chrome, &assets.dressroom, font, messages, &game.dress_lists, figure, pointer);
         }
         if let Some(window) = &game.audio_window {
-            window.draw(&mut shop_layer, &assets.chrome, &assets.options, font, messages, sound, pointer.0);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.options, font, messages, sound, pointer.0);
         }
         if let Some(window) = &game.graphics_window {
-            window.draw(&mut shop_layer, &assets.chrome, &assets.options, font, messages, &self.graphics, pointer.0);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.options, font, messages, &self.graphics, pointer.0);
         }
         if let Some(window) = &game.shortcuts_window {
-            window.draw(&mut shop_layer, &assets.chrome, font, messages, &self.shortcuts, pointer.0);
+            window.draw(shop_layer.window(), &assets.chrome, font, messages, &self.shortcuts, pointer.0);
         }
         let mut menu_layer = Layer::default();
         if let Some(menu) = &game.menu {
@@ -15104,13 +15127,33 @@ impl App {
 /// A layer with its text rasterized.
 type Composed<'a> = (Vec<Sprite<'a>>, Vec<(Texture, [f32; 2])>, f32);
 
-/// Rasterizes each layer's text.
+/// Rasterizes each layer's text, one piece per window (see `Layer::window`).
 fn compose<'a>(gpu: &Gpu, font: &Font, layers: Vec<Layer<'a>>) -> Vec<Composed<'a>> {
     layers
         .into_iter()
-        .map(|layer| {
-            let texts = layer.texts.iter().map(|(text, position, color)| (gpu.text(font, text, *color), *position)).collect();
-            (layer.sprites, texts, layer.faded)
+        .flat_map(|layer| {
+            window_spans(&layer.windows, layer.sprites.len(), layer.texts.len())
+                .into_iter()
+                .map(|(sprites, texts)| {
+                    let texts = layer.texts[texts].iter().map(|(text, position, color)| (gpu.text(font, text, *color), *position)).collect();
+                    (layer.sprites[sprites].to_vec(), texts, layer.faded)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Each window's sprites and texts, from where each starts (see `Layer::window`).
+fn window_spans(starts: &[(usize, usize)], sprites: usize, texts: usize) -> Vec<(std::ops::Range<usize>, std::ops::Range<usize>)> {
+    let mut from = (0, 0);
+    starts
+        .iter()
+        .copied()
+        .chain([(sprites, texts)])
+        .map(|to| {
+            let span = (from.0..to.0, from.1..to.1);
+            from = to;
+            span
         })
         .collect()
 }
@@ -15782,6 +15825,13 @@ fn ground_drop_refused(since_wear: Option<Duration>, busy: bool, equipment: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_covers_the_text_of_the_windows_before_it() {
+        // Two windows: the first's 3 sprites and 2 texts, then the second's 1 sprite and 1 text.
+        assert_eq!(window_spans(&[(3, 2)], 4, 3), [(0..3, 0..2), (3..4, 2..3)]);
+        assert_eq!(window_spans(&[], 4, 3), [(0..4, 0..3)]);
+    }
 
     #[test]
     fn the_head_turns_before_the_body() {
