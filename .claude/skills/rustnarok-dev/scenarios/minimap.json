@@ -18,10 +18,8 @@
     {
       "expect": {
         "state": {
-          "minimap": {
-            "mode": "see_through",
-            "zoom": 1.0
-          }
+          "minimap.mode": "see_through",
+          "minimap.zoom": 1.0
         }
       }
     },
@@ -179,10 +177,8 @@
     {
       "expect": {
         "state": {
-          "minimap": {
-            "mode": "see_through",
-            "zoom": 1.0
-          }
+          "minimap.mode": "see_through",
+          "minimap.zoom": 1.0
         }
       }
     }
