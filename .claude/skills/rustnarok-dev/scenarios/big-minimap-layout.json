@@ -1,0 +1,30 @@
+{
+  "about": "The big minimap's layout (issue #539): titled \"<display name> ( prontera ) 156 180\", following the player's cell; the picture 1:1 on the grey pane; Quest, Facility and Guild/Party ticked; the player as their own head; a test NPC's quest mark that starts navigation to its cell when clicked; Guild/Party unticked; on prtg_cas01 (in the exception table) the mini button shows the OK box instead.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/quest-marks.txt"}, {"wait": 300},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/quest-marks.txt"}, {"wait": 500},
+    {"say": "@warp prontera 156 180"}, {"settle": 2000},
+    {"click_on": {"button": "minimap_mini"}}, {"wait": 400},
+    {"expect": {"windows_open": ["Minimap"], "state": {"minimap_window.title": "Prontera, Capital of Rune Midgard ( prontera ) 156 180", "minimap_window.checks": [true, true, true]}}},
+    {"move": [300, 700]},
+    {"shot": "big-minimap-layout", "crop": [488, 190, 516, 559]},
+    {"click_on": {"button": "minimap_quest:162 184"}}, {"wait": 400},
+    {"expect": {"state": {"navigation.map": "prontera", "navigation.cell": [162, 184]}}},
+    {"click_on": {"button": "minimap_check_party"}}, {"wait": 200},
+    {"expect": {"state": {"minimap_window.checks": [true, true, false]}}},
+    {"click_on": {"button": "minimap_check_party"}}, {"wait": 200},
+    {"click_on": {"button": "minimap_mini"}}, {"wait": 300},
+    {"expect": {"windows_closed": ["Minimap"]}},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/quest-marks.txt"}, {"wait": 300},
+    {"say": "@warp prtg_cas01 100 100"}, {"settle": 2000},
+    {"click_on": {"button": "minimap_mini"}}, {"wait": 400},
+    {"expect": {"windows_open": ["Notice"], "windows_closed": ["Minimap"]}},
+    {"move": [300, 700]},
+    {"shot": "big-minimap-refused"},
+    {"click_on": {"button": "ok"}}, {"wait": 300},
+    {"expect": {"windows_closed": ["Notice"]}},
+    {"say": "@warp prontera 156 180"}, {"settle": 1500}
+  ]
+}

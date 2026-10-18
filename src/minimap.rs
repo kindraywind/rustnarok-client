@@ -168,10 +168,10 @@ pub fn push_in(area: [f32; 4]) -> ([f32; 4], u8) {
 
 /// An NPC's quest mark from ZC_QUEST_NOTIFY_EFFECT: one per NPC, replaced by the next; effect 9999 (QTYPE_NONE) takes
 /// it away. Colour 0 is kept but draws nothing.
-pub fn set_quest_mark(marks: &mut Vec<(u32, [i32; 2], u16)>, npc: u32, cell: [i32; 2], effect: u16, color: u16) {
+pub fn set_quest_mark(marks: &mut Vec<(u32, [i32; 2], u16, u16)>, npc: u32, cell: [i32; 2], effect: u16, color: u16) {
     marks.retain(|(each, ..)| *each != npc);
     if effect != 9999 {
-        marks.push((npc, cell, color));
+        marks.push((npc, cell, effect, color));
     }
 }
 
@@ -307,22 +307,6 @@ impl Assets {
     /// The arrow's shadow for the player's facing `rot` in degrees.
     pub fn arrow_shadow(&self, rot: f32) -> &Texture {
         &self.arrow_shadows[arrow_turn(rot)]
-    }
-
-    pub fn guild_ring(&self) -> &Texture {
-        &self.guild_ring
-    }
-
-    pub fn guild_dot(&self) -> &Texture {
-        &self.guild
-    }
-
-    pub fn party_back(&self) -> &Texture {
-        &self.dot_back
-    }
-
-    pub fn boss_mark(&self) -> &Texture {
-        &self.boss
     }
 }
 
@@ -591,9 +575,9 @@ mod tests {
         set_quest_mark(&mut quests, 7, [150, 170], 1, 2);
         set_quest_mark(&mut quests, 8, [10, 10], 1, 0);
         set_quest_mark(&mut quests, 7, [151, 171], 2, 3);
-        assert_eq!(quests, [(8, [10, 10], 0), (7, [151, 171], 3)]);
+        assert_eq!(quests, [(8, [10, 10], 1, 0), (7, [151, 171], 2, 3)]);
         set_quest_mark(&mut quests, 7, [151, 171], 9999, 3);
-        assert_eq!(quests, [(8, [10, 10], 0)]);
+        assert_eq!(quests, [(8, [10, 10], 1, 0)]);
         // Compass marks by id alone: another NPC's mark with the same id replaces it; type 2 removes it.
         let mut compass = Vec::new();
         set_compass_mark(&mut compass, 1, 0, "npc a");

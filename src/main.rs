@@ -1179,8 +1179,8 @@ struct Game {
     cutin: Option<cutin::Cutin>,
     /// Compass marks on the minimap, by mark id: the cell, its color, until when (None: until taken away) and when set.
     marks: Vec<(u8, Mark)>,
-    /// NPCs' quest marks (ZC_QUEST_NOTIFY_EFFECT): the NPC, its cell and the mark's colour.
-    quest_marks: Vec<(u32, [i32; 2], u16)>,
+    /// NPCs' quest marks (ZC_QUEST_NOTIFY_EFFECT): the NPC, its cell, the effect and the mark's colour.
+    quest_marks: Vec<(u32, [i32; 2], u16, u16)>,
     /// Where the store picked in the Universal Catalog stands.
     store_mark: Option<[i32; 2]>,
     /// The box asking how many, and what for.
@@ -1414,8 +1414,9 @@ struct Game {
     /// The party setup window, and the member whose leadership is being asked about.
     party_dialog: Option<party::PartyDialog>,
     leader_asked: Option<u32>,
-    /// A party question up: leaving, disbanding, expelling a member, or "only the leader can invite".
-    party_asked: Option<PartyQuestion>,
+    /// A question or notice in the message box: leaving, disbanding, expelling a member, "only the leader can invite", a
+    /// plain notice.
+    question_box: Option<BoxQuestion>,
     /// The last press on a party member's row (when, whose): a second soon after on the same row is a double click.
     row_press: Option<(Instant, u32)>,
     /// The small party windows as last saved for this character.
@@ -2785,6 +2786,7 @@ impl Game {
         let mut places = window_places(frames.iter().map(|(name, frame)| (*name, frame.position, frame.minimized)));
         // Sizes ride along as lines of their own ("inventory_size columns rows 0", "shop_size width rows 0").
         places += &format!("{PARTY_MODE} 0 {} 0\n", self.party_window.mode);
+        places += &minimap_window::checks_line(self.minimap_window.checks);
         if let Some(sizes) = self.shop.as_ref().and_then(shop::Shop::sizes) {
             self.shop_sizes = sizes;
         }
@@ -2827,6 +2829,9 @@ impl Game {
         }
         if let Some(&([columns, rows], _)) = saved.get(CART_SIZE) {
             self.cart.set_size([columns as usize, rows as usize]);
+        }
+        if let Some(&checks) = saved.get(minimap_window::CHECKS_LINE) {
+            self.minimap_window.checks = minimap_window::checks_from(checks);
         }
         if let Some(&([_, mode], _)) = saved.get(PARTY_MODE) {
             self.party_window.set_mode(mode as usize);
@@ -2981,27 +2986,27 @@ impl Game {
         self.party_dialog = Some(party::PartyDialog::new(kind, self.party.as_ref(), leader, at));
     }
 
-    /// A party question answered (OK: `yes`).
-    fn answer_party(&mut self, yes: bool, messages: &[String]) {
-        let Some(asked) = self.party_asked.take() else { return };
+    /// The message box answered (OK: `yes`).
+    fn answer_box(&mut self, yes: bool, messages: &[String]) {
+        let Some(asked) = self.question_box.take() else { return };
         if !yes {
             return;
         }
         match asked {
-            PartyQuestion::Leave => match self.party.as_ref().map(|party| party::leave_decision(party, self.account_id, &self.map)) {
+            BoxQuestion::Leave => match self.party.as_ref().map(|party| party::leave_decision(party, self.account_id, &self.map)) {
                 Some(party::Leaving::HandOver(account)) => {
                     let _ = self.session.change_party_leader(account);
                     self.leave_party();
                 }
                 Some(party::Leaving::Delegate) => self.chat_line(messages.get(party::LEAVE_AFTER_DELEGATION).cloned().unwrap_or_default(), CHAT_ERROR),
-                Some(party::Leaving::AskDisband) => self.party_asked = Some(PartyQuestion::Disband),
+                Some(party::Leaving::AskDisband) => self.question_box = Some(BoxQuestion::Disband),
                 Some(party::Leaving::Leave) | None => self.leave_party(),
             },
-            PartyQuestion::Disband => self.leave_party(),
-            PartyQuestion::Expel(account, name) => {
+            BoxQuestion::Disband => self.leave_party(),
+            BoxQuestion::Expel(account, name) => {
                 let _ = self.session.expel_from_party(account, &name);
             }
-            PartyQuestion::OnlyLeader | PartyQuestion::LastRow => {}
+            BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) => {}
         }
     }
 
@@ -3022,9 +3027,9 @@ impl Game {
             party::MemberChoice::Mail => {
                 let _ = self.session.start_mail(&info.name);
             }
-            party::MemberChoice::Leave => self.party_asked = Some(PartyQuestion::Leave),
+            party::MemberChoice::Leave => self.question_box = Some(BoxQuestion::Leave),
             party::MemberChoice::Whisper => self.whisper_member(&info.name),
-            party::MemberChoice::Expel => self.party_asked = Some(PartyQuestion::Expel(info.account, info.name)),
+            party::MemberChoice::Expel => self.question_box = Some(BoxQuestion::Expel(info.account, info.name)),
             party::MemberChoice::Assign if !info.online => self.chat_line(messages.get(LEADER_OFFLINE).cloned().unwrap_or_default(), CHAT_ERROR),
             party::MemberChoice::Assign => self.leader_asked = Some(info.account),
             party::MemberChoice::AddSmall => self.member_windows.add(info.account, &party::Grid::new(screen())),
@@ -3063,6 +3068,11 @@ impl Game {
         self.party_window.picked = None;
         self.party_window.frame.open = true;
         self.raise(Panel::Party);
+    }
+
+    /// The quest NPCs the big minimap shows: those with a mark colour (cell, effect, colour).
+    fn big_minimap_quests(&self) -> Vec<([i32; 2], u16, u16)> {
+        self.quest_marks.iter().filter(|(.., color)| *color != 0).map(|&(_, cell, effect, color)| (cell, effect, color)).collect()
     }
 
     /// Whether the small minimap is there: outdoors and not hidden.
@@ -3857,7 +3867,7 @@ impl Game {
             || self.bind_asked.is_some()
             || self.expansion_asked.is_some()
             || self.leader_asked.is_some()
-            || self.party_asked.is_some()
+            || self.question_box.is_some()
             || self.dismiss_asked
             || self.homunculus_rename.is_some()
             || self.pet_asked.is_some()
@@ -4467,7 +4477,8 @@ impl Game {
         push(BindAsked, self.bind_asked.is_some());
         push(ExpansionAsked, self.expansion_asked.is_some());
         push(LeaderAsked, self.leader_asked.is_some());
-        push(PartyAsked, self.party_asked.is_some());
+        push(PartyAsked, self.question_box.as_ref().is_some_and(|asked| !matches!(asked, BoxQuestion::Notice(_))));
+        push(Notice, matches!(self.question_box, Some(BoxQuestion::Notice(_))));
         push(DismissAsked, self.dismiss_asked);
         push(HomunculusRename, self.homunculus_rename.is_some());
         push(PetAsked, self.pet_asked.is_some());
@@ -4594,7 +4605,7 @@ impl Game {
             || self.bind_asked.is_some()
             || self.expansion_asked.is_some()
             || self.leader_asked.is_some()
-            || self.party_asked.is_some()
+            || self.question_box.is_some()
             || self.dismiss_asked
             || self.homunculus_rename.is_some()
             || self.pet_asked.is_some()
@@ -4650,7 +4661,7 @@ impl Game {
         if self.leader_asked.take().is_some() {
             return;
         }
-        if self.party_asked.take().is_some() {
+        if self.question_box.take().is_some() {
             return;
         }
         if self.dismiss_asked {
@@ -4851,7 +4862,7 @@ impl Game {
             LeaderAsked => {
                 self.leader_asked = None;
             }
-            PartyAsked => self.party_asked = None,
+            PartyAsked | Notice => self.question_box = None,
             DismissAsked => self.answer_dismiss(false, &[]),
             HomunculusRename => self.answer_homunculus_name(false),
             PetAsked => self.answer_pet(false),
@@ -5345,14 +5356,14 @@ enum DialogButton {
 }
 
 /// A guild question, answered with OK or Cancel.
-/// A party question's buttons and whether each answers yes: OK and Cancel, or OK alone where Cancel would be.
-fn party_question_buttons(asks: bool) -> Vec<([f32; 2], bool)> {
+/// The message box's buttons and whether each answers yes: OK and Cancel, or OK alone where Cancel would be.
+fn box_buttons(asks: bool) -> Vec<([f32; 2], bool)> {
     if asks { vec![(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] } else { vec![(RIGHT_BUTTON, true)] }
 }
 
-/// A party question in the message box.
+/// A question or notice in the message box.
 #[derive(Debug, Clone, PartialEq)]
-enum PartyQuestion {
+enum BoxQuestion {
     /// "Are you sure that you want to leave?" (357).
     Leave,
     /// Nobody to hand the party to: disband instead? (3257).
@@ -5363,9 +5374,11 @@ enum PartyQuestion {
     OnlyLeader,
     /// "In the last row" (3145): a small party window let go outside the used cells. OK only.
     LastRow,
+    /// A plain notice of this message, OK only (the big minimap refused on this map).
+    Notice(usize),
 }
 
-impl PartyQuestion {
+impl BoxQuestion {
     fn message(&self) -> usize {
         match self {
             Self::Leave => PARTY_LEAVE_ASKS,
@@ -5373,12 +5386,13 @@ impl PartyQuestion {
             Self::Expel(..) => PARTY_EXPEL_ASKS,
             Self::OnlyLeader => party::ONLY_LEADER_INVITES,
             Self::LastRow => party::IN_THE_LAST_ROW,
+            Self::Notice(message) => *message,
         }
     }
 
     /// Whether it asks (OK and Cancel), else it tells (OK alone).
     fn asks(&self) -> bool {
-        !matches!(self, Self::OnlyLeader | Self::LastRow)
+        !matches!(self, Self::OnlyLeader | Self::LastRow | Self::Notice(_))
     }
 }
 
@@ -5927,12 +5941,18 @@ fn toggle_world_map(game: &mut Game, gpu: Option<&render::Gpu>, grf: &Grf, world
     };
 }
 
-fn toggle_big_minimap(game: &mut Game, gpu: &render::Gpu, no_picture: String) {
+/// Opens or closes the big minimap, with the player's head; on a map in the exception table, the OK box of
+/// `minimap_window::NO_PICTURE` instead.
+fn toggle_big_minimap(game: &mut Game, gpu: &render::Gpu, grf: &Grf, exceptions: &HashSet<String>) {
     let map = map_key(&game.map);
-    let image = game.minimap.clone();
-    if !game.minimap_window.toggle(gpu, image.as_ref(), &map) {
-        game.chat_line(no_picture, CHAT_ERROR);
+    if !game.minimap_window.frame.open && exceptions.contains(&map) {
+        game.question_box = Some(BoxQuestion::Notice(minimap_window::NO_PICTURE));
+        return;
     }
+    let image = game.minimap.clone();
+    let head = game.player.look.as_ref().and_then(|look| actor::head_image(grf, look));
+    game.minimap_window.set_head(gpu, head.as_ref());
+    game.minimap_window.toggle(gpu, image.as_ref(), &map);
     game.sync_esc();
 }
 
@@ -6595,6 +6615,8 @@ struct App {
     modifiers: ModifiersState,
     /// Maps with the indoor camera.
     indoor: HashSet<String>,
+    /// Maps with no big minimap (`data\ExceptionMinimapNameTable.txt`).
+    minimap_exceptions: HashSet<String>,
     /// Maps with their own camera table; the view the player left; whether it's written (not when driven).
     viewpoints: HashMap<String, rustnarok_client::map::Viewpoint>,
     saved_view: SavedView,
@@ -7613,11 +7635,23 @@ impl App {
                 }
             }
             // The big minimap: a click on it, before the small one's buttons (it can cover them).
-            Scene::Game(game) if game.minimap_window.hit(cursor, [game.world.gat.width as u32, game.world.gat.height as u32]).is_some() => {
+            Scene::Game(game) if game.minimap_window.covers(cursor) => {
                 let size = [game.world.gat.width as u32, game.world.gat.height as u32];
-                if let Some(hit) = game.minimap_window.hit(cursor, size) {
-                    game.minimap_window.click(hit);
-                    game.sync_esc();
+                let quests = game.big_minimap_quests();
+                let pins = minimap_window::Pins { player: game.player.cell, party: &[], guild: &[], boss: None, quests: &quests };
+                match game.minimap_window.hit(cursor, size, &pins) {
+                    // A quest NPC: navigation to its cell on this map.
+                    Some(minimap_window::Hit::Quest(cell)) => {
+                        let map = navigation::map_key(&game.map);
+                        let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
+                        let target = navigation::Target { cell: Some(cell.map(|value| value as u16)), monster: None, name, map };
+                        game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
+                    }
+                    Some(hit) => {
+                        game.minimap_window.click(hit);
+                        game.sync_esc();
+                    }
+                    None => {}
                 }
             }
             // The minimap's bottom row: zoom (kept with the settings), the big map, the route flag.
@@ -7631,8 +7665,7 @@ impl App {
                 }
                 Some("mini") => {
                     if let Some(gpu) = &self.gpu {
-                        let no_picture = self.messages.get(minimap_window::NO_PICTURE).cloned().unwrap_or_default();
-                        toggle_big_minimap(game, gpu, no_picture);
+                        toggle_big_minimap(game, gpu, &self.grf, &self.minimap_exceptions);
                     }
                 }
                 // ponytail: #276 draws the navigation route when this is on. The route itself is not drawn here.
@@ -7760,13 +7793,13 @@ impl App {
                     }
                 }
             }
-            // A party question: OK (alone when it only tells) or Cancel.
-            Scene::Game(game) if game.party_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            // The message box: OK (alone when it only tells) or Cancel.
+            Scene::Game(game) if game.question_box.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
-                let asks = game.party_asked.as_ref().is_some_and(PartyQuestion::asks);
-                for (place, yes) in party_question_buttons(asks) {
+                let asks = game.question_box.as_ref().is_some_and(BoxQuestion::asks);
+                for (place, yes) in box_buttons(asks) {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
-                        game.answer_party(yes, &self.messages);
+                        game.answer_box(yes, &self.messages);
                     }
                 }
             }
@@ -8405,12 +8438,12 @@ impl App {
                         // The leader's press opens or closes the invite window; anyone else is told only the leader invites.
                         Some(party::Hit::Button(party::Button::Invite)) => {
                             if game.party.as_ref().and_then(party::Party::leader) != Some(game.account_id) {
-                                game.party_asked = Some(PartyQuestion::OnlyLeader);
+                                game.question_box = Some(BoxQuestion::OnlyLeader);
                             } else {
                                 game.toggle_party_dialog(party::DialogKind::Invite);
                             }
                         }
-                        Some(party::Hit::Button(party::Button::Leave)) => game.party_asked = Some(PartyQuestion::Leave),
+                        Some(party::Hit::Button(party::Button::Leave)) => game.question_box = Some(BoxQuestion::Leave),
                         Some(party::Hit::Button(party::Button::Setup)) => {
                             if game.party.is_some() {
                                 game.toggle_party_dialog(party::DialogKind::Setup);
@@ -9300,7 +9333,7 @@ impl App {
                 let member_held = game.member_windows.release(outside, &party::Grid::new(screen()));
                 // Let go outside the used cells: it went back, and the box says why.
                 if std::mem::take(&mut game.member_windows.last_row) {
-                    game.party_asked = Some(PartyQuestion::LastRow);
+                    game.question_box = Some(BoxQuestion::LastRow);
                 }
                 let windows = trade_moved
                     | slid
@@ -9500,7 +9533,8 @@ impl App {
             && game.minimap_window.covers(cursor)
         {
             let size = [game.world.gat.width as u32, game.world.gat.height as u32];
-            if game.minimap_window.hit(cursor, size) == Some(minimap_window::Hit::Title(TitleHit::Title)) {
+            let pins = minimap_window::Pins { player: game.player.cell, party: &[], guild: &[], boss: None, quests: &[] };
+            if game.minimap_window.hit(cursor, size, &pins) == Some(minimap_window::Hit::Title(TitleHit::Title)) {
                 game.minimap_window.frame.start_drag(cursor);
             }
             game.press_esc(cursor);
@@ -10010,11 +10044,10 @@ impl App {
         }
         // The big minimap: nothing indoors.
         if fired == shortcuts::Action::MinimapWindow {
-            let no_picture = self.messages.get(minimap_window::NO_PICTURE).cloned().unwrap_or_default();
             if let (Scene::Game(game), Some(gpu)) = (&mut self.scene, &self.gpu)
                 && !game.camera_goal.indoor
             {
-                toggle_big_minimap(game, gpu, no_picture);
+                toggle_big_minimap(game, gpu, &self.grf, &self.minimap_exceptions);
             }
             return true;
         }
@@ -10375,8 +10408,8 @@ impl App {
                     let _ = game.session.change_party_leader(account);
                 }
             }
-            Scene::Game(game) if game.party_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
-                game.answer_party(*key == Key::Named(NamedKey::Enter), &self.messages);
+            Scene::Game(game) if game.question_box.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.answer_box(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
             // A docked party window's edit box: Enter is OK, Esc closes the window.
             Scene::Game(game) if game.party_dialog.as_ref().is_some_and(|dialog| dialog.typing) => {
@@ -10978,7 +11011,7 @@ impl App {
                         .and_then(|text| text.trim().parse::<f32>().ok())
                         .map_or(1.0, |zoom| zoom.clamp(1.0, minimap::MOST_ZOOM)),
                     navigation_route: false,
-                    minimap_window: minimap_window::Window::new(gpu, &minimap_map),
+                    minimap_window: minimap_window::Window::new(gpu, &self.grf, &minimap_map),
                     guild_places: HashMap::new(),
                     party_colors: Vec::new(),
                     show_bars: true,
@@ -11204,7 +11237,7 @@ impl App {
                     blocked: HashSet::new(),
                     party_dialog: None,
                     leader_asked: None,
-                    party_asked: None,
+                    question_box: None,
                     row_press: None,
                     small_saved: String::new(),
                     talks: whisper::Talks::default(),
@@ -11350,7 +11383,6 @@ impl App {
 
     /// Loads another map on the same map server.
     fn change_map(&mut self, map: String, position: [u16; 2]) {
-        let no_picture = self.messages.get(minimap_window::NO_PICTURE).cloned().unwrap_or_default();
         let (Scene::Game(game), Some(gpu)) = (&mut self.scene, &self.gpu) else { return };
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
@@ -11360,9 +11392,10 @@ impl App {
                 game.minimap = minimap::load_map(&self.grf, &map);
                 game.minimap_crop = None;
                 let image = game.minimap.clone();
-                // ponytail: said when a warp leaves the big map open on a map with no overview. A picture that fails to decode counts as none.
-                if game.minimap_window.change_map(gpu, image.as_ref(), &map_key(&map)) {
-                    game.chat_line(no_picture, CHAT_ERROR);
+                // ponytail: a warp onto a map with no big minimap closes an open one, and says so in the OK box.
+                let shown = !self.minimap_exceptions.contains(&map_key(&map));
+                if game.minimap_window.change_map(gpu, image.as_ref(), &map_key(&map), shown) {
+                    game.question_box = Some(BoxQuestion::Notice(minimap_window::NO_PICTURE));
                     game.sync_esc();
                 }
                 game.guild_places.clear();
@@ -15776,7 +15809,7 @@ impl App {
             cell: game.player.cell,
             yaw: game.player.rot,
             marks: &marks,
-            quests: &game.quest_marks.iter().map(|&(_, cell, color)| (cell, color)).collect::<Vec<_>>(),
+            quests: &game.quest_marks.iter().map(|&(_, cell, _, color)| (cell, color)).collect::<Vec<_>>(),
             store: game.store_mark,
             party: &dots,
             guild: &guild,
@@ -16383,11 +16416,11 @@ impl App {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }
-        // A party question: its words, OK and Cancel (OK alone when it only tells).
-        if let Some(asked) = &game.party_asked {
+        // The message box: its words, OK and Cancel (OK alone when it only tells).
+        if let Some(asked) = &game.question_box {
             let dialog = dialog_position(&assets.message);
             shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
-            for (place, yes) in party_question_buttons(asked.asks()) {
+            for (place, yes) in box_buttons(asked.asks()) {
                 shop_layer.sprites.push(button_sprite(pointer, offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }));
             }
             for (row, line) in message_lines(font, message(asked.message()), MESSAGE_WIDTH).into_iter().enumerate() {
@@ -16506,39 +16539,18 @@ impl App {
         }
         game.dialog_links = dialog_links;
         let mut minimap_layer = Layer::default();
+        let mut minimap_tooltip = Layer::default();
         {
-            let show_quests = game.minimap_window.show_quests;
-            let show_boss = game.minimap_window.show_boss;
             minimap_layer.faded = game.minimap_window.frame.faded();
-            let quest_cells: Vec<[i32; 2]> = if show_quests {
-                game.quests.iter().filter(|quest| quest.active).filter_map(|quest| quest_texts.get(&quest.id).and_then(|text| text.npc)).collect()
-            } else {
-                Vec::new()
-            };
-            let title = map_names.get(&map_key(&game.map)).cloned().unwrap_or_else(|| map_key(&game.map));
+            let map = map_key(&game.map);
+            let title = minimap_window::title(map_names.get(&map).map_or(map.as_str(), String::as_str), &map, game.player.cell);
             let naming_caret = (now.saturating_duration_since(game.entered).as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
-            let boss_pin = show_boss.then_some(boss).flatten();
-            game.minimap_window.draw(
-                &mut minimap_layer,
-                &assets.chrome,
-                &assets.minimap,
-                messages,
-                &title,
-                size,
-                &minimap_window::Pins {
-                    player: game.player.cell,
-                    yaw: game.player.rot,
-                    marks: &marks,
-                    party: &dots,
-                    guild: &guild,
-                    boss: boss_pin,
-                    quests: &quest_cells,
-                },
-                pointer.0,
-                naming_caret,
-            );
+            let party_cells: Vec<[i32; 2]> = dots.iter().map(|(cell, _)| *cell).collect();
+            let quests = game.big_minimap_quests();
+            let pins = minimap_window::Pins { player: game.player.cell, party: &party_cells, guild: &guild, boss, quests: &quests };
+            game.minimap_window.draw(&mut minimap_layer, &mut minimap_tooltip, &assets.chrome, font, messages, &title, size, &pins, pointer, naming_caret);
         }
-        layers.extend([catalog_layer, shop_layer, minimap_layer, overlay, menu_layer, tooltip, world_layer]);
+        layers.extend([catalog_layer, shop_layer, minimap_layer, overlay, menu_layer, tooltip, minimap_tooltip, world_layer]);
         let composed = compose(gpu, font, layers);
         let (mut sprites, alphas) = flatten(&composed);
 
@@ -17148,6 +17160,7 @@ fn main() {
         Vec::new()
     });
     let indoor = rustnarok_client::map::indoor_maps(&grf).unwrap_or_default();
+    let minimap_exceptions = minimap_window::load_exceptions(&grf);
     let viewpoints = rustnarok_client::map::viewpoints(&grf).unwrap_or_default();
     // A client the harness drives starts from the default view and keeps it to itself.
     let driven = std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_some();
@@ -17222,6 +17235,7 @@ fn main() {
         icons: HashMap::new(),
         modifiers: ModifiersState::empty(),
         indoor,
+        minimap_exceptions,
         viewpoints,
         saved_view,
         save_view: !driven,
