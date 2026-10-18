@@ -1,5 +1,5 @@
 {
- "about": "Garments: a backpack worn with a hat (the bag goes over the hat), and ribbon wings drawn from the picture every job shares (they used to be missing), facing away, to the side and to the camera. Costume garments, so each replaces whatever costume garment an earlier scenario left on.",
+ "about": "Garments: a backpack worn with a hat (the bag goes over the hat), and ribbon wings drawn from the picture every job shares (they used to be missing), facing away, to the side and to the camera. Costume garments, so each replaces whatever costume garment an earlier scenario left on. Then the player dies wearing the wings and lies without them (issue #306), and gets up with them again.",
  "account": "",
  "slot": 0,
  "env": {
@@ -274,6 +274,50 @@
   },
   {
    "shot": "garment-wings-back",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@die"
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "shot": "garment-dead",
+   "crop": [
+    392,
+    60,
+    240,
+    360
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@alive"
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "shot": "garment-revived",
    "crop": [
     392,
     60,

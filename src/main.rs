@@ -14143,6 +14143,22 @@ impl ApplicationHandler<NetEvent> for App {
 }
 
 fn main() {
+    // Every panic, also a caught one (a packet skipped), goes to crash.log in the settings folder with its backtrace:
+    // a bundled app's stderr goes nowhere.
+    // ponytail: the file only grows; cap it if a server ever sends a stream of unreadable packets.
+    let report = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write as _;
+        if let Some(path) = settings_path("crash.log")
+            && path.parent().map_or(Ok(()), std::fs::create_dir_all).is_ok()
+            && let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path)
+        {
+            let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+            let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
+            let _ = writeln!(file, "unix time {seconds}, thread {thread}: {info}\n{}", std::backtrace::Backtrace::force_capture());
+        }
+        report(info);
+    }));
     // Started as Ragnarok.app: work in the bundle's folder, where data.grf is (Finder starts apps in /).
     if let Ok(exe) = std::env::current_exe()
         && let Some(folder) = exe.ancestors().find(|path| path.extension().is_some_and(|extension| extension == "app")).and_then(|bundle| bundle.parent())

@@ -747,6 +747,8 @@ impl SpriteSet {
             headgear,
             head_hidden: [look.head_top, look.head_mid, look.head_bottom].iter().any(|view| HEAD_HIDING.contains(view)),
             outfit: outfit(job),
+            madogear: MADOGEAR_BODIES.contains(&job),
+            female: look.sex == 0,
         };
         let (weapon, glow) = weapon.unwrap_or_default();
         Some(Self {
@@ -1102,7 +1104,15 @@ struct Dressing {
     head_hidden: bool,
     /// An outfit body: no weapon or shield.
     outfit: bool,
+    /// A Madogear body: never a shield, and no garment for a woman.
+    madogear: bool,
+    female: bool,
 }
+
+/// Sprite jobs on a Madogear.
+const MADOGEAR_BODIES: [u16; 3] = [4086, 4087, 4112];
+/// A player's dead action (all eight directions).
+const DEAD_ACTIONS: std::ops::RangeInclusive<usize> = 64..=71;
 
 impl Dressing {
     /// The layers to draw in action `index` (direction included) at body frame `frame`, back to front.
@@ -1121,6 +1131,9 @@ impl Dressing {
         if self.head_hidden {
             order.retain(|&part| part != Part::Head);
         }
+        // The dead and a woman on a Madogear wear no garment; a Madogear carries no shield.
+        let robe_off = DEAD_ACTIONS.contains(&index) || self.madogear && self.female;
+        order.retain(|&part| !(part == Part::Robe && robe_off || part == Part::Shield && self.madogear));
         order
     }
 }
@@ -2124,6 +2137,27 @@ mod tests {
         assert_eq!(body_scale(4036), 0.82);
         assert_eq!(body_scale(4220), 0.8);
         assert_eq!(body_scale(4218), 1.0);
+    }
+
+    #[test]
+    fn leaves_off_garments_and_shields_where_the_game_does() {
+        let dressing = |madogear: bool, female: bool| Dressing {
+            head_first: Vec::new(),
+            robe_over_body: Vec::new(),
+            robe_over_headgear: false,
+            headgear: Vec::new(),
+            head_hidden: false,
+            outfit: false,
+            madogear,
+            female,
+        };
+        let has = |dressing: &Dressing, index: usize, part: Part| dressing.order(index, 0).contains(&part);
+        let knight = dressing(false, false);
+        // Standing with a garment; lying dead without it.
+        assert!(has(&knight, 0, Part::Robe) && !has(&knight, 64, Part::Robe) && !has(&knight, 71, Part::Robe));
+        // A shield in an attack, but never on a Madogear; a woman on one has no garment, a man does.
+        assert!(has(&knight, 80, Part::Shield) && !has(&dressing(true, false), 80, Part::Shield));
+        assert!(!has(&dressing(true, true), 0, Part::Robe) && has(&dressing(true, false), 0, Part::Robe));
     }
 
     #[test]
