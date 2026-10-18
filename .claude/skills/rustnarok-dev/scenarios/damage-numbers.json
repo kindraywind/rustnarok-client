@@ -1,0 +1,111 @@
+{
+  "about": "Damage numbers (issue #203): a Poring summoned indoors, attacked once. The clock stops when the attack comes back, then steps on: the number pops up big a little over the Poring's feet, shrinks as it arcs up to its top at about 0.7 s, and falls away fading, drifting diagonally away from where the Poring faces (which way depends on how it stood, so the shots differ from run to run there).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp iz_int01 18 26"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@monster 1002 1"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "units_at_least": {
+          "monster": 1
+        }
+      }
+    },
+    {
+      "click_unit": {
+        "kind": "monster"
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "wait",
+        "packet": "0x08c8",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 560
+      }
+    },
+    {
+      "shot": "damage-pop",
+      "crop": [
+        212,
+        0,
+        600,
+        500
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 500
+      }
+    },
+    {
+      "shot": "damage-top",
+      "crop": [
+        212,
+        0,
+        600,
+        500
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 700
+      }
+    },
+    {
+      "shot": "damage-fall",
+      "crop": [
+        212,
+        0,
+        600,
+        500
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}
