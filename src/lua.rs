@@ -21,7 +21,8 @@ const STYLING_SHOP: &str = "data\\luafiles514\\lua files\\stylingshop\\stylingsh
 /// The same table under the name older data (kRO 2022, its translations) gives it.
 const ACHIEVEMENT_LIST: &str = "system\\achievement_list.lub";
 const ITEM_INFO: &str = "data\\luafiles514\\lua files\\datainfo\\iteminfo.lub";
-const TRANSLATED_ITEM_INFO: &str = "system\\luafiles514\\iteminfo.lua";
+/// A translation's item table: under LuaFiles514, or (older translations) straight in System.
+const TRANSLATED_ITEM_INFO: [&str; 2] = ["system\\luafiles514\\iteminfo.lua", "system\\iteminfo.lua"];
 const ACCESSORY_ID: &str = "data\\luafiles514\\lua files\\datainfo\\accessoryid.lub";
 const ACCESSORY_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\accname.lub";
 const WEAPON_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\weapontable.lub";
@@ -550,10 +551,29 @@ impl ItemInfo {
     }
 }
 
-/// Every item the client knows, by item ID (`tbl` in iteminfo).
+/// Every item the client knows, by item ID (`tbl` in iteminfo): the client's own table, with a translation's entries
+/// over it (a translation older than the data lacks the newer items, which keep the client's names).
 pub fn item_info(grf: &Grf) -> io::Result<HashMap<u32, ItemInfo>> {
-    // A translation's item table (System\LuaFiles514\itemInfo.lua) goes before the client's own.
-    let lua = run(grf, &[TRANSLATED_ITEM_INFO]).or_else(|_| run(grf, &[ITEM_INFO]))?;
+    let own = run(grf, &[ITEM_INFO]).and_then(|lua| items_in(&lua));
+    let translated = TRANSLATED_ITEM_INFO.iter().find_map(|path| run(grf, &[path]).and_then(|lua| items_in(&lua)).ok());
+    layered(own, translated)
+}
+
+/// The client's items with a translation's over them; either alone when the other is missing.
+fn layered(own: io::Result<HashMap<u32, ItemInfo>>, translated: Option<HashMap<u32, ItemInfo>>) -> io::Result<HashMap<u32, ItemInfo>> {
+    match (own, translated) {
+        (Ok(mut items), Some(translated)) => {
+            items.extend(translated);
+            Ok(items)
+        }
+        (Ok(items), None) => Ok(items),
+        (Err(_), Some(translated)) => Ok(translated),
+        (Err(error), None) => Err(error),
+    }
+}
+
+/// The items of a run iteminfo (`tbl`).
+fn items_in(lua: &Lua) -> io::Result<HashMap<u32, ItemInfo>> {
     let table: mlua::Table = lua.globals().get("tbl").map_err(lua_error)?;
     let text = |entry: &mlua::Table, key: &str| entry.get::<mlua::String>(key).map(|text| decode(&text)).unwrap_or_default();
     let lines = |entry: &mlua::Table, key: &str| -> Vec<String> {
@@ -1424,6 +1444,17 @@ fn hotkey_table(lua: &Lua, name: &str, table: u8, user: bool) -> io::Result<Vec<
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
+
+    #[test]
+    fn lays_a_translation_over_the_clients_items() {
+        let item = |name: &str| super::ItemInfo { name: name.into(), ..Default::default() };
+        let own = [(501, item("빨간포션")), (25_000, item("새 아이템"))].into_iter().collect();
+        let translated = [(501, item("Red Potion"))].into_iter().collect();
+        let items = super::layered(Ok(own), Some(translated)).unwrap();
+        // Translated where the translation has it; the newer item keeps the client's name.
+        assert_eq!((items[&501].name.as_str(), items[&25_000].name.as_str()), ("Red Potion", "새 아이템"));
+        assert!(super::layered(Err(std::io::ErrorKind::NotFound.into()), None).is_err());
+    }
 
     #[test]
     fn reads_quest_info() {
