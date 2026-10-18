@@ -38,6 +38,9 @@
 //! `none` for the archive alone),
 //! `RUSTNAROK_CLIENT_SCREENSHOT=out.png` (save a settled frame and quit; in the game after `RUSTNAROK_CLIENT_SHOT_DELAY` seconds, 2 by default).
 
+// The control socket's game state is one json! literal deeper than the macro's default limit.
+#![recursion_limit = "256"]
+
 mod achievement;
 mod actor;
 mod announce;
