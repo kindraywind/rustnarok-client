@@ -1,0 +1,141 @@
+{
+  "about": "Level up buttons (issue #222): @blvl 1 leaves the base level button in the bottom right corner (and marks the menu's status button new); clicking it opens the status window and it goes. @jlvl 1 does the same at the bottom left for the skill window (the open menu shows the skill button's mark). The levels are lowered again at the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "level_ups": {
+            "base": false,
+            "job": false
+          }
+        }
+      }
+    },
+    {
+      "say": "@blvl 1"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "level_ups.base": true
+        }
+      }
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "level-up-base",
+      "crop": [
+        0,
+        560,
+        1024,
+        208
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "level_up_base"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Status"
+        ],
+        "state": {
+          "level_ups.base": false
+        }
+      }
+    },
+    {
+      "say": "@jlvl 1"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "level_ups.job": true
+        }
+      }
+    },
+    {
+      "click": [
+        108,
+        153
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "level-up-job",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "level_up_job"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Skills"
+        ],
+        "state": {
+          "level_ups.job": false
+        }
+      }
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "key": "Alt+A"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@blvl -1"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@jlvl -1"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

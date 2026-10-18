@@ -81,6 +81,10 @@ pub struct Assets {
     mail_new: Option<Texture>,
     achievement_new: Option<Texture>,
     item_new: Option<Texture>,
+    /// The status and skill buttons after a level up, and the toggle while any mark waits in the closed menu.
+    status_new: Option<Texture>,
+    skill_new: Option<Texture>,
+    toggle_new: Option<Texture>,
 }
 
 impl Assets {
@@ -99,6 +103,9 @@ impl Assets {
             mail_new: gpu.try_load_texture(grf, &format!("{menu}bt_mail_new.bmp"), false).ok(),
             achievement_new: gpu.try_load_texture(grf, &format!("{menu}bt_achievement_new.bmp"), false).ok(),
             item_new: gpu.try_load_texture(grf, &format!("{menu}bt_item_new.bmp"), false).ok(),
+            status_new: gpu.try_load_texture(grf, &format!("{menu}bt_status_new.bmp"), false).ok(),
+            skill_new: gpu.try_load_texture(grf, &format!("{menu}bt_skill_new.bmp"), false).ok(),
+            toggle_new: gpu.try_load_texture(grf, &format!("{menu}bt_menu_new_normal.bmp"), false).ok(),
         }
     }
 }
@@ -135,6 +142,9 @@ pub struct Info<'a> {
     pub reward_waiting: bool,
     /// Something was picked up since the inventory was last open.
     pub new_items: bool,
+    /// A base (job) level up the status (skill) window hasn't shown yet.
+    pub new_level: bool,
+    pub new_job_level: bool,
 }
 
 impl BasicInfo {
@@ -268,7 +278,11 @@ impl BasicInfo {
         shadowed(layer, weight_text, [weight_x, EXTRA_TOP], if limit > 0 && weight * 2 >= limit { RED } else { [0, 0, 0] });
 
         // The menu toggle, and the menu when it's open.
-        let toggle = &assets.toggles[usize::from(self.menu_open)];
+        let marked = info.unread_mail || info.reward_waiting || info.new_items || info.new_level || info.new_job_level;
+        let toggle = match &assets.toggle_new {
+            Some(new) if !self.menu_open && marked => new,
+            _ => &assets.toggles[usize::from(self.menu_open)],
+        };
         layer.sprites.push((toggle, at([0.0, MENU_TOGGLE_TOP]), toggle.size));
         if self.menu_open {
             layer.sprites.push((&assets.menu, at([0.0, MENU_TOP]), assets.menu.size));
@@ -277,6 +291,8 @@ impl BasicInfo {
                     "mail" if info.unread_mail => assets.mail_new.as_ref().or(icon.as_ref()),
                     "achievement" if info.reward_waiting => assets.achievement_new.as_ref().or(icon.as_ref()),
                     "item" if info.new_items => assets.item_new.as_ref().or(icon.as_ref()),
+                    "status" if info.new_level => assets.status_new.as_ref().or(icon.as_ref()),
+                    "skill" if info.new_job_level => assets.skill_new.as_ref().or(icon.as_ref()),
                     _ => icon.as_ref(),
                 };
                 if let Some(icon) = icon {

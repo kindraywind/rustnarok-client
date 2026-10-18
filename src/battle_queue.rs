@@ -135,6 +135,11 @@ impl Default for QueueWindow {
 }
 
 impl QueueWindow {
+    /// Whether the window is under the pointer.
+    pub fn covers(&self, cursor: [f32; 2]) -> bool {
+        self.frame.local(cursor, HEIGHT).is_some()
+    }
+
     /// The apply buttons the picked battleground offers, left to right.
     fn applies(&self, list: &[Battleground]) -> Vec<u16> {
         let Some(entry) = self.picked.and_then(|index| list.get(index)) else { return Vec::new() };

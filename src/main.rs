@@ -72,6 +72,7 @@ mod hotkeys;
 mod inventory;
 mod iteminfo;
 mod laphine;
+mod level_up;
 mod macros;
 mod mail;
 mod material;
@@ -860,6 +861,8 @@ struct Game {
     /// What was just picked up, for five seconds; and whether anything was since the inventory was last open.
     pickup_popup: Option<pickup::Popup>,
     new_items: bool,
+    /// The level up buttons in the bottom corners.
+    level_ups: level_up::LevelUps,
     /// A skill's description, while it shows.
     skill_description: Option<skill_descript::SkillDescription>,
     /// The Universal Catalog's store search while it's open.
@@ -2273,8 +2276,14 @@ impl Game {
             || self.pet_asked.is_some()
             || self.friend_asked.is_some()
             || self.party_invite.is_some()
-            || self.trade_asked.is_some();
+            || self.trade_asked.is_some()
+            || self.queue_asked.is_some()
+            || self.adopt_asked.is_some();
         self.window_at(cursor).is_some()
+            || self.catalog.as_ref().and_then(|catalog| catalog.hit(cursor)).is_some()
+            || self.queue_window.covers(cursor)
+            || self.skill_description.as_ref().is_some_and(|window| window.contains(cursor))
+            || self.level_ups.hit(cursor).is_some()
             || (asking && contains(dialog_position_of(message), message, cursor))
             || self.dialog.is_some()
             || self.amount.is_some()
@@ -3675,6 +3684,7 @@ struct Assets {
     catalog: catalog::Assets,
     skill_descript: skill_descript::Assets,
     pickup: pickup::Assets,
+    level_up: level_up::Assets,
     battle_queue: battle_queue::Assets,
     mercenary: mercenary::Assets,
     homunculus: homunculus::Assets,
@@ -3791,6 +3801,7 @@ impl Assets {
             catalog: catalog::Assets::load(gpu, grf),
             skill_descript: skill_descript::Assets::load(gpu),
             pickup: pickup::Assets::load(gpu, grf),
+            level_up: level_up::Assets::load(gpu, grf),
             battle_queue: battle_queue::Assets::load(gpu, grf, &lua::entry_queue(grf).unwrap_or_default()),
             mercenary: mercenary::Assets::load(gpu, grf),
             homunculus: homunculus::Assets::load(gpu, grf),
@@ -5254,6 +5265,22 @@ impl App {
                     }
                     _ => {}
                 }
+            }
+            // A level up button: the status window (base level) or the skill window (job level), restored if minimised.
+            Scene::Game(game) if game.level_ups.hit(cursor).is_some() && game.window_at(cursor).is_none() => {
+                match game.level_ups.hit(cursor).unwrap() {
+                    level_up::Button::Base => {
+                        game.status_window.frame.open = true;
+                        game.status_window.frame.minimized = false;
+                        game.raise(Panel::Status);
+                    }
+                    level_up::Button::Job => {
+                        game.skill_window.frame.open = true;
+                        game.skill_window.frame.minimized = false;
+                        game.raise(Panel::Skills);
+                    }
+                }
+                game.sync_esc();
             }
             // A skill's description: its ESC button closes it; a click elsewhere on it does nothing.
             Scene::Game(game) if game.skill_description.as_ref().is_some_and(|window| window.contains(cursor)) => {
@@ -7966,6 +7993,7 @@ impl App {
                     skill_description: None,
                     pickup_popup: None,
                     new_items: false,
+                    level_ups: level_up::LevelUps::default(),
                     char_names: HashMap::new(),
                     names_asked: HashSet::new(),
                     dress_figure: None,
@@ -8739,7 +8767,8 @@ impl App {
                 game.act(act, look_tables);
             }
             MapEvent::Status { id, value } => {
-                game.status.insert(id, value);
+                let before = game.status.insert(id, value);
+                game.level_ups.changed(id, before, value);
             }
             MapEvent::Statuses(values) => game.status.extend(values),
             // -1 takes the bar away.
@@ -11683,6 +11712,8 @@ impl App {
         if game.inventory.frame.open {
             game.new_items = false;
         }
+        game.level_ups
+            .seen(game.status_window.frame.open && !game.status_window.frame.minimized, game.skill_window.frame.open && !game.skill_window.frame.minimized);
         let blink_on = game.entered.elapsed().as_millis() % 1000 > 500;
         let marks: Vec<_> = game.marks.iter().filter(|_| blink_on).map(|(_, cell, color, _)| (*cell, color)).collect();
         // Party members on this map, each in a color of their own, picked at random.
@@ -11779,6 +11810,7 @@ impl App {
         game.announcements.prepare(gpu, font);
         let mut announce_layer = Layer::default();
         game.announcements.draw(&mut announce_layer);
+        game.level_ups.draw(&mut announce_layer, &assets.level_up, pointer);
         // The pickup popup takes no clicks.
         if let Some(popup) = &game.pickup_popup {
             let icon = icons.get(&popup.icon).and_then(Option::as_ref);
@@ -11830,6 +11862,8 @@ impl App {
                         unread_mail: game.mail.unread,
                         reward_waiting: game.achievements.values().any(|achievement| achievement::claimable(Some(achievement))),
                         new_items: game.new_items,
+                        new_level: game.level_ups.base,
+                        new_job_level: game.level_ups.job,
                     };
                     game.basic_info.draw(&mut layer, &assets.chrome, &assets.basic_info, font, messages, &info, pointer.0);
                 }
