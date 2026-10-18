@@ -40,10 +40,19 @@ const MOST_IN_PARTY: usize = 12;
 const PARTY_ART: &str = "renewalparty\\";
 /// A small member window. ponytail: 120×32 with a 100×5 bar in the party window's colours; the client's bitmaps
 /// would replace the size and the flat fill.
-pub const MEMBER_SIZE: [f32; 2] = [120.0, 32.0];
-pub const MEMBER_HP: [f32; 2] = [100.0, 5.0];
-const MEMBER_HP_AT: [f32; 2] = [8.0, 20.0];
-const CLOSE_AT: [f32; 2] = [106.0, 3.0];
+/// A small party window, its grid's cell, and its parts: the background, the job icon (the leader's lower), the crown,
+/// the line and how wide it may be, the HP bar.
+pub const MINI_SIZE: [f32; 2] = [174.0, 52.0];
+const CELL: [f32; 2] = [177.0, 55.0];
+const MINI_ICON: [f32; 2] = [7.0, 6.0];
+const MINI_LEADER_ICON: [f32; 2] = [7.0, 8.0];
+const MINI_CROWN: [f32; 2] = [9.0, 0.0];
+const MINI_TEXT: [f32; 2] = [35.0, 9.0];
+const MINI_TEXT_WIDTH: f32 = 104.0;
+const MINI_BAR: [f32; 2] = [35.0, 23.0];
+const MINI_BAR_SIZE: [f32; 2] = [66.0, 5.0];
+/// "In the last row", for a small window let go outside the used cells.
+pub const IN_THE_LAST_ROW: usize = 3145;
 const MOST_FRIENDS: usize = 40;
 const FRIEND_ROW: f32 = 23.0;
 const FRIEND: [u8; 3] = [0x10, 0x25, 0x50];
@@ -52,9 +61,6 @@ const POSITION: [f32; 2] = [300.0, 200.0];
 /// "Party", "Cap", and what the buttons do.
 const TITLE_MESSAGE: usize = 103;
 const CAP_MESSAGE: usize = 3231;
-const NAME: [u8; 3] = [0x33, 0x33, 0x33];
-const LEADER: [u8; 3] = [0x08, 0x31, 0x7B];
-const MAP: [u8; 3] = [0x77, 0x77, 0x77];
 const OFFLINE: [u8; 3] = [0xAA, 0xAA, 0xAA];
 
 /// Someone in the party, as the window shows them.
@@ -103,7 +109,6 @@ impl Party {
     pub fn settings(&self) -> Settings {
         Settings { exp_even: self.exp_shared, pickup: self.pickup_shared, share: self.item_shared }
     }
-
 }
 
 /// The party's three settings, as the setup window shows them.
@@ -202,6 +207,8 @@ pub enum Button {
     /// The adventurer's agency; the lock (on or off).
     Agency,
     Lock(bool),
+    /// Sort Mini Party Window.
+    Sort,
     Create,
     Invite,
     Leave,
@@ -218,6 +225,7 @@ impl Button {
             Self::Agency => "mesbtn_01",
             Self::Lock(false) => "mesbtn_07",
             Self::Lock(true) => "mesbtn_06",
+            Self::Sort => "mesbtn_011",
             Self::Create => "mesbtn_08",
             Self::Invite => "mesbtn_010",
             Self::Leave => "mesbtn_09",
@@ -234,6 +242,7 @@ impl Button {
             Self::Agency => 3514,
             Self::Lock(false) => 1627,
             Self::Lock(true) => 1626,
+            Self::Sort => 3983,
             Self::Create => 2054,
             Self::Invite => 2056,
             Self::Leave => 2055,
@@ -250,6 +259,7 @@ impl Button {
         match self {
             Self::Agency => "agency",
             Self::Lock(_) => "lock",
+            Self::Sort => "sort",
             Self::Create => "create",
             Self::Invite => "invite",
             Self::Leave => "leave",
@@ -304,7 +314,8 @@ pub enum MemberChoice {
     Whisper,
     Expel,
     Assign,
-    /// Close the small party window it was opened on.
+    /// Give them a small party window, or close theirs.
+    AddSmall,
     RemoveSmall,
 }
 
@@ -316,14 +327,16 @@ impl MemberChoice {
             Self::Whisper => 360,
             Self::Expel => 97,
             Self::Assign => 1532,
+            Self::AddSmall => 3101,
             Self::RemoveSmall => 3102,
         }
     }
 }
 
 /// The menu on a member's row (or small party window, `small`): mail; on our own row leaving, on another whispering
-/// and, when we lead, expelling and handing over.
-pub fn member_menu(me: u32, account: u32, leader: bool, small: bool) -> Vec<MemberChoice> {
+/// and, when we lead, expelling and handing over; then on an online member's row adding and removing a small window,
+/// on a small window removing it.
+pub fn member_menu(me: u32, account: u32, leader: bool, small: bool, online: bool) -> Vec<MemberChoice> {
     let mut choices = vec![MemberChoice::Mail];
     if account == me {
         choices.push(MemberChoice::Leave);
@@ -335,15 +348,16 @@ pub fn member_menu(me: u32, account: u32, leader: bool, small: bool) -> Vec<Memb
     }
     if small {
         choices.push(MemberChoice::RemoveSmall);
+    } else if online {
+        choices.extend([MemberChoice::AddSmall, MemberChoice::RemoveSmall]);
     }
     choices
 }
 
 /// Skills that go on a member's row with Shift held (or /noshift on).
 const SUPPORT_SKILLS: [u16; 60] = [
-    28, 29, 30, 34, 35, 53, 54, 66, 67, 68, 71, 72, 73, 77, 78, 138, 139, 231, 234, 235, 236, 237, 255, 280, 281, 282, 283, 286, 289, 374, 402, 463,
-    464, 465, 466, 467, 468, 469, 470, 471, 472, 479, 1015, 2001, 2020, 2026, 2027, 2050, 2051, 2052, 2053, 2341, 2344, 2345, 2346, 2347, 2348, 2451,
-    2515, 8221,
+    28, 29, 30, 34, 35, 53, 54, 66, 67, 68, 71, 72, 73, 77, 78, 138, 139, 231, 234, 235, 236, 237, 255, 280, 281, 282, 283, 286, 289, 374, 402, 463, 464, 465,
+    466, 467, 468, 469, 470, 471, 472, 479, 1015, 2001, 2020, 2026, 2027, 2050, 2051, 2052, 2053, 2341, 2344, 2345, 2346, 2347, 2348, 2451, 2515, 8221,
 ];
 
 /// Whether a press on a member's row (or small window) casts the skill being aimed on them: a Heal-like skill
@@ -390,8 +404,10 @@ pub struct Assets {
     /// Each button's normal, hovered and pressed images.
     buttons: Vec<(Button, [Texture; 3])>,
     radio: [Texture; 2],
-    hp: [Texture; 4],
-    grey: Texture,
+    /// The small windows' background and the offline crown.
+    mini_bg: Texture,
+    crown_grey: Texture,
+    has_small: Texture,
     picked: Texture,
 }
 
@@ -412,6 +428,7 @@ impl Assets {
                 Button::Agency,
                 Button::Lock(false),
                 Button::Lock(true),
+                Button::Sort,
                 Button::Create,
                 Button::Invite,
                 Button::Leave,
@@ -420,14 +437,14 @@ impl Assets {
                 Button::Delete,
                 Button::FriendSetup,
             ]
-                .into_iter()
-                .map(|button| (button, ["", "_a", "_b"].map(|look| image(format!("{basic}{}{look}.bmp", button.image())))))
-                .collect(),
+            .into_iter()
+            .map(|button| (button, ["", "_a", "_b"].map(|look| image(format!("{basic}{}{look}.bmp", button.image())))))
+            .collect(),
             radio: ["radiobtn_off", "radiobtn_on"].map(|name| image(format!("{UI}{name}.bmp"))),
-            // Border, background, healthy and low.
-            hp: [[0x11, 0x11, 0x11, 0xFF], [0x33, 0x33, 0x33, 0xFF], [0x10, 0xEF, 0x21, 0xFF], [0xFF, 0x00, 0x00, 0xFF]].map(|color| gpu.solid(color)),
-            // ponytail: an offline small window fills its bar with the offline grey. A client bitmap would replace it.
-            grey: gpu.solid([OFFLINE[0], OFFLINE[1], OFFLINE[2], 0xFF]),
+            mini_bg: image(format!("{UI}{PARTY_ART}img_partymini_bg.tga")),
+            has_small: gpu.solid([0xDD, 0xE8, 0xFF, 0xFF]),
+            crown_grey: crate::render::load_image(grf, &format!("{UI}{PARTY_ART}ico_partycrown.bmp"))
+                .map_or_else(|_| gpu.solid([0, 0, 0, 0]), |crown| gpu.texture(&greyed(crown), false)),
             picked: gpu.solid([0x73, 0x9C, 0xEF, 0xFF]),
         }
     }
@@ -582,36 +599,6 @@ impl Setup {
     }
 }
 
-/// How wide the filled part of an HP bar `width` wide is. The party window and the small windows share it.
-fn hp_fill(hp: i32, max: i32, width: f32) -> f32 {
-    let share = if max > 0 { (hp as f32 / max as f32).clamp(0.0, 1.0) } else { 0.0 };
-    (width * share).round()
-}
-
-/// The party window draws the low (red) fill under a quarter of the bar.
-fn hp_low(hp: i32, max: i32) -> bool {
-    max > 0 && (hp as f32 / max as f32) < 0.25
-}
-
-/// What a small window's bar shows. Offline is grey, whatever the last HP was.
-#[derive(Debug, PartialEq)]
-enum MemberBar {
-    Empty,
-    Hp(f32),
-    Offline,
-}
-
-fn member_bar(online: bool, hp: Option<[i32; 2]>) -> MemberBar {
-    if !online {
-        // ponytail: the whole bar goes grey, not the last fill in grey. A client bitmap would say which.
-        return MemberBar::Offline;
-    }
-    match hp {
-        Some([hp, max]) => MemberBar::Hp(hp_fill(hp, max, MEMBER_HP[0])),
-        None => MemberBar::Empty,
-    }
-}
-
 /// A job's icon in the party window, alive or dead: its path (an offline member's is that path with "|grey").
 pub fn job_icon(job: u16, dead: bool) -> String {
     format!("{UI}{PARTY_ART}icon_jobs_{job}{}.bmp", if dead { "_die" } else { "" })
@@ -754,7 +741,7 @@ impl PartyWindow {
         let mut buttons = vec![Button::Agency, Button::Setup, Button::Lock(self.locked)];
         match party {
             None => buttons.push(Button::Create),
-            Some(_) => buttons.extend([Button::Invite, Button::Leave]),
+            Some(_) => buttons.extend([Button::Invite, Button::Leave, Button::Sort]),
         }
         buttons
     }
@@ -791,12 +778,8 @@ impl PartyWindow {
             let [x, y] = self.frame.at(local);
             [x, y, size[0], size[1]]
         };
-        let mut boxes: Vec<(String, [f32; 4])> = self
-            .buttons(party)
-            .into_iter()
-            .enumerate()
-            .map(|(index, button)| (button.name().to_owned(), place(self.button_at(index), BUTTON)))
-            .collect();
+        let mut boxes: Vec<(String, [f32; 4])> =
+            self.buttons(party).into_iter().enumerate().map(|(index, button)| (button.name().to_owned(), place(self.button_at(index), BUTTON))).collect();
         let members = party.filter(|_| !self.friends).map_or(&[][..], |party| &party.members);
         let width = self.size()[0];
         boxes.extend(
@@ -851,6 +834,7 @@ impl PartyWindow {
         party: Option<&Party>,
         friends: &[Friend],
         (me, our_hp, on_screen, map_names): Whose<'_>,
+        small: &[u32],
         pointer: ([f32; 2], bool),
     ) {
         if !self.frame.open {
@@ -894,6 +878,10 @@ impl PartyWindow {
             let top = self.row_top(row);
             let info = &member.info;
             let places = row_places(width, row_height, MODES[self.mode].2, top);
+            // A member with a small window has a band on their row.
+            if small.contains(&info.account) {
+                layer.sprites.push((&assets.has_small, at([0.0, top + 2.0]), [width, row_height]));
+            }
             if hit == Some(Hit::Member(info.account)) {
                 layer.sprites.push((&assets.hover, at([0.0, top + 2.0]), [width, row_height]));
             }
@@ -989,42 +977,72 @@ impl PartyWindow {
 }
 
 /// A click on a small member window.
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum MemberHit {
-    Close,
-    Body,
-}
-
-/// One member's small HP window, dragged out of the party list.
+/// The small party windows' grid: the screen in 177×55 cells from (0, 0), column by column; only the cells wholly
+/// inside x 0..W and y trunc(0.3·H)..H − 165 are used.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MemberWindow {
-    pub account: u32,
-    /// Top left. ponytail: the drop point, then snapped like any other window near the screen edge.
-    pub position: [f32; 2],
+pub struct Grid {
+    rows: usize,
+    columns: usize,
+    /// The used cells, in cell order.
+    pub used: Vec<usize>,
 }
 
-impl MemberWindow {
-    fn hit(&self, cursor: [f32; 2]) -> Option<MemberHit> {
-        let local = [cursor[0] - self.position[0], cursor[1] - self.position[1]];
-        if !contains([0.0, 0.0], MEMBER_SIZE, local) {
-            return None;
-        }
-        if contains(CLOSE_AT, window::BUTTON_SIZE, local) {
-            return Some(MemberHit::Close);
-        }
-        Some(MemberHit::Body)
+impl Grid {
+    pub fn new([width, height]: [f32; 2]) -> Self {
+        let rows = (height / CELL[1]).floor().max(1.0) as usize;
+        let columns = (width / CELL[0]).floor().max(1.0) as usize;
+        let (top, bottom) = ((0.3 * height).trunc(), height - 165.0);
+        let used = (0..rows * columns)
+            .filter(|&cell| {
+                let [x, y] = Self::corner(rows, cell);
+                x + CELL[0] <= width && y >= top && y + CELL[1] <= bottom
+            })
+            .collect();
+        Self { rows, columns, used }
+    }
+
+    fn corner(rows: usize, cell: usize) -> [f32; 2] {
+        [CELL[0] * (cell / rows) as f32, CELL[1] * (cell % rows) as f32]
+    }
+
+    /// A cell's top left on screen.
+    pub fn at(&self, cell: usize) -> [f32; 2] {
+        Self::corner(self.rows, cell)
+    }
+
+    /// The cell nearest a window's top left (rounding at half a cell, clamped to the grid), or `None` when that cell
+    /// isn't a used one.
+    pub fn nearest(&self, [x, y]: [f32; 2]) -> Option<usize> {
+        let column = ((x / CELL[0]).round().max(0.0) as usize).min(self.columns - 1);
+        let row = ((y / CELL[1]).round().max(0.0) as usize).min(self.rows - 1);
+        let cell = column * self.rows + row;
+        self.used.contains(&cell).then_some(cell)
+    }
+
+    /// The first used cell no window holds.
+    // ponytail: in cell order.
+    pub fn first_free(&self, taken: &[usize]) -> Option<usize> {
+        self.used.iter().copied().find(|cell| !taken.contains(cell))
     }
 }
 
-/// The small windows dragged out of the party window.
-/// ponytail: forgotten at logout (the game is dropped). Saving each account and place would keep them.
+/// One member's small window, in its grid cell.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberWindow {
+    pub account: u32,
+    pub cell: usize,
+}
+
+/// The small party windows.
 #[derive(Debug, Default)]
 pub struct MemberWindows {
     pub open: Vec<MemberWindow>,
     /// A party row held until the button is let go.
     held: Option<u32>,
-    /// A small window being moved, and where in it the pointer grabbed.
-    moving: Option<(u32, [f32; 2])>,
+    /// A small window being moved: whose, where in it the pointer grabbed, and where it is now.
+    moving: Option<(u32, [f32; 2], [f32; 2])>,
+    /// A window let go outside the used cells: "In the last row" is to be shown.
+    pub last_row: bool,
 }
 
 impl MemberWindows {
@@ -1033,48 +1051,79 @@ impl MemberWindows {
         self.held = Some(account);
     }
 
-    /// A press on a small window's body grabs it. The close button does not.
-    pub fn press_window(&mut self, account: u32, cursor: [f32; 2]) {
+    /// A press anywhere on a small window grabs it.
+    pub fn press_window(&mut self, account: u32, cursor: [f32; 2], grid: &Grid) {
         let Some(index) = self.open.iter().position(|window| window.account == account) else { return };
         let window = self.open.remove(index);
-        let grab = [cursor[0] - window.position[0], cursor[1] - window.position[1]];
+        let at = grid.at(window.cell);
         self.open.push(window);
-        self.moving = Some((account, grab));
+        self.moving = Some((account, [cursor[0] - at[0], cursor[1] - at[1]], at));
     }
 
-    /// Follows the pointer while a small window is held.
+    /// Follows the pointer while a small window is held, with no snapping.
     pub fn drag_to(&mut self, cursor: [f32; 2]) {
-        let Some((account, grab)) = self.moving else { return };
-        let Some(window) = self.open.iter_mut().find(|window| window.account == account) else { return };
-        window.position = window::dragged_to([cursor[0] - grab[0], cursor[1] - grab[1]], MEMBER_SIZE);
+        if let Some((_, grab, at)) = &mut self.moving {
+            *at = [cursor[0] - grab[0], cursor[1] - grab[1]];
+        }
     }
 
-    /// Lets go. A party row let go outside the party window (`outside`) opens that member's window at `at`, or moves
-    /// the one they already have. Returns whether a row or a window was held, so the release is not also a click.
-    pub fn release(&mut self, outside: bool, at: [f32; 2]) -> bool {
-        let held = self.held.take();
-        let moving = self.moving.take().is_some();
-        if let Some(account) = held {
+    /// Lets go. A party row let go outside the party window (`outside`) gives that member a window in the first free
+    /// cell; a small window snaps to the nearest cell (swapping with a window there), or goes back to its own when
+    /// that cell isn't used. Returns whether a row or a window was held, so the release is not also a click.
+    pub fn release(&mut self, outside: bool, grid: &Grid) -> bool {
+        if let Some(account) = self.held.take() {
             if outside {
-                self.place(account, at);
+                self.add(account, grid);
             }
             return true;
         }
-        moving
+        let Some((account, _, at)) = self.moving.take() else { return false };
+        match grid.nearest(at) {
+            Some(cell) => self.move_to(account, cell),
+            None => self.last_row = true,
+        }
+        true
     }
 
-    fn place(&mut self, account: u32, at: [f32; 2]) {
-        let position = window::dragged_to(at, MEMBER_SIZE);
-        if let Some(window) = self.open.iter_mut().find(|window| window.account == account) {
-            window.position = position;
-        } else {
-            self.open.push(MemberWindow { account, position });
+    /// `account`'s window to `cell`; a window already there takes the moved one's cell.
+    fn move_to(&mut self, account: u32, cell: usize) {
+        let Some(from) = self.open.iter().find(|window| window.account == account).map(|window| window.cell) else { return };
+        for window in &mut self.open {
+            if window.account == account {
+                window.cell = cell;
+            } else if window.cell == cell {
+                window.cell = from;
+            }
+        }
+    }
+
+    /// A window for `account` in the first free cell; nothing when they have one or no cell is free.
+    pub fn add(&mut self, account: u32, grid: &Grid) {
+        if self.has(account) {
+            return;
+        }
+        let taken: Vec<usize> = self.open.iter().map(|window| window.cell).collect();
+        if let Some(cell) = grid.first_free(&taken) {
+            self.open.push(MemberWindow { account, cell });
+        }
+    }
+
+    pub fn has(&self, account: u32) -> bool {
+        self.open.iter().any(|window| window.account == account)
+    }
+
+    /// Every window back in the used cells from the first, in their cell order.
+    pub fn sort(&mut self, grid: &Grid) {
+        let mut order: Vec<usize> = (0..self.open.len()).collect();
+        order.sort_by_key(|&index| self.open[index].cell);
+        for (index, cell) in order.into_iter().zip(&grid.used) {
+            self.open[index].cell = *cell;
         }
     }
 
     pub fn close(&mut self, account: u32) {
         self.open.retain(|window| window.account != account);
-        if self.moving.is_some_and(|(moving, _)| moving == account) {
+        if self.moving.is_some_and(|(moving, ..)| moving == account) {
             self.moving = None;
         }
     }
@@ -1090,12 +1139,40 @@ impl MemberWindows {
         let still = |account: u32| party.members.iter().any(|member| member.info.account == account);
         self.open.retain(|window| still(window.account));
         self.held = self.held.filter(|&account| still(account));
-        self.moving = self.moving.filter(|&(account, _)| still(account));
+        self.moving = self.moving.filter(|&(account, ..)| still(account));
+    }
+
+    /// The saved windows of members in the party come back in their cells (the first free one when theirs is taken or
+    /// no longer used).
+    pub fn restore(&mut self, saved: &[(u32, usize)], party: &Party, grid: &Grid) {
+        for &(account, cell) in saved {
+            if self.has(account) || !party.members.iter().any(|member| member.info.account == account) {
+                continue;
+            }
+            if grid.used.contains(&cell) && !self.open.iter().any(|window| window.cell == cell) {
+                self.open.push(MemberWindow { account, cell });
+            } else {
+                self.add(account, grid);
+            }
+        }
+    }
+
+    /// Each window's member and cell, a line each, as saved for the character.
+    pub fn saved(&self) -> String {
+        self.open.iter().map(|window| format!("{} {}\n", window.account, window.cell)).collect()
+    }
+
+    /// Where a window is drawn: its cell, or under the pointer while moved.
+    fn position(&self, window: &MemberWindow, grid: &Grid) -> [f32; 2] {
+        match self.moving {
+            Some((account, _, at)) if account == window.account => at,
+            _ => grid.at(window.cell),
+        }
     }
 
     /// The topmost small window under the pointer.
-    pub fn hit(&self, cursor: [f32; 2]) -> Option<(u32, MemberHit)> {
-        self.open.iter().rev().find_map(|window| window.hit(cursor).map(|hit| (window.account, hit)))
+    pub fn hit(&self, cursor: [f32; 2], grid: &Grid) -> Option<u32> {
+        self.open.iter().rev().find(|window| contains(self.position(window, grid), MINI_SIZE, cursor)).map(|window| window.account)
     }
 
     /// `PartyHp:<name>` for each open window, in list order.
@@ -1109,91 +1186,89 @@ impl MemberWindows {
             .collect()
     }
 
-    /// The body and close button of each small window, for the test driver.
-    pub fn button_boxes(&self, party: Option<&Party>) -> Vec<(String, [f32; 4])> {
+    /// Each small window, for the test driver.
+    pub fn button_boxes(&self, party: Option<&Party>, grid: &Grid) -> Vec<(String, [f32; 4])> {
         let Some(party) = party else { return Vec::new() };
-        let mut boxes = Vec::new();
-        for window in &self.open {
-            let Some(member) = party.members.iter().find(|member| member.info.account == window.account) else { continue };
-            let [x, y] = window.position;
-            boxes.push((format!("party_hp:{}", member.info.name), [x, y, MEMBER_SIZE[0], MEMBER_SIZE[1]]));
-            let close = offset(window.position, CLOSE_AT);
-            boxes.push((format!("party_hp_close:{}", member.info.name), [close[0], close[1], window::BUTTON_SIZE[0], window::BUTTON_SIZE[1]]));
-        }
-        boxes
+        self.open
+            .iter()
+            .filter_map(|window| {
+                let member = party.members.iter().find(|member| member.info.account == window.account)?;
+                let [x, y] = self.position(window, grid);
+                Some((format!("party_hp:{}", member.info.name), [x, y, MINI_SIZE[0], MINI_SIZE[1]]))
+            })
+            .collect()
     }
 
-    /// Each dragged-out window. The bar reads `Member::hp`, which `MapEvent::PartyHp` (ZC_NOTIFY_HP_TO_GROUPM,
-    /// 0x080E) fills for the party window too.
+    /// Each small window: the background (three times over online, once offline), the job icon and crown, "Lv.N
+    /// Name(Map)" cut to 104 px (whole in a tooltip), and the HP bar where the party window shows one.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, font: &Font, party: Option<&Party>, here: &str, pointer: [f32; 2]) {
+    pub fn draw<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        icons: &'a HashMap<String, Option<Texture>>,
+        font: &Font,
+        party: Option<&Party>,
+        (me, our_hp, on_screen, map_names): Whose<'_>,
+        grid: &Grid,
+        pointer: [f32; 2],
+    ) {
         let Some(party) = party else { return };
         for window in &self.open {
-            if let Some(member) = party.members.iter().find(|member| member.info.account == window.account) {
-                draw_member(layer, chrome, assets, font, member, window.position, here, true, pointer);
+            let Some(member) = party.members.iter().find(|member| member.info.account == window.account) else { continue };
+            let info = &member.info;
+            let at = self.position(window, grid);
+            let place = |local: [f32; 2]| offset(at, local);
+            for _ in 0..if info.online { 3 } else { 1 } {
+                layer.sprites.push((&assets.mini_bg, at, assets.mini_bg.size));
+            }
+            let icon = job_icon(info.job, member.dead);
+            let key = if info.online { icon } else { format!("{icon}|grey") };
+            if let Some(Some(icon)) = icons.get(&key) {
+                layer.sprites.push((icon, place(if info.leader { MINI_LEADER_ICON } else { MINI_ICON }), [ICON, ICON]));
+            }
+            if info.leader {
+                let crown = if info.online { &assets.crown } else { &assets.crown_grey };
+                layer.sprites.push((crown, place(MINI_CROWN), crown.size));
+            }
+            let whole = mini_line(info.level, &info.name, &map_names(&info.map));
+            let line = window::fit(font, &whole, MINI_TEXT_WIDTH);
+            layer.texts.push((line.clone(), place(MINI_TEXT), if info.online { [255; 3] } else { OFFLINE }));
+            if line != whole && contains(at, MINI_SIZE, pointer) {
+                window::tooltip(tooltip, chrome, font, &whole, offset(pointer, [12.0, 12.0]), [255; 3]);
+            }
+            let hp = if info.account == me { Some(our_hp) } else { member.hp };
+            if shows_bar(info.account, me, info.online, on_screen(info.account))
+                && let Some([hp, max]) = hp
+            {
+                let [border, background, fill, low] = &assets.bar_colors;
+                let bar = place(MINI_BAR);
+                layer.sprites.push((border, bar, MINI_BAR_SIZE));
+                layer.sprites.push((background, offset(bar, [1.0, 1.0]), [MINI_BAR_SIZE[0] - 2.0, MINI_BAR_SIZE[1] - 2.0]));
+                if let Some(width) = crate::overhead::party_fill_width(i64::from(hp), i64::from(max), MINI_BAR_SIZE[0]) {
+                    let color = if hp * 4 < max { low } else { fill };
+                    layer.sprites.push((color, offset(bar, [1.0, 1.0]), [width, MINI_BAR_SIZE[1] - 2.0]));
+                }
             }
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_member<'a>(
-    layer: &mut Layer<'a>,
-    chrome: &'a Chrome,
-    assets: &'a Assets,
-    font: &Font,
-    member: &Member,
-    at: [f32; 2],
-    here: &str,
-    close: bool,
-    pointer: [f32; 2],
-) {
-    let place = |local: [f32; 2]| offset(at, local);
-    layer.sprites.push((&chrome.white, at, MEMBER_SIZE));
-    for x in [0.0, MEMBER_SIZE[0] - 1.0] {
-        layer.sprites.push((&chrome.border, place([x, 0.0]), [1.0, MEMBER_SIZE[1]]));
-    }
-    layer.sprites.push((&chrome.border, place([0.0, 0.0]), [MEMBER_SIZE[0], 1.0]));
-    layer.sprites.push((&chrome.border, place([0.0, MEMBER_SIZE[1] - 1.0]), [MEMBER_SIZE[0], 1.0]));
-    let info = &member.info;
-    let color = if !info.online {
-        OFFLINE
-    } else if info.leader {
-        LEADER
-    } else {
-        NAME
-    };
-    let map = info.map.trim_end_matches(".gat");
-    // ponytail: the map shares the name's line when it isn't this map. A second line would need a taller window.
-    let room = if close { CLOSE_AT[0] - 8.0 } else { MEMBER_SIZE[0] - 8.0 };
-    let (name, elsewhere) = if !map.is_empty() && map != here {
-        let name = window::fit(font, &info.name, room * 0.55);
-        let used = font.width(&name) + 4.0;
-        (name, Some(window::fit(font, map, (room - used).max(0.0))))
-    } else {
-        (window::fit(font, &info.name, room), None)
-    };
-    layer.texts.push((name.clone(), place([4.0, 3.0]), color));
-    if let Some(elsewhere) = elsewhere {
-        layer.texts.push((elsewhere, place([4.0 + font.width(&name) + 4.0, 3.0]), if info.online { MAP } else { OFFLINE }));
-    }
-    if close {
-        let image = chrome.button(2, contains(place(CLOSE_AT), window::BUTTON_SIZE, pointer));
-        layer.sprites.push((image, place(CLOSE_AT), image.size));
-    }
-    let [border, background, healthy, low] = &assets.hp;
-    let bar = place(MEMBER_HP_AT);
-    layer.sprites.push((border, bar, [MEMBER_HP[0] + 2.0, MEMBER_HP[1] + 2.0]));
-    layer.sprites.push((background, offset(bar, [1.0, 1.0]), MEMBER_HP));
-    match member_bar(info.online, member.hp) {
-        MemberBar::Offline => layer.sprites.push((&assets.grey, offset(bar, [1.0, 1.0]), MEMBER_HP)),
-        MemberBar::Hp(width) => {
-            let [hp, max] = member.hp.unwrap_or([0, 0]);
-            let fill = if hp_low(hp, max) { low } else { healthy };
-            layer.sprites.push((fill, offset(bar, [1.0, 1.0]), [width, MEMBER_HP[1]]));
-        }
-        MemberBar::Empty => {}
-    }
+/// A small window's line: "Lv.N Name(Map)", the map left out when not known.
+fn mini_line(level: u16, name: &str, map: &str) -> String {
+    if map.is_empty() { format!("Lv.{level} {name}") } else { format!("Lv.{level} {name}({map})") }
+}
+
+/// The saved list read back: a member's account and cell a line; a line it can't read is skipped.
+pub fn parse_saved(text: &str) -> Vec<(u32, usize)> {
+    text.lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            Some((words.next()?.parse().ok()?, words.next()?.parse().ok()?))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1256,11 +1331,11 @@ mod tests {
         assert_eq!(party.member(2).unwrap().hp, Some([5, 10]));
         assert_eq!(party.leader(), Some(1));
         let mut window = PartyWindow::default();
-        let party_bar = [Button::Agency, Button::Setup, Button::Lock(false), Button::Invite, Button::Leave];
+        let party_bar = [Button::Agency, Button::Setup, Button::Lock(false), Button::Invite, Button::Leave, Button::Sort];
         assert_eq!(window.buttons(Some(&party)), party_bar);
         assert_eq!(window.buttons(None), [Button::Agency, Button::Setup, Button::Lock(false), Button::Create]);
         let xs = |window: &PartyWindow, party| (0..window.buttons(party).len()).map(|place| window.button_at(place)[0]).collect::<Vec<_>>();
-        assert_eq!(xs(&window, Some(&party)), [5.0, 31.0, 57.0, 83.0, 109.0]);
+        assert_eq!(xs(&window, Some(&party)), [5.0, 31.0, 57.0, 83.0, 109.0, 135.0]);
         assert_eq!(xs(&window, None), [5.0, 31.0, 57.0, 83.0]);
         assert!(party_bar.iter().all(|&button| window.takes(button)));
         window.locked = true;
@@ -1294,12 +1369,13 @@ mod tests {
     #[test]
     fn offers_each_rows_menu() {
         use MemberChoice::*;
-        assert_eq!(member_menu(1, 1, true, false), [Mail, Leave]);
-        assert_eq!(member_menu(1, 2, true, false), [Mail, Whisper, Expel, Assign]);
-        assert_eq!(member_menu(2, 1, false, false), [Mail, Whisper]);
-        assert_eq!(member_menu(1, 2, true, true), [Mail, Whisper, Expel, Assign, RemoveSmall]);
-        assert_eq!(member_menu(1, 1, true, true), [Mail, Leave, RemoveSmall]);
-        assert_eq!([Mail, Leave, Whisper, Expel, Assign, RemoveSmall].map(MemberChoice::message), [2808, 96, 360, 97, 1532, 3102]);
+        assert_eq!(member_menu(1, 1, true, false, false), [Mail, Leave]);
+        assert_eq!(member_menu(1, 2, true, false, false), [Mail, Whisper, Expel, Assign]);
+        assert_eq!(member_menu(2, 1, false, false, false), [Mail, Whisper]);
+        assert_eq!(member_menu(1, 2, true, false, true), [Mail, Whisper, Expel, Assign, AddSmall, RemoveSmall]);
+        assert_eq!(member_menu(1, 2, true, true, true), [Mail, Whisper, Expel, Assign, RemoveSmall]);
+        assert_eq!(member_menu(1, 1, true, true, true), [Mail, Leave, RemoveSmall]);
+        assert_eq!([Mail, Leave, Whisper, Expel, Assign, AddSmall, RemoveSmall].map(MemberChoice::message), [2808, 96, 360, 97, 1532, 3101, 3102]);
     }
 
     #[test]
@@ -1363,7 +1439,7 @@ mod tests {
         let mut window = PartyWindow::default();
         window.frame.open = true;
         let names: Vec<String> = window.button_boxes(Some(&party)).into_iter().map(|(name, _)| name).collect();
-        assert_eq!(names, ["agency", "setup", "lock", "invite", "leave", "member:M1", "member:M2", "member:M3", "party_mode"]);
+        assert_eq!(names, ["agency", "setup", "lock", "invite", "leave", "sort", "member:M1", "member:M2", "member:M3", "party_mode"]);
     }
 
     #[test]
@@ -1429,44 +1505,99 @@ mod tests {
     }
 
     #[test]
-    fn drag_out_opens_outside_the_party_window_only() {
+    fn lays_out_the_small_windows_grid() {
+        let grid = Grid::new([1024.0, 768.0]);
+        assert_eq!(grid.used.len(), 25);
+        let first: Vec<[f32; 2]> = grid.used.iter().take(6).map(|&cell| grid.at(cell)).collect();
+        assert_eq!(first, [[0.0, 275.0], [0.0, 330.0], [0.0, 385.0], [0.0, 440.0], [0.0, 495.0], [177.0, 275.0]]);
+        assert_eq!(grid.at(*grid.used.last().unwrap()), [708.0, 495.0]);
+        let small = Grid::new([800.0, 600.0]);
+        let ys: Vec<f32> = small.used.iter().take(3).map(|&cell| small.at(cell)[1]).collect();
+        assert_eq!((small.used.len(), ys), (12, vec![220.0, 275.0, 330.0]));
+        assert_eq!(small.at(small.used[11]), [531.0, 330.0]);
+        // The nearest cell rounds at half a cell and clamps to the grid; a cell outside the used rows is none.
+        assert_eq!(grid.nearest([180.0, 330.0]).map(|cell| grid.at(cell)), Some([177.0, 330.0]));
+        assert_eq!(grid.nearest([88.0, 302.0]).map(|cell| grid.at(cell)), Some([0.0, 275.0]));
+        assert_eq!(grid.nearest([89.0, 303.0]).map(|cell| grid.at(cell)), Some([177.0, 330.0]));
+        assert_eq!(grid.nearest([5000.0, 400.0]).map(|cell| grid.at(cell)), Some([708.0, 385.0]));
+        assert_eq!(grid.nearest([0.0, 10.0]), None);
+        assert_eq!(grid.nearest([-50.0, 700.0]), None);
+        assert_eq!(grid.first_free(&[grid.used[0], grid.used[2]]), Some(grid.used[1]));
+    }
+
+    #[test]
+    fn small_windows_snap_swap_and_sort() {
+        let grid = Grid::new([1024.0, 768.0]);
         let mut windows = MemberWindows::default();
         windows.press_row(2);
         // Let go still inside the party window: no small window.
-        assert!(windows.release(false, [400.0, 300.0]));
+        assert!(windows.release(false, &grid));
         assert!(windows.open.is_empty());
         windows.press_row(2);
-        assert!(windows.release(true, [400.0, 300.0]));
-        assert_eq!(windows.open, vec![MemberWindow { account: 2, position: [400.0, 300.0] }]);
-        // Dragging the same member out again moves that window, at the new drop point.
-        windows.press_row(2);
-        assert!(windows.release(true, [300.0, 240.0]));
-        assert_eq!(windows.open, vec![MemberWindow { account: 2, position: [300.0, 240.0] }]);
-        // A release back inside leaves it where it was.
-        windows.press_row(2);
-        assert!(windows.release(false, [10.0, 10.0]));
-        assert_eq!(windows.open[0].position, [300.0, 240.0]);
-        // Dragging the small window itself moves it by the grab.
-        windows.press_window(2, [310.0, 250.0]);
-        windows.drag_to([500.0, 320.0]);
-        assert!(windows.release(true, [500.0, 320.0]));
-        assert_eq!(windows.open[0].position, [490.0, 310.0]);
-        assert_eq!(windows.open[0].hit([490.0 + 8.0, 310.0 + 8.0]), Some(MemberHit::Body));
-        assert_eq!(windows.open[0].hit([490.0 + CLOSE_AT[0] + 2.0, 310.0 + CLOSE_AT[1] + 2.0]), Some(MemberHit::Close));
+        assert!(windows.release(true, &grid));
+        assert_eq!(windows.open, [MemberWindow { account: 2, cell: grid.used[0] }]);
+        assert_eq!(windows.hit([10.0, 280.0], &grid), Some(2));
+        // One a member; Add takes the next free cell.
+        windows.add(2, &grid);
+        windows.add(3, &grid);
+        assert_eq!(windows.open.iter().map(|window| (window.account, window.cell)).collect::<Vec<_>>(), [(2, grid.used[0]), (3, grid.used[1])]);
+        // Dragged to about (180, 330): it snaps to (177, 330).
+        windows.press_window(2, [10.0, 280.0], &grid);
+        windows.drag_to([190.0, 335.0]);
+        assert_eq!(windows.hit([185.0, 340.0], &grid), Some(2));
+        assert!(windows.release(false, &grid));
+        assert_eq!(grid.at(windows.open.iter().find(|window| window.account == 2).unwrap().cell), [177.0, 330.0]);
+        // Onto the other's cell: they swap.
+        windows.press_window(2, [180.0, 335.0], &grid);
+        windows.drag_to([5.0, 335.0]);
+        windows.release(false, &grid);
+        let cell_of = |windows: &MemberWindows, account: u32| windows.open.iter().find(|window| window.account == account).unwrap().cell;
+        assert_eq!((grid.at(cell_of(&windows, 2)), grid.at(cell_of(&windows, 3))), ([0.0, 330.0], [177.0, 330.0]));
+        // Let go at the top of the screen: "In the last row", and it goes back.
+        windows.press_window(2, [5.0, 335.0], &grid);
+        windows.drag_to([300.0, 10.0]);
+        windows.release(false, &grid);
+        assert!(windows.last_row);
+        assert_eq!(grid.at(cell_of(&windows, 2)), [0.0, 330.0]);
+        // Sort packs them from the first cell, in their cell order.
+        windows.sort(&grid);
+        assert_eq!((cell_of(&windows, 2), cell_of(&windows, 3)), (grid.used[0], grid.used[1]));
         windows.close(2);
-        assert!(windows.open.is_empty());
+        assert_eq!(windows.open.len(), 1);
+    }
+
+    #[test]
+    fn keeps_the_small_windows_for_next_time() {
+        let grid = Grid::new([1024.0, 768.0]);
+        let mut party = Party::default();
+        [member(1, true), member(2, false), member(3, false)].into_iter().for_each(|info| party.upsert(info));
+        let mut windows = MemberWindows::default();
+        windows.add(2, &grid);
+        windows.add(3, &grid);
+        windows.sort(&grid);
+        windows.press_window(3, [10.0, 335.0], &grid);
+        windows.drag_to([360.0, 440.0]);
+        windows.release(false, &grid);
+        let saved = windows.saved();
+        assert_eq!(parse_saved(&saved), [(2, grid.used[0]), (3, 2 * 13 + 8)]);
+        assert_eq!(parse_saved("broken\n9 x\n4 7\n"), [(4, 7)]);
+        // Read back on the party list: in their cells, members only.
+        let mut again = MemberWindows::default();
+        again.restore(&[(2, grid.used[0]), (3, 2 * 13 + 8), (9, grid.used[3])], &party, &grid);
+        assert_eq!(again.open, windows.open);
+        again.restore(&parse_saved(&saved), &party, &grid);
+        assert_eq!(again.open.len(), 2, "no second window for a member");
     }
 
     #[test]
     fn leaving_removes_the_window() {
+        let grid = Grid::new([1024.0, 768.0]);
         let mut party = Party::default();
         party.upsert(member(1, true));
         party.upsert(member(2, false));
         let mut windows = MemberWindows::default();
-        windows.press_row(2);
-        windows.release(true, [400.0, 300.0]);
-        windows.press_row(1);
-        windows.release(true, [100.0, 120.0]);
+        windows.add(2, &grid);
+        windows.add(1, &grid);
         assert_eq!(windows.names(Some(&party)), ["PartyHp:M2", "PartyHp:M1"]);
         party.members.retain(|member| member.info.account != 2);
         windows.retain(Some(&party));
@@ -1474,29 +1605,13 @@ mod tests {
         // A row held while they leave is not opened on release.
         windows.press_row(2);
         windows.retain(Some(&party));
-        assert!(!windows.release(true, [20.0, 20.0]));
+        assert!(!windows.release(true, &grid));
         assert!(windows.open.iter().all(|window| window.account != 2));
         // Leaving the party, or logging out, drops the rest.
         windows.retain(None);
         assert!(windows.open.is_empty());
         assert!(windows.names(None).is_empty());
-    }
-
-    #[test]
-    fn hp_fill_width_matches_the_party_bar() {
-        assert_eq!(hp_fill(50, 100, MEMBER_HP[0]), 50.0);
-        assert_eq!(hp_fill(5, 10, 60.0), 30.0);
-        assert_eq!(hp_fill(1, 100, MEMBER_HP[0]), 1.0);
-        assert_eq!(hp_fill(0, 100, MEMBER_HP[0]), 0.0);
-        assert_eq!(hp_fill(10, 0, MEMBER_HP[0]), 0.0);
-        assert_eq!(hp_fill(-5, 100, MEMBER_HP[0]), 0.0);
-        assert_eq!(hp_fill(150, 100, MEMBER_HP[0]), MEMBER_HP[0]);
-        // The small window's bar is that width; offline is grey rather than a fill.
-        assert_eq!(member_bar(true, Some([50, 100])), MemberBar::Hp(50.0));
-        assert_eq!(member_bar(true, Some([10, 100])), MemberBar::Hp(10.0));
-        assert_eq!(member_bar(true, None), MemberBar::Empty);
-        assert_eq!(member_bar(false, Some([50, 100])), MemberBar::Offline);
-        assert!(hp_low(10, 100));
-        assert!(!hp_low(50, 100));
+        assert_eq!(mini_line(9, "M1", "Prontera"), "Lv.9 M1(Prontera)");
+        assert_eq!(mini_line(9, "M1", ""), "Lv.9 M1");
     }
 }

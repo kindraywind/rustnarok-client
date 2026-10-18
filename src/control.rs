@@ -1111,7 +1111,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             game.party_window
                 .button_boxes(game.party.as_ref())
                 .into_iter()
-                .chain(game.member_windows.button_boxes(game.party.as_ref()))
+                .chain(game.member_windows.button_boxes(game.party.as_ref(), &crate::party::Grid::new(crate::screen())))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.inventory.tab_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1506,6 +1506,14 @@ fn game_state(app: &App, game: &Game) -> Value {
     });
     // The party window's size mode and size.
     state["party_window"] = json!({"mode": game.party_window.mode, "size": game.party_window.size(), "locked": game.party_window.locked});
+    // The small party windows: each member's window's top left.
+    state["small_windows"] = game
+        .member_windows
+        .button_boxes(game.party.as_ref(), &crate::party::Grid::new(crate::screen()))
+        .into_iter()
+        .filter_map(|(name, [x, y, ..])| Some((name.strip_prefix("party_hp:")?.to_owned(), json!([x, y]))))
+        .collect::<serde_json::Map<String, Value>>()
+        .into();
     // The party booking board: the posts found (their leaders' names), its last line, and who asks to join us.
     state["booking"] = game
         .booking
