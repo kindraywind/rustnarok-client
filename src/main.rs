@@ -3167,7 +3167,9 @@ impl App {
                 }
             }
             // Setting up a buying store: its name, zeny limit, wanted items, OK or cancel.
-            Scene::Game(game) if game.buying_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &game.inventory.items).is_some()) => {
+            Scene::Game(game)
+                if game.amount.is_none() && game.buying_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &game.inventory.items).is_some()) =>
+            {
                 let setup = game.buying_setup.as_mut().unwrap();
                 let hit = setup.hit(cursor, &game.inventory.items).unwrap();
                 match setup.click(hit, &game.inventory.items) {
@@ -3200,7 +3202,7 @@ impl App {
                 }
             }
             // Our open buying store: closing it closes the store and drops the sign.
-            Scene::Game(game) if game.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some()) => {
+            Scene::Game(game) if game.amount.is_none() && game.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some()) => {
                 if game.my_buying_store.as_ref().unwrap().hit(cursor) == Some(true) {
                     let _ = game.session.close_buying_store();
                     game.my_buying_store = None;
