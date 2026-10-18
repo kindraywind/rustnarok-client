@@ -827,6 +827,9 @@ const CZ_REQ_BANKING_WITHDRAW: u16 = 0x09A9;
 const ZC_ACK_BANKING_WITHDRAW: u16 = 0x09AA;
 const CZ_REQ_CLOSE_BANKING: u16 = 0x09B8;
 const ZC_SPIRITS: u16 = 0x01D0;
+const ZC_MILLENNIUMSHIELD: u16 = 0x0440;
+const ZC_SPIRITS_ATTRIBUTE: u16 = 0x08CF;
+const ZC_SOULENERGY: u16 = 0x0B73;
 const CZ_REQ_ITEMCOMPOSITION_LIST: u16 = 0x017A;
 const ZC_ITEMCOMPOSITION_LIST: u16 = 0x017B;
 const CZ_REQ_ITEMCOMPOSITION: u16 = 0x017C;
@@ -1487,6 +1490,22 @@ pub enum MapEvent {
     },
     /// How many spirit spheres (or coins) a unit carries; 0 takes them away.
     Spirits {
+        id: u32,
+        count: u16,
+    },
+    /// How many Millennium Shield shields (a Royal Guard's: rage spheres) a unit carries.
+    Shields {
+        id: u32,
+        count: u16,
+    },
+    /// A unit's charms: their element (0 none, 1 water, 2 earth, 3 fire, 4 wind) and how many.
+    Charms {
+        id: u32,
+        kind: u16,
+        count: u16,
+    },
+    /// How many souls a unit carries.
+    Souls {
         id: u32,
         count: u16,
     },
@@ -4067,6 +4086,10 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // The result byte is rathena's "failure".
         ZC_ACK_ITEMCOMPOSITION => MapEvent::CardInserted { equip: u16_at(2), card: u16_at(4), ok: packet[6] == 0 },
         ZC_SPIRITS => MapEvent::Spirits { id: u32_at(2), count: u16_at(6) },
+        // Counts are signed; rathena never sends one below 0.
+        ZC_MILLENNIUMSHIELD => MapEvent::Shields { id: u32_at(2), count: (u16_at(6) as i16).max(0) as u16 },
+        ZC_SPIRITS_ATTRIBUTE => MapEvent::Charms { id: u32_at(2), kind: u16_at(6), count: (u16_at(8) as i16).max(0) as u16 },
+        ZC_SOULENERGY => MapEvent::Souls { id: u32_at(2), count: u16_at(6) },
         ZC_ACK_OPEN_BANKING => MapEvent::BankOpened,
         ZC_BANKING_CHECK => MapEvent::BankBalance(i64::from_le_bytes(packet[2..10].try_into().unwrap())),
         ZC_ACK_BANKING_DEPOSIT | ZC_ACK_BANKING_WITHDRAW => MapEvent::BankMoved {
@@ -5011,6 +5034,15 @@ mod tests {
         packet.extend_from_slice(&5u16.to_le_bytes());
         assert_eq!(Some(packet.len() as i32), packet_length(ZC_SPIRITS));
         let Some(MapEvent::Spirits { id: 2_000_002, count: 5 }) = decode_map_packet(&packet) else { panic!() };
+        let shields = [&ZC_MILLENNIUMSHIELD.to_le_bytes()[..], &2_000_002u32.to_le_bytes(), &3u16.to_le_bytes(), &0u16.to_le_bytes()].concat();
+        let Some(MapEvent::Shields { id: 2_000_002, count: 3 }) = decode_map_packet(&shields) else { panic!() };
+        let charms =
+            |kind: u16, count: u16| [&ZC_SPIRITS_ATTRIBUTE.to_le_bytes()[..], &2_000_002u32.to_le_bytes(), &kind.to_le_bytes(), &count.to_le_bytes()].concat();
+        let Some(MapEvent::Charms { kind: 3, count: 2, .. }) = decode_map_packet(&charms(3, 2)) else { panic!() };
+        let Some(MapEvent::Charms { kind: 0, count: 0, .. }) = decode_map_packet(&charms(0, 0)) else { panic!() };
+        let souls = [&ZC_SOULENERGY.to_le_bytes()[..], &2_000_002u32.to_le_bytes(), &5u16.to_le_bytes()].concat();
+        let Some(MapEvent::Souls { id: 2_000_002, count: 5 }) = decode_map_packet(&souls) else { panic!() };
+        assert_eq!([ZC_MILLENNIUMSHIELD, ZC_SPIRITS_ATTRIBUTE, ZC_SOULENERGY].map(packet_length), [Some(10), Some(10), Some(8)]);
     }
 
     #[test]

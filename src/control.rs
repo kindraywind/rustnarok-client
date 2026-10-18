@@ -716,6 +716,17 @@ fn game_state(app: &App, game: &Game) -> Value {
     let me = game.player.cell;
     let distance = |cell: [i32; 2]| (cell[0] - me[0]).abs().max((cell[1] - me[1]).abs());
     let status = |id: u16| game.status.get(&id).copied();
+    // What circles a unit: spheres (or coins), shields, charms and their element ("water", "earth", "fire", "wind"
+    // or null), souls.
+    let orbs = |value: &mut Value, unit: Option<u32>| {
+        let orbs = game.spirits.get(&unit).copied().unwrap_or_default();
+        let (element, charms) = orbs.charms;
+        value["spirits"] = orbs.spheres.into();
+        value["shields"] = orbs.shields.into();
+        value["charms"] = charms.into();
+        value["charm"] = element.checked_sub(1).and_then(|element| crate::CHARM_NAMES.get(usize::from(element))).copied().into();
+        value["souls"] = orbs.souls.into();
+    };
     // A combo window's milliseconds left, on the drawing's clock (0: none).
     let combo_ms = |unit: Option<u32>| {
         game.combos.get(&unit).map_or(0, |(start, length)| length.saturating_sub(crate::control::now().saturating_duration_since(*start)).as_millis() as u64)
@@ -734,8 +745,8 @@ fn game_state(app: &App, game: &Game) -> Value {
                 MERCENARY => json!("mercenary"),
                 other => json!(other),
             };
-            let spirits = game.spirits.get(&Some(id)).copied().unwrap_or(0);
-            let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "spirits": spirits, "combo_ms": combo_ms(Some(id)), "held": crate::locked_with(&game.locks, id)});
+            let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "combo_ms": combo_ms(Some(id)), "held": crate::locked_with(&game.locks, id)});
+            orbs(&mut unit, Some(id));
             if let Some(rect) = screen(Owner::Unit(id)) {
                 unit["screen"] = json!(rect);
                 unit["area"] = json!(area(Owner::Unit(id)));
@@ -862,7 +873,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         })
     });
     let now = Instant::now();
-    json!({
+    let mut state = json!({
         "map": game.map,
         // The weather effect IDs showing.
         "weather": game.weather.ids(),
@@ -872,7 +883,6 @@ fn game_state(app: &App, game: &Game) -> Value {
             "char_id": game.me.id,
             "job": game.me.job,
             "cell": game.player.cell,
-            "spirits": game.spirits.get(&None).copied().unwrap_or(0),
             "direction": game.player.direction,
             "moving": game.player.moving(),
             "casting": game.casts.contains_key(&None),
@@ -929,7 +939,9 @@ fn game_state(app: &App, game: &Game) -> Value {
         "skills": game.skills.len(),
         "status_icons": game.status_icons.iter().map(|(id, _, ends)| json!({"id": id, "left_ms": ends.map(|end| end.saturating_duration_since(now).as_millis() as u64)})).collect::<Vec<_>>(),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
-    })
+    });
+    orbs(&mut state["player"], None);
+    state
 }
 
 #[cfg(test)]

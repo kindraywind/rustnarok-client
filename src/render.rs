@@ -423,6 +423,17 @@ pub fn load_image(grf: &Grf, path: &str) -> Result<RgbaImage, String> {
     Ok(key_out(decoded.map_err(|error| format!("{path}: {error}"))?.to_rgba8()))
 }
 
+/// A glow drawn on black (effect pictures): black becomes transparent, the brightest channel the opacity.
+pub fn glow(mut image: RgbaImage) -> RgbaImage {
+    for pixel in image.pixels_mut() {
+        let [r, g, b, _] = pixel.0;
+        let alpha = r.max(g).max(b);
+        let lift = |channel: u8| (u16::from(channel) * 255 / u16::from(alpha.max(1))) as u8;
+        pixel.0 = [lift(r), lift(g), lift(b), alpha];
+    }
+    image
+}
+
 /// Magenta, the client's color key, becomes transparent.
 pub fn key_out(mut image: RgbaImage) -> RgbaImage {
     for pixel in image.pixels_mut() {

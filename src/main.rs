@@ -352,6 +352,18 @@ const SPIRIT_TURN: f32 = 1.5;
 const SPIRIT_TILT: f32 = 0.4;
 /// The sphere picture's ball is about 22px across in a 94px square.
 const SPHERE_SCALE: f32 = 0.5;
+/// Shields, souls and charms circle at their own heights, so two kinds on one unit don't overlap; the shield and
+/// charm pictures are scaled down to about a sphere's size, and souls are spheres tinted pale violet.
+// ponytail: heights, sizes and tints are estimates; calibrate against the real client.
+const SHIELD_HEIGHT: f32 = 22.0;
+const SHIELD_SCALE: f32 = 0.22;
+const SOUL_HEIGHT: f32 = 64.0;
+const SOUL_TINT: [f32; 4] = [0.85, 0.7, 1.0, 1.0];
+const CHARM_HEIGHT: f32 = 84.0;
+const CHARM_SCALE: f32 = 0.4;
+/// Charm tints by element: water, earth, fire, wind.
+const CHARM_TINTS: [[f32; 4]; 4] = [[0.5, 0.7, 1.0, 1.0], [0.75, 0.55, 0.35, 1.0], [1.0, 0.45, 0.35, 1.0], [0.5, 1.0, 0.55, 1.0]];
+const CHARM_NAMES: [&str; 4] = ["water", "earth", "fire", "wind"];
 /// Heal, Highness Heal and Coluceo Heal report how much they healed.
 const HEAL_SKILLS: [u16; 3] = [28, 2043, 2044];
 const CAST_BAR: [f32; 2] = [60.0, 6.0];
@@ -490,9 +502,12 @@ struct Game {
     /// The emotion sprite, and the emotions showing: by unit (None = the player), the sprite action and when.
     emotion_sprite: Option<SpriteSet>,
     emotions: HashMap<Option<u32>, (usize, Instant)>,
-    /// Spirit spheres or coins: by unit (None = the player), how many; the sphere's picture, the coin's sprite.
-    spirits: HashMap<Option<u32>, u16>,
+    /// What circles units (None = the player): spheres or coins, shields, charms, souls; the sphere's, the shield's
+    /// and the charm's pictures, the coin's sprite.
+    spirits: HashMap<Option<u32>, Orbs>,
     sphere: Option<Texture>,
+    shield: Option<Texture>,
+    charm: Option<Texture>,
     coin_sprite: Option<SpriteSet>,
     digits: Option<Digits>,
     /// The NPC conversation on screen.
@@ -2281,6 +2296,42 @@ fn button_sprite(pointer: ([f32; 2], bool), position: [f32; 2], images: &ButtonI
         (false, _) => &images[0],
     };
     (image, position, image.size)
+}
+
+/// What circles a unit: spirit spheres (or coins), Millennium Shield shields, charms (element 1-4 and how many) and
+/// souls.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Orbs {
+    spheres: u16,
+    shields: u16,
+    charms: (u16, u16),
+    souls: u16,
+}
+
+/// Changes what circles a unit; a unit left with nothing leaves the map.
+fn change_orbs(spirits: &mut HashMap<Option<u32>, Orbs>, unit: Option<u32>, change: impl FnOnce(&mut Orbs)) {
+    let orbs = spirits.entry(unit).or_default();
+    change(orbs);
+    if orbs.charms.1 == 0 {
+        orbs.charms = (0, 0);
+    }
+    if *orbs == Orbs::default() {
+        spirits.remove(&unit);
+    }
+}
+
+/// The Royal Guard line, whose rage spheres rathena sends as shields (and as spheres when one comes into view).
+// ponytail: both packets go into the one sphere count for these jobs.
+fn guard_job(job: u16) -> bool {
+    matches!(job, 4066 | 4073 | 4082 | 4083 | 4102 | 4110 | 4258 | 4281)
+}
+
+/// Where `count` things circling a body at `height` are now: each one's center, and whether it's on the near side.
+fn orbit(count: u16, height: f32, turned: f32) -> impl Iterator<Item = ([f32; 2], bool)> {
+    (0..count).map(move |place| {
+        let angle = turned * SPIRIT_TURN + f32::from(place) * std::f32::consts::TAU / f32::from(count);
+        ([angle.cos() * SPIRIT_RADIUS, -height + angle.sin() * SPIRIT_RADIUS * SPIRIT_TILT], angle.sin() > 0.0)
+    })
 }
 
 /// Jobs whose spirits are coins: Gunslinger, Rebellion, their baby forms, Night Watch; anyone else's are spheres.
@@ -4888,6 +4939,8 @@ impl App {
                     emotions: HashMap::new(),
                     spirits: HashMap::new(),
                     sphere: gpu.try_load_texture(&self.grf, "data\\texture\\effect\\기구.bmp", true).ok(),
+                    shield: render::load_image(&self.grf, "data\\texture\\effect\\shield.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
+                    charm: render::load_image(&self.grf, "data\\texture\\effect\\charm.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
                     coin_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\동전"),
                     digits: Digits::load(gpu, &self.grf),
                     dialog: None,
@@ -5328,13 +5381,22 @@ impl App {
                 }
             }
             MapEvent::Spirits { id, count } => {
-                let key = (id != game.account_id).then_some(id);
-                if count > 0 {
-                    game.spirits.insert(key, count);
-                } else {
-                    game.spirits.remove(&key);
-                }
+                change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.spheres = count);
             }
+            // A Royal Guard's rage spheres come as shields too.
+            MapEvent::Shields { id, count } => {
+                let job = if id == game.account_id { Some(game.me.job) } else { game.units.get(&id).map(|actor| actor.job) };
+                let guard = job.is_some_and(guard_job);
+                change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| {
+                    *if guard { &mut orbs.spheres } else { &mut orbs.shields } = count
+                });
+            }
+            MapEvent::Charms { id, kind, count } => {
+                change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| {
+                    orbs.charms = if (1..=4).contains(&kind) { (kind, count) } else { (0, 0) }
+                });
+            }
+            MapEvent::Souls { id, count } => change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.souls = count),
             MapEvent::Vanish { id, reason } => {
                 if id != game.account_id {
                     game.spirits.remove(&Some(id));
@@ -7391,7 +7453,7 @@ impl App {
         let turned = now.duration_since(game.entered).as_secs_f32();
         let coin = game.coin_sprite.as_mut().map(|sprite| sprite.frame_at(gpu, 0, 0, Timing::Loop(turned * 1000.0))).unwrap_or_default();
         let mut spirits: [Vec<Billboard>; 2] = [Vec::new(), Vec::new()];
-        for (unit, &count) in &game.spirits {
+        for (unit, orbs) in &game.spirits {
             let (feet, job) = match unit {
                 None => (player_feet, game.me.job),
                 Some(id) => match (feet_of.get(id), game.units.get(id)) {
@@ -7399,10 +7461,22 @@ impl App {
                     _ => continue,
                 },
             };
-            for place in 0..count {
-                let angle = turned * SPIRIT_TURN + f32::from(place) * std::f32::consts::TAU / f32::from(count);
-                let center = [angle.cos() * SPIRIT_RADIUS, -SPIRIT_HEIGHT + angle.sin() * SPIRIT_RADIUS * SPIRIT_TILT];
-                let side = &mut spirits[usize::from(angle.sin() > 0.0)];
+            // Shields at the waist, souls over the spheres, charms over the head.
+            let (element, charms) = orbs.charms;
+            let pictures = [
+                (game.shield.as_ref(), orbs.shields, SHIELD_HEIGHT, SHIELD_SCALE, [1.0; 4]),
+                (game.sphere.as_ref(), orbs.souls, SOUL_HEIGHT, SPHERE_SCALE, SOUL_TINT),
+                (game.charm.as_ref(), charms, CHARM_HEIGHT, CHARM_SCALE, CHARM_TINTS[usize::from(element.clamp(1, 4) - 1)]),
+            ];
+            for (picture, count, height, scale, tint) in pictures {
+                let Some(picture) = picture else { continue };
+                let size = picture.size.map(|side| side * scale);
+                for (center, near) in orbit(count, height, turned) {
+                    spirits[usize::from(near)].push((picture, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, tint));
+                }
+            }
+            for (center, near) in orbit(orbs.spheres, SPIRIT_HEIGHT, turned) {
+                let side = &mut spirits[usize::from(near)];
                 if coin_job(job) {
                     if let Some(sprite) = &game.coin_sprite {
                         side.extend(
@@ -8807,6 +8881,27 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_what_circles_a_unit() {
+        let mut spirits = HashMap::new();
+        change_orbs(&mut spirits, None, |orbs| orbs.spheres = 5);
+        change_orbs(&mut spirits, None, |orbs| orbs.charms = (3, 2));
+        change_orbs(&mut spirits, Some(7), |orbs| orbs.souls = 4);
+        assert_eq!(spirits[&None], Orbs { spheres: 5, charms: (3, 2), ..Orbs::default() });
+        // A 0 clears only its kind; a unit with nothing left leaves.
+        change_orbs(&mut spirits, None, |orbs| orbs.charms = (3, 0));
+        assert_eq!(spirits[&None], Orbs { spheres: 5, ..Orbs::default() });
+        change_orbs(&mut spirits, Some(7), |orbs| orbs.souls = 0);
+        assert!(!spirits.contains_key(&Some(7)));
+        change_orbs(&mut spirits, None, |orbs| orbs.spheres = 0);
+        assert!(spirits.is_empty());
+        assert!(guard_job(4066) && !guard_job(4054));
+        // A glow on black: black goes clear, a dim red stays red, half as opaque.
+        let image = render::glow(image::RgbaImage::from_pixel(1, 1, image::Rgba([128, 0, 0, 255])));
+        assert_eq!(image.get_pixel(0, 0).0, [255, 0, 0, 128]);
+        assert_eq!(render::glow(image::RgbaImage::new(1, 1)).get_pixel(0, 0).0, [0; 4]);
+    }
 
     #[test]
     fn locks_and_lets_go_of_pairs() {
