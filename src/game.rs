@@ -535,6 +535,8 @@ impl Game {
         places += &size_lines(self.inventory.size(), self.cart.size(), self.storage.rows(), self.shop_sizes);
         places += &format!("{VEND_SIZE} {} {} 0\n{SKILL_LIST_SIZE} 0 {} 0\n", self.vend_size.width, self.vend_size.rows, self.skill_window.list_rows());
         places += &format!("{ITEM_PLACE} {} {} 0\n", self.item_place[0], self.item_place[1]);
+        let quest = self.quest_window.frame.position;
+        places += &format!("{QUEST_PLACE} {} {} 0\n", quest[0], quest[1]);
         if places != self.saved_places {
             if let Some(path) = settings_path("windows") {
                 let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, &places));
@@ -589,6 +591,9 @@ impl Game {
         }
         if let Some(&(place, _)) = saved.get(ITEM_PLACE) {
             self.item_place = iteminfo::restored_place(place, screen());
+        }
+        if let Some(&(place, _)) = saved.get(QUEST_PLACE) {
+            self.quest_window.frame.position = quest::restored_place(place, screen());
         }
         if let (Some(&([width, goods], _)), Some(&([_, deal], _))) = (saved.get(SHOP_SIZE), saved.get(SHOP_DEAL_SIZE)) {
             self.shop_sizes = (shop::snap_width(width), [goods as usize, deal as usize]);
@@ -1710,7 +1715,7 @@ impl Game {
             || self.buying_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.inventory.items).is_some())
             || self.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some())
             || self.mail.hit(cursor).is_some()
-            || self.quest_window.hit(cursor, &self.quests).is_some()
+            || self.quest_window.covers(cursor)
             || self.achievement_window.covers(cursor)
             || self.synthesis.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.upgrade.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -2637,7 +2642,7 @@ impl Game {
                     self.minimap_window.close();
                 }
             }
-            Quests => self.quest_window.frame.open = false,
+            Quests => self.quest_window.close(),
             Menu => self.menu = None,
             Capturing => self.capturing = false,
             Amount => self.answer_amount(false, &[]),

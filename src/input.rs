@@ -234,10 +234,10 @@ impl App {
                     let _ = game.session.claim_achievement(id);
                 }
             }
-            Scene::Game(game) if game.quest_window.hit(cursor, &game.quests).is_some() => {
-                let hit = game.quest_window.hit(cursor, &game.quests).unwrap();
+            Scene::Game(game) if game.quest_window.covers(cursor) => {
+                let hit = game.quest_window.hit(cursor, &game.quests, &self.quest_texts).unwrap();
                 let tracker = game.quest_window.tracker;
-                if let Some((id, active)) = game.quest_window.click(hit, &game.quests) {
+                if let Some((id, active)) = game.quest_window.click(hit, &game.quests, &self.quest_texts) {
                     let _ = game.session.set_quest_active(id, active);
                 }
                 // The tracker's checkbox is kept with the settings.
@@ -436,8 +436,7 @@ impl App {
                     }
                 }
                 Some(Choice::QuestInfo(id)) => {
-                    game.quest_window.frame.open = true;
-                    game.quest_window.tab = 0;
+                    game.quest_window.open();
                     game.quest_window.picked = Some(id);
                     game.sync_esc();
                 }
@@ -660,9 +659,7 @@ impl App {
             },
             // The new-quest icon: the quest window.
             Scene::Game(game) if game.quest_icon && quest_notice::on_icon(cursor) && game.window_at(cursor).is_none() => {
-                game.quest_window.frame.open = true;
-                game.quest_window.frame.minimized = false;
-                game.quest_window.tab = 0;
+                game.quest_window.open();
                 game.quest_icon = false;
                 game.sync_esc();
             }
@@ -1237,7 +1234,7 @@ impl App {
                                 game.mail_action(action);
                             }
                             Some("quest") => {
-                                game.quest_window.frame.toggle();
+                                game.quest_window.toggle();
                                 game.sync_esc();
                             }
                             // The game settings and the shortcut settings, as the game menu opens them (#68).
@@ -2124,6 +2121,7 @@ impl App {
                 }
                 _ if on_pick => game.pick.as_mut().unwrap().0.scroll_by(rows),
                 _ if game.achievement_window.covers(self.cursor) => game.achievement_window.scroll_by(rows, &self.achievement_info),
+                _ if game.quest_window.covers(self.cursor) => game.quest_window.scroll_by(rows, &game.quests, &self.quest_texts),
                 Some(Panel::Inventory) => game.inventory.wheel(rows),
                 Some(Panel::Cart) => game.cart.wheel(rows),
                 Some(Panel::Skills) => {
@@ -2769,9 +2767,10 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
-            && let Some(hit) = game.quest_window.hit(cursor, &game.quests)
+            && let Some(hit) = game.quest_window.hit(cursor, &game.quests, &self.quest_texts)
         {
-            if hit == quest::Hit::Title(TitleHit::Title) {
+            // It drags from anywhere that isn't a control (its details stay put).
+            if hit == quest::Hit::Window && game.quest_window.frame.local(cursor, 466.0).is_some() {
                 game.quest_window.frame.start_drag(cursor);
             }
             return;
@@ -3091,7 +3090,7 @@ impl App {
                 game.skill_window.frame.toggle();
                 game.raise(Panel::Skills);
             }
-            shortcuts::Action::Quests => game.quest_window.frame.toggle(),
+            shortcuts::Action::Quests => game.quest_window.toggle(),
             shortcuts::Action::Friends => {
                 if game.party_window.frame.open && game.party_window.friends {
                     game.party_window.frame.open = false;

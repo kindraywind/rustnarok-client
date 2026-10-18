@@ -1383,6 +1383,7 @@ impl App {
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         trade_icons.extend(compared.iter().flat_map(|window| window.images(items)));
         trade_icons.extend(game.card_view.iter().map(|view| view.path.clone()));
+        trade_icons.extend(game.quest_window.icons(&game.quests, quest_texts));
         if game.vend_setup.is_some() {
             trade_icons.extend(vend::icons(items, game.cart.items.iter().map(|item| (item.id, item.identified))));
         }
@@ -1875,7 +1876,7 @@ impl App {
         if let Some(store) = &game.my_buying_store {
             store.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
         }
-        game.quest_window.draw(shop_layer.window(), &assets.chrome, &assets.quest, font, messages, &game.quests, quest_texts, pointer.0);
+        game.quest_window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.quest, icons, font, messages, &game.quests, quest_texts, pointer);
         game.achievement_window.draw(
             shop_layer.window(),
             &assets.chrome,

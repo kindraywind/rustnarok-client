@@ -362,9 +362,11 @@ impl App {
                     shortcuts_window: None,
                     world_map: None,
                     quests: Vec::new(),
-                    quest_window: quest::QuestWindow {
-                        tracker: settings_path("quest_tracker").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
-                        ..quest::QuestWindow::load()
+                    quest_window: {
+                        let mut window = quest::QuestWindow::load();
+                        window.tracker =
+                            settings_path("quest_tracker").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0");
+                        window
                     },
                     achievement_totals: net::AchievementTotals::default(),
                     achievements: HashMap::new(),

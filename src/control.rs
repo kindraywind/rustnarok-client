@@ -1102,7 +1102,9 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.chat.settings.iter().flat_map(crate::chat::Settings::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.chat.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.room.iter().flat_map(|room| room.button_boxes(&game.me.name)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
-        .chain(game.quest_window.button_boxes(&game.quests).into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.quest_window.button_boxes(&game.quests, &app.quest_texts).into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
