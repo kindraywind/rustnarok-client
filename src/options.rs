@@ -47,11 +47,14 @@ const SHORTCUTS_TITLE: usize = 1487;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GraphicsSettings {
     pub effects_on: bool,
+    /// The max-level aura in full (`/aura`), else simplified; and none at all (`/aura2`).
+    pub aura: bool,
+    pub aura_off: bool,
 }
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
-        Self { effects_on: true }
+        Self { effects_on: true, aura: true, aura_off: false }
     }
 }
 
@@ -64,19 +67,23 @@ impl GraphicsSettings {
         Self::path().map_or_else(Self::default, |path| Self::load_from(&path))
     }
 
+    /// Saved for next time; not by clients driven over the control socket (scenarios), which share the player's file.
     pub fn save(&self) {
-        if let Some(path) = Self::path() {
+        if let Some(path) = Self::path().filter(|_| !crate::control::driven()) {
             self.save_to(&path);
         }
     }
 
     pub fn load_from(path: &Path) -> Self {
         let text = std::fs::read_to_string(path).unwrap_or_default();
-        Self { effects_on: text.split_whitespace().next().is_none_or(|value| value != "0") }
+        let mut words = text.split_whitespace();
+        let mut next = |default: bool| words.next().map_or(default, |value| value != "0");
+        Self { effects_on: next(true), aura: next(true), aura_off: next(false) }
     }
 
     pub fn save_to(&self, path: &Path) {
-        let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.effects_on { "1" } else { "0" }));
+        let text = [self.effects_on, self.aura, self.aura_off].map(|on| if on { "1" } else { "0" }).join(" ");
+        let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, text));
     }
 }
 
@@ -519,9 +526,12 @@ mod tests {
     fn graphics_settings_round_trip() {
         let path = temp_settings("graphics");
         let _ = std::fs::remove_file(&path);
-        let settings = GraphicsSettings { effects_on: false };
+        let settings = GraphicsSettings { effects_on: false, aura: false, aura_off: true };
         settings.save_to(&path);
         assert_eq!(GraphicsSettings::load_from(&path), settings);
+        // An older file with only the effects switch keeps the aura's defaults.
+        std::fs::write(&path, "0").unwrap();
+        assert_eq!(GraphicsSettings::load_from(&path), GraphicsSettings { effects_on: false, ..GraphicsSettings::default() });
         let _ = std::fs::remove_file(path);
     }
 

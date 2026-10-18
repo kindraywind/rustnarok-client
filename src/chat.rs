@@ -882,6 +882,9 @@ pub enum Command {
     },
     /// /effect: effects off or on.
     Effect,
+    /// /aura: the max-level aura in full or simplified; /aura2: none at all.
+    Aura,
+    AuraOff,
     /// /emo, /emotion: the emotion list, open or closed.
     EmotionList,
     /// /memo: where the player stands becomes a Warp Portal destination.
@@ -933,6 +936,8 @@ pub fn command(text: &str) -> Option<Command> {
         "/exall" => Command::AllWhispers { allow: false },
         "/inall" => Command::AllWhispers { allow: true },
         "/effect" => Command::Effect,
+        "/aura" => Command::Aura,
+        "/aura2" => Command::AuraOff,
         "/emo" | "/emotion" => Command::EmotionList,
         "/achievement" => Command::Achievements,
         "/memo" => Command::Memo,
