@@ -974,6 +974,10 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
     let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
 
     for instance in &rsw.models {
+        // RSM 2 on maps needs its own placement and animation (#439); the reader is there, they stay out until then.
+        if instance.file.to_lowercase().ends_with(".rsm2") {
+            continue;
+        }
         let entry = models.entry(instance.file.as_str()).or_insert_with(|| {
             let rsm = Rsm::parse(&grf.read(&format!("data\\model\\{}", instance.file)).ok()?).ok()?;
             let triangles = rsm.triangles();

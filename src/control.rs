@@ -1469,6 +1469,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         }).collect::<serde_json::Map<_, _>>(),
         "chat_height": game.chat.height(),
     });
+    // The skill units on the ground standing as models (their UNT_ numbers).
+    state["standing_models"] = game.effects.standing_kinds().into();
     // The effect sounds played in the last five seconds (`no_sound` in a scenario checks these).
     state["sounds_recent"] = recent_sounds().into();
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.

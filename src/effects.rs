@@ -783,6 +783,13 @@ impl Effects {
         }
     }
 
+    /// The kinds (rathena's UNT_ numbers) of the units standing as models now, sorted (for the test driver).
+    pub fn standing_kinds(&self) -> Vec<u32> {
+        let mut kinds: Vec<u32> = self.standing.iter().filter_map(|(_, id, _)| self.unit_kinds.get(id).copied()).collect();
+        kinds.sort_unstable();
+        kinds
+    }
+
     /// How far an earthquake shakes the camera now (0: none).
     pub fn quake(&self, now: Instant) -> f32 {
         // ponytail: a third of a cell, by eye; the client's own amplitude isn't measured.
@@ -1008,9 +1015,11 @@ fn load(gpu: &Gpu, grf: &Grf, file: &str, folder: &str) -> Option<Rc<Loaded>> {
     Some(Rc::new(Loaded { animation, textures }))
 }
 
-/// A model under data\model\ (without .rsm), its triangles grouped by texture.
+/// A model under data\model\ (an RSM 1 named without .rsm, an RSM 2 with its .rsm2), its triangles grouped by
+/// texture.
 fn load_model(grf: &Grf, file: &str) -> Option<Model> {
-    let rsm = Rsm::parse(&grf.read(&format!("data\\model\\{file}.rsm")).ok()?).ok()?;
+    let path = if file.to_lowercase().ends_with(".rsm2") { format!("data\\model\\{file}") } else { format!("data\\model\\{file}.rsm") };
+    let rsm = Rsm::parse(&grf.read(&path).ok()?).ok()?;
     let mut model = Model(rsm.textures.iter().map(|name| (format!("data\\texture\\{name}"), Vec::new())).collect());
     for triangle in rsm.triangles() {
         // Model space has y down.
@@ -1022,6 +1031,21 @@ fn load_model(grf: &Grf, file: &str) -> Option<Model> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stands_the_four_trap_models() {
+        let table = Table::load();
+        let models: Vec<&str> = (20852..=20855).filter_map(|kind| table.models.get(&kind).map(String::as_str)).collect();
+        assert_eq!(
+            models,
+            [
+                "effect\\deepblindtrap\\deep_trap.rsm2",
+                "effect\\solidtrap\\sol_trap.rsm2",
+                "effect\\swifttrap\\swi_trap.rsm2",
+                "effect\\flametrap\\fla_trap.rsm2"
+            ]
+        );
+    }
 
     #[test]
     fn says_what_skills_show() {
