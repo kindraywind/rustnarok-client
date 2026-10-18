@@ -1051,6 +1051,10 @@ fn game_state(app: &App, game: &Game) -> Value {
             })
         }),
         "refusing_party": game.refusing_party,
+        "map_property": game.map_property.map(|(property, flags)| json!({"type": property, "flags": flags})),
+        "map_type": game.map_type,
+        // The PvP counter as it shows (rank, players), or null.
+        "pvp_rank": game.pvp_rank.filter(|_| game.map_property.is_some_and(|(_, flags)| flags & net::MAP_COUNT_PK != 0)).map(|(rank, players)| [rank, players]),
         // The texts in the announcement bar, oldest first.
         "announcements": game.announcements.texts(),
         "mercenary": game.mercenary.as_ref().map(|hired| json!({"id": hired.id, "name": hired.name, "level": hired.level, "hp": hired.hp, "loyalty": hired.loyalty, "summons": hired.summons, "kills": hired.kills, "following": game.steering.following, "order": game.steering.order.map(|order| format!("{order:?}"))})),

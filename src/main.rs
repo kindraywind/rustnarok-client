@@ -285,6 +285,20 @@ const NO_COSTUME_NOTICE: usize = 1772;
 /// "In this Map,Effect of Mirace of Sun and Moon is nullified."
 const NO_MIRACLE_NOTICE: usize = 2381;
 const MAP_NOTICE: [u8; 3] = [0x64, 0xFF, 0xFF];
+/// "You have won %d times and have lost %d times in PVP. Current points %d."
+const PVP_RECORD: usize = 853;
+/// rankfont's action for the slash between rank and players (0 to 9 are the digits).
+const RANK_SLASH: usize = 10;
+// ponytail: the PvP counter's place (right-aligned under the minimap) and size are estimates.
+const RANK_RIGHT: f32 = 1012.0;
+const RANK_TOP: f32 = 168.0;
+const RANK_SCALE: f32 = 0.6;
+
+/// The counter's rankfont actions for "<rank>/<players>".
+fn rank_frames(rank: u32, players: u32) -> Vec<usize> {
+    let digits = |number: u32| number.to_string().bytes().map(|digit| usize::from(digit - b'0')).collect::<Vec<_>>();
+    [digits(rank), vec![RANK_SLASH], digits(players)].concat()
+}
 /// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
 const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
 
@@ -692,6 +706,13 @@ struct Game {
     /// The player's mercenary, its skills, its window and skill list, how it's steered, and whether dismissing it is
     /// being asked.
     mercenary: Option<net::Mercenary>,
+    /// The map's property and flags (net::MAP_*), and its type, as the server last sent them.
+    map_property: Option<(u16, u32)>,
+    map_type: Option<u16>,
+    /// The player's PvP rank and the players on the map, while the server counts them.
+    pvp_rank: Option<(u32, u32)>,
+    /// The counter's digits (rankfont), loaded when first shown.
+    rank_font: Option<Option<SpriteSet>>,
     /// Server announcements in the bar across the top.
     announcements: announce::Bar,
     /// The names whose whispers (and speaker announcements) the player blocks, as far as the server has said.
@@ -1468,6 +1489,7 @@ impl Game {
             }
             chat::Command::Who => self.session.user_count(),
             chat::Command::Memo => self.session.remember_warp_point(),
+            chat::Command::PvpInfo => self.session.pvp_info(self.me.id, self.account_id),
             chat::Command::Where => {
                 // ponytail: the map and the cell, plainly; match the official client's wording from a screenshot.
                 let [x, y] = self.player.cell;
@@ -5610,6 +5632,10 @@ impl App {
                     mercenary: None,
                     refusing_party: None,
                     announcements: announce::Bar::default(),
+                    map_property: None,
+                    map_type: None,
+                    pvp_rank: None,
+                    rank_font: None,
                     blocked: HashSet::new(),
                     party_setup: None,
                     leader_asked: None,
@@ -6053,8 +6079,10 @@ impl App {
                 game.chat_line(message, color.unwrap_or(if id.is_none() { CHAT_SELF } else { CHAT_WHITE }));
             }
             MapEvent::MapChange { map, position } => {
-                // The new map's weather comes once it has loaded, and the mercenary's news.
+                // The new map's weather comes once it has loaded, and the mercenary's news, its type and the PvP count.
                 game.weather.clear();
+                game.pvp_rank = None;
+                game.map_type = None;
                 game.forget_mercenary(false);
                 game.forget_homunculus(false);
                 // Back at the save point: up again.
@@ -7009,11 +7037,23 @@ impl App {
                 game.chat_line(text, if result == 2 { CHAT_ITEM } else { CHAT_ERROR });
             }
             // A map's property: its notices, then the "ready" the server waits for.
-            MapEvent::MapProperty { flags, .. } => {
+            MapEvent::MapProperty { property, flags } => {
+                game.map_property = Some((property, flags));
                 for id in arrival_notices(flags, game.me.job) {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), MAP_NOTICE);
                 }
                 let _ = game.session.ready_to_play();
+            }
+            MapEvent::MapType(kind) => game.map_type = Some(kind),
+            // Sent to the area: only our own counts. Rank 0 or no players hides the counter; a hidden player's (all
+            // ones) shows nothing.
+            MapEvent::PvpRank { account, rank, players } if account == game.account_id => {
+                game.pvp_rank = (rank != 0 && rank != u32::MAX && players != 0).then_some((rank, players));
+            }
+            MapEvent::PvpRank { .. } => {}
+            MapEvent::PvpInfo { wins, losses, points } => {
+                let text = rustnarok_client::messages::fill(self.messages.get(PVP_RECORD).map_or("", String::as_str), &[&wins, &losses, &points]);
+                game.chat_line(text, CHAT_ITEM);
             }
             MapEvent::PartyChat { account, text } => game.chat_line(text, if account == game.account_id { PARTY_CHAT_OURS } else { PARTY_CHAT }),
             MapEvent::PartyPosition { account, cell } => {
@@ -8319,6 +8359,18 @@ impl App {
             _ => Vec::new(),
         };
         // Taming's slot machine: its result played once, then held a moment.
+        // The PvP counter while the map counts and a rank came: each character's frame, left to right.
+        let counting = game.map_property.is_some_and(|(_, flags)| flags & net::MAP_COUNT_PK != 0);
+        let rank_placed: Vec<Vec<actor::Placed>> = match game.pvp_rank.filter(|_| counting) {
+            Some((rank, players)) => {
+                let font = game.rank_font.get_or_insert_with(|| SpriteSet::at(grf, "data\\sprite\\이팩트\\rankfont"));
+                match font {
+                    Some(font) => rank_frames(rank, players).into_iter().map(|action| font.frame_at(gpu, action, 0, Timing::Span(0.5))).collect(),
+                    None => Vec::new(),
+                }
+            }
+            None => Vec::new(),
+        };
         let slot_frame = match (&mut game.slot_sprite, game.slot) {
             (Some(sprite), Some((action, start))) => {
                 let length = sprite.index_ms(action).unwrap_or(1000.0).max(1.0);
@@ -8511,6 +8563,21 @@ impl App {
             // ponytail: the emblem left of the guild line; calibrate against the real client.
             if let Some(emblem) = game.emblems.get(guild_id).and_then(|(_, emblem)| emblem.as_ref()) {
                 base.sprites.push((emblem, [corner(line)[0] - guild::EMBLEM_SIZE[0] - 2.0, top], guild::EMBLEM_SIZE));
+            }
+        }
+        // ponytail: on a GvG map (not a battleground) each player's guild emblem over their head; where it sits is an
+        // estimate.
+        let siege = game.map_property.is_some_and(|(_, flags)| flags & net::MAP_SIEGE != 0 && flags & net::MAP_BATTLEFIELD == 0);
+        if siege {
+            let ours = game.guild.as_ref().map(|guild| (guild.id, player_feet));
+            let others = game.units.iter().filter(|(_, actor)| actor.kind == PLAYER && actor.guild != 0 && !actor.hidden);
+            let heads = others.filter_map(|(id, actor)| Some((actor.guild, *feet_of.get(id)?))).chain(ours);
+            for (guild_id, feet) in heads {
+                if let (Some(emblem), Some(point)) = (game.emblems.get(&guild_id).and_then(|(_, emblem)| emblem.as_ref()), sprite_point(feet, -overhead::HEAD))
+                {
+                    let size = guild::EMBLEM_SIZE;
+                    base.sprites.push((emblem, [(point[0] - size[0] / 2.0).round(), (point[1] - size[1] - 4.0).round()], size));
+                }
             }
         }
         let ratio = |value: Option<&i64>, maximum: Option<&i64>| match (value, maximum) {
@@ -9197,6 +9264,32 @@ impl App {
                 },
             }
         });
+        if let Some(Some(font)) = &game.rank_font
+            && !rank_placed.is_empty()
+        {
+            // Each character's box from its parts, laid side by side, right-aligned.
+            let bounds = |placed: &[actor::Placed]| {
+                placed
+                    .iter()
+                    .fold([f32::MAX, f32::MIN, f32::MAX], |[left, right, top], (_, at, size)| [left.min(at[0]), right.max(at[0] + size[0]), top.min(at[1])])
+            };
+            let width: f32 = rank_placed
+                .iter()
+                .map(|placed| {
+                    let [left, right, _] = bounds(placed);
+                    (right - left) * RANK_SCALE
+                })
+                .sum();
+            let mut x = RANK_RIGHT - width;
+            for placed in &rank_placed {
+                let [left, right, top] = bounds(placed);
+                for (key, at, size) in placed {
+                    let corner = [x + (at[0] - left) * RANK_SCALE, RANK_TOP + (at[1] - top) * RANK_SCALE];
+                    sprites.push((font.texture(*key), corner, [size[0] * RANK_SCALE, size[1] * RANK_SCALE]));
+                }
+                x += (right - left) * RANK_SCALE;
+            }
+        }
         if let Some(sprite) = &game.slot_sprite {
             let middle = [SCREEN[0] / 2.0, SCREEN[1] / 2.0];
             sprites.extend(slot_frame.into_iter().map(|(key, offset, size)| (sprite.texture(key), [middle[0] + offset[0], middle[1] + offset[1]], size)));
@@ -9744,6 +9837,12 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spells_the_pvp_counter() {
+        assert_eq!(rank_frames(3, 12), [3, RANK_SLASH, 1, 2]);
+        assert_eq!(rank_frames(10, 100), [1, 0, RANK_SLASH, 1, 0, 0]);
+    }
 
     #[test]
     fn tells_what_a_map_turns_off() {
