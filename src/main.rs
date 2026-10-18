@@ -2163,9 +2163,23 @@ fn login_position(window: &Texture) -> [f32; 2] {
     [((SCREEN[0] - window.size[0]) / 2.0).floor(), LOGIN_TOP]
 }
 
+/// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
+/// folder elsewhere.
+fn settings_path(name: &str) -> Option<std::path::PathBuf> {
+    let home = || Some(std::path::PathBuf::from(std::env::var_os("HOME")?));
+    let folder = if cfg!(target_os = "macos") {
+        home()?.join("Library/Application Support")
+    } else if cfg!(windows) {
+        std::env::var_os("APPDATA")?.into()
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME").filter(|folder| !folder.is_empty()).map(Into::into).or_else(|| Some(home()?.join(".config")))?
+    };
+    Some(folder.join("rustnarok-client").join(name))
+}
+
 /// Where the saved login ID is kept.
 fn saved_id_path() -> Option<std::path::PathBuf> {
-    Some(std::path::PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/rustnarok-client/saved_id"))
+    settings_path("saved_id")
 }
 
 fn saved_id() -> Option<String> {
@@ -4077,12 +4091,13 @@ impl App {
             return;
         }
         let key = &event.logical_key;
-        // Ctrl+Cmd+F, as Macs have it: fullscreen (the canvas scaled to fit, bars on the sides), or back.
-        if self.modifiers.super_key()
-            && self.modifiers.control_key()
-            && event.physical_key == PhysicalKey::Code(KeyCode::KeyF)
-            && let Some(gpu) = &self.gpu
-        {
+        // Ctrl+Cmd+F, as Macs have it, or Alt+Enter elsewhere: fullscreen (the canvas scaled to fit, bars on the sides), or back.
+        let fullscreen = if cfg!(target_os = "macos") {
+            self.modifiers.super_key() && self.modifiers.control_key() && event.physical_key == PhysicalKey::Code(KeyCode::KeyF)
+        } else {
+            self.modifiers.alt_key() && *key == Key::Named(NamedKey::Enter)
+        };
+        if fullscreen && let Some(gpu) = &self.gpu {
             gpu.window.set_fullscreen(gpu.window.fullscreen().is_none().then_some(winit::window::Fullscreen::Borderless(None)));
             return;
         }
@@ -8322,8 +8337,10 @@ fn main() {
             eprintln!("{found} files from the data folder at {overlay}");
         }
     }
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut event_loop = EventLoop::<NetEvent>::with_user_event();
     // A client driven over the control socket opens without taking the keyboard from the app in use.
+    #[cfg(target_os = "macos")]
     winit::platform::macos::EventLoopBuilderExtMacOS::with_activate_ignoring_other_apps(
         &mut event_loop,
         std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_none(),

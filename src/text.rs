@@ -4,24 +4,34 @@ use image::{Rgba, RgbaImage};
 
 /// The official client draws its UI text at 12px.
 pub const SIZE: f32 = 12.0;
-const DEFAULT_FONT: &str = "/System/Library/Fonts/Supplemental/Tahoma.ttf";
-/// For what the first font lacks: Tahoma has no Hangul.
-const FALLBACK_FONT: &str = "/System/Library/Fonts/Supplemental/AppleGothic.ttf";
 // ponytail: fontdue doesn't hint, so small text only reads well antialiased.
 /// Set to false (thresholded coverage) once a hinted bitmap-friendly font like Gulim is in use.
 const ANTIALIAS: bool = true;
 
-/// The font (`RUSTNAROK_CLIENT_FONT`, Tahoma by default), then the fallback.
+/// The font (`RUSTNAROK_CLIENT_FONT`, Tahoma by default), then the fallbacks.
 pub struct Font(Vec<fontdue::Font>);
+
+/// Tahoma, then a font for what it lacks (Tahoma has no Hangul), from the system's fonts.
+fn system_fonts() -> Vec<String> {
+    if cfg!(target_os = "macos") {
+        vec!["/System/Library/Fonts/Supplemental/Tahoma.ttf".into(), "/System/Library/Fonts/Supplemental/AppleGothic.ttf".into()]
+    } else if cfg!(windows) {
+        vec![r"C:\Windows\Fonts\tahoma.ttf".into(), r"C:\Windows\Fonts\malgun.ttf".into()]
+    } else {
+        // Fontconfig's pick for Tahoma (whatever stands in for it), then for Korean.
+        ["Tahoma", ":lang=ko"]
+            .into_iter()
+            .filter_map(|pattern| String::from_utf8(std::process::Command::new("fc-match").args(["-f", "%{file}", pattern]).output().ok()?.stdout).ok())
+            .collect()
+    }
+}
 
 impl Font {
     pub fn load() -> Self {
-        let path = std::env::var("RUSTNAROK_CLIENT_FONT").unwrap_or_else(|_| DEFAULT_FONT.into());
-        let fonts: Vec<_> = [path.as_str(), FALLBACK_FONT]
-            .into_iter()
-            .filter_map(|path| fontdue::Font::from_bytes(std::fs::read(path).ok()?, fontdue::FontSettings::default()).ok())
-            .collect();
-        assert!(!fonts.is_empty(), "no font at {path} or {FALLBACK_FONT}");
+        let paths: Vec<String> = std::env::var("RUSTNAROK_CLIENT_FONT").into_iter().chain(system_fonts()).collect();
+        let fonts: Vec<_> =
+            paths.iter().filter_map(|path| fontdue::Font::from_bytes(std::fs::read(path).ok()?, fontdue::FontSettings::default()).ok()).collect();
+        assert!(!fonts.is_empty(), "no font at {paths:?}");
         Self(fonts)
     }
 

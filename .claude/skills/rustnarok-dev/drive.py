@@ -46,10 +46,23 @@ def account(n):
     return fields["username" + n], fields["password" + n]
 
 
-def send(command, timeout=60):
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+def connect(timeout):
+    if os.name != "nt":
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(timeout)
         s.connect(SOCK)
+        return s
+    # Windows: the control "socket" is a file naming a localhost port and the token to open with (src/control.rs).
+    with open(SOCK) as f:
+        address, token = f.read().split()
+    host, port = address.rsplit(":", 1)
+    s = socket.create_connection((host, int(port)), timeout)
+    s.sendall((token + "\n").encode())
+    return s
+
+
+def send(command, timeout=60):
+    with connect(timeout) as s:
         s.sendall((json.dumps(command) + "\n").encode())
         data = b""
         while not data.endswith(b"\n"):
@@ -74,7 +87,8 @@ def launch(n="", slot="0", binary=None, env_extra=None, quiet=False):
         os.remove(SOCK)
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
     log = open(LOG, "w")
-    subprocess.Popen([binary or os.path.join(REPO, "target", "release", "rustnarok-client")], cwd=REPO, env=env, stdout=log, stderr=log)
+    exe = "rustnarok-client.exe" if os.name == "nt" else "rustnarok-client"
+    subprocess.Popen([binary or os.path.join(REPO, "target", "release", exe)], cwd=REPO, env=env, stdout=log, stderr=log)
     for _ in range(120):
         if os.path.exists(SOCK):
             try:
@@ -82,7 +96,7 @@ def launch(n="", slot="0", binary=None, env_extra=None, quiet=False):
                 if not quiet:
                     print(json.dumps(state, ensure_ascii=False)[:300])
                 return state
-            except OSError:
+            except (OSError, ValueError):  # not up yet, or (Windows) the port file half written
                 pass
         time.sleep(0.5)
     sys.exit("no control socket; see " + LOG)

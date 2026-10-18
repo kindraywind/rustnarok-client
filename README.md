@@ -4,7 +4,7 @@
 
 # rustnarok-client
 
-**A native Ragnarok Online client for macOS, written from scratch in Rust.**
+**A native Ragnarok Online client for macOS, written from scratch in Rust. It builds on Linux and Windows too.**
 
 The windows, fonts, sounds and behavior of the official client, drawn from the player's own game data at runtime.
 As good as the original, and better where it can be.
@@ -69,7 +69,7 @@ against `main`.
 | 🐾 **Pets** | Taming with its slot machine, hatching, the pet window (Alt+J), feeding, renaming, accessories, performances and pet talk. |
 | 👥 **Together** | Parties, guilds (info with the emblem, members, positions, skills, expel list, notice), clans, friends, chat rooms, RODEX mail, server announcements and item news. |
 | 🔊 **Sound** | Each map's music, NPC scripts' sounds and music, sprites' own sounds (attacks, flinches, deaths), effect sounds, volume settings. |
-| 🍎 **macOS** | Retina-sharp text, a resizable window, fullscreen (Ctrl+Cmd+F), an `.app` bundle. |
+| 🍎 **macOS** | Retina-sharp text, a resizable window, fullscreen (Ctrl+Cmd+F; Alt+Enter on Linux and Windows), an `.app` bundle. |
 | 🌐 **English** | Through a translation pack's loose files placed over data.grf, as the official client does. |
 
 Window places are measured over the client's own bitmaps where they show them. Where they don't, they are estimates
@@ -77,7 +77,17 @@ marked `ponytail:` in the code, to calibrate against screenshots of the real cli
 
 ## 🚀 Quick start
 
-1. **Rust**: install rustup; `rust-toolchain.toml` pins the nightly the code builds with.
+1. **Rust**: install rustup; `rust-toolchain.toml` pins the nightly the code builds with. Also, by OS:
+   - **macOS**: the Xcode command line tools (`xcode-select --install`). Text is Tahoma, with AppleGothic for Hangul.
+   - **Linux**: a C compiler, ALSA headers and pkg-config (`sudo apt install build-essential libasound2-dev
+     pkg-config`; `alsa-lib-devel` on Fedora), and Vulkan or OpenGL drivers. Text is fontconfig's pick for Tahoma and
+     for Korean (`fonts-nanum`, say).
+   - **Windows**: Visual Studio's C++ build tools (MSVC) and DirectX 12 or Vulkan. Text is Tahoma, with Malgun Gothic
+     for Hangul.
+
+   Settings (saved ID, sound, chat macros) are kept in `~/Library/Application Support/rustnarok-client` on macOS,
+   `%APPDATA%\rustnarok-client` on Windows and `~/.config/rustnarok-client` (or `$XDG_CONFIG_HOME`) on Linux. CI
+   builds, tests and lints on Linux; Windows was last checked by CI in PR #128.
 2. **Game data**: put an official kRO `data.grf` (2024 data is what's tested) in the repository folder, or point
    `RUSTNAROK_CLIENT_GRF` at one.
 3. **English** (optional): a translation pack's `data` and `System` folders next to data.grf. Their loose files go
@@ -169,7 +179,8 @@ Regenerate it whenever the server changes.
 cargo test --release
 ```
 
-Some tests read the official data.grf (`RUSTNAROK_CLIENT_GRF`, or `./data.grf`). One test logs into a running server
+Some tests read the official data.grf (`RUSTNAROK_CLIENT_GRF`, or `./data.grf`) and skip themselves without it, as on
+CI. One test logs into a running server
 and is ignored by default; it runs with `RUSTNAROK_CLIENT_TEST_ACCOUNT=user:password cargo test -- --ignored`.
 
 `.claude/skills/rustnarok-dev/` is the shared develop-and-verify loop: `verify.sh` (fmt, clippy, tests, a live
@@ -178,7 +189,8 @@ before/after/diff sheets of every screenshot.
 
 ### 🤖 Driving the client
 
-- `RUSTNAROK_CLIENT_CONTROL=<socket>` lets a test driver play the client over a Unix socket: screenshots, clicks, keys,
+- `RUSTNAROK_CLIENT_CONTROL=<socket>` lets a test driver play the client over a Unix socket (on Windows, a localhost
+  port that file names, with a token to open with): screenshots, clicks, keys,
   typing, the game state with units' screen boxes and named click targets, waiting for packets,
   pausing the clock. The commands are listed at the top of `src/control.rs`. A driven client ignores the real mouse
   and keyboard and stays silent.
