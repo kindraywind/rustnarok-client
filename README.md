@@ -81,17 +81,18 @@ marked `ponytail:` in the code, to calibrate against screenshots of the real cli
 `rustnarok-client-mcp` hands the client to an AI assistant such as Claude Code. Ask in plain words: it looks at the
 screen, reads the game state and plays through the client's own mouse and keyboard handling.
 
-> **"Reset my skills and stats and build me for the War of Emperium."**
+> **"Reset my skills with a Neuralizer and rebuild me for the War of Emperium."**
 
 ```text
-state                    → a Wizard, base level 99, job level 50
-say "@reset"             → every stat and skill point back
-key Alt+A, screenshot    → the status window and its free points
-click × n                → INT and DEX for casting, VIT to live through the castle
-key Alt+S, state         → the skill tree, each skill's box
-click × n                → Storm Gust, Quagmire, Safety Wall, Jupitel Thunder ...
-drag × 4                 → those skills onto F1-F4
-screenshot               → both windows, for you to check
+state                     → a Wizard, job level 50
+key Alt+Q, double click   → its gear off: the Neuralizer wants nothing carried
+click (the Kafra's box)   → the Kafra's menu, then her storage
+drag × n                  → everything but the Neuralizer into storage
+key Alt+E, double click   → the Neuralizer: every skill point back
+key Alt+S, state          → the skill tree, each skill's box
+click × n                 → Storm Gust, Quagmire, Safety Wall, Jupitel Thunder ...
+drag × n, double click    → the gear out of storage and on again
+drag × 4                  → the war skills onto F1-F4
 ```
 
 > **"Take my Novice through the Acolyte job change."**
