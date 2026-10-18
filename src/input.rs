@@ -3013,10 +3013,11 @@ impl App {
         }
     }
 
-    /// Sends what's on the chat's input line, as Enter does: the client's sound commands (/music, /sound, /bv, /v),
+    /// Sends what's on the chat's input line, as Enter does: the client's sound commands (/bgm, /sound, /bv, /v),
     /// else `Game::send_chat` (party with `party`, guild with `guild`).
     pub(crate) fn send_chat_input(&mut self, party: bool, guild: bool) {
         let Scene::Game(game) = &mut self.scene else { return };
+        let music_was_on = self.sound.on[0];
         if let Some(shown) = self.sound.command(game.chat.input.trim()) {
             game.chat.input.clear();
             if let Some(audio) = &mut self.audio {
@@ -3025,6 +3026,11 @@ impl App {
             self.sound.save();
             if let Some(id) = shown {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
+            }
+            // /bgm on: the map's song from its beginning.
+            if self.sound.on[0] && !music_was_on {
+                let map = game.map.clone();
+                self.play_music(Some(&map));
             }
         } else {
             let before = self.graphics;

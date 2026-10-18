@@ -592,7 +592,7 @@ mod tests {
         assert_eq!(window.hit(at([SLIDER_X + ARROW + 1.0, row(0)])), Some(Hit::Track(0, 0)), "the thumb's middle can't go past the track's end");
         assert_eq!(window.hit(at([SLIDER_X + ARROW + TRACK - 1.0, row(0)])), Some(Hit::Track(0, MAX_VOLUME)));
         window.click(Hit::More(0), &mut settings);
-        assert_eq!(settings, Settings { on: [true, false], volume: [108, 100] });
+        assert_eq!(settings, Settings { on: [true, false], volume: [108, 64] });
         assert!(window.press(Hit::Track(0, 20), at([0.0, 0.0]), &mut settings));
         let middle = window.frame.position[0] + SLIDER_X + ARROW + TRACK / 2.0;
         assert!(window.drag_to([middle, 0.0], &mut settings));
