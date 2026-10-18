@@ -4,7 +4,7 @@
   "slot": 0,
   "steps": [
     {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
-    {"expect": {"state": {"camera": {"yaw": 0, "pitch": 45, "distance": 300}}}},
+    {"expect": {"state": {"camera.yaw": 0, "camera.pitch": 45, "camera.distance": 300}}},
     {"move": [1000, 750]},
     {"shot": "camera-default", "threshold": 20},
     {"drag": [[500, 400], [590, 400]], "button": "right"}, {"wait": 200},
@@ -24,6 +24,6 @@
     {"click": [700, 400], "button": "right", "mods": "Ctrl", "count": 2}, {"wait": 200},
     {"click": [700, 400], "button": "right", "mods": "Shift", "count": 2}, {"wait": 200},
     {"click": [700, 400], "button": "right", "count": 2}, {"wait": 200},
-    {"expect": {"state": {"camera": {"yaw": 0, "pitch": 50, "distance": 300}}}}
+    {"expect": {"state": {"camera.yaw": 0, "camera.pitch": 50, "camera.distance": 300}}}
   ]
 }
