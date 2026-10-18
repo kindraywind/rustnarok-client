@@ -784,6 +784,24 @@ pub const MERCENARY_ASPD: u16 = 53;
 pub const MERCENARY_FLEE: u16 = 165;
 pub const MERCENARY_KILLS: u16 = 189;
 pub const MERCENARY_LOYALTY: u16 = 190;
+const ZC_CHANGESTATE_MER: u16 = 0x0230;
+const ZC_PROPERTY_HOMUN: u16 = 0x0BA4;
+const ZC_HO_PAR_CHANGE2: u16 = 0x0BA5;
+const ZC_HOSKILLINFO_LIST: u16 = 0x0235;
+const ZC_HOSKILLINFO_UPDATE: u16 = 0x0239;
+const ZC_FEED_MER: u16 = 0x022F;
+const CZ_COMMAND_MER: u16 = 0x022D;
+const CZ_RENAME_MER: u16 = 0x0231;
+/// ZC_CHANGESTATE_MER's states: the unit is the player's homunculus, its intimacy (0-1000), its hunger (0-100).
+pub const HOMUNCULUS_OWNED: u8 = 0;
+pub const HOMUNCULUS_INTIMACY: u8 = 1;
+pub const HOMUNCULUS_HUNGER: u8 = 2;
+/// CZ_COMMAND_MER's feed.
+pub const HOMUNCULUS_FEED: u8 = 1;
+/// ZC_HO_PAR_CHANGE2's kinds.
+pub const HOMUNCULUS_EXP: u16 = 1;
+pub const HOMUNCULUS_HP: u16 = 5;
+pub const HOMUNCULUS_SP: u16 = 7;
 const ZC_PET_ACT: u16 = 0x01AA;
 const CZ_PET_ACT: u16 = 0x01A9;
 const ZC_ACK_REQNAMEALL_NPC: u16 = 0x0ADF;
@@ -1169,6 +1187,63 @@ impl Mercenary {
             MERCENARY_FLEE => self.flee = short,
             MERCENARY_KILLS => self.kills = value,
             MERCENARY_LOYALTY => self.loyalty = short,
+            _ => {}
+        }
+    }
+}
+
+/// The player's homunculus as ZC_PROPERTY_HOMUN has it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Homunculus {
+    pub name: String,
+    /// Bit 0: renamed, bit 1: vaporized, bit 2: alive.
+    pub flags: u8,
+    pub level: u16,
+    /// 0-100.
+    pub hunger: u16,
+    /// 0-1000.
+    pub intimacy: u16,
+    pub atk: u16,
+    pub matk: u16,
+    pub hit: u16,
+    pub critical: u16,
+    pub def: u16,
+    pub mdef: u16,
+    pub flee: u16,
+    /// Attack motion, as the status window's ASPD value.
+    pub aspd: u16,
+    pub hp: u32,
+    pub max_hp: u32,
+    pub sp: u32,
+    pub max_sp: u32,
+    pub exp: i64,
+    /// 0 at the top level.
+    pub next_exp: i64,
+    pub skill_points: u16,
+    pub range: u16,
+}
+
+impl Homunculus {
+    /// It has a name of the player's choosing and can't be renamed again.
+    pub fn renamed(&self) -> bool {
+        self.flags & 1 != 0
+    }
+
+    pub fn vaporized(&self) -> bool {
+        self.flags & 2 != 0
+    }
+
+    pub fn alive(&self) -> bool {
+        self.flags & 4 != 0
+    }
+
+    /// A ZC_HO_PAR_CHANGE2 value.
+    pub fn set(&mut self, kind: u16, value: u64) {
+        let short = value.min(u64::from(u32::MAX)) as u32;
+        match kind {
+            HOMUNCULUS_EXP => self.exp = value.min(i64::MAX as u64) as i64,
+            HOMUNCULUS_HP => self.hp = short,
+            HOMUNCULUS_SP => self.sp = short,
             _ => {}
         }
     }
@@ -1700,6 +1775,28 @@ pub enum MapEvent {
     MercenaryChanged {
         kind: u16,
         value: u32,
+    },
+    /// ZC_CHANGESTATE_MER: a HOMUNCULUS_* state of the homunculus `id`.
+    HomunculusState {
+        state: u8,
+        id: u32,
+        value: u32,
+    },
+    /// What the player's homunculus is like now.
+    HomunculusInfo(Homunculus),
+    /// One of the homunculus's values changed (a HOMUNCULUS_* kind).
+    HomunculusChanged {
+        kind: u16,
+        value: u64,
+    },
+    /// The homunculus's skills.
+    HomunculusSkills(Vec<Skill>),
+    /// One of the homunculus's skills changed; its kind isn't in the packet (0).
+    HomunculusSkill(Skill),
+    /// The homunculus was fed (or there was no food), and its food.
+    HomunculusFed {
+        ok: bool,
+        food: u32,
     },
     /// The pet was fed (or there was no food), and its food.
     PetFed {
@@ -3003,6 +3100,16 @@ impl MapSession {
         self.stream.write_all(&[low, high, command])
     }
 
+    /// One of the HOMUNCULUS_* commands (feed) to the player's homunculus.
+    pub fn homunculus_command(&mut self, command: u8) -> io::Result<()> {
+        self.stream.write_all(&encode_homunculus_command(command))
+    }
+
+    /// Names the player's homunculus (once).
+    pub fn rename_homunculus(&mut self, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_rename_homunculus(name))
+    }
+
     /// Sends the player's mercenary (or homunculus) to a cell.
     pub fn move_npc(&mut self, id: u32, cell: [u16; 2]) -> io::Result<()> {
         self.stream.write_all(&encode_move_npc(id, cell))
@@ -3865,13 +3972,29 @@ fn encode_pet_command(command: u8) -> [u8; 3] {
     [low, high, command]
 }
 
-/// CZ_RENAME_PET: at most 23 bytes of whole characters, NUL-padded.
-fn encode_rename_pet(name: &str) -> [u8; 26] {
+/// CZ_COMMAND_MER: a homunculus command.
+fn encode_homunculus_command(command: u8) -> [u8; 5] {
+    let [low, high] = CZ_COMMAND_MER.to_le_bytes();
+    [low, high, 0, 0, command]
+}
+
+/// A rename request: the header and at most 23 bytes of whole characters, NUL-padded.
+fn encode_named(header: u16, name: &str) -> [u8; 26] {
     let mut packet = [0u8; 26];
-    packet[..2].copy_from_slice(&CZ_RENAME_PET.to_le_bytes());
+    packet[..2].copy_from_slice(&header.to_le_bytes());
     let bytes = euc_kr_cut(name, 23);
     packet[2..2 + bytes.len()].copy_from_slice(&bytes);
     packet
+}
+
+/// CZ_RENAME_PET.
+fn encode_rename_pet(name: &str) -> [u8; 26] {
+    encode_named(CZ_RENAME_PET, name)
+}
+
+/// CZ_RENAME_MER.
+fn encode_rename_homunculus(name: &str) -> [u8; 26] {
+    encode_named(CZ_RENAME_MER, name)
 }
 
 /// Text in EUC-KR, cut to at most `most` bytes of whole characters.
@@ -4509,6 +4632,37 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // ZC_SKILLINFO_LIST's entries.
         ZC_MER_SKILLINFO_LIST => MapEvent::MercenarySkills(packet[4..].chunks_exact(SKILL_SIZE).map(decode_skill).collect()),
         ZC_MER_PAR_CHANGE => MapEvent::MercenaryChanged { kind: u16_at(2), value: u32_at(4) },
+        ZC_CHANGESTATE_MER => MapEvent::HomunculusState { state: packet[3], id: u32_at(4), value: u32_at(8) },
+        // Name, flags, level, hunger, intimacy, the eight values, HP, SP, EXP, skill points, range.
+        ZC_PROPERTY_HOMUN => MapEvent::HomunculusInfo(Homunculus {
+            name: c_string(&packet[2..26]),
+            flags: packet[26],
+            level: u16_at(27),
+            hunger: u16_at(29),
+            intimacy: u16_at(31),
+            atk: u16_at(33),
+            matk: u16_at(35),
+            hit: u16_at(37),
+            critical: u16_at(39),
+            def: u16_at(41),
+            mdef: u16_at(43),
+            flee: u16_at(45),
+            aspd: u16_at(47),
+            hp: u32_at(49),
+            max_hp: u32_at(53),
+            sp: u32_at(57),
+            max_sp: u32_at(61),
+            exp: self::u64_at(packet, 65) as i64,
+            next_exp: self::u64_at(packet, 73) as i64,
+            skill_points: u16_at(81),
+            range: u16_at(83),
+        }),
+        ZC_HO_PAR_CHANGE2 => MapEvent::HomunculusChanged { kind: u16_at(2), value: self::u64_at(packet, 4) },
+        ZC_HOSKILLINFO_LIST => MapEvent::HomunculusSkills(packet[4..].chunks_exact(SKILL_SIZE).map(decode_skill).collect()),
+        ZC_HOSKILLINFO_UPDATE => {
+            MapEvent::HomunculusSkill(Skill { id: u16_at(2), kind: 0, level: u16_at(4), sp: u16_at(6), range: u16_at(8), upgradable: packet[10] != 0 })
+        }
+        ZC_FEED_MER => MapEvent::HomunculusFed { ok: packet[2] == 1, food: u32_at(3) },
         ZC_PROPERTY_PET => MapEvent::PetInfo(Pet {
             name: c_string(&packet[2..26]),
             renamed: packet[26] != 0,
