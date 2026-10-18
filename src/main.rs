@@ -6168,8 +6168,10 @@ struct App {
     /// achievements, at login), handled once the game is on.
     entering: Option<(MapSession, String)>,
     early_events: Vec<MapEvent>,
-    /// The server's latest tick and when it came, to place other units' walks in time.
-    server_clock: Option<(u32, Instant)>,
+    /// Our guess of the server's tick, to place walks in time; and whether a map has loaded since the last
+    /// ZC_NOTIFY_TIME (the first one after a load sets the clock outright).
+    server_clock: actor::ServerClock,
+    map_loaded: bool,
     fields: [String; 2],
     /// Remember the ID for next time (the login window's save box).
     save_id: bool,
@@ -10345,7 +10347,8 @@ impl App {
                 let _ = session.ask_name(account.account_id);
                 let look = character_look(&me);
                 let sprites = SpriteSet::player(&self.grf, &look, &self.look_tables);
-                let mut player = Actor::new(me.name.clone(), sprites, position.map(i32::from), direction, 150);
+                // The character list's speed until the map server sends one.
+                let mut player = Actor::new(me.name.clone(), sprites, position.map(i32::from), direction, if me.speed > 0 { me.speed } else { 150 });
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
                 player.sync_companions(me.option, &self.grf);
                 let indoor = self.indoor.contains(&map_key(&map));
@@ -10808,13 +10811,18 @@ impl App {
     }
 
     fn map_event(&mut self, event: MapEvent) {
-        if let MapEvent::Entered { position, direction, clock } = event {
-            self.server_clock = Some(clock);
+        if let MapEvent::Entered { position, direction, clock: (tick, at) } = event {
+            self.server_clock.set(tick, at);
+            self.map_loaded = true;
             self.show_loading(LoadTarget::Enter { position, direction });
             return;
         }
         if let MapEvent::ServerTime(tick, at) = event {
-            self.server_clock = Some((tick, at));
+            if std::mem::take(&mut self.map_loaded) {
+                self.server_clock.set(tick, at);
+            } else {
+                self.server_clock.heard(tick, at);
+            }
             return;
         }
 
@@ -10918,6 +10926,7 @@ impl App {
                 }
             }
             MapEvent::UnitWalk { unit, to, start_time, sub } => {
+                let known = game.units.get(&unit.id).is_some_and(|actor| actor.remove_at.is_none());
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
                 if actor.remove_at.is_some() {
                     *actor = new_actor(&unit);
@@ -10927,11 +10936,20 @@ impl App {
                 actor.level = unit.level;
                 let from = unit.position.map(i32::from);
                 actor.guild = unit.guild;
-                // On the server's clock, a little behind it; from where it really is in its cell.
+                // Every move entry carries the unit's speed.
+                if unit.speed > 0 {
+                    actor.step_ms = f32::from(unit.speed);
+                }
+                // On the server's clock, a little behind it; from where it really is in its cell. No path: a new unit
+                // stands where it starts, a known one goes on as it was.
                 let now = control::now();
-                let begin = self.server_clock.map_or(now, |clock| actor::local_time(clock, start_time) + actor::REMOTE_DELAY);
-                let path = world::find_path(&game.world.gat, from, to.map(i32::from)).unwrap_or_default();
-                actor.walk_from(from, sub, path, begin, now);
+                self.server_clock.heard(start_time, Instant::now());
+                let begin = self.server_clock.local(start_time).map_or(now, |at| at + actor::REMOTE_DELAY);
+                match world::find_path(&game.world.gat, from, to.map(i32::from)) {
+                    Some(path) => actor.walk_from(from, sub, path, begin, now, known),
+                    None if !known => actor.walk_from(from, sub, Vec::new(), begin, now, false),
+                    None => {}
+                }
                 actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
                 // A walk into view is often the first packet. The falcon and warg come with it.
                 if unit.id == game.account_id {
@@ -11280,14 +11298,33 @@ impl App {
                     }
                 }
             }
-            MapEvent::PlayerMove { from, to, .. } => {
-                let from = from.map(i32::from);
-                if let Some(path) = world::find_path(&game.world.gat, from, to.map(i32::from)) {
-                    game.player.walk_on(from, path, control::now());
+            // Our own walk as the server has it, from its start cell and sub-cell at its tick, on the same shown clock as
+            // other units; from where we're drawn when there's no way from there.
+            MapEvent::PlayerMove { from, to, start_time, sub } => {
+                let now = control::now();
+                self.server_clock.heard(start_time, Instant::now());
+                let begin = self.server_clock.local(start_time).map_or(now, |at| at + actor::REMOTE_DELAY);
+                let (from, to) = (from.map(i32::from), to.map(i32::from));
+                let gat = &game.world.gat;
+                let walk = world::find_path(gat, from, to).map(|path| (from, sub, path)).or_else(|| {
+                    let drawn = game.player.position(now);
+                    let cell = drawn.map(|value| value.round() as i32);
+                    let sub = [0, 1].map(|axis| ((drawn[axis] - cell[axis] as f32) * 16.0 + 8.0).round().clamp(0.0, 15.0) as u8);
+                    world::find_path(gat, cell, to).map(|path| (cell, sub, path))
+                });
+                if let Some((from, sub, path)) = walk {
+                    game.player.walk_from(from, sub, path, begin, now, true);
                 }
             }
-            // A knockback (ZC_HIGHJUMP) slides the unit there; the stop that follows at the same cell leaves the slide
-            // running.
+            // A knockback puts the unit on its new cell at once; what it was doing goes on until the stop that follows.
+            MapEvent::Knocked { id, position } => {
+                let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
+                if let Some(actor) = actor {
+                    actor.place_at(position.map(i32::from), control::now());
+                }
+            }
+            // ZC_FASTMOVE slides the unit there; the stop that follows at the same cell leaves the slide running.
+            // ponytail: the slide kept for ZC_FASTMOVE; only the knockback is known to be at once.
             MapEvent::Stop { id, position } | MapEvent::Slide { id, position } => {
                 let cell = position.map(i32::from);
                 let slide = matches!(event, MapEvent::Slide { .. });
@@ -11315,6 +11352,7 @@ impl App {
                 game.chat_line(message, color.unwrap_or(if id.is_none() { CHAT_SELF } else { CHAT_WHITE }));
             }
             MapEvent::MapChange { map, position } => {
+                self.map_loaded = true;
                 // A map change or teleport leaves the NPC behind: its windows and picture go, and nothing is sent.
                 game.dialog = None;
                 game.cutin = None;
@@ -11466,6 +11504,10 @@ impl App {
             MapEvent::Status { id, value } => {
                 let before = game.status.insert(id, value);
                 game.level_ups.changed(id, before, value);
+                // Our walking speed. ponytail: a walk under way keeps its times; the next one goes at the new speed.
+                if id == net::STATUS_SPEED && value > 0 {
+                    game.player.step_ms = value as f32;
+                }
             }
             MapEvent::Statuses(values) => game.status.extend(values),
             // -1 takes the bar away.
@@ -16463,7 +16505,8 @@ fn main() {
         playing: None,
         entering: None,
         early_events: Vec::new(),
-        server_clock: None,
+        server_clock: actor::ServerClock::default(),
+        map_loaded: false,
         fields: [saved_id().unwrap_or_default(), String::new()],
         save_id: saved_id().is_some(),
         focus: usize::from(saved_id().is_some()),

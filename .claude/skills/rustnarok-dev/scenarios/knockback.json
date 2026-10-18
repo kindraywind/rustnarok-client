@@ -1,5 +1,5 @@
 {
-  "about": "Knockback (issue #305): a Swordsman's Magnum Break knocks the Porings around back two cells; each slides there over 200 ms, facing as it was, instead of jumping. Magnum Break goes twice (the first can miss), and the clock pauses when the second one's knockback (ZC_HIGHJUMP 0x01ff) comes, and shots step 50 ms apart. The character is a Swordsman with every skill for the run and a Novice again at the end.",
+  "about": "Knockback (issue #305): a Swordsman's Magnum Break knocks the Porings around back two cells; each is on its new cell the moment the knockback (ZC_HIGHJUMP) comes, as rathena's packets have it (issue #442), and flinches there. Magnum Break goes twice (the first can miss), and the clock pauses when the second one's knockback (ZC_HIGHJUMP 0x01ff) comes, and shots step 50 ms apart. The character is a Swordsman with every skill for the run and a Novice again at the end.",
   "account": "",
   "slot": 0,
   "steps": [
