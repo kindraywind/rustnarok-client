@@ -1164,6 +1164,32 @@ impl Companion {
     }
 }
 
+/// The exact facing, in degrees, of a step or an offset toward a target: atan2(dx, −dz), so 0 faces south (the
+/// camera at its default turn), 90 east, 180 north, 270 west.
+pub fn angle_of(step: [i32; 2]) -> f32 {
+    (step[0] as f32).atan2(-(step[1] as f32)).to_degrees().rem_euclid(360.0)
+}
+
+/// The exact facing of one of the sprites' eight directions (0 south, turning west).
+pub fn rot_of(direction: u8) -> f32 {
+    (360.0 - f32::from(direction % 8) * 45.0) % 360.0
+}
+
+/// Which of its eight directions a unit facing `rot` shows to a camera turned `yaw` degrees: the angle between them,
+/// rounded to the nearest direction (`round`) or floored, so the unit switches as soon as the camera turns at all one
+/// way.
+pub fn view_direction(rot: f32, yaw: f32, round: bool) -> u8 {
+    let seen = (-yaw - rot).rem_euclid(360.0);
+    let direction = if !round {
+        (seen / 45.0) as u8
+    } else if !(22.5..=337.5).contains(&seen) {
+        0
+    } else {
+        ((seen + 22.5) / 45.0) as u8
+    };
+    direction % 8
+}
+
 /// Something on the map that moves cell by cell.
 pub struct Actor {
     pub name: String,
@@ -1183,7 +1209,9 @@ pub struct Actor {
     step_started: Instant,
     /// Milliseconds per straight step (diagonals take √2 as long).
     pub step_ms: f32,
+    /// The facing in the sprites' eight directions, and exactly, in degrees (`angle_of`: 0 south, 90 east).
     pub direction: u8,
+    pub rot: f32,
     /// Players only: 0 looking straight ahead, 1 and 2 turned to the sides.
     pub head_direction: u16,
     animation_started: Instant,
@@ -1235,6 +1263,7 @@ impl Actor {
             step_started: now,
             step_ms: f32::from(speed.max(1)),
             direction,
+            rot: rot_of(direction),
             head_direction: 0,
             animation_started: now,
             shot: None,
@@ -1282,10 +1311,19 @@ impl Actor {
         self.shot = Some(Shot { action, started: start, duration_ms: duration_ms.max(50.0), hold });
     }
 
+    /// Turns to face a cell: the nearest of the eight directions, and its exact angle.
     pub fn face(&mut self, toward: [i32; 2]) {
         if toward != self.cell {
-            self.direction = world::direction([toward[0] - self.cell[0], toward[1] - self.cell[1]]);
+            let step = [toward[0] - self.cell[0], toward[1] - self.cell[1]];
+            self.direction = world::direction(step);
+            self.rot = angle_of(step);
         }
+    }
+
+    /// Faces one of the eight directions (the server's, or our own turn).
+    pub fn set_direction(&mut self, direction: u8) {
+        self.direction = direction;
+        self.rot = rot_of(direction);
     }
 
     pub fn walk(&mut self, path: Vec<[i32; 2]>) {
@@ -1324,6 +1362,7 @@ impl Actor {
             let duration = self.step_ms * if step[0] != 0 && step[1] != 0 { std::f32::consts::SQRT_2 } else { 1.0 };
             let progress = now.saturating_duration_since(self.step_started).as_secs_f32() * 1000.0 / duration;
             self.direction = world::direction(step);
+            self.rot = angle_of(step);
             if progress < 1.0 {
                 return [self.cell[0] as f32 + step[0] as f32 * progress, self.cell[1] as f32 + step[1] as f32 * progress];
             }
@@ -1417,6 +1456,33 @@ mod tests {
         assert_eq!(SpriteSet::folders(5), ["몬스터", "npc"]);
         assert_eq!(SpriteSet::folders(8), ["homun", "몬스터", "npc"]);
         assert_eq!(SpriteSet::folders(6), ["npc", "몬스터"]);
+    }
+
+    #[test]
+    fn faces_exact_angles_and_shows_them_to_the_camera() {
+        assert_eq!([[0, -1], [1, 0], [0, 1], [-1, 0]].map(angle_of), [0.0, 90.0, 180.0, 270.0]);
+        assert!((angle_of([2, -1]) - 63.435).abs() < 0.01);
+        // The eight directions' angles agree with their steps.
+        for step in [[0, -1], [-1, -1], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [1, -1]] {
+            assert!((rot_of(world::direction(step)) - angle_of(step)).abs() < 1e-3, "{step:?}");
+        }
+        // (rot, camera yaw) -> (rounded, floored): facing south, the camera turned 10 and 30 degrees either way. A
+        // floored unit switches as soon as the camera turns one way, a rounded one only past 22.5 degrees.
+        let table = [
+            ((0.0, 0.0), (0, 0)),
+            ((0.0, 10.0), (0, 7)),
+            ((0.0, -10.0), (0, 0)),
+            ((0.0, 30.0), (7, 7)),
+            ((0.0, -30.0), (1, 0)),
+            ((0.0, -22.5), (1, 0)),
+            ((0.0, 22.5), (0, 7)),
+            ((180.0, 0.0), (4, 4)),
+            ((90.0, 45.0), (5, 5)),
+            ((angle_of([2, -1]), 0.0), (7, 6)),
+        ];
+        for ((rot, yaw), (round, floor)) in table {
+            assert_eq!((view_direction(rot, yaw, true), view_direction(rot, yaw, false)), (round, floor), "rot {rot} yaw {yaw}");
+        }
     }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
