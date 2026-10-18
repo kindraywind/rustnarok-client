@@ -23,7 +23,8 @@
 //! - `state`: the scene and the login server; at character select the characters, selected slot and `pin` ("ask",
 //!   "new", "change" or "none"); in the game the map, the player, open windows, the NPC dialog, the aimed
 //!   skill, units and ground items (with their sprites' screen boxes and the areas a click picks them in), counts and
-//!   status icons. Everything comes from what the client itself knows, whatever server it plays on.
+//!   status icons. Each unit's `tint` is `[r, g, b]` while a status colours it, or null. Everything comes from what
+//!   the client itself knows, whatever server it plays on.
 //!   `player` has `status_points` and `skill_points` left, `stats` (`str` to `luk`: `{value, bonus, cost}`, cost being
 //!   the points one more takes) and `skills` (`[{id, name, level, max_level, upgradable}]`, level 0: not learned yet).
 //!   While the status window (Alt+A) is open, the arrows that raise a stat are targets named `raise_str` to
@@ -872,6 +873,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             if actor.dead {
                 unit["dead"] = true.into();
             }
+            unit["tint"] = json!(crate::actor::status_tint(actor.body_state, actor.health_state));
             unit
         })
         .collect();
@@ -1007,6 +1009,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             game.guild.iter().flat_map(|guild| game.guild_window.button_boxes(guild)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(question_buttons)
+        .chain(game.hotkeys.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.level_ups.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.skill_description.iter().map(|window| json!({"kind": "button", "name": "skill_description_close", "box": window.close_box()})))
         .chain(
@@ -1050,7 +1053,14 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .collect();
     // Newest first: the order Esc closes them in.
-    let windows = game.esc_names();
+    // The windows open: those Esc closes, in its order, then the ones it leaves up.
+    let mut windows = game.esc_names();
+    windows.extend(
+        [("Hotkeys", game.hotkeys.frame.open), ("BasicInfo", game.basic_info.frame.open)]
+            .into_iter()
+            .filter(|(_, open)| *open)
+            .map(|(name, _)| name.to_owned()),
+    );
     let dialog = game.dialog.as_ref().map(|dialog| {
         json!({
             "npc": dialog.npc,
@@ -1108,6 +1118,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "look": player_look(game.player.look.as_ref().unwrap_or(&Look::default())),
         },
         "windows": windows,
+        // The windows Esc closes, in the order it closes them (newest first).
+        "esc_order": game.esc_names(),
         // The game menu's buttons, when it is open (null when it isn't). Newest-first `windows` does not include it.
         "escape": game.escape.as_ref().map(|menu| menu.choices(game.can_resurrect()).into_iter().map(|choice| choice.button()).collect::<Vec<_>>()),
         "save_asked": game.save_asked,

@@ -439,9 +439,11 @@ const DROP_MS_PER_CELL: f32 = 40.0;
 /// Items cast a quarter of a character's shadow.
 const ITEM_SHADOW: f32 = 0.25;
 
-/// The size a unit is drawn at: the size table's factor for its job (1 when it isn't listed), and ChangeSize on top.
-fn unit_draw_scale(sizes: &HashMap<u16, f32>, job: u16, change_percent: Option<i32>) -> f32 {
-    lua::sprite_scale(sizes.get(&job).copied().unwrap_or(1.0), change_percent)
+/// The size a unit is drawn at. The size table applies to monsters (1 when the job isn't listed).
+/// ChangeSize's percent multiplies that. 100 leaves it. None leaves the table factor.
+fn unit_draw_scale(sizes: &HashMap<u16, f32>, kind: u8, job: u16, change_percent: Option<i32>) -> f32 {
+    let factor = if kind == MONSTER { sizes.get(&job).copied().unwrap_or(1.0) } else { 1.0 };
+    lua::sprite_scale(factor, change_percent)
 }
 
 /// Grows a frame around the feet. 1 leaves it.
@@ -885,6 +887,8 @@ struct Game {
     new_items: bool,
     /// The level up buttons in the bottom corners.
     level_ups: level_up::LevelUps,
+    /// The server's overweight point, in percent of the weight limit.
+    overweight: u32,
     /// A new quest's icon (until the quest window opens), and hunts' progress banners.
     quest_icon: bool,
     banners: quest_notice::Banners,
@@ -8142,6 +8146,7 @@ impl App {
                     pickup_popup: None,
                     new_items: false,
                     level_ups: level_up::LevelUps::default(),
+                    overweight: basic_info::OVERWEIGHT,
                     quest_icon: false,
                     banners: quest_notice::Banners::default(),
                     char_names: HashMap::new(),
@@ -8419,6 +8424,8 @@ impl App {
                     game.effects.play(gpu, grf, table, EF_WARPZONE2, effects::Target::Unit(Some(unit.id)), at, Instant::now());
                 }
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
+                actor.body_state = unit.body_state;
+                actor.health_state = unit.health_state;
                 actor.stop_at(unit.position.map(i32::from));
                 actor.direction = unit.direction;
                 actor.head_direction = unit.head_direction;
@@ -8441,6 +8448,8 @@ impl App {
             }
             MapEvent::UnitWalk { unit, to, .. } => {
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
+                actor.body_state = unit.body_state;
+                actor.health_state = unit.health_state;
                 let from = unit.position.map(i32::from);
                 actor.guild = unit.guild;
                 if actor.cell != from && !actor.moving() {
@@ -9178,6 +9187,7 @@ impl App {
                 let [before, after] = MVP_EXP.map(|id| self.messages.get(id).cloned().unwrap_or_default());
                 game.chat_line(format!("{before}{exp}{after}"), CHAT_ITEM);
             }
+            MapEvent::OverweightPercent(percent) => game.overweight = percent,
             MapEvent::MvpOverweight => game.chat_line(self.messages.get(MVP_OVERWEIGHT).cloned().unwrap_or_default(), CHAT_ERROR),
             MapEvent::HomunculusState { state: net::HOMUNCULUS_OWNED, id, .. } => game.homunculus_id = Some(id),
             MapEvent::HomunculusState { state: net::HOMUNCULUS_INTIMACY, value, .. } => {
@@ -10663,10 +10673,11 @@ impl App {
             }
             MapEvent::StatusIcon { kind, id, on, left_ms, value, .. } => {
                 // ChangeSize's percent multiplies the size table when the status is on.
-                if kind == actor::CHANGE_SIZE {
+                if kind == actor::CHANGE_SIZE || kind == actor::CHANGE_SIZE_MONSTER {
                     let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                     if let Some(actor) = actor {
-                        actor.size_percent = on.then_some(value);
+                        // The short status packet carries no percent. 0 would shrink the sprite away.
+                        actor.size_percent = (on && value != 0).then_some(value);
                     }
                 }
                 // The mirror's 10 minutes are over: the boss leaves the minimap.
@@ -10695,11 +10706,13 @@ impl App {
             MapEvent::Recovered { kind, amount } => {
                 game.damages.push(Damage { target: None, amount, start: Instant::now(), kind: DamageKind::Heal { sp: kind == net::STATUS_SP }, flinch: None });
             }
-            // Mounting, dismounting or an outfit puts a player in another body.
-            MapEvent::OptionChange { id, option } => {
+            // Mounting, dismounting or an outfit puts a player in another body. Body and health state colour it.
+            MapEvent::OptionChange { id, option, body, health } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor {
                     actor.cloaked = option & actor::UNSEEN_OPTIONS != 0;
+                    actor.body_state = body;
+                    actor.health_state = health;
                 }
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor
@@ -11202,8 +11215,10 @@ impl App {
                 cart.frame_at(gpu, usize::from(seen_direction(direction, yaw)), 0, cart_timing(action, timing)),
             ));
         }
-        let player_scale = unit_draw_scale(monster_sizes, game.player.job, game.player.size_percent);
+        let player_tint = actor::status_tint(game.player.body_state, game.player.health_state);
+        let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
         if let Some(sprites) = &mut game.player.sprites {
+            sprites.set_tint(player_tint);
             let mut placed = sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing);
             scale_frame(&mut placed, player_scale);
             frames.push((Owner::Player, player_feet, placed));
@@ -11227,7 +11242,11 @@ impl App {
             _ => Vec::new(),
         };
         let preview_placements = match (preview_feet, &mut game.player.sprites) {
-            (Some(_), Some(sprites)) => sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
+            (Some(_), Some(sprites)) => {
+                // The equipment figure keeps the sprite's own colours.
+                sprites.set_tint(None);
+                sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0))
+            }
             _ => Vec::new(),
         };
         let stylist_placements = game.stylist.as_mut().map(|window| window.pose(gpu)).unwrap_or_default();
@@ -11255,8 +11274,10 @@ impl App {
                     cart.frame_at(gpu, usize::from(seen_direction(direction, yaw)), 0, cart_timing(action, timing)),
                 ));
             }
-            let scale = unit_draw_scale(monster_sizes, actor.job, actor.size_percent);
+            let tint = crate::actor::status_tint(actor.body_state, actor.health_state);
+            let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent);
             if let Some(sprites) = &mut actor.sprites {
+                sprites.set_tint(tint);
                 let mut placed = sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing);
                 scale_frame(&mut placed, scale);
                 frames.push((Owner::Unit(id), feet, placed));
@@ -11353,7 +11374,7 @@ impl App {
                 let scale = match owner {
                     Owner::Item(_) => ITEM_SHADOW,
                     Owner::Player => player_scale,
-                    Owner::Unit(id) => game.units.get(id).map(|actor| unit_draw_scale(monster_sizes, actor.job, actor.size_percent)).unwrap_or(1.0),
+                    Owner::Unit(id) => game.units.get(id).map(|actor| unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent)).unwrap_or(1.0),
                 };
                 if !dead {
                     billboards.extend(shadow_placements.iter().map(|(key, position, size)| {
@@ -11917,6 +11938,7 @@ impl App {
         if game.quest_window.frame.open {
             game.quest_icon = false;
         }
+        game.basic_info.fourth = basic_info::fourth_job(game.me.job);
         game.banners.current(control::now());
         game.level_ups
             .seen(game.status_window.frame.open && !game.status_window.frame.minimized, game.skill_window.frame.open && !game.skill_window.frame.minimized);
@@ -12079,6 +12101,7 @@ impl App {
                         new_items: game.new_items,
                         new_level: game.level_ups.base,
                         new_job_level: game.level_ups.job,
+                        overweight: game.overweight,
                     };
                     game.basic_info.draw(&mut layer, &assets.chrome, &assets.basic_info, font, messages, &info, pointer.0);
                 }

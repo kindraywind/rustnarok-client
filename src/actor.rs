@@ -17,9 +17,9 @@ pub const WALK: usize = 1;
 
 /// The status (EFST_ON_PUSH_CART) a unit pushing a cart has; its value is the cart's type.
 pub const PUSH_CART: u16 = 673;
-/// EFST_CHANGE_SIZE (status.hpp). Its val1, the first value of ZC_MSG_STATE_CHANGE3, is the size in percent.
+/// EFST_CHANGE_SIZE and EFST_CHANGE_SIZE_MONSTER (status.hpp). val1 on ZC_MSG_STATE_CHANGE3 is the size in percent.
 pub const CHANGE_SIZE: u16 = 1420;
-// ponytail: EFST_CHANGE_SIZE_MONSTER (1421) is left out; apply it the same way if monsters are resized on that icon.
+pub const CHANGE_SIZE_MONSTER: u16 = 1421;
 
 // ponytail: cart types 1 to 9 as 손수레, 손수레1 … 손수레8, as the files run; baby jobs' carts (베이비손수레…) not yet.
 /// The sprite (without extension) of a pushcart type.
@@ -469,6 +469,45 @@ type ImageKey = (usize, u32, usize, [u8; 4]);
 /// One image of a frame: which image, top-left offset from the feet, size (negative width = mirrored).
 pub type Placed = (ImageKey, [f32; 2], [f32; 2]);
 
+/// rathena's OPT1_* (status.hpp): the body states that colour a sprite.
+const OPT1_STONE: u16 = 1;
+const OPT1_FREEZE: u16 = 2;
+const OPT1_STONEWAIT: u16 = 6;
+/// rathena's OPT2_* bits (status.hpp).
+const OPT2_POISON: u16 = 0x0001;
+const OPT2_CURSE: u16 = 0x0002;
+const OPT2_DPOISON: u16 = 0x0080;
+
+/// The RGB a unit's whole sprite is multiplied by. A body state wins over a health state.
+/// None when the state has no colour, or it has ended.
+pub fn status_tint(body: u16, health: u16) -> Option<[u8; 3]> {
+    match body {
+        OPT1_STONE => Some([64, 64, 64]),
+        OPT1_FREEZE => Some([0, 128, 255]),
+        OPT1_STONEWAIT => Some([128, 128, 128]),
+        // ponytail: stacked health bits take deadly poison, then poison, then curse.
+        _ if health & OPT2_DPOISON != 0 => Some([255, 50, 255]),
+        _ if health & OPT2_POISON != 0 => Some([255, 128, 255]),
+        _ if health & OPT2_CURSE != 0 => Some([200, 50, 50]),
+        _ => None,
+    }
+}
+
+/// Multiplies a layer's RGB by `tint` and keeps its alpha.
+fn multiply_rgb(color: [u8; 4], tint: [u8; 3]) -> [u8; 4] {
+    [
+        (u16::from(color[0]) * u16::from(tint[0]) / 255) as u8,
+        (u16::from(color[1]) * u16::from(tint[1]) / 255) as u8,
+        (u16::from(color[2]) * u16::from(tint[2]) / 255) as u8,
+        color[3],
+    ]
+}
+
+/// One layer's colour under a status tint. None leaves the layer's own colour.
+fn layer_color(color: [u8; 4], tint: Option<[u8; 3]>) -> [u8; 4] {
+    tint.map_or(color, |tint| multiply_rgb(color, tint))
+}
+
 /// A character's sprites (body, head, what it wears) or a single NPC/monster sprite, plus the textures decoded so far.
 pub struct SpriteSet {
     layers: Vec<Layer>,
@@ -478,6 +517,8 @@ pub struct SpriteSet {
     dressing: Option<Dressing>,
     /// How big it's drawn (babies are smaller).
     scale: f32,
+    /// Status colour multiplied into every layer. None keeps each layer's own colour.
+    tint: Option<[u8; 3]>,
     textures: HashMap<ImageKey, Texture>,
 }
 
@@ -600,6 +641,7 @@ impl SpriteSet {
             player: true,
             dressing: Some(dressing),
             scale: body_scale(job),
+            tint: None,
             textures: HashMap::new(),
         })
     }
@@ -625,7 +667,14 @@ impl SpriteSet {
         };
         let body = load(format!("data\\sprite\\인간족\\몸통\\{name}"), Part::Body)?;
         let weapon = load(format!("data\\sprite\\인간족\\용병\\{weapon}"), Part::Weapon);
-        Some(Self { layers: [Some(body), weapon].into_iter().flatten().collect(), player: true, dressing: None, scale: 1.0, textures: HashMap::new() })
+        Some(Self {
+            layers: [Some(body), weapon].into_iter().flatten().collect(),
+            player: true,
+            dressing: None,
+            scale: 1.0,
+            tint: None,
+            textures: HashMap::new(),
+        })
     }
 
     /// The sprite folders to look in for a unit of this kind (5 monster, 8 homunculus), first match wins.
@@ -658,8 +707,14 @@ impl SpriteSet {
             player: false,
             dressing: None,
             scale: 1.0,
+            tint: None,
             textures: HashMap::new(),
         })
+    }
+
+    /// Colours every layer from here on. None clears the status colour.
+    pub fn set_tint(&mut self, tint: Option<[u8; 3]>) {
+        self.tint = tint;
     }
 
     /// Places the frame of `action` facing `direction` (head turned `head_direction`: 0 straight, 1 and 2 to the sides)
@@ -741,7 +796,7 @@ impl SpriteSet {
             }
             placed.extend(sprite::place(&layer.spr, frame, shift).into_iter().map(|placement| {
                 (
-                    (number, placement.kind, placement.image, placement.color),
+                    (number, placement.kind, placement.image, layer_color(placement.color, self.tint)),
                     placement.position.map(|value| value * self.scale),
                     placement.size.map(|value| value * self.scale),
                 )
@@ -994,6 +1049,9 @@ pub struct Actor {
     pub dead: bool,
     /// Hiding, cloaking or chase-walking (the unit's option has UNSEEN_OPTIONS).
     pub cloaked: bool,
+    /// rathena's opt1 and opt2: the body and health state that colour the sprite.
+    pub body_state: u16,
+    pub health_state: u16,
     /// The pushcart it pulls, drawn behind it.
     pub cart: Option<SpriteSet>,
     /// The action and frame last seen, so a frame's sound plays once each time it comes up.
@@ -1028,6 +1086,8 @@ impl Actor {
             remove_at: None,
             dead: false,
             cloaked: false,
+            body_state: 0,
+            health_state: 0,
             cart: None,
             heard: None,
             held: None,
@@ -1276,5 +1336,34 @@ mod tests {
         assert_eq!(actor.direction, 5);
         assert_eq!(actor.update(at(400)), [12.0, 11.0]);
         assert!(!actor.moving());
+    }
+
+    #[test]
+    fn colours_a_unit_by_its_state() {
+        assert_eq!(status_tint(OPT1_STONE, 0), Some([64, 64, 64]));
+        assert_eq!(status_tint(OPT1_STONEWAIT, 0), Some([128, 128, 128]));
+        assert_eq!(status_tint(OPT1_FREEZE, 0), Some([0, 128, 255]));
+        assert_eq!(status_tint(0, OPT2_POISON), Some([255, 128, 255]));
+        assert_eq!(status_tint(0, OPT2_DPOISON), Some([255, 50, 255]));
+        assert_eq!(status_tint(0, OPT2_CURSE), Some([200, 50, 50]));
+        // A body state wins when a health state is set too.
+        assert_eq!(status_tint(OPT1_FREEZE, OPT2_POISON), Some([0, 128, 255]));
+        assert_eq!(status_tint(OPT1_STONE, OPT2_CURSE | OPT2_POISON), Some([64, 64, 64]));
+        assert_eq!(status_tint(OPT1_STONEWAIT, OPT2_DPOISON), Some([128, 128, 128]));
+        // Two health bits at once: deadly poison, then poison, then curse.
+        assert_eq!(status_tint(0, OPT2_POISON | OPT2_DPOISON), Some([255, 50, 255]));
+        assert_eq!(status_tint(0, OPT2_POISON | OPT2_CURSE), Some([255, 128, 255]));
+        // Stun, silence and a state that has ended leave the sprite alone.
+        assert_eq!(status_tint(3, 0x0010), None);
+        assert_eq!(status_tint(0, 0), None);
+    }
+
+    #[test]
+    fn multiplies_every_layer_by_the_tint() {
+        let tint = status_tint(OPT1_FREEZE, OPT2_POISON);
+        let layers = [[255, 255, 255, 255], [128, 64, 32, 128], [0, 255, 0, 255]];
+        assert_eq!(layers.map(|color| layer_color(color, tint)), [[0, 128, 255, 255], [0, 32, 32, 128], [0, 128, 0, 255]]);
+        // Ending the state restores each layer's own colour.
+        assert_eq!(layers.map(|color| layer_color(color, status_tint(0, 0))), layers);
     }
 }

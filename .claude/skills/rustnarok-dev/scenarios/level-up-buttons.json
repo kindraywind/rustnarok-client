@@ -80,10 +80,9 @@
       }
     },
     {
-      "click": [
-        108,
-        153
-      ]
+      "click_on": {
+        "button": "menu"
+      }
     },
     {
       "wait": 300

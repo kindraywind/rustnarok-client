@@ -1,10 +1,10 @@
 {
-  "about": "Esc closes the window last opened or clicked, one per press, then opens the game menu. A question is answered No. Dead, the menu is save point and return; a Token of Siegfried adds resurrect here (issue #178).",
+  "about": "Esc closes the window last opened or clicked, one per press, then opens the game menu. A question is answered No. Dead, the menu is save point and return; a Token of Siegfried adds resurrect here (issue #178). The token it gives is taken away at the end (and at the start, in case a run stopped halfway).",
   "account": "",
   "slot": 0,
   "steps": [
     {"say": "@warp iz_int01 18 26"},
-    {"settle": 1500},
+    {"settle": 1500}, {"say": "@delitem 7621 99"}, {"wait": 300},
     {"say": "@heal"},
     {"wait": 400},
     {"key": "Alt+E"},
@@ -13,13 +13,13 @@
     {"wait": 300},
     {"click_on": {"button": "tab:item"}},
     {"wait": 200},
-    {"expect": {"state": {"windows": ["Inventory", "Skills"]}}},
+    {"expect": {"state": {"esc_order": ["Inventory", "Skills"]}}},
     {"key": "Escape"},
     {"wait": 200},
-    {"expect": {"windows_closed": ["Inventory"], "windows_open": ["Skills"], "state": {"windows": ["Skills"]}}},
+    {"expect": {"windows_closed": ["Inventory"], "windows_open": ["Skills"], "state": {"esc_order": ["Skills"]}}},
     {"key": "Escape"},
     {"wait": 200},
-    {"expect": {"windows_closed": ["Skills"], "state": {"windows": [], "escape": null}}},
+    {"expect": {"windows_closed": ["Skills"], "state": {"esc_order": [], "escape": null}}},
     {"key": "Escape"},
     {"wait": 300},
     {"expect": {"state": {"escape": ["char_select", "settings", "shortcuts", "exit", "return"]}}},
@@ -52,6 +52,7 @@
     {"wait": 200},
     {"expect": {"state": {"escape": ["char_select", "settings", "shortcuts", "exit", "return"]}}},
     {"click_on": {"button": "return"}},
-    {"wait": 200}
+    {"wait": 200},
+    {"say": "@delitem 7621 1"}, {"wait": 300}
   ]
 }
