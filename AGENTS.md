@@ -8,7 +8,9 @@ screenshots in git; `cargo fmt` and `clippy -D warnings` stay clean; dev switche
 ## Where things are
 
 - The library (`src/lib.rs`) draws nothing: `net` (every packet), `grf`, `lua` (the data's Lua tables), `map`, `model`,
-  `sprite`, `effect`, `text`, `messages`.
+  `sprite`, `effect`, `text`, `messages`. `net.rs` has the login and char protocol, the packet IDs, the data types and
+  the `encode_*` functions; `net/map_event.rs` the `MapEvent` enum, `net/map_session.rs` the `MapSession` requests,
+  `net/decode.rs` `decode_map_packet`, and `net/tests.rs` the tests.
 - The binary is the game:
   - `main.rs`: message IDs and other constants, the scene types, `struct Game` (the game scene's state), `struct App`,
     `Assets` and its `load`, `main()` with the dev switches, and its tests.
@@ -24,10 +26,11 @@ screenshots in git; `cargo fmt` and `clippy -D warnings` stay clean; dev switche
 
 ## A new packet
 
-In `net.rs`, a request is an `encode_*` function plus a `MapSession` method. A reply is a `MapEvent` variant plus an arm in
-`decode_map_packet`. Give each a `#[test]` in the style of `decodes_mail`, without data.grf. The connection drops on an ID
-that `src/packet_lengths.txt` doesn't know; regenerate it with `tools/packet-lengths/run.sh`. Handle the event in
-`events.rs` `map_event`.
+A request is an `encode_*` function and a packet ID in `net.rs`, plus a `MapSession` method in `net/map_session.rs`. A
+reply is a `MapEvent` variant in `net/map_event.rs` plus an arm in `decode_map_packet` (`net/decode.rs`). Give each a
+`#[test]` in `net/tests.rs` in the style of `decodes_mail`, without data.grf. The connection drops on an ID that
+`src/packet_lengths.txt` doesn't know; regenerate it with `tools/packet-lengths/run.sh`. Handle the event in `events.rs`
+`map_event`.
 
 ## A new window
 
