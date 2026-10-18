@@ -615,6 +615,8 @@ const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
 const ZC_NPC_CHAT: u16 = 0x02C1;
+const CZ_USE_SKILL_TOGROUND_WITHTALKBOX2: u16 = 0x0367;
+const ZC_TALKBOX_CHATCONTENTS: u16 = 0x0191;
 const ZC_MONSTER_INFO: u16 = 0x018C;
 const ZC_BOSS_INFO: u16 = 0x0293;
 const ZC_CASH_TIME_COUNTER: u16 = 0x0298;
@@ -1578,6 +1580,11 @@ pub enum MapEvent {
         hours: u16,
         minutes: u16,
         name: String,
+    },
+    /// A Talkie Box went off: its ground unit, and the message it held.
+    TalkieBox {
+        unit: u32,
+        text: String,
     },
     /// One of the client's messages, by number: with a number for its `%d`, a skill for its `%s`, in a color.
     Message {
@@ -2548,6 +2555,11 @@ impl MapSession {
     }
 
     /// Uses a skill on a cell.
+    /// A ground skill with a message: a Talkie Box.
+    pub fn use_skill_at_with_text(&mut self, skill: u16, level: u16, cell: [u16; 2], text: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_skill_at_with_text(skill, level, cell, text))
+    }
+
     pub fn use_skill_at(&mut self, skill: u16, level: u16, cell: [u16; 2]) -> io::Result<()> {
         let mut packet = CZ_USE_SKILL_TOGROUND.to_le_bytes().to_vec();
         packet.extend_from_slice(&level.to_le_bytes());
@@ -3453,15 +3465,35 @@ fn encode_pet_command(command: u8) -> [u8; 3] {
 fn encode_rename_pet(name: &str) -> [u8; 26] {
     let mut packet = [0u8; 26];
     packet[..2].copy_from_slice(&CZ_RENAME_PET.to_le_bytes());
+    let bytes = euc_kr_cut(name, 23);
+    packet[2..2 + bytes.len()].copy_from_slice(&bytes);
+    packet
+}
+
+/// Text in EUC-KR, cut to at most `most` bytes of whole characters.
+fn euc_kr_cut(text: &str, most: usize) -> Vec<u8> {
     let mut bytes = Vec::new();
-    for character in name.chars() {
+    for character in text.chars() {
         let encoded = encoding_rs::EUC_KR.encode(character.encode_utf8(&mut [0; 4])).0.into_owned();
-        if bytes.len() + encoded.len() > 23 {
+        if bytes.len() + encoded.len() > most {
             break;
         }
         bytes.extend_from_slice(&encoded);
     }
-    packet[2..2 + bytes.len()].copy_from_slice(&bytes);
+    bytes
+}
+
+/// CZ_USE_SKILL_TOGROUND_WITHTALKBOX2: a ground skill with a message (a Talkie Box's): level, skill, cell, then at
+/// most 20 bytes of text, NUL-padded to 21.
+fn encode_skill_at_with_text(skill: u16, level: u16, cell: [u16; 2], text: &str) -> [u8; 31] {
+    let mut packet = [0u8; 31];
+    packet[..2].copy_from_slice(&CZ_USE_SKILL_TOGROUND_WITHTALKBOX2.to_le_bytes());
+    packet[2..4].copy_from_slice(&level.to_le_bytes());
+    packet[4..6].copy_from_slice(&skill.to_le_bytes());
+    packet[6..8].copy_from_slice(&cell[0].to_le_bytes());
+    packet[8..10].copy_from_slice(&cell[1].to_le_bytes());
+    let bytes = euc_kr_cut(text, 20);
+    packet[10..10 + bytes.len()].copy_from_slice(&bytes);
     packet
 }
 
@@ -4052,6 +4084,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             minutes: u16_at(13),
             name: c_string(&packet[19..70]),
         },
+        ZC_TALKBOX_CHATCONTENTS => MapEvent::TalkieBox { unit: u32_at(2), text: c_string(&packet[6..27]) },
         ZC_MSG => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: None },
         ZC_MSG_VALUE => MapEvent::Message { id: usize::from(u16_at(2)), value: Some(u32_at(4) as i32), skill: None, color: None },
         ZC_MSG_SKILL => MapEvent::Message { id: u32_at(4) as usize, value: None, skill: Some(u16_at(2)), color: None },
@@ -5314,6 +5347,24 @@ mod tests {
         assert!(name.is_empty());
         assert_eq!([ZC_MONSTER_INFO, ZC_BOSS_INFO].map(packet_length), [Some(29), Some(70)]);
         assert_eq!(boss(1, "").len(), 70);
+    }
+
+    #[test]
+    fn encodes_a_talkie_box() {
+        let packet = encode_skill_at_with_text(125, 1, [171, 360], "hello");
+        assert_eq!(packet[..10], [0x67, 0x03, 1, 0, 125, 0, 171, 0, 0x68, 0x01]);
+        assert_eq!(&packet[10..16], b"hello\0");
+        // At most 20 bytes, cut at a whole character: "ab" and nine Korean characters (2 bytes each), no half of the tenth.
+        let korean = encode_skill_at_with_text(125, 1, [0, 0], &format!("ab{}", "가".repeat(10)));
+        assert_eq!(korean[10..12], *b"ab");
+        assert_eq!(encoding_rs::EUC_KR.decode(&korean[12..30]).0, "가".repeat(9));
+        assert_eq!(korean[30], 0);
+        let mut said = [&ZC_TALKBOX_CHATCONTENTS.to_le_bytes()[..], &77u32.to_le_bytes()].concat();
+        said.extend_from_slice(b"hello");
+        said.resize(27, 0);
+        let Some(MapEvent::TalkieBox { unit: 77, text }) = decode_map_packet(&said) else { panic!() };
+        assert_eq!(text, "hello");
+        assert_eq!([CZ_USE_SKILL_TOGROUND_WITHTALKBOX2, ZC_TALKBOX_CHATCONTENTS].map(packet_length), [Some(31), Some(27)]);
     }
 
     #[test]

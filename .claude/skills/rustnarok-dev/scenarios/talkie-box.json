@@ -1,0 +1,31 @@
+{
+  "about": "Talkie Box (issue #113): a Hunter aims the Talkie Box at the cell east of them, types its message in the box that asks for it, and places it; the second player, recalled onto the Hunter's cell, sets it off, and both see \"hello\" over it. traps_setting 0 makes the trap seen by everyone (renewal shows hidden traps to the caster's party only); it's a battle flag in the map server's memory, put back to 2 at the end.",
+  "account": "",
+  "slot": 0,
+  "second": {"account": "2", "slot": 0},
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@job 11"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500},
+    {"say": "@item 1065 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@setbattleflag traps_setting 0"}, {"wait": 300},
+    {"say": "@recall {second}"}, {"as": "second", "settle": 2000},
+    {"key": "Alt+S"}, {"wait": 400},
+    {"click_on": {"skill": 125}, "count": 2}, {"wait": 300},
+    {"key": "Alt+S"}, {"wait": 300},
+    {"click": [562, 388]}, {"wait": 400},
+    {"expect": {"windows_open": ["Amount"]}},
+    {"type": "hello"}, {"key": "Enter"},
+    {"wait_for": {"event": "TalkieBox", "ms": 8000}}, {"wait": 300}, {"move": [1000, 750]},
+    {"expect": {"state": {"talkie": ["hello"]}}},
+    {"shot": "talkie-first", "crop": [362, 234, 300, 240], "threshold": 5},
+    {"as": "second", "wait_for": {"packet": "0x0191", "ms": 5000}},
+    {"as": "second", "expect": {"state": {"talkie": ["hello"]}}},
+    {"as": "second", "move": [1000, 750]},
+    {"as": "second", "shot": "talkie-second", "crop": [362, 234, 300, 240], "threshold": 5},
+    {"say": "@setbattleflag traps_setting 2"}, {"wait": 300},
+    {"say": "@job 0"}, {"wait": 500},
+    {"say": "@itemreset"}, {"wait": 800}
+  ]
+}
