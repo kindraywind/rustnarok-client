@@ -817,9 +817,29 @@ fn state(app: &mut App) -> Value {
     }
     match base {
         Scene::Login => state["login_id"] = app.fields[0].as_str().into(),
-        Scene::ServerSelect { accepted, selected } => {
+        Scene::ServerSelect { accepted, selected, scroll } => {
             state["servers"] = accepted.char_servers.iter().map(|server| server.name.as_str()).collect();
             state["selected"] = (*selected).into();
+            state["scroll"] = (*scroll).into();
+            let origin = crate::servers::place(crate::screen());
+            state["server_window"] = json!([origin[0], origin[1], crate::servers::WIDTH, crate::servers::HEIGHT]);
+            let list = crate::offset(origin, crate::servers::LIST);
+            let mut targets = Vec::new();
+            for row in crate::servers::shown(*scroll, accepted.char_servers.len()) {
+                let y = list[1] + (row - *scroll) as f32 * crate::servers::ROW;
+                let box_ = [list[0], y, crate::servers::LIST_SIZE[0], crate::servers::ROW];
+                targets.push(json!({"kind": "button", "name": row.to_string(), "box": box_}));
+                if row == *selected {
+                    targets.push(json!({"kind": "button", "name": "selected", "box": box_}));
+                }
+            }
+            if let Some(assets) = app.assets.as_ref() {
+                for (name, at, images) in [("ok", crate::servers::OK, &assets.ok), ("cancel", crate::servers::CANCEL, &assets.cancel)] {
+                    let [x, y] = crate::offset(origin, at);
+                    targets.push(json!({"kind": "button", "name": name, "box": [x, y, images[0].size[0], images[0].size[1]]}));
+                }
+            }
+            state["targets"] = json!(targets);
         }
         Scene::CharSelect(select) => {
             state["characters"] = select

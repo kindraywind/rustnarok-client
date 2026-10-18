@@ -60,14 +60,27 @@ impl App {
                     self.quitting = true;
                 }
             }
-            Scene::ServerSelect { accepted, selected } => {
-                let service = dialog_position(&assets.service);
-                let list = offset(service, SERVER_LIST);
-                if let Some(row) = (0..accepted.char_servers.len()).find(|&row| contains(offset(list, [0.0, row as f32 * SERVER_ROW[1]]), SERVER_ROW, cursor)) {
+            Scene::ServerSelect { accepted, selected, scroll } => {
+                let place = servers::place(screen());
+                let list = offset(place, servers::LIST);
+                let local = [cursor[0] - place[0], cursor[1] - place[1]];
+                let frame = window::Frame::new(place, servers::WIDTH);
+                // ponytail: the shared title bar's close does what Cancel does; minimize does nothing on this step.
+                if contains([0.0, 0.0], [servers::WIDTH, window::TITLE_HEIGHT], local) {
+                    if frame.title_hit(local) == Some(window::TitleHit::Close) {
+                        self.scene = Scene::Login;
+                    }
+                } else if let Some(row) = servers::shown(*scroll, accepted.char_servers.len())
+                    .find(|&row| contains(offset(list, [0.0, (row - *scroll) as f32 * servers::ROW]), [servers::LIST_SIZE[0], servers::ROW], cursor))
+                {
+                    let enter = self.server_clicks.double(row as u16);
                     *selected = row;
-                } else if hit(offset(service, LEFT_BUTTON), &assets.ok) {
-                    self.enter_char_server();
-                } else if hit(offset(service, RIGHT_BUTTON), &assets.cancel) {
+                    if enter {
+                        self.confirm_server();
+                    }
+                } else if hit(offset(place, servers::OK), &assets.ok) {
+                    self.confirm_server();
+                } else if hit(offset(place, servers::CANCEL), &assets.cancel) {
                     self.scene = Scene::Login;
                 }
             }
@@ -3295,10 +3308,16 @@ impl App {
                 Key::Named(NamedKey::Escape) => self.escape_before_map(),
                 _ => {}
             },
-            Scene::ServerSelect { accepted, selected } => match key {
-                Key::Named(NamedKey::ArrowUp) => *selected = selected.saturating_sub(1),
-                Key::Named(NamedKey::ArrowDown) => *selected = (*selected + 1).min(accepted.char_servers.len().saturating_sub(1)),
-                Key::Named(NamedKey::Enter) => self.enter_char_server(),
+            Scene::ServerSelect { accepted, selected, scroll } => match key {
+                Key::Named(NamedKey::ArrowUp) => {
+                    *selected = selected.saturating_sub(1);
+                    *scroll = servers::keep_visible(*selected, *scroll);
+                }
+                Key::Named(NamedKey::ArrowDown) => {
+                    *selected = (*selected + 1).min(accepted.char_servers.len().saturating_sub(1));
+                    *scroll = servers::keep_visible(*selected, *scroll);
+                }
+                Key::Named(NamedKey::Enter) => self.confirm_server(),
                 Key::Named(NamedKey::Escape) => self.escape_before_map(),
                 _ => {}
             },

@@ -23,6 +23,10 @@ pub struct CharServer {
     pub port: u16,
     pub name: String,
     pub users: u16,
+    /// PACKET_AC_ACCEPT_LOGIN_sub::type (2 age 18+, 3 paid, 4 free).
+    pub kind: u16,
+    /// PACKET_AC_ACCEPT_LOGIN_sub::new_ (1 when the server is new).
+    pub new: u16,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -118,6 +122,8 @@ fn decode_reply(packet: &[u8]) -> Result<LoginAccepted, LoginError> {
                     port: u16::from_le_bytes([server[4], server[5]]),
                     name: c_string(&server[6..26]),
                     users: u16::from_le_bytes([server[26], server[27]]),
+                    kind: u16::from_le_bytes([server[28], server[29]]),
+                    new: u16::from_le_bytes([server[30], server[31]]),
                 })
                 .collect(),
         }),
@@ -6659,12 +6665,14 @@ mod tests {
         server[4..6].copy_from_slice(&6121u16.to_le_bytes());
         server[6..13].copy_from_slice(b"rAthena");
         server[26..28].copy_from_slice(&3u16.to_le_bytes());
+        server[28..30].copy_from_slice(&2u16.to_le_bytes());
+        server[30..32].copy_from_slice(&1u16.to_le_bytes());
 
         let accepted = decode_reply(&packet).unwrap();
         assert_eq!(accepted.account_id, 2_000_000);
         assert_eq!(accepted.sex, 1);
         assert_eq!(accepted.web_token, "0123456789abcdef");
-        assert_eq!(accepted.char_servers, vec![CharServer { ip: [127, 0, 0, 1], port: 6121, name: "rAthena".into(), users: 3 }]);
+        assert_eq!(accepted.char_servers, vec![CharServer { ip: [127, 0, 0, 1], port: 6121, name: "rAthena".into(), users: 3, kind: 2, new: 1 }]);
 
         let mut refuse = vec![0u8; 26];
         refuse[..2].copy_from_slice(&AC_REFUSE_LOGIN.to_le_bytes());

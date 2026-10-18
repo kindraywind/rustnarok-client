@@ -7,7 +7,7 @@
   visual.py check <scenario.json>...                                baseline, this tree, then diff: the PR's pictures
   visual.py suite                                                   check every scenario in scenarios/, one report
 
-A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": {...}, "steps": [...]} with steps such as
+A scenario is JSON: {"account": "", "slot": "0", "start": "char_select"|"server_select", "env": {...}, "steps": [...]} with steps such as
   {"say": "@warp prontera 156 180"}  {"settle": 1500}  {"wait": 1500}  {"key": "Alt+E"}  {"type": "hello"}
   {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]], "button": "right", "mods": "Ctrl"}  {"move": [x, y]} (or a target)
   {"drag": [[x, y], [x2, y2]], "held": true} ... {"cmd": {"cmd": "release"}}  (the button stays down: look mid-drag)
@@ -83,6 +83,18 @@ def wait_for_game(timeout=60):
     raise RuntimeError(f"not in the game after {timeout}s: {json.dumps(state)[:300]}")
 
 
+def wait_for_server_select(timeout=60):
+    """Until the client is on the char-server list (login finished, no autostart)."""
+    deadline = time.time() + timeout
+    state = {}
+    while time.time() < deadline:
+        state = drive.send({"cmd": "state"})
+        if state.get("scene") == "server_select":
+            return state
+        time.sleep(0.5)
+    raise RuntimeError(f"not at server_select after {timeout}s: {json.dumps(state)[:300]}")
+
+
 def wait_for_char_select(timeout=60):
     """Until the client is at character select (and any initial 0x08b9 PIN state packet has arrived)."""
     deadline = time.time() + timeout
@@ -99,12 +111,13 @@ def wait_for_char_select(timeout=60):
 
 def launch_one(binary, player):
     """One client as `player` ({"account", "slot", "start", "env"}), on the client `drive.use` points at."""
-    at_select = player.get("start") == "char_select"
-    slot = "select" if at_select else str(player.get("slot", "0"))
+    start = player.get("start")
+    slot = None if start == "server_select" else "select" if start == "char_select" else str(player.get("slot", "0"))
+    ready = wait_for_server_select if start == "server_select" else wait_for_char_select if start == "char_select" else wait_for_game
     for attempt in range(6):
         drive.launch(player.get("account", ""), slot, binary=binary, env_extra=with_names(player.get("env", {}), {}), quiet=True)
         try:
-            return wait_for_char_select() if at_select else wait_for_game()
+            return ready()
         except RuntimeError:
             drive.quit_quietly()
             time.sleep(10)  # the server still holds the last session

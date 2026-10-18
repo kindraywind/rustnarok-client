@@ -10,7 +10,10 @@ impl App {
                 if std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none() {
                     remember_id(self.save_id.then_some(self.fields[0].as_str()));
                 }
-                self.scene = Scene::ServerSelect { accepted, selected: 0 };
+                let selected = servers::clamped_row(saved_server(), accepted.char_servers.len());
+                let scroll = servers::keep_visible(selected, 0);
+                self.server_clicks = window::Clicks::default();
+                self.scene = Scene::ServerSelect { accepted, selected, scroll };
                 if std::env::var_os("RUSTNAROK_CLIENT_AUTOSTART").is_some() {
                     self.enter_char_server();
                 }
