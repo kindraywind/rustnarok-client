@@ -47,7 +47,7 @@ Two players: "second": {"account": "2", "slot": 0, "env": {...}} starts a second
 "as": "second" (a shot too) acts on it. The first account should be a GM (`@recall` brings the second over).
 "{first}" and "{second}" in any string (dict keys too: {"state": {"guild.members.{second}": 1}}) are the two
 characters' names, so a scenario runs on anyone's server;
-"{repo}" is the repository's absolute path (`@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/merge.txt`), and
+"{repo}" (in steps and "env" values) is the repository's absolute path (`@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/merge.txt`), and
 "{scenarios}" the scenarios folder's (`@loadnpc {scenarios}/battleground-team.txt`).
 Each scenario starts a fresh client; the clock is paused for every shot so frames repeat.
 Everything lands under docs/personal/visual/<date>/<HHMMSS>/ (gitignored): game images never go in the repository.
@@ -102,7 +102,7 @@ def launch_one(binary, player):
     at_select = player.get("start") == "char_select"
     slot = "select" if at_select else str(player.get("slot", "0"))
     for attempt in range(6):
-        drive.launch(player.get("account", ""), slot, binary=binary, env_extra=player.get("env", {}), quiet=True)
+        drive.launch(player.get("account", ""), slot, binary=binary, env_extra=with_names(player.get("env", {}), {}), quiet=True)
         try:
             return wait_for_char_select() if at_select else wait_for_game()
         except RuntimeError:

@@ -16,6 +16,8 @@ pub enum Modifier {
     Alt,
     Shift,
     Ctrl,
+    /// Tab held with the key (KEY2 9).
+    Tab,
     /// A KEY2 this client doesn't treat as a modifier, so the row never matches a press.
     Other,
 }
@@ -75,6 +77,11 @@ pub enum Action {
     /// The friend setup: when a whisper opens a 1:1 window.
     FriendSetup,
     PartyBoard,
+    /// The other equipment set worn, as the equipment window's swap button does.
+    SwapEquipment,
+    Achievements,
+    /// The mailbox.
+    Mail,
     Hunting,
     Macro(u8),
     Hotbar {
@@ -111,6 +118,8 @@ pub struct KeyEvent<'a> {
     pub alt: bool,
     pub shift: bool,
     pub ctrl: bool,
+    /// Tab held down (not the Tab press itself).
+    pub tab: bool,
     pub repeat: bool,
     /// A text box has the caret.
     pub text_focus: bool,
@@ -127,7 +136,7 @@ pub fn action(shortcuts: &Shortcuts, event: &KeyEvent<'_>) -> Option<Action> {
     if event.repeat || !reaches(event) {
         return None;
     }
-    let modifier = counted_modifier(event.alt, event.shift, event.ctrl);
+    let modifier = counted_modifier(event);
     let keys = event_keys(event);
     shortcuts
         .bindings
@@ -367,32 +376,37 @@ fn modifier_of(vk: u16) -> Modifier {
         16 => Modifier::Shift,
         17 => Modifier::Ctrl,
         18 => Modifier::Alt,
+        9 => Modifier::Tab,
         _ => Modifier::Other,
     }
 }
 
-fn counted_modifier(alt: bool, shift: bool, ctrl: bool) -> Modifier {
-    if alt {
+/// The one modifier a press counts: Alt, then Shift, then Ctrl, then Tab.
+fn counted_modifier(event: &KeyEvent<'_>) -> Modifier {
+    if event.alt {
         Modifier::Alt
-    } else if shift {
+    } else if event.shift {
         Modifier::Shift
-    } else if ctrl {
+    } else if event.ctrl {
         Modifier::Ctrl
+    } else if event.tab {
+        Modifier::Tab
     } else {
         Modifier::None
     }
 }
 
-/// With a text box focused, the keys that still reach shortcuts.
+/// With a text box focused, the keys that still reach shortcuts, by the counted modifier: with Alt all, with Ctrl
+/// all but A, C, V and X, with Shift none (the key goes to the box), else the named few.
 fn reaches(event: &KeyEvent<'_>) -> bool {
     if !event.text_focus {
         return true;
     }
-    if event.alt {
-        return true;
-    }
-    if event.ctrl {
-        return !event_keys(event).iter().any(|key| matches!(key, ShortcutKey::Char('a' | 'c' | 'v' | 'x')));
+    match counted_modifier(event) {
+        Modifier::Alt => return true,
+        Modifier::Ctrl => return !event_keys(event).iter().any(|key| matches!(key, ShortcutKey::Char('a' | 'c' | 'v' | 'x'))),
+        Modifier::Shift => return false,
+        _ => {}
     }
     // ponytail: Print Screen is let through while a text box has the caret, or the snapshot key never fires.
     matches!(
@@ -557,9 +571,16 @@ fn exe_action(exe: &str, table: u8, index: u16) -> Action {
     if name.contains("CHANGE_SKILLBAR") {
         return Action::SwitchHotkeys;
     }
-    // ponytail: no equipment set swap yet; it mustn't fall to the equipment window.
+    // Before EQUIP, the equipment window.
     if name.contains("SWAP_EQUIP") {
-        return Action::Unused;
+        return Action::SwapEquipment;
+    }
+    if name.contains("ACHIEVEMENT") {
+        return Action::Achievements;
+    }
+    // Before CHAT and ITEM.
+    if name.contains("MAIL") {
+        return Action::Mail;
     }
     if name.contains("COSEQUIP") {
         return Action::Costume;
@@ -721,6 +742,9 @@ pub fn action_name(action: Action) -> String {
         Action::Costume => "costume",
         Action::Reputation => "reputation",
         Action::PartyBoard => "party_board",
+        Action::SwapEquipment => "swap_equipment",
+        Action::Achievements => "achievements",
+        Action::Mail => "mail",
         Action::Hunting => "hunting",
         Action::Macro(line) => return format!("macro_{}", line + 1),
         Action::Hotbar { bar, slot } => return format!("hotbar_{bar}_{}", slot + 1),
@@ -761,6 +785,7 @@ fn chord(key: ShortcutKey, modifier: Modifier) -> String {
         Modifier::Alt => format!("Alt+{name}"),
         Modifier::Shift => format!("Shift+{name}"),
         Modifier::Ctrl => format!("Ctrl+{name}"),
+        Modifier::Tab => format!("Tab+{name}"),
         Modifier::None | Modifier::Other => name,
     }
 }
@@ -927,7 +952,7 @@ mod tests {
         repeat: bool,
         text_focus: bool,
     ) -> Option<Action> {
-        action(shortcuts, &KeyEvent { key, physical, alt, shift, ctrl, repeat, text_focus, bar: 1 })
+        action(shortcuts, &KeyEvent { key, physical, alt, shift, ctrl, tab: false, repeat, text_focus, bar: 1 })
     }
 
     #[test]
@@ -935,13 +960,55 @@ mod tests {
         assert_eq!(exe_action("MSI_HK_COSEQUIPWND_ONOFF", 0, 0), Action::Costume);
         assert_eq!(exe_action("MSI_HK_EQUIPWND_ONOFF", 0, 0), Action::Equipment);
         assert_eq!(exe_action("MSI_HK_CHANGE_SKILLBAR", 0, 0), Action::SwitchHotkeys);
-        assert_eq!(exe_action("MSI_HK_SWAP_EQUIPMENT", 0, 0), Action::Unused);
+        assert_eq!(exe_action("MSI_HK_SWAP_EQUIPMENT", 0, 0), Action::SwapEquipment);
+        assert_eq!(exe_action("MSI_HK_ACHIEVEMENT", 0, 0), Action::Achievements);
+        assert_eq!(exe_action("MSI_HK_MAIL_ONOFF", 0, 0), Action::Mail);
         assert_eq!(exe_action("MSI_HK_SKILLBAR_ONOFF", 0, 0), Action::HotkeyBar);
         assert_eq!(exe_action("MSI_HK_FRIEND_SETUP", 0, 0), Action::FriendSetup);
         assert_eq!(exe_action("MSI_HK_FRIENDWND_ONOFF", 0, 0), Action::Friends);
         assert_eq!(exe_action("MSI_HK_SINGLEMAP_ONOFF", 2, 43), Action::MinimapWindow);
         assert_eq!(exe_action("MSI_HK_MAPWND_ONOFF", 2, 8), Action::WorldMap);
         assert_eq!(exe_action("MSI_HK_MINIMAP_ONOFF", 2, 13), Action::Minimap);
+    }
+
+    #[test]
+    fn counts_tab_as_the_fourth_modifier() {
+        let f1 = Key::Named(NamedKey::F1);
+        let press = |alt: bool, shift: bool, ctrl: bool, tab: bool| KeyEvent {
+            key: &f1,
+            physical: None,
+            alt,
+            shift,
+            ctrl,
+            tab,
+            repeat: false,
+            text_focus: false,
+            bar: 1,
+        };
+        assert_eq!(counted_modifier(&press(false, false, false, true)), Modifier::Tab);
+        assert_eq!(counted_modifier(&press(false, false, true, true)), Modifier::Ctrl);
+        assert_eq!(counted_modifier(&press(false, true, true, true)), Modifier::Shift);
+        assert_eq!(counted_modifier(&press(true, true, true, true)), Modifier::Alt);
+        assert_eq!(modifier_of(9), Modifier::Tab);
+        // Held Tab: F1's slot (no modifier) doesn't fire.
+        let shortcuts = sample();
+        assert_eq!(action(&shortcuts, &press(false, false, false, false)), Some(Action::Hotbar { bar: 1, slot: 0 }));
+        assert_eq!(action(&shortcuts, &press(false, false, false, true)), None);
+    }
+
+    #[test]
+    fn a_text_box_keeps_shifted_keys() {
+        let shortcuts = sample();
+        let f1 = Key::Named(NamedKey::F1);
+        let typing =
+            |alt: bool, shift: bool, ctrl: bool| KeyEvent { key: &f1, physical: None, alt, shift, ctrl, tab: false, repeat: false, text_focus: true, bar: 1 };
+        // No modifier: F-keys still reach shortcuts; Shift: nothing does; Ctrl: all but A, C, V and X; Alt: all.
+        assert!(reaches(&typing(false, false, false)));
+        assert!(!reaches(&typing(false, true, false)));
+        assert_eq!(action(&shortcuts, &typing(false, true, false)), None);
+        assert!(reaches(&typing(false, false, true)) && reaches(&typing(true, true, false)));
+        let c = Key::Character("c".into());
+        assert!(!reaches(&KeyEvent { key: &c, physical: None, alt: false, shift: false, ctrl: true, tab: false, repeat: false, text_focus: true, bar: 1 }));
     }
 
     #[test]
@@ -1109,7 +1176,10 @@ mod tests {
         shortcuts.apply_user(&rows);
         let queue = Key::Character(SmolStr::new("q"));
         let on = |bar: u8| {
-            action(&shortcuts, &KeyEvent { key: &queue, physical: None, alt: false, shift: false, ctrl: false, repeat: false, text_focus: false, bar })
+            action(
+                &shortcuts,
+                &KeyEvent { key: &queue, physical: None, alt: false, shift: false, ctrl: false, tab: false, repeat: false, text_focus: false, bar },
+            )
         };
         assert_eq!(on(1), Some(Action::Hotbar { bar: 1, slot: 9 }));
         assert_eq!(on(2), Some(Action::Hotbar { bar: 2, slot: 9 }));

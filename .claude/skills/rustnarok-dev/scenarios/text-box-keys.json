@@ -1,0 +1,20 @@
+{
+  "about": "Shifted keys stay in a text box (issue #301): with hotbar slot 1 on Shift+F1 (userkeys/shift-f1.lua) and a Red Potion in it, Shift+F1 with the chat line open (as it is outside battle mode) types into it and uses nothing.",
+  "account": "",
+  "slot": 0,
+  "env": {"RUSTNAROK_CLIENT_USERKEYS": "{repo}/.claude/skills/rustnarok-dev/userkeys/shift-f1.lua"},
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"expect": {"state": {"shortcuts.hotbar_1_1": "Shift+F1"}}},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 501 5"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@heal -30 0"}, {"wait": 400},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"drag_on": [{"inventory_item": 501}, {"hotkey": 0}]}, {"wait": 300},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"expect": {"state": {"chat_line_open": true}}},
+    {"key": "Shift+F1"}, {"wait_for": {"sent": "0x0439", "ms": 1500}, "none": true},
+    {"expect": {"inventory_has": [{"id": 501, "amount": 5}]}},
+    {"say": "@itemreset"}, {"wait": 500}
+  ]
+}

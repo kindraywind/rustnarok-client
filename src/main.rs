@@ -694,6 +694,8 @@ const RENAME_PROMPT: usize = 2026;
 const QUIT_MESSAGE: usize = 17;
 /// What I Will Protect You says after the partner's name.
 const PROTECT_WORDS: usize = 759;
+/// "Do you want to return to the login screen?" (Esc at character select).
+const RETURN_TO_LOGIN_MESSAGE: usize = 3432;
 const DELETE_QUESTION: usize = 19;
 const BIRTHDATE_MESSAGE: usize = 1815;
 /// Talking to another NPC while one's window is open.
@@ -5330,9 +5332,22 @@ enum Scene {
     },
 }
 
+/// Esc on a screen before a map: the login window, the service list and the server list ask to quit; character
+/// select asks to go back to the login screen.
+// ponytail: the game picks 3432 or 17 at character select by a setting we don't have; 3432 is what Esc does there.
+fn pre_map_escape(scene: &Scene) -> Option<(usize, Then)> {
+    match scene {
+        Scene::Login | Scene::Connections { .. } | Scene::ServerSelect { .. } => Some((QUIT_MESSAGE, Then::Quit)),
+        Scene::CharSelect(_) => Some((RETURN_TO_LOGIN_MESSAGE, Then::BackToLogin)),
+        _ => None,
+    }
+}
+
 /// What a confirmed question or a prompt goes on to do.
 enum Then {
     BackToLogin,
+    /// Quit the client (Esc before a map, answered yes).
+    Quit,
     /// Ask for the birthdate that deletes this character.
     AskBirthdate(u32),
     /// Delete this character with the birthdate typed in.
@@ -6404,6 +6419,8 @@ struct App {
     /// Which char server we picked (going back to character select reconnects to it), and leaving was agreed.
     char_server: usize,
     quitting: bool,
+    /// Tab is held down (the fourth shortcut modifier).
+    tab_held: bool,
     /// The game went back to character select at least once.
     returned: bool,
     /// The slot of the character last played, selected again back at character select.
@@ -6722,6 +6739,13 @@ impl App {
     }
 
     /// Puts a question (message `id`) with OK and Cancel over the current scene.
+    /// Esc on a screen before a map: its question (`pre_map_escape`).
+    fn escape_before_map(&mut self) {
+        if let Some((question, then)) = pre_map_escape(&self.scene) {
+            self.ask(question, then);
+        }
+    }
+
     fn ask(&mut self, id: usize, then: Then) {
         let text = self.message_text(id);
         let back = std::mem::replace(&mut self.scene, Scene::Login);
@@ -6738,6 +6762,7 @@ impl App {
         self.scene = *back;
         match then {
             Then::BackToLogin => self.back_to_login(),
+            Then::Quit => self.quitting = true,
             Then::AskBirthdate(id) => {
                 let text = self.message_text(BIRTHDATE_MESSAGE);
                 let back = std::mem::replace(&mut self.scene, Scene::Login);
@@ -9695,6 +9720,7 @@ impl App {
                 alt: self.modifiers.alt_key(),
                 shift: self.modifiers.shift_key(),
                 ctrl: self.modifiers.control_key(),
+                tab: self.tab_held && event.logical_key != Key::Named(NamedKey::Tab),
                 repeat: event.repeat,
                 text_focus,
                 bar: if game.hotkeys.tab() == 0 { 1 } else { 2 },
@@ -9849,6 +9875,17 @@ impl App {
                 game.toggle_reputation(&self.reputation_tables);
                 game.sync_esc();
             }
+            // The other equipment set, as the equipment window's swap button.
+            shortcuts::Action::SwapEquipment => match game.equipment.switch_all(&game.inventory.items, control::now()) {
+                Ok(true) => drop(game.session.switch_all()),
+                Ok(false) => {}
+                Err(id) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+            },
+            shortcuts::Action::Achievements => game.achievement_window.frame.toggle(),
+            shortcuts::Action::Mail => {
+                let action = game.mail.toggle();
+                game.mail_action(action);
+            }
             shortcuts::Action::RotateHotkeys => {
                 let (tab, rowshift) = game.hotkeys.rotate();
                 let _ = game.session.rotate_hotkeys(tab, rowshift);
@@ -9883,6 +9920,10 @@ impl App {
     }
 
     fn key(&mut self, event: &control::KeyPress) {
+        // Tab held counts as a modifier for the keys pressed meanwhile.
+        if event.logical_key == Key::Named(NamedKey::Tab) {
+            self.tab_held = event.state == ElementState::Pressed;
+        }
         // Print Screen on its release (Windows sends no press for it), Scroll Lock, and on Macs Cmd+Shift+S (they have
         // no Print Screen; a ponytail choice): a screenshot.
         let pressed = event.state == ElementState::Pressed && !event.repeat;
@@ -9926,12 +9967,11 @@ impl App {
                 return;
             }
         }
-        // Ctrl+Cmd+F, as Macs have it, or Alt+Enter elsewhere: fullscreen (the canvas widened to the screen's shape), or back.
-        let fullscreen = if cfg!(target_os = "macos") {
-            self.modifiers.super_key() && self.modifiers.control_key() && event.physical_key == PhysicalKey::Code(KeyCode::KeyF)
-        } else {
-            self.modifiers.alt_key() && *key == Key::Named(NamedKey::Enter)
-        };
+        // Ctrl+Cmd+F, as Macs have it: fullscreen (the canvas widened to the screen's shape), or back. Alt+Enter is no
+        // shortcut in the game: it reaches it as Enter with Alt held.
+        // ponytail: no fullscreen key off the Mac; the graphics settings are where one would go.
+        let fullscreen =
+            cfg!(target_os = "macos") && self.modifiers.super_key() && self.modifiers.control_key() && event.physical_key == PhysicalKey::Code(KeyCode::KeyF);
         if fullscreen && let Some(gpu) = &self.gpu {
             gpu.window.set_fullscreen(gpu.window.fullscreen().is_none().then_some(winit::window::Fullscreen::Borderless(None)));
             return;
@@ -9945,6 +9985,7 @@ impl App {
                 match key {
                     Key::Named(NamedKey::Tab) => self.focus ^= 1,
                     Key::Named(NamedKey::Enter) => self.submit_login(),
+                    Key::Named(NamedKey::Escape) => self.escape_before_map(),
                     Key::Named(NamedKey::Backspace) => {
                         self.fields[self.focus].pop();
                     }
@@ -9965,14 +10006,14 @@ impl App {
                     let picked = *selected;
                     self.choose_connection(picked);
                 }
-                Key::Named(NamedKey::Escape) => self.quitting = true,
+                Key::Named(NamedKey::Escape) => self.escape_before_map(),
                 _ => {}
             },
             Scene::ServerSelect { accepted, selected } => match key {
                 Key::Named(NamedKey::ArrowUp) => *selected = selected.saturating_sub(1),
                 Key::Named(NamedKey::ArrowDown) => *selected = (*selected + 1).min(accepted.char_servers.len().saturating_sub(1)),
                 Key::Named(NamedKey::Enter) => self.enter_char_server(),
-                Key::Named(NamedKey::Escape) => self.scene = Scene::Login,
+                Key::Named(NamedKey::Escape) => self.escape_before_map(),
                 _ => {}
             },
             Scene::CharSelect(select) if select.pin_pad.is_some() => {
@@ -10009,7 +10050,7 @@ impl App {
                     select.menu = None;
                     select.moving = None;
                 }
-                Key::Named(NamedKey::Escape) => self.select_action(char_select::Action::Close),
+                Key::Named(NamedKey::Escape) => self.escape_before_map(),
                 _ => {}
             },
             Scene::CharMake(make, _) => match key {
@@ -16873,6 +16914,7 @@ fn main() {
         char_session: None,
         char_server: 0,
         quitting: false,
+        tab_held: false,
         returned: false,
         account: None,
         playing: None,
@@ -17768,6 +17810,14 @@ mod tests {
         assert_eq!(attack_goal(&units, &walls, 3354), Some([156, 190]));
         walls.remove(&3354);
         assert_eq!(attack_goal(&units, &walls, 3354), None);
+    }
+
+    #[test]
+    fn asks_before_leaving_a_screen_before_the_map() {
+        assert!(matches!(pre_map_escape(&Scene::Login), Some((QUIT_MESSAGE, Then::Quit))));
+        assert!(matches!(pre_map_escape(&Scene::Connections { selected: 0 }), Some((QUIT_MESSAGE, Then::Quit))));
+        let waiting = Scene::Waiting(Box::new(Scene::Login));
+        assert!(pre_map_escape(&waiting).is_none(), "a box over the screen takes Esc itself");
     }
 
     #[test]
