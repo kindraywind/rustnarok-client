@@ -5600,6 +5600,14 @@ mod tests {
     }
 
     #[test]
+    fn settings_buttons_open_then_shut_their_window() {
+        let mut window = toggled(None, || 7);
+        assert_eq!(window, Some(7));
+        window = toggled(window, || 8);
+        assert_eq!(window, None);
+    }
+
+    #[test]
     fn asks_before_leaving_a_screen_before_the_map() {
         assert!(matches!(pre_map_escape(&Scene::Login), Some((QUIT_MESSAGE, Then::Quit))));
         assert!(matches!(pre_map_escape(&Scene::Connections { selected: 0 }), Some((QUIT_MESSAGE, Then::Quit))));
