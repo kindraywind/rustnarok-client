@@ -98,6 +98,7 @@ mod shortcuts;
 mod skills;
 mod sound;
 mod status;
+mod status_tip;
 mod storage;
 mod stylist;
 mod trade;
@@ -729,6 +730,8 @@ struct Game {
     speech: HashMap<Option<u32>, (String, [u8; 3], Instant)>,
     /// Status effects on the player with an icon: the client's EFST id, when it began and ends (None: no end).
     status_icons: Vec<(u16, Instant, Option<Instant>)>,
+    /// The lines of the status icon tooltip showing, if one is.
+    status_tip: Option<Vec<String>>,
     effects: effects::Effects,
     /// An NPC shop asking whether to buy or sell, and the open shop.
     deal_choice: Option<u32>,
@@ -3876,6 +3879,8 @@ struct App {
     skill_info: HashMap<u16, SkillInfo>,
     skill_trees: SkillTrees,
     status_icon_files: HashMap<u16, (u8, String)>,
+    /// What each status icon says when pointed at.
+    state_infos: HashMap<u16, lua::StateInfo>,
     /// Which effects things play.
     effect_table: effects::Table,
     /// Quests' titles, descriptions and summaries.
@@ -7229,6 +7234,7 @@ impl App {
                     locks: Vec::new(),
                     speech: HashMap::new(),
                     status_icons: Vec::new(),
+                    status_tip: None,
                     cooldowns: skills::Cooldowns::default(),
                     talkie_text: None,
                     talkie_spots: HashMap::new(),
@@ -10251,6 +10257,7 @@ impl App {
         let card_names = &self.card_names;
         let (achievement_info, title_names) = (&self.achievement_info, &self.title_names);
         let (skill_info, skill_trees, status_icon_files) = (&self.skill_info, &self.skill_trees, &self.status_icon_files);
+        let state_infos = &self.state_infos;
         let font = &self.font;
         let now = control::now();
         let pointer = (self.cursor, self.mouse_down);
@@ -11067,13 +11074,33 @@ impl App {
         let per_column = ((SCREEN[1] - STATUS_TOP) / STATUS_STEP[1]) as usize;
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
             let (_, file) = status_icon_files.get(kind)?;
-            Some((icons.get(&format!("data\\texture\\effect\\{file}"))?.as_ref()?, start, end))
+            Some((*kind, icons.get(&format!("data\\texture\\effect\\{file}"))?.as_ref()?, start, end))
         });
-        for (order, (icon, start, end)) in shown.enumerate() {
+        game.status_tip = None;
+        for (order, (kind, icon, start, end)) in shown.enumerate() {
             let corner = [
                 SCREEN[0] - STATUS_RIGHT - STATUS_ICON - (order / per_column) as f32 * STATUS_STEP[0],
                 STATUS_TOP + (order % per_column) as f32 * STATUS_STEP[1],
             ];
+            // Pointed at: what it is and the time it has left, in a box at its left, rebuilt each frame.
+            if contains(corner, [STATUS_ICON; 2], pointer.0)
+                && let Some(info) = state_infos.get(&kind)
+            {
+                let left = end.filter(|_| info.time_limit).map(|end| end.saturating_duration_since(now).as_secs());
+                let lines = status_tip::lines(info, left, messages);
+                let widest = lines.iter().map(|(line, _)| font.width(line)).fold(0.0, f32::max);
+                let (box_corner, size) = status_tip::place(corner, widest, lines.len(), font.line_height());
+                tooltip.sprites.push((&assets.speech_fill, box_corner, size));
+                for (edge, piece) in overhead::border(size) {
+                    tooltip.sprites.push((&assets.speech_border, offset(box_corner, edge), piece));
+                }
+                for (row, (line, color)) in lines.iter().enumerate() {
+                    let at = status_tip::line_at(box_corner, row, font.line_height());
+                    tooltip.texts.push((line.clone(), offset(at, [1.0, 1.0]), [0, 0, 0]));
+                    tooltip.texts.push((line.clone(), at, *color));
+                }
+                game.status_tip = Some(lines.into_iter().map(|(line, _)| line).collect());
+            }
             let scale = (STATUS_ICON / icon.size[0].max(icon.size[1])).min(1.0);
             let size = icon.size.map(|value| value * scale);
             chat_layer.sprites.push((icon, offset(corner, [(STATUS_ICON - size[0]) / 2.0, (STATUS_ICON - size[1]) / 2.0]), size));
@@ -12132,6 +12159,10 @@ fn main() {
     });
     let skill_trees = lua::skill_trees(&grf).unwrap_or_default();
     let status_icon_files = lua::status_icons(&grf).unwrap_or_default();
+    let state_infos = lua::state_info(&grf).unwrap_or_else(|error| {
+        eprintln!("no status icon descriptions: {error}");
+        HashMap::new()
+    });
     let mut look_tables = lua::look_tables(&grf).unwrap_or_else(|error| {
         eprintln!("no equipment sprite names: {error}");
         LookTables::default()
@@ -12188,6 +12219,7 @@ fn main() {
         skill_info,
         skill_trees,
         status_icon_files,
+        state_infos,
         effect_table: effects::Table::load(),
         // Driven or screenshot runs stay quiet unless RUSTNAROK_CLIENT_SOUND=1.
         audio: (std::env::var("RUSTNAROK_CLIENT_SOUND").is_ok_and(|sound| sound == "1")

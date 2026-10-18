@@ -1,0 +1,122 @@
+{
+  "about": "Status icon tooltips (issue #224): a LV10 Blessing Scroll (12215) gives Blessing; pointing at its icon (the first, at the top right) shows its name in the buff colour, its description and the time left, which counts down; moving away hides it.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@item 12215 1"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "inventory_item": 12215
+      },
+      "count": 2
+    },
+    {
+      "wait_for": {
+        "packet": "0x0983",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        972,
+        182
+      ]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "status_icons.0.left_ms": 1000
+        }
+      }
+    },
+    {
+      "shot": "status-tip",
+      "crop": [
+        700,
+        140,
+        324,
+        140
+      ],
+      "threshold": 5
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "move": [
+        973,
+        182
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "status-tip-later",
+      "crop": [
+        700,
+        140,
+        324,
+        140
+      ],
+      "threshold": 5
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "status_tip": null
+        }
+      }
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

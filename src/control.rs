@@ -1327,6 +1327,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["partner"] = json!(game.partner);
     // The pickup popup's line while it shows.
     state["pickup_popup"] = json!(game.pickup_popup.as_ref().map(|popup| popup.text.clone()));
+    // The status icon tooltip's lines while one shows.
+    state["status_tip"] = json!(game.status_tip);
     orbs(&mut state["player"], None);
     state
 }
