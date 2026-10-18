@@ -573,6 +573,8 @@ struct Game {
     escape: Option<escape::Menu>,
     /// The option menu's audio settings, while open.
     audio_window: Option<options::AudioWindow>,
+    graphics_window: Option<options::GraphicsWindow>,
+    shortcuts_window: Option<options::ShortcutsWindow>,
     world_map: Option<worldmap::WorldMap>,
     /// The quest log and its window.
     quests: Vec<net::Quest>,
@@ -1455,6 +1457,8 @@ impl Game {
             || self.escape.is_some()
             || self.world_map.is_some()
             || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.item_window.as_ref().is_some_and(|window| window.hit(cursor, items).is_some())
             || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
             || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
@@ -2346,9 +2350,35 @@ fn login_position(window: &Texture) -> [f32; 2] {
     [((SCREEN[0] - window.size[0]) / 2.0).floor(), LOGIN_TOP]
 }
 
+fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
+    let number = match key {
+        Key::Named(NamedKey::F1) => 1,
+        Key::Named(NamedKey::F2) => 2,
+        Key::Named(NamedKey::F3) => 3,
+        Key::Named(NamedKey::F4) => 4,
+        Key::Named(NamedKey::F5) => 5,
+        Key::Named(NamedKey::F6) => 6,
+        Key::Named(NamedKey::F7) => 7,
+        Key::Named(NamedKey::F8) => 8,
+        Key::Named(NamedKey::F9) => 9,
+        Key::Named(NamedKey::F10) => 10,
+        Key::Named(NamedKey::F11) => 11,
+        Key::Named(NamedKey::F12) => 12,
+        Key::Character(text) => {
+            let mut characters = text.chars();
+            return characters
+                .next()
+                .filter(|character| !character.is_control() && characters.next().is_none())
+                .map(|character| options::ShortcutKey::Char(character.to_ascii_lowercase()));
+        }
+        _ => return None,
+    };
+    Some(options::ShortcutKey::NamedF(number))
+}
+
 /// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
 /// folder elsewhere.
-fn settings_path(name: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn settings_path(name: &str) -> Option<std::path::PathBuf> {
     let home = || Some(std::path::PathBuf::from(std::env::var_os("HOME")?));
     let folder = if cfg!(target_os = "macos") {
         home()?.join("Library/Application Support")
@@ -2644,8 +2674,9 @@ struct App {
     audio: Option<sound::Audio>,
     sound: sound::Settings,
     music: HashMap<String, String>,
-    /// /effect: effects are drawn and heard; off, they still play, unseen and silent. Kept until the client quits.
-    effects_on: bool,
+    /// /effect: effects are drawn and heard; off, they still play, unseen and silent.
+    graphics: options::GraphicsSettings,
+    shortcuts: options::ShortcutSettings,
     cursor_look: cursor::Cursor,
     /// The client's loading pictures, and the loading screen while it's up.
     loading_images: Vec<String>,
@@ -3135,8 +3166,15 @@ impl App {
                     game.escape = None;
                     game.audio_window = Some(options::AudioWindow::new());
                 }
-                // ponytail: the graphics and hotkey settings windows aren't made yet.
-                Some(escape::Choice::Graphics | escape::Choice::Hotkeys) | None => {}
+                Some(escape::Choice::Graphics) => {
+                    game.escape = None;
+                    game.graphics_window = Some(options::GraphicsWindow::new());
+                }
+                Some(escape::Choice::Hotkeys) => {
+                    game.escape = None;
+                    game.shortcuts_window = Some(options::ShortcutsWindow::new());
+                }
+                None => {}
             },
             // The audio settings: checkboxes and arrows (the sliders go on press).
             Scene::Game(game) if game.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
@@ -3150,6 +3188,24 @@ impl App {
                 }
                 if !window.frame.open {
                     game.audio_window = None;
+                }
+            }
+            Scene::Game(game) if game.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let window = game.graphics_window.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                if window.click(hit, &mut self.graphics) {
+                    self.graphics.save();
+                }
+                if !window.frame.open {
+                    game.graphics_window = None;
+                }
+            }
+            Scene::Game(game) if game.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let window = game.shortcuts_window.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                window.click(hit);
+                if !window.frame.open {
+                    game.shortcuts_window = None;
                 }
             }
             // The quest window: tabs, quests, their locks, and the picked one's details.
@@ -3931,6 +3987,12 @@ impl App {
             {
                 audio.set(&self.sound);
             }
+            if let Some(window) = &mut game.graphics_window {
+                window.drag_to(self.cursor);
+            }
+            if let Some(window) = &mut game.shortcuts_window {
+                window.drag_to(self.cursor);
+            }
             game.camera_goal.drag(self.cursor, self.modifiers);
             if let Some((_, start, moved)) = &mut game.dragging {
                 *moved |= (self.cursor[0] - start[0]).abs() + (self.cursor[1] - start[1]).abs() > 4.0;
@@ -4226,8 +4288,11 @@ impl App {
                 if slid {
                     self.sound.save();
                 }
+                let option_windows = game.graphics_window.as_mut().is_some_and(options::GraphicsWindow::drop_drag)
+                    | game.shortcuts_window.as_mut().is_some_and(options::ShortcutsWindow::drop_drag);
                 let windows = trade_moved
                     | slid
+                    | option_windows
                     | game.party_window.frame.drop_drag()
                     | game.status_window.frame.drop_drag()
                     | game.guild_window.frame.drop_drag()
@@ -4359,6 +4424,20 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && let Some(window) = &mut game.graphics_window
+            && let Some(hit) = window.hit(cursor)
+        {
+            window.press(hit, cursor);
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(window) = &mut game.shortcuts_window
+            && let Some(hit) = window.hit(cursor)
+        {
+            window.press(hit, cursor);
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
             && let Some(id) = game.window_at(cursor)
         {
             game.raise(id);
@@ -4451,8 +4530,14 @@ impl App {
             if let Some(id) = shown {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
             }
-        } else if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.effects_on) {
-            game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+        } else {
+            let effects_on = self.graphics.effects_on;
+            if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.graphics.effects_on) {
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+            }
+            if effects_on != self.graphics.effects_on {
+                self.graphics.save();
+            }
         }
     }
 
@@ -4475,6 +4560,20 @@ impl App {
             return;
         }
         let key = &event.logical_key;
+        if let Scene::Game(game) = &mut self.scene
+            && game.shortcuts_window.as_ref().is_some_and(|window| window.listening.is_some())
+        {
+            if let Some(key) = shortcut_key(key) {
+                if game.shortcuts_window.as_mut().unwrap().bind_key(key, &mut self.shortcuts) {
+                    self.shortcuts.save();
+                }
+                return;
+            }
+            if *key == Key::Named(NamedKey::Escape) {
+                game.shortcuts_window.as_mut().unwrap().listening = None;
+                return;
+            }
+        }
         // Ctrl+Cmd+F, as Macs have it, or Alt+Enter elsewhere: fullscreen (the canvas scaled to fit, bars on the sides), or back.
         let fullscreen = if cfg!(target_os = "macos") {
             self.modifiers.super_key() && self.modifiers.control_key() && event.physical_key == PhysicalKey::Code(KeyCode::KeyF)
@@ -4586,18 +4685,18 @@ impl App {
                 return;
             }
         }
-        // F1-F9 press the hotkeys of the first row; F12 shows or hides the bar.
+        // Configured function keys press hotkeys; an unbound F12 shows or hides the bar.
+        // ponytail: letter bindings are saved in the shortcuts window for Battle Mode later; without it they
+        // would steal the first character of chat.
         if let Scene::Game(game) = &mut self.scene
-            && let Key::Named(named) = key
+            && let Some(shortcut) = shortcut_key(key)
+            && matches!(shortcut, options::ShortcutKey::NamedF(_))
         {
-            let function = [NamedKey::F1, NamedKey::F2, NamedKey::F3, NamedKey::F4, NamedKey::F5, NamedKey::F6, NamedKey::F7, NamedKey::F8, NamedKey::F9]
-                .iter()
-                .position(|function| function == named);
-            if let Some(slot) = function {
+            if let Some(slot) = self.shortcuts.slot_for(shortcut) {
                 game.press_hotkey(slot);
                 return;
             }
-            if *named == NamedKey::F12 {
+            if shortcut == options::ShortcutKey::NamedF(12) {
                 game.hotkeys.frame.toggle();
                 return;
             }
@@ -5200,6 +5299,8 @@ impl App {
                     amount: None,
                     escape: None,
                     audio_window: None,
+                    graphics_window: None,
+                    shortcuts_window: None,
                     world_map: None,
                     quests: Vec::new(),
                     quest_window: quest::QuestWindow::default(),
@@ -7645,7 +7746,7 @@ impl App {
         }
         let player_feet = game.world.cell_position(player_cell);
         game.camera.target = player_feet;
-        if self.effects_on {
+        if self.graphics.effects_on {
             game.camera.target[1] += game.effects.quake(now);
         }
         game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame));
@@ -8314,7 +8415,7 @@ impl App {
         }
         // Weather over the map, under the names and windows.
         let mut weather_layer = Layer::default();
-        if self.effects_on {
+        if self.graphics.effects_on {
             game.weather.draw(&mut weather_layer, &assets.weather, now);
         }
         let mut layers = vec![weather_layer, base, cutin_layer, chat_layer];
@@ -8669,6 +8770,12 @@ impl App {
         if let Some(window) = &game.audio_window {
             window.draw(&mut shop_layer, &assets.chrome, &assets.options, font, messages, sound, pointer.0);
         }
+        if let Some(window) = &game.graphics_window {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.options, font, messages, &self.graphics, pointer.0);
+        }
+        if let Some(window) = &game.shortcuts_window {
+            window.draw(&mut shop_layer, &assets.chrome, font, messages, &self.shortcuts, pointer.0);
+        }
         let mut menu_layer = Layer::default();
         if let Some(menu) = &game.menu {
             menu.draw(&mut menu_layer, &assets.context_menu, font, pointer.0);
@@ -8718,7 +8825,7 @@ impl App {
 
         game.effects.advance(gpu, now, yaw);
         // With /effect off, effects still play on, unseen, and their sounds come due without being heard.
-        let effects_on = self.effects_on;
+        let effects_on = self.graphics.effects_on;
         if let Some(audio) = audio {
             for (file, at) in game.effects.due_sounds(now).into_iter().filter(|_| effects_on) {
                 let distance = (at[0] - player_feet[0]).abs().max((at[2] - player_feet[2]).abs()) / world::CELL;
@@ -8913,9 +9020,13 @@ impl ApplicationHandler<NetEvent> for App {
                     // Through the chat line, so the client's commands (/organize, %) work too.
                     let say_at = std::env::var("RUSTNAROK_CLIENT_SAY_AT").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(1.0);
                     if let Some(texts) = game.auto_say.take_if(|_| game.entered.elapsed().as_secs_f32() >= say_at) {
+                        let effects_on = self.graphics.effects_on;
                         for text in texts.split('|') {
                             game.chat.input = text.to_owned();
-                            let _ = game.send_chat(false, false, &self.messages, &mut self.effects_on);
+                            let _ = game.send_chat(false, false, &self.messages, &mut self.graphics.effects_on);
+                        }
+                        if effects_on != self.graphics.effects_on {
+                            self.graphics.save();
                         }
                     }
                     // Dev switch RUSTNAROK_CLIENT_GUILD=window: the guild window, once the guild is known.
@@ -8955,11 +9066,15 @@ impl ApplicationHandler<NetEvent> for App {
                     }
                     if let Some(whispers) = std::env::var("RUSTNAROK_CLIENT_WHISPER").ok().filter(|_| game.whispered.is_empty() && game.chat.whisper.is_empty())
                     {
+                        let effects_on = self.graphics.effects_on;
                         for whisper in whispers.split(';') {
                             let (to, text) = whisper.split_once('|').unwrap_or((whisper, "hi"));
                             game.chat.whisper = to.to_owned();
                             game.chat.input = text.to_owned();
-                            let _ = game.send_chat(false, false, &self.messages, &mut self.effects_on);
+                            let _ = game.send_chat(false, false, &self.messages, &mut self.graphics.effects_on);
+                        }
+                        if effects_on != self.graphics.effects_on {
+                            self.graphics.save();
                         }
                     }
                 }
@@ -9130,6 +9245,8 @@ fn main() {
     let picking = connections.len() > 1 && std::env::var_os("RUSTNAROK_CLIENT_SERVER").is_none() && std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none();
     let quest_texts = quest::texts(&grf);
     let sound = sound::Settings::load();
+    let graphics = options::GraphicsSettings::load();
+    let shortcuts = options::ShortcutSettings::load();
     let mut app = App {
         grf,
         job_names,
@@ -9157,7 +9274,8 @@ fn main() {
         .flatten(),
         sound,
         music,
-        effects_on: true,
+        graphics,
+        shortcuts,
         cursor_look,
         loading_images,
         loading: None,

@@ -897,6 +897,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("MailWrite", game.mail.compose.is_some()),
         ("NewMail", game.mail.unread),
         ("AudioSettings", game.audio_window.is_some()),
+        ("GraphicsSettings", game.graphics_window.is_some()),
+        ("ShortcutSettings", game.shortcuts_window.is_some()),
         ("WorldMap", game.world_map.is_some()),
         ("Quests", game.quest_window.frame.open),
     ];
