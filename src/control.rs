@@ -1007,6 +1007,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             game.guild.iter().flat_map(|guild| game.guild_window.button_boxes(guild)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(question_buttons)
+        .chain(game.hotkeys.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.level_ups.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.skill_description.iter().map(|window| json!({"kind": "button", "name": "skill_description_close", "box": window.close_box()})))
         .chain(
