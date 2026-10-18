@@ -681,7 +681,13 @@ const CHARM_SCALE: f32 = 0.4;
 const CHARM_TINTS: [[f32; 4]; 4] = [[0.5, 0.7, 1.0, 1.0], [0.75, 0.55, 0.35, 1.0], [1.0, 0.45, 0.35, 1.0], [0.5, 1.0, 0.55, 1.0]];
 const CHARM_NAMES: [&str; 4] = ["water", "earth", "fire", "wind"];
 /// Heal, Highness Heal and Coluceo Heal report how much they healed.
-const HEAL_SKILLS: [u16; 3] = [28, 2043, 2044];
+/// Heals that show their amount and an effect by it: Heal, Lord Heal, the NPC heal, Coluceo Heal, Highness Heal and the
+/// homunculus's (not Epiclesis).
+const HEAL_SKILLS: [u16; 6] = [28, 334, 729, 2043, 2051, 8001];
+/// SP Recovery's amount shows blue.
+const SP_RECOVERY: u16 = 9;
+/// The look a trap takes when it goes off.
+const FIRED_TRAP: u32 = 0x8c;
 const STATUS_ICON: f32 = status_tip::ICON;
 /// Steps of the clock drawn over a status icon.
 const CLOCK_STEPS: usize = 32;
@@ -724,6 +730,31 @@ const BOSS_SHOWN: usize = 1225;
 const BOSS_ALARM: u16 = 253;
 /// The spark of a landed hit, and a warp portal's rings.
 const EF_HIT1: u32 = 0;
+/// A critical's second spark, and the spark of the Taekwon line's blows.
+const EF_HIT2: u32 = 1;
+const TAEKWON_HIT: u32 = 434;
+/// The Taekwon line: Taekwon, Star Gladiator (and its union), Star Emperor (and its union).
+const TAEKWON_LINE: [u16; 5] = [4046, 4047, 4048, 4239, 4240];
+
+/// The sparks a landed normal attack shows on its target: none for a miss or a lucky dodge; EF_HIT1 (434 from the
+/// Taekwon line), and EF_HIT2 too on a critical.
+fn attack_sparks(damage: i32, kind: u8, taekwon: bool) -> Vec<u32> {
+    if damage <= 0 || !matches!(kind, 0 | 4 | 8 | 9 | 10 | 13) {
+        return Vec::new();
+    }
+    let first = if taekwon { TAEKWON_HIT } else { EF_HIT1 };
+    if matches!(kind, 10 | 13) { vec![first, EF_HIT2] } else { vec![first] }
+}
+
+/// A heal's effect by its amount.
+fn heal_effect(amount: i32) -> u32 {
+    match amount {
+        4000.. => 325,
+        2000.. => 313,
+        200.. => 312,
+        _ => 7,
+    }
+}
 const EF_WARPZONE2: u32 = 321;
 /// The MVP's banner (mvp.str).
 const EF_MVP: u32 = 68;
@@ -11067,15 +11098,17 @@ impl App {
                     Some(Dialog { npc: 0, lines: Vec::new(), button: DialogButton::None, menu: Some((items, 0)), input: None, warp: Some((skill, maps)) });
             }
             MapEvent::Act(act) => {
-                // A landed hit on a monster sparks (EF_HIT1).
-                let monster = game.units.get(&act.target).is_some_and(|actor| actor.kind == MONSTER);
-                if let Some(gpu) = gpu
-                    && monster
-                    && act.damage > 0
-                    && matches!(act.kind, 0 | 4 | 8 | 9 | 10 | 13)
-                {
+                // A landed hit sparks on whatever it hit, each hit as it lands.
+                let attacker_job = if act.source == game.account_id { Some(game.player.job) } else { game.units.get(&act.source).map(|actor| actor.job) };
+                let sparks = attack_sparks(act.damage, act.kind, attacker_job.is_some_and(|job| TAEKWON_LINE.contains(&job)));
+                if let Some(gpu) = gpu {
                     let lands = Instant::now() + Duration::from_millis(act.source_speed.max(0) as u64);
-                    game.play_effect_from(gpu, grf, table, EF_HIT1, act.target, lands);
+                    // ponytail: the hits of a double attack 200 ms apart, as a skill's.
+                    for hit in 0..u32::from(act.hits.max(1)) {
+                        for &spark in &sparks {
+                            game.play_effect_from(gpu, grf, table, spark, act.target, lands + Duration::from_millis(200) * hit);
+                        }
+                    }
                 }
                 game.act(act, look_tables);
             }
@@ -12759,24 +12792,46 @@ impl App {
                 let gap = Duration::from_millis(skill_motions::hit_gap_ms(skill));
                 if act.damage != 0 && !(act.source == act.target && act.kind == 6) {
                     game.show_hit(&act, Some(hit_ms), gap);
-                    // Hit by hit: what comes at the target first (a bolt's arrows), then what shows as it lands.
+                    // Hit by hit, as each lands: the skill's hit effects on the target. A skill the table lacks: what
+                    // comes at the target first (a bolt's arrows), then what shows as it lands.
                     if let Some(gpu) = gpu {
                         let now = Instant::now();
                         let lands = now + Duration::from_secs_f32(hit_ms / 1000.0);
                         for hit in 0..u32::from(act.hits.max(1)) {
-                            for effect in table.skill(skill, "beforeHitEffectId") {
-                                game.play_effect_from(gpu, grf, table, effect, act.target, now + gap * hit);
-                            }
-                            for effect in table.skill(skill, "hitEffectId") {
-                                game.play_effect_from(gpu, grf, table, effect, act.target, lands + gap * hit);
+                            match table.hit(skill) {
+                                Some(effects) => {
+                                    for effect in effects.into_iter().flatten() {
+                                        game.play_effect_from(gpu, grf, table, effect, act.target, lands + gap * hit);
+                                    }
+                                }
+                                None => {
+                                    for effect in table.skill(skill, "beforeHitEffectId") {
+                                        game.play_effect_from(gpu, grf, table, effect, act.target, now + gap * hit);
+                                    }
+                                    for effect in table.skill(skill, "hitEffectId") {
+                                        game.play_effect_from(gpu, grf, table, effect, act.target, lands + gap * hit);
+                                    }
+                                }
                             }
                         }
                     }
                 }
-                skill_effects(game, skill, "effectId", act.target);
-                skill_effects(game, skill, "effectIdOnCaster", act.source);
+                // As the packet comes: the caster's effect, and the skill's own (on the caster or the target).
+                if let Some(gpu) = gpu {
+                    if let Some(effect) = table.caster(skill) {
+                        game.play_effect(gpu, grf, table, effect, act.source);
+                    }
+                    if let Some(struck) = table.struck(skill) {
+                        for &(who, effect) in struck {
+                            game.play_effect(gpu, grf, table, effect, if who == effects::Who::Caster { act.source } else { act.target });
+                        }
+                    }
+                }
+                if table.struck(skill).is_none() {
+                    skill_effects(game, skill, "effectId", act.target);
+                }
             }
-            MapEvent::SkillUsed { skill, amount, target, source, .. } => {
+            MapEvent::SkillUsed { skill, amount, target, source, ok } => {
                 game.casts.remove(&(source != game.account_id).then_some(source));
                 let me = game.account_id;
                 let target_cell = if target == me { Some(game.player.cell) } else { game.units.get(&target).map(|actor| actor.cell) };
@@ -12786,28 +12841,57 @@ impl App {
                     caster.face(cell);
                 }
                 game.skill_motion(source, skill, amount, overhead::Shout::Used, 1.0, &self.skill_info, look_tables);
-                if HEAL_SKILLS.contains(&skill) {
+                // A result of 0: only the motion and the name.
+                if !ok {
+                    return;
+                }
+                // Heals show their amount, green, and an effect by it; SP Recovery its amount, blue.
+                let heal = HEAL_SKILLS.contains(&skill);
+                if heal || skill == SP_RECOVERY {
                     game.damages.push(Damage {
                         target: (target != me).then_some(target),
                         amount,
                         start: Instant::now(),
-                        kind: DamageKind::Heal { sp: false },
+                        kind: DamageKind::Heal { sp: !heal },
                         flinch: None,
                         drift: [0.0; 2],
                         source: None,
                     });
                 }
-                skill_effects(game, skill, "effectId", target);
-                skill_effects(game, skill, "effectIdOnCaster", source);
+                match (heal, table.used(skill), gpu) {
+                    (true, _, Some(gpu)) => game.play_effect(gpu, grf, table, heal_effect(amount), target),
+                    (false, Some(used), Some(gpu)) => {
+                        for &(who, effect) in used {
+                            game.play_effect(gpu, grf, table, effect, if who == effects::Who::Caster { source } else { target });
+                        }
+                    }
+                    (false, None, _) => {
+                        skill_effects(game, skill, "effectId", target);
+                        skill_effects(game, skill, "effectIdOnCaster", source);
+                    }
+                    _ => {}
+                }
             }
             MapEvent::GroundSkill { skill, source, level, cell } => {
                 game.casts.remove(&(source != game.account_id).then_some(source));
-                if let Some(gpu) = gpu {
-                    for effect in table.skill(skill, "effectId") {
-                        game.play_effect_at(gpu, grf, table, effect, cell);
+                // At the cell or on the caster; a skill the table lacks: its effect at the cell and on the caster.
+                match (table.ground(skill), gpu) {
+                    (Some(ground), Some(gpu)) => {
+                        for &(who, effect) in ground {
+                            match who {
+                                effects::Who::Caster => game.play_effect(gpu, grf, table, effect, source),
+                                _ => game.play_effect_at(gpu, grf, table, effect, cell),
+                            }
+                        }
                     }
+                    (None, Some(gpu)) => {
+                        for effect in table.skill(skill, "effectId") {
+                            game.play_effect_at(gpu, grf, table, effect, cell);
+                        }
+                        skill_effects(game, skill, "effectIdOnCaster", source);
+                    }
+                    _ => {}
                 }
-                skill_effects(game, skill, "effectIdOnCaster", source);
                 let caster = if source == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&source) };
                 if let Some(caster) = caster {
                     caster.face([i32::from(cell[0]), i32::from(cell[1])]);
@@ -12975,11 +13059,16 @@ impl App {
                 }
             }
             MapEvent::LookChange { id, kind, value, extra } => {
-                // A skill's ground unit becoming another (rathena's Warp Portal opens this way): the new one's effect.
+                // A skill's ground unit becoming another (rathena's Warp Portal opens this way): the new one's effect. A trap
+                // going off (becoming 0x8c) first shows its trigger at its cell.
                 if kind == net::LOOK_JOB
                     && let Some(at) = game.effects.ground_unit_at(id)
                     && let Some(gpu) = gpu
                 {
+                    let trigger = game.effects.unit_kind(id).filter(|_| value == FIRED_TRAP).and_then(|old| table.trap(old));
+                    if let Some(effect) = trigger {
+                        game.effects.play(gpu, grf, table, effect, effects::Target::Ground, at, Instant::now());
+                    }
                     game.effects.play_unit(gpu, grf, table, value, id, at, Instant::now());
                 }
                 // A job change comes as the player's new look.
@@ -16808,5 +16897,15 @@ mod tests {
         // The pet's status comes last; the homunculus has three entries.
         assert_eq!(PET_CHOICES.map(|(label, _)| label), [592, 593, 594, 595, 596]);
         assert_eq!(HOMUNCULUS_CHOICES.map(|(label, _)| label), [1112, 1113, 1114]);
+    }
+
+    #[test]
+    fn sparks_landed_attacks_and_heals_by_amount() {
+        // A hit sparks EF_HIT1, a critical EF_HIT2 too, the Taekwon line 434; a miss or a lucky dodge nothing.
+        assert_eq!((attack_sparks(12, 0, false), attack_sparks(40, 10, false)), (vec![EF_HIT1], vec![EF_HIT1, EF_HIT2]));
+        assert_eq!(attack_sparks(12, 8, true), [TAEKWON_HIT]);
+        assert!(attack_sparks(0, 0, false).is_empty() && attack_sparks(12, 11, false).is_empty());
+        assert_eq!([heal_effect(5000), heal_effect(2000), heal_effect(450), heal_effect(80)], [325, 313, 312, 7]);
+        assert!(HEAL_SKILLS.contains(&2051) && !HEAL_SKILLS.contains(&2044), "Highness Heal, not Epiclesis");
     }
 }
