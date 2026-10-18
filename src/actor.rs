@@ -1471,6 +1471,10 @@ pub fn view_direction(rot: f32, yaw: f32, round: bool) -> u8 {
 
 /// Other units show this long after the server moves them.
 pub const REMOTE_DELAY: Duration = Duration::from_millis(72);
+/// A knockback slides the unit to its new cell over this long.
+const SLIDE: Duration = Duration::from_millis(200);
+// ponytail: farther than this many cells a move (a pet put back at its owner, say) jumps instead of sliding.
+const SLIDE_REACH: f32 = 5.0;
 /// A walk heard of after it ended replays at 13/10 the speed.
 const LATE_PACE: f32 = 10.0 / 13.0;
 
@@ -1532,6 +1536,8 @@ pub struct Actor {
     pub rot: f32,
     /// The facing came from the server (appearing, turning) rather than from walking or turning to a target.
     pub facing_from_server: bool,
+    /// Sliding (a knockback): the path is one straight move that doesn't turn the unit.
+    sliding: bool,
     /// Players only: 0 looking straight ahead, 1 and 2 turned to the sides.
     pub head_direction: u16,
     animation_started: Instant,
@@ -1589,6 +1595,7 @@ impl Actor {
             direction,
             rot: rot_of(direction),
             facing_from_server: true,
+            sliding: false,
             head_direction: 0,
             animation_started: now,
             shot: None,
@@ -1729,6 +1736,11 @@ impl Actor {
     }
 
     fn start_walking(&mut self, now: Instant) {
+        // A walk cuts a slide short at its end cell.
+        if let Some(cell) = self.sliding_to() {
+            self.stop_at(cell);
+            self.leg = (cell.map(|value| value as f32), now);
+        }
         self.ready = false;
         self.sitting = false;
         // Walking looks straight ahead again.
@@ -1744,6 +1756,7 @@ impl Actor {
 
     pub fn stop_at(&mut self, cell: [i32; 2]) {
         self.cell = cell;
+        self.sliding = false;
         if !self.path.is_empty() {
             self.animation_started = Instant::now();
         }
@@ -1757,10 +1770,12 @@ impl Actor {
     /// Advances along the path; returns the (fractional) cell the actor is at now.
     pub fn update(&mut self, now: Instant) -> [f32; 2] {
         while let Some(&(next, arrives)) = self.path.first() {
-            let step = [next[0] - self.cell[0], next[1] - self.cell[1]];
-            self.direction = world::direction(step);
-            self.rot = angle_of(step);
-            self.facing_from_server = false;
+            if !self.sliding {
+                let step = [next[0] - self.cell[0], next[1] - self.cell[1]];
+                self.direction = world::direction(step);
+                self.rot = angle_of(step);
+                self.facing_from_server = false;
+            }
             if now < arrives {
                 break;
             }
@@ -1771,9 +1786,27 @@ impl Actor {
             self.leg = (next.map(|value| value as f32), arrives);
             if self.path.is_empty() {
                 self.animation_started = now;
+                self.sliding = false;
             }
         }
         self.position(now)
+    }
+
+    /// Slides straight to `cell` from where it is drawn, over 200 ms, facing as it was (a knockback). A long way jumps.
+    pub fn slide_to(&mut self, cell: [i32; 2], now: Instant) {
+        let from = self.position(now);
+        if f32::hypot(cell[0] as f32 - from[0], cell[1] as f32 - from[1]) > SLIDE_REACH {
+            self.stop_at(cell);
+            return;
+        }
+        self.leg = (from, now);
+        self.path = vec![(cell, now + SLIDE)];
+        self.sliding = true;
+    }
+
+    /// The cell a slide under way ends on.
+    pub fn sliding_to(&self) -> Option<[i32; 2]> {
+        self.path.last().map(|&(cell, _)| cell).filter(|_| self.sliding)
     }
 
     /// Current animation and how far into it: a one-shot action while it plays, else idle or walk.
@@ -1793,7 +1826,7 @@ impl Actor {
                 Pace::Stretch(_) => {}
             }
         }
-        let action = if self.moving() {
+        let action = if self.moving() && !self.sliding {
             WALK
         } else if self.sitting {
             SIT
@@ -2180,6 +2213,24 @@ mod tests {
         assert_eq!(local_time((1000, start), 1500), start + Duration::from_millis(500));
         assert_eq!(local_time((1000, now), 900), now - Duration::from_millis(100));
         assert_eq!(local_time((u32::MAX - 10, start), 5), start + Duration::from_millis(16));
+    }
+
+    #[test]
+    fn slides_back_over_a_fifth_of_a_second() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut actor = Actor::new("a".into(), None, [10, 10], 4, 150);
+        actor.slide_to([10, 13], start);
+        // Straight there in 200 ms, still facing the way it did, and not walking.
+        assert_near(actor.update(at(0)), [10.0, 10.0]);
+        assert_near(actor.update(at(100)), [10.0, 11.5]);
+        assert_eq!((actor.direction, actor.sliding_to()), (4, Some([10, 13])));
+        assert_eq!(actor.animation(at(100)).0, IDLE);
+        assert_near(actor.update(at(200)), [10.0, 13.0]);
+        assert_eq!((actor.cell, actor.sliding_to(), actor.moving()), ([10, 13], None, false));
+        // Farther than five cells: a jump.
+        actor.slide_to([10, 20], at(300));
+        assert_eq!((actor.cell, actor.moving()), ([10, 20], false));
     }
 
     fn assert_near(a: [f32; 2], b: [f32; 2]) {

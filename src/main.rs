@@ -9347,15 +9347,24 @@ impl App {
                     player.walk(path);
                 }
             }
+            // A knockback (ZC_HIGHJUMP) slides the unit there; the stop that follows at the same cell leaves the slide
+            // running.
             MapEvent::Stop { id, position } | MapEvent::Slide { id, position } => {
                 let cell = position.map(i32::from);
-                if id == game.account_id {
-                    game.player.stop_at(cell);
-                    if let Some((_, arrived)) = &mut game.pending {
-                        *arrived = Some(Instant::now());
+                let slide = matches!(event, MapEvent::Slide { .. });
+                let now = control::now();
+                let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
+                if let Some(actor) = actor {
+                    if slide {
+                        actor.slide_to(cell, now);
+                    } else if actor.sliding_to() != Some(cell) {
+                        actor.stop_at(cell);
                     }
-                } else if let Some(actor) = game.units.get_mut(&id) {
-                    actor.stop_at(cell);
+                }
+                if id == game.account_id
+                    && let Some((_, arrived)) = &mut game.pending
+                {
+                    *arrived = Some(Instant::now());
                 }
             }
             // In a chat room, talk goes to its window.
