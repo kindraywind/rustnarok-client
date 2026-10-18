@@ -1,0 +1,15 @@
+// Chat log (issue #398): @chatfill prints 300 numbered lines, then one line too wide for the log. Loaded and unloaded
+// by scenarios/chat-log.json.
+-	script	Chat Fill	-1,{
+OnInit:
+	bindatcmd "chatfill", strnpcinfo(3) + "::OnFill";
+	end;
+OnFill:
+	for (.@i = 0; .@i < 300; .@i++)
+		dispbottom "line " + .@i;
+	dispbottom "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW end";
+	end;
+OnUnload:
+	unbindatcmd "chatfill";
+	end;
+}

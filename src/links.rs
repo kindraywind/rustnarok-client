@@ -148,6 +148,11 @@ pub fn marked(words: &str, target: &Target) -> String {
     format!("{START}{}{WORDS}{words}{END}", target.encode())
 }
 
+/// Whether the text holds an item or navigation link (the chat keeps such a line whole).
+pub fn has_links(text: &str) -> bool {
+    ["<ITEMLINK>", "<ITEML>", "<ITEM>", "<NAVI>"].iter().any(|tag| text.contains(tag))
+}
+
 /// The text with its item and navigation links made into marked runs, items named by `name_of` where the link carries
 /// no words (`<ITEML>`).
 pub fn mark(text: &str, name_of: &dyn Fn(&ItemLink) -> String) -> String {

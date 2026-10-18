@@ -1208,8 +1208,6 @@ struct Game {
     no_shift: bool,
     /// /noctrl: a click on a monster keeps attacking without Ctrl (saved; on unless turned off).
     no_ctrl: bool,
-    /// /skillfail: the red lines for some skill failures (saved; on unless turned off).
-    skill_fail: bool,
     /// /snap, /itemsnap, /skillsnap (saved; only /skillsnap on unless changed).
     snaps: Snaps,
     /// Where the cursor is drawn: the pointer, or the middle of what it snapped to.
@@ -2767,8 +2765,8 @@ impl Game {
     /// An incoming whisper: always a main-chat line, a 1:1 window when that sender's box is on, and one away reply.
     fn receive_whisper(&mut self, from: String, text: String) {
         let line = format!("(From {from}) : {text}");
-        self.chat_line_kind(line.clone(), WHISPER_COLOR, chat::Kind::Whisper);
-        self.chat.note_recent(&from);
+        self.chat_line_kind(format!("( From {from} ) : {text}"), WHISPER_COLOR, chat::Kind::Whisper);
+        self.chat.whispered_by(&from);
         let friend = self.friends.iter().any(|friend| friend.name.eq_ignore_ascii_case(&from));
         if self.whisper_open.opens(friend) {
             self.talks.ensure(&from);
@@ -2986,15 +2984,6 @@ impl Game {
                 let distance = self.camera_goal.distance();
                 self.camera_goal.set_distance(distance);
                 let line = messages.get(if on { ZOOM_OUT_ON } else { ZOOM_OUT_OFF }).cloned().unwrap_or_default();
-                self.chat_line(line, CHAT_ITEM);
-                Ok(())
-            }
-            chat::Command::SkillFail => {
-                self.skill_fail = !self.skill_fail;
-                if let Some(path) = settings_path("skillfail") {
-                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.skill_fail { "1" } else { "0" }));
-                }
-                let line = messages.get(if self.skill_fail { SKILL_FAIL_ON } else { SKILL_FAIL_OFF }).cloned().unwrap_or_default();
                 self.chat_line(line, CHAT_ITEM);
                 Ok(())
             }
@@ -5253,9 +5242,6 @@ const ALL_RIDING: u16 = 613;
 /// /noctrl's lines: on, off.
 const NO_CTRL_ON: usize = 717;
 const NO_CTRL_OFF: usize = 718;
-/// /skillfail's lines: on, off.
-const SKILL_FAIL_ON: usize = 730;
-const SKILL_FAIL_OFF: usize = 731;
 
 /// In reach to attack: at most range × 5 + 5.5 world units away (a cell is 5).
 fn in_attack_reach(from: [i32; 2], to: [i32; 2], range: i32) -> bool {
@@ -6256,6 +6242,10 @@ impl App {
             }
             if let Some(bank) = &mut game.bank {
                 bank.typing = false;
+            }
+            // A double click on a speaker's line in the log: whisper them (the click still reaches the world).
+            if let Some(name) = game.chat.log_click(cursor) {
+                game.chat.whisper_to(&name);
             }
         }
         match &mut self.scene {
@@ -7608,7 +7598,9 @@ impl App {
                 }
             }
             Scene::Game(game) if game.chat.on_list(cursor) || game.chat.blocks(cursor) => {
-                game.chat.click(cursor);
+                if let Some(id) = game.chat.click(cursor) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
                 // ponytail: a click on the chat bar opens the battle-mode line; Enter is the key the spec names.
                 game.chat_mode.open_line();
             }
@@ -8215,7 +8207,8 @@ impl App {
                     }
                 }
                 Some(_) => {}
-                None if game.chat.contains(self.cursor) => game.chat.scroll_by(rows),
+                // Three rows a notch.
+                None if game.chat.contains(self.cursor) => game.chat.scroll_by(rows * 3),
                 None => game.camera_goal.wheel(rows, Instant::now(), self.modifiers.control_key(), self.modifiers.shift_key()),
             }
         }
@@ -9624,6 +9617,10 @@ impl App {
                             match key {
                                 Key::Named(NamedKey::Tab) if typing => game.chat.naming = !game.chat.naming,
                                 Key::Named(NamedKey::Insert) => game.toggle_sit(),
+                                // PageUp / PageDown page the log; with Ctrl, to its top or bottom.
+                                Key::Named(key @ (NamedKey::PageUp | NamedKey::PageDown)) if game.chat_mode.chat_line_open() => {
+                                    game.chat.page(*key == NamedKey::PageDown, self.modifiers.control_key());
+                                }
                                 Key::Named(NamedKey::Enter) if typing && game.chat.naming => game.chat.naming = false,
                                 Key::Named(NamedKey::Enter) if typing => self.send_chat_input(self.modifiers.control_key(), self.modifiers.alt_key()),
                                 Key::Named(NamedKey::Backspace) if typing => {
@@ -10116,7 +10113,6 @@ impl App {
                     camera_snap: settings_path("camerasnap").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     quake_flip: false,
                     no_ctrl: settings_path("noctrl").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
-                    skill_fail: settings_path("skillfail").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
                     snaps: Snaps::load(),
                     cursor_at: [-1.0; 2],
                     attack: None,
@@ -12215,7 +12211,7 @@ impl App {
             MapEvent::WhisperResult(result) => {
                 let (to, text) = game.whispered.pop_front().unwrap_or_default();
                 let line = match result {
-                    0 => format!("(To {to}) : {text}"),
+                    0 => format!("( To {to} ) : {text}"),
                     1 => self.messages.get(WHISPER_FAILED).cloned().unwrap_or_default(),
                     _ => format!("{to}{}", self.messages.get(WHISPER_FAILED + usize::from(result) - 1).cloned().unwrap_or_default()),
                 };
@@ -12739,20 +12735,34 @@ impl App {
                 game.casts.remove(&caster);
                 game.cast_squares.remove(&caster);
             }
-            // Why the server refused a skill, in red; the cast bar and square stay.
-            MapEvent::SkillFailed { skill, detail, item, cause, .. } => {
-                let skill_name = self.skill_info.get(&skill).map_or_else(|| skill.to_string(), |info| info.name.clone());
-                let item_name = self.items.get(&item).map_or_else(|| item.to_string(), |info| info.name(true).to_owned());
-                for (id, fill) in skills::refusal_lines(skill, detail, cause, game.skill_fail) {
-                    let Some(template) = self.messages.get(id).filter(|template| !template.is_empty()) else { continue };
-                    let line = match fill {
-                        skills::Fill::Nothing => template.clone(),
-                        skills::Fill::Skill => rustnarok_client::messages::fill(template, &[&skill_name]),
-                        skills::Fill::Item => rustnarok_client::messages::fill(template, &[&item_name]),
-                        skills::Fill::ItemCount(count) => rustnarok_client::messages::fill(template, &[&item_name, &count]),
-                        skills::Fill::Number(number) => rustnarok_client::messages::fill(template, &[&number]),
-                    };
-                    game.chat_line(line, CHAT_ERROR);
+            MapEvent::SkillFailed { skill, detail, cause, .. } => {
+                game.casts.remove(&None);
+                // The client's messages for why: a skill's own reason, else the general cause.
+                let by_skill = (detail != 0).then(|| match skill {
+                    1 if detail < 7 => 159 + detail as usize,
+                    1 if detail == 7 => 383,
+                    27 => 214,
+                    50 => 205,
+                    52 => 207,
+                    _ => 204,
+                });
+                let by_cause = match cause {
+                    1 => Some(202),
+                    2 => Some(203),
+                    3 => Some(808),
+                    4 => Some(219),
+                    5 => Some(233),
+                    6 => Some(239),
+                    7 => Some(246),
+                    8 => Some(247),
+                    9 => Some(580),
+                    10 => Some(285),
+                    13 => Some(1398),
+                    83 => Some(661),
+                    _ => None,
+                };
+                if let Some(id) = by_cause.or(by_skill) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
             }
             // A pushcart comes and goes as a status, its type the status's value.
@@ -14341,6 +14351,7 @@ impl App {
         // The basic info and chat windows are kept as they're left.
         game.basic_info.save_if_changed();
         game.chat.save_if_changed();
+        game.chat.layout(&|text| font.width(text));
         game.chat_links = game.chat.draw(&mut chat_layer, &assets.chat, font, messages, open, caret, &name_of);
         // The input bar buttons' tooltips, over the pointer.
         if let Some(text) = game.chat.tooltip(pointer.0).and_then(|id| messages.get(id)) {
