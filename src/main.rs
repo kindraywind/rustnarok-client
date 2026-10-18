@@ -2264,10 +2264,12 @@ impl Game {
                         self.player.face(at);
                         let _ = self.session.pick_up(id);
                     }
+                    // The walk goes to the cell next to the item on the player's side (`pending_walk` notes the item).
                     PickStep::Walk if may_move(self.last_move, now) => {
+                        let spot = pickup_spot(self.player.cell, at, |cell| self.world.gat.walkable(cell));
                         self.last_move = Some(now);
                         self.pending_walk = Some((at, now));
-                        let _ = self.session.walk(at.map(|value| value as u16));
+                        let _ = self.session.walk(spot.map(|value| value as u16));
                     }
                     // Stopped out of reach after walking there: it can't be reached.
                     PickStep::Wait if arrived.zip(self.pending_walk).is_some_and(|(stopped, (_, sent))| stopped > sent) => self.pending = None,
@@ -5236,6 +5238,18 @@ fn may_talk(moving: bool, attacking: bool, sitting: bool) -> bool {
 /// An item can be picked up from the next cell, diagonals too.
 fn within_pickup(from: [i32; 2], at: [i32; 2]) -> bool {
     (at[0] - from[0]).abs().max((at[1] - from[1]).abs()) <= 1
+}
+
+/// Where a walk to pick up an item at `item` goes: the cell next to it one step toward the player (the item's own when
+/// the player is on it). When that can't be walked on, the first of its neighbours that can: right, right and down,
+/// right and up, left, left and down, left and up, down, up (+y up).
+fn pickup_spot(player: [i32; 2], item: [i32; 2], walkable: impl Fn([i32; 2]) -> bool) -> [i32; 2] {
+    const AROUND: [[i32; 2]; 8] = [[1, 0], [1, 1], [1, -1], [-1, 0], [-1, 1], [-1, -1], [0, 1], [0, -1]];
+    let toward = [item[0] + (player[0] - item[0]).signum(), item[1] + (player[1] - item[1]).signum()];
+    if walkable(toward) {
+        return toward;
+    }
+    AROUND.iter().map(|step| [item[0] + step[0], item[1] + step[1]]).find(|&cell| walkable(cell)).unwrap_or(toward)
 }
 
 /// What a pending pickup does this frame.
@@ -16182,6 +16196,18 @@ mod tests {
             [attack_refused(900, 1000, false), attack_refused(899, 1000, false), attack_refused(0, 1000, true)],
             [Some(OVERWEIGHT), None, Some(RIDING_NO_ATTACK)]
         );
+    }
+
+    #[test]
+    fn walks_beside_an_item_to_pick_it_up() {
+        let open = |_: [i32; 2]| true;
+        // From the west, the south-west and on top of it.
+        assert_eq!(pickup_spot([10, 10], [14, 10], open), [13, 10]);
+        assert_eq!(pickup_spot([10, 6], [14, 10], open), [13, 9]);
+        assert_eq!(pickup_spot([14, 10], [14, 10], open), [14, 10]);
+        // That cell a wall: the first open neighbour in the fixed order (east is first).
+        assert_eq!(pickup_spot([10, 10], [14, 10], |cell| cell != [13, 10]), [15, 10]);
+        assert_eq!(pickup_spot([10, 10], [14, 10], |cell| ![[13, 10], [15, 10], [15, 11]].contains(&cell)), [15, 9]);
     }
 
     #[test]
