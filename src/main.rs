@@ -646,6 +646,10 @@ const UNITS_PER_ZOOM: f32 = 2.5;
 /// How near and far the camera goes, outdoors and indoors; a wheel step, and how often the wheel counts.
 const DISTANCE_RANGE: [f32; 2] = [230.0, 400.0];
 const DISTANCE_RANGE_INDOOR: [f32; 2] = [230.0, 300.0];
+/// With /zoom on, outdoors the camera goes out to this; its lines: on, off.
+const ZOOM_OUT_DISTANCE: f32 = 730.0;
+const ZOOM_OUT_ON: usize = 3511;
+const ZOOM_OUT_OFF: usize = 3512;
 const WHEEL_STEP: f32 = 24.3;
 const WHEEL_GAP: Duration = Duration::from_millis(15);
 /// Shift + wheel tilts this many degrees a step.
@@ -720,7 +724,7 @@ struct Game {
     walks: u32,
     walk_held: bool,
     last_walk_try: Option<Instant>,
-    press_mark: Option<(Instant, bool)>,
+    press_mark: Option<(Instant, [f32; 2], bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
     shadow: Option<SpriteSet>,
@@ -1056,24 +1060,26 @@ struct CameraGoal {
     indoor: bool,
     /// The right button is down: where the pointer was last.
     dragging: Option<[f32; 2]>,
-    /// The last right press, and whether the pointer moved since.
-    last_press: Option<(Instant, bool)>,
+    /// The last right press: when, where, and whether the pointer moved off since.
+    last_press: Option<(Instant, [f32; 2], bool)>,
     /// The parts of a tilt and a zoom step dragged but not yet whole.
     carry: [f32; 2],
     last_wheel: Option<Instant>,
     /// The map's own camera table, which then sets the limits (and no double click resets).
     limits: Option<rustnarok_client::map::Viewpoint>,
+    /// /zoom: outdoors the camera goes out to ZOOM_OUT_DISTANCE.
+    zoom_out: bool,
 }
 
 impl CameraGoal {
     #[cfg(test)]
     fn new(indoor: bool) -> Self {
-        Self::arrive(indoor, None, [PITCH, ZOOM * UNITS_PER_ZOOM])
+        Self::arrive(indoor, None, [PITCH, ZOOM * UNITS_PER_ZOOM], false)
     }
 
     /// The goal on arriving on a map: the map's own table's start, or the tilt and distance the player left on this
     /// kind of map (within its limits); turned 0 outdoors, YAW_INDOOR indoors.
-    fn arrive(indoor: bool, limits: Option<rustnarok_client::map::Viewpoint>, saved: [f32; 2]) -> Self {
+    fn arrive(indoor: bool, limits: Option<rustnarok_client::map::Viewpoint>, saved: [f32; 2], zoom_out: bool) -> Self {
         let mut goal = Self {
             yaw: if indoor { YAW_INDOOR } else { 0.0 },
             pitch: PITCH,
@@ -1084,6 +1090,7 @@ impl CameraGoal {
             carry: [0.0; 2],
             last_wheel: None,
             limits,
+            zoom_out,
         };
         match limits {
             Some(table) => {
@@ -1118,9 +1125,15 @@ impl CameraGoal {
         self.zoom * UNITS_PER_ZOOM
     }
 
-    /// Moves the camera to `distance` world units, within the map's range.
+    /// Moves the camera to `distance` world units, within the map's range: its own table's, or the kind of map's
+    /// (further out outdoors with /zoom).
     fn set_distance(&mut self, distance: f32) {
-        let [near, far] = self.limits.map_or(if self.indoor { DISTANCE_RANGE_INDOOR } else { DISTANCE_RANGE }, |table| table.distance);
+        let [near, far] = match self.limits {
+            Some(table) => table.distance,
+            None if self.indoor => DISTANCE_RANGE_INDOOR,
+            None if self.zoom_out => [DISTANCE_RANGE[0], ZOOM_OUT_DISTANCE],
+            None => DISTANCE_RANGE,
+        };
         self.zoom = distance.clamp(near, far) / UNITS_PER_ZOOM;
     }
 
@@ -1132,7 +1145,7 @@ impl CameraGoal {
     /// Right button down. A second press within CAMERA_DOUBLE_CLICK with the pointer not moved at all resets: the
     /// distance with Ctrl, the tilt with Shift, otherwise (outdoors only) the turn, to the nearest whole circle.
     fn press(&mut self, cursor: [f32; 2], now: Instant, ctrl: bool, shift: bool) {
-        if self.limits.is_none() && self.last_press.is_some_and(|(at, moved)| !moved && now.saturating_duration_since(at) < CAMERA_DOUBLE_CLICK) {
+        if self.limits.is_none() && self.last_press.is_some_and(|(at, _, moved)| !moved && now.saturating_duration_since(at) < CAMERA_DOUBLE_CLICK) {
             if ctrl {
                 self.zoom = ZOOM;
             }
@@ -1143,14 +1156,14 @@ impl CameraGoal {
                 self.yaw = (self.yaw / 360.0).round() * 360.0;
             }
         }
-        self.last_press = Some((now, false));
+        self.last_press = Some((now, cursor, false));
         self.dragging = Some(cursor);
     }
 
-    /// The pointer moved: the next right press isn't a double click.
-    fn pointer_moved(&mut self) {
-        if let Some((_, moved)) = &mut self.last_press {
-            *moved = true;
+    /// The pointer moved to `cursor`: off the last press, the next right press isn't a double click.
+    fn pointer_moved(&mut self, cursor: [f32; 2]) {
+        if let Some((_, from, moved)) = &mut self.last_press {
+            *moved |= moved_off(*from, cursor);
         }
     }
 
@@ -2221,6 +2234,18 @@ impl Game {
                     let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.camera_snap { "1" } else { "0" }));
                 }
                 let line = messages.get(if self.camera_snap { CAMERA_ON } else { CAMERA_OFF }).cloned().unwrap_or_default();
+                self.chat_line(line, CHAT_ITEM);
+                Ok(())
+            }
+            chat::Command::Zoom => {
+                let on = !self.camera_goal.zoom_out;
+                if let Some(path) = settings_path("zoomout") {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if on { "1" } else { "0" }));
+                }
+                self.camera_goal.zoom_out = on;
+                let distance = self.camera_goal.distance();
+                self.camera_goal.set_distance(distance);
+                let line = messages.get(if on { ZOOM_OUT_ON } else { ZOOM_OUT_OFF }).cloned().unwrap_or_default();
                 self.chat_line(line, CHAT_ITEM);
                 Ok(())
             }
@@ -4051,6 +4076,11 @@ fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
 
 /// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
 /// folder elsewhere.
+/// Whether /zoom is on (saved; off unless turned on).
+fn zoom_out_saved() -> bool {
+    settings_path("zoomout").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1")
+}
+
 pub(crate) fn settings_path(name: &str) -> Option<std::path::PathBuf> {
     let home = || Some(std::path::PathBuf::from(std::env::var_os("HOME")?));
     let folder = if cfg!(target_os = "macos") {
@@ -4299,8 +4329,18 @@ fn may_move(last: Option<Instant>, now: Instant) -> bool {
 }
 
 /// Whether a press now, after the last one (when, and whether the pointer moved since), is a double press.
-fn double_press(last: Option<(Instant, bool)>, now: Instant) -> bool {
-    last.is_some_and(|(at, moved)| !moved && now.saturating_duration_since(at) < DOUBLE_PRESS)
+fn double_press(last: Option<(Instant, [f32; 2], bool)>, now: Instant) -> bool {
+    last.is_some_and(|(at, _, moved)| !moved && now.saturating_duration_since(at) < DOUBLE_PRESS)
+}
+
+/// How far the pointer may wander from a press and still count as still there (a double click, a click not a
+/// drag), in canvas pixels: a hand's tremor on a mouse or trackpad, which a scaled window turns into fractions.
+// ponytail: an estimate; one canvas pixel was too strict on a scaled window.
+const POINTER_SLACK: f32 = 2.0;
+
+/// Whether the pointer at `to` has moved off a press at `from`.
+fn moved_off(from: [f32; 2], to: [f32; 2]) -> bool {
+    (to[0] - from[0]).abs().max((to[1] - from[1]).abs()) >= POINTER_SLACK
 }
 
 fn offset(origin: [f32; 2], offset: [f32; 2]) -> [f32; 2] {
@@ -6250,10 +6290,11 @@ impl App {
     /// The pointer moved: windows and items being dragged follow it.
     fn pointer_moved(&mut self) {
         if let Scene::Game(game) = &mut self.scene {
-            if let Some((_, moved)) = &mut game.press_mark {
-                *moved = true;
+            let cursor = self.cursor;
+            if let Some((_, from, moved)) = &mut game.press_mark {
+                *moved |= moved_off(*from, cursor);
             }
-            if game.right_press.is_some() {
+            if game.right_press.is_some_and(|(from, _)| moved_off(from, cursor)) {
                 game.right_moved = true;
             }
             let (inventory_height, equipment_height, info_height) = (game.inventory.height(), game.equipment.height(), game.basic_info.height());
@@ -6333,7 +6374,7 @@ impl App {
             if let Some(window) = &mut game.shortcuts_window {
                 window.drag_to(self.cursor);
             }
-            game.camera_goal.pointer_moved();
+            game.camera_goal.pointer_moved(cursor);
             game.camera_goal.drag(self.cursor, self.modifiers);
             if let Some((_, start, moved)) = &mut game.dragging {
                 *moved |= (self.cursor[0] - start[0]).abs() + (self.cursor[1] - start[1]).abs() > 4.0;
@@ -6711,7 +6752,7 @@ impl App {
                     };
                     if let Some(key) = key {
                         game.hotkeys.keys[slot] = Some(key);
-                        let _ = game.session.set_hotkey(0, slot as u16, Some(key));
+                        let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, Some(key));
                     }
                 }
                 // A hotkey moved along the bar trades places with what's there; let go off the bar, it's taken off.
@@ -6725,13 +6766,13 @@ impl App {
                         Some(to) if to != from => {
                             game.hotkeys.keys.swap(from, to);
                             for slot in [from, to] {
-                                let _ = game.session.set_hotkey(0, slot as u16, game.hotkeys.keys[slot]);
+                                let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, game.hotkeys.keys[slot]);
                             }
                         }
                         Some(_) => {}
                         None => {
                             game.hotkeys.keys[from] = None;
-                            let _ = game.session.set_hotkey(0, from as u16, None);
+                            let _ = game.session.set_hotkey(game.hotkeys.tab(), from as u16, None);
                         }
                     }
                 }
@@ -6911,7 +6952,7 @@ impl App {
         {
             let now = Instant::now();
             let double = double_press(game.press_mark, now);
-            game.press_mark = Some((now, false));
+            game.press_mark = Some((now, cursor, false));
             let (shift, ctrl) = (self.modifiers.shift_key(), self.modifiers.control_key());
             // Alt + left press orders the mercenary (when it's out).
             if !double && self.modifiers.alt_key() && game.companion_press(false, cursor, shift) {
@@ -7298,6 +7339,7 @@ impl App {
                 ctrl: self.modifiers.control_key(),
                 repeat: event.repeat,
                 text_focus,
+                bar: if game.hotkeys.tab() == 0 { 1 } else { 2 },
             },
         );
         fired.is_some_and(|fired| self.perform_shortcut(fired))
@@ -7436,6 +7478,7 @@ impl App {
                 game.raise(Panel::Status);
             }
             shortcuts::Action::RotateHotkeys => game.hotkeys.rotate(),
+            shortcuts::Action::SwitchHotkeys => game.hotkeys.switch(),
             shortcuts::Action::Costume => {
                 if game.equipment.frame.open && game.equipment.showing_costume() {
                     game.equipment.frame.open = false;
@@ -7445,16 +7488,16 @@ impl App {
                     game.raise(Panel::Equipment);
                 }
             }
-            shortcuts::Action::Hotbar { bar: 1, slot } => game.press_hotkey(usize::from(slot)),
-            // ponytail: no window yet (memorial, commands, ground cursor, tip, party board, hunting, flags, hotbar 2). The key is eaten.
+            // Only the showing bar's keys come here (see shortcuts::action).
+            shortcuts::Action::Hotbar { slot, .. } => game.press_hotkey(usize::from(slot)),
+            // ponytail: no window yet (memorial, commands, ground cursor, tip, party board, hunting, flags). The key is eaten.
             shortcuts::Action::Memorial
             | shortcuts::Action::Commands
             | shortcuts::Action::GroundCursor
             | shortcuts::Action::Tip
             | shortcuts::Action::PartyBoard
             | shortcuts::Action::Hunting
-            | shortcuts::Action::Flag(_)
-            | shortcuts::Action::Hotbar { .. } => {}
+            | shortcuts::Action::Flag(_) => {}
             shortcuts::Action::Macro(_)
             | shortcuts::Action::Screenshot
             | shortcuts::Action::Minimap
@@ -8100,7 +8143,7 @@ impl App {
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
                 player.sync_companions(me.option, &self.grf);
                 let indoor = self.indoor.contains(&map_key(&map));
-                let camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
+                let camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor), zoom_out_saved());
                 let camera = camera_goal.camera(world.cell_position(position.map(f32::from)));
                 let now = Instant::now();
                 let minimap = minimap::load_map(&self.grf, &map);
@@ -8442,7 +8485,7 @@ impl App {
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
                 let indoor = self.indoor.contains(&map_key(&map));
-                game.camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
+                game.camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor), zoom_out_saved());
                 game.camera = game.camera_goal.camera(world.cell_position(position.map(f32::from)));
                 game.minimap = minimap::load_map(&self.grf, &map);
                 game.minimap_crop = None;
@@ -10684,12 +10727,7 @@ impl App {
                 }
             }
             MapEvent::InventoryExpansion(slots) => game.inventory.expansion = slots,
-            MapEvent::Hotkeys { tab: 0, keys, .. } => {
-                for (slot, key) in keys.into_iter().enumerate().take(game.hotkeys.keys.len()) {
-                    game.hotkeys.keys[slot] = key;
-                }
-            }
-            MapEvent::Hotkeys { .. } => {}
+            MapEvent::Hotkeys { tab, keys, .. } => game.hotkeys.set_tab(tab, keys),
             MapEvent::Skills(skills) => game.skills = skills,
             MapEvent::SkillChanged(changed) => match game.skills.iter_mut().find(|skill| skill.id == changed.id) {
                 // ZC_SKILLINFO_UPDATE doesn't say the kind.
@@ -13773,10 +13811,19 @@ mod tests {
         assert!((follow_step(Duration::from_secs_f32(1.0 / 60.0)) - 0.1).abs() < 1e-4);
         assert!((follow_step(Duration::from_secs_f32(2.0 / 60.0)) - 0.19).abs() < 1e-4);
         // The view left on each kind of map, within that kind's limits.
-        let outdoors = CameraGoal::arrive(false, None, [80.0, 500.0]);
+        let outdoors = CameraGoal::arrive(false, None, [80.0, 500.0], false);
         assert_eq!((outdoors.pitch, outdoors.distance(), outdoors.yaw), (65.0, 400.0, 0.0));
-        let indoors = CameraGoal::arrive(true, None, [20.0, 400.0]);
+        let indoors = CameraGoal::arrive(true, None, [20.0, 400.0], false);
         assert_eq!((indoors.pitch, indoors.distance(), indoors.yaw), (35.0, 300.0, YAW_INDOOR));
+        // /zoom: outdoors out to 730, indoors no further.
+        let mut far = CameraGoal::arrive(false, None, [45.0, 511.3], true);
+        assert!((far.distance() - 511.3).abs() < 0.01);
+        far.set_distance(1000.0);
+        assert_eq!(far.distance(), ZOOM_OUT_DISTANCE);
+        far.zoom_out = false;
+        far.set_distance(far.distance());
+        assert_eq!(far.distance(), 400.0);
+        assert_eq!(CameraGoal::arrive(true, None, [45.0, 511.3], true).distance(), 300.0);
         // A map's own table starts it, and holds it.
         let table = rustnarok_client::map::Viewpoint {
             distance: [210.0, 260.0],
@@ -13786,7 +13833,7 @@ mod tests {
             pitch: [35.0, 45.0],
             pitch_in: 40.0,
         };
-        let mut own = CameraGoal::arrive(false, Some(table), [80.0, 500.0]);
+        let mut own = CameraGoal::arrive(false, Some(table), [80.0, 500.0], true);
         assert_eq!((own.pitch, own.distance(), own.yaw), (40.0, 250.0, 50.0));
         own.steer(100.0, 0.0, false, false, false);
         assert_eq!(own.yaw, 65.0);
@@ -13841,9 +13888,13 @@ mod tests {
         outdoors.press([5.0, 5.0], now + Duration::from_millis(300), false, false);
         assert_eq!(outdoors.yaw, 360.0);
         outdoors.yaw = 30.0;
-        outdoors.pointer_moved();
-        outdoors.press([5.0, 5.0], now + Duration::from_millis(400), false, false);
+        outdoors.pointer_moved([9.0, 5.0]);
+        outdoors.press([9.0, 5.0], now + Duration::from_millis(400), false, false);
         assert_eq!(outdoors.yaw, 30.0, "moved: not a double click");
+        // A hand's tremor between the presses still makes one.
+        outdoors.pointer_moved([9.6, 5.4]);
+        outdoors.press([9.6, 5.4], now + Duration::from_millis(500), false, false);
+        assert_eq!(outdoors.yaw, 0.0, "a tremor isn't a move");
         // Indoors: the turn stays within 25 to 65 and isn't reset; the tilt is fixed at 60 without Ctrl.
         let mut indoors = CameraGoal::new(true);
         indoors.steer(100.0, 0.0, false, false, false);
@@ -13931,9 +13982,12 @@ mod tests {
         assert!(!may_move(Some(start), at(299)));
         assert!(may_move(Some(start), at(300)));
         // A second press: double only when soon and the pointer stayed still.
-        assert!(double_press(Some((start, false)), at(400)));
-        assert!(!double_press(Some((start, true)), at(400)));
-        assert!(!double_press(Some((start, false)), at(500)));
+        assert!(double_press(Some((start, [0.0; 2], false)), at(400)));
+        assert!(!double_press(Some((start, [0.0; 2], true)), at(400)));
+        assert!(!double_press(Some((start, [0.0; 2], false)), at(500)));
+        // A tremor isn't a move; two pixels are.
+        assert!(!moved_off([100.0, 100.0], [101.4, 99.2]));
+        assert!(moved_off([100.0, 100.0], [100.0, 102.0]));
         assert!(!double_press(None, start));
     }
 
