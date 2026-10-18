@@ -3,6 +3,7 @@
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::LookTables;
+use rustnarok_client::net;
 use rustnarok_client::text::Font;
 
 use crate::actor::{Look, Placed, SpriteSet, Timing};
@@ -46,7 +47,7 @@ const DESCRIPTION: [u8; 3] = [0x55, 0x55, 0x55];
 const RACE_JOBS: [u16; 2] = [0, 4218];
 const HAIRSTYLES: [usize; 2] = [23, 6];
 pub const HAIR_COLORS: usize = 9;
-/// rathena takes names of up to 23 bytes (EUC-KR).
+/// rathena takes names of up to 23 bytes.
 const NAME_BYTES: usize = 23;
 
 const TITLE_MESSAGE: usize = 3355;
@@ -249,16 +250,16 @@ impl Make {
     }
 
     // ponytail: rathena has no packet to check a new name, so the check only looks at its length.
-    /// The client's rule: at least 2 Hangul or 4 Latin letters (4 bytes in EUC-KR).
+    /// The client's rule: at least 2 Hangul or 4 Latin letters (4 bytes in the code page).
     fn name_long_enough(&self) -> bool {
-        encoding_rs::EUC_KR.encode(self.name.trim()).0.len() >= 4
+        net::encode_text(self.name.trim()).len() >= 4
     }
 
     /// Typed text, kept within what the server takes.
     pub fn type_text(&mut self, text: &str) {
         for character in text.chars().filter(|character| !character.is_control()) {
             let longer = format!("{}{character}", self.name);
-            if encoding_rs::EUC_KR.encode(&longer).0.len() <= NAME_BYTES {
+            if net::encode_text(&longer).len() <= NAME_BYTES {
                 self.name = longer;
             }
         }

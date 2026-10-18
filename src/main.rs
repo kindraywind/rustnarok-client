@@ -4925,6 +4925,11 @@ impl App {
         let proxy = self.proxy.clone();
         let [id, password] = self.fields.clone();
         let (server, version) = self.login_server();
+        // The connection's langtype (RUSTNAROK_CLIENT_LANGTYPE overrides it) picks the code page of chat and names.
+        let langtype = std::env::var("RUSTNAROK_CLIENT_LANGTYPE").ok().and_then(|langtype| langtype.parse().ok());
+        net::set_codepage(rustnarok_client::clientinfo::codepage(
+            langtype.unwrap_or_else(|| self.connections.get(self.connection).map_or(0, |connection| connection.langtype)),
+        ));
         std::thread::spawn(move || {
             let _ = proxy.send_event(NetEvent::Login(net::login(&server, version, &id, &password)));
         });
