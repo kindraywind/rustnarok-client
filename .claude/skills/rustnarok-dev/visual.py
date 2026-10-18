@@ -32,10 +32,12 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": 
               "identified": [1201], "unidentified": [1202], "inventory_has": [{"id": 1201, "cards": [4035, 0, 0, 0]}],
               "characters": {"1": "Name"} (at character select), "weather": [162] ([] for none),
               "state": {"pet.intimacy": 950, "pet": null, "scene": "char_select", "pin": "ask"},
-              "achievements": {"200005": "completed"}, "title": 1000, "state_at_least": {"cooldowns.8": 9000}}}
+              "achievements": {"200005": "completed"}, "title": 1000, "state_at_least": {"cooldowns.8": 9000},
+              "no_sound": "se_prtchbell_03.wav"}}
     (state: values at dotted paths of the game state (a number picks a list's element: "head_emblems.0.name"), or of the whole control state when the game state has no such
     field — e.g. "pin" ("ask"/"new"/"change"/"none") at character select; state_at_least: numbers there at least the
-    ones given; achievements: each one "completed" or "rewarded"; title: the one worn)
+    ones given; achievements: each one "completed" or "rewarded"; title: the one worn; no_sound: that wav didn't play in
+    the last 5 seconds)
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
 diff; `threshold` (percent, default 1) is how much change a shot takes before the report flags it.
@@ -215,6 +217,8 @@ def expect(wanted, state):
             failures.append(f"chat has no {value!r} (last: {chat[-3:]})")
         elif key == "no_chat" and any(value in line for line in chat):
             failures.append(f"chat has {value!r}")
+        elif key == "no_sound" and value in game.get("sounds_recent", []):
+            failures.append(f"{value} played in the last 5 s")
         elif key == "inventory_items" and game.get("inventory_items") != value:
             failures.append(f"inventory_items {game.get('inventory_items')} != {value}")
         elif key == "hp_at_least" and game.get("player", {}).get("hp", 0) < value:
@@ -296,7 +300,7 @@ def expect(wanted, state):
                     failures.append(f"achievement {achievement} is not {want}: {have}")
         elif key == "title" and game.get("title") != value:
             failures.append(f"title {game.get('title')} != {value}")
-        elif key not in ("achievements", "title", "state", "state_at_least", "chat", "no_chat", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
+        elif key not in ("achievements", "title", "state", "state_at_least", "chat", "no_chat", "no_sound", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
             failures.append(f"unknown expectation {key}")
     return failures
 

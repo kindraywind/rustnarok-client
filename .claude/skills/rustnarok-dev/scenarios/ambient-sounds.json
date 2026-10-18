@@ -1,0 +1,16 @@
+{
+  "about": "Map ambient sounds (issue #363). By Prontera's church (248, 318) the bell (se_prtchbell_03.wav, a 50x45 box at about cell 250, 330, range 70, every 4 s) plays at once and again a cycle later. 30 cells south (248, 288) it's past range + 75 and stays quiet.",
+  "account": "",
+  "slot": 0,
+  "env": {"RUSTNAROK_CLIENT_SOUND": "1"},
+  "steps": [
+    {"say": "@warp prontera 248 318"},
+    {"wait_for": {"event": "Sound se_prtchbell_03.wav", "ms": 8000}},
+    {"wait_for": {"event": "Sound se_prtchbell_03.wav", "ms": 8000}},
+    {"move": [1000, 740]},
+    {"shot": "by-the-church", "threshold": 100},
+    {"say": "@warp prontera 248 288"}, {"settle": 1500}, {"wait": 6000},
+    {"expect": {"no_sound": "se_prtchbell_03.wav"}},
+    {"say": "@warp prontera 156 180"}, {"settle": 1000}
+  ]
+}

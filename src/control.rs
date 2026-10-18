@@ -255,6 +255,10 @@ enum Seen {
 const LOG_SIZE: usize = 2000;
 static LOG: Mutex<Log> = Mutex::new(Log { next: 0, entries: VecDeque::new() });
 static SEEN: Condvar = Condvar::new();
+/// Effect sounds played lately, with when (for `sounds_recent`).
+static RECENT_SOUNDS: Mutex<VecDeque<(Instant, String)>> = Mutex::new(VecDeque::new());
+/// How long a played sound stays in `sounds_recent`.
+const RECENT: Duration = Duration::from_secs(5);
 /// Where the log stood at the last command other than `wait`: what a `wait` looks at by default.
 // ponytail: one mark for every connection (one driver at a time); keep one per connection if drivers ever share a client.
 static MARK: AtomicU64 = AtomicU64::new(0);
@@ -436,7 +440,18 @@ pub fn driven() -> bool {
 pub fn sound_played(name: &str) {
     if driven() {
         record(Seen::Event(format!("Sound {name}")), format!("{:05} == Sound {name}", trace_ms()));
+        RECENT_SOUNDS.lock().unwrap().push_back((now(), name.to_owned()));
     }
+}
+
+/// The effect sounds played in the last five seconds, oldest first.
+fn recent_sounds() -> Vec<String> {
+    let mut recent = RECENT_SOUNDS.lock().unwrap();
+    let now = now();
+    while recent.front().is_some_and(|(at, _)| now.saturating_duration_since(*at) > RECENT) {
+        recent.pop_front();
+    }
+    recent.iter().map(|(_, name)| name.clone()).collect()
 }
 
 /// Notes an event from the servers for `wait`: its variant's name, and what it says (a disconnection's reason, say).
@@ -1453,6 +1468,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         }).collect::<serde_json::Map<_, _>>(),
         "chat_height": game.chat.height(),
     });
+    // The effect sounds played in the last five seconds (`no_sound` in a scenario checks these).
+    state["sounds_recent"] = recent_sounds().into();
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
     state["storage_rows"] = game.storage.rows().into();
     state["skill_list_rows"] = game.skill_window.list_rows().into();

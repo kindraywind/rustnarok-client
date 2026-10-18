@@ -45,6 +45,7 @@
 
 mod achievement;
 mod actor;
+mod ambient;
 mod announce;
 mod aura;
 mod bank;
@@ -13728,6 +13729,13 @@ impl App {
         let players_first = game.players_first(self.modifiers.shift_key());
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
 
+        // The map's ambient sounds, each on its cycle.
+        if let Some(audio) = audio.as_mut() {
+            let at = actor::world_xz(game.player.position(now));
+            for (file, volume) in game.world.ambient.due(at, now) {
+                audio.play(grf, &file, volume);
+            }
+        }
         // The mercenary and the homunculus follow the player unless told otherwise.
         if let Some(id) = game.mercenary.as_ref().map(|hired| hired.id) {
             game.follow_player(id, false, now);

@@ -87,12 +87,26 @@ pub struct Model {
     pub scale: [f32; 3],
 }
 
+/// An ambient sound source (an RSW type-3 object): a wav played every `cycle` seconds from a box `width` × `height`
+/// around `position`, heard out to `range`, at `volume` times the effect volume.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SoundSource {
+    pub file: String,
+    pub position: [f32; 3],
+    pub volume: f32,
+    pub width: i32,
+    pub height: i32,
+    pub range: f32,
+    pub cycle: f32,
+}
+
 pub struct Rsw {
     pub ground_file: String,
     pub altitude_file: String,
     pub water: Option<Water>,
     pub light: Light,
     pub models: Vec<Model>,
+    pub sounds: Vec<SoundSource>,
 }
 
 impl Rsw {
@@ -142,6 +156,7 @@ impl Rsw {
         }
 
         let mut models = Vec::new();
+        let mut sounds = Vec::new();
         for _ in 0..reader.i32()?.max(0) {
             match reader.i32()? {
                 1 => {
@@ -159,14 +174,24 @@ impl Rsw {
                     reader.string(80)?; // node name
                     models.push(Model { name, file, position: reader.vector()?, rotation: reader.vector()?, scale: reader.vector()? });
                 }
-                // Light sources, sounds and effects aren't drawn yet; their sizes are fixed.
+                // Light sources and effects aren't drawn yet; their sizes are fixed.
                 2 => drop(reader.take(80 + 12 + 12 + 4)?),
-                3 => drop(reader.take(80 + 80 + 12 + 4 + 4 + 4 + 4 + if version >= (2, 0) { 4 } else { 0 })?),
+                // A sound: its name, the wav, where, how loud, its box, its range and cycle (before 2.0 none: 4 s).
+                3 => {
+                    reader.string(80)?;
+                    let file = reader.string(80)?;
+                    let position = reader.vector()?;
+                    let volume = reader.f32()?;
+                    let (width, height) = (reader.i32()?, reader.i32()?);
+                    let range = reader.f32()?;
+                    let cycle = if version >= (2, 0) { reader.f32()? } else { 4.0 };
+                    sounds.push(SoundSource { file, position, volume, width, height, range, cycle });
+                }
                 4 => drop(reader.take(80 + 12 + 4 + 4 + 16)?),
                 other => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("unknown RSW object type {other}"))),
             }
         }
-        Ok(Self { ground_file, altitude_file, water, light, models })
+        Ok(Self { ground_file, altitude_file, water, light, models, sounds })
     }
 }
 
@@ -354,6 +379,54 @@ pub fn parse_viewpoints(text: &str) -> HashMap<String, Viewpoint> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hand-made RSW of `version` holding one sound object.
+    fn rsw_with_a_sound(version: (u8, u8)) -> Vec<u8> {
+        let text = |bytes: &mut Vec<u8>, value: &str, length: usize| {
+            let mut field = value.as_bytes().to_vec();
+            field.resize(length, 0);
+            bytes.extend(field);
+        };
+        let numbers = |bytes: &mut Vec<u8>, values: &[f32]| values.iter().for_each(|value| bytes.extend(value.to_le_bytes()));
+        let mut bytes = b"GRSW".to_vec();
+        bytes.extend([version.0, version.1]);
+        for name in ["", "prontera.gnd", "prontera.gat", ""] {
+            text(&mut bytes, name, 40);
+        }
+        // Water: level, kind, wave height, speed, pitch, animation speed.
+        numbers(&mut bytes, &[0.0]);
+        bytes.extend(0i32.to_le_bytes());
+        numbers(&mut bytes, &[1.0, 2.0, 50.0]);
+        bytes.extend(3i32.to_le_bytes());
+        // Light: longitude, latitude, diffuse, ambient, opacity; then the ground bounds.
+        bytes.extend(45i32.to_le_bytes());
+        bytes.extend(45i32.to_le_bytes());
+        numbers(&mut bytes, &[1.0, 1.0, 1.0, 0.3, 0.3, 0.3, 0.5]);
+        bytes.extend([0; 16]);
+        bytes.extend(1i32.to_le_bytes());
+        bytes.extend(3i32.to_le_bytes());
+        text(&mut bytes, "bell", 80);
+        text(&mut bytes, "se_prtchbell_03.wav", 80);
+        numbers(&mut bytes, &[-12.5, -40.0, 610.0, 0.8]);
+        bytes.extend(50i32.to_le_bytes());
+        bytes.extend(45i32.to_le_bytes());
+        numbers(&mut bytes, &[70.0]);
+        if version >= (2, 0) {
+            numbers(&mut bytes, &[6.0]);
+        }
+        bytes
+    }
+
+    #[test]
+    fn reads_sound_sources() {
+        let rsw = Rsw::parse(&rsw_with_a_sound((2, 1))).unwrap();
+        let bell =
+            SoundSource { file: "se_prtchbell_03.wav".into(), position: [-12.5, -40.0, 610.0], volume: 0.8, width: 50, height: 45, range: 70.0, cycle: 6.0 };
+        assert_eq!((rsw.sounds.as_slice(), rsw.models.len()), (std::slice::from_ref(&bell), 0));
+        // Before 2.0 there's no cycle: 4 seconds.
+        let old = Rsw::parse(&rsw_with_a_sound((1, 9))).unwrap();
+        assert_eq!(old.sounds[0].cycle, 4.0);
+    }
 
     #[test]
     fn finds_the_ground_between_a_cells_corners() {
