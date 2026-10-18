@@ -75,6 +75,9 @@ const WORLD_VIEW: [&str; 4] = [
 /// The battlegrounds the queue window lists (`EntryQueueList`); a translation's copy in the data folder has rathena's
 /// names.
 const ENTRY_QUEUE: &str = "data\\luafiles514\\lua files\\entryqueue\\entryqueuelist.lub";
+/// Per monster job, how big its sprite is drawn (`tbl[job].MonsterSize`). The new file is read second and wins.
+const MONSTER_SIZE: &str = "system\\monster_size_effect.lub";
+const MONSTER_SIZE_NEW: &str = "system\\monster_size_effect_new.lub";
 
 /// A battleground the queue window lists.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -778,6 +781,65 @@ fn state_infos(lua: &Lua) -> io::Result<HashMap<u16, StateInfo>> {
     Ok(infos)
 }
 
+/// Sprite scales by monster job. A job in neither file is absent, and drawn at 1×. The new file wins where both
+/// list the job. A file that fails to parse is skipped; the other still counts.
+pub fn monster_sizes(grf: &Grf) -> HashMap<u16, f32> {
+    let mut sizes = HashMap::new();
+    for path in [MONSTER_SIZE, MONSTER_SIZE_NEW] {
+        match grf.read(path) {
+            Ok(bytes) => {
+                if let Err(error) = merge_monster_sizes(&mut sizes, &bytes) {
+                    eprintln!("monster sizes ({path}): {error}");
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => eprintln!("monster sizes ({path}): {error}"),
+        }
+    }
+    sizes
+}
+
+/// The old table, then the new one over it. A missing side is skipped.
+#[cfg(test)]
+fn monster_size_tables(old: Option<&[u8]>, new: Option<&[u8]>) -> io::Result<HashMap<u16, f32>> {
+    let mut sizes = HashMap::new();
+    for bytes in [old, new].into_iter().flatten() {
+        merge_monster_sizes(&mut sizes, bytes)?;
+    }
+    Ok(sizes)
+}
+
+/// `tbl[job].MonsterSize` from one size-effect file, written over `sizes`.
+fn merge_monster_sizes(sizes: &mut HashMap<u16, f32>, bytes: &[u8]) -> io::Result<()> {
+    let lua = new_lua()?;
+    exec_bytes(&lua, "monster_size_effect", bytes.to_vec())?;
+    let tbl: mlua::Table = lua.globals().get("tbl").map_err(lua_error)?;
+    for pair in tbl.pairs::<mlua::Value, mlua::Value>() {
+        let (key, value) = pair.map_err(lua_error)?;
+        let (Some(job), mlua::Value::Table(info)) = (number(&key).and_then(|id| u16::try_from(id).ok()), value) else { continue };
+        let Some(size) = info.get::<mlua::Value>("MonsterSize").ok().and_then(lua_f32) else { continue };
+        sizes.insert(job, size);
+    }
+    Ok(())
+}
+
+fn lua_f32(value: mlua::Value) -> Option<f32> {
+    match value {
+        mlua::Value::Integer(n) => Some(n as f32),
+        mlua::Value::Number(n) => Some(n as f32),
+        _ => None,
+    }
+}
+
+/// How big a unit is drawn: the size table's factor (1 when the job is not listed), times the ChangeSize percent
+/// (100 keeps the table's size) when that status is on.
+pub fn sprite_scale(table_factor: f32, change_percent: Option<i32>) -> f32 {
+    match change_percent {
+        Some(percent) => table_factor * percent as f32 / 100.0,
+        None => table_factor,
+    }
+}
+
 /// A field's box on a world map's picture (in its pixels: left, top, right, bottom), by its map's name (lowercase,
 /// no extension).
 #[derive(Debug, Clone, PartialEq)]
@@ -1454,6 +1516,36 @@ mod tests {
         // Translated where the translation has it; the newer item keeps the client's name.
         assert_eq!((items[&501].name.as_str(), items[&25_000].name.as_str()), ("Red Potion", "새 아이템"));
         assert!(super::layered(Err(std::io::ErrorKind::NotFound.into()), None).is_err());
+    }
+
+    #[test]
+    fn reads_monster_sizes_and_lets_the_new_table_win() {
+        let old = br#"
+            tbl = {
+                [1031] = { MonsterSize = 1.2, MonsterEff = -1 },
+                [1111] = { MonsterSize = 0.5, MonsterEff = { -1 } },
+                [2222] = { MonsterSize = 2 },
+            }
+        "#;
+        let new_table = br#"
+            tbl = {
+                [1031] = { MonsterSize = 1.5 },
+                [3333] = { MonsterSize = 2.5 },
+            }
+        "#;
+        let sizes = super::monster_size_tables(Some(old), Some(new_table)).unwrap();
+        // Poring (1002) is in neither table.
+        assert!(!sizes.contains_key(&1002));
+        assert_eq!(super::sprite_scale(sizes.get(&1002).copied().unwrap_or(1.0), None), 1.0);
+        // The new table replaces the old size. A job only the old table has stays.
+        assert_eq!((sizes[&1031], sizes[&1111], sizes[&2222], sizes[&3333]), (1.5, 0.5, 2.0, 2.5));
+        assert_eq!(super::monster_size_tables(Some(old), None).unwrap()[&1031], 1.2);
+        assert_eq!(super::monster_size_tables(None, Some(new_table)).unwrap()[&3333], 2.5);
+        // ChangeSize's percent multiplies the table factor. 100% leaves it.
+        assert_eq!(super::sprite_scale(sizes[&1031], Some(150)), 2.25);
+        assert_eq!(super::sprite_scale(sizes[&1031], Some(100)), 1.5);
+        assert_eq!(super::sprite_scale(1.0, Some(50)), 0.5);
+        assert_eq!(super::sprite_scale(1.2, None), 1.2);
     }
 
     #[test]

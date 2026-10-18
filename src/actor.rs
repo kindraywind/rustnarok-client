@@ -17,6 +17,9 @@ pub const WALK: usize = 1;
 
 /// The status (EFST_ON_PUSH_CART) a unit pushing a cart has; its value is the cart's type.
 pub const PUSH_CART: u16 = 673;
+/// EFST_CHANGE_SIZE (status.hpp). Its val1, the first value of ZC_MSG_STATE_CHANGE3, is the size in percent.
+pub const CHANGE_SIZE: u16 = 1420;
+// ponytail: EFST_CHANGE_SIZE_MONSTER (1421) is left out; apply it the same way if monsters are resized on that icon.
 
 // ponytail: cart types 1 to 9 as 손수레, 손수레1 … 손수레8, as the files run; baby jobs' carts (베이비손수레…) not yet.
 /// The sprite (without extension) of a pushcart type.
@@ -997,6 +1000,8 @@ pub struct Actor {
     heard: Option<(usize, usize)>,
     /// Locked by Blade Stop or Cursed Circle since then: the animation holds that frame.
     pub held: Option<Instant>,
+    /// ChangeSize's percent, when that status is on. It multiplies the size table's factor.
+    pub size_percent: Option<i32>,
 }
 
 impl Actor {
@@ -1026,6 +1031,7 @@ impl Actor {
             cart: None,
             heard: None,
             held: None,
+            size_percent: None,
         }
     }
 
