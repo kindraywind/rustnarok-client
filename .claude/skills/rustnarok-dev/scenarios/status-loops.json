@@ -1,0 +1,33 @@
+{
+  "about": "Looping status effects (issue #369): a Mage's Energy Coat (after its 5 s cast) leaves fading copies of the character behind it while it walks (the quickens' afterimage), on its own screen and on another player's. Ends a Novice with no skills.",
+  "account": "",
+  "slot": 0,
+  "second": {"account": "2", "slot": 0},
+  "steps": [
+    {"say": "@warp morocc 160 120"},
+    {"settle": 1500},
+    {"say": "@recall {second}"},
+    {"as": "second", "settle": 2000},
+    {"say": "@job 2"},
+    {"wait": 800},
+    {"say": "@allskill"},
+    {"wait": 800},
+    {"say": "@heal"},
+    {"wait": 300},
+    {"say": "@useskill 157 1 {first}"},
+    {"wait": 5500},
+    {"click_on": {"cell": [165, 120]}},
+    {"move": [1000, 740]},
+    {"wait": 350},
+    {"expect": {"state_at_least": {"player.ghosts": 1}}},
+    {"cmd": {"cmd": "clock", "action": "pause"}},
+    {"shot": "afterimage-own", "crop": [312, 184, 400, 300], "threshold": 30},
+    {"cmd": {"cmd": "clock", "action": "resume"}},
+    {"as": "second", "shot": "afterimage-seen", "crop": [312, 184, 400, 300], "threshold": 30},
+    {"wait": 1500},
+    {"say": "@skreset"},
+    {"wait": 500},
+    {"say": "@job 0"},
+    {"wait": 800}
+  ]
+}

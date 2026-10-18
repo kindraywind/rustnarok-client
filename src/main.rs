@@ -2640,6 +2640,31 @@ impl Game {
         }
     }
 
+    /// Starts or stops what a status keeps showing on its unit (the player's own works too): its looping effects, the
+    /// copies left behind it (the quickens' afterimage) and Cursed Circle's dark body.
+    fn status_loop(&mut self, gpu: Option<&Gpu>, grf: &Grf, table: &effects::Table, unit: u32, status: u16, on: bool) {
+        let key = (unit != self.account_id).then_some(unit);
+        let shown = table.status(status);
+        self.effects.forget_status(key, status);
+        let actor = match key {
+            None => Some(&mut self.player),
+            Some(id) => self.units.get_mut(&id),
+        };
+        let Some(actor) = actor else { return };
+        if shown.contains(&actor::AFTERIMAGE) {
+            actor.blur(status, on);
+        }
+        if actor::CURSED_CIRCLE.contains(&status) {
+            actor.cursed = on;
+        }
+        let at = self.world.cell_position(actor.cell.map(|value| value as f32));
+        if let Some(gpu) = gpu.filter(|_| on) {
+            for &effect in shown.iter().filter(|&&effect| effect != actor::AFTERIMAGE) {
+                self.effects.play(gpu, grf, table, effect, effects::Target::Status(key, status), at, Instant::now());
+            }
+        }
+    }
+
     /// Plays an effect at a cell.
     fn play_effect_at(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, cell: [u16; 2]) {
         let at = self.world.cell_position(cell.map(f32::from));
@@ -12772,6 +12797,7 @@ impl App {
                 }
             }
             MapEvent::StatusIcon { kind, id, on, left_ms, value, .. } => {
+                game.status_loop(gpu, grf, table, id, kind, on);
                 // ChangeSize's percent multiplies the size table when the status is on.
                 if kind == actor::CHANGE_SIZE || kind == actor::CHANGE_SIZE_MONSTER {
                     let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
@@ -13370,7 +13396,7 @@ impl App {
             let (feet, placed) = cart_frame(cart);
             carts.push((Owner::Player, feet, placed));
         }
-        let player_tint = actor::status_tint(game.player.body_state, game.player.health_state);
+        let player_tint = game.player.body_tint();
         let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
         // Our own character in Hiding shows its shadow alone (a frame with no sprite); cloaked or GM-hidden, nothing.
         match actor::seen(game.player.hide_option, true) {
@@ -13379,6 +13405,7 @@ impl App {
                     sprites.set_tint(player_tint);
                     let mut placed = sprites.frame(gpu, action, player_seen, head_direction, timing);
                     scale_frame(&mut placed, player_scale);
+                    game.player.leave_ghost(now, player_feet, &placed);
                     frames.push((Owner::Player, player_feet, placed));
                 }
             }
@@ -13448,12 +13475,13 @@ impl App {
                 let (feet, placed) = cart_frame(cart);
                 carts.push((Owner::Unit(id), feet, placed));
             }
-            let tint = crate::actor::status_tint(actor.body_state, actor.health_state);
+            let tint = actor.body_tint();
             let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent);
             if let Some(sprites) = &mut actor.sprites {
                 sprites.set_tint(tint);
                 let mut placed = sprites.frame(gpu, action, seen, head_direction, timing);
                 scale_frame(&mut placed, scale);
+                actor.leave_ghost(now, feet, &placed);
                 frames.push((Owner::Unit(id), feet, placed));
             }
             if !actor.cloaked {
@@ -13706,6 +13734,18 @@ impl App {
                 (sprites.texture(*key), *feet, *position, *size, tint, *angle, sprite_layer(index, player, flat))
             })
         }));
+        // The copies left behind units that blur (the quickens), fading out.
+        let blurring = std::iter::once((Owner::Player, &game.player)).chain(game.units.iter().map(|(&id, actor)| (Owner::Unit(id), actor)));
+        for (owner, actor) in blurring.filter(|(_, actor)| !actor.ghosts.is_empty()) {
+            let Some(sprites) = actor.sprites.as_ref() else { continue };
+            let (player, flat) = stand_of(&owner);
+            for ghost in &actor.ghosts {
+                let alpha = actor::ghost_alpha(now.saturating_duration_since(ghost.left));
+                billboards.extend(ghost.placed.iter().enumerate().filter_map(|(index, (key, position, size, angle))| {
+                    Some((sprites.texture_of(*key)?, ghost.feet, *position, *size, [1.0, 1.0, 1.0, alpha], *angle, sprite_layer(index, player, flat)))
+                }));
+            }
+        }
         for draw in &companion_draws {
             let actor = match draw.owner {
                 Owner::Player => &game.player,

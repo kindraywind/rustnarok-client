@@ -891,6 +891,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             let (action, frame) = animation(actor);
             unit["action"] = action.into();
             unit["frame"] = frame.into();
+            // Copies left behind it while a status blurs it (the quickens).
+            unit["ghosts"] = actor.ghosts.len().into();
             orbs(&mut unit, Some(id));
             if let Some(rect) = screen(Owner::Unit(id)) {
                 unit["screen"] = json!(rect);
@@ -1176,6 +1178,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "moving": game.player.moving(),
             // The falcon (25 above the ground) and the warg (on the ground), or null. Riding leaves the warg null.
             "falcon": companion_state(game.player.falcon.as_ref(), crate::actor::FALCON_HEIGHT),
+            // Copies left behind while a status blurs the player (the quickens).
+            "ghosts": game.player.ghosts.len(),
             "warg": companion_state(game.player.warg.as_ref(), 0.0),
             "cart": cart_state(game.player.cart.as_ref()),
             "casting": game.casts.contains_key(&None),
