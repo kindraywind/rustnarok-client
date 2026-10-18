@@ -806,6 +806,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
         .chain(game.skill_window.skill_boxes(&app.skill_trees, &jobs).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
         .chain(game.pick.iter().flat_map(|(list, _)| list.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
+        .chain(game.pick.iter().flat_map(|(list, _)| list.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
         .chain(game.pet.iter().flat_map(|pet| game.pet_window.button_boxes(pet)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
@@ -851,6 +852,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("Bank", game.bank.is_some()),
         ("PickList", game.pick.is_some()),
         ("GuildAsked", game.guild_asked.is_some()),
+        ("ItemMerge", game.pick.as_ref().is_some_and(|(list, _)| list.merging)),
         ("DealChoice", game.deal_choice.is_some()),
         ("Trade", game.trade.is_some()),
         ("TradeAsked", game.trade_asked.is_some()),
@@ -942,6 +944,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             let names = |antagonist: bool| guild.relations.iter().filter(|relation| relation.antagonist == antagonist).map(|relation| relation.name.as_str()).collect::<Vec<_>>();
             json!({"id": guild.id, "name": guild.name, "master": guild.master, "allies": names(false), "antagonists": names(true)})
         }),
+        // The item merge window: how many rows, and the picked stacks' indexes.
+        "merge": game.pick.as_ref().filter(|(list, _)| list.merging).map(|(list, _)| json!({"rows": list.items.len(), "picked": list.picked_indexes()})),
         "monster_info": game.monster_window.as_ref().map(|window| {
             let info = &window.info;
             json!({"class": info.class, "level": info.level, "hp": info.hp, "size": info.size, "race": info.race, "element": info.element})

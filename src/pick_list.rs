@@ -24,6 +24,12 @@ const LEFT: f32 = 16.0;
 const FOOTER: f32 = 27.0;
 const BUTTON: [f32; 2] = [42.0, 20.0];
 const SELECTED: [u8; 4] = [0x34, 0x6A, 0xE1, 0x80];
+/// Item merge: its title, the hint over the rows (two lines), and its refusals.
+// ponytail: data.grf has no picture for this window; the lines next to its title in msgstringtable.
+pub const MERGE_TITLE: usize = 2169;
+const MERGE_HINT: usize = 2170;
+const HINT: f32 = 28.0;
+const ONE_KIND: usize = 2172;
 
 pub struct Assets {
     pub strip: Texture,
@@ -65,6 +71,9 @@ pub struct PickList {
     pub making: bool,
     /// The rows are skills (their IDs in `id`), not items.
     pub skills: bool,
+    /// Item merge: several rows picked (in the order picked), each with its amount, under a hint.
+    pub merging: bool,
+    picked: Vec<usize>,
     selected: Option<usize>,
     scroll: usize,
     clicks: Clicks,
@@ -72,33 +81,70 @@ pub struct PickList {
 
 impl PickList {
     pub fn new(title: usize, items: Vec<InventoryItem>) -> Self {
-        let mut frame = Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor(), ((SCREEN[1] - Self::height()) / 2.0).floor()], WIDTH);
+        let height = TITLE_HEIGHT + PADDING * 2.0 + ROWS as f32 * ROW + FOOTER;
+        let mut frame = Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor(), ((SCREEN[1] - height) / 2.0).floor()], WIDTH);
         frame.open = true;
-        Self { frame, title, items, making: false, skills: false, selected: None, scroll: 0, clicks: Clicks::default() }
+        Self { frame, title, items, making: false, skills: false, merging: false, picked: Vec::new(), selected: None, scroll: 0, clicks: Clicks::default() }
     }
 
-    fn height() -> f32 {
-        TITLE_HEIGHT + PADDING * 2.0 + ROWS as f32 * ROW + FOOTER
+    /// The item merge window: the stacks sorted by item, then by index.
+    pub fn merging(mut items: Vec<InventoryItem>) -> Self {
+        items.sort_by_key(|item| (item.id, item.index));
+        Self { merging: true, ..Self::new(MERGE_TITLE, items) }
     }
 
-    fn buttons() -> ([f32; 2], [f32; 2]) {
-        let top = Self::height() - FOOTER + 4.0;
+    /// Where the rows begin.
+    fn top(&self) -> f32 {
+        TITLE_HEIGHT + PADDING + if self.merging { HINT } else { 0.0 }
+    }
+
+    fn height(&self) -> f32 {
+        self.top() + PADDING + ROWS as f32 * ROW + FOOTER
+    }
+
+    fn buttons(&self) -> ([f32; 2], [f32; 2]) {
+        let top = self.height() - FOOTER + 4.0;
         ([WIDTH - 62.0 - BUTTON[0], top], [WIDTH - 15.0 - BUTTON[0], top])
     }
 
+    /// Item merge: picks a row or unpicks it; a stack of another item than the picked ones is refused (its line).
+    pub fn toggle(&mut self, row: usize) -> Result<(), usize> {
+        if let Some(at) = self.picked.iter().position(|&picked| picked == row) {
+            self.picked.remove(at);
+            return Ok(());
+        }
+        let id = |row: usize| self.items.get(row).map(|item| item.id);
+        if self.picked.first().is_some_and(|&first| id(first) != id(row)) {
+            return Err(ONE_KIND);
+        }
+        self.picked.push(row);
+        Ok(())
+    }
+
+    /// Item merge: the picked stacks' indexes to send (the first picked first), or the hint's line when fewer than
+    /// two are picked.
+    pub fn merge_request(&self) -> Result<Vec<u16>, usize> {
+        let indexes = self.picked_indexes();
+        if indexes.len() < 2 { Err(MERGE_HINT) } else { Ok(indexes) }
+    }
+
+    pub fn picked_indexes(&self) -> Vec<u16> {
+        self.picked.iter().filter_map(|&row| self.items.get(row)).map(|item| item.index).collect()
+    }
+
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
-        let local = self.frame.local(cursor, Self::height())?;
+        let local = self.frame.local(cursor, self.height())?;
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
         }
-        let (ok, cancel) = Self::buttons();
+        let (ok, cancel) = self.buttons();
         if contains(ok, BUTTON, local) {
             return Some(Hit::Ok);
         }
         if contains(cancel, BUTTON, local) {
             return Some(Hit::Cancel);
         }
-        let top = TITLE_HEIGHT + PADDING;
+        let top = self.top();
         if local[1] >= top && local[1] < top + ROWS as f32 * ROW {
             let row = ((local[1] - top) / ROW) as usize + self.scroll;
             if row < self.items.len() {
@@ -139,13 +185,24 @@ impl PickList {
         if !self.frame.open || self.frame.minimized {
             return Vec::new();
         }
-        let top = TITLE_HEIGHT + PADDING;
+        let top = self.top();
         let rows = self.items.iter().enumerate().skip(self.scroll).take(ROWS);
         rows.map(|(row, item)| {
             let [x, y] = self.frame.at([LEFT, top + (row - self.scroll) as f32 * ROW]);
             (item.id, [x, y, WIDTH - LEFT - 1.0, ROW])
         })
         .collect()
+    }
+
+    /// OK and Cancel on screen, named for scripted clicks: `ok`, `cancel`.
+    pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
+        let (ok, cancel) = self.buttons();
+        [("ok", ok), ("cancel", cancel)]
+            .map(|(name, corner)| {
+                let [x, y] = self.frame.at(corner);
+                (name.to_owned(), [x, y, BUTTON[0], BUTTON[1]])
+            })
+            .to_vec()
     }
 
     pub fn icons(&self, items: &HashMap<u32, ItemInfo>, skill_info: &HashMap<u16, SkillInfo>) -> Vec<String> {
@@ -177,15 +234,21 @@ impl PickList {
         if frame.minimized {
             return;
         }
-        let height = Self::height();
+        let height = self.height();
         let list_height = height - TITLE_HEIGHT - FOOTER;
         layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [WIDTH, list_height]));
         layer.sprites.push((&assets.strip, frame.at([0.0, TITLE_HEIGHT]), [assets.strip.size[0], list_height]));
         layer.sprites.push((&chrome.border, frame.at([WIDTH - 1.0, TITLE_HEIGHT]), [1.0, list_height]));
-        let top = TITLE_HEIGHT + PADDING;
+        if self.merging {
+            let hint = window::wrap(font, messages.get(MERGE_HINT).map_or("", String::as_str), WIDTH - LEFT - 8.0, 2);
+            for (line, text) in hint.into_iter().enumerate() {
+                layer.texts.push((text, frame.at([LEFT + 4.0, TITLE_HEIGHT + PADDING + line as f32 * 13.0]), [0, 0, 0]));
+            }
+        }
+        let top = self.top();
         for (row, item) in self.items.iter().enumerate().skip(self.scroll).take(ROWS) {
             let y = top + (row - self.scroll) as f32 * ROW;
-            if self.selected == Some(row) {
+            if self.selected == Some(row) && !self.merging || self.picked.contains(&row) {
                 layer.sprites.push((&assets.selected, frame.at([LEFT, y]), [WIDTH - LEFT - 1.0, ROW]));
             }
             let icon = self.icon_path(item, items, skill_info).and_then(|path| icons.get(&path)).and_then(Option::as_ref);
@@ -197,7 +260,11 @@ impl PickList {
             } else {
                 inventory::item_name(items, item.id, item.identified, item.refine)
             };
-            layer.texts.push((window::fit(font, &name, WIDTH - LEFT - 40.0), frame.at([LEFT + 32.0, y + 10.0]), [0, 0, 0]));
+            layer.texts.push((window::fit(font, &name, WIDTH - LEFT - 80.0), frame.at([LEFT + 32.0, y + 10.0]), [0, 0, 0]));
+            if self.merging {
+                let amount = item.amount.to_string();
+                layer.texts.push((amount.clone(), frame.at([WIDTH - 10.0 - font.width(&amount), y + 10.0]), [0, 0, 0]));
+            }
         }
         let footer = height - FOOTER;
         layer.sprites.push((&assets.bar, frame.at([0.0, footer]), [WIDTH, FOOTER]));
@@ -206,7 +273,7 @@ impl PickList {
             let hovered = hit == Some(target);
             usize::from(hovered) + usize::from(hovered && pointer.1)
         };
-        let (ok, cancel) = Self::buttons();
+        let (ok, cancel) = self.buttons();
         layer.sprites.push((&assets.buttons[if self.making { 2 } else { 0 }][look(Hit::Ok)], frame.at(ok), BUTTON));
         layer.sprites.push((&assets.buttons[1][look(Hit::Cancel)], frame.at(cancel), BUTTON));
     }
@@ -231,5 +298,26 @@ mod tests {
         assert_eq!(list.click(Hit::Row(0)), Some(Some(0)));
         assert_eq!(list.click(Hit::Cancel), Some(None));
         assert_eq!(list.click(Hit::Title(TitleHit::Close)), Some(None));
+    }
+
+    #[test]
+    fn merges_stacks_of_one_item() {
+        let stack = |index: u16, id: u32, amount: u16| InventoryItem { index, id, amount, identified: true, ..Default::default() };
+        let mut list = PickList::merging(vec![stack(9, 16395, 3), stack(4, 16393, 1), stack(2, 16395, 2), stack(7, 16393, 1)]);
+        // By item, then by index; the rows sit under the hint.
+        assert_eq!(list.items.iter().map(|item| item.index).collect::<Vec<_>>(), [4, 7, 2, 9]);
+        let [x, y, ..] = list.row_boxes()[2].1;
+        assert_eq!(list.hit([x + 40.0, y + 10.0]), Some(Hit::Row(2)));
+        // One picked isn't enough; another item is refused; a second click unpicks.
+        assert_eq!(list.toggle(3), Ok(()));
+        assert_eq!(list.merge_request(), Err(MERGE_HINT));
+        assert_eq!(list.toggle(0), Err(ONE_KIND));
+        assert_eq!(list.picked_indexes(), [9]);
+        assert_eq!(list.toggle(2), Ok(()));
+        assert_eq!(list.merge_request(), Ok(vec![9, 2]));
+        assert_eq!(list.toggle(3), Ok(()));
+        assert_eq!(list.picked_indexes(), [2]);
+        let [x, y, ..] = list.button_boxes()[0].1;
+        assert_eq!(list.hit([x + 5.0, y + 5.0]), Some(Hit::Ok));
     }
 }
