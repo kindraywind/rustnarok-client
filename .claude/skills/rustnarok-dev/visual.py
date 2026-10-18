@@ -143,13 +143,17 @@ def launch(binary, scenario):
     return names
 
 
+# A short token of this run, for names the server keeps taken after they're gone (a broken guild's).
+STAMP = format(int(time.time()) % 36**5, "x")
+
+
 def with_names(value, names):
-    """`value` with "{first}" and "{second}" turned into the characters' names, and "{repo}" into the repository's
-    path."""
+    """`value` with "{first}" and "{second}" turned into the characters' names, "{repo}" into the repository's
+    path, and "{stamp}" into a token of this run."""
     if isinstance(value, str):
         for client, name in names.items():
             value = value.replace("{" + client + "}", name)
-        return value.replace("{repo}", REPO).replace("{scenarios}", os.path.join(HERE, "scenarios"))
+        return value.replace("{repo}", REPO).replace("{scenarios}", os.path.join(HERE, "scenarios")).replace("{stamp}", STAMP)
     if isinstance(value, list):
         return [with_names(item, names) for item in value]
     if isinstance(value, dict):

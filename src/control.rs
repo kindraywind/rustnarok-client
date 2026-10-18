@@ -1376,6 +1376,9 @@ fn game_state(app: &App, game: &Game) -> Value {
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, ..)| text.as_str()).collect::<Vec<_>>(),
         // The chat window: the tab shown, each tab's last lines, where typed lines go, the lock.
         "chat_tab": game.chat.tab,
+        // The hovered player's name block: its lines and its emblem's box, or null.
+        "hover_name": game.hover_block.as_ref().map(|(lines, emblem)| json!({"lines": lines, "emblem": emblem})),
+        "show_emblems": game.show_emblems,
         // The name in the chat's whisper box.
         "whisper_name": game.chat.whisper,
         "chat_tabs": (0..2).map(|tab| game.chat.tab_lines(tab).iter().rev().take(5).rev().map(|(text, ..)| text.clone()).collect::<Vec<_>>()).collect::<Vec<_>>(),

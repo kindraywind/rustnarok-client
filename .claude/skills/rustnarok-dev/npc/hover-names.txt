@@ -1,0 +1,3 @@
+// Scenario hover-names.json: talking to these puts the character into the Swordman Clan (1), or takes it out.
+morocc,163,121,4	script	Clan Joiner	4_M_01,{ clan_join 1; end; }
+morocc,163,118,4	script	Clan Leaver	4_M_01,{ clan_leave; end; }
