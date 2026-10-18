@@ -336,6 +336,17 @@ impl App {
                     game.card_view = None;
                 }
             }
+            // A card's own window, over the description: its close button or its picture.
+            Scene::Game(game) if game.card_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                match game.card_window.as_ref().unwrap().hit(cursor) {
+                    Some(iteminfo::Hit::Close) => game.card_window = None,
+                    Some(iteminfo::Hit::View) => {
+                        let card = game.card_window.as_ref().unwrap().shown.item;
+                        game.toggle_card_view(card, &self.card_pictures, &self.items);
+                    }
+                    _ => {}
+                }
+            }
             // The item description window: its close button or a card's picture (a click on a card in the strip does nothing).
             Scene::Game(game) if game.item_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
                 match game.item_window.as_ref().unwrap().hit(cursor) {
@@ -345,10 +356,7 @@ impl App {
                     }
                     Some(iteminfo::Hit::View) => {
                         let item = game.item_window.as_ref().unwrap().shown.item;
-                        if let Some(name) = self.card_pictures.name(item) {
-                            game.card_view = Some(iteminfo::CardView::new(iteminfo::cardbmp_path(name)));
-                            escape::touch(&mut game.esc_order, escape::WindowId::CardPicture);
-                        }
+                        game.toggle_card_view(item, &self.card_pictures, &self.items);
                     }
                     _ => {}
                 }
@@ -1721,6 +1729,9 @@ impl App {
             if let Some(window) = &mut game.item_window {
                 window.drag_to(self.cursor);
             }
+            if let Some(window) = &mut game.card_window {
+                window.drag_to(self.cursor);
+            }
             if let Some(room) = &mut game.room {
                 let height = room.height();
                 room.frame.drag_to(self.cursor, height);
@@ -2076,13 +2087,19 @@ impl App {
                 let choices = choices.into_iter().map(|(label, choice)| Some((fill(label), choice))).collect();
                 game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             }
+            // A right press on a card in a description's strip: the card's own window (the description stays).
+            let card =
+                if state == ElementState::Pressed { game.item_window.as_ref().and_then(|window| window.card_under(self.cursor, &self.items)) } else { None };
+            if let Some((card, enchant)) = card {
+                game.show_card(card, enchant);
+            }
             // A right click on an item (inventory, storage, what's worn, a shop's row) describes it.
             let shop_row = match game.shop.as_ref().and_then(|shop| shop.hit(self.cursor)) {
                 Some(shop::Hit::Row(window, row)) => game.shop.as_ref().and_then(|shop| shop.offer_at(window, row)),
                 _ => None,
             };
             let described = match game.window_at(self.cursor) {
-                _ if state != ElementState::Pressed || self.modifiers.alt_key() => None,
+                _ if state != ElementState::Pressed || self.modifiers.alt_key() || card.is_some() => None,
                 _ if shop_row.is_some() => shop_row.map(|offer| net::InventoryItem {
                     id: offer.item,
                     kind: offer.kind,
@@ -2146,6 +2163,7 @@ impl App {
             let on_shop = game.shop.as_ref().is_some_and(|shop| shop.covers(self.cursor));
             let on_pick = game.pick.as_ref().is_some_and(|(list, _)| list.covers(self.cursor));
             let on_item = game.item_window.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+            let on_card = game.card_window.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.cart.items).is_some());
             let on_buying_setup = game.buying_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.inventory.items).is_some());
             let on_cashshop = game.cashshop.as_ref().is_some_and(|shop| shop.hit(self.cursor).is_some());
@@ -2184,6 +2202,10 @@ impl App {
                     game.buying_setup.as_mut().unwrap().scroll_by(rows, inv);
                 }
                 _ if game.card_view.as_ref().is_some_and(|view| view.hit(self.cursor).is_some()) => {}
+                _ if on_card => {
+                    let lines = game.card_lines;
+                    game.card_window.as_mut().unwrap().scroll_by(rows, lines);
+                }
                 _ if on_item => {
                     let lines = game.item_lines;
                     game.item_window.as_mut().unwrap().scroll_by(rows, lines);
@@ -2399,6 +2421,7 @@ impl App {
                     | game.room.as_mut().is_some_and(|room| room.frame.drop_drag())
                     | game.card_view.as_mut().is_some_and(|view| view.drop_drag())
                     | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
+                    | game.card_window.as_mut().is_some_and(|window| window.drop_drag())
                     | game.mail.drop_drag()
                     | game.quest_window.frame.drop_drag()
                     | game.achievement_window.frame.drop_drag()
@@ -2636,6 +2659,8 @@ impl App {
             let on_menu = game.escape.as_ref().is_some_and(|menu| menu.hit(cursor, game.can_resurrect()).is_some());
             if !on_menu && game.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some()) {
                 escape::touch(&mut game.esc_order, escape::WindowId::CardPicture);
+            } else if !on_menu && game.card_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) {
+                escape::touch(&mut game.esc_order, escape::WindowId::CardInfo);
             } else if !on_menu && game.item_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) {
                 escape::touch(&mut game.esc_order, escape::WindowId::ItemInfo);
             } else if !on_menu {
@@ -2680,8 +2705,8 @@ impl App {
         // over it).
         if let Scene::Game(game) = &mut self.scene
             && links::at(&game.dialog_links, cursor).is_none()
-            && let Some(window) = &mut game.item_window
-            && let Some(hit) = window.hit(cursor)
+            && let Some((window, hit)) =
+                [&mut game.card_window, &mut game.item_window].into_iter().flatten().find_map(|window| window.hit(cursor).map(|hit| (window, hit)))
         {
             match hit {
                 iteminfo::Hit::Grip => window.start_drag(cursor),

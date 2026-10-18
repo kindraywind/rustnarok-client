@@ -1222,6 +1222,10 @@ struct Game {
     achievement_window: achievement::AchievementWindow,
     /// The item description window, and how many lines its text wraps to.
     item_window: Option<iteminfo::ItemWindow>,
+    /// A card's own window, opened from a description's strip, where it opens, and its text's lines.
+    card_window: Option<iteminfo::ItemWindow>,
+    card_place: [f32; 2],
+    card_lines: usize,
     item_lines: usize,
     /// Where the item description window opens: where it was last (saved), else its first place.
     item_place: [f32; 2],
@@ -2910,6 +2914,7 @@ const VEND_SIZE: &str = "vend_size";
 const SKILL_LIST_SIZE: &str = "skill_list_size";
 const ITEM_PLACE: &str = "item_info";
 const QUEST_PLACE: &str = "quest";
+const CARD_PLACE: &str = "card_info";
 
 /// The sizes' lines of the window places: the inventory's and the cart's columns and rows, the storage's rows, an NPC
 /// shop's goods width and rows, then its deal's rows.
@@ -3245,29 +3250,6 @@ fn inventory_right(alt: bool, shift: bool, ctrl: bool) -> Option<InventoryRight>
     } else {
         None
     }
-}
-
-/// With compare on, the worn items that share a slot with the inventory item under the pointer.
-fn compared_windows(inventory: &Inventory, items: &HashMap<u32, ItemInfo>, messages: &[String], cursor: [f32; 2]) -> Vec<iteminfo::ItemWindow> {
-    if !inventory.compare || !inventory.frame.open {
-        return Vec::new();
-    }
-    let Some((index, area)) = inventory.item_boxes().into_iter().find(|(_, area)| contains([area[0], area[1]], [area[2], area[3]], cursor)) else {
-        return Vec::new();
-    };
-    let Some(hovered) = inventory.get(index) else { return Vec::new() };
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
-    inventory::compared_worn(hovered, &inventory.items)
-        .into_iter()
-        .enumerate()
-        .map(|(place, item)| {
-            let mut window = iteminfo::ItemWindow::new(iteminfo::Shown::of(item));
-            window.worn = true;
-            window.fit(window.lines(items, messages, now).len());
-            window.place_beside(area, place);
-            window
-        })
-        .collect()
 }
 
 /// A window that a button opens and shuts: shut when it's open, else a new one.
