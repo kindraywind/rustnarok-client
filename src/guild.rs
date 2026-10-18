@@ -136,7 +136,75 @@ pub enum Hit {
     LevelUp(u16),
     /// An ally or an antagonist on the info page (the master's to end): its guild ID, and whether it's an antagonist.
     Relation(u32, bool),
+    /// On the positions page, the master's: a permission box (position, bit), a title, a tax.
+    Permission(u32, u32),
+    PositionTitle(u32),
+    Tax(u32),
+    /// A row of the members page, by its place in `Guild::members`.
+    Member(usize),
     Window,
+}
+
+/// What the right-click menu on a member's row offers.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum MemberChoice {
+    /// The master moves the member to this position.
+    Move(u32),
+    /// A member who isn't the master leaves.
+    Leave,
+}
+
+/// Positions a member can be moved to from the menu: 1 to 19 (0, the master's, hands the guild over: not here).
+const MOVABLE: std::ops::RangeInclusive<u32> = 1..=19;
+
+impl Guild {
+    /// The member menu on a row: the master on someone else's gets the other positions; a member on their own row
+    /// who isn't the master gets leaving; anyone else nothing.
+    pub fn member_menu(&self, me: u32, row: usize) -> Vec<MemberChoice> {
+        let Some(member) = self.members.get(row) else { return Vec::new() };
+        if member.character == me {
+            return if self.master { Vec::new() } else { vec![MemberChoice::Leave] };
+        }
+        if !self.master {
+            return Vec::new();
+        }
+        MOVABLE.filter(|&id| id != member.position).map(MemberChoice::Move).collect()
+    }
+
+    /// A position's values with one permission switched, as the master's request carries them.
+    pub fn switched(&self, id: u32, permission: u32) -> GuildPosition {
+        let mut position = self.position(id);
+        position.mode ^= permission;
+        position
+    }
+
+    /// A position's permissions and tax as known (none known: nothing set).
+    pub fn position(&self, id: u32) -> GuildPosition {
+        self.position_info.iter().find(|position| position.id == id).cloned().unwrap_or(GuildPosition { id, ..Default::default() })
+    }
+
+    pub fn title(&self, id: u32) -> String {
+        self.positions.get(&id).cloned().unwrap_or_default()
+    }
+
+    /// ZC_ACK_CHANGE_GUILD_POSITIONINFO: the position's title, permissions and tax, added if not known yet.
+    pub fn change_position(&mut self, position: GuildPosition, title: String) {
+        self.positions.insert(position.id, title);
+        match self.position_info.iter_mut().find(|known| known.id == position.id) {
+            Some(known) => *known = position,
+            None => {
+                self.position_info.push(position);
+                self.position_info.sort_by_key(|position| position.id);
+            }
+        }
+    }
+
+    /// ZC_ACK_REQ_CHANGE_MEMBERS: a member's new position.
+    pub fn move_member(&mut self, character: u32, position: u32) {
+        if let Some(member) = self.members.iter_mut().find(|member| member.character == character) {
+            member.position = position;
+        }
+    }
 }
 
 /// The info page's columns: allies, then antagonists, the first rows of each.
@@ -198,6 +266,58 @@ pub fn decode_emblem(data: &[u8]) -> Option<RgbaImage> {
     Some(crate::render::key_out(image.to_rgba8()))
 }
 
+/// The top of a list's row.
+fn row_top(row: usize) -> f32 {
+    PAGE_TOP + LINE + 6.0 + row as f32 * LINE
+}
+
+/// A positions page row's clickable parts (the master's): the title, the three boxes, the tax; corners and sizes.
+// ponytail: each part takes its column's width over the whole row.
+fn position_parts(row: usize) -> [(PositionPart, [f32; 2], [f32; 2]); 5] {
+    let top = row_top(row) - 2.0;
+    let column = |index: usize| POSITION_COLUMNS[index].1 - 2.0;
+    let width = |index: usize| POSITION_COLUMNS.get(index + 1).map_or(WIDTH - 6.0, |next| next.1 - 2.0) - column(index);
+    [
+        (PositionPart::Title, [column(1), top], [width(1), LINE]),
+        (PositionPart::Permission(PERMISSIONS[0]), [column(2), top], [width(2), LINE]),
+        (PositionPart::Permission(PERMISSIONS[1]), [column(3), top], [width(3), LINE]),
+        (PositionPart::Permission(PERMISSIONS[2]), [column(4), top], [width(4), LINE]),
+        (PositionPart::Tax, [column(5), top], [width(5), LINE]),
+    ]
+}
+
+#[derive(Clone, Copy)]
+enum PositionPart {
+    Title,
+    Permission(u32),
+    Tax,
+}
+
+impl PositionPart {
+    fn hit(self, id: u32) -> Hit {
+        match self {
+            PositionPart::Title => Hit::PositionTitle(id),
+            PositionPart::Permission(bit) => Hit::Permission(id, bit),
+            PositionPart::Tax => Hit::Tax(id),
+        }
+    }
+
+    /// Its target name for the test driver.
+    fn name(self, id: u32) -> String {
+        match self {
+            PositionPart::Title => format!("title:{id}"),
+            PositionPart::Permission(GuildPosition::INVITE) => format!("invite:{id}"),
+            PositionPart::Permission(GuildPosition::EXPEL) => format!("expel:{id}"),
+            PositionPart::Permission(_) => format!("storage:{id}"),
+            PositionPart::Tax => format!("tax:{id}"),
+        }
+    }
+}
+
+fn member_box(row: usize) -> ([f32; 2], [f32; 2]) {
+    ([4.0, row_top(row) - 2.0], [WIDTH - 8.0, LINE])
+}
+
 impl GuildWindow {
     pub fn height(&self) -> f32 {
         HEIGHT
@@ -224,6 +344,22 @@ impl GuildWindow {
                         return Some(Hit::Relation(relation.id, relation.antagonist));
                     }
                 }
+            }
+        }
+        if self.tab == POSITIONS && guild.master {
+            for (row, position) in guild.position_info.iter().skip(self.scroll).take(ROWS).enumerate() {
+                if let Some((part, ..)) = position_parts(row).into_iter().find(|(_, corner, size)| contains(*corner, *size, local)) {
+                    return Some(part.hit(position.id));
+                }
+            }
+        }
+        if self.tab == MEMBERS {
+            let shown = guild.members.len().saturating_sub(self.scroll).min(ROWS);
+            if let Some(row) = (0..shown).find(|&row| {
+                let (corner, size) = member_box(row);
+                contains(corner, size, local)
+            }) {
+                return Some(Hit::Member(self.scroll + row));
             }
         }
         if self.tab == SKILLS {
@@ -255,6 +391,40 @@ impl GuildWindow {
             (relation.name.clone(), [x, y, size[0], size[1]])
         })
         .collect()
+    }
+
+    /// The positions page's parts (the master's) and the members page's rows, for the test driver: `title:<id>`,
+    /// `invite:<id>`, `expel:<id>`, `storage:<id>`, `tax:<id>`, `member:<name>`.
+    pub fn button_boxes(&self, guild: &Guild) -> Vec<(String, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized {
+            return Vec::new();
+        }
+        let place = |corner: [f32; 2], size: [f32; 2]| {
+            let [x, y] = self.frame.at(corner);
+            [x, y, size[0], size[1]]
+        };
+        match self.tab {
+            POSITIONS if guild.master => guild
+                .position_info
+                .iter()
+                .skip(self.scroll)
+                .take(ROWS)
+                .enumerate()
+                .flat_map(|(row, position)| position_parts(row).map(|(part, corner, size)| (part.name(position.id), place(corner, size))))
+                .collect(),
+            MEMBERS => guild
+                .members
+                .iter()
+                .skip(self.scroll)
+                .take(ROWS)
+                .enumerate()
+                .map(|(row, member)| {
+                    let (corner, size) = member_box(row);
+                    (format!("member:{}", member.name), place(corner, size))
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// The wheel scrolls the open list.
@@ -327,7 +497,6 @@ impl GuildWindow {
             }
             layer.sprites.push((&chrome.border, at([4.0, PAGE_TOP + LINE + 2.0]), [WIDTH - 8.0, 1.0]));
         };
-        let row_top = |row: usize| PAGE_TOP + LINE + 6.0 + row as f32 * LINE;
         match self.tab {
             // Info: the emblem, then the guild's name, level, master, members, levels, castles, exp and tax points.
             0 => {
@@ -379,6 +548,10 @@ impl GuildWindow {
                 header(layer, &POSITION_COLUMNS);
                 for (row, position) in guild.position_info.iter().skip(self.scroll).take(ROWS).enumerate() {
                     let top = row_top(row);
+                    // The part under the master's pointer can be clicked.
+                    if let Some((_, corner, size)) = position_parts(row).into_iter().find(|(part, ..)| hit == Some(part.hit(position.id))) {
+                        layer.sprites.push((&assets.hover, at(corner), size));
+                    }
                     let title = guild.positions.get(&position.id).map_or("", String::as_str);
                     text(layer, (position.id + 1).to_string(), [POSITION_COLUMNS[0].1, top], [0, 0, 0]);
                     text(layer, window::fit(font, title, POSITION_COLUMNS[2].1 - POSITION_COLUMNS[1].1 - 6.0), [POSITION_COLUMNS[1].1, top], [0, 0, 0]);
@@ -444,6 +617,77 @@ mod tests {
         assert_eq!(window.hit(at([TAB[0] * 1.5, TITLE_HEIGHT + 5.0]), &guild), Some(Hit::Tab(1)));
         assert_eq!(window.hit(at([TAB[0] * 5.5, TITLE_HEIGHT + 5.0]), &guild), Some(Hit::Tab(5)));
         assert_eq!(window.hit(at([200.0, 200.0]), &guild), Some(Hit::Window));
+    }
+
+    fn crab() -> Guild {
+        let member =
+            |character: u32, name: &str, position: u32| GuildMember { account: character + 1000, character, position, name: name.into(), ..Default::default() };
+        Guild {
+            master: true,
+            members: vec![member(1, "Boss", 0), member(2, "Newbie", 19)],
+            positions: (0..20).map(|id| (id, format!("Position {}", id + 1))).collect(),
+            position_info: (0..20).map(|id| GuildPosition { id, mode: 0, tax: 0 }).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn hits_the_masters_position_parts() {
+        let mut window = GuildWindow::default();
+        window.frame.open = true;
+        window.show_tab(POSITIONS);
+        let mut guild = crab();
+        let at = |local: [f32; 2]| window.frame.at(local);
+        // The second row is position 1.
+        let middle = row_top(1) + 5.0;
+        assert_eq!(window.hit(at([60.0, middle]), &guild), Some(Hit::PositionTitle(1)));
+        assert_eq!(window.hit(at([200.0, middle]), &guild), Some(Hit::Permission(1, GuildPosition::INVITE)));
+        assert_eq!(window.hit(at([250.0, middle]), &guild), Some(Hit::Permission(1, GuildPosition::EXPEL)));
+        assert_eq!(window.hit(at([300.0, middle]), &guild), Some(Hit::Permission(1, GuildPosition::STORAGE)));
+        assert_eq!(window.hit(at([350.0, middle]), &guild), Some(Hit::Tax(1)));
+        let names: Vec<String> = window.button_boxes(&guild).into_iter().map(|(name, _)| name).take(5).collect();
+        assert_eq!(names, ["title:0", "invite:0", "expel:0", "storage:0", "tax:0"]);
+        // A box click switches that one bit and keeps the rest.
+        guild.position_info[1].mode = GuildPosition::STORAGE;
+        guild.position_info[1].tax = 5;
+        assert_eq!(guild.switched(1, GuildPosition::INVITE), GuildPosition { id: 1, mode: 0x101, tax: 5 });
+        assert_eq!(guild.switched(1, GuildPosition::STORAGE), GuildPosition { id: 1, mode: 0, tax: 5 });
+        // Others see the page as it is.
+        guild.master = false;
+        assert_eq!(window.hit(at([200.0, middle]), &guild), Some(Hit::Window));
+        assert!(window.button_boxes(&guild).is_empty());
+    }
+
+    #[test]
+    fn offers_moves_to_the_master_and_leaving_to_members() {
+        let mut window = GuildWindow::default();
+        window.frame.open = true;
+        window.show_tab(MEMBERS);
+        let mut guild = crab();
+        assert_eq!(window.hit(window.frame.at([20.0, row_top(1) + 5.0]), &guild), Some(Hit::Member(1)));
+        assert_eq!(window.button_boxes(&guild).into_iter().map(|(name, _)| name).collect::<Vec<_>>(), ["member:Boss", "member:Newbie"]);
+        // The master on another member: positions 1 to 19 but the one they hold.
+        let moves = guild.member_menu(1, 1);
+        assert_eq!(moves.len(), 18);
+        assert_eq!(moves.first(), Some(&MemberChoice::Move(1)));
+        assert!(!moves.contains(&MemberChoice::Move(19)) && !moves.contains(&MemberChoice::Move(0)));
+        assert!(guild.member_menu(1, 0).is_empty(), "the master doesn't leave");
+        // A member: leaving on their own row, nothing on others'.
+        guild.master = false;
+        assert_eq!(guild.member_menu(2, 1), [MemberChoice::Leave]);
+        assert!(guild.member_menu(2, 0).is_empty());
+    }
+
+    #[test]
+    fn applies_position_changes_and_moves() {
+        let mut guild = Guild { members: crab().members, ..Default::default() };
+        guild.change_position(GuildPosition { id: 1, mode: 1, tax: 10 }, "Officer".into());
+        assert_eq!((guild.title(1).as_str(), guild.position(1)), ("Officer", GuildPosition { id: 1, mode: 1, tax: 10 }));
+        guild.change_position(GuildPosition { id: 1, mode: 0, tax: 3 }, "Clerk".into());
+        assert_eq!(guild.position_info.len(), 1);
+        assert_eq!((guild.title(1).as_str(), guild.position(1).tax), ("Clerk", 3));
+        guild.move_member(2, 1);
+        assert_eq!(guild.members[1].position, 1);
     }
 
     #[test]
