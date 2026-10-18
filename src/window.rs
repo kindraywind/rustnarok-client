@@ -288,6 +288,42 @@ pub fn wrap(font: &Font, text: &str, width: f32, lines: usize) -> Vec<String> {
     wrapped
 }
 
+/// A window's corner grip: the 15×15 corner inside the window takes the press (its 16×16 bitmap hangs 1 px out).
+pub const GRIP: f32 = 15.0;
+
+/// Whether `local` (window-local) is on the corner grip of a window `size` big.
+pub fn on_grip(size: [f32; 2], local: [f32; 2]) -> bool {
+    contains([size[0] - GRIP, size[1] - GRIP], [GRIP; 2], local)
+}
+
+/// A corner grip being held: where the press was and the window's size then. The corner follows the pointer from
+/// the press (moving back undoes it); each window clamps and snaps what it's asked for.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Grip(Option<([f32; 2], [f32; 2])>);
+
+impl Grip {
+    pub fn start(&mut self, cursor: [f32; 2], size: [f32; 2]) {
+        self.0 = Some((cursor, size));
+    }
+
+    /// The size the pointer asks for while held.
+    pub fn asked(&self, cursor: [f32; 2]) -> Option<[f32; 2]> {
+        let (from, size) = self.0?;
+        Some([size[0] + cursor[0] - from[0], size[1] + cursor[1] - from[1]])
+    }
+
+    /// Lets go; whether it was held.
+    pub fn stop(&mut self) -> bool {
+        self.0.take().is_some()
+    }
+}
+
+/// The steps (0, 1, 2...) a size `asked` makes past `least`, `step` apart, clamped to `most` steps: the game's
+/// least + step·trunc((clamp(asked) − least)/step), rounding toward the least.
+pub fn steps(asked: f32, least: f32, step: f32, most: usize) -> usize {
+    (((asked - least) / step).max(0.0) as usize).min(most)
+}
+
 /// Notices double clicks on the same thing (an item index).
 #[derive(Default)]
 pub struct Clicks(Option<(u16, std::time::Instant)>);
@@ -388,6 +424,21 @@ impl<T> Amount<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grips_follow_the_pointer_from_the_press() {
+        let size = [280.0, 300.0];
+        assert!(on_grip(size, [266.0, 286.0]) && on_grip(size, [279.0, 299.0]));
+        assert!(!on_grip(size, [264.0, 290.0]) && !on_grip(size, [280.0, 290.0]));
+        let mut grip = Grip::default();
+        assert_eq!(grip.asked([0.0, 0.0]), None);
+        grip.start([500.0, 400.0], size);
+        assert_eq!(grip.asked([540.0, 380.0]), Some([320.0, 280.0]));
+        assert_eq!(grip.asked([500.0, 400.0]), Some(size), "moving back undoes it");
+        assert!(grip.stop() && !grip.stop());
+        // Steps round toward the least, and stop at the most.
+        assert_eq!([100.0, 120.0, 151.0, 152.0, 1000.0].map(|asked| steps(asked, 120.0, 32.0, 6)), [0, 0, 0, 1, 6]);
+    }
 
     #[test]
     fn dragged_windows_snap_to_the_edges_and_stay_in_reach() {

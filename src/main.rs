@@ -1148,6 +1148,8 @@ struct Game {
     cashshop_list_requested: bool,
     cashshop_buy_asked: bool,
     trade_asked: Option<(String, u32, u16)>,
+    /// The NPC shop windows' sizes (goods width, goods and deal rows): kept, and given to the next shop.
+    shop_sizes: (f32, [usize; 2]),
     trade_with: String,
     /// /notrade: deal requests are refused at once.
     no_trade: bool,
@@ -2348,6 +2350,13 @@ impl Game {
         }
     }
 
+    /// A shop's windows open at the sizes the last one was left at (an NPC's shop or a market; the others keep
+    /// theirs).
+    fn open_shop(&mut self, mut shop: shop::Shop) {
+        shop.apply_sizes(self.shop_sizes);
+        self.shop = Some(shop);
+    }
+
     fn store_open(&self) -> bool {
         self.my_shop.is_some() || self.my_buying_store.is_some()
     }
@@ -2542,9 +2551,11 @@ impl Game {
             return;
         }
         let mut places = window_places(frames.iter().map(|(name, frame)| (*name, frame.position, frame.minimized)));
-        // The inventory's columns and rows ride along as a line of their own ("inventory_size columns rows 0").
-        let [columns, rows] = self.inventory.size();
-        places += &format!("{INVENTORY_SIZE} {columns} {rows} 0\n");
+        // Sizes ride along as lines of their own ("inventory_size columns rows 0", "shop_size width rows 0").
+        if let Some(sizes) = self.shop.as_ref().and_then(shop::Shop::sizes) {
+            self.shop_sizes = sizes;
+        }
+        places += &size_lines(self.inventory.size(), self.cart.size(), self.storage.rows(), self.shop_sizes);
         if places != self.saved_places {
             if let Some(path) = settings_path("windows") {
                 let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, &places));
@@ -2568,6 +2579,15 @@ impl Game {
         }
         if let Some(&([columns, rows], _)) = saved.get(INVENTORY_SIZE) {
             self.inventory.set_size([columns as usize, rows as usize]);
+        }
+        if let Some(&([columns, rows], _)) = saved.get(CART_SIZE) {
+            self.cart.set_size([columns as usize, rows as usize]);
+        }
+        if let Some(&([_, rows], _)) = saved.get(STORAGE_SIZE) {
+            self.storage.set_rows(rows as usize);
+        }
+        if let (Some(&([width, goods], _)), Some(&([_, deal], _))) = (saved.get(SHOP_SIZE), saved.get(SHOP_DEAL_SIZE)) {
+            self.shop_sizes = (shop::snap_width(width), [goods as usize, deal as usize]);
         }
         self.saved_places = text;
     }
@@ -2594,8 +2614,8 @@ impl Game {
     }
 
     /// Whether the pointer is on a window's control: a title bar's close or minimize button, the equipment window's
-    /// buttons, a pick list's OK or Cancel.
-    // ponytail: tabs, scroll arrows, resize corners and the minimap aren't told apart yet.
+    /// buttons, a pick list's OK or Cancel, a corner grip.
+    // ponytail: tabs, scroll arrows and the minimap aren't told apart yet.
     /// Opens the navigation window, or closes it.
     fn toggle_navigation(&mut self) {
         self.navi_window = if self.navi_window.is_some() { None } else { Some(navigation::Window::new()) };
@@ -2626,6 +2646,16 @@ impl Game {
         matches!(title, Some(TitleHit::Close | TitleHit::Minimize))
             || self.equipment.button_boxes().into_iter().any(|(_, area)| inside(area))
             || self.pick.as_ref().is_some_and(|(list, _)| list.button_boxes().into_iter().any(|(_, area)| inside(area)))
+            || self.on_grip(cursor)
+    }
+
+    /// Whether the pointer is on a window's corner grip (or one is held).
+    fn on_grip(&self, cursor: [f32; 2]) -> bool {
+        let top = self.window_at(cursor);
+        (top == Some(Panel::Inventory) && self.inventory.hit(cursor) == Some(inventory::Hit::Resize))
+            || (top == Some(Panel::Cart) && self.cart.hit(cursor) == Some(inventory::Hit::Resize))
+            || (top == Some(Panel::Storage) && self.storage.on_grip(cursor))
+            || matches!(self.shop.as_ref().and_then(|shop| shop.hit(cursor)), Some(shop::Hit::Resize(_)))
     }
 
     /// Whether the aim cursor shows "valid" here: over a unit a press would take; never for a ground skill.
@@ -5285,8 +5315,22 @@ fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
     Some(options::ShortcutKey::NamedF(number))
 }
 
-/// The line of the window places that keeps the inventory's size.
+/// The lines of the window places that keep sizes: the inventory's and the cart's columns and rows, the storage's
+/// rows, and an NPC shop's goods width and both windows' rows (the next shop opens at those).
 const INVENTORY_SIZE: &str = "inventory_size";
+const CART_SIZE: &str = "cart_size";
+const STORAGE_SIZE: &str = "storage_size";
+const SHOP_SIZE: &str = "shop_size";
+const SHOP_DEAL_SIZE: &str = "shop_deal_size";
+
+/// The sizes' lines of the window places: the inventory's and the cart's columns and rows, the storage's rows, an NPC
+/// shop's goods width and rows, then its deal's rows.
+fn size_lines(inventory: [usize; 2], cart: [usize; 2], storage: usize, (width, [goods, deal]): (f32, [usize; 2])) -> String {
+    let [[columns, rows], [cart_columns, cart_rows]] = [inventory, cart];
+    format!(
+        "{INVENTORY_SIZE} {columns} {rows} 0\n{CART_SIZE} {cart_columns} {cart_rows} 0\n{STORAGE_SIZE} 0 {storage} 0\n{SHOP_SIZE} {width} {goods} 0\n{SHOP_DEAL_SIZE} 0 {deal} 0\n"
+    )
+}
 
 /// The windows' places as saved: a line per window, its name, x, y and 1 when collapsed.
 fn window_places<'a>(frames: impl Iterator<Item = (&'a str, [f32; 2], bool)>) -> String {
@@ -7915,6 +7959,7 @@ impl App {
             game.inventory.frame.drag_to(self.cursor, inventory_height);
             game.inventory.resize_to(self.cursor);
             game.cart.resize_to(self.cursor);
+            game.storage.resize_to(self.cursor);
             game.equipment.frame.drag_to(self.cursor, equipment_height);
             let skills_height = game.skill_window.height();
             game.skill_window.frame.drag_to(self.cursor, skills_height);
@@ -8652,6 +8697,8 @@ impl App {
                     | game.inventory.frame.drop_drag()
                     | game.inventory.stop_resize()
                     | game.cart.stop_resize()
+                    | game.storage.stop_resize()
+                    | game.shop.as_mut().is_some_and(shop::Shop::stop_resize)
                     | game.equipment.frame.drop_drag()
                     | game.basic_info.frame.drop_drag()
                     | game.hotkeys.frame.drop_drag()
@@ -8894,6 +8941,9 @@ impl App {
                 shop::Hit::Row(0, row) => game.dragging = Some((Dragged::ShopOffer(row), cursor, false)),
                 shop::Hit::Row(_, row) => game.dragging = Some((Dragged::ShopDeal(row), cursor, false)),
                 shop::Hit::Title(window, TitleHit::Title) => game.shop.as_mut().unwrap().frames[window].start_drag(cursor),
+                shop::Hit::Resize(_) => {
+                    game.shop.as_mut().unwrap().start_resize(cursor);
+                }
                 _ => {}
             }
             return;
@@ -9044,6 +9094,7 @@ impl App {
                 match game.storage.hit(cursor, &assets.storage, &self.items) {
                     Some(storage::Hit::Item(index)) => game.dragging = Some((Dragged::Stored(index), cursor, false)),
                     Some(storage::Hit::Title(TitleHit::Title)) => game.storage.frame.start_drag(cursor),
+                    Some(storage::Hit::Resize) => game.storage.start_resize(cursor),
                     _ => {}
                 }
             }
@@ -10298,6 +10349,7 @@ impl App {
                     cashshop_buy_asked: false,
                     trade_asked: None,
                     trade_with: String::new(),
+                    shop_sizes: shop::default_sizes(),
                     no_trade: false,
                     trade_give: VecDeque::new(),
                     trade_give_zeny: None,
@@ -10417,7 +10469,7 @@ impl App {
                     my_buying_store: None,
                     mail: mail::Mail::default(),
                     cart: {
-                        let mut cart = inventory::Inventory::new(false);
+                        let mut cart = inventory::Inventory::cart();
                         cart.title = CART_TITLE;
                         cart.frame.position = CART_POSITION;
                         cart.frame.open = std::env::var_os("RUSTNAROK_CLIENT_CART").is_some();
@@ -11660,7 +11712,7 @@ impl App {
                     .collect();
                 let mut store = shop::Shop::new(false, offers);
                 store.vendor = Some((vendor, shop_id, name));
-                game.shop = Some(store);
+                game.open_shop(store);
                 game.auto_deal();
             }
             MapEvent::VendBought { result, .. } => {
@@ -11724,7 +11776,7 @@ impl App {
                 game.signs.remove(&owner);
             }
             MapEvent::BuyingStoreItems { owner, store_id, limit, items } => {
-                game.shop = Some(shop::Shop::new_buying_store(owner, store_id, limit, &items, &game.inventory.items));
+                game.open_shop(shop::Shop::new_buying_store(owner, store_id, limit, &items, &game.inventory.items));
             }
             MapEvent::BuyingStoreSold { index, amount, price } => {
                 let name = game.inventory.get(index).map(|item| inventory::item_name(&self.items, item.id, item.identified, item.refine)).unwrap_or_default();
@@ -13299,7 +13351,7 @@ impl App {
                         ..Default::default()
                     })
                     .collect();
-                game.shop = Some(shop::Shop::new(false, offers));
+                game.open_shop(shop::Shop::new(false, offers));
                 game.auto_deal();
             }
             MapEvent::ShopWants(wants) => {
@@ -13320,7 +13372,7 @@ impl App {
                         })
                     })
                     .collect();
-                game.shop = Some(shop::Shop::new(true, offers));
+                game.open_shop(shop::Shop::new(true, offers));
                 game.auto_deal();
             }
             // Markets and barters: the plain shop's windows with stock and costs; they stay open after a purchase.
@@ -13349,7 +13401,7 @@ impl App {
                     .collect();
                 let mut store = shop::Shop::new(false, offers);
                 store.market = Some(kind);
-                game.shop = Some(store);
+                game.open_shop(store);
             }
             MapEvent::MarketBought { ok, items } => {
                 if ok && let Some(shop) = &mut game.shop {
@@ -16377,6 +16429,13 @@ mod tests {
         let read = parse_window_places(&saved);
         assert_eq!((read["inventory"], read["status"]), (([0.0, 120.0], false), ([185.5, 300.0], true)));
         assert!(parse_window_places("broken line\nskills 1 2 0").contains_key("skills"));
+        // The sizes ride along and read back.
+        let sizes = size_lines([8, 4], [6, 5], 13, (248.0, [2, 7]));
+        let read = parse_window_places(&sizes);
+        assert_eq!(
+            [INVENTORY_SIZE, CART_SIZE, STORAGE_SIZE, SHOP_SIZE, SHOP_DEAL_SIZE].map(|name| read[name].0),
+            [[8.0, 4.0], [6.0, 5.0], [0.0, 13.0], [248.0, 2.0], [0.0, 7.0]]
+        );
     }
 
     #[test]

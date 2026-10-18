@@ -14,25 +14,34 @@ use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, offset};
 
-// ponytail: the inventory's cells and margins, seven rows tall; calibrate against the real client.
+// ponytail: the inventory's cells and margins in a grid; calibrate against the real client.
 const COLUMNS: usize = 7;
-const ROWS: usize = 7;
 const CELL: f32 = 32.0;
-const BODY_HEIGHT: f32 = ROWS as f32 * CELL + 18.0;
+/// Rows of cells: 12 at the game's least height (458), one more for each 32 px the corner grip adds (it only changes
+/// the height), as far as 0.7 of the screen's height.
+// ponytail: the game's storage is a one-column list; this grid takes its row steps.
+pub const LEAST_ROWS: usize = 12;
+const LEAST_HEIGHT: f32 = 458.0;
 const FOOTER_HEIGHT: f32 = 29.0;
 const TAB_COLUMN: f32 = 27.0;
 const MARGIN: f32 = 16.0;
 const WIDTH: f32 = TAB_COLUMN + MARGIN + COLUMNS as f32 * CELL + MARGIN;
-const HEIGHT: f32 = TITLE_HEIGHT + BODY_HEIGHT + FOOTER_HEIGHT;
 const TABS_AT: [f32; 2] = [1.0, TITLE_HEIGHT];
 const GRID: [f32; 2] = [TAB_COLUMN + MARGIN, TITLE_HEIGHT + 8.0];
 const ICON_OFFSET: f32 = 4.0;
-const FOOTER_TOP: f32 = TITLE_HEIGHT + BODY_HEIGHT;
-/// The search field and its button, and the close button, in the footer.
-const SEARCH: [f32; 2] = [72.0, FOOTER_TOP + 5.0];
+/// The search field and the close button sit in the footer.
 const SEARCH_SIZE: [f32; 2] = [130.0, 18.0];
-const CLOSE: [f32; 2] = [WIDTH - 15.0 - 42.0, FOOTER_TOP + 5.0];
 const CLOSE_SIZE: [f32; 2] = [42.0, 20.0];
+
+/// The most rows at a screen `height` tall: 458 + 32k up to ⌊0.7·height⌋, only 12 under 700.
+pub fn most_rows(height: f32) -> usize {
+    LEAST_ROWS + window::steps((0.7 * height).floor(), LEAST_HEIGHT, CELL, usize::MAX)
+}
+
+/// The window's height with `rows` rows.
+fn height(rows: usize) -> f32 {
+    TITLE_HEIGHT + rows as f32 * CELL + 18.0 + FOOTER_HEIGHT
+}
 const DEFAULT_POSITION: [f32; 2] = [290.0, 100.0];
 const TITLE_MESSAGE: usize = 169;
 /// Where the tab strips' tabs end: the client's eight (usable, cash, armor, weapon, costume, ammo, card, etc.) and
@@ -103,6 +112,8 @@ pub enum Hit {
     Search,
     Find,
     Close,
+    /// The corner grip.
+    Resize,
     Window,
 }
 
@@ -117,11 +128,24 @@ pub struct Storage {
     /// What's typed in the search field, and whether typing goes there.
     pub search: String,
     pub typing: bool,
+    /// Rows of cells shown, and the corner grip while held.
+    rows: usize,
+    grip: window::Grip,
 }
 
 impl Default for Storage {
     fn default() -> Self {
-        Self { items: Vec::new(), count: [0; 2], frame: Frame::new(DEFAULT_POSITION, WIDTH), tab: 0, scroll: 0, search: String::new(), typing: false }
+        Self {
+            items: Vec::new(),
+            count: [0; 2],
+            frame: Frame::new(DEFAULT_POSITION, WIDTH),
+            tab: 0,
+            scroll: 0,
+            search: String::new(),
+            typing: false,
+            rows: LEAST_ROWS,
+            grip: window::Grip::default(),
+        }
     }
 }
 
@@ -129,7 +153,7 @@ impl Storage {
     /// The server starts listing it: the window opens on its first tab.
     pub fn open(&mut self) {
         let frame = std::mem::replace(&mut self.frame, Frame::new(DEFAULT_POSITION, WIDTH));
-        *self = Self { frame, ..Self::default() };
+        *self = Self { frame, rows: self.rows, ..Self::default() };
         self.frame.open = true;
         self.frame.minimized = false;
     }
@@ -188,11 +212,65 @@ impl Storage {
     }
 
     pub fn height(&self) -> f32 {
-        HEIGHT
+        height(self.rows)
+    }
+
+    fn body_height(&self) -> f32 {
+        self.rows as f32 * CELL + 18.0
+    }
+
+    fn footer_top(&self) -> f32 {
+        TITLE_HEIGHT + self.body_height()
+    }
+
+    fn search_at(&self) -> [f32; 2] {
+        [72.0, self.footer_top() + 5.0]
+    }
+
+    fn close_at(&self) -> [f32; 2] {
+        [WIDTH - 15.0 - 42.0, self.footer_top() + 5.0]
+    }
+
+    /// Its rows of cells.
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// Takes `rows` as far as the grip would go at this screen size.
+    pub fn set_rows(&mut self, rows: usize) {
+        self.rows = rows.clamp(LEAST_ROWS, most_rows(crate::screen()[1]));
+    }
+
+    /// The corner grip on screen while the window is open (for the test driver).
+    pub fn grip_box(&self) -> Option<[f32; 4]> {
+        let [x, y] = self.frame.at([WIDTH - window::GRIP, self.height() - window::GRIP]);
+        (self.frame.open && !self.frame.minimized).then_some([x, y, window::GRIP, window::GRIP])
+    }
+
+    /// Whether `cursor` is on the corner grip.
+    pub fn on_grip(&self, cursor: [f32; 2]) -> bool {
+        !self.frame.minimized && self.frame.local(cursor, self.height()).is_some_and(|local| window::on_grip([WIDTH, self.height()], local))
+    }
+
+    /// Held by the corner grip at `cursor`.
+    pub fn start_resize(&mut self, cursor: [f32; 2]) {
+        self.grip.start(cursor, [WIDTH, self.height()]);
+    }
+
+    /// While held, the bottom follows the pointer from the press, a row per 32 px (rounding toward the least); returns
+    /// whether it's held.
+    pub fn resize_to(&mut self, cursor: [f32; 2]) -> bool {
+        let Some([_, asked]) = self.grip.asked(cursor) else { return false };
+        self.set_rows(LEAST_ROWS + window::steps(asked, height(LEAST_ROWS), CELL, usize::MAX));
+        true
+    }
+
+    pub fn stop_resize(&mut self) -> bool {
+        self.grip.stop()
     }
 
     pub fn hit(&self, cursor: [f32; 2], assets: &Assets, info: &HashMap<u32, ItemInfo>) -> Option<Hit> {
-        let local = self.frame.local(cursor, HEIGHT)?;
+        let local = self.frame.local(cursor, self.height())?;
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
         }
@@ -201,19 +279,22 @@ impl Storage {
             let y = local[1] - TABS_AT[1];
             return Some(Hit::Tab(edges.iter().position(|&edge| y < edge).unwrap_or(0)));
         }
-        if contains(CLOSE, CLOSE_SIZE, local) {
+        if contains(self.close_at(), CLOSE_SIZE, local) {
             return Some(Hit::Close);
         }
         let button = assets.search[0].size;
-        if contains(offset(SEARCH, [SEARCH_SIZE[0] - button[0], 0.0]), button, local) {
+        if contains(offset(self.search_at(), [SEARCH_SIZE[0] - button[0], 0.0]), button, local) {
             return Some(Hit::Find);
         }
-        if contains(SEARCH, SEARCH_SIZE, local) {
+        if contains(self.search_at(), SEARCH_SIZE, local) {
             return Some(Hit::Search);
+        }
+        if !self.frame.minimized && window::on_grip([WIDTH, self.height()], local) {
+            return Some(Hit::Resize);
         }
         let [x, y] = [local[0] - GRID[0], local[1] - GRID[1]];
         let [column, row] = [(x / CELL).floor(), (y / CELL).floor()];
-        if x >= 0.0 && y >= 0.0 && (column as usize) < COLUMNS && (row as usize) < ROWS {
+        if x >= 0.0 && y >= 0.0 && (column as usize) < COLUMNS && (row as usize) < self.rows {
             let cell = (self.scroll + row as usize) * COLUMNS + column as usize;
             if let Some(item) = self.listed(assets, info).nth(cell) {
                 return Some(Hit::Item(item.index));
@@ -233,14 +314,14 @@ impl Storage {
                 self.scroll = 0;
                 self.search.clear();
             }
-            Hit::Item(_) | Hit::Search | Hit::Find | Hit::Window => {}
+            Hit::Item(_) | Hit::Search | Hit::Find | Hit::Resize | Hit::Window => {}
         }
         false
     }
 
     pub fn scroll_by(&mut self, rows: i32, assets: &Assets, info: &HashMap<u32, ItemInfo>) {
         let total_rows = self.listed(assets, info).count().div_ceil(COLUMNS);
-        self.scroll = (self.scroll as i32 + rows).clamp(0, total_rows.saturating_sub(ROWS) as i32) as usize;
+        self.scroll = (self.scroll as i32 + rows).clamp(0, total_rows.saturating_sub(self.rows) as i32) as usize;
     }
 
     /// Typing while the search field has the caret.
@@ -286,20 +367,20 @@ impl Storage {
         };
 
         // Body: the tab column and its strip, the white item area, the cells.
-        layer.sprites.push((&assets.footer[1], at([0.0, TITLE_HEIGHT]), [TAB_COLUMN, BODY_HEIGHT]));
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [TABS_AT[0], BODY_HEIGHT]));
+        layer.sprites.push((&assets.footer[1], at([0.0, TITLE_HEIGHT]), [TAB_COLUMN, self.body_height()]));
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [TABS_AT[0], self.body_height()]));
         if let Some(strip) = assets.tabs.get(self.tab) {
             layer.sprites.push((strip, at(TABS_AT), strip.size));
         }
-        layer.sprites.push((&chrome.white, at([TAB_COLUMN, TITLE_HEIGHT]), [WIDTH - TAB_COLUMN, BODY_HEIGHT]));
+        layer.sprites.push((&chrome.white, at([TAB_COLUMN, TITLE_HEIGHT]), [WIDTH - TAB_COLUMN, self.body_height()]));
         for x in [TAB_COLUMN, WIDTH - 1.0] {
-            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, BODY_HEIGHT]));
+            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, self.body_height()]));
         }
-        for cell in 0..ROWS * COLUMNS {
+        for cell in 0..self.rows * COLUMNS {
             let place = [GRID[0] + (cell % COLUMNS) as f32 * CELL, GRID[1] + (cell / COLUMNS) as f32 * CELL];
             layer.sprites.push((&assets.cell, at(place), assets.cell.size));
         }
-        for (cell, item) in self.listed(assets, items).skip(self.scroll * COLUMNS).take(ROWS * COLUMNS).enumerate() {
+        for (cell, item) in self.listed(assets, items).skip(self.scroll * COLUMNS).take(self.rows * COLUMNS).enumerate() {
             let place = at([GRID[0] + (cell % COLUMNS) as f32 * CELL, GRID[1] + (cell / COLUMNS) as f32 * CELL]);
             let info = items.get(&item.id);
             if let Some(Some(icon)) = info.and_then(|info| icons.get(&inventory::icon_path(info, item.identified))) {
@@ -320,25 +401,51 @@ impl Storage {
 
         // Footer: the count, the search field, the close button.
         let [left, middle, right] = &assets.footer;
-        layer.sprites.push((left, at([0.0, FOOTER_TOP]), left.size));
-        layer.sprites.push((middle, at([left.size[0], FOOTER_TOP]), [WIDTH - left.size[0] - right.size[0], FOOTER_HEIGHT]));
-        layer.sprites.push((right, at([WIDTH - right.size[0], FOOTER_TOP]), right.size));
-        layer.sprites.push((&assets.count, at([8.0, FOOTER_TOP + 8.0]), assets.count.size));
-        layer.texts.push((format!("{}/{}", self.count[0], self.count[1]), at([22.0, FOOTER_TOP + 8.0]), [0, 0, 0]));
-        layer.sprites.push((&chrome.border, at(offset(SEARCH, [-1.0, -1.0])), [SEARCH_SIZE[0] + 2.0, SEARCH_SIZE[1] + 2.0]));
-        layer.sprites.push((&chrome.white, at(SEARCH), SEARCH_SIZE));
+        layer.sprites.push((left, at([0.0, self.footer_top()]), left.size));
+        layer.sprites.push((middle, at([left.size[0], self.footer_top()]), [WIDTH - left.size[0] - right.size[0], FOOTER_HEIGHT]));
+        layer.sprites.push((right, at([WIDTH - right.size[0], self.footer_top()]), right.size));
+        layer.sprites.push((&assets.count, at([8.0, self.footer_top() + 8.0]), assets.count.size));
+        layer.texts.push((format!("{}/{}", self.count[0], self.count[1]), at([22.0, self.footer_top() + 8.0]), [0, 0, 0]));
+        layer.sprites.push((&chrome.border, at(offset(self.search_at(), [-1.0, -1.0])), [SEARCH_SIZE[0] + 2.0, SEARCH_SIZE[1] + 2.0]));
+        layer.sprites.push((&chrome.white, at(self.search_at()), SEARCH_SIZE));
         let shown = if self.typing && caret { format!("{}|", self.search) } else { self.search.clone() };
-        layer.texts.push((window::fit(font, &shown, SEARCH_SIZE[0] - 28.0), at(offset(SEARCH, [3.0, 3.0])), [0, 0, 0]));
+        layer.texts.push((window::fit(font, &shown, SEARCH_SIZE[0] - 28.0), at(offset(self.search_at(), [3.0, 3.0])), [0, 0, 0]));
         let find = &assets.search[look(Hit::Find)];
-        layer.sprites.push((find, at(offset(SEARCH, [SEARCH_SIZE[0] - find.size[0], 0.0])), find.size));
-        layer.sprites.push((&assets.close[look(Hit::Close)], at(CLOSE), CLOSE_SIZE));
-        layer.sprites.push((&assets.resize, at([WIDTH - 14.0, HEIGHT - 14.0]), assets.resize.size));
+        layer.sprites.push((find, at(offset(self.search_at(), [SEARCH_SIZE[0] - find.size[0], 0.0])), find.size));
+        layer.sprites.push((&assets.close[look(Hit::Close)], at(self.close_at()), CLOSE_SIZE));
+        layer.sprites.push((&assets.resize, at([WIDTH - window::GRIP, self.height() - window::GRIP]), assets.resize.size));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resizes_its_height_in_the_games_steps() {
+        // 458 + 32k up to 0.7 of the screen: 12 to 14 rows at 768 high, only 12 under 700.
+        assert_eq!([600.0, 699.0, 768.0, 1080.0].map(most_rows), [12, 12, 14, 21]);
+        let mut storage = Storage::default();
+        assert_eq!(storage.rows(), LEAST_ROWS);
+        storage.frame.open = true;
+        let corner = storage.frame.at([WIDTH - 5.0, storage.height() - 5.0]);
+        assert!(storage.on_grip(corner));
+        storage.start_resize(corner);
+        // 31 px down isn't a row yet; 32 is; the width never changes.
+        assert!(storage.resize_to([corner[0] + 100.0, corner[1] + 31.0]));
+        assert_eq!(storage.rows(), 12);
+        storage.resize_to([corner[0], corner[1] + 64.0]);
+        assert_eq!(storage.rows(), most_rows(crate::screen()[1]).min(14));
+        storage.resize_to([corner[0], corner[1] - 500.0]);
+        assert_eq!(storage.rows(), LEAST_ROWS);
+        assert!(storage.stop_resize() && !storage.resize_to(corner));
+        // Kept rows survive the next opening; a kept value out of range is clamped.
+        storage.set_rows(13);
+        storage.open();
+        assert_eq!(storage.rows(), 13.min(most_rows(crate::screen()[1])));
+        storage.set_rows(99);
+        assert_eq!(storage.rows(), most_rows(crate::screen()[1]));
+    }
 
     fn item(index: u16, kind: u8, location: u32) -> InventoryItem {
         InventoryItem { index, id: 2220, kind, amount: 1, location, identified: true, ..Default::default() }

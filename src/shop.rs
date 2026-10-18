@@ -15,8 +15,27 @@ use crate::{Layer, UI, contains, offset};
 
 const WIDTH: f32 = 280.0;
 const ROW: f32 = 32.0;
-/// Rows each window shows: the goods (280×312) and the deal (280×152).
-const ROWS: [usize; 2] = [8, 3];
+/// Rows each window shows at first: the goods (280×312) and the deal (280×152).
+pub const ROWS: [usize; 2] = [8, 3];
+/// The corner grips: the goods both ways, 248, 280 or 312 wide (232 to 320 asked, stepping toward 280); either window
+/// 120 to 312 high, a row per 32 px (2 to 8 rows here). A player's shop and a buying store have none.
+const LEAST_ROWS: usize = 2;
+const MOST_ROWS: usize = 8;
+
+/// The goods' width for an asked one: 248, 280 or 312.
+pub fn snap_width(asked: f32) -> f32 {
+    WIDTH + ROW * ((asked.clamp(232.0, 320.0) - WIDTH) / ROW).trunc()
+}
+
+/// The windows' sizes before any are kept: the goods' width and both windows' rows.
+pub fn default_sizes() -> (f32, [usize; 2]) {
+    (WIDTH, ROWS)
+}
+
+/// A window's height with `rows` rows.
+fn height(rows: usize) -> f32 {
+    TITLE_HEIGHT + PADDING * 2.0 + rows as f32 * ROW + FOOTER
+}
 /// The goods on the inventory's spot, the deal beside and under it.
 const POSITIONS: [[f32; 2]; 2] = [[0.0, 120.0], [280.0, 280.0]];
 /// A market's goods: where the icon and name go, and how wide the name may be.
@@ -55,6 +74,8 @@ pub struct Assets {
     /// Buy, sell, cancel and exchange: normal, hovered, pressed.
     buttons: [[Texture; 3]; 4],
     selected: Texture,
+    /// The corner grip.
+    resize: Texture,
 }
 
 impl Assets {
@@ -71,6 +92,7 @@ impl Assets {
             bar: image(format!("{UI}basic_interface\\btnbar_mid2.bmp")),
             buttons: [button("buy"), button("sell"), button("cancel"), button("exchange")],
             selected: gpu.solid(SELECTED),
+            resize: image(format!("{UI}btn_resize.bmp")),
         }
     }
 }
@@ -103,6 +125,8 @@ pub enum Hit {
     Row(usize, usize),
     Deal,
     Cancel,
+    /// A window's corner grip.
+    Resize(usize),
     Window(usize),
 }
 
@@ -132,6 +156,10 @@ pub struct Shop {
     /// Offers in the deal, and how many.
     pub deal: Vec<(usize, u32)>,
     pub frames: [Frame; 2],
+    /// Each window's rows, the goods' width, and the corner grips while held.
+    rows: [usize; 2],
+    width: f32,
+    grips: [window::Grip; 2],
     scroll: [usize; 2],
     selected: [Option<usize>; 2],
     clicks: Clicks,
@@ -154,6 +182,9 @@ impl Shop {
             offers,
             deal: Vec::new(),
             frames,
+            rows: ROWS,
+            width: WIDTH,
+            grips: [window::Grip::default(); 2],
             scroll: [0; 2],
             selected: [None; 2],
             clicks: Clicks::default(),
@@ -166,17 +197,70 @@ impl Shop {
         self.vendor.is_none() && self.buying_store.is_none() && self.market.is_none()
     }
 
-    /// Windows held by their title bars follow the pointer.
+    /// Windows held by their title bars follow the pointer; one held by its corner grip takes the size it asks
+    /// for.
     pub fn drag_to(&mut self, cursor: [f32; 2]) {
-        for (window, frame) in self.frames.iter_mut().enumerate() {
-            frame.drag_to(cursor, Self::height(window));
+        for window in 0..2 {
+            if let Some([width, asked]) = self.grips[window].asked(cursor) {
+                let rows = LEAST_ROWS + window::steps(asked, height(LEAST_ROWS), ROW, MOST_ROWS - LEAST_ROWS);
+                self.set_size(window, (window == 0).then_some(width), rows);
+            }
+            let height = self.height(window);
+            self.frames[window].drag_to(cursor, height);
         }
+    }
+
+    /// Whether the windows have corner grips: an NPC's shop or a market, not a player's shop or buying store.
+    fn resizable(&self) -> bool {
+        self.vendor.is_none() && self.buying_store.is_none()
+    }
+
+    /// Sizes a window: the goods' width (snapped) and the rows.
+    pub fn set_size(&mut self, window: usize, width: Option<f32>, rows: usize) {
+        if let Some(width) = width.filter(|_| window == 0) {
+            self.width = snap_width(width);
+            self.frames[0].set_width(self.width);
+        }
+        self.rows[window] = rows.clamp(LEAST_ROWS, MOST_ROWS);
+        let most = self.rows(window).len().saturating_sub(self.rows[window]);
+        self.scroll[window] = self.scroll[window].min(most);
+    }
+
+    /// The goods' width and both windows' rows, for keeping them (None for a player's shop or store).
+    pub fn sizes(&self) -> Option<(f32, [usize; 2])> {
+        self.resizable().then_some((self.width, self.rows))
+    }
+
+    /// Puts back kept sizes.
+    pub fn apply_sizes(&mut self, (width, rows): (f32, [usize; 2])) {
+        if !self.resizable() {
+            return;
+        }
+        self.set_size(0, Some(width), rows[0]);
+        self.set_size(1, None, rows[1]);
+    }
+
+    /// A press on a window's corner grip holds it; whether it did.
+    pub fn start_resize(&mut self, cursor: [f32; 2]) -> bool {
+        let Some(Hit::Resize(window)) = self.hit(cursor) else { return false };
+        let size = [self.window_width(window), self.height(window)];
+        self.grips[window].start(cursor, size);
+        true
+    }
+
+    /// Lets go of the grips; whether one was held.
+    pub fn stop_resize(&mut self) -> bool {
+        self.grips.iter_mut().fold(false, |held, grip| grip.stop() | held)
+    }
+
+    fn window_width(&self, window: usize) -> f32 {
+        if window == 0 { self.width } else { WIDTH }
     }
 
     /// Which of its windows is under the pointer: 0 the goods, 1 the deal.
     pub fn window_at(&self, cursor: [f32; 2]) -> Option<usize> {
         match self.hit(cursor)? {
-            Hit::Title(window, _) | Hit::Row(window, _) | Hit::Window(window) => Some(window),
+            Hit::Title(window, _) | Hit::Row(window, _) | Hit::Resize(window) | Hit::Window(window) => Some(window),
             Hit::Deal | Hit::Cancel => Some(1),
         }
     }
@@ -248,8 +332,8 @@ impl Shop {
         shop
     }
 
-    fn height(window: usize) -> f32 {
-        TITLE_HEIGHT + PADDING * 2.0 + ROWS[window] as f32 * ROW + FOOTER
+    fn height(&self, window: usize) -> f32 {
+        height(self.rows[window])
     }
 
     /// The rows a window lists: offers, or the deal's offers with their amounts.
@@ -266,15 +350,18 @@ impl Shop {
     }
 
     fn deal_button(&self, window: usize) -> ([f32; 2], [f32; 2]) {
-        let top = Self::height(window) - FOOTER + 4.0;
+        let top = self.height(window) - FOOTER + 4.0;
         if window == 1 { ([WIDTH - 62.0 - BUTTON[0], top], [WIDTH - 15.0 - BUTTON[0], top]) } else { ([-100.0; 2], [-100.0; 2]) }
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         for window in [1, 0] {
-            let Some(local) = self.frames[window].local(cursor, Self::height(window)) else { continue };
+            let Some(local) = self.frames[window].local(cursor, self.height(window)) else { continue };
             if let Some(hit) = self.frames[window].title_hit(local) {
                 return Some(Hit::Title(window, hit));
+            }
+            if self.resizable() && !self.frames[window].minimized && window::on_grip([self.window_width(window), self.height(window)], local) {
+                return Some(Hit::Resize(window));
             }
             let (deal, cancel) = self.deal_button(window);
             if contains(deal, BUTTON, local) {
@@ -284,7 +371,7 @@ impl Shop {
                 return Some(Hit::Cancel);
             }
             let top = TITLE_HEIGHT + PADDING;
-            if local[1] >= top && local[1] < top + ROWS[window] as f32 * ROW {
+            if local[1] >= top && local[1] < top + self.rows[window] as f32 * ROW {
                 let row = ((local[1] - top) / ROW) as usize + self.scroll[window];
                 if row < self.rows(window).len() {
                     return Some(Hit::Row(window, row));
@@ -312,7 +399,7 @@ impl Shop {
             Hit::Deal if self.deal.is_empty() && self.plain() => return Some(Action::Close),
             Hit::Deal => return (!self.deal.is_empty()).then_some(Action::Deal),
             Hit::Cancel => return Some(Action::Close),
-            Hit::Window(_) => {}
+            Hit::Resize(_) | Hit::Window(_) => {}
         }
         None
     }
@@ -479,8 +566,8 @@ impl Shop {
 
     pub fn scroll_by(&mut self, cursor: [f32; 2], rows: i32) {
         for (window, frame) in self.frames.iter().enumerate() {
-            if frame.local(cursor, Self::height(window)).is_some() {
-                let most = self.rows(window).len().saturating_sub(ROWS[window]);
+            if frame.local(cursor, self.height(window)).is_some() {
+                let most = self.rows(window).len().saturating_sub(self.rows[window]);
                 self.scroll[window] = (self.scroll[window] as i32 + rows).clamp(0, most as i32) as usize;
             }
         }
@@ -508,7 +595,7 @@ impl Shop {
             let hovered = hit == Some(target);
             usize::from(hovered) + usize::from(hovered && pointer.1)
         };
-        for window in 0..2 {
+        for (window, titles) in TITLES.iter().enumerate() {
             let frame = &self.frames[window];
             if !frame.open {
                 continue;
@@ -518,22 +605,23 @@ impl Shop {
                 Some((.., name)) if window == 0 => name.as_str(),
                 _ if self.buying_store.is_some() && window == 0 => message(WANTED_TITLE),
                 _ if barter && window == 1 => message(EXCHANGE_TITLE),
-                _ => message(TITLES[window][usize::from(self.selling)]),
+                _ => message(titles[usize::from(self.selling)]),
             };
             frame.draw_title(layer, chrome, title, pointer.0);
             if frame.minimized {
                 continue;
             }
-            let height = Self::height(window);
+            let height = self.height(window);
+            let width = self.window_width(window);
             let list_height = height - TITLE_HEIGHT - FOOTER;
-            layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [WIDTH, list_height]));
+            layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [width, list_height]));
             layer.sprites.push((&assets.strip, frame.at([0.0, TITLE_HEIGHT]), [assets.strip.size[0], list_height]));
-            layer.sprites.push((&chrome.border, frame.at([WIDTH - 1.0, TITLE_HEIGHT]), [1.0, list_height]));
-            for (place, (offer_index, amount)) in self.rows(window).into_iter().enumerate().skip(self.scroll[window]).take(ROWS[window]) {
+            layer.sprites.push((&chrome.border, frame.at([width - 1.0, TITLE_HEIGHT]), [1.0, list_height]));
+            for (place, (offer_index, amount)) in self.rows(window).into_iter().enumerate().skip(self.scroll[window]).take(self.rows[window]) {
                 let top = TITLE_HEIGHT + PADDING + (place - self.scroll[window]) as f32 * ROW;
                 let offer = &self.offers[offer_index];
                 if self.selected[window] == Some(place) {
-                    layer.sprites.push((&assets.selected, frame.at([LEFT, top]), [WIDTH - LEFT - 1.0, ROW]));
+                    layer.sprites.push((&assets.selected, frame.at([LEFT, top]), [width - LEFT - 1.0, ROW]));
                 }
                 // A market's goods sit further right, the name wider.
                 let market_goods = window == 0 && self.market == Some(MarketKind::Market);
@@ -552,22 +640,25 @@ impl Shop {
                 let name = inventory::item_name(items, offer.item, offer.identified, offer.refine);
                 // ponytail: a barter's costs go on a second line, in grey; where the real client shows them isn't known.
                 if barter {
-                    layer.texts.push((window::fit(font, &name, WIDTH - LEFT - 40.0), frame.at([LEFT + 32.0, top + 3.0]), [0, 0, 0]));
+                    layer.texts.push((window::fit(font, &name, width - LEFT - 40.0), frame.at([LEFT + 32.0, top + 3.0]), [0, 0, 0]));
                     let costs = self.costs_text(items, messages, &[(offer_index, amount.unwrap_or(1))]);
-                    layer.texts.push((window::fit(font, &costs, WIDTH - LEFT - 40.0), frame.at([LEFT + 32.0, top + 17.0]), GREY));
+                    layer.texts.push((window::fit(font, &costs, width - LEFT - 40.0), frame.at([LEFT + 32.0, top + 17.0]), GREY));
                     continue;
                 }
                 let (price, name_width) = price_text(offer.listed, offer.price);
                 let name_width = if market_goods { MARKET_NAME_WIDTH } else { name_width };
                 layer.texts.push((window::fit(font, &name, name_width), frame.at([name_x, top + 10.0]), [0, 0, 0]));
-                layer.texts.push((price.clone(), frame.at([WIDTH - PRICE_RIGHT - font.width(&price), top + 10.0]), [0, 0, 0]));
+                layer.texts.push((price.clone(), frame.at([width - PRICE_RIGHT - font.width(&price), top + 10.0]), [0, 0, 0]));
             }
             // Footer: the deal's total and buttons.
             let footer = height - FOOTER;
-            layer.sprites.push((&assets.bar, frame.at([0.0, footer]), [WIDTH, FOOTER]));
+            layer.sprites.push((&assets.bar, frame.at([0.0, footer]), [width, FOOTER]));
+            if self.resizable() {
+                layer.sprites.push((&assets.resize, frame.at([width - window::GRIP, height - window::GRIP]), assets.resize.size));
+            }
             if let (Some((_, _, limit)), 0) = (self.buying_store, window) {
                 let text = rustnarok_client::messages::fill(message(LIMIT_MESSAGE), &[&group(u64::from(limit))]);
-                layer.texts.push((window::fit(font, &text, WIDTH - 20.0), frame.at([10.0, footer + 7.0]), [0, 0, 0]));
+                layer.texts.push((window::fit(font, &text, width - 20.0), frame.at([10.0, footer + 7.0]), [0, 0, 0]));
             }
             if window == 1 {
                 let total = if barter {
@@ -604,7 +695,14 @@ impl Shop {
     pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
         let (deal, cancel) = self.deal_button(1);
         let [deal, cancel] = [self.frames[1].at(deal), self.frames[1].at(cancel)];
-        vec![("shop_deal", [deal[0], deal[1], BUTTON[0], BUTTON[1]]), ("shop_cancel", [cancel[0], cancel[1], BUTTON[0], BUTTON[1]])]
+        let mut boxes = vec![("shop_deal", [deal[0], deal[1], BUTTON[0], BUTTON[1]]), ("shop_cancel", [cancel[0], cancel[1], BUTTON[0], BUTTON[1]])];
+        if self.resizable() {
+            for (window, name) in ["shop_resize_0", "shop_resize_1"].into_iter().enumerate() {
+                let [x, y] = self.frames[window].at([self.window_width(window) - window::GRIP, self.height(window) - window::GRIP]);
+                boxes.push((name, [x, y, window::GRIP, window::GRIP]));
+            }
+        }
+        boxes
     }
 
     pub fn row_boxes(&self) -> Vec<(u32, [f32; 4])> {
@@ -612,10 +710,10 @@ impl Shop {
             .into_iter()
             .enumerate()
             .skip(self.scroll[0])
-            .take(ROWS[0])
+            .take(self.rows[0])
             .map(|(place, (offer, _))| {
                 let top = self.frames[0].at([0.0, TITLE_HEIGHT + PADDING + (place - self.scroll[0]) as f32 * ROW]);
-                (self.offers[offer].item, [top[0], top[1], WIDTH, ROW])
+                (self.offers[offer].item, [top[0], top[1], self.width, ROW])
             })
             .collect()
     }
@@ -652,6 +750,36 @@ pub fn group(number: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resizes_by_the_corner_grips() {
+        // 232 to 320 asked, toward 280: 248, 280 or 312.
+        assert_eq!([100.0, 248.0, 249.0, 311.0, 312.0, 400.0].map(snap_width), [248.0, 248.0, 280.0, 280.0, 312.0, 312.0]);
+        let mut shop = Shop::new(false, vec![offer(501, 50, 0, 0)]);
+        let grip = |shop: &Shop, window: usize| {
+            let [x, y, w, h] = shop.button_boxes().into_iter().find(|(name, _)| *name == ["shop_resize_0", "shop_resize_1"][window]).unwrap().1;
+            [x + w / 2.0, y + h / 2.0]
+        };
+        // The goods: both ways.
+        let corner = grip(&shop, 0);
+        assert_eq!(shop.hit(corner), Some(Hit::Resize(0)));
+        assert!(shop.start_resize(corner));
+        shop.drag_to([corner[0] - 40.0, corner[1] - 6.0 * ROW]);
+        assert_eq!(shop.sizes(), Some((248.0, [2, 3])));
+        assert!(shop.stop_resize());
+        // The deal: only its height, up to 8 rows.
+        let corner = grip(&shop, 1);
+        assert!(shop.start_resize(corner));
+        shop.drag_to([corner[0] + 100.0, corner[1] + 20.0 * ROW]);
+        assert_eq!(shop.sizes(), Some((248.0, [2, MOST_ROWS])));
+        shop.stop_resize();
+        // A player's shop has no grips and keeps nothing.
+        let mut vendor = Shop::new(false, vec![offer(501, 50, 0, 0)]);
+        vendor.vendor = Some((1, 2, "Shop".into()));
+        vendor.apply_sizes((312.0, [8, 8]));
+        assert_eq!((vendor.sizes(), vendor.rows), (None, ROWS));
+        assert!(!vendor.button_boxes().iter().any(|(name, _)| name.starts_with("shop_resize")));
+    }
 
     fn offer(item: u32, price: u32, have: u16, kind: u8) -> Offer {
         Offer { item, price, index: 2, have, kind, identified: true, ..Offer::default() }
