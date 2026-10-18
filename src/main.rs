@@ -84,6 +84,7 @@ mod pin;
 mod quest;
 mod ranking;
 mod refine;
+mod reform;
 mod render;
 mod roulette;
 mod shop;
@@ -712,6 +713,8 @@ struct Game {
     /// Laphine synthesis and upgrade, open until their close packet or a map change.
     synthesis: Option<laphine::Synthesis>,
     upgrade: Option<laphine::Upgrade>,
+    /// The item reform window (a reform box or an NPC).
+    reform: Option<reform::Reform>,
     /// The material window (Change Material, Four Spirit Analysis).
     materials: Option<material::Materials>,
     /// The Lucky Roulette's window.
@@ -1690,6 +1693,7 @@ impl Game {
             || self.synthesis.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.upgrade.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.reform.as_ref().is_some_and(|window| window.hit(cursor, &self.inventory.items).is_some())
             || roulette::icon_hit(cursor)
             || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.chat.contains(cursor)
@@ -2010,7 +2014,8 @@ impl Game {
             return;
         }
         match item.kind {
-            net::ITEM_HEALING | net::ITEM_USABLE | net::ITEM_CASH => {
+            // A reform box is a delayed consume: using it only opens the window.
+            net::ITEM_HEALING | net::ITEM_USABLE | net::ITEM_DELAY_CONSUME | net::ITEM_CASH => {
                 let _ = self.session.use_item(index, self.account_id);
             }
             // An egg (armor worn nowhere) hatches from the egg list only.
@@ -2495,6 +2500,7 @@ struct Assets {
     trade: trade::Assets,
     refine: refine::Assets,
     laphine: laphine::Assets,
+    reform: reform::Assets,
     bank: bank::Assets,
     cashshop: cashshop::Assets,
     context_menu: menu::Assets,
@@ -2603,6 +2609,7 @@ impl Assets {
             trade: trade::Assets::load(gpu, grf),
             refine: refine::Assets::load(gpu, grf),
             laphine: laphine::Assets::load(gpu, grf),
+            reform: reform::Assets::load(gpu, grf),
             bank: bank::Assets::load(gpu, grf),
             cashshop: cashshop::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
@@ -2971,6 +2978,8 @@ struct App {
     title_names: HashMap<u32, String>,
     /// Item names and resources by item ID, and the client's numbered messages.
     items: HashMap<u32, ItemInfo>,
+    /// What each reform item can turn into, from the client's reform list.
+    reforms: HashMap<u32, Vec<lua::ReformInfo>>,
     messages: Vec<String>,
     /// Item icons by file, loaded when first shown.
     icons: HashMap<String, Option<Texture>>,
@@ -3981,6 +3990,20 @@ impl App {
                     None => {}
                 }
             }
+            Scene::Game(game) if game.reform.as_ref().is_some_and(|window| window.hit(cursor, &game.inventory.items).is_some()) => {
+                let hit = game.reform.as_ref().unwrap().hit(cursor, &game.inventory.items).unwrap();
+                match game.reform.as_mut().unwrap().click(hit, &game.inventory.items) {
+                    Some(reform::Action::Reform { item, index }) => {
+                        let _ = game.session.reform(item, index);
+                    }
+                    // Until the server hears it, it holds the player and refuses NPC clicks.
+                    Some(reform::Action::Close) => {
+                        let _ = game.session.close_reform();
+                        game.reform = None;
+                    }
+                    None => {}
+                }
+            }
             Scene::Game(game) if game.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
                 let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
                 let carried = &game.inventory.items;
@@ -4460,6 +4483,9 @@ impl App {
             if let Some(window) = &mut game.upgrade {
                 window.frame.drag_to(self.cursor, laphine::Upgrade::height());
             }
+            if let Some(window) = &mut game.reform {
+                window.frame.drag_to(self.cursor, reform::HEIGHT);
+            }
             if let Some(window) = &mut game.monster_window {
                 window.frame.drag_to(self.cursor, monster_info::MonsterWindow::height());
             }
@@ -4650,10 +4676,12 @@ impl App {
             let on_cashshop = game.cashshop.as_ref().is_some_and(|shop| shop.hit(self.cursor).is_some());
             let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+            let on_reform = game.reform.as_ref().is_some_and(|window| window.hit(self.cursor, &game.inventory.items).is_some());
             match game.window_at(self.cursor) {
                 _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
                 _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
                 _ if on_cashshop => game.cashshop.as_mut().unwrap().scroll_at(self.cursor, rows),
+                _ if on_reform => game.reform.as_mut().unwrap().scroll_by(rows, &game.inventory.items),
                 _ if on_setup => {
                     let count = game.cart.items.len();
                     game.vend_setup.as_mut().unwrap().scroll_by(rows, count);
@@ -4796,6 +4824,7 @@ impl App {
                     | game.synthesis.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.reform.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag());
                 // A slider let go keeps its volume for next time.
                 let slid = game.audio_window.as_mut().is_some_and(options::AudioWindow::drop_drag);
@@ -4925,6 +4954,14 @@ impl App {
         {
             if hit == roulette::Hit::Title(TitleHit::Title) {
                 game.roulette.as_mut().unwrap().frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.reform.as_ref().and_then(|window| window.hit(cursor, &game.inventory.items))
+        {
+            if hit == reform::Hit::Title(TitleHit::Title) {
+                game.reform.as_mut().unwrap().frame.start_drag(cursor);
             }
             return;
         }
@@ -5902,6 +5939,7 @@ impl App {
                     refine: None,
                     synthesis: None,
                     upgrade: None,
+                    reform: None,
                     materials: None,
                     roulette: None,
                     monster_window: None,
@@ -6360,6 +6398,18 @@ impl App {
                     let _ = game.session.close_upgrade();
                 }
             },
+            // A reform item the client has no entries for: tell the server and open nothing.
+            MapEvent::ReformOpen(item) => match self.reforms.get(&item).filter(|entries| !entries.is_empty()) {
+                Some(entries) => {
+                    game.reform = Some(reform::Reform::open(item, entries.clone()));
+                    game.inventory.frame.open = true;
+                    game.raise(Panel::Inventory);
+                }
+                None => {
+                    game.reform = None;
+                    let _ = game.session.close_reform();
+                }
+            },
             MapEvent::Synthesized(result) => {
                 if result == 0
                     && let Some(window) = &mut game.synthesis
@@ -6406,6 +6456,9 @@ impl App {
                     game.item_window = Some(window);
                 }
             }
+            // Result 0: rathena has forgotten the window, so close it. The inventory updates arrived on their own.
+            MapEvent::Reformed { result: 0, .. } => game.reform = None,
+            MapEvent::Reformed { .. } => {}
             MapEvent::RefineMaterials { index, blessings, materials } => {
                 if materials.is_empty() {
                     game.chat_line(self.messages.get(CANT_REFINE).cloned().unwrap_or_default(), CHAT_ERROR);
@@ -6520,11 +6573,13 @@ impl App {
                 // The NPC is left behind: its shop and its buy-or-sell question close (the server doesn't say so).
                 game.close_shop();
                 game.close_cashshop();
-                // rathena forgets the refine window on a map change; the material window and the roulette go too.
+                // rathena forgets the refine window on a map change; the material window, the roulette and the reform
+                // window go too. The reform window sends no close: the server already forgot it.
                 game.refine = None;
                 // rathena forgets both Laphine windows on a map change, without a close packet.
                 game.synthesis = None;
                 game.upgrade = None;
+                game.reform = None;
                 game.roulette = None;
                 // The mirror's status ends with the warp.
                 game.boss = None;
@@ -9286,6 +9341,7 @@ impl App {
         shop_icons.extend(game.cashshop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default());
         let mut pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
         pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
+        pick_icons.extend(game.reform.as_ref().map(|window| window.icons(items)).unwrap_or_default());
         pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.synthesis.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.upgrade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
@@ -9658,6 +9714,9 @@ impl App {
         }
         if let Some(window) = &game.refine {
             window.draw(&mut shop_layer, &assets.chrome, &assets.refine, icons, items, &game.inventory.items, messages, font, pointer);
+        }
+        if let Some(window) = &game.reform {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.reform, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.materials {
             window.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, &game.inventory.items, messages, font, pointer);
@@ -10257,6 +10316,15 @@ fn main() {
         eprintln!("no item names: {error}");
         HashMap::new()
     });
+    // ItemDBNameTbl is shared with the enchant window: it calls lua::item_db_names on the same file.
+    let item_names = grf.read(lua::ITEM_DB_NAMES).and_then(lua::item_db_names).unwrap_or_else(|error| {
+        eprintln!("no item name table: {error}");
+        HashMap::new()
+    });
+    let reforms = grf.read(lua::ITEM_REFORM).and_then(|bytes| lua::reform_table(bytes, &item_names)).unwrap_or_else(|error| {
+        eprintln!("no item reform list: {error}");
+        HashMap::new()
+    });
     let messages = messages::load(&grf).unwrap_or_else(|error| {
         eprintln!("no client messages: {error}");
         Vec::new()
@@ -10297,6 +10365,7 @@ fn main() {
         upgrade_boxes,
         title_names,
         items,
+        reforms,
         messages,
         icons: HashMap::new(),
         modifiers: ModifiersState::empty(),

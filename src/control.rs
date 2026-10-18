@@ -868,6 +868,10 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.synthesis.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.upgrade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
+            game.reform.iter().flat_map(|window| window.row_boxes(&game.inventory.items)).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})),
+        )
+        .chain(game.reform.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
             game.achievement_window
                 .button_boxes(&app.achievement_info, &game.achievements)
                 .into_iter()
@@ -928,6 +932,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("Refine", game.refine.is_some()),
         ("LaphineSynthesis", game.synthesis.is_some()),
         ("LaphineUpgrade", game.upgrade.is_some()),
+        ("ItemReform", game.reform.is_some()),
         ("Materials", game.materials.is_some()),
         ("PartySetup", game.party_setup.is_some()),
         ("DressRoom", game.dressroom.is_some()),
