@@ -15137,8 +15137,8 @@ impl App {
                 near.then_some((id, actor.job, actor.level, feet))
             });
             for (id, job, level, feet) in player.into_iter().chain(others) {
-                if let Some(baby) = aura::level99(job, level) {
-                    aura::draw(&assets.aura, feet, baby, seconds, id, self.graphics.aura, &mut effect_meshes, &mut effect_quads);
+                if let Some(kind) = aura::kind(job, level) {
+                    aura::draw(&assets.aura, kind, feet, seconds, id, self.graphics.aura, &mut effect_meshes, &mut effect_quads);
                 }
             }
         }

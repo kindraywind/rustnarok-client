@@ -1,0 +1,23 @@
+{
+  "about": "The 3rd- and 4th-job auras: MCPTester made a Rune Knight at level 200 gets the red aura (bubble walls rising and opening, two discs, spreading shock rings), then a Dragon Knight at 275 the orange one. /aura leaves only the shock rings. It ends a Novice at 99 again.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 300},
+    {"say": "@job 4054"}, {"wait": 800},
+    {"say": "@blvl 101"}, {"wait": 1500},
+    {"expect": {"state": {"player.base_level": 200}}},
+    {"move": [1000, 700]},
+    {"shot": "aura-red", "crop": [262, 184, 500, 400], "threshold": 5},
+    {"type": "/aura"}, {"key": "Enter"}, {"wait": 500},
+    {"shot": "aura-red-simple", "crop": [262, 184, 500, 400], "threshold": 5},
+    {"type": "/aura"}, {"key": "Enter"}, {"wait": 300},
+    {"say": "@job 4252"}, {"wait": 800},
+    {"say": "@blvl 75"}, {"wait": 1500},
+    {"shot": "aura-orange", "crop": [262, 184, 500, 400], "threshold": 5},
+    {"say": "@blvl -176"}, {"wait": 800},
+    {"say": "@job 0"}, {"wait": 800},
+    {"expect": {"state": {"player.base_level": 99}}}
+  ]
+}
