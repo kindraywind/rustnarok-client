@@ -146,7 +146,8 @@ impl Frame {
         [self.width - 14.0, 3.0]
     }
 
-    fn minimize_button(&self) -> [f32; 2] {
+    /// The minimize button's corner inside the window.
+    pub fn minimize_button(&self) -> [f32; 2] {
         [self.width - 29.0, 3.0]
     }
 
@@ -154,6 +155,11 @@ impl Frame {
     pub fn local(&self, cursor: [f32; 2], height: f32) -> Option<[f32; 2]> {
         let height = if self.minimized { TITLE_HEIGHT } else { height };
         (self.open && contains(self.position, [self.width, height], cursor)).then(|| [cursor[0] - self.position[0], cursor[1] - self.position[1]])
+    }
+
+    /// A window whose width changes (the skill window's two views).
+    pub fn set_width(&mut self, width: f32) {
+        self.width = width;
     }
 
     pub fn title_hit(&self, local: [f32; 2]) -> Option<TitleHit> {

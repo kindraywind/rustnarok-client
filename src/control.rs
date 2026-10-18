@@ -952,6 +952,8 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .into_iter()
                 .map(|(job, area)| (format!("skill_tab:{job}"), area))
                 .chain(game.skill_window.arrow_boxes(&sheet))
+                .chain(game.skill_window.up_boxes(&sheet))
+                .chain(game.skill_window.view_box().map(|area| ("skill_view".to_owned(), area)))
                 .chain(game.skill_window.button_boxes().into_iter().map(|(name, area)| (name.to_owned(), area)))
                 .filter(|(_, area)| on_top(Panel::Skills, area))
                 .chain(game.status_window.raise_boxes(&game.status).into_iter().filter(|(_, area)| on_top(Panel::Status, area)))
@@ -1180,6 +1182,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             "walk_goal": game.walk_goal,
             // Skill levels put in the skill window but not sent, in the order they'd go.
             "skill_pending": game.skill_window.pending(),
+            "skill_list": game.skill_window.simple(),
             // Where the cursor is drawn (the middle of what it snapped to, else the pointer).
             "cursor_at": game.cursor_at,
             "cursor_snapped": game.cursor_at != app.cursor,

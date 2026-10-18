@@ -1,6 +1,7 @@
 //! The skill window (Alt+S): the job's skills where the client's skill tree puts them, a tab down the left for each
 //! tier of the line (Novice with the first job, the second job with its transcendent one, third, fourth) and Etc,
-//! their levels, and the points left to put in. Points go in pending first and are sent on Apply.
+//! their levels, and the points left to put in. Points go in pending first and are sent on Apply. The title bar's
+//! minimize button switches to a simple list, one skill a row with a level up button, and back; the choice is kept.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -58,6 +59,32 @@ const APPLY_AT: [f32; 2] = [WIDTH - 100.0, HEIGHT - 27.0];
 const RESET_AT: [f32; 2] = [WIDTH - 50.0, HEIGHT - 27.0];
 const POINTS_AT: [f32; 2] = [80.0, HEIGHT - 23.0];
 const BAR_HEIGHT: f32 = 32.0;
+/// The list view: 330 wide, one skill a row 32 tall from y 32, ten rows a page.
+const LIST_WIDTH: f32 = 330.0;
+const LIST_TOP: f32 = 32.0;
+const LIST_ROW: f32 = 32.0;
+const LIST_ROWS: usize = 10;
+/// In a row, from the icon at (44, top + 2): the level up button at (78, +2), the selection band 164×28 at (104, +0),
+/// the name at (112, +3), "Lv :" at (113, +15) or (124, +15) beside the arrows at (112, +16) and (192, +16), the SP at
+/// (212, +15).
+const LIST_ICON_X: f32 = 44.0;
+const LIST_UP: [f32; 2] = [78.0 - LIST_ICON_X, 0.0];
+const UP_SIZE: [f32; 2] = [24.0, 24.0];
+const LIST_BAND: [f32; 4] = [104.0 - LIST_ICON_X, -2.0, 164.0, 28.0];
+const LIST_NAME: [f32; 2] = [112.0 - LIST_ICON_X, 1.0];
+const LIST_LEVEL: [f32; 2] = [113.0 - LIST_ICON_X, 13.0];
+const LIST_LEVEL_ARROWS: [f32; 2] = [124.0 - LIST_ICON_X, 13.0];
+const LIST_ARROWS: [[f32; 2]; 2] = [[112.0 - LIST_ICON_X, 14.0], [192.0 - LIST_ICON_X, 14.0]];
+const LIST_SP: [f32; 2] = [212.0 - LIST_ICON_X, 13.0];
+// ponytail: the band's colour comes from the skin's table, which isn't read; a light blue stands in.
+const BAND: [u8; 3] = [222, 232, 250];
+/// Apply and Reset at (w − 115, h − 27) and (w − 65, h − 27); "Skill Point: %d" at (30, h − 23).
+const LIST_APPLY_AT: [f32; 2] = [LIST_WIDTH - 115.0, HEIGHT - 27.0];
+const LIST_RESET_AT: [f32; 2] = [LIST_WIDTH - 65.0, HEIGHT - 27.0];
+const LIST_POINTS_AT: [f32; 2] = [30.0, HEIGHT - 23.0];
+const LIST_POINTS_MESSAGE: usize = 284;
+/// "Passive" in place of the SP.
+const PASSIVE_MESSAGE: usize = 286;
 /// The boxes of the hovered (or pinned) skill's prerequisites, pink; of a skill that can be raised, light blue.
 const NEEDED_FILL: [u8; 3] = [255, 192, 204];
 const NEEDED_LINE: [u8; 3] = [255, 182, 193];
@@ -93,6 +120,8 @@ pub struct Assets {
     /// Box fills: plain, a prerequisite's, a raisable skill's; and a prerequisite's outline.
     fills: [Texture; 3],
     needed_line: Texture,
+    /// The list view's selection band.
+    band: Texture,
 }
 
 impl Assets {
@@ -110,6 +139,7 @@ impl Assets {
             reset: ["btn_reset", "btn_reset_a", "btn_reset_b"].map(root),
             fills: [solid([255; 3]), solid(NEEDED_FILL), solid(RAISABLE_FILL)],
             needed_line: solid(NEEDED_LINE),
+            band: solid(BAND),
         }
     }
 }
@@ -119,6 +149,8 @@ pub enum Hit {
     Title(TitleHit),
     Tab(usize),
     Skill(u16),
+    /// The list view's level up button by a skill.
+    LevelUp(u16),
     /// An arrow on a skill's level line: one level more (`up`) or less to use, up to `learned`.
     Step {
         id: u16,
@@ -139,6 +171,8 @@ pub enum Action {
     LevelUp(u16),
     /// Send the pending levels (after asking).
     Apply,
+    /// The view was switched: the list (`true`) or the tree, to keep.
+    View(bool),
 }
 
 pub struct SkillWindow {
@@ -153,6 +187,8 @@ pub struct SkillWindow {
     pending: Vec<u16>,
     /// The skill whose prerequisites stay lit (a right click), instead of the hovered one's.
     pinned: Option<u16>,
+    /// The simple list rather than the tree.
+    simple: bool,
 }
 
 impl Default for SkillWindow {
@@ -165,8 +201,23 @@ impl Default for SkillWindow {
             chosen: HashMap::new(),
             pending: Vec::new(),
             pinned: None,
+            simple: false,
         }
     }
+}
+
+fn view_path() -> Option<std::path::PathBuf> {
+    crate::settings_path("skilllist")
+}
+
+/// Whether the skill window was last left in its list view.
+pub fn load_view() -> bool {
+    view_path().and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1")
+}
+
+pub fn save_view(simple: bool) {
+    let Some(path) = view_path() else { return };
+    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if simple { "1" } else { "0" }));
 }
 
 /// The tab for skills no tree of the line holds (a Wedding Ring's, an adopted family's, cards'), after the line's.
@@ -411,6 +462,27 @@ impl SkillWindow {
         HEIGHT
     }
 
+    fn width(&self) -> f32 {
+        if self.simple { LIST_WIDTH } else { WIDTH }
+    }
+
+    /// The simple list (`true`) or the tree.
+    pub fn set_simple(&mut self, simple: bool) {
+        self.simple = simple;
+        self.frame.set_width(self.width());
+        self.scroll = 0;
+    }
+
+    /// Where the level arrows sit from a skill's icon.
+    fn arrows(&self) -> [[f32; 2]; 2] {
+        if self.simple { LIST_ARROWS } else { ARROWS }
+    }
+
+    /// Apply and Reset.
+    fn buttons(&self) -> [[f32; 2]; 2] {
+        if self.simple { [LIST_APPLY_AT, LIST_RESET_AT] } else { [APPLY_AT, RESET_AT] }
+    }
+
     /// The level to use a skill at: the one picked, kept within what's learned, else the learned level.
     pub fn use_level(&self, id: u16, learned: u16) -> u16 {
         self.chosen.get(&id).map_or(learned, |&level| level.clamp(1, learned.max(1)))
@@ -497,13 +569,23 @@ impl SkillWindow {
 
     /// The open tab's skills that show, with their icons' corners in the window.
     fn shown(&self, sheet: &Sheet) -> Vec<(u16, [f32; 2])> {
-        self.tree(sheet).into_iter().filter_map(|(place, id)| Some((id, icon_corner(place, self.scroll)?))).collect()
+        let tree = self.tree(sheet).into_iter();
+        if self.simple {
+            let row = |row: usize| [LIST_ICON_X, LIST_TOP + 2.0 + row as f32 * LIST_ROW];
+            return tree.skip(self.scroll).take(LIST_ROWS).enumerate().map(|(index, (_, id))| (id, row(index))).collect();
+        }
+        tree.filter_map(|(place, id)| Some((id, icon_corner(place, self.scroll)?))).collect()
     }
 
     /// The wheel over the window: whole rows, three a notch (`rows` > 0 down).
     pub fn scroll_by(&mut self, sheet: &Sheet, rows: i32) {
-        let last = self.tree(sheet).iter().map(|(place, _)| place / COLUMNS).max().unwrap_or(0);
-        let most = (last + 1).saturating_sub(ROWS);
+        let tree = self.tree(sheet);
+        let most = if self.simple {
+            tree.len().saturating_sub(LIST_ROWS)
+        } else {
+            let last = tree.iter().map(|(place, _)| place / COLUMNS).max().unwrap_or(0);
+            (last + 1).saturating_sub(ROWS)
+        };
         let step = WHEEL_ROWS as i64 * i64::from(rows.signum());
         self.scroll = (self.scroll as i64 + step).clamp(0, most as i64) as usize;
     }
@@ -517,18 +599,22 @@ impl SkillWindow {
         if let Some(tab) = (0..tabs.len()).find(|&tab| contains(tab_corner(tab), TAB, local)) {
             return Some(Hit::Tab(tab));
         }
+        let [apply, reset] = self.buttons();
         if !self.pending.is_empty() {
-            if contains(APPLY_AT, BUTTON, local) {
+            if contains(apply, BUTTON, local) {
                 return Some(Hit::Apply);
             }
-            if contains(RESET_AT, BUTTON, local) {
+            if contains(reset, BUTTON, local) {
                 return Some(Hit::Reset);
             }
         }
         for (id, corner) in self.shown(sheet) {
+            if self.simple && self.raisable(sheet, id) && contains(offset(corner, LIST_UP), UP_SIZE, local) {
+                return Some(Hit::LevelUp(id));
+            }
             if self.pending.is_empty()
                 && let Some(learned) = sheet.steppable(id)
-                && let Some(arrow) = ARROWS.iter().position(|&at| contains(offset(corner, at), ARROW, local))
+                && let Some(arrow) = self.arrows().iter().position(|&at| contains(offset(corner, at), ARROW, local))
             {
                 return Some(Hit::Step { id, up: arrow == 1, learned });
             }
@@ -541,12 +627,24 @@ impl SkillWindow {
 
     pub fn click(&mut self, hit: Hit) -> Option<Action> {
         match hit {
+            // The minimize button switches the view instead of collapsing the window.
+            Hit::Title(TitleHit::Minimize) => {
+                self.set_simple(!self.simple);
+                return Some(Action::View(self.simple));
+            }
             Hit::Title(hit) => self.frame.click_title(hit),
             Hit::Tab(tab) => {
                 self.tab = tab;
                 self.scroll = 0;
             }
-            Hit::Skill(id) => return Some(if self.clicks.double(id) { Action::Use(id) } else { Action::LevelUp(id) }),
+            // A double click uses it; one click raises it in the tree (the list has its buttons).
+            Hit::Skill(id) => {
+                return match self.clicks.double(id) {
+                    true => Some(Action::Use(id)),
+                    false => (!self.simple).then_some(Action::LevelUp(id)),
+                };
+            }
+            Hit::LevelUp(id) => return Some(Action::LevelUp(id)),
             Hit::Step { id, up, learned } => {
                 let level = self.use_level(id, learned);
                 let level = if up { level + 1 } else { level.saturating_sub(1) };
@@ -592,7 +690,7 @@ impl SkillWindow {
             .into_iter()
             .filter(|&(id, _)| sheet.steppable(id).is_some())
             .flat_map(|(id, corner)| {
-                ["less", "more"].into_iter().zip(ARROWS).map(move |(name, place)| {
+                ["less", "more"].into_iter().zip(self.arrows()).map(move |(name, place)| {
                     let [x, y] = self.frame.at(offset(corner, place));
                     (format!("skill_{name}:{id}"), [x, y, ARROW[0], ARROW[1]])
                 })
@@ -615,12 +713,39 @@ impl SkillWindow {
             .collect()
     }
 
+    /// The list view's level up buttons on screen (for the test driver): `skill_up:<id>` and its box.
+    pub fn up_boxes(&self, sheet: &Sheet) -> Vec<(String, [f32; 4])> {
+        if !self.frame.open || !self.simple {
+            return Vec::new();
+        }
+        self.shown(sheet)
+            .into_iter()
+            .filter(|&(id, _)| self.raisable(sheet, id))
+            .map(|(id, corner)| {
+                let [x, y] = self.frame.at(offset(corner, LIST_UP));
+                (format!("skill_up:{id}"), [x, y, UP_SIZE[0], UP_SIZE[1]])
+            })
+            .collect()
+    }
+
+    /// The title bar's minimize button, which switches the view, on screen (for the test driver).
+    pub fn view_box(&self) -> Option<[f32; 4]> {
+        let [x, y] = self.frame.at(self.frame.minimize_button());
+        self.frame.open.then_some([x, y, window::BUTTON_SIZE[0], window::BUTTON_SIZE[1]])
+    }
+
+    /// Whether the simple list shows rather than the tree.
+    pub fn simple(&self) -> bool {
+        self.simple
+    }
+
     /// Apply and Reset on screen (for the test driver), while levels are pending.
     pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
         if !self.frame.open || self.frame.minimized || self.pending.is_empty() {
             return Vec::new();
         }
-        [("skill_apply", APPLY_AT), ("skill_reset", RESET_AT)]
+        let [apply, reset] = self.buttons();
+        [("skill_apply", apply), ("skill_reset", reset)]
             .map(|(name, at)| {
                 (name, {
                     let [x, y] = self.frame.at(at);
@@ -662,7 +787,8 @@ impl SkillWindow {
             return;
         }
         let hit = self.hit(pointer.0, sheet);
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, HEIGHT - TITLE_HEIGHT - BAR_HEIGHT]));
+        let width = self.width();
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [width, HEIGHT - TITLE_HEIGHT - BAR_HEIGHT]));
 
         // A tab for each tier down the left, its name a letter a line; the open one in black.
         let tabs = self.tab_jobs(sheet);
@@ -687,109 +813,120 @@ impl SkillWindow {
             }
         }
 
-        // Every cell's empty box, under the skills.
-        for cell in 0..COLUMNS * ROWS {
-            if let Some(corner) = icon_corner(cell, 0) {
-                layer.sprites.push((&assets.slot, at(corner), assets.slot.size));
+        if self.simple {
+            self.draw_rows(layer, assets, icons, font, messages, sheet, hit, pointer.1, cooling);
+        } else {
+            // Every cell's empty box, under the skills.
+            for cell in 0..COLUMNS * ROWS {
+                if let Some(corner) = icon_corner(cell, 0) {
+                    layer.sprites.push((&assets.slot, at(corner), assets.slot.size));
+                }
             }
-        }
-        let hovered = match hit {
-            Some(Hit::Skill(id)) => Some(id),
-            _ => None,
-        };
-        // The pinned skill's prerequisites, else the hovered one's: each with the level it needs.
-        let chain = self.pinned.or(hovered).map(|id| sheet.chain(id)).unwrap_or_default();
-        for (id, corner) in self.shown(sheet) {
-            let learned = sheet.learned(id);
-            let skill_info = sheet.info.get(&id);
-            let needed = chain.get(&id).copied();
-            let raisable = self.raisable(sheet, id);
-            // The box: pink in the chain, light blue when it can be raised, else white.
-            let (line, fill) = match (needed, raisable) {
-                (Some(_), _) => (Some(&assets.needed_line), 1),
-                (None, true) => (Some(&assets.fills[2]), 2),
-                (None, false) => (None, 0),
+            let hovered = match hit {
+                Some(Hit::Skill(id)) => Some(id),
+                _ => None,
             };
-            if let Some(line) = line {
-                layer.sprites.push((line, at(offset(corner, [-2.0, -2.0])), [ICON + 4.0, ICON + 4.0]));
-            }
-            layer.sprites.push((&assets.fills[fill], at(offset(corner, [-1.0, -1.0])), [ICON + 2.0, ICON + 2.0]));
-            if let Some(Some(icon)) = skill_info.map(icon_path).and_then(|path| icons.get(&path)) {
-                layer.sprites.push((icon, at(corner), [ICON, ICON]));
-                // ponytail: whitened rather than greyed; the renderer has no grey mode.
-                if learned == 0 && fill == 0 {
-                    layer.sprites.push((&assets.veil, at(corner), [ICON, ICON]));
-                }
-            }
-            if learned > 0 {
-                cooling.draw(layer, id, at(corner), [ICON, ICON]);
-            }
-            // The name above, the level below (learned skills only), both centred on the icon.
-            let name = skill_info.map_or_else(|| id.to_string(), |info| info.name.clone());
-            let shown = window::fit(font, &name, NAME_WIDTH);
-            let middle = corner[0] + ICON / 2.0;
-            let top = corner[1] - ICON_AT[1];
-            layer.texts.push((
-                shown.clone(),
-                at([(middle - font.width(&shown) / 2.0).floor(), top + NAME_Y]),
-                if learned > 0 { LEARNED_NAME } else { UNLEARNED_NAME },
-            ));
-            if learned > 0 {
-                // A level to pick: "use / learned", the use level coloured when it isn't the learned one.
-                let (first, rest) = match sheet.steppable(id) {
-                    Some(learned) => (self.use_level(id, learned), format!(" / {learned}")),
-                    None => (learned, String::new()),
+            // The pinned skill's prerequisites, else the hovered one's: each with the level it needs.
+            let chain = self.pinned.or(hovered).map(|id| sheet.chain(id)).unwrap_or_default();
+            for (id, corner) in self.shown(sheet) {
+                let learned = sheet.learned(id);
+                let skill_info = sheet.info.get(&id);
+                let needed = chain.get(&id).copied();
+                let raisable = self.raisable(sheet, id);
+                // The box: pink in the chain, light blue when it can be raised, else white.
+                let (line, fill) = match (needed, raisable) {
+                    (Some(_), _) => (Some(&assets.needed_line), 1),
+                    (None, true) => (Some(&assets.fills[2]), 2),
+                    (None, false) => (None, 0),
                 };
-                let first_text = first.to_string();
-                let left = (middle - (font.width(&first_text) + font.width(&rest)) / 2.0).floor();
-                let color = if first == learned { [0, 0, 0] } else { USE_LEVEL };
-                layer.texts.push((rest, at([left + font.width(&first_text), top + LEVEL_Y]), [0, 0, 0]));
-                layer.texts.push((first_text, at([left, top + LEVEL_Y]), color));
-            }
-            let pending = self.pending_levels(id);
-            if pending > 0 {
-                layer.texts.push((format!("+{pending}"), at([corner[0] - ICON_AT[0] + PENDING_X, corner[1]]), RED));
-            }
-            if self.pending.is_empty() && sheet.steppable(id).is_some() {
-                for (arrow, place) in assets.arrows.iter().zip(ARROWS) {
-                    layer.sprites.push((arrow, at(offset(corner, place)), arrow.size));
+                if let Some(line) = line {
+                    layer.sprites.push((line, at(offset(corner, [-2.0, -2.0])), [ICON + 4.0, ICON + 4.0]));
                 }
-            }
-            if let Some(level) = needed {
-                let text = level.to_string();
-                let place = at(offset(corner, NEED_AT));
-                for nudge in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
-                    layer.texts.push((text.clone(), offset(place, nudge), [255; 3]));
+                layer.sprites.push((&assets.fills[fill], at(offset(corner, [-1.0, -1.0])), [ICON + 2.0, ICON + 2.0]));
+                if let Some(Some(icon)) = skill_info.map(icon_path).and_then(|path| icons.get(&path)) {
+                    layer.sprites.push((icon, at(corner), [ICON, ICON]));
+                    // ponytail: whitened rather than greyed; the renderer has no grey mode.
+                    if learned == 0 && fill == 0 {
+                        layer.sprites.push((&assets.veil, at(corner), [ICON, ICON]));
+                    }
                 }
-                layer.texts.push((text, place, [0, 0, 0]));
-            }
-            if hovered == Some(id) {
-                window::tooltip(tooltip, chrome, font, &name, offset(pointer.0, [-10.0, -20.0]), [255; 3]);
+                if learned > 0 {
+                    cooling.draw(layer, id, at(corner), [ICON, ICON]);
+                }
+                // The name above, the level below (learned skills only), both centred on the icon.
+                let name = skill_info.map_or_else(|| id.to_string(), |info| info.name.clone());
+                let shown = window::fit(font, &name, NAME_WIDTH);
+                let middle = corner[0] + ICON / 2.0;
+                let top = corner[1] - ICON_AT[1];
+                layer.texts.push((
+                    shown.clone(),
+                    at([(middle - font.width(&shown) / 2.0).floor(), top + NAME_Y]),
+                    if learned > 0 { LEARNED_NAME } else { UNLEARNED_NAME },
+                ));
+                if learned > 0 {
+                    // A level to pick: "use / learned", the use level coloured when it isn't the learned one.
+                    let (first, rest) = match sheet.steppable(id) {
+                        Some(learned) => (self.use_level(id, learned), format!(" / {learned}")),
+                        None => (learned, String::new()),
+                    };
+                    let first_text = first.to_string();
+                    let left = (middle - (font.width(&first_text) + font.width(&rest)) / 2.0).floor();
+                    let color = if first == learned { [0, 0, 0] } else { USE_LEVEL };
+                    layer.texts.push((rest, at([left + font.width(&first_text), top + LEVEL_Y]), [0, 0, 0]));
+                    layer.texts.push((first_text, at([left, top + LEVEL_Y]), color));
+                }
+                let pending = self.pending_levels(id);
+                if pending > 0 {
+                    layer.texts.push((format!("+{pending}"), at([corner[0] - ICON_AT[0] + PENDING_X, corner[1]]), RED));
+                }
+                if self.pending.is_empty() && sheet.steppable(id).is_some() {
+                    for (arrow, place) in assets.arrows.iter().zip(ARROWS) {
+                        layer.sprites.push((arrow, at(offset(corner, place)), arrow.size));
+                    }
+                }
+                if let Some(level) = needed {
+                    let text = level.to_string();
+                    let place = at(offset(corner, NEED_AT));
+                    for nudge in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+                        layer.texts.push((text.clone(), offset(place, nudge), [255; 3]));
+                    }
+                    layer.texts.push((text, place, [0, 0, 0]));
+                }
+                if hovered == Some(id) {
+                    window::tooltip(tooltip, chrome, font, &name, offset(pointer.0, [-10.0, -20.0]), [255; 3]);
+                }
             }
         }
 
-        // The points, on the bottom bar: while levels are pending, left (blue), used (red) and the total.
+        // The points, on the bottom bar: while levels are pending, left (blue), used (red) and the total. The list
+        // says the points left.
         let bar_top = HEIGHT - BAR_HEIGHT;
         let [left, middle, right] = &assets.bar;
         layer.sprites.push((left, at([0.0, bar_top]), left.size));
-        layer.sprites.push((middle, at([left.size[0], bar_top]), [WIDTH - left.size[0] - right.size[0], BAR_HEIGHT]));
-        layer.sprites.push((right, at([WIDTH - right.size[0], bar_top]), right.size));
-        let mut x = POINTS_AT[0];
-        let mut put = |layer: &mut Layer<'a>, text: String, color: [u8; 3]| {
-            let width = font.width(&text);
-            layer.texts.push((text, at([x, POINTS_AT[1]]), color));
-            x += width;
-        };
-        put(layer, message(POINTS_MESSAGE).to_owned(), [0, 0, 0]);
-        if self.pending.is_empty() {
-            put(layer, sheet.points.to_string(), [0, 0, 0]);
+        layer.sprites.push((middle, at([left.size[0], bar_top]), [width - left.size[0] - right.size[0], BAR_HEIGHT]));
+        layer.sprites.push((right, at([width - right.size[0], bar_top]), right.size));
+        if self.simple {
+            let line = message(LIST_POINTS_MESSAGE).replace("%d", &self.points_left(sheet).to_string());
+            layer.texts.push((line, at(LIST_POINTS_AT), [0, 0, 0]));
         } else {
-            put(layer, self.points_left(sheet).to_string(), BLUE);
-            put(layer, format!("({})", self.pending.len()), RED);
-            put(layer, format!(" / {}", sheet.points), [0, 0, 0]);
+            let mut x = POINTS_AT[0];
+            let mut put = |layer: &mut Layer<'a>, text: String, color: [u8; 3]| {
+                let width = font.width(&text);
+                layer.texts.push((text, at([x, POINTS_AT[1]]), color));
+                x += width;
+            };
+            put(layer, message(POINTS_MESSAGE).to_owned(), [0, 0, 0]);
+            if self.pending.is_empty() {
+                put(layer, sheet.points.to_string(), [0, 0, 0]);
+            } else {
+                put(layer, self.points_left(sheet).to_string(), BLUE);
+                put(layer, format!("({})", self.pending.len()), RED);
+                put(layer, format!(" / {}", sheet.points), [0, 0, 0]);
+            }
         }
         // Apply and Reset, live only while something is pending.
-        for (images, place, button) in [(&assets.apply, APPLY_AT, Hit::Apply), (&assets.reset, RESET_AT, Hit::Reset)] {
+        let [apply, reset] = self.buttons();
+        for (images, place, button) in [(&assets.apply, apply, Hit::Apply), (&assets.reset, reset, Hit::Reset)] {
             let state = match hit {
                 Some(hit) if hit == button => 1 + usize::from(pointer.1),
                 _ => 0,
@@ -797,6 +934,81 @@ impl SkillWindow {
             layer.sprites.push((&images[state], at(place), images[state].size));
             if self.pending.is_empty() {
                 layer.sprites.push((&assets.veil, at(place), images[0].size));
+            }
+        }
+    }
+    /// The list view's rows: the hovered one's band, the icon, the level up button, the name, "Lv :" with the level
+    /// (red while pending; "use / learned" between the arrows for a level to pick) and the SP, or "Passive".
+    #[allow(clippy::too_many_arguments)]
+    fn draw_rows<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        assets: &'a Assets,
+        icons: &'a HashMap<String, Option<Texture>>,
+        font: &Font,
+        messages: &[String],
+        sheet: &Sheet,
+        hit: Option<Hit>,
+        pressed: bool,
+        cooling: &Cooling<'a>,
+    ) {
+        let at = |local: [f32; 2]| self.frame.at(local);
+        let message = |id: usize| messages.get(id).map_or("", String::as_str);
+        let hovered = match hit {
+            Some(Hit::Skill(id) | Hit::LevelUp(id) | Hit::Step { id, .. }) => Some(id),
+            _ => None,
+        };
+        for (id, corner) in self.shown(sheet) {
+            let place = |local: [f32; 2]| at(offset(corner, local));
+            let learned = sheet.learned(id);
+            let raisable = self.raisable(sheet, id);
+            if hovered == Some(id) {
+                let [x, y, w, h] = LIST_BAND;
+                layer.sprites.push((&assets.band, place([x, y]), [w, h]));
+            }
+            let skill_info = sheet.info.get(&id);
+            if let Some(Some(icon)) = skill_info.map(icon_path).and_then(|path| icons.get(&path)) {
+                layer.sprites.push((icon, at(corner), [ICON, ICON]));
+                if learned == 0 && !raisable {
+                    layer.sprites.push((&assets.veil, at(corner), [ICON, ICON]));
+                }
+            }
+            if learned > 0 {
+                cooling.draw(layer, id, at(corner), [ICON, ICON]);
+            }
+            if raisable {
+                let state = if hit == Some(Hit::LevelUp(id)) { 1 + usize::from(pressed) } else { 0 };
+                layer.sprites.push((&assets.up[state], place(LIST_UP), UP_SIZE));
+            }
+            let name = skill_info.map_or_else(|| id.to_string(), |info| info.name.clone());
+            let name = window::fit(font, &name, LIST_WIDTH - 20.0 - LIST_ICON_X - LIST_NAME[0]);
+            layer.texts.push((name, place(LIST_NAME), if learned > 0 { [0, 0, 0] } else { UNLEARNED_NAME }));
+            // "Lv :" and the level; with the arrows, the level to use over the learned one.
+            let steppable = sheet.steppable(id).filter(|_| self.pending.is_empty());
+            let mut x = if steppable.is_some() { LIST_LEVEL_ARROWS[0] } else { LIST_LEVEL[0] };
+            let mut put = |text: String, color: [u8; 3]| {
+                let width = font.width(&text);
+                layer.texts.push((text, place([x, LIST_LEVEL[1]]), color));
+                x += width;
+            };
+            put("Lv : ".to_owned(), [0, 0, 0]);
+            let pending = self.pending_levels(id);
+            match steppable {
+                Some(learned) => {
+                    let level = self.use_level(id, learned);
+                    put(format!("{level:2}"), if level == learned { [0, 0, 0] } else { USE_LEVEL });
+                    put(format!(" / {learned}"), [0, 0, 0]);
+                }
+                None => put(format!("{:2}", learned + pending), if pending > 0 { RED } else { [0, 0, 0] }),
+            }
+            if steppable.is_some() {
+                for (arrow, at) in assets.arrows.iter().zip(LIST_ARROWS) {
+                    layer.sprites.push((arrow, place(at), arrow.size));
+                }
+            }
+            if let Some(skill) = sheet.skills.iter().find(|skill| skill.id == id && skill.level > 0) {
+                let sp = if skill.kind == 0 { message(PASSIVE_MESSAGE).to_owned() } else { format!("Sp : {}", skill.sp) };
+                layer.texts.push((sp, place(LIST_SP), [0, 0, 0]));
             }
         }
     }
@@ -999,6 +1211,48 @@ mod tests {
         window.pin(Some(2212));
         window.pin(None);
         assert_eq!(window.pinned, None);
+    }
+
+    #[test]
+    fn switches_to_a_list_with_level_up_buttons() {
+        // A Mage (2) with twelve skills in a row of places; Fire Bolt (19) can rise, Basic Skill (1) is at its maximum.
+        let places: Vec<(usize, u16)> = (0..12).map(|place| (place, 100 + place as u16)).collect();
+        let trees = SkillTrees { trees: HashMap::from([(0, vec![(20, 1)]), (2, [places, vec![(21, 19)]].concat())]), parents: HashMap::new() };
+        let skill = |id: u16, level: u16| Skill { id, kind: Skill::ENEMY, level, sp: 12, range: 9, upgradable: true };
+        let skills = [skill(1, 9), skill(19, 2)];
+        let skill_info = HashMap::from([(1, info(9, Vec::new())), (19, info(10, Vec::new()))]);
+        let sheet = Sheet { trees: &trees, jobs: &[0, 2], skills: &skills, info: &skill_info, points: 3 };
+        let mut window = SkillWindow::default();
+        window.frame.open = true;
+        let center = |area: [f32; 4]| [area[0] + area[2] / 2.0, area[1] + area[3] / 2.0];
+        // The minimize button switches the view (the window doesn't collapse) and says which to keep.
+        assert_eq!(window.hit(center(window.view_box().unwrap()), &sheet), Some(Hit::Title(TitleHit::Minimize)));
+        assert_eq!(window.click(Hit::Title(TitleHit::Minimize)), Some(Action::View(true)));
+        assert!(window.simple() && !window.frame.minimized);
+        assert_eq!(window.view_box().unwrap()[0], DEFAULT_POSITION[0] + LIST_WIDTH - 29.0);
+        // One skill a row, 32 apart from y 34, in place order; ten rows a page.
+        let boxes = window.skill_boxes(&sheet);
+        assert_eq!(boxes.len(), LIST_ROWS);
+        assert_eq!(boxes[0].1, [DEFAULT_POSITION[0] + 44.0, DEFAULT_POSITION[1] + 34.0, ICON, ICON]);
+        assert_eq!(boxes[1].1[1], DEFAULT_POSITION[1] + 66.0);
+        // Fourteen rows: the wheel stops at the fifth.
+        window.scroll_by(&sheet, 1);
+        window.scroll_by(&sheet, 1);
+        assert_eq!(window.skill_boxes(&sheet)[0].0, 104);
+        // Only Fire Bolt gets a level up button; it raises, a click on the skill doesn't.
+        let ups = window.up_boxes(&sheet);
+        assert_eq!(ups.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["skill_up:19"]);
+        assert_eq!(window.hit(center(ups[0].1), &sheet), Some(Hit::LevelUp(19)));
+        assert_eq!(window.click(Hit::LevelUp(19)), Some(Action::LevelUp(19)));
+        assert_eq!(window.click(Hit::Skill(19)), None);
+        assert_eq!(window.click(Hit::Skill(19)), Some(Action::Use(19)));
+        // Apply and Reset sit at (w − 115, h − 27) and (w − 65, h − 27).
+        window.raise(&sheet, 19).unwrap();
+        let buttons = window.button_boxes();
+        assert_eq!(buttons[0].1[0] - DEFAULT_POSITION[0], LIST_WIDTH - 115.0);
+        assert_eq!(buttons[1].1[0] - DEFAULT_POSITION[0], LIST_WIDTH - 65.0);
+        window.click(Hit::Title(TitleHit::Minimize));
+        assert!(!window.simple() && window.up_boxes(&sheet).is_empty());
     }
 
     #[test]
