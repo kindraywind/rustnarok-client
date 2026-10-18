@@ -50,6 +50,8 @@ const JOB_INHERIT: &str = "data\\luafiles514\\lua files\\skillinfoz\\jobinheritl
 const PC_JOB_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\pcjobname.lub";
 const SKILL_ID: &str = "data\\luafiles514\\lua files\\skillinfoz\\skillid.lub";
 const SKILL_INFO: &str = "data\\luafiles514\\lua files\\skillinfoz\\skillinfolist.lub";
+/// Each skill's description, line by line (`SKILL_DESCRIPT`).
+const SKILL_DESCRIPT: &str = "data\\luafiles514\\lua files\\skillinfoz\\skilldescript.lub";
 /// Defines JobSkillTab, which the skill tree needs.
 const SKILL_INFO_F: &str = "data\\luafiles514\\lua files\\skillinfoz\\skillinfo_f.lub";
 const SKILL_TREE: &str = "data\\luafiles514\\lua files\\skillinfoz\\skilltreeview.lub";
@@ -588,6 +590,23 @@ pub struct SkillInfo {
     pub max_level: u16,
     /// The level to use can be picked (`bSeperateLv`): the skill window's arrows, the wheel while aiming.
     pub separate_level: bool,
+}
+
+/// Skills' descriptions by ID, line by line as the data has them.
+pub fn skill_descriptions(grf: &Grf) -> io::Result<HashMap<u16, Vec<String>>> {
+    skill_descripts(&run(grf, &[SKILL_ID, SKILL_DESCRIPT])?)
+}
+
+fn skill_descripts(lua: &Lua) -> io::Result<HashMap<u16, Vec<String>>> {
+    let list: mlua::Table = lua.globals().get("SKILL_DESCRIPT").map_err(lua_error)?;
+    let mut descriptions = HashMap::new();
+    for pair in list.pairs::<i64, mlua::Table>() {
+        let Ok((id, lines)) = pair else { continue };
+        if let Ok(id) = u16::try_from(id) {
+            descriptions.insert(id, lines.sequence_values::<mlua::String>().flatten().map(|line| decode(&line)).collect());
+        }
+    }
+    Ok(descriptions)
 }
 
 pub fn skill_info(grf: &Grf) -> io::Result<HashMap<u16, SkillInfo>> {
@@ -1380,6 +1399,14 @@ fn hotkey_table(lua: &Lua, name: &str, table: u8, user: bool) -> io::Result<Vec<
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
+
+    #[test]
+    fn reads_skill_descriptions() {
+        let lua = super::new_lua().unwrap();
+        lua.load(r#"SKID = { SM_BASH = 5 } SKILL_DESCRIPT = { [SKID.SM_BASH] = { "Bash", "Max Level: 10", "^777777Hits hard^000000" } }"#).exec().unwrap();
+        let descriptions = super::skill_descripts(&lua).unwrap();
+        assert_eq!(descriptions[&5], ["Bash", "Max Level: 10", "^777777Hits hard^000000"]);
+    }
 
     #[test]
     fn reads_what_status_icons_say() {

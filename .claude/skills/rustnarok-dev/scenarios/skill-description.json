@@ -1,0 +1,160 @@
+{
+  "about": "Skill descriptions (issue #223): a Swordman gets its skills (@allskill) and puts it on the hotbar. A right click on Bash in the skill window opens its description (the data's SKILL_DESCRIPT, in its colours); a right click on it on the hotbar closes it, another opens it by the bar; its ESC button closes it. The character goes back to a Novice with no skills at the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@job 1"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@allskill"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "wait": 500
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "skill_tab:1"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "skill": 5
+        },
+        {
+          "hotkey": 0
+        }
+      ]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "skill": 5
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "SkillDescription"
+        ],
+        "state": {
+          "skill_description.skill": 5
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "skill-description"
+    },
+    {
+      "click_on": {
+        "hotkey": 0
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "SkillDescription"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "hotkey": 0
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "SkillDescription"
+        ]
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "skill-description-hotbar"
+    },
+    {
+      "click_on": {
+        "button": "skill_description_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "SkillDescription"
+        ]
+      }
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@skreset"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@job 0"
+    },
+    {
+      "wait": 800
+    }
+  ]
+}

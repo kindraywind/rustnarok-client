@@ -60,6 +60,8 @@ pub enum WindowId {
     DressRoom,
     Ranking,
     Catalog,
+    /// A skill's description (a right click on a skill).
+    SkillDescription,
     Roulette,
     MonsterInfo,
     Achievements,
@@ -145,6 +147,7 @@ impl WindowId {
             Self::DressRoom => "DressRoom",
             Self::Ranking => "Ranking",
             Self::Catalog => "Catalog",
+            Self::SkillDescription => "SkillDescription",
             Self::Roulette => "Roulette",
             Self::MonsterInfo => "MonsterInfo",
             Self::Achievements => "Achievements",
