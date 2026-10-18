@@ -710,6 +710,16 @@ const ZC_ACK_RANKING2: u16 = 0x0AF6;
 const CZ_REQNAME_BYGID: u16 = 0x0369;
 const ZC_ACK_REQNAME_BYGID: u16 = 0x0AF7;
 const ZC_STARSKILL: u16 = 0x020E;
+const CZ_SEARCH_STORE_INFO: u16 = 0x0835;
+const ZC_SEARCH_STORE_INFO_FAILED: u16 = 0x0837;
+const CZ_SEARCH_STORE_INFO_NEXT_PAGE: u16 = 0x0838;
+const ZC_OPEN_SEARCH_STORE_INFO: u16 = 0x083A;
+const CZ_CLOSE_SEARCH_STORE_INFO: u16 = 0x083B;
+const CZ_SSILIST_ITEM_CLICK: u16 = 0x083C;
+const ZC_SSILIST_ITEM_CLICK_ACK: u16 = 0x083D;
+const ZC_SEARCH_STORE_INFO_ACK: u16 = 0x0B64;
+/// One result of ZC_SEARCH_STORE_INFO_ACK.
+const CATALOG_ROW_SIZE: usize = 142;
 /// ZC_STARSKILL's kind for the Taekwon Mission's target.
 pub const STAR_MISSION: u8 = 20;
 const ZC_NOTIFY_RANKING: u16 = 0x019A;
@@ -1240,6 +1250,21 @@ fn decode_broadcast(message: &[u8]) -> (String, [u8; 3], BroadcastKind) {
     }
 }
 
+/// A store the Universal Catalog found (ZC_SEARCH_STORE_INFO_ACK).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CatalogRow {
+    pub store: u32,
+    /// The owner's account.
+    pub account: u32,
+    pub shop: String,
+    pub item: u32,
+    pub kind: u8,
+    pub price: u32,
+    pub amount: u16,
+    pub cards: [u32; 4],
+    pub refine: u8,
+}
+
 /// The player's mercenary as ZC_MER_INIT has it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Mercenary {
@@ -1725,6 +1750,23 @@ pub enum MapEvent {
     },
     /// A script opens the dress room (`opendressroom`).
     DressRoom,
+    /// A Universal Catalog opens the store search: `remote` opens a store found (effect 1), else it shows where it
+    /// is; the searches left.
+    CatalogOpen {
+        remote: bool,
+        uses: u8,
+    },
+    /// A page of results: the first replaces the list, later ones add to it; `more`: a next page exists.
+    CatalogResults {
+        first: bool,
+        more: bool,
+        uses: u8,
+        rows: Vec<CatalogRow>,
+    },
+    /// A search failed: 0 nothing found, 1 too many, 2 no searches left, 3 too soon, 4 the store's gone.
+    CatalogFailed(u8),
+    /// Where a store found stands on this map; none when it's on another.
+    CatalogMark(Option<[i16; 2]>),
     /// A ranking's top ten (0 Blacksmith, 1 Alchemist, 2 Taekwon, 3 Killer): character IDs (0: an empty place) and
     /// points, and the player's own points.
     Ranking {
@@ -3826,6 +3868,25 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Searches the stores on the map: vending (`buying` false) or buying stores, the items by ID, prices between
+    /// `min` and `max` (0: no limit); the answer is `CatalogResults` or `CatalogFailed`.
+    pub fn search_stores(&mut self, buying: bool, max: u32, min: u32, items: &[u32], cards: &[u32]) -> io::Result<()> {
+        self.stream.write_all(&encode_store_search(buying, max, min, items, cards))
+    }
+
+    pub fn next_store_page(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_SEARCH_STORE_INFO_NEXT_PAGE.to_le_bytes())
+    }
+
+    pub fn close_store_search(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_CLOSE_SEARCH_STORE_INFO.to_le_bytes())
+    }
+
+    /// A result picked: where it is (`CatalogMark`), or its store opened.
+    pub fn pick_store(&mut self, account: u32, store: u32, item: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_store_pick(account, store, item))
+    }
+
     /// Asks for a ranking's top ten (0 Blacksmith, 1 Alchemist, 2 Taekwon, 3 Killer); the answer is `Ranking`.
     pub fn ask_ranking(&mut self, kind: u16) -> io::Result<()> {
         self.stream.write_all(&encode_ranking_request(kind))
@@ -4353,6 +4414,31 @@ fn encode_hatch(index: u16) -> [u8; 4] {
     let mut packet = [0u8; 4];
     packet[..2].copy_from_slice(&CZ_SELECT_PETEGG.to_le_bytes());
     packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_SEARCH_STORE_INFO: kind (0 vending, 1 buying), max then min price, the item and card counts, the IDs.
+fn encode_store_search(buying: bool, max: u32, min: u32, items: &[u32], cards: &[u32]) -> Vec<u8> {
+    let mut packet = CZ_SEARCH_STORE_INFO.to_le_bytes().to_vec();
+    packet.extend_from_slice(&[0, 0, u8::from(buying)]);
+    packet.extend_from_slice(&max.to_le_bytes());
+    packet.extend_from_slice(&min.to_le_bytes());
+    packet.extend_from_slice(&[items.len().min(255) as u8, cards.len().min(255) as u8]);
+    for id in items.iter().take(255).chain(cards.iter().take(255)) {
+        packet.extend_from_slice(&id.to_le_bytes());
+    }
+    let length = packet.len() as u16;
+    packet[2..4].copy_from_slice(&length.to_le_bytes());
+    packet
+}
+
+/// CZ_SSILIST_ITEM_CLICK: the owner's account, the store, the item, as the result gave them.
+fn encode_store_pick(account: u32, store: u32, item: u32) -> [u8; 14] {
+    let mut packet = [0u8; 14];
+    packet[..2].copy_from_slice(&CZ_SSILIST_ITEM_CLICK.to_le_bytes());
+    packet[2..6].copy_from_slice(&account.to_le_bytes());
+    packet[6..10].copy_from_slice(&store.to_le_bytes());
+    packet[10..].copy_from_slice(&item.to_le_bytes());
     packet
 }
 
@@ -4951,6 +5037,34 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // Flag 3: a name follows; 2: none.
         ZC_ACK_REQNAME_BYGID => MapEvent::CharName { id: u32_at(4), name: (u16_at(2) == 3).then(|| c_string(&packet[8..32])) },
         ZC_UPDATE_RANKING_POINT => MapEvent::RankingPoints { kind: u16_at(2), added: u32_at(4) as i32, total: u32_at(8) },
+        ZC_OPEN_SEARCH_STORE_INFO => MapEvent::CatalogOpen { remote: u16_at(2) == 1, uses: packet[4] },
+        ZC_SEARCH_STORE_INFO_ACK => MapEvent::CatalogResults {
+            first: packet[4] != 0,
+            more: packet[5] != 0,
+            uses: packet[6],
+            rows: packet[7..]
+                .chunks_exact(CATALOG_ROW_SIZE)
+                .map(|row| {
+                    let at = |offset: usize| u32::from_le_bytes(row[offset..offset + 4].try_into().unwrap());
+                    CatalogRow {
+                        store: at(0),
+                        account: at(4),
+                        shop: c_string(&row[8..88]),
+                        item: at(88),
+                        kind: row[92],
+                        price: at(93),
+                        amount: u16::from_le_bytes([row[97], row[98]]),
+                        cards: std::array::from_fn(|card| at(99 + 4 * card)),
+                        refine: row[140],
+                    }
+                })
+                .collect(),
+        },
+        ZC_SEARCH_STORE_INFO_FAILED => MapEvent::CatalogFailed(packet[2]),
+        ZC_SSILIST_ITEM_CLICK_ACK => {
+            let cell = [u16_at(2) as i16, u16_at(4) as i16];
+            MapEvent::CatalogMark((cell != [-1, -1]).then_some(cell))
+        }
         ZC_STARSKILL => MapEvent::StarSkill { name: c_string(&packet[2..26]), monster: u32_at(26), count: packet[30], kind: packet[31] },
         ZC_NOTIFY_RANKING => MapEvent::PvpRank { account: u32_at(2), rank: u32_at(6), players: u32_at(10) },
         ZC_ACK_PVPPOINT => MapEvent::PvpInfo { wins: u32_at(10), losses: u32_at(14), points: u32_at(18) as i32 },
@@ -6351,6 +6465,49 @@ mod tests {
         assert_eq!(encode_blocking_play_cancel(), [0x47, 0x04]);
         assert!(matches!(decode_map_packet(&[0xD6, 0x01, 19, 0]), Some(MapEvent::MapType(19))));
         assert!(matches!(decode_map_packet(&[0x02, 0x0A, 0, 0]), Some(MapEvent::DressRoom)));
+    }
+
+    #[test]
+    fn decodes_store_searches() {
+        assert!(matches!(decode_map_packet(&[0x3A, 0x08, 1, 0, 10]), Some(MapEvent::CatalogOpen { remote: true, uses: 10 })));
+        assert!(matches!(decode_map_packet(&[0x37, 0x08, 3]), Some(MapEvent::CatalogFailed(3))));
+        // Two results, the second with cards and a refine.
+        let mut results = ZC_SEARCH_STORE_INFO_ACK.to_le_bytes().to_vec();
+        results.extend_from_slice(&[0, 0, 1, 1, 9]);
+        for (store, item, refine, card) in [(11u32, 909u32, 0u8, 0u32), (12, 1201, 7, 4035)] {
+            let mut row = vec![0u8; CATALOG_ROW_SIZE];
+            row[..4].copy_from_slice(&store.to_le_bytes());
+            row[4..8].copy_from_slice(&2_000_001u32.to_le_bytes());
+            row[8..20].copy_from_slice(b"Catalog test");
+            row[88..92].copy_from_slice(&item.to_le_bytes());
+            row[93..97].copy_from_slice(&1500u32.to_le_bytes());
+            row[97..99].copy_from_slice(&10u16.to_le_bytes());
+            row[99..103].copy_from_slice(&card.to_le_bytes());
+            row[140] = refine;
+            results.extend_from_slice(&row);
+        }
+        let length = results.len() as u16;
+        results[2..4].copy_from_slice(&length.to_le_bytes());
+        let Some(MapEvent::CatalogResults { first: true, more: true, uses: 9, rows }) = decode_map_packet(&results) else { panic!() };
+        assert_eq!(
+            (rows[0].store, rows[0].account, rows[0].shop.as_str(), rows[0].item, rows[0].price, rows[0].amount),
+            (11, 2_000_001, "Catalog test", 909, 1500, 10)
+        );
+        assert_eq!((rows[1].item, rows[1].refine, rows[1].cards), (1201, 7, [4035, 0, 0, 0]));
+        let empty = [&ZC_SEARCH_STORE_INFO_ACK.to_le_bytes()[..], &7u16.to_le_bytes(), &[1, 0, 8]].concat();
+        assert!(matches!(decode_map_packet(&empty), Some(MapEvent::CatalogResults { rows, uses: 8, .. }) if rows.is_empty()));
+        let mark = |x: i16, y: i16| [&ZC_SSILIST_ITEM_CLICK_ACK.to_le_bytes()[..], &x.to_le_bytes(), &y.to_le_bytes()].concat();
+        assert!(matches!(decode_map_packet(&mark(170, 330)), Some(MapEvent::CatalogMark(Some([170, 330])))));
+        assert!(matches!(decode_map_packet(&mark(-1, -1)), Some(MapEvent::CatalogMark(None))));
+        // Max price before min, two items, no cards: 23 bytes.
+        let search = encode_store_search(false, 2000, 100, &[909, 910], &[]);
+        assert_eq!(search.len(), 23);
+        assert_eq!(&search[..15], &[0x35, 0x08, 23, 0, 0, 0xD0, 0x07, 0, 0, 100, 0, 0, 0, 2, 0]);
+        assert_eq!(&search[15..], &[0x8D, 0x03, 0, 0, 0x8E, 0x03, 0, 0]);
+        assert_eq!(encode_store_pick(2_000_001, 11, 909), [0x3C, 0x08, 0x81, 0x84, 0x1E, 0, 11, 0, 0, 0, 0x8D, 0x03, 0, 0]);
+        assert_eq!(packet_length(CZ_SEARCH_STORE_INFO_NEXT_PAGE), Some(2));
+        assert_eq!(packet_length(CZ_CLOSE_SEARCH_STORE_INFO), Some(2));
+        assert_eq!(packet_length(ZC_SEARCH_STORE_INFO_ACK), Some(-1));
     }
 
     #[test]

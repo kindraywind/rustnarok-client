@@ -1,0 +1,514 @@
+{
+  "about": "Universal Catalog (issue #99): the first player opens a buying store 'Buying Jellopy' at prt_fild08 170 360; the second, 30 cells away, uses a Universal Catalog Silver, searches buying stores for 'Jellopy', sees the store in the results and double-clicks it to get its place marked (170 360); closes; then a Gold catalog's search and double click open the store's window from afar.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "say": "@zeny -2000000000"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "say": "@zeny 10000"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "say": "@item 909 1"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "say": "@item 12548 2"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Inventory"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "inventory_item": 12548
+      },
+      "count": 2
+    },
+    {
+      "wait_for": {
+        "packet": "0x0810",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "BuyingStoreSetup"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "button": "buying_cancel"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "BuyingStoreSetup"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "inventory_item": 12548
+      },
+      "count": 2
+    },
+    {
+      "wait_for": {
+        "packet": "0x0810",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "BuyingStoreSetup"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "pick_item": 909
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "10"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "5"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "buying_name"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "type": "Buying Jellopy"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "buying_limit"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "type": "1000"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "buying_ok"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0813",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "MyBuyingStore"
+        ]
+      }
+    },
+    {
+      "as": "second",
+      "say": "@warp prt_fild08 170 330"
+    },
+    {
+      "as": "second",
+      "settle": 1500
+    },
+    {
+      "as": "second",
+      "say": "@itemreset"
+    },
+    {
+      "as": "second",
+      "wait": 600
+    },
+    {
+      "as": "second",
+      "say": "@item 12580 1"
+    },
+    {
+      "as": "second",
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "say": "@item 12581 1"
+    },
+    {
+      "as": "second",
+      "wait": 600
+    },
+    {
+      "as": "second",
+      "key": "Alt+E"
+    },
+    {
+      "as": "second",
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "inventory_item": 12580
+      },
+      "count": 2
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x083a",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "expect": {
+        "windows_open": [
+          "Catalog"
+        ],
+        "state": {
+          "catalog.remote": false,
+          "catalog.uses": 10,
+          "catalog.results": 0
+        }
+      }
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "catalog_buy"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 200
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "catalog_name"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 200
+    },
+    {
+      "as": "second",
+      "type": "Jellopy"
+    },
+    {
+      "as": "second",
+      "wait": 200
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "catalog_search"
+      }
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "sent": "0x0835",
+        "ms": 3000
+      }
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x0b64",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "catalog.buying": true,
+          "catalog.rows.0.item": 909,
+          "catalog.rows.0.shop": "Buying Jellopy",
+          "catalog.rows.0.price": 10,
+          "catalog.uses": 9
+        }
+      }
+    },
+    {
+      "as": "second",
+      "shot": "catalog-results"
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "pick_item": 909
+      },
+      "count": 2
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x083d",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "catalog.mark": [
+            170,
+            360
+          ]
+        }
+      }
+    },
+    {
+      "as": "second",
+      "shot": "catalog-mark"
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "catalog_close"
+      }
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "sent": "0x083b",
+        "ms": 3000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "expect": {
+        "windows_closed": [
+          "Catalog"
+        ]
+      }
+    },
+    {
+      "as": "second",
+      "wait": 9000
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "inventory_item": 12581
+      },
+      "count": 2
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x083a",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "expect": {
+        "windows_open": [
+          "Catalog"
+        ],
+        "state": {
+          "catalog.remote": true
+        }
+      }
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "catalog_buy"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 200
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "catalog_name"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 200
+    },
+    {
+      "as": "second",
+      "type": "Jellopy"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x0b64",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "pick_item": 909
+      },
+      "count": 2
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x0818",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "as": "second",
+      "expect": {
+        "windows_open": [
+          "Shop",
+          "Catalog"
+        ]
+      }
+    },
+    {
+      "as": "second",
+      "shot": "catalog-remote-store"
+    }
+  ]
+}
