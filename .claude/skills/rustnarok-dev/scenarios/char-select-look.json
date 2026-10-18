@@ -1,0 +1,12 @@
+{
+  "about": "Character select's look (issue #504): every character stands still facing front, the selected card's border cycles, and the details, Game Start and its label, the list title, the page line and the close X sit at the game's places in its colours.",
+  "account": "",
+  "slot": 0,
+  "start": "char_select",
+  "steps": [
+    {"wait": 1500},
+    {"expect": {"state": {"scene": "char_select"}}},
+    {"move": [1010, 760]},
+    {"shot": "char-select", "threshold": 5}
+  ]
+}
