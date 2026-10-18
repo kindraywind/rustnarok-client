@@ -3006,6 +3006,8 @@ pub struct Hunt {
     pub name: String,
     pub count: u16,
     pub needed: u16,
+    /// The monsters' level range (0: none that way).
+    pub levels: [u16; 2],
 }
 
 /// A quest in the player's log: active (or put aside), when it runs out (Unix time, 0 never) and its hunts.
@@ -5846,20 +5848,22 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_PLAY_NPC_BGM => MapEvent::NpcMusic(c_string(&packet[2..26])),
         ZC_WARPLIST => MapEvent::WarpList { skill: u16_at(4), maps: packet[6..].chunks_exact(16).map(c_string).filter(|map| !map.is_empty()).collect() },
         ZC_NOTIFY_MAPINFO => MapEvent::MapForbids(u16_at(2)),
-        // Each quest: ID, state (1 active), start and end times, hunts; each hunt 46 bytes, with how many it needs.
+        // Each quest: ID, state (1 active), start and end times, hunts. Each hunt is 44 bytes as clif_quest_send_list
+        // writes it (its 46 is only the buffer's estimate): ID, type, monster, level range, count, needed, name.
         ZC_ALL_QUEST_LIST3 => {
             let mut quests = Vec::new();
             let mut at = 8;
             while at + 15 <= packet.len() {
                 let count = usize::from(u16_at(at + 13));
-                let hunts = packet[at + 15..].chunks_exact(46).take(count).map(|hunt| Hunt {
+                let hunts = packet[at + 15..].chunks_exact(44).take(count).map(|hunt| Hunt {
                     id: self::u32_at(hunt, 0),
                     count: self::u16_at(hunt, 16),
                     needed: self::u16_at(hunt, 18),
                     name: c_string(&hunt[20..44]),
+                    levels: [self::u16_at(hunt, 12), self::u16_at(hunt, 14)],
                 });
                 quests.push(Quest { id: u32_at(at), active: packet[at + 4] == 1, end: u32_at(at + 9), hunts: hunts.collect() });
-                at += 15 + count * 46;
+                at += 15 + count * 44;
             }
             MapEvent::Quests(quests)
         }
@@ -5871,6 +5875,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 count: self::u16_at(hunt, 16),
                 needed: 0,
                 name: c_string(&hunt[18..42]),
+                levels: [self::u16_at(hunt, 12), self::u16_at(hunt, 14)],
             });
             MapEvent::QuestAdded(Quest { id: u32_at(2), active: packet[6] == 1, end: u32_at(11), hunts: hunts.collect() })
         }
@@ -6495,21 +6500,33 @@ mod tests {
     #[test]
     fn decodes_quests() {
         let mut list = ZC_ALL_QUEST_LIST3.to_le_bytes().to_vec();
-        list.extend_from_slice(&[0, 0, 1, 0, 0, 0]);
-        list.extend_from_slice(&7001u32.to_le_bytes());
-        list.push(1);
-        list.extend_from_slice(&[0; 8]);
-        list.extend_from_slice(&1u16.to_le_bytes());
-        let mut hunt = [0u8; 46];
-        hunt[..4].copy_from_slice(&7_001_000u32.to_le_bytes());
-        hunt[16..18].copy_from_slice(&2u16.to_le_bytes());
-        hunt[18..20].copy_from_slice(&10u16.to_le_bytes());
-        hunt[20..26].copy_from_slice(b"Poring");
-        list.extend_from_slice(&hunt);
+        list.extend_from_slice(&[0, 0, 2, 0, 0, 0]);
+        // Two quests, the first with two hunts (one with a level range): 44 bytes each, as rathena writes them.
+        let hunt = |id: u32, count: u16, needed: u16, levels: [u16; 2], name: &[u8]| {
+            let mut hunt = [0u8; 44];
+            hunt[..4].copy_from_slice(&id.to_le_bytes());
+            hunt[12..14].copy_from_slice(&levels[0].to_le_bytes());
+            hunt[14..16].copy_from_slice(&levels[1].to_le_bytes());
+            hunt[16..18].copy_from_slice(&count.to_le_bytes());
+            hunt[18..20].copy_from_slice(&needed.to_le_bytes());
+            hunt[20..20 + name.len()].copy_from_slice(name);
+            hunt
+        };
+        for (id, hunts) in [(7001u32, vec![hunt(7_001_000, 2, 10, [0, 0], b"Poring"), hunt(7_001_001, 0, 5, [10, 20], b"Lunatic")]), (7002, vec![])] {
+            list.extend_from_slice(&id.to_le_bytes());
+            list.push(1);
+            list.extend_from_slice(&[0; 8]);
+            list.extend_from_slice(&(hunts.len() as u16).to_le_bytes());
+            for hunt in hunts {
+                list.extend_from_slice(&hunt);
+            }
+        }
         let length = list.len() as u16;
         list[2..4].copy_from_slice(&length.to_le_bytes());
         let Some(MapEvent::Quests(quests)) = decode_map_packet(&list) else { panic!() };
-        assert_eq!(quests, [Quest { id: 7001, active: true, end: 0, hunts: vec![Hunt { id: 7_001_000, name: "Poring".into(), count: 2, needed: 10 }] }]);
+        let poring = Hunt { id: 7_001_000, name: "Poring".into(), count: 2, needed: 10, levels: [0, 0] };
+        let lunatic = Hunt { id: 7_001_001, name: "Lunatic".into(), count: 0, needed: 5, levels: [10, 20] };
+        assert_eq!(quests, [Quest { id: 7001, active: true, end: 0, hunts: vec![poring, lunatic] }, Quest { id: 7002, active: true, end: 0, hunts: vec![] }]);
 
         let mut update = ZC_UPDATE_MISSION_HUNT_EX.to_le_bytes().to_vec();
         update.extend_from_slice(&[18, 0, 1, 0]);

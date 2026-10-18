@@ -90,6 +90,7 @@ mod picking;
 mod pickup;
 mod pin;
 mod quest;
+mod quest_tracker;
 mod ranking;
 mod refine;
 mod reform;
@@ -295,6 +296,9 @@ const LEFT_GUILD: usize = 489;
 const MEMBER_LEFT: usize = 364;
 const LEFT_BECAUSE: usize = 365;
 const LEAVE_CHOICE: usize = 508;
+/// A tracked quest's menu: "Quest information", "Delete".
+const QUEST_INFO_CHOICE: usize = 1622;
+const QUEST_DELETE_CHOICE: usize = 351;
 /// "Position Title", over the question for a new one.
 const POSITION_TITLE: usize = 511;
 const GUILD_INVITED: usize = 377;
@@ -1430,6 +1434,9 @@ enum Choice {
     Pet(u8),
     /// Hand the party to this member (by account).
     Leader(u32),
+    /// A tracked quest: its details in the quest window, or put it aside.
+    QuestInfo(u32),
+    QuestAside(u32),
     /// Ask this party member (by account) to be adopted.
     Adopt(u32),
     /// The guild master moves a member (by its place in the member list) to a position.
@@ -2293,6 +2300,7 @@ impl Game {
             || self.queue_window.covers(cursor)
             || self.skill_description.as_ref().is_some_and(|window| window.contains(cursor))
             || self.level_ups.hit(cursor).is_some()
+            || (self.quest_window.tracker && !quest_tracker::tracked(&self.quests).is_empty() && quest_tracker::covers(cursor))
             || (asking && contains(dialog_position_of(message), message, cursor))
             || self.dialog.is_some()
             || self.amount.is_some()
@@ -5021,8 +5029,18 @@ impl App {
             }
             Scene::Game(game) if game.quest_window.hit(cursor, &game.quests).is_some() => {
                 let hit = game.quest_window.hit(cursor, &game.quests).unwrap();
+                let tracker = game.quest_window.tracker;
                 if let Some((id, active)) = game.quest_window.click(hit, &game.quests) {
                     let _ = game.session.set_quest_active(id, active);
+                }
+                // The tracker's checkbox is kept with the settings.
+                if game.quest_window.tracker != tracker
+                    && let Some(path) = settings_path("quest_tracker")
+                {
+                    let _ = path
+                        .parent()
+                        .map_or(Ok(()), std::fs::create_dir_all)
+                        .and_then(|()| std::fs::write(path, if game.quest_window.tracker { "1" } else { "0" }));
                 }
             }
             // The mail windows: the mailbox, a mail read, one written, and the new-mail icon.
@@ -5141,6 +5159,15 @@ impl App {
                 Some(Choice::Pet(net::PET_INFO)) => game.open_pet_window(),
                 Some(Choice::Pet(command)) => game.pet_command(command),
                 Some(Choice::Leader(account)) => game.leader_asked = Some(account),
+                Some(Choice::QuestInfo(id)) => {
+                    game.quest_window.frame.open = true;
+                    game.quest_window.tab = 0;
+                    game.quest_window.picked = Some(id);
+                    game.sync_esc();
+                }
+                Some(Choice::QuestAside(id)) => {
+                    let _ = game.session.set_quest_active(id, false);
+                }
                 Some(Choice::GuildMove(row, position)) => {
                     if let Some(member) = game.guild.as_ref().and_then(|guild| guild.members.get(row)) {
                         let _ = game.session.move_member(member.account, member.character, position);
@@ -6176,6 +6203,21 @@ impl App {
             game.right_press = None;
             let label = self.messages.get(LEADER_CHOICE).cloned().unwrap_or_default();
             game.menu = Some(menu::Menu::new(self.cursor, vec![Some((label, Choice::Leader(account)))], &self.font));
+            return;
+        }
+        // A right click on a tracked quest's title: its details, or putting it aside.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+            && let Some((start, None)) = game.right_press
+            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+            && game.quest_window.tracker
+            && game.window_at(self.cursor).is_none()
+            && let Some(id) = quest_tracker::title_at(&quest_tracker::blocks(&game.quests, &self.quest_texts, &self.messages), &self.font, self.cursor)
+        {
+            game.right_press = None;
+            let label = |message: usize| self.messages.get(message).cloned().unwrap_or_default();
+            let choices = vec![Some((label(QUEST_INFO_CHOICE), Choice::QuestInfo(id))), Some((label(QUEST_DELETE_CHOICE), Choice::QuestAside(id)))];
+            game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             return;
         }
         // A right click on a skill, in the skill window or on the hotkey bar: its description (the same skill again on
@@ -7960,7 +8002,10 @@ impl App {
                     shortcuts_window: None,
                     world_map: None,
                     quests: Vec::new(),
-                    quest_window: quest::QuestWindow::default(),
+                    quest_window: quest::QuestWindow {
+                        tracker: settings_path("quest_tracker").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
+                        ..Default::default()
+                    },
                     achievement_totals: net::AchievementTotals::default(),
                     achievements: HashMap::new(),
                     achievement_window: achievement::AchievementWindow::default(),
@@ -11826,6 +11871,10 @@ impl App {
                 let step = ((share.clamp(0.0, 1.0) * CLOCK_STEPS as f32) as usize).min(CLOCK_STEPS);
                 chat_layer.sprites.push((&assets.clocks[color][step], corner, [STATUS_ICON; 2]));
             }
+        }
+        // The quest tracker, under the minimap.
+        if game.quest_window.tracker {
+            quest_tracker::draw(&mut chat_layer, &quest_tracker::blocks(&game.quests, quest_texts, messages));
         }
         // An NPC's illustration, over the world and under the windows.
         let mut cutin_layer = Layer::default();

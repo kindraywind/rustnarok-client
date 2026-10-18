@@ -1269,6 +1269,10 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["pickup_popup"] = json!(game.pickup_popup.as_ref().map(|popup| popup.text.clone()));
     // A skill's description while it shows: which skill, and its lines.
     state["skill_description"] = json!(game.skill_description.as_ref().map(|window| json!({"skill": window.skill, "lines": window.text()})));
+    // The quest tracker as drawn: each quest's title, summary and hunt lines (none while it's off).
+    let blocks = if game.quest_window.tracker { crate::quest_tracker::blocks(&game.quests, &app.quest_texts, &app.messages) } else { Vec::new() };
+    state["quest_tracker"] =
+        json!(blocks.iter().map(|block| json!({"id": block.id, "title": block.title, "summary": block.summary, "hunts": block.hunts})).collect::<Vec<_>>());
     // The level up buttons up in the bottom corners.
     state["level_ups"] = json!({"base": game.level_ups.base, "job": game.level_ups.job});
     // The status icon tooltip's lines while one shows.

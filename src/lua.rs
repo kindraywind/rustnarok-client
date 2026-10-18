@@ -592,6 +592,31 @@ pub struct SkillInfo {
     pub separate_level: bool,
 }
 
+/// The quests' titles, descriptions and summaries (`QuestInfoList`), from the translation's System folder.
+const QUEST_INFO: &str = "system\\OngoingQuestInfoList_True.lub";
+
+/// A quest's words: title, description (its lines joined), summary.
+pub fn quest_info(grf: &Grf) -> io::Result<HashMap<u32, [String; 3]>> {
+    quest_infos(&run(grf, &[QUEST_INFO])?)
+}
+
+fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, [String; 3]>> {
+    let list: mlua::Table = lua.globals().get("QuestInfoList").map_err(lua_error)?;
+    let mut quests = HashMap::new();
+    for pair in list.pairs::<i64, mlua::Table>() {
+        let Ok((id, entry)) = pair else { continue };
+        let text = |key: &str| entry.get::<mlua::String>(key).map(|text| decode(&text)).unwrap_or_default();
+        let description = entry
+            .get::<mlua::Table>("Description")
+            .map(|lines| lines.sequence_values::<mlua::String>().flatten().map(|line| decode(&line)).collect::<Vec<_>>().join(" "))
+            .unwrap_or_default();
+        if let Ok(id) = u32::try_from(id) {
+            quests.insert(id, [text("Title"), description, text("Summary")]);
+        }
+    }
+    Ok(quests)
+}
+
 /// Skills' descriptions by ID, line by line as the data has them.
 pub fn skill_descriptions(grf: &Grf) -> io::Result<HashMap<u16, Vec<String>>> {
     skill_descripts(&run(grf, &[SKILL_ID, SKILL_DESCRIPT])?)
@@ -1399,6 +1424,16 @@ fn hotkey_table(lua: &Lua, name: &str, table: u8, user: bool) -> io::Result<Vec<
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
+
+    #[test]
+    fn reads_quest_info() {
+        let lua = super::new_lua().unwrap();
+        lua.load(r#"QuestInfoList = { [7001] = { Title = "Hunting Porings", Description = { "Hunt", "ten Porings." }, Summary = "Poring x10" } }"#)
+            .exec()
+            .unwrap();
+        let quests = super::quest_infos(&lua).unwrap();
+        assert_eq!(quests[&7001], ["Hunting Porings".to_owned(), "Hunt ten Porings.".to_owned(), "Poring x10".to_owned()]);
+    }
 
     #[test]
     fn reads_skill_descriptions() {
