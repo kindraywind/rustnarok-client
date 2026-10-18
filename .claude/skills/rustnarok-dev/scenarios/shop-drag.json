@@ -1,0 +1,26 @@
+{
+  "about": "Dragging in an NPC shop: Butterfly Wings dragged onto the Buying Items window ask how many (the box holds 1; 3 are typed), a Magnifier goes in the same way, then the wings dragged back onto the shop's list ask how many to take out (the box holds all 3) and go. Cancel ends the deal.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 134 220"}, {"settle": 2000},
+    {"expect": {"map": "prt_in.gat"}},
+    {"click": [187, 317]}, {"wait": 1500},
+    {"expect": {"windows_open": ["DealChoice"]}},
+    {"click": [536, 537]}, {"wait": 1000},
+    {"expect": {"windows_open": ["Shop"]}},
+    {"drag_on": [{"pick_item": 602}, {"point": [530, 320]}]}, {"wait": 400},
+    {"key": "Backspace"}, {"type": "3"}, {"key": "Enter"}, {"wait": 300},
+    {"drag_on": [{"pick_item": 611}, {"point": [530, 320]}]}, {"wait": 400},
+    {"key": "Enter"}, {"wait": 300},
+    {"expect": {"state": {"shop_deal": [{"item": 602, "amount": 3}, {"item": 611, "amount": 1}]}}},
+    {"move": [800, 600]},
+    {"shot": "shop-drag-in", "crop": [90, 90, 590, 300]},
+    {"drag_on": [{"point": [530, 298]}, {"point": [240, 250]}]}, {"wait": 400},
+    {"key": "Enter"}, {"wait": 300},
+    {"expect": {"state": {"shop_deal": [{"item": 611, "amount": 1}]}}},
+    {"shot": "shop-drag-out", "crop": [90, 90, 590, 300]},
+    {"click": [633, 364]}, {"wait": 500},
+    {"expect": {"windows_closed": ["Shop"]}}
+  ]
+}

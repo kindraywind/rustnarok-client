@@ -1001,6 +1001,12 @@ impl SpriteSet {
         Some(frame as f32 * delay * DELAY_UNIT_MS * scale)
     }
 
+    /// When frame `frame` of action `index` comes, played at `scale` times its ACT pace.
+    pub fn frame_ms(&self, index: usize, frame: usize, scale: f32) -> Option<f32> {
+        let delay = self.layers[0].act.delays.get(index).copied().unwrap_or(4.0).max(1.0);
+        self.layers[0].act.actions.get(index).map(|_| frame as f32 * delay * DELAY_UNIT_MS * scale)
+    }
+
     pub fn index_ms(&self, index: usize) -> Option<f32> {
         let frames = self.layers[0].act.actions.get(index)?.len();
         let delay = self.layers[0].act.delays.get(index).copied().unwrap_or(4.0).max(1.0);
@@ -1727,6 +1733,12 @@ impl Actor {
         let index = action * 8 + usize::from(self.direction % 8);
         let delay = self.sprites.as_ref().and_then(|sprites| sprites.layers[0].act.delays.get(index).copied()).unwrap_or(4.0).max(1.0);
         self.shot = Some(Shot { action, started: start, pace: flinch_pace(motion / 288.0, self.kind == 0, delay), hold: false });
+    }
+
+    /// Plays `action` once at its ACT pace, then holds its last frame until `ms` after `start` (a cast).
+    pub fn hold_for(&mut self, action: usize, start: Instant, ms: f32) {
+        let length = self.sprites.as_ref().and_then(|sprites| sprites.index_ms(action * 8 + usize::from(self.direction % 8))).unwrap_or(0.0);
+        self.shot = Some(Shot { action, started: start, pace: Pace::Hold((ms / length.max(1.0)).max(1.0)), hold: false });
     }
 
     /// In its own attack swing now.

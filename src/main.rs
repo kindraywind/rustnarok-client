@@ -108,6 +108,7 @@ mod screenshot;
 mod shop;
 mod shortcuts;
 mod skill_descript;
+mod skill_motions;
 mod skills;
 mod sound;
 mod status;
@@ -707,7 +708,7 @@ const EF_WARPZONE2: u32 = 321;
 /// The MVP's banner (mvp.str).
 const EF_MVP: u32 = 68;
 /// The cast aura by the skill's element: neutral, water, earth, fire, wind, poison, holy, shadow, ghost, undead.
-const CAST_AURAS: [u32; 10] = [12, 54, 57, 55, 56, 59, 58, 454, 58, 454];
+const CAST_AURAS: [u32; 10] = [12, 54, 56, 55, 57, 59, 58, 12, 12, 12];
 /// "Select a target", under an aimed skill's name.
 const TARGET_MESSAGE: usize = 234;
 /// Taming's result: the slot machine's success and failure actions (they play those sounds), how long the last
@@ -1766,6 +1767,8 @@ enum Panel {
 enum Asked {
     /// A row of the shop, into the deal.
     Shop(usize),
+    /// A row of the shop's deal, out of it.
+    ShopOut(usize),
     /// An inventory item, into storage.
     Store(u16),
     /// An inventory item, onto the ground.
@@ -1812,6 +1815,7 @@ impl Asked {
         matches!(
             self,
             Asked::Shop(_)
+                | Asked::ShopOut(_)
                 | Asked::Store(_)
                 | Asked::Drop(_)
                 | Asked::Take(_)
@@ -1919,6 +1923,9 @@ enum Dragged {
     Hotkey(usize),
     /// A worn item, by inventory index, out of the equipment window.
     Worn(u16),
+    /// A shop's offer (by row), or a row of its deal.
+    ShopOffer(usize),
+    ShopDeal(usize),
 }
 
 /// What a sprite on the map belongs to.
@@ -3201,6 +3208,7 @@ impl Game {
             Asked::FromCart(index) => self.cart.get(index).map(|item| item.amount),
             Asked::Take(index) => self.storage.get(index).map(|item| item.amount),
             Asked::Shop(_)
+            | Asked::ShopOut(_)
             | Asked::PartyName
             | Asked::Invite
             | Asked::RoomPassword(_)
@@ -3269,9 +3277,21 @@ impl Game {
                 }
                 Ok(())
             }
-            Asked::Shop(row) if amount.value() > 0 => {
+            Asked::ShopOut(row) => {
                 if let Some(shop) = &mut self.shop
-                    && let Some((msg_id, arg)) = shop.add_checked(row, amount.value())
+                    && amount.value() > 0
+                {
+                    shop.take_out(row, amount.value());
+                }
+                Ok(())
+            }
+            Asked::Shop(row) if amount.value() > 0 => {
+                let zeny = self.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u64;
+                if let Some(shop) = &mut self.shop
+                    && let Some((msg_id, arg)) = {
+                        shop.zeny = zeny;
+                        shop.add_checked(row, amount.value())
+                    }
                 {
                     let text = messages.get(msg_id).map_or("", String::as_str);
                     let line = match arg {
@@ -3301,6 +3321,12 @@ impl Game {
             Asked::Shop(row) => {
                 if let Some(shop) = &mut self.shop {
                     shop.add(row, amount);
+                }
+                Ok(())
+            }
+            Asked::ShopOut(row) => {
+                if let Some(shop) = &mut self.shop {
+                    shop.take_out(row, amount);
                 }
                 Ok(())
             }
@@ -3510,15 +3536,56 @@ impl Game {
     }
 
     /// A unit starts or uses a skill: players strike the skill pose, and units call its name (see `overhead::shouts`).
-    fn skill_motion(&mut self, source: u32, skill: u16, level: i32, packet: overhead::Shout, duration: f32, info: &HashMap<u16, SkillInfo>) {
+    /// A player caster's motion for a skill packet (`skill_motions`) and its name shouted. A cast holds the cast pose
+    /// for `pace` ms (none for skills cast standing); the others play their motion at `pace` times its ACT pace.
+    /// Returns when the hit lands, in ms from now: the swing's "atk" frame, the skill pose's frame 6.
+    #[allow(clippy::too_many_arguments)]
+    fn skill_motion(
+        &mut self,
+        source: u32,
+        skill: u16,
+        level: i32,
+        packet: overhead::Shout,
+        pace: f32,
+        info: &HashMap<u16, SkillInfo>,
+        tables: &LookTables,
+    ) -> Option<f32> {
         let me = self.account_id;
-        let Some(actor) = (if source == me { Some(&mut self.player) } else { self.units.get_mut(&source) }) else { return };
+        let actor = (if source == me { Some(&mut self.player) } else { self.units.get_mut(&source) })?;
         if actor.remove_at.is_some() {
-            return;
+            return None;
         }
         let monster = actor.kind == MONSTER;
+        let mut hit_ms = None;
         if actor.kind == PLAYER {
-            actor.play(SKILL_ACTION, Instant::now(), duration.max(100.0), false);
+            let now = Instant::now();
+            let action = match (packet, skill_motions::motion(skill)) {
+                (overhead::Shout::Cast, _) if skill_motions::cast_standing(skill) => None,
+                (overhead::Shout::Cast, _) => {
+                    actor.hold_for(SKILL_ACTION, now, pace);
+                    None
+                }
+                (_, skill_motions::Motion::Keep) => None,
+                (_, skill_motions::Motion::Attack) => Some(
+                    actor
+                        .look
+                        .as_ref()
+                        .map_or(actor::combat_actions(actor.kind).0, |look| actor::attack_action(look.job, look.sex, tables.weapon_type(look.weapon))),
+                ),
+                (_, skill_motions::Motion::Throw) => Some(5),
+                (_, skill_motions::Motion::ThirdAttack) => Some(11),
+                (_, skill_motions::Motion::PickUp) => Some(actor::PICKUP),
+                (_, skill_motions::Motion::Skill) if skill_motions::ready_instead(actor.job) => Some(actor::READY),
+                (_, skill_motions::Motion::Skill) => Some(SKILL_ACTION),
+            };
+            if let Some(action) = action {
+                actor.play_at_pace(action, now, pace, false);
+                let index = action * 8 + usize::from(actor.direction % 8);
+                hit_ms = actor.sprites.as_ref().and_then(|sprites| match action {
+                    SKILL_ACTION => sprites.frame_ms(index, 6, pace),
+                    _ => sprites.hit_ms(index, pace),
+                });
+            }
             actor.stand_ready();
         }
         if overhead::shouts(skill, level, monster, packet)
@@ -3527,6 +3594,7 @@ impl Game {
             let unit = (source != me).then_some(source);
             self.say(unit, format!("{} !!", info.name), CHAT_WHITE);
         }
+        hit_ms.map(|ms| ms + skill_motions::hit_extra_ms(skill))
     }
 
     /// Puts a window in front of the others, and at the front of the Esc list when it is open.
@@ -4447,14 +4515,14 @@ impl Game {
             source.stand_ready();
             hit_ms = source.sprites.as_ref().and_then(|sprites| sprites.hit_ms(attack * 8 + usize::from(source.direction % 8), scale));
         }
-        self.show_hit(&act, hit_ms);
+        self.show_hit(&act, hit_ms, MULTI_HIT_DELAY);
     }
 
     /// The numbers of a hit as it lands: split over a multi-hit's hits (with the running total over monsters),
     /// yellow for a critical, "Lucky" for a lucky dodge.
     /// The numbers (and the flinch) of a hit, landing `hit_ms` after now (the attacker's "atk" frame), or after its
     /// attack motion when its sprite doesn't say.
-    fn show_hit(&mut self, act: &net::Act, hit_ms: Option<f32>) {
+    fn show_hit(&mut self, act: &net::Act, hit_ms: Option<f32>, gap: Duration) {
         let me = self.account_id;
         let target = (act.target != me).then_some(act.target);
         let hit = match target {
@@ -4484,7 +4552,7 @@ impl Game {
         };
         let hits = if amount > 0 { i32::from(act.hits.max(1)) } else { 1 };
         for hit in 0..hits {
-            let start = lands + MULTI_HIT_DELAY * hit as u32;
+            let start = lands + gap * hit as u32;
             self.damages.push(Damage { target, amount: amount / hits, start, kind, flinch, drift, source: (amount > 0).then_some(act.source) });
             if hits > 1 && !on_player {
                 self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: DamageKind::Combo, flinch: None, drift, source: None });
@@ -7066,8 +7134,8 @@ impl App {
                         let _ = shop.send(&mut game.session);
                     }
                     Some(shop::Action::Close) => game.close_shop(),
-                    Some(shop::Action::Ask(row)) => game.amount = Some(window::Amount::new(Asked::Shop(row), None)),
-                    None => {}
+                    Some(shop::Action::Ask(row, _)) => game.amount = Some(window::Amount::new(Asked::Shop(row), None)),
+                    Some(shop::Action::AskOut(..) | shop::Action::Say(..)) | None => {}
                 }
             }
             // A small party window: its close button removes it. A click on the body was a drag (handled on press).
@@ -7468,6 +7536,9 @@ impl App {
             if let Some(trade) = &mut game.trade {
                 let height = trade.height();
                 trade.frame.drag_to(self.cursor, height);
+            }
+            if let Some(shop) = &mut game.shop {
+                shop.drag_to(self.cursor);
             }
             let party_height = game.party_window.height(game.party.as_ref(), &game.friends);
             game.party_window.frame.drag_to(self.cursor, party_height);
@@ -7958,7 +8029,7 @@ impl App {
                             id: u32::from(id),
                             count: game.skill_window.use_level(id, skill.level) as i16,
                         }),
-                        Dragged::Stored(_) | Dragged::Carted(_) | Dragged::Hotkey(_) | Dragged::Worn(_) => None,
+                        Dragged::Stored(_) | Dragged::Carted(_) | Dragged::Hotkey(_) | Dragged::Worn(_) | Dragged::ShopOffer(_) | Dragged::ShopDeal(_) => None,
                     };
                     if let Some(key) = key {
                         for (slot, key) in hotkeys::drop_on(&game.hotkeys.keys, key, slot) {
@@ -7983,6 +8054,28 @@ impl App {
                         }
                         Some(_) => {}
                         None => game.chat_line(self.messages.get(HOTKEY_ITEM_STAYS).cloned().unwrap_or_default(), CHAT_ERROR),
+                    }
+                }
+                // A shop's offer let go over its deal goes in; a deal row let go over its goods comes out.
+                if let Some((Dragged::ShopOffer(row) | Dragged::ShopDeal(row), _, true)) = item
+                    && let Some(shop) = &mut game.shop
+                {
+                    let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u64;
+                    shop.zeny = zeny;
+                    let action = match (item.map(|(dragged, ..)| dragged), shop.window_at(self.cursor)) {
+                        (Some(Dragged::ShopOffer(_)), Some(1)) => shop.drop_offer(row),
+                        (Some(Dragged::ShopDeal(_)), Some(0)) => shop.drop_deal(row),
+                        _ => None,
+                    };
+                    match action {
+                        Some(shop::Action::Ask(row, fill)) => game.amount = Some(window::Amount::new(Asked::Shop(row), (fill > 0).then_some(fill))),
+                        Some(shop::Action::AskOut(row, fill)) => game.amount = Some(window::Amount::new(Asked::ShopOut(row), Some(fill))),
+                        Some(shop::Action::Say(message, arg)) => {
+                            let text = self.messages.get(message).map_or("", String::as_str);
+                            let line = arg.map_or_else(|| text.to_owned(), |arg| rustnarok_client::messages::fill(text, &[&arg]));
+                            game.chat_line(line, CHAT_ERROR);
+                        }
+                        _ => {}
                     }
                 }
                 // An item let go over the storage goes in; a stored one let go over the inventory comes out.
@@ -8073,6 +8166,7 @@ impl App {
                 }
                 let trade_moved = game.chat.drop_drag()
                     | game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
+                    | game.shop.as_mut().is_some_and(|shop| shop.frames.iter_mut().fold(false, |moved, frame| frame.drop_drag() | moved))
                     | game.room.as_mut().is_some_and(|room| room.frame.drop_drag())
                     | game.card_view.as_mut().is_some_and(|view| view.drop_drag())
                     | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
@@ -8336,6 +8430,18 @@ impl App {
         {
             if hit == trade::Hit::Title(TitleHit::Title) {
                 trade.frame.start_drag(cursor);
+            }
+            return;
+        }
+        // A shop's row starts a drag at once; its title bar moves the window.
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.shop.as_ref().and_then(|shop| shop.hit(cursor))
+        {
+            match hit {
+                shop::Hit::Row(0, row) => game.dragging = Some((Dragged::ShopOffer(row), cursor, false)),
+                shop::Hit::Row(_, row) => game.dragging = Some((Dragged::ShopDeal(row), cursor, false)),
+                shop::Hit::Title(window, TitleHit::Title) => game.shop.as_mut().unwrap().frames[window].start_drag(cursor),
+                _ => {}
             }
             return;
         }
@@ -12236,7 +12342,7 @@ impl App {
                         None => game.cast_squares.remove(&(source != me).then_some(source)),
                     };
                 }
-                game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info);
+                game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info, look_tables);
                 skill_effects(game, skill, "beginCastEffectId", source);
             }
             MapEvent::SkillHit { skill, level, act } => {
@@ -12248,24 +12354,28 @@ impl App {
                     if let Some(cell) = target_cell.filter(|_| act.source != act.target) {
                         source.face(cell);
                     }
-                    // Monsters swing as for an attack; players take the skill pose.
+                    // Monsters swing as for an attack; players take the skill's motion (`skill_motion`).
                     if source.kind != PLAYER {
                         source.play_at_pace(actor::combat_actions(source.kind).0, Instant::now(), actor::attack_scale(act.source_speed, false), false);
                     }
                 }
-                game.skill_motion(act.source, skill, i32::from(level as i16), overhead::Shout::Hit, act.source_speed as f32, &self.skill_info);
+                let scale = actor::attack_scale(act.source_speed, false);
+                let hit_ms = game.skill_motion(act.source, skill, i32::from(level as i16), overhead::Shout::Hit, scale, &self.skill_info, look_tables);
+                // Hits land on the motion's hit frame (else after the attack motion), each `hit_gap_ms` after the last.
+                let hit_ms = hit_ms.unwrap_or(act.source_speed.max(0) as f32);
+                let gap = Duration::from_millis(skill_motions::hit_gap_ms(skill));
                 if act.damage != 0 && !(act.source == act.target && act.kind == 6) {
-                    game.show_hit(&act, None);
+                    game.show_hit(&act, Some(hit_ms), gap);
                     // Hit by hit: what comes at the target first (a bolt's arrows), then what shows as it lands.
                     if let Some(gpu) = gpu {
                         let now = Instant::now();
-                        let lands = now + Duration::from_millis(act.source_speed.max(0) as u64);
+                        let lands = now + Duration::from_secs_f32(hit_ms / 1000.0);
                         for hit in 0..u32::from(act.hits.max(1)) {
                             for effect in table.skill(skill, "beforeHitEffectId") {
-                                game.play_effect_from(gpu, grf, table, effect, act.target, now + MULTI_HIT_DELAY * hit);
+                                game.play_effect_from(gpu, grf, table, effect, act.target, now + gap * hit);
                             }
                             for effect in table.skill(skill, "hitEffectId") {
-                                game.play_effect_from(gpu, grf, table, effect, act.target, lands + MULTI_HIT_DELAY * hit);
+                                game.play_effect_from(gpu, grf, table, effect, act.target, lands + gap * hit);
                             }
                         }
                     }
@@ -12282,7 +12392,7 @@ impl App {
                 {
                     caster.face(cell);
                 }
-                game.skill_motion(source, skill, amount, overhead::Shout::Used, 400.0, &self.skill_info);
+                game.skill_motion(source, skill, amount, overhead::Shout::Used, 1.0, &self.skill_info, look_tables);
                 if HEAL_SKILLS.contains(&skill) {
                     game.damages.push(Damage {
                         target: (target != me).then_some(target),
@@ -12309,7 +12419,7 @@ impl App {
                 if let Some(caster) = caster {
                     caster.face([i32::from(cell[0]), i32::from(cell[1])]);
                 }
-                game.skill_motion(source, skill, i32::from(level as i16), overhead::Shout::Hit, 400.0, &self.skill_info);
+                game.skill_motion(source, skill, i32::from(level as i16), overhead::Shout::Hit, 1.0, &self.skill_info, look_tables);
             }
             MapEvent::SkillUnit { id, kind, cell } => {
                 if let Some(gpu) = gpu {
@@ -14314,6 +14424,16 @@ impl App {
             Some((Dragged::Stored(index), _, true)) => {
                 game.storage.get(index).and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)))
             }
+            Some((Dragged::ShopOffer(row), _, true)) => game
+                .shop
+                .as_ref()
+                .and_then(|shop| shop.offer_at(0, row))
+                .and_then(|offer| items.get(&offer.item).map(|info| inventory::icon_path(info, offer.identified))),
+            Some((Dragged::ShopDeal(row), _, true)) => game
+                .shop
+                .as_ref()
+                .and_then(|shop| shop.offer_at(1, row))
+                .and_then(|offer| items.get(&offer.item).map(|info| inventory::icon_path(info, offer.identified))),
             Some((Dragged::Carted(index), _, true)) => {
                 game.cart.get(index).and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)))
             }

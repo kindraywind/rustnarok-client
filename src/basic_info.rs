@@ -17,6 +17,10 @@ const MINIMIZE_BUTTON: [f32; 2] = [206.0, 3.0];
 const BUTTON_SIZE: [f32; 2] = [11.0, 11.0];
 /// The title: white at (18, 3) under black at (17, 2); the only text with a shadow.
 const TITLE: [f32; 2] = [17.0, 2.0];
+/// The minimised window: the name in its title bar, and under the bar a grey box with 3 px cut corners round white.
+const MINI_NAME: [f32; 2] = [17.0, 3.0];
+const MINI_BOX_TOP: f32 = 17.0;
+const MINI_EDGE: [u8; 4] = [200, 200, 200, 0xFF];
 /// HP and SP bars: 135 by 9, filled 127 px at most.
 const BAR_SIZE: [f32; 2] = [135.0, 9.0];
 const BAR_FULL: f32 = 127.0;
@@ -99,10 +103,31 @@ pub fn heavy(weight: i64, limit: i64, percent: u32) -> bool {
     limit > 0 && weight * 100 / limit >= i64::from(percent)
 }
 
-/// An HP or SP bar's fill: its width (127 px at most) and whether it's red (under a quarter); none when there's
-/// nothing to show, or more than the most.
+/// An HP or SP bar's fill: its width (127 px at most, 0 at zero, when only the red caps show) and whether it's red
+/// (under a quarter); none with no most, or more than the most (then the bar isn't drawn at all).
 pub fn bar_fill(now: i64, most: i64) -> Option<(f32, bool)> {
-    (most > 0 && now > 0 && now <= most).then(|| ((BAR_FULL * now as f32 / most as f32).trunc(), now * 4 < most))
+    (most > 0 && (0..=most).contains(&now)).then(|| ((BAR_FULL * now as f32 / most as f32).trunc(), now * 4 < most))
+}
+
+/// A bar's percentage: "%d%%" of now·100/most, not cut at 100.
+pub fn percent_text(now: i64, most: i64) -> String {
+    format!("{}%", if most > 0 { now * 100 / most } else { 0 })
+}
+
+/// Where the minimised window's short first line starts: centred, at least 3 from the left.
+pub fn mini_line_x(width: f32) -> f32 {
+    ((WIDTH - width) / 2.0).floor().max(3.0)
+}
+
+/// The minimised window's grey box under the title bar, its bottom corners cut 3 px: (x, y, width, height) pieces.
+pub fn mini_box(height: f32) -> Vec<[f32; 4]> {
+    let body = height - MINI_BOX_TOP - 3.0;
+    let mut pieces = vec![[0.0, MINI_BOX_TOP, WIDTH, body]];
+    pieces.extend((0..3).map(|row| {
+        let inset = row as f32 + 1.0;
+        [inset, MINI_BOX_TOP + body + row as f32, WIDTH - 2.0 * inset, 1.0]
+    }));
+    pieces
 }
 
 /// The numbers over a bar: "%3d  /  %3d".
@@ -182,7 +207,8 @@ pub fn doram(job: u16) -> bool {
 pub struct Assets {
     /// The window's back: the game's, and the 4th jobs'; the mini window's.
     backgrounds: [Texture; 2],
-    mini: Texture,
+    /// The minimised window's grey edge.
+    mini_edge: Texture,
     /// HP and SP bars' back.
     bar_back: Texture,
     /// Blue and red bar pieces: left cap, middle, right cap.
@@ -212,7 +238,7 @@ impl Assets {
         let image = |path: String| gpu.load_texture(grf, &path, false);
         Self {
             backgrounds: [image(format!("{basic}basewin_bg2.bmp")), image(format!("{basic}w_basewin_bg2.bmp"))],
-            mini: image(format!("{basic}basewin_mini.bmp")),
+            mini_edge: gpu.solid(MINI_EDGE),
             bar_back: image(format!("{basic}gze_bg1.bmp")),
             bars: ["blue", "red"].map(|color| ["left", "mid", "right"].map(|part| image(format!("{basic}gze{color}_{part}.bmp")))),
             exp_border: gpu.solid(EXP_BORDER),
@@ -366,9 +392,17 @@ impl BasicInfo {
         let value = |id: u16| info.status.get(&id).copied().unwrap_or(0);
         let text = |layer: &mut Layer<'a>, text: String, place: [f32; 2], color: [u8; 3]| layer.texts.push((text, at(place), color));
 
-        let background = if self.frame.minimized { &assets.mini } else { &assets.backgrounds[usize::from(self.fourth)] };
-        let height = if self.frame.minimized { layout.mini } else { layout.height };
-        layer.sprites.push((background, at([0.0, 0.0]), [WIDTH, height]));
+        if self.frame.minimized {
+            // The standard title bar over a grey box with cut corners, white inside.
+            chrome.draw_title_bar(layer, at([0.0, 0.0]), WIDTH);
+            for [x, y, w, h] in mini_box(layout.mini) {
+                layer.sprites.push((&assets.mini_edge, at([x, y]), [w, h]));
+            }
+            layer.sprites.push((&chrome.white, at([1.0, MINI_BOX_TOP]), [WIDTH - 2.0, layout.mini - MINI_BOX_TOP - 2.0]));
+        } else {
+            let background = &assets.backgrounds[usize::from(self.fourth)];
+            layer.sprites.push((background, at([0.0, 0.0]), [WIDTH, layout.height]));
+        }
         for place in [BASE_BUTTON, MINIMIZE_BUTTON] {
             let button = usize::from(place == MINIMIZE_BUTTON);
             let image = chrome.button(button, contains(at(place), BUTTON_SIZE, cursor));
@@ -377,7 +411,7 @@ impl BasicInfo {
         let [(hp, max_hp), (sp, max_sp)] = [(value(net::STATUS_HP), value(net::STATUS_MAX_HP)), (value(net::STATUS_SP), value(net::STATUS_MAX_SP))];
         // Minimised: the name in the title, a line of levels and exp, and one of HP and SP (each red under a quarter).
         if self.frame.minimized {
-            text(layer, info.name.to_owned(), TITLE, BLACK);
+            text(layer, info.name.to_owned(), MINI_NAME, BLACK);
             let [long, short] = mini_lines(
                 value(net::STATUS_BASE_LEVEL),
                 info.job,
@@ -388,7 +422,8 @@ impl BasicInfo {
             if font.width(&long) <= WIDTH - 18.0 {
                 text(layer, long, [9.0, 20.0], BLACK);
             } else {
-                text(layer, short.clone(), [((WIDTH - font.width(&short)) / 2.0).floor(), 20.0], BLACK);
+                let x = mini_line_x(font.width(&short));
+                text(layer, short, [x, 20.0], BLACK);
             }
             let mut x = 9.0;
             for (part, low) in [(format!("HP {hp} / {max_hp}"), hp * 4 < max_hp), (" | ".to_owned(), false), (format!("SP {sp} / {max_sp}"), sp * 4 < max_sp)] {
@@ -406,16 +441,19 @@ impl BasicInfo {
         for (bar, (now, most)) in [(hp, max_hp), (sp, max_sp)].into_iter().enumerate() {
             let corner = layout.bars[bar];
             text(layer, ["HP", "SP"][bar].to_owned(), layout.labels[bar], BLACK);
-            layer.sprites.push((&assets.bar_back, at(corner), BAR_SIZE));
-            if let Some((width, red)) = bar_fill(now, most) {
-                let [left, middle, right] = &assets.bars[usize::from(red)];
-                layer.sprites.push((left, at(corner), left.size));
-                layer.sprites.push((middle, at(offset(corner, [left.size[0], 0.0])), [width, middle.size[1]]));
-                layer.sprites.push((right, at(offset(corner, [left.size[0] + width, 0.0])), right.size));
+            // Over the most, the bar isn't drawn at all: no back, no fill, no numbers.
+            if now <= most {
+                layer.sprites.push((&assets.bar_back, at(corner), BAR_SIZE));
+                if let Some((width, red)) = bar_fill(now, most) {
+                    let [left, middle, right] = &assets.bars[usize::from(red)];
+                    layer.sprites.push((left, at(corner), left.size));
+                    layer.sprites.push((middle, at(offset(corner, [left.size[0], 0.0])), [width, middle.size[1]]));
+                    layer.sprites.push((right, at(offset(corner, [left.size[0] + width, 0.0])), right.size));
+                }
+                let numbers = bar_text(now, most);
+                text(layer, numbers.clone(), [corner[0] + ((BAR_SIZE[0] - font.width(&numbers)) / 2.0).floor(), corner[1] - 2.0], BLACK);
             }
-            let numbers = bar_text(now, most);
-            text(layer, numbers.clone(), [corner[0] + ((BAR_SIZE[0] - font.width(&numbers)) / 2.0).floor(), corner[1] - 2.0], BLACK);
-            let percent = format!("{}%", if most > 0 { (now * 100 / most).clamp(0, 100) } else { 0 });
+            let percent = percent_text(now, most);
             let x = layout.percent.unwrap_or(WIDTH - 20.0 - font.width(&percent));
             text(layer, percent, [x, layout.labels[bar][1]], BLACK);
         }
@@ -523,7 +561,16 @@ mod tests {
         assert_eq!(bar_fill(40, 40), Some((127.0, false)));
         assert_eq!(bar_fill(9, 40), Some((28.0, true)), "under a quarter: red");
         assert_eq!(bar_fill(10, 40), Some((31.0, false)));
-        assert_eq!((bar_fill(41, 40), bar_fill(0, 40), bar_fill(5, 0)), (None, None, None));
+        // Over the most: no bar; at zero only the red caps (no fill); no most: nothing.
+        assert_eq!((bar_fill(41, 40), bar_fill(0, 40), bar_fill(5, 0)), (None, Some((0.0, true)), None));
+        // The percentage isn't cut at 100.
+        assert_eq!([percent_text(41, 40), percent_text(0, 40), percent_text(20, 40), percent_text(5, 0)], ["102%", "0%", "50%", "0%"]);
+        // The short mini line: centred, never nearer the left than 3.
+        assert_eq!((mini_line_x(200.0), mini_line_x(500.0)), (((WIDTH - 200.0) / 2.0).floor(), 3.0));
+        // The grey box under the title bar, its bottom corners cut 3 px.
+        let pieces = mini_box(55.0);
+        assert_eq!(pieces[0], [0.0, 17.0, WIDTH, 35.0]);
+        assert_eq!(pieces[1..], [[1.0, 52.0, WIDTH - 2.0, 1.0], [2.0, 53.0, WIDTH - 4.0, 1.0], [3.0, 54.0, WIDTH - 6.0, 1.0]]);
         assert_eq!(bar_text(7, 40), "  7  /   40");
         assert_eq!(zeny_text(1234567), "Zeny : 1,234,567");
         assert_eq!(zeny_text(999), "Zeny : 999");
