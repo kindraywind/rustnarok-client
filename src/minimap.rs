@@ -5,11 +5,13 @@ use image::{Rgba, RgbaImage};
 use rustnarok_client::grf::Grf;
 
 use crate::render::{self, Gpu, Texture};
-use crate::{Layer, SCREEN, UI, contains};
+use crate::{Layer, UI, contains, screen};
 
 const SIZE: f32 = 128.0;
 /// The map square at (W - 144, 16); the bottom row at y 145.
-const ORIGIN: [f32; 2] = [SCREEN[0] - 144.0, 16.0];
+fn origin() -> [f32; 2] {
+    [screen()[0] - 144.0, 16.0]
+}
 const ROW: f32 = 145.0;
 const BUTTON: f32 = 12.0;
 /// The bottom row's buttons and their left edges from the screen's right: object, plus, minus, mini, view on.
@@ -68,7 +70,7 @@ pub fn window(player: [f32; 2], zoom: f32) -> [f32; 2] {
 /// Where a share of the overview lands on screen through the window, or none outside it.
 pub fn on_screen(at: [f32; 2], window: [f32; 2], zoom: f32) -> Option<[f32; 2]> {
     let local = [(at[0] - window[0]) * zoom, (at[1] - window[1]) * zoom];
-    local.iter().all(|value| (0.0..=1.0).contains(value)).then(|| [ORIGIN[0] + local[0] * SIZE, ORIGIN[1] + local[1] * SIZE])
+    local.iter().all(|value| (0.0..=1.0).contains(value)).then(|| [origin()[0] + local[0] * SIZE, origin()[1] + local[1] * SIZE])
 }
 
 /// The overview's window as a picture: the overview's pixels it covers, at `alpha`.
@@ -97,12 +99,12 @@ pub fn coordinates(cell: [i32; 2]) -> String {
 /// A bottom-row button's box on screen (for the test driver).
 pub fn button_box(name: &str) -> [f32; 4] {
     let from_right = BUTTONS.iter().find(|(each, _)| *each == name).map_or(0.0, |(_, from_right)| *from_right);
-    [SCREEN[0] - from_right, ROW, BUTTON, BUTTON]
+    [screen()[0] - from_right, ROW, BUTTON, BUTTON]
 }
 
 /// The bottom row's button under the pointer.
 pub fn button_at(cursor: [f32; 2]) -> Option<&'static str> {
-    BUTTONS.into_iter().find(|(_, from_right)| contains([SCREEN[0] - from_right, ROW], [BUTTON, BUTTON], cursor)).map(|(name, _)| name)
+    BUTTONS.into_iter().find(|(_, from_right)| contains([screen()[0] - from_right, ROW], [BUTTON, BUTTON], cursor)).map(|(name, _)| name)
 }
 
 pub struct Assets {
@@ -209,7 +211,7 @@ pub fn draw<'a>(layer: &mut Layer<'a>, assets: &'a Assets, overview: Option<&'a 
     let player = share(markers.cell, size);
     let window = window(player, zoom);
     if let Some(overview) = overview {
-        layer.sprites.push((overview, ORIGIN, [SIZE, SIZE]));
+        layer.sprites.push((overview, origin(), [SIZE, SIZE]));
         let at = |cell: [i32; 2]| on_screen(share(cell, size), window, zoom).map(|point| point.map(f32::round));
         // The cross: 8x2 and 2x8.
         for &(cell, color) in markers.marks {
@@ -232,7 +234,7 @@ pub fn draw<'a>(layer: &mut Layer<'a>, assets: &'a Assets, overview: Option<&'a 
         // The boss, kept at the edge when outside.
         if let Some(boss) = markers.boss {
             let local = [(share(boss, size)[0] - window[0]) * zoom, (share(boss, size)[1] - window[1]) * zoom].map(|value| value.clamp(0.0, 1.0));
-            let [x, y] = [ORIGIN[0] + local[0] * SIZE, ORIGIN[1] + local[1] * SIZE];
+            let [x, y] = [origin()[0] + local[0] * SIZE, origin()[1] + local[1] * SIZE];
             layer.sprites.push((&assets.boss, [(x - 6.0).round(), (y - 6.0).round()], [12.0, 12.0]));
         }
         // The player: the arrow turned with the camera over its shadow.
@@ -245,11 +247,11 @@ pub fn draw<'a>(layer: &mut Layer<'a>, assets: &'a Assets, overview: Option<&'a 
     }
     // The bottom row: the buttons and the coordinates, black under white.
     for ((_, from_right), button) in BUTTONS.iter().zip(&assets.buttons) {
-        layer.sprites.push((button, [SCREEN[0] - from_right, ROW], [BUTTON, BUTTON]));
+        layer.sprites.push((button, [screen()[0] - from_right, ROW], [BUTTON, BUTTON]));
     }
     let text = coordinates(markers.cell);
-    layer.texts.push((text.clone(), [SCREEN[0] - 126.0, ROW], [0, 0, 0]));
-    layer.texts.push((text, [SCREEN[0] - 125.0, ROW], [255; 3]));
+    layer.texts.push((text.clone(), [screen()[0] - 126.0, ROW], [0, 0, 0]));
+    layer.texts.push((text, [screen()[0] - 125.0, ROW], [255; 3]));
 }
 
 #[cfg(test)]
@@ -288,11 +290,11 @@ mod tests {
         assert_eq!(window([0.1, 0.95], 2.0), [0.0, 0.5]);
         assert_eq!(window([0.3, 0.3], 1.0), [0.0, 0.0]);
         // The player at the middle of a ×2 window lands at the middle of the square; outside it, nowhere.
-        assert_eq!(on_screen([0.5, 0.5], [0.25, 0.25], 2.0), Some([ORIGIN[0] + 64.0, ORIGIN[1] + 64.0]));
+        assert_eq!(on_screen([0.5, 0.5], [0.25, 0.25], 2.0), Some([origin()[0] + 64.0, origin()[1] + 64.0]));
         assert_eq!(on_screen([0.9, 0.5], [0.25, 0.25], 2.0), None);
         assert_eq!(coordinates([156, 180]), " 156  180");
-        assert_eq!(button_at([SCREEN[0] - 70.0, ROW + 5.0]), Some("plus"));
-        assert_eq!(button_at([SCREEN[0] - 56.0, ROW + 5.0]), Some("minus"));
+        assert_eq!(button_at([screen()[0] - 70.0, ROW + 5.0]), Some("plus"));
+        assert_eq!(button_at([screen()[0] - 56.0, ROW + 5.0]), Some("minus"));
     }
 
     #[test]

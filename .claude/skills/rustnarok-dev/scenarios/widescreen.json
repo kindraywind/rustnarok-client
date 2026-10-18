@@ -1,0 +1,32 @@
+{
+  "about": "A 16:9 window: the world fills it from edge to edge (no black bars), the minimap and status icons keep to the right edge, the chat to the bottom left.",
+  "account": "",
+  "slot": 0,
+  "env": {
+    "RUSTNAROK_CLIENT_WINDOW": "1365x768"
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "widescreen-game",
+      "threshold": 5
+    }
+  ]
+}

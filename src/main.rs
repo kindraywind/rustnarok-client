@@ -15,6 +15,7 @@
 //! `RUSTNAROK_CLIENT_CAMERA=yaw,pitch,zoom` (the camera turned, in degrees and zoom units, on every map),
 //! `RUSTNAROK_CLIENT_WEAR=1` (put on every piece of equipment carried, once the inventory is in), `RUSTNAROK_CLIENT_EQUIPMENT=1` (open
 //! the equipment window), `RUSTNAROK_CLIENT_SHOT_LOADING=1` (screenshot the loading screen instead of the game),
+//! `RUSTNAROK_CLIENT_WINDOW=<width>x<height>` (the window's size at start, e.g. 1365x768 for 16:9),
 //! `RUSTNAROK_CLIENT_SKILLS=1` (open the skill window), `RUSTNAROK_CLIENT_SKILL=<id>:<level>` (use a skill 3 seconds in, on oneself
 //! if it needs a target), `RUSTNAROK_CLIENT_HOTKEYS=<slot>[,<slot>...]` (press those hotkeys, one a second from 3 seconds in),
 //! `RUSTNAROK_CLIENT_DEAL=buy|sell[:<row>:<amount>]` (answer a shop's question at once, and make that deal),
@@ -120,6 +121,7 @@ mod worldmap;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use actor::{Actor, Digits, Look, SpriteSet, Timing};
@@ -143,8 +145,31 @@ use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 use world::{Billboard, Camera, DepthLayer, World, WorldFrame};
 
-/// The client renders in these logical pixels; Retina scaling happens in the projection.
-pub const SCREEN: [f32; 2] = [1024.0, 768.0];
+/// The canvas the client lays out and renders in, in logical pixels (Retina scaling happens in the projection): 768
+/// high and as wide as the window's shape, at least the classic 1024, so a wide window shows more instead of black bars.
+pub fn screen() -> [f32; 2] {
+    [f32::from_bits(SCREEN_WIDTH.load(Ordering::Relaxed)), 768.0]
+}
+
+// ponytail: one global for the one window, read in over a hundred places that would otherwise all take it as an argument.
+static SCREEN_WIDTH: AtomicU32 = AtomicU32::new(1024f32.to_bits());
+
+/// The canvas width for a window of `size` pixels.
+fn canvas_width([width, height]: [u32; 2]) -> f32 {
+    (768.0 * width as f32 / height.max(1) as f32).round().max(1024.0)
+}
+
+/// Where a full-screen 4:3 picture (the login background, a loading screen) goes: in its own shape, centered.
+fn picture_place() -> ([f32; 2], [f32; 2]) {
+    let [width, height] = screen();
+    ([((width - 1024.0) / 2.0).floor(), 0.0], [1024.0, height])
+}
+
+/// Fits the canvas to a window of `size` pixels.
+pub fn fit_screen(size: [u32; 2]) {
+    SCREEN_WIDTH.store(canvas_width(size).to_bits(), Ordering::Relaxed);
+}
+
 const UI: &str = "data\\texture\\유저인터페이스\\";
 const DEFAULT_SERVER: &str = "127.0.0.1:6900";
 const CARET_BLINK: Duration = Duration::from_millis(500);
@@ -1811,8 +1836,8 @@ impl Game {
     /// The cell under a point on screen, on the plane at the player's height.
     fn ground_cell(&self, cursor: [f32; 2]) -> Option<[i32; 2]> {
         let height = self.world.cell_position(self.player.cell.map(|value| value as f32))[1];
-        let view = self.camera.view(SCREEN[0] / SCREEN[1]);
-        view.pick([cursor[0] / SCREEN[0], cursor[1] / SCREEN[1]], height)
+        let view = self.camera.view(screen()[0] / screen()[1]);
+        view.pick([cursor[0] / screen()[0], cursor[1] / screen()[1]], height)
             .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32])
     }
 
@@ -4047,7 +4072,7 @@ impl Assets {
 }
 
 fn login_position(window: &Texture) -> [f32; 2] {
-    [((SCREEN[0] - window.size[0]) / 2.0).floor(), LOGIN_TOP]
+    [((screen()[0] - window.size[0]) / 2.0).floor(), LOGIN_TOP]
 }
 
 fn shortcut_to_bind(key: options::ShortcutKey) -> Option<shortcuts::ShortcutKey> {
@@ -4147,7 +4172,7 @@ fn dialog_position(dialog: &Texture) -> [f32; 2] {
 }
 
 fn dialog_position_of(size: [f32; 2]) -> [f32; 2] {
-    [((SCREEN[0] - size[0]) / 2.0).floor(), ((SCREEN[1] - size[1]) / 1.5).floor()]
+    [((screen()[0] - size[0]) / 2.0).floor(), ((screen()[1] - size[1]) / 1.5).floor()]
 }
 
 /// An attack asked for with the mouse.
@@ -4434,11 +4459,11 @@ fn menu_first_row(selected: usize, count: usize) -> usize {
 
 /// Where the client opens NPC windows.
 fn npc_box_position() -> [f32; 2] {
-    [(SCREEN[0] / 3.0).max(20.0).floor(), (SCREEN[1] / 2.0 - 200.0).max(100.0).floor()]
+    [(screen()[0] / 3.0).max(20.0).floor(), (screen()[1] / 2.0 - 200.0).max(100.0).floor()]
 }
 
 fn menu_position() -> [f32; 2] {
-    [(SCREEN[0] / 3.0).max(20.0).floor(), (SCREEN[1] / 2.0 + 76.0).max(376.0).floor()]
+    [(screen()[0] / 3.0).max(20.0).floor(), (screen()[1] / 2.0 + 76.0).max(376.0).floor()]
 }
 
 /// Splits NPC text into lines that fit `width`; `^RRGGBB` switches color. Returns colored pieces per line.
@@ -7614,7 +7639,7 @@ impl App {
                 return;
             }
         }
-        // Ctrl+Cmd+F, as Macs have it, or Alt+Enter elsewhere: fullscreen (the canvas scaled to fit, bars on the sides), or back.
+        // Ctrl+Cmd+F, as Macs have it, or Alt+Enter elsewhere: fullscreen (the canvas widened to the screen's shape), or back.
         let fullscreen = if cfg!(target_os = "macos") {
             self.modifiers.super_key() && self.modifiers.control_key() && event.physical_key == PhysicalKey::Code(KeyCode::KeyF)
         } else {
@@ -8586,14 +8611,15 @@ impl App {
         let (Some(gpu), Some(assets), Some(loading)) = (&mut self.gpu, &self.assets, &mut self.loading) else { return };
         let mut layer = Layer::default();
         if let Some(image) = &loading.image {
-            layer.sprites.push((image, [0.0, 0.0], SCREEN));
+            let (at, size) = picture_place();
+            layer.sprites.push((image, at, size));
         }
         let [width, height] = LOADING_BAR;
-        let corner = [((SCREEN[0] - width) / 2.0).floor(), (SCREEN[1] * 0.75).floor()];
+        let corner = [((screen()[0] - width) / 2.0).floor(), (screen()[1] * 0.75).floor()];
         layer.sprites.push((&assets.loading_bar[0], corner, LOADING_BAR));
         layer.sprites.push((&assets.loading_bar[1], offset(corner, [1.0, 1.0]), [width - 2.0, height - 2.0]));
         let percent = "0%";
-        layer.texts.push((percent.to_owned(), [((SCREEN[0] - self.font.width(percent)) / 2.0).floor(), corner[1] + 1.0], [255, 255, 0]));
+        layer.texts.push((percent.to_owned(), [((screen()[0] - self.font.width(percent)) / 2.0).floor(), corner[1] + 1.0], [255, 255, 0]));
         let composed = compose(gpu, &self.font, vec![layer]);
         let sprites = flatten(&composed);
         // Screenshots wait for the game itself, unless RUSTNAROK_CLIENT_SHOT_LOADING asks for this screen.
@@ -11288,7 +11314,8 @@ impl App {
         };
 
         let mut base = Layer::default();
-        base.sprites.push((&assets.background, [0.0; 2], SCREEN));
+        let (at, size) = picture_place();
+        base.sprites.push((&assets.background, at, size));
         let mut caret = None;
         match self.scene.base() {
             Scene::Login => {
@@ -11493,7 +11520,7 @@ impl App {
         let eye = [game.camera.target[0] - horizontal * game.camera.yaw.sin(), game.camera.target[2] - horizontal * game.camera.yaw.cos()];
         game.camera.ground = -game.world.gat.height(eye.map(|axis| (axis / world::CELL).floor() as i32));
         game.last_frame = now;
-        let view = game.camera.view(SCREEN[0] / SCREEN[1]);
+        let view = game.camera.view(screen()[0] / screen()[1]);
         let yaw = game.camera.yaw;
         let mut frames = Vec::new();
         let mut sounds: Vec<(String, f32)> = game.player.sound_now(now).map(|sound| (sound, 1.0)).into_iter().collect();
@@ -11628,7 +11655,7 @@ impl App {
 
         // Clickable areas: each unit's and item's sprite bounds and the cell under it on screen, in logical pixels.
         // The dead and the hidden can't be clicked.
-        let to_screen = |[x, y]: [f32; 2]| [x * SCREEN[0], y * SCREEN[1]];
+        let to_screen = |[x, y]: [f32; 2]| [x * screen()[0], y * screen()[1]];
         let siege_map = game.map_property.is_some_and(|(_, flags)| versus::siege(flags));
         let our_guild = game.guild.as_ref().map_or(0, |guild| guild.id);
         game.hit_boxes = frames
@@ -11645,7 +11672,7 @@ impl App {
                     }
                 }
                 let [left, top, right, bottom] = view.sprite_rect(*feet, low, high)?;
-                let sprite = [left * SCREEN[0], top * SCREEN[1], right * SCREEN[0], bottom * SCREEN[1]];
+                let sprite = [left * screen()[0], top * screen()[1], right * screen()[0], bottom * screen()[1]];
                 let half = world::CELL / 2.0;
                 let corners: Option<Vec<_>> = [[-half, -half], [half, -half], [half, half], [-half, half]]
                     .iter()
@@ -11888,7 +11915,7 @@ impl App {
             };
         let counter = match game.pvp_rank.filter(|_| counting) {
             Some((rank, players)) => {
-                glyph_frames(&mut game.rank_font, "data\\sprite\\이팩트\\rankfont", counter_glyphs(rank, players, SCREEN), Timing::Span(0.0))
+                glyph_frames(&mut game.rank_font, "data\\sprite\\이팩트\\rankfont", counter_glyphs(rank, players, screen()), Timing::Span(0.0))
             }
             None => Vec::new(),
         };
@@ -11896,7 +11923,7 @@ impl App {
         let clock = match first_place {
             Some(since) => {
                 let glyphs = clock_glyphs(now.saturating_duration_since(since).as_secs());
-                let left = SCREEN[0] / 2.0 - 20.0 * glyphs.len() as f32;
+                let left = screen()[0] / 2.0 - 20.0 * glyphs.len() as f32;
                 let placed = glyphs.into_iter().enumerate().map(|(n, glyph)| (glyph, [left + n as f32 * 40.0, 40.0])).collect();
                 glyph_frames(&mut game.time_font, "data\\sprite\\이팩트\\timefont", placed, Timing::Span(0.0))
             }
@@ -11906,7 +11933,7 @@ impl App {
             Some(elapsed) => glyph_frames(
                 &mut game.time_attack,
                 "data\\sprite\\이팩트\\timeattack",
-                vec![(0, [SCREEN[0] / 2.0, 120.0])],
+                vec![(0, [screen()[0] / 2.0, 120.0])],
                 Timing::Loop(elapsed.as_secs_f32() * 1000.0),
             ),
             None => Vec::new(),
@@ -12126,12 +12153,12 @@ impl App {
 
         // In-world overlays: under the feet (in sprite pixels, the way sprites are drawn) HP bars and names under them;
         // over the head cast bars and what's said.
-        let sprite_point = |feet: [f32; 3], y: f32| view.sprite_rect(feet, [0.0, y], [0.0, y]).map(|[x, y, ..]| [x * SCREEN[0], y * SCREEN[1]]);
+        let sprite_point = |feet: [f32; 3], y: f32| view.sprite_rect(feet, [0.0, y], [0.0, y]).map(|[x, y, ..]| [x * screen()[0], y * screen()[1]]);
         let mut base = Layer::default();
         for (name, feet) in &labels {
             let name = name.split('#').next().unwrap_or_default();
             if let Some(point) = sprite_point(*feet, overhead::NAME_BELOW) {
-                base.outlined(name, overhead::label_corner(point, font.width(name), font.line_height(), SCREEN));
+                base.outlined(name, overhead::label_corner(point, font.width(name), font.line_height(), screen()));
             }
         }
         // ponytail: a player's title, then their guild, on lines under the name; where titles go isn't known.
@@ -12139,14 +12166,14 @@ impl App {
         if let Some((title, feet)) = &title_line
             && let Some(point) = sprite_point(*feet, overhead::NAME_BELOW)
         {
-            let [x, y] = overhead::label_corner(point, font.width(title), font.line_height(), SCREEN);
+            let [x, y] = overhead::label_corner(point, font.width(title), font.line_height(), screen());
             base.outlined(title, [x, y + font.line_height()]);
             under_name += 1.0;
         }
         if let Some((name, line, feet, guild_id)) = &guild_line
             && let Some(point) = sprite_point(*feet, overhead::NAME_BELOW)
         {
-            let corner = |text: &str| overhead::label_corner(point, font.width(text), font.line_height(), SCREEN);
+            let corner = |text: &str| overhead::label_corner(point, font.width(text), font.line_height(), screen());
             let top = corner(name)[1] + under_name * font.line_height();
             base.outlined(line, [corner(line)[0], top]);
             // ponytail: the emblem left of the guild line; calibrate against the real client.
@@ -12165,7 +12192,7 @@ impl App {
         }
         if let Some([a, b]) = game.battle.score {
             let score = format!("{a} : {b}");
-            base.outlined(&score, [(SCREEN[0] - 12.0 - font.width(&score)).floor(), 166.0]);
+            base.outlined(&score, [(screen()[0] - 12.0 - font.width(&score)).floor(), 166.0]);
         }
         // On a siege map (not a battleground) other players in a guild, and the guardians, carry its emblem over their
         // heads; it follows the unit but doesn't grow with the zoom.
@@ -12181,7 +12208,7 @@ impl App {
                 };
                 // The unit's sprite scale: screen pixels a sprite pixel.
                 let scale = (at_feet[1] - above[1]) / 100.0;
-                let [left, top, right, bottom] = guild::head_emblem_box(at_feet, SCREEN, scale);
+                let [left, top, right, bottom] = guild::head_emblem_box(at_feet, screen(), scale);
                 base.sprites.push((emblem, [left.round(), top.round()], guild::EMBLEM_SIZE));
                 game.head_emblems.push((actor.name.clone(), actor.guild, [left, top, right, bottom]));
             }
@@ -12280,7 +12307,7 @@ impl App {
             let Some(anchor) = head(unit) else { continue };
             let lines = overhead::lines(text);
             let size = overhead::size(lines.iter().map(|line| font.width(line)).fold(0.0, f32::max), lines.len());
-            let corner = overhead::corner(anchor, size, SCREEN);
+            let corner = overhead::corner(anchor, size, screen());
             base.sprites.push((&assets.speech_fill, corner, size));
             for (edge, piece) in overhead::border(size) {
                 base.sprites.push((&assets.speech_border, offset(corner, edge), piece));
@@ -12476,7 +12503,7 @@ impl App {
         });
         game.status_tip = None;
         for (order, (kind, icon, start, end)) in shown.enumerate() {
-            let corner = status_tip::icon_corner(order, SCREEN);
+            let corner = status_tip::icon_corner(order, screen());
             // Pointed at: what it is and the time it has left, in a box at its left, rebuilt each frame.
             if status_tip::on_icon(corner, pointer.0)
                 && let Some(info) = state_infos.get(&kind)
@@ -12519,10 +12546,10 @@ impl App {
         if let Some((image, place)) = &game.cutin {
             let [width, height] = image.size;
             let corner = match place {
-                0 => [0.0, SCREEN[1] - height],
-                1 => [((SCREEN[0] - width) / 2.0).floor(), SCREEN[1] - height],
-                2 => [SCREEN[0] - width, SCREEN[1] - height],
-                _ => [((SCREEN[0] - width) / 2.0).floor(), ((SCREEN[1] - height) / 2.0).floor()],
+                0 => [0.0, screen()[1] - height],
+                1 => [((screen()[0] - width) / 2.0).floor(), screen()[1] - height],
+                2 => [screen()[0] - width, screen()[1] - height],
+                _ => [((screen()[0] - width) / 2.0).floor(), ((screen()[1] - height) / 2.0).floor()],
             };
             if *place <= 4 {
                 cutin_layer.sprites.push((image, corner, image.size));
@@ -12749,11 +12776,11 @@ impl App {
             tooltip.outlined(&level.to_string(), [pointer.0[0] + 20.0, pointer.0[1] - 18.0]);
         }
         if game.targeting.is_some() || game.capturing {
-            aim_lines.push((message(TARGET_MESSAGE).to_owned(), SCREEN[1] - 60.0 - 23.0));
+            aim_lines.push((message(TARGET_MESSAGE).to_owned(), screen()[1] - 60.0 - 23.0));
         }
         for (text, top) in aim_lines {
             let width = font.width(&text).ceil() + 14.0;
-            let left = ((SCREEN[0] - width) / 2.0).floor();
+            let left = ((screen()[0] - width) / 2.0).floor();
             tooltip.sprites.push((&assets.target_fill, [left, top], [width, 23.0]));
             tooltip.texts.push((text.clone(), [left + 8.0, top + 6.0], [0, 0, 0]));
             tooltip.texts.push((text, [left + 7.0, top + 5.0], [0x00, 0xFF, 0x00]));
@@ -13078,7 +13105,7 @@ impl App {
         // The cursor shows what a click would do.
         let on_window = game.on_ui(pointer.0, items, assets.message.size);
         let ground = view
-            .pick([pointer.0[0] / SCREEN[0], pointer.0[1] / SCREEN[1]], player_feet[1])
+            .pick([pointer.0[0] / screen()[0], pointer.0[1] / screen()[1]], player_feet[1])
             .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32]);
         cursor_look.set(if game.camera_goal.dragging.is_some() {
             cursor::Kind::Rotate
@@ -13116,7 +13143,7 @@ impl App {
             }
         }
         if let Some(sprite) = &game.slot_sprite {
-            let middle = [SCREEN[0] / 2.0, SCREEN[1] / 2.0];
+            let middle = [screen()[0] / 2.0, screen()[1] / 2.0];
             sprites.extend(slot_frame.into_iter().map(|(key, offset, size, _)| (sprite.texture(key), [middle[0] + offset[0], middle[1] + offset[1]], size)));
         }
         cursor_look.press(pointer.1);
@@ -13221,10 +13248,15 @@ impl ApplicationHandler<NetEvent> for App {
         if self.gpu.is_some() {
             return;
         }
+        // RUSTNAROK_CLIENT_WINDOW=<width>x<height> opens the window at another size (wide screens in tests).
+        let size = std::env::var("RUSTNAROK_CLIENT_WINDOW").ok().and_then(|size| {
+            let (width, height) = size.split_once('x')?;
+            Some(LogicalSize::new(width.parse().ok()?, height.parse().ok()?))
+        });
         let attributes = Window::default_attributes()
             .with_title("Ragnarok")
-            .with_inner_size(LogicalSize::new(SCREEN[0], SCREEN[1]))
-            .with_min_inner_size(LogicalSize::new(SCREEN[0] / 2.0, SCREEN[1] / 2.0));
+            .with_inner_size(size.unwrap_or(LogicalSize::new(1024.0, 768.0)))
+            .with_min_inner_size(LogicalSize::new(512.0, 384.0));
         let gpu = Gpu::new(Arc::new(event_loop.create_window(attributes).expect("create window")));
         // The client draws its own cursor.
         gpu.window.set_cursor_visible(false);
@@ -13264,11 +13296,11 @@ impl ApplicationHandler<NetEvent> for App {
             WindowEvent::ModifiersChanged(_) | WindowEvent::KeyboardInput { .. } | WindowEvent::Ime(_) if control::driven() => {}
             // RUSTNAROK_CLIENT_CURSOR pins the pointer for screenshots.
             WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } if std::env::var_os("RUSTNAROK_CLIENT_CURSOR").is_some() => {}
-            // Screen pixels to the canvas, through its place in the window (black bars in fullscreen).
+            // Screen pixels to the canvas, through its place in the window (black bars above and below in one narrower than 4:3).
             WindowEvent::CursorMoved { position, .. } => {
                 let [left, top, width, height] = render::viewport([gpu.config.width, gpu.config.height]);
                 gpu.window.request_redraw();
-                self.cursor = [(position.x as f32 - left) * SCREEN[0] / width, (position.y as f32 - top) * SCREEN[1] / height];
+                self.cursor = [(position.x as f32 - left) * screen()[0] / width, (position.y as f32 - top) * screen()[1] / height];
                 self.pointer_moved();
             }
             WindowEvent::MouseInput { state, button: MouseButton::Right, .. } => {
@@ -13786,6 +13818,13 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canvas_widens_with_the_window() {
+        assert_eq!(canvas_width([2048, 1536]), 1024.0);
+        assert_eq!(canvas_width([3840, 2160]), 1365.0, "16:9");
+        assert_eq!(canvas_width([1000, 1000]), 1024.0, "narrower than 4:3 keeps 1024, with bars above and below");
+    }
 
     #[test]
     fn dead_players_lie_there_until_revived() {

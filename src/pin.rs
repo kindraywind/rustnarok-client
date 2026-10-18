@@ -6,7 +6,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame};
-use crate::{Layer, SCREEN, UI, contains, offset};
+use crate::{Layer, UI, contains, offset, screen};
 
 pub const TITLE_MESSAGE: usize = 1899;
 pub const ENTER_MESSAGE: usize = 2566;
@@ -344,7 +344,7 @@ impl PinPad {
     }
 
     pub fn origin() -> [f32; 2] {
-        [((SCREEN[0] - SIZE[0]) / 2.0).floor(), ((SCREEN[1] - SIZE[1]) / 2.0).floor()]
+        [((screen()[0] - SIZE[0]) / 2.0).floor(), ((screen()[1] - SIZE[1]) / 2.0).floor()]
     }
 
     fn at(local: [f32; 2]) -> [f32; 2] {

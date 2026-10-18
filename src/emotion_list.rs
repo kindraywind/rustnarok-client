@@ -5,7 +5,7 @@ use rustnarok_client::text::Font;
 use crate::actor::{Placed, SpriteSet};
 use crate::emotion;
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN, contains, offset};
+use crate::{Layer, contains, offset, screen};
 
 // ponytail: an 8 by 8 grid on the window chrome (data.grf has no bitmaps for this window); place it against the real
 // client.
@@ -40,7 +40,7 @@ impl List {
     }
 
     fn corner(&self) -> [f32; 2] {
-        [((SCREEN[0] - WIDTH) / 2.0).floor(), ((SCREEN[1] - self.height()) / 2.0).floor()]
+        [((screen()[0] - WIDTH) / 2.0).floor(), ((screen()[1] - self.height()) / 2.0).floor()]
     }
 
     fn frame(&self) -> Frame {

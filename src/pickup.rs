@@ -7,13 +7,15 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::Chrome;
-use crate::{Layer, SCREEN, UI};
+use crate::{Layer, UI, screen};
 
 /// " - %d obtained."
 pub const OBTAINED: usize = 696;
 const LIFE: Duration = Duration::from_secs(5);
 /// Its left edge never moves: it grows to the right.
-const CORNER: [f32; 2] = [(SCREEN[0] - 640.0) / 2.0 + 220.0, 75.0];
+fn corner() -> [f32; 2] {
+    [(screen()[0] - 640.0) / 2.0 + 220.0, 75.0]
+}
 const HEIGHT: f32 = 32.0;
 const PIECE: f32 = 14.0;
 const ICON: [f32; 2] = [13.0, 5.0];
@@ -109,7 +111,7 @@ impl Popup {
     }
 
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, icon: Option<&'a Texture>, font: &Font) {
-        let [x, y] = CORNER;
+        let [x, y] = corner();
         let [w, h] = [self.width, HEIGHT];
         let [lu, mu, ru, lm, rm, ld, md, rd] = &assets.pieces;
         let middle = [w - 2.0 * PIECE, h - 2.0 * PIECE];
@@ -153,7 +155,7 @@ mod tests {
         assert!(!popup.alive(start + LIFE));
         // Result 3 carries the new total: what came is that less what was held.
         assert_eq!((obtained(0, 3, 7), obtained(3, 10, 7), obtained(3, 5, 7), obtained(2, 3, 0)), (Some(3), Some(3), Some(0), None));
-        assert_eq!(CORNER, [412.0, 75.0]);
+        assert_eq!(corner(), [412.0, 75.0]);
         // Each refusal's line: 1 and 6 can't get it, 2 overweight, 4 the weight limit, 5 30,000 of a kind, 7 another
         // item's limit, 9 its own; 8 nothing.
         assert_eq!([1, 2, 4, 5, 6, 7, 8, 9].map(failure_line), [Some(53), Some(52), Some(220), Some(279), Some(53), Some(1418), None, Some(3984)]);

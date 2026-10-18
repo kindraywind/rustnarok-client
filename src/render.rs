@@ -10,7 +10,7 @@ use rustnarok_client::text::{self, Font};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::SCREEN;
+use crate::screen;
 
 const SHADER: &str = r"
 struct Screen { size: vec2<f32> };
@@ -61,6 +61,7 @@ pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
+    screen_buffer: wgpu::Buffer,
     screen_bind_group: wgpu::BindGroup,
     /// Texture + sampler at bindings 0 and 1; shared by UI images, ground textures, lightmaps and sprites.
     pub texture_layout: wgpu::BindGroupLayout,
@@ -80,12 +81,12 @@ type TextCache = HashMap<(String, [u8; 3]), (Texture, u64)>;
 /// How many frames a line of text stays rasterized without being drawn.
 const TEXT_FRAMES: u64 = 120;
 
-/// Where the 1024×768 canvas goes in a target of `size` pixels: as large as fits, centered, with black bars on the
-/// sides that don't match (left, top, width, height).
+/// Where the canvas goes in a target of `size` pixels: as large as fits, centered, with black bars on the sides that
+/// don't match (only a window narrower than 4:3 has them) (left, top, width, height).
 pub fn viewport(size: [u32; 2]) -> [f32; 4] {
     let [width, height] = size.map(|side| side as f32);
-    let scale = (width / SCREEN[0]).min(height / SCREEN[1]);
-    let [canvas_width, canvas_height] = [SCREEN[0] * scale, SCREEN[1] * scale];
+    let scale = (width / screen()[0]).min(height / screen()[1]);
+    let [canvas_width, canvas_height] = [screen()[0] * scale, screen()[1] * scale];
     [((width - canvas_width) / 2.0).floor(), ((height - canvas_height) / 2.0).floor(), canvas_width, canvas_height]
 }
 
@@ -107,6 +108,7 @@ impl Gpu {
         // Original assets are sRGB; keep them unchanged on screen.
         config.format = config.format.add_srgb_suffix();
         surface.configure(&device, &config);
+        crate::fit_screen([config.width, config.height]);
 
         let screen_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
@@ -141,8 +143,8 @@ impl Gpu {
 
         let screen_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: bytemuck::cast_slice(&SCREEN),
-            usage: wgpu::BufferUsages::UNIFORM,
+            contents: bytemuck::cast_slice(&screen()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let screen_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
@@ -200,6 +202,7 @@ impl Gpu {
             device,
             queue,
             pipeline,
+            screen_buffer,
             screen_bind_group,
             texture_layout,
             pixel_sampler,
@@ -212,7 +215,7 @@ impl Gpu {
 
     /// Screen pixels per canvas pixel (2 on a Retina display, more in fullscreen).
     pub fn ui_scale(&self) -> f32 {
-        viewport([self.config.width, self.config.height])[3] / SCREEN[1]
+        viewport([self.config.width, self.config.height])[3] / screen()[1]
     }
 
     /// A line of UI text, rasterized at the screen's own pixel size so it stays sharp however the canvas is scaled,
@@ -285,6 +288,8 @@ impl Gpu {
         self.config.width = size.width.max(1);
         self.config.height = size.height.max(1);
         self.surface.configure(&self.device, &self.config);
+        crate::fit_screen([self.config.width, self.config.height]);
+        self.queue.write_buffer(&self.screen_buffer, 0, bytemuck::cast_slice(&screen()));
         // Text rasterized for the old size would be blurry or wasteful now.
         self.texts.borrow_mut().clear();
     }
@@ -317,7 +322,7 @@ impl Gpu {
 
     /// Renders one frame at 1x.
     pub fn snapshot(&self, world: Option<&dyn WorldPass>, sprites: &[Sprite]) -> RgbaImage {
-        let [width, height] = SCREEN.map(|value| value as u32);
+        let [width, height] = screen().map(|value| value as u32);
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let target = self.device.create_texture(&wgpu::TextureDescriptor {
             label: None,

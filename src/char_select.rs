@@ -13,7 +13,7 @@ use crate::actor::{self, Placed, SpriteSet, Timing};
 use crate::menu::{self, Menu};
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Clicks};
-use crate::{Layer, SCREEN, UI, contains, offset};
+use crate::{Layer, UI, contains, offset, screen};
 
 // Places measured from make_character_ver2\bg_back2.tga, the client's own (blurred) picture of this screen, by
 // blurring the parts' bitmaps the same way and fitting them to it.
@@ -219,7 +219,7 @@ impl Select {
 
     /// The screen position of the whole window (centered).
     fn origin() -> [f32; 2] {
-        [((SCREEN[0] - FRAME[0]) / 2.0).floor(), ((SCREEN[1] - FRAME[1]) / 2.0).floor()]
+        [((screen()[0] - FRAME[0]) / 2.0).floor(), ((screen()[1] - FRAME[1]) / 2.0).floor()]
     }
 
     fn at(local: [f32; 2]) -> [f32; 2] {

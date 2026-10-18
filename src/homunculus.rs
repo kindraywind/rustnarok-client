@@ -13,7 +13,7 @@ use crate::mercenary::{
 };
 use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN, UI, contains, messages, offset, skills};
+use crate::{Layer, UI, contains, messages, offset, screen, skills};
 
 const TITLE: usize = 936;
 const SKILLS_TITLE: usize = 937;
@@ -107,7 +107,7 @@ pub struct Window {
 
 impl Default for Window {
     fn default() -> Self {
-        Self { frame: Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor() + 120.0, 170.0], WIDTH) }
+        Self { frame: Frame::new([((screen()[0] - WIDTH) / 2.0).floor() + 120.0, 170.0], WIDTH) }
     }
 }
 
@@ -232,7 +232,7 @@ pub struct SkillList {
 
 impl Default for SkillList {
     fn default() -> Self {
-        Self { frame: Frame::new([((SCREEN[0] - SKILL_WIDTH) / 2.0).floor() - 120.0, 190.0], SKILL_WIDTH) }
+        Self { frame: Frame::new([((screen()[0] - SKILL_WIDTH) / 2.0).floor() - 120.0, 190.0], SKILL_WIDTH) }
     }
 }
 
