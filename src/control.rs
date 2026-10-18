@@ -1220,6 +1220,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         // What the mouse cursor shows.
         "cursor": format!("{:?}", app.cursor_look.kind()),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
+        "chat_line_open": game.chat_mode.chat_line_open(),
     });
     // The ranking board.
     state["ranking"] = json!(game.ranking.as_ref().map(|board| {

@@ -144,12 +144,6 @@ impl Chat {
         if self.naming { &mut self.whisper } else { &mut self.input }
     }
 
-    /// The battle-mode chat line (#179). The always-on line is not that line, so this stays closed until #179
-    /// opens it. Esc checks it first.
-    pub fn battle_line_open(&self) -> bool {
-        false
-    }
-
     /// The whisper-name list next to the battle-mode line (#179). Closed until that list exists.
     pub fn whisper_list_open(&self) -> bool {
         false
@@ -259,6 +253,8 @@ pub enum Command {
     Camera,
     /// /noctrl, /nc: a click on a monster keeps attacking without Ctrl, on or off.
     NoCtrl,
+    /// /battlemode, /bm: battle mode. The chat line closes and letter keys are shortcuts.
+    BattleMode,
     /// /battlechat: typed lines go to the battleground team, on or off.
     BattleChat,
     /// /dressroom: the dress room.
@@ -286,6 +282,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/noshift" => Command::NoShift,
         "/noctrl" | "/nc" => Command::NoCtrl,
         "/camera" => Command::Camera,
+        "/battlemode" | "/bm" => Command::BattleMode,
         "/battlechat" => Command::BattleChat,
         "/dressroom" => Command::DressRoom,
         "/blacksmith" => Command::Ranking(0),
@@ -325,6 +322,9 @@ mod tests {
         assert_eq!(command("/pvpinfo"), Some(Command::PvpInfo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
         assert_eq!([command("/noctrl"), command("/nc")], [Some(Command::NoCtrl), Some(Command::NoCtrl)]);
+        assert_eq!(command("/camera"), Some(Command::Camera));
+        assert_eq!(command("/bm"), Some(Command::BattleMode));
+        assert_eq!(command("/battlemode"), Some(Command::BattleMode));
         assert_eq!(command("/battlechat"), Some(Command::BattleChat));
         assert_eq!(command("/dressroom"), Some(Command::DressRoom));
         for (text, kind) in [("/blacksmith", 0), ("/alchemist", 1), ("/taekwon", 2), ("/pk", 3)] {
