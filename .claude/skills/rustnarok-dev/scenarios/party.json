@@ -111,6 +111,60 @@
       "shot": "second-party"
     },
     {
+      "expect": {
+        "state": {
+          "party_window.mode": 0,
+          "party_window.size": [
+            273.0,
+            326.0
+          ]
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "party_mode"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "party_window.mode": 1,
+          "party_window.size": [
+            243.0,
+            179.0
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "first-party-small"
+    },
+    {
+      "click_on": {
+        "button": "party_mode"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "party_window.mode": 0
+        }
+      }
+    },
+    {
       "as": "second",
       "type": "/leave"
     },
@@ -128,5 +182,5 @@
       "wait": 800
     }
   ],
-  "about": "Two players form a party: the first organizes it and invites through the right-click menu, the second accepts; both party windows list both members."
+  "about": "Two players form a party: the first organizes it and invites through the right-click menu, the second accepts; both party windows list both members. The window is the game's 273×326 with job icons, the crown, Lv.N, Name(Map) in the member's colour, the HP bar and status icons (issue #480); its title button switches it to 243×179 and back."
 }

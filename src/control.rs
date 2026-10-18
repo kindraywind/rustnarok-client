@@ -1094,10 +1094,9 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .chain(
             game.party_window
-                .button_boxes(game.party.as_ref(), &game.friends, game.account_id)
+                .button_boxes(game.party.as_ref(), game.account_id)
                 .into_iter()
                 .chain(game.member_windows.button_boxes(game.party.as_ref()))
-                .chain(game.party_window.compact.then(|| crate::party::compact_boxes(game.party.as_ref())).into_iter().flatten())
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.inventory.tab_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1187,9 +1186,6 @@ fn game_state(app: &App, game: &Game) -> Value {
             .map(|(name, _)| name.to_owned()),
     );
     windows.extend(game.member_windows.names(game.party.as_ref()));
-    if game.party_window.compact && game.party.is_some() {
-        windows.push("PartyList".to_owned());
-    }
     let dialog = game.dialog.as_ref().map(|dialog| {
         json!({
             "npc": dialog.npc,
@@ -1491,6 +1487,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         }).collect::<serde_json::Map<_, _>>(),
         "chat_height": game.chat.height(),
     });
+    // The party window's size mode and size.
+    state["party_window"] = json!({"mode": game.party_window.mode, "size": game.party_window.size()});
     // The party booking board: the posts found (their leaders' names), its last line, and who asks to join us.
     state["booking"] = game
         .booking

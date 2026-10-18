@@ -21,7 +21,7 @@ const SEE_THROUGH: u8 = 0xAA;
 pub const MOST_ZOOM: f32 = 4.0;
 /// The player arrow turned in this many steps around.
 const TURNS: u32 = 32;
-/// Party members' colours by their place in the party list; past the table, the last.
+/// Party members' colours by their place in the party list (15 the last); past the table, grey.
 const PARTY_COLORS: [u32; 16] = [
     0xff0a3278, 0xff007878, 0xff000000, 0xff780000, 0xff007800, 0xff787800, 0xff780078, 0xff783200, 0xff787878, 0xff000078, 0xff003232, 0xff320000, 0xff003200,
     0xff323200, 0xff320032, 0xff780000,
@@ -36,7 +36,7 @@ fn rgba(argb: u32) -> [u8; 4] {
 
 /// A party member's colour by their place in the party list.
 pub fn party_color(place: usize) -> [u8; 4] {
-    rgba(if place < 15 { PARTY_COLORS[place] } else { PARTY_PAST })
+    rgba(PARTY_COLORS.get(place).copied().unwrap_or(PARTY_PAST))
 }
 
 /// A compass mark shows half of each second.
@@ -399,6 +399,7 @@ mod tests {
     fn colours_party_members_and_blinks() {
         assert_eq!(party_color(0), [0x0a, 0x32, 0x78, 0xff]);
         assert_eq!(party_color(2), [0, 0, 0, 0xff]);
+        assert_eq!(party_color(15), [0x78, 0, 0, 0xff]);
         assert_eq!(party_color(16), [0x32, 0x32, 0x32, 0xff]);
         assert!(blink_on(0) && blink_on(1499) && !blink_on(500) && !blink_on(1999));
         // Each mark keeps its own clock: one set at 0 is off at 600, one set at 500 is still on.
