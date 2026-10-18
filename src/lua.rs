@@ -22,6 +22,22 @@ const ACCESSORY_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\accname.lu
 const WEAPON_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\weapontable.lub";
 const ROBE_ID: &str = "data\\luafiles514\\lua files\\datainfo\\spriterobeid.lub";
 const ROBE_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\spriterobename.lub";
+/// What decides where garments and headgear go among a character's layers: the garment tables (by job, action and
+/// frame), the garments worn over the headgear, and the headgear priorities.
+const LAYER_RULES: [&str; 12] = [
+    JOB_INHERIT,
+    ROBE_ID,
+    ROBE_NAME,
+    "data\\luafiles514\\lua files\\datainfo\\spriterobename_f.lub",
+    "data\\luafiles514\\lua files\\spreditinfo\\2dlayerdir_f.lub",
+    "data\\luafiles514\\lua files\\spreditinfo\\_new_biglayerdir_male.lub",
+    "data\\luafiles514\\lua files\\spreditinfo\\_new_biglayerdir_female.lub",
+    "data\\luafiles514\\lua files\\spreditinfo\\_new_smalllayerdir_male.lub",
+    "data\\luafiles514\\lua files\\spreditinfo\\_new_smalllayerdir_female.lub",
+    "data\\luafiles514\\lua files\\spreditinfo\\_new_2dlayerdir_f.lub",
+    ACCESSORY_ID,
+    "data\\luafiles514\\lua files\\datainfo\\tb_layer_priority.lub",
+];
 /// Defines JOBID, which the job name and skill tables use.
 const JOB_INHERIT: &str = "data\\luafiles514\\lua files\\skillinfoz\\jobinheritlist.lub";
 const PC_JOB_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\pcjobname.lub";
@@ -256,6 +272,44 @@ pub struct LookTables {
     pub robes: HashMap<u16, String>,
     /// Item IDs to the view they show as (iteminfo's ClassNum): weapons and shields arrive as item IDs.
     pub item_views: HashMap<u32, u32>,
+    /// Where garments and headgear go among a character's layers; None without the tables.
+    pub layers: Option<LayerRules>,
+}
+
+/// The data's own rules for layering what a character wears, run in a Lua VM of their own.
+pub struct LayerRules(Lua);
+
+impl std::fmt::Debug for LayerRules {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("LayerRules")
+    }
+}
+
+impl LayerRules {
+    pub fn load(grf: &Grf) -> io::Result<Self> {
+        run(grf, &LAYER_RULES).map(Self)
+    }
+
+    fn call<R: mlua::FromLuaMulti>(&self, function: &str, arguments: impl mlua::IntoLuaMulti) -> Option<R> {
+        self.0.globals().get::<mlua::Function>(function).ok()?.call(arguments).ok()
+    }
+
+    /// Whether garment `robe` goes over the body (else behind everything) on a character of `job` and `sex` (0
+    /// female) in action `action` (direction included, 0 to 103) at body frame `frame`.
+    pub fn robe_over_body(&self, robe: u16, sex: u8, job: u16, action: usize, frame: usize) -> Option<bool> {
+        self.call::<(bool, mlua::Value)>("_New_DrawOnTop", (robe, sex, job, action, frame)).map(|(over, _)| over)
+    }
+
+    /// Garments that, when over the body, go over the headgear too (bags).
+    pub fn robe_over_headgear(&self, robe: u16) -> bool {
+        self.call("IsTopLayer", robe).unwrap_or(false)
+    }
+
+    /// Where headgear `view` in `slot` (2 lower, 3 upper, 4 middle) goes facing `direction`: layers are drawn in order
+    /// of these numbers, the body's numbered from 1; -1 hides it.
+    pub fn headgear_priority(&self, direction: usize, slot: u8, view: u16) -> Option<i32> {
+        self.call("GetLayerPriority", (direction, slot, view))
+    }
 }
 
 /// Looks below this are view IDs; from here on they're item IDs.
@@ -290,6 +344,7 @@ pub fn look_tables(grf: &Grf) -> io::Result<LookTables> {
         weapon_types,
         robes: names(&table(&robes, "RobeNameTable")?)?,
         item_views: HashMap::new(),
+        layers: LayerRules::load(grf).ok(),
     })
 }
 

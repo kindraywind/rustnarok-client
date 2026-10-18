@@ -438,6 +438,8 @@ pub struct SpriteSet {
     layers: Vec<Layer>,
     /// Laid out like a player's body: standing and sitting frames go by head direction.
     player: bool,
+    /// A player's: where its garment, head and headgear go among its layers.
+    dressing: Option<Dressing>,
     textures: HashMap<ImageKey, Texture>,
 }
 
@@ -458,11 +460,12 @@ impl SpriteSet {
         };
         // Color 0 is the sprite's own palette.
         let dye = |path: String, color: u16| -> Option<Palette> { (color > 0).then(|| grf.read(&path).ok().and_then(|bytes| sprite::parse_palette(&bytes)))? };
+        let body_palettes = if is_doram(look.job) { "data\\palette\\도람족\\body" } else { "data\\palette\\몸" };
         // ponytail: there is no head sprite 0; rathena allows hair 0, so show the first style.
         let hair = look.hair.max(1);
         let body = load(
             format!("data\\sprite\\{race}\\몸통\\{sex}\\{class}_{sex}"),
-            dye(format!("data\\palette\\몸\\{class}_{sex}_{}.pal", look.clothes_color), look.clothes_color),
+            dye(format!("{body_palettes}\\{class}_{sex}_{}.pal", look.clothes_color), look.clothes_color),
             Part::Body,
         )?;
         let head = load(
@@ -470,10 +473,11 @@ impl SpriteSet {
             dye(format!("{palettes}\\머리{hair}_{sex}_{}.pal", look.hair_color), look.hair_color),
             Part::Head,
         );
-        // A headgear filling several slots shows once.
+        // A headgear filling several slots shows once. Doram wear their own cut of some.
         let headgear = |view: u16, part: Part| {
             let name = tables.headgears.get(&view)?;
-            load(format!("data\\sprite\\악세사리\\{sex}\\{sex}{name}"), None, part)
+            let doram = is_doram(look.job).then(|| load(format!("data\\sprite\\악세사리\\{sex}_doram\\{sex}{name}"), None, part)).flatten();
+            doram.or_else(|| load(format!("data\\sprite\\악세사리\\{sex}\\{sex}{name}"), None, part))
         };
         let bottom = headgear(look.head_bottom, Part::HeadBottom);
         let mid = (look.head_mid != look.head_bottom).then(|| headgear(look.head_mid, Part::HeadMid)).flatten();
@@ -494,10 +498,58 @@ impl SpriteSet {
             };
             load(format!("data\\sprite\\방패\\{class}\\{class}_{sex}{name}"), None, Part::Shield)
         });
-        let robe = tables.robes.get(&look.robe).and_then(|name| load(format!("data\\sprite\\로브\\{name}\\{sex}\\{class}_{sex}"), None, Part::Robe));
+        // Most garments share one picture for every job (Doram have their own); how it moves is per job.
+        let robe = tables.robes.get(&look.robe).and_then(|name| {
+            let per_job = format!("data\\sprite\\로브\\{name}\\{sex}\\{class}_{sex}");
+            let shared = format!("data\\sprite\\로브\\{name}\\{name}{}.spr", if is_doram(look.job) { "_doram" } else { "" });
+            Some(Layer {
+                spr: Spr::parse(&grf.read(&shared).or_else(|_| grf.read(&format!("{per_job}.spr"))).ok()?).ok()?,
+                act: Act::parse(&grf.read(&format!("{per_job}.act")).ok()?).ok()?,
+                palette: None,
+                part: Part::Robe,
+            })
+        });
+
+        let rules = tables.layers.as_ref();
+        let robe_over_body = match &robe {
+            Some(_) => body
+                .act
+                .actions
+                .iter()
+                .enumerate()
+                .map(|(index, frames)| {
+                    // Without the tables: over the body only facing away.
+                    let fallback = (3..=5).contains(&(index % 8));
+                    (0..frames.len())
+                        .map(|frame| rules.and_then(|rules| rules.robe_over_body(look.robe, look.sex, look.job, index, frame)).unwrap_or(fallback))
+                        .collect()
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        let place = |view: u16, slot: u8, default: i32| -> [Option<i32>; 8] {
+            std::array::from_fn(|direction| {
+                let place = rules.and_then(|rules| rules.headgear_priority(direction, slot, view)).unwrap_or(default);
+                (place != -1).then_some(place)
+            })
+        };
+        let headgear =
+            [(&bottom, Part::HeadBottom, look.head_bottom, 2, 300), (&mid, Part::HeadMid, look.head_mid, 4, 100), (&top, Part::HeadTop, look.head_top, 3, 200)]
+                .into_iter()
+                .filter(|(layer, ..)| layer.is_some())
+                .map(|(_, part, view, slot, default)| (part, place(view, slot, default)))
+                .collect();
+        let dressing = Dressing {
+            head_first: grf.read(&format!("data\\imf\\{class}_{sex}.imf")).ok().and_then(|bytes| sprite::parse_imf(&bytes).ok()).unwrap_or_default(),
+            robe_over_body,
+            robe_over_headgear: robe.is_some() && rules.is_some_and(|rules| rules.robe_over_headgear(look.robe)),
+            headgear,
+            head_hidden: [look.head_top, look.head_mid, look.head_bottom].iter().any(|view| HEAD_HIDING.contains(view)),
+        };
         Some(Self {
             layers: [Some(body), head, bottom, mid, top, weapon.flatten(), shield.flatten(), robe].into_iter().flatten().collect(),
             player: true,
+            dressing: Some(dressing),
             textures: HashMap::new(),
         })
     }
@@ -523,7 +575,7 @@ impl SpriteSet {
         };
         let body = load(format!("data\\sprite\\인간족\\몸통\\{name}"), Part::Body)?;
         let weapon = load(format!("data\\sprite\\인간족\\용병\\{weapon}"), Part::Weapon);
-        Some(Self { layers: [Some(body), weapon].into_iter().flatten().collect(), player: true, textures: HashMap::new() })
+        Some(Self { layers: [Some(body), weapon].into_iter().flatten().collect(), player: true, dressing: None, textures: HashMap::new() })
     }
 
     pub fn single(grf: &Grf, name: &str, monster: bool) -> Option<Self> {
@@ -546,6 +598,7 @@ impl SpriteSet {
                 part: Part::Body,
             }],
             player: false,
+            dressing: None,
             textures: HashMap::new(),
         })
     }
@@ -592,36 +645,30 @@ impl SpriteSet {
         };
         let body_frame = &body_frames[frame_index];
 
-        // Layering by the direction seen: a shield turned away goes behind, a garment shows
-        // behind the body unless the character faces away, headgear goes over the head and the weapon between them.
-        let direction = index % 8;
-        let shield_behind = (2..=5).contains(&direction);
-        let facing_away = (3..=5).contains(&direction);
-        let mut order = Vec::new();
-        if shield_behind {
-            order.push(Part::Shield);
-        }
-        if !facing_away {
-            order.push(Part::Robe);
-        }
-        order.extend([Part::Body, Part::Head, Part::HeadMid, Part::HeadTop, Part::Weapon, Part::HeadBottom]);
-        if !shield_behind {
-            order.push(Part::Shield);
-        }
-        if facing_away {
-            order.push(Part::Robe);
-        }
+        let frames_of =
+            |part: Part| self.layers.iter().position(|layer| layer.part == part).and_then(|number| Some((number, self.layers[number].act.actions.get(index)?)));
+        // The head's frames count the frames of what's worn on it.
+        let head_count = frames_of(Part::Head).map(|(_, frames)| frames.len()).filter(|&count| count > 0).unwrap_or(body_frames.len());
+        let order = match &self.dressing {
+            Some(dressing) => dressing.order(index, frame_index),
+            None => vec![Part::Body, Part::Weapon],
+        };
 
         let mut placed = Vec::new();
         for part in order {
-            let Some((number, layer)) = self.layers.iter().enumerate().find(|(_, layer)| layer.part == part) else { continue };
-            let frame = if part == Part::Body {
-                body_frame
-            } else {
-                // Single-action sprites (some weapons) repeat their one action.
-                let Some(frames) = layer.act.actions.get(index % layer.act.actions.len().max(1)).filter(|frames| !frames.is_empty()) else { continue };
-                &frames[layer_frame(frames.len(), look, frame_index, body_frames.len(), |count| animated(layer, count))]
+            let Some((number, frames)) = frames_of(part) else { continue };
+            let layer = &self.layers[number];
+            // The head goes with the body's frame (standing or sitting, the head direction's), as do weapons and
+            // shields; garments and headgear too unless they have frames to play in turn (garments then from the
+            // first group while standing or sitting).
+            let own = |count: usize| animated(layer, count);
+            let frame = match part {
+                Part::Body => Some(frame_index),
+                Part::Robe => layer_frame(frames.len(), head_count, if look.is_some() { 0 } else { frame_index }, frame_index, own),
+                Part::HeadBottom | Part::HeadMid | Part::HeadTop => layer_frame(frames.len(), head_count, frame_index, frame_index, own),
+                Part::Head | Part::Weapon | Part::Shield => (frame_index < frames.len()).then_some(frame_index),
             };
+            let Some(frame) = frame.and_then(|frame| frames.get(frame)) else { continue };
             let shift = if part.on_head() { sprite::head_shift(body_frame, frame) } else { [0, 0] };
             placed.extend(
                 sprite::place(&layer.spr, frame, shift)
@@ -680,18 +727,103 @@ fn animated(layer: &Layer, index: usize, count: usize, timing: Timing) -> usize 
     }
 }
 
-/// Which of a layer's `count` frames goes with the body's frame `body_frame` of `body_count`. Standing or sitting
-/// (`look`: the head direction) a layer's frames come in three groups, one per head direction, and play within the
-/// group (`own(n)`: which of n frames the layer's own clock is at), so balloons bob and wings flap while weapons and
-/// shields hold still. Otherwise a layer with as many frames as the body keeps step with it.
-fn layer_frame(count: usize, look: Option<usize>, body_frame: usize, body_count: usize, own: impl Fn(usize) -> usize) -> usize {
-    match look {
-        Some(look) => {
-            let group = (count / 3).max(1);
-            (own(group) + group * look) % count
+/// Which of a garment's or headgear's `count` frames shows with the body at frame `base`. One with n frames to each of
+/// the head's `head_count` plays them in turn (`own(n)`: which of n frames its own clock is at) within group `group`, so
+/// balloons bob and wings flap; any other shows frame `base`. None when it has no such frame.
+fn layer_frame(count: usize, head_count: usize, group: usize, base: usize, own: impl Fn(usize) -> usize) -> Option<usize> {
+    let n = count / head_count.max(1);
+    let frame = if n > 1 && count.is_multiple_of(head_count) { own(n) + n * group } else { base };
+    (frame < count).then_some(frame)
+}
+
+/// Where a garment goes among a character's layers.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum RobeAt {
+    /// Behind everything.
+    Behind,
+    /// Over the body, under the head.
+    OverBody,
+    /// Over the body and the headgear too (bags).
+    OverHeadgear,
+}
+
+/// Garments over the headgear go at this place among the layers (headgear: middle 100, upper 200, lower 300).
+const OVER_HEADGEAR: i32 = 400;
+
+/// A character's layers back to front, facing `direction` (0 the camera, turning clockwise): a garment behind, a shield
+/// turned away, the body and head (the head behind the body in some frames facing away: `head_first`) with a garment
+/// over the body between them, the weapon and a shield turned this way (when `armed`), then the headgear by its
+/// place (`headgear`: part and place; the body's layers are 1, 2, ... so a negative place goes behind them all), and a
+/// garment worn over the headgear.
+fn stack(direction: usize, armed: bool, head_first: bool, robe: RobeAt, headgear: &[(Part, i32)]) -> Vec<Part> {
+    let turned_away = (2..=5).contains(&direction);
+    let mut body = vec![Part::Body];
+    if robe == RobeAt::OverBody {
+        body.push(Part::Robe);
+    }
+    let mut walk = Vec::new();
+    if robe == RobeAt::Behind {
+        walk.push(Part::Robe);
+    }
+    if armed && turned_away {
+        walk.push(Part::Shield);
+    }
+    if head_first {
+        walk.push(Part::Head);
+        walk.extend(body);
+    } else {
+        walk.extend(body);
+        walk.push(Part::Head);
+    }
+    if armed {
+        walk.push(Part::Weapon);
+        if !turned_away {
+            walk.push(Part::Shield);
         }
-        None if count == body_count => body_frame,
-        None => own(count),
+    }
+    let mut placed: Vec<(i32, Part)> = (1..).zip(walk).chain(headgear.iter().map(|&(part, place)| (place, part))).collect();
+    if robe == RobeAt::OverHeadgear {
+        placed.push((OVER_HEADGEAR, Part::Robe));
+    }
+    placed.sort_by_key(|&(place, _)| place);
+    placed.into_iter().map(|(_, part)| part).collect()
+}
+
+/// Headgear views that hide the head under them.
+const HEAD_HIDING: [u16; 7] = [331, 1931, 2171, 2494, 2587, 2606, 2607];
+
+/// What places a player's garment, head and headgear among its layers.
+struct Dressing {
+    /// By action and frame: the head goes behind the body (the job's .imf).
+    head_first: Vec<Vec<bool>>,
+    /// By action and body frame: the garment goes over the body rather than behind everything.
+    robe_over_body: Vec<Vec<bool>>,
+    /// Over the body, the garment goes over the headgear too.
+    robe_over_headgear: bool,
+    /// Each headgear layer's place facing each way; None hides it there.
+    headgear: Vec<(Part, [Option<i32>; 8])>,
+    /// The headgear hides the head.
+    head_hidden: bool,
+}
+
+impl Dressing {
+    /// The layers to draw in action `index` (direction included) at body frame `frame`, back to front.
+    fn order(&self, index: usize, frame: usize) -> Vec<Part> {
+        let direction = index % 8;
+        let at = |table: &[Vec<bool>]| table.get(index).and_then(|frames| frames.get(frame)).copied().unwrap_or(false);
+        let robe = match (at(&self.robe_over_body), self.robe_over_headgear) {
+            (false, _) => RobeAt::Behind,
+            (true, false) => RobeAt::OverBody,
+            (true, true) => RobeAt::OverHeadgear,
+        };
+        let headgear: Vec<(Part, i32)> = self.headgear.iter().filter_map(|(part, places)| Some((*part, places[direction]?))).collect();
+        // Weapons and shields show in the battle stance and the weapon attacks.
+        let armed = matches!(index, 32..=39 | 80..=95);
+        let mut order = stack(direction, armed, at(&self.head_first), robe, &headgear);
+        if self.head_hidden {
+            order.retain(|&part| part != Part::Head);
+        }
+        order
     }
 }
 
@@ -933,12 +1065,16 @@ mod tests {
         // Facing the camera the garment goes first, behind the body (the dagger and guard hide behind it then).
         let layers = |index: usize| -> Vec<usize> { novice.place(index, 0, Timing::Loop(0.0)).iter().map(|((layer, ..), ..)| *layer).collect() };
         assert_eq!(layers(0), [7, 0, 1, 3, 4, 2]);
-        // Facing away it goes last, over the hat. The dagger and guard only show in the battle stance (and the
-        // dagger in its attack motion).
-        assert_eq!(layers(4).last(), Some(&7));
+        // Facing away it goes over the body, under the head and the hats. The dagger and guard only show in the battle
+        // stance (and the dagger in its attack motion), under the hats.
+        assert_eq!(layers(4), [0, 7, 1, 3, 4, 2]);
         let ready = layers(READY * 8);
+        assert_eq!(ready[ready.len() - 3..], [3, 4, 2], "{ready:?}");
         assert!(ready.contains(&5) && ready.contains(&6), "{ready:?}");
         assert!(layers(attack_action(0, 0, 1) * 8).contains(&5));
+        // A garment drawn once for every job (its picture shared, its motion per job) shows.
+        let ribbon = SpriteSet::player(&grf, &Look { hair: 1, robe: 42, ..Default::default() }, &tables).unwrap();
+        assert!(ribbon.layers.iter().any(|layer| layer.part == Part::Robe));
         // An animated wing flaps while its wearer stands still.
         let winged = SpriteSet::player(&grf, &Look { hair: 1, robe: 61, ..Default::default() }, &tables).unwrap();
         assert_ne!(winged.place(0, 0, Timing::Loop(0.0)), winged.place(0, 0, Timing::Loop(100.0)));
@@ -946,15 +1082,29 @@ mod tests {
 
     #[test]
     fn picks_each_layers_frame() {
-        // Standing with the head turned (look 1): a 3-frame hat or shield shows frame 1 whatever its clock says;
-        // a 24-frame balloon or wing plays frames 8 to 15.
-        assert_eq!(layer_frame(3, Some(1), 1, 3, |_| 0), 1);
-        assert_eq!(layer_frame(24, Some(1), 1, 3, |count| count - 1), 15);
-        assert_eq!(layer_frame(24, Some(2), 2, 3, |_| 3), 19);
-        // Walking or attacking: in step with the body, or on its own clock when the frame counts differ.
-        assert_eq!(layer_frame(8, None, 5, 8, |_| 0), 5);
-        assert_eq!(layer_frame(10, None, 4, 9, |count| count - 1), 9);
-        assert_eq!(layer_frame(1, None, 4, 5, |_| 0), 0);
+        // Standing with the head turned (base and group 1): a 3-frame hat shows frame 1 whatever its clock says; a
+        // 24-frame balloon plays frames 8 to 15, and a 24-frame wing (group 0) frames 0 to 7.
+        assert_eq!(layer_frame(3, 3, 1, 1, |_| 2), Some(1));
+        assert_eq!(layer_frame(24, 3, 1, 1, |n| n - 1), Some(15));
+        assert_eq!(layer_frame(24, 3, 0, 1, |_| 3), Some(3));
+        // Walking: in step with the body; a layer short of the body's frame doesn't show.
+        assert_eq!(layer_frame(8, 8, 5, 5, |_| 0), Some(5));
+        assert_eq!(layer_frame(4, 8, 5, 5, |_| 0), None);
+        assert_eq!(layer_frame(16, 8, 5, 5, |n| n - 1), Some(11));
+    }
+
+    #[test]
+    fn stacks_layers_back_to_front() {
+        use Part::*;
+        let hats = [(HeadMid, 100), (HeadTop, 200), (HeadBottom, 300)];
+        // Facing the camera with a cape behind: the cape, body, head, then headgear over all of it.
+        assert_eq!(stack(0, false, false, RobeAt::Behind, &hats), [Robe, Body, Head, HeadMid, HeadTop, HeadBottom]);
+        // In the battle stance the weapon and a shield turned this way go between the head and the headgear.
+        assert_eq!(stack(0, true, false, RobeAt::Behind, &hats), [Robe, Body, Head, Weapon, Shield, HeadMid, HeadTop, HeadBottom]);
+        // Turned away: the shield first, the garment over the body under the head.
+        assert_eq!(stack(4, true, false, RobeAt::OverBody, &hats), [Shield, Body, Robe, Head, Weapon, HeadMid, HeadTop, HeadBottom]);
+        // The head behind the body, a bag over the headgear, and a headgear placed behind everything.
+        assert_eq!(stack(3, false, true, RobeAt::OverHeadgear, &[(HeadTop, 200), (HeadBottom, -100)]), [HeadBottom, Head, Body, HeadTop, Robe]);
     }
 
     #[test]
