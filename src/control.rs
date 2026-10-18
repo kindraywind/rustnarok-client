@@ -118,6 +118,24 @@ pub enum Command {
     Say {
         text: String,
     },
+    /// A button goes down at a point and stays down until `mouse_up`.
+    MouseDown {
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        button: Button,
+    },
+    MouseUp {
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        button: Button,
+    },
+    /// Where a map cell's middle is on screen: `{"point": [x, y]}`.
+    CellPoint {
+        x: i32,
+        y: i32,
+    },
     State,
     Wait {
         ms: Option<u64>,
@@ -447,6 +465,18 @@ pub fn run(app: &mut App, event_loop: &ActiveEventLoop, Request { command, reply
 fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Result<Value, String> {
     match command {
         Command::Screenshot { crop, scale } => screenshot(app, event_loop, crop, scale),
+        Command::MouseDown { x, y, button } | Command::MouseUp { x, y, button } => {
+            let state = if matches!(command, Command::MouseDown { .. }) { ElementState::Pressed } else { ElementState::Released };
+            point(app, [x, y]);
+            press(app, event_loop, button, state);
+            Ok(Value::Null)
+        }
+        Command::CellPoint { x, y } => {
+            let Scene::Game(game) = &app.scene else { return Err("not in the game".into()) };
+            let view = game.camera.view(crate::SCREEN[0] / crate::SCREEN[1]);
+            let point = view.project(game.world.cell_position([x as f32, y as f32])).ok_or("the cell is behind the camera")?;
+            Ok(json!({"ok": true, "point": [point[0] * crate::SCREEN[0], point[1] * crate::SCREEN[1]]}))
+        }
         Command::Move { x, y } => {
             point(app, [x, y]);
             Ok(Value::Null)
@@ -1038,6 +1068,18 @@ fn game_state(app: &App, game: &Game) -> Value {
             "direction": game.player.direction,
             "moving": game.player.moving(),
             "casting": game.casts.contains_key(&None),
+            // The attack asked for with the mouse (null: none), kept up or only while held.
+            "attack": game.attack.map(|attack| json!({"target": attack.target, "continuous": attack.continuous})),
+            "no_ctrl": game.no_ctrl,
+            // The skill being aimed (null: none), and the last one sent by aiming, at a cell or a unit.
+            "aiming": game.targeting.map(|(skill, level)| json!({"skill": skill, "level": level})),
+            "skill_sent": game.skill_sent.map(|(skill, level, target)| match target {
+                crate::SkillTarget::Cell(cell) => json!({"skill": skill, "level": level, "cell": cell}),
+                crate::SkillTarget::Unit(unit) => json!({"skill": skill, "level": level, "unit": unit}),
+            }),
+            // The last cell a mouse walk went to, and how many have gone out.
+            "walk_goal": game.walk_goal,
+            "walks": game.walks,
             "combo_ms": combo_ms(None),
             // How many units Blade Stop or Cursed Circle locks the player with.
             "held": crate::locked_with(&game.locks, game.account_id),
@@ -1063,7 +1105,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         // boxes, pick list rows, menu choices and window buttons (by name), each with its box on screen.
         "targets": targets,
         // What's carried: index, item, how many, identified, worn where (0: not worn).
-        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "grade": item.grade, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires, "switch": item.switch})).collect::<Vec<_>>(),
+        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "grade": item.grade, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires, "switch": item.switch, "favorite": item.favorite})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
         // Bound shortcuts: action name to the chord ("Alt+V", "F1"). Unbound rows are left out.
@@ -1166,6 +1208,15 @@ fn game_state(app: &App, game: &Game) -> Value {
         "inventory_items": game.inventory.items.len(),
         "skills": game.skills.len(),
         "status_icons": game.status_icons.iter().map(|(id, _, ends)| json!({"id": id, "left_ms": ends.map(|end| end.saturating_duration_since(now).as_millis() as u64)})).collect::<Vec<_>>(),
+        // Where the camera is steered to: the turn (within a circle) and tilt in degrees, the distance in world units.
+        "camera": json!({
+            "yaw": game.camera_goal.yaw.rem_euclid(360.0).round(),
+            "pitch": game.camera_goal.pitch.round(),
+            "distance": (f64::from(game.camera_goal.distance()) * 10.0).round() / 10.0,
+            "indoor": game.camera_goal.indoor,
+        }),
+        // What the mouse cursor shows.
+        "cursor": format!("{:?}", app.cursor_look.kind()),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
     });
     // The ranking board.
@@ -1333,7 +1384,7 @@ mod tests {
         assert_eq!(stats["int"], json!({"value": 9, "bonus": 2, "cost": 2}));
         assert_eq!(stats["str"], json!({"value": 1, "bonus": 0, "cost": 0}));
         assert_eq!(stats["luk"]["cost"], 3);
-        let info = HashMap::from([(19, SkillInfo { resource: "MG_FIREBOLT".into(), name: "Fire Bolt".into(), max_level: 10 })]);
+        let info = HashMap::from([(19, SkillInfo { resource: "MG_FIREBOLT".into(), name: "Fire Bolt".into(), max_level: 10, ..Default::default() })]);
         let skills = [
             net::Skill { id: 19, kind: net::Skill::ENEMY, level: 3, sp: 16, range: 9, upgradable: true },
             net::Skill { id: 9999, kind: 0, level: 0, sp: 0, range: 0, upgradable: false },

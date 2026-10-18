@@ -9,14 +9,15 @@
 
 A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": {...}, "steps": [...]} with steps such as
   {"say": "@warp prontera 156 180"}  {"settle": 1500}  {"wait": 1500}  {"key": "Alt+E"}  {"type": "hello"}
-  {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]]}  {"move": [x, y]} (or a target)
+  {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]], "button": "right", "mods": "Ctrl"}  {"move": [x, y]} (or a target)
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
     (targets by name from the control socket's `targets`: inventory_item (item id), pick_item (a pick list's row, item
     id), menu_item (part of a right-click menu choice's label), button (a window button's name, e.g. "feed"),
     hotkey (slot), skill (id), char_slot (a card at character select, by slot), unit (name, from `units`),
-    ground_item (item id, from `ground_items`), or
+    ground_item (item id, from `ground_items`), cell (a map cell [x, y]: its middle on screen), or
     {"point": [x, y]}; "offset": [dx, dy] shifts from the centre; a target not on screen fails the step)
   {"wheel": [x, y, rows]}  (the mouse wheel over a point: rows > 0 scrolls down)
+  {"mouse_down": <target>} ... {"mouse_up": <target>}  (a button held down between steps; "button": "right")
   {"click_unit": {"kind": "pet", "name": "Poring"}, "button": "right", "mods": "shift"}  (the middle of the nearest
     unit of that kind, and name if given, on screen)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
@@ -157,6 +158,10 @@ def locate(target):
     box in the control socket's `targets`), or {"point": [x, y]}. None when it isn't on screen."""
     if "point" in target:
         return target["point"]
+    if "cell" in target:
+        x, y = target["cell"]
+        reply = drive.send({"cmd": "cell_point", "x": x, "y": y})
+        return [round(value) for value in reply["point"]] if reply.get("ok") else None
     target = dict(target)
     dx, dy = target.pop("offset", [0, 0])
     (kind, value), = target.items()
@@ -330,6 +335,12 @@ def step_on_client(action, shots_dir, name):
             if key in action:
                 command[key] = action[key]
         return drive.send(command)
+    for key in ("mouse_down", "mouse_up"):
+        if key in action:
+            point = locate(action[key])
+            if point is None:
+                return [f"{key} {action[key]}: not on screen"]
+            return drive.send({"cmd": key, "x": point[0], "y": point[1], "button": action.get("button", "left")})
     if "wheel" in action:
         x, y, rows = action["wheel"]
         return drive.send({"cmd": "wheel", "x": x, "y": y, "rows": rows})
@@ -353,7 +364,11 @@ def step_on_client(action, shots_dir, name):
         return drive.send({"cmd": "drag", "from": start, "to": end})
     if "drag" in action:
         start, end = action["drag"]
-        return drive.send({"cmd": "drag", "from": start, "to": end})
+        command = {"cmd": "drag", "from": start, "to": end}
+        for key in ("button", "mods"):
+            if key in action:
+                command[key] = action[key]
+        return drive.send(command)
     if "cmd" in action:
         return drive.send(action["cmd"])
     if "wait_for" in action:
@@ -386,10 +401,11 @@ def run(scenarios, binary, out):
         scenario = json.load(open(path))
         name = os.path.splitext(os.path.basename(path))[0]
         print(f"{name}:")
-        # A client that can't get in (say, no character in the slot on this server) fails its scenario, not the run.
+        # A client that can't get in (no character in the slot, an account the accounts file doesn't have) fails its
+        # scenario, not the run.
         try:
             names = launch(binary, scenario)
-        except RuntimeError as error:
+        except (RuntimeError, KeyError) as error:
             quit_all(scenario)
             results[name] = [f"launch: {error}"]
             print(f"  {name}: FAIL (launch: {error})")

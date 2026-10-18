@@ -423,8 +423,6 @@ const PARTY_CREATE: usize = 2054;
 /// What a locked chat room asks ("Please enter Password.").
 const ROOM_PASSWORD: usize = 15;
 const PARTY_INVITE: usize = 2056;
-/// Items can be picked up from this far (closer means walking first).
-const PICKUP_RANGE: f32 = 2.0;
 /// A dropped item starts this many cells up and falls one cell per 40ms.
 const DROP_HEIGHT: f32 = 5.0;
 const DROP_MS_PER_CELL: f32 = 40.0;
@@ -601,23 +599,38 @@ const HIDDEN_JOBS: [u16; 2] = [111, 139];
 const WARP_JOB: u16 = 45;
 
 // The camera by default: 300 world units (60 cells) from the player, 45 degrees up, with world.rs's 15 degree field
-// of view. Zooming and tilting go further either way than the defaults need.
-// ponytail: the zoom-out limit (5x) is a guess; narrow it if the far view breaks.
+// of view. Distances are in world units (a cell is 5); the goal keeps the client's zoom units (× 2.5).
 const ZOOM: f32 = 120.0;
-const ZOOM_MIN: f32 = 65.0;
-const ZOOM_MAX: f32 = 325.0;
-const ZOOM_MAX_INDOOR: f32 = 162.5;
-const ZOOM_STEP: f32 = 15.0;
 /// World units per zoom unit.
 const UNITS_PER_ZOOM: f32 = 2.5;
+/// How near and far the camera goes, outdoors and indoors; a wheel step, and how often the wheel counts.
+const DISTANCE_RANGE: [f32; 2] = [230.0, 400.0];
+const DISTANCE_RANGE_INDOOR: [f32; 2] = [230.0, 300.0];
+const WHEEL_STEP: f32 = 24.3;
+const WHEEL_GAP: Duration = Duration::from_millis(15);
+/// Shift + wheel tilts this many degrees a step.
+const WHEEL_TILT: f32 = 5.0;
 const PITCH: f32 = 45.0;
-const PITCH_RANGE: [f32; 2] = [10.0, 90.0];
-const PITCH_RANGE_INDOOR: [f32; 2] = [40.0, 60.0];
-const YAW_RANGE: [f32; 2] = [-360.0, 360.0];
-/// Indoors the camera keeps a fixed slant you can only adjust a little.
-const YAW_INDOOR: f32 = 40.0;
-const YAW_RANGE_INDOOR: [f32; 2] = [25.0, 60.0];
+/// A double right-click with Shift tilts back to this.
+const PITCH_RESET: f32 = 50.0;
+/// Indoors the camera keeps a fixed slant you can only turn a little.
+const YAW_INDOOR: f32 = 45.0;
+const YAW_RANGE_INDOOR: [f32; 2] = [25.0, 65.0];
 const CAMERA_DOUBLE_CLICK: Duration = Duration::from_millis(500);
+/// /camera's lines: on, off.
+const CAMERA_ON: usize = 319;
+const CAMERA_OFF: usize = 320;
+
+/// How far the camera tilts: outdoors 50 to 65 degrees (25 to 65 with Ctrl), indoors fixed at 60 (35 to 55 with
+/// Ctrl).
+fn pitch_range(indoor: bool, ctrl: bool) -> [f32; 2] {
+    match (indoor, ctrl) {
+        (false, false) => [50.0, 65.0],
+        (false, true) => [25.0, 65.0],
+        (true, false) => [60.0, 60.0],
+        (true, true) => [35.0, 55.0],
+    }
+}
 /// "Disconnected from the server."
 const DISCONNECTED_MESSAGE: usize = 3;
 /// The loading screen's progress bar.
@@ -656,6 +669,14 @@ struct Game {
     last_keepalive: Instant,
     /// Dev switch: a cell to walk to shortly after entering.
     auto_walk: Option<[u16; 2]>,
+    /// Walking by the mouse: when the last walk was sent and where, how many were sent, whether the held button
+    /// keeps walking (and when it last tried), and the last press (when, and whether the pointer moved since).
+    last_move: Option<Instant>,
+    walk_goal: Option<[i32; 2]>,
+    walks: u32,
+    walk_held: bool,
+    last_walk_try: Option<Instant>,
+    press_mark: Option<(Instant, bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
     shadow: Option<SpriteSet>,
@@ -851,6 +872,18 @@ struct Game {
     head_emblems: Vec<(String, u32, [f32; 4])>,
     /// /noshift: a click on a player attacks without Shift (saved).
     no_shift: bool,
+    /// /noctrl: a click on a monster keeps attacking without Ctrl (saved; on unless turned off).
+    no_ctrl: bool,
+    /// /camera: the camera sticks to the player (saved; off unless turned on); the earthquake's shake this frame.
+    camera_snap: bool,
+    quake_flip: bool,
+    /// The last skill sent by aiming: ID, level and target.
+    skill_sent: Option<(u16, u16, SkillTarget)>,
+    /// The attack asked for with the mouse, and when the last attack packet went out; riding a mount that can't
+    /// attack.
+    attack: Option<Attack>,
+    last_attack: Option<Instant>,
+    riding: bool,
     /// The map's property and flags (net::MAP_*), and its type, as the server last sent them.
     map_property: Option<(u16, u32)>,
     map_type: Option<u16>,
@@ -918,6 +951,10 @@ struct Game {
     /// The right-click menu, and where a right press began (and on whom).
     menu: Option<menu::Menu<Choice>>,
     right_press: Option<([f32; 2], Option<u32>)>,
+    /// The pointer moved since the right button went down: no menu on release.
+    right_moved: bool,
+    /// A monster marked for a companion (the companion, the monster): a second Alt press on it sends the attack.
+    companion_mark: Option<(u32, u32)>,
     /// Open windows from back to front.
     windows: Vec<Panel>,
     /// Windows Esc closes, newest first. Pushed on open and on a press, dropped on close.
@@ -958,12 +995,48 @@ struct CameraGoal {
     indoor: bool,
     /// The right button is down: where the pointer was last.
     dragging: Option<[f32; 2]>,
-    last_press: Option<(Instant, [f32; 2])>,
+    /// The last right press, and whether the pointer moved since.
+    last_press: Option<(Instant, bool)>,
+    /// The parts of a tilt and a zoom step dragged but not yet whole.
+    carry: [f32; 2],
+    last_wheel: Option<Instant>,
+    /// The map's own camera table, which then sets the limits (and no double click resets).
+    limits: Option<rustnarok_client::map::Viewpoint>,
 }
 
 impl CameraGoal {
+    #[cfg(test)]
     fn new(indoor: bool) -> Self {
-        let mut goal = Self { yaw: if indoor { YAW_INDOOR } else { 0.0 }, pitch: PITCH, zoom: ZOOM, indoor, dragging: None, last_press: None };
+        Self::arrive(indoor, None, [PITCH, ZOOM * UNITS_PER_ZOOM])
+    }
+
+    /// The goal on arriving on a map: the map's own table's start, or the tilt and distance the player left on this
+    /// kind of map (within its limits); turned 0 outdoors, YAW_INDOOR indoors.
+    fn arrive(indoor: bool, limits: Option<rustnarok_client::map::Viewpoint>, saved: [f32; 2]) -> Self {
+        let mut goal = Self {
+            yaw: if indoor { YAW_INDOOR } else { 0.0 },
+            pitch: PITCH,
+            zoom: ZOOM,
+            indoor,
+            dragging: None,
+            last_press: None,
+            carry: [0.0; 2],
+            last_wheel: None,
+            limits,
+        };
+        match limits {
+            Some(table) => {
+                goal.yaw = table.yaw_in.clamp(table.yaw[0], table.yaw[1]);
+                goal.pitch = table.pitch_in.clamp(table.pitch[0], table.pitch[1]);
+                goal.set_distance(table.distance_in);
+            }
+            None => {
+                // The widest tilt each kind of map allows (with Ctrl, and indoors fixed 60 too).
+                let [low, high] = if indoor { [35.0, 60.0] } else { [25.0, 65.0] };
+                goal.pitch = saved[0].clamp(low, high);
+                goal.set_distance(saved[1]);
+            }
+        }
         // RUSTNAROK_CLIENT_CAMERA holds on every map, warps included.
         if let Some([yaw, pitch, zoom]) = std::env::var("RUSTNAROK_CLIENT_CAMERA").ok().and_then(|camera| {
             let values: Vec<f32> = camera.split(',').filter_map(|value| value.parse().ok()).collect();
@@ -976,67 +1049,179 @@ impl CameraGoal {
 
     /// The camera already in place, for a fresh map.
     fn camera(&self, target: world::Vector) -> Camera {
-        Camera { target, distance: self.zoom * UNITS_PER_ZOOM, pitch: self.pitch.to_radians(), yaw: self.yaw.to_radians() }
+        Camera { target, distance: self.zoom * UNITS_PER_ZOOM, pitch: self.pitch.to_radians(), yaw: self.yaw.to_radians(), ground: f32::MIN }
     }
 
-    /// Right button down; a quick second press resets the tilt (Shift), the zoom (Ctrl) or the turn.
-    fn press(&mut self, cursor: [f32; 2], modifiers: ModifiersState) {
-        let now = Instant::now();
-        if let Some((at, place)) = self.last_press
-            && now.duration_since(at) < CAMERA_DOUBLE_CLICK
-            && (place[0] - cursor[0]).abs() < 10.0
-            && (place[1] - cursor[1]).abs() < 10.0
-        {
-            if modifiers.shift_key() {
-                self.pitch = PITCH;
-            }
-            if modifiers.control_key() {
+    /// The distance to the player in world units.
+    fn distance(&self) -> f32 {
+        self.zoom * UNITS_PER_ZOOM
+    }
+
+    /// Moves the camera to `distance` world units, within the map's range.
+    fn set_distance(&mut self, distance: f32) {
+        let [near, far] = self.limits.map_or(if self.indoor { DISTANCE_RANGE_INDOOR } else { DISTANCE_RANGE }, |table| table.distance);
+        self.zoom = distance.clamp(near, far) / UNITS_PER_ZOOM;
+    }
+
+    /// How far the camera tilts now: the map's table, or `pitch_range`.
+    fn pitch_limits(&self, ctrl: bool) -> [f32; 2] {
+        self.limits.map_or(pitch_range(self.indoor, ctrl), |table| table.pitch)
+    }
+
+    /// Right button down. A second press within CAMERA_DOUBLE_CLICK with the pointer not moved at all resets: the
+    /// distance with Ctrl, the tilt with Shift, otherwise (outdoors only) the turn, to the nearest whole circle.
+    fn press(&mut self, cursor: [f32; 2], now: Instant, ctrl: bool, shift: bool) {
+        if self.limits.is_none() && self.last_press.is_some_and(|(at, moved)| !moved && now.saturating_duration_since(at) < CAMERA_DOUBLE_CLICK) {
+            if ctrl {
                 self.zoom = ZOOM;
-            } else {
-                self.yaw = if self.indoor { YAW_INDOOR } else { 0.0 };
+            }
+            if shift {
+                self.pitch = PITCH_RESET;
+            }
+            if !ctrl && !shift && !self.indoor {
+                self.yaw = (self.yaw / 360.0).round() * 360.0;
             }
         }
-        self.last_press = Some((now, cursor));
+        self.last_press = Some((now, false));
         self.dragging = Some(cursor);
     }
 
-    /// Dragging turns the view; with Shift it tilts, with Ctrl it zooms.
+    /// The pointer moved: the next right press isn't a double click.
+    fn pointer_moved(&mut self) {
+        if let Some((_, moved)) = &mut self.last_press {
+            *moved = true;
+        }
+    }
+
+    /// Dragging with the right button down (see `steer`).
     fn drag(&mut self, cursor: [f32; 2], modifiers: ModifiersState) {
         // Only while the right button is down: `replace` would start a drag on any move.
         let Some(last) = self.dragging else { return };
         self.dragging = Some(cursor);
-        let [dx, dy] = [cursor[0] - last[0], cursor[1] - last[1]];
-        if modifiers.shift_key() {
-            let [low, high] = if self.indoor { PITCH_RANGE_INDOOR } else { PITCH_RANGE };
-            self.pitch = (self.pitch + dy / SCREEN[1] * 300.0).clamp(low, high);
-        } else if modifiers.control_key() {
-            self.zoom = self.clamp_zoom(self.zoom - dy * ZOOM_STEP / 10.0);
+        self.steer(cursor[0] - last[0], cursor[1] - last[1], modifiers.control_key(), modifiers.shift_key(), modifiers.alt_key());
+    }
+
+    /// A drag of `dx`, `dy` pixels: turns a degree a pixel (indoors within YAW_RANGE_INDOOR), except with Shift; with
+    /// Shift it tilts and with Ctrl it zooms, half a degree or unit a pixel (dragging down tilts down and comes
+    /// closer), in whole steps (the rest carries over). Ctrl turns too; Alt does nothing.
+    fn steer(&mut self, dx: f32, dy: f32, ctrl: bool, shift: bool, alt: bool) {
+        if alt {
+            return;
+        }
+        let steps = |carry: &mut f32| {
+            *carry += dy / 2.0;
+            let whole = carry.trunc();
+            *carry -= whole;
+            whole
+        };
+        if !shift {
+            self.yaw += dx;
+            if let Some(table) = self.limits {
+                self.yaw = self.yaw.clamp(table.yaw[0], table.yaw[1]);
+            } else if self.indoor {
+                self.yaw = self.yaw.clamp(YAW_RANGE_INDOOR[0], YAW_RANGE_INDOOR[1]);
+            }
+        }
+        if shift {
+            let [low, high] = self.pitch_limits(ctrl);
+            self.pitch = (self.pitch + steps(&mut self.carry[0])).clamp(low, high);
+        }
+        if ctrl {
+            let closer = steps(&mut self.carry[1]);
+            self.set_distance(self.distance() - closer);
+        }
+    }
+
+    /// A wheel turn (`rows` > 0: toward the user), counted at most once per WHEEL_GAP: one WHEEL_STEP however far
+    /// it turned, away from the user farther; with Shift it tilts instead (away from the user flatter).
+    fn wheel(&mut self, rows: i32, now: Instant, ctrl: bool, shift: bool) {
+        if rows == 0 || self.last_wheel.is_some_and(|last| now.saturating_duration_since(last) < WHEEL_GAP) {
+            return;
+        }
+        self.last_wheel = Some(now);
+        let toward = rows.signum() as f32;
+        if shift {
+            let [low, high] = self.pitch_limits(ctrl);
+            self.pitch = (self.pitch + toward * WHEEL_TILT).clamp(low, high);
         } else {
-            let [low, high] = if self.indoor { YAW_RANGE_INDOOR } else { YAW_RANGE };
-            self.yaw = (self.yaw + dx / SCREEN[0] * 720.0).clamp(low, high);
+            self.set_distance(self.distance() - toward * WHEEL_STEP);
         }
     }
 
-    fn wheel(&mut self, notches: f32) {
-        self.zoom = self.clamp_zoom(self.zoom + notches * ZOOM_STEP);
-    }
-
-    fn clamp_zoom(&self, zoom: f32) -> f32 {
-        zoom.clamp(ZOOM_MIN, if self.indoor { ZOOM_MAX_INDOOR } else { ZOOM_MAX })
-    }
-
-    /// Moves the camera part of the way to the goal; turning past half a circle wraps both around.
-    fn ease(&mut self, camera: &mut Camera, elapsed: Duration) {
-        let step = (elapsed.as_secs_f32() * 1000.0 * 0.006 * 2.0).min(1.0);
-        let mut yaw = camera.yaw.to_degrees();
-        if self.yaw > 180.0 && yaw > 180.0 {
-            (self.yaw, yaw) = (self.yaw - 360.0, yaw - 360.0);
-        } else if self.yaw < -180.0 && yaw < -180.0 {
-            (self.yaw, yaw) = (self.yaw + 360.0, yaw + 360.0);
-        }
-        camera.yaw = (yaw + (self.yaw - yaw) * step).to_radians();
+    /// Moves the camera FOLLOW of the way per 60th of a second to the goal and its look-at point to the player's feet
+    /// (`snap`: at once); it turns the short way round.
+    fn ease(&self, camera: &mut Camera, elapsed: Duration, feet: world::Vector, snap: bool) {
+        let step = follow_step(elapsed);
+        camera.target = if snap { feet } else { [0, 1, 2].map(|axis| camera.target[axis] + (feet[axis] - camera.target[axis]) * step) };
+        let yaw = camera.yaw.to_degrees();
+        let turn = (self.yaw - yaw + 180.0).rem_euclid(360.0) - 180.0;
+        camera.yaw = (yaw + turn * step).to_radians();
         camera.pitch += (self.pitch.to_radians() - camera.pitch) * step;
-        camera.distance += (self.zoom * UNITS_PER_ZOOM - camera.distance) * step;
+        camera.distance += (self.distance() - camera.distance) * step;
+    }
+}
+
+/// The camera moves this share of the way each 60th of a second.
+const FOLLOW: f32 = 0.1;
+/// A view changed is written this long after it last changed.
+const VIEW_SAVE_AFTER: Duration = Duration::from_millis(500);
+
+/// How much of the way the camera moves in `elapsed`: FOLLOW per 60th of a second, the same at any frame rate.
+fn follow_step(elapsed: Duration) -> f32 {
+    1.0 - (1.0 - FOLLOW).powf(elapsed.as_secs_f32() * 60.0)
+}
+
+/// The tilt and distance the player left the camera at, outdoors and indoors: kept between maps, and (for a client
+/// the harness doesn't drive) saved.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SavedView {
+    views: [[f32; 2]; 2],
+    changed: Option<Instant>,
+}
+
+impl Default for SavedView {
+    fn default() -> Self {
+        Self { views: [[PITCH, ZOOM * UNITS_PER_ZOOM]; 2], changed: None }
+    }
+}
+
+impl SavedView {
+    /// From the saved text: outdoor tilt and distance, then indoor; anything missing stays the default.
+    fn parse(text: &str) -> Self {
+        let mut saved = Self::default();
+        let values: Vec<f32> = text.split_whitespace().filter_map(|value| value.parse().ok()).collect();
+        if let [outdoor_pitch, outdoor_distance, indoor_pitch, indoor_distance] = values[..] {
+            saved.views = [[outdoor_pitch, outdoor_distance], [indoor_pitch, indoor_distance]];
+        }
+        saved
+    }
+
+    fn text(&self) -> String {
+        let [[a, b], [c, d]] = self.views;
+        format!("{a} {b} {c} {d}")
+    }
+
+    fn of(&self, indoor: bool) -> [f32; 2] {
+        self.views[usize::from(indoor)]
+    }
+
+    /// Follows the goal: a changed tilt or distance is kept (not on a map with its own table), and written once it
+    /// has held still VIEW_SAVE_AFTER, when `save`.
+    fn follow(&mut self, goal: &CameraGoal, now: Instant, save: bool) {
+        if goal.limits.is_none() {
+            let view = [goal.pitch, goal.distance()];
+            let slot = &mut self.views[usize::from(goal.indoor)];
+            if *slot != view {
+                *slot = view;
+                self.changed = Some(now);
+            }
+        }
+        if self.changed.is_some_and(|at| now.saturating_duration_since(at) >= VIEW_SAVE_AFTER) {
+            self.changed = None;
+            if save && let Some(path) = settings_path("camera") {
+                let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, self.text()));
+            }
+        }
     }
 }
 
@@ -1282,7 +1467,6 @@ struct Loading {
 /// An action waiting for the player to arrive.
 #[derive(Clone, Copy, PartialEq)]
 enum Pending {
-    Attack(u32),
     PickUp(u32),
     Skill { id: u16, level: u16, target: SkillTarget },
 }
@@ -1452,9 +1636,104 @@ impl Game {
         }
     }
 
+    /// Attacks `target` and keeps at it, walking into reach first.
     fn attack(&mut self, target: u32) {
-        if let Some(goal) = self.units.get(&target).map(|actor| actor.cell) {
-            self.attack_from(target, self.player.cell, goal);
+        self.attack = Some(Attack::new(target, true));
+        self.attack_step(Instant::now());
+    }
+
+    /// Moves the attack along: once in reach (or once a walk toward it has ended) the one attack packet goes out, no
+    /// sooner than ATTACK_GAP after the last; out of reach, every CHASE_GAP a cell in reach is looked for, and walked
+    /// to when it changed. A target gone (or dying) ends it; after the packet the server keeps at it (or swings once).
+    fn attack_step(&mut self, now: Instant) {
+        let Some(mut attack) = self.attack else { return };
+        let Some(goal) = self.units.get(&attack.target).filter(|actor| actor.remove_at.is_none()).map(|actor| actor.cell) else {
+            self.attack = None;
+            return;
+        };
+        if attack.sent || self.store_open() {
+            return;
+        }
+        let from = self.player.cell;
+        if in_attack_reach(from, goal, self.attack_range) || (attack.chased && !self.player.moving()) {
+            if may_attack(self.last_attack, now) {
+                let _ = self.session.act(attack.target, attack.action());
+                self.last_attack = Some(now);
+                attack.sent = true;
+            }
+        } else if attack.last_chase.is_none_or(|last| now.saturating_duration_since(last) >= CHASE_GAP) {
+            attack.last_chase = Some(now);
+            let path = world::find_path(&self.world.gat, from, goal);
+            let stop = path.and_then(|path| path.into_iter().find(|&cell| in_attack_reach(cell, goal, self.attack_range)));
+            if let Some(stop) = stop.filter(|&stop| attack.chase_cell != Some(stop))
+                && may_move(self.last_move, now)
+            {
+                self.last_move = Some(now);
+                attack.chase_cell = Some(stop);
+                attack.chased = true;
+                let _ = self.session.walk(stop.map(|value| value as u16));
+            }
+        }
+        // A one swing that went out is over; so is one let go of.
+        self.attack = Some(attack).filter(|attack| !(attack.sent && !attack.continuous && !attack.held));
+    }
+
+    /// The cell under a point on screen, on the plane at the player's height.
+    fn ground_cell(&self, cursor: [f32; 2]) -> Option<[i32; 2]> {
+        let height = self.world.cell_position(self.player.cell.map(|value| value as f32))[1];
+        let view = self.camera.view(SCREEN[0] / SCREEN[1]);
+        view.pick([cursor[0] / SCREEN[0], cursor[1] / SCREEN[1]], height)
+            .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32])
+    }
+
+    /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`: not blocked, nobody standing there, a
+    /// path to it); nothing when the last walk went out less than MOVE_GAP ago. Whether a walk was sent.
+    fn walk_toward(&mut self, cell: [i32; 2], now: Instant) -> bool {
+        if !may_move(self.last_move, now) {
+            return false;
+        }
+        let from = self.player.cell;
+        let taken: std::collections::HashSet<[i32; 2]> = self.units.values().filter(|actor| !actor.hidden).map(|actor| actor.cell).collect();
+        let gat = &self.world.gat;
+        let open = |cell: [i32; 2]| gat.walkable(cell) && !taken.contains(&cell) && world::find_path(gat, from, cell).is_some();
+        let Some(goal) = world::walk_goal(cell, from, open) else { return false };
+        self.pending = None;
+        self.last_move = Some(now);
+        self.walk_goal = Some(goal);
+        self.walks += 1;
+        let _ = self.session.walk(goal.map(|value| value as u16));
+        true
+    }
+
+    /// Turns to face a cell, the head straight. rathena counts directions the other way along y from the sprites.
+    fn turn_to(&mut self, cell: [i32; 2]) {
+        let step = [cell[0] - self.player.cell[0], cell[1] - self.player.cell[1]];
+        if step != [0, 0] {
+            let _ = self.session.change_direction(world::direction([step[0], -step[1]]), 0);
+            self.player.direction = world::direction(step);
+            self.player.head_direction = 0;
+        }
+    }
+
+    /// What a left click on the world does: talk to an NPC, attack, swing once at a player, pick up an item, or
+    /// (the ground, anything else) walk.
+    fn world_click(&self, cursor: [f32; 2], shift: bool) -> WorldClick {
+        match hovered(&self.hit_boxes, cursor, shift) {
+            Some(Owner::Unit(id)) => match self.units.get(&id).map(|actor| actor.kind) {
+                // A warp portal: walk onto it.
+                Some(NPC) if self.units[&id].job == WARP_JOB => WorldClick::Warp(self.units[&id].cell),
+                Some(NPC) => WorldClick::Talk(id),
+                Some(MONSTER) => WorldClick::Attack(id),
+                // Players: an attack where the map (or Shift, or /noshift) says so; one swing a click on a siege map.
+                Some(PLAYER) => match versus::click(self.side().flags, self.players_first(shift), self.no_shift, self.account_id, id) {
+                    versus::Click::Attack => WorldClick::Attack(id),
+                    versus::Click::Swing => WorldClick::Swing(id),
+                    versus::Click::Walk => WorldClick::Ground,
+                },
+                _ => WorldClick::Ground,
+            },
+            Some(Owner::Item(id)) => WorldClick::PickUp(id),
+            _ => WorldClick::Ground,
         }
     }
 
@@ -1462,20 +1741,29 @@ impl Game {
         self.my_shop.is_some() || self.my_buying_store.is_some()
     }
 
-    /// Attacks `target`, walking into reach first: the server only swings from within range.
-    fn attack_from(&mut self, target: u32, from: [i32; 2], goal: [i32; 2]) {
-        if self.store_open() {
+    /// What a press would aim the skill being aimed at: the cell under the pointer for ground skills (units there
+    /// don't count), the unit under it (or the player) for the others.
+    fn aim_target(&self, cursor: [f32; 2], players_first: bool) -> Option<SkillTarget> {
+        let (id, _) = self.targeting?;
+        let ground = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).is_some_and(|skill| skill.kind & net::Skill::GROUND != 0);
+        let unit = match hovered_unit(&self.hit_boxes, cursor, players_first) {
+            Some(Owner::Unit(unit)) => Some(unit),
+            Some(Owner::Player) => Some(self.account_id),
+            _ => None,
+        };
+        aim_use(ground, unit, if ground { self.ground_cell(cursor) } else { None })
+    }
+
+    /// Talks to an NPC, turned to face it; only standing still or sitting (walking or attacking, nothing).
+    /// rathena answers when it's too far.
+    fn talk_to(&mut self, id: u32) {
+        if !may_talk(self.player.moving(), self.attack.is_some(), self.player.sitting) {
             return;
         }
-        if world::in_reach(from, goal, self.attack_range) {
-            self.pending = None;
-            let _ = self.session.act(target, net::ACT_ATTACK_REPEAT);
-        } else if let Some(stop) =
-            world::find_path(&self.world.gat, from, goal).and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, self.attack_range)))
-        {
-            self.pending = Some((Pending::Attack(target), None));
-            let _ = self.session.walk(stop.map(|value| value as u16));
+        if let Some(cell) = self.units.get(&id).map(|actor| actor.cell) {
+            self.turn_to(cell);
         }
+        let _ = self.session.talk(id);
     }
 
     /// Picks up an item, walking over first when it's out of reach.
@@ -1486,8 +1774,7 @@ impl Game {
         let Some(item) = self.ground.get(&id) else { return };
         let at = item.at;
         self.player.face(at);
-        let [dx, dy] = [(at[0] - self.player.cell[0]) as f32, (at[1] - self.player.cell[1]) as f32];
-        if dx.hypot(dy) > PICKUP_RANGE {
+        if !within_pickup(self.player.cell, at) {
             self.pending = Some((Pending::PickUp(id), None));
             let _ = self.session.walk(at.map(|value| value as u16));
         } else {
@@ -1519,6 +1806,58 @@ impl Game {
                 .as_ref()
                 .is_some_and(|homunculus| self.homunculus_skill_list.hit(cursor, &self.homunculus_skills, homunculus.skill_points).is_some()),
         })
+    }
+
+    /// The frame of a window with a title bar.
+    fn titled_frame(&self, panel: Panel) -> Option<&window::Frame> {
+        Some(match panel {
+            Panel::Hotkeys | Panel::BasicInfo => return None,
+            Panel::Inventory => &self.inventory.frame,
+            Panel::Equipment => &self.equipment.frame,
+            Panel::Skills => &self.skill_window.frame,
+            Panel::Storage => &self.storage.frame,
+            Panel::Party => &self.party_window.frame,
+            Panel::Status => &self.status_window.frame,
+            Panel::Guild => &self.guild_window.frame,
+            Panel::Clan => &self.clan_window.frame,
+            Panel::Cart => &self.cart.frame,
+            Panel::Pet => &self.pet_window.frame,
+            Panel::Mercenary => &self.mercenary_window.frame,
+            Panel::MercenarySkills => &self.mercenary_skill_list.frame,
+            Panel::Homunculus => &self.homunculus_window.frame,
+            Panel::HomunculusSkills => &self.homunculus_skill_list.frame,
+        })
+    }
+
+    /// Whether the pointer is on a window's control: a title bar's close or minimize button, the equipment window's
+    /// buttons, a pick list's OK or Cancel.
+    // ponytail: tabs, scroll arrows, resize corners and the minimap aren't told apart yet.
+    fn on_control(&self, cursor: [f32; 2]) -> bool {
+        let inside = |area: [f32; 4]| contains([area[0], area[1]], [area[2], area[3]], cursor);
+        let title = self
+            .window_at(cursor)
+            .and_then(|panel| self.titled_frame(panel))
+            .and_then(|frame| frame.title_hit([cursor[0] - frame.position[0], cursor[1] - frame.position[1]]));
+        matches!(title, Some(TitleHit::Close | TitleHit::Minimize))
+            || self.equipment.button_boxes().into_iter().any(|(_, area)| inside(area))
+            || self.pick.as_ref().is_some_and(|(list, _)| list.button_boxes().into_iter().any(|(_, area)| inside(area)))
+    }
+
+    /// Whether the skill being aimed can be used on what's under the pointer: the ground for a ground skill (where it
+    /// can be walked), a unit of the kind it's for.
+    fn aim_valid(&self, cursor: [f32; 2], players_first: bool) -> bool {
+        let Some((id, _)) = self.targeting else { return false };
+        let flags = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).map_or(0, |skill| skill.kind);
+        match self.aim_target(cursor, players_first) {
+            Some(SkillTarget::Cell(cell)) => self.world.gat.walkable(cell),
+            Some(SkillTarget::Unit(unit)) if unit == self.account_id => aim_fits(flags, AimAt::Me),
+            Some(SkillTarget::Unit(unit)) => match self.units.get(&unit).map(|actor| actor.kind) {
+                Some(MONSTER) => aim_fits(flags, AimAt::Monster),
+                Some(PLAYER) => aim_fits(flags, AimAt::Player),
+                _ => false,
+            },
+            None => false,
+        }
     }
 
     fn skill_points(&self) -> i64 {
@@ -1590,6 +1929,7 @@ impl Game {
         let range = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id).map_or(1, |skill| i32::from(skill.range).max(1));
         if world::in_reach(self.player.cell, goal, range) {
             self.pending = None;
+            self.skill_sent = Some((id, level, target));
             let _ = match target {
                 SkillTarget::Unit(unit) => self.session.use_skill(id, level, unit),
                 SkillTarget::Cell(cell) => self.send_skill_at(id, level, cell.map(|value| value as u16)),
@@ -1765,6 +2105,25 @@ impl Game {
                 self.open_dressroom();
                 Ok(())
             }
+            // ponytail: the client's lines for /camera speak of zooming; they're used for on and off.
+            chat::Command::Camera => {
+                self.camera_snap = !self.camera_snap;
+                if let Some(path) = settings_path("camerasnap") {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.camera_snap { "1" } else { "0" }));
+                }
+                let line = messages.get(if self.camera_snap { CAMERA_ON } else { CAMERA_OFF }).cloned().unwrap_or_default();
+                self.chat_line(line, CHAT_ITEM);
+                Ok(())
+            }
+            chat::Command::NoCtrl => {
+                self.no_ctrl = !self.no_ctrl;
+                if let Some(path) = settings_path("noctrl") {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.no_ctrl { "1" } else { "0" }));
+                }
+                let line = messages.get(if self.no_ctrl { NO_CTRL_ON } else { NO_CTRL_OFF }).cloned().unwrap_or_default();
+                self.chat_line(line, CHAT_ITEM);
+                Ok(())
+            }
             // ponytail: the client's own line for /noshift isn't in this data; a plain one.
             chat::Command::NoShift => {
                 self.no_shift = !self.no_shift;
@@ -1899,12 +2258,39 @@ impl Game {
     }
 
     /// Whether the pointer is over the interface (a window, the chat, a dialog) rather than the world.
-    fn on_ui(&self, cursor: [f32; 2], items: &HashMap<u32, ItemInfo>) -> bool {
+    /// Whether the pointer is on a window, or something holds the clicks (a dialog, a menu, a question in the message
+    /// box of this size).
+    fn on_ui(&self, cursor: [f32; 2], items: &HashMap<u32, ItemInfo>, message: [f32; 2]) -> bool {
+        let asking = self.guild_invite.is_some()
+            || self.guild_asked.is_some()
+            || self.bind_asked.is_some()
+            || self.expansion_asked.is_some()
+            || self.leader_asked.is_some()
+            || self.dismiss_asked
+            || self.homunculus_rename.is_some()
+            || self.pet_asked.is_some()
+            || self.friend_asked.is_some()
+            || self.party_invite.is_some()
+            || self.trade_asked.is_some();
         self.window_at(cursor).is_some()
+            || (asking && contains(dialog_position_of(message), message, cursor))
             || self.dialog.is_some()
             || self.amount.is_some()
             || self.escape.is_some()
             || self.world_map.is_some()
+            || self.deal_choice.is_some()
+            || self.menu.is_some()
+            || self.pick.as_ref().is_some_and(|(list, _)| list.covers(cursor))
+            || self.shop.as_ref().is_some_and(|shop| shop.covers(cursor))
+            || self.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.enchant.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.materials.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.bank.as_ref().is_some_and(|bank| bank.hit(cursor).is_some())
+            || self.viewing.as_ref().is_some_and(|viewed| viewed.window.hit(cursor, &viewed.items).is_some())
+            || self.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some()
+            || self.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some()
+            || self.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some()
+            || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
             || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
             || self.cashshop_buy_asked
@@ -1930,7 +2316,7 @@ impl Game {
             || roulette::icon_hit(cursor)
             || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.stylist.as_ref().is_some_and(|window| window.covers(cursor))
-            || self.chat.contains(cursor)
+            || self.chat.blocks(cursor)
             || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
     }
@@ -2127,7 +2513,7 @@ impl Game {
     }
 
     /// An inventory item let go on the deal: it goes in unless the deal is locked, holds it already or is full.
-    fn offer(&mut self, index: u16) -> Option<usize> {
+    fn offer(&mut self, index: u16, all: bool) -> Option<usize> {
         let trade = self.trade.as_ref()?;
         if !trade.open_for_items() {
             return None;
@@ -2138,7 +2524,22 @@ impl Game {
         if trade.items[0].len() + trade.pending.len() >= trade::MOST_ITEMS {
             return Some(TRADE_FULL);
         }
-        self.move_item(Asked::Trade(index));
+        match self.inventory.get(index).map(|item| u32::from(item.amount)) {
+            Some(amount) if all => self.give(Asked::Trade(index), amount),
+            _ => self.move_item(Asked::Trade(index)),
+        }
+        None
+    }
+
+    /// Alt + right click on an inventory item: the whole stack goes to the first that's open of the storage, a trade
+    /// and the cart. A refused trade says why.
+    fn quick_move(&mut self, index: u16) -> Option<usize> {
+        let amount = u32::from(self.inventory.get(index)?.amount);
+        match quick_target(self.storage.frame.open, self.trade.is_some(), self.cart.cart.is_some() && self.cart.frame.open)? {
+            QuickTo::Storage => self.give(Asked::Store(index), amount),
+            QuickTo::Trade => return self.offer(index, true),
+            QuickTo::Cart => self.give(Asked::ToCart(index), amount),
+        }
         None
     }
 
@@ -2888,23 +3289,39 @@ impl Game {
 
     /// Sends the mercenary or homunculus `id` at the monster under the cursor, or to the cell there; the order it now
     /// follows, if any.
-    fn order_companion(&mut self, id: u32, cursor: [f32; 2]) -> Option<mercenary::Order> {
-        if let Some(Owner::Unit(target)) = hovered(&self.hit_boxes, cursor, false)
-            && self.units.get(&target).is_some_and(|actor| actor.kind == MONSTER)
-        {
-            // ponytail: rathena reads non-zero as "keep attacking" and says the client sends 0; 1 keeps it at it.
-            let _ = self.session.act_npc(id, target, 1);
-            return Some(mercenary::Order::Attack(target));
+    /// An Alt press for a companion (the mercenary, or the homunculus): on a monster it attacks it, at once with
+    /// Shift, otherwise the first press marks it and a second on the same one sends the attack; on the ground it goes
+    /// there. False when that companion isn't out (Alt does nothing special then).
+    fn companion_press(&mut self, homunculus: bool, cursor: [f32; 2], shift: bool) -> bool {
+        let id = if homunculus { self.homunculus_id.filter(|id| self.units.contains_key(id)) } else { self.mercenary.as_ref().map(|hired| hired.id) };
+        let Some(id) = id else { return false };
+        let monster = match hovered(&self.hit_boxes, cursor, false) {
+            Some(Owner::Unit(target)) if self.units.get(&target).is_some_and(|actor| actor.kind == MONSTER) => Some(target),
+            _ => None,
+        };
+        let order = match monster {
+            Some(target) => {
+                let (mark, attack) = companion_mark(self.companion_mark, id, target, shift);
+                self.companion_mark = mark;
+                // ponytail: rathena reads non-zero as "keep attacking" and says the client sends 0; 1 keeps it at it.
+                attack.then(|| {
+                    let _ = self.session.act_npc(id, target, 1);
+                    mercenary::Order::Attack(target)
+                })
+            }
+            None => {
+                self.companion_mark = None;
+                self.ground_cell(cursor).filter(|&cell| self.world.gat.walkable(cell)).map(|cell| {
+                    let _ = self.session.move_npc(id, cell.map(|value| value as u16));
+                    mercenary::Order::Move(self.player.cell)
+                })
+            }
+        };
+        if let Some(order) = order {
+            let steering = if homunculus { &mut self.homunculus_steering } else { &mut self.steering };
+            steering.order = Some(order);
         }
-        let height = self.world.cell_position(self.player.cell.map(|value| value as f32))[1];
-        let view = self.camera.view(SCREEN[0] / SCREEN[1]);
-        let point = view.pick([cursor[0] / SCREEN[0], cursor[1] / SCREEN[1]], height)?;
-        let cell = [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32];
-        if !self.world.gat.walkable(cell) {
-            return None;
-        }
-        let _ = self.session.move_npc(id, cell.map(|value| value as u16));
-        Some(mercenary::Order::Move(self.player.cell))
+        true
     }
 
     /// Calls the mercenary or homunculus `id` back to the player when `steering` says so; an attack order lasts while
@@ -3502,7 +3919,218 @@ fn last_sentence(text: &str) -> &str {
 }
 
 fn dialog_position(dialog: &Texture) -> [f32; 2] {
-    [((SCREEN[0] - dialog.size[0]) / 2.0).floor(), ((SCREEN[1] - dialog.size[1]) / 1.5).floor()]
+    dialog_position_of(dialog.size)
+}
+
+fn dialog_position_of(size: [f32; 2]) -> [f32; 2] {
+    [((SCREEN[0] - size[0]) / 2.0).floor(), ((SCREEN[1] - size[1]) / 1.5).floor()]
+}
+
+/// An attack asked for with the mouse.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Attack {
+    target: u32,
+    /// Kept up (Ctrl or /noctrl); otherwise only while the button is held.
+    continuous: bool,
+    held: bool,
+    /// The attack packet went out.
+    sent: bool,
+    /// A walk toward it went out (to where), and when a cell in reach was last looked for.
+    chased: bool,
+    chase_cell: Option<[i32; 2]>,
+    last_chase: Option<Instant>,
+}
+
+/// What letting go of the button does to an attack.
+#[derive(Debug, PartialEq)]
+enum Release {
+    Keep,
+    /// It went out and was only while held: CZ_CANCEL_LOCKON.
+    Cancel,
+}
+
+impl Attack {
+    fn new(target: u32, continuous: bool) -> Self {
+        Self { target, continuous, held: true, sent: false, chased: false, chase_cell: None, last_chase: None }
+    }
+
+    fn release(&mut self) -> Release {
+        if self.continuous {
+            return Release::Keep;
+        }
+        self.held = false;
+        if self.sent { Release::Cancel } else { Release::Keep }
+    }
+
+    /// Keeps attacking while kept up or held; let go before it reached, one swing.
+    fn action(&self) -> u8 {
+        if self.continuous || self.held { net::ACT_ATTACK_REPEAT } else { net::ACT_ATTACK }
+    }
+}
+
+/// An attack packet goes no sooner than this after the last; out of reach, a cell in reach is looked for this often.
+const ATTACK_GAP: Duration = Duration::from_millis(1200);
+const CHASE_GAP: Duration = Duration::from_millis(450);
+/// "Attacks and skills cannot be used when your Weight is over 90%.", "Unable to attack while riding."
+const OVERWEIGHT: usize = 307;
+const RIDING_NO_ATTACK: usize = 1885;
+/// EFST_ALL_RIDING: a mount that can't attack (rathena's All_Riding has NoAttack).
+const ALL_RIDING: u16 = 613;
+/// /noctrl's lines: on, off.
+const NO_CTRL_ON: usize = 717;
+const NO_CTRL_OFF: usize = 718;
+
+/// In reach to attack: at most range × 5 + 5.5 world units away (a cell is 5).
+fn in_attack_reach(from: [i32; 2], to: [i32; 2], range: i32) -> bool {
+    let [dx, dy] = [(from[0] - to[0]) as f32, (from[1] - to[1]) as f32];
+    dx.hypot(dy) * 5.0 <= range as f32 * 5.0 + 5.5
+}
+
+fn may_attack(last: Option<Instant>, now: Instant) -> bool {
+    last.is_none_or(|last| now.saturating_duration_since(last) >= ATTACK_GAP)
+}
+
+/// Why an attack can't start: weight at 90% or more, riding a mount that can't attack.
+fn attack_refused(weight: i64, max_weight: i64, riding: bool) -> Option<usize> {
+    if max_weight > 0 && weight * 10 >= max_weight * 9 {
+        Some(OVERWEIGHT)
+    } else if riding {
+        Some(RIDING_NO_ATTACK)
+    } else {
+        None
+    }
+}
+
+/// The player menu opens on the right release only for a still click: the pointer not moved at all, no Shift, the
+/// left button up, off the windows.
+fn menu_opens(moved: bool, shift: bool, left_down: bool, on_window: bool) -> bool {
+    !(moved || shift || left_down || on_window)
+}
+
+/// An Alt press for a companion on a monster: the mark left (companion, monster), and whether the attack goes now
+/// (with Shift, or a second press on the marked one).
+fn companion_mark(mark: Option<(u32, u32)>, companion: u32, target: u32, shift: bool) -> (Option<(u32, u32)>, bool) {
+    if shift || mark == Some((companion, target)) { (None, true) } else { (Some((companion, target)), false) }
+}
+
+/// What an aimed skill could land on: the player, a monster, another player.
+#[derive(Clone, Copy)]
+enum AimAt {
+    Me,
+    Monster,
+    Player,
+}
+
+/// Whether a skill (its target flags, `net::Skill::*`) can be used on that: enemy skills on monsters (and players,
+/// where the map lets them), friend skills on players and oneself, self skills on oneself.
+// ponytail: an enemy skill counts as fitting any player; whether the map allows the hit isn't checked here.
+fn aim_fits(flags: u32, at: AimAt) -> bool {
+    let has = |flag: u32| flags & flag != 0;
+    match at {
+        AimAt::Me => has(net::Skill::SELF) || has(net::Skill::FRIEND),
+        AimAt::Monster => has(net::Skill::ENEMY),
+        AimAt::Player => has(net::Skill::FRIEND) || has(net::Skill::ENEMY),
+    }
+}
+
+/// What a press while aiming uses the skill on: for a ground skill the cell under the pointer (a unit there doesn't
+/// count), for the others the unit under it. None: the press lets go of the aim.
+fn aim_use(ground: bool, unit: Option<u32>, cell: Option<[i32; 2]>) -> Option<SkillTarget> {
+    if ground { cell.map(SkillTarget::Cell) } else { unit.map(SkillTarget::Unit) }
+}
+
+/// The level a wheel turn picks while aiming (rows > 0 is down, lowering it): 1 to the learned level, and only for
+/// skills whose level can be picked.
+fn aim_level(level: u16, learned: u16, rows: i32, separate: bool) -> u16 {
+    if !separate {
+        return level;
+    }
+    (i32::from(level) - rows).clamp(1, i32::from(learned.max(1))) as u16
+}
+
+/// Talking needs the player standing still (or sitting): not walking, not attacking.
+fn may_talk(moving: bool, attacking: bool, sitting: bool) -> bool {
+    sitting || !(moving || attacking)
+}
+
+/// An item can be picked up from the next cell, diagonals too.
+fn within_pickup(from: [i32; 2], at: [i32; 2]) -> bool {
+    (at[0] - from[0]).abs().max((at[1] - from[1]).abs()) <= 1
+}
+
+/// The cursor over an NPC: a warp portal's, or talking.
+fn npc_cursor(job: u16) -> cursor::Kind {
+    if job == WARP_JOB { cursor::Kind::Warp } else { cursor::Kind::Talk }
+}
+
+/// A right click on an inventory item with a modifier: Alt sends the stack on, Shift moves it into the favourites or
+/// out, Ctrl identifies it. None: no modifier (the description).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum InventoryRight {
+    QuickMove,
+    Favorite,
+    Identify,
+}
+
+fn inventory_right(alt: bool, shift: bool, ctrl: bool) -> Option<InventoryRight> {
+    if alt {
+        Some(InventoryRight::QuickMove)
+    } else if shift {
+        Some(InventoryRight::Favorite)
+    } else if ctrl {
+        Some(InventoryRight::Identify)
+    } else {
+        None
+    }
+}
+
+/// Where Alt + right click sends a stack: the first that's open of the storage, a trade, the cart.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum QuickTo {
+    Storage,
+    Trade,
+    Cart,
+}
+
+fn quick_target(storage: bool, trade: bool, cart: bool) -> Option<QuickTo> {
+    [(storage, QuickTo::Storage), (trade, QuickTo::Trade), (cart, QuickTo::Cart)].into_iter().find(|(open, _)| *open).map(|(_, to)| to)
+}
+
+/// An item's link on the chat line, as the chat shows links.
+// ponytail: the tag the chat already reads for item links; the official client's own link isn't knowable.
+fn item_link(id: u32, name: &str) -> String {
+    format!("<ITEM>{name}<INFO>{id}</INFO></ITEM>")
+}
+
+/// Magnifier and Novice Magnifier (rathena's ITEMID_MAGNIFIER and ITEMID_NOVICE_MAGNIFIER).
+const MAGNIFIERS: [u32; 2] = [611, 12325];
+/// "You don't have any Magnifier."
+const NO_MAGNIFIER: usize = 2735;
+
+/// What a left click on the world does (`Game::world_click`).
+enum WorldClick {
+    /// A warp portal's cell.
+    Warp([i32; 2]),
+    Talk(u32),
+    Attack(u32),
+    Swing(u32),
+    PickUp(u32),
+    Ground,
+}
+
+/// CZ_REQUEST_MOVE goes no sooner than this after the last one; a walk asked for sooner is dropped. The held button
+/// tries again this often.
+const MOVE_GAP: Duration = Duration::from_millis(300);
+/// Two presses this close, the pointer not moved at all between them, make a double press.
+const DOUBLE_PRESS: Duration = Duration::from_millis(500);
+
+fn may_move(last: Option<Instant>, now: Instant) -> bool {
+    last.is_none_or(|last| now.saturating_duration_since(last) >= MOVE_GAP)
+}
+
+/// Whether a press now, after the last one (when, and whether the pointer moved since), is a double press.
+fn double_press(last: Option<(Instant, bool)>, now: Instant) -> bool {
+    last.is_some_and(|(at, moved)| !moved && now.saturating_duration_since(at) < DOUBLE_PRESS)
 }
 
 fn offset(origin: [f32; 2], offset: [f32; 2]) -> [f32; 2] {
@@ -3760,6 +4388,10 @@ struct App {
     modifiers: ModifiersState,
     /// Maps with the indoor camera.
     indoor: HashSet<String>,
+    /// Maps with their own camera table; the view the player left; whether it's written (not when driven).
+    viewpoints: HashMap<String, rustnarok_client::map::Viewpoint>,
+    saved_view: SavedView,
+    save_view: bool,
     look_tables: LookTables,
     /// Job names shown to players.
     pc_job_names: HashMap<u16, String>,
@@ -5101,7 +5733,14 @@ impl App {
                     }
                     Panel::Inventory => {
                         let hit = game.inventory.hit(cursor).unwrap();
-                        if let Some(index) = game.inventory.click(hit) {
+                        // Shift + click puts the item's link on the chat line.
+                        if shift
+                            && let inventory::Hit::Item(index) = hit
+                            && let Some(item) = game.inventory.get(index)
+                        {
+                            let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
+                            game.chat.typing().push_str(&item_link(item.id, &name));
+                        } else if let Some(index) = game.inventory.click(hit) {
                             game.use_item(index);
                         }
                     }
@@ -5274,7 +5913,7 @@ impl App {
                     }
                 }
             }
-            Scene::Game(game) if game.chat.contains(cursor) => game.chat.click(cursor),
+            Scene::Game(game) if game.chat.blocks(cursor) => game.chat.click(cursor),
             Scene::Game(game) if game.dialog.is_some() => {
                 // NPC windows take the click; the map doesn't react while talking.
                 let dialog = game.dialog.as_mut().unwrap();
@@ -5309,73 +5948,18 @@ impl App {
                     let _ = game.session.try_capture(id);
                 }
             }
-            Scene::Game(game) if game.targeting.is_some() => {
-                // An aimed skill goes to the unit under the pointer, or the cell for ground skills.
-                let (id, _) = game.targeting.unwrap();
-                let ground = game.skills.iter().find(|skill| skill.id == id).is_some_and(|skill| skill.kind & net::Skill::GROUND != 0);
-                let unit = match hovered_unit(&game.hit_boxes, cursor, game.players_first(shift)) {
-                    Some(Owner::Unit(unit)) => Some((unit, game.units.get(&unit).map(|actor| actor.cell))),
-                    Some(Owner::Player) => Some((game.account_id, Some(game.player.cell))),
-                    _ => None,
-                };
-                let height = game.world.cell_position(game.player.cell.map(|value| value as f32))[1];
-                let view = game.camera.view(SCREEN[0] / SCREEN[1]);
-                let cell = view
-                    .pick([cursor[0] / SCREEN[0], cursor[1] / SCREEN[1]], height)
-                    .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32]);
-                match (ground, unit, cell) {
-                    (true, Some((_, Some(at))), _) => game.aim_skill(SkillTarget::Cell(at)),
-                    (true, _, Some(cell)) => game.aim_skill(SkillTarget::Cell(cell)),
-                    (false, Some((unit, _)), _) => game.aim_skill(SkillTarget::Unit(unit)),
-                    // Clicking nothing keeps aiming.
-                    _ => {}
-                }
-            }
             Scene::Game(game) => {
                 if game.store_open() {
                     return;
                 }
-                // Whatever is under the cursor (see `picking::pick`): talk to NPCs, attack monsters, pick items up.
-                match hovered(&game.hit_boxes, cursor, shift) {
-                    Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
-                        Some(NPC) => {
-                            let _ = game.session.talk(id);
-                            return;
-                        }
-                        Some(MONSTER) => {
-                            game.attack(id);
-                            return;
-                        }
-                        // Players: an attack where the map (or Shift, or /noshift) says so; one swing a click on a
-                        // siege map. Otherwise the click walks, below.
-                        Some(PLAYER) => match versus::click(game.side().flags, game.players_first(shift), game.no_shift, game.account_id, id) {
-                            versus::Click::Attack => {
-                                game.attack(id);
-                                return;
-                            }
-                            versus::Click::Swing => {
-                                let _ = game.session.act(id, net::ACT_ATTACK);
-                                return;
-                            }
-                            versus::Click::Walk => {}
-                        },
-                        _ => {}
-                    },
-                    Some(Owner::Item(id)) => {
-                        game.pick_up(id);
-                        return;
-                    }
-                    _ => {}
-                }
-                game.pending = None;
-                // Walk to the clicked cell: pick the ground plane at the player's height.
-                let height = game.world.cell_position(game.player.cell.map(|value| value as f32))[1];
-                let view = game.camera.view(SCREEN[0] / SCREEN[1]);
-                if let Some(point) = view.pick([cursor[0] / SCREEN[0], cursor[1] / SCREEN[1]], height) {
-                    let cell = [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32];
-                    if game.world.gat.walkable(cell) {
-                        let _ = game.session.walk(cell.map(|value| value as u16));
-                    }
+                // Whatever is under the cursor (see `picking::pick`): talk to NPCs, attack monsters, pick items up. The
+                // ground walked when the button went down (`press`).
+                match game.world_click(cursor, shift) {
+                    // Started on the press.
+                    WorldClick::Attack(_) => {}
+                    WorldClick::Swing(id) => drop(game.session.act(id, net::ACT_ATTACK)),
+                    // The rest went with the press.
+                    WorldClick::Talk(_) | WorldClick::PickUp(_) | WorldClick::Warp(_) | WorldClick::Ground => {}
                 }
             }
             Scene::Message(..) => {
@@ -5398,6 +5982,12 @@ impl App {
     /// The pointer moved: windows and items being dragged follow it.
     fn pointer_moved(&mut self) {
         if let Scene::Game(game) = &mut self.scene {
+            if let Some((_, moved)) = &mut game.press_mark {
+                *moved = true;
+            }
+            if game.right_press.is_some() {
+                game.right_moved = true;
+            }
             let (inventory_height, equipment_height, info_height) = (game.inventory.height(), game.equipment.height(), game.basic_info.height());
             game.basic_info.frame.drag_to(self.cursor, info_height);
             let hotkeys_height = game.hotkeys.height();
@@ -5475,6 +6065,7 @@ impl App {
             if let Some(window) = &mut game.shortcuts_window {
                 window.drag_to(self.cursor);
             }
+            game.camera_goal.pointer_moved();
             game.camera_goal.drag(self.cursor, self.modifiers);
             if let Some((_, start, moved)) = &mut game.dragging {
                 *moved |= (self.cursor[0] - start[0]).abs() + (self.cursor[1] - start[1]).abs() > 4.0;
@@ -5484,27 +6075,13 @@ impl App {
 
     /// The right button: Alt moves stacks to storage, a click on a player opens their menu, a press aims the camera.
     fn right_button(&mut self, state: ElementState) {
-        // ponytail: Ctrl + right click orders the mercenary and Alt + right click the homunculus (not a drag, not on a
-        // window), an estimate of the official client's: at a monster it attacks, on the ground it goes there.
-        if let Scene::Game(game) = &mut self.scene
-            && state == ElementState::Released
-            && let Some((start, _)) = game.right_press
-            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
-            && game.window_at(self.cursor).is_none()
-            && !game.chat.contains(self.cursor)
-            && let Some((homunculus, id)) = if self.modifiers.control_key() {
-                game.mercenary.as_ref().map(|hired| (false, hired.id))
-            } else if self.modifiers.alt_key() {
-                game.homunculus_id.filter(|id| game.units.contains_key(id)).map(|id| (true, id))
-            } else {
-                None
-            }
+        // Alt + right press orders the homunculus (when it's out), off the windows.
+        if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
+            && state == ElementState::Pressed
+            && self.modifiers.alt_key()
+            && !game.on_ui(self.cursor, &self.items, assets.message.size)
+            && game.companion_press(true, self.cursor, self.modifiers.shift_key())
         {
-            game.right_press = None;
-            if let Some(order) = game.order_companion(id, self.cursor) {
-                let steering = if homunculus { &mut game.homunculus_steering } else { &mut game.steering };
-                steering.order = Some(order);
-            }
             return;
         }
         // On the character select, a card's menu of moving and renaming (only once the PIN check has passed).
@@ -5553,13 +6130,45 @@ impl App {
         }
         if let Scene::Game(game) = &mut self.scene {
             let assets = self.assets.as_ref();
-            // Alt + right click moves a whole stack between the inventory and the open storage.
+            // A right press lets go of a skill being aimed.
+            if state == ElementState::Pressed {
+                game.targeting = None;
+            }
+            // A right press on an NPC talks too.
+            if state == ElementState::Pressed
+                && let Some(assets) = assets
+                && !game.on_ui(self.cursor, &self.items, assets.message.size)
+                && let Some(Owner::Unit(id)) = hovered_unit(&game.hit_boxes, self.cursor, false)
+                && game.units.get(&id).is_some_and(|actor| actor.kind == NPC && actor.job != WARP_JOB)
+            {
+                game.talk_to(id);
+            }
+            // A right click on an inventory item with a modifier: Alt sends the stack to what's open, Shift moves it
+            // into the favourites or out, Ctrl identifies it with a Magnifier.
+            let (alt, shift, ctrl) = (self.modifiers.alt_key(), self.modifiers.shift_key(), self.modifiers.control_key());
+            if state == ElementState::Pressed
+                && game.window_at(self.cursor) == Some(Panel::Inventory)
+                && let Some(inventory::Hit::Item(index)) = game.inventory.hit(self.cursor)
+                && let Some(item) = game.inventory.get(index).cloned()
+                && let Some(action) = inventory_right(alt, shift, ctrl)
+            {
+                let line = match action {
+                    InventoryRight::QuickMove => game.quick_move(index),
+                    InventoryRight::Favorite => game.session.move_favorite(index, item.favorite).err().and(None),
+                    InventoryRight::Identify if item.identified => None,
+                    InventoryRight::Identify if game.inventory.items.iter().any(|carried| MAGNIFIERS.contains(&carried.id)) => {
+                        game.session.identify_one(index).err().and(None)
+                    }
+                    InventoryRight::Identify => Some(NO_MAGNIFIER),
+                };
+                if let Some(line) = line {
+                    game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+                return;
+            }
+            // Alt + right click takes a whole stack out of the open storage.
             let moved = match game.window_at(self.cursor) {
                 _ if state != ElementState::Pressed || !self.modifiers.alt_key() || !game.storage.frame.open => None,
-                Some(Panel::Inventory) => match game.inventory.hit(self.cursor) {
-                    Some(inventory::Hit::Item(index)) => game.inventory.get(index).map(|item| (Asked::Store(index), item.amount)),
-                    _ => None,
-                },
                 Some(Panel::Storage) => match assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items)) {
                     Some(storage::Hit::Item(index)) => game.storage.get(index).map(|item| (Asked::Take(index), item.amount)),
                     _ => None,
@@ -5573,15 +6182,16 @@ impl App {
                 _ => false,
             });
             let on_unit = match picking::pick(with_menu, self.cursor, true) {
-                _ if game.window_at(self.cursor).is_some() || game.chat.contains(self.cursor) => None,
+                _ if game.window_at(self.cursor).is_some() || game.chat.blocks(self.cursor) => None,
                 Some(Owner::Unit(id)) => Some(id),
                 _ => None,
             };
             if state == ElementState::Pressed {
                 game.menu = None;
                 game.right_press = Some((self.cursor, on_unit));
-            } else if let Some((start, Some(id))) = game.right_press.take()
-                && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+                game.right_moved = false;
+            } else if let Some((_, Some(id))) = game.right_press.take()
+                && menu_opens(game.right_moved, self.modifiers.shift_key(), self.mouse_down, false)
                 && let Some(actor) = game.units.get(&id)
             {
                 let fill = |id: usize| rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&actor.name]);
@@ -5660,7 +6270,7 @@ impl App {
                 game.give(asked, u32::from(amount));
             } else if state == ElementState::Pressed && (game.targeting.take().is_some() | std::mem::take(&mut game.capturing)) {
             } else if state == ElementState::Pressed {
-                game.camera_goal.press(self.cursor, self.modifiers);
+                game.camera_goal.press(self.cursor, Instant::now(), self.modifiers.control_key(), self.modifiers.shift_key());
             } else {
                 game.camera_goal.dragging = None;
             }
@@ -5670,6 +6280,15 @@ impl App {
     /// The left button went down or up: a press grabs, a release drops or clicks.
     /// The wheel turned `rows` notches (positive: toward the player): it scrolls what the pointer is over, or zooms.
     fn wheel(&mut self, rows: i32) {
+        // Over a window the wheel zooms only with Ctrl (and never while aiming).
+        if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
+            && self.modifiers.control_key()
+            && game.targeting.is_none()
+            && game.on_ui(self.cursor, &self.items, assets.message.size)
+        {
+            game.camera_goal.wheel(rows, Instant::now(), true, self.modifiers.shift_key());
+            return;
+        }
         if let Scene::Game(game) = &mut self.scene {
             // Over the inventory the wheel scrolls it; elsewhere it zooms (away from you zooms out).
             let on_shop = game.shop.as_ref().is_some_and(|shop| shop.covers(self.cursor));
@@ -5720,13 +6339,33 @@ impl App {
                 }
                 Some(_) => {}
                 None if game.chat.contains(self.cursor) => game.chat.scroll_by(rows),
-                None => game.camera_goal.wheel(-rows as f32),
+                // Aiming, the wheel picks the level (up raises it) instead of zooming.
+                None if game.targeting.is_some() => {
+                    let (id, level) = game.targeting.unwrap();
+                    let separate = self.skill_info.get(&id).is_some_and(|info| info.separate_level);
+                    let learned = game.skills.iter().find(|skill| skill.id == id).map_or(level, |skill| skill.level);
+                    game.targeting = Some((id, aim_level(level, learned, rows, separate)));
+                }
+                None => game.camera_goal.wheel(rows, Instant::now(), self.modifiers.control_key(), self.modifiers.shift_key()),
             }
         }
     }
 
     fn left_button(&mut self, event_loop: &ActiveEventLoop, state: ElementState) {
         self.mouse_down = state == ElementState::Pressed;
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+        {
+            game.walk_held = false;
+            // An attack held down stops when let go, once it went out.
+            if let Some(attack) = &mut game.attack
+                && attack.release() == Release::Cancel
+            {
+                game.attack = None;
+                let _ = game.session.stop_attack();
+            }
+        }
+        let message_size = self.assets.as_ref().map_or([0.0; 2], |assets| assets.message.size);
         let dragged = match &mut self.scene {
             Scene::Game(game) if state == ElementState::Released => {
                 let item = game.dragging.take();
@@ -5819,13 +6458,13 @@ impl App {
                         }
                     }
                     (Some((Dragged::Item(index), _, true)), _) if on_trade => {
-                        if let Some(id) = game.offer(index) {
+                        if let Some(id) = game.offer(index, false) {
                             game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                         }
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
                     // Let go over the world: dropped at the player's feet, asking how many of a stack.
-                    (Some((Dragged::Item(index), _, true)), None) if !game.on_ui(self.cursor, &self.items) && !game.store_open() => {
+                    (Some((Dragged::Item(index), _, true)), None) if !game.on_ui(self.cursor, &self.items, message_size) && !game.store_open() => {
                         game.move_item(Asked::Drop(index))
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Cart)) => game.move_item(Asked::ToCart(index)),
@@ -5915,6 +6554,82 @@ impl App {
     /// A mouse press: grabs a window by its title bar, and notes it for Esc.
     fn press(&mut self) {
         let cursor = self.cursor;
+        // Aiming a skill: the press on its target uses it; any other press lets go of the aim. On the world that's
+        // all it does (no walk); on a window the window gets the press too.
+        if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
+            && game.targeting.is_some()
+        {
+            let on_ui = game.on_ui(cursor, &self.items, assets.message.size);
+            match (on_ui, game.aim_target(cursor, game.players_first(self.modifiers.shift_key()))) {
+                (false, Some(target)) => {
+                    game.aim_skill(target);
+                    return;
+                }
+                (on_ui, _) => {
+                    game.targeting = None;
+                    if !on_ui {
+                        return;
+                    }
+                }
+            }
+        }
+        // A press on the ground walks there at once, and holding the button keeps following the pointer. Shift turns
+        // to face it, Ctrl does nothing, and sitting only turns. A second press within DOUBLE_PRESS with the pointer
+        // still is ignored. Units and items are the click's (on release).
+        if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
+            && game.dragging.is_none()
+            && !game.on_ui(cursor, &self.items, assets.message.size)
+            && !game.store_open()
+            && game.targeting.is_none()
+            && !game.capturing
+        {
+            let now = Instant::now();
+            let double = double_press(game.press_mark, now);
+            game.press_mark = Some((now, false));
+            let (shift, ctrl) = (self.modifiers.shift_key(), self.modifiers.control_key());
+            // Alt + left press orders the mercenary (when it's out).
+            if !double && self.modifiers.alt_key() && game.companion_press(false, cursor, shift) {
+                return;
+            }
+            // A new press ends the attack under way.
+            game.attack = None;
+            match game.world_click(cursor, shift) {
+                _ if double => {}
+                // A monster with Shift (without /noshift): nothing.
+                WorldClick::Attack(id) if shift && !game.no_shift && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER) => {}
+                // An attack: kept up with Ctrl or /noctrl, otherwise while the button is held.
+                WorldClick::Attack(id) => {
+                    let weight = |id: u16| game.status.get(&id).copied().unwrap_or(0);
+                    match attack_refused(weight(net::STATUS_WEIGHT), weight(net::STATUS_MAX_WEIGHT), game.riding) {
+                        Some(line) => game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR),
+                        None => {
+                            game.attack = Some(Attack::new(id, ctrl || game.no_ctrl));
+                            game.attack_step(now);
+                        }
+                    }
+                }
+                WorldClick::Talk(id) => game.talk_to(id),
+                WorldClick::PickUp(id) if !game.player.sitting => game.pick_up(id),
+                WorldClick::Warp(cell) if !ctrl => {
+                    game.walk_toward(cell, now);
+                    game.walk_held = true;
+                    game.last_walk_try = Some(now);
+                }
+                WorldClick::Ground if !ctrl => {
+                    if let Some(cell) = game.ground_cell(cursor) {
+                        if shift || game.player.sitting {
+                            game.turn_to(cell);
+                        } else {
+                            game.walk_toward(cell, now);
+                            game.walk_held = true;
+                            game.last_walk_try = Some(now);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         if let Scene::Game(game) = &mut self.scene {
             // Windows opened since the last Esc join the list before this press moves one to the front.
             game.sync_esc();
@@ -7027,7 +7742,8 @@ impl App {
                 let sprites = SpriteSet::player(&self.grf, &look, &self.look_tables);
                 let mut player = Actor::new(me.name.clone(), sprites, position.map(i32::from), direction, 150);
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
-                let camera_goal = CameraGoal::new(self.indoor.contains(&map_key(&map)));
+                let indoor = self.indoor.contains(&map_key(&map));
+                let camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
                 let camera = camera_goal.camera(world.cell_position(position.map(f32::from)));
                 let now = Instant::now();
                 let minimap = minimap::load_map(gpu, &self.grf, &map);
@@ -7194,6 +7910,15 @@ impl App {
                     dress_figure: None,
                     head_emblems: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
+                    skill_sent: None,
+                    right_moved: false,
+                    companion_mark: None,
+                    camera_snap: settings_path("camerasnap").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
+                    quake_flip: false,
+                    no_ctrl: settings_path("noctrl").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
+                    attack: None,
+                    last_attack: None,
+                    riding: false,
                     map_type: None,
                     battle: battleground::Battle::default(),
                     queue_window: battle_queue::QueueWindow::default(),
@@ -7302,6 +8027,12 @@ impl App {
                     attack_range: 1,
                     pending: None,
                     auto_say: std::env::var("RUSTNAROK_CLIENT_SAY").ok(),
+                    last_move: None,
+                    walk_goal: None,
+                    walks: 0,
+                    walk_held: false,
+                    last_walk_try: None,
+                    press_mark: None,
                     auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
                         let (x, y) = cell.split_once(',')?;
                         Some([x.parse().ok()?, y.parse().ok()?])
@@ -7332,7 +8063,8 @@ impl App {
         let (Scene::Game(game), Some(gpu)) = (&mut self.scene, &self.gpu) else { return };
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
-                game.camera_goal = CameraGoal::new(self.indoor.contains(&map_key(&map)));
+                let indoor = self.indoor.contains(&map_key(&map));
+                game.camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
                 game.camera = game.camera_goal.camera(world.cell_position(position.map(f32::from)));
                 game.minimap = minimap::load_map(gpu, &self.grf, &map);
                 game.minimap_faded = None;
@@ -7866,6 +8598,7 @@ impl App {
                 game.boss = None;
                 game.materials = None;
                 game.deal_choice = None;
+                game.attack = None;
                 // The merge window closes without a word.
                 if matches!(game.pick, Some((_, Picking::Merge))) {
                     game.pick = None;
@@ -8076,6 +8809,11 @@ impl App {
             }
             // The wear and take-off answers that follow move the items.
             MapEvent::Switched { .. } => {}
+            MapEvent::FavoriteMoved { index, favorite } => {
+                if let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index) {
+                    item.favorite = favorite;
+                }
+            }
             // The storage opens with the inventory beside it.
             MapEvent::InventoryStart { kind: 2 } => {
                 game.storage.open();
@@ -9671,6 +10409,9 @@ impl App {
                     lock_pair(&mut game.locks, id, id, false);
                     game.hold_locked();
                 }
+                if id == game.account_id && kind == ALL_RIDING {
+                    game.riding = on;
+                }
                 if id == game.account_id {
                     game.status_icons.retain(|(icon, ..)| *icon != kind);
                     if on && self.status_icon_files.contains_key(&kind) {
@@ -9913,10 +10654,13 @@ impl App {
                     game.play_effect(gpu, grf, table, effect, id);
                 }
             }
-            // The server's positions: walk from where it has us.
-            MapEvent::TooFar { target, target_cell, cell, range } => {
+            // Out of reach after all: chase it again, as asked (kept up unless it was only while held).
+            // ponytail: the chase starts from the client's positions, not the server's in the packet.
+            MapEvent::TooFar { target, range, .. } => {
                 game.attack_range = i32::from(range);
-                game.attack_from(target, cell.map(i32::from), target_cell.map(i32::from));
+                let (continuous, held) = game.attack.map_or((true, false), |attack| (attack.continuous, attack.held));
+                game.attack = Some(Attack { held, ..Attack::new(target, continuous) });
+                game.attack_step(Instant::now());
             }
             MapEvent::StyleChanged(false) => {
                 game.stylist = None;
@@ -10143,11 +10887,20 @@ impl App {
             *arrived = Some(now);
         }
         let player_feet = game.world.cell_position(player_cell);
-        game.camera.target = player_feet;
-        if self.graphics.effects_on {
-            game.camera.target[1] += game.effects.quake(now);
+        game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame), player_feet, game.camera_snap);
+        // An earthquake shakes the view sideways and in and out, the other way each frame.
+        let quake = if self.graphics.effects_on { game.effects.quake(now) } else { 0.0 };
+        if quake > 0.0 {
+            game.quake_flip = !game.quake_flip;
+            let shake = if game.quake_flip { quake } else { -quake };
+            game.camera.target[0] += game.camera.yaw.cos() * shake;
+            game.camera.target[2] -= game.camera.yaw.sin() * shake;
+            game.camera.distance += shake;
         }
-        game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame));
+        // The eye stays above the ground under it.
+        let horizontal = game.camera.distance * game.camera.pitch.cos();
+        let eye = [game.camera.target[0] - horizontal * game.camera.yaw.sin(), game.camera.target[2] - horizontal * game.camera.yaw.cos()];
+        game.camera.ground = -game.world.gat.height(eye.map(|axis| (axis / world::CELL).floor() as i32));
         game.last_frame = now;
         let view = game.camera.view(SCREEN[0] / SCREEN[1]);
         let yaw = game.camera.yaw;
@@ -10287,6 +11040,27 @@ impl App {
                 Some(picking::Target { owner: *owner, kind, sprite, area: picking::area(sprite, cell, min), depth })
             })
             .collect();
+
+        // Warp portals have no sprite: the cell they stand on is their pick box.
+        let half = world::CELL / 2.0;
+        for (&id, actor) in game.units.iter().filter(|(_, actor)| actor.job == WARP_JOB) {
+            let feet = game.world.cell_position(actor.cell.map(|value| value as f32));
+            let corners: Option<Vec<_>> = [[-half, -half], [half, -half], [half, half], [-half, half]]
+                .iter()
+                .map(|[dx, dz]| view.project([feet[0] + dx, feet[1], feet[2] + dz]).map(to_screen))
+                .collect();
+            if let Some(corners) = corners {
+                let cell = picking::bounds(&corners);
+                let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]).powi(2)).sum::<f32>();
+                game.hit_boxes.push(picking::Target {
+                    owner: Owner::Unit(id),
+                    kind: picking::Kind::Other,
+                    sprite: cell,
+                    area: picking::area(cell, cell, picking::UNIT_MIN),
+                    depth,
+                });
+            }
+        }
 
         // Shadows first, so characters standing at the same depth draw over them.
         let shadow_placements = game.shadow.as_mut().map(|shadow| shadow.frame(gpu, 0, 0, 0, Timing::Loop(0.0))).unwrap_or_default();
@@ -11449,31 +12223,31 @@ impl App {
         let mut sprites = flatten(&composed);
 
         // The cursor shows what a click would do.
-        let on_window = game.on_ui(pointer.0, items);
+        let on_window = game.on_ui(pointer.0, items, assets.message.size);
         let ground = view
             .pick([pointer.0[0] / SCREEN[0], pointer.0[1] / SCREEN[1]], player_feet[1])
             .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32]);
-        let near_warp = |cell: [i32; 2]| {
-            game.units.values().any(|actor| actor.job == WARP_JOB && (actor.cell[0] - cell[0]).abs() <= 1 && (actor.cell[1] - cell[1]).abs() <= 1)
-        };
         cursor_look.set(if game.camera_goal.dragging.is_some() {
             cursor::Kind::Rotate
+        } else if pointer.1 && game.attack.is_some_and(|attack| attack.held) {
+            cursor::Kind::Attack
         } else if (game.targeting.is_some() || game.capturing) && !on_window {
-            cursor::Kind::Target
+            if game.aim_valid(pointer.0, players_first) { cursor::Kind::TargetValid } else { cursor::Kind::Target }
         } else if on_window {
-            cursor::Kind::Default
+            if game.on_control(pointer.0) { cursor::Kind::Clickable } else { cursor::Kind::Default }
+        } else if game.companion_mark.is_some_and(|(_, target)| hovered(&game.hit_boxes, pointer.0, false) == Some(Owner::Unit(target))) {
+            cursor::Kind::TargetValid
         } else {
             match hovered(&game.hit_boxes, pointer.0, players_first) {
                 Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
                     Some(MONSTER) => cursor::Kind::Attack,
-                    Some(NPC) => cursor::Kind::Talk,
+                    Some(NPC) => npc_cursor(game.units[&id].job),
                     Some(PLAYER) if game.opponent(id).is_some_and(|other| game.side().attack_cursor(&other, players_first, false)) => cursor::Kind::Attack,
                     Some(HOMUNCULUS | MERCENARY | ELEMENTAL) if versus::companion_cursor(game.side().flags) => cursor::Kind::Attack,
                     _ => cursor::Kind::Default,
                 },
                 Some(Owner::Item(_)) => cursor::Kind::Pick,
                 _ => match ground {
-                    Some(cell) if near_warp(cell) => cursor::Kind::Warp,
                     Some(cell) if !game.world.gat.walkable(cell) => cursor::Kind::NoWalk,
                     _ => cursor::Kind::Default,
                 },
@@ -11490,6 +12264,7 @@ impl App {
             let middle = [SCREEN[0] / 2.0, SCREEN[1] / 2.0];
             sprites.extend(slot_frame.into_iter().map(|(key, offset, size)| (sprite.texture(key), [middle[0] + offset[0], middle[1] + offset[1]], size)));
         }
+        cursor_look.press(pointer.1);
         sprites.extend(cursor_look.draw(gpu, pointer.0));
 
         game.effects.advance(gpu, now, yaw);
@@ -11686,6 +12461,22 @@ impl ApplicationHandler<NetEvent> for App {
                     game.last_keepalive = Instant::now();
                     let _ = game.session.tick(tick);
                 }
+                // The view the player leaves is kept for the next map of its kind.
+                self.saved_view.follow(&game.camera_goal, Instant::now(), self.save_view);
+                // The held button follows the pointer: another walk each time MOVE_GAP has passed since the last
+                // try, not over a window, nor while an attack or a pickup is on its way.
+                let now = Instant::now();
+                game.attack_step(now);
+                if game.walk_held
+                    && game.pending.is_none()
+                    && game.last_walk_try.is_none_or(|last| now.saturating_duration_since(last) > MOVE_GAP)
+                    && let Some(assets) = &self.assets
+                    && !game.on_ui(self.cursor, &self.items, assets.message.size)
+                    && let Some(cell) = game.ground_cell(self.cursor)
+                {
+                    game.last_walk_try = Some(now);
+                    game.walk_toward(cell, now);
+                }
                 if game.entered.elapsed() > Duration::from_secs(1) {
                     if let Some(cell) = game.auto_walk.take() {
                         let _ = game.session.walk(cell);
@@ -11815,7 +12606,6 @@ impl ApplicationHandler<NetEvent> for App {
                 {
                     game.pending = None;
                     match pending {
-                        Pending::Attack(target) => game.attack(target),
                         Pending::PickUp(id) => game.pick_up(id),
                         Pending::Skill { id, level, target } => {
                             game.targeting = Some((id, level));
@@ -11924,6 +12714,13 @@ fn main() {
         Vec::new()
     });
     let indoor = rustnarok_client::map::indoor_maps(&grf).unwrap_or_default();
+    let viewpoints = rustnarok_client::map::viewpoints(&grf).unwrap_or_default();
+    // A client the harness drives starts from the default view and keeps it to itself.
+    let driven = std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_some();
+    let saved_view = settings_path("camera")
+        .filter(|_| !driven)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map_or_else(SavedView::default, |text| SavedView::parse(&text));
     let pc_job_names = lua::pc_job_names(&grf).unwrap_or_default();
     let map_names = rustnarok_client::map::map_names(&grf).unwrap_or_default();
     let skill_info = lua::skill_info(&grf).unwrap_or_else(|error| {
@@ -11977,6 +12774,9 @@ fn main() {
         icons: HashMap::new(),
         modifiers: ModifiersState::empty(),
         indoor,
+        viewpoints,
+        saved_view,
+        save_view: !driven,
         look_tables,
         pc_job_names,
         map_names,
@@ -12196,6 +12996,189 @@ mod tests {
     }
 
     #[test]
+    fn moves_items_with_a_modifier() {
+        assert_eq!(
+            [inventory_right(true, true, false), inventory_right(false, true, true), inventory_right(false, false, true), inventory_right(false, false, false)],
+            [Some(InventoryRight::QuickMove), Some(InventoryRight::Favorite), Some(InventoryRight::Identify), None]
+        );
+        assert_eq!(quick_target(true, true, true), Some(QuickTo::Storage));
+        assert_eq!(quick_target(false, true, true), Some(QuickTo::Trade));
+        assert_eq!(quick_target(false, false, true), Some(QuickTo::Cart));
+        assert_eq!(quick_target(false, false, false), None);
+        assert_eq!(show_links(&item_link(512, "Apple")), "^0070C0Apple^000000");
+    }
+
+    #[test]
+    fn glides_and_keeps_the_view() {
+        // A tenth of the way a 60th of a second, the same at any frame rate.
+        assert!((follow_step(Duration::from_secs_f32(1.0 / 60.0)) - 0.1).abs() < 1e-4);
+        assert!((follow_step(Duration::from_secs_f32(2.0 / 60.0)) - 0.19).abs() < 1e-4);
+        // The view left on each kind of map, within that kind's limits.
+        let outdoors = CameraGoal::arrive(false, None, [80.0, 500.0]);
+        assert_eq!((outdoors.pitch, outdoors.distance(), outdoors.yaw), (65.0, 400.0, 0.0));
+        let indoors = CameraGoal::arrive(true, None, [20.0, 400.0]);
+        assert_eq!((indoors.pitch, indoors.distance(), indoors.yaw), (35.0, 300.0, YAW_INDOOR));
+        // A map's own table starts it, and holds it.
+        let table = rustnarok_client::map::Viewpoint {
+            distance: [210.0, 260.0],
+            distance_in: 250.0,
+            yaw: [45.0, 65.0],
+            yaw_in: 50.0,
+            pitch: [35.0, 45.0],
+            pitch_in: 40.0,
+        };
+        let mut own = CameraGoal::arrive(false, Some(table), [80.0, 500.0]);
+        assert_eq!((own.pitch, own.distance(), own.yaw), (40.0, 250.0, 50.0));
+        own.steer(100.0, 0.0, false, false, false);
+        assert_eq!(own.yaw, 65.0);
+        // Saved views: read back, followed per kind of map.
+        let mut saved = SavedView::parse("50 350 45 280");
+        assert_eq!((saved.of(false), saved.of(true)), ([50.0, 350.0], [45.0, 280.0]));
+        assert_eq!(SavedView::parse(&saved.text()), SavedView { changed: None, ..saved });
+        assert_eq!(SavedView::parse("junk"), SavedView::default());
+        let now = Instant::now();
+        saved.follow(&outdoors, now, false);
+        assert_eq!((saved.of(false), saved.of(true)), ([65.0, 400.0], [45.0, 280.0]));
+        assert!(saved.changed.is_some());
+        saved.follow(&outdoors, now + VIEW_SAVE_AFTER, false);
+        assert!(saved.changed.is_none());
+    }
+
+    #[test]
+    fn steers_the_camera_at_the_games_rates() {
+        let now = Instant::now();
+        let mut outdoors = CameraGoal::new(false);
+        // A degree a pixel, unlimited outdoors; Alt does nothing.
+        outdoors.steer(360.0, 0.0, false, false, false);
+        outdoors.steer(90.0, 0.0, false, false, true);
+        assert_eq!(outdoors.yaw, 360.0);
+        // Shift tilts half a degree a pixel, 50 to 65 (25 to 65 with Ctrl); a pixel at a time carries over.
+        outdoors.steer(0.0, 200.0, false, true, false);
+        assert_eq!(outdoors.pitch, 65.0);
+        outdoors.steer(0.0, -400.0, false, true, false);
+        assert_eq!(outdoors.pitch, 50.0);
+        outdoors.steer(0.0, 1.0, true, true, false);
+        outdoors.steer(0.0, 1.0, true, true, false);
+        assert_eq!(outdoors.pitch, 51.0);
+        outdoors.steer(0.0, -400.0, true, true, false);
+        assert_eq!(outdoors.pitch, 25.0);
+        // Ctrl zooms (down comes closer) and turns too; 230 to 400 units.
+        outdoors.steer(10.0, 400.0, true, false, false);
+        assert_eq!((outdoors.distance(), outdoors.yaw), (230.0, 370.0));
+        outdoors.steer(0.0, -1000.0, true, false, false);
+        assert_eq!(outdoors.distance(), 400.0);
+        // The wheel: one step however far, at most every 15 ms; with Shift it tilts.
+        outdoors.wheel(3, now, false, false);
+        assert!((outdoors.distance() - 375.7).abs() < 0.01);
+        outdoors.wheel(1, now + Duration::from_millis(5), false, false);
+        assert!((outdoors.distance() - 375.7).abs() < 0.01);
+        // (Shift alone keeps to 50..65: the 25 it had comes up to 50.)
+        outdoors.wheel(-1, now + Duration::from_millis(20), false, true);
+        assert_eq!(outdoors.pitch, 50.0);
+        // A double right-click with the pointer still: Ctrl the distance, Shift the tilt, otherwise the turn.
+        outdoors.press([5.0, 5.0], now, false, false);
+        outdoors.press([5.0, 5.0], now + Duration::from_millis(200), true, true);
+        assert_eq!((outdoors.distance(), outdoors.pitch), (300.0, PITCH_RESET));
+        outdoors.press([5.0, 5.0], now + Duration::from_millis(300), false, false);
+        assert_eq!(outdoors.yaw, 360.0);
+        outdoors.yaw = 30.0;
+        outdoors.pointer_moved();
+        outdoors.press([5.0, 5.0], now + Duration::from_millis(400), false, false);
+        assert_eq!(outdoors.yaw, 30.0, "moved: not a double click");
+        // Indoors: the turn stays within 25 to 65 and isn't reset; the tilt is fixed at 60 without Ctrl.
+        let mut indoors = CameraGoal::new(true);
+        indoors.steer(100.0, 0.0, false, false, false);
+        assert_eq!(indoors.yaw, 65.0);
+        indoors.steer(0.0, -50.0, false, true, false);
+        assert_eq!(indoors.pitch, 60.0);
+        indoors.press([5.0, 5.0], now, false, false);
+        indoors.press([5.0, 5.0], now + Duration::from_millis(100), false, false);
+        assert_eq!(indoors.yaw, 65.0);
+        indoors.steer(0.0, -1000.0, true, false, false);
+        assert_eq!(indoors.distance(), 300.0);
+    }
+
+    #[test]
+    fn opens_menus_and_orders_companions() {
+        assert!(menu_opens(false, false, false, false));
+        assert!(!menu_opens(true, false, false, false) && !menu_opens(false, true, false, false));
+        assert!(!menu_opens(false, false, true, false) && !menu_opens(false, false, false, true));
+        // Without Shift the first press marks the monster and the second sends the attack; with Shift at once.
+        assert_eq!(companion_mark(None, 1, 9, false), (Some((1, 9)), false));
+        assert_eq!(companion_mark(Some((1, 9)), 1, 9, false), (None, true));
+        assert_eq!(companion_mark(Some((1, 8)), 1, 9, false), (Some((1, 9)), false));
+        assert_eq!(companion_mark(None, 1, 9, true), (None, true));
+    }
+
+    #[test]
+    fn tells_a_fitting_target() {
+        let (enemy, friend, me) = (net::Skill::ENEMY, net::Skill::FRIEND, net::Skill::SELF);
+        assert!(aim_fits(enemy, AimAt::Monster) && !aim_fits(enemy, AimAt::Me));
+        assert!(aim_fits(friend, AimAt::Me) && aim_fits(friend, AimAt::Player) && !aim_fits(friend, AimAt::Monster));
+        assert!(aim_fits(me, AimAt::Me) && !aim_fits(me, AimAt::Player));
+    }
+
+    #[test]
+    fn aims_where_the_pointer_is() {
+        // Ground skills ignore the unit under the pointer; unit skills need one, and a press without lets go.
+        assert!(matches!(aim_use(true, Some(9), Some([3, 4])), Some(SkillTarget::Cell([3, 4]))));
+        assert!(matches!(aim_use(false, Some(9), Some([3, 4])), Some(SkillTarget::Unit(9))));
+        assert!(aim_use(false, None, Some([3, 4])).is_none() && aim_use(true, Some(9), None).is_none());
+        // The wheel: up raises, down lowers, 1 to the learned level; not for a skill without a level to pick.
+        assert_eq!([aim_level(10, 10, 2, true), aim_level(8, 10, -1, true), aim_level(10, 10, -1, true), aim_level(1, 10, 3, true)], [8, 9, 10, 1]);
+        assert_eq!(aim_level(5, 10, 2, false), 5);
+    }
+
+    #[test]
+    fn talks_and_picks_up_from_close() {
+        assert!(may_talk(false, false, false) && may_talk(true, false, true));
+        assert!(!may_talk(true, false, false) && !may_talk(false, true, false));
+        assert!(within_pickup([5, 5], [6, 6]) && within_pickup([5, 5], [5, 5]));
+        assert!(!within_pickup([5, 5], [7, 5]) && !within_pickup([5, 5], [6, 7]));
+        assert_eq!([npc_cursor(WARP_JOB), npc_cursor(86)], [cursor::Kind::Warp, cursor::Kind::Talk]);
+    }
+
+    #[test]
+    fn attacks_as_the_player_asked() {
+        // Reach: range × 5 + 5.5 units.
+        assert!(in_attack_reach([0, 0], [2, 0], 1));
+        assert!(!in_attack_reach([0, 0], [2, 1], 1));
+        assert!(in_attack_reach([0, 0], [10, 0], 9) && !in_attack_reach([0, 0], [11, 0], 9));
+        let start = Instant::now();
+        assert!(may_attack(None, start) && !may_attack(Some(start), start + Duration::from_millis(1199)));
+        assert!(may_attack(Some(start), start + ATTACK_GAP));
+        // Kept up: letting go changes nothing.
+        let mut kept = Attack::new(5, true);
+        assert_eq!((kept.release(), kept.action()), (Release::Keep, net::ACT_ATTACK_REPEAT));
+        // Held and sent: letting go cancels it.
+        let mut held = Attack { sent: true, ..Attack::new(5, false) };
+        assert_eq!(held.action(), net::ACT_ATTACK_REPEAT);
+        assert_eq!(held.release(), Release::Cancel);
+        // Let go before it reached: one swing when it comes.
+        let mut early = Attack::new(5, false);
+        assert_eq!(early.release(), Release::Keep);
+        assert_eq!(early.action(), net::ACT_ATTACK);
+        assert_eq!(
+            [attack_refused(900, 1000, false), attack_refused(899, 1000, false), attack_refused(0, 1000, true)],
+            [Some(OVERWEIGHT), None, Some(RIDING_NO_ATTACK)]
+        );
+    }
+
+    #[test]
+    fn walks_no_more_than_every_300_ms() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        assert!(may_move(None, start));
+        assert!(!may_move(Some(start), at(299)));
+        assert!(may_move(Some(start), at(300)));
+        // A second press: double only when soon and the pointer stayed still.
+        assert!(double_press(Some((start, false)), at(400)));
+        assert!(!double_press(Some((start, true)), at(400)));
+        assert!(!double_press(Some((start, false)), at(500)));
+        assert!(!double_press(None, start));
+    }
+
+    #[test]
     fn coins_for_the_gunslinger_line() {
         assert!([24, 4215, 4228, 4229, 4306].into_iter().all(coin_job));
         assert!(![15, 4016, 0].into_iter().any(coin_job));
@@ -12225,7 +13208,7 @@ mod tests {
         goal.drag([100.0, 100.0], none);
         goal.drag([200.0, 100.0], none);
         assert_eq!((goal.yaw, goal.dragging), (0.0, None));
-        goal.press([200.0, 100.0], none);
+        goal.press([200.0, 100.0], Instant::now(), false, false);
         goal.drag([300.0, 100.0], none);
         assert!(goal.yaw > 0.0);
     }

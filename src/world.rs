@@ -22,7 +22,14 @@ pub const CELL: f32 = 5.0;
 const SPRITE_SCALE: f32 = CELL / 35.0;
 const FIELD_OF_VIEW: f32 = 15.0;
 const NEAR: f32 = 10.0;
-const FAR: f32 = 4000.0;
+const FAR: f32 = 1500.0;
+/// How far above the ground under it the eye stays.
+const EYE_CLEARANCE: f32 = 2.0;
+
+/// The eye's height, kept above the ground under it.
+pub fn above_ground(eye: f32, ground: f32) -> f32 {
+    eye.max(ground + EYE_CLEARANCE)
+}
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 pub type Vector = [f32; 3];
@@ -63,6 +70,8 @@ pub struct Camera {
     pub pitch: f32,
     /// Radians; 0 looks north.
     pub yaw: f32,
+    /// The ground's height under the eye (f32::MIN: not known).
+    pub ground: f32,
 }
 
 /// A frame's camera: view-projection plus the basis billboards and picking need.
@@ -78,8 +87,11 @@ pub struct View {
 impl Camera {
     pub fn view(&self, aspect: f32) -> View {
         let horizontal = self.distance * self.pitch.cos();
-        let eye =
-            [self.target[0] - horizontal * self.yaw.sin(), self.target[1] + self.distance * self.pitch.sin(), self.target[2] - horizontal * self.yaw.cos()];
+        let eye = [
+            self.target[0] - horizontal * self.yaw.sin(),
+            above_ground(self.target[1] + self.distance * self.pitch.sin(), self.ground),
+            self.target[2] - horizontal * self.yaw.cos(),
+        ];
         // Left-handed: right = up x forward, depth along forward.
         let forward = normalize(subtract(self.target, eye));
         let right = normalize(cross([0.0, 1.0, 0.0], forward));
@@ -924,6 +936,25 @@ pub fn in_reach(from: [i32; 2], to: [i32; 2], range: i32) -> bool {
 }
 
 /// RO's direction index (0 south, then clockwise: south-west, west, ... south-east) for a step.
+/// Where a walk aimed at `target` from `from` goes: the target when `ok` takes it; otherwise, stepping from the
+/// target back toward `from` along a straight line, the first cell `ok` takes in the 3×3 around each step, in a fixed
+/// order. None once the line reaches `from`'s row or column.
+// ponytail: the target's own 3×3 is tried even when it's on `from`'s row or column.
+pub fn walk_goal(target: [i32; 2], from: [i32; 2], ok: impl Fn([i32; 2]) -> bool) -> Option<[i32; 2]> {
+    const AROUND: [[i32; 2]; 9] = [[0, 0], [1, 0], [1, 1], [1, -1], [-1, 0], [-1, 1], [-1, -1], [0, 1], [0, -1]];
+    let steps = (target[0] - from[0]).abs().max((target[1] - from[1]).abs());
+    for step in 0..steps {
+        let at = [0, 1].map(|axis| target[axis] + ((from[axis] - target[axis]) as f32 * step as f32 / steps as f32).round() as i32);
+        if step > 0 && (at[0] == from[0] || at[1] == from[1]) {
+            return None;
+        }
+        if let Some(cell) = AROUND.iter().map(|around| [at[0] + around[0], at[1] + around[1]]).find(|&cell| ok(cell)) {
+            return Some(cell);
+        }
+    }
+    None
+}
+
 pub fn direction(step: [i32; 2]) -> u8 {
     match (step[0].signum(), step[1].signum()) {
         (0, -1) => 0,
@@ -940,6 +971,25 @@ pub fn direction(step: [i32; 2]) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn walks_as_close_as_it_can() {
+        // Open ground from 0 to 19 each way, with a wall from x 10 to 12 for y 10 to 12.
+        let wall = |[x, y]: [i32; 2]| (10..=12).contains(&x) && (10..=12).contains(&y);
+        let open = |cell: [i32; 2]| cell.iter().all(|value| (0..20).contains(value)) && !wall(cell);
+        assert_eq!(walk_goal([5, 9], [0, 0], open), Some([5, 9]));
+        // A click on the wall's edge: its own 3×3, (1,0) first.
+        assert_eq!(walk_goal([12, 11], [0, 0], open), Some([13, 11]));
+        // The middle of the wall has nothing open around it: one step back toward the player, (1,-1) is.
+        assert_eq!(walk_goal([11, 11], [0, 0], open), Some([11, 9]));
+        // An island that can't be reached: everything from x 15 on; steps back until it's left.
+        let reachable = |cell: [i32; 2]| open(cell) && cell[0] < 15;
+        assert_eq!(walk_goal([18, 5], [0, 0], reachable), Some([14, 4]));
+        // A line that reaches the player's row gives up.
+        let nothing = |_: [i32; 2]| false;
+        assert_eq!(walk_goal([18, 5], [0, 5], nothing), None);
+        assert_eq!(walk_goal([3, 3], [3, 3], open), None);
+    }
 
     #[test]
     fn melee_reach_matches_the_server() {
@@ -975,7 +1025,7 @@ mod tests {
 
     #[test]
     fn camera_projects_its_target_to_the_center() {
-        let camera = Camera { target: [100.0, 0.0, 100.0], distance: 200.0, pitch: 0.8, yaw: 0.0 };
+        let camera = Camera { target: [100.0, 0.0, 100.0], distance: 200.0, pitch: 0.8, yaw: 0.0, ground: f32::MIN };
         let view = camera.view(4.0 / 3.0);
         let center = view.project(camera.target).unwrap();
         assert!((center[0] - 0.5).abs() < 1e-4 && (center[1] - 0.5).abs() < 1e-4, "{center:?}");

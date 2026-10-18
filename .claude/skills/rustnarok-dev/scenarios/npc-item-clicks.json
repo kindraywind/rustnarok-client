@@ -1,0 +1,27 @@
+{
+  "about": "Clicking NPCs and items (issue #170): our merge NPC (npc/merge.txt, loaded with @loadnpc) answers a talk with a chat line, since there's nothing to merge. Clicked while walking it doesn't talk; standing still, a left click and a right click each talk. An Apple dropped with @dropall and left three cells behind is walked to and picked up from the next cell. The NPC lives only in the map server's memory, and the scenario unloads it at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/merge.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/merge.txt"}, {"wait": 1000},
+    {"click_on": {"cell": [156, 173]}}, {"wait": 150},
+    {"click_unit": {"kind": "npc", "name": "Merge Test"}}, {"wait": 800},
+    {"expect": {"no_chat": "Merge items available"}},
+    {"wait": 2000},
+    {"click_unit": {"kind": "npc", "name": "Merge Test"}}, {"wait_for": {"sent": "0x0090", "ms": 3000}}, {"wait": 500},
+    {"expect": {"chat": "Merge items available does not exist."}},
+    {"click_unit": {"kind": "npc", "name": "Merge Test"}, "button": "right"}, {"wait_for": {"sent": "0x0090", "ms": 3000}}, {"wait": 300},
+    {"say": "@item 512"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@dropall"}, {"wait": 1000},
+    {"expect": {"ground_items_at_least": 1}},
+    {"say": "@warp prontera 160 180"}, {"settle": 1500},
+    {"click_on": {"ground_item": 512}}, {"wait_for": {"sent": "0x0362", "ms": 6000}},
+    {"wait_for": {"event": "PickedUp", "ms": 5000}}, {"wait": 300},
+    {"expect": {"inventory_has": [{"id": 512}]}},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/merge.txt"}, {"wait": 500}
+  ]
+}

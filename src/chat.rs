@@ -105,6 +105,13 @@ impl Chat {
         self.scroll = 0;
     }
 
+    /// Whether a press here is the window's alone: its tabs, its grab strip and the input bar. The log's lines let
+    /// presses through to the world (the wheel still scrolls them).
+    pub fn blocks(&self, cursor: [f32; 2]) -> bool {
+        let log_top = self.top() + TAB_HEIGHT + HANDLE;
+        self.contains(cursor) && !contains([0.0, log_top], [600.0, self.log_height()], cursor)
+    }
+
     pub fn push(&mut self, text: String, color: [u8; 3]) {
         self.lines.push((text, color));
         // New lines show unless the log is scrolled back.
@@ -248,6 +255,10 @@ pub enum Command {
     PvpInfo,
     /// /noshift: a click on a player attacks without Shift, on or off.
     NoShift,
+    /// /camera: the camera sticks to the player instead of gliding after them, on or off.
+    Camera,
+    /// /noctrl, /nc: a click on a monster keeps attacking without Ctrl, on or off.
+    NoCtrl,
     /// /battlechat: typed lines go to the battleground team, on or off.
     BattleChat,
     /// /dressroom: the dress room.
@@ -273,6 +284,8 @@ pub fn command(text: &str) -> Option<Command> {
         "/memo" => Command::Memo,
         "/pvpinfo" => Command::PvpInfo,
         "/noshift" => Command::NoShift,
+        "/noctrl" | "/nc" => Command::NoCtrl,
+        "/camera" => Command::Camera,
         "/battlechat" => Command::BattleChat,
         "/dressroom" => Command::DressRoom,
         "/blacksmith" => Command::Ranking(0),
@@ -289,6 +302,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn lets_presses_through_the_log() {
+        let chat = Chat::default();
+        let log_top = SCREEN[1] - INPUT_HEIGHT - PADDING - HEIGHTS[0];
+        // The log's lines: the window has them, the world too.
+        assert!(chat.contains([300.0, log_top + 10.0]) && !chat.blocks([300.0, log_top + 10.0]));
+        // The input bar and the tabs are the window's alone.
+        assert!(chat.blocks([300.0, SCREEN[1] - 10.0]) && chat.blocks([20.0, chat.top() + 5.0]));
+        assert!(!chat.contains([700.0, log_top + 10.0]) && !chat.blocks([700.0, log_top + 10.0]));
+    }
+
+    #[test]
     fn reads_the_clients_commands() {
         for text in ["/h", "/help"] {
             assert_eq!(command(text), Some(Command::Help));
@@ -300,6 +324,7 @@ mod tests {
         assert_eq!(command("/memo"), Some(Command::Memo));
         assert_eq!(command("/pvpinfo"), Some(Command::PvpInfo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
+        assert_eq!([command("/noctrl"), command("/nc")], [Some(Command::NoCtrl), Some(Command::NoCtrl)]);
         assert_eq!(command("/battlechat"), Some(Command::BattleChat));
         assert_eq!(command("/dressroom"), Some(Command::DressRoom));
         for (text, kind) in [("/blacksmith", 0), ("/alchemist", 1), ("/taekwon", 2), ("/pk", 3)] {

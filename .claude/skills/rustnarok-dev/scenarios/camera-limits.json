@@ -1,0 +1,29 @@
+{
+  "about": "Camera rates and limits (issue #175), outdoors: a right drag turns a degree a pixel; Shift tilts half a degree a pixel within 50-65 (25-65 with Ctrl); Ctrl zooms half a unit a pixel within 230-400 world units; a wheel step is 24.3 units; a double right-click with Ctrl puts the distance back to 300, with Shift the tilt to 50, and without either the turn to 0.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"expect": {"state": {"camera.yaw": 0, "camera.pitch": 45, "camera.distance": 300}}},
+    {"move": [1000, 750]},
+    {"shot": "camera-default", "threshold": 20},
+    {"drag": [[500, 400], [590, 400]], "button": "right"}, {"wait": 200},
+    {"expect": {"state": {"camera.yaw": 90}}},
+    {"drag": [[500, 300], [500, 500]], "button": "right", "mods": "Shift"}, {"wait": 200},
+    {"expect": {"state": {"camera.pitch": 65, "camera.yaw": 90}}},
+    {"drag": [[500, 500], [500, 100]], "button": "right", "mods": "Ctrl+Shift"}, {"wait": 200},
+    {"expect": {"state": {"camera.pitch": 25}}},
+    {"drag": [[500, 100], [500, 700]], "button": "right", "mods": "Ctrl"}, {"wait": 200},
+    {"expect": {"state": {"camera.distance": 230}}},
+    {"drag": [[500, 700], [500, 50]], "button": "right", "mods": "Ctrl"}, {"wait": 200},
+    {"expect": {"state": {"camera.distance": 400}}},
+    {"wait": 1500}, {"move": [1000, 750]},
+    {"shot": "camera-far-low", "threshold": 20},
+    {"wheel": [700, 400, 1]}, {"wait": 200},
+    {"expect": {"state": {"camera.distance": 375.7}}},
+    {"click": [700, 400], "button": "right", "mods": "Ctrl", "count": 2}, {"wait": 200},
+    {"click": [700, 400], "button": "right", "mods": "Shift", "count": 2}, {"wait": 200},
+    {"click": [700, 400], "button": "right", "count": 2}, {"wait": 200},
+    {"expect": {"state": {"camera.yaw": 0, "camera.pitch": 50, "camera.distance": 300}}}
+  ]
+}
