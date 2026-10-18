@@ -2910,6 +2910,22 @@ impl MapSession {
         self.send_id(CZ_REQ_CLOSE_BANKING, account)
     }
 
+    pub fn open_cashshop(&mut self, tab: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_cashshop_open(tab))
+    }
+
+    pub fn request_cashshop_list(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_cashshop_list_request())
+    }
+
+    pub fn buy_cashshop(&mut self, free: u32, items: &[(u32, u32, u16)]) -> io::Result<()> {
+        self.stream.write_all(&encode_cashshop_buy(free, items))
+    }
+
+    pub fn close_cashshop(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_cashshop_close())
+    }
+
     /// Puts zeny in the bank, or takes it out.
     pub fn move_zeny(&mut self, deposit: bool, account: u32, zeny: i32) -> io::Result<()> {
         self.stream.write_all(&encode_bank_move(deposit, account, zeny))
@@ -3652,20 +3668,29 @@ fn encode_bank_move(deposit: bool, account: u32, zeny: i32) -> [u8; 10] {
     packet
 }
 
-fn encode_cashshop_open(_tab: u32) -> Vec<u8> {
-    Vec::new()
+fn encode_cashshop_open(tab: u32) -> Vec<u8> {
+    [&CZ_SE_CASHSHOP_OPEN2.to_le_bytes()[..], &tab.to_le_bytes()].concat()
 }
 
 fn encode_cashshop_list_request() -> Vec<u8> {
-    Vec::new()
+    CZ_CASHSHOP_LIST.to_le_bytes().to_vec()
 }
 
-fn encode_cashshop_buy(_free: u32, _items: &[(u32, u32, u16)]) -> Vec<u8> {
-    Vec::new()
+fn encode_cashshop_buy(free: u32, items: &[(u32, u32, u16)]) -> Vec<u8> {
+    let mut packet = CZ_SE_PC_BUY_CASHITEM_LIST.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((10 + items.len() * 10) as u16).to_le_bytes());
+    packet.extend_from_slice(&(items.len() as u16).to_le_bytes());
+    packet.extend_from_slice(&free.to_le_bytes());
+    for &(item, amount, tab) in items {
+        packet.extend_from_slice(&item.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+        packet.extend_from_slice(&tab.to_le_bytes());
+    }
+    packet
 }
 
 fn encode_cashshop_close() -> Vec<u8> {
-    Vec::new()
+    CZ_CASHSHOP_CLOSE.to_le_bytes().to_vec()
 }
 
 /// CZ_CONFIG: a setting (rathena's e_config_type) on or off.
@@ -4101,6 +4126,9 @@ fn decode_buying_items(bytes: &[u8]) -> Vec<BuyingItem> {
 }
 
 fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
+    if packet.len() < 2 {
+        return None;
+    }
     let u32_at = |offset: usize| u32::from_le_bytes(packet[offset..offset + 4].try_into().unwrap());
     let u16_at = |offset: usize| u16::from_le_bytes([packet[offset], packet[offset + 1]]);
     Some(match u16_at(0) {
@@ -4407,6 +4435,21 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             balance: i64::from_le_bytes(packet[4..12].try_into().unwrap()),
             zeny: u32_at(12) as i32,
         },
+        ZC_SE_CASHSHOP_OPEN => MapEvent::CashShopOpen { cash: u32_at(2), free: u32_at(6), tab: u32_at(10) },
+        ZC_ACK_SCHEDULER_CASHITEM => {
+            if packet.len() < 8 {
+                return None;
+            }
+            let length = usize::from(u16_at(2));
+            let count = i16::from_le_bytes([packet[4], packet[5]]);
+            if count < 0 || length != 8 + count as usize * 8 || packet.len() < length {
+                return None;
+            }
+            let tab = i16::from_le_bytes([packet[6], packet[7]]);
+            let items = packet[8..length].chunks_exact(8).map(|entry| (self::u32_at(entry, 0), self::u32_at(entry, 4))).collect();
+            MapEvent::CashShopList { tab, items }
+        }
+        ZC_SE_PC_BUY_CASHITEM_RESULT => MapEvent::CashShopBuyResult { item: u32_at(2), result: u16_at(6), cash: u32_at(8), free: u32_at(12) },
         ZC_EQUIPWIN_MICROSCOPE => MapEvent::OtherEquipment(Equipped {
             name: c_string(&packet[4..28]),
             job: u16_at(28),
