@@ -423,8 +423,9 @@ impl PetWindow {
             let check = &assets.check[usize::from(self.auto_feed)];
             layer.sprites.push((check, at(self.auto_box()), AUTO_BOX));
         }
-        // The open command list over everything.
+        // The open command list over everything, the window's text included.
         if self.list_open {
+            let layer = layer.window();
             let [x, y, w, h] = COMMAND_BOX;
             let top = y + h;
             layer.sprites.push((&assets.line, at([x, top]), [w, LIST.len() as f32 * LIST_ROW + 1.0]));
