@@ -1146,6 +1146,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "grade": item.grade, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires, "switch": item.switch, "favorite": item.favorite})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
+        // The hotbar showing: 0 (hotbar 1) or 1.
+        "hotkey_tab": game.hotkeys.tab(),
         // Bound shortcuts: action name to the chord ("Alt+V", "F1"). Unbound rows are left out.
         "shortcuts": app.keybinds.labels(),
         "dialog": dialog,

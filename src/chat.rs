@@ -300,6 +300,8 @@ pub enum Command {
     NoShift,
     /// /camera: the camera sticks to the player instead of gliding after them, on or off.
     Camera,
+    /// /zoom: the camera can go further out outdoors, on or off.
+    Zoom,
     /// /noctrl, /nc: a click on a monster keeps attacking without Ctrl, on or off.
     NoCtrl,
     /// /battlemode, /bm: battle mode. The chat line closes and letter keys are shortcuts.
@@ -331,6 +333,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/noshift" => Command::NoShift,
         "/noctrl" | "/nc" => Command::NoCtrl,
         "/camera" => Command::Camera,
+        "/zoom" => Command::Zoom,
         "/battlemode" | "/bm" => Command::BattleMode,
         "/battlechat" => Command::BattleChat,
         "/dressroom" => Command::DressRoom,
@@ -424,6 +427,7 @@ mod tests {
         assert_eq!(command("/noshift"), Some(Command::NoShift));
         assert_eq!([command("/noctrl"), command("/nc")], [Some(Command::NoCtrl), Some(Command::NoCtrl)]);
         assert_eq!(command("/camera"), Some(Command::Camera));
+        assert_eq!(command("/zoom"), Some(Command::Zoom));
         assert_eq!(command("/bm"), Some(Command::BattleMode));
         assert_eq!(command("/battlemode"), Some(Command::BattleMode));
         assert_eq!(command("/battlechat"), Some(Command::BattleChat));
