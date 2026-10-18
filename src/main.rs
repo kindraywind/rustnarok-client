@@ -53,6 +53,7 @@ mod basic_info;
 mod battle_mode;
 mod battle_queue;
 mod battleground;
+mod booking_window;
 mod buying;
 mod cashshop;
 mod cast_square;
@@ -143,6 +144,7 @@ use equipment::Equipment;
 use image::{Rgba, RgbaImage};
 use inventory::Inventory;
 use render::{Gpu, Sprite, Texture};
+use rustnarok_client::booking;
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::{self, ItemInfo, LookTables, SkillInfo, SkillTrees};
 use rustnarok_client::messages;
@@ -1229,6 +1231,12 @@ struct Game {
     cashshop_list_requested: bool,
     cashshop_buy_asked: bool,
     trade_asked: Option<(String, u32, u16)>,
+    /// The party booking board, its web server (address and who we are there), the answers coming back from the
+    /// requests sent to it, and someone asking to join through our post (character, account, name, level, job).
+    booking: Option<booking_window::BookingWindow>,
+    booking_web: (String, booking::Auth),
+    booking_answers: (std::sync::mpsc::Sender<BookingAnswer>, std::sync::mpsc::Receiver<BookingAnswer>),
+    booking_asked: Option<(u32, u32, String, u16, u16)>,
     /// The NPC shop windows' sizes (goods width, goods and deal rows): kept, and given to the next shop.
     shop_sizes: (f32, [usize; 2]),
     trade_with: String,
@@ -2826,6 +2834,76 @@ impl Game {
     /// buttons, a pick list's OK or Cancel, a corner grip.
     // ponytail: tabs, scroll arrows and the minimap aren't told apart yet.
     /// Opens the navigation window, or closes it.
+    /// Sends a request to the party booking board off the frame; its answer comes back to `poll_booking`.
+    fn booking_request(&mut self, request: booking::Request) {
+        if let Some(window) = &mut self.booking {
+            window.status = "...".to_owned();
+        }
+        let (address, auth) = self.booking_web.clone();
+        let answers = self.booking_answers.0.clone();
+        std::thread::spawn(move || {
+            let reply = booking::send(&address, &auth, &request);
+            let _ = answers.send((request, reply));
+        });
+    }
+
+    /// Opens the party booking board (listing what's posted), or closes it.
+    fn toggle_booking(&mut self) {
+        if self.booking.take().is_none() {
+            let level = self.status.get(&net::STATUS_BASE_LEVEL).copied().unwrap_or(1).clamp(1, i64::from(u16::MAX)) as u16;
+            self.booking = Some(booking_window::BookingWindow::new(self.account_id, level));
+            self.booking_request(booking::Request::List);
+        }
+        self.sync_esc();
+    }
+
+    /// The board's answers: posts found fill the window; a post added or deleted lists the board again.
+    fn poll_booking(&mut self) {
+        while let Ok((request, reply)) = self.booking_answers.1.try_recv() {
+            let Some(window) = &mut self.booking else { continue };
+            // ponytail: the board's lines are plain English; the client's own aren't identified.
+            match (request, reply) {
+                (_, Err(error)) => window.status = format!("The board didn't answer: {error}"),
+                (_, Ok(booking::Reply::Posts(posts))) => {
+                    window.status = format!("{} posts", posts.len());
+                    window.posts = posts;
+                }
+                (booking::Request::Add(_), Ok(_)) => {
+                    window.status = "Posted.".to_owned();
+                    self.booking_request(booking::Request::List);
+                }
+                (_, Ok(_)) => {
+                    window.status = "Deleted.".to_owned();
+                    self.booking_request(booking::Request::List);
+                }
+            }
+        }
+    }
+
+    /// What a click on the board asks.
+    fn booking_action(&mut self, action: booking_window::Action) {
+        match action {
+            booking_window::Action::Close => {
+                self.booking = None;
+                self.sync_esc();
+            }
+            booking_window::Action::Search { min_level, max_level, purpose, roles } => {
+                self.booking_request(booking::Request::Search { min_level, max_level, purpose, roles });
+            }
+            booking_window::Action::Post(post) => {
+                let post = booking::Post { account: self.account_id, character: self.me.id, name: self.me.name.clone(), ..post };
+                self.booking_request(booking::Request::Add(post));
+            }
+            booking_window::Action::Delete => self.booking_request(booking::Request::Delete),
+            booking_window::Action::Join(post) => {
+                let _ = self.session.ask_to_join(post.character, post.account);
+                if let Some(window) = &mut self.booking {
+                    window.status = format!("Asked {} to join.", post.name);
+                }
+            }
+        }
+    }
+
     fn toggle_navigation(&mut self) {
         self.navi_window = if self.navi_window.is_some() { None } else { Some(navigation::Window::new()) };
     }
@@ -3533,6 +3611,7 @@ impl Game {
             || self.cashshop.as_ref().is_some_and(|shop| shop.typing)
             || self.bank.as_ref().is_some_and(|bank| bank.typing)
             || self.trade.as_ref().is_some_and(|trade| trade.typing)
+            || self.booking.as_ref().is_some_and(|window| window.focus.is_some())
             || self.storage.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
             || self.talks.typing()
@@ -3617,6 +3696,7 @@ impl Game {
             || self.friend_asked.is_some()
             || self.party_invite.is_some()
             || self.trade_asked.is_some()
+            || self.booking_asked.is_some()
             || self.queue_asked.is_some()
             || self.adopt_asked.is_some();
         self.window_at(cursor).is_some()
@@ -3645,6 +3725,7 @@ impl Game {
             || self.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some()
             || self.reputation_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
             || self.navi_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
+            || self.booking.as_ref().and_then(|window| window.hit(cursor)).is_some()
             || self.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some()
             || self.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some()
             || self.talks.hit(cursor).is_some()
@@ -4268,6 +4349,12 @@ impl Game {
         if self.trade_asked.is_some() {
             names.push("TradeAsked".into());
         }
+        if self.booking.is_some() {
+            names.push("PartyBooking".into());
+        }
+        if self.booking_asked.is_some() {
+            names.push("BookingAsked".into());
+        }
         names.extend(self.talks.window_names());
         if let Some(dialog) = &self.dialog {
             names.push(if dialog.warp.is_some() { "WarpList" } else { "NpcDialog" }.into());
@@ -4351,6 +4438,7 @@ impl Game {
             || self.amount.is_some()
             || self.adopt_asked.is_some()
             || self.queue_asked.is_some()
+            || self.booking_asked.is_some()
     }
 
     /// The Apply question's answer: yes sends each pending level, what it needs first; no keeps them pending.
@@ -4365,6 +4453,10 @@ impl Game {
 
     /// Answers the open question with No.
     fn answer_no(&mut self, messages: &[String]) {
+        if let Some((character, account, ..)) = self.booking_asked.take() {
+            let _ = self.session.answer_join(character, account, false);
+            return;
+        }
         if self.save_asked {
             self.save_asked = false;
             return;
@@ -5544,6 +5636,18 @@ fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
     Some(options::ShortcutKey::NamedF(number))
 }
 
+/// A party booking request and what the web server said to it.
+type BookingAnswer = (booking::Request, std::io::Result<booking::Reply>);
+
+/// The web server's address (party booking): RUSTNAROK_CLIENT_WEB, else the login server's host on 8888.
+// ponytail: the web server's port, rathena's default; the client's own source of it isn't in our data.
+fn web_address(login: &str) -> String {
+    std::env::var("RUSTNAROK_CLIENT_WEB").ok().filter(|address| !address.is_empty()).unwrap_or_else(|| {
+        let host = login.rsplit_once(':').map_or(login, |(host, _)| host);
+        format!("{host}:8888")
+    })
+}
+
 /// The lines of the window places that keep sizes: the inventory's and the cart's columns and rows, the storage's
 /// rows, and an NPC shop's goods width and both windows' rows (the next shop opens at those).
 const INVENTORY_SIZE: &str = "inventory_size";
@@ -6519,6 +6623,7 @@ impl App {
                     }
                 }
                 None if game.storage.typing => game.storage.type_text(text),
+                None if game.booking.as_ref().is_some_and(|window| window.focus.is_some()) => game.booking.as_mut().unwrap().type_text(text),
                 None if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
                     let window = game.navi_window.as_mut().unwrap();
                     window.text.push_str(text);
@@ -7355,6 +7460,24 @@ impl App {
                     Some(ranking::Hit::Title(TitleHit::Close)) => game.ranking = None,
                     Some(ranking::Hit::Title(title)) => game.ranking.as_mut().unwrap().frame.click_title(title),
                     _ => {}
+                }
+            }
+            // The party booking board.
+            Scene::Game(game) if game.booking.as_ref().and_then(|window| window.hit(cursor)).is_some() => {
+                let window = game.booking.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                if let Some(action) = window.click(hit) {
+                    game.booking_action(action);
+                }
+            }
+            // Someone asks to join through our post: OK lets them in.
+            Scene::Game(game) if game.booking_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, accept) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
+                        let (character, account, ..) = game.booking_asked.take().unwrap();
+                        let _ = game.session.answer_join(character, account, accept);
+                    }
                 }
             }
             // The navigation window: its field, a result to go to, stopping.
@@ -9716,6 +9839,7 @@ impl App {
                 game.status_window.frame.toggle();
                 game.raise(Panel::Status);
             }
+            shortcuts::Action::PartyBoard => game.toggle_booking(),
             shortcuts::Action::Reputation => {
                 game.toggle_reputation(&self.reputation_tables);
                 game.sync_esc();
@@ -9741,7 +9865,6 @@ impl App {
             | shortcuts::Action::Commands
             | shortcuts::Action::GroundCursor
             | shortcuts::Action::Tip
-            | shortcuts::Action::PartyBoard
             | shortcuts::Action::Hunting
             | shortcuts::Action::Flag(_) => {}
             shortcuts::Action::Macro(_)
@@ -10083,6 +10206,15 @@ impl App {
                             game.chat_line(line, CHAT_ERROR);
                         }
                     }
+                }
+            }
+            // The booking board's fields.
+            Scene::Game(game) if game.booking.as_ref().is_some_and(|window| window.focus.is_some()) => {
+                let window = game.booking.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Enter | NamedKey::Escape) => window.focus = None,
+                    Key::Named(NamedKey::Backspace) => window.backspace(),
+                    _ => window.type_text(event.text.as_deref().unwrap_or_default()),
                 }
             }
             // The navigation window's search field: each change searches again.
@@ -10644,6 +10776,17 @@ impl App {
                     cashshop_list_requested: false,
                     cashshop_buy_asked: false,
                     trade_asked: None,
+                    booking: None,
+                    booking_web: (
+                        web_address(&self.login_server().0),
+                        booking::Auth {
+                            account: account.account_id,
+                            token: account.web_token.clone(),
+                            world: account.char_servers.get(self.char_server).map(|server| server.name.clone()).unwrap_or_default(),
+                        },
+                    ),
+                    booking_answers: std::sync::mpsc::channel(),
+                    booking_asked: None,
                     trade_with: String::new(),
                     shop_sizes: shop::default_sizes(),
                     no_trade: false,
@@ -12826,6 +12969,13 @@ impl App {
                 }
             }
             // Refused at once under /notrade: no window, no line.
+            // Someone asks to join through our booking post: a question for the leader.
+            MapEvent::BookingJoinAsked { character, account, name, level, job } => game.booking_asked = Some((character, account, name, level, job)),
+            // ponytail: plain lines for the leader's answer; the client's own aren't identified.
+            MapEvent::BookingJoinAnswered { leader, party, refused, .. } => {
+                let line = if refused { format!("{leader} turned down your request to join {party}.") } else { format!("{leader} let you join {party}.") };
+                game.chat_line(line, if refused { CHAT_ERROR } else { CHAT_ITEM });
+            }
             MapEvent::TradeAsked { .. } if game.no_trade => {
                 let _ = game.session.answer_trade(false);
             }
@@ -14081,6 +14231,7 @@ impl App {
 
         // The map's moving RSM 2 models, posed for now.
         game.world.animate(gpu, now);
+        game.poll_booking();
         // The map's ambient sounds, each on its cycle.
         if let Some(audio) = audio.as_mut() {
             let at = actor::world_xz(game.player.position(now));
@@ -15718,6 +15869,19 @@ impl App {
         if let Some(trade) = &game.trade {
             trade.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);
         }
+        // Someone asks to join through our booking post: who, their level and job.
+        // ponytail: the question's words are plain English; the client's own aren't identified.
+        if let Some((_, _, name, level, job)) = &game.booking_asked {
+            let dialog = dialog_position(&assets.message);
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
+            let job_name = self.pc_job_names.get(job).cloned().unwrap_or_default();
+            let lines = [format!("{name} asks to join your party."), format!("Lv.{level} {job_name}")];
+            for (row, line) in lines.into_iter().enumerate() {
+                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
         // Someone asks for a deal: who, their C-Code and level, OK or cancel.
         if let Some((name, id, level)) = &game.trade_asked {
             let dialog = dialog_position(&assets.message);
@@ -15915,6 +16079,10 @@ impl App {
         }
         if let Some(board) = &game.ranking {
             board.draw(shop_layer.window(), &assets.chrome, font, messages, &game.char_names, pointer.0);
+        }
+        if let Some(window) = &game.booking {
+            let caret = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+            window.draw(shop_layer.window(), &assets.chrome, font, pointer.0, caret);
         }
         if let Some(window) = &game.navi_window {
             let caret = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);

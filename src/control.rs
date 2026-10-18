@@ -878,6 +878,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         || game.cashshop_buy_asked
         || game.save_asked
         || game.trade_asked.is_some()
+        || game.booking_asked.is_some()
         || game.adopt_asked.is_some()
         || game.queue_asked.is_some();
     let question_buttons = app.assets.as_ref().filter(|_| question).into_iter().flat_map(|assets| {
@@ -1032,6 +1033,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .chain(game.shop.iter().flat_map(crate::shop::Shop::row_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.storage.grip_box().map(|area| json!({"kind": "button", "name": "storage_resize", "box": area})))
+        .chain(
+            game.booking
+                .iter()
+                .flat_map(crate::booking_window::BookingWindow::button_boxes)
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(game.skill_window.grip_box().map(|area| json!({"kind": "button", "name": "skills_resize", "box": area})))
         .chain(
             game.vend_setup
@@ -1484,6 +1491,13 @@ fn game_state(app: &App, game: &Game) -> Value {
         }).collect::<serde_json::Map<_, _>>(),
         "chat_height": game.chat.height(),
     });
+    // The party booking board: the posts found (their leaders' names), its last line, and who asks to join us.
+    state["booking"] = game
+        .booking
+        .as_ref()
+        .map(|window| json!({"posts": window.posts.iter().map(|post| post.name.clone()).collect::<Vec<_>>(), "status": window.status}))
+        .into();
+    state["booking_asked"] = game.booking_asked.as_ref().map(|(_, _, name, ..)| name.clone()).into();
     // The RSM 2 model instances standing on the map.
     state["rsm2_models"] = game.world.rsm_2_models.into();
     state["rsm2_moving"] = game.world.rsm_2_moving().into();

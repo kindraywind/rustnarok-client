@@ -31,6 +31,8 @@ pub struct LoginAccepted {
     pub account_id: u32,
     pub login_id2: u32,
     pub sex: u8,
+    /// The web server's key for this login (rathena's web auth token).
+    pub web_token: String,
     pub char_servers: Vec<CharServer>,
 }
 
@@ -107,6 +109,7 @@ fn decode_reply(packet: &[u8]) -> Result<LoginAccepted, LoginError> {
             account_id: u32_at(8),
             login_id2: u32_at(12),
             sex: packet[46],
+            web_token: c_string(&packet[47..ACCEPT_HEADER]),
             char_servers: packet[ACCEPT_HEADER..]
                 .chunks_exact(CHAR_SERVER_SIZE)
                 .map(|server| CharServer {
@@ -1319,6 +1322,12 @@ const CZ_REQ_EXPEL_GROUP_MEMBER: u16 = 0x0103;
 const CZ_REQUEST_CHAT_PARTY: u16 = 0x0108;
 const ZC_ACK_MAKE_GROUP: u16 = 0x00FA;
 const ZC_PARTY_JOIN_REQ: u16 = 0x02C6;
+/// Party booking (rathena's web server keeps the posts): asking a post's leader to join, the leader's question and
+/// answer, and the answer to the asker.
+const CZ_PARTY_REQ_MASTER_TO_JOIN: u16 = 0x0AE6;
+const ZC_PARTY_REQ_MASTER_TO_JOIN: u16 = 0x0AE7;
+const CZ_PARTY_REQ_ACK_MASTER_TO_JOIN: u16 = 0x0AF8;
+const ZC_PARTY_JOIN_REQ_ACK_FROM_MASTER: u16 = 0x0AFA;
 const ZC_PARTY_JOIN_REQ_ACK: u16 = 0x02C5;
 const ZC_ADD_MEMBER_TO_GROUP: u16 = 0x0AE4;
 const ZC_GROUP_LIST: u16 = 0x0AE5;
@@ -2838,6 +2847,22 @@ pub enum MapEvent {
     },
     /// How making a party went: 0 made, 1 the name is taken, 2 already in one, 3 not on this map.
     PartyMade(u8),
+    /// Someone asks to join the party through its booking post: their character and account, name, base level and
+    /// job.
+    BookingJoinAsked {
+        character: u32,
+        account: u32,
+        name: String,
+        level: u16,
+        job: u16,
+    },
+    /// A booking post's leader answered the player's request (their name, the party's, their account).
+    BookingJoinAnswered {
+        leader: String,
+        party: String,
+        account: u32,
+        refused: bool,
+    },
     /// A party asks the player to join.
     PartyInvite {
         party: u32,
@@ -4514,6 +4539,18 @@ impl MapSession {
     pub fn invite_to_party(&mut self, name: &str) -> io::Result<()> {
         let mut packet = CZ_PARTY_JOIN_REQ.to_le_bytes().to_vec();
         packet.extend_from_slice(&name_field(name));
+        self.stream.write_all(&packet)
+    }
+
+    /// Asks a booking post's leader (by character and account) to let the player join.
+    pub fn ask_to_join(&mut self, character: u32, account: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_pair(CZ_PARTY_REQ_MASTER_TO_JOIN, character, account))
+    }
+
+    /// The leader's answer to a request through the booking post.
+    pub fn answer_join(&mut self, character: u32, account: u32, accept: bool) -> io::Result<()> {
+        let mut packet = encode_pair(CZ_PARTY_REQ_ACK_MASTER_TO_JOIN, character, account);
+        packet.push(u8::from(accept));
         self.stream.write_all(&packet)
     }
 
@@ -6399,6 +6436,12 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         },
         ZC_DELETE_MEMBER_FROM_GROUP => MapEvent::PartyLeft { account: u32_at(2), name: c_string(&packet[6..30]), result: packet[30] },
         ZC_ACK_MAKE_GROUP => MapEvent::PartyMade(packet[2]),
+        ZC_PARTY_REQ_MASTER_TO_JOIN => {
+            MapEvent::BookingJoinAsked { character: u32_at(2), account: u32_at(6), name: c_string(&packet[10..34]), level: u16_at(34), job: u16_at(36) }
+        }
+        ZC_PARTY_JOIN_REQ_ACK_FROM_MASTER => {
+            MapEvent::BookingJoinAnswered { leader: c_string(&packet[2..26]), party: c_string(&packet[26..50]), account: u32_at(50), refused: u32_at(54) != 0 }
+        }
         ZC_PARTY_JOIN_REQ => MapEvent::PartyInvite { party: u32_at(2), name: c_string(&packet[6..30]) },
         ZC_PARTY_JOIN_REQ_ACK => MapEvent::PartyInviteResult { name: c_string(&packet[2..26]), result: u32_at(26) },
         ZC_NOTIFY_CHAT_PARTY => MapEvent::PartyChat { account: u32_at(4), text: c_string(&packet[8..]) },
@@ -6484,12 +6527,34 @@ mod tests {
     }
 
     #[test]
+    fn asks_and_answers_through_booking_posts() {
+        assert_eq!(encode_pair(CZ_PARTY_REQ_MASTER_TO_JOIN, 150004, 2000001), [0xE6, 0x0A, 0xF4, 0x49, 2, 0, 0x81, 0x84, 0x1E, 0]);
+        let mut asked = vec![0u8; 38];
+        asked[..2].copy_from_slice(&ZC_PARTY_REQ_MASTER_TO_JOIN.to_le_bytes());
+        asked[2..6].copy_from_slice(&150005u32.to_le_bytes());
+        asked[6..10].copy_from_slice(&2000002u32.to_le_bytes());
+        asked[10..16].copy_from_slice(b"LaneA2");
+        asked[34..36].copy_from_slice(&60u16.to_le_bytes());
+        asked[36..38].copy_from_slice(&4257u16.to_le_bytes());
+        let Some(MapEvent::BookingJoinAsked { character, account, name, level, job }) = decode_map_packet(&asked) else { panic!() };
+        assert_eq!((character, account, name.as_str(), level, job), (150005, 2000002, "LaneA2", 60, 4257));
+        let mut answered = vec![0u8; 58];
+        answered[..2].copy_from_slice(&ZC_PARTY_JOIN_REQ_ACK_FROM_MASTER.to_le_bytes());
+        answered[2..8].copy_from_slice(b"LaneA1");
+        answered[26..31].copy_from_slice(b"Crabs");
+        answered[50..54].copy_from_slice(&2000001u32.to_le_bytes());
+        let Some(MapEvent::BookingJoinAnswered { leader, party, account, refused }) = decode_map_packet(&answered) else { panic!() };
+        assert_eq!((leader.as_str(), party.as_str(), account, refused), ("LaneA1", "Crabs", 2000001, false));
+    }
+
+    #[test]
     fn decodes_accept_and_refuse() {
         let mut packet = vec![0u8; ACCEPT_HEADER + CHAR_SERVER_SIZE];
         packet[..2].copy_from_slice(&AC_ACCEPT_LOGIN.to_le_bytes());
         packet[2..4].copy_from_slice(&((ACCEPT_HEADER + CHAR_SERVER_SIZE) as u16).to_le_bytes());
         packet[8..12].copy_from_slice(&2_000_000u32.to_le_bytes());
         packet[46] = 1;
+        packet[47..63].copy_from_slice(b"0123456789abcdef");
         let server = &mut packet[ACCEPT_HEADER..];
         server[..4].copy_from_slice(&[127, 0, 0, 1]);
         server[4..6].copy_from_slice(&6121u16.to_le_bytes());
@@ -6499,6 +6564,7 @@ mod tests {
         let accepted = decode_reply(&packet).unwrap();
         assert_eq!(accepted.account_id, 2_000_000);
         assert_eq!(accepted.sex, 1);
+        assert_eq!(accepted.web_token, "0123456789abcdef");
         assert_eq!(accepted.char_servers, vec![CharServer { ip: [127, 0, 0, 1], port: 6121, name: "rAthena".into(), users: 3 }]);
 
         let mut refuse = vec![0u8; 26];
