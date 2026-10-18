@@ -1620,12 +1620,13 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The new-quest icon up, and the progress banners showing.
     state["quest_icon"] = json!(game.quest_icon);
     state["quest_banners"] = json!(game.banners.texts());
-    // The minimap: opaque, see-through or hidden, its zoom, and whether the navigation route is on.
+    // The minimap: opaque, see-through or hidden, its zoom, whether the navigation route is on, and the player arrow's clockwise angle.
     state["minimap"] = json!({
         "mode": game.minimap_view.name(),
         "zoom": game.minimap_zoom,
         "route": game.navigation_route,
         "shown": game.minimap_shown(),
+        "arrow": crate::minimap::arrow_angle(game.player.rot),
         // NPCs' quest marks ([x, y, colour]) and the store search mark.
         "quests": game.quest_marks.iter().map(|(_, cell, color)| json!([cell[0], cell[1], color])).collect::<Vec<_>>(),
         "store": game.store_mark,

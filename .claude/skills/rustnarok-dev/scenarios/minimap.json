@@ -1,5 +1,5 @@
 {
-  "about": "Minimap (issue #214): see-through by default; the plus button zooms up to 4 around the player; Ctrl+Tab goes hidden (no picture, buttons or coordinates, issue #537), opaque, then see-through again; minus zooms back out to 1 (the zoom is kept with the settings).",
+  "about": "Minimap (issues #214, #536, #537): see-through by default; the plus button zooms up to 4 around the player; Ctrl+Tab goes hidden (no picture, buttons or coordinates, issue #537), opaque, then see-through again; minus zooms back out to 1 (the zoom is kept with the settings). Walking north turns the arrow up (0°) over its arrow-shaped shadow, walking east turns it right (90°), and dragging the camera leaves the arrow unchanged.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -182,6 +182,99 @@
           "minimap.zoom": 1.0
         }
       }
+    },
+    {
+      "click_on": {
+        "cell": [
+          156,
+          184
+        ]
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "expect": {
+        "state": {
+          "player.cell": [
+            156,
+            184
+          ],
+          "minimap.arrow": 0
+        }
+      }
+    },
+    {
+      "shot": "minimap-north",
+      "crop": [
+        870,
+        10,
+        154,
+        160
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "cell": [
+          160,
+          184
+        ]
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "drag": [
+        [
+          500,
+          400
+        ],
+        [
+          530,
+          400
+        ]
+      ],
+      "button": "right"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "expect": {
+        "state": {
+          "player.cell": [
+            160,
+            184
+          ],
+          "camera.yaw": 30,
+          "minimap.arrow": 90
+        }
+      }
+    },
+    {
+      "shot": "minimap-east",
+      "crop": [
+        870,
+        10,
+        154,
+        160
+      ],
+      "threshold": 5
     }
   ]
 }
