@@ -522,7 +522,6 @@ const CHARM_TINTS: [[f32; 4]; 4] = [[0.5, 0.7, 1.0, 1.0], [0.75, 0.55, 0.35, 1.0
 const CHARM_NAMES: [&str; 4] = ["water", "earth", "fire", "wind"];
 /// Heal, Highness Heal and Coluceo Heal report how much they healed.
 const HEAL_SKILLS: [u16; 3] = [28, 2043, 2044];
-const CAST_BAR: [f32; 2] = [60.0, 6.0];
 const STATUS_ICON: f32 = status_tip::ICON;
 /// Steps of the clock drawn over a status icon.
 const CLOCK_STEPS: usize = 32;
@@ -3842,7 +3841,7 @@ impl Assets {
             guild: guild::Assets::load(gpu, grf),
             clan: clan::Assets::load(gpu, grf),
             vend: vend::Assets::load(gpu, grf),
-            cast_fill: gpu.solid([0x00, 0xFF, 0x00, 0xFF]),
+            cast_fill: gpu.solid([0x16, 0xEA, 0x25, 0xFF]),
             combo_fill: gpu.solid([0xFF, 0xA0, 0x00, 0xFF]),
             speech_fill: gpu.solid([0, 0, 0, 102]),
             speech_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
@@ -11673,25 +11672,32 @@ impl App {
         };
         let [border, background, ..] = &assets.bars;
         for (unit, (start, length)) in &game.casts {
-            let Some([x, y]) = head(unit) else { continue };
-            let left = x - CAST_BAR[0] / 2.0;
-            let done = (now.duration_since(*start).as_secs_f32() / length.as_secs_f32()).min(1.0);
-            base.sprites.push((border, [left, y], CAST_BAR));
-            base.sprites.push((background, [left + 1.0, y + 1.0], [CAST_BAR[0] - 2.0, CAST_BAR[1] - 2.0]));
-            base.sprites.push((&assets.cast_fill, [left + 1.0, y + 1.0], [((CAST_BAR[0] - 2.0) * done).round(), CAST_BAR[1] - 2.0]));
+            let feet = match unit {
+                None => player_feet,
+                Some(id) => match feet_of.get(id) {
+                    Some(&feet) => feet,
+                    None => continue,
+                },
+            };
+            let Some(top) = sprite_point(feet, -overhead::CAST_ABOVE) else { continue };
+            let [left, y, width, height] = overhead::cast_rect(top);
+            let done = now.duration_since(*start).as_secs_f32() / length.as_secs_f32();
+            base.sprites.push((border, [left, y], [width, height]));
+            base.sprites.push((background, [left + 1.0, y + 1.0], [width - 2.0, height - 2.0]));
+            base.sprites.push((&assets.cast_fill, [left + 1.0, y + 1.0], [overhead::cast_fill(done), height - 2.0]));
         }
         // Combo windows: a bar under the cast bar's place, emptying as the window runs out.
         // ponytail: how the official client shows a combo window isn't knowable from rathena.
         game.combos.retain(|_, (start, length)| now.duration_since(*start) < *length);
         for (unit, &(start, length)) in &game.combos {
             let Some([x, y]) = head(unit) else { continue };
-            let [left, top] = [x - CAST_BAR[0] / 2.0, y + CAST_BAR[1] + 1.0];
-            base.sprites.push((border, [left, top], CAST_BAR));
-            base.sprites.push((background, [left + 1.0, top + 1.0], [CAST_BAR[0] - 2.0, CAST_BAR[1] - 2.0]));
+            let [left, top] = [x - overhead::CAST_BAR[0] / 2.0, y + overhead::CAST_BAR[1] + 1.0];
+            base.sprites.push((border, [left, top], overhead::CAST_BAR));
+            base.sprites.push((background, [left + 1.0, top + 1.0], [overhead::CAST_BAR[0] - 2.0, overhead::CAST_BAR[1] - 2.0]));
             base.sprites.push((
                 &assets.combo_fill,
                 [left + 1.0, top + 1.0],
-                [((CAST_BAR[0] - 2.0) * share_left(start, length, now)).round(), CAST_BAR[1] - 2.0],
+                [((overhead::CAST_BAR[0] - 2.0) * share_left(start, length, now)).round(), overhead::CAST_BAR[1] - 2.0],
             ));
         }
         // Chat room signs over their owners' heads, like speech (not the room we're in).

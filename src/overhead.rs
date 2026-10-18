@@ -37,6 +37,22 @@ pub fn shouts(skill: u16, level: i32, monster: bool, packet: Shout) -> bool {
 
 /// How far over the feet the balloon's bottom (and the cast bar's top) sits, in sprite pixels straight up the screen.
 pub const HEAD: f32 = 81.0;
+/// How far over the feet the cast bar's top sits, in sprite pixels.
+pub const CAST_ABOVE: f32 = 96.7;
+/// The cast bar: 60 by 6, centred on the head.
+pub const CAST_BAR: [f32; 2] = [60.0, 6.0];
+
+/// The cast bar's box with its top centre at `point` (whole pixels).
+pub fn cast_rect(point: [f32; 2]) -> [f32; 4] {
+    [(point[0] - CAST_BAR[0] / 2.0).round(), point[1].round(), CAST_BAR[0], CAST_BAR[1]]
+}
+
+/// How wide the fill is `done` of the way through the cast: trunc(60 * pct / 100 - 2) with pct a whole percent.
+pub fn cast_fill(done: f32) -> f32 {
+    let percent = (done.clamp(0.0, 1.0) * 100.0).floor();
+    (CAST_BAR[0] * percent / 100.0 - 2.0).trunc().max(0.0)
+}
+
 /// How far under the feet HP/SP bars start, and names under them, in sprite pixels.
 pub const BAR_BELOW: f32 = 12.0;
 pub const NAME_BELOW: f32 = 20.0;
@@ -113,6 +129,12 @@ pub fn border([width, height]: [f32; 2]) -> Vec<([f32; 2], [f32; 2])> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sizes_the_cast_bar() {
+        assert_eq!(cast_rect([512.0, 300.4]), [482.0, 300.0, 60.0, 6.0]);
+        assert_eq!([0.0, 0.01, 0.5, 0.99, 1.0, 1.5].map(cast_fill), [0.0, 0.0, 28.0, 57.0, 58.0, 58.0]);
+    }
 
     #[test]
     fn who_calls_which_skill() {
