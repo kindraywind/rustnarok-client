@@ -1621,7 +1621,15 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["quest_icon"] = json!(game.quest_icon);
     state["quest_banners"] = json!(game.banners.texts());
     // The minimap: opaque, see-through or hidden, its zoom, and whether the navigation route is on.
-    state["minimap"] = json!({"mode": game.minimap_view.name(), "zoom": game.minimap_zoom, "route": game.navigation_route, "shown": game.minimap_shown()});
+    state["minimap"] = json!({
+        "mode": game.minimap_view.name(),
+        "zoom": game.minimap_zoom,
+        "route": game.navigation_route,
+        "shown": game.minimap_shown(),
+        // NPCs' quest marks ([x, y, colour]) and the store search mark.
+        "quests": game.quest_marks.iter().map(|(_, cell, color)| json!([cell[0], cell[1], color])).collect::<Vec<_>>(),
+        "store": game.store_mark,
+    });
     // The big minimap and the memos recorded on this map.
     state["minimap_window"] = json!({
         "open": game.minimap_window.frame.open,

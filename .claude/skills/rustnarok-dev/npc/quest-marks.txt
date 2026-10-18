@@ -1,0 +1,16 @@
+// Minimap quest marks (issue #538): one NPC near the player with a green mark (talking to it takes the mark away with
+// showevent QTYPE_NONE), one far north with a yellow mark. Loaded and unloaded by scenarios/minimap-marks.json.
+prontera,162,184,4	script	QAMarkNear	4_F_KAFRA1,{
+	showevent QTYPE_NONE;
+	end;
+OnInit:
+	questinfo QTYPE_QUEST, QMARK_GREEN;
+	end;
+}
+
+prontera,156,300,4	script	QAMarkFar	4_F_KAFRA1,{
+	end;
+OnInit:
+	questinfo QTYPE_QUEST, QMARK_YELLOW;
+	end;
+}

@@ -95,10 +95,61 @@ pub fn window(player: [f32; 2], zoom: f32) -> [f32; 2] {
     player.map(|at| (at - span / 2.0).clamp(0.0, 1.0 - span))
 }
 
-/// Where a share of the overview lands on screen through the window, or none outside it.
-pub fn on_screen(at: [f32; 2], window: [f32; 2], zoom: f32) -> Option<[f32; 2]> {
-    let local = [(at[0] - window[0]) * zoom, (at[1] - window[1]) * zoom];
-    local.iter().all(|value| (0.0..=1.0).contains(value)).then(|| [origin()[0] + local[0] * SIZE, origin()[1] + local[1] * SIZE])
+/// Where a share of the overview lands on screen through the window, in or out of the square.
+fn through(at: [f32; 2], window: [f32; 2], zoom: f32) -> [f32; 2] {
+    [origin()[0] + (at[0] - window[0]) * zoom * SIZE, origin()[1] + (at[1] - window[1]) * zoom * SIZE]
+}
+
+/// A mark's box at screen point `at` with half-size `half`: (x − s, y − s) to (x + s, y + s), corners truncated; as
+/// [left, top, right, bottom].
+pub fn mark_box([x, y]: [f32; 2], half: f32) -> [f32; 4] {
+    [(x - half).trunc(), (y - half).trunc(), (x + half).trunc(), (y + half).trunc()]
+}
+
+/// Whether all of a box is inside the square: a plain mark (party, guild, compass) is drawn whole or not at all.
+pub fn inside([left, top, right, bottom]: [f32; 4]) -> bool {
+    let [x, y] = origin();
+    left >= x && top >= y && right <= x + SIZE && bottom <= y + SIZE
+}
+
+/// A box pushed back inside the square, and the side it touched: left 1, right 2, top 3, bottom 4 (left or right wins
+/// over top or bottom); 0 when it was inside.
+pub fn push_in(area: [f32; 4]) -> ([f32; 4], u8) {
+    let [x, y] = origin();
+    let [left, top, right, bottom] = area;
+    let [width, height] = [right - left, bottom - top];
+    let side = if left < x {
+        1
+    } else if right > x + SIZE {
+        2
+    } else if top < y {
+        3
+    } else if bottom > y + SIZE {
+        4
+    } else {
+        0
+    };
+    let left = left.clamp(x, x + SIZE - width);
+    let top = top.clamp(y, y + SIZE - height);
+    ([left, top, left + width, top + height], side)
+}
+
+/// An NPC's quest mark from ZC_QUEST_NOTIFY_EFFECT: one per NPC, replaced by the next; effect 9999 (QTYPE_NONE) takes
+/// it away. Colour 0 is kept but draws nothing.
+pub fn set_quest_mark(marks: &mut Vec<(u32, [i32; 2], u16)>, npc: u32, cell: [i32; 2], effect: u16, color: u16) {
+    marks.retain(|(each, ..)| *each != npc);
+    if effect != 9999 {
+        marks.push((npc, cell, color));
+    }
+}
+
+/// A compass mark (ZC_COMPASS) by its id alone: a new one replaces the mark with that id whichever NPC sent it; type 2
+/// only removes it.
+pub fn set_compass_mark<T>(marks: &mut Vec<(u8, T)>, id: u8, kind: u32, mark: T) {
+    marks.retain(|(each, _)| *each != id);
+    if kind != 2 {
+        marks.push((id, mark));
+    }
 }
 
 /// The overview's window as a picture: the overview's pixels it covers, at `alpha`.
@@ -164,6 +215,11 @@ pub struct Assets {
     /// A navigation's trail dots and where it heads.
     trail: Texture,
     goal: Texture,
+    /// Quest marks by colour (1 yellow, 2 green, 3 purple), the store search mark, and the edge arrows by side (left,
+    /// right, top, bottom).
+    quests: [Texture; 3],
+    store: Texture,
+    edge_arrows: [Texture; 4],
 }
 
 /// Turns an image by `angle` radians around its center (nearest neighbor), keeping its size.
@@ -202,6 +258,9 @@ impl Assets {
             boss: image(format!("{UI}map\\bossmonster.bmp")),
             trail: gpu.texture(&disc(1, rgba(0xffff4040)), false),
             goal: gpu.texture(&disc(3, rgba(0xffff2020)), false),
+            quests: [1, 2, 3].map(|color| image(format!("{UI}basic_interface\\quest_{color}.bmp"))),
+            store: image(format!("{UI}basic_interface\\search_store.bmp")),
+            edge_arrows: [1, 2, 3, 4].map(|side| image(format!("{UI}basic_interface\\quest_arrow{side}.bmp"))),
         }
     }
 
@@ -303,6 +362,9 @@ pub struct Markers<'a> {
     pub cell: [i32; 2],
     pub yaw: f32,
     pub marks: &'a [([i32; 2], &'a Texture)],
+    /// NPCs' quest marks (cell, colour) and the store search mark.
+    pub quests: &'a [([i32; 2], u16)],
+    pub store: Option<[i32; 2]>,
     pub party: &'a [([i32; 2], &'a Texture)],
     pub guild: &'a [[i32; 2]],
     pub boss: Option<[i32; 2]>,
@@ -319,47 +381,68 @@ pub fn draw<'a>(layer: &mut Layer<'a>, assets: &'a Assets, overview: Option<&'a 
     if let Some(overview) = overview {
         layer.sprites.push((overview, origin(), [SIZE, SIZE]));
     }
-    {
-        let at = |cell: [i32; 2]| on_screen(share(cell, size), window, zoom).map(|point| point.map(f32::round));
-        // A navigation's trail, a dot every few cells, and a disc where it heads.
-        // ponytail: the client's own route look on the minimap isn't known; red dots.
-        for &cell in markers.trail.iter().step_by(crate::navigation::TRAIL_STEP) {
-            let Some([x, y]) = at(cell) else { continue };
-            layer.sprites.push((&assets.trail, [x - 1.0, y - 1.0], assets.trail.size));
+    // A cell's screen point; a cell with x or y under 0 is never drawn.
+    let point = |cell: [i32; 2]| (cell[0] >= 0 && cell[1] >= 0).then(|| through(share(cell, size), window, zoom));
+    let place = |area: [f32; 4]| ([area[0], area[1]], [area[2] - area[0], area[3] - area[1]]);
+    // A plain mark: drawn whole inside the square or not at all.
+    let plain = |cell: [i32; 2], half: f32| point(cell).map(|at| mark_box(at, half)).filter(|area| inside(*area));
+    // A navigation's trail, a dot every few cells, and a disc where it heads.
+    // ponytail: the client's own route look on the minimap isn't known; red dots.
+    for &cell in markers.trail.iter().step_by(crate::navigation::TRAIL_STEP) {
+        if let Some(area) = plain(cell, 1.0) {
+            layer.sprites.push((&assets.trail, [area[0], area[1]], assets.trail.size));
         }
-        if let Some([x, y]) = markers.goal.and_then(at) {
-            layer.sprites.push((&assets.goal, [x - 3.0, y - 3.0], assets.goal.size));
+    }
+    if let Some(area) = markers.goal.and_then(|cell| plain(cell, 3.0)) {
+        layer.sprites.push((&assets.goal, [area[0], area[1]], assets.goal.size));
+    }
+    // The player: the arrow turned with the camera over its shadow, never left out.
+    if let Some([x, y]) = point(markers.cell).map(|at| at.map(f32::round)) {
+        layer.sprites.push((&assets.arrow_shadow, [x - 7.0, y - 7.0], [14.0, 16.0]));
+        let turn = ((180.0 - markers.yaw).rem_euclid(360.0) / 360.0 * TURNS as f32).round() as usize % TURNS as usize;
+        layer.sprites.push((&assets.arrows[turn], [x - 5.0, y - 5.0], [10.0, 10.0]));
+    }
+    // The boss, all of its 12×12 kept inside the square.
+    if let Some(at) = markers.boss.and_then(point) {
+        let (area, _) = push_in(mark_box(at, 6.0));
+        let (corner, extent) = place(area);
+        layer.sprites.push((&assets.boss, corner, extent));
+    }
+    // Party members: their colour on a white back.
+    for &(cell, color) in markers.party {
+        if let Some(area) = plain(cell, 2.0) {
+            layer.sprites.push((&assets.dot_back, [area[0] - 1.0, area[1] - 1.0], [6.0, 6.0]));
+            layer.sprites.push((color, [area[0], area[1]], [4.0, 4.0]));
         }
-        // The cross: 8x2 and 2x8.
-        for &(cell, color) in markers.marks {
-            let Some([x, y]) = at(cell) else { continue };
+    }
+    // Guild members: a pink circle in a white ring.
+    for &cell in markers.guild {
+        if let Some(area) = plain(cell, 2.0) {
+            layer.sprites.push((&assets.guild_ring, [area[0] - 1.0, area[1] - 1.0], assets.guild_ring.size));
+            layer.sprites.push((&assets.guild, [area[0], area[1]], assets.guild.size));
+        }
+    }
+    // Quest marks and the store mark: kept at the edge, as an arrow toward them once pushed.
+    let edge = |picture: &'a Texture, at: [f32; 2], layer: &mut Layer<'a>| {
+        let (area, side) = push_in(mark_box(at, 4.0));
+        let image = if side == 0 { picture } else { &assets.edge_arrows[usize::from(side) - 1] };
+        let (corner, extent) = place(area);
+        layer.sprites.push((image, corner, extent));
+    };
+    for &(cell, color) in markers.quests {
+        if let (Some(at), 1..=3) = (point(cell), color) {
+            edge(&assets.quests[usize::from(color) - 1], at, layer);
+        }
+    }
+    if let Some(at) = markers.store.and_then(point) {
+        edge(&assets.store, at, layer);
+    }
+    // Compass marks: a cross, 8×2 and 2×8.
+    for &(cell, color) in markers.marks {
+        if let Some(area) = plain(cell, 1.0) {
+            let [x, y] = [area[0] + 1.0, area[1] + 1.0];
             layer.sprites.push((color, [x - 1.0, y - 4.0], [2.0, 8.0]));
             layer.sprites.push((color, [x - 4.0, y - 1.0], [8.0, 2.0]));
-        }
-        // Guild members: a pink circle in a white ring.
-        for &cell in markers.guild {
-            let Some([x, y]) = at(cell) else { continue };
-            layer.sprites.push((&assets.guild_ring, [x - 3.0, y - 3.0], assets.guild_ring.size));
-            layer.sprites.push((&assets.guild, [x - 2.0, y - 2.0], assets.guild.size));
-        }
-        // Party members: 4x4 of their colour on a 6x6 white.
-        for &(cell, color) in markers.party {
-            let Some([x, y]) = at(cell) else { continue };
-            layer.sprites.push((&assets.dot_back, [x - 3.0, y - 3.0], [6.0, 6.0]));
-            layer.sprites.push((color, [x - 2.0, y - 2.0], [4.0, 4.0]));
-        }
-        // The boss, kept at the edge when outside.
-        if let Some(boss) = markers.boss {
-            let local = [(share(boss, size)[0] - window[0]) * zoom, (share(boss, size)[1] - window[1]) * zoom].map(|value| value.clamp(0.0, 1.0));
-            let [x, y] = [origin()[0] + local[0] * SIZE, origin()[1] + local[1] * SIZE];
-            layer.sprites.push((&assets.boss, [(x - 6.0).round(), (y - 6.0).round()], [12.0, 12.0]));
-        }
-        // The player: the arrow turned with the camera over its shadow.
-        if let Some([x, y]) = at(markers.cell) {
-            layer.sprites.push((&assets.arrow_shadow, [x - 7.0, y - 7.0], [14.0, 16.0]));
-            let turn = ((180.0 - markers.yaw).rem_euclid(360.0) / 360.0 * TURNS as f32).round() as usize % TURNS as usize;
-            let arrow = &assets.arrows[turn];
-            layer.sprites.push((arrow, [x - 5.0, y - 5.0], [10.0, 10.0]));
         }
     }
     // The bottom row: the buttons and the coordinates, black under white.
@@ -409,12 +492,48 @@ mod tests {
         assert_eq!(window([0.5, 0.5], 2.0), [0.25, 0.25]);
         assert_eq!(window([0.1, 0.95], 2.0), [0.0, 0.5]);
         assert_eq!(window([0.3, 0.3], 1.0), [0.0, 0.0]);
-        // The player at the middle of a ×2 window lands at the middle of the square; outside it, nowhere.
-        assert_eq!(on_screen([0.5, 0.5], [0.25, 0.25], 2.0), Some([origin()[0] + 64.0, origin()[1] + 64.0]));
-        assert_eq!(on_screen([0.9, 0.5], [0.25, 0.25], 2.0), None);
+        // The player at the middle of a ×2 window lands at the middle of the square; a mark past it isn't inside.
+        assert_eq!(through([0.5, 0.5], [0.25, 0.25], 2.0), [origin()[0] + 64.0, origin()[1] + 64.0]);
+        assert!(!inside(mark_box(through([0.9, 0.5], [0.25, 0.25], 2.0), 2.0)));
         assert_eq!(coordinates([156, 180]), " 156  180");
         assert_eq!(button_at([screen()[0] - 70.0, ROW + 5.0]), Some("plus"));
         assert_eq!(button_at([screen()[0] - 56.0, ROW + 5.0]), Some("minus"));
+    }
+
+    #[test]
+    fn keeps_marks_whole_or_at_the_edge() {
+        let [x, y] = origin();
+        // A box with truncated corners; inside whole, or not.
+        assert_eq!(mark_box([x + 10.7, y + 20.2], 2.0), [x + 8.0, y + 18.0, x + 12.0, y + 22.0].map(f32::trunc));
+        assert!(inside(mark_box([x + 2.0, y + 64.0], 2.0)));
+        assert!(!inside(mark_box([x + 1.5, y + 64.0], 2.0)), "a dot crossing the edge is gone whole");
+        // Pushed back in: the side, and a corner where left wins over top.
+        let (area, side) = push_in(mark_box([x - 30.0, y + 50.0], 4.0));
+        assert_eq!((area[0], area[2] - area[0], side), (x, 8.0, 1));
+        assert_eq!(push_in(mark_box([x + 200.0, y + 50.0], 4.0)).1, 2);
+        assert_eq!(push_in(mark_box([x + 50.0, y - 9.0], 4.0)).1, 3);
+        assert_eq!(push_in(mark_box([x + 50.0, y + 300.0], 4.0)), ([x + 46.0, y + 120.0, x + 54.0, y + 128.0], 4));
+        assert_eq!(push_in(mark_box([x - 5.0, y - 5.0], 4.0)), ([x, y, x + 8.0, y + 8.0], 1));
+        assert_eq!(push_in(mark_box([x + 50.0, y + 50.0], 4.0)).1, 0);
+    }
+
+    #[test]
+    fn keys_quest_and_compass_marks() {
+        let mut quests = Vec::new();
+        set_quest_mark(&mut quests, 7, [150, 170], 1, 2);
+        set_quest_mark(&mut quests, 8, [10, 10], 1, 0);
+        set_quest_mark(&mut quests, 7, [151, 171], 2, 3);
+        assert_eq!(quests, [(8, [10, 10], 0), (7, [151, 171], 3)]);
+        set_quest_mark(&mut quests, 7, [151, 171], 9999, 3);
+        assert_eq!(quests, [(8, [10, 10], 0)]);
+        // Compass marks by id alone: another NPC's mark with the same id replaces it; type 2 removes it.
+        let mut compass = Vec::new();
+        set_compass_mark(&mut compass, 1, 0, "npc a");
+        set_compass_mark(&mut compass, 2, 1, "npc a");
+        set_compass_mark(&mut compass, 1, 1, "npc b");
+        assert_eq!(compass, [(2, "npc a"), (1, "npc b")]);
+        set_compass_mark(&mut compass, 2, 2, "npc b");
+        assert_eq!(compass, [(1, "npc b")]);
     }
 
     #[test]

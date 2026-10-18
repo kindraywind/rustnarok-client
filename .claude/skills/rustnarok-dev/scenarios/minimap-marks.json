@@ -1,0 +1,25 @@
+{
+  "about": "Minimap quest marks (issue #538): two test NPCs with questinfo (a green mark near the player, a yellow one far north) show their plus marks after arriving on the map; zoomed in, the far one becomes an edge arrow at the top; talking to the near one (showevent QTYPE_NONE) takes its mark away.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/quest-marks.txt"}, {"wait": 300},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/quest-marks.txt"}, {"wait": 500},
+    {"say": "@warp prontera 156 180"}, {"settle": 2000},
+    {"expect": {"state": {"minimap.quests": [[162, 184, 2], [156, 300, 1]]}}},
+    {"move": [600, 500]},
+    {"shot": "marks-whole-map", "crop": [870, 10, 154, 160]},
+    {"click_on": {"button": "minimap_plus"}}, {"click_on": {"button": "minimap_plus"}}, {"click_on": {"button": "minimap_plus"}},
+    {"click_on": {"button": "minimap_plus"}}, {"click_on": {"button": "minimap_plus"}}, {"click_on": {"button": "minimap_plus"}},
+    {"wait": 200}, {"move": [600, 500]},
+    {"expect": {"state": {"minimap.zoom": 4.0}}},
+    {"shot": "marks-edge-arrow", "crop": [870, 10, 154, 160]},
+    {"click_on": {"unit": "QAMarkNear"}}, {"wait": 800},
+    {"expect": {"state": {"minimap.quests": [[156, 300, 1]]}}},
+    {"move": [600, 500]},
+    {"shot": "marks-near-gone", "crop": [870, 10, 154, 160]},
+    {"click_on": {"button": "minimap_minus"}}, {"click_on": {"button": "minimap_minus"}}, {"click_on": {"button": "minimap_minus"}},
+    {"click_on": {"button": "minimap_minus"}}, {"click_on": {"button": "minimap_minus"}}, {"click_on": {"button": "minimap_minus"}},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/quest-marks.txt"}
+  ]
+}
