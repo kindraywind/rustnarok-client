@@ -1,0 +1,220 @@
+{
+  "about": "Chat room owner tools (issue #325): the first player makes a room and the second joins by its board. The owner's Room Setup opens the make window filled from the room; renamed, the second sees the new title. The owner's right click on the second's name gives the menu (Give Master Authority, Kick Character Out): handed over, the second is the owner, and kicks the first: the client sends CZ_REQ_EXPEL_MEMBER (rathena refuses to kick a GM account, PC_PERM_NO_CHAT_KICK, and both lane characters are GMs, so the first stays). Both leave by warping.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "key": "Alt+C"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "type": "QA room"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "chat": "Room has been successfully created."
+      }
+    },
+    {
+      "as": "second",
+      "say": "@warp prontera 160 180"
+    },
+    {
+      "as": "second",
+      "settle": 2500
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "room_sign"
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "room.members": 2,
+          "room.owner": "{first}"
+        }
+      }
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "room.title": "QA room"
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "room_setup"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "room-setup",
+      "threshold": 5
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "type": "Renamed room"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "room.title": "Renamed room"
+        }
+      }
+    },
+    {
+      "as": "second",
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "as": "second",
+      "shot": "renamed",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "room_member_{second}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "member-menu",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "menu_item": "Give Master"
+      }
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "room.owner": "{second}"
+        }
+      }
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "room_member_{first}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "shot": "second-member-menu",
+      "threshold": 5
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "menu_item": "Kick"
+      }
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "sent": "0x00e2",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "as": "second",
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "as": "second",
+      "shot": "kick-sent",
+      "threshold": 5
+    },
+    {
+      "as": "second",
+      "say": "@warp prontera 156 184"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "wait": 800
+    }
+  ]
+}
