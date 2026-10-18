@@ -364,7 +364,16 @@ const WEDDING_EFFECT: u32 = 347;
 /// questions (feeding; the name, then renaming once), no food, and neglect.
 // ponytail: the menu's order is a guess; the strings sit together like one.
 const PET_EGGS: usize = 599;
-const PET_CHOICES: [(usize, u8); 5] = [(596, net::PET_INFO), (592, net::PET_FEED), (593, net::PET_PERFORM), (594, net::PET_RETURN), (595, net::PET_UNEQUIP)];
+const PET_CHOICES: [(usize, u8); 5] = [(592, net::PET_FEED), (593, net::PET_PERFORM), (594, net::PET_RETURN), (595, net::PET_UNEQUIP), (596, net::PET_INFO)];
+/// A player's menu: "Open 1:1 Chat", "Send a mail", "Block Chat (Toggle)", "Kick %s".
+const WHISPER_CHOICE: usize = 360;
+const MAIL_CHOICE: usize = 2808;
+const BLOCK_CHOICE: usize = 3820;
+const KICK_CHOICE: usize = 458;
+/// Our homunculus's menu: "View Status", "Feed", "Stand By".
+const HOMUNCULUS_CHOICES: [(usize, Choice); 3] = [(1112, Choice::HomunculusStatus), (1113, Choice::HomunculusFeed), (1114, Choice::HomunculusStandBy)];
+/// Ourselves with a stall open: "Close stall".
+const CLOSE_STALL_CHOICE: usize = 3493;
 const PET_FEED_ASKS: usize = 601;
 const PET_NAME_RULE: usize = 682;
 const PET_RENAME_ASKS: usize = 683;
@@ -420,9 +429,9 @@ const VOUCHER_SLOTS: usize = 10;
 const EXPANSION_ASKS: usize = 3561;
 const EXPANSION_RESULTS: [usize; 5] = [3566, 3562, 3563, 3564, 3565];
 const FRIEND_ONLINE: usize = 1041;
-/// Parties: "Ask %s to join your party", made, " Party has sent you an invitation...", "You left the party", party
-/// chat colors (ours, others'), the prompts' titles.
-const PARTY_ASK: usize = 88;
+/// Parties: "Ask (%s) to join your party", made, " Party has sent you an invitation...", "You left the party",
+/// party chat colors (ours, others'), the prompts' titles.
+const PARTY_ASK: usize = 392;
 const PARTY_MADE: usize = 77;
 const PARTY_INVITED: usize = 94;
 const PARTY_LEFT: usize = 84;
@@ -1303,7 +1312,7 @@ struct Game {
     weather: weather::Weather,
     /// The right-click menu, and where a right press began (and on whom).
     menu: Option<menu::Menu<Choice>>,
-    right_press: Option<([f32; 2], Option<u32>)>,
+    right_press: Option<([f32; 2], Option<MenuFor>)>,
     /// The pointer moved since the right button went down: no menu on release.
     right_moved: bool,
     /// A monster marked for a companion (the companion, the monster): a second Alt press on it sends the attack.
@@ -1885,6 +1894,86 @@ enum Choice {
     GuildLeave,
     /// The master ends the relation with this guild (antagonist or not), without asking.
     EndRelation(u32, bool),
+    /// Whisper this player: their name in the chat's name box.
+    Whisper(u32),
+    /// Write them a mail.
+    Mail(u32),
+    /// Block their whispers.
+    Block(u32),
+    /// Our homunculus: its window, feeding it, or it staying put rather than following.
+    HomunculusStatus,
+    HomunculusFeed,
+    HomunculusStandBy,
+    /// Close our stall.
+    CloseStall,
+}
+
+/// Whom a still right-click opens the menu for.
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum MenuFor {
+    Player(u32),
+    Pet(u32),
+    Homunculus(u32),
+    /// Ourselves, while our stall is open.
+    Stall,
+}
+
+/// The menu a still right-click opens for what's under the pointer (`picked`, by the usual ranks with Shift's aside):
+/// another player, our pet or homunculus, or ourselves while our stall is open; nothing for anything else.
+fn menu_for(picked: Option<Owner>, is_player: impl Fn(u32) -> bool, pet: Option<u32>, homunculus: Option<u32>, stall: bool) -> Option<MenuFor> {
+    match picked? {
+        Owner::Unit(id) if pet == Some(id) => Some(MenuFor::Pet(id)),
+        Owner::Unit(id) if homunculus == Some(id) => Some(MenuFor::Homunculus(id)),
+        Owner::Unit(id) if is_player(id) => Some(MenuFor::Player(id)),
+        Owner::Player if stall => Some(MenuFor::Stall),
+        _ => None,
+    }
+}
+
+/// What we can do with another player, from where we stand.
+#[derive(Default, Clone, Copy)]
+struct PlayerTies {
+    trading: bool,
+    /// We lead a party they aren't in.
+    party_invite: bool,
+    /// We're a guild master: they aren't in our guild; they're in another guild.
+    guild_invite: bool,
+    guild_relation: bool,
+    friend: bool,
+    adoptable: bool,
+    /// Their row in the chat room we own.
+    in_our_room: Option<usize>,
+}
+
+/// A player's menu entries in the game's order, each when it applies: the message and the choice.
+// ponytail: no separator lines; good/bad points, the chat-block record and removing all equipment are left out.
+fn player_choices(id: u32, ties: PlayerTies) -> Vec<(usize, Choice)> {
+    let mut choices = Vec::new();
+    if !ties.trading {
+        choices.push((TRADE_CHOICE, Choice::Trade(id)));
+    }
+    if ties.party_invite {
+        choices.push((PARTY_ASK, Choice::Invite(id)));
+    }
+    if ties.guild_invite {
+        choices.push((GUILD_CHOICE, Choice::GuildInvite(id)));
+    }
+    if ties.guild_relation {
+        choices.extend([(ALLY_CHOICE, Choice::Ally(id)), (ANTAGONIST_CHOICE, Choice::Antagonist(id))]);
+    }
+    choices.push((WHISPER_CHOICE, Choice::Whisper(id)));
+    if !ties.friend {
+        choices.push((FRIEND_CHOICE, Choice::Befriend(id)));
+    }
+    choices.extend([(MAIL_CHOICE, Choice::Mail(id)), (VIEW_CHOICE, Choice::ViewEquipment(id))]);
+    if ties.adoptable {
+        choices.push((ADOPT_CHOICE, Choice::Adopt(id)));
+    }
+    choices.push((BLOCK_CHOICE, Choice::Block(id)));
+    if let Some(row) = ties.in_our_room {
+        choices.push((KICK_CHOICE, Choice::RoomKick(row)));
+    }
+    choices
 }
 
 /// A battleground queue question waiting for OK: applying (how, for which), leaving the queue, or entering the
@@ -6600,6 +6689,40 @@ impl App {
                 Some(Choice::ViewEquipment(id)) => {
                     let _ = game.session.view_equipment(id);
                 }
+                // Their name in the chat's name box, as the friend list's whisper does.
+                Some(Choice::Whisper(id)) => {
+                    if let Some(actor) = game.units.get(&id) {
+                        game.chat.whisper = actor.name.clone();
+                        game.chat.naming = false;
+                    }
+                }
+                Some(Choice::Mail(id)) => {
+                    if let Some(name) = game.units.get(&id).map(|actor| actor.name.clone()) {
+                        let _ = game.session.start_mail(&name);
+                    }
+                }
+                // As /ex: their whispers blocked.
+                Some(Choice::Block(id)) => {
+                    if let Some(name) = game.units.get(&id).map(|actor| actor.name.clone())
+                        && game.session.set_whisper(&name, false).is_ok()
+                    {
+                        game.whisper_asked.push_back(name);
+                    }
+                }
+                Some(Choice::HomunculusStatus) => {
+                    game.homunculus_window.frame.toggle();
+                    game.raise(Panel::Homunculus);
+                    game.sync_esc();
+                }
+                Some(Choice::HomunculusFeed) => {
+                    let _ = game.session.homunculus_command(net::HOMUNCULUS_FEED);
+                }
+                Some(Choice::HomunculusStandBy) => game.homunculus_steering.following = !game.homunculus_steering.following,
+                Some(Choice::CloseStall) => {
+                    let _ = game.session.close_shop();
+                    game.my_shop = None;
+                    game.signs.remove(&game.account_id);
+                }
                 Some(Choice::Invite(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         let _ = game.session.invite_to_party(&actor.name.clone());
@@ -8016,66 +8139,62 @@ impl App {
                 },
                 _ => None,
             };
-            // A right click (not a drag) on another player (or our pet) opens the menu of what can be done with them;
-            // the monsters and items around don't get in the way.
-            let with_menu = game.hit_boxes.iter().copied().filter(|target| match target.owner {
-                Owner::Unit(id) => game.units.get(&id).is_some_and(|actor| actor.kind == PLAYER) || game.pet_id == Some(id),
-                _ => false,
-            });
-            let on_unit = match picking::pick(with_menu, self.cursor, true, screen_middle()) {
+            // A right click (not a drag) opens the menu for what's under the pointer, by the usual ranks: another
+            // player, our pet or homunculus, ourselves with our stall open. A monster or an item over them wins.
+            let ourselves =
+                || picking::pick(game.hit_boxes.iter().copied().filter(|target| target.owner == Owner::Player), self.cursor, false, screen_middle());
+            let picked = hovered(&game.hit_boxes, self.cursor, false).or_else(|| game.my_shop.as_ref().and_then(|_| ourselves()));
+            let is_player = |id: u32| game.units.get(&id).is_some_and(|actor| actor.kind == PLAYER);
+            let on_unit = match menu_for(picked, is_player, game.pet_id, game.homunculus_id, game.my_shop.is_some()) {
                 _ if game.window_at(self.cursor).is_some() || game.chat.blocks(self.cursor) => None,
-                Some(Owner::Unit(id)) => Some(id),
-                _ => None,
+                target => target,
             };
             if state == ElementState::Pressed {
                 game.menu = None;
                 game.right_press = Some((self.cursor, on_unit));
                 game.right_moved = false;
-            } else if let Some((_, Some(id))) = game.right_press.take()
+            } else if let Some((_, Some(target))) = game.right_press.take()
                 && menu_opens(game.right_moved, self.modifiers.shift_key(), self.mouse_down, false)
-                && let Some(actor) = game.units.get(&id)
             {
-                let fill = |id: usize| rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&actor.name]);
-                let mut choices = Vec::new();
-                // Our pet: its commands, the accessory's while it wears one.
-                if Some(id) == game.pet_id {
-                    let accessory = game.pet.as_ref().is_some_and(|pet| pet.accessory != 0);
-                    let commands = PET_CHOICES.into_iter().filter(|&(_, command)| command != net::PET_UNEQUIP || accessory);
-                    choices.extend(commands.map(|(label, command)| Some((fill(label), Choice::Pet(command)))));
-                } else {
-                    if game.trade.is_none() {
-                        choices.push(Some((fill(TRADE_CHOICE), Choice::Trade(id))));
+                let name = match target {
+                    MenuFor::Player(id) | MenuFor::Pet(id) | MenuFor::Homunculus(id) => game.units.get(&id).map(|actor| actor.name.clone()).unwrap_or_default(),
+                    MenuFor::Stall => game.me.name.clone(),
+                };
+                let fill = |id: usize| rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]);
+                let choices: Vec<(usize, Choice)> = match target {
+                    // Our pet: its commands, the accessory's while it wears one.
+                    MenuFor::Pet(_) => {
+                        let accessory = game.pet.as_ref().is_some_and(|pet| pet.accessory != 0);
+                        PET_CHOICES
+                            .into_iter()
+                            .filter(|&(_, command)| command != net::PET_UNEQUIP || accessory)
+                            .map(|(label, command)| (label, Choice::Pet(command)))
+                            .collect()
                     }
-                    // The guild's master can invite, and ask another guild for an alliance or set it as an antagonist.
-                    // ponytail: where the two sit in the menu is an estimate.
-                    if game.guild.as_ref().is_some_and(|guild| guild.master && guild.members.iter().all(|member| member.account != id)) {
-                        choices.push(Some((fill(GUILD_CHOICE), Choice::GuildInvite(id))));
+                    MenuFor::Homunculus(_) => HOMUNCULUS_CHOICES.to_vec(),
+                    MenuFor::Stall => vec![(CLOSE_STALL_CHOICE, Choice::CloseStall)],
+                    MenuFor::Player(id) => {
+                        let guild = game.guild.as_ref().filter(|guild| guild.master);
+                        let their_guild = game.units.get(&id).map_or(0, |actor| actor.guild);
+                        let in_party = |party: &party::Party| party.members.iter().any(|member| member.info.account == id);
+                        // Married (wearing the ring): a party member can be asked to be adopted.
+                        let married = game.inventory.items.iter().any(|item| item.worn != 0 && WEDDING_RINGS.contains(&item.id));
+                        let ties = PlayerTies {
+                            trading: game.trade.is_some(),
+                            party_invite: game.party.as_ref().is_some_and(|party| party.leader() == Some(game.account_id) && !in_party(party)),
+                            guild_invite: guild.is_some_and(|guild| guild.members.iter().all(|member| member.account != id)),
+                            guild_relation: guild.is_some_and(|guild| their_guild != 0 && their_guild != guild.id),
+                            friend: game.friends.iter().any(|friend| friend.account == id),
+                            adoptable: married && game.party.as_ref().is_some_and(in_party),
+                            in_our_room: game.room.as_ref().and_then(|room| {
+                                let row = room.members.iter().position(|(member, _)| *member == name)?;
+                                room.member_choices(row, &game.me.name).map(|_| row)
+                            }),
+                        };
+                        player_choices(id, ties)
                     }
-                    if game.guild.as_ref().is_some_and(|guild| guild.master && actor.guild != 0 && actor.guild != guild.id) {
-                        choices.push(Some((fill(ALLY_CHOICE), Choice::Ally(id))));
-                        choices.push(Some((fill(ANTAGONIST_CHOICE), Choice::Antagonist(id))));
-                    }
-                    // Not yet a friend: offer it, under a line.
-                    if game.friends.iter().all(|friend| friend.account != id) {
-                        choices.extend([None, Some((fill(FRIEND_CHOICE), Choice::Befriend(id)))]);
-                    }
-                    // The party's leader can invite players not in it.
-                    if let Some(party) = &game.party
-                        && party.leader() == Some(game.account_id)
-                        && party.members.iter().all(|member| member.info.account != id)
-                    {
-                        choices.extend([None, Some((fill(PARTY_ASK), Choice::Invite(id)))]);
-                    }
-                    // Married (wearing the ring): a party member can be asked to be adopted.
-                    // ponytail: where it sits in the menu is an estimate.
-                    if game.party.as_ref().is_some_and(|party| party.members.iter().any(|member| member.info.account == id))
-                        && game.inventory.items.iter().any(|item| item.worn != 0 && WEDDING_RINGS.contains(&item.id))
-                    {
-                        choices.extend([None, Some((fill(ADOPT_CHOICE), Choice::Adopt(id)))]);
-                    }
-                    // ponytail: last, under a line; where the real client lists it isn't known.
-                    choices.extend([None, Some((fill(VIEW_CHOICE), Choice::ViewEquipment(id)))]);
-                }
+                };
+                let choices = choices.into_iter().map(|(label, choice)| Some((fill(label), choice))).collect();
                 game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             }
             // A right click on an item (inventory, storage, what's worn, a shop's row) describes it.
@@ -16643,5 +16762,40 @@ mod tests {
         goal.press([200.0, 100.0], Instant::now(), false, false);
         goal.drag([300.0, 100.0], none);
         assert!(goal.yaw > 0.0);
+    }
+
+    #[test]
+    fn opens_the_menu_for_what_is_under_the_pointer() {
+        let players = [7u32, 8];
+        let is_player = |id: u32| players.contains(&id);
+        let menu = |picked| menu_for(picked, is_player, Some(20), Some(30), false);
+        // A player alone: their menu. A monster or an item over them is what's picked: no menu.
+        assert_eq!(menu(Some(Owner::Unit(7))), Some(MenuFor::Player(7)));
+        assert_eq!((menu(Some(Owner::Unit(99))), menu(Some(Owner::Item(5))), menu(None)), (None, None, None));
+        // Our pet and our homunculus have their own; we have one only with our stall open.
+        assert_eq!((menu(Some(Owner::Unit(20))), menu(Some(Owner::Unit(30)))), (Some(MenuFor::Pet(20)), Some(MenuFor::Homunculus(30))));
+        assert_eq!(menu(Some(Owner::Player)), None);
+        assert_eq!(menu_for(Some(Owner::Player), is_player, None, None, true), Some(MenuFor::Stall));
+        // The pick itself goes by the usual ranks: a monster's area over a player's wins.
+        let target = |owner, kind| picking::Target { owner, kind, sprite: [0.0; 4], area: [100.0, 100.0, 200.0, 200.0], depth: 1.0 };
+        let boxes = [target(Owner::Unit(7), picking::Kind::Player), target(Owner::Unit(99), picking::Kind::Monster)];
+        assert!(picking::pick(boxes, [150.0, 150.0], false, [512.0, 384.0]) == Some(Owner::Unit(99)));
+    }
+
+    #[test]
+    fn lists_a_players_entries_in_the_games_order() {
+        let labels = |ties| player_choices(7, ties).into_iter().map(|(label, _)| label).collect::<Vec<_>>();
+        // A stranger: a deal, 1:1 chat, friends, mail, equipment, block.
+        assert_eq!(labels(PlayerTies::default()), [391, 360, 358, 2808, 1360, 3820]);
+        // Our party's leader, a guild master facing another guild's member, a friend, adoption, our chat room.
+        let all =
+            PlayerTies { trading: false, party_invite: true, guild_invite: true, guild_relation: true, friend: true, adoptable: true, in_our_room: Some(2) };
+        assert_eq!(labels(all), [391, 392, 382, 399, 403, 360, 2808, 1360, 887, 3820, 458]);
+        assert!(player_choices(7, all).contains(&(458, Choice::RoomKick(2))));
+        // While trading there's no deal to ask for.
+        assert_eq!(labels(PlayerTies { trading: true, friend: true, ..PlayerTies::default() }), [360, 2808, 1360, 3820]);
+        // The pet's status comes last; the homunculus has three entries.
+        assert_eq!(PET_CHOICES.map(|(label, _)| label), [592, 593, 594, 595, 596]);
+        assert_eq!(HOMUNCULUS_CHOICES.map(|(label, _)| label), [1112, 1113, 1114]);
     }
 }

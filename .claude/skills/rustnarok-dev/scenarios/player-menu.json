@@ -1,0 +1,20 @@
+{
+  "about": "The right-click menu on another player (issue #296): the game's entries in its order (a deal, 1:1 chat, friends, mail, equipment, block), and Open 1:1 Chat puts their name in the chat's whisper box.",
+  "account": "",
+  "slot": 0,
+  "second": {"account": "2", "slot": 0},
+  "steps": [
+    {"say": "@warp morocc 160 120"},
+    {"settle": 1500},
+    {"say": "@recall {second}"},
+    {"as": "second", "settle": 2000},
+    {"move": {"unit": "{second}"}},
+    {"wait": 300},
+    {"click_on": {"unit": "{second}"}, "button": "right"},
+    {"wait": 400},
+    {"shot": "player-menu", "crop": [262, 100, 500, 450]},
+    {"click_on": {"menu_item": "Open 1:1 Chat"}},
+    {"wait": 300},
+    {"expect": {"state": {"whisper_name": "{second}"}}}
+  ]
+}
