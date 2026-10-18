@@ -746,8 +746,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     let combo_ms = |unit: Option<u32>| {
         game.combos.get(&unit).map_or(0, |(start, length)| length.saturating_sub(crate::control::now().saturating_duration_since(*start)).as_millis() as u64)
     };
-    // The message box's OK and Cancel while a guild question is up.
-    let question = game.guild_asked.is_some() || game.guild_invite.is_some();
+    // The message box's OK and Cancel while a question is up.
+    let question = game.guild_asked.is_some() || game.guild_invite.is_some() || game.cashshop_buy_asked;
     let question_buttons = app.assets.as_ref().filter(|_| question).into_iter().flat_map(|assets| {
         let dialog = crate::dialog_position(&assets.message);
         [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)].map(|(name, place, button)| {
@@ -832,6 +832,9 @@ fn game_state(app: &App, game: &Game) -> Value {
         .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
         .chain(game.skill_window.skill_boxes(&app.skill_trees, &jobs).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
+        .chain(game.basic_info.menu_boxes().into_iter().map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
+        .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::item_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
+        .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.pick.iter().flat_map(|(list, _)| list.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.pick.iter().flat_map(|(list, _)| list.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
@@ -927,6 +930,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("OtherEquipment", game.viewing.is_some()),
         ("SwapEquipment", game.equipment.frame.open && game.equipment.swapping),
         ("Bank", game.bank.is_some()),
+        ("CashShop", game.cashshop.is_some()),
         ("PickList", game.pick.is_some()),
         ("GuildAsked", game.guild_asked.is_some()),
         ("ItemMerge", game.pick.as_ref().is_some_and(|(list, _)| list.merging)),
