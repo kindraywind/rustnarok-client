@@ -545,6 +545,7 @@ impl App {
                     guild_window: guild::GuildWindow::default(),
                     guild_invite: None,
                     guild_asked: None,
+                    reason_box: None,
                     guild_shown: false,
                     clan: None,
                     clan_window: clan::ClanWindow::default(),
@@ -2078,16 +2079,21 @@ impl App {
                 }
             }
             // The guild: what it is, its pages, its talk, and who comes and goes.
-            MapEvent::Guild { id, name, master, emblem } => {
+            MapEvent::Guild { id, name, master, emblem, mode } => {
                 let guild = game.guild.get_or_insert_with(guild::Guild::default);
                 guild.id = id;
                 guild.name = name;
                 guild.master = master;
                 guild.emblem = emblem;
+                guild.mode = mode;
                 game.want_emblem(id, emblem);
             }
             MapEvent::GuildInfo(info) => {
                 if let Some(guild) = &mut game.guild {
+                    // We lead it when its master's name is ours, too.
+                    if info.master == game.me.name {
+                        guild.master = true;
+                    }
                     guild.name.clone_from(&info.name);
                     guild.info = Some(info);
                 }

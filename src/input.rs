@@ -405,9 +405,13 @@ impl App {
                 Some(Choice::Adopt(id)) => {
                     let _ = game.session.ask_adoption(id);
                 }
+                // Sent: "Send (name) a Guild Invitation" in cyan.
                 Some(Choice::GuildInvite(id)) => {
-                    if let Some(actor) = game.units.get(&id) {
-                        let _ = game.session.invite_to_guild(&actor.name.clone());
+                    if let Some(name) = game.units.get(&id).map(|actor| actor.name.clone())
+                        && game.session.invite_to_guild(&name).is_ok()
+                    {
+                        let line = rustnarok_client::messages::fill(self.messages.get(GUILD_CHOICE).map_or("", String::as_str), &[&name]);
+                        game.chat_line(line, [0x00, 0xFF, 0xFF]);
                     }
                 }
                 Some(Choice::Ally(id)) => {
@@ -443,12 +447,26 @@ impl App {
                 Some(Choice::EndRelation(id, antagonist)) => {
                     let _ = game.session.end_relation(id, antagonist);
                 }
-                Some(Choice::GuildMove(row, position)) => {
-                    if let Some(member) = game.guild.as_ref().and_then(|guild| guild.members.get(row)) {
-                        let _ = game.session.move_member(member.account, member.character, position);
+                Some(Choice::GuildMember(choice, index)) => {
+                    if let Some(member) = game.guild.as_ref().and_then(|guild| guild.members.get(index)).cloned() {
+                        match choice {
+                            guild::MemberChoice::Leave => game.reason_box = Some(guild::ReasonBox::new(guild::Reasoned::Leave)),
+                            guild::MemberChoice::Expel => {
+                                game.reason_box = Some(guild::ReasonBox::new(guild::Reasoned::Expel(member.account, member.character)))
+                            }
+                            guild::MemberChoice::Assign => {
+                                game.question_box = Some(BoxQuestion::GuildLeader { account: member.account, character: member.character, name: member.name })
+                            }
+                            guild::MemberChoice::PartyInvite => {
+                                let _ = game.session.invite_to_party(&member.name);
+                            }
+                            guild::MemberChoice::Whisper => game.whisper_member(&member.name),
+                            guild::MemberChoice::Mail => {
+                                let _ = game.session.start_mail(&member.name);
+                            }
+                        }
                     }
                 }
-                Some(Choice::GuildLeave) => game.guild_asked = Some(GuildAsked::Leave),
                 Some(Choice::Befriend(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         let _ = game.session.add_friend(&actor.name.clone());
@@ -532,14 +550,8 @@ impl App {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
-                        let _ = match game.guild_asked.take().unwrap() {
-                            GuildAsked::Ally { id, .. } => game.session.answer_alliance(id, yes),
-                            GuildAsked::Leave if yes => match &game.guild {
-                                Some(guild) => game.session.leave_guild(guild.id, game.account_id, game.me.id, ""),
-                                None => Ok(()),
-                            },
-                            GuildAsked::Leave => Ok(()),
-                        };
+                        let GuildAsked::Ally { id, .. } = game.guild_asked.take().unwrap();
+                        let _ = game.session.answer_alliance(id, yes);
                     }
                 }
             }
@@ -763,6 +775,14 @@ impl App {
                             let _ = game.session.change_party_leader(account);
                         }
                     }
+                }
+            }
+            // The guild's reason box: OK sends, Cancel closes.
+            Scene::Game(game) if game.reason_box.as_ref().is_some_and(|reason| reason.hit(cursor, screen()).is_some()) => {
+                match game.reason_box.as_ref().and_then(|reason| reason.hit(cursor, screen())) {
+                    Some(guild::ReasonHit::Ok) => game.answer_reason(true),
+                    Some(guild::ReasonHit::Cancel) => game.answer_reason(false),
+                    _ => {}
                 }
             }
             // The message box: OK (alone when it only tells) or Cancel.
@@ -1321,7 +1341,20 @@ impl App {
                         Some(guild::Hit::PositionTitle(id)) => game.amount = Some(window::Amount::name(Asked::PositionTitle(id), POSITION_TITLE)),
                         Some(guild::Hit::Tax(id)) => game.amount = Some(window::Amount::new(Asked::PositionTax(id), None)),
                         // The members page: select, sort, online first.
-                        Some(hit @ (guild::Hit::Member(_) | guild::Hit::SortBy(_) | guild::Hit::LoginStatus | guild::Hit::MemberPage)) => {
+                        // The master's moves: OK sends them all at once.
+                        Some(guild::Hit::MovesOk) => {
+                            if let Some(moves) = game.guild_window.take_moves(Instant::now()) {
+                                let _ = game.session.move_members(&moves);
+                            }
+                        }
+                        Some(
+                            hit @ (guild::Hit::Member(_)
+                            | guild::Hit::SortBy(_)
+                            | guild::Hit::LoginStatus
+                            | guild::Hit::MemberPage
+                            | guild::Hit::Drop(_)
+                            | guild::Hit::PickPosition(_)),
+                        ) => {
                             if let Some(guild) = &game.guild {
                                 game.guild_window.click_members(hit, guild);
                             }
@@ -1808,17 +1841,21 @@ impl App {
             && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
             && game.window_at(self.cursor) == Some(Panel::Guild)
             && let Some(guild) = &game.guild
-            && let Some(guild::Hit::Member(row)) = game.guild_window.hit(self.cursor, guild)
+            && game.guild_window.tab == guild::MEMBERS
+            && let Some(index) = game.guild_window.member.and_then(|character| guild.members.iter().position(|member| member.character == character))
         {
-            let choices = guild.member_menu(game.me.id, row);
+            // The menu is for the row selected by the last left press.
+            let name = guild.members[index].name.clone();
+            let invite_party = game
+                .party
+                .as_ref()
+                .is_some_and(|party| party.leader() == Some(game.account_id) && !party.members.iter().any(|member| member.info.name == name));
+            let choices = guild.member_menu(game.me.id, index, invite_party);
             if !choices.is_empty() {
                 game.right_press = None;
                 let entries = choices
                     .into_iter()
-                    .map(|choice| match choice {
-                        guild::MemberChoice::Move(position) => Some((guild.title(position), Choice::GuildMove(row, position))),
-                        guild::MemberChoice::Leave => Some((self.messages.get(LEAVE_CHOICE).cloned().unwrap_or_default(), Choice::GuildLeave)),
-                    })
+                    .map(|choice| Some((self.messages.get(choice.message()).cloned().unwrap_or_default(), Choice::GuildMember(choice, index))))
                     .collect();
                 game.menu = Some(menu::Menu::new(self.cursor, entries, &self.font));
                 return;
@@ -1954,7 +1991,7 @@ impl App {
                         let ties = PlayerTies {
                             trading: game.trade.is_some(),
                             party_invite: game.party.as_ref().is_some_and(|party| party.leader() == Some(game.account_id) && !in_party(party)),
-                            guild_invite: guild.is_some_and(|guild| guild.members.iter().all(|member| member.account != id)),
+                            guild_invite: guild::offers_invite(game.guild.as_ref(), their_guild),
                             guild_relation: guild.is_some_and(|guild| their_guild != 0 && their_guild != guild.id),
                             friend: game.friends.iter().any(|friend| friend.account == id),
                             adoptable: married && game.party.as_ref().is_some_and(in_party),
@@ -3407,6 +3444,19 @@ impl App {
             }
             Scene::Game(game) if game.question_box.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_box(*key == Key::Named(NamedKey::Enter), &self.messages);
+            }
+            // The guild's reason box: Enter is OK, Esc cancels.
+            Scene::Game(game) if game.reason_box.is_some() => match key {
+                Key::Named(NamedKey::Enter) => game.answer_reason(true),
+                Key::Named(NamedKey::Escape) => game.answer_reason(false),
+                Key::Named(NamedKey::Backspace) => drop(game.reason_box.as_mut().unwrap().text.pop()),
+                _ => game.reason_box.as_mut().unwrap().type_text(event.text.as_deref().unwrap_or_default()),
+            },
+            // The master's pending guild moves: Enter is OK.
+            Scene::Game(game) if game.guild_window.frame.open && !game.guild_window.pending.is_empty() && *key == Key::Named(NamedKey::Enter) => {
+                if let Some(moves) = game.guild_window.take_moves(Instant::now()) {
+                    let _ = game.session.move_members(&moves);
+                }
             }
             // A docked party window's edit box: Enter is OK, Esc closes the window.
             Scene::Game(game) if game.party_dialog.as_ref().is_some_and(|dialog| dialog.typing) => {
