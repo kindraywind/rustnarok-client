@@ -32,6 +32,10 @@ player's own game data at runtime. As good as the original, and better where it 
 >
 > This is a learning project: a study of how a game client is built, not a product.
 
+> [!NOTE]
+> **Vanilla first.** rustnarok-client aims to play as close to the unmodded game as it can. Mods and extras come
+> later, apart from the main client. Want something else now? Fork it and make it your own.
+
 ---
 
 <table>
