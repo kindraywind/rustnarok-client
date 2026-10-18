@@ -1,0 +1,127 @@
+{
+  "about": "PvP rank extras (issue #143): two players on pvp_y_1-2 both rank first with the clock running; after the second dies, the ranks are 1 and 2, the clock leaves the second, and both (top ten) carry the aura. No rank line with two players.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {
+      "say": "@warp pvp_y_1-2"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "expect": {
+        "state": {
+          "pvp_rank": [
+            1,
+            2
+          ]
+        },
+        "state_at_least": {
+          "first_place_seconds": 0
+        }
+      }
+    },
+    {
+      "shot": "first-place-clock",
+      "crop": [
+        312,
+        20,
+        400,
+        90
+      ]
+    },
+    {
+      "shot": "pvp-counter",
+      "crop": [
+        824,
+        668,
+        200,
+        100
+      ]
+    },
+    {
+      "as": "second",
+      "say": "@die"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "pvp_rank": [
+            2,
+            2
+          ],
+          "first_place_seconds": null
+        }
+      }
+    },
+    {
+      "expect": {
+        "state": {
+          "top_rank_auras": [
+            "{second}",
+            "{first}"
+          ]
+        }
+      }
+    },
+    {
+      "as": "second",
+      "expect": {
+        "no_chat": "What a pity"
+      }
+    },
+    {
+      "as": "second",
+      "say": "@alive"
+    },
+    {
+      "as": "second",
+      "say": "@heal"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "as": "second",
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "as": "second",
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "pvp_rank": null,
+          "first_place_seconds": null,
+          "top_rank_auras": []
+        }
+      }
+    }
+  ]
+}

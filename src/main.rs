@@ -289,17 +289,56 @@ const NO_MIRACLE_NOTICE: usize = 2381;
 const MAP_NOTICE: [u8; 3] = [0x64, 0xFF, 0xFF];
 /// "You have won %d times and have lost %d times in PVP. Current points %d."
 const PVP_RECORD: usize = 853;
-/// rankfont's action for the slash between rank and players (0 to 9 are the digits).
-const RANK_SLASH: usize = 10;
-// ponytail: the PvP counter's place (right-aligned under the minimap) and size are estimates.
-const RANK_RIGHT: f32 = 1012.0;
-const RANK_TOP: f32 = 168.0;
-const RANK_SCALE: f32 = 0.6;
+/// rankfont's and timefont's action for the slash or colon (0 to 9 are the digits).
+const GLYPH_SEPARATOR: usize = 10;
+/// "Congratulations! %s's rank has gone up to %d." / "What a pity! %s's rank has gone down to %d."
+const RANK_UP: usize = 582;
+const RANK_DOWN: usize = 583;
+const RANK_LINE: [u8; 3] = [0xFF, 0xFF, 0x00];
+/// EF_TOPRANK, on every player ranked 1 to 10.
+const TOP_RANK_EFFECT: u32 = 159;
+/// How long the "time attack" banner shows after reaching first place.
+const FIRST_PLACE_BANNER: Duration = Duration::from_secs(3);
 
-/// The counter's rankfont actions for "<rank>/<players>".
-fn rank_frames(rank: u32, players: u32) -> Vec<usize> {
-    let digits = |number: u32| number.to_string().bytes().map(|digit| usize::from(digit - b'0')).collect::<Vec<_>>();
-    [digits(rank), vec![RANK_SLASH], digits(players)].concat()
+fn digits(number: u64) -> Vec<usize> {
+    number.to_string().bytes().map(|digit| usize::from(digit - b'0')).collect()
+}
+
+/// The PvP counter's glyphs (rankfont actions) and where each is anchored: the rank right-aligned with its last digit
+/// at W − 105, H − 50, 25 px apart; the slash at W − 80, H − 40; the player count (at most 9999) from W − 55, H − 30.
+fn counter_glyphs(rank: u32, players: u32, screen: [f32; 2]) -> Vec<(usize, [f32; 2])> {
+    let [width, height] = screen;
+    let rank = digits(u64::from(rank));
+    let count = rank.len() as f32;
+    let mut glyphs: Vec<_> = rank.into_iter().enumerate().map(|(n, digit)| (digit, [width - 105.0 - (count - 1.0 - n as f32) * 25.0, height - 50.0])).collect();
+    glyphs.push((GLYPH_SEPARATOR, [width - 80.0, height - 40.0]));
+    glyphs.extend(digits(u64::from(players.min(9999))).into_iter().enumerate().map(|(n, digit)| (digit, [width - 55.0 + n as f32 * 25.0, height - 30.0])));
+    glyphs
+}
+
+/// The first-place clock's glyphs (timefont actions): ss, mm:ss, hh:mm:ss or dd:hh:mm:ss.
+fn clock_glyphs(seconds: u64) -> Vec<usize> {
+    let parts = [seconds / 86_400, seconds / 3600 % 24, seconds / 60 % 60, seconds % 60];
+    let first = parts.iter().position(|&part| part > 0).unwrap_or(3).min(3);
+    let mut glyphs = Vec::new();
+    for (n, part) in parts[first..].iter().enumerate() {
+        if n > 0 {
+            glyphs.push(GLYPH_SEPARATOR);
+        }
+        glyphs.extend(digits(*part / 10).into_iter().chain(digits(*part % 10)));
+    }
+    glyphs
+}
+
+/// The chat line when our rank moves into or out of the top ten (the first rank compares with 0).
+fn rank_line(before: u32, now: u32) -> Option<usize> {
+    let top = |rank: u32| (1..=10).contains(&rank);
+    match (top(before), top(now)) {
+        (false, true) => Some(RANK_UP),
+        (true, false) => Some(RANK_DOWN),
+        (false, false) if before == 0 && now > 10 => Some(RANK_DOWN),
+        _ => None,
+    }
 }
 /// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
 const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
@@ -733,8 +772,16 @@ struct Game {
     map_type: Option<u16>,
     /// The player's PvP rank and the players on the map, while the server counts them.
     pvp_rank: Option<(u32, u32)>,
-    /// The counter's digits (rankfont), loaded when first shown.
+    /// The counter's digits (rankfont), the clock's (timefont) and the first-place banner (timeattack), loaded when first
+    /// shown.
     rank_font: Option<Option<SpriteSet>>,
+    time_font: Option<Option<SpriteSet>>,
+    time_attack: Option<Option<SpriteSet>>,
+    /// Our last rank (0 before any), and since when we've held first place.
+    last_rank: u32,
+    first_since: Option<Instant>,
+    /// Players ranked 1 to 10 (by account): they carry the top-ten aura.
+    top_ten: HashSet<u32>,
     /// Server announcements in the bar across the top.
     announcements: announce::Bar,
     /// The names whose whispers (and speaker announcements) the player blocks, as far as the server has said.
@@ -5751,6 +5798,11 @@ impl App {
                     map_type: None,
                     pvp_rank: None,
                     rank_font: None,
+                    time_font: None,
+                    time_attack: None,
+                    last_rank: 0,
+                    first_since: None,
+                    top_ten: HashSet::new(),
                     blocked: HashSet::new(),
                     party_setup: None,
                     leader_asked: None,
@@ -6226,6 +6278,9 @@ impl App {
                 game.weather.clear();
                 game.pvp_rank = None;
                 game.map_type = None;
+                game.last_rank = 0;
+                game.first_since = None;
+                game.top_ten.clear();
                 game.forget_mercenary(false);
                 game.forget_homunculus(false);
                 // Back at the save point: up again.
@@ -7191,10 +7246,39 @@ impl App {
             MapEvent::MapType(kind) => game.map_type = Some(kind),
             // Sent to the area: only our own counts. Rank 0 or no players hides the counter; a hidden player's (all
             // ones) shows nothing.
-            MapEvent::PvpRank { account, rank, players } if account == game.account_id => {
-                game.pvp_rank = (rank != 0 && rank != u32::MAX && players != 0).then_some((rank, players));
+            // Only on a map that counts.
+            MapEvent::PvpRank { .. } if game.map_property.is_none_or(|(_, flags)| flags & net::MAP_COUNT_PK == 0) => {}
+            MapEvent::PvpRank { account, rank, players } => {
+                // ponytail: what EF_TOPRANK looks like isn't in this data or rathena's sources ("PvP circle"); the effect
+                // plays (nothing until effects.txt has it) and who carries it is kept.
+                if (1..=10).contains(&rank) {
+                    if game.top_ten.insert(account)
+                        && let Some(gpu) = gpu
+                    {
+                        game.play_effect(gpu, grf, table, TOP_RANK_EFFECT, account);
+                    }
+                } else {
+                    game.top_ten.remove(&account);
+                }
+                if account == game.account_id {
+                    game.pvp_rank = (rank != 0 && rank != u32::MAX && players != 0).then_some((rank, players));
+                    if rank != game.last_rank {
+                        if let Some(id) = rank_line(game.last_rank, rank) {
+                            let text = rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&game.me.name, &rank]);
+                            game.chat_line(text, RANK_LINE);
+                        }
+                        if let Some(audio) = &mut self.audio {
+                            audio.play(grf, "effect\\number_change.wav", 1.0);
+                        }
+                    }
+                    game.first_since = match (rank, game.first_since) {
+                        (1, Some(since)) => Some(since),
+                        (1, None) => Some(control::now()),
+                        _ => None,
+                    };
+                    game.last_rank = rank;
+                }
             }
-            MapEvent::PvpRank { .. } => {}
             MapEvent::PvpInfo { wins, losses, points } => {
                 let text = rustnarok_client::messages::fill(self.messages.get(PVP_RECORD).map_or("", String::as_str), &[&wins, &losses, &points]);
                 game.chat_line(text, CHAT_ITEM);
@@ -8507,16 +8591,39 @@ impl App {
             _ => Vec::new(),
         };
         // Taming's slot machine: its result played once, then held a moment.
-        // The PvP counter while the map counts and a rank came: each character's frame, left to right.
+        // The PvP counter while the map counts and a rank came, the first-place clock while we're first among more than
+        // one, and the banner its first 3 s: each glyph's frame at its anchor.
         let counting = game.map_property.is_some_and(|(_, flags)| flags & net::MAP_COUNT_PK != 0);
-        let rank_placed: Vec<Vec<actor::Placed>> = match game.pvp_rank.filter(|_| counting) {
-            Some((rank, players)) => {
-                let font = game.rank_font.get_or_insert_with(|| SpriteSet::at(grf, "data\\sprite\\이팩트\\rankfont"));
-                match font {
-                    Some(font) => rank_frames(rank, players).into_iter().map(|action| font.frame_at(gpu, action, 0, Timing::Span(0.5))).collect(),
+        let glyph_frames =
+            |font: &mut Option<Option<SpriteSet>>, path: &str, glyphs: Vec<(usize, [f32; 2])>, timing: Timing| -> Vec<(Vec<actor::Placed>, [f32; 2])> {
+                match font.get_or_insert_with(|| SpriteSet::at(grf, path)) {
+                    Some(font) => glyphs.into_iter().map(|(action, at)| (font.frame_at(gpu, action, 0, timing), at)).collect(),
                     None => Vec::new(),
                 }
+            };
+        let counter = match game.pvp_rank.filter(|_| counting) {
+            Some((rank, players)) => {
+                glyph_frames(&mut game.rank_font, "data\\sprite\\이팩트\\rankfont", counter_glyphs(rank, players, SCREEN), Timing::Span(0.0))
             }
+            None => Vec::new(),
+        };
+        let first_place = game.first_since.filter(|_| counting && game.pvp_rank.is_some_and(|(_, players)| players > 1));
+        let clock = match first_place {
+            Some(since) => {
+                let glyphs = clock_glyphs(now.saturating_duration_since(since).as_secs());
+                let left = SCREEN[0] / 2.0 - 20.0 * glyphs.len() as f32;
+                let placed = glyphs.into_iter().enumerate().map(|(n, glyph)| (glyph, [left + n as f32 * 40.0, 40.0])).collect();
+                glyph_frames(&mut game.time_font, "data\\sprite\\이팩트\\timefont", placed, Timing::Span(0.0))
+            }
+            None => Vec::new(),
+        };
+        let banner = match first_place.map(|since| now.saturating_duration_since(since)).filter(|elapsed| *elapsed < FIRST_PLACE_BANNER) {
+            Some(elapsed) => glyph_frames(
+                &mut game.time_attack,
+                "data\\sprite\\이팩트\\timeattack",
+                vec![(0, [SCREEN[0] / 2.0, 120.0])],
+                Timing::Loop(elapsed.as_secs_f32() * 1000.0),
+            ),
             None => Vec::new(),
         };
         let slot_frame = match (&mut game.slot_sprite, game.slot) {
@@ -9431,30 +9538,11 @@ impl App {
                 },
             }
         });
-        if let Some(Some(font)) = &game.rank_font
-            && !rank_placed.is_empty()
-        {
-            // Each character's box from its parts, laid side by side, right-aligned.
-            let bounds = |placed: &[actor::Placed]| {
-                placed
-                    .iter()
-                    .fold([f32::MAX, f32::MIN, f32::MAX], |[left, right, top], (_, at, size)| [left.min(at[0]), right.max(at[0] + size[0]), top.min(at[1])])
-            };
-            let width: f32 = rank_placed
-                .iter()
-                .map(|placed| {
-                    let [left, right, _] = bounds(placed);
-                    (right - left) * RANK_SCALE
-                })
-                .sum();
-            let mut x = RANK_RIGHT - width;
-            for placed in &rank_placed {
-                let [left, right, top] = bounds(placed);
-                for (key, at, size) in placed {
-                    let corner = [x + (at[0] - left) * RANK_SCALE, RANK_TOP + (at[1] - top) * RANK_SCALE];
-                    sprites.push((font.texture(*key), corner, [size[0] * RANK_SCALE, size[1] * RANK_SCALE]));
+        for (font, frames) in [(&game.rank_font, &counter), (&game.time_font, &clock), (&game.time_attack, &banner)] {
+            if let Some(Some(font)) = font {
+                for (placed, anchor) in frames {
+                    sprites.extend(placed.iter().map(|(key, at, size)| (font.texture(*key), [anchor[0] + at[0], anchor[1] + at[1]], *size)));
                 }
-                x += (right - left) * RANK_SCALE;
             }
         }
         if let Some(sprite) = &game.slot_sprite {
@@ -10021,9 +10109,32 @@ mod tests {
     }
 
     #[test]
-    fn spells_the_pvp_counter() {
-        assert_eq!(rank_frames(3, 12), [3, RANK_SLASH, 1, 2]);
-        assert_eq!(rank_frames(10, 100), [1, 0, RANK_SLASH, 1, 0, 0]);
+    fn places_the_pvp_counter() {
+        let screen = [1024.0, 768.0];
+        assert_eq!(counter_glyphs(3, 12, screen), [(3, [919.0, 718.0]), (GLYPH_SEPARATOR, [944.0, 728.0]), (1, [969.0, 738.0]), (2, [994.0, 738.0])]);
+        // A two-digit rank ends at the same place; the count stops at 9999.
+        let glyphs = counter_glyphs(12, 15_000, screen);
+        assert_eq!(&glyphs[..2], [(1, [894.0, 718.0]), (2, [919.0, 718.0])]);
+        assert_eq!(glyphs[3..].iter().map(|(digit, _)| *digit).collect::<Vec<_>>(), [9, 9, 9, 9]);
+    }
+
+    #[test]
+    fn spells_the_first_place_clock() {
+        let colon = GLYPH_SEPARATOR;
+        assert_eq!(clock_glyphs(59), [5, 9]);
+        assert_eq!(clock_glyphs(61), [0, 1, colon, 0, 1]);
+        assert_eq!(clock_glyphs(3 * 3600 + 2 * 60 + 1), [0, 3, colon, 0, 2, colon, 0, 1]);
+        assert_eq!(clock_glyphs(2 * 86_400), [0, 2, colon, 0, 0, colon, 0, 0, colon, 0, 0]);
+        assert_eq!(clock_glyphs(0), [0, 0]);
+    }
+
+    #[test]
+    fn tells_when_the_rank_crosses_the_top_ten() {
+        assert_eq!(rank_line(11, 10), Some(RANK_UP));
+        assert_eq!(rank_line(10, 11), Some(RANK_DOWN));
+        assert_eq!(rank_line(0, 11), Some(RANK_DOWN), "a first rank outside the top ten");
+        assert_eq!(rank_line(0, 3), Some(RANK_UP));
+        assert_eq!(rank_line(5, 3), None);
     }
 
     #[test]
