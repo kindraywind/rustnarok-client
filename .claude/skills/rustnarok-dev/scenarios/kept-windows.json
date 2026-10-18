@@ -1,0 +1,96 @@
+{
+  "about": "Kept windows, part one (issue #313): with the windows kept (RUSTNAROK_CLIENT_KEEP_WINDOWS, as a player's are), the basic info window is minimised and moved to (200, 100) and the chat window set to its 180-tall step. kept-windows-back checks they come back that way.",
+  "account": "",
+  "slot": 0,
+  "env": {
+    "RUSTNAROK_CLIENT_KEEP_WINDOWS": "1"
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "click": [
+        211,
+        8
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "mouse_down": {
+        "point": [
+          100,
+          8
+        ]
+      }
+    },
+    {
+      "move": [
+        200,
+        58
+      ]
+    },
+    {
+      "move": [
+        300,
+        108
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          300,
+          108
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "basic_info.position": [
+            200.0,
+            100.0
+          ],
+          "basic_info.minimized": true
+        }
+      }
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_height": 180
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "kept-set",
+      "threshold": 5
+    }
+  ]
+}

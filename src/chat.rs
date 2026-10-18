@@ -292,12 +292,20 @@ pub struct Chat {
     pub settings: Option<Settings>,
     /// Alt+F10 hides the window. Typing still goes to the line.
     pub hidden: bool,
+    /// What was last kept of the window's place.
+    saved: String,
 }
 
 impl Default for Chat {
     fn default() -> Self {
         let kinds = settings_path().and_then(|path| std::fs::read_to_string(path).ok()).and_then(|text| kinds_from(&text)).unwrap_or_else(default_kinds);
-        Self::with_kinds(kinds)
+        let mut chat = Self::with_kinds(kinds);
+        let kept = crate::settings_path("chat_window").filter(|_| crate::keeps_windows()).and_then(|path| std::fs::read_to_string(path).ok());
+        if let Some((corner, size, hidden)) = kept.as_deref().and_then(|text| Self::from_saved(text, screen())) {
+            (chat.corner, chat.size, chat.hidden) = (corner, size, hidden);
+        }
+        chat.saved = chat.saved_text();
+        chat
     }
 }
 
@@ -321,6 +329,39 @@ impl Chat {
             send_to: SendTo::default(),
             settings: None,
             hidden: false,
+            saved: String::new(),
+        }
+    }
+
+    /// The window as kept between logins (the game's M_CHATWNDX/Y, HEIGHT, STATUS, SHOW): its bottom left corner once
+    /// moved ("-" where it never was), its F10 step and whether Alt+F10 hid it.
+    pub fn saved_text(&self) -> String {
+        let place = self.corner.map_or_else(|| "- -".to_owned(), |[x, y]| format!("{} {}", x as i32, y as i32));
+        format!("{place} {} {}", self.size, u8::from(self.hidden))
+    }
+
+    /// A kept window: its corner (None, the screen's bottom left, when it never moved or wouldn't be wholly on
+    /// `screen` at that step), its F10 step and whether it was hidden.
+    pub fn from_saved(text: &str, screen: [f32; 2]) -> Option<(Option<[f32; 2]>, usize, bool)> {
+        let fields: Vec<&str> = text.split_whitespace().collect();
+        let [x, y, size, hidden] = fields[..] else { return None };
+        let size: usize = size.parse().ok().filter(|&size| size < STEPS.len())?;
+        let corner = match (x.parse::<f32>(), y.parse::<f32>()) {
+            (Ok(x), Ok(y)) => Some([x, y]).filter(|&[x, y]| x >= 0.0 && x + WIDTH <= screen[0] && y - height(STEPS[size]) >= 0.0 && y <= screen[1]),
+            _ => None,
+        };
+        Some((corner, size, hidden == "1"))
+    }
+
+    /// Keeps the window's place, size and hiding when they changed.
+    pub fn save_if_changed(&mut self) {
+        let text = self.saved_text();
+        if text != self.saved
+            && crate::keeps_windows()
+            && let Some(path) = crate::settings_path("chat_window")
+        {
+            let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&path, &text));
+            self.saved = text;
         }
     }
 
@@ -873,6 +914,11 @@ pub enum Command {
     Away,
     /// /navigation, /navi: the navigation window, open or closed.
     Navigation,
+    /// /cashshop: the cash shop; /battleground: the battleground queue, open or closed. The game opens them from
+    /// elsewhere than the menu.
+    // ponytail: the commands' names are ours.
+    CashShop,
+    BattleQueue,
 }
 
 /// The command typed, if `text` is one; a name is the rest of the line, quotes taken off.
@@ -907,6 +953,8 @@ pub fn command(text: &str) -> Option<Command> {
         "/pk" if name.is_empty() => Command::Ranking(3),
         "/away" => Command::Away,
         "/navigation" | "/navi" => Command::Navigation,
+        "/cashshop" => Command::CashShop,
+        "/battleground" => Command::BattleQueue,
         _ => return None,
     })
 }
@@ -1071,6 +1119,24 @@ mod tests {
     }
 
     #[test]
+    fn keeps_the_window_where_it_was() {
+        let screen = [1024.0, 768.0];
+        let mut chat = fresh();
+        assert_eq!(chat.saved_text(), "- - 1 0");
+        chat.cycle_size();
+        chat.cycle_size();
+        chat.corner = Some([100.0, 500.0]);
+        chat.hidden = true;
+        let text = chat.saved_text();
+        assert_eq!(text, "100 500 3 1");
+        assert_eq!(Chat::from_saved(&text, screen), Some((Some([100.0, 500.0]), 3, true)));
+        // Off the screen at that step (the 180-tall log needs 180 above its bottom): back at the bottom left.
+        assert_eq!(Chat::from_saved("100 100 3 0", screen), Some((None, 3, false)));
+        assert_eq!(Chat::from_saved("900 500 1 0", screen), Some((None, 1, false)));
+        assert_eq!((Chat::from_saved("- - 9 0", screen), Chat::from_saved("junk", screen)), (None, None));
+    }
+
+    #[test]
     fn saves_the_tabs_kinds() {
         let kinds = default_kinds();
         let text = kinds_text(&kinds);
@@ -1109,6 +1175,7 @@ mod tests {
         }
         assert_eq!(command("/pk on"), None);
         assert_eq!([command("/navigation"), command("/navi")], [Some(Command::Navigation), Some(Command::Navigation)]);
+        assert_eq!([command("/cashshop"), command("/battleground")], [Some(Command::CashShop), Some(Command::BattleQueue)]);
         assert_eq!(command("/away"), Some(Command::Away));
         assert_eq!(command("/ex"), Some(Command::BlockList));
         assert_eq!(command("/ex Poring"), Some(Command::Whispers { name: "Poring".into(), allow: false }));

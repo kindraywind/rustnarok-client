@@ -1,5 +1,5 @@
 {
-  "about": "Menu buttons (issue #211): the menu under the basic info shows the game's buttons five to a row on its 42 x 43 grid (plus battle and shop, which this client opens from there); quest opens the quest window, option the game settings, keyboard the shortcut settings, each closing again on a second click.",
+  "about": "Menu buttons (issue #211): the menu under the basic info shows the game's buttons five to a row on its 42 x 43 grid (plus battle and shop, which this client opens from there); quest opens the quest window, option the game settings, keyboard the shortcut settings, each closing again on a second click. Minimised (issue #313), the menu stays under the 55-tall window: its toggle opens the same fourteen buttons and quest still opens the quest window.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -123,6 +123,73 @@
       "click_on": {
         "button": "menu"
       }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [
+        211,
+        8
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "menu"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "quest"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Quests"
+        ]
+      }
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "menu-under-mini",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "menu_item": "quest"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "menu"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [
+        211,
+        8
+      ]
     },
     {
       "wait": 300

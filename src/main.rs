@@ -24,6 +24,7 @@
 //! `RUSTNAROK_CLIENT_TRADE=ask:<name>|accept` (ask that player for a deal, or take the first one asked),
 //! `RUSTNAROK_CLIENT_TRADE_GIVE=<item>:<amount>[,...][,z<zeny>]` (once a deal opens, put those in, lock and exchange),
 //! `RUSTNAROK_CLIENT_ROOM=window|make:<title>` (open the chat room maker with that title, or make the room),
+//! `RUSTNAROK_CLIENT_KEEP_WINDOWS=1` (under the test driver, keep the basic info and chat windows between runs as a player's are),
 //! `RUSTNAROK_CLIENT_STATUS=1` (open the status window), `RUSTNAROK_CLIENT_CART=1` (open the cart),
 //! `RUSTNAROK_CLIENT_VEND=<name>:<price>` (when the vending skill goes off, sell the whole cart at that price),
 //! `RUSTNAROK_CLIENT_FRIEND=accept` (befriend whoever asks), `RUSTNAROK_CLIENT_GUILD=accept,window` (join the first guild that invites, open the guild window),
@@ -2915,6 +2916,20 @@ impl Game {
                 self.open_dressroom();
                 Ok(())
             }
+            chat::Command::CashShop => {
+                let _ = self.session.open_cashshop(0);
+                Ok(())
+            }
+            // The battleground queue; while queued, how many wait is asked again.
+            chat::Command::BattleQueue => {
+                self.queue_window.frame.toggle();
+                if self.queue_window.frame.open
+                    && let Some((name, _)) = &self.queued
+                {
+                    let _ = self.session.ask_queue_number(name);
+                }
+                Ok(())
+            }
             chat::Command::Navigation => {
                 self.toggle_navigation();
                 self.sync_esc();
@@ -5020,6 +5035,13 @@ fn toggle_big_minimap(game: &mut Game, gpu: &render::Gpu, no_picture: String) {
         game.chat_line(no_picture, CHAT_ERROR);
     }
     game.sync_esc();
+}
+
+/// Whether the basic info and chat windows are kept between runs: always for a player, and for a client the test
+/// driver runs (`RUSTNAROK_CLIENT_CONTROL`) only with the dev switch `RUSTNAROK_CLIENT_KEEP_WINDOWS`, so one
+/// scenario's windows don't move the next one's.
+pub(crate) fn keeps_windows() -> bool {
+    std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_none() || std::env::var_os("RUSTNAROK_CLIENT_KEEP_WINDOWS").is_some()
 }
 
 pub(crate) fn settings_path(name: &str) -> Option<std::path::PathBuf> {
@@ -7167,15 +7189,6 @@ impl App {
                                 game.party_window.frame.toggle();
                                 game.raise(Panel::Party);
                             }
-                            // The battleground queue; while queued, how many wait is asked again.
-                            Some("battle") => {
-                                game.queue_window.frame.toggle();
-                                if game.queue_window.frame.open
-                                    && let Some((name, _)) = &game.queued
-                                {
-                                    let _ = game.session.ask_queue_number(name);
-                                }
-                            }
                             Some("status") => {
                                 game.status_window.frame.toggle();
                                 game.raise(Panel::Status);
@@ -7190,9 +7203,6 @@ impl App {
                             // The bank opens when the server says so: it answers in its own words where banking is off.
                             Some("bank") => {
                                 let _ = game.session.open_bank(game.account_id);
-                            }
-                            Some("shop") => {
-                                let _ = game.session.open_cashshop(0);
                             }
                             Some("achievement") => game.achievement_window.frame.toggle(),
                             Some("mail") => {
@@ -9679,7 +9689,7 @@ impl App {
                         equipment.frame.open = std::env::var_os("RUSTNAROK_CLIENT_EQUIPMENT").is_some();
                         equipment
                     },
-                    basic_info: BasicInfo::default(),
+                    basic_info: BasicInfo::load(screen()),
                     hotkeys: hotkeys::Hotkeys::default(),
                     dragging: None,
                     drag_cancelled: false,
@@ -14034,6 +14044,9 @@ impl App {
         let open = game.chat_mode.chat_line_open();
         let caret = open && (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
         let name_of = |item: &links::ItemLink| inventory::item_name(items, item.id, true, item.refine);
+        // The basic info and chat windows are kept as they're left.
+        game.basic_info.save_if_changed();
+        game.chat.save_if_changed();
         game.chat_links = game.chat.draw(&mut chat_layer, &assets.chat, font, messages, open, caret, &name_of);
         // The input bar buttons' tooltips, over the pointer.
         if let Some(text) = game.chat.tooltip(pointer.0).and_then(|id| messages.get(id)) {
@@ -14060,7 +14073,6 @@ impl App {
         }
         game.basic_info.fourth = basic_info::fourth_job(game.me.job);
         game.basic_info.doram = basic_info::doram(game.me.job);
-        game.basic_info.features = basic_info::Features { battle: !self.battlegrounds.is_empty(), shop: true };
         game.banners.current(control::now());
         game.level_ups
             .seen(game.status_window.frame.open && !game.status_window.frame.minimized, game.skill_window.frame.open && !game.skill_window.frame.minimized);

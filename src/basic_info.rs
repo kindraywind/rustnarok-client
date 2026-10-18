@@ -185,18 +185,10 @@ pub const ORDER: [&str; 24] = [
 /// The buttons the game shows.
 const SHOWN: [&str; 14] = ["status", "equip", "item", "skill", "party", "guild", "quest", "map", "navigation", "option", "bank", "mail", "keyboard", "repute"];
 
-/// Buttons shown besides the game's fourteen, for windows this client has that open from nowhere else.
-// ponytail: the game hides battle and shop; here battle shows when the data lists battlegrounds (their queue opens
-// from it, #107) and shop opens the cash shop.
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
-pub struct Features {
-    pub battle: bool,
-    pub shop: bool,
-}
-
-/// The buttons that show, in the game's order.
-pub fn visible(features: Features) -> Vec<&'static str> {
-    ORDER.into_iter().filter(|name| SHOWN.contains(name) || (*name == "battle" && features.battle) || (*name == "shop" && features.shop)).collect()
+/// The buttons that show, in the game's order: the fourteen (rows of 5, 5 and 4). The cash shop and the battleground
+/// queue, which the game opens elsewhere, open with /cashshop and /battleground here.
+pub fn visible() -> Vec<&'static str> {
+    ORDER.into_iter().filter(|name| SHOWN.contains(name)).collect()
 }
 
 /// Doram have their own status button.
@@ -274,14 +266,15 @@ pub struct BasicInfo {
     pub fourth: bool,
     /// The player is a Doram (their own status button).
     pub doram: bool,
-    pub features: Features,
+    /// What was last kept of the window.
+    saved: String,
 }
 
 impl Default for BasicInfo {
     fn default() -> Self {
         let mut frame = Frame::new([0.0, 0.0], WIDTH);
         frame.open = true;
-        Self { frame, menu_open: false, fourth: false, doram: false, features: Features::default() }
+        Self { frame, menu_open: false, fourth: false, doram: false, saved: String::new() }
     }
 }
 
@@ -302,45 +295,91 @@ pub struct Info<'a> {
 }
 
 impl BasicInfo {
-    /// The window, plus the menu toggle and the open menu under it.
-    pub fn height(&self) -> f32 {
-        let layout = layout(self.fourth);
-        if self.frame.minimized {
-            layout.mini
-        } else if self.menu_open {
-            self.button_corner(0)[1] + visible(self.features).len().div_ceil(MENU_COLUMNS) as f32 * MENU_STEP[1]
-        } else {
-            self.menu_top()
+    /// The window as kept between logins (the game's BASICINFOWNDINFO): x, y, width, its own height (55 or 71
+    /// minimised, 134 or 149 not) and whether it shows.
+    pub fn saved_text(&self) -> String {
+        let [x, y] = self.frame.position;
+        format!("{} {} {} {} {}", x as i32, y as i32, WIDTH as i32, self.body() as i32, u8::from(self.frame.open))
+    }
+
+    /// A kept window's place, whether it was minimised and whether it showed; None unless it's 220 wide, one of the
+    /// window's heights, and wholly on `screen`.
+    pub fn from_saved(text: &str, screen: [f32; 2]) -> Option<([f32; 2], bool, bool)> {
+        let values: Vec<i32> = text.split_whitespace().map(|value| value.parse().ok()).collect::<Option<_>>()?;
+        let [x, y, w, h, shown] = values[..] else { return None };
+        let [x, y, w, h] = [x, y, w, h].map(|value| value as f32);
+        // ponytail: the game's heights are 55, 134, 71 and 149; this window's 4th-job height (150) is kept too.
+        let sizes = [NORMAL.mini, NORMAL.height, FOURTH.mini, 149.0, FOURTH.height];
+        let on_screen = x >= 0.0 && y >= 0.0 && x + w <= screen[0] && y + h <= screen[1];
+        (w == WIDTH && sizes.contains(&h) && on_screen).then_some(([x, y], h == NORMAL.mini || h == FOURTH.mini, shown != 0))
+    }
+
+    /// The window as it was left, or the default.
+    pub fn load(screen: [f32; 2]) -> Self {
+        let mut window = Self::default();
+        let kept = crate::settings_path("basic_info").filter(|_| crate::keeps_windows()).and_then(|path| std::fs::read_to_string(path).ok());
+        if let Some((position, minimized, shown)) = kept.as_deref().and_then(|text| Self::from_saved(text, screen)) {
+            window.frame.position = position;
+            window.frame.minimized = minimized;
+            window.frame.open = shown;
+        }
+        window.saved = window.saved_text();
+        window
+    }
+
+    /// Keeps the window's place and state when they changed.
+    pub fn save_if_changed(&mut self) {
+        let text = self.saved_text();
+        if text != self.saved
+            && crate::keeps_windows()
+            && let Some(path) = crate::settings_path("basic_info")
+        {
+            let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&path, &text));
+            self.saved = text;
         }
     }
 
-    /// The menu window starts at the basic info's bottom edge: its toggle bar 4 down, the menu's back 13 down.
+    /// The window's own height: the minimised one's (55, or 71 for a 4th job) or the full one's.
+    pub fn body(&self) -> f32 {
+        let layout = layout(self.fourth);
+        if self.frame.minimized { layout.mini } else { layout.height }
+    }
+
+    /// The window, plus the menu toggle and the open menu under it.
+    pub fn height(&self) -> f32 {
+        if self.menu_open { self.button_corner(0)[1] + visible().len().div_ceil(MENU_COLUMNS) as f32 * MENU_STEP[1] } else { self.menu_top() }
+    }
+
+    /// The menu is its own strip at the window's bottom edge (minimised or not): its toggle bar 4 down, the menu's
+    /// back 13 down.
     fn toggle_top(&self) -> f32 {
-        layout(self.fourth).height + TOGGLE_AT
+        self.body() + TOGGLE_AT
     }
 
     fn menu_top(&self) -> f32 {
-        layout(self.fourth).height + MENU_AT
+        self.body() + MENU_AT
     }
 
     /// The `place`th visible button's corner in the window.
     pub fn button_corner(&self, place: usize) -> [f32; 2] {
-        let base = layout(self.fourth).height;
+        let base = self.body();
         [MENU_BUTTONS[0] + (place % MENU_COLUMNS) as f32 * MENU_STEP[0], base + MENU_BUTTONS[1] + (place / MENU_COLUMNS) as f32 * MENU_STEP[1]]
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
-        let local = self.frame.local(cursor, self.height())?;
+        // Its own reach, minimised or not: the window and the menu strip under it.
+        let local = [cursor[0] - self.frame.position[0], cursor[1] - self.frame.position[1]];
+        if !self.frame.open || !contains([0.0, 0.0], [WIDTH, self.height()], local) {
+            return None;
+        }
         Some(if contains(MINIMIZE_BUTTON, BUTTON_SIZE, local) {
             Hit::Minimize
         } else if local[1] < TITLE_HEIGHT {
             Hit::Title
-        } else if self.frame.minimized {
-            Hit::Window
         } else if (self.toggle_top()..self.toggle_top() + TOGGLE_HEIGHT).contains(&local[1]) {
             Hit::MenuToggle
         } else if self.menu_open && local[1] >= self.menu_top() {
-            visible(self.features)
+            visible()
                 .into_iter()
                 .enumerate()
                 .find(|(place, _)| contains(self.button_corner(*place), MENU_BUTTON_SIZE, local))
@@ -363,17 +402,17 @@ impl BasicInfo {
 
     /// The strip that opens and closes the menu (for the test driver).
     pub fn toggle_box(&self) -> Option<[f32; 4]> {
-        (self.frame.open && !self.frame.minimized).then(|| {
+        self.frame.open.then(|| {
             let [x, y] = self.frame.at([0.0, self.toggle_top()]);
             [x, y, WIDTH, TOGGLE_HEIGHT]
         })
     }
 
     pub fn menu_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
-        if !self.frame.open || !self.menu_open || self.frame.minimized {
+        if !self.frame.open || !self.menu_open {
             return Vec::new();
         }
-        visible(self.features)
+        visible()
             .into_iter()
             .enumerate()
             .map(|(place, name)| {
@@ -431,6 +470,7 @@ impl BasicInfo {
                 text(layer, part, [x, 36.0], if low { RED } else { BLACK });
                 x += width;
             }
+            self.draw_menu(layer, assets, info);
             return;
         }
         let title = messages.get(BASIC_INFO_MESSAGE).cloned().unwrap_or_default();
@@ -484,6 +524,12 @@ impl BasicInfo {
         let weight_x = zeny_x - WEIGHT_GAP - font.width(&weight_text);
         text(layer, weight_text, [weight_x, layout.extra], if heavy(weight, limit, info.overweight) { RED } else { BLACK });
 
+        self.draw_menu(layer, assets, info);
+    }
+
+    /// The menu under the window (also under the minimised one): its toggle bar, and the buttons when it's open.
+    fn draw_menu<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, info: &Info) {
+        let at = |local: [f32; 2]| self.frame.at(local);
         // The menu toggle, and the menu when it's open.
         let marked = info.unread_mail || info.reward_waiting || info.new_items || info.new_level || info.new_job_level;
         let toggle = match &assets.toggle_new {
@@ -493,7 +539,7 @@ impl BasicInfo {
         layer.sprites.push((toggle, at([0.0, self.toggle_top()]), toggle.size));
         if self.menu_open {
             layer.sprites.push((&assets.menu, at([0.0, self.menu_top()]), assets.menu.size));
-            for (place, name) in visible(self.features).into_iter().enumerate() {
+            for (place, name) in visible().into_iter().enumerate() {
                 let icon = assets.icons.get(name).and_then(Option::as_ref);
                 let icon = match name {
                     "mail" if info.unread_mail => assets.mail_new.as_ref().or(icon),
@@ -534,12 +580,11 @@ mod tests {
 
     #[test]
     fn shows_the_games_buttons_on_its_grid() {
-        let base = visible(Features::default());
-        assert_eq!(base, ["status", "equip", "item", "skill", "party", "guild", "quest", "map", "navigation", "option", "bank", "mail", "keyboard", "repute"]);
-        // Battle and shop come in their places in the game's order.
-        let more = visible(Features { battle: true, shop: true });
-        assert_eq!(more.len(), 16);
-        assert_eq!((more[6], more[13]), ("battle", "shop"));
+        // The game's fourteen, nothing else.
+        assert_eq!(
+            visible(),
+            ["status", "equip", "item", "skill", "party", "guild", "quest", "map", "navigation", "option", "bank", "mail", "keyboard", "repute"]
+        );
         // Five a row, 42 and 43 apart, from (9, 23) under the window.
         let mut window = BasicInfo::default();
         assert_eq!(
@@ -554,6 +599,38 @@ mod tests {
         assert_eq!(window.height(), 134.0 + 23.0 + 3.0 * 43.0);
         window.fourth = true;
         assert_eq!(window.button_corner(0), [9.0, 173.0]);
+    }
+
+    #[test]
+    fn keeps_the_menu_under_the_minimised_window() {
+        let mut window = BasicInfo::default();
+        window.frame.minimized = true;
+        // The toggle 4 under the 55-tall window, the buttons from (9, 23) under it; 71 for a 4th job.
+        assert_eq!(window.toggle_box(), Some([0.0, 59.0, WIDTH, TOGGLE_HEIGHT]));
+        assert_eq!(window.hit(window.frame.at([100.0, 62.0])), Some(Hit::MenuToggle));
+        window.menu_open = true;
+        assert_eq!((window.button_corner(0), window.menu_boxes().len()), ([9.0, 78.0], 14));
+        let corner = window.button_corner(6);
+        assert_eq!(window.hit(window.frame.at([corner[0] + 5.0, corner[1] + 5.0])), Some(Hit::Menu("quest")));
+        window.fourth = true;
+        assert_eq!(window.button_corner(0), [9.0, 94.0]);
+    }
+
+    #[test]
+    fn keeps_the_window_where_it_was() {
+        let screen = [1024.0, 768.0];
+        let mut window = BasicInfo::default();
+        window.frame.position = [300.0, 200.0];
+        window.frame.minimized = true;
+        let text = window.saved_text();
+        assert_eq!(text, "300 200 220 55 1");
+        assert_eq!(BasicInfo::from_saved(&text, screen), Some(([300.0, 200.0], true, true)));
+        // The full window, a 4th job's, shut.
+        assert_eq!(BasicInfo::from_saved("0 0 220 149 0", screen), Some(([0.0, 0.0], false, false)));
+        // A wrong width or height, or off the screen: the default instead.
+        for bad in ["0 0 200 134 1", "0 0 220 100 1", "900 0 220 134 1", "0 700 220 134 1", "-5 0 220 134 1", "junk"] {
+            assert_eq!(BasicInfo::from_saved(bad, screen), None, "{bad}");
+        }
     }
 
     #[test]
