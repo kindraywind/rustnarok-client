@@ -1,0 +1,114 @@
+{
+  "about": "Kept windows, part two (issue #313): a new run of the client starts with the basic info window minimised at (200, 100) and the chat window 180 tall, as part one left them; then both go back to their defaults (full at (0, 0), 96 tall), which is what's kept after.",
+  "account": "",
+  "slot": 0,
+  "env": {
+    "RUSTNAROK_CLIENT_KEEP_WINDOWS": "1"
+  },
+  "steps": [
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "basic_info.position": [
+            200.0,
+            100.0
+          ],
+          "basic_info.minimized": true,
+          "chat_height": 180
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "kept-back",
+      "threshold": 5
+    },
+    {
+      "mouse_down": {
+        "point": [
+          300,
+          108
+        ]
+      }
+    },
+    {
+      "move": [
+        200,
+        58
+      ]
+    },
+    {
+      "move": [
+        100,
+        8
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          100,
+          8
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [
+        211,
+        8
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "basic_info.position": [
+            0.0,
+            0.0
+          ],
+          "basic_info.minimized": false,
+          "chat_height": 96
+        }
+      }
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

@@ -24,9 +24,10 @@
       "wait": 300
     },
     {
-      "click_on": {
-        "menu_item": "battle"
-      }
+      "type": "/battleground"
+    },
+    {
+      "key": "Enter"
     },
     {
       "wait": 400
@@ -114,9 +115,10 @@
       "shot": "queue-waiting"
     },
     {
-      "click_on": {
-        "menu_item": "battle"
-      }
+      "type": "/battleground"
+    },
+    {
+      "key": "Enter"
     },
     {
       "wait": 300
@@ -129,9 +131,10 @@
       }
     },
     {
-      "click_on": {
-        "menu_item": "battle"
-      }
+      "type": "/battleground"
+    },
+    {
+      "key": "Enter"
     },
     {
       "wait_for": {
@@ -218,9 +221,10 @@
       }
     },
     {
-      "click_on": {
-        "menu_item": "battle"
-      }
+      "type": "/battleground"
+    },
+    {
+      "key": "Enter"
     },
     {
       "wait": 300
