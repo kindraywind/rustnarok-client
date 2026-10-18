@@ -443,6 +443,8 @@ fn packet_length(id: u16) -> Option<i32> {
 
 /// Dev hook (the client's control socket): sees every packet read from the char and map servers.
 pub static PACKET_HOOK: std::sync::OnceLock<fn(&[u8])> = std::sync::OnceLock::new();
+/// Dev hook (the control socket): sees every packet written to the map server.
+pub static SENT_HOOK: std::sync::OnceLock<fn(&[u8])> = std::sync::OnceLock::new();
 
 /// Reads one packet: fixed lengths come from the table, variable ones carry their length at offset 2.
 fn read_packet(reader: &mut impl Read) -> io::Result<Vec<u8>> {
@@ -698,6 +700,11 @@ const CZ_MOVE_ITEM_FROM_CART_TO_BODY: u16 = 0x0127;
 const ZC_ADD_ITEM_TO_CART: u16 = 0x0B45;
 const ZC_NOTIFY_UNREADMAIL: u16 = 0x09E7;
 const ZC_BROADCAST: u16 = 0x009A;
+const ZC_MAPPROPERTY_R2: u16 = 0x099B;
+const CZ_BLOCKING_PLAY_CANCEL: u16 = 0x0447;
+/// ZC_MAPPROPERTY_R2's flags (rathena's `clif_map_property`).
+pub const MAP_NO_COSTUME: u32 = 1 << 8;
+pub const MAP_SUN_MOON_STAR_MIRACLE: u32 = 1 << 10;
 const ZC_BROADCAST2: u16 = 0x01C3;
 const ZC_MSG: u16 = 0x0291;
 const ZC_MSG_VALUE: u16 = 0x07E2;
@@ -1584,6 +1591,11 @@ pub enum MapEvent {
         time: u32,
     },
     /// An announcement: plain ones yellow (or blue when the server asks), ZC_BROADCAST2 in its own color.
+    /// The map's property (rathena's `map_property`) and its flags (MAP_*), at every load and flag change.
+    MapProperty {
+        property: u16,
+        flags: u32,
+    },
     /// A server announcement, its color resolved; `size` is ZC_BROADCAST2's font size.
     Broadcast {
         text: String,
@@ -2707,7 +2719,19 @@ pub struct MapTicket {
 }
 
 pub struct MapSession {
-    stream: TcpStream,
+    stream: Wire,
+}
+
+/// The map server's socket: every packet written is shown to `SENT_HOOK` first.
+struct Wire(TcpStream);
+
+impl Wire {
+    fn write_all(&mut self, packet: &[u8]) -> io::Result<()> {
+        if let Some(hook) = SENT_HOOK.get() {
+            hook(packet);
+        }
+        self.0.write_all(packet)
+    }
 }
 
 impl MapSession {
@@ -2735,7 +2759,7 @@ impl MapSession {
             };
             on_event(MapEvent::Disconnected(error));
         });
-        Ok(Self { stream })
+        Ok(Self { stream: Wire(stream) })
     }
 
     /// Tells the server the map is loaded; it then sends everything in view.
@@ -3488,6 +3512,11 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Tells the server the client is ready after a map property (CZ_BLOCKING_PLAY_CANCEL).
+    pub fn ready_to_play(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_blocking_play_cancel())
+    }
+
     /// Refuses (or accepts again) party invitations; the answer is `PartyRefusing`.
     pub fn refuse_parties(&mut self, refuse: bool) -> io::Result<()> {
         let [low, high] = CZ_PARTY_CONFIG.to_le_bytes();
@@ -3628,7 +3657,7 @@ impl MapSession {
 
 impl Drop for MapSession {
     fn drop(&mut self) {
-        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        let _ = self.stream.0.shutdown(std::net::Shutdown::Both);
     }
 }
 
@@ -3872,6 +3901,11 @@ fn encode_hatch(index: u16) -> [u8; 4] {
     packet[..2].copy_from_slice(&CZ_SELECT_PETEGG.to_le_bytes());
     packet[2..].copy_from_slice(&index.to_le_bytes());
     packet
+}
+
+/// CZ_BLOCKING_PLAY_CANCEL: the header alone.
+fn encode_blocking_play_cancel() -> [u8; 2] {
+    CZ_BLOCKING_PLAY_CANCEL.to_le_bytes()
 }
 
 /// CZ_GROUPINFO_CHANGE_V2: EXP (0 each takes, 1 even) u32, then the pickup and distribution flags.
@@ -4408,6 +4442,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         },
         ZC_NOTIFY_UNREADMAIL => MapEvent::MailUnread(packet[2] != 0),
         // "blue" (and "ssss" for the War of Emperium) at the start are color hints, not words.
+        ZC_MAPPROPERTY_R2 => MapEvent::MapProperty { property: u16_at(2), flags: u32_at(4) },
         ZC_BROADCAST => {
             let (text, color, kind) = decode_broadcast(&packet[4..]);
             MapEvent::Broadcast { text, color, kind, size: None }
@@ -5643,6 +5678,15 @@ mod tests {
         assert_eq!(encode_refine(4, 1010, true), [0xA3, 0x0A, 4, 0, 0xF2, 0x03, 0, 0, 1]);
         let ids = [ZC_OPEN_REFINING_UI, CZ_REFINING_SELECT_ITEM, ZC_REFINING_MATERIAL_LIST, CZ_REQ_REFINING, CZ_CLOSE_REFINING_UI, ZC_ACK_ITEMREFINING];
         assert_eq!(ids.map(packet_length), [Some(2), Some(4), Some(-1), Some(9), Some(2), Some(8)]);
+    }
+
+    #[test]
+    fn decodes_the_map_property() {
+        let packet = [&ZC_MAPPROPERTY_R2.to_le_bytes()[..], &3u16.to_le_bytes(), &(MAP_NO_COSTUME | 1).to_le_bytes()].concat();
+        assert!(matches!(decode_map_packet(&packet), Some(MapEvent::MapProperty { property: 3, flags }) if flags == MAP_NO_COSTUME | 1));
+        assert_eq!(packet_length(ZC_MAPPROPERTY_R2), Some(8));
+        assert_eq!(encode_blocking_play_cancel(), [0x47, 0x04]);
+        assert_eq!(packet_length(CZ_BLOCKING_PLAY_CANCEL), Some(2));
     }
 
     #[test]
