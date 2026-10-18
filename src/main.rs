@@ -379,6 +379,9 @@ const BOUND: usize = 1328;
 const RENTAL_MINUTES: usize = 1256;
 const RENTAL_SECONDS: usize = 1270;
 const RENTAL_ENDED: usize = 1258;
+/// "<item> have been placed on / removed from the Swap Equipment window."
+const SWITCH_ADDED: usize = 3143;
+const SWITCH_REMOVED: usize = 3144;
 /// The Convex Mirror: no boss here, the boss will show on the minimap; its status icon (EFST_CASH_BOSS_ALARM).
 const NO_BOSS: usize = 1223;
 const BOSS_SHOWN: usize = 1225;
@@ -605,6 +608,8 @@ struct Game {
     friend_asked: Option<(u32, u32, String)>,
     /// The server asks whether to use this voucher to grow the inventory.
     expansion_asked: Option<u32>,
+    /// The item the player last put in or took out of the Swap Equipment set: its answer gets a line.
+    switch_asked: Option<u16>,
     /// A bind-on-equip item (inventory index) waiting for OK to be worn; the broken items' indexes before the
     /// inventory came again (None: there was none yet, at login).
     bind_asked: Option<u16>,
@@ -3337,8 +3342,21 @@ impl App {
                         if hit == equipment::Hit::TakeOffAll {
                             let _ = game.session.take_off_all();
                         }
-                        if let Some(index) = game.equipment.click(hit) {
-                            let _ = game.session.take_off(index);
+                        if hit == equipment::Hit::SwitchAll {
+                            match game.equipment.switch_all(&game.inventory.items, control::now()) {
+                                Ok(true) => drop(game.session.switch_all()),
+                                Ok(false) => {}
+                                Err(id) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+                            }
+                        }
+                        // In the swap view, a double click takes the item out of the set.
+                        match game.equipment.click(hit) {
+                            Some(index) if game.equipment.swapping => {
+                                game.switch_asked = Some(index);
+                                let _ = game.session.switch_remove(index);
+                            }
+                            Some(index) => drop(game.session.take_off(index)),
+                            None => {}
                         }
                     }
                     Panel::Cart => {
@@ -3860,6 +3878,13 @@ impl App {
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Cart)) => game.move_item(Asked::ToCart(index)),
                     (Some((Dragged::Carted(index), _, true)), Some(Panel::Inventory)) => game.move_item(Asked::FromCart(index)),
                     (Some((Dragged::Stored(index), _, true)), Some(Panel::Inventory)) => game.move_item(Asked::Take(index)),
+                    // Onto the swap view: into the Swap Equipment set, where it would be worn.
+                    (Some((Dragged::Item(index), _, true)), Some(Panel::Equipment)) if game.equipment.swapping => {
+                        if let Some(item) = game.inventory.get(index) {
+                            game.switch_asked = Some(index);
+                            let _ = game.session.switch_add(index, item.location);
+                        }
+                    }
                     _ => {}
                 }
                 let trade_moved = game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
@@ -4812,6 +4837,7 @@ impl App {
                     friends: Vec::new(),
                     friend_asked: None,
                     expansion_asked: None,
+                    switch_asked: None,
                     bind_asked: None,
                     broken_before: None,
                     pet_id: None,
@@ -5380,6 +5406,39 @@ impl App {
             }
             // ponytail: no line fits a refusal; it says nothing.
             MapEvent::TookOffAll { .. } => {}
+            MapEvent::SwitchSet(set) => {
+                for item in &mut game.inventory.items {
+                    item.switch = set.iter().find(|(index, _)| *index == item.index).map_or(0, |(_, places)| *places);
+                }
+            }
+            // The player's own add and remove get a line.
+            // ponytail: whether the client also says so for items a switch moves isn't knowable; it doesn't.
+            MapEvent::SwitchAdded { index, places, result } => {
+                let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
+                let asked = game.switch_asked.take_if(|asked| *asked == index).is_some();
+                let name = game.inventory.items.iter_mut().find(|item| item.index == index && result == 0).map(|item| {
+                    item.switch = places;
+                    inventory::item_name(&self.items, item.id, item.identified, item.refine)
+                });
+                match result {
+                    0 if asked => game.chat_line(format!("{}{}", name.unwrap_or_default(), message(SWITCH_ADDED)), CHAT_ITEM),
+                    0 => {}
+                    1 => game.chat_line(message(1773), CHAT_ERROR),
+                    _ => game.chat_line(message(372), CHAT_ERROR),
+                }
+            }
+            MapEvent::SwitchRemoved { index, .. } => {
+                let asked = game.switch_asked.take_if(|asked| *asked == index).is_some();
+                let name = game.inventory.items.iter_mut().find(|item| item.index == index).map(|item| {
+                    item.switch = 0;
+                    inventory::item_name(&self.items, item.id, item.identified, item.refine)
+                });
+                if let Some(name) = name.filter(|_| asked) {
+                    game.chat_line(format!("{name}{}", self.messages.get(SWITCH_REMOVED).cloned().unwrap_or_default()), CHAT_ITEM);
+                }
+            }
+            // The wear and take-off answers that follow move the items.
+            MapEvent::Switched { .. } => {}
             // The storage opens with the inventory beside it.
             MapEvent::InventoryStart { kind: 2 } => {
                 game.storage.open();

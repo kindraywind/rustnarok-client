@@ -624,6 +624,13 @@ const ZC_CASH_ITEM_DELETE: u16 = 0x0299;
 const ZC_NOTIFY_BIND_ON_EQUIP: u16 = 0x02D3;
 const CZ_REQ_TAKEOFF_EQUIP_ALL: u16 = 0x0BAD;
 const ZC_ACK_TAKEOFF_EQUIP_ALL: u16 = 0x0BAE;
+const CZ_REQ_EQUIPSWITCH_ADD: u16 = 0x0A97;
+const ZC_EQUIPSWITCH_ADDED: u16 = 0x0A98;
+const CZ_REQ_EQUIPSWITCH_REMOVE: u16 = 0x0A99;
+const ZC_EQUIPSWITCH_REMOVED: u16 = 0x0A9A;
+const ZC_EQUIPSWITCH_LIST: u16 = 0x0A9B;
+const CZ_REQ_EQUIPSWITCH: u16 = 0x0A9C;
+const ZC_EQUIPSWITCH_REPLY: u16 = 0x0A9D;
 const CZ_REQ_OPEN_ROULETTE: u16 = 0x0A19;
 const ZC_ACK_OPEN_ROULETTE: u16 = 0x0A1A;
 const CZ_REQ_ROULETTE_INFO: u16 = 0x0A1B;
@@ -1560,6 +1567,23 @@ pub enum MapEvent {
     TookOffAll {
         refused: bool,
     },
+    /// The Swap Equipment set: inventory index and the places it goes in.
+    SwitchSet(Vec<(u16, u32)>),
+    /// An item went into the set (result 0), or didn't: 1 level too low, 2 can't.
+    SwitchAdded {
+        index: u16,
+        places: u32,
+        result: u16,
+    },
+    /// An item left the set.
+    SwitchRemoved {
+        index: u16,
+        places: u32,
+    },
+    /// The set is switched with what's worn now.
+    Switched {
+        failed: bool,
+    },
     /// A rental (by item ID) has this many seconds left.
     RentalTime {
         item: u32,
@@ -2290,6 +2314,8 @@ pub struct InventoryItem {
     pub bind: u16,
     /// A rental's end, Unix time in seconds (0: not a rental).
     pub expires: u32,
+    /// Where it goes in the Swap Equipment set; 0 when it isn't in it.
+    pub switch: u32,
 }
 
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
@@ -2358,6 +2384,7 @@ fn decode_equip_item(entry: &[u8]) -> InventoryItem {
         broken: entry[67] & 2 != 0,
         bind: u16_at(entry, 35),
         expires: u32_at(entry, 31),
+        switch: 0,
     }
 }
 
@@ -2761,6 +2788,21 @@ impl MapSession {
 
     pub fn roulette(&mut self, request: RouletteRequest) -> io::Result<()> {
         self.stream.write_all(&encode_roulette(request))
+    }
+
+    /// Puts an item in the Swap Equipment set, in its places; ZC_EQUIPSWITCH_ADDED answers.
+    pub fn switch_add(&mut self, index: u16, places: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_switch_add(index, places))
+    }
+
+    /// Takes an item out of the Swap Equipment set; ZC_EQUIPSWITCH_REMOVED answers.
+    pub fn switch_remove(&mut self, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_index(CZ_REQ_EQUIPSWITCH_REMOVE, index))
+    }
+
+    /// Switches the Swap Equipment set with what's worn.
+    pub fn switch_all(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_REQ_EQUIPSWITCH.to_le_bytes())
     }
 
     /// Takes off the general equipment (costumes, shadow gear and ammunition stay on).
@@ -3247,8 +3289,18 @@ fn encode_select_warp_point(skill: u16, map: &str) -> [u8; 20] {
 
 /// CZ_REQ_ITEMCOMPOSITION_LIST: a card's inventory index, asking what it can go into.
 fn encode_card_list(card: u16) -> [u8; 4] {
-    let [[h0, h1], [c0, c1]] = [CZ_REQ_ITEMCOMPOSITION_LIST, card].map(u16::to_le_bytes);
-    [h0, h1, c0, c1]
+    encode_index(CZ_REQ_ITEMCOMPOSITION_LIST, card)
+}
+
+/// A header and an inventory index.
+fn encode_index(header: u16, index: u16) -> [u8; 4] {
+    let [[h0, h1], [i0, i1]] = [header, index].map(u16::to_le_bytes);
+    [h0, h1, i0, i1]
+}
+
+/// CZ_REQ_EQUIPSWITCH_ADD: the inventory index, then the places.
+fn encode_switch_add(index: u16, places: u32) -> Vec<u8> {
+    [&CZ_REQ_EQUIPSWITCH_ADD.to_le_bytes()[..], &index.to_le_bytes(), &places.to_le_bytes()].concat()
 }
 
 /// CZ_REQ_ITEMCOMPOSITION: the card's inventory index, then the equipment's.
@@ -3757,6 +3809,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 broken: packet[11] != 0,
                 bind: u16_at(38),
                 expires: u32_at(34),
+                switch: 0,
             },
         },
         ZC_INVENTORY_START => MapEvent::InventoryStart { kind: packet[4] },
@@ -4062,6 +4115,11 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_RECV_ROULETTE_ITEM => MapEvent::RouletteClaimed { result: packet[2], bonus: u32_at(3) },
         ZC_NOTIFY_BIND_ON_EQUIP => MapEvent::BoundOnEquip(u16_at(2)),
         ZC_ACK_TAKEOFF_EQUIP_ALL => MapEvent::TookOffAll { refused: packet[2] != 0 },
+        // Length, then each item: index, places.
+        ZC_EQUIPSWITCH_LIST => MapEvent::SwitchSet(packet[4..].chunks_exact(6).map(|entry| (self::u16_at(entry, 0), self::u32_at(entry, 2))).collect()),
+        ZC_EQUIPSWITCH_ADDED => MapEvent::SwitchAdded { index: u16_at(2), places: u32_at(4), result: u16_at(8) },
+        ZC_EQUIPSWITCH_REMOVED => MapEvent::SwitchRemoved { index: u16_at(2), places: u32_at(4) },
+        ZC_EQUIPSWITCH_REPLY => MapEvent::Switched { failed: u16_at(2) != 0 },
         ZC_CASH_TIME_COUNTER => MapEvent::RentalTime { item: u32_at(2), seconds: u32_at(6) },
         ZC_CASH_ITEM_DELETE => MapEvent::RentalExpired { index: u16_at(2), item: u32_at(4) },
         // Class, level, size, HP, DEF, race, MDEF, element, then the nine elements' damage %.
@@ -5292,6 +5350,31 @@ mod tests {
         assert_eq!(CZ_REQ_TAKEOFF_EQUIP_ALL.to_le_bytes(), [0xAD, 0x0B]);
         let ids = [ZC_NOTIFY_BIND_ON_EQUIP, CZ_REQ_TAKEOFF_EQUIP_ALL, ZC_ACK_TAKEOFF_EQUIP_ALL, ZC_ITEM_PICKUP_ACK];
         assert_eq!(ids.map(packet_length), [Some(4), Some(2), Some(3), Some(70)]);
+    }
+
+    #[test]
+    fn decodes_swap_equipment() {
+        let list = [&ZC_EQUIPSWITCH_LIST.to_le_bytes()[..], &16u16.to_le_bytes(), &[7, 0, 2, 0, 0, 0], &[9, 0, 0x10, 0, 0, 0]].concat();
+        let Some(MapEvent::SwitchSet(set)) = decode_map_packet(&list) else { panic!() };
+        assert_eq!(set, [(7, 2), (9, 0x10)]);
+        let added = [&ZC_EQUIPSWITCH_ADDED.to_le_bytes()[..], &7u16.to_le_bytes(), &2u32.to_le_bytes(), &1u16.to_le_bytes()].concat();
+        let Some(MapEvent::SwitchAdded { index: 7, places: 2, result: 1 }) = decode_map_packet(&added) else { panic!() };
+        let removed = [&ZC_EQUIPSWITCH_REMOVED.to_le_bytes()[..], &7u16.to_le_bytes(), &2u32.to_le_bytes(), &0u16.to_le_bytes()].concat();
+        let Some(MapEvent::SwitchRemoved { index: 7, places: 2 }) = decode_map_packet(&removed) else { panic!() };
+        let Some(MapEvent::Switched { failed: false }) = decode_map_packet(&[0x9D, 0x0A, 0, 0]) else { panic!() };
+        assert_eq!(encode_switch_add(7, 2), [0x97, 0x0A, 7, 0, 2, 0, 0, 0]);
+        assert_eq!(encode_index(CZ_REQ_EQUIPSWITCH_REMOVE, 7), [0x99, 0x0A, 7, 0]);
+        assert_eq!(CZ_REQ_EQUIPSWITCH.to_le_bytes(), [0x9C, 0x0A]);
+        let ids = [
+            CZ_REQ_EQUIPSWITCH_ADD,
+            ZC_EQUIPSWITCH_ADDED,
+            CZ_REQ_EQUIPSWITCH_REMOVE,
+            ZC_EQUIPSWITCH_REMOVED,
+            ZC_EQUIPSWITCH_LIST,
+            CZ_REQ_EQUIPSWITCH,
+            ZC_EQUIPSWITCH_REPLY,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(8), Some(10), Some(4), Some(10), Some(-1), Some(2), Some(4)]);
     }
 
     #[test]
