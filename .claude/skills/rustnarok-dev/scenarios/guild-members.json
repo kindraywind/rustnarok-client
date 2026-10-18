@@ -1,0 +1,277 @@
+{
+ "about": "Guild Member tab (issue #514): the grid of 5 rows 44 px tall, both members online with the band and their heads, the access date; two presses on Level put the highest level first with the down arrow; the login status box keeps them by level (both online).",
+ "account": "",
+ "slot": 0,
+ "second": {
+  "account": "2",
+  "slot": 0,
+  "env": {
+   "RUSTNAROK_CLIENT_GUILD": "accept"
+  }
+ },
+ "steps": [
+  {
+   "say": "@warp prontera 156 180"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "say": "@breakguild"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "say": "@recall {second}"
+  },
+  {
+   "as": "second",
+   "settle": 2000
+  },
+  {
+   "say": "@guild PosTest"
+  },
+  {
+   "wait_for": {
+    "event": "GuildMade",
+    "ms": 5000
+   }
+  },
+  {
+   "say": "@warp prontera 156 177"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "click_on": {
+    "unit": "{second}"
+   },
+   "button": "right"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "click_on": {
+    "menu_item": "Guild invitation"
+   }
+  },
+  {
+   "wait_for": {
+    "packet": "0x0169",
+    "ms": 5000
+   }
+  },
+  {
+   "wait": 800
+  },
+  {
+   "expect": {
+    "chat": "Offer Accepted"
+   }
+  },
+  {
+   "key": "Alt+G"
+  },
+  {
+   "wait_for": {
+    "packet": "0x014c",
+    "ms": 5000
+   }
+  },
+  {
+   "wait": 300
+  },
+  {
+   "click": [
+    276,
+    148
+   ]
+  },
+  {
+   "wait_for": {
+    "packet": "0x0b7d",
+    "ms": 5000
+   }
+  },
+  {
+   "wait": 300
+  },
+  {
+   "expect": {
+    "state": {
+     "guild.members.{second}": 19
+    }
+   }
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "shot": "guild-members",
+   "crop": [
+    180,
+    120,
+    400,
+    317
+   ]
+  },
+  {
+   "expect": {
+    "state": {
+     "guild_window.order": [
+      "{first}",
+      "{second}"
+     ]
+    }
+   }
+  },
+  {
+   "click_on": {
+    "button": "sort:level"
+   }
+  },
+  {
+   "wait": 200
+  },
+  {
+   "click_on": {
+    "button": "sort:level"
+   }
+  },
+  {
+   "wait": 200
+  },
+  {
+   "expect": {
+    "state": {
+     "guild_window.sort": [
+      3,
+      false
+     ],
+     "guild_window.order": [
+      "{second}",
+      "{first}"
+     ]
+    }
+   }
+  },
+  {
+   "click_on": {
+    "button": "login_status"
+   }
+  },
+  {
+   "wait": 300
+  },
+  {
+   "expect": {
+    "state": {
+     "guild_window.online_first": true,
+     "guild_window.order": [
+      "{second}",
+      "{first}"
+     ]
+    }
+   }
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "shot": "guild-members-sorted",
+   "crop": [
+    180,
+    120,
+    400,
+    317
+   ]
+  },
+  {
+   "as": "second",
+   "key": "Alt+G"
+  },
+  {
+   "as": "second",
+   "wait_for": {
+    "packet": "0x014c",
+    "ms": 5000
+   }
+  },
+  {
+   "as": "second",
+   "wait": 300
+  },
+  {
+   "as": "second",
+   "click": [
+    276,
+    148
+   ]
+  },
+  {
+   "as": "second",
+   "wait_for": {
+    "packet": "0x0b7d",
+    "ms": 5000
+   }
+  },
+  {
+   "as": "second",
+   "wait": 300
+  },
+  {
+   "as": "second",
+   "click_on": {
+    "button": "member:{second}"
+   },
+   "button": "right"
+  },
+  {
+   "as": "second",
+   "wait": 400
+  },
+  {
+   "as": "second",
+   "click_on": {
+    "menu_item": "Leave Guild"
+   }
+  },
+  {
+   "as": "second",
+   "wait": 300
+  },
+  {
+   "as": "second",
+   "click_on": {
+    "button": "ok"
+   }
+  },
+  {
+   "wait_for": {
+    "packet": "0x0a83",
+    "ms": 5000
+   }
+  },
+  {
+   "wait": 300
+  },
+  {
+   "say": "@breakguild"
+  },
+  {
+   "wait": 1500
+  }
+ ]
+}
