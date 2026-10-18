@@ -257,9 +257,9 @@ impl Gat {
         Ok(Self { width, height, cells })
     }
 
-    /// Types 0 (walkable), 3 (walkable water) can be walked on.
+    /// Every type but 1 (a wall) and 5 (a gap that can be shot across) can be walked on, as rathena has it.
     pub fn walkable(&self, [x, y]: [i32; 2]) -> bool {
-        x >= 0 && y >= 0 && (x as usize) < self.width && (y as usize) < self.height && matches!(self.cells[y as usize * self.width + x as usize].1, 0 | 3)
+        x >= 0 && y >= 0 && (x as usize) < self.width && (y as usize) < self.height && !matches!(self.cells[y as usize * self.width + x as usize].1, 1 | 5)
     }
 
     /// Average height of a cell (negative is up).
@@ -366,6 +366,14 @@ mod tests {
         assert_eq!(gat.height_at([1.5, 0.5]), -1.0);
         // Off the map: the nearest cell's edge.
         assert_eq!(gat.height_at([-3.0, 0.5]), -2.0);
+    }
+
+    #[test]
+    fn walks_on_every_type_but_walls_and_gaps() {
+        let gat = Gat { width: 7, height: 1, cells: (0..7).map(|kind| ([0.0; 4], kind)).collect() };
+        let walkable: Vec<bool> = (0..7).map(|x| gat.walkable([x, 0])).collect();
+        assert_eq!(walkable, [true, false, true, true, true, false, true]);
+        assert!(!gat.walkable([7, 0]) && !gat.walkable([-1, 0]));
     }
 
     #[test]

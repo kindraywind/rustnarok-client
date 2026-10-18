@@ -22,11 +22,34 @@ pub const PUSH_CART: u16 = 673;
 pub const CHANGE_SIZE: u16 = 1420;
 pub const CHANGE_SIZE_MONSTER: u16 = 1421;
 
-// ponytail: cart types 1 to 9 as 손수레, 손수레1 … 손수레8, as the files run; baby jobs' carts (베이비손수레…) not yet.
-/// The sprite (without extension) of a pushcart type.
-pub fn cart_path(kind: i32) -> String {
-    let number = if kind > 1 { (kind - 1).to_string() } else { String::new() };
-    format!("data\\sprite\\이팩트\\손수레{number}")
+/// Jobs of the Super Novice line, whose cart is always their own.
+const SUPER_NOVICE_JOBS: [u16; 4] = [23, 4045, 4190, 4191];
+
+/// Baby jobs (rathena's JOB_BABY… and JOB_SUPER_BABY…), whose carts move by a baby cart's ACT.
+fn baby_job(job: u16) -> bool {
+    matches!(job, 4023..=4045 | 4096..=4112 | 4191 | 4220 | 4222..=4229 | 4238 | 4241 | 4242 | 4244)
+}
+
+// ponytail: types 10 to 13 follow the names (손수레9 …), which this data doesn't have; Hyper Novice's cart isn't known.
+/// The sprite (without extension) and ACT of a pushcart type for a job: 손수레, 손수레1 … by type, the Super Novice's
+/// 슈노손수레 whatever the type; a baby's by its own ACT (베이비손수레…, with the grown-up's sprite) or, for types 6 to
+/// 9, a sprite of its own (손수레5베이비 …).
+pub fn cart_path(kind: i32, job: u16) -> (String, String) {
+    let folder = "data\\sprite\\이팩트\\";
+    let baby = baby_job(job);
+    let name = if SUPER_NOVICE_JOBS.contains(&job) {
+        "슈노손수레".to_string()
+    } else if kind > 1 {
+        format!("손수레{}", kind - 1)
+    } else {
+        "손수레".to_string()
+    };
+    let (sprite, act) = match name.strip_prefix("손수레").and_then(|number| number.parse::<i32>().ok()) {
+        Some(5..) if baby => (format!("{name}베이비"), format!("{name}베이비")),
+        _ if baby => (name.clone(), format!("베이비{name}")),
+        _ => (name.clone(), name),
+    };
+    (format!("{folder}{sprite}"), format!("{folder}{act}.act"))
 }
 
 /// Players only.
@@ -570,12 +593,17 @@ pub fn status_tint(body: u16, health: u16) -> Option<[u8; 3]> {
         OPT1_STONE => Some([64, 64, 64]),
         OPT1_FREEZE => Some([0, 128, 255]),
         OPT1_STONEWAIT => Some([128, 128, 128]),
-        // ponytail: stacked health bits take deadly poison, then poison, then curse.
+        // ponytail: stacked health bits take deadly poison, then curse over poison.
         _ if health & OPT2_DPOISON != 0 => Some([255, 50, 255]),
-        _ if health & OPT2_POISON != 0 => Some([255, 128, 255]),
         _ if health & OPT2_CURSE != 0 => Some([200, 50, 50]),
+        _ if health & OPT2_POISON != 0 => Some([255, 128, 255]),
         _ => None,
     }
+}
+
+/// Whether a body state (stone, frozen) stops the unit's animation where it is.
+pub fn stilled(body: u16) -> bool {
+    matches!(body, OPT1_STONE | OPT1_FREEZE)
 }
 
 /// Multiplies a layer's RGB by `tint` and keeps its alpha.
@@ -1250,16 +1278,21 @@ const FALCON_SPRITE: &str = "매";
 /// The warg's sprite name (`몬스터\워그`, then `npc\워그`).
 const WARG_SPRITE: &str = "워그";
 
-/// How far the cart's rope lets it lag (#196): one cell. The cart is still pinned behind its owner until that lands.
+/// How far the cart's rope lets it lag: one cell.
 pub const CART_ROPE: f32 = world::CELL;
+/// Cart frames a world unit rolled.
+const CART_FRAMES: f32 = 0.92;
 /// The falcon flies this far above the ground.
 pub const FALCON_HEIGHT: f32 = 25.0;
-// ponytail: two cells, longer than the cart's one-cell rope. rope_step is that rope; the cart should call it with CART_ROPE once #196 lands.
+// ponytail: two cells, longer than the cart's one-cell rope.
 pub const FALCON_REACH: f32 = CART_ROPE * 2.0;
 /// The warg keeps about three cells out.
 pub const WARG_REACH: f32 = world::CELL * 3.0;
 /// The warg's shadow, twice a body's.
 pub const WARG_SHADOW: f32 = 2.0;
+
+/// The MVP tomb, which casts no shadow.
+const MVP_TOMB: u16 = 565;
 
 /// Sprite jobs that keep their shadow while sitting: the Star Gladiator line's union forms, which float.
 const SITTING_SHADOW_JOBS: [u16; 5] = [4048, 4238, 4243, 4244, 4316];
@@ -1268,7 +1301,7 @@ const SITTING_SHADOW_JOBS: [u16; 5] = [4048, 4238, 4243, 4244, 4316];
 /// isn't listed. A player (`player`) casts none while dead or sitting, but for the floating union forms.
 pub fn shadow_factor(factors: &HashMap<u16, f32>, player: bool, job: u16, option: u32, sitting: bool, dead: bool) -> f32 {
     let sprite = if player { sprite_job(job, option) } else { job };
-    if player && (dead || sitting && !SITTING_SHADOW_JOBS.contains(&sprite)) {
+    if player && (dead || sitting && !SITTING_SHADOW_JOBS.contains(&sprite)) || sprite == MVP_TOMB {
         return 0.0;
     }
     factors.get(&sprite).copied().unwrap_or(1.0)
@@ -1282,7 +1315,7 @@ pub fn world_xz(cell: [f32; 2]) -> [f32; 2] {
     [(cell[0] + 0.5) * world::CELL, (cell[1] + 0.5) * world::CELL]
 }
 
-/// One step of the cart's rope (#196). Farther than `reach` from `leader`, move straight in until exactly `reach` away.
+/// One step of a rope. Farther than `reach` from `leader`, move straight in until exactly `reach` away.
 pub fn rope_step(from: [f32; 2], leader: [f32; 2], reach: f32) -> [f32; 2] {
     let dx = leader[0] - from[0];
     let dz = leader[1] - from[1];
@@ -1344,6 +1377,45 @@ fn warg_out(option: u32) -> bool {
 }
 
 /// A falcon or a warg following a player: where it stands, the way it faces, and its sprite.
+/// A pushcart on its rope: where it stands (world XZ), the way it faces (degrees, as `Actor::rot`) and how far it has
+/// rolled (world units).
+pub struct Cart {
+    pub sprites: SpriteSet,
+    pub at: [f32; 2],
+    pub rot: f32,
+    pub rolled: f32,
+}
+
+impl Cart {
+    /// A rope's length behind a leader facing `direction`.
+    pub fn behind(sprites: SpriteSet, leader: [f32; 2], direction: u8) -> Self {
+        Self { sprites, at: place_behind(leader, direction, CART_ROPE), rot: rot_of(direction), rolled: 0.0 }
+    }
+
+    /// Pulled in to a rope's length when the leader is farther, turned toward it. A leader suddenly far off (a warp,
+    /// a teleport) has the cart placed behind it again.
+    pub fn step(&mut self, leader: [f32; 2], direction: u8) {
+        let [dx, dz] = [leader[0] - self.at[0], leader[1] - self.at[1]];
+        // ponytail: more than two ropes away counts as a jump, not a pull.
+        if f32::hypot(dx, dz) > CART_ROPE * 3.0 {
+            (self.at, self.rot) = (place_behind(leader, direction, CART_ROPE), rot_of(direction));
+            return;
+        }
+        let at = rope_step(self.at, leader, CART_ROPE);
+        self.rolled += f32::hypot(at[0] - self.at[0], at[1] - self.at[1]);
+        self.at = at;
+        let [dx, dz] = [leader[0] - at[0], leader[1] - at[1]];
+        if f32::hypot(dx, dz) > 1e-3 {
+            self.rot = dx.atan2(-dz).to_degrees().rem_euclid(360.0);
+        }
+    }
+
+    /// Which of `count` frames shows: the wheels turn with the distance rolled, looping.
+    pub fn frame(&self, count: usize) -> usize {
+        (self.rolled * CART_FRAMES) as usize % count.max(1)
+    }
+}
+
 pub struct Companion {
     pub at: [f32; 2],
     pub direction: u8,
@@ -1439,6 +1511,8 @@ pub struct Actor {
     pub job: u16,
     /// A player's guild (0: none).
     pub guild: u32,
+    /// The level the server shows (monsters' and players'; 0 for NPCs and pets).
+    pub level: u16,
     /// A player's looks, to rebuild its sprites when they change.
     pub look: Option<Look>,
     /// Script NPCs the client never draws.
@@ -1479,8 +1553,8 @@ pub struct Actor {
     /// rathena's opt1 and opt2: the body and health state that colour the sprite.
     pub body_state: u16,
     pub health_state: u16,
-    /// The pushcart it pulls, drawn behind it.
-    pub cart: Option<SpriteSet>,
+    /// The pushcart it pulls.
+    pub cart: Option<Cart>,
     /// The server's option word (rathena OPTION_*), falcon and warg included.
     pub option: u32,
     /// The falcon, while OPTION_FALCON is set.
@@ -1503,6 +1577,7 @@ impl Actor {
             kind: 0,
             job: 0,
             guild: 0,
+            level: 0,
             look: None,
             hidden: false,
             sprites,
@@ -1755,8 +1830,12 @@ impl Actor {
         }
     }
 
-    /// One rope step. `moving` is the player walking this frame, which is when the warg runs.
+    /// One rope step for the cart, falcon and warg. `moving` is the player walking this frame, which is when the warg
+    /// runs.
     pub fn step_companions(&mut self, leader: [f32; 2], moving: bool) {
+        if let Some(cart) = &mut self.cart {
+            cart.step(leader, self.direction);
+        }
         if let Some(falcon) = &mut self.falcon {
             let step = falcon_step(falcon.at, falcon.direction, leader);
             (falcon.at, falcon.direction, falcon.moving) = (step.at, step.direction, step.moving);
@@ -2034,6 +2113,51 @@ mod tests {
     }
 
     #[test]
+    fn pulls_the_cart_on_a_one_cell_rope() {
+        let sprites = SpriteSet { layers: Vec::new(), player: false, dressing: None, scale: 1.0, tint: None, textures: HashMap::new() };
+        // Placed a rope's length behind a leader facing south (0): to its north, facing south.
+        let mut cart = Cart::behind(sprites, [50.0, 50.0], 0);
+        assert_near(cart.at, [50.0, 55.0]);
+        assert_eq!(cart.rot, 0.0);
+        // Closer than the rope: it stays, turning to face the leader (east of it: 90).
+        cart.step([53.0, 55.0], 6);
+        assert_near(cart.at, [50.0, 55.0]);
+        assert!((cart.rot - 90.0).abs() < 1e-3, "{}", cart.rot);
+        assert_eq!(cart.rolled, 0.0);
+        // Farther: pulled straight in to exactly a rope's length, rolling as far as it moved.
+        cart.step([58.0, 55.0], 6);
+        assert_near(cart.at, [53.0, 55.0]);
+        assert!((cart.rolled - 3.0).abs() < 1e-4);
+        // The wheels turn 0.92 frames a world unit, looping.
+        assert_eq!(cart.frame(4), 2);
+        cart.rolled = 5.0;
+        assert_eq!(cart.frame(4), 0);
+        // A jump (a warp) puts it behind the leader again.
+        cart.step([200.0, 200.0], 4);
+        assert_near(cart.at, [200.0, 195.0]);
+    }
+
+    #[test]
+    fn names_each_cart_type() {
+        let path = |kind: i32, job: u16| {
+            let (sprite, act) = cart_path(kind, job);
+            (sprite.trim_start_matches("data\\sprite\\이팩트\\").to_string(), act.trim_start_matches("data\\sprite\\이팩트\\").to_string())
+        };
+        let same = |name: &str| (name.to_string(), format!("{name}.act"));
+        assert_eq!(path(1, 5), same("손수레"));
+        for kind in 2..=13 {
+            assert_eq!(path(kind, 10), same(&format!("손수레{}", kind - 1)));
+        }
+        // The Super Novice's own, whatever the type.
+        assert_eq!(path(3, 23), same("슈노손수레"));
+        assert_eq!(path(1, 4045), ("슈노손수레".to_string(), "베이비슈노손수레.act".to_string()));
+        // Babies: a baby ACT on the grown-up sprite, or a baby sprite of its own from type 6.
+        assert_eq!(path(1, 4028), ("손수레".to_string(), "베이비손수레.act".to_string()));
+        assert_eq!(path(5, 4036), ("손수레4".to_string(), "베이비손수레4.act".to_string()));
+        assert_eq!(path(6, 4107), same("손수레5베이비"));
+    }
+
+    #[test]
     fn walks_in_step_with_the_server() {
         let start = Instant::now();
         let ms = |at: Instant| at.duration_since(start).as_secs_f32() * 1000.0;
@@ -2176,9 +2300,11 @@ mod tests {
         assert_eq!(status_tint(OPT1_FREEZE, OPT2_POISON), Some([0, 128, 255]));
         assert_eq!(status_tint(OPT1_STONE, OPT2_CURSE | OPT2_POISON), Some([64, 64, 64]));
         assert_eq!(status_tint(OPT1_STONEWAIT, OPT2_DPOISON), Some([128, 128, 128]));
-        // Two health bits at once: deadly poison, then poison, then curse.
+        // Two health bits at once: deadly poison, then curse over poison.
         assert_eq!(status_tint(0, OPT2_POISON | OPT2_DPOISON), Some([255, 50, 255]));
-        assert_eq!(status_tint(0, OPT2_POISON | OPT2_CURSE), Some([255, 128, 255]));
+        assert_eq!(status_tint(0, OPT2_POISON | OPT2_CURSE), Some([200, 50, 50]));
+        // Stone and freeze stop the animation; the others don't.
+        assert!(stilled(OPT1_STONE) && stilled(OPT1_FREEZE) && !stilled(OPT1_STONEWAIT) && !stilled(0));
         // Stun, silence and a state that has ended leave the sprite alone.
         assert_eq!(status_tint(3, 0x0010), None);
         assert_eq!(status_tint(0, 0), None);

@@ -35,10 +35,12 @@ pub fn shouts(skill: u16, level: i32, monster: bool, packet: Shout) -> bool {
     !quiet
 }
 
-/// How far over the feet the balloon's bottom (and the cast bar's top) sits, in sprite pixels straight up the screen.
-pub const HEAD: f32 = 81.0;
-/// How far over the feet the cast bar's top sits, in sprite pixels.
-pub const CAST_ABOVE: f32 = 96.7;
+/// Screen pixels per sprite pixel on the 768-high screen, at the default camera.
+const SCREEN_PER_SPRITE: f32 = 1.34;
+/// How far over the feet the balloon's bottom and the cast bar's top sit, in sprite pixels straight up the screen:
+/// 81/480 of the screen's height.
+pub const HEAD: f32 = 129.0 / SCREEN_PER_SPRITE;
+pub const CAST_ABOVE: f32 = HEAD;
 /// The cast bar: 60 by 6, centred on the head.
 pub const CAST_BAR: [f32; 2] = [60.0, 6.0];
 
@@ -53,9 +55,11 @@ pub fn cast_fill(done: f32) -> f32 {
     (CAST_BAR[0] * percent / 100.0 - 2.0).trunc().max(0.0)
 }
 
-/// How far under the feet HP/SP bars start, and names under them, in sprite pixels.
-pub const BAR_BELOW: f32 = 12.0;
-pub const NAME_BELOW: f32 = 20.0;
+/// How far under the feet HP/SP bars start (12/480 of the screen's height) and the name's box under them (20/480),
+/// in sprite pixels; the name's text starts this many screen pixels into its box.
+pub const BAR_BELOW: f32 = 19.0 / SCREEN_PER_SPRITE;
+pub const NAME_BELOW: f32 = 32.0 / SCREEN_PER_SPRITE;
+pub const NAME_TEXT_TOP: f32 = 4.0;
 /// Bytes per balloon line (a double-byte character counts two).
 const LINE_BYTES: usize = 35;
 /// The balloon's padding around its text: left, top; and the step from line to line.

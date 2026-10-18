@@ -1,0 +1,27 @@
+{
+  "about": "A pushcart on a one-cell rope (issue #196): placed a cell behind the player's facing, it stays put while the player is within a cell, gets pulled along at exactly one cell when they walk, faces them, rolls its wheels with the distance and casts a shadow. A walk east, then north, then back; shots at each corner and mid-walk. state reports the cart's spot, facing and frame.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 300},
+    {"say": "@job 5"}, {"wait": 500},
+    {"say": "@cart 0"}, {"wait": 500},
+    {"say": "@cart 1"}, {"wait": 1500},
+    {"move": [1000, 750]},
+    {"shot": "cart-placed", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"click_on": {"cell": [173, 360]}}, {"wait": 300},
+    {"shot": "cart-pulled", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"wait": 1200},
+    {"move": [1000, 750]},
+    {"shot": "cart-east", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"click_on": {"cell": [173, 363]}}, {"wait": 1500},
+    {"move": [1000, 750]},
+    {"shot": "cart-north", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"click_on": {"cell": [172, 362]}}, {"wait": 800},
+    {"move": [1000, 750]},
+    {"shot": "cart-stays", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"say": "@cart 0"}, {"wait": 500},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}
