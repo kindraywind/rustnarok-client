@@ -1,0 +1,17 @@
+{
+  "about": "Shadows (issue #194): four NPCs of our own (npc/shadows.txt) with monster looks whose shadows differ by the data's shadow table: Poring (small), Baphomet, Orc Warrior and Knight of Abyss (the widest), near prontera 156 180. Then the player sits, and casts none. The NPCs live only in the map server's memory, and the scenario unloads them at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/shadows.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/shadows.txt"}, {"wait": 1500},
+    {"expect": {"chat": "Script loaded."}},
+    {"move": [1000, 750]},
+    {"shot": "shadows-npcs", "crop": [230, 0, 560, 320]},
+    {"key": "Insert"}, {"wait": 800},
+    {"shot": "shadows-sitting", "crop": [412, 230, 200, 200]},
+    {"key": "Insert"}, {"wait": 800},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/shadows.txt"}, {"wait": 500}
+  ]
+}
