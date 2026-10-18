@@ -90,6 +90,7 @@ mod minimap;
 mod minimap_window;
 mod monster_info;
 mod navigation;
+mod npc_menu;
 mod npc_say;
 mod options;
 mod overhead;
@@ -634,13 +635,6 @@ const DELETE_QUESTION: usize = 19;
 const BIRTHDATE_MESSAGE: usize = 1815;
 
 /// NPC dialogs are drawn as shapes, like the client draws them.
-const MENU_SIZE: [u32; 2] = [276, 116];
-const MENU_CONTENT: [u32; 4] = [8, 10, 268, 90];
-const MENU_ROW: [f32; 2] = [260.0, 20.0];
-const MENU_ROWS: usize = 4;
-const MENU_OK: [f32; 2] = [184.0, 91.0];
-const MENU_CANCEL: [f32; 2] = [230.0, 91.0];
-const MENU_SELECTION: [u8; 4] = [0xCD, 0xE0, 0xFF, 0xFF];
 /// A player's action while casting or using a skill.
 const SKILL_ACTION: usize = 12;
 /// How far over the ground the magic square under a ground cast floats, so the ground doesn't cover it.
@@ -1033,6 +1027,8 @@ struct Game {
     dialog: Option<Dialog>,
     /// The NPC say window's place, scroll and button throttle.
     say: npc_say::SayWindow,
+    /// Where the NPC menu is.
+    npc_menu: window::Frame,
     /// Last frame's clickable units and items.
     hit_boxes: Vec<picking::Target<Owner>>,
     /// Items lying around, by ground ID.
@@ -2135,19 +2131,33 @@ impl Game {
         }
     }
 
-    /// Picks the highlighted menu item, or cancels the conversation.
+    /// Picks the highlighted menu item, or cancels the conversation: the menu answers 255, the talk is closed and
+    /// the say window, the menu and the cut-in go. A menu without items cancels.
     fn choose(&mut self, cancel: bool) {
         let Some(dialog) = &mut self.dialog else { return };
-        let Some((_, selected)) = dialog.menu.take() else { return };
+        let Some(menu) = dialog.menu.take() else { return };
+        let selected = menu.selected;
         // Warp Portal and Teleport: the map as it came; the row after the maps (Cancel) and Esc cancel.
         if let Some((skill, maps)) = dialog.warp.take() {
             let _ = self.session.select_warp_point(skill, maps.get(selected).filter(|_| !cancel).map_or("cancel", String::as_str));
             self.dialog = None;
             return;
         }
+        let cancel = cancel || menu.items.is_empty();
         let _ = self.session.choose(dialog.npc, if cancel { 255 } else { selected as u8 + 1 });
         if cancel {
+            // ponytail: the say window counts as open whenever there's a talk; CZ_CLOSE_DIALOG for a menu-only talk
+            // is harmless to rathena.
+            let _ = self.session.close_dialog(dialog.npc);
             self.dialog = None;
+            self.cutin = None;
+        }
+    }
+
+    /// The menu's OK, on the say window's 300 ms timer.
+    fn menu_ok(&mut self) {
+        if self.say.throttle.pass(Instant::now()) {
+            self.choose(false);
         }
     }
 
@@ -2521,7 +2531,7 @@ impl Game {
     }
 
     /// Every window's frame, by name, for saving where each was left. `minimap` is the game's MINIMAPWNDINFO.
-    fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 18] {
+    fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 19] {
         [
             ("hotkeys", &mut self.hotkeys.frame),
             ("basic_info", &mut self.basic_info.frame),
@@ -2541,6 +2551,7 @@ impl Game {
             ("homunculus_skills", &mut self.homunculus_skill_list.frame),
             ("minimap", &mut self.minimap_window.frame),
             ("npc_say", &mut self.say.frame),
+            ("npc_menu", &mut self.npc_menu),
         ]
     }
 
@@ -4919,8 +4930,7 @@ struct Dialog {
     /// Next was pressed: the text stays until the next page wipes it.
     wipe: bool,
     button: DialogButton,
-    /// Menu items and the highlighted one.
-    menu: Option<(Vec<String>, usize)>,
+    menu: Option<npc_menu::Menu>,
     /// Waiting for a number (or text when the flag is set).
     input: Option<(bool, String)>,
     /// Warp Portal's or Teleport's list rather than an NPC's: the skill and the maps as the server named them.
@@ -5107,10 +5117,9 @@ struct Assets {
     grey: Texture,
     selection: Texture,
     say: npc_say::Assets,
-    menu: Texture,
+    npc_menu: npc_menu::Assets,
     next: ButtonImages,
     close: ButtonImages,
-    menu_selection: Texture,
     bars: [Texture; 7],
     monster_bars: [Texture; 4],
     chrome: window::Chrome,
@@ -5141,30 +5150,6 @@ fn clock(share: f32, color: [u8; 4]) -> RgbaImage {
         let [dx, dy] = [x as f32 + 0.5 - 16.0, y as f32 + 0.5 - 16.0];
         let turned = (dx.atan2(-dy) / std::f32::consts::TAU).rem_euclid(1.0);
         if turned < share { Rgba(color) } else { Rgba([0; 4]) }
-    })
-}
-
-/// The client's dialog frame: a white rounded box with a 1px grey border inset by 2, and a filled content area.
-fn dialog_frame([width, height]: [u32; 2], content: [u32; 4], fill: [u8; 3]) -> RgbaImage {
-    let rounded = |x: u32, y: u32, [left, top, right, bottom]: [u32; 4], radius: f32| {
-        let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-        if x < left || y < top || x >= right || y >= bottom {
-            return false;
-        }
-        let cx = px.clamp(left as f32 + radius, right as f32 - radius);
-        let cy = py.clamp(top as f32 + radius, bottom as f32 - radius);
-        (px - cx).powi(2) + (py - cy).powi(2) <= radius * radius
-    };
-    RgbaImage::from_fn(width, height, |x, y| {
-        if !rounded(x, y, [0, 0, width, height], 5.0) {
-            Rgba([0; 4])
-        } else if rounded(x, y, [2, 2, width - 2, height - 2], 5.0) && !rounded(x, y, [3, 3, width - 3, height - 3], 4.0) {
-            Rgba([0xC1, 0xC6, 0xC2, 255])
-        } else if x >= content[0] && y >= content[1] && x < content[2] && y < content[3] {
-            Rgba([fill[0], fill[1], fill[2], 255])
-        } else {
-            Rgba([255; 4])
-        }
     })
 }
 
@@ -5240,10 +5225,9 @@ impl Assets {
             grey: gpu.solid([0x9C, 0x9C, 0x9C, 0xFF]),
             selection: gpu.solid(SELECTION_COLOR),
             say: npc_say::Assets::load(gpu),
-            menu: gpu.texture(&dialog_frame(MENU_SIZE, MENU_CONTENT, [0xF9, 0xF9, 0xF9]), false),
+            npc_menu: npc_menu::Assets::load(gpu, grf),
             next: button(UI, "btn_next"),
             close: button(UI, "btn_close"),
-            menu_selection: gpu.solid(MENU_SELECTION),
             bars: BAR_COLORS.map(|color| gpu.solid(color)),
             monster_bars: MONSTER_BAR_COLORS.map(|color| gpu.solid(color)),
             chrome: window::Chrome::load(gpu, grf),
@@ -5807,15 +5791,6 @@ fn orbit(count: u16, height: f32, turned: f32) -> impl Iterator<Item = ([f32; 2]
 // ponytail: inferred from who has Coin Flip; the server doesn't say.
 fn coin_job(job: u16) -> bool {
     matches!(job, 24 | 4215 | 4228 | 4229 | 4306)
-}
-
-/// First menu row shown, scrolled so the highlighted item stays visible.
-fn menu_first_row(selected: usize, count: usize) -> usize {
-    selected.saturating_sub(MENU_ROWS - 1).min(count.saturating_sub(MENU_ROWS))
-}
-
-fn menu_position() -> [f32; 2] {
-    [(screen()[0] / 3.0).max(20.0).floor(), (screen()[1] / 2.0 + 76.0).max(376.0).floor()]
 }
 
 /// Splits NPC text into lines that fit `width`; `^RRGGBB` switches color. Returns colored pieces per line.
@@ -7905,23 +7880,12 @@ impl App {
                 let dialog = game.dialog.as_mut().unwrap();
                 if dialog.button != DialogButton::None && dialog.warp.is_none() && game.say.on_button(cursor) {
                     game.press_dialog_button(true);
-                } else if let Some((items, selected)) = &mut dialog.menu {
-                    let menu = menu_position();
-                    let first = menu_first_row(*selected, items.len());
-                    let list = offset(menu, [MENU_CONTENT[0] as f32, MENU_CONTENT[1] as f32]);
-                    let row = (0..MENU_ROWS.min(items.len())).find(|&row| contains(offset(list, [0.0, row as f32 * MENU_ROW[1]]), MENU_ROW, cursor));
-                    if let Some(row) = row {
-                        // Clicking the highlighted item again picks it (as OK does, throttled with Next).
-                        if *selected == first + row {
-                            if game.say.throttle.pass(Instant::now()) {
-                                game.choose(false);
-                            }
-                        } else {
-                            *selected = first + row;
-                        }
-                    } else if hit(offset(menu, MENU_OK), &assets.ok) && game.say.throttle.pass(Instant::now()) {
-                        game.choose(false);
-                    } else if hit(offset(menu, MENU_CANCEL), &assets.cancel) {
+                } else if let Some(menu) = &dialog.menu {
+                    // Rows go on the press; the buttons on the click.
+                    let [ok, cancel] = npc_menu::buttons(menu.items.len()).map(|place| game.npc_menu.at(place));
+                    if hit(ok, &assets.ok) {
+                        game.menu_ok();
+                    } else if hit(cancel, &assets.cancel) {
                         game.choose(true);
                     }
                 }
@@ -8049,6 +8013,8 @@ impl App {
             game.quest_window.frame.drag_to(self.cursor, 466.0);
             game.minimap_window.frame.drag_to(self.cursor, minimap_window::HEIGHT);
             game.say.frame.drag_to(self.cursor, npc_say::SIZE[1]);
+            let menu_height = game.dialog.as_ref().and_then(|dialog| dialog.menu.as_ref()).map_or(0.0, |menu| menu.size()[1]);
+            game.npc_menu.drag_to(self.cursor, menu_height);
             game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
             if let Some(window) = &mut game.roulette {
                 window.frame.drag_to(self.cursor, roulette::HEIGHT);
@@ -8459,6 +8425,8 @@ impl App {
             let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_reform = game.reform.as_ref().is_some_and(|window| window.hit(self.cursor, &game.inventory.items).is_some());
+            let on_npc_menu =
+                game.dialog.as_ref().and_then(|dialog| dialog.menu.as_ref()).is_some_and(|menu| game.npc_menu.local(self.cursor, menu.size()[1]).is_some());
             match game.window_at(self.cursor) {
                 // Aiming, the wheel picks the level (up raises it), wherever the pointer is.
                 _ if game.targeting.is_some() => {
@@ -8469,6 +8437,7 @@ impl App {
                 }
                 _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
                 _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
+                _ if on_npc_menu => game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut()).unwrap().wheel(rows),
                 _ if game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()) && game.say.contains(self.cursor) => {
                     game.say.scroll_by(rows as f32 * npc_say::SCROLL_STEP);
                 }
@@ -8751,7 +8720,8 @@ impl App {
                     | game.friend_setup.as_mut().is_some_and(|setup| setup.frame.drop_drag())
                     | game.block_list.as_mut().is_some_and(|list| list.frame.drop_drag())
                     | game.minimap_window.frame.drop_drag()
-                    | game.say.frame.drop_drag();
+                    | game.say.frame.drop_drag()
+                    | game.npc_menu.drop_drag();
                 windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
             }
             _ => false,
@@ -8954,6 +8924,19 @@ impl App {
         {
             if hit == iteminfo::Hit::Grip {
                 window.start_drag(cursor);
+            }
+            return;
+        }
+        // The NPC menu, over the say window: a press on a row selects it (a double click picks it); any part but the
+        // list and the buttons drags it.
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(menu) = game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut())
+            && let Some(local) = game.npc_menu.local(cursor, menu.size()[1])
+        {
+            if menu.grips(local) {
+                game.npc_menu.start_drag(cursor);
+            } else if menu.press(local, Instant::now()) {
+                game.menu_ok();
             }
             return;
         }
@@ -9698,9 +9681,9 @@ impl App {
                             .chars()
                             .filter(|character| if *text { !character.is_control() } else { character.is_ascii_digit() || *character == '-' }),
                     ),
-                    (Key::Named(NamedKey::ArrowUp), _, Some((_, selected))) => *selected = selected.saturating_sub(1),
-                    (Key::Named(NamedKey::ArrowDown), _, Some((items, selected))) => *selected = (*selected + 1).min(items.len().saturating_sub(1)),
-                    (Key::Named(NamedKey::Enter), _, Some(_)) => game.choose(false),
+                    (Key::Named(NamedKey::ArrowUp), _, Some(menu)) => menu.step(false),
+                    (Key::Named(NamedKey::ArrowDown), _, Some(menu)) => menu.step(true),
+                    (Key::Named(NamedKey::Enter), _, Some(_)) => game.menu_ok(),
                     // Without a menu Up and Down scroll the text, and Enter (or Space with the chat line closed)
                     // presses Next or Close.
                     (Key::Named(NamedKey::ArrowUp), None, None) => game.say.scroll_by(-npc_say::SCROLL_STEP),
@@ -10342,6 +10325,7 @@ impl App {
                     message_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\msg"),
                     dialog: None,
                     say: npc_say::SayWindow::default(),
+                    npc_menu: npc_menu::frame(),
                     hit_boxes: Vec::new(),
                     ground: HashMap::new(),
                     item_sprites: HashMap::new(),
@@ -11332,8 +11316,11 @@ impl App {
                 }
             }
             MapEvent::NpcMenu { npc, items } => {
+                // A new list replaces an open one, and the say window's Next goes.
                 let items = items.into_iter().filter(|item| !item.is_empty()).collect();
-                game.dialog_for(npc).menu = Some((items, 0));
+                let dialog = game.dialog_for(npc);
+                dialog.menu = Some(npc_menu::Menu::new(items));
+                dialog.button = DialogButton::None;
             }
             MapEvent::NpcInput { npc, text } => game.dialog_for(npc).input = Some((text, String::new())),
             // Where Warp Portal or Teleport goes, in the NPC menu's box: "Random Area" for Teleport's random spot, the
@@ -11348,7 +11335,7 @@ impl App {
                     lines: Vec::new(),
                     wipe: false,
                     button: DialogButton::None,
-                    menu: Some((items, 0)),
+                    menu: Some(npc_menu::Menu::new(items)),
                     input: None,
                     warp: Some((skill, maps)),
                 });
@@ -14758,24 +14745,12 @@ impl App {
                     DialogButton::None => {}
                 }
             }
-            if let Some((items, selected)) = &dialog.menu {
-                let menu = menu_position();
-                overlay.window().sprites.push((&assets.menu, menu, assets.menu.size));
-                let list = offset(menu, [MENU_CONTENT[0] as f32, MENU_CONTENT[1] as f32]);
-                let first = menu_first_row(*selected, items.len());
-                for (row, item) in items.iter().enumerate().skip(first).take(MENU_ROWS) {
-                    let top = offset(list, [0.0, (row - first) as f32 * MENU_ROW[1]]);
-                    if row == *selected {
-                        overlay.sprites.push((&assets.menu_selection, top, MENU_ROW));
-                    }
-                    let mut x = top[0] + 5.0;
-                    for (color, piece) in wrap_colored(font, item, MENU_ROW[0]).into_iter().next().unwrap_or_default() {
-                        overlay.texts.push((piece.clone(), [x, top[1] + 3.0], color));
-                        x += font.width(&piece);
-                    }
-                }
-                overlay.sprites.push(button_sprite(pointer, offset(menu, MENU_OK), &assets.ok));
-                overlay.sprites.push(button_sprite(pointer, offset(menu, MENU_CANCEL), &assets.cancel));
+            if let Some(menu) = &dialog.menu {
+                let corner = game.npc_menu.position;
+                menu.draw(overlay.window(), &assets.chrome, &assets.pickup, &assets.npc_menu, corner, font);
+                let [ok, cancel] = npc_menu::buttons(menu.items.len()).map(|place| offset(corner, place));
+                overlay.sprites.push(button_sprite(pointer, ok, &assets.ok));
+                overlay.sprites.push(button_sprite(pointer, cancel, &assets.cancel));
             }
         }
 
@@ -16061,10 +16036,10 @@ impl ApplicationHandler<NetEvent> for App {
                         game.press_dialog_button(false);
                     }
                     if let Some(dialog) = &mut game.dialog
-                        && let Some((items, selected)) = &mut dialog.menu
+                        && let Some(menu) = &mut dialog.menu
                         && let Some(choice) = game.auto_menu.pop()
                     {
-                        *selected = choice.saturating_sub(1).min(items.len().saturating_sub(1));
+                        menu.selected = choice.saturating_sub(1).min(menu.items.len().saturating_sub(1));
                         game.choose(false);
                     }
                     let me = game.player.cell;

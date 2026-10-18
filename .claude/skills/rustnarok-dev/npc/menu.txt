@@ -1,0 +1,22 @@
+// A 6-item menu with colours over a page and a picture, then a 20-item one (issue #447). Loaded and unloaded by
+// scenarios/npc-menu.json.
+iz_int01,26,26,4	script	Menu Clerk	4_M_01,{
+	cutin "kafra_01", 2;
+	mes "[Menu Clerk]";
+	mes "Pick one.";
+	switch (select("^FF0000Red:Still red:^000000Black:Four:Five:Six")) {
+	case 3:
+		mes "Black it is.";
+		break;
+	default:
+		mes "Not black.";
+		break;
+	}
+	next;
+	mes "Twenty.";
+	select("1:2:3:4:5:6:7:8:9:10:11:12:13:14:15:16:17:18:19:20");
+	mes "Picked.";
+	close2;
+	cutin "", 255;
+	end;
+}

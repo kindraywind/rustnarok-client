@@ -1164,7 +1164,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 DialogButton::Close => "close",
                 DialogButton::None => "none",
             },
-            "menu": dialog.menu.as_ref().map(|(items, selected)| json!({"items": items, "selected": selected})),
+            "menu": dialog.menu.as_ref().map(|menu| json!({"items": menu.items, "selected": menu.selected, "first": menu.first, "position": game.npc_menu.position})),
             "input": dialog.input.as_ref().map(|(text, typed)| json!({"text": text, "typed": typed})),
             "position": game.say.frame.position,
             "scroll": game.say.scroll,
@@ -1175,6 +1175,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "map": game.map,
         // The weather effect IDs showing.
         "weather": game.weather.ids(),
+        // An NPC's picture is up.
+        "cutin": game.cutin.is_some(),
         "player": {
             "name": game.me.name,
             "account_id": game.account_id,
