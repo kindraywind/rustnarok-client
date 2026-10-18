@@ -10,14 +10,10 @@ No Wine, no wrapper, no official client underneath: an open-source reimplementat
 network protocol to the last window. The windows, fonts, sounds and behavior of the official client, drawn from the
 player's own game data at runtime. As good as the original, and better where it can be.
 
-[![Rust](https://img.shields.io/badge/Rust-nightly-E8401C?logo=rust&logoColor=white)](rust-toolchain.toml)
-[![macOS](https://img.shields.io/badge/macOS-native-111111?logo=apple&logoColor=white)](#-quick-start)
-[![wgpu](https://img.shields.io/badge/GPU-wgpu%20%C2%B7%20Metal-5A4FCF)](https://wgpu.rs)
-[![PACKETVER](https://img.shields.io/badge/PACKETVER-20220406-E8401C)](#-server)
-[![rathena](https://img.shields.io/badge/server-rathena-2F7D32)](https://github.com/kindraywind/rathena/tree/rustnarok)
-[![Status](https://img.shields.io/badge/status-alpha-orange)](#-status)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#-licenses)
-[![Clean room](https://img.shields.io/badge/clean%20room-no%20game%20data%20in%20git-1F6FEB)](#-conventions)
+<img alt="100% Rust" src="https://img.shields.io/badge/100%25-Rust-b7410e?style=flat-square&logo=rust">
+<img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-native-2f7bf5?style=flat-square">
+<img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-3a3a3a?style=flat-square">
+<img alt="Status: early alpha" src="https://img.shields.io/badge/status-early%20alpha-d69e2e?style=flat-square">
 
 [Quick start](#-quick-start) · [What works](#-what-works) · [An AI plays it](#-an-ai-plays-it) · [Server](#-server) · [Development](#-development) · [Not done yet](#-not-done-yet)
 
@@ -143,6 +139,24 @@ than fights beside you. Use it on your own server: a bot on someone else's break
 Setting it up: [Driving the client](#-driving-the-client).
 
 ## 🚀 Quick start
+
+### 🤖 With an AI agent
+
+Paste this into Claude Code, Codex or any coding agent:
+
+```text
+Set up https://github.com/kindraywind/rustnarok-client for me and get it running.
+
+1. Clone it and install what its README's Quick start lists for my OS (rustup picks up the pinned nightly).
+2. Ask me where my official kRO data.grf is (and any translation pack or BGM folder). Never download game data.
+   Link them into the repository folder, or set RUSTNAROK_CLIENT_GRF.
+3. Ask me which server to join. If I have none, set up a local rathena from
+   https://github.com/kindraywind/rathena (branch rustnarok, follow its RUSTNAROK.md) and make me an account.
+4. Run `cargo run --release` and check it reaches the login window.
+5. Then build rustnarok-client-mcp and add it as an MCP server (README: "Driving the client"), so you can play it with me.
+```
+
+### ✋ By hand
 
 1. **Rust**: install rustup; `rust-toolchain.toml` pins the nightly the code builds with. Also, by OS:
    - **macOS**: the Xcode command line tools (`xcode-select --install`). Text is Tahoma, with AppleGothic for Hangul.
@@ -282,8 +296,6 @@ PNG), `lua_dump`, `messages`, `job_name`, `act_sounds`, `str_dump`, `map_info`, 
 
 ### 📐 Conventions
 
-- **Clean room**: no decompiled code from the official client. The protocol comes from the server's source, file
-  formats from public documentation, and the client's look from its own data files.
 - **No game data in git**: no .grf, nothing extracted from one, no screenshots. Fact tables written by hand
   (`effects.txt`, `status_icons.txt`, `packet_lengths.txt`) are code.
 - **`ponytail:` comments** mark deliberate shortcuts and estimates, with what would replace them.
