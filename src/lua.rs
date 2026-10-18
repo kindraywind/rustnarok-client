@@ -695,6 +695,21 @@ pub struct SkillInfo {
     pub separate_level: bool,
     /// Its range in cells by level (`AttackRange`), from level 1.
     pub attack_range: Vec<u16>,
+    /// The skills it needs first, each at a level (`_NeedSkillList`); some jobs have their own (`NeedSkillList`).
+    pub needs: Vec<(u16, u16)>,
+    pub job_needs: HashMap<u16, Vec<(u16, u16)>>,
+}
+
+impl SkillInfo {
+    /// The skills it needs first for a job: the job's own list if it has one, else the usual.
+    pub fn needs_for(&self, job: u16) -> &[(u16, u16)] {
+        self.job_needs.get(&job).unwrap_or(&self.needs)
+    }
+}
+
+/// A `{ {skill, level}, ... }` list.
+fn skill_levels(list: &mlua::Table) -> Vec<(u16, u16)> {
+    list.sequence_values::<mlua::Table>().flatten().filter_map(|pair| Some((pair.get::<u16>(1).ok()?, pair.get::<u16>(2).ok()?))).collect()
 }
 
 /// The quests' titles, descriptions and summaries (`QuestInfoList`), from the translation's System folder.
@@ -770,6 +785,13 @@ pub fn skill_info(grf: &Grf) -> io::Result<HashMap<u16, SkillInfo>> {
             max_level: entry.get("MaxLv").unwrap_or(0),
             separate_level: entry.get("bSeperateLv").unwrap_or(false),
             attack_range: entry.get::<mlua::Table>("AttackRange").map(|ranges| ranges.sequence_values::<u16>().flatten().collect()).unwrap_or_default(),
+            needs: entry.get::<mlua::Table>("_NeedSkillList").map(|list| skill_levels(&list)).unwrap_or_default(),
+            job_needs: entry
+                .get::<mlua::Table>("NeedSkillList")
+                .map(|jobs| {
+                    jobs.pairs::<i64, mlua::Table>().flatten().filter_map(|(job, list)| Some((u16::try_from(job).ok()?, skill_levels(&list)))).collect()
+                })
+                .unwrap_or_default(),
         };
         if let Ok(id) = u16::try_from(id) {
             skills.insert(id, info);
