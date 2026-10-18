@@ -1,0 +1,24 @@
+{
+  "about": "Cash shop (issue #51): open it from the basic information menu, list tabs and prices, buy one Red Potion with cash points, then close it.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@itemreset"}, {"wait": 500},
+    {"say": "@cash -1000000"}, {"wait": 500},
+    {"say": "@cash 100"}, {"wait": 500},
+    {"click": [108, 152]}, {"wait": 300},
+    {"click_on": {"menu_item": "shop"}},
+    {"wait_for": {"packet": "0x0b6e", "ms": 5000}},
+    {"wait_for": {"packet": "0x08ca", "ms": 5000}}, {"wait": 400},
+    {"expect": {"windows_open": ["CashShop"]}},
+    {"shot": "cash-shop-open", "crop": [150, 80, 720, 450]},
+    {"click_on": {"pick_item": 501}}, {"wait": 300},
+    {"click_on": {"button": "cashshop_buy"}}, {"wait": 300},
+    {"click_on": {"button": "ok"}},
+    {"wait_for": {"packet": "0x0849", "ms": 5000}}, {"wait": 500},
+    {"expect": {"chat": "Item purchase successful", "identified": [501]}},
+    {"shot": "cash-shop-bought", "crop": [150, 80, 720, 450]},
+    {"click_on": {"button": "cashshop_close"}}, {"wait": 300},
+    {"expect": {"windows_closed": ["CashShop"]}}
+  ]
+}
