@@ -8209,7 +8209,7 @@ impl App {
                         let hit = game.basic_info.hit(cursor).unwrap();
                         match game.basic_info.click(hit) {
                             Some("equip") => {
-                                game.equipment.frame.toggle();
+                                game.equipment.toggle_general();
                                 game.raise(Panel::Equipment);
                             }
                             Some("item") => {
@@ -10058,7 +10058,7 @@ impl App {
                 game.raise(Panel::BasicInfo);
             }
             shortcuts::Action::Equipment => {
-                game.equipment.frame.toggle();
+                game.equipment.toggle_general();
                 game.raise(Panel::Equipment);
             }
             shortcuts::Action::Skills => {
@@ -11051,6 +11051,7 @@ impl App {
                     equipment: {
                         let mut equipment = Equipment::default();
                         equipment.frame.open = std::env::var_os("RUSTNAROK_CLIENT_EQUIPMENT").is_some();
+                        equipment.set_tab_labels(&self.messages, &self.font);
                         equipment
                     },
                     basic_info: BasicInfo::load(screen()),
@@ -11700,8 +11701,10 @@ impl App {
                     robe: equipped.robe,
                     option: 0,
                 };
+                let mut window = equipment::Equipment::of(equipped.name, screen());
+                window.set_tab_labels(&self.messages, &self.font);
                 game.viewing = Some(Viewed {
-                    window: equipment::Equipment::of(equipped.name),
+                    window,
                     items: equipped.items.into_iter().map(|(item, _)| item).collect(),
                     sprites: SpriteSet::player(grf, &look, look_tables),
                 });

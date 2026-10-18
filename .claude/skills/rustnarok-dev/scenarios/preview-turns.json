@@ -14,7 +14,7 @@
     {"key": "Alt+Q"}, {"wait": 500},
     {"expect": {"windows_open": ["Equipment"]}},
     {"move": [900, 650]},
-    {"shot": "preview-wings", "crop": [478, 200, 284, 192]},
+    {"shot": "preview-wings", "crop": [183, 298, 284, 192]},
     {"key": "Alt+Q"}, {"wait": 300},
     {"say": "@itemreset"}, {"wait": 800}
   ]

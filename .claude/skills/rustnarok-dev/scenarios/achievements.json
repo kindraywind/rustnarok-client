@@ -3,6 +3,7 @@
   "account": "",
   "slot": 0,
   "steps": [
+    {"say": "@set BaseLevel 98"}, {"wait": 300}, {"say": "@blvl 1"}, {"wait": 800},
     {"say": "@warp iz_int01 22 30"}, {"settle": 1500},
     {"say": "@job 1"}, {"wait_for": {"packet": "0x0a24", "ms": 5000}}, {"wait": 300},
     {"expect": {"achievements": {"200005": "completed"}}},
@@ -26,7 +27,7 @@
     {"click_on": {"button": "equipment_tab:2"}}, {"wait": 300},
     {"click_on": {"button": "title:1000"}}, {"wait_for": {"packet": "0x0a2f", "ms": 5000}}, {"wait": 300}, {"move": [1000, 750]},
     {"expect": {"title": 1000}},
-    {"shot": "title-worn", "crop": [470, 190, 300, 210]},
+    {"shot": "title-worn", "crop": [175, 290, 300, 200]},
     {"click_on": {"button": "title:0"}}, {"wait_for": {"packet": "0x0a2f", "ms": 5000}}, {"wait": 300},
     {"expect": {"title": 0}},
     {"say": "@job 0"}, {"wait": 500}
