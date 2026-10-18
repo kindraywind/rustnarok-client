@@ -1264,8 +1264,22 @@ impl SavedView {
 }
 
 /// The sprite direction to draw for a unit facing `direction`, seen through a camera turned `yaw` radians.
-fn seen_direction(direction: u8, yaw: f32) -> u8 {
-    (i32::from(direction) - (yaw.to_degrees() / 45.0).round() as i32).rem_euclid(8) as u8
+fn seen_direction(rot: f32, yaw: f32, round: bool) -> u8 {
+    actor::view_direction(rot, yaw.to_degrees(), round)
+}
+
+/// Whether a unit rounds the camera's angle (to the nearest direction) rather than flooring it: players standing,
+/// walking or sitting; NPCs (jobs 46 to 999) standing; jobs 6018 to 6052 standing, walking or sitting. Monsters,
+/// and players in any other action, floor.
+// ponytail: the battle stance counts as standing.
+fn rounds_facing(kind: u8, job: u16, action: usize) -> bool {
+    let still_or_walking = matches!(action, actor::IDLE | actor::WALK | actor::SIT | actor::READY);
+    match kind {
+        PLAYER => still_or_walking,
+        _ if (6018..=6052).contains(&job) => still_or_walking,
+        NPC => (46..=999).contains(&job) && action == actor::IDLE,
+        _ => false,
+    }
 }
 
 /// Ground position of a companion at world XZ, lifted by `lift` (the falcon's 25).
@@ -1284,7 +1298,7 @@ struct CompanionDraw {
 
 fn push_companion(companion: &mut actor::Companion, warg: bool, owner: Owner, gpu: &Gpu, world: &World, yaw: f32, now: Instant, out: &mut Vec<CompanionDraw>) {
     let lift = if warg { 0.0 } else { actor::FALCON_HEIGHT };
-    let placed = companion.frame(gpu, seen_direction(companion.direction, yaw), now, !warg);
+    let placed = companion.frame(gpu, seen_direction(actor::rot_of(companion.direction), yaw, false), now, !warg);
     if placed.is_empty() {
         return;
     }
@@ -1774,7 +1788,7 @@ impl Game {
         let step = [cell[0] - self.player.cell[0], cell[1] - self.player.cell[1]];
         if step != [0, 0] {
             let _ = self.session.change_direction(world::direction([step[0], -step[1]]), 0);
-            self.player.direction = world::direction(step);
+            self.player.set_direction(world::direction(step));
             self.player.head_direction = 0;
         }
     }
@@ -8486,7 +8500,7 @@ impl App {
                 actor.body_state = unit.body_state;
                 actor.health_state = unit.health_state;
                 actor.stop_at(unit.position.map(i32::from));
-                actor.direction = unit.direction;
+                actor.set_direction(unit.direction);
                 actor.head_direction = unit.head_direction;
                 actor.sitting = unit.sitting;
                 // A player seen again may have changed clothes (or guilds) meanwhile.
@@ -8509,7 +8523,7 @@ impl App {
             MapEvent::Turn { id, direction, head_direction } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor {
-                    actor.direction = direction;
+                    actor.set_direction(direction);
                     actor.head_direction = head_direction;
                 }
             }
@@ -11284,6 +11298,7 @@ impl App {
         let mut sounds: Vec<(String, f32)> = game.player.sound_now(now).map(|sound| (sound, 1.0)).into_iter().collect();
         let (action, timing) = game.player.animation(now);
         let (direction, head_direction) = (game.player.direction, game.player.head_direction);
+        let player_seen = seen_direction(game.player.rot, yaw, rounds_facing(PLAYER, game.player.job, action));
         // Pushcarts, apart from the bodies (their textures are the cart's, and they cast no shadow of their own).
         // A cart's ACT has one action per direction; its frames turn the wheels, so they run only while walking.
         // ponytail: the cart's anchor half a cell behind its owner; place it against the real client.
@@ -11299,11 +11314,7 @@ impl App {
         if let Some(cart) = &mut game.player.cart
             && actor::seen(game.player.hide_option, true) == actor::Seen::Whole
         {
-            carts.push((
-                Owner::Player,
-                behind(player_feet, direction),
-                cart.frame_at(gpu, usize::from(seen_direction(direction, yaw)), 0, cart_timing(action, timing)),
-            ));
+            carts.push((Owner::Player, behind(player_feet, direction), cart.frame_at(gpu, usize::from(player_seen), 0, cart_timing(action, timing))));
         }
         let player_tint = actor::status_tint(game.player.body_state, game.player.health_state);
         let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
@@ -11312,7 +11323,7 @@ impl App {
             actor::Seen::Whole => {
                 if let Some(sprites) = &mut game.player.sprites {
                     sprites.set_tint(player_tint);
-                    let mut placed = sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing);
+                    let mut placed = sprites.frame(gpu, action, player_seen, head_direction, timing);
                     scale_frame(&mut placed, player_scale);
                     frames.push((Owner::Player, player_feet, placed));
                 }
@@ -11374,22 +11385,19 @@ impl App {
             }
             let (action, timing) = actor.animation(now);
             let (direction, head_direction) = (actor.direction, actor.head_direction);
+            let seen = seen_direction(actor.rot, yaw, rounds_facing(actor.kind, actor.job, action));
             // NPC names show under them; players' and monsters' on hover (below).
             if !actor.hidden && (actor.kind == NPC || actor.sprites.is_none()) {
                 labels.push((actor.name.clone(), feet));
             }
             if let Some(cart) = &mut actor.cart {
-                carts.push((
-                    Owner::Unit(id),
-                    behind(feet, direction),
-                    cart.frame_at(gpu, usize::from(seen_direction(direction, yaw)), 0, cart_timing(action, timing)),
-                ));
+                carts.push((Owner::Unit(id), behind(feet, direction), cart.frame_at(gpu, usize::from(seen), 0, cart_timing(action, timing))));
             }
             let tint = crate::actor::status_tint(actor.body_state, actor.health_state);
             let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent);
             if let Some(sprites) = &mut actor.sprites {
                 sprites.set_tint(tint);
-                let mut placed = sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing);
+                let mut placed = sprites.frame(gpu, action, seen, head_direction, timing);
                 scale_frame(&mut placed, scale);
                 frames.push((Owner::Unit(id), feet, placed));
             }
@@ -13516,6 +13524,16 @@ mod tests {
         assert_eq!(share_left(start, length, start), 1.0);
         assert_eq!(share_left(start, length, start + Duration::from_millis(200)), 0.75);
         assert_eq!(share_left(start, length, start + Duration::from_secs(2)), 0.0);
+    }
+
+    #[test]
+    fn rounds_or_floors_the_facing_by_unit() {
+        let attack = actor::attack_action(0, 0, 1);
+        assert!(rounds_facing(PLAYER, 0, actor::IDLE) && rounds_facing(PLAYER, 0, actor::WALK) && rounds_facing(PLAYER, 0, actor::SIT));
+        assert!(!rounds_facing(PLAYER, 0, attack));
+        assert!(!rounds_facing(MONSTER, 1002, actor::IDLE) && !rounds_facing(MONSTER, 1002, actor::WALK));
+        assert!(rounds_facing(NPC, 100, actor::IDLE) && !rounds_facing(NPC, 100, actor::WALK) && !rounds_facing(NPC, WARP_JOB, actor::IDLE));
+        assert!(rounds_facing(MONSTER, 6020, actor::WALK) && !rounds_facing(MONSTER, 6020, attack));
     }
 
     #[test]

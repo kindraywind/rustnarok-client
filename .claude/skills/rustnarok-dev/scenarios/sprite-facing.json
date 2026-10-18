@@ -1,0 +1,24 @@
+{
+  "about": "Sprite facing by the camera's angle (issue #189): a Poring next to the player (it may wander off between shots; the unit tests are the exact check), shot with the camera turned 0, 10 and 30 degrees. The monster floors the angle, so it shows its next direction as soon as the camera turns at 10; the player (standing) rounds it, and changes only past 22.5, at 30. A double right-click puts the camera back.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"say": "@monster poring 1"}, {"wait": 800},
+    {"expect": {"state": {"camera.yaw": 0}, "units_at_least": {"monster": 1}}},
+    {"move": [1000, 750]},
+    {"shot": "facing-yaw0", "crop": [262, 184, 500, 400], "threshold": 5},
+    {"drag": [[500, 400], [510, 400]], "button": "right"}, {"wait": 1200},
+    {"expect": {"state": {"camera.yaw": 10}}},
+    {"move": [1000, 750]},
+    {"shot": "facing-yaw10", "crop": [262, 184, 500, 400], "threshold": 5},
+    {"drag": [[500, 400], [520, 400]], "button": "right"}, {"wait": 1200},
+    {"expect": {"state": {"camera.yaw": 30}}},
+    {"move": [1000, 750]},
+    {"shot": "facing-yaw30", "crop": [262, 184, 500, 400], "threshold": 5},
+    {"click": [700, 650], "button": "right", "count": 2}, {"wait": 300},
+    {"expect": {"state": {"camera.yaw": 0}}},
+    {"say": "@killmonster2"}, {"wait": 500}
+  ]
+}

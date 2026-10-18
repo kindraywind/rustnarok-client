@@ -696,7 +696,7 @@ impl Effects {
         self.quakes.retain(|(_, until)| now < *until);
 
         // ponytail: sprites face south as seen; the few effect sprites drawn in 8 directions would face their unit.
-        let facing = usize::from(crate::seen_direction(0, yaw));
+        let facing = usize::from(crate::seen_direction(0.0, yaw, true));
         let sprites = &mut self.sprites;
         self.animations.retain_mut(|animation| {
             let Some(Some(sprite)) = sprites.get_mut(&animation.sprite) else { return false };
