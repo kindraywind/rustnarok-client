@@ -3706,6 +3706,7 @@ impl Game {
         push(Navigation, self.navi_window.is_some());
         push(Catalog, self.catalog.is_some());
         push(SkillDescription, self.skill_description.is_some());
+        push(SkillDelay, self.skill_description.as_ref().is_some_and(|window| window.delays));
         push(Roulette, self.roulette.is_some());
         push(MonsterInfo, self.monster_window.is_some());
         push(Achievements, self.achievement_window.frame.open);
@@ -3758,6 +3759,12 @@ impl Game {
     }
 
     /// Brings the Esc list in line with what's open.
+    /// Whether a skill is used rather than passive (an unknown one counts as used).
+    fn skill_active(&self, id: u16) -> bool {
+        let guild = self.guild.iter().flat_map(|guild| &guild.skills);
+        self.skills.iter().chain(guild).find(|skill| skill.id == id).is_none_or(|skill| skill.kind != 0)
+    }
+
     fn sync_esc(&mut self) {
         let open = self.esc_open();
         escape::sync(&mut self.esc_order, &open);
@@ -4019,6 +4026,11 @@ impl Game {
             Navigation => self.navi_window = None,
             Catalog => self.close_catalog(),
             SkillDescription => self.skill_description = None,
+            SkillDelay => {
+                if let Some(window) = &mut self.skill_description {
+                    window.delays = false;
+                }
+            }
             Roulette => self.close_roulette(),
             MonsterInfo => self.monster_window = None,
             Achievements => self.achievement_window.frame.open = false,
@@ -6745,10 +6757,15 @@ impl App {
                 }
                 game.sync_esc();
             }
-            // A skill's description: its ESC button closes it; a click elsewhere on it does nothing.
+            // A skill's description: its delay button opens or closes the delays beside it, its close button closes it;
+            // a click elsewhere on it does nothing.
             Scene::Game(game) if game.skill_description.as_ref().is_some_and(|window| window.contains(cursor)) => {
-                if game.skill_description.as_ref().is_some_and(|window| window.on_close(cursor)) {
+                if let Some(window) = game.skill_description.as_mut().filter(|window| window.on_delay(cursor)) {
+                    window.delays = !window.delays;
+                    game.sync_esc();
+                } else if game.skill_description.as_ref().is_some_and(|window| window.on_close(cursor)) {
                     game.skill_description = None;
+                    game.sync_esc();
                 }
             }
             // The store search: the kind, the fields, searching, paging, and a row twice to find its store.
@@ -7753,8 +7770,8 @@ impl App {
             game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             return;
         }
-        // A right click on a skill, in the skill window or on the hotkey bar: its description (the same skill again
-        // closes it).
+        // A right click on a skill in the skill window or the guild window's skills: its description (the hotkey bar's
+        // opens on the press), the same skill again closes it. Only the guild's has a close button; Esc closes either.
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Released
             && let Some((start, None)) = game.right_press
@@ -7772,27 +7789,23 @@ impl App {
                         _ => None,
                     };
                     game.skill_window.pin(skill);
-                    skill.map(|id| (id, None))
+                    skill.map(|id| (id, false))
                 }
-                Some(Panel::Hotkeys) => match game.hotkeys.hit(cursor) {
-                    Some(hotkeys::Hit::Slot(slot)) => game.hotkeys.keys.get(slot).copied().flatten().filter(|key| key.skill).and_then(|key| {
-                        let row = game.hotkeys.slot_boxes().into_iter().find(|(index, _)| *index == slot).map(|(_, area)| [area[1], area[1] + area[3]])?;
-                        Some((key.id as u16, Some(row)))
-                    }),
+                Some(Panel::Guild) => match game.guild.as_ref().and_then(|guild| game.guild_window.hit(cursor, guild)) {
+                    Some(guild::Hit::Skill(id)) => Some((id, true)),
                     _ => None,
                 },
                 _ => None,
             };
-            if let Some((id, row)) = opened {
+            if let Some((id, closable)) = opened {
                 game.right_press = None;
                 if game.skill_description.as_ref().is_some_and(|window| window.skill == id) {
                     game.skill_description = None;
                 } else {
                     let lines = self.skill_descriptions.get(&id).cloned().unwrap_or_default();
-                    game.skill_description = Some(skill_descript::SkillDescription::new(id, &lines, |height| match row {
-                        Some(row) => skill_descript::at_hotbar(cursor[0], row, height),
-                        None => skill_descript::at_window(cursor, height),
-                    }));
+                    let active = game.skill_active(id);
+                    game.skill_description =
+                        Some(skill_descript::SkillDescription::new(id, &lines, closable, active, |height| skill_descript::at_window(cursor, height)));
                 }
                 game.sync_esc();
                 return;
@@ -7857,6 +7870,28 @@ impl App {
                 if let Some(line) = line {
                     game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
+                return;
+            }
+            // A right press on a skill on the hotkey bar: its description under or over that row (the same skill again
+            // closes it).
+            if state == ElementState::Pressed
+                && game.window_at(self.cursor) == Some(Panel::Hotkeys)
+                && let Some(hotkeys::Hit::Slot(slot)) = game.hotkeys.hit(self.cursor)
+                && let Some(key) = game.hotkeys.keys.get(slot).copied().flatten().filter(|key| key.skill)
+                && let Some(row) = game.hotkeys.slot_row(slot)
+            {
+                let id = key.id as u16;
+                if game.skill_description.as_ref().is_some_and(|window| window.skill == id) {
+                    game.skill_description = None;
+                } else {
+                    let lines = self.skill_descriptions.get(&id).cloned().unwrap_or_default();
+                    let (pointer_x, bar_y) = (self.cursor[0], game.hotkeys.frame.position[1]);
+                    let active = game.skill_active(id);
+                    game.skill_description = Some(skill_descript::SkillDescription::new(id, &lines, true, active, |height| {
+                        skill_descript::at_hotbar(pointer_x, bar_y, row, height)
+                    }));
+                }
+                game.sync_esc();
                 return;
             }
             // Alt + right click takes a whole stack out of the open storage.
@@ -14567,7 +14602,7 @@ impl App {
         }
         // A skill's description, over the windows.
         if let Some(window) = &game.skill_description {
-            window.draw(&mut shop_layer, &assets.chrome, &assets.skill_descript, font, pointer.0);
+            window.draw(&mut shop_layer, &assets.chrome, &assets.skill_descript, font, pointer.0, &cooling, skill_info);
         }
         if let Some((list, _)) = &game.pick {
             list.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, skill_info, messages, font, pointer);

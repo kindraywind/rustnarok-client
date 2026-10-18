@@ -256,6 +256,11 @@ impl Hotkeys {
             .to_vec()
     }
 
+    /// The bar row a shown slot is on.
+    pub fn slot_row(&self, slot: usize) -> Option<usize> {
+        self.slot_boxes().iter().position(|(index, _)| *index == slot).map(|visible| visible / PER_ROW)
+    }
+
     /// The shown slots on screen: slot number and box.
     pub fn slot_boxes(&self) -> Vec<(usize, [f32; 4])> {
         if !self.frame.open {

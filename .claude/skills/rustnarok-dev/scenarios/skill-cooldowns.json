@@ -15,7 +15,7 @@
     {"shot": "cooldown-skills", "crop": [200, 120, 460, 425]},
     {"cmd": {"cmd": "clock", "action": "resume"}},
     {"key": "F1"}, {"wait": 300},
-    {"expect": {"chat": "There is a Delay after using a Skill."}},
+    {"expect": {"chat": "due to cooldown delay."}},
     {"wait": 10500},
     {"expect": {"state": {"cooldowns.8": null}}},
     {"wait_for": {"packet": "0x043d", "do": {"cmd": "key", "key": "F1"}}},
