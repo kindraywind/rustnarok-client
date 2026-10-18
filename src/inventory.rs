@@ -18,6 +18,8 @@ use crate::{Layer, UI, contains, offset};
 const SIZE: [usize; 2] = [7, 2];
 const COLUMNS: std::ops::RangeInclusive<usize> = 6..=8;
 const ROWS: std::ops::RangeInclusive<usize> = 2..=6;
+/// The cart's own rule: 120 to 216 high, so 2 to 5 rows.
+const CART_ROWS: usize = 5;
 const CELL: f32 = 32.0;
 const FOOTER_HEIGHT: f32 = 29.0;
 /// The tab column, then 16px of white on either side of the cells (27 + 16 + 16 + columns).
@@ -192,6 +194,8 @@ pub struct Inventory {
     rows: usize,
     /// Held by the corner grip: where the press was, and the columns and rows then.
     resizing: Option<([f32; 2], [usize; 2])>,
+    /// The most rows the grip takes it to.
+    most_rows: usize,
 }
 
 impl Default for Inventory {
@@ -210,6 +214,7 @@ impl Default for Inventory {
             columns: SIZE[0],
             rows: SIZE[1],
             resizing: None,
+            most_rows: *ROWS.end(),
         }
     }
 }
@@ -388,6 +393,11 @@ impl Inventory {
         inventory
     }
 
+    /// The cart: the inventory's look, at most 5 rows.
+    pub fn cart() -> Self {
+        Self { most_rows: CART_ROWS, ..Self::default() }
+    }
+
     /// A fresh listing from the server replaces what we had.
     pub fn clear(&mut self) {
         self.items.clear();
@@ -522,7 +532,7 @@ impl Inventory {
     /// Takes `columns` and `rows` as far as the grip would go; the items reflow.
     pub fn set_size(&mut self, [columns, rows]: [usize; 2]) {
         self.columns = columns.clamp(*COLUMNS.start(), *COLUMNS.end());
-        self.rows = rows.clamp(*ROWS.start(), *ROWS.end());
+        self.rows = rows.clamp(*ROWS.start(), self.most_rows);
         self.frame.set_width(self.width());
         self.scroll_by(0);
     }
@@ -702,6 +712,15 @@ impl Inventory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cart_stops_at_five_rows() {
+        let mut cart = Inventory::cart();
+        cart.set_size([8, 9]);
+        assert_eq!(cart.size(), [8, CART_ROWS]);
+        cart.set_size([1, 1]);
+        assert_eq!(cart.size(), [6, 2]);
+    }
 
     #[test]
     fn resizes_by_its_corner_grip() {

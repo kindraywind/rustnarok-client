@@ -1,0 +1,28 @@
+{
+  "about": "Corner grips (issue #426). The storage resizes only its height in 32 px steps: 12 rows at 458, 14 as far as 0.7 of a 768 screen goes. An NPC shop's goods resize both ways (248, 280 or 312 wide; 2 to 8 rows), and its Buying Items list only its height.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@storage"}, {"wait": 1500},
+    {"expect": {"windows_open": ["Storage"], "state": {"storage_rows": 12}}},
+    {"mouse_down": {"button": "storage_resize"}}, {"move": [570, 650]}, {"wait": 200},
+    {"mouse_up": {"point": [570, 650]}}, {"wait": 300},
+    {"expect": {"state": {"storage_rows": 14}}},
+    {"move": [900, 720]},
+    {"shot": "storage-14-rows", "crop": [280, 90, 300, 620], "threshold": 5},
+    {"key": "Escape"}, {"wait": 300},
+    {"say": "@warp prontera 134 220"}, {"settle": 2000},
+    {"click": [187, 317]}, {"wait": 1500},
+    {"click": [536, 537]}, {"wait": 1000},
+    {"expect": {"windows_open": ["Shop"], "state": {"shop_size": {"width": 280.0, "rows": [8, 3]}}}},
+    {"mouse_down": {"button": "shop_resize_0"}}, {"move": [233, 231]}, {"wait": 200},
+    {"mouse_up": {"point": [233, 231]}}, {"wait": 300},
+    {"mouse_down": {"button": "shop_resize_1"}}, {"move": [700, 560]}, {"wait": 200},
+    {"mouse_up": {"point": [700, 560]}}, {"wait": 300},
+    {"expect": {"state": {"shop_size": {"width": 248.0, "rows": [2, 7]}}}},
+    {"move": [900, 720]},
+    {"shot": "shop-resized", "crop": [0, 100, 600, 500], "threshold": 5},
+    {"click_on": {"button": "shop_cancel"}}, {"wait": 300}
+  ]
+}

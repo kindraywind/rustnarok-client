@@ -1005,6 +1005,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})),
         )
         .chain(game.shop.iter().flat_map(crate::shop::Shop::row_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
+        .chain(game.storage.grip_box().map(|area| json!({"kind": "button", "name": "storage_resize", "box": area})))
         .chain(
             game.buying_setup
                 .iter()
@@ -1440,6 +1441,9 @@ fn game_state(app: &App, game: &Game) -> Value {
         }).collect::<serde_json::Map<_, _>>(),
         "chat_height": game.chat.height(),
     });
+    // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
+    state["storage_rows"] = game.storage.rows().into();
+    state["shop_size"] = game.shop.as_ref().and_then(crate::shop::Shop::sizes).map(|(width, rows)| json!({"width": width, "rows": rows})).into();
     // The ranking board.
     state["ranking"] = json!(game.ranking.as_ref().map(|board| {
         let rows = board.rows(&game.char_names);
