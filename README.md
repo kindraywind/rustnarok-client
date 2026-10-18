@@ -64,7 +64,7 @@ against `main`.
 | 🌍 **The world** | GND ground with lightmaps, RSW models (RSM 1.x), water, GAT walkability, weather (snow, cherry blossoms, leaves, clouds, fog, fireworks), the camera (right drag turns, wheel zooms), cursors, the minimap with NPC marks and party members, the world map. |
 | 🧙 **Characters** | Players with heads, headgear, weapons, shields and garments; monsters, NPCs, pets and warp portals; walking, sitting, emotions, spirit spheres and coins, pushcarts; HP/SP bars, names with party, guild, position and emblem on pointing, chat bubbles, cast bars, the MVP banner. |
 | ⚔️ **Combat and skills** | Attacking with reach checks, damage numbers of every kind, death; the skill window and hotkeys, casting with targets, status icons, effects (STR animations, moving textures and sprites, cylinders, sprite animations, camera shakes), skills' units on the ground (Fire Wall, Safety Wall, Pneuma, warp portals, traps), Warp Portal's destination list, Auto Spell and Shadow Spell. |
-| 🪟 **Windows** | Basic info with its menu, inventory (with expansion), equipment (and another player's), item descriptions with card slots, status (raising stats), skills, the hotkey bar, chat with whispers, the emotion list and chat macros, NPC dialogs (menus, number and text input), quests, the option menu (Esc) and audio settings, the right-click menu. |
+| 🪟 **Windows** | Basic info with its menu, inventory (with expansion), equipment (and another player's), item descriptions with card slots, status (raising stats), skills, the hotkey bar, chat with whispers, the emotion list and chat macros, NPC dialogs (menus, number and text input), quests, the option menu (Esc) with audio, graphics and shortcut settings, the right-click menu. |
 | 🛒 **Trade and crafting** | NPC shops, markets and barter shops, trading, vending (one's own shop and others'), buying stores (one's own store and selling into others'), storage, cart, the bank, the refine window, card insertion, the Magnifier, making items from a list (Pharmacy, Arrow Crafting, cooking), Repair and Upgrade Weapon, the material window (Change Material, Four Spirit Analysis). |
 | 🐾 **Pets** | Taming with its slot machine, hatching, the pet window (Alt+J), feeding, renaming, accessories, performances and pet talk. |
 | 👥 **Together** | Parties, guilds (info with the emblem, members, positions, skills, expel list, notice), clans, friends, chat rooms, RODEX mail, server announcements and item news. |
@@ -228,8 +228,7 @@ PNG), `lua_dump`, `messages`, `job_name`, `act_sounds`, `str_dump`, `map_info`, 
 
 - [ ] Calibrating window places against screenshots of the real client.
 - [ ] Effects the client draws in code other than camera shakes and weather (auras, body flashes, songs), stone spikes
-  (Earth Spike, Heaven's Drive), missiles flying from the caster (Soul Strike, Fire Ball); the graphics and hotkey
-  settings windows behind the option menu.
+  (Earth Spike, Heaven's Drive), missiles flying from the caster (Soul Strike, Fire Ball).
 - [ ] Guild management: editing positions, expelling, registering an emblem, alliances; the status window's trait stats.
 - [ ] World map: dungeons, monster info, the other worlds. Quests: the recommended tab.
 - [ ] Mail: returning mail, selecting several; the fee shown before sending.
