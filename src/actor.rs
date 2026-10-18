@@ -910,6 +910,8 @@ pub struct Actor {
     pub cart: Option<SpriteSet>,
     /// The action and frame last seen, so a frame's sound plays once each time it comes up.
     heard: Option<(usize, usize)>,
+    /// Locked by Blade Stop or Cursed Circle since then: the animation holds that frame.
+    pub held: Option<Instant>,
 }
 
 impl Actor {
@@ -936,6 +938,7 @@ impl Actor {
             remove_at: None,
             cart: None,
             heard: None,
+            held: None,
         }
     }
 
@@ -1019,6 +1022,8 @@ impl Actor {
 
     /// Current animation and how far into it: a one-shot action while it plays, else idle or walk.
     pub fn animation(&self, now: Instant) -> (usize, Timing) {
+        // ponytail: a locked unit holding its frame is an estimate of how the official client shows it.
+        let now = self.held.map_or(now, |at| at.min(now));
         if let Some(shot) = self.shot.as_ref().filter(|shot| shot.started <= now) {
             let progress = now.saturating_duration_since(shot.started).as_secs_f32() * 1000.0 / shot.duration_ms;
             if progress < 1.0 || shot.hold {

@@ -482,6 +482,10 @@ const ZC_ACCEPT_ENTER: u16 = 0x02EB;
 const ZC_NOTIFY_VANISH: u16 = 0x0080;
 const ZC_NOTIFY_PLAYERMOVE: u16 = 0x0087;
 const ZC_STOPMOVE: u16 = 0x0088;
+const ZC_HIGHJUMP: u16 = 0x01FF;
+const ZC_FASTMOVE: u16 = 0x08D2;
+const ZC_COMBODELAY: u16 = 0x01D2;
+const ZC_BLADESTOP: u16 = 0x01D1;
 const ZC_CHANGE_DIRECTION: u16 = 0x009C;
 const ZC_NOTIFY_CHAT: u16 = 0x008D;
 const ZC_NOTIFY_PLAYERCHAT: u16 = 0x008E;
@@ -1139,6 +1143,22 @@ pub enum MapEvent {
     Stop {
         id: u32,
         position: [u16; 2],
+    },
+    /// A unit is at a cell now, moved there at once (a knockback, Taekwon Jump, Snap, a pet put by its owner).
+    Slide {
+        id: u32,
+        position: [u16; 2],
+    },
+    /// A unit may use its next combo skill for this long.
+    ComboWindow {
+        id: u32,
+        ms: u32,
+    },
+    /// Blade Stop or Cursed Circle locks two units together, or lets go.
+    BladeStop {
+        source: u32,
+        target: u32,
+        on: bool,
     },
     /// A unit turned its body or (players) its head.
     Turn {
@@ -3722,6 +3742,9 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             MapEvent::PlayerMove { from, to, start_time: u32_at(2) }
         }
         ZC_STOPMOVE => MapEvent::Stop { id: u32_at(2), position: [u16_at(6), u16_at(8)] },
+        ZC_HIGHJUMP | ZC_FASTMOVE => MapEvent::Slide { id: u32_at(2), position: [u16_at(6), u16_at(8)] },
+        ZC_COMBODELAY => MapEvent::ComboWindow { id: u32_at(2), ms: u32_at(6) },
+        ZC_BLADESTOP => MapEvent::BladeStop { source: u32_at(2), target: u32_at(6), on: u32_at(10) != 0 },
         ZC_CHANGE_DIRECTION => MapEvent::Turn { id: u32_at(2), direction: packet[8], head_direction: u16_at(6) },
         ZC_NOTIFY_CHAT => MapEvent::Chat { id: Some(u32_at(4)), message: c_string(&packet[8..]), color: None },
         ZC_NOTIFY_PLAYERCHAT => MapEvent::Chat { id: None, message: c_string(&packet[4..]), color: None },
@@ -5382,6 +5405,20 @@ mod tests {
         assert_eq!(CZ_REQ_TAKEOFF_EQUIP_ALL.to_le_bytes(), [0xAD, 0x0B]);
         let ids = [ZC_NOTIFY_BIND_ON_EQUIP, CZ_REQ_TAKEOFF_EQUIP_ALL, ZC_ACK_TAKEOFF_EQUIP_ALL, ZC_ITEM_PICKUP_ACK];
         assert_eq!(ids.map(packet_length), [Some(4), Some(2), Some(3), Some(70)]);
+    }
+
+    #[test]
+    fn decodes_combos_locks_and_slides() {
+        let combo = [&ZC_COMBODELAY.to_le_bytes()[..], &2000010u32.to_le_bytes(), &700u32.to_le_bytes()].concat();
+        let Some(MapEvent::ComboWindow { id: 2000010, ms: 700 }) = decode_map_packet(&combo) else { panic!() };
+        let lock = |on: u32| [&ZC_BLADESTOP.to_le_bytes()[..], &2000010u32.to_le_bytes(), &110000u32.to_le_bytes(), &on.to_le_bytes()].concat();
+        let Some(MapEvent::BladeStop { source: 2000010, target: 110000, on: true }) = decode_map_packet(&lock(1)) else { panic!() };
+        let Some(MapEvent::BladeStop { on: false, .. }) = decode_map_packet(&lock(0)) else { panic!() };
+        for header in [ZC_HIGHJUMP, ZC_FASTMOVE] {
+            let slide = [&header.to_le_bytes()[..], &2000010u32.to_le_bytes(), &170u16.to_le_bytes(), &370u16.to_le_bytes()].concat();
+            let Some(MapEvent::Slide { id: 2000010, position: [170, 370] }) = decode_map_packet(&slide) else { panic!() };
+        }
+        assert_eq!([ZC_COMBODELAY, ZC_BLADESTOP, ZC_HIGHJUMP, ZC_FASTMOVE].map(packet_length), [Some(10), Some(14), Some(10), Some(10)]);
     }
 
     #[test]
