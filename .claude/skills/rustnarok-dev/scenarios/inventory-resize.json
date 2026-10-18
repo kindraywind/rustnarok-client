@@ -1,0 +1,23 @@
+{
+  "about": "The inventory's corner grip: twelve kinds of potions fill the Item tab; the grip dragged 40 px right and 70 down makes the window 8 columns by 4 rows (whole cells) and the items reflow into it; dragged back it is 7 by 2 again.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 501 1"}, {"say": "@item 502 1"}, {"say": "@item 503 1"}, {"say": "@item 504 1"},
+    {"say": "@item 505 1"}, {"say": "@item 506 1"}, {"say": "@item 507 1"}, {"say": "@item 508 1"},
+    {"say": "@item 509 1"}, {"say": "@item 510 1"}, {"say": "@item 511 1"}, {"say": "@item 512 1"}, {"wait": 1500},
+    {"key": "Alt+E"}, {"wait": 500},
+    {"move": [900, 700]},
+    {"shot": "inventory-default", "crop": [0, 150, 360, 280]},
+    {"drag": [[278, 295], [318, 365]]}, {"wait": 300},
+    {"move": [900, 700]},
+    {"shot": "inventory-resized", "crop": [0, 150, 360, 280]},
+    {"drag": [[310, 359], [270, 289]]}, {"wait": 300},
+    {"move": [900, 700]},
+    {"shot": "inventory-back", "crop": [0, 150, 360, 280]},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"say": "@itemreset"}, {"wait": 500}
+  ]
+}

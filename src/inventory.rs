@@ -13,21 +13,22 @@ use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, offset};
 
 // ponytail: sizes and offsets of the classic inventory over its bitmaps; calibrate against the real client.
-const COLUMNS: usize = 7;
-const ROWS: usize = 2;
+/// Columns and rows of cells it opens with, and how far its corner grip takes them (the client's 248 to 312 wide in
+/// 32 px steps, and up to 240 high).
+const SIZE: [usize; 2] = [7, 2];
+const COLUMNS: std::ops::RangeInclusive<usize> = 6..=8;
+const ROWS: std::ops::RangeInclusive<usize> = 2..=6;
 const CELL: f32 = 32.0;
-/// Rows of cells plus 8px above and 10px below them; the tab strip is exactly this tall.
-const BODY_HEIGHT: f32 = ROWS as f32 * CELL + 18.0;
 const FOOTER_HEIGHT: f32 = 29.0;
 /// The tab column, then 16px of white on either side of the cells (27 + 16 + 16 + columns).
 const TAB_COLUMN: f32 = 27.0;
 const MARGIN: f32 = 16.0;
-const WIDTH: f32 = TAB_COLUMN + MARGIN + COLUMNS as f32 * CELL + MARGIN;
-const HEIGHT: f32 = TITLE_HEIGHT + BODY_HEIGHT + FOOTER_HEIGHT;
-/// The tab strip, after a 1px white edge.
+/// The tab strip, after a 1px white edge; as tall as the body.
 const TABS_AT: [f32; 2] = [1.0, TITLE_HEIGHT];
-const TABS_SIZE: [f32; 2] = [20.0, BODY_HEIGHT];
+const TAB_WIDTH: f32 = 20.0;
 const TABS: usize = 4;
+/// The corner grip: the bottom-right 15 px of the window.
+const GRIP: f32 = 15.0;
 /// Favourites, after Item, Equip and Etc.
 const FAVORITES_TAB: usize = 3;
 /// "Compare equips" and "Lock item drop".
@@ -164,6 +165,8 @@ pub enum Hit {
     LockDrop,
     /// Compare equips.
     Compare,
+    /// The corner grip.
+    Resize,
     Window,
 }
 
@@ -184,6 +187,11 @@ pub struct Inventory {
     /// Lock item drop, and compare the worn item while pointing at an unworn one.
     pub lock_drop: bool,
     pub compare: bool,
+    /// Columns and rows of cells shown.
+    columns: usize,
+    rows: usize,
+    /// Held by the corner grip: where the press was, and the columns and rows then.
+    resizing: Option<([f32; 2], [usize; 2])>,
 }
 
 impl Default for Inventory {
@@ -193,14 +201,22 @@ impl Default for Inventory {
             expansion: 0,
             title: messages::INVENTORY,
             cart: None,
-            frame: Frame::new(DEFAULT_POSITION, WIDTH).collapsing(),
+            frame: Frame::new(DEFAULT_POSITION, width(SIZE[0])).collapsing(),
             tab: 0,
             scroll: 0,
             clicks: Clicks::default(),
             lock_drop: false,
             compare: false,
+            columns: SIZE[0],
+            rows: SIZE[1],
+            resizing: None,
         }
     }
+}
+
+/// The window's width for `columns` of cells.
+fn width(columns: usize) -> f32 {
+    TAB_COLUMN + MARGIN + columns as f32 * CELL + MARGIN
 }
 
 /// The tab an item is listed under: a favourite only on the favourites tab, the rest by type.
@@ -424,14 +440,17 @@ impl Inventory {
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
-        let local = self.frame.local(cursor, HEIGHT)?;
+        let local = self.frame.local(cursor, self.height())?;
+        let tabs = [TAB_WIDTH, self.body_height()];
         Some(if let Some(hit) = self.frame.title_hit(local) {
             Hit::Title(hit)
-        } else if contains(TABS_AT, TABS_SIZE, local) {
-            Hit::Tab((((local[1] - TABS_AT[1]) / (TABS_SIZE[1] / TABS as f32)) as usize).min(TABS - 1))
+        } else if !self.frame.minimized && contains([self.width() - GRIP, self.height() - GRIP], [GRIP; 2], local) {
+            Hit::Resize
+        } else if contains(TABS_AT, tabs, local) {
+            Hit::Tab((((local[1] - TABS_AT[1]) / (tabs[1] / TABS as f32)) as usize).min(TABS - 1))
         } else if let Some(hit) = self.check_at(local) {
             hit
-        } else if let Some(item) = self.cell_at(local).and_then(|cell| self.listed().nth(self.scroll * COLUMNS + cell)) {
+        } else if let Some(item) = self.cell_at(local).and_then(|cell| self.listed().nth(self.scroll * self.columns + cell)) {
             Hit::Item(item.index)
         } else {
             Hit::Window
@@ -443,7 +462,7 @@ impl Inventory {
         if self.cart.is_some() {
             return None;
         }
-        let top = TITLE_HEIGHT + BODY_HEIGHT;
+        let top = TITLE_HEIGHT + self.body_height();
         if !(top..top + FOOTER_HEIGHT).contains(&local[1]) || local[0] < CHECK_X {
             return None;
         }
@@ -457,7 +476,7 @@ impl Inventory {
     fn cell_at(&self, local: [f32; 2]) -> Option<usize> {
         let [x, y] = [local[0] - GRID[0], local[1] - GRID[1]];
         let [column, row] = [(x / CELL).floor(), (y / CELL).floor()];
-        (x >= 0.0 && y >= 0.0 && (column as usize) < COLUMNS && (row as usize) < ROWS).then(|| row as usize * COLUMNS + column as usize)
+        (x >= 0.0 && y >= 0.0 && (column as usize) < self.columns && (row as usize) < self.rows).then(|| row as usize * self.columns + column as usize)
     }
 
     /// Reacts to a click on the window: returns the item to use on a double click.
@@ -477,13 +496,54 @@ impl Inventory {
                 self.compare = !self.compare;
                 self.boxes().save();
             }
-            Hit::Window => {}
+            Hit::Resize | Hit::Window => {}
         }
         None
     }
 
     pub fn height(&self) -> f32 {
-        HEIGHT
+        TITLE_HEIGHT + self.body_height() + FOOTER_HEIGHT
+    }
+
+    fn width(&self) -> f32 {
+        width(self.columns)
+    }
+
+    /// Rows of cells plus 8px above and 10px below them; the tab strip is exactly this tall.
+    fn body_height(&self) -> f32 {
+        self.rows as f32 * CELL + 18.0
+    }
+
+    /// Its columns and rows of cells.
+    pub fn size(&self) -> [usize; 2] {
+        [self.columns, self.rows]
+    }
+
+    /// Takes `columns` and `rows` as far as the grip would go; the items reflow.
+    pub fn set_size(&mut self, [columns, rows]: [usize; 2]) {
+        self.columns = columns.clamp(*COLUMNS.start(), *COLUMNS.end());
+        self.rows = rows.clamp(*ROWS.start(), *ROWS.end());
+        self.frame.set_width(self.width());
+        self.scroll_by(0);
+    }
+
+    /// Held by the corner grip at `cursor`.
+    pub fn start_resize(&mut self, cursor: [f32; 2]) {
+        self.resizing = Some((cursor, self.size()));
+    }
+
+    /// While held by its grip, the corner follows the pointer from the press in whole cells (the window stays
+    /// opaque); returns whether it's held.
+    pub fn resize_to(&mut self, cursor: [f32; 2]) -> bool {
+        let Some((from, [columns, rows])) = self.resizing else { return false };
+        let step = |start: usize, moved: f32| (start as f32 + moved / CELL).round().max(0.0) as usize;
+        self.set_size([step(columns, cursor[0] - from[0]), step(rows, cursor[1] - from[1])]);
+        true
+    }
+
+    /// Lets go of the grip; returns whether it was held.
+    pub fn stop_resize(&mut self) -> bool {
+        self.resizing.take().is_some()
     }
 
     pub fn boxes(&self) -> Boxes {
@@ -500,13 +560,13 @@ impl Inventory {
         if !self.frame.open || self.frame.minimized {
             return Vec::new();
         }
-        let height = TABS_SIZE[1] / TABS as f32;
+        let height = self.body_height() / TABS as f32;
         ["tab:item", "tab:equip", "tab:etc", "tab:favorite"]
             .into_iter()
             .enumerate()
             .map(|(tab, name)| {
                 let [x, y] = self.frame.at([TABS_AT[0], TABS_AT[1] + tab as f32 * height]);
-                (name, [x, y, TABS_SIZE[0], height])
+                (name, [x, y, TAB_WIDTH, height])
             })
             .collect()
     }
@@ -516,7 +576,7 @@ impl Inventory {
         if !self.frame.open || self.frame.minimized || self.cart.is_some() {
             return Vec::new();
         }
-        let y = self.frame.at([0.0, TITLE_HEIGHT + BODY_HEIGHT])[1];
+        let y = self.frame.at([0.0, TITLE_HEIGHT + self.body_height()])[1];
         ["lock_drop", "compare"]
             .into_iter()
             .enumerate()
@@ -533,19 +593,19 @@ impl Inventory {
             return Vec::new();
         }
         self.listed()
-            .skip(self.scroll * COLUMNS)
-            .take(ROWS * COLUMNS)
+            .skip(self.scroll * self.columns)
+            .take(self.rows * self.columns)
             .enumerate()
             .map(|(cell, item)| {
-                let corner = self.frame.at([GRID[0] + (cell % COLUMNS) as f32 * CELL, GRID[1] + (cell / COLUMNS) as f32 * CELL]);
+                let corner = self.frame.at([GRID[0] + (cell % self.columns) as f32 * CELL, GRID[1] + (cell / self.columns) as f32 * CELL]);
                 (item.index, [corner[0], corner[1], CELL, CELL])
             })
             .collect()
     }
 
     pub fn scroll_by(&mut self, rows: i32) {
-        let total_rows = self.listed().count().div_ceil(COLUMNS);
-        self.scroll = (self.scroll as i32 + rows).clamp(0, total_rows.saturating_sub(ROWS) as i32) as usize;
+        let total_rows = self.listed().count().div_ceil(self.columns);
+        self.scroll = (self.scroll as i32 + rows).clamp(0, total_rows.saturating_sub(self.rows) as i32) as usize;
     }
 
     /// Draws the window into `layer` and the hovered item's name into `tooltip`.
@@ -574,21 +634,21 @@ impl Inventory {
         }
 
         // Body: the striped tab column with its strip, the white item area between borders, and the cells.
-        layer.sprites.push((&assets.footer[1], at([0.0, TITLE_HEIGHT]), [TAB_COLUMN, BODY_HEIGHT]));
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [TABS_AT[0], BODY_HEIGHT]));
+        layer.sprites.push((&assets.footer[1], at([0.0, TITLE_HEIGHT]), [TAB_COLUMN, self.body_height()]));
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [TABS_AT[0], self.body_height()]));
         layer.sprites.push((&assets.tabs[self.tab], at(TABS_AT), assets.tabs[self.tab].size));
-        layer.sprites.push((&chrome.white, at([TAB_COLUMN, TITLE_HEIGHT]), [WIDTH - TAB_COLUMN, BODY_HEIGHT]));
-        for x in [TAB_COLUMN, WIDTH - 1.0] {
-            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, BODY_HEIGHT]));
+        layer.sprites.push((&chrome.white, at([TAB_COLUMN, TITLE_HEIGHT]), [self.width() - TAB_COLUMN, self.body_height()]));
+        for x in [TAB_COLUMN, self.width() - 1.0] {
+            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, self.body_height()]));
         }
-        for cell in 0..ROWS * COLUMNS {
-            let place = [GRID[0] + (cell % COLUMNS) as f32 * CELL, GRID[1] + (cell / COLUMNS) as f32 * CELL];
+        for cell in 0..self.rows * self.columns {
+            let place = [GRID[0] + (cell % self.columns) as f32 * CELL, GRID[1] + (cell / self.columns) as f32 * CELL];
             layer.sprites.push((&assets.cell, at(place), assets.cell.size));
         }
 
         // Items: icon, and how many unless it's equipment; the hovered one's name in a tooltip.
-        for (cell, item) in self.listed().skip(self.scroll * COLUMNS).take(ROWS * COLUMNS).enumerate() {
-            let place = at([GRID[0] + (cell % COLUMNS) as f32 * CELL, GRID[1] + (cell / COLUMNS) as f32 * CELL]);
+        for (cell, item) in self.listed().skip(self.scroll * self.columns).take(self.rows * self.columns).enumerate() {
+            let place = at([GRID[0] + (cell % self.columns) as f32 * CELL, GRID[1] + (cell / self.columns) as f32 * CELL]);
             let info = items.get(&item.id);
             if let Some(Some(icon)) = info.and_then(|info| icons.get(&icon_path(info, item.identified))) {
                 layer.sprites.push((icon, offset(place, [ICON_OFFSET, ICON_OFFSET]), icon.size));
@@ -611,20 +671,20 @@ impl Inventory {
         }
 
         // Footer: rounded bar with the item count and the resize grip.
-        let footer_top = TITLE_HEIGHT + BODY_HEIGHT;
+        let footer_top = TITLE_HEIGHT + self.body_height();
         let [left, middle, right] = &assets.footer;
         layer.sprites.push((left, at([0.0, footer_top]), left.size));
-        layer.sprites.push((middle, at([left.size[0], footer_top]), [WIDTH - left.size[0] - right.size[0], FOOTER_HEIGHT]));
-        layer.sprites.push((right, at([WIDTH - right.size[0], footer_top]), right.size));
+        layer.sprites.push((middle, at([left.size[0], footer_top]), [self.width() - left.size[0] - right.size[0], FOOTER_HEIGHT]));
+        layer.sprites.push((right, at([self.width() - right.size[0], footer_top]), right.size));
         layer.sprites.push((&assets.count, at([8.0, footer_top + 8.0]), assets.count.size));
         let slots = self.cart.map_or(BASE_SLOTS + usize::from(self.expansion), |(most, _)| usize::from(most));
         layer.texts.push((format!("{}/{slots}", self.items.len()), at([22.0, footer_top + 8.0]), [0, 0, 0]));
         // A cart says how heavy it is.
         if let Some((_, [weight, most])) = self.cart {
             let text = format!("{} / {}", weight / 10, most / 10);
-            layer.texts.push((text.clone(), at([WIDTH - 20.0 - font.width(&text), footer_top + 8.0]), [0, 0, 0]));
+            layer.texts.push((text.clone(), at([self.width() - 20.0 - font.width(&text), footer_top + 8.0]), [0, 0, 0]));
         }
-        layer.sprites.push((&assets.resize, at([WIDTH - 14.0, HEIGHT - 14.0]), assets.resize.size));
+        layer.sprites.push((&assets.resize, at([self.width() - GRIP, self.height() - GRIP]), assets.resize.size));
         // The player's inventory: lock item drop, then compare equips.
         if self.cart.is_none() {
             for (index, (on, id)) in [(self.lock_drop, LOCK_DROP), (self.compare, COMPARE)].into_iter().enumerate() {
@@ -642,6 +702,29 @@ impl Inventory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resizes_by_its_corner_grip() {
+        let mut inventory = Inventory::default();
+        inventory.frame.open = true;
+        let corner = inventory.frame.at([inventory.width() - 5.0, inventory.height() - 5.0]);
+        assert_eq!(inventory.hit(corner), Some(Hit::Resize));
+        // From 7 x 2: 40 px right and 70 down make 8 x 4 (whole cells, from the press); past the limits it stops.
+        inventory.start_resize(corner);
+        assert!(inventory.resize_to([corner[0] + 40.0, corner[1] + 70.0]));
+        assert_eq!(inventory.size(), [8, 4]);
+        assert_eq!((inventory.width(), inventory.height()), (width(8), TITLE_HEIGHT + 4.0 * CELL + 18.0 + FOOTER_HEIGHT));
+        inventory.resize_to([corner[0] - 300.0, corner[1] + 500.0]);
+        assert_eq!(inventory.size(), [6, 6]);
+        assert!(inventory.stop_resize() && !inventory.resize_to(corner));
+        // Items reflow into the columns shown, and the scroll stays in range.
+        inventory.items = (0..20).map(|index| InventoryItem { index, id: 501, kind: net::ITEM_HEALING, amount: 1, ..Default::default() }).collect();
+        inventory.set_size([6, 2]);
+        inventory.scroll_by(10);
+        assert_eq!(inventory.scroll, 2, "20 items in 6 columns: 4 rows, 2 shown");
+        inventory.set_size([8, 6]);
+        assert_eq!(inventory.scroll, 0);
+    }
 
     #[test]
     fn names_items_in_full() {
@@ -711,7 +794,7 @@ mod tests {
         // The first cell of the usable tab holds the potion; the equipment tab lists the weapon.
         let first_cell = offset(inventory.frame.position, offset(GRID, [5.0, 5.0]));
         assert_eq!(inventory.hit(first_cell), Some(Hit::Item(3)));
-        let equipment_tab = offset(inventory.frame.position, [5.0, TITLE_HEIGHT + TABS_SIZE[1] / TABS as f32 * 1.5]);
+        let equipment_tab = offset(inventory.frame.position, [5.0, TITLE_HEIGHT + inventory.body_height() / TABS as f32 * 1.5]);
         assert_eq!(inventory.hit(equipment_tab), Some(Hit::Tab(1)));
         inventory.click(Hit::Tab(1));
         assert_eq!(inventory.hit(first_cell), Some(Hit::Item(2)));
