@@ -1,0 +1,27 @@
+{
+  "about": "Animation timing (issue #191): a walk north shot at three moments 150 ms apart on the paused clock (the legs move with the distance walked), and an attack on a training dummy (2408) shot as it starts and 200 ms on, played once at its ACT pace times attackMT/432. state reports each unit's action and body frame.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"click_on": {"cell": [170, 367]}}, {"wait": 250},
+    {"cmd": {"cmd": "clock", "action": "pause"}},
+    {"expect": {"state": {"player.action": 1}}},
+    {"shot": "walk-a", "crop": [362, 184, 300, 290], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 150}},
+    {"shot": "walk-b", "crop": [362, 184, 300, 290], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 150}},
+    {"shot": "walk-c", "crop": [362, 184, 300, 290], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 2000},
+    {"expect": {"state": {"player.action": 0, "player.cell": [170, 367]}}},
+    {"say": "@monster 2408 1"}, {"wait": 1500},
+    {"click_unit": {"kind": "monster", "name": "Dummy 10"}},
+    {"wait_for": {"packet": "0x08c8", "pause": true, "ms": 8000}},
+    {"shot": "attack-a", "crop": [262, 134, 500, 440], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 200}},
+    {"shot": "attack-b", "crop": [262, 134, 500, 440], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "resume"}},
+    {"say": "@killmonster2"}, {"wait": 500}
+  ]
+}
