@@ -45,6 +45,7 @@ impl LevelUps {
     }
 
     /// An open status (skill) window has seen the base (job) level.
+    /// The status (skill) window was opened, by any means: the base (job) button and its menu mark go.
     pub fn seen(&mut self, status_open: bool, skills_open: bool) {
         self.base &= !status_open;
         self.job &= !skills_open;
@@ -88,9 +89,25 @@ impl Assets {
     }
 }
 
+/// Whether a window counts as opened for the level-up buttons: open, minimised or not.
+pub fn opened(frame: &crate::window::Frame) -> bool {
+    frame.open
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_minimised_window_counts_as_seen() {
+        let mut frame = crate::window::Frame::new([0.0, 0.0], 100.0);
+        frame.open = true;
+        frame.minimized = true;
+        let mut ups = LevelUps::default();
+        ups.changed(STATUS_BASE_LEVEL, Some(1), 2);
+        ups.seen(opened(&frame), false);
+        assert!(ups.button_boxes().is_empty());
+    }
 
     #[test]
     fn stays_until_its_window_opens() {

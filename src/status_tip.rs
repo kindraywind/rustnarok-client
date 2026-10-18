@@ -99,7 +99,7 @@ pub fn lines(info: &StateInfo, left: Option<u64>, messages: &[String]) -> Vec<(S
 /// edge on the icon's left, its top 3 below the icon's, pulled up to stay on screen.
 pub fn place(icon: [f32; 2], widest: f32, count: usize, line_height: f32) -> ([f32; 2], [f32; 2]) {
     let size = [widest + 2.0 * PAD[0], PAD[1] + count as f32 * (line_height + PAD[1])];
-    let corner = [icon[0] - size[0], (icon[1] + 3.0).min(screen()[1] - size[1]).max(0.0)];
+    let corner = [icon[0] - size[0], (icon[1] + 2.0).min(screen()[1] - size[1]).max(0.0)];
     (corner, size)
 }
 
@@ -179,8 +179,10 @@ mod tests {
     fn sits_left_of_the_icon_on_screen() {
         // Three 12px lines, 100 wide, beside an icon at (956, 166).
         let (corner, size) = place([956.0, 166.0], 100.0, 3, 12.0);
-        assert_eq!((corner, size), ([844.0, 169.0], [112.0, 52.0]));
-        assert_eq!(line_at(corner, 1, 12.0), [850.0, 189.0]);
+        assert_eq!((corner, size), ([844.0, 168.0], [112.0, 52.0]));
+        assert_eq!(line_at(corner, 1, 12.0), [850.0, 188.0]);
+        // The top is the icon's top + 2: 171 for the first row's icons at 169.
+        assert_eq!(place([956.0, 169.0], 100.0, 1, 12.0).0[1], 171.0);
         // Near the bottom it's pulled up.
         let (corner, size) = place([956.0, 740.0], 100.0, 3, 12.0);
         assert_eq!(corner[1] + size[1], screen()[1]);

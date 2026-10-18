@@ -23,7 +23,24 @@ const BANNER_LIFE: Duration = Duration::from_secs(2);
 fn banner_top() -> f32 {
     screen()[1] * 130.0 / 480.0
 }
-const BANNER_STEP: f32 = 22.0;
+/// A message's rounded box: the text 6 in and 4 down, lines a line height and 4 apart, boxes 10 apart.
+// ponytail: the box's size follows the status tooltip's rule: text width + 12, 4 + (line height + 4) a line.
+const BANNER_TEXT: [f32; 2] = [6.0, 4.0];
+const BANNER_GAP: f32 = 10.0;
+
+/// Each banner's box (x, y, width, height), stacked down the strip from its top, centred across `screen_width`.
+pub fn banner_boxes(widths: &[(f32, usize)], line_height: f32, top: f32, screen_width: f32) -> Vec<[f32; 4]> {
+    let mut y = top;
+    widths
+        .iter()
+        .map(|&(width, lines)| {
+            let size = [width + 2.0 * BANNER_TEXT[0], BANNER_TEXT[1] + lines as f32 * (line_height + 4.0)];
+            let corner = [((screen_width - size[0]) / 2.0).floor(), y];
+            y += size[1] + BANNER_GAP;
+            [corner[0], corner[1], size[0], size[1]]
+        })
+        .collect()
+}
 const ICON: [f32; 2] = [43.0, 43.0];
 
 /// A quest from ZC_ADD_QUEST_EX: a new one goes last; one already known is refreshed where it stands. True when new.
@@ -75,16 +92,18 @@ impl Banners {
     }
 
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, font: &Font) {
-        for (row, (text, _)) in self.0.iter().enumerate() {
-            let size = [font.width(text) + 16.0, 20.0];
-            let corner = [((screen()[0] - size[0]) / 2.0).floor(), banner_top() + row as f32 * BANNER_STEP];
-            layer.sprites.push((&assets.banner, [corner[0] + 1.0, corner[1] + 1.0], [size[0] - 2.0, size[1] - 2.0]));
-            for (edge, piece) in overhead::border(size) {
-                layer.sprites.push((&assets.banner_edge, [corner[0] + edge[0], corner[1] + edge[1]], piece));
+        let lines: Vec<Vec<&str>> = self.0.iter().map(|(text, _)| text.lines().collect()).collect();
+        let widths: Vec<(f32, usize)> = lines.iter().map(|lines| (lines.iter().map(|line| font.width(line)).fold(0.0, f32::max), lines.len().max(1))).collect();
+        for (lines, [x, y, w, h]) in lines.iter().zip(banner_boxes(&widths, font.line_height(), banner_top(), screen()[0])) {
+            layer.sprites.push((&assets.banner, [x + 1.0, y + 1.0], [w - 2.0, h - 2.0]));
+            for (edge, piece) in overhead::border([w, h]) {
+                layer.sprites.push((&assets.banner_edge, [x + edge[0], y + edge[1]], piece));
             }
-            let at = [corner[0] + 8.0, corner[1] + 4.0];
-            layer.texts.push((text.clone(), [at[0] + 1.0, at[1] + 1.0], [0, 0, 0]));
-            layer.texts.push((text.clone(), at, YELLOW));
+            for (row, line) in lines.iter().enumerate() {
+                let at = [x + BANNER_TEXT[0], y + BANNER_TEXT[1] + row as f32 * (font.line_height() + 4.0)];
+                layer.texts.push((line.to_string(), [at[0] + 1.0, at[1] + 1.0], [0, 0, 0]));
+                layer.texts.push((line.to_string(), at, YELLOW));
+            }
         }
     }
 }
@@ -124,6 +143,15 @@ mod tests {
 
     fn quest(id: u32) -> Quest {
         Quest { id, active: true, ..Default::default() }
+    }
+
+    #[test]
+    fn stacks_banner_boxes_10_apart() {
+        // Two one-line banners, 100 and 40 wide, with a 14-high font: 112 x 22 and 52 x 22, the second 10 under.
+        let boxes = banner_boxes(&[(100.0, 1), (40.0, 1)], 14.0, 200.0, 1024.0);
+        assert_eq!(boxes, [[456.0, 200.0, 112.0, 22.0], [486.0, 232.0, 52.0, 22.0]]);
+        // Two lines: 4 + 2 x 18.
+        assert_eq!(banner_boxes(&[(60.0, 2)], 14.0, 0.0, 1024.0)[0][3], 40.0);
     }
 
     #[test]

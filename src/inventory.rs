@@ -282,14 +282,33 @@ pub fn full_name(
     item: &InventoryItem,
     slots: bool,
 ) -> String {
-    let Some(info) = items.get(&item.id) else { return item.id.to_string() };
+    full_name_maker(items, cards, messages, makers, item, slots).0
+}
+
+/// The maker's name piece of a forged or brewed item's name: blue, or red when the maker has no name ("Nameless").
+pub const MAKER_COLOR: [u8; 3] = [64, 64, 224];
+pub const NAMELESS_COLOR: [u8; 3] = [224, 64, 64];
+/// Where in a name the maker's name is, and its colour.
+pub type MakerRun = (std::ops::Range<usize>, [u8; 3]);
+
+/// The full name, and where in it the maker's name is with its colour (forged or brewed items).
+pub fn full_name_maker(
+    items: &HashMap<u32, ItemInfo>,
+    cards: &CardNames,
+    messages: &[String],
+    makers: &HashMap<u32, Option<String>>,
+    item: &InventoryItem,
+    slots: bool,
+) -> (String, Option<MakerRun>) {
+    let Some(info) = items.get(&item.id) else { return (item.id.to_string(), None) };
     if !item.identified {
-        return info.name(false).to_owned();
+        return (info.name(false).to_owned(), None);
     }
     let equipment = matches!(item.kind, net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR);
     if !equipment {
-        return info.name(true).to_owned();
+        return (info.name(true).to_owned(), None);
     }
+    let mut maker_run = None;
     let message = |id: usize| messages.get(id).map_or("", String::as_str);
     let mut name = String::new();
     if item.refine > 0 {
@@ -305,7 +324,10 @@ pub fn full_name(
             if (1..=3).contains(&strength) {
                 name.push_str(message(VERY_STRONG + strength as usize - 1));
             }
-            name.push_str(makers.get(&maker).and_then(Option::as_deref).unwrap_or(message(NAMELESS)));
+            let start = name.len();
+            let known = makers.get(&maker).and_then(Option::as_deref);
+            name.push_str(known.unwrap_or(message(NAMELESS)));
+            maker_run = Some((start..name.len(), if known.is_some() { MAKER_COLOR } else { NAMELESS_COLOR }));
             // Water, earth, fire, wind (rathena's 1 to 4) have lines of their own; none is plain "'s ".
             let element = match item.cards[1] & 0x0F {
                 1 => 2,
@@ -335,7 +357,7 @@ pub fn full_name(
     if slots && info.slots > 0 {
         name.push_str(&format!(" [{}]", info.slots));
     }
-    name
+    (name, maker_run)
 }
 
 /// The icon file of an item.

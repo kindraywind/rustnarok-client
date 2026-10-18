@@ -71,6 +71,8 @@ pub struct Popup {
     /// The line it shows ("<name> - N obtained.") and the item's icon file.
     pub text: String,
     pub icon: String,
+    /// The maker's name piece of the text, coloured.
+    pub maker: Option<crate::inventory::MakerRun>,
     width: f32,
     until: Instant,
 }
@@ -78,18 +80,38 @@ pub struct Popup {
 impl Popup {
     /// A pickup: `line_width` is the chat line's width, which sizes the popup.
     pub fn new(text: String, icon: String, line_width: f32, now: Instant) -> Self {
-        Self { text, icon, width: width_for(line_width), until: now + LIFE }
+        Self { text, icon, maker: None, width: width_for(line_width), until: now + LIFE }
+    }
+
+    /// The pieces of a line that starts `start` bytes into the text: plain (black) and the maker's (its colour).
+    fn runs(&self, line: &str, start: usize) -> Vec<(String, [u8; 3])> {
+        let Some((range, color)) = &self.maker else { return vec![(line.to_owned(), INK)] };
+        let end = start + line.len();
+        let (from, to) = (range.start.clamp(start, end) - start, range.end.clamp(start, end) - start);
+        let cut = |mut at: usize| {
+            while !line.is_char_boundary(at) {
+                at -= 1;
+            }
+            at
+        };
+        let (from, to) = (cut(from), cut(to));
+        [(&line[..from], INK), (&line[from..to], *color), (&line[to..], INK)]
+            .into_iter()
+            .filter(|(piece, _)| !piece.is_empty())
+            .map(|(piece, color)| (piece.to_owned(), color))
+            .collect()
     }
 
     pub fn alive(&self, now: Instant) -> bool {
         now < self.until
     }
 
-    /// The text on one line, or two when it's too wide (the second cut with "..." if it still is).
-    fn lines(&self, font: &Font) -> Vec<String> {
+    /// The text on one line, or two when it's too wide (the second cut with "..." if it still is), each with where it
+    /// starts in the text.
+    fn lines(&self, font: &Font) -> Vec<(String, usize)> {
         let room = self.width - 49.0;
         if font.width(&self.text) <= room {
-            return vec![self.text.clone()];
+            return vec![(self.text.clone(), 0)];
         }
         let mut first = String::new();
         let mut rest = self.text.as_str();
@@ -100,6 +122,7 @@ impl Popup {
             }
             first.push(character);
         }
+        let second_start = self.text.len() - rest.trim_start().len();
         let mut second = rest.trim_start().to_owned();
         if font.width(&second) > room {
             while !second.is_empty() && font.width(&format!("{second}...")) > room {
@@ -107,7 +130,7 @@ impl Popup {
             }
             second.push_str("...");
         }
-        vec![first, second]
+        vec![(first, 0), (second, second_start)]
     }
 
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, icon: Option<&'a Texture>, font: &Font) {
@@ -129,9 +152,15 @@ impl Popup {
         }
         let lines = self.lines(font);
         let tops: Vec<f32> = if lines.len() == 1 { vec![TEXT[1]] } else { LINES.to_vec() };
-        for (line, top) in lines.into_iter().zip(tops) {
-            layer.texts.push((line.clone(), [x + TEXT[0] + 1.0, y + top + 1.0], SHADOW));
-            layer.texts.push((line, [x + TEXT[0], y + top], INK));
+        // Black with a light shadow, the maker's name in its colour.
+        for ((line, start), top) in lines.into_iter().zip(tops) {
+            let mut left = x + TEXT[0];
+            for (piece, color) in self.runs(&line, start) {
+                let width = font.width(&piece);
+                layer.texts.push((piece.clone(), [left + 1.0, y + top + 1.0], SHADOW));
+                layer.texts.push((piece, [left, y + top], color));
+                left += width;
+            }
         }
     }
 }
@@ -139,6 +168,19 @@ impl Popup {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colours_the_makers_name() {
+        let now = Instant::now();
+        let mut popup = Popup::new("Smith's Knife - 1 obtained.".into(), String::new(), 200.0, now);
+        assert_eq!(popup.runs("Smith's Knife", 0), [("Smith's Knife".to_owned(), INK)]);
+        popup.maker = Some((0..5, crate::inventory::MAKER_COLOR));
+        assert_eq!(popup.runs("Smith's Knife", 0), [("Smith".to_owned(), crate::inventory::MAKER_COLOR), ("'s Knife".to_owned(), INK)]);
+        // "Nameless" in red; a second line starting past the maker is plain.
+        popup.maker = Some((2..10, crate::inventory::NAMELESS_COLOR));
+        assert_eq!(popup.runs("+7Nameless's", 0)[1], ("Nameless".to_owned(), crate::inventory::NAMELESS_COLOR));
+        assert_eq!(popup.runs("obtained.", 20), [("obtained.".to_owned(), INK)]);
+    }
 
     #[test]
     fn sizes_lives_and_counts() {
