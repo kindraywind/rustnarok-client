@@ -1,0 +1,63 @@
+{
+  "about": "Map notices on arrival (issue #144): with the nocostume flag on Prontera (@mapflag, cleared again at the end) arriving prints the costume line, and every map property is answered with CZ_BLOCKING_PLAY_CANCEL (a sent packet).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@mapflag nocostume 1"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "wait_for": {
+        "sent": "0x0447",
+        "ms": 8000
+      }
+    },
+    {
+      "settle": 1000
+    },
+    {
+      "expect": {
+        "chat": "Costume equipments are not visible on this map."
+      }
+    },
+    {
+      "shot": "map-notice",
+      "crop": [
+        0,
+        600,
+        620,
+        168
+      ]
+    },
+    {
+      "say": "@mapflag nocostume 0"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "wait_for": {
+        "sent": "0x0447",
+        "ms": 8000
+      }
+    },
+    {
+      "settle": 1000
+    }
+  ]
+}

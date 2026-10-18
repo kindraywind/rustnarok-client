@@ -20,7 +20,8 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": 
   {"click_unit": {"kind": "pet", "name": "Poring"}, "button": "right", "mods": "shift"}  (the middle of the nearest
     unit of that kind, and name if given, on screen)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
-  {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command)
+  {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command; or "sent":
+    "0x0447": a packet the client sent the map server)
   {"expect": {"chat": "Item created.", "inventory_items": 5, "hp_at_least": 40, "map": "iz_int01.gat",
               "windows_open": ["Inventory"], "windows_closed": ["Skills"], "units_at_least": {"monster": 10},
               "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null},
@@ -109,7 +110,11 @@ def player_name(state):
 def launch(binary, scenario):
     # Scenarios start from the same server state: RUSTNAROK_CLIENT_SCENARIO_RESET is a shell command (each developer's
     # own, for their server) run before every launch, e.g. clearing the test characters' saved hotkey bars.
+    # A lane's own reset script (docs/personal/scenario-reset.sh, from lane.sh) when the variable isn't set.
     reset = os.environ.get("RUSTNAROK_CLIENT_SCENARIO_RESET")
+    local_reset = os.path.join(REPO, "docs", "personal", "scenario-reset.sh")
+    if not reset and os.path.exists(local_reset):
+        reset = f"sh '{local_reset}'"
     if reset:
         subprocess.run(reset, shell=True, check=True)
     drive.use("first")

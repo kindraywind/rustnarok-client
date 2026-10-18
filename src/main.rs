@@ -40,6 +40,7 @@
 
 mod achievement;
 mod actor;
+mod announce;
 mod bank;
 mod basic_info;
 mod buying;
@@ -133,7 +134,6 @@ const CHAT_ITEM: [u8; 3] = [0x00, 0xFF, 0xFF];
 const CHAT_ERROR: [u8; 3] = [0xFF, 0x00, 0x00];
 // ponytail: the two announcement shades are guesses; calibrate them against the real client.
 const CHAT_BROADCAST: [u8; 3] = [0xFF, 0xFF, 0x00];
-const CHAT_BROADCAST_BLUE: [u8; 3] = [0x00, 0xC0, 0xFF];
 /// Messages that come with a skill's name, "[Name] message" (rathena's notes give 0xCDCDFF).
 const CHAT_SKILL_MESSAGE: [u8; 3] = [0xCD, 0xCD, 0xFF];
 /// Out of ammunition, too heavy, ammunition equipped (ZC_ACTION_FAILURE).
@@ -278,6 +278,33 @@ const PARTY_INVITED: usize = 94;
 const PARTY_LEFT: usize = 84;
 const PARTY_CHAT_OURS: [u8; 3] = [200, 200, 100];
 const PARTY_CHAT: [u8; 3] = [230, 215, 200];
+/// "%s has acquired %s.", a member's pickup.
+const PARTY_PICKUP: usize = 1276;
+/// "Costume equipments are not visible on this map."
+const NO_COSTUME_NOTICE: usize = 1772;
+/// "In this Map,Effect of Mirace of Sun and Moon is nullified."
+const NO_MIRACLE_NOTICE: usize = 2381;
+const MAP_NOTICE: [u8; 3] = [0x64, 0xFF, 0xFF];
+/// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
+const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
+
+/// What a map's flags tell a player of this job on arrival: the messages to print.
+fn arrival_notices(flags: u32, job: u16) -> Vec<usize> {
+    let mut notices = Vec::new();
+    if flags & net::MAP_NO_COSTUME != 0 {
+        notices.push(NO_COSTUME_NOTICE);
+    }
+    if flags & net::MAP_SUN_MOON_STAR_MIRACLE == 0 && STAR_GLADIATORS.contains(&job) {
+        notices.push(NO_MIRACLE_NOTICE);
+    }
+    notices
+}
+const PARTY_REFUSING: usize = 1325;
+const PARTY_ALLOWING: usize = 1326;
+/// "You can't modify Party Setup."
+const PARTY_SETUP_REFUSED: usize = 373;
+const LEADER_CHOICE: usize = 1532;
+const LEADER_QUESTION: usize = 1533;
 const PARTY_CREATE: usize = 2054;
 /// What a locked chat room asks ("Please enter Password.").
 const ROOM_PASSWORD: usize = 15;
@@ -574,6 +601,8 @@ struct Game {
     escape: Option<escape::Menu>,
     /// The option menu's audio settings, while open.
     audio_window: Option<options::AudioWindow>,
+    graphics_window: Option<options::GraphicsWindow>,
+    shortcuts_window: Option<options::ShortcutsWindow>,
     world_map: Option<worldmap::WorldMap>,
     /// The quest log and its window.
     quests: Vec<net::Quest>,
@@ -667,6 +696,15 @@ struct Game {
     /// The player's mercenary, its skills, its window and skill list, how it's steered, and whether dismissing it is
     /// being asked.
     mercenary: Option<net::Mercenary>,
+    /// Server announcements in the bar across the top.
+    announcements: announce::Bar,
+    /// The names whose whispers (and speaker announcements) the player blocks, as far as the server has said.
+    blocked: HashSet<String>,
+    /// Whether the player refuses party invitations (None until the server says).
+    refusing_party: Option<bool>,
+    /// The party setup window, and the member whose leadership is being asked about.
+    party_setup: Option<party::Setup>,
+    leader_asked: Option<u32>,
     mercenary_skills: Vec<net::Skill>,
     mercenary_window: mercenary::Window,
     mercenary_skill_list: mercenary::SkillList,
@@ -974,6 +1012,8 @@ enum Choice {
     ViewEquipment(u32),
     /// A command to the player's pet (net::PET_INFO and on).
     Pet(u8),
+    /// Hand the party to this member (by account).
+    Leader(u32),
 }
 
 /// A pet question waiting for OK: feed it, or rename it (to this).
@@ -1348,6 +1388,11 @@ impl Game {
             let _ = self.session.leave_party();
             return None;
         }
+        // ponytail: /refuse and /accept are rathena's names for them (clif_parse_PartyTick).
+        if text == "/refuse" || text == "/accept" {
+            let _ = self.session.refuse_parties(text == "/refuse");
+            return None;
+        }
         if let Some(name) = text.strip_prefix("/expel ") {
             let member = self.party.as_ref().and_then(|party| party.members.iter().find(|member| member.info.name == name.trim()));
             if let Some(member) = member {
@@ -1462,6 +1507,8 @@ impl Game {
             || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
             || self.cashshop_buy_asked
+            || self.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.item_window.as_ref().is_some_and(|window| window.hit(cursor, items).is_some())
             || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
             || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
@@ -2362,9 +2409,35 @@ fn login_position(window: &Texture) -> [f32; 2] {
     [((SCREEN[0] - window.size[0]) / 2.0).floor(), LOGIN_TOP]
 }
 
+fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
+    let number = match key {
+        Key::Named(NamedKey::F1) => 1,
+        Key::Named(NamedKey::F2) => 2,
+        Key::Named(NamedKey::F3) => 3,
+        Key::Named(NamedKey::F4) => 4,
+        Key::Named(NamedKey::F5) => 5,
+        Key::Named(NamedKey::F6) => 6,
+        Key::Named(NamedKey::F7) => 7,
+        Key::Named(NamedKey::F8) => 8,
+        Key::Named(NamedKey::F9) => 9,
+        Key::Named(NamedKey::F10) => 10,
+        Key::Named(NamedKey::F11) => 11,
+        Key::Named(NamedKey::F12) => 12,
+        Key::Character(text) => {
+            let mut characters = text.chars();
+            return characters
+                .next()
+                .filter(|character| !character.is_control() && characters.next().is_none())
+                .map(|character| options::ShortcutKey::Char(character.to_ascii_lowercase()));
+        }
+        _ => return None,
+    };
+    Some(options::ShortcutKey::NamedF(number))
+}
+
 /// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
 /// folder elsewhere.
-fn settings_path(name: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn settings_path(name: &str) -> Option<std::path::PathBuf> {
     let home = || Some(std::path::PathBuf::from(std::env::var_os("HOME")?));
     let folder = if cfg!(target_os = "macos") {
         home()?.join("Library/Application Support")
@@ -2660,8 +2733,9 @@ struct App {
     audio: Option<sound::Audio>,
     sound: sound::Settings,
     music: HashMap<String, String>,
-    /// /effect: effects are drawn and heard; off, they still play, unseen and silent. Kept until the client quits.
-    effects_on: bool,
+    /// /effect: effects are drawn and heard; off, they still play, unseen and silent.
+    graphics: options::GraphicsSettings,
+    shortcuts: options::ShortcutSettings,
     cursor_look: cursor::Cursor,
     /// The client's loading pictures, and the loading screen while it's up.
     loading_images: Vec<String>,
@@ -3151,8 +3225,15 @@ impl App {
                     game.escape = None;
                     game.audio_window = Some(options::AudioWindow::new());
                 }
-                // ponytail: the graphics and hotkey settings windows aren't made yet.
-                Some(escape::Choice::Graphics | escape::Choice::Hotkeys) | None => {}
+                Some(escape::Choice::Graphics) => {
+                    game.escape = None;
+                    game.graphics_window = Some(options::GraphicsWindow::new());
+                }
+                Some(escape::Choice::Hotkeys) => {
+                    game.escape = None;
+                    game.shortcuts_window = Some(options::ShortcutsWindow::new());
+                }
+                None => {}
             },
             // The audio settings: checkboxes and arrows (the sliders go on press).
             Scene::Game(game) if game.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
@@ -3166,6 +3247,24 @@ impl App {
                 }
                 if !window.frame.open {
                     game.audio_window = None;
+                }
+            }
+            Scene::Game(game) if game.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let window = game.graphics_window.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                if window.click(hit, &mut self.graphics) {
+                    self.graphics.save();
+                }
+                if !window.frame.open {
+                    game.graphics_window = None;
+                }
+            }
+            Scene::Game(game) if game.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let window = game.shortcuts_window.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                window.click(hit);
+                if !window.frame.open {
+                    game.shortcuts_window = None;
                 }
             }
             // The quest window: tabs, quests, their locks, and the picked one's details.
@@ -3293,6 +3392,7 @@ impl App {
                 Some(Choice::Pet(net::PET_FEED)) => game.pet_asked = Some(PetAsked::Feed),
                 Some(Choice::Pet(net::PET_INFO)) => game.open_pet_window(),
                 Some(Choice::Pet(command)) => game.pet_command(command),
+                Some(Choice::Leader(account)) => game.leader_asked = Some(account),
                 Some(Choice::Befriend(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         let _ = game.session.add_friend(&actor.name.clone());
@@ -3399,6 +3499,30 @@ impl App {
                         game.expansion_asked = None;
                         let _ = game.session.answer_expansion(yes);
                     }
+                }
+            }
+            // Handing the party over: OK asks the server.
+            Scene::Game(game) if game.leader_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        let account = game.leader_asked.take().unwrap();
+                        if yes {
+                            let _ = game.session.change_party_leader(account);
+                        }
+                    }
+                }
+            }
+            // The party setup window: choices, OK and Cancel.
+            Scene::Game(game) if game.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some() => {
+                let setup = game.party_setup.as_mut().unwrap();
+                match setup.hit(cursor).and_then(|hit| setup.click(hit)) {
+                    Some(party::SetupAction::Send(settings)) => {
+                        game.party_setup = None;
+                        let _ = game.session.party_options(settings.exp_even, settings.pickup, settings.share);
+                    }
+                    Some(party::SetupAction::Close) => game.party_setup = None,
+                    None => {}
                 }
             }
             // Dismissing the mercenary: OK lets it go.
@@ -3782,6 +3906,12 @@ impl App {
                         Some(party::Hit::Button(party::Button::Leave)) => {
                             let _ = game.session.leave_party();
                         }
+                        Some(party::Hit::Button(party::Button::Setup)) => {
+                            if let Some(party) = &game.party {
+                                let leader = party.leader() == Some(game.account_id);
+                                game.party_setup = Some(party::Setup::new(party, leader, game.party_window.frame.position));
+                            }
+                        }
                         _ => {}
                     },
                     Panel::Storage => {
@@ -3971,6 +4101,12 @@ impl App {
             {
                 audio.set(&self.sound);
             }
+            if let Some(window) = &mut game.graphics_window {
+                window.drag_to(self.cursor);
+            }
+            if let Some(window) = &mut game.shortcuts_window {
+                window.drag_to(self.cursor);
+            }
             game.camera_goal.drag(self.cursor, self.modifiers);
             if let Some((_, start, moved)) = &mut game.dragging {
                 *moved |= (self.cursor[0] - start[0]).abs() + (self.cursor[1] - start[1]).abs() > 4.0;
@@ -4019,6 +4155,20 @@ impl App {
             && select.unlocked()
         {
             select.open_menu(self.cursor, &self.font, &self.messages);
+        }
+        // The leader's right click (not a drag) on another member's row in the party window: hand the party over.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+            && let Some((start, None)) = game.right_press
+            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+            && game.window_at(self.cursor) == Some(Panel::Party)
+            && let Some(party::Hit::Member(account)) = game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends, game.account_id)
+            && game.party.as_ref().is_some_and(|party| party.offers_leader(game.account_id, account))
+        {
+            game.right_press = None;
+            let label = self.messages.get(LEADER_CHOICE).cloned().unwrap_or_default();
+            game.menu = Some(menu::Menu::new(self.cursor, vec![Some((label, Choice::Leader(account)))], &self.font));
+            return;
         }
         if let Scene::Game(game) = &mut self.scene {
             let assets = self.assets.as_ref();
@@ -4268,8 +4418,11 @@ impl App {
                 if slid {
                     self.sound.save();
                 }
+                let option_windows = game.graphics_window.as_mut().is_some_and(options::GraphicsWindow::drop_drag)
+                    | game.shortcuts_window.as_mut().is_some_and(options::ShortcutsWindow::drop_drag);
                 let windows = trade_moved
                     | slid
+                    | option_windows
                     | game.party_window.frame.drop_drag()
                     | game.status_window.frame.drop_drag()
                     | game.guild_window.frame.drop_drag()
@@ -4401,6 +4554,20 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && let Some(window) = &mut game.graphics_window
+            && let Some(hit) = window.hit(cursor)
+        {
+            window.press(hit, cursor);
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(window) = &mut game.shortcuts_window
+            && let Some(hit) = window.hit(cursor)
+        {
+            window.press(hit, cursor);
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
             && let Some(id) = game.window_at(cursor)
         {
             game.raise(id);
@@ -4493,8 +4660,14 @@ impl App {
             if let Some(id) = shown {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
             }
-        } else if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.effects_on) {
-            game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+        } else {
+            let effects_on = self.graphics.effects_on;
+            if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.graphics.effects_on) {
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+            }
+            if effects_on != self.graphics.effects_on {
+                self.graphics.save();
+            }
         }
     }
 
@@ -4517,6 +4690,20 @@ impl App {
             return;
         }
         let key = &event.logical_key;
+        if let Scene::Game(game) = &mut self.scene
+            && game.shortcuts_window.as_ref().is_some_and(|window| window.listening.is_some())
+        {
+            if let Some(key) = shortcut_key(key) {
+                if game.shortcuts_window.as_mut().unwrap().bind_key(key, &mut self.shortcuts) {
+                    self.shortcuts.save();
+                }
+                return;
+            }
+            if *key == Key::Named(NamedKey::Escape) {
+                game.shortcuts_window.as_mut().unwrap().listening = None;
+                return;
+            }
+        }
         // Ctrl+Cmd+F, as Macs have it, or Alt+Enter elsewhere: fullscreen (the canvas scaled to fit, bars on the sides), or back.
         let fullscreen = if cfg!(target_os = "macos") {
             self.modifiers.super_key() && self.modifiers.control_key() && event.physical_key == PhysicalKey::Code(KeyCode::KeyF)
@@ -4628,18 +4815,18 @@ impl App {
                 return;
             }
         }
-        // F1-F9 press the hotkeys of the first row; F12 shows or hides the bar.
+        // Configured function keys press hotkeys; an unbound F12 shows or hides the bar.
+        // ponytail: letter bindings are saved in the shortcuts window for Battle Mode later; without it they
+        // would steal the first character of chat.
         if let Scene::Game(game) = &mut self.scene
-            && let Key::Named(named) = key
+            && let Some(shortcut) = shortcut_key(key)
+            && matches!(shortcut, options::ShortcutKey::NamedF(_))
         {
-            let function = [NamedKey::F1, NamedKey::F2, NamedKey::F3, NamedKey::F4, NamedKey::F5, NamedKey::F6, NamedKey::F7, NamedKey::F8, NamedKey::F9]
-                .iter()
-                .position(|function| function == named);
-            if let Some(slot) = function {
+            if let Some(slot) = self.shortcuts.slot_for(shortcut) {
                 game.press_hotkey(slot);
                 return;
             }
-            if *named == NamedKey::F12 {
+            if shortcut == options::ShortcutKey::NamedF(12) {
                 game.hotkeys.frame.toggle();
                 return;
             }
@@ -4760,6 +4947,13 @@ impl App {
                 game.expansion_asked = None;
                 let _ = game.session.answer_expansion(*key == Key::Named(NamedKey::Enter));
             }
+            Scene::Game(game) if game.leader_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                let account = game.leader_asked.take().unwrap();
+                if *key == Key::Named(NamedKey::Enter) {
+                    let _ = game.session.change_party_leader(account);
+                }
+            }
+            Scene::Game(game) if game.party_setup.is_some() && *key == Key::Named(NamedKey::Escape) => game.party_setup = None,
             Scene::Game(game) if game.dismiss_asked && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_dismiss(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
@@ -5257,6 +5451,8 @@ impl App {
                     amount: None,
                     escape: None,
                     audio_window: None,
+                    graphics_window: None,
+                    shortcuts_window: None,
                     world_map: None,
                     quests: Vec::new(),
                     quest_window: quest::QuestWindow::default(),
@@ -5314,6 +5510,11 @@ impl App {
                     pet_window: pet::PetWindow::default(),
                     pet_asked: None,
                     mercenary: None,
+                    refusing_party: None,
+                    announcements: announce::Bar::default(),
+                    blocked: HashSet::new(),
+                    party_setup: None,
+                    leader_asked: None,
                     mercenary_skills: Vec::new(),
                     mercenary_window: mercenary::Window::default(),
                     mercenary_skill_list: mercenary::SkillList::default(),
@@ -6039,7 +6240,16 @@ impl App {
                 }
             }
             // Announcements, and the client's own messages by number.
-            MapEvent::Broadcast { text, color, blue } => game.chat_line(text, color.unwrap_or(if blue { CHAT_BROADCAST_BLUE } else { CHAT_BROADCAST })),
+            // In the chat and the bar; a blocked speaker's not at all.
+            MapEvent::Broadcast { text, color, kind, size } => {
+                if let net::BroadcastKind::Speaker(name) = &kind
+                    && game.blocked.contains(name)
+                {
+                    return;
+                }
+                game.chat_line(text.clone(), color);
+                game.announcements.push(text, color, size.unwrap_or(announce::SIZE), control::now());
+            }
             // ponytail: in the announcements' yellow; a monster's drop says the box's line with the monster's name, as
             // rathena's notes have it, unchecked against the real client.
             MapEvent::ItemObtained { item, player, box_item, monster } => {
@@ -6674,16 +6884,38 @@ impl App {
                     5 => 1324,
                     7 => 71,
                     8 => 1388,
+                    10 => 3027,
                     _ => 1871,
                 };
                 let text = rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]);
                 game.chat_line(text, if result == 2 { CHAT_ITEM } else { CHAT_ERROR });
             }
+            // A map's property: its notices, then the "ready" the server waits for.
+            MapEvent::MapProperty { flags, .. } => {
+                for id in arrival_notices(flags, game.me.job) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), MAP_NOTICE);
+                }
+                let _ = game.session.ready_to_play();
+            }
             MapEvent::PartyChat { account, text } => game.chat_line(text, if account == game.account_id { PARTY_CHAT_OURS } else { PARTY_CHAT }),
             MapEvent::PartyPosition { account, cell } => {
                 if let Some(member) = game.party.as_mut().and_then(|party| party.member(account)) {
-                    member.cell = Some(cell.map(i32::from));
+                    member.cell = cell.map(|cell| cell.map(i32::from));
                 }
+            }
+            // ponytail: the line and its color (the party chat's) for a member's pickup are estimates.
+            MapEvent::PartyPickup { account, item, identified, refine } => {
+                let member = game.party.as_mut().and_then(|party| party.member(account)).map(|member| member.info.name.clone());
+                let name = inventory::item_name(&self.items, item, identified, refine);
+                let text = rustnarok_client::messages::fill(self.messages.get(PARTY_PICKUP).map_or("", String::as_str), &[&member.unwrap_or_default(), &name]);
+                game.chat_line(text, PARTY_CHAT);
+            }
+            // It comes at every map load: a line only when it changes.
+            MapEvent::PartyRefusing(refusing) => {
+                if game.refusing_party.is_some_and(|known| known != refusing) {
+                    game.chat_line(self.messages.get(if refusing { PARTY_REFUSING } else { PARTY_ALLOWING }).cloned().unwrap_or_default(), CHAT_ITEM);
+                }
+                game.refusing_party = Some(refusing);
             }
             // Members' HP: in the window, and as a bar under them.
             MapEvent::PartyHp { account, hp, max } => {
@@ -6694,9 +6926,18 @@ impl App {
                     game.unit_hp.insert(account, (hp, max));
                 }
             }
-            MapEvent::PartyOptions { exp, .. } => {
+            // EXP 2: an even share was refused (the levels are too far apart); the item settings still change.
+            MapEvent::PartyOptions { exp, pickup, share } => {
                 if let Some(party) = &mut game.party {
-                    party.exp_shared = exp == 1;
+                    if exp != 2 {
+                        party.exp_shared = exp == 1;
+                    }
+                    party.pickup_shared = pickup;
+                    party.item_shared = share;
+                }
+                if exp == 2 {
+                    // ponytail: which line the official client prints for a refused share is an estimate.
+                    game.chat_line(self.messages.get(PARTY_SETUP_REFUSED).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
             }
             MapEvent::PartyLeader { old, new } => {
@@ -7110,11 +7351,22 @@ impl App {
             }
             MapEvent::WhisperSetting { allow, result } => {
                 let name = game.whisper_asked.pop_front().unwrap_or_default();
+                if result == 0 {
+                    if allow {
+                        game.blocked.remove(&name);
+                    } else {
+                        game.blocked.insert(name.clone());
+                    }
+                }
                 let id = if allow { ALLOW_RESULTS } else { BLOCK_RESULTS } + usize::from(result.min(2));
                 game.chat_line(format!("{name}{}", self.messages.get(id).cloned().unwrap_or_default()), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
             }
-            MapEvent::WhisperList(names) if names.is_empty() => game.chat_line(self.messages.get(BLOCKED_NONE).cloned().unwrap_or_default(), CHAT_ITEM),
+            MapEvent::WhisperList(names) if names.is_empty() => {
+                game.blocked.clear();
+                game.chat_line(self.messages.get(BLOCKED_NONE).cloned().unwrap_or_default(), CHAT_ITEM)
+            }
             MapEvent::WhisperList(names) => {
+                game.blocked = names.iter().cloned().collect();
                 for name in names {
                     game.chat_line(name, CHAT_ITEM);
                 }
@@ -7739,7 +7991,7 @@ impl App {
         }
         let player_feet = game.world.cell_position(player_cell);
         game.camera.target = player_feet;
-        if self.effects_on {
+        if self.graphics.effects_on {
             game.camera.target[1] += game.effects.quake(now);
         }
         game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame));
@@ -8407,12 +8659,17 @@ impl App {
         if let Some(member) = game.party.as_mut().and_then(|party| party.member(account)) {
             member.hp = Some(own_hp);
         }
+        // Announcements under the windows.
+        game.announcements.expire(now);
+        game.announcements.prepare(gpu, font);
+        let mut announce_layer = Layer::default();
+        game.announcements.draw(&mut announce_layer);
         // Weather over the map, under the names and windows.
         let mut weather_layer = Layer::default();
-        if self.effects_on {
+        if self.graphics.effects_on {
             game.weather.draw(&mut weather_layer, &assets.weather, now);
         }
-        let mut layers = vec![weather_layer, base, cutin_layer, chat_layer];
+        let mut layers = vec![weather_layer, base, announce_layer, cutin_layer, chat_layer];
         let mut preview = Some(preview);
         let cooling = skills::Cooling { cooldowns: &game.cooldowns, clocks: &assets.clocks[0], now: control::now(), note: message(COOLDOWN_LEFT) };
         for &id in &game.windows {
@@ -8717,6 +8974,7 @@ impl App {
         // colors.
         let colored_question = match (game.expansion_asked, &game.pet_asked) {
             _ if game.dismiss_asked => Some(message(mercenary::DISMISS_QUESTION).to_owned()),
+            _ if game.leader_asked.is_some() => Some(message(LEADER_QUESTION).to_owned()),
             _ if game.bind_asked.is_some() => Some(message(BIND_ASKS).to_owned()),
             (Some(voucher), _) => {
                 let now = inventory::BASE_SLOTS + usize::from(game.inventory.expansion);
@@ -8777,8 +9035,17 @@ impl App {
         if let Some(menu) = &game.escape {
             menu.draw(&mut shop_layer, &assets.chrome, &assets.escape, messages, pointer);
         }
+        if let Some(setup) = &game.party_setup {
+            setup.draw(&mut shop_layer, &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), messages, pointer);
+        }
         if let Some(window) = &game.audio_window {
             window.draw(&mut shop_layer, &assets.chrome, &assets.options, font, messages, sound, pointer.0);
+        }
+        if let Some(window) = &game.graphics_window {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.options, font, messages, &self.graphics, pointer.0);
+        }
+        if let Some(window) = &game.shortcuts_window {
+            window.draw(&mut shop_layer, &assets.chrome, font, messages, &self.shortcuts, pointer.0);
         }
         let mut menu_layer = Layer::default();
         if let Some(menu) = &game.menu {
@@ -8829,7 +9096,7 @@ impl App {
 
         game.effects.advance(gpu, now, yaw);
         // With /effect off, effects still play on, unseen, and their sounds come due without being heard.
-        let effects_on = self.effects_on;
+        let effects_on = self.graphics.effects_on;
         if let Some(audio) = audio {
             for (file, at) in game.effects.due_sounds(now).into_iter().filter(|_| effects_on) {
                 let distance = (at[0] - player_feet[0]).abs().max((at[2] - player_feet[2]).abs()) / world::CELL;
@@ -9024,9 +9291,13 @@ impl ApplicationHandler<NetEvent> for App {
                     // Through the chat line, so the client's commands (/organize, %) work too.
                     let say_at = std::env::var("RUSTNAROK_CLIENT_SAY_AT").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(1.0);
                     if let Some(texts) = game.auto_say.take_if(|_| game.entered.elapsed().as_secs_f32() >= say_at) {
+                        let effects_on = self.graphics.effects_on;
                         for text in texts.split('|') {
                             game.chat.input = text.to_owned();
-                            let _ = game.send_chat(false, false, &self.messages, &mut self.effects_on);
+                            let _ = game.send_chat(false, false, &self.messages, &mut self.graphics.effects_on);
+                        }
+                        if effects_on != self.graphics.effects_on {
+                            self.graphics.save();
                         }
                     }
                     // Dev switch RUSTNAROK_CLIENT_GUILD=window: the guild window, once the guild is known.
@@ -9066,11 +9337,15 @@ impl ApplicationHandler<NetEvent> for App {
                     }
                     if let Some(whispers) = std::env::var("RUSTNAROK_CLIENT_WHISPER").ok().filter(|_| game.whispered.is_empty() && game.chat.whisper.is_empty())
                     {
+                        let effects_on = self.graphics.effects_on;
                         for whisper in whispers.split(';') {
                             let (to, text) = whisper.split_once('|').unwrap_or((whisper, "hi"));
                             game.chat.whisper = to.to_owned();
                             game.chat.input = text.to_owned();
-                            let _ = game.send_chat(false, false, &self.messages, &mut self.effects_on);
+                            let _ = game.send_chat(false, false, &self.messages, &mut self.graphics.effects_on);
+                        }
+                        if effects_on != self.graphics.effects_on {
+                            self.graphics.save();
                         }
                     }
                 }
@@ -9241,6 +9516,8 @@ fn main() {
     let picking = connections.len() > 1 && std::env::var_os("RUSTNAROK_CLIENT_SERVER").is_none() && std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none();
     let quest_texts = quest::texts(&grf);
     let sound = sound::Settings::load();
+    let graphics = options::GraphicsSettings::load();
+    let shortcuts = options::ShortcutSettings::load();
     let mut app = App {
         grf,
         job_names,
@@ -9268,7 +9545,8 @@ fn main() {
         .flatten(),
         sound,
         music,
-        effects_on: true,
+        graphics,
+        shortcuts,
         cursor_look,
         loading_images,
         loading: None,
@@ -9357,6 +9635,17 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tells_what_a_map_turns_off() {
+        let miracle = net::MAP_SUN_MOON_STAR_MIRACLE;
+        assert_eq!(arrival_notices(miracle, 0), Vec::<usize>::new(), "prontera: nothing");
+        assert_eq!(arrival_notices(miracle | net::MAP_NO_COSTUME, 4047), [NO_COSTUME_NOTICE]);
+        assert_eq!(arrival_notices(0, 4047), [NO_MIRACLE_NOTICE], "a Star Gladiator where the Miracle is off");
+        assert_eq!(arrival_notices(0, 4302), [NO_MIRACLE_NOTICE], "a Sky Emperor too");
+        assert_eq!(arrival_notices(0, 4008), Vec::<usize>::new(), "anyone else: nothing");
+        assert_eq!(arrival_notices(net::MAP_NO_COSTUME, 4316), [NO_COSTUME_NOTICE, NO_MIRACLE_NOTICE]);
+    }
 
     #[test]
     fn keeps_what_circles_a_unit() {

@@ -1,0 +1,433 @@
+{
+  "about": "Party extras (issue #105): /refuse and /accept, a member's pickup shown to the party, the setup window (item settings change for everyone, an even EXP share refused between levels 99 and 1), and handing over the leader from the party window. The refusal is saved on the character: RUSTNAROK_CLIENT_SCENARIO_RESET should set char.disable_partyinvite to 0 for both characters.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0,
+    "env": {
+      "RUSTNAROK_CLIENT_PARTY": "accept"
+    }
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "type": "/leave"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "as": "second",
+      "type": "/leave"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "as": "second",
+      "type": "/refuse"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x02c9",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "expect": {
+        "chat": "Block all party invitations.",
+        "state": {
+          "refusing_party": true
+        }
+      }
+    },
+    {
+      "type": "/organize QAExtras"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "click_on": {
+        "unit": "{second}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "party"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x02c5",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "blocked the party invitation"
+      }
+    },
+    {
+      "as": "second",
+      "type": "/accept"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x02c9",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "expect": {
+        "chat": "Allow all party invitations.",
+        "state": {
+          "refusing_party": false
+        }
+      }
+    },
+    {
+      "click_on": {
+        "unit": "{second}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "party"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x02c5",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "chat": "Request for party accepted."
+      }
+    },
+    {
+      "say": "#item \"{second}\" 1201"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "key": "Alt+E"
+    },
+    {
+      "as": "second",
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "tab:equip"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "drag_on": [
+        {
+          "inventory_item": 1201
+        },
+        {
+          "point": [
+            700,
+            520
+          ]
+        }
+      ]
+    },
+    {
+      "as": "second",
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "ground_item": 1201
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b67",
+        "ms": 6000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "has acquired"
+      }
+    },
+    {
+      "shot": "party-pickup",
+      "crop": [
+        0,
+        600,
+        620,
+        168
+      ]
+    },
+    {
+      "as": "second",
+      "key": "Alt+E"
+    },
+    {
+      "key": "Alt+Z"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click_on": {
+        "button": "setup"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "PartySetup"
+        ]
+      }
+    },
+    {
+      "shot": "party-setup"
+    },
+    {
+      "click_on": {
+        "button": "pickup_party"
+      }
+    },
+    {
+      "click_on": {
+        "button": "share_shared"
+      }
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x07d8",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "PartySetup"
+        ],
+        "state": {
+          "party.pickup_shared": true,
+          "party.item_shared": true
+        }
+      }
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "party.pickup_shared": true,
+          "party.item_shared": true
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "setup"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "exp_even"
+      }
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x07d8",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "You can't modify Party Setup.",
+        "state": {
+          "party.exp_shared": false
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "member:{second}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "Assign Party Leader"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "LeaderAsked"
+        ]
+      }
+    },
+    {
+      "shot": "leader-asked"
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x07fc",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "LeaderAsked"
+        ],
+        "state": {
+          "party.leader": "{second}"
+        }
+      }
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "party.leader": "{second}"
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "party-new-leader"
+    },
+    {
+      "say": "#delitem \"{second}\" 1201 1"
+    },
+    {
+      "as": "second",
+      "type": "/leave"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "type": "/leave"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    }
+  ]
+}

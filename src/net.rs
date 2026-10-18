@@ -443,6 +443,8 @@ fn packet_length(id: u16) -> Option<i32> {
 
 /// Dev hook (the client's control socket): sees every packet read from the char and map servers.
 pub static PACKET_HOOK: std::sync::OnceLock<fn(&[u8])> = std::sync::OnceLock::new();
+/// Dev hook (the control socket): sees every packet written to the map server.
+pub static SENT_HOOK: std::sync::OnceLock<fn(&[u8])> = std::sync::OnceLock::new();
 
 /// Reads one packet: fixed lengths come from the table, variable ones carry their length at offset 2.
 fn read_packet(reader: &mut impl Read) -> io::Result<Vec<u8>> {
@@ -698,6 +700,11 @@ const CZ_MOVE_ITEM_FROM_CART_TO_BODY: u16 = 0x0127;
 const ZC_ADD_ITEM_TO_CART: u16 = 0x0B45;
 const ZC_NOTIFY_UNREADMAIL: u16 = 0x09E7;
 const ZC_BROADCAST: u16 = 0x009A;
+const ZC_MAPPROPERTY_R2: u16 = 0x099B;
+const CZ_BLOCKING_PLAY_CANCEL: u16 = 0x0447;
+/// ZC_MAPPROPERTY_R2's flags (rathena's `clif_map_property`).
+pub const MAP_NO_COSTUME: u32 = 1 << 8;
+pub const MAP_SUN_MOON_STAR_MIRACLE: u32 = 1 << 10;
 const ZC_BROADCAST2: u16 = 0x01C3;
 const ZC_MSG: u16 = 0x0291;
 const ZC_MSG_VALUE: u16 = 0x07E2;
@@ -983,6 +990,11 @@ const ZC_NOTIFY_CHAT_PARTY: u16 = 0x0109;
 const ZC_NOTIFY_POSITION_TO_GROUPM: u16 = 0x0107;
 const ZC_NOTIFY_HP_TO_GROUPM: u16 = 0x080E;
 const ZC_REQ_GROUPINFO_CHANGE_V2: u16 = 0x07D8;
+const CZ_GROUPINFO_CHANGE_V2: u16 = 0x07D7;
+const CZ_CHANGE_GROUP_MASTER: u16 = 0x07DA;
+const ZC_ITEM_PICKUP_PARTY: u16 = 0x0B67;
+const CZ_PARTY_CONFIG: u16 = 0x02C8;
+const ZC_PARTY_CONFIG: u16 = 0x02C9;
 const ZC_CHANGE_GROUP_MASTER: u16 = 0x07FC;
 const ZC_GROUP_ISALIVE: u16 = 0x0AB2;
 const ZC_NOTIFY_MEMBERINFO_TO_GROUPM: u16 = 0x0ABD;
@@ -1122,6 +1134,47 @@ pub struct Pet {
     pub accessory: u16,
     /// The monster it is.
     pub monster: u16,
+}
+
+/// What kind of announcement a ZC_BROADCAST is, by its prefix.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BroadcastKind {
+    Normal,
+    /// "ssss": War of Emperium notices.
+    Woe,
+    /// "micc": a speaker's, by name (dropped when the player blocks that name).
+    Speaker(String),
+}
+
+const BROADCAST_YELLOW: [u8; 3] = [0xFF, 0xFF, 0x00];
+const BROADCAST_BLUE: [u8; 3] = [0x00, 0xFF, 0xFF];
+
+/// "RRGGBB" as a color; yellow when it isn't one.
+fn hex_color(text: &[u8]) -> [u8; 3] {
+    let hex = std::str::from_utf8(text).ok().and_then(|text| u32::from_str_radix(text, 16).ok()).filter(|_| text.len() == 6);
+    hex.map_or(BROADCAST_YELLOW, |value| [(value >> 16) as u8, (value >> 8) as u8, value as u8])
+}
+
+/// ZC_BROADCAST's text (from byte 4): its prefix ("tool", "blue", "micc", "ssss", any case) decides the color and
+/// where the words start; without one, a `#…` part up to the first `:` is cut out.
+fn decode_broadcast(message: &[u8]) -> (String, [u8; 3], BroadcastKind) {
+    let prefix = message.get(..4).map(<[u8]>::to_ascii_lowercase).unwrap_or_default();
+    let text = |from: usize| c_string(message.get(from..).unwrap_or_default());
+    match prefix.as_slice() {
+        b"tool" => (text(10), hex_color(message.get(4..10).unwrap_or_default()), BroadcastKind::Normal),
+        b"blue" => (text(4), BROADCAST_BLUE, BroadcastKind::Normal),
+        b"micc" => (text(34), hex_color(message.get(28..34).unwrap_or_default()), BroadcastKind::Speaker(c_string(message.get(4..28).unwrap_or_default()))),
+        b"ssss" => (text(4), BROADCAST_YELLOW, BroadcastKind::Woe),
+        _ => {
+            let mut text = text(0);
+            if let Some(hash) = text.char_indices().skip(1).find(|&(_, character)| character == '#').map(|(at, _)| at)
+                && let Some(colon) = text[hash..].find(':')
+            {
+                text.replace_range(hash..hash + colon, "");
+            }
+            (text, BROADCAST_YELLOW, BroadcastKind::Normal)
+        }
+    }
 }
 
 /// The player's mercenary as ZC_MER_INIT has it.
@@ -1545,10 +1598,17 @@ pub enum MapEvent {
         time: u32,
     },
     /// An announcement: plain ones yellow (or blue when the server asks), ZC_BROADCAST2 in its own color.
+    /// The map's property (rathena's `map_property`) and its flags (MAP_*), at every load and flag change.
+    MapProperty {
+        property: u16,
+        flags: u32,
+    },
+    /// A server announcement, its color resolved; `size` is ZC_BROADCAST2's font size.
     Broadcast {
         text: String,
-        color: Option<[u8; 3]>,
-        blue: bool,
+        color: [u8; 3],
+        kind: BroadcastKind,
+        size: Option<u16>,
     },
     /// Someone got a special item: out of a box (its item), from a monster (its name), or from an NPC (neither).
     ItemObtained {
@@ -2095,11 +2155,20 @@ pub enum MapEvent {
         account: u32,
         text: String,
     },
-    /// A member's place on the minimap.
+    /// A member's place on the minimap; none when they left the map.
     PartyPosition {
         account: u32,
-        cell: [u16; 2],
+        cell: Option<[u16; 2]>,
     },
+    /// A member (by account) picked up an item.
+    PartyPickup {
+        account: u32,
+        item: u32,
+        identified: bool,
+        refine: u8,
+    },
+    /// Whether the player refuses party invitations.
+    PartyRefusing(bool),
     PartyHp {
         account: u32,
         hp: i32,
@@ -2672,7 +2741,19 @@ pub struct MapTicket {
 }
 
 pub struct MapSession {
-    stream: TcpStream,
+    stream: Wire,
+}
+
+/// The map server's socket: every packet written is shown to `SENT_HOOK` first.
+struct Wire(TcpStream);
+
+impl Wire {
+    fn write_all(&mut self, packet: &[u8]) -> io::Result<()> {
+        if let Some(hook) = SENT_HOOK.get() {
+            hook(packet);
+        }
+        self.0.write_all(packet)
+    }
 }
 
 impl MapSession {
@@ -2700,7 +2781,7 @@ impl MapSession {
             };
             on_event(MapEvent::Disconnected(error));
         });
-        Ok(Self { stream })
+        Ok(Self { stream: Wire(stream) })
     }
 
     /// Tells the server the map is loaded; it then sends everything in view.
@@ -3469,6 +3550,27 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Tells the server the client is ready after a map property (CZ_BLOCKING_PLAY_CANCEL).
+    pub fn ready_to_play(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_blocking_play_cancel())
+    }
+
+    /// Refuses (or accepts again) party invitations; the answer is `PartyRefusing`.
+    pub fn refuse_parties(&mut self, refuse: bool) -> io::Result<()> {
+        let [low, high] = CZ_PARTY_CONFIG.to_le_bytes();
+        self.stream.write_all(&[low, high, u8::from(refuse)])
+    }
+
+    /// The leader's party settings: even EXP share, items to the party on pickup, items shared out.
+    pub fn party_options(&mut self, exp_even: bool, pickup: bool, share: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_party_options(exp_even, pickup, share))
+    }
+
+    /// Hands the party to another member (the leader only).
+    pub fn change_party_leader(&mut self, account: u32) -> io::Result<()> {
+        self.send_id(CZ_CHANGE_GROUP_MASTER, account)
+    }
+
     /// Invites a character, by name, into the party.
     pub fn invite_to_party(&mut self, name: &str) -> io::Result<()> {
         let mut packet = CZ_PARTY_JOIN_REQ.to_le_bytes().to_vec();
@@ -3593,7 +3695,7 @@ impl MapSession {
 
 impl Drop for MapSession {
     fn drop(&mut self) {
-        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        let _ = self.stream.0.shutdown(std::net::Shutdown::Both);
     }
 }
 
@@ -3861,6 +3963,21 @@ fn encode_hatch(index: u16) -> [u8; 4] {
     let mut packet = [0u8; 4];
     packet[..2].copy_from_slice(&CZ_SELECT_PETEGG.to_le_bytes());
     packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_BLOCKING_PLAY_CANCEL: the header alone.
+fn encode_blocking_play_cancel() -> [u8; 2] {
+    CZ_BLOCKING_PLAY_CANCEL.to_le_bytes()
+}
+
+/// CZ_GROUPINFO_CHANGE_V2: EXP (0 each takes, 1 even) u32, then the pickup and distribution flags.
+fn encode_party_options(exp_even: bool, pickup: bool, share: bool) -> [u8; 8] {
+    let mut packet = [0u8; 8];
+    packet[..2].copy_from_slice(&CZ_GROUPINFO_CHANGE_V2.to_le_bytes());
+    packet[2..6].copy_from_slice(&u32::from(exp_even).to_le_bytes());
+    packet[6] = u8::from(pickup);
+    packet[7] = u8::from(share);
     packet
 }
 
@@ -4391,14 +4508,15 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         },
         ZC_NOTIFY_UNREADMAIL => MapEvent::MailUnread(packet[2] != 0),
         // "blue" (and "ssss" for the War of Emperium) at the start are color hints, not words.
+        ZC_MAPPROPERTY_R2 => MapEvent::MapProperty { property: u16_at(2), flags: u32_at(4) },
         ZC_BROADCAST => {
-            let text = c_string(&packet[4..]);
-            let blue = text.starts_with("blue");
-            let text = text.strip_prefix("blue").or_else(|| text.strip_prefix("ssss")).unwrap_or(&text).to_owned();
-            MapEvent::Broadcast { text, color: None, blue }
+            let (text, color, kind) = decode_broadcast(&packet[4..]);
+            MapEvent::Broadcast { text, color, kind, size: None }
         }
-        // The color is 0xRRGGBB, little-endian.
-        ZC_BROADCAST2 => MapEvent::Broadcast { text: c_string(&packet[16..]), color: Some([packet[6], packet[5], packet[4]]), blue: false },
+        // The color is 0xRRGGBB, little-endian; the font size is at 10 (type, alignment and Y aren't used).
+        ZC_BROADCAST2 => {
+            MapEvent::Broadcast { text: c_string(&packet[16..]), color: [packet[6], packet[5], packet[4]], kind: BroadcastKind::Normal, size: Some(u16_at(10)) }
+        }
         // The player's name and what it came from each come after their length: a box's item ID (4), a monster's
         // name (24), nothing for an NPC.
         ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN => {
@@ -4938,7 +5056,13 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_PARTY_JOIN_REQ => MapEvent::PartyInvite { party: u32_at(2), name: c_string(&packet[6..30]) },
         ZC_PARTY_JOIN_REQ_ACK => MapEvent::PartyInviteResult { name: c_string(&packet[2..26]), result: u32_at(26) },
         ZC_NOTIFY_CHAT_PARTY => MapEvent::PartyChat { account: u32_at(4), text: c_string(&packet[8..]) },
-        ZC_NOTIFY_POSITION_TO_GROUPM => MapEvent::PartyPosition { account: u32_at(2), cell: [u16_at(6), u16_at(8)] },
+        // clif_party_xy_remove sends -1, -1: the member left the map.
+        ZC_NOTIFY_POSITION_TO_GROUPM => {
+            let cell = [u16_at(6), u16_at(8)];
+            MapEvent::PartyPosition { account: u32_at(2), cell: (cell != [u16::MAX; 2]).then_some(cell) }
+        }
+        ZC_ITEM_PICKUP_PARTY => MapEvent::PartyPickup { account: u32_at(2), item: u32_at(6), identified: packet[10] != 0, refine: packet[31] },
+        ZC_PARTY_CONFIG => MapEvent::PartyRefusing(packet[2] != 0),
         ZC_NOTIFY_HP_TO_GROUPM => MapEvent::PartyHp { account: u32_at(2), hp: u32_at(6) as i32, max: u32_at(10) as i32 },
         ZC_REQ_GROUPINFO_CHANGE_V2 => MapEvent::PartyOptions { exp: u32_at(2), pickup: packet[6] != 0, share: packet[7] != 0 },
         ZC_CHANGE_GROUP_MASTER => MapEvent::PartyLeader { old: u32_at(2), new: u32_at(6) },
@@ -5301,8 +5425,26 @@ mod tests {
         blue.extend_from_slice(b"blueHello all\0");
         let length = blue.len() as u16;
         blue[2..4].copy_from_slice(&length.to_le_bytes());
-        let Some(MapEvent::Broadcast { text, color: None, blue: true }) = decode_map_packet(&blue) else { panic!() };
+        let Some(MapEvent::Broadcast { text, color: BROADCAST_BLUE, kind: BroadcastKind::Normal, size: None }) = decode_map_packet(&blue) else { panic!() };
         assert_eq!(text, "Hello all");
+
+        // Every prefix, in either case.
+        for (message, want, color, kind) in [
+            (&b"Hello\0"[..], "Hello", BROADCAST_YELLOW, BroadcastKind::Normal),
+            (b"BLUEShout\0", "Shout", BROADCAST_BLUE, BroadcastKind::Normal),
+            (b"ssssThe War of Emperium has begun.\0", "The War of Emperium has begun.", BROADCAST_YELLOW, BroadcastKind::Woe),
+            (b"toolFF8800Orange\0", "Orange", [0xFF, 0x88, 0x00], BroadcastKind::Normal),
+            (b"TOOLzzzzzzBad hex\0", "Bad hex", BROADCAST_YELLOW, BroadcastKind::Normal),
+            // A name's #tag up to the first colon goes.
+            (b"GM#1234 : Server restart\0", "GM: Server restart", BROADCAST_YELLOW, BroadcastKind::Normal),
+            (b"#notag at the start\0", "#notag at the start", BROADCAST_YELLOW, BroadcastKind::Normal),
+        ] {
+            assert_eq!(decode_broadcast(message), (want.to_owned(), color, kind), "{}", String::from_utf8_lossy(message));
+        }
+        let mut speaker = b"micc".to_vec();
+        speaker.extend_from_slice(&name_field("Loud"));
+        speaker.extend_from_slice(b"00FF00Buy potions\0");
+        assert_eq!(decode_broadcast(&speaker), ("Buy potions".to_owned(), [0, 0xFF, 0], BroadcastKind::Speaker("Loud".into())));
 
         let mut colored = ZC_BROADCAST2.to_le_bytes().to_vec();
         colored.extend_from_slice(&[0, 0]);
@@ -5311,8 +5453,9 @@ mod tests {
         colored.extend_from_slice(b"Event!\0");
         let length = colored.len() as u16;
         colored[2..4].copy_from_slice(&length.to_le_bytes());
-        let Some(MapEvent::Broadcast { text, color: Some(color), .. }) = decode_map_packet(&colored) else { panic!() };
-        assert_eq!((text.as_str(), color), ("Event!", [0xFF, 0x80, 0x00]));
+        colored[10..12].copy_from_slice(&16u16.to_le_bytes());
+        let Some(MapEvent::Broadcast { text, color, size, .. }) = decode_map_packet(&colored) else { panic!() };
+        assert_eq!((text.as_str(), color, size), ("Event!", [0xFF, 0x80, 0x00], Some(16)));
 
         let mut value = ZC_MSG_VALUE.to_le_bytes().to_vec();
         value.extend_from_slice(&178u16.to_le_bytes());
@@ -5658,6 +5801,47 @@ mod tests {
         assert_eq!(encode_refine(4, 1010, true), [0xA3, 0x0A, 4, 0, 0xF2, 0x03, 0, 0, 1]);
         let ids = [ZC_OPEN_REFINING_UI, CZ_REFINING_SELECT_ITEM, ZC_REFINING_MATERIAL_LIST, CZ_REQ_REFINING, CZ_CLOSE_REFINING_UI, ZC_ACK_ITEMREFINING];
         assert_eq!(ids.map(packet_length), [Some(2), Some(4), Some(-1), Some(9), Some(2), Some(8)]);
+    }
+
+    #[test]
+    fn decodes_the_map_property() {
+        let packet = [&ZC_MAPPROPERTY_R2.to_le_bytes()[..], &3u16.to_le_bytes(), &(MAP_NO_COSTUME | 1).to_le_bytes()].concat();
+        assert!(matches!(decode_map_packet(&packet), Some(MapEvent::MapProperty { property: 3, flags }) if flags == MAP_NO_COSTUME | 1));
+        assert_eq!(packet_length(ZC_MAPPROPERTY_R2), Some(8));
+        assert_eq!(encode_blocking_play_cancel(), [0x47, 0x04]);
+        assert_eq!(packet_length(CZ_BLOCKING_PLAY_CANCEL), Some(2));
+    }
+
+    #[test]
+    fn decodes_party_extras() {
+        // clif_party_show_picker: a Knife +4, identified, picked up by account 2000001.
+        let mut pickup = vec![0u8; 33];
+        pickup[..2].copy_from_slice(&ZC_ITEM_PICKUP_PARTY.to_le_bytes());
+        pickup[2..6].copy_from_slice(&2_000_001u32.to_le_bytes());
+        pickup[6..10].copy_from_slice(&1201u32.to_le_bytes());
+        pickup[10] = 1;
+        pickup[30] = 5;
+        pickup[31] = 4;
+        assert!(matches!(decode_map_packet(&pickup), Some(MapEvent::PartyPickup { account: 2_000_001, item: 1201, identified: true, refine: 4 })));
+        assert_eq!(packet_length(ZC_ITEM_PICKUP_PARTY), Some(33));
+        assert!(matches!(decode_map_packet(&[0xC9, 0x02, 1]), Some(MapEvent::PartyRefusing(true))));
+        assert!(matches!(decode_map_packet(&[0xC9, 0x02, 0]), Some(MapEvent::PartyRefusing(false))));
+
+        // clif_party_option: all three, and the refused EXP share (2).
+        let options = |exp: u32, pickup: u8, share: u8| [&ZC_REQ_GROUPINFO_CHANGE_V2.to_le_bytes()[..], &exp.to_le_bytes(), &[pickup, share]].concat();
+        assert!(matches!(decode_map_packet(&options(1, 1, 0)), Some(MapEvent::PartyOptions { exp: 1, pickup: true, share: false })));
+        assert!(matches!(decode_map_packet(&options(2, 0, 1)), Some(MapEvent::PartyOptions { exp: 2, pickup: false, share: true })));
+
+        // clif_party_xy_remove: -1, -1.
+        let position = |x: i16, y: i16| [&ZC_NOTIFY_POSITION_TO_GROUPM.to_le_bytes()[..], &7u32.to_le_bytes(), &x.to_le_bytes(), &y.to_le_bytes()].concat();
+        assert!(matches!(decode_map_packet(&position(-1, -1)), Some(MapEvent::PartyPosition { account: 7, cell: None })));
+        assert!(matches!(decode_map_packet(&position(156, 180)), Some(MapEvent::PartyPosition { account: 7, cell: Some([156, 180]) })));
+
+        assert_eq!(encode_party_options(true, false, true), [0xD7, 0x07, 1, 0, 0, 0, 0, 1]);
+        assert_eq!(encode_party_options(false, true, false), [0xD7, 0x07, 0, 0, 0, 0, 1, 0]);
+        for (header, length) in [(CZ_PARTY_CONFIG, 3), (ZC_PARTY_CONFIG, 3), (CZ_GROUPINFO_CHANGE_V2, 8), (CZ_CHANGE_GROUP_MASTER, 6)] {
+            assert_eq!(packet_length(header), Some(length), "{header:#06x}");
+        }
     }
 
     #[test]

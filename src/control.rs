@@ -104,6 +104,9 @@ pub enum Command {
         #[serde(default, deserialize_with = "packet_id")]
         packet: Option<u16>,
         event: Option<String>,
+        /// A packet the client sends, by ID.
+        #[serde(default, deserialize_with = "packet_id")]
+        sent: Option<u16>,
         #[serde(default)]
         fresh: bool,
         #[serde(default)]
@@ -186,6 +189,8 @@ struct Entry {
 
 enum Seen {
     Packet(u16),
+    /// A packet the client sent the map server.
+    Sent(u16),
     Event(String),
 }
 
@@ -208,6 +213,7 @@ pub fn listen(proxy: EventLoopProxy<NetEvent>) {
     let path = Path::new(&path);
     let (listener, token) = bind(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     let _ = net::PACKET_HOOK.set(packet_seen);
+    let _ = net::SENT_HOOK.set(packet_sent);
     ON.store(true, Ordering::Relaxed);
     eprintln!("control socket at {}", path.display());
     std::thread::spawn(move || {
@@ -258,7 +264,7 @@ fn serve(stream: Stream, proxy: &EventLoopProxy<NetEvent>, token: Option<&str>) 
             continue;
         }
         let reply = match serde_json::from_str::<Command>(&line) {
-            Ok(Command::Wait { ms, packet, event, fresh, pause, first }) => wait(proxy, ms, packet, event, fresh, pause, first),
+            Ok(Command::Wait { ms, packet, event, sent, fresh, pause, first }) => wait(proxy, ms, (packet, event, sent), fresh, pause, first),
             Ok(Command::Trace { last, events }) => trace(last.unwrap_or(20), events),
             Ok(command) => {
                 MARK.store(LOG.lock().unwrap().next, Ordering::Relaxed);
@@ -283,8 +289,7 @@ fn forward(proxy: &EventLoopProxy<NetEvent>, command: Command) -> Value {
 fn wait(
     proxy: &EventLoopProxy<NetEvent>,
     ms: Option<u64>,
-    packet: Option<u16>,
-    event: Option<String>,
+    (packet, event, sent): (Option<u16>, Option<String>, Option<u16>),
     fresh: bool,
     pause: bool,
     first: Option<Box<Command>>,
@@ -298,7 +303,7 @@ fn wait(
             return done;
         }
     }
-    if packet.is_none() && event.is_none() {
+    if packet.is_none() && event.is_none() && sent.is_none() {
         std::thread::sleep(Duration::from_millis(ms.unwrap_or(0)));
         return json!({"ok": true});
     }
@@ -309,6 +314,7 @@ fn wait(
         let mark = MARK.load(Ordering::Relaxed);
         let wanted = |entry: &&Entry| match &entry.seen {
             Seen::Packet(id) => packet == Some(*id),
+            Seen::Sent(id) => sent == Some(*id),
             Seen::Event(name) => event.as_deref() == Some(name.as_str()),
         };
         if let Some(entry) = log.entries.iter().filter(|entry| entry.seq >= mark).find(wanted) {
@@ -329,7 +335,8 @@ fn wait(
 
 fn trace(last: usize, events: bool) -> Value {
     let log = LOG.lock().unwrap();
-    let lines: Vec<&str> = log.entries.iter().filter(|entry| events || matches!(entry.seen, Seen::Packet(_))).map(|entry| entry.text.as_str()).collect();
+    let lines: Vec<&str> =
+        log.entries.iter().filter(|entry| events || matches!(entry.seen, Seen::Packet(_) | Seen::Sent(_))).map(|entry| entry.text.as_str()).collect();
     json!({"ok": true, "trace": lines[lines.len().saturating_sub(last)..].join("\n")})
 }
 
@@ -348,6 +355,12 @@ fn record(seen: Seen, text: String) {
 fn packet_seen(packet: &[u8]) {
     let id = u16::from_le_bytes([packet[0], packet[1]]);
     record(Seen::Packet(id), format!("{:05} <- {id:#06x} {} {:02x?}", trace_ms(), packet.len(), &packet[..packet.len().min(32)]));
+}
+
+/// Every packet the client writes to the map server, as `->` lines.
+fn packet_sent(packet: &[u8]) {
+    let id = u16::from_le_bytes([packet[0], packet[1]]);
+    record(Seen::Sent(id), format!("{:05} -> {id:#06x} {} {:02x?}", trace_ms(), packet.len(), &packet[..packet.len().min(32)]));
 }
 
 /// The `RUSTNAROK_CLIENT_TRACE` timestamp: wall-clock milliseconds, the last five digits.
@@ -798,6 +811,16 @@ fn game_state(app: &App, game: &Game) -> Value {
     };
     let jobs = app.skill_trees.lineage(game.me.job);
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
+    // The leader question's OK and Cancel, in the message box.
+    let leader_question: Vec<(&str, [f32; 4])> = match (&app.assets, game.leader_asked) {
+        (Some(assets), Some(_)) => {
+            let dialog = crate::dialog_position(&assets.message);
+            [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)]
+                .map(|(name, place, images)| (name, [dialog[0] + place[0], dialog[1] + place[1], images[0].size[0], images[0].size[1]]))
+                .to_vec()
+        }
+        _ => Vec::new(),
+    };
     let targets: Vec<Value> = game
         .inventory
         .item_boxes()
@@ -843,6 +866,15 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(
+            game.party_window
+                .button_boxes(game.party.as_ref(), &game.friends, game.account_id)
+                .into_iter()
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(game.inventory.tab_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.party_setup.iter().flat_map(|setup| setup.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(leader_question.into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
             game.mercenary.iter().flat_map(|_| game.mercenary_window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(
@@ -866,6 +898,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("Shop", game.shop.is_some()),
         ("Refine", game.refine.is_some()),
         ("Materials", game.materials.is_some()),
+        ("PartySetup", game.party_setup.is_some()),
+        ("LeaderAsked", game.leader_asked.is_some()),
         ("Roulette", game.roulette.is_some()),
         ("MonsterInfo", game.monster_window.is_some()),
         ("Achievements", game.achievement_window.frame.open),
@@ -901,6 +935,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("MailWrite", game.mail.compose.is_some()),
         ("NewMail", game.mail.unread),
         ("AudioSettings", game.audio_window.is_some()),
+        ("GraphicsSettings", game.graphics_window.is_some()),
+        ("ShortcutSettings", game.shortcuts_window.is_some()),
         ("WorldMap", game.world_map.is_some()),
         ("Quests", game.quest_window.frame.open),
     ];
@@ -985,6 +1021,20 @@ fn game_state(app: &App, game: &Game) -> Value {
         "aimed_skill": game.targeting.map(|(id, level)| json!({"id": id, "level": level, "name": app.skill_info.get(&id).map(|info| info.name.as_str())})),
         "units": units,
         // The player's pet as the server last told it, or null.
+        "party": game.party.as_ref().map(|party| {
+            let leader = party.members.iter().find(|member| member.info.leader).map(|member| member.info.name.clone());
+            json!({
+                "name": party.name,
+                "leader": leader,
+                "members": party.members.iter().map(|member| member.info.name.clone()).collect::<Vec<_>>(),
+                "exp_shared": party.exp_shared,
+                "pickup_shared": party.pickup_shared,
+                "item_shared": party.item_shared,
+            })
+        }),
+        "refusing_party": game.refusing_party,
+        // The texts in the announcement bar, oldest first.
+        "announcements": game.announcements.texts(),
         "mercenary": game.mercenary.as_ref().map(|hired| json!({"id": hired.id, "name": hired.name, "level": hired.level, "hp": hired.hp, "loyalty": hired.loyalty, "summons": hired.summons, "kills": hired.kills, "following": game.steering.following, "order": game.steering.order.map(|order| format!("{order:?}"))})),
         "pet": game.pet.as_ref().map(|pet| json!({"id": game.pet_id, "name": pet.name, "level": pet.level, "hunger": pet.hunger, "intimacy": pet.intimacy, "accessory": pet.accessory, "renamed": pet.renamed})),
         "ground_items": ground,
@@ -1011,9 +1061,18 @@ mod tests {
         );
         assert_eq!(
             parse(r#"{"cmd":"wait","packet":"0x08c8","pause":true,"do":{"cmd":"key","key":"F1"}}"#).unwrap(),
-            Command::Wait { ms: None, packet: Some(0x08c8), event: None, fresh: false, pause: true, first: Some(Box::new(Command::Key { key: "F1".into() })) }
+            Command::Wait {
+                ms: None,
+                packet: Some(0x08c8),
+                event: None,
+                sent: None,
+                fresh: false,
+                pause: true,
+                first: Some(Box::new(Command::Key { key: "F1".into() }))
+            }
         );
         assert!(matches!(parse(r#"{"cmd":"wait","packet":2248,"ms":500}"#), Ok(Command::Wait { packet: Some(0x08c8), ms: Some(500), .. })));
+        assert!(matches!(parse(r#"{"cmd":"wait","sent":"0x0447"}"#), Ok(Command::Wait { sent: Some(0x0447), packet: None, .. })));
         assert_eq!(parse(r#"{"cmd":"clock","action":"step","ms":50}"#).unwrap(), Command::Clock { action: ClockAction::Step, ms: Some(50) });
         assert_eq!(parse(r#"{"cmd":"state"}"#).unwrap(), Command::State);
         // A missing coordinate, a misspelt field, an unknown command, a bad packet ID.

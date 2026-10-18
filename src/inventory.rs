@@ -253,6 +253,22 @@ impl Inventory {
         HEIGHT
     }
 
+    /// The three tabs on screen (for the test driver): `tab:item`, `tab:equip`, `tab:etc`.
+    pub fn tab_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized {
+            return Vec::new();
+        }
+        let height = TABS_SIZE[1] / TABS as f32;
+        ["tab:item", "tab:equip", "tab:etc"]
+            .into_iter()
+            .enumerate()
+            .map(|(tab, name)| {
+                let [x, y] = self.frame.at([TABS_AT[0], TABS_AT[1] + tab as f32 * height]);
+                (name, [x, y, TABS_SIZE[0], height])
+            })
+            .collect()
+    }
+
     /// The listed items' cells on screen (the open tab, the rows scrolled to): inventory index and box.
     pub fn item_boxes(&self) -> Vec<(u16, [f32; 4])> {
         if !self.frame.open || self.frame.minimized {
