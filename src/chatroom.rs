@@ -9,8 +9,20 @@ use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, SCREEN, UI, contains, offset};
 
 // ponytail: places are estimates; calibrate against the real client.
-pub const SIGN: [f32; 2] = [140.0, 26.0];
-const SIGN_BORDER: [u8; 4] = [0xC1, 0xC6, 0xC2, 0xFF];
+/// The board over an owner's head, and where its text starts inside.
+pub const SIGN: [f32; 2] = [140.0, 34.0];
+const SIGN_TEXT: [f32; 2] = [31.0, 8.0];
+/// How far over the feet a shop board's bottom sits, in sprite pixels (the head height); a chat room's sits 17 screen
+/// pixels lower.
+pub const SIGN_ABOVE: f32 = 96.0;
+const ROOM_DROP: f32 = 17.0;
+/// A shop board: grey frame, white, and a yellow band inside.
+const SHOP_FRAME: [u8; 4] = [0xC3, 0xC3, 0xC3, 0xFF];
+const SHOP_BAND: [u8; 4] = [0xFF, 0xFA, 0x7D, 0xFF];
+/// The system box's corner and edge pieces, and the chat room board's tail under its middle.
+const PIECE: f32 = 14.0;
+const TAIL: usize = 6;
+const TAIL_EDGE: [u8; 4] = [0x8C, 0x8C, 0x8C, 0xFF];
 const ROOM_WIDTH: f32 = 279.0;
 const ROOM_LIST: f32 = 120.0;
 const ROOM_SEND: f32 = 30.0;
@@ -68,7 +80,11 @@ pub struct Assets {
     /// Open and password-locked room icons, a vendor's shop, and a buying store.
     icons: [Texture; 4],
     white: Texture,
-    border: Texture,
+    frame: Texture,
+    band: Texture,
+    tail_edge: Texture,
+    /// The system box: corners, edges (lu, mu, ru, lm, rm, ld, md, rd).
+    pieces: [Texture; 8],
     ok: [Texture; 3],
     cancel: [Texture; 3],
     footer: Texture,
@@ -81,7 +97,10 @@ impl Assets {
         Self {
             icons: [image("chat_open"), image("chat_close"), image("shop"), image("buyingshop")],
             white: gpu.solid([255; 4]),
-            border: gpu.solid(SIGN_BORDER),
+            frame: gpu.solid(SHOP_FRAME),
+            band: gpu.solid(SHOP_BAND),
+            tail_edge: gpu.solid(TAIL_EDGE),
+            pieces: ["lu", "mu", "ru", "lm", "rm", "ld", "md", "rd"].map(|name| image(&format!("sysbox_{name}"))),
             ok: ["btn_ok", "btn_ok_a", "btn_ok_b"].map(image),
             cancel: ["btn_cancel", "btn_cancel_a", "btn_cancel_b"].map(image),
             footer: image("basic_interface\\btnbar_mid2"),
@@ -90,19 +109,55 @@ impl Assets {
     }
 }
 
-/// Draws a sign with its top middle at `top`.
-pub fn draw_sign<'a>(layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, sign: &Sign, top: [f32; 2]) -> [f32; 4] {
-    let corner = [(top[0] - SIGN[0] / 2.0).round(), top[1].round()];
-    layer.sprites.push((&assets.white, corner, SIGN));
-    let inner = offset(corner, [2.0, 2.0]);
-    let size = [SIGN[0] - 4.0, SIGN[1] - 4.0];
-    for (place, edge) in [
-        (inner, [size[0], 1.0]),
-        (inner, [1.0, size[1]]),
-        (offset(inner, [0.0, size[1] - 1.0]), [size[0], 1.0]),
-        (offset(inner, [size[0] - 1.0, 0.0]), [1.0, size[1]]),
-    ] {
-        layer.sprites.push((&assets.border, place, edge));
+/// Whether a sign is a shop's board (a vendor's or a buying store's), not a chat room's.
+fn is_shop(kind: u8) -> bool {
+    matches!(kind, SHOP | BUYING_STORE)
+}
+
+/// The board's box for a unit whose head point (`SIGN_ABOVE` over its feet) is `head`: centred on it, a shop's bottom
+/// there and a chat room's 17 lower.
+pub fn sign_rect(kind: u8, head: [f32; 2]) -> [f32; 4] {
+    let bottom = head[1] + if is_shop(kind) { 0.0 } else { ROOM_DROP };
+    let corner = [(head[0] - SIGN[0] / 2.0).round(), (bottom - SIGN[1]).round()];
+    [corner[0], corner[1], corner[0] + SIGN[0], corner[1] + SIGN[1]]
+}
+
+/// The tail's rows under a chat room board with its box at `rect`: each row's left, top and width, narrowing to a
+/// point under the middle.
+// ponytail: the tail's size and look; the data has no bitmap for it.
+fn tail_rows(rect: [f32; 4]) -> Vec<[f32; 3]> {
+    let middle = ((rect[0] + rect[2]) / 2.0).floor();
+    (0..TAIL).map(|row| [middle - (TAIL - 1 - row) as f32, rect[3] - 1.0 + row as f32, (2 * (TAIL - row) - 1) as f32]).collect()
+}
+
+/// Draws a sign over the unit whose head point is `head`, and gives its box.
+pub fn draw_sign<'a>(layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, sign: &Sign, head: [f32; 2]) -> [f32; 4] {
+    let rect = sign_rect(sign.kind, head);
+    let [x, y] = [rect[0], rect[1]];
+    let [w, h] = SIGN;
+    if is_shop(sign.kind) {
+        // ponytail: the band's place: inside a white margin of 2 within the frame.
+        layer.sprites.push((&assets.frame, [x, y], SIGN));
+        layer.sprites.push((&assets.white, [x + 1.0, y + 1.0], [w - 2.0, h - 2.0]));
+        layer.sprites.push((&assets.band, [x + 3.0, y + 3.0], [w - 6.0, h - 6.0]));
+    } else {
+        let [lu, mu, ru, lm, rm, ld, md, rd] = &assets.pieces;
+        let middle = [w - 2.0 * PIECE, h - 2.0 * PIECE];
+        layer.sprites.push((&assets.white, [x + PIECE, y + PIECE], middle));
+        layer.sprites.push((lu, [x, y], [PIECE; 2]));
+        layer.sprites.push((mu, [x + PIECE, y], [middle[0], PIECE]));
+        layer.sprites.push((ru, [x + w - PIECE, y], [PIECE; 2]));
+        layer.sprites.push((lm, [x, y + PIECE], [PIECE, middle[1]]));
+        layer.sprites.push((rm, [x + w - PIECE, y + PIECE], [PIECE, middle[1]]));
+        layer.sprites.push((ld, [x, y + h - PIECE], [PIECE; 2]));
+        layer.sprites.push((md, [x + PIECE, y + h - PIECE], [middle[0], PIECE]));
+        layer.sprites.push((rd, [x + w - PIECE, y + h - PIECE], [PIECE; 2]));
+        for [left, top, width] in tail_rows(rect) {
+            layer.sprites.push((&assets.tail_edge, [left, top], [width, 1.0]));
+            if width > 2.0 {
+                layer.sprites.push((&assets.white, [left + 1.0, top], [width - 2.0, 1.0]));
+            }
+        }
     }
     let icon = &assets.icons[match sign.kind {
         0 => 1,
@@ -110,10 +165,11 @@ pub fn draw_sign<'a>(layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, sig
         BUYING_STORE => 3,
         _ => 0,
     }];
-    layer.sprites.push((icon, offset(corner, [2.0, 1.0]), icon.size));
-    let text = window::fit(font, &sign.text(), SIGN[0] - 34.0);
-    layer.texts.push((text, offset(corner, [30.0, ((SIGN[1] - font.line_height()) / 2.0).floor()]), [0, 0, 0]));
-    [corner[0], corner[1], corner[0] + SIGN[0], corner[1] + SIGN[1]]
+    // ponytail: the icon's place, left of the text and centred down the board.
+    layer.sprites.push((icon, [x + 3.0, y + ((h - icon.size[1]) / 2.0).floor()], icon.size));
+    let text = window::fit(font, &sign.text(), w - SIGN_TEXT[0] - 4.0);
+    layer.texts.push((text, [x + SIGN_TEXT[0], y + SIGN_TEXT[1]], [0, 0, 0]));
+    rect
 }
 
 /// The room the player is in.
@@ -321,6 +377,19 @@ impl Make {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn places_the_boards() {
+        // A head point at (500, 300): both 140x34 and centred, a shop's bottom on it, a chat room's 17 lower.
+        assert_eq!(sign_rect(SHOP, [500.0, 300.0]), [430.0, 266.0, 570.0, 300.0]);
+        assert_eq!(sign_rect(BUYING_STORE, [500.0, 300.0]), [430.0, 266.0, 570.0, 300.0]);
+        assert_eq!(sign_rect(1, [500.0, 300.0]), [430.0, 283.0, 570.0, 317.0]);
+        assert_eq!(sign_rect(0, [500.5, 300.0]), [431.0, 283.0, 571.0, 317.0]);
+        // The tail narrows to one pixel under the middle, from the box's last row down.
+        let tail = tail_rows([430.0, 283.0, 570.0, 317.0]);
+        assert_eq!(tail.first(), Some(&[495.0, 316.0, 11.0]));
+        assert_eq!(tail.last(), Some(&[500.0, 321.0, 1.0]));
+    }
 
     #[test]
     fn signs_count_and_makes_cycle() {
