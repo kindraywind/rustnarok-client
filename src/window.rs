@@ -26,6 +26,14 @@ pub struct Chrome {
 }
 
 impl Chrome {
+    /// The title bar alone (its rounded caps around a stretched middle), `width` wide at `corner`.
+    pub fn draw_title_bar<'a>(&'a self, layer: &mut Layer<'a>, corner: [f32; 2], width: f32) {
+        let [left, middle, right] = &self.title;
+        layer.sprites.push((left, corner, left.size));
+        layer.sprites.push((middle, offset(corner, [left.size[0], 0.0]), [width - left.size[0] - right.size[0], TITLE_HEIGHT]));
+        layer.sprites.push((right, offset(corner, [width - right.size[0], 0.0]), right.size));
+    }
+
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let basic = format!("{UI}basic_interface\\");
         let image = |path: String| gpu.load_texture(grf, &path, false);
