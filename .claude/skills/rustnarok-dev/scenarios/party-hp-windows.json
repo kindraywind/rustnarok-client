@@ -1,0 +1,49 @@
+{
+  "about": "A party member dragged out of the party window (issue #318) keeps a small HP window. Damaging them updates it from the same party HP packet, and it goes when they leave.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0,
+    "env": {
+      "RUSTNAROK_CLIENT_PARTY": "accept,window"
+    }
+  },
+  "steps": [
+    {"say": "@warp prontera 156 180"},
+    {"settle": 1500},
+    {"type": "/leave"},
+    {"key": "Enter"},
+    {"as": "second", "type": "/leave"},
+    {"as": "second", "key": "Enter"},
+    {"wait": 1500},
+    {"say": "@recall {second}"},
+    {"as": "second", "settle": 2000},
+    {"type": "/organize QAParty"},
+    {"key": "Enter"},
+    {"wait": 1500},
+    {"click_on": {"unit": "{second}"}, "button": "right"},
+    {"wait": 400},
+    {"click_on": {"unit": "{second}", "offset": [20, 52]}},
+    {"wait": 2500},
+    {"expect": {"chat": "Request for party accepted."}},
+    {"key": "Alt+Z"},
+    {"wait": 600},
+    {"drag_on": [{"button": "member:{second}"}, {"point": [40, 200]}]},
+    {"wait": 300},
+    {"expect": {"windows_open": ["PartyHp:{second}"]}},
+    {"as": "second", "say": "@heal"},
+    {"wait": 800},
+    {"as": "second", "say": "@heal -30 0"},
+    {"wait": 1200},
+    {"expect": {"windows_open": ["PartyHp:{second}"], "state": {"party.wounded": ["{second}"]}}},
+    {"shot": "party-member-hp", "crop": [40, 200, 120, 32]},
+    {"as": "second", "type": "/leave"},
+    {"as": "second", "key": "Enter"},
+    {"wait": 800},
+    {"expect": {"windows_closed": ["PartyHp:{second}"]}},
+    {"type": "/leave"},
+    {"key": "Enter"},
+    {"wait": 400}
+  ]
+}
