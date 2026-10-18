@@ -22,11 +22,34 @@ pub const PUSH_CART: u16 = 673;
 pub const CHANGE_SIZE: u16 = 1420;
 pub const CHANGE_SIZE_MONSTER: u16 = 1421;
 
-// ponytail: cart types 1 to 9 as 손수레, 손수레1 … 손수레8, as the files run; baby jobs' carts (베이비손수레…) not yet.
-/// The sprite (without extension) of a pushcart type.
-pub fn cart_path(kind: i32) -> String {
-    let number = if kind > 1 { (kind - 1).to_string() } else { String::new() };
-    format!("data\\sprite\\이팩트\\손수레{number}")
+/// Jobs of the Super Novice line, whose cart is always their own.
+const SUPER_NOVICE_JOBS: [u16; 4] = [23, 4045, 4190, 4191];
+
+/// Baby jobs (rathena's JOB_BABY… and JOB_SUPER_BABY…), whose carts move by a baby cart's ACT.
+fn baby_job(job: u16) -> bool {
+    matches!(job, 4023..=4045 | 4096..=4112 | 4191 | 4220 | 4222..=4229 | 4238 | 4241 | 4242 | 4244)
+}
+
+// ponytail: types 10 to 13 follow the names (손수레9 …), which this data doesn't have; Hyper Novice's cart isn't known.
+/// The sprite (without extension) and ACT of a pushcart type for a job: 손수레, 손수레1 … by type, the Super Novice's
+/// 슈노손수레 whatever the type; a baby's by its own ACT (베이비손수레…, with the grown-up's sprite) or, for types 6 to
+/// 9, a sprite of its own (손수레5베이비 …).
+pub fn cart_path(kind: i32, job: u16) -> (String, String) {
+    let folder = "data\\sprite\\이팩트\\";
+    let baby = baby_job(job);
+    let name = if SUPER_NOVICE_JOBS.contains(&job) {
+        "슈노손수레".to_string()
+    } else if kind > 1 {
+        format!("손수레{}", kind - 1)
+    } else {
+        "손수레".to_string()
+    };
+    let (sprite, act) = match name.strip_prefix("손수레").and_then(|number| number.parse::<i32>().ok()) {
+        Some(5..) if baby => (format!("{name}베이비"), format!("{name}베이비")),
+        _ if baby => (name.clone(), format!("베이비{name}")),
+        _ => (name.clone(), name),
+    };
+    (format!("{folder}{sprite}"), format!("{folder}{act}.act"))
 }
 
 /// Players only.
@@ -1214,11 +1237,13 @@ const FALCON_SPRITE: &str = "매";
 /// The warg's sprite name (`몬스터\워그`, then `npc\워그`).
 const WARG_SPRITE: &str = "워그";
 
-/// How far the cart's rope lets it lag (#196): one cell. The cart is still pinned behind its owner until that lands.
+/// How far the cart's rope lets it lag: one cell.
 pub const CART_ROPE: f32 = world::CELL;
+/// Cart frames a world unit rolled.
+const CART_FRAMES: f32 = 0.92;
 /// The falcon flies this far above the ground.
 pub const FALCON_HEIGHT: f32 = 25.0;
-// ponytail: two cells, longer than the cart's one-cell rope. rope_step is that rope; the cart should call it with CART_ROPE once #196 lands.
+// ponytail: two cells, longer than the cart's one-cell rope.
 pub const FALCON_REACH: f32 = CART_ROPE * 2.0;
 /// The warg keeps about three cells out.
 pub const WARG_REACH: f32 = world::CELL * 3.0;
@@ -1246,7 +1271,7 @@ pub fn world_xz(cell: [f32; 2]) -> [f32; 2] {
     [(cell[0] + 0.5) * world::CELL, (cell[1] + 0.5) * world::CELL]
 }
 
-/// One step of the cart's rope (#196). Farther than `reach` from `leader`, move straight in until exactly `reach` away.
+/// One step of a rope. Farther than `reach` from `leader`, move straight in until exactly `reach` away.
 pub fn rope_step(from: [f32; 2], leader: [f32; 2], reach: f32) -> [f32; 2] {
     let dx = leader[0] - from[0];
     let dz = leader[1] - from[1];
@@ -1308,6 +1333,45 @@ fn warg_out(option: u32) -> bool {
 }
 
 /// A falcon or a warg following a player: where it stands, the way it faces, and its sprite.
+/// A pushcart on its rope: where it stands (world XZ), the way it faces (degrees, as `Actor::rot`) and how far it has
+/// rolled (world units).
+pub struct Cart {
+    pub sprites: SpriteSet,
+    pub at: [f32; 2],
+    pub rot: f32,
+    pub rolled: f32,
+}
+
+impl Cart {
+    /// A rope's length behind a leader facing `direction`.
+    pub fn behind(sprites: SpriteSet, leader: [f32; 2], direction: u8) -> Self {
+        Self { sprites, at: place_behind(leader, direction, CART_ROPE), rot: rot_of(direction), rolled: 0.0 }
+    }
+
+    /// Pulled in to a rope's length when the leader is farther, turned toward it. A leader suddenly far off (a warp,
+    /// a teleport) has the cart placed behind it again.
+    pub fn step(&mut self, leader: [f32; 2], direction: u8) {
+        let [dx, dz] = [leader[0] - self.at[0], leader[1] - self.at[1]];
+        // ponytail: more than two ropes away counts as a jump, not a pull.
+        if f32::hypot(dx, dz) > CART_ROPE * 3.0 {
+            (self.at, self.rot) = (place_behind(leader, direction, CART_ROPE), rot_of(direction));
+            return;
+        }
+        let at = rope_step(self.at, leader, CART_ROPE);
+        self.rolled += f32::hypot(at[0] - self.at[0], at[1] - self.at[1]);
+        self.at = at;
+        let [dx, dz] = [leader[0] - at[0], leader[1] - at[1]];
+        if f32::hypot(dx, dz) > 1e-3 {
+            self.rot = dx.atan2(-dz).to_degrees().rem_euclid(360.0);
+        }
+    }
+
+    /// Which of `count` frames shows: the wheels turn with the distance rolled, looping.
+    pub fn frame(&self, count: usize) -> usize {
+        (self.rolled * CART_FRAMES) as usize % count.max(1)
+    }
+}
+
 pub struct Companion {
     pub at: [f32; 2],
     pub direction: u8,
@@ -1406,8 +1470,8 @@ pub struct Actor {
     /// rathena's opt1 and opt2: the body and health state that colour the sprite.
     pub body_state: u16,
     pub health_state: u16,
-    /// The pushcart it pulls, drawn behind it.
-    pub cart: Option<SpriteSet>,
+    /// The pushcart it pulls.
+    pub cart: Option<Cart>,
     /// The server's option word (rathena OPTION_*), falcon and warg included.
     pub option: u32,
     /// The falcon, while OPTION_FALCON is set.
@@ -1630,8 +1694,12 @@ impl Actor {
         }
     }
 
-    /// One rope step. `moving` is the player walking this frame, which is when the warg runs.
+    /// One rope step for the cart, falcon and warg. `moving` is the player walking this frame, which is when the warg
+    /// runs.
     pub fn step_companions(&mut self, leader: [f32; 2], moving: bool) {
+        if let Some(cart) = &mut self.cart {
+            cart.step(leader, self.direction);
+        }
         if let Some(falcon) = &mut self.falcon {
             let step = falcon_step(falcon.at, falcon.direction, leader);
             (falcon.at, falcon.direction, falcon.moving) = (step.at, step.direction, step.moving);
@@ -1888,6 +1956,51 @@ mod tests {
         assert_eq!(actor.direction, 5);
         assert_eq!(actor.update(at(400)), [12.0, 11.0]);
         assert!(!actor.moving());
+    }
+
+    #[test]
+    fn pulls_the_cart_on_a_one_cell_rope() {
+        let sprites = SpriteSet { layers: Vec::new(), player: false, dressing: None, scale: 1.0, tint: None, textures: HashMap::new() };
+        // Placed a rope's length behind a leader facing south (0): to its north, facing south.
+        let mut cart = Cart::behind(sprites, [50.0, 50.0], 0);
+        assert_near(cart.at, [50.0, 55.0]);
+        assert_eq!(cart.rot, 0.0);
+        // Closer than the rope: it stays, turning to face the leader (east of it: 90).
+        cart.step([53.0, 55.0], 6);
+        assert_near(cart.at, [50.0, 55.0]);
+        assert!((cart.rot - 90.0).abs() < 1e-3, "{}", cart.rot);
+        assert_eq!(cart.rolled, 0.0);
+        // Farther: pulled straight in to exactly a rope's length, rolling as far as it moved.
+        cart.step([58.0, 55.0], 6);
+        assert_near(cart.at, [53.0, 55.0]);
+        assert!((cart.rolled - 3.0).abs() < 1e-4);
+        // The wheels turn 0.92 frames a world unit, looping.
+        assert_eq!(cart.frame(4), 2);
+        cart.rolled = 5.0;
+        assert_eq!(cart.frame(4), 0);
+        // A jump (a warp) puts it behind the leader again.
+        cart.step([200.0, 200.0], 4);
+        assert_near(cart.at, [200.0, 195.0]);
+    }
+
+    #[test]
+    fn names_each_cart_type() {
+        let path = |kind: i32, job: u16| {
+            let (sprite, act) = cart_path(kind, job);
+            (sprite.trim_start_matches("data\\sprite\\이팩트\\").to_string(), act.trim_start_matches("data\\sprite\\이팩트\\").to_string())
+        };
+        let same = |name: &str| (name.to_string(), format!("{name}.act"));
+        assert_eq!(path(1, 5), same("손수레"));
+        for kind in 2..=13 {
+            assert_eq!(path(kind, 10), same(&format!("손수레{}", kind - 1)));
+        }
+        // The Super Novice's own, whatever the type.
+        assert_eq!(path(3, 23), same("슈노손수레"));
+        assert_eq!(path(1, 4045), ("슈노손수레".to_string(), "베이비슈노손수레.act".to_string()));
+        // Babies: a baby ACT on the grown-up sprite, or a baby sprite of its own from type 6.
+        assert_eq!(path(1, 4028), ("손수레".to_string(), "베이비손수레.act".to_string()));
+        assert_eq!(path(5, 4036), ("손수레4".to_string(), "베이비손수레4.act".to_string()));
+        assert_eq!(path(6, 4107), same("손수레5베이비"));
     }
 
     fn assert_near(a: [f32; 2], b: [f32; 2]) {

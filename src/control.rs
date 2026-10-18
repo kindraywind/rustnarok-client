@@ -863,7 +863,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 MERCENARY => json!("mercenary"),
                 other => json!(other),
             };
-            let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "combo_ms": combo_ms(Some(id)), "held": crate::locked_with(&game.locks, id)});
+            let mut unit = json!({"id": id, "kind": kind, "name": actor.name, "job": actor.job, "cell": actor.cell, "combo_ms": combo_ms(Some(id)), "held": crate::locked_with(&game.locks, id), "cart": cart_state(actor.cart.as_ref())});
             let (action, frame) = animation(actor);
             unit["action"] = action.into();
             unit["frame"] = frame.into();
@@ -1101,6 +1101,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             // The falcon (25 above the ground) and the warg (on the ground), or null. Riding leaves the warg null.
             "falcon": companion_state(game.player.falcon.as_ref(), crate::actor::FALCON_HEIGHT),
             "warg": companion_state(game.player.warg.as_ref(), 0.0),
+            "cart": cart_state(game.player.cart.as_ref()),
             "casting": game.casts.contains_key(&None),
             // The attack asked for with the mouse (null: none), kept up or only while held.
             "attack": game.attack.map(|attack| json!({"target": attack.target, "continuous": attack.continuous})),
@@ -1342,6 +1343,13 @@ fn game_state(app: &App, game: &Game) -> Value {
 }
 
 /// The player's look as the game state reports it. Zeros until the server has sent one.
+/// A pushcart's spot (world X and Z), facing (degrees) and wheel frame, or null.
+fn cart_state(cart: Option<&crate::actor::Cart>) -> Value {
+    let Some(cart) = cart else { return Value::Null };
+    let tenth = |value: f32| (f64::from(value) * 10.0).round() / 10.0;
+    json!({"x": tenth(cart.at[0]), "z": tenth(cart.at[1]), "rot": tenth(cart.rot), "frame": cart.frame(cart.sprites.frames(0))})
+}
+
 fn companion_state(companion: Option<&crate::actor::Companion>, height: f32) -> Value {
     let Some(companion) = companion else { return Value::Null };
     let tenth = |value: f32| (f64::from(value) * 10.0).round() / 10.0;
