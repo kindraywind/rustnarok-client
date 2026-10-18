@@ -60,10 +60,11 @@ new() {
 }
 
 list() {
-    git -C "$MAIN" worktree list --porcelain | awk '/^worktree /{path=$2} /^branch /{print path, $2}' | while read -r path ref; do
+    # One line per worktree: its path and branch ("-" when detached).
+    git -C "$MAIN" worktree list --porcelain | awk '/^worktree /{path=$2; ref="-"} /^branch /{ref=$2} /^$/{print path, ref}' | while read -r path ref; do
         case $path in "$LANES"/*) ;; *) continue ;; esac
         local branch=${ref#refs/heads/} state=open running
-        merged "$branch" && state=merged
+        [ "$branch" != "-" ] && merged "$branch" && state=merged
         running=$(clients "$path" | wc -l | tr -d ' ')
         echo "$(basename "$path")  $branch  $state  clients:$running"
     done
@@ -73,8 +74,10 @@ rm_lane() {
     local name=$1 force=${2:-}
     local lane="$LANES/$name"
     [ -d "$lane" ] || die "no lane $name"
+    # The lane's branch, even when its HEAD was detached since.
     local branch
-    branch=$(git -C "$lane" rev-parse --abbrev-ref HEAD)
+    branch=$(git -C "$MAIN" worktree list --porcelain | awk -v lane="$lane" '/^worktree /{path=$2} /^branch /{if (path == lane) print substr($2, 12)}')
+    [ -n "$branch" ] || branch=$name
     if [ "$force" != "--force" ] && [ -n "$(git -C "$lane" status --porcelain)" ]; then
         die "$name has uncommitted changes (--force to drop them)"
     fi
@@ -85,7 +88,9 @@ rm_lane() {
     [ -d "$lane/docs/personal/baseline-tree" ] && git -C "$MAIN" worktree remove --force "$lane/docs/personal/baseline-tree" 2>/dev/null || true
     git -C "$MAIN" worktree remove --force "$lane"
     git -C "$MAIN" worktree prune
-    if merged "$branch"; then
+    if ! git -C "$MAIN" rev-parse -q --verify "refs/heads/$branch" >/dev/null; then
+        echo "removed $name"
+    elif merged "$branch"; then
         git -C "$MAIN" branch -q -D "$branch" && echo "removed $name, deleted merged branch $branch"
     else
         echo "removed $name, kept unmerged branch $branch"
