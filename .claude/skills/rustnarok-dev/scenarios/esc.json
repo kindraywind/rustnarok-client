@@ -1,5 +1,5 @@
 {
-  "about": "Esc closes the window last opened or clicked, one per press, then opens the game menu. A question is answered No. Dead, the menu is save point and return; a Token of Siegfried adds resurrect here (issue #178). The token it gives is taken away at the end (and at the start, in case a run stopped halfway).",
+  "about": "Esc closes the window last opened or clicked, one per press, then opens the game menu. A question is answered No. Dead, the menu is save point and return; a Token of Siegfried adds resurrect here (issue #178). The token it gives is taken away at the end (and at the start, in case a run stopped halfway). The menu is titled with the player's C-Code; game settings opens its window over the menu, which stays up, and the first Esc closes the window (issue #546).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -25,6 +25,11 @@
     {"expect": {"state": {"escape": ["char_select", "settings", "shortcuts", "exit", "return"]}}},
     {"move": [1000, 750]},
     {"shot": "menu-alive", "crop": [370, 470, 300, 170]},
+    {"click_on": {"button": "settings"}}, {"wait": 300},
+    {"expect": {"windows_open": ["GraphicsSettings"], "state": {"escape": ["char_select", "settings", "shortcuts", "exit", "return"]}}},
+    {"move": [1000, 750]}, {"shot": "menu-with-settings"},
+    {"key": "Escape"}, {"wait": 200},
+    {"expect": {"windows_closed": ["GraphicsSettings"], "state": {"escape": ["char_select", "settings", "shortcuts", "exit", "return"]}}},
     {"click_on": {"button": "return"}},
     {"wait": 200},
     {"expect": {"state": {"escape": null}}},

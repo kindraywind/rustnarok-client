@@ -3266,6 +3266,11 @@ fn compared_windows(inventory: &Inventory, items: &HashMap<u32, ItemInfo>, messa
         .collect()
 }
 
+/// A window that a button opens and shuts: shut when it's open, else a new one.
+fn toggled<T>(window: Option<T>, open: impl FnOnce() -> T) -> Option<T> {
+    if window.is_some() { None } else { Some(open()) }
+}
+
 /// Where Alt + right click sends a stack: the first that's open of the storage, a trade, the cart.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum QuickTo {
@@ -5598,6 +5603,14 @@ mod tests {
         assert_eq!(login_refusal("abcd", "123456"), None);
         // Bytes, not characters: two Korean letters are 6 bytes.
         assert_eq!(login_refusal("가나", "123456"), None);
+    }
+
+    #[test]
+    fn settings_buttons_open_then_shut_their_window() {
+        let mut window = toggled(None, || 7);
+        assert_eq!(window, Some(7));
+        window = toggled(window, || 8);
+        assert_eq!(window, None);
     }
 
     #[test]

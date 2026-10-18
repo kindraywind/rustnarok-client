@@ -1658,6 +1658,12 @@ impl Game {
     /// Whether the pointer is over the interface (a window, the chat, a dialog) rather than the world.
     /// Whether the pointer is on a window, or something holds the clicks (a dialog, a menu, a question in the message
     /// box of this size).
+    /// The game settings or shortcut settings window under the pointer.
+    pub(crate) fn settings_at(&self, cursor: [f32; 2]) -> bool {
+        self.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+    }
+
     pub(crate) fn on_ui(&self, cursor: [f32; 2], message: [f32; 2]) -> bool {
         let asking = self.guild_invite.is_some()
             || self.guild_asked.is_some()

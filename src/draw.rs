@@ -2193,7 +2193,7 @@ impl App {
             }
         }
         if let Some(menu) = &game.escape {
-            menu.draw(shop_layer.window(), &assets.chrome, &assets.escape, messages, pointer, game.can_resurrect());
+            menu.draw(shop_layer.window(), &assets.chrome, &assets.escape, messages, game.me.id, pointer, game.can_resurrect());
         }
         // The party's docked window, half see-through while the party window is dragged.
         if let Some(dialog) = &game.party_dialog {
