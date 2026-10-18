@@ -353,6 +353,7 @@ impl Equipment {
         cursor: [f32; 2],
         worn: &[InventoryItem],
         preview: Vec<Sprite<'a>>,
+        names: (&inventory::CardNames, &HashMap<u32, Option<String>>),
     ) {
         if !self.frame.open {
             return;
@@ -405,7 +406,7 @@ impl Equipment {
             if let Some(Some(icon)) = info.and_then(|info| icons.get(&inventory::icon_path(info, item.identified))) {
                 layer.sprites.push((icon, at([icon_x, top]), icon.size));
             }
-            let name = inventory::item_name(items, item.id, item.identified, item.refine);
+            let name = inventory::full_name(items, names.0, messages, names.1, item, false);
             let lines = window::wrap(font, &name, NAME_WIDTH, 2);
             let first_line = top + (ICON - lines.len() as f32 * NAME_LINE) / 2.0 - 2.0;
             for (number, line) in lines.iter().enumerate() {

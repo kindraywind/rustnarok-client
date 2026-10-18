@@ -35,6 +35,19 @@ pub fn obtained(result: u8, count: u16, held: u16) -> Option<u16> {
     }
 }
 
+/// A refused pickup's line (results other than 0 and 3); 8 has none.
+pub fn failure_line(result: u8) -> Option<usize> {
+    match result {
+        2 => Some(52),
+        4 => Some(220),
+        5 => Some(279),
+        7 => Some(1418),
+        8 => None,
+        9 => Some(3984),
+        _ => Some(53),
+    }
+}
+
 /// The popup's width for a chat line this wide: 54 more, in steps of 28, at least 34.
 pub fn width_for(line_width: f32) -> f32 {
     (((line_width + 54.0) / 28.0).ceil() * 28.0).max(34.0)
@@ -141,5 +154,8 @@ mod tests {
         // Result 3 carries the new total: what came is that less what was held.
         assert_eq!((obtained(0, 3, 7), obtained(3, 10, 7), obtained(3, 5, 7), obtained(2, 3, 0)), (Some(3), Some(3), Some(0), None));
         assert_eq!(CORNER, [412.0, 75.0]);
+        // Each refusal's line: 1 and 6 can't get it, 2 overweight, 4 the weight limit, 5 30,000 of a kind, 7 another
+        // item's limit, 9 its own; 8 nothing.
+        assert_eq!([1, 2, 4, 5, 6, 7, 8, 9].map(failure_line), [Some(53), Some(52), Some(220), Some(279), Some(53), Some(1418), None, Some(3984)]);
     }
 }
