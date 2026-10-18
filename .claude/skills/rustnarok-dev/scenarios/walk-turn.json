@@ -1,0 +1,20 @@
+{
+  "about": "Turning mid-walk on a client behind the server (as over a network): walking east, a click to the north-west lands mid-step while our clock is paused, so the server's new walk comes before we reach the cell it starts from. That step plays out first and the character turns there, in step with the server, instead of jumping sideways from the cell before. Shots: right after the new walk comes, then 100 ms on.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"click_on": {"cell": [178, 360]}}, {"wait": 400},
+    {"cmd": {"cmd": "clock", "action": "pause"}},
+    {"click_on": {"cell": [170, 366]}},
+    {"wait_for": {"packet": "0x0087", "ms": 3000}}, {"wait": 50},
+    {"move": [1000, 750]},
+    {"shot": "walk-turn-a", "crop": [362, 234, 300, 300], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "pause"}},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 100}},
+    {"shot": "walk-turn-b", "crop": [362, 234, 300, 300], "threshold": 5},
+    {"wait": 3000},
+    {"expect": {"state": {"player.cell": [170, 366], "player.moving": false}}}
+  ]
+}

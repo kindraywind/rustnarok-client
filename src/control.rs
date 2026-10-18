@@ -1118,6 +1118,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "char_id": game.me.id,
             "job": game.me.job,
             "cell": game.player.cell,
+            // Where it's drawn, in cells: between two while walking.
+            "position": game.player.position(self::now()),
             "direction": game.player.direction,
             "moving": game.player.moving(),
             // The falcon (25 above the ground) and the warg (on the ground), or null. Riding leaves the warg null.
