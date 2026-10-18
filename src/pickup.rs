@@ -67,6 +67,21 @@ impl Assets {
     }
 }
 
+/// The system box: its 14-px corners, the edges stretched between them, white inside.
+pub fn draw_sysbox<'a>(layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, [x, y, w, h]: [f32; 4]) {
+    let [lu, mu, ru, lm, rm, ld, md, rd] = &assets.pieces;
+    let middle = [w - 2.0 * PIECE, h - 2.0 * PIECE];
+    layer.sprites.push((&chrome.white, [x + PIECE, y + PIECE], middle));
+    layer.sprites.push((lu, [x, y], [PIECE; 2]));
+    layer.sprites.push((mu, [x + PIECE, y], [middle[0], PIECE]));
+    layer.sprites.push((ru, [x + w - PIECE, y], [PIECE; 2]));
+    layer.sprites.push((lm, [x, y + PIECE], [PIECE, middle[1]]));
+    layer.sprites.push((rm, [x + w - PIECE, y + PIECE], [PIECE, middle[1]]));
+    layer.sprites.push((ld, [x, y + h - PIECE], [PIECE; 2]));
+    layer.sprites.push((md, [x + PIECE, y + h - PIECE], [middle[0], PIECE]));
+    layer.sprites.push((rd, [x + w - PIECE, y + h - PIECE], [PIECE; 2]));
+}
+
 pub struct Popup {
     /// The line it shows ("<name> - N obtained.") and the item's icon file.
     pub text: String,
@@ -135,18 +150,7 @@ impl Popup {
 
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, icon: Option<&'a Texture>, font: &Font) {
         let [x, y] = corner();
-        let [w, h] = [self.width, HEIGHT];
-        let [lu, mu, ru, lm, rm, ld, md, rd] = &assets.pieces;
-        let middle = [w - 2.0 * PIECE, h - 2.0 * PIECE];
-        layer.sprites.push((&chrome.white, [x + PIECE, y + PIECE], middle));
-        layer.sprites.push((lu, [x, y], [PIECE; 2]));
-        layer.sprites.push((mu, [x + PIECE, y], [middle[0], PIECE]));
-        layer.sprites.push((ru, [x + w - PIECE, y], [PIECE; 2]));
-        layer.sprites.push((lm, [x, y + PIECE], [PIECE, middle[1]]));
-        layer.sprites.push((rm, [x + w - PIECE, y + PIECE], [PIECE, middle[1]]));
-        layer.sprites.push((ld, [x, y + h - PIECE], [PIECE; 2]));
-        layer.sprites.push((md, [x + PIECE, y + h - PIECE], [middle[0], PIECE]));
-        layer.sprites.push((rd, [x + w - PIECE, y + h - PIECE], [PIECE; 2]));
+        draw_sysbox(layer, chrome, assets, [x, y, self.width, HEIGHT]);
         if let Some(icon) = icon {
             layer.sprites.push((icon, [x + ICON[0], y + ICON[1]], ICON_SIZE));
         }

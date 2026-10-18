@@ -1,0 +1,20 @@
+// A long page, a slow second page and a cleared one (issue #445). Loaded and unloaded by scenarios/npc-say.json.
+iz_int01,24,26,4	script	Say Clerk	4_M_01,{
+	mes "[Say Clerk]";
+	mes "Line two.";
+	mes "Line three.";
+	mes "Line four.";
+	mes "Line five.";
+	mes "Pneumonoultramicroscopicsilicovolcanoconiosis breaks mid-word.";
+	mes "Line seven.";
+	mes "Line eight.";
+	mes "Line nine.";
+	mes "Line ten.";
+	next;
+	sleep2 1000;
+	mes "Page two.";
+	sleep2 1000;
+	clear;
+	mes "After the clear.";
+	close;
+}
