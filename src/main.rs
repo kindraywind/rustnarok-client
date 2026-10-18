@@ -82,6 +82,7 @@ mod pick_list;
 mod picking;
 mod pin;
 mod quest;
+mod ranking;
 mod refine;
 mod render;
 mod roulette;
@@ -294,6 +295,13 @@ const NO_MIRACLE_NOTICE: usize = 2381;
 const MAP_NOTICE: [u8; 3] = [0x64, 0xFF, 0xFF];
 /// "You have won %d times and have lost %d times in PVP. Current points %d."
 const PVP_RECORD: usize = 853;
+/// "[Point] You have been rewarded with %d … rank points. Your point total is %d.", by ranking.
+const RANK_POINTS_BLACKSMITH: usize = 901;
+const RANK_POINTS_ALCHEMIST: usize = 902;
+const RANK_POINTS_TAEKWON: usize = 926;
+const RANK_POINTS_SLAYER: usize = 953;
+/// "[Taekwon Mission] Target Monster: %s (%d%%)"
+const MISSION_TARGET: usize = 927;
 /// rankfont's and timefont's action for the slash or colon (0 to 9 are the digits).
 const GLYPH_SEPARATOR: usize = 10;
 /// "Congratulations! %s's rank has gone up to %d." / "What a pity! %s's rank has gone down to %d."
@@ -773,6 +781,11 @@ struct Game {
     /// The player's mercenary, its skills, its window and skill list, how it's steered, and whether dismissing it is
     /// being asked.
     mercenary: Option<net::Mercenary>,
+    /// The ranking board while it's open, characters' names by ID as the server told them (None: it has none), and
+    /// the names asked for.
+    ranking: Option<ranking::Board>,
+    char_names: HashMap<u32, Option<String>>,
+    names_asked: HashSet<u32>,
     /// The dress room's lists, the room while it's open, and its figure.
     dress_lists: dressroom::Lists,
     dressroom: Option<dressroom::Room>,
@@ -1592,6 +1605,7 @@ impl Game {
             chat::Command::Who => self.session.user_count(),
             chat::Command::Memo => self.session.remember_warp_point(),
             chat::Command::PvpInfo => self.session.pvp_info(self.me.id, self.account_id),
+            chat::Command::Ranking(kind) => self.session.ask_ranking(kind),
             chat::Command::DressRoom => {
                 self.open_dressroom();
                 Ok(())
@@ -3749,6 +3763,17 @@ impl App {
                     }
                 }
             }
+            // The ranking board: another ranking, or closing it.
+            Scene::Game(game) if game.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some() => {
+                match game.ranking.as_ref().and_then(|board| board.hit(cursor)) {
+                    Some(ranking::Hit::Kind(kind)) => {
+                        let _ = game.session.ask_ranking(kind);
+                    }
+                    Some(ranking::Hit::Title(TitleHit::Close)) => game.ranking = None,
+                    Some(ranking::Hit::Title(title)) => game.ranking.as_mut().unwrap().frame.click_title(title),
+                    _ => {}
+                }
+            }
             // The dress room: pickers, turning, closing.
             Scene::Game(game) if game.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some() => {
                 let room = game.dressroom.as_mut().unwrap();
@@ -5353,6 +5378,7 @@ impl App {
                 }
             }
             Scene::Game(game) if game.party_setup.is_some() && *key == Key::Named(NamedKey::Escape) => game.party_setup = None,
+            Scene::Game(game) if game.ranking.is_some() && *key == Key::Named(NamedKey::Escape) => game.ranking = None,
             Scene::Game(game) if game.dressroom.is_some() && *key == Key::Named(NamedKey::Escape) => {
                 game.dressroom = None;
                 game.dress_figure = None;
@@ -5925,6 +5951,9 @@ impl App {
                         .map(|[hair, hair_color, clothes_color]| dressroom::Lists { hair, hair_color, clothes_color })
                         .unwrap_or_default(),
                     dressroom: None,
+                    ranking: None,
+                    char_names: HashMap::new(),
+                    names_asked: HashSet::new(),
                     dress_figure: None,
                     head_emblems: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
@@ -7448,6 +7477,40 @@ impl App {
             }
             MapEvent::MapType(kind) => game.map_type = Some(kind),
             MapEvent::DressRoom => game.open_dressroom(),
+            // The board opens (or shows the new ranking); the names it lacks are asked for once each.
+            MapEvent::Ranking { kind, ids, points, mine } => {
+                let frame = game.ranking.as_ref().map(|board| board.frame.position);
+                let mut board = ranking::Board::new(kind, ids, points, mine);
+                if let Some(position) = frame {
+                    board.frame.position = position;
+                }
+                for id in ranking::missing_names(&ids, &game.char_names) {
+                    if game.names_asked.insert(id) {
+                        let _ = game.session.ask_char_name(id);
+                    }
+                }
+                game.ranking = Some(board);
+            }
+            MapEvent::CharName { id, name } => {
+                game.char_names.insert(id, name);
+            }
+            // ponytail: the point and mission lines' color is an estimate.
+            MapEvent::RankingPoints { kind, added, total } => {
+                let id = match kind {
+                    0 => RANK_POINTS_BLACKSMITH,
+                    1 => RANK_POINTS_ALCHEMIST,
+                    2 => RANK_POINTS_TAEKWON,
+                    _ => RANK_POINTS_SLAYER,
+                };
+                let text = rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&added, &total]);
+                game.chat_line(text, CHAT_ITEM);
+            }
+            MapEvent::StarSkill { name, count, kind: net::STAR_MISSION, .. } => {
+                let text = rustnarok_client::messages::fill(self.messages.get(MISSION_TARGET).map_or("", String::as_str), &[&name, &count]);
+                game.chat_line(text, CHAT_ITEM);
+            }
+            // The Star Gladiator's Feeling and Hatred aren't shown yet.
+            MapEvent::StarSkill { .. } => {}
             // Sent to the area: only our own counts. Rank 0 or no players hides the counter; a hidden player's (all
             // ones) shows nothing.
             // Only on a map that counts.
@@ -9716,6 +9779,9 @@ impl App {
         }
         if let Some(setup) = &game.party_setup {
             setup.draw(&mut shop_layer, &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), messages, pointer);
+        }
+        if let Some(board) = &game.ranking {
+            board.draw(&mut shop_layer, &assets.chrome, font, messages, &game.char_names, pointer.0);
         }
         if let Some(room) = &game.dressroom {
             let feet = room.feet();

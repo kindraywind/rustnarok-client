@@ -704,6 +704,14 @@ const ZC_MAPPROPERTY_R2: u16 = 0x099B;
 const CZ_BLOCKING_PLAY_CANCEL: u16 = 0x0447;
 const ZC_NOTIFY_MAPPROPERTY2: u16 = 0x01D6;
 const ZC_DRESSROOM_OPEN: u16 = 0x0A02;
+const CZ_REQ_RANKING: u16 = 0x097C;
+const ZC_UPDATE_RANKING_POINT: u16 = 0x097E;
+const ZC_ACK_RANKING2: u16 = 0x0AF6;
+const CZ_REQNAME_BYGID: u16 = 0x0369;
+const ZC_ACK_REQNAME_BYGID: u16 = 0x0AF7;
+const ZC_STARSKILL: u16 = 0x020E;
+/// ZC_STARSKILL's kind for the Taekwon Mission's target.
+pub const STAR_MISSION: u8 = 20;
 const ZC_NOTIFY_RANKING: u16 = 0x019A;
 const CZ_REQ_PVPPOINT: u16 = 0x020F;
 const ZC_ACK_PVPPOINT: u16 = 0x0210;
@@ -1702,6 +1710,32 @@ pub enum MapEvent {
     },
     /// A script opens the dress room (`opendressroom`).
     DressRoom,
+    /// A ranking's top ten (0 Blacksmith, 1 Alchemist, 2 Taekwon, 3 Killer): character IDs (0: an empty place) and
+    /// points, and the player's own points.
+    Ranking {
+        kind: u16,
+        ids: [u32; 10],
+        points: [u32; 10],
+        mine: u32,
+    },
+    /// A character's name by ID (none when the server has none).
+    CharName {
+        id: u32,
+        name: Option<String>,
+    },
+    /// Rank points the player earned (or lost), and the new total.
+    RankingPoints {
+        kind: u16,
+        added: i32,
+        total: u32,
+    },
+    /// A Star Gladiator's or Taekwon's target (STAR_MISSION: the Taekwon Mission, `count` kills of 100 done).
+    StarSkill {
+        name: String,
+        monster: u32,
+        count: u8,
+        kind: u8,
+    },
     /// The map's type (rathena's `e_map_type`; it only sends 19, a battleground).
     MapType(u16),
     /// A player's PvP rank among the players on the map (rank 0 or 0 players: no counter).
@@ -3729,6 +3763,16 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Asks for a ranking's top ten (0 Blacksmith, 1 Alchemist, 2 Taekwon, 3 Killer); the answer is `Ranking`.
+    pub fn ask_ranking(&mut self, kind: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_ranking_request(kind))
+    }
+
+    /// Asks for a character's name by ID; the answer is `CharName`.
+    pub fn ask_char_name(&mut self, id: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_name_request(id))
+    }
+
     /// Asks for the player's PvP record; the answer is `PvpInfo`.
     pub fn pvp_info(&mut self, character: u32, account: u32) -> io::Result<()> {
         self.stream.write_all(&encode_pvp_info(character, account))
@@ -4176,6 +4220,20 @@ fn encode_hatch(index: u16) -> [u8; 4] {
     let mut packet = [0u8; 4];
     packet[..2].copy_from_slice(&CZ_SELECT_PETEGG.to_le_bytes());
     packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_REQ_RANKING: the ranking's type.
+fn encode_ranking_request(kind: u16) -> [u8; 4] {
+    let [[h0, h1], [k0, k1]] = [CZ_REQ_RANKING, kind].map(u16::to_le_bytes);
+    [h0, h1, k0, k1]
+}
+
+/// CZ_REQNAME_BYGID: the character ID.
+fn encode_name_request(id: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_REQNAME_BYGID.to_le_bytes());
+    packet[2..].copy_from_slice(&id.to_le_bytes());
     packet
 }
 
@@ -4750,6 +4808,16 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_NOTIFY_MAPPROPERTY2 => MapEvent::MapType(u16_at(2)),
         // The view at 2 rathena always sends 0 and calls ignored.
         ZC_DRESSROOM_OPEN => MapEvent::DressRoom,
+        ZC_ACK_RANKING2 => MapEvent::Ranking {
+            kind: u16_at(2),
+            ids: std::array::from_fn(|place| u32_at(4 + 4 * place)),
+            points: std::array::from_fn(|place| u32_at(44 + 4 * place)),
+            mine: u32_at(84),
+        },
+        // Flag 3: a name follows; 2: none.
+        ZC_ACK_REQNAME_BYGID => MapEvent::CharName { id: u32_at(4), name: (u16_at(2) == 3).then(|| c_string(&packet[8..32])) },
+        ZC_UPDATE_RANKING_POINT => MapEvent::RankingPoints { kind: u16_at(2), added: u32_at(4) as i32, total: u32_at(8) },
+        ZC_STARSKILL => MapEvent::StarSkill { name: c_string(&packet[2..26]), monster: u32_at(26), count: packet[30], kind: packet[31] },
         ZC_NOTIFY_RANKING => MapEvent::PvpRank { account: u32_at(2), rank: u32_at(6), players: u32_at(10) },
         ZC_ACK_PVPPOINT => MapEvent::PvpInfo { wins: u32_at(10), losses: u32_at(14), points: u32_at(18) as i32 },
         ZC_BROADCAST => {
@@ -6145,6 +6213,41 @@ mod tests {
         assert_eq!(encode_blocking_play_cancel(), [0x47, 0x04]);
         assert!(matches!(decode_map_packet(&[0xD6, 0x01, 19, 0]), Some(MapEvent::MapType(19))));
         assert!(matches!(decode_map_packet(&[0x02, 0x0A, 0, 0]), Some(MapEvent::DressRoom)));
+    }
+
+    #[test]
+    fn decodes_rankings() {
+        // clif_ranklist: two filled places, the rest empty, and our 50 points.
+        let mut ranking = vec![0u8; 88];
+        ranking[..2].copy_from_slice(&ZC_ACK_RANKING2.to_le_bytes());
+        ranking[4..8].copy_from_slice(&150_000u32.to_le_bytes());
+        ranking[8..12].copy_from_slice(&150_002u32.to_le_bytes());
+        ranking[44..48].copy_from_slice(&50u32.to_le_bytes());
+        ranking[48..52].copy_from_slice(&10u32.to_le_bytes());
+        ranking[84..88].copy_from_slice(&50u32.to_le_bytes());
+        let Some(MapEvent::Ranking { kind: 0, ids, points, mine: 50 }) = decode_map_packet(&ranking) else { panic!() };
+        assert_eq!((&ids[..3], &points[..3]), (&[150_000, 150_002, 0][..], &[50, 10, 0][..]));
+        let name = [&ZC_ACK_REQNAME_BYGID.to_le_bytes()[..], &3u16.to_le_bytes(), &150_000u32.to_le_bytes(), &name_field("Rndev")].concat();
+        assert!(matches!(decode_map_packet(&name), Some(MapEvent::CharName { id: 150_000, name: Some(name) }) if name == "Rndev"));
+        let nameless = [&ZC_ACK_REQNAME_BYGID.to_le_bytes()[..], &2u16.to_le_bytes(), &7u32.to_le_bytes(), &[0u8; 24]].concat();
+        assert!(matches!(decode_map_packet(&nameless), Some(MapEvent::CharName { id: 7, name: None })));
+        // @addfame -50 arrives as a negative amount.
+        let points = [&ZC_UPDATE_RANKING_POINT.to_le_bytes()[..], &0u16.to_le_bytes(), &(-50i32).to_le_bytes(), &0u32.to_le_bytes()].concat();
+        assert!(matches!(decode_map_packet(&points), Some(MapEvent::RankingPoints { kind: 0, added: -50, total: 0 })));
+        let mut star = vec![0u8; 32];
+        star[..2].copy_from_slice(&ZC_STARSKILL.to_le_bytes());
+        star[2..8].copy_from_slice(b"Poring");
+        star[26..30].copy_from_slice(&1002u32.to_le_bytes());
+        star[30] = 7;
+        star[31] = STAR_MISSION;
+        assert!(matches!(decode_map_packet(&star), Some(MapEvent::StarSkill { monster: 1002, count: 7, kind: STAR_MISSION, .. })));
+        assert_eq!(encode_ranking_request(3), [0x7C, 0x09, 3, 0]);
+        assert_eq!(encode_name_request(150_000), [0x69, 0x03, 0xF0, 0x49, 0x02, 0]);
+        for (header, length) in
+            [(ZC_ACK_RANKING2, 88), (ZC_ACK_REQNAME_BYGID, 32), (ZC_UPDATE_RANKING_POINT, 12), (ZC_STARSKILL, 32), (CZ_REQ_RANKING, 4), (CZ_REQNAME_BYGID, 6)]
+        {
+            assert_eq!(packet_length(header), Some(length), "{header:#06x}");
+        }
         assert_eq!(packet_length(ZC_DRESSROOM_OPEN), Some(4));
         // clif_pvpset: ours and another player's.
         let rank = |account: u32, rank: u32, players: u32| {
