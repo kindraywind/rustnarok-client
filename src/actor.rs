@@ -1059,6 +1059,8 @@ impl Actor {
     pub fn walk(&mut self, path: Vec<[i32; 2]>) {
         self.ready = false;
         self.sitting = false;
+        // Walking looks straight ahead again.
+        self.head_direction = 0;
         let now = Instant::now();
         // Walking interrupts an attack or flinch, not a death.
         if self.shot.as_ref().is_some_and(|shot| !shot.hold) {

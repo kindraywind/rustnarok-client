@@ -1267,6 +1267,7 @@ pub struct Unit {
     pub head_direction: u16,
     pub sex: u8,
     pub position: [u16; 2],
+    /// A sprite direction (`sprite_direction`).
     pub direction: u8,
     pub level: u16,
     pub name: String,
@@ -1598,7 +1599,7 @@ pub enum MapEvent {
         target: u32,
         on: bool,
     },
-    /// A unit turned its body or (players) its head.
+    /// A unit turned its body (a sprite direction) or (players) its head.
     Turn {
         id: u32,
         direction: u8,
@@ -4999,9 +5000,21 @@ pub fn encode_position([x, y]: [u16; 2], direction: u8) -> [u8; 3] {
     [(x >> 2) as u8, ((x << 6) | ((y >> 4) & 0x3F)) as u8, ((y << 4) | u16::from(direction & 0x0F)) as u8]
 }
 
+/// A server direction (0 north, counter-clockwise: 2 west, 4 south) as a sprite direction (0 facing the camera,
+/// clockwise: 2 west, 4 away). The same sum turns a sprite direction back into a server one.
+pub fn sprite_direction(direction: u8) -> u8 {
+    4u8.wrapping_sub(direction) & 7
+}
+
 pub fn decode_position(bytes: &[u8]) -> ([u16; 2], u8) {
     let [a, b, c] = [bytes[0], bytes[1], bytes[2]].map(u16::from);
     ([(a << 2) | (b >> 6), ((b & 0x3F) << 4) | (c >> 4)], (c & 0x0F) as u8)
+}
+
+/// A standing unit's cell and its sprite direction.
+fn decode_entry_position(bytes: &[u8]) -> ([u16; 2], u8) {
+    let (position, direction) = decode_position(bytes);
+    (position, sprite_direction(direction))
 }
 
 /// Packed walk (6 bytes): start and destination cells, as rathena's WBUFPOS2.
@@ -5078,10 +5091,10 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
     Some(match u16_at(0) {
         ZC_ACCEPT_ENTER => {
             let (position, direction) = decode_position(&packet[6..9]);
-            MapEvent::Entered { position, direction }
+            MapEvent::Entered { position, direction: sprite_direction(direction) }
         }
-        ZC_NOTIFY_STANDENTRY => MapEvent::Unit(decode_unit(packet, &STAND_LAYOUT, decode_position(&packet[63..66]))),
-        ZC_NOTIFY_NEWENTRY => MapEvent::Unit(decode_unit(packet, &NEW_LAYOUT, decode_position(&packet[63..66]))),
+        ZC_NOTIFY_STANDENTRY => MapEvent::Unit(decode_unit(packet, &STAND_LAYOUT, decode_entry_position(&packet[63..66]))),
+        ZC_NOTIFY_NEWENTRY => MapEvent::Unit(decode_unit(packet, &NEW_LAYOUT, decode_entry_position(&packet[63..66]))),
         ZC_NOTIFY_MOVEENTRY => {
             let (from, to) = decode_move(&packet[67..73]);
             MapEvent::UnitWalk { unit: decode_unit(packet, &MOVE_LAYOUT, (from, 0)), to, start_time: u32_at(37) }
@@ -5095,7 +5108,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_HIGHJUMP | ZC_FASTMOVE => MapEvent::Slide { id: u32_at(2), position: [u16_at(6), u16_at(8)] },
         ZC_COMBODELAY => MapEvent::ComboWindow { id: u32_at(2), ms: u32_at(6) },
         ZC_BLADESTOP => MapEvent::BladeStop { source: u32_at(2), target: u32_at(6), on: u32_at(10) != 0 },
-        ZC_CHANGE_DIRECTION => MapEvent::Turn { id: u32_at(2), direction: packet[8], head_direction: u16_at(6) },
+        ZC_CHANGE_DIRECTION => MapEvent::Turn { id: u32_at(2), direction: sprite_direction(packet[8]), head_direction: u16_at(6) },
         ZC_NOTIFY_CHAT => MapEvent::Chat { id: Some(u32_at(4)), message: c_string(&packet[8..]), color: None },
         ZC_NOTIFY_PLAYERCHAT => MapEvent::Chat { id: None, message: c_string(&packet[4..]), color: None },
         // The color is 0xBBGGRR, little-endian.
@@ -6195,6 +6208,15 @@ mod tests {
         renamed.extend_from_slice(&4u32.to_le_bytes());
         assert!(matches!(decode_char_packet(&renamed), Some(CharEvent::Renamed(4))));
         assert_eq!(packet_length(HC_ACK_CHANGE_CHARNAME), Some(6));
+    }
+
+    #[test]
+    fn turns_server_directions_into_sprite_directions() {
+        // North shows the back, west and east stay, south faces the camera.
+        assert_eq!((0..8).map(sprite_direction).collect::<Vec<_>>(), [4, 3, 2, 1, 0, 7, 6, 5]);
+        assert!((0..8).all(|direction| sprite_direction(sprite_direction(direction)) == direction));
+        // A standing unit's entry packet carries rathena's direction; the unit faces the sprite's way.
+        assert_eq!(decode_entry_position(&encode_position([156, 191], 4)), ([156, 191], 0));
     }
 
     #[test]
