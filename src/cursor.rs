@@ -31,7 +31,7 @@ enum Play {
     Loop,
     /// Once, then the last frame.
     Once,
-    /// Only while the left button is down; the first frame while it's up.
+    /// Once while the left button is down, then the last frame; the first frame while it's up.
     WhilePressed,
 }
 
@@ -75,8 +75,8 @@ pub fn frame(kind: Kind, elapsed: Option<f32>, frames: usize) -> usize {
     let Some(elapsed) = elapsed else { return 0 };
     let shown = (elapsed / time) as usize;
     match play {
-        Play::Loop | Play::WhilePressed => shown % frames,
-        Play::Once => shown.min(frames - 1),
+        Play::Loop => shown % frames,
+        Play::Once | Play::WhilePressed => shown.min(frames - 1),
     }
 }
 
@@ -151,9 +151,11 @@ mod tests {
         assert_eq!([479.0, 480.0, 1500.0].map(|ms| frame(Kind::Attack, Some(ms), 2)), [0, 1, 1]);
         // Talking plays once and holds the last frame.
         assert_eq!(frame(Kind::Talk, Some(10_000.0), 5), 4);
-        // The hand plays only while pressed.
+        // The hand plays once while pressed.
         assert_eq!([frame(Kind::Clickable, None, 3), frame(Kind::Clickable, Some(200.0), 3)], [0, 2]);
         assert_eq!([frame(Kind::Pick, None, 4), frame(Kind::Pick, Some(50.0), 4)], [0, 2]);
+        // Pressed past their last frame, the hand and the pick-up cursor hold it.
+        assert_eq!([frame(Kind::Clickable, Some(1000.0), 3), frame(Kind::Pick, Some(500.0), 4)], [2, 3]);
         assert_eq!([frame(Kind::TargetValid, Some(150.0), 6), frame(Kind::Target, Some(150.0), 6)], [2, 1]);
     }
 }

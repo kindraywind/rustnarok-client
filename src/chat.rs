@@ -1,10 +1,15 @@
-//! The chat window at the bottom of the screen: message tabs, the log and the input line.
+//! The chat window at the bottom of the screen: two tabs each with its own log, the log and the input line, and the
+//! tab settings window that picks which kinds of lines each tab shows.
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::text::Font;
 
 use crate::links::{self, ItemLink, Target};
 use crate::render::{Gpu, Texture};
+use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, screen};
 
 /// F10's steps: the input bar alone, then logs of 3, 6, 9, 12 and 15 lines.
@@ -27,15 +32,31 @@ const INPUT_HEIGHT: f32 = 24.0;
 const NAME_BOX: ([f32; 2], [f32; 2]) = ([6.0, 4.0], [90.0, 16.0]);
 const LIST_BUTTON: [f32; 2] = [97.0, 3.0];
 const MESSAGE_BOX: ([f32; 2], [f32; 2]) = ([110.0, 4.0], [460.0, 16.0]);
-const FILTER_BUTTON: [f32; 2] = [572.0, 7.0];
+const SEND_TO_BUTTON: [f32; 2] = [572.0, 7.0];
 const SIZE_BUTTON: [f32; 2] = [586.0, 7.0];
 const BUTTON_SIZE: [f32; 2] = [11.0, 11.0];
-/// The stick, battle-option and option buttons right after the two tabs.
+/// The input bar buttons' tooltips: the whisper list, the receiving group, the size.
+const TOOLTIPS: [usize; 3] = [3187, 3188, 3189];
+/// The stick, battle-option and option buttons right after the two tabs, and the lock at the strip's right.
 const FUNCTION_BUTTONS: [[f32; 2]; 3] = [[2.0 * TAB_WIDTH + 4.0, 4.0], [2.0 * TAB_WIDTH + 19.0, 5.0], [2.0 * TAB_WIDTH + 34.0, 5.0]];
+// ponytail: the lock's x; at the right end of the tab strip.
+const LOCK_BUTTON: [f32; 2] = [WIDTH - 18.0, 4.0];
 const TAB_MESSAGES: [usize; 2] = [1291, 1292];
+/// The line over the input bar.
+const FRAME_LINE: [u8; 4] = [142, 142, 142, 0xFF];
+/// The most the whisper name and the message take, in bytes as sent (CP949).
+// ponytail: counted in CP949 bytes, as the server reads them, not in characters.
+pub const NAME_MOST: usize = 24;
+pub const MESSAGE_MOST: usize = 234;
 /// Party chat: the player's own lines and the others'.
 pub const PARTY_OURS: [u8; 3] = [255, 200, 0];
 pub const PARTY: [u8; 3] = [255, 200, 200];
+/// Chat colours the kinds are read from: the player's own line, the guild's and the clan's, a skill's message.
+const OWN: [u8; 3] = [0x00, 0xFF, 0x00];
+const PUBLIC: [u8; 3] = [255, 255, 255];
+const GUILD: [u8; 3] = [180, 255, 180];
+const CLAN: [u8; 3] = [180, 220, 255];
+const SKILL_MESSAGE: [u8; 3] = [0xCD, 0xCD, 0xFF];
 const DARK: [u8; 4] = [0, 0, 0, 0x80];
 const DARKER: [u8; 4] = [0, 0, 0, 0xBF];
 const TAB_BORDER: [u8; 4] = [0x95, 0x95, 0x95, 0xFF];
@@ -55,16 +76,140 @@ fn line_at(row: usize) -> [f32; 2] {
     [LOG_BOX[0] + LINE_TEXT[0], LOG_BOX[1] + LINE_TEXT[1] + LINE * row as f32]
 }
 
+/// What kind of line a chat line is, for which tab shows it.
+// ponytail: the kinds and how a line's colour tells its kind (whispers say so themselves) are ours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Kind {
+    Public,
+    Own,
+    Whisper,
+    Party,
+    Guild,
+    Clan,
+    /// Party booking's search messages (nothing sends these yet).
+    PartySearch,
+    Battle,
+    System,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 9] = [Kind::Public, Kind::Own, Kind::Whisper, Kind::Party, Kind::Guild, Kind::Clan, Kind::PartySearch, Kind::Battle, Kind::System];
+
+    /// The kind a line in `color` is.
+    pub fn of_color(color: [u8; 3]) -> Self {
+        match color {
+            PUBLIC => Kind::Public,
+            OWN => Kind::Own,
+            PARTY | PARTY_OURS => Kind::Party,
+            GUILD => Kind::Guild,
+            CLAN => Kind::Clan,
+            SKILL_MESSAGE => Kind::Battle,
+            _ => Kind::System,
+        }
+    }
+
+    /// Its name in the tab settings window: the game's where it has one.
+    // ponytail: the names the game's table doesn't have are ours.
+    pub fn label(self, messages: &[String]) -> String {
+        let message = |id: usize, fallback: &str| messages.get(id).filter(|text| !text.is_empty()).cloned().unwrap_or_else(|| fallback.to_owned());
+        match self {
+            Kind::Public => "Public Chat".into(),
+            Kind::Own => "My Chat".into(),
+            Kind::Whisper => message(1278, "Whisper"),
+            Kind::Party => message(1279, "Party Chat"),
+            Kind::Guild => message(1280, "Guild Chat"),
+            Kind::Clan => "Clan Chat".into(),
+            Kind::PartySearch => message(1549, "Party member search"),
+            Kind::Battle => "Battle Messages".into(),
+            Kind::System => "System Messages".into(),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Kind::Public => "public",
+            Kind::Own => "own",
+            Kind::Whisper => "whisper",
+            Kind::Party => "party",
+            Kind::Guild => "guild",
+            Kind::Clan => "clan",
+            Kind::PartySearch => "party_search",
+            Kind::Battle => "battle",
+            Kind::System => "system",
+        }
+    }
+}
+
+/// A tab: the kinds of lines it shows, and how far its log is scrolled back.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tab {
+    pub kinds: HashSet<Kind>,
+    scroll: usize,
+}
+
+/// The tabs' kinds when nothing is saved: Public everything but battle messages; Battle those, whispers, party and
+/// guild.
+// ponytail: the defaults are a choice.
+pub fn default_kinds() -> [HashSet<Kind>; 2] {
+    [Kind::ALL.into_iter().filter(|kind| *kind != Kind::Battle).collect(), [Kind::Battle, Kind::Whisper, Kind::Party, Kind::Guild].into_iter().collect()]
+}
+
+/// The tabs' kinds as saved: a line a tab, its kinds' names.
+pub fn kinds_from(text: &str) -> Option<[HashSet<Kind>; 2]> {
+    let mut lines = text.lines();
+    let mut tab = || -> Option<HashSet<Kind>> {
+        Some(lines.next()?.split_whitespace().filter_map(|name| Kind::ALL.into_iter().find(|kind| kind.name() == name)).collect())
+    };
+    Some([tab()?, tab()?])
+}
+
+pub fn kinds_text(kinds: &[HashSet<Kind>; 2]) -> String {
+    kinds
+        .iter()
+        .map(|kinds| Kind::ALL.into_iter().filter(|kind| kinds.contains(kind)).map(Kind::name).collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn settings_path() -> Option<PathBuf> {
+    crate::settings_path("chattabs")
+}
+
+/// Where the line typed goes when no key says otherwise (the button at the input bar's right).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum SendTo {
+    #[default]
+    Public,
+    Party,
+    Guild,
+}
+
+/// How much of `text` fits in `most` bytes as sent (CP949), whole characters.
+pub fn capped(text: &str, most: usize) -> &str {
+    let mut used = 0;
+    for (at, character) in text.char_indices() {
+        let mut buffer = [0; 4];
+        used += encoding_rs::EUC_KR.encode(character.encode_utf8(&mut buffer)).0.len();
+        if used > most {
+            return &text[..at];
+        }
+    }
+    text
+}
+
 pub struct Assets {
     input: Texture,
     list: Texture,
     base: Texture,
-    /// The stick, battle-option and option buttons after the tabs.
-    functions: Vec<Texture>,
+    /// The stick, battle-option and option buttons after the tabs: normal and pressed.
+    functions: Vec<[Texture; 2]>,
+    /// The lock at the strip's right: locked and not.
+    lock: [Texture; 2],
     dark: Texture,
     darker: Texture,
     white: Texture,
     tab_border: Texture,
+    frame_line: Texture,
     /// Item and navigation links' underlines.
     link: Texture,
     navi_link: Texture,
@@ -78,21 +223,45 @@ impl Assets {
             input: image("dialog_bg"),
             list: image("dialog_btn0"),
             base: image("sys_base_off"),
-            // ponytail: which images the three buttons are.
-            functions: ["stickoff", "battle_option_a", "battle_option2_a"].iter().map(|name| image(name)).collect(),
+            // ponytail: _a is the normal look and _b the pressed one; this data has no battle_option.bmp for the third,
+            // so it takes battle_option2.
+            functions: vec![
+                [image("stickoff_a"), image("stickoff_b")],
+                [image("battle_option_a"), image("battle_option_b")],
+                [image("battle_option2_a"), image("battle_option2_b")],
+            ],
+            lock: [image("lock_dragwnd"), image("unlock_dragwnd")],
             dark: gpu.solid(DARK),
             darker: gpu.solid(DARKER),
             white: gpu.solid([255; 4]),
             tab_border: gpu.solid(TAB_BORDER),
+            frame_line: gpu.solid(FRAME_LINE),
             link: gpu.solid([crate::links::COLOR[0], crate::links::COLOR[1], crate::links::COLOR[2], 0xFF]),
             navi_link: gpu.solid([crate::links::NAVI_COLOR[0], crate::links::NAVI_COLOR[1], crate::links::NAVI_COLOR[2], 0xFF]),
         }
     }
 }
 
+/// What a click on the chat window lands on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Hit {
+    Tab(usize),
+    Stick,
+    Options,
+    Lock,
+    /// The tab strip's empty part: it drags the window.
+    Strip,
+    List,
+    SendTo,
+    Size,
+    Name,
+    Message,
+    Log,
+}
+
 pub struct Chat {
-    /// Every line so far with its color.
-    pub lines: Vec<(String, [u8; 3])>,
+    /// Every line so far with its color and kind.
+    pub lines: Vec<(String, [u8; 3], Kind)>,
     /// What's being typed, and the syllable the input method is still composing.
     pub input: String,
     pub preedit: String,
@@ -101,14 +270,32 @@ pub struct Chat {
     pub naming: bool,
     /// Which of F10's steps the window is at.
     size: usize,
-    /// Lines scrolled back from the newest.
-    scroll: usize,
+    pub tabs: [Tab; 2],
+    /// The tab shown.
+    pub tab: usize,
+    /// Where the window's bottom left corner is, once moved (else the screen's bottom left).
+    corner: Option<[f32; 2]>,
+    /// The pointer's offset from the corner while the window is dragged.
+    drag: Option<[f32; 2]>,
+    /// The lock: no dragging.
+    pub locked: bool,
+    pub send_to: SendTo,
+    /// The tab settings window, while open.
+    pub settings: Option<Settings>,
     /// Alt+F10 hides the window. Typing still goes to the line.
     pub hidden: bool,
 }
 
 impl Default for Chat {
     fn default() -> Self {
+        let kinds = settings_path().and_then(|path| std::fs::read_to_string(path).ok()).and_then(|text| kinds_from(&text)).unwrap_or_else(default_kinds);
+        Self::with_kinds(kinds)
+    }
+}
+
+impl Chat {
+    pub fn with_kinds(kinds: [HashSet<Kind>; 2]) -> Self {
+        let [public, battle] = kinds;
         Self {
             lines: Vec::new(),
             input: String::new(),
@@ -116,13 +303,17 @@ impl Default for Chat {
             whisper: String::new(),
             naming: false,
             size: STEPS.iter().position(|&step| step == DEFAULT_STEP).unwrap_or(0),
-            scroll: 0,
+            tabs: [Tab { kinds: public, scroll: 0 }, Tab { kinds: battle, scroll: 0 }],
+            tab: 0,
+            corner: None,
+            drag: None,
+            locked: false,
+            send_to: SendTo::default(),
+            settings: None,
             hidden: false,
         }
     }
-}
 
-impl Chat {
     fn step(&self) -> usize {
         STEPS[self.size]
     }
@@ -131,17 +322,24 @@ impl Chat {
         height(self.step())
     }
 
-    /// The top of the window; its bottom stays at the screen's.
-    fn top(&self) -> f32 {
-        screen()[1] - self.height()
+    /// The window's bottom left corner.
+    fn corner(&self) -> [f32; 2] {
+        self.corner.unwrap_or([0.0, screen()[1]])
     }
 
-    fn bar_top(&self) -> f32 {
-        screen()[1] - INPUT_HEIGHT
+    /// Where the window's bottom left corner was moved to (None: the screen's bottom left).
+    pub fn corner_moved(&self) -> Option<[f32; 2]> {
+        self.corner
+    }
+
+    /// A window-local point on screen.
+    fn at(&self, local: [f32; 2]) -> [f32; 2] {
+        let [left, bottom] = self.corner();
+        [left + local[0], bottom - self.height() + local[1]]
     }
 
     pub fn contains(&self, cursor: [f32; 2]) -> bool {
-        !self.hidden && contains([0.0, self.top()], [WIDTH, self.height()], cursor)
+        !self.hidden && contains(self.at([0.0, 0.0]), [WIDTH, self.height()], cursor)
     }
 
     /// Alt+F10: the log and the input bar leave the screen, or come back.
@@ -152,47 +350,214 @@ impl Chat {
     /// F10: the next size, the same cycle as the size button.
     pub fn cycle_size(&mut self) {
         self.size = (self.size + 1) % STEPS.len();
-        self.scroll = 0;
+        self.tabs.iter_mut().for_each(|tab| tab.scroll = 0);
+        self.keep_on_screen();
     }
 
     /// Whether a press here is the window's alone: its tabs, the strips around the log and the input bar. The log
     /// box's lines let presses through to the world (the wheel still scrolls them).
     pub fn blocks(&self, cursor: [f32; 2]) -> bool {
-        let log = [LOG_BOX[0], self.top() + LOG_BOX[1]];
-        let log_size = [LOG_WIDTH, (self.height() - LOG_UNDER).max(0.0)];
-        self.contains(cursor) && !contains(log, log_size, cursor)
+        self.contains(cursor) && self.hit(cursor) != Some(Hit::Log)
     }
 
-    pub fn push(&mut self, text: String, color: [u8; 3]) {
-        self.lines.push((text, color));
-        // New lines show unless the log is scrolled back.
-        if self.scroll > 0 {
-            self.scroll += 1;
+    /// What `cursor` is on.
+    pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
+        if !self.contains(cursor) {
+            return None;
+        }
+        let top = self.at([0.0, 0.0]);
+        let local = [cursor[0] - top[0], cursor[1] - top[1]];
+        let bar = self.height() - INPUT_HEIGHT;
+        let on = |corner: [f32; 2], size: [f32; 2]| contains(corner, size, local);
+        let in_bar = |offset: [f32; 2], size: [f32; 2]| on([offset[0], bar + offset[1]], size);
+        if local[1] >= bar {
+            return Some(if in_bar(SIZE_BUTTON, BUTTON_SIZE) {
+                Hit::Size
+            } else if in_bar(SEND_TO_BUTTON, BUTTON_SIZE) {
+                Hit::SendTo
+            } else if in_bar(LIST_BUTTON, [12.0, 18.0]) {
+                Hit::List
+            } else if in_bar(NAME_BOX.0, NAME_BOX.1) {
+                Hit::Name
+            } else {
+                // The message box, and the rest of the bar with it.
+                Hit::Message
+            });
+        }
+        if local[1] < TAB_HEIGHT {
+            let small = [14.0, 14.0];
+            return Some(if let Some(tab) = (0..2).find(|&tab| on([tab as f32 * TAB_WIDTH, 0.0], [TAB_WIDTH, TAB_HEIGHT])) {
+                Hit::Tab(tab)
+            } else if on(FUNCTION_BUTTONS[0], small) {
+                Hit::Stick
+            } else if on(FUNCTION_BUTTONS[1], small) || on(FUNCTION_BUTTONS[2], small) {
+                Hit::Options
+            } else if on(LOCK_BUTTON, small) {
+                Hit::Lock
+            } else {
+                Hit::Strip
+            });
+        }
+        Some(if on(LOG_BOX, [LOG_WIDTH, bar - LOG_BOX[1]]) { Hit::Log } else { Hit::Strip })
+    }
+
+    /// The tabs and buttons on screen (for the test driver).
+    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        if self.hidden {
+            return Vec::new();
+        }
+        let area = |local: [f32; 2], size: [f32; 2]| {
+            let [x, y] = self.at(local);
+            [x, y, size[0], size[1]]
+        };
+        let bar = self.height() - INPUT_HEIGHT;
+        let mut boxes = vec![
+            ("chat_send_to", area([SEND_TO_BUTTON[0], bar + SEND_TO_BUTTON[1]], BUTTON_SIZE)),
+            ("chat_size", area([SIZE_BUTTON[0], bar + SIZE_BUTTON[1]], BUTTON_SIZE)),
+        ];
+        if self.step() > 0 {
+            let small = [14.0, 14.0];
+            boxes.extend([
+                ("chat_tab_0", area([0.0, 0.0], [TAB_WIDTH, TAB_HEIGHT])),
+                ("chat_tab_1", area([TAB_WIDTH, 0.0], [TAB_WIDTH, TAB_HEIGHT])),
+                ("chat_stick", area(FUNCTION_BUTTONS[0], small)),
+                ("chat_options", area(FUNCTION_BUTTONS[2], small)),
+                ("chat_lock", area(LOCK_BUTTON, small)),
+                ("chat_strip", area([2.0 * TAB_WIDTH + 60.0, 2.0], [100.0, 12.0])),
+            ]);
+        }
+        boxes
+    }
+
+    /// The tooltip for the input bar button under `cursor`.
+    pub fn tooltip(&self, cursor: [f32; 2]) -> Option<usize> {
+        match self.hit(cursor)? {
+            Hit::List => Some(TOOLTIPS[0]),
+            Hit::SendTo => Some(TOOLTIPS[1]),
+            Hit::Size => Some(TOOLTIPS[2]),
+            _ => None,
         }
     }
 
-    /// Scrolls the log by `rows` lines (negative: back in time).
-    pub fn scroll_by(&mut self, rows: i32) {
-        let most = self.lines.len().saturating_sub(self::rows(self.step()));
-        self.scroll = (self.scroll as i32 - rows).clamp(0, most as i32) as usize;
+    /// A press: on the empty part of the tab strip it starts a drag (unless locked).
+    pub fn press(&mut self, cursor: [f32; 2]) -> bool {
+        if self.locked || self.hit(cursor) != Some(Hit::Strip) {
+            return false;
+        }
+        let corner = self.corner();
+        self.drag = Some([cursor[0] - corner[0], cursor[1] - corner[1]]);
+        true
     }
 
-    /// A click on the window: the size button cycles the size; the boxes of the input bar take the caret.
+    /// The pointer moved: a dragged window follows it, kept on the screen.
+    pub fn drag_to(&mut self, cursor: [f32; 2]) {
+        if let Some(offset) = self.drag {
+            self.corner = Some([cursor[0] - offset[0], cursor[1] - offset[1]]);
+            self.keep_on_screen();
+        }
+    }
+
+    /// The drag ends; whether there was one.
+    pub fn drop_drag(&mut self) -> bool {
+        self.drag.take().is_some()
+    }
+
+    fn keep_on_screen(&mut self) {
+        if let Some([left, bottom]) = self.corner {
+            let screen = screen();
+            self.corner = Some([left.clamp(0.0, (screen[0] - WIDTH).max(0.0)), bottom.clamp(self.height(), screen[1])]);
+        }
+    }
+
+    /// Adds a line of the kind its colour tells.
+    pub fn push(&mut self, text: String, color: [u8; 3]) {
+        self.push_kind(text, color, Kind::of_color(color));
+    }
+
+    pub fn push_kind(&mut self, text: String, color: [u8; 3], kind: Kind) {
+        self.lines.push((text, color, kind));
+        // New lines show unless the tab is scrolled back.
+        for tab in &mut self.tabs {
+            if tab.scroll > 0 && tab.kinds.contains(&kind) {
+                tab.scroll += 1;
+            }
+        }
+    }
+
+    /// The lines tab `tab` shows, oldest first.
+    pub fn tab_lines(&self, tab: usize) -> Vec<&(String, [u8; 3], Kind)> {
+        self.lines.iter().filter(|(.., kind)| self.tabs[tab].kinds.contains(kind)).collect()
+    }
+
+    /// Scrolls the shown tab's log by `rows` lines (negative: back in time).
+    pub fn scroll_by(&mut self, rows: i32) {
+        let most = self.tab_lines(self.tab).len().saturating_sub(self::rows(self.step()));
+        let tab = &mut self.tabs[self.tab];
+        tab.scroll = (tab.scroll as i32 - rows).clamp(0, most as i32) as usize;
+    }
+
+    /// A click on the window: a tab shows its log; the buttons do what they say; the boxes of the input bar take the
+    /// caret.
     pub fn click(&mut self, cursor: [f32; 2]) {
-        let bar = [0.0, self.bar_top()];
-        let at = |offset: [f32; 2]| [bar[0] + offset[0], bar[1] + offset[1]];
-        if contains(at(SIZE_BUTTON), BUTTON_SIZE, cursor) {
-            self.cycle_size();
-        } else if contains(at(NAME_BOX.0), NAME_BOX.1, cursor) {
-            self.naming = true;
-        } else if contains(at(MESSAGE_BOX.0), MESSAGE_BOX.1, cursor) {
-            self.naming = false;
+        match self.hit(cursor) {
+            Some(Hit::Tab(tab)) => self.tab = tab,
+            // ponytail: "stick" puts the window back at the screen's bottom left.
+            Some(Hit::Stick) => self.corner = None,
+            Some(Hit::Options) => self.settings = if self.settings.is_some() { None } else { Some(Settings::new(self.tab)) },
+            Some(Hit::Lock) => self.locked = !self.locked,
+            Some(Hit::Size) => self.cycle_size(),
+            // ponytail: "Select receiving group" turns where a line goes: public, the party, the guild.
+            Some(Hit::SendTo) => {
+                self.send_to = match self.send_to {
+                    SendTo::Public => SendTo::Party,
+                    SendTo::Party => SendTo::Guild,
+                    SendTo::Guild => SendTo::Public,
+                }
+            }
+            Some(Hit::Name) => self.naming = true,
+            Some(Hit::Message) => self.naming = false,
+            _ => {}
         }
     }
 
     /// Typing goes to the box with the caret.
     pub fn typing(&mut self) -> &mut String {
         if self.naming { &mut self.whisper } else { &mut self.input }
+    }
+
+    /// Types `text` into the box with the caret, up to that box's most.
+    pub fn type_text(&mut self, text: &str) {
+        let most = if self.naming { NAME_MOST } else { MESSAGE_MOST };
+        let typing = self.typing();
+        let joined = format!("{typing}{text}");
+        *typing = capped(&joined, most).to_owned();
+    }
+
+    /// Types `text` whole into the box with the caret if it fits its most (an item link); else nothing.
+    pub fn type_whole(&mut self, text: &str) {
+        let most = if self.naming { NAME_MOST } else { MESSAGE_MOST };
+        let joined = format!("{}{text}", self.typing());
+        if capped(&joined, most).len() == joined.len() {
+            *self.typing() = joined;
+        }
+    }
+
+    /// Ticks or unticks `kind` for the settings window's tab, and saves the tabs.
+    pub fn toggle_kind(&mut self, kind: Kind) {
+        let Some(settings) = &self.settings else { return };
+        let kinds = &mut self.tabs[settings.tab].kinds;
+        if !kinds.remove(&kind) {
+            kinds.insert(kind);
+        }
+        self.tabs[settings.tab].scroll = 0;
+        if let Some(path) = settings_path() {
+            self.save_to(&path);
+        }
+    }
+
+    pub fn save_to(&self, path: &Path) {
+        let kinds = [self.tabs[0].kinds.clone(), self.tabs[1].kinds.clone()];
+        let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, kinds_text(&kinds)));
     }
 
     /// The whisper-name list next to the battle-mode line (#179). Closed until that list exists.
@@ -210,9 +575,8 @@ impl Chat {
         self.naming = false;
     }
 
-    /// The window; the input bar only while the line is `open`.
-    /// The window, and the boxes of the item links in its log with their items. `name_of` names an item a link carries
-    /// without words.
+    /// The window, and the boxes of the links in its log with their targets; the input bar only while the line is
+    /// `open`. `name_of` names an item a link carries without words.
     #[allow(clippy::too_many_arguments)]
     pub fn draw<'a>(
         &self,
@@ -228,12 +592,12 @@ impl Chat {
         if self.hidden {
             return link_boxes;
         }
-        let top = self.top();
+        let at = |local: [f32; 2]| self.at(local);
         if self.step() > 0 {
-            // Tabs: the general log is the open one.
+            // Tabs: the shown one in the open look.
             for (tab, &message) in TAB_MESSAGES.iter().enumerate() {
-                let left = tab as f32 * TAB_WIDTH;
-                let (fill, border) = if tab == 0 { (&assets.dark, &assets.white) } else { (&assets.darker, &assets.tab_border) };
+                let [left, top] = at([tab as f32 * TAB_WIDTH, 0.0]);
+                let (fill, border) = if tab == self.tab { (&assets.dark, &assets.white) } else { (&assets.darker, &assets.tab_border) };
                 layer.sprites.push((fill, [left, top + 1.0], [TAB_WIDTH, TAB_HEIGHT - 1.0]));
                 layer.sprites.push((border, [left, top], [TAB_WIDTH, 1.0]));
                 layer.sprites.push((border, [left, top], [1.0, TAB_HEIGHT]));
@@ -243,24 +607,29 @@ impl Chat {
                 layer.texts.push((label.to_owned(), [x + 1.0, top + 2.0], [0, 0, 0]));
                 layer.texts.push((label.to_owned(), [x, top + 1.0], [255; 3]));
             }
-            for (function, corner) in assets.functions.iter().zip(FUNCTION_BUTTONS) {
-                layer.sprites.push((function, [corner[0], top + corner[1]], function.size));
+            // The buttons after the tabs: the options one pressed while the settings are open.
+            for (index, (images, corner)) in assets.functions.iter().zip(FUNCTION_BUTTONS).enumerate() {
+                let pressed = (index == 0 && self.corner.is_none()) || (index > 0 && self.settings.is_some());
+                let image = &images[usize::from(pressed)];
+                layer.sprites.push((image, at(corner), image.size));
             }
+            let lock = &assets.lock[usize::from(!self.locked)];
+            layer.sprites.push((lock, at(LOCK_BUTTON), lock.size));
 
             // The log: translucent black between white edges, newest line at the bottom.
-            let corner = [LOG_BOX[0], top + LOG_BOX[1]];
+            let corner = at(LOG_BOX);
             let size = [LOG_WIDTH, self.height() - LOG_UNDER];
             layer.sprites.push((&assets.dark, corner, size));
             layer.sprites.push((&assets.white, corner, [1.0, size[1]]));
             layer.sprites.push((&assets.white, [corner[0] + size[0] - 1.0, corner[1]], [1.0, size[1]]));
-            layer.sprites.push((&assets.white, [2.0 * TAB_WIDTH, corner[1]], [corner[0] + size[0] - 2.0 * TAB_WIDTH, 1.0]));
+            layer.sprites.push((&assets.white, at([2.0 * TAB_WIDTH, LOG_BOX[1]]), [LOG_BOX[0] + size[0] - 2.0 * TAB_WIDTH, 1.0]));
+            let lines = self.tab_lines(self.tab);
             let shown = rows(self.step());
-            let end = self.lines.len().saturating_sub(self.scroll);
+            let end = lines.len().saturating_sub(self.tabs[self.tab].scroll);
             let start = end.saturating_sub(shown);
             let first_row = shown - (end - start);
-            for (row, (line, color)) in self.lines[start..end].iter().enumerate() {
-                let [mut x, y] = line_at(first_row + row);
-                let y = top + y;
+            for (row, (line, color, _)) in lines[start..end].iter().enumerate() {
+                let [mut x, y] = at(line_at(first_row + row));
                 // Links in their colour, underlined.
                 for (piece, item) in links::pieces(&links::mark(line, name_of)) {
                     let width = font.width(&piece);
@@ -276,31 +645,101 @@ impl Chat {
                     x += width;
                 }
             }
+            // The line over the input bar.
+            layer.sprites.push((&assets.frame_line, at([4.0, self.height() - INPUT_HEIGHT]), [592.0, 1.0]));
         }
         if !open {
             return link_boxes;
         }
 
         // The input bar with what's being typed and the caret.
-        let bar_top = self.bar_top();
-        layer.sprites.push((&assets.input, [0.0, bar_top], assets.input.size));
-        layer.sprites.push((&assets.list, [LIST_BUTTON[0], bar_top + LIST_BUTTON[1]], assets.list.size));
-        for button in [FILTER_BUTTON, SIZE_BUTTON] {
-            layer.sprites.push((&assets.base, [button[0], bar_top + button[1]], assets.base.size));
+        let bar = self.height() - INPUT_HEIGHT;
+        let in_bar = |offset: [f32; 2]| at([offset[0], bar + offset[1]]);
+        layer.sprites.push((&assets.input, in_bar([0.0, 0.0]), assets.input.size));
+        layer.sprites.push((&assets.list, in_bar(LIST_BUTTON), assets.list.size));
+        for button in [SEND_TO_BUTTON, SIZE_BUTTON] {
+            layer.sprites.push((&assets.base, in_bar(button), assets.base.size));
         }
-        let text_top = bar_top + NAME_BOX.0[1] + ((NAME_BOX.1[1] - font.line_height()) / 2.0).round();
+        let [name_x, text_top] = in_bar([NAME_BOX.0[0], NAME_BOX.0[1] + ((NAME_BOX.1[1] - font.line_height()) / 2.0).round()]);
+        let message_x = in_bar(MESSAGE_BOX.0)[0];
         let (name, typed) = if self.naming {
             (format!("{}{}", self.whisper, self.preedit), self.input.clone())
         } else {
             (self.whisper.clone(), format!("{}{}", self.input, self.preedit))
         };
-        layer.texts.push((name.clone(), [NAME_BOX.0[0], text_top], [0, 0, 0]));
-        layer.texts.push((typed.clone(), [MESSAGE_BOX.0[0], text_top], [0, 0, 0]));
+        layer.texts.push((name.clone(), [name_x, text_top], [0, 0, 0]));
+        layer.texts.push((typed.clone(), [message_x, text_top], [0, 0, 0]));
         if caret {
-            let end = if self.naming { NAME_BOX.0[0] + font.width(&name) } else { MESSAGE_BOX.0[0] + font.width(&typed) };
+            let end = if self.naming { name_x + font.width(&name) } else { message_x + font.width(&typed) };
             layer.sprites.push((&assets.darker, [end + 1.0, text_top + 1.0], [1.0, font.line_height() - 2.0]));
         }
         link_boxes
+    }
+}
+
+/// The tab settings window: a box per kind of line for the tab it was opened from.
+// ponytail: its layout is ours over the client's chrome.
+pub struct Settings {
+    pub frame: Frame,
+    pub tab: usize,
+}
+
+const SETTINGS_WIDTH: f32 = 200.0;
+const SETTINGS_ROW: f32 = 18.0;
+const SETTINGS_TOP: f32 = TITLE_HEIGHT + 6.0;
+const SETTINGS_HEIGHT: f32 = SETTINGS_TOP + Kind::ALL.len() as f32 * SETTINGS_ROW + 8.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SettingsHit {
+    Title(TitleHit),
+    Kind(Kind),
+    Window,
+}
+
+impl Settings {
+    pub fn new(tab: usize) -> Self {
+        let mut frame = Frame::new([620.0, screen()[1] - 360.0], SETTINGS_WIDTH);
+        frame.open = true;
+        Self { frame, tab }
+    }
+
+    pub fn hit(&self, cursor: [f32; 2]) -> Option<SettingsHit> {
+        let local = self.frame.local(cursor, SETTINGS_HEIGHT)?;
+        if let Some(hit) = self.frame.title_hit(local) {
+            return Some(SettingsHit::Title(hit));
+        }
+        let row = ((local[1] - SETTINGS_TOP) / SETTINGS_ROW).floor();
+        Some(if local[1] >= SETTINGS_TOP && (row as usize) < Kind::ALL.len() { SettingsHit::Kind(Kind::ALL[row as usize]) } else { SettingsHit::Window })
+    }
+
+    /// Each kind's row on screen (for the test driver), named "tab_<kind>".
+    pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
+        Kind::ALL
+            .iter()
+            .enumerate()
+            .map(|(row, kind)| {
+                let [x, y] = self.frame.at([8.0, SETTINGS_TOP + row as f32 * SETTINGS_ROW]);
+                (format!("tab_{}", kind.name()), [x, y, SETTINGS_WIDTH - 16.0, SETTINGS_ROW])
+            })
+            .collect()
+    }
+
+    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, messages: &[String], kinds: &HashSet<Kind>, pointer: [f32; 2]) {
+        let at = |local: [f32; 2]| self.frame.at(local);
+        let title = messages.get(TAB_MESSAGES[self.tab]).cloned().unwrap_or_default();
+        self.frame.draw_title(layer, chrome, &title, pointer);
+        if self.frame.minimized {
+            return;
+        }
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [SETTINGS_WIDTH, SETTINGS_HEIGHT - TITLE_HEIGHT]));
+        for x in [0.0, SETTINGS_WIDTH - 1.0] {
+            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, SETTINGS_HEIGHT - TITLE_HEIGHT]));
+        }
+        layer.sprites.push((&chrome.border, at([0.0, SETTINGS_HEIGHT - 1.0]), [SETTINGS_WIDTH, 1.0]));
+        for (row, kind) in Kind::ALL.iter().enumerate() {
+            let mark = if kinds.contains(kind) { "■" } else { "□" };
+            layer.texts.push((format!("{mark} {}", kind.label(messages)), at([8.0, SETTINGS_TOP + row as f32 * SETTINGS_ROW]), [0, 0, 0]));
+        }
     }
 }
 
@@ -386,23 +825,32 @@ pub fn command(text: &str) -> Option<Command> {
 mod tests {
     use super::*;
 
+    /// A chat with the default tabs (not the saved ones).
+    fn fresh() -> Chat {
+        Chat::with_kinds(default_kinds())
+    }
+
+    fn top(chat: &Chat) -> f32 {
+        chat.at([0.0, 0.0])[1]
+    }
+
     #[test]
     fn lets_presses_through_the_log() {
-        let chat = Chat::default();
+        let chat = fresh();
         let log_top = screen()[1] - 96.0 + LOG_BOX[1];
         // The log's lines: the window has them, the world too.
         assert!(chat.contains([300.0, log_top + 10.0]) && !chat.blocks([300.0, log_top + 10.0]));
         // The input bar and the tabs are the window's alone.
-        assert!(chat.blocks([300.0, screen()[1] - 10.0]) && chat.blocks([20.0, chat.top() + 5.0]));
+        assert!(chat.blocks([300.0, screen()[1] - 10.0]) && chat.blocks([20.0, top(&chat) + 5.0]));
         assert!(!chat.contains([700.0, log_top + 10.0]) && !chat.blocks([700.0, log_top + 10.0]));
     }
 
     #[test]
     fn steps_through_six_sizes() {
-        let mut chat = Chat::default();
+        let mut chat = fresh();
         let mut heights = Vec::new();
         for _ in 0..7 {
-            heights.push((chat.height(), rows(chat.step()), chat.top()));
+            heights.push((chat.height(), rows(chat.step()), top(&chat)));
             chat.cycle_size();
         }
         let tall = [96.0, 138.0, 180.0, 222.0, 264.0, 24.0, 96.0];
@@ -411,7 +859,7 @@ mod tests {
         // The bottom edge stays put.
         assert!(heights.iter().all(|&(height, _, top)| top + height == screen()[1]));
         // The input bar alone: no log to let presses through.
-        let mut alone = Chat::default();
+        let mut alone = fresh();
         (0..5).for_each(|_| alone.cycle_size());
         assert_eq!(alone.height(), 24.0);
         assert!(alone.blocks([300.0, screen()[1] - 10.0]) && !alone.contains([300.0, screen()[1] - 30.0]));
@@ -432,21 +880,104 @@ mod tests {
         assert_eq!((local(NAME_BOX.0), NAME_BOX.1), ([6.0, h - 20.0], [90.0, 16.0]));
         assert_eq!(local(LIST_BUTTON), [97.0, h - 21.0]);
         assert_eq!((local(MESSAGE_BOX.0), MESSAGE_BOX.1), ([110.0, h - 20.0], [460.0, 16.0]));
-        assert_eq!([local(FILTER_BUTTON), local(SIZE_BUTTON)], [[572.0, h - 17.0], [586.0, h - 17.0]]);
+        assert_eq!([local(SEND_TO_BUTTON), local(SIZE_BUTTON)], [[572.0, h - 17.0], [586.0, h - 17.0]]);
         assert_eq!(FUNCTION_BUTTONS, [[224.0, 4.0], [239.0, 5.0], [254.0, 5.0]]);
-        // The boxes take the caret, the size button the size.
-        let mut chat = Chat::default();
+        // The boxes take the caret, the size button the size, the receiving group turns.
+        let mut chat = fresh();
         chat.click([50.0, screen()[1] - 12.0]);
         assert!(chat.naming);
         chat.click([300.0, screen()[1] - 12.0]);
         assert!(!chat.naming);
+        assert_eq!(chat.tooltip([576.0, screen()[1] - 12.0]), Some(3188));
+        chat.click([576.0, screen()[1] - 12.0]);
+        assert_eq!(chat.send_to, SendTo::Party);
         chat.click([590.0, screen()[1] - 12.0]);
         assert_eq!(chat.height(), 138.0);
     }
 
     #[test]
+    fn picks_tabs_and_routes_lines_by_kind() {
+        let mut chat = fresh();
+        let strip = top(&chat) + 8.0;
+        assert_eq!([chat.hit([50.0, strip]), chat.hit([150.0, strip]), chat.hit([400.0, strip])], [Some(Hit::Tab(0)), Some(Hit::Tab(1)), Some(Hit::Strip)]);
+        chat.push("Poring : hi".into(), PUBLIC);
+        chat.push("Leader : party".into(), PARTY);
+        chat.push_kind("(From A) : psst".into(), [0xFF, 0xFF, 0x00], Kind::Whisper);
+        chat.push("You used Bash.".into(), SKILL_MESSAGE);
+        let texts = |chat: &Chat, tab: usize| chat.tab_lines(tab).iter().map(|(text, ..)| text.clone()).collect::<Vec<_>>();
+        assert_eq!(texts(&chat, 0), ["Poring : hi", "Leader : party", "(From A) : psst"]);
+        assert_eq!(texts(&chat, 1), ["Leader : party", "(From A) : psst", "You used Bash."]);
+        chat.click([150.0, strip]);
+        assert_eq!(chat.tab, 1);
+        // Party unticked for Public: party lines leave its log.
+        chat.tabs[0].kinds.remove(&Kind::Party);
+        assert_eq!(texts(&chat, 0), ["Poring : hi", "(From A) : psst"]);
+    }
+
+    #[test]
+    fn scrolls_each_tab_on_its_own() {
+        let mut chat = fresh();
+        for line in 0..10 {
+            chat.push(format!("line {line}"), PUBLIC);
+        }
+        chat.scroll_by(-4);
+        assert_eq!((chat.tabs[0].scroll, chat.tabs[1].scroll), (4, 0));
+        // A new public line keeps Public where it was scrolled; Battle doesn't show it.
+        chat.push("line 10".into(), PUBLIC);
+        assert_eq!((chat.tabs[0].scroll, chat.tabs[1].scroll), (5, 0));
+        chat.tab = 1;
+        chat.scroll_by(-4);
+        assert_eq!(chat.tabs[1].scroll, 0, "nothing to scroll back to");
+    }
+
+    #[test]
+    fn caps_what_is_typed() {
+        let mut chat = fresh();
+        chat.type_text(&"a".repeat(300));
+        assert_eq!(chat.input.len(), MESSAGE_MOST);
+        // Korean counts two bytes a syllable as sent.
+        chat.naming = true;
+        chat.type_text(&"가".repeat(20));
+        assert_eq!(chat.whisper.chars().count(), NAME_MOST / 2);
+        assert_eq!(capped("ab가", 3), "ab");
+        // A link goes in whole or not at all.
+        chat.naming = false;
+        chat.input.clear();
+        chat.type_text(&"a".repeat(230));
+        chat.type_whole("<ITEM>Apple<INFO>512</INFO></ITEM>");
+        assert_eq!(chat.input.len(), 230);
+    }
+
+    #[test]
+    fn drags_by_the_strip_and_locks() {
+        let mut chat = fresh();
+        let strip = [400.0, top(&chat) + 8.0];
+        assert!(chat.press(strip));
+        chat.drag_to([500.0, strip[1] - 200.0]);
+        assert!(chat.drop_drag());
+        assert_eq!(chat.corner(), [100.0, screen()[1] - 200.0]);
+        // Kept on the screen.
+        assert!(chat.press([500.0, top(&chat) + 8.0]));
+        chat.drag_to([-500.0, -500.0]);
+        chat.drop_drag();
+        assert_eq!(chat.corner(), [0.0, chat.height()]);
+        chat.locked = true;
+        assert!(!chat.press([400.0, top(&chat) + 8.0]));
+    }
+
+    #[test]
+    fn saves_the_tabs_kinds() {
+        let kinds = default_kinds();
+        let text = kinds_text(&kinds);
+        assert_eq!(text.lines().nth(1), Some("whisper party guild battle"));
+        assert_eq!(kinds_from(&text), Some(kinds));
+        assert_eq!(kinds_from("public"), None);
+    }
+
+    #[test]
     fn colors_party_chat() {
         assert_eq!([PARTY_OURS, PARTY], [[255, 200, 0], [255, 200, 200]]);
+        assert_eq!([Kind::of_color(PARTY), Kind::of_color(GUILD), Kind::of_color([0xFF, 0, 0])], [Kind::Party, Kind::Guild, Kind::System]);
     }
 
     #[test]

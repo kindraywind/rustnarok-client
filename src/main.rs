@@ -712,6 +712,40 @@ fn name_color(kind: u8, job: u16, level: u16, ours: bool, own_level: i64) -> [u8
     }
 }
 
+/// The effect a unit leaves where it vanished, by rathena's `clr_type`: 3 teleported (EF_TELEPORTATION), 2 logged out
+/// (its fainter rings); nothing for a GM hidden from sight (OPTION_INVISIBLE), nor for going out of sight or dying.
+// ponytail: the 300 and 600 the game passes with these aren't used.
+fn vanish_effect(reason: u8, option: u32) -> Option<u32> {
+    if option & actor::OPTION_INVISIBLE != 0 {
+        return None;
+    }
+    match reason {
+        3 => Some(304),
+        2 => Some(314),
+        _ => None,
+    }
+}
+
+/// Over a monster: the attack cursor when a click would attack it (not with Shift held, unless /noshift is on).
+fn monster_cursor(shift: bool, no_shift: bool) -> cursor::Kind {
+    if shift && !no_shift { cursor::Kind::Default } else { cursor::Kind::Attack }
+}
+
+/// The turning cursor only while the right button turns the camera: not when Shift tilts it, nor with Alt.
+fn turning_cursor(dragging: bool, shift: bool, alt: bool) -> bool {
+    dragging && !shift && !alt
+}
+
+/// A warp portal's pick box around its feet, in sprite pixels: 50/640 of the screen's width and 50/730 of its height
+/// each way at the default camera, so it grows and shrinks with the zoom like a sprite.
+// ponytail: worked out for the 1024-wide screen; a wider canvas keeps the same box.
+const WARP_PICK: [f32; 2] = [59.7, 39.3];
+
+/// A warp portal's pick box on screen (`0..1`, y down: left, top, right, bottom).
+fn warp_pick_rect(view: &world::View, feet: world::Vector) -> Option<[f32; 4]> {
+    view.sprite_rect(feet, [-WARP_PICK[0], -WARP_PICK[1]], WARP_PICK)
+}
+
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
 const WARP_JOB: u16 = 45;
 
@@ -803,6 +837,8 @@ struct Game {
     walks: u32,
     walk_held: bool,
     last_walk_try: Option<Instant>,
+    /// A walk asked for during the player's own swing, sent when the swing ends.
+    walk_after_swing: Option<[i32; 2]>,
     press_mark: Option<(Instant, [f32; 2], bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
@@ -944,6 +980,8 @@ struct Game {
     /// The party, its window, and an invitation waiting for an answer (party ID and name).
     party: Option<party::Party>,
     party_window: party::PartyWindow,
+    /// Members dragged out of the party window: a small HP window each, until it's closed, they leave, or logout.
+    member_windows: party::MemberWindows,
     party_invite: Option<(u32, String)>,
     /// The partner's name, as the last I Miss You told it (while the player has the ring's skill).
     partner: Option<String>,
@@ -1937,6 +1975,10 @@ impl Game {
     /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`: not blocked, nobody standing there, a
     /// path to it); nothing when the last walk went out less than MOVE_GAP ago. Whether a walk was sent.
     fn walk_toward(&mut self, cell: [i32; 2], now: Instant) -> bool {
+        if self.player.swinging(control::now()) {
+            self.walk_after_swing = Some(cell);
+            return false;
+        }
         if !may_move(self.last_move, now) {
             return false;
         }
@@ -1954,13 +1996,18 @@ impl Game {
     }
 
     /// Turns to face a cell, the head straight. rathena counts directions the other way along y from the sprites.
+    /// Only standing, sitting or flinching; see `turn_toward`.
     fn turn_to(&mut self, cell: [i32; 2]) {
         let step = [cell[0] - self.player.cell[0], cell[1] - self.player.cell[1]];
-        if step != [0, 0] {
-            let _ = self.session.change_direction(world::direction([step[0], -step[1]]), 0);
-            self.player.set_direction(world::direction(step));
-            self.player.head_direction = 0;
+        if step == [0, 0] || self.player.moving() || self.player.swinging(control::now()) {
+            return;
         }
+        // The sprites count directions the other way round from rathena: body = (4 - ours) mod 8 and back.
+        let body = (12 - self.player.direction % 8) % 8;
+        let (body, head) = turn_toward(body, self.player.head_direction as u8, world::direction([step[0], -step[1]]));
+        let _ = self.session.change_direction(body, head);
+        self.player.set_direction((12 - body) % 8);
+        self.player.head_direction = u16::from(head);
     }
 
     /// What a left click on the world does: talk to an NPC, attack, swing once at a player, pick up an item, or
@@ -2000,6 +2047,17 @@ impl Game {
             _ => None,
         };
         aim_use(ground, unit, if ground { self.ground_cell(cursor) } else { None })
+    }
+
+    /// A party member's small window (or a row of the compact list) under the pointer, for aiming a skill.
+    /// The close button is left out: that still closes the window.
+    fn party_member_at(&self, cursor: [f32; 2]) -> Option<u32> {
+        match self.member_windows.hit(cursor) {
+            Some((account, party::MemberHit::Body)) => Some(account),
+            Some(_) => None,
+            None if self.party_window.compact => party::compact_hit(cursor, self.party.as_ref()),
+            None => None,
+        }
     }
 
     /// Talks to an NPC, turned to face it; only standing still or sitting (walking or attacking, nothing).
@@ -2695,6 +2753,8 @@ impl Game {
             || self.navi_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
             || self.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some()
             || self.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some()
+            || self.member_windows.hit(cursor).is_some()
+            || self.party_window.compact && party::compact_hit(cursor, self.party.as_ref()).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
             || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
@@ -2723,6 +2783,7 @@ impl Game {
             || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.stylist.as_ref().is_some_and(|window| window.covers(cursor))
             || self.chat.blocks(cursor)
+            || self.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).is_some()
             || self.link_at(cursor).is_some()
             || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -3862,6 +3923,11 @@ impl Game {
         self.chat.push(text, color);
     }
 
+    /// A chat line of a kind its colour doesn't tell (whispers share the broadcasts' yellow).
+    fn chat_line_kind(&mut self, text: String, color: [u8; 3], kind: chat::Kind) {
+        self.chat.push_kind(text, color, kind);
+    }
+
     /// Starts the attacker's swing now; the number and the flinch come when the hit lands.
     fn act(&mut self, act: net::Act, tables: &LookTables) {
         // Sitting down and standing up.
@@ -3928,7 +3994,7 @@ impl Game {
         let amount = act.damage + act.left_damage;
         let lands = Instant::now() + Duration::from_secs_f32(hit_ms.unwrap_or(act.source_speed.max(0) as f32) / 1000.0);
         // Misses, endured hits and lucky dodges don't flinch.
-        let flinch = (amount > 0 && !matches!(act.kind, 4 | 9 | 11)).then_some(act.target_speed.max(100) as f32);
+        let flinch = (amount > 0 && !matches!(act.kind, 4 | 9 | 11)).then_some(act.target_speed as f32);
         let kind = match act.kind {
             11 => DamageKind::Lucky,
             10 | 13 => DamageKind::Critical,
@@ -5298,7 +5364,7 @@ impl App {
                 None if game.mail.typing() => game.mail.type_text(text),
                 None if game.room.is_some() => game.room.as_mut().unwrap().input.push_str(text),
                 None if !game.chat_mode.chat_line_open() => {}
-                None => game.chat.typing().extend(typed),
+                None => game.chat.type_text(&typed.collect::<String>()),
             },
             Scene::CharMake(make, _) => make.type_text(text),
             Scene::Prompt { input, then: Then::ConfirmName(_), .. } => {
@@ -6455,6 +6521,14 @@ impl App {
                     None => {}
                 }
             }
+            // A small party window: its close button removes it. A click on the body was a drag (handled on press).
+            Scene::Game(game)
+                if game.member_windows.hit(cursor).is_some() || game.party_window.compact && party::compact_hit(cursor, game.party.as_ref()).is_some() =>
+            {
+                if let Some((account, party::MemberHit::Close)) = game.member_windows.hit(cursor) {
+                    game.member_windows.close(account);
+                }
+            }
             Scene::Game(game) if game.window_at(cursor).is_some() => {
                 let id = game.window_at(cursor).unwrap();
                 game.raise(id);
@@ -6555,7 +6629,7 @@ impl App {
                             && let Some(item) = game.inventory.get(index)
                         {
                             let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
-                            game.chat.typing().push_str(&item_link(item.id, &name));
+                            game.chat.type_whole(&item_link(item.id, &name));
                         } else if let Some(index) = game.inventory.click(hit) {
                             game.use_item(index);
                         }
@@ -6701,6 +6775,7 @@ impl App {
                                 game.party_setup = Some(party::Setup::new(party, leader, game.party_window.frame.position));
                             }
                         }
+                        Some(party::Hit::LastRow) => game.party_window.compact = !game.party_window.compact,
                         _ => {}
                     },
                     Panel::Storage => {
@@ -6727,6 +6802,15 @@ impl App {
                             None => {}
                         }
                     }
+                }
+            }
+            // The chat tab settings: a kind of line on or off for the tab.
+            Scene::Game(game) if game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).is_some() => {
+                match game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).unwrap() {
+                    chat::SettingsHit::Title(TitleHit::Close) => game.chat.settings = None,
+                    chat::SettingsHit::Title(title) => game.chat.settings.as_mut().unwrap().frame.click_title(title),
+                    chat::SettingsHit::Kind(kind) => game.chat.toggle_kind(kind),
+                    chat::SettingsHit::Window => {}
                 }
             }
             Scene::Game(game) if game.chat.blocks(cursor) => {
@@ -6811,6 +6895,7 @@ impl App {
             }
             let (inventory_height, equipment_height, info_height) = (game.inventory.height(), game.equipment.height(), game.basic_info.height());
             game.basic_info.frame.drag_to(self.cursor, info_height);
+            game.chat.drag_to(self.cursor);
             let hotkeys_height = game.hotkeys.height();
             game.hotkeys.frame.drag_to(self.cursor, hotkeys_height);
             game.inventory.frame.drag_to(self.cursor, inventory_height);
@@ -6825,6 +6910,7 @@ impl App {
             }
             let party_height = game.party_window.height(game.party.as_ref(), &game.friends);
             game.party_window.frame.drag_to(self.cursor, party_height);
+            game.member_windows.drag_to(self.cursor);
             let status_height = game.status_height;
             game.status_window.frame.drag_to(self.cursor, status_height);
             let guild_height = game.guild_window.height();
@@ -7388,7 +7474,8 @@ impl App {
                     }
                     _ => {}
                 }
-                let trade_moved = game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
+                let trade_moved = game.chat.drop_drag()
+                    | game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
                     | game.room.as_mut().is_some_and(|room| room.frame.drop_drag())
                     | game.card_view.as_mut().is_some_and(|view| view.drop_drag())
                     | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
@@ -7410,9 +7497,12 @@ impl App {
                 }
                 let option_windows = game.graphics_window.as_mut().is_some_and(options::GraphicsWindow::drop_drag)
                     | game.shortcuts_window.as_mut().is_some_and(options::ShortcutsWindow::drop_drag);
+                let member_held =
+                    game.member_windows.release(game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends, game.account_id).is_none(), self.cursor);
                 let windows = trade_moved
                     | slid
                     | option_windows
+                    | member_held
                     | game.party_window.frame.drop_drag()
                     | game.status_window.frame.drop_drag()
                     | game.guild_window.frame.drop_drag()
@@ -7469,6 +7559,12 @@ impl App {
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
             && game.targeting.is_some()
         {
+            // ponytail: a click on the member's window casts on their account id (a player's unit id). Range is the
+            // same as aiming at them in the world; the close button still closes.
+            if let Some(account) = game.party_member_at(cursor) {
+                game.aim_skill(SkillTarget::Unit(account));
+                return;
+            }
             let on_ui = game.on_ui(cursor, &self.items, assets.message.size);
             match (on_ui, game.aim_target(cursor, game.players_first(self.modifiers.shift_key()))) {
                 (false, Some(target)) => {
@@ -7576,6 +7672,12 @@ impl App {
             if hit == iteminfo::ViewHit::Grip {
                 view.start_drag(cursor);
             }
+            return;
+        }
+        // The chat window goes by its tab strip.
+        if let Scene::Game(game) = &mut self.scene
+            && game.chat.press(cursor)
+        {
             return;
         }
         // The item description window goes by its top (the NPC window's links are over it).
@@ -7715,6 +7817,20 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && let Some((account, hit)) = game.member_windows.hit(cursor)
+        {
+            if hit == party::MemberHit::Body {
+                game.member_windows.press_window(account, cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && game.party_window.compact
+            && party::compact_hit(cursor, game.party.as_ref()).is_some()
+        {
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
             && let Some(id) = game.window_at(cursor)
         {
             game.raise(id);
@@ -7757,6 +7873,11 @@ impl App {
             match id {
                 Panel::BasicInfo if game.basic_info.hit(cursor) == Some(basic_info::Hit::Title) => game.basic_info.frame.start_drag(cursor),
                 Panel::Inventory if game.inventory.hit(cursor) == Some(inventory::Hit::Title(TitleHit::Title)) => game.inventory.frame.start_drag(cursor),
+                Panel::Party if matches!(game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id), Some(party::Hit::Member(_))) => {
+                    if let Some(party::Hit::Member(account)) = game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id) {
+                        game.member_windows.press_row(account);
+                    }
+                }
                 Panel::Party
                     if game.party_window.hit(cursor, game.party.as_ref(), &game.friends, game.account_id) == Some(party::Hit::Title(TitleHit::Title)) =>
                 {
@@ -7830,6 +7951,8 @@ impl App {
             }
         } else {
             let effects_on = self.graphics.effects_on;
+            // The receiving group button's choice, or the key held.
+            let (party, guild) = (party || game.chat.send_to == chat::SendTo::Party, guild || game.chat.send_to == chat::SendTo::Guild);
             if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.graphics.effects_on) {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
             }
@@ -8457,7 +8580,8 @@ impl App {
                                     game.chat.typing().pop();
                                 }
                                 _ if typing && !self.modifiers.alt_key() && !self.modifiers.super_key() && !self.modifiers.control_key() => {
-                                    game.chat.typing().extend(event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()));
+                                    let typed: String = event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()).collect();
+                                    game.chat.type_text(&typed);
                                 }
                                 _ => {}
                             }
@@ -8887,6 +9011,7 @@ impl App {
                         window.frame.open = window.friends || order.split(',').any(|part| part == "window");
                         window
                     },
+                    member_windows: party::MemberWindows::default(),
                     party_invite: None,
                     partner: None,
                     adopt_asked: None,
@@ -9055,6 +9180,7 @@ impl App {
                     walks: 0,
                     walk_held: false,
                     last_walk_try: None,
+                    walk_after_swing: None,
                     press_mark: None,
                     auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
                         let (x, y) = cell.split_once(',')?;
@@ -9586,6 +9712,15 @@ impl App {
                 if id == game.account_id && reason == 1 {
                     game.escape = Some(escape::Menu { dead: true });
                 }
+                // Teleporting and logging out leave rings and a sound on the spot (not for a GM hidden from sight).
+                if id != game.account_id
+                    && let (Some(gpu), Some(actor)) = (gpu, dying.as_deref())
+                    && let Some(effect) = vanish_effect(reason, actor.hide_option)
+                {
+                    let at = game.world.cell_position(actor.position(Instant::now()));
+                    game.effects.play(gpu, grf, table, effect, effects::Target::Ground, at, Instant::now());
+                }
+                let dying = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 match (reason, dying) {
                     (1, Some(actor)) => fall(actor, lands),
                     // Out of sight: it fades out, its shadow gone at once.
@@ -10651,6 +10786,7 @@ impl App {
                     })
                     .collect();
                 game.party = Some(party);
+                game.member_windows.retain(game.party.as_ref());
             }
             MapEvent::PartyMember { party: name, member, cell, .. } => {
                 let party = game.party.get_or_insert_with(party::Party::default);
@@ -10669,12 +10805,14 @@ impl App {
                     3 => game.chat_line(message(1873), CHAT_ERROR),
                     _ if account == game.account_id => {
                         game.party = None;
+                        game.member_windows.retain(None);
                         game.chat_line(message(PARTY_LEFT), CHAT_ITEM);
                     }
                     _ => {
                         if let Some(party) = &mut game.party {
                             party.members.retain(|member| member.info.account != account);
                         }
+                        game.member_windows.retain(game.party.as_ref());
                         game.unit_hp.remove(&account);
                     }
                 }
@@ -10982,7 +11120,7 @@ impl App {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
             }
             // Whispers, yellow both ways (the client's "(From name)" wording).
-            MapEvent::Whisper { from, text } => game.chat_line(format!("(From {from}) : {text}"), WHISPER_COLOR),
+            MapEvent::Whisper { from, text } => game.chat_line_kind(format!("(From {from}) : {text}"), WHISPER_COLOR, chat::Kind::Whisper),
             MapEvent::WhisperResult(result) => {
                 let (to, text) = game.whispered.pop_front().unwrap_or_default();
                 let line = match result {
@@ -10990,7 +11128,7 @@ impl App {
                     1 => self.messages.get(WHISPER_FAILED).cloned().unwrap_or_default(),
                     _ => format!("{to}{}", self.messages.get(WHISPER_FAILED + usize::from(result) - 1).cloned().unwrap_or_default()),
                 };
-                game.chat_line(line, WHISPER_COLOR);
+                game.chat_line_kind(line, WHISPER_COLOR, chat::Kind::Whisper);
             }
             MapEvent::ItemSkill(skill) => game.cast_item_skill(skill),
             // Eggs to hatch: the pick list; an empty one shows nothing.
@@ -12048,15 +12186,21 @@ impl App {
         // Bodies that finished dying leave; hits that land make their target flinch.
         game.units.retain(|_, actor| actor.remove_at.is_none_or(|at| at > now));
         for damage in &mut game.damages {
-            if damage.start <= now && damage.flinch.take().is_some() {
+            if damage.start <= now && damage.flinch.is_some() {
+                let motion = damage.flinch.take();
                 let target = match damage.target {
                     None => Some(&mut game.player),
                     Some(id) => game.units.get_mut(&id),
                 };
-                // A monster already in a special action (attacking, casting) doesn't flinch.
-                if let Some(target) = target.filter(|target| target.remove_at.is_none() && !(target.kind == MONSTER && target.in_action(now))) {
+                // The flinch stops a walk once its step is done and gets a sitting player up.
+                if let Some(target) =
+                    target.filter(|target| target.remove_at.is_none() && !target.dead && actor::flinches(target.kind, target.animation(now).0))
+                    && let Some(motion) = motion
+                {
                     let (_, flinch, _) = actor::combat_actions(target.kind);
-                    target.play_at_pace(flinch, now, 1.0, false);
+                    target.flinch(flinch, now, motion);
+                    target.stop_after_step();
+                    target.sitting = false;
                     target.stand_ready();
                 }
             }
@@ -12275,16 +12419,11 @@ impl App {
             })
             .collect();
 
-        // Warp portals have no sprite: the cell they stand on is their pick box.
-        let half = world::CELL / 2.0;
+        // Warp portals have no sprite: their pick box is drawn around the feet.
         for (&id, actor) in game.units.iter().filter(|(_, actor)| actor.job == WARP_JOB) {
             let feet = game.world.cell_position(actor.cell.map(|value| value as f32));
-            let corners: Option<Vec<_>> = [[-half, -half], [half, -half], [half, half], [-half, half]]
-                .iter()
-                .map(|[dx, dz]| view.project([feet[0] + dx, feet[1], feet[2] + dz]).map(to_screen))
-                .collect();
-            if let Some(corners) = corners {
-                let cell = picking::bounds(&corners);
+            if let Some([left, top, right, bottom]) = warp_pick_rect(&view, feet) {
+                let cell = picking::bounds(&[to_screen([left, top]), to_screen([right, bottom])]);
                 let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]).powi(2)).sum::<f32>();
                 game.hit_boxes.push(picking::Target {
                     owner: Owner::Unit(id),
@@ -13095,6 +13234,16 @@ impl App {
         let caret = open && (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
         let name_of = |item: &links::ItemLink| inventory::item_name(items, item.id, true, item.refine);
         game.chat_links = game.chat.draw(&mut chat_layer, &assets.chat, font, messages, open, caret, &name_of);
+        // The input bar buttons' tooltips, over the pointer.
+        if let Some(text) = game.chat.tooltip(pointer.0).and_then(|id| messages.get(id)) {
+            let size = [font.width(text) + 8.0, font.line_height() + 4.0];
+            let corner = [pointer.0[0] - size[0] / 2.0, pointer.0[1] - size[1] - 6.0];
+            tooltip.sprites.push((&assets.speech_fill, corner, size));
+            for (edge, piece) in overhead::border(size) {
+                tooltip.sprites.push((&assets.speech_border, offset(corner, edge), piece));
+            }
+            tooltip.texts.push((text.clone(), offset(corner, [4.0, 2.0]), [0, 0, 0]));
+        }
         let size = [game.world.gat.width as u32, game.world.gat.height as u32];
         // NPC marks blink, shown half of each second.
         game.marks.retain(|(.., until)| until.is_none_or(|until| until > now));
@@ -13406,6 +13555,19 @@ impl App {
             layer.faded = game.panel_faded(id);
             layers.push(layer);
         }
+        // Party members dragged out of the list, and the compact stack, over the other windows.
+        let mut member_layer = Layer::default();
+        game.member_windows.draw(
+            &mut member_layer,
+            &assets.chrome,
+            &assets.party,
+            font,
+            game.party.as_ref(),
+            here.as_str(),
+            game.party_window.compact,
+            pointer.0,
+        );
+        layers.push(member_layer);
         // A dragged item's or skill's icon follows the pointer.
         let dragged_icon = match game.dragging {
             Some((Dragged::Item(index) | Dragged::Worn(index), _, true)) => {
@@ -13453,6 +13615,9 @@ impl App {
         }
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
+        if let Some(settings) = &game.chat.settings {
+            settings.draw(&mut shop_layer, &assets.chrome, messages, &game.chat.tabs[settings.tab].kinds, pointer.0);
+        }
         // A skill's description, over the windows.
         if let Some(window) = &game.skill_description {
             window.draw(&mut shop_layer, &assets.chrome, &assets.skill_descript, font, pointer.0);
@@ -13781,7 +13946,8 @@ impl App {
         // The cursor shows what a click would do.
         let on_window = game.on_ui(pointer.0, items, assets.message.size);
         let ground = view.pick_ground([pointer.0[0] / screen()[0], pointer.0[1] / screen()[1]], &game.world.gat);
-        cursor_look.set(if game.camera_goal.dragging.is_some() {
+        let (shift, alt) = (self.modifiers.shift_key(), self.modifiers.alt_key());
+        cursor_look.set(if turning_cursor(game.camera_goal.dragging.is_some(), shift, alt) {
             cursor::Kind::Rotate
         } else if pointer.1 && game.attack.is_some_and(|attack| attack.held) {
             cursor::Kind::Attack
@@ -13796,7 +13962,7 @@ impl App {
         } else {
             match hovered(&game.hit_boxes, pointer.0, players_first) {
                 Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
-                    Some(MONSTER) => cursor::Kind::Attack,
+                    Some(MONSTER) => monster_cursor(shift, game.no_shift),
                     Some(NPC) => npc_cursor(game.units[&id].job),
                     Some(PLAYER) if game.opponent(id).is_some_and(|other| game.side().attack_cursor(&other, players_first, false)) => cursor::Kind::Attack,
                     Some(HOMUNCULUS | MERCENARY | ELEMENTAL) if versus::companion_cursor(game.side().flags) => cursor::Kind::Attack,
@@ -14058,6 +14224,10 @@ impl ApplicationHandler<NetEvent> for App {
                 let now = Instant::now();
                 game.attack_step(now);
                 game.pending_step(now);
+                if let Some(cell) = game.walk_after_swing.filter(|_| !game.player.swinging(control::now())) {
+                    game.walk_after_swing = None;
+                    game.walk_toward(cell, now);
+                }
                 if follows_pointer(game.walk_held, game.pending.is_some(), game.last_walk_try, now)
                     && let Some(assets) = &self.assets
                     && !game.on_ui(self.cursor, &self.items, assets.message.size)
@@ -14226,6 +14396,22 @@ impl ApplicationHandler<NetEvent> for App {
 }
 
 fn main() {
+    // Every panic, also a caught one (a packet skipped), goes to crash.log in the settings folder with its backtrace:
+    // a bundled app's stderr goes nowhere.
+    // ponytail: the file only grows; cap it if a server ever sends a stream of unreadable packets.
+    let report = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write as _;
+        if let Some(path) = settings_path("crash.log")
+            && path.parent().map_or(Ok(()), std::fs::create_dir_all).is_ok()
+            && let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path)
+        {
+            let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+            let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
+            let _ = writeln!(file, "unix time {seconds}, thread {thread}: {info}\n{}", std::backtrace::Backtrace::force_capture());
+        }
+        report(info);
+    }));
     // Started as Ragnarok.app: work in the bundle's folder, where data.grf is (Finder starts apps in /).
     if let Ok(exe) = std::env::current_exe()
         && let Some(folder) = exe.ancestors().find(|path| path.extension().is_some_and(|extension| extension == "app")).and_then(|bundle| bundle.parent())
@@ -14497,6 +14683,21 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
     1.0 - (now.saturating_duration_since(start).as_secs_f32() / length.as_secs_f32().max(f32::EPSILON)).min(1.0)
 }
 
+/// Turning on the spot toward rathena direction `target` (0 north, counting counter-clockwise): the body and the head
+/// (0 straight, 1 right, 2 left) after. Ahead or behind, the body turns. 45° aside, the head turns, or the body when the
+/// head already looks that way. 90° to 135° aside, the body turns one sector short and the head looks the rest.
+fn turn_toward(body: u8, head: u8, target: u8) -> (u8, u8) {
+    match (body + 8 - target) % 8 {
+        1 if head == 1 => (target, 0),
+        1 => (body, 1),
+        2 | 3 => ((target + 1) % 8, 1),
+        7 if head == 2 => (target, 0),
+        7 => (body, 2),
+        5 | 6 => ((target + 7) % 8, 2),
+        _ => (target, 0),
+    }
+}
+
 /// Why an item can't be dropped on the ground now: `Some(None)` quietly, `Some(Some(message))` saying so; `None` when
 /// it can. In order: a wear asked for under 2 s ago, a deal or talk under way, the equipment window, the storage, the
 /// mail window, the ammunition worn.
@@ -14519,6 +14720,24 @@ fn ground_drop_refused(since_wear: Option<Duration>, busy: bool, equipment: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_head_turns_before_the_body() {
+        // Facing north (0): north-east (7) is 45° right: the head looks right, then the body turns.
+        assert_eq!(turn_toward(0, 0, 7), (0, 1));
+        assert_eq!(turn_toward(0, 1, 7), (7, 0));
+        // East (6), 90° right: the body to north-east, the head right; south-east (5), 135°: the body east.
+        assert_eq!(turn_toward(0, 0, 6), (7, 1));
+        assert_eq!(turn_toward(0, 0, 5), (6, 1));
+        // Left: north-west (1) the head; west (2) and south-west (3) one sector short.
+        assert_eq!(turn_toward(0, 0, 1), (0, 2));
+        assert_eq!(turn_toward(0, 2, 1), (1, 0));
+        assert_eq!(turn_toward(0, 0, 2), (1, 2));
+        assert_eq!(turn_toward(0, 0, 3), (2, 2));
+        // Ahead and behind: the body, the head straight.
+        assert_eq!(turn_toward(0, 2, 0), (0, 0));
+        assert_eq!(turn_toward(0, 1, 4), (4, 0));
+    }
 
     #[test]
     fn some_things_open_keep_items_off_the_ground() {
@@ -14562,6 +14781,38 @@ mod tests {
         assert_eq!(canvas_width([2048, 1536]), 1024.0);
         assert_eq!(canvas_width([3840, 2160]), 1365.0, "16:9");
         assert_eq!(canvas_width([1000, 1000]), 1024.0, "narrower than 4:3 keeps 1024, with bars above and below");
+    }
+
+    #[test]
+    fn rings_where_a_unit_teleported_or_logged_out() {
+        assert_eq!(vanish_effect(3, 0), Some(304));
+        assert_eq!(vanish_effect(3, actor::OPTION_INVISIBLE), None);
+        assert_eq!(vanish_effect(2, 0), Some(314));
+        assert_eq!((vanish_effect(0, 0), vanish_effect(1, 0)), (None, None));
+    }
+
+    #[test]
+    fn shows_the_attack_and_turning_cursors_only_when_they_apply() {
+        assert_eq!(monster_cursor(false, false), cursor::Kind::Attack);
+        assert_eq!(monster_cursor(true, false), cursor::Kind::Default);
+        assert_eq!(monster_cursor(true, true), cursor::Kind::Attack);
+        // The right button held: no key and Ctrl turn (Ctrl isn't asked); Shift tilts; Alt doesn't.
+        assert!(turning_cursor(true, false, false) && !turning_cursor(true, true, false) && !turning_cursor(true, false, true));
+        assert!(!turning_cursor(false, false, false));
+    }
+
+    #[test]
+    fn picks_warps_in_a_box_around_their_feet() {
+        let camera = |distance: f32| Camera { target: [100.0, 0.0, 100.0], distance, pitch: 45f32.to_radians(), yaw: 0.0, ground: f32::MIN };
+        let size = |distance: f32| {
+            let [left, top, right, bottom] = warp_pick_rect(&camera(distance).view(4.0 / 3.0), [100.0, 0.0, 100.0]).unwrap();
+            [(right - left) * 1024.0, (bottom - top) * 768.0]
+        };
+        // About 166 by 109 screen pixels at the default distance, centred on the feet; smaller farther out.
+        let [width, height] = size(300.0);
+        assert!((width - 166.0).abs() < 8.0 && (height - 109.0).abs() < 6.0, "{width} {height}");
+        let far = size(400.0);
+        assert!(far[0] < width * 0.8 && far[1] < height * 0.8, "{far:?}");
     }
 
     #[test]
