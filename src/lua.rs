@@ -23,8 +23,8 @@ const WEAPON_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\weapontable.
 const ROBE_ID: &str = "data\\luafiles514\\lua files\\datainfo\\spriterobeid.lub";
 const ROBE_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\spriterobename.lub";
 /// What decides where garments and headgear go among a character's layers: the garment tables (by job, action and
-/// frame), the garments worn over the headgear, and the headgear priorities.
-const LAYER_RULES: [&str; 12] = [
+/// frame), the garments worn over the headgear, the headgear priorities, and the headgear Doram wear moved.
+const LAYER_RULES: [&str; 14] = [
     JOB_INHERIT,
     ROBE_ID,
     ROBE_NAME,
@@ -37,6 +37,8 @@ const LAYER_RULES: [&str; 12] = [
     "data\\luafiles514\\lua files\\spreditinfo\\_new_2dlayerdir_f.lub",
     ACCESSORY_ID,
     "data\\luafiles514\\lua files\\datainfo\\tb_layer_priority.lub",
+    "data\\luafiles514\\lua files\\offsetitempos\\offsetitempos_f.lub",
+    "data\\luafiles514\\lua files\\offsetitempos\\offsetitempos.lub",
 ];
 /// Defines JOBID, which the job name and skill tables use.
 const JOB_INHERIT: &str = "data\\luafiles514\\lua files\\skillinfoz\\jobinheritlist.lub";
@@ -309,6 +311,12 @@ impl LayerRules {
     /// of these numbers, the body's numbered from 1; -1 hides it.
     pub fn headgear_priority(&self, direction: usize, slot: u8, view: u16) -> Option<i32> {
         self.call("GetLayerPriority", (direction, slot, view))
+    }
+
+    /// How far a Doram of `sex` has headgear `view` moved facing `direction` (sprite pixels), if at all.
+    pub fn doram_headgear_offset(&self, view: u16, direction: usize, sex: u8) -> Option<[i32; 2]> {
+        let (x, y) = self.call::<(Option<i32>, Option<i32>)>("OffsetItemPos_GetOffsetForDoram", (view, direction, sex))?;
+        Some([x?, y?])
     }
 }
 

@@ -173,6 +173,8 @@ pub struct Character {
     pub hair_color: u16,
     pub clothes_color: u16,
     pub robe: u16,
+    /// Option bits (rathena's OPTION_*: mounts, outfits, ...).
+    pub option: u32,
     pub name: String,
     /// STR, AGI, VIT, INT, DEX, LUK.
     pub stats: [u8; 6],
@@ -450,6 +452,7 @@ fn decode_character(info: &[u8]) -> Character {
         hair_color: i16_at(104),
         clothes_color: i16_at(106),
         robe: i32_at(162) as u16,
+        option: i32_at(36) as u32,
         name: c_string(&info[108..132]),
         stats: info[132..138].try_into().unwrap(),
         slot: info[138],
@@ -531,6 +534,7 @@ const ZC_DELETE_ITEM_FROM_BODY: u16 = 0x07FA;
 const CZ_USE_ITEM: u16 = 0x0439;
 const ZC_USE_ITEM_ACK: u16 = 0x01C8;
 const ZC_SPRITE_CHANGE: u16 = 0x01D7;
+const ZC_STATE_CHANGE: u16 = 0x0229;
 const CZ_REQ_WEAR_EQUIP: u16 = 0x0998;
 const ZC_REQ_WEAR_EQUIP_ACK: u16 = 0x0999;
 const CZ_REQ_TAKEOFF_EQUIP: u16 = 0x00AB;
@@ -965,6 +969,8 @@ pub struct Unit {
     pub name: String,
     /// Sitting when it came into view.
     pub sitting: bool,
+    /// Option bits (rathena's OPTION_*: mounts, outfits, hiding, ...).
+    pub option: u32,
     /// A player's guild and its emblem's version (0 for none).
     pub guild: u32,
     pub emblem: u32,
@@ -1965,6 +1971,11 @@ pub enum MapEvent {
         cell: [u16; 2],
         id: u8,
         color: [u8; 3],
+    },
+    /// A unit's option bits changed (ZC_STATE_CHANGE): mounting, outfits, hiding, ...
+    OptionChange {
+        id: u32,
+        option: u32,
     },
     /// A unit's looks changed (`kind` is a `LOOK_*`); for weapons `extra` is the shield.
     LookChange {
@@ -3695,6 +3706,8 @@ fn decode_unit(packet: &[u8], layout: &UnitLayout, position: ([u16; 2], u8)) -> 
         level: u16_at(layout.level),
         name: c_string(&packet[layout.name..(layout.name + 24).min(packet.len())]),
         sitting: layout.state.is_some_and(|state| packet.get(state) == Some(&2)),
+        // effectState, after bodyState and healthState.
+        option: u32_at(packet, 19),
         // GUID and GEmblemVer follow the robe.
         guild: u32_at(packet, layout.robe + 2),
         emblem: u32::from(u16_at(layout.robe + 6)),
@@ -4505,6 +4518,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 .collect(),
         },
         ZC_SPRITE_CHANGE => MapEvent::LookChange { id: u32_at(2), kind: packet[6], value: u32_at(7), extra: u32_at(11) },
+        // AID, bodyState, healthState, then effectState.
+        ZC_STATE_CHANGE => MapEvent::OptionChange { id: u32_at(2), option: u32_at(10) },
         ZC_REQ_WEAR_EQUIP_ACK => MapEvent::Equipped { index: u16_at(2), location: u32_at(4), result: packet[10] },
         // Since 2011 the flag is inverted: 0 means it came off.
         ZC_REQ_TAKEOFF_EQUIP_ACK => MapEvent::Unequipped { index: u16_at(2), location: u32_at(4), failed: packet[8] != 0 },
@@ -4585,6 +4600,22 @@ mod tests {
         info[140..142].copy_from_slice(&1u16.to_le_bytes());
         let character = decode_character(&info);
         assert_eq!((character.moves, character.renames, character.name_changed), (2, 1, true));
+
+        // A knight on a Peco: effectstate is the option.
+        info[36..40].copy_from_slice(&0x20u32.to_le_bytes());
+        assert_eq!(decode_character(&info).option, 0x20);
+    }
+
+    #[test]
+    fn decodes_option_changes() {
+        // clif_changeoption_target: AID, bodyState, healthState, effectState, PK mode.
+        let mut packet = ZC_STATE_CHANGE.to_le_bytes().to_vec();
+        packet.extend_from_slice(&2_000_002u32.to_le_bytes());
+        packet.extend_from_slice(&[0, 0, 0, 0]);
+        packet.extend_from_slice(&0x80_0020u32.to_le_bytes());
+        packet.push(0);
+        assert_eq!(packet.len(), packet_length(ZC_STATE_CHANGE).unwrap() as usize);
+        let Some(MapEvent::OptionChange { id: 2_000_002, option: 0x80_0020 }) = decode_map_packet(&packet) else { panic!() };
     }
 
     #[test]

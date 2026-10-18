@@ -1,0 +1,227 @@
+{
+ "about": "Bodies: a knight on a Peco, a Lord Knight's sword in the battle stance, a baby drawn smaller, and the wedding outfit. Puts the job and options back at the end.",
+ "account": "",
+ "slot": 0,
+ "env": {
+  "RUSTNAROK_CLIENT_CAMERA": "0,45,65"
+ },
+ "steps": [
+  {
+   "say": "@warp pay_fild04 184 210"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "say": "@killmonster2"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@heal"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "say": "@option 0 0 0"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@job 7"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "say": "@option 0 0 32"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "expect": {
+    "state": {
+     "player.job": 7
+    }
+   }
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "shot": "body-knight-peco",
+   "crop": [
+    352,
+    140,
+    320,
+    320
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@option 0 0 0"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@job 4008"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "say": "@item 1101 1"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "click": [
+    11,
+    225
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "click_on": {
+    "inventory_item": 1101
+   },
+   "count": 2
+  },
+  {
+   "wait_for": {
+    "event": "Equipped",
+    "ms": 5000
+   }
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "say": "@useskill 28 1 {first}"
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "shot": "body-lord-knight-ready",
+   "crop": [
+    352,
+    140,
+    320,
+    320
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@job 4023"
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "expect": {
+    "state": {
+     "player.job": 4023
+    }
+   }
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "shot": "body-baby",
+   "crop": [
+    352,
+    140,
+    320,
+    320
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@option 0 0 4096"
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "shot": "body-wedding",
+   "crop": [
+    352,
+    140,
+    320,
+    320
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@option 0 0 0"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@job 0"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "expect": {
+    "state": {
+     "player.job": 0
+    }
+   }
+  }
+ ]
+}
