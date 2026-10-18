@@ -423,7 +423,7 @@ impl Select {
                 (index, action, timing)
             })
             .collect();
-        poses.into_iter().filter_map(|(index, action, timing)| Some((index, self.figures[index].as_mut()?.frame(gpu, action, 0, 0, timing)))).collect()
+        poses.into_iter().filter_map(|(index, action, timing)| Some((index, self.figures[index].as_mut()?.flat_frame(gpu, action, 0, 0, timing)))).collect()
     }
 
     /// The job icons the page shows, to load before drawing.
