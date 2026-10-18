@@ -1,0 +1,19 @@
+{
+  "about": "A click 6 cells east and 4 north walks the server's way: the 4 diagonal steps first, then 2 straight ones, where it used to go straight first and cut across at the end. Shot 600 ms into the walk (on the diagonal, at 172,362), then the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"click_on": {"cell": [176, 364]}},
+    {"wait_for": {"packet": "0x0087", "ms": 3000, "pause": true}},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 600}},
+    {"move": [1000, 750]},
+    {"shot": "walk-diagonal-mid", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"expect": {"state": {"player.cell": [172, 362]}}},
+    {"cmd": {"cmd": "clock", "action": "resume"}},
+    {"wait": 1500},
+    {"shot": "walk-diagonal-end", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"expect": {"state": {"player.cell": [176, 364], "player.moving": false}}}
+  ]
+}
