@@ -1,0 +1,328 @@
+{
+  "about": "Battlegrounds, a team made by script (issue #107): the test NPC battleground-team.txt puts both players on one team on bat_c01 (a whisper 'join' to npc:RustnarokBG). Each sees the other's camp, the first sees the second's minimap dot and HP bar, and the bar follows @heal -10 0. /battlechat sends a line to the team; 'score#3#1' sets the score; when the second leaves, the first gets the server's line and loses the dot. Both leave and go back to Prontera; the NPC is unloaded.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {
+      "say": "@unloadnpcfile {scenarios}/battleground-team.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {scenarios}/battleground-team.txt"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokBG"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "join"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "packet": "0x02dd",
+        "ms": 10000
+      }
+    },
+    {
+      "settle": 2500
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "map": "bat_c01.gat",
+        "state": {
+          "battleground.joined": true
+        }
+      }
+    },
+    {
+      "key": "Tab",
+      "as": "second"
+    },
+    {
+      "type": "npc:RustnarokBG",
+      "as": "second"
+    },
+    {
+      "key": "Tab",
+      "as": "second"
+    },
+    {
+      "type": "join",
+      "as": "second"
+    },
+    {
+      "key": "Enter",
+      "as": "second"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x02dd",
+        "ms": 10000
+      }
+    },
+    {
+      "as": "second",
+      "settle": 2500
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "expect": {
+        "map": "bat_c01.gat",
+        "state": {
+          "battleground.joined": true
+        }
+      }
+    },
+    {
+      "as": "second",
+      "say": "@warp bat_c01 56 125"
+    },
+    {
+      "as": "second",
+      "settle": 1500
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "battleground.dots": 1,
+          "battleground.hp": 1
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "battleground-team"
+    },
+    {
+      "as": "second",
+      "say": "@heal -10 0"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0a0e",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "battleground-hp"
+    },
+    {
+      "type": "/battlechat"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "Battlefield Chat has been activated.",
+        "state": {
+          "battleground.battle_chat": true
+        }
+      }
+    },
+    {
+      "type": "hello team"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x02dc",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "expect": {
+        "chat": "hello team"
+      }
+    },
+    {
+      "type": "/battlechat"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "Battlefield Chat has been deactivated."
+      }
+    },
+    {
+      "type": "score#3#1"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "packet": "0x02de",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "battleground.score": [
+            3,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "battleground-score"
+    },
+    {
+      "type": "leave",
+      "as": "second"
+    },
+    {
+      "key": "Enter",
+      "as": "second"
+    },
+    {
+      "as": "second",
+      "settle": 2500
+    },
+    {
+      "wait_for": {
+        "packet": "0x02df",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "chat": "is leaving the battlefield",
+        "state": {
+          "battleground.dots": 0
+        }
+      }
+    },
+    {
+      "type": "score#0#0"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "type": "leave"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "settle": 2500
+    },
+    {
+      "expect": {
+        "state": {
+          "battleground": null
+        }
+      }
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "as": "second",
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "as": "second",
+      "settle": 1500
+    },
+    {
+      "as": "second",
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@unloadnpcfile {scenarios}/battleground-team.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

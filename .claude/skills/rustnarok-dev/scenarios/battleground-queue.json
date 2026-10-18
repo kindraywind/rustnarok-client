@@ -1,0 +1,235 @@
+{
+  "about": "Battleground queue (issue #107), one player: the menu's battle button opens the queue window; picking 'KVM (Level 80 and up)' shows its details; applying alone (asked first) queues the player, and the window shows the wait with how many are queued. Closing and opening it asks for that number again. Cancelling (asked first) leaves the queue; applying again within a minute gets rathena's own refusal. The character is raised 79 levels for it (KVM wants 80+) and lowered again at the end; the scenario reset deletes the queue's saved statuses (sc_data 704, 705), or the next run couldn't apply.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@blvl 79"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "click_on": {
+        "button": "menu"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "battle"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "BattleQueue"
+        ],
+        "state": {
+          "battle_queue": null
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "queue-list"
+    },
+    {
+      "click_on": {
+        "button": "KVM (Level 80 and up)"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "queue-details"
+    },
+    {
+      "click_on": {
+        "button": "individual"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x08d8",
+        "ms": 5000
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x08d9",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "You are now in the battlefield queue.",
+        "state": {
+          "battle_queue.name": "KVM (Level 80 and up)",
+          "battle_queue.number": 1
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "queue-waiting"
+    },
+    {
+      "click_on": {
+        "menu_item": "battle"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "BattleQueue"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "menu_item": "battle"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x08d9",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "BattleQueue"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "button": "cancel"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x08db",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "You have left the battlefield queue.",
+        "state": {
+          "battle_queue": null
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "KVM (Level 80 and up)"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "individual"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x08d8",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "chat": "due to recently leaving one",
+        "state": {
+          "battle_queue": null
+        }
+      }
+    },
+    {
+      "click_on": {
+        "menu_item": "battle"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@blvl -79"
+    },
+    {
+      "wait": 800
+    }
+  ]
+}

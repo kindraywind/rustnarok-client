@@ -67,6 +67,59 @@ const WORLD_VIEW: [&str; 4] = [
     "data\\luafiles514\\lua files\\worldviewdata\\worldviewdata_table.lub",
 ];
 
+/// The battlegrounds the queue window lists (`EntryQueueList`); a translation's copy in the data folder has rathena's
+/// names.
+const ENTRY_QUEUE: &str = "data\\luafiles514\\lua files\\entryqueue\\entryqueuelist.lub";
+
+/// A battleground the queue window lists.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Battleground {
+    /// Sent to the server; rathena's `Name` in battleground_db.
+    pub name: String,
+    pub display: String,
+    /// Team sizes: ours and theirs.
+    pub sizes: [u16; 2],
+    /// Applying alone, as a party, as a guild.
+    pub applies: [bool; 3],
+    /// Who may enter: 1 up to a level, 2 from a level, 3 a range; the levels.
+    pub condition: (u8, [u32; 2]),
+    /// What a win, a draw and a loss bring.
+    pub rewards: [String; 3],
+    pub goal: String,
+    /// Its picture (battle_field\bat_a01.bmp).
+    pub picture: String,
+}
+
+pub fn entry_queue(grf: &Grf) -> io::Result<Vec<Battleground>> {
+    battlegrounds(&run(grf, &[ENTRY_QUEUE])?)
+}
+
+/// `EntryQueueList` in order.
+fn battlegrounds(lua: &Lua) -> io::Result<Vec<Battleground>> {
+    let list: mlua::Table = lua.globals().get("EntryQueueList").map_err(lua_error)?;
+    let mut entries: Vec<(i64, Battleground)> = Vec::new();
+    for pair in list.pairs::<i64, mlua::Table>() {
+        let (index, entry) = pair.map_err(lua_error)?;
+        let text = |key: &str| entry.get::<mlua::String>(key).map(|text| decode(&text)).unwrap_or_default();
+        let number = |key: &str| entry.get::<u32>(key).unwrap_or(0);
+        entries.push((
+            index,
+            Battleground {
+                name: text("BattleFieldName"),
+                display: text("DisplayBattleFieldName"),
+                sizes: [number("AllianceNum") as u16, number("EnemyNum") as u16],
+                applies: [number("PrivateApply") == 1, number("PartyApply") == 1, number("GuildApply") == 1],
+                condition: (number("EnterCondType") as u8, [number("EnterCondValue1"), number("EnterCondValue2")]),
+                rewards: [text("RewardWin"), text("RewardDraw"), text("RewardLose")],
+                goal: text("VictoryCond"),
+                picture: text("MiniMapFile"),
+            },
+        ));
+    }
+    entries.sort_by_key(|(index, _)| *index);
+    Ok(entries.into_iter().map(|(_, battleground)| battleground).collect())
+}
+
 /// Runs client Lua files in order; precompiled ones are converted from the client's 32-bit bytecode first.
 fn run(grf: &Grf, files: &[&str]) -> io::Result<Lua> {
     let lua = new_lua()?;
@@ -803,7 +856,7 @@ pub fn upgrade_boxes(grf: &Grf) -> io::Result<HashMap<u32, UpgradeBox>> {
 
 const ENCHANT_LIST_F: &str = "data\\luafiles514\\lua files\\enchant\\enchantlist_f.lub";
 const ENCHANT_LIST: &str = "data\\luafiles514\\lua files\\enchant\\enchantlist.lub";
-const ITEM_DB_NAMES: &str = "data\\luafiles514\\lua files\\itemdbnametbl.lub";
+pub const ITEM_DB_NAMES: &str = "data\\luafiles514\\lua files\\itemdbnametbl.lub";
 // ponytail: the official client provides these; the values are what lets every table load. LoadAllData is not called
 // (it hands the tables to the client). The C_Set stubs are there in case a file calls it anyway.
 const ENCHANT_STUBS: &str = r#"
@@ -922,7 +975,7 @@ pub fn enchant_tables(lists: &[Vec<u8>], names: Vec<u8>) -> io::Result<HashMap<u
     for (index, bytes) in lists.iter().enumerate() {
         exec_bytes(&lua, &format!("enchant list {index}"), bytes.clone())?;
     }
-    let names = item_db_names(&lua);
+    let names = loaded_item_names(&lua);
     let table: mlua::Table = lua.globals().get("Table").map_err(lua_error)?;
     let mut tables = HashMap::new();
     for pair in table.pairs::<mlua::Value, mlua::Value>() {
@@ -934,7 +987,7 @@ pub fn enchant_tables(lists: &[Vec<u8>], names: Vec<u8>) -> io::Result<HashMap<u
 }
 
 /// `ItemDBNameTbl`, keyed by the Lua string's own bytes (Korean names are cp949, not UTF-8).
-fn item_db_names(lua: &Lua) -> HashMap<Vec<u8>, u32> {
+fn loaded_item_names(lua: &Lua) -> HashMap<Vec<u8>, u32> {
     let Ok(table) = lua.globals().get::<mlua::Table>("ItemDBNameTbl") else { return HashMap::new() };
     let mut names = HashMap::new();
     for pair in table.pairs::<mlua::Value, mlua::Value>().flatten() {
@@ -1074,9 +1127,244 @@ fn read_slot(slot: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> EnchantSlot {
     }
 }
 
+/// `ReformItemList` and `ReformInfo`.
+pub const ITEM_REFORM: &str = "data\\luafiles514\\lua files\\itemreform\\itemreformsystem.lub";
+
+/// One way a reform item can turn a carried item into another.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReformInfo {
+    pub base: u32,
+    pub result: u32,
+    /// Material item and how many.
+    pub materials: Vec<(u32, u32)>,
+    pub refine_min: u16,
+    pub refine_max: u16,
+    /// Random options the item must have. The client doesn't track them, so the button ignores this.
+    pub need_options: u8,
+    /// The item may hold no cards.
+    pub empty_socket: bool,
+    /// Cards and enchants stay. False: they are removed.
+    pub preserve_socket: bool,
+    /// The item's grade stays. False: it is removed.
+    pub preserve_grade: bool,
+    /// Added to the refine (negative lowers it).
+    pub change_refine: i32,
+    pub random_option: String,
+}
+
+/// `ItemDBNameTbl` as name bytes to item id. Keys stay the Lua string's raw bytes: some names are cp949, not UTF-8.
+/// A table stored as id to name is read the other way into the same map.
+pub fn item_db_names(source: Vec<u8>) -> io::Result<HashMap<Vec<u8>, u32>> {
+    let lua = new_lua()?;
+    exec_bytes(&lua, ITEM_DB_NAMES, source)?;
+    let table: mlua::Table = lua.globals().get("ItemDBNameTbl").map_err(lua_error)?;
+    let mut names = HashMap::new();
+    for pair in table.pairs::<mlua::Value, mlua::Value>() {
+        let (key, value) = pair.map_err(lua_error)?;
+        let id_of = |value: &mlua::Value| number(value).and_then(|id| u32::try_from(id).ok());
+        if let (Some(name), Some(id)) = (raw_bytes(&key), id_of(&value)) {
+            names.insert(name, id);
+        } else if let (Some(id), Some(name)) = (id_of(&key), raw_bytes(&value)) {
+            names.insert(name, id);
+        }
+    }
+    Ok(names)
+}
+
+/// `ReformItemList` and `ReformInfo` from the file's bytes. Names resolve through `names`. `InformationString` is skipped.
+pub fn reform_table(source: Vec<u8>, names: &HashMap<Vec<u8>, u32>) -> io::Result<HashMap<u32, Vec<ReformInfo>>> {
+    let lua = new_lua()?;
+    exec_bytes(&lua, ITEM_REFORM, source)?;
+    let globals = lua.globals();
+    let list: mlua::Table = globals.get("ReformItemList").map_err(lua_error)?;
+    let info: mlua::Table = globals.get("ReformInfo").map_err(lua_error)?;
+    let mut reforms = HashMap::new();
+    for pair in list.pairs::<mlua::Value, mlua::Value>() {
+        let (key, value) = pair.map_err(lua_error)?;
+        let (Some(name), mlua::Value::Table(indexes)) = (raw_bytes(&key), value) else { continue };
+        let Some(&item) = names.get(&name) else { continue };
+        let mut entries = Vec::new();
+        for index in entry_numbers(&indexes)? {
+            let Ok(row) = info.get::<mlua::Table>(index) else { continue };
+            if let Some(entry) = read_reform(&row, names) {
+                entries.push(entry);
+            }
+        }
+        if !entries.is_empty() {
+            reforms.insert(item, entries);
+        }
+    }
+    Ok(reforms)
+}
+
+fn raw_bytes(value: &mlua::Value) -> Option<Vec<u8>> {
+    match value {
+        mlua::Value::String(text) => Some(text.as_bytes().to_vec()),
+        _ => None,
+    }
+}
+
+/// Lua 5.1 stores every number as a double; only whole ones are taken.
+fn number(value: &mlua::Value) -> Option<i64> {
+    match value {
+        mlua::Value::Integer(n) => Some(*n),
+        mlua::Value::Number(n) if n.fract() == 0.0 => format!("{n:.0}").parse().ok(),
+        _ => None,
+    }
+}
+
+/// The list's entry numbers, in the order written.
+fn entry_numbers(table: &mlua::Table) -> io::Result<Vec<i64>> {
+    let mut numbers = Vec::new();
+    for index in 1..=table.raw_len() {
+        if let Ok(n) = table.get::<i64>(index) {
+            numbers.push(n);
+        }
+    }
+    if numbers.is_empty() {
+        for pair in table.pairs::<mlua::Value, mlua::Value>() {
+            let (_, value) = pair.map_err(lua_error)?;
+            if let Some(n) = number(&value) {
+                numbers.push(n);
+            }
+        }
+    }
+    Ok(numbers)
+}
+
+fn field_number(table: &mlua::Table, key: &str) -> Option<i64> {
+    table.get::<mlua::Value>(key).ok().as_ref().and_then(number)
+}
+
+fn flag(table: &mlua::Table, key: &str, default: bool) -> bool {
+    match table.get::<mlua::Value>(key) {
+        Ok(mlua::Value::Boolean(value)) => value,
+        Ok(value) => number(&value).map(|n| n != 0).unwrap_or(default),
+        Err(_) => default,
+    }
+}
+
+fn reform_named(table: &mlua::Table, key: &str, names: &HashMap<Vec<u8>, u32>) -> Option<u32> {
+    let value = table.get::<mlua::Value>(key).ok()?;
+    names.get(&raw_bytes(&value)?).copied()
+}
+
+fn read_reform(entry: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> Option<ReformInfo> {
+    let base = reform_named(entry, "BaseItem", names)?;
+    let result = reform_named(entry, "ResultItem", names)?;
+    let mut materials = Vec::new();
+    if let Ok(table) = entry.get::<mlua::Table>("Material") {
+        for pair in table.pairs::<mlua::Value, mlua::Value>().flatten() {
+            if let (Some(name), Some(amount)) = (raw_bytes(&pair.0), number(&pair.1))
+                && let Some(&id) = names.get(&name)
+            {
+                materials.push((name, id, u32::try_from(amount).unwrap_or(0)));
+            }
+        }
+        materials.sort_by(|a, b| a.0.cmp(&b.0));
+    }
+    let narrow = |n: i64| u16::try_from(n).unwrap_or(if n < 0 { 0 } else { u16::MAX });
+    Some(ReformInfo {
+        base,
+        result,
+        materials: materials.into_iter().map(|(_, id, amount)| (id, amount)).collect(),
+        refine_min: field_number(entry, "NeedRefineMin").map(narrow).unwrap_or(0),
+        refine_max: field_number(entry, "NeedRefineMax").map(narrow).unwrap_or(u16::MAX),
+        need_options: u8::try_from(field_number(entry, "NeedOptionNumMin").unwrap_or(0)).unwrap_or(u8::MAX),
+        empty_socket: flag(entry, "IsEmptySocket", false),
+        preserve_socket: flag(entry, "PreserveSocketItem", true),
+        preserve_grade: flag(entry, "PreserveGrade", true),
+        change_refine: i32::try_from(field_number(entry, "ChangeRefineValue").unwrap_or(0)).unwrap_or(0),
+        random_option: entry.get::<mlua::String>("RandomOptionCode").ok().map(|text| decode(&text)).unwrap_or_default(),
+    })
+}
+
+/// `data\luafiles514\lua files\hotkey_v2.lub`: the game's shortcut defaults.
+const HOTKEY_V2: &str = "data\\luafiles514\\lua files\\hotkey_v2.lub";
+
+/// One row of `HOTKEY_<n>` or `USERKEY_<n>`: the action name and the virtual-key codes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HotkeyRow {
+    /// 1 hotbar, 2 interface, 3 macros and flags, 4 the second hotbar.
+    pub table: u8,
+    pub index: u16,
+    pub exe: String,
+    /// Missing, or 0, when the row is unbound.
+    pub key1: Option<u16>,
+    pub key2: u16,
+    /// A row from `USERKEY_<n>`, which replaces the default at the same table and index.
+    pub user: bool,
+}
+
+/// The shortcut tables in `grf`'s hotkey_v2.lub.
+pub fn hotkey_defaults(grf: &Grf) -> io::Result<Vec<HotkeyRow>> {
+    hotkey_bytes(&grf.read(HOTKEY_V2)?)
+}
+
+/// Shortcut rows from a Lua source in the same shape as hotkey_v2.lub or UserKeys.lua.
+pub fn hotkey_rows(source: &str) -> io::Result<Vec<HotkeyRow>> {
+    hotkey_bytes(source.as_bytes())
+}
+
+/// `MsgStrID.MSI_HK_…` in older tables is the name itself, so a missing message table still yields the EXE string.
+const MSGSTRID: &str = "MsgStrID = setmetatable({}, { __index = function(_, name) return name end })";
+
+fn hotkey_bytes(bytes: &[u8]) -> io::Result<Vec<HotkeyRow>> {
+    let lua = new_lua()?;
+    lua.load(MSGSTRID).exec().map_err(lua_error)?;
+    exec_bytes(&lua, HOTKEY_V2, bytes.to_vec())?;
+    let mut rows = Vec::new();
+    for table in 1..=4 {
+        rows.extend(hotkey_table(&lua, &format!("HOTKEY_{table}"), table, false)?);
+        rows.extend(hotkey_table(&lua, &format!("USERKEY_{table}"), table, true)?);
+    }
+    Ok(rows)
+}
+
+fn hotkey_table(lua: &Lua, name: &str, table: u8, user: bool) -> io::Result<Vec<HotkeyRow>> {
+    let Ok(entries) = lua.globals().get::<mlua::Table>(name) else { return Ok(Vec::new()) };
+    let mut rows = Vec::new();
+    for pair in entries.pairs::<mlua::Value, mlua::Value>() {
+        let (key, value) = pair.map_err(lua_error)?;
+        let (Some(index), mlua::Value::Table(entry)) = (number(&key).and_then(|index| u16::try_from(index).ok()), value) else { continue };
+        let Some(exe) = entry.get::<mlua::String>("EXE").ok().map(|text| decode(&text)).filter(|exe| !exe.is_empty() && exe != "NULL") else {
+            continue;
+        };
+        // ponytail: KEY1 0 is unbound, the same as leaving it out (the save file omits a 0).
+        let key1 = field_number(&entry, "KEY1").and_then(|code| u16::try_from(code).ok()).filter(|code| *code > 0);
+        let key2 = field_number(&entry, "KEY2").and_then(|code| u16::try_from(code).ok()).unwrap_or(0);
+        rows.push(HotkeyRow { table, index, exe, key1, key2, user });
+    }
+    rows.sort_by_key(|row| row.index);
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
+
+    #[test]
+    fn reads_the_battleground_list() {
+        let lua = super::new_lua().unwrap();
+        lua.load(
+            r#"EntryQueueList = {
+                [2] = { BattleFieldName = "KVM (Level 80 and up)", DisplayBattleFieldName = "KVM", AllianceNum = 5, EnemyNum = 5,
+                    PrivateApply = 1, PartyApply = 1, GuildApply = 0, EnterCondType = 2, EnterCondValue1 = 80, EnterCondValue2 = 0,
+                    RewardWin = "5 Badges", RewardDraw = "2", RewardLose = "1", VictoryCond = "More kills", MiniMapFile = "bat_c01.bmp" },
+                [1] = { BattleFieldName = "Tierra Gorge", AllianceNum = 6, EnemyNum = 6, EnterCondType = 3, EnterCondValue1 = 60,
+                    EnterCondValue2 = 79 },
+            }
+            function ReadEntryQueueList() for k, v in pairs(EntryQueueList) do AddEntryQueue(k, v) end end"#,
+        )
+        .exec()
+        .unwrap();
+        let list = super::battlegrounds(&lua).unwrap();
+        assert_eq!(list.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(), ["Tierra Gorge", "KVM (Level 80 and up)"]);
+        let kvm = &list[1];
+        assert_eq!((kvm.sizes, kvm.applies, kvm.condition), ([5, 5], [true, true, false], (2, [80, 0])));
+        assert_eq!((kvm.rewards[0].as_str(), kvm.goal.as_str(), kvm.picture.as_str()), ("5 Badges", "More kills", "bat_c01.bmp"));
+        assert_eq!(list[0].condition, (3, [60, 79]));
+    }
 
     #[test]
     fn finds_the_achievement_table_under_either_name() {
@@ -1231,6 +1519,53 @@ mod tests {
         let shop = super::styling_shop(&[framework.as_bytes().to_vec(), lists.as_bytes().to_vec()]).unwrap();
         assert_eq!(shop.head_palette[&1].goods, 3);
         assert_eq!((shop.body_palette[&1].goods, shop.body_palette[&1].item, shop.body_palette[&1].box_item), (0, 6047, 16855));
+    }
+
+    #[test]
+    fn reads_reform_names_as_raw_bytes() {
+        // "\196\247" is the bytes C4 F7 (Lua's \ddd escapes are decimal), not UTF-8. One name is stored as id to name.
+        let names = super::item_db_names(
+            br#"
+            ItemDBNameTbl = {
+                ["Box"] = 100, ["Sword"] = 200, ["Shard"] = 300,
+                [400] = "\196\247"
+            }
+            "#
+            .to_vec(),
+        )
+        .unwrap();
+        assert_eq!(names.get(b"Box".as_slice()), Some(&100));
+        assert_eq!(names.get(&vec![0xC4, 0xF7]), Some(&400));
+        let reforms = super::reform_table(
+            br#"
+            ReformItemList = { ["Box"] = { 1 }, ["\196\247"] = { 2 }, ["Missing"] = { 3 } }
+            ReformInfo = {
+                [1] = {
+                    BaseItem = "Sword", ResultItem = "\196\247",
+                    Material = { Shard = 100, Box = 1 },
+                    NeedRefineMin = 9, NeedRefineMax = 20, NeedOptionNumMin = 1,
+                    IsEmptySocket = false, PreserveSocketItem = true, PreserveGrade = true,
+                    ChangeRefineValue = -5, RandomOptionCode = "AD",
+                    InformationString = { "leave this out" }
+                },
+                [2] = {
+                    BaseItem = "Sword", ResultItem = "Box",
+                    NeedRefineMin = 0, NeedRefineMax = 10,
+                    IsEmptySocket = true, PreserveSocketItem = false, PreserveGrade = false
+                }
+            }
+            "#
+            .to_vec(),
+            &names,
+        )
+        .unwrap();
+        let box_entry = &reforms[&100][0];
+        assert_eq!((box_entry.base, box_entry.result, box_entry.materials.as_slice()), (200, 400, &[(100, 1), (300, 100)][..]));
+        assert_eq!((box_entry.refine_min, box_entry.refine_max, box_entry.need_options, box_entry.change_refine), (9, 20, 1, -5));
+        assert_eq!((box_entry.empty_socket, box_entry.preserve_socket, box_entry.preserve_grade, box_entry.random_option.as_str()), (false, true, true, "AD"));
+        let korean = &reforms[&400][0];
+        assert_eq!((korean.base, korean.result, korean.empty_socket, korean.preserve_socket), (200, 100, true, false));
+        assert!(!reforms.contains_key(&0) && reforms.len() == 2);
     }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.

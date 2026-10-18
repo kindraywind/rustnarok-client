@@ -1,0 +1,127 @@
+{
+  "about": "Pickup popup (issue #218): @item 501 3 pops '<name> - 3 obtained.' with the item's icon at (412, 75); a second pickup replaces it; 5 s after the last pickup it's gone. The menu's item button carries its 'new' mark until the inventory opens.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "pickup_popup": null
+        }
+      }
+    },
+    {
+      "say": "@item 501 3"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b41",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "pickup-popup",
+      "crop": [
+        392,
+        60,
+        320,
+        60
+      ],
+      "threshold": 5
+    },
+    {
+      "say": "@item 909 1"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b41",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "pickup-popup-second",
+      "crop": [
+        392,
+        60,
+        320,
+        60
+      ],
+      "threshold": 5
+    },
+    {
+      "wait": 5500
+    },
+    {
+      "expect": {
+        "state": {
+          "pickup_popup": null
+        }
+      }
+    },
+    {
+      "click": [
+        108,
+        153
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "pickup-item-new",
+      "crop": [
+        0,
+        140,
+        230,
+        200
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "pickup-item-seen",
+      "crop": [
+        0,
+        140,
+        230,
+        200
+      ],
+      "threshold": 5
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}
