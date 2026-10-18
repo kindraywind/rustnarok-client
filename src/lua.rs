@@ -709,6 +709,279 @@ pub fn upgrade_boxes(grf: &Grf) -> io::Result<HashMap<u32, UpgradeBox>> {
     upgrade_table(grf.read(UPGRADE_TABLE)?)
 }
 
+const ENCHANT_LIST_F: &str = "data\\luafiles514\\lua files\\enchant\\enchantlist_f.lub";
+const ENCHANT_LIST: &str = "data\\luafiles514\\lua files\\enchant\\enchantlist.lub";
+const ITEM_DB_NAMES: &str = "data\\luafiles514\\lua files\\itemdbnametbl.lub";
+// ponytail: the official client provides these; the values are what lets every table load. LoadAllData is not called
+// (it hands the tables to the client). The C_Set stubs are there in case a file calls it anyway.
+const ENCHANT_STUBS: &str = r#"
+MAX_SLOT_NUM = 4
+MAX_REFINE_LEVEL = 20
+MAX_GRADE_LEVEL = 4
+MAX_MATERIAL_NUM = 10
+function C_GetSlotCount() return 0 end
+function MessageBox() end
+function C_SetSlotOrder() return true, "" end
+function C_AddTargetItem() return true, "" end
+function C_SetCondition() return true, "" end
+function C_ApproveRandomOption() return true, "" end
+function C_SetReset() return true, "" end
+function C_SetCaution() return true, "" end
+function C_SetRequire() return true, "" end
+function C_SetSuccessRate() return true, "" end
+function C_SetGradeBonus() return true, "" end
+function C_SetEnchant() return true, "" end
+function C_AddPerfectEnchant() return true, "" end
+function C_AddUpgradeEnchant() return true, "" end
+"#;
+
+/// What a random or perfect enchant, an upgrade or a reset costs.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EnchantCost {
+    pub zeny: u32,
+    pub materials: Vec<(u32, u32)>,
+}
+
+/// A perfect enchant: the item it puts in, and what it costs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PerfectEnchant {
+    pub item: u32,
+    pub cost: EnchantCost,
+}
+
+/// An upgrade of an enchant already in a slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnchantUpgrade {
+    pub result: u32,
+    pub cost: EnchantCost,
+}
+
+/// One card slot of an enchant table.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EnchantSlot {
+    pub cost: EnchantCost,
+    pub success_rate: u32,
+    /// Added to the success rate, by grade.
+    pub grade_bonus: Vec<(u8, u32)>,
+    /// Random enchants at a grade: item id and weight, out of 100000.
+    pub rates: Vec<(u8, Vec<(u32, u32)>)>,
+    pub perfect: Vec<PerfectEnchant>,
+    /// The enchant in the slot, and what it upgrades to.
+    pub upgrades: Vec<(u32, EnchantUpgrade)>,
+}
+
+impl EnchantSlot {
+    pub fn bonus(&self, grade: u8) -> u32 {
+        self.grade_bonus.iter().find(|(listed, _)| *listed == grade).map(|(_, bonus)| *bonus).unwrap_or(0)
+    }
+
+    pub fn rate_list(&self, grade: u8) -> &[(u32, u32)] {
+        self.rates.iter().find(|(listed, _)| *listed == grade).map(|(_, list)| list.as_slice()).unwrap_or(&[])
+    }
+
+    /// Random enchants are offered when the slot has a rate table at all.
+    pub fn random(&self) -> bool {
+        !self.rates.is_empty()
+    }
+}
+
+/// Resetting the enchants on an item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnchantReset {
+    pub enabled: bool,
+    /// Out of 100000. Zero is not offered: rathena takes the cost and then doesn't answer.
+    pub rate: u32,
+    pub cost: EnchantCost,
+}
+
+/// One enchant table (`Table[n]` in the client's enchant list).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnchantTable {
+    pub targets: Vec<u32>,
+    pub slot_order: Vec<u8>,
+    pub min_refine: u8,
+    pub min_grade: u8,
+    /// Whether an item with random options may go in. The client doesn't track those, so this is recorded only.
+    pub approve_random_opt: bool,
+    pub reset: Option<EnchantReset>,
+    /// Card slots 0 to 3.
+    pub slots: [Option<EnchantSlot>; 4],
+}
+
+/// The enchant tables from data.grf (`enchantlist_f`, `enchantlist`, `itemdbnametbl`).
+pub fn enchants(grf: &Grf) -> io::Result<HashMap<u64, EnchantTable>> {
+    let names = grf.read(ITEM_DB_NAMES).unwrap_or_default();
+    let mut lists = Vec::new();
+    if let Ok(bytes) = grf.read(ENCHANT_LIST_F) {
+        lists.push(bytes);
+    }
+    lists.push(grf.read(ENCHANT_LIST)?);
+    enchant_tables(&lists, names)
+}
+
+/// Reads `Table` from the list files' bytes (the `_f` file first, when there is one) and item names from `names`.
+/// A test passes a small Lua source of the same shape. Names are resolved by the raw bytes of the key.
+pub fn enchant_tables(lists: &[Vec<u8>], names: Vec<u8>) -> io::Result<HashMap<u64, EnchantTable>> {
+    let lua = new_lua()?;
+    lua.load(ENCHANT_STUBS).set_name("enchant stubs").exec().map_err(lua_error)?;
+    if !names.is_empty() {
+        exec_bytes(&lua, ITEM_DB_NAMES, names)?;
+    }
+    for (index, bytes) in lists.iter().enumerate() {
+        exec_bytes(&lua, &format!("enchant list {index}"), bytes.clone())?;
+    }
+    let names = item_db_names(&lua);
+    let table: mlua::Table = lua.globals().get("Table").map_err(lua_error)?;
+    let mut tables = HashMap::new();
+    for pair in table.pairs::<mlua::Value, mlua::Value>() {
+        let (key, value) = pair.map_err(lua_error)?;
+        let (Some(id), mlua::Value::Table(entry)) = (lua_u64(&key), value) else { continue };
+        tables.insert(id, read_enchant(&entry, &names));
+    }
+    Ok(tables)
+}
+
+/// `ItemDBNameTbl`, keyed by the Lua string's own bytes (Korean names are cp949, not UTF-8).
+fn item_db_names(lua: &Lua) -> HashMap<Vec<u8>, u32> {
+    let Ok(table) = lua.globals().get::<mlua::Table>("ItemDBNameTbl") else { return HashMap::new() };
+    let mut names = HashMap::new();
+    for pair in table.pairs::<mlua::Value, mlua::Value>().flatten() {
+        if let (mlua::Value::String(key), Some(id)) = (pair.0, value_u32(&pair.1)) {
+            names.insert(key.as_bytes().as_ref().to_vec(), id);
+        }
+    }
+    names
+}
+
+fn value_u32(value: &mlua::Value) -> Option<u32> {
+    match value {
+        mlua::Value::Integer(id) => u32::try_from(*id).ok(),
+        mlua::Value::Number(id) if id.is_finite() && *id >= 0.0 && *id <= u32::MAX as f64 => Some(*id as u32),
+        _ => None,
+    }
+}
+
+fn lua_u64(value: &mlua::Value) -> Option<u64> {
+    match value {
+        mlua::Value::Integer(id) => u64::try_from(*id).ok(),
+        mlua::Value::Number(id) if id.is_finite() && *id >= 0.0 => Some(*id as u64),
+        _ => None,
+    }
+}
+
+fn named_id(value: &mlua::Value, names: &HashMap<Vec<u8>, u32>) -> Option<u32> {
+    match value {
+        mlua::Value::String(text) => {
+            let bytes = text.as_bytes();
+            names.get(bytes.as_ref()).copied()
+        }
+        _ => value_u32(value),
+    }
+}
+
+fn mat_list(table: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> Vec<(u32, u32)> {
+    let Ok(mats) = table.get::<mlua::Table>("MatTbl") else { return Vec::new() };
+    let mut list = Vec::new();
+    for (key, amount) in mats.pairs::<mlua::Value, mlua::Value>().flatten() {
+        if let (Some(id), Some(amount)) = (named_id(&key, names), value_u32(&amount)) {
+            list.push((id, amount));
+        }
+    }
+    list.sort();
+    list
+}
+
+fn cost_of(table: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> EnchantCost {
+    EnchantCost { zeny: table.get::<u32>("Zeny").unwrap_or(0), materials: mat_list(table, names) }
+}
+
+fn read_enchant(entry: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> EnchantTable {
+    let targets = entry
+        .get::<mlua::Table>("TargetItemTbl")
+        .map(|items| items.sequence_values::<mlua::Value>().flatten().filter_map(|name| named_id(&name, names)).collect())
+        .unwrap_or_default();
+    let slot_order =
+        entry.get::<mlua::Table>("SlotOrder").map(|order| order.sequence_values::<u8>().flatten().filter(|slot| *slot < 4).collect()).unwrap_or_default();
+    let condition = entry.get::<mlua::Table>("Condition").ok();
+    let number = |table: &mlua::Table, key: &str| table.get::<u32>(key).unwrap_or(0);
+    let reset = entry.get::<mlua::Table>("Reset").ok().map(|reset| EnchantReset {
+        enabled: lua_flag(&reset, "bReset"),
+        rate: number(&reset, "Rate"),
+        cost: cost_of(&reset, names),
+    });
+    let mut slots: [Option<EnchantSlot>; 4] = [None, None, None, None];
+    if let Ok(table) = entry.get::<mlua::Table>("Slot") {
+        for (key, slot) in table.pairs::<mlua::Value, mlua::Table>().flatten() {
+            let Some(index) = value_u32(&key).filter(|index| *index < 4) else { continue };
+            slots[index as usize] = Some(read_slot(&slot, names));
+        }
+    }
+    EnchantTable {
+        targets,
+        slot_order,
+        min_refine: condition.as_ref().map(|condition| number(condition, "MinRefine") as u8).unwrap_or(0),
+        min_grade: condition.as_ref().map(|condition| number(condition, "MinGrade") as u8).unwrap_or(0),
+        approve_random_opt: lua_flag(entry, "bApproveRandomOpt"),
+        reset,
+        slots,
+    }
+}
+
+fn read_slot(slot: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> EnchantSlot {
+    let require = slot.get::<mlua::Table>("RequireTbl").ok();
+    let mut grade_bonus = Vec::new();
+    if let Ok(bonuses) = slot.get::<mlua::Table>("GradeBonusTbl") {
+        for (grade, bonus) in bonuses.pairs::<mlua::Value, mlua::Value>().flatten() {
+            if let (Some(grade), Some(bonus)) = (value_u32(&grade), value_u32(&bonus)) {
+                grade_bonus.push((grade as u8, bonus));
+            }
+        }
+        grade_bonus.sort();
+    }
+    let mut rates = Vec::new();
+    if let Ok(table) = slot.get::<mlua::Table>("EnchantRateTbl") {
+        for (grade, list) in table.pairs::<mlua::Value, mlua::Table>().flatten() {
+            let Some(grade) = value_u32(&grade) else { continue };
+            let mut enchants = Vec::new();
+            for (name, weight) in list.pairs::<mlua::Value, mlua::Value>().flatten() {
+                if let (Some(id), Some(weight)) = (named_id(&name, names), value_u32(&weight)) {
+                    enchants.push((id, weight));
+                }
+            }
+            enchants.sort();
+            rates.push((grade as u8, enchants));
+        }
+        rates.sort_by_key(|(grade, _)| *grade);
+    }
+    let mut perfect = Vec::new();
+    if let Ok(table) = slot.get::<mlua::Table>("PerfectECTbl") {
+        for (name, info) in table.pairs::<mlua::Value, mlua::Table>().flatten() {
+            if let Some(item) = named_id(&name, names) {
+                perfect.push(PerfectEnchant { item, cost: cost_of(&info, names) });
+            }
+        }
+        perfect.sort_by_key(|row| row.item);
+    }
+    let mut upgrades = Vec::new();
+    if let Ok(table) = slot.get::<mlua::Table>("UpgradeECTbl") {
+        for (name, info) in table.pairs::<mlua::Value, mlua::Table>().flatten() {
+            let result = info.get::<mlua::Value>("ResultItemDB").ok().and_then(|name| named_id(&name, names));
+            if let (Some(item), Some(result)) = (named_id(&name, names), result) {
+                upgrades.push((item, EnchantUpgrade { result, cost: cost_of(&info, names) }));
+            }
+        }
+        upgrades.sort_by_key(|(item, _)| *item);
+    }
+    EnchantSlot {
+        cost: require.as_ref().map(|require| cost_of(require, names)).unwrap_or(EnchantCost { zeny: 0, materials: Vec::new() }),
+        success_rate: slot.get::<u32>("SuccessRate").unwrap_or(0),
+        grade_bonus,
+        rates,
+        perfect,
+        upgrades,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
@@ -880,5 +1153,50 @@ mod tests {
         // Warp portals and Poring are the classic examples.
         assert_eq!(names.get(&45).map(String::as_str), Some("1_ETC_01"));
         assert_eq!(names.get(&1002).map(|name| name.to_lowercase()), Some("poring".into()));
+    }
+
+    #[test]
+    fn reads_an_enchant_table_and_resolves_names_by_their_bytes() {
+        let names = b"ItemDBNameTbl = { Sharp1 = 4818, Sharp2 = 4817, Mysterious = 25669, [\"\\128\\129\"] = 600028 }\n".to_vec();
+        let list = b"
+            function order(self, ...)
+                self.SlotOrder = {}
+                for i = 1, #arg do self.SlotOrder[i] = arg[i] end
+            end
+            local info = {
+                TargetItemTbl = { \"\\128\\129\" },
+                Condition = { MinRefine = 5, MinGrade = 1 },
+                bApproveRandomOpt = false,
+                Reset = { bReset = true, Rate = 100000, Zeny = 500000, MatTbl = {} },
+                Slot = {
+                    [3] = {
+                        RequireTbl = { Zeny = 1000, MatTbl = { Mysterious = 2 } },
+                        SuccessRate = 80000,
+                        GradeBonusTbl = { [0] = 0, [1] = 5000 },
+                        EnchantRateTbl = { [1] = { Sharp1 = 100000 } },
+                        PerfectECTbl = { Sharp1 = { Zeny = 100000, MatTbl = { Mysterious = 20 } } },
+                        UpgradeECTbl = { Sharp1 = { ResultItemDB = \"Sharp2\", Zeny = 200000, MatTbl = { Mysterious = 40 } } },
+                    },
+                },
+            }
+            order(info, 3, 2)
+            Table = { [33] = info }
+        "
+        .to_vec();
+        let tables = super::enchant_tables(&[list], names).unwrap();
+        let table = &tables[&33];
+        assert_eq!(table.targets, [600028]);
+        assert_eq!(table.slot_order, [3, 2]);
+        assert_eq!((table.min_refine, table.min_grade, table.approve_random_opt), (5, 1, false));
+        let reset = table.reset.as_ref().unwrap();
+        assert_eq!((reset.enabled, reset.rate, reset.cost.zeny), (true, 100000, 500000));
+        let slot = table.slots[3].as_ref().unwrap();
+        assert_eq!((slot.cost.zeny, slot.cost.materials.as_slice(), slot.success_rate, slot.bonus(1)), (1000, [(25669, 2)].as_slice(), 80000, 5000));
+        assert_eq!(slot.rate_list(1), [(4818, 100000)]);
+        assert!(slot.rate_list(0).is_empty());
+        assert_eq!(slot.perfect[0].item, 4818);
+        assert_eq!((slot.perfect[0].cost.zeny, slot.perfect[0].cost.materials.as_slice()), (100000, [(25669, 20)].as_slice()));
+        assert_eq!(slot.upgrades[0].1.result, 4817);
+        assert_eq!(slot.upgrades[0].1.cost.materials, [(25669, 40)]);
     }
 }

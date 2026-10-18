@@ -838,6 +838,17 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.basic_info.menu_boxes().into_iter().map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::item_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.enchant
+                .iter()
+                .flat_map(|window| {
+                    let index = window.item;
+                    let item = index.and_then(|index| game.inventory.items.iter().find(|item| item.index == index));
+                    window.row_boxes(item)
+                })
+                .map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})),
+        )
+        .chain(game.enchant.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.pick.iter().flat_map(|(list, _)| list.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.pick.iter().flat_map(|(list, _)| list.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
@@ -928,6 +939,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("Refine", game.refine.is_some()),
         ("LaphineSynthesis", game.synthesis.is_some()),
         ("LaphineUpgrade", game.upgrade.is_some()),
+        ("Enchant", game.enchant.is_some()),
         ("Materials", game.materials.is_some()),
         ("PartySetup", game.party_setup.is_some()),
         ("DressRoom", game.dressroom.is_some()),
@@ -1018,7 +1030,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         // boxes, pick list rows, menu choices and window buttons (by name), each with its box on screen.
         "targets": targets,
         // What's carried: index, item, how many, identified, worn where (0: not worn).
-        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires, "switch": item.switch})).collect::<Vec<_>>(),
+        "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "grade": item.grade, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires, "switch": item.switch})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
         "dialog": dialog,

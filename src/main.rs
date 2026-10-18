@@ -59,6 +59,7 @@ mod dressroom;
 mod effects;
 mod emotion;
 mod emotion_list;
+mod enchant;
 mod equipment;
 mod escape;
 mod guild;
@@ -712,6 +713,8 @@ struct Game {
     /// Laphine synthesis and upgrade, open until their close packet or a map change.
     synthesis: Option<laphine::Synthesis>,
     upgrade: Option<laphine::Upgrade>,
+    /// The enchant window (perfect, random, upgrade, reset).
+    enchant: Option<enchant::Enchant>,
     /// The material window (Change Material, Four Spirit Analysis).
     materials: Option<material::Materials>,
     /// The Lucky Roulette's window.
@@ -2495,6 +2498,7 @@ struct Assets {
     trade: trade::Assets,
     refine: refine::Assets,
     laphine: laphine::Assets,
+    enchant: enchant::Assets,
     bank: bank::Assets,
     cashshop: cashshop::Assets,
     context_menu: menu::Assets,
@@ -2603,6 +2607,7 @@ impl Assets {
             trade: trade::Assets::load(gpu, grf),
             refine: refine::Assets::load(gpu, grf),
             laphine: laphine::Assets::load(gpu, grf),
+            enchant: enchant::Assets::load(gpu, grf),
             bank: bank::Assets::load(gpu, grf),
             cashshop: cashshop::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
@@ -2971,6 +2976,8 @@ struct App {
     title_names: HashMap<u32, String>,
     /// Item names and resources by item ID, and the client's numbered messages.
     items: HashMap<u32, ItemInfo>,
+    /// Enchant tables from the client's Lua, by table number.
+    enchant_tables: HashMap<u64, lua::EnchantTable>,
     messages: Vec<String>,
     /// Item icons by file, loaded when first shown.
     icons: HashMap<String, Option<Texture>>,
@@ -3981,6 +3988,41 @@ impl App {
                     None => {}
                 }
             }
+            Scene::Game(game) if game.enchant.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
+                let action = {
+                    let carried = &game.inventory.items;
+                    let count = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
+                    let index = game.enchant.as_ref().and_then(|window| window.item);
+                    let item = index.and_then(|index| carried.iter().find(|item| item.index == index)).cloned();
+                    let window = game.enchant.as_mut().unwrap();
+                    let hit = window.hit(cursor).unwrap();
+                    window.click(hit, item.as_ref(), count, zeny)
+                };
+                match action {
+                    Some(enchant::Action::Send(request)) => {
+                        let result = match request {
+                            enchant::Request::Random { table, index } => game.session.enchant_random(table, index),
+                            enchant::Request::Perfect { table, index, item } => game.session.enchant_perfect(table, index, item),
+                            enchant::Request::Upgrade { table, index, slot } => game.session.enchant_upgrade(table, index, slot),
+                            enchant::Request::Reset { table, index } => game.session.enchant_reset(table, index),
+                        };
+                        // Nothing went out, so the window must not sit waiting for an answer that never comes.
+                        if result.is_err()
+                            && let Some(window) = &mut game.enchant
+                        {
+                            window.forget_request();
+                        }
+                    }
+                    Some(enchant::Action::Refuse(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+                    // Until the server hears the close, it holds the player and ignores the next request.
+                    Some(enchant::Action::Close) => {
+                        let _ = game.session.close_enchant();
+                        game.enchant = None;
+                    }
+                    None => {}
+                }
+            }
             Scene::Game(game) if game.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
                 let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
                 let carried = &game.inventory.items;
@@ -4460,6 +4502,9 @@ impl App {
             if let Some(window) = &mut game.upgrade {
                 window.frame.drag_to(self.cursor, laphine::Upgrade::height());
             }
+            if let Some(window) = &mut game.enchant {
+                window.frame.drag_to(self.cursor, enchant::HEIGHT);
+            }
             if let Some(window) = &mut game.monster_window {
                 window.frame.drag_to(self.cursor, monster_info::MonsterWindow::height());
             }
@@ -4653,6 +4698,11 @@ impl App {
             match game.window_at(self.cursor) {
                 _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
                 _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
+                _ if game.enchant.as_ref().is_some_and(|window| window.hit(self.cursor).is_some()) => {
+                    let index = game.enchant.as_ref().and_then(|window| window.item);
+                    let item = index.and_then(|index| game.inventory.items.iter().find(|item| item.index == index)).cloned();
+                    game.enchant.as_mut().unwrap().scroll_by(rows, item.as_ref());
+                }
                 _ if on_cashshop => game.cashshop.as_mut().unwrap().scroll_at(self.cursor, rows),
                 _ if on_setup => {
                     let count = game.cart.items.len();
@@ -4737,6 +4787,7 @@ impl App {
                 let on_trade = game.trade.as_ref().is_some_and(|trade| trade.hit(self.cursor).is_some());
                 let on_mail = matches!(game.mail.hit(self.cursor), Some(mail::Hit::Compose(_)));
                 let on_refine = game.refine.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+                let on_enchant = game.enchant.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_materials = game.materials.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
@@ -4764,6 +4815,16 @@ impl App {
                     // Into the refine machine: the server lists what refines it.
                     (Some((Dragged::Item(index), _, true)), _) if on_refine => {
                         let _ = game.session.refine_select(index);
+                    }
+                    // Into the enchant window: it stays here until a request; the server hears the item with that.
+                    (Some((Dragged::Item(index), _, true)), _) if on_enchant => {
+                        let slots = game.inventory.get(index).and_then(|item| self.items.get(&item.id)).map(|info| info.slots).unwrap_or(0);
+                        if let Some(item) = game.inventory.get(index).cloned()
+                            && let Some(window) = &mut game.enchant
+                            && let Err(Some(id)) = window.try_item(&item, slots)
+                        {
+                            game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                        }
                     }
                     (Some((Dragged::Item(index), _, true)), _) if on_trade => {
                         if let Some(id) = game.offer(index) {
@@ -4796,6 +4857,7 @@ impl App {
                     | game.synthesis.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.enchant.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag());
                 // A slider let go keeps its volume for next time.
                 let slid = game.audio_window.as_mut().is_some_and(options::AudioWindow::drop_drag);
@@ -4917,6 +4979,14 @@ impl App {
         {
             if hit == laphine::Hit::Title(TitleHit::Title) {
                 game.upgrade.as_mut().unwrap().frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.enchant.as_ref().and_then(|window| window.hit(cursor))
+        {
+            if hit == enchant::Hit::Title(TitleHit::Title) {
+                game.enchant.as_mut().unwrap().frame.start_drag(cursor);
             }
             return;
         }
@@ -5902,6 +5972,7 @@ impl App {
                     refine: None,
                     synthesis: None,
                     upgrade: None,
+                    enchant: None,
                     materials: None,
                     roulette: None,
                     monster_window: None,
@@ -6406,6 +6477,30 @@ impl App {
                     game.item_window = Some(window);
                 }
             }
+            // A table this client doesn't have: say so, and tell rathena the window is closed.
+            MapEvent::EnchantOpen(table) => match self.enchant_tables.get(&table).cloned() {
+                Some(info) => {
+                    game.enchant = Some(enchant::Enchant::open(table, info));
+                    game.inventory.frame.open = true;
+                    game.raise(Panel::Inventory);
+                }
+                None => {
+                    game.chat_line(self.messages.get(enchant::NOT_FOUND).cloned().unwrap_or_default(), CHAT_ERROR);
+                    let _ = game.session.close_enchant();
+                }
+            },
+            MapEvent::Enchanted { message, item } => {
+                let success = message == enchant::SUCCESS as u32;
+                if let Some(window) = &game.enchant
+                    && let Some(index) = window.item
+                    && let Some(carried) = game.inventory.items.iter_mut().find(|carried| carried.index == index)
+                {
+                    carried.cards = window.cards_after(message, item, carried.cards);
+                }
+                let text = self.messages.get(message as usize).cloned().unwrap_or_default();
+                game.chat_line(text, if success { CHAT_ITEM } else { CHAT_ERROR });
+                game.enchant = None;
+            }
             MapEvent::RefineMaterials { index, blessings, materials } => {
                 if materials.is_empty() {
                     game.chat_line(self.messages.get(CANT_REFINE).cloned().unwrap_or_default(), CHAT_ERROR);
@@ -6522,9 +6617,10 @@ impl App {
                 game.close_cashshop();
                 // rathena forgets the refine window on a map change; the material window and the roulette go too.
                 game.refine = None;
-                // rathena forgets both Laphine windows on a map change, without a close packet.
+                // rathena forgets both Laphine windows and the enchant window on a map change, without a close packet.
                 game.synthesis = None;
                 game.upgrade = None;
+                game.enchant = None;
                 game.roulette = None;
                 // The mirror's status ends with the warp.
                 game.boss = None;
@@ -9286,6 +9382,7 @@ impl App {
         shop_icons.extend(game.cashshop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default());
         let mut pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
         pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
+        pick_icons.extend(game.enchant.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.synthesis.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.upgrade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
@@ -9658,6 +9755,9 @@ impl App {
         }
         if let Some(window) = &game.refine {
             window.draw(&mut shop_layer, &assets.chrome, &assets.refine, icons, items, &game.inventory.items, messages, font, pointer);
+        }
+        if let Some(window) = &game.enchant {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.enchant, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.materials {
             window.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, &game.inventory.items, messages, font, pointer);
@@ -10257,6 +10357,10 @@ fn main() {
         eprintln!("no item names: {error}");
         HashMap::new()
     });
+    let enchant_tables = lua::enchants(&grf).unwrap_or_else(|error| {
+        eprintln!("no enchant tables: {error}");
+        HashMap::new()
+    });
     let messages = messages::load(&grf).unwrap_or_else(|error| {
         eprintln!("no client messages: {error}");
         Vec::new()
@@ -10297,6 +10401,7 @@ fn main() {
         upgrade_boxes,
         title_names,
         items,
+        enchant_tables,
         messages,
         icons: HashMap::new(),
         modifiers: ModifiersState::empty(),
