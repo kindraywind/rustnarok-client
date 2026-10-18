@@ -14156,7 +14156,10 @@ impl App {
             }
         }
         // Status icons down the right, each with the clock of its time (orange in the last minute).
-        let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
+        // In the game's five priority passes, 42 as 12.
+        let started: Vec<(u16, (Instant, Option<Instant>))> = game.status_icons.iter().map(|&(kind, start, end)| (kind, (start, end))).collect();
+        let order = status_tip::placed(&started, |kind| status_icon_files.get(&kind).map(|(priority, _)| *priority));
+        let shown = order.iter().filter_map(|(kind, (start, end))| {
             let (_, file) = status_icon_files.get(kind)?;
             Some((*kind, icons.get(&format!("data\\texture\\effect\\{file}"))?.as_ref()?, start, end))
         });

@@ -24,8 +24,38 @@ pub fn rows(height: f32) -> usize {
     ((height - 50.0 - 150.0) / STEP[1]).ceil().max(1.0) as usize
 }
 
+/// The most icons shown.
+const MOST_ICONS: usize = 99;
+/// Increase AGI's two status ids: 42 is shown as 12.
+const AGI_SHOWN_AS: (u16, u16) = (42, 12);
+
+/// The icons in the order they're placed: five passes, priority 0 to 4 from the icon table (`priority` of a status,
+/// None when it has no icon), each taking its statuses in the order they started; 42 as 12, each once; at most 99.
+// ponytail: the icons known without the Lua table come with priority 0, and a priority past 4 goes after the fifth
+// pass.
+pub fn placed<T: Copy>(icons: &[(u16, T)], priority: impl Fn(u16) -> Option<u8>) -> Vec<(u16, T)> {
+    let mut seen = Vec::new();
+    let shown: Vec<(u16, T, u8)> = icons
+        .iter()
+        .map(|&(id, data)| (if id == AGI_SHOWN_AS.0 { AGI_SHOWN_AS.1 } else { id }, data))
+        .filter_map(|(id, data)| {
+            let priority = priority(id)?;
+            (!seen.contains(&id)).then(|| {
+                seen.push(id);
+                (id, data, priority)
+            })
+        })
+        .collect();
+    let mut order: Vec<(u16, T)> = Vec::new();
+    for pass in 0..=4 {
+        order.extend(shown.iter().filter(|(.., priority)| *priority == pass).map(|&(id, data, _)| (id, data)));
+    }
+    order.extend(shown.iter().filter(|(.., priority)| *priority > 4).map(|&(id, data, _)| (id, data)));
+    order.truncate(MOST_ICONS);
+    order
+}
+
 /// The `order`th icon's box corner (columns right to left, rows top down).
-// ponytail: icons go in the order they came; the game sorts them in five priority passes from its icon table.
 pub fn icon_corner(order: usize, [width, height]: [f32; 2]) -> [f32; 2] {
     let per = rows(height);
     [width - FIRST[0] - (order / per) as f32 * STEP[0], FIRST[1] + (order % per) as f32 * STEP[1]]
@@ -81,6 +111,28 @@ pub fn line_at(corner: [f32; 2], row: usize, line_height: f32) -> [f32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn places_icons_by_priority_passes() {
+        let table = |id: u16| match id {
+            10 => Some(0), // Blessing
+            12 => Some(0), // Increase AGI
+            30 => Some(2),
+            40 => Some(1),
+            50 => Some(9),
+            _ => None,
+        };
+        // Started in any order, they come out the same: pass 0 (in start order), 1, 2, then past 4.
+        let started = [(30, 'a'), (50, 'b'), (12, 'c'), (40, 'd'), (10, 'e'), (77, 'f')];
+        assert_eq!(placed(&started, table).iter().map(|(id, _)| *id).collect::<Vec<_>>(), [12, 10, 40, 30, 50]);
+        let other = [(10, 'e'), (40, 'd'), (30, 'a'), (12, 'c'), (50, 'b')];
+        assert_eq!(placed(&other, table).iter().map(|(id, _)| *id).collect::<Vec<_>>(), [10, 12, 40, 30, 50]);
+        // 42 is 12's icon, and once only.
+        assert_eq!(placed(&[(42, 'x'), (12, 'y')], table), [(12, 'x')]);
+        // At most 99.
+        let many: Vec<(u16, ())> = (0..150).map(|id| (id, ())).collect();
+        assert_eq!(placed(&many, |_| Some(0)).len(), 99);
+    }
 
     #[test]
     fn says_the_time_left_and_lines() {

@@ -1324,6 +1324,11 @@ fn game_state(app: &App, game: &Game) -> Value {
         "inventory_items": game.inventory.items.len(),
         "skills": game.skills.len(),
         "status_icons": game.status_icons.iter().map(|(id, _, ends)| json!({"id": id, "left_ms": ends.map(|end| end.saturating_duration_since(now).as_millis() as u64)})).collect::<Vec<_>>(),
+        // The icons as drawn down the right: the priority passes' order.
+        "status_icons_drawn": crate::status_tip::placed(&game.status_icons.iter().map(|&(id, ..)| (id, ())).collect::<Vec<_>>(), |id| app.status_icon_files.get(&id).map(|(priority, _)| *priority))
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>(),
         // Where the camera is steered to: the turn (within a circle) and tilt in degrees, the distance in world units.
         "camera": json!({
             "yaw": game.camera_goal.yaw.rem_euclid(360.0).round(),

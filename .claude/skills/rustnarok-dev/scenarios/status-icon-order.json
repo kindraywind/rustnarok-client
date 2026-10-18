@@ -1,0 +1,139 @@
+{
+  "about": "Status icon order (issue #315): our NPC (npc/status-icons-order.txt) starts Blessing (icon priority 0), Eternal Chaos (1) and Promote Health Research (2) in two different orders; both times the icons come out in the same order down the right, by the five priority passes. The statuses are ended and the NPC unloaded.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/status-icons-order.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/status-icons-order.txt"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokIcons"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "clear"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "type": "a"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state": {
+          "status_icons_drawn": [
+            10,
+            79,
+            480
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "icons-order-a",
+      "crop": [
+        820,
+        150,
+        204,
+        140
+      ],
+      "threshold": 5
+    },
+    {
+      "type": "clear"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "type": "b"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state": {
+          "status_icons_drawn": [
+            10,
+            79,
+            480
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "icons-order-b",
+      "crop": [
+        820,
+        150,
+        204,
+        140
+      ],
+      "threshold": 5
+    },
+    {
+      "type": "clear"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/status-icons-order.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}
