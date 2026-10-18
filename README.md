@@ -49,7 +49,7 @@ Login, char and map servers at PACKETVER 20220406. Every packet length is genera
 <td width="50%" valign="top">
 
 ### 🧪 Tested by playing
-A control socket and an [MCP server](#-an-ai-plays-it) drive the live client; scenario suites screenshot each change and diff it
+A control socket and an [MCP server](#-driving-the-client) drive the live client; scenario suites screenshot each change and diff it
 against `main`.
 
 </td>
@@ -78,31 +78,50 @@ marked `ponytail:` in the code, to calibrate against screenshots of the real cli
 
 ## 🤖 An AI plays it
 
-`rustnarok-client-mcp` hands the live client to an AI assistant as MCP tools. It sees the frames, reads the game state
-and plays through the same mouse and keyboard code a player does. Features here are checked that way. Some of what it
-does:
+`rustnarok-client-mcp` hands the client to an AI assistant such as Claude Code. Ask in plain words: it looks at the
+screen, reads the game state and plays through the client's own mouse and keyboard handling.
 
-| Ask | What happens |
-|---|---|
-| 🎮 *"Log in and kill a Poring."* | `launch` logs in and enters the map, `say "@monster poring"` spawns one, `state` lists it with its screen box, and a `click` in that box attacks through the client's own picking. |
-| 🎞️ *"Show me Fire Bolt frame by frame."* | `wait` casts it and freezes the animation clock the moment the skill lands; `clock step` and `screenshot` then walk the effect 16 ms at a time. |
-| 🧪 *"Put a Red Potion on F1."* | `key Alt+E` opens the inventory, `state` names every item's and hotkey slot's box, and `drag` drops one on the other. |
-| 🔍 *"Why did I get disconnected?"* | `trace` lists the last packets from the char and map servers with the events they made, the drop's reason included. |
-| 🔎 *"Is that text blurry?"* | `screenshot` with `crop` and `scale: 2` zooms into any part of the 1024×768 canvas. |
-| 🇰🇷 *"Say hello in Korean."* | `type` sends Hangul in as the input method's commit, the way a Korean keyboard does. |
-| ⚔️ *"Is the other player an enemy in PvP?"* | Scenarios run two clients on two accounts: one warps, recalls the other, finds it among `state`'s enemies and attacks it. |
-| 🖼️ *"Did my change break anything?"* | `visual.py` plays the JSON scenarios in `scenarios/` on the branch and on `main` and makes before/after/diff sheets; pull requests here carry them. |
+> **"Reset my skills and stats and build me for the War of Emperium."**
 
-Catching a short effect, as tool calls:
-
-```jsonc
-{"tool": "say",   "text": "@monster poring"}
-{"tool": "state"}                                   // the Poring's screen box: [480, 330, 520, 370]
-{"tool": "key",   "key": "F1"}                      // Fire Bolt, aimed
-{"tool": "wait",  "do": {"cmd": "click", "x": 500, "y": 350}, "event": "SkillHit", "pause": true}
-{"tool": "screenshot", "crop": [400, 250, 200, 150], "scale": 2}
-{"tool": "clock", "action": "step", "ms": 50}       // then screenshot again, frame after frame
+```text
+state                    → a Wizard, base level 99, job level 50
+say "@reset"             → every stat and skill point back
+key Alt+A, screenshot    → the status window and its free points
+click × n                → INT and DEX for casting, VIT to live through the castle
+key Alt+S, state         → the skill tree, each skill's box
+click × n                → Storm Gust, Quagmire, Safety Wall, Jupitel Thunder ...
+drag × 4                 → those skills onto F1-F4
+screenshot               → both windows, for you to check
 ```
+
+> **"Take my Novice through the Acolyte job change."**
+
+```text
+state                    → a Novice, job level 10, in Prontera
+click (the priest's box) → the dialog, as text: the NPC's lines, Next, a menu
+click, key Enter × n     → reads each line, picks the Acolyte choice
+state                    → the priest sends it to a pilgrim outside the town
+click × n                → walks the fields to the pilgrim, talks, walks back
+state                    → job: Acolyte
+```
+
+NPC dialogs come as text, menus as lists to pick from, so quests that are talking, walking and fetching suit it best.
+
+More errands to hand over:
+
+| Ask | What it does |
+|---|---|
+| 🛒 *"Buy 50 Red Potions and put them on F1."* | Walks to the tool dealer, buys them and drags them onto the hotkey bar. |
+| 💇 *"Try every hair color and show me."* | Clicks through the stylist's colors and sends a screenshot of each to pick from. |
+| 📸 *"A photo of me casting Storm Gust by the Prontera fountain."* | Pauses the clock at the effect's best frame, turns the camera and crops the shot. |
+| 🗣️ *"Talk to this NPC and tell me what it says in Thai."* | Reads the dialog, translates it and picks the option you choose. |
+| 🧙 *"Make me a new character for an archer build."* | Creates and names it, then spends its stat points on AGI and DEX. |
+| 💬 *"I'm off to eat. Answer whispers and tell me who wrote."* | Waits for chat, replies, and sums it up when you're back. |
+| 🎉 *"Run a 10-question quiz in chat and give the winner an Old Blue Box."* | Asks, reads the answers, hands out the prize with a GM command: a game master for a server among friends. |
+| ♿ *"Walk to Prontera and sell my loot."* | Plays by typed or spoken words, for players who find the mouse hard. |
+
+It takes a few seconds a step, and a driven client ignores the real mouse and keyboard, so it runs errands rather
+than fights beside you. Use it on your own server: a bot on someone else's breaks its rules.
 
 Setting it up: [Driving the client](#-driving-the-client).
 
