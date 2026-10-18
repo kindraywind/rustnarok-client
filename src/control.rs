@@ -1447,7 +1447,7 @@ mod tests {
         assert_eq!(stats["int"], json!({"value": 9, "bonus": 2, "cost": 2}));
         assert_eq!(stats["str"], json!({"value": 1, "bonus": 0, "cost": 0}));
         assert_eq!(stats["luk"]["cost"], 3);
-        let info = HashMap::from([(19, SkillInfo { resource: "MG_FIREBOLT".into(), name: "Fire Bolt".into(), max_level: 10 })]);
+        let info = HashMap::from([(19, SkillInfo { resource: "MG_FIREBOLT".into(), name: "Fire Bolt".into(), max_level: 10, ..Default::default() })]);
         let skills = [
             net::Skill { id: 19, kind: net::Skill::ENEMY, level: 3, sp: 16, range: 9, upgradable: true },
             net::Skill { id: 9999, kind: 0, level: 0, sp: 0, range: 0, upgradable: false },
