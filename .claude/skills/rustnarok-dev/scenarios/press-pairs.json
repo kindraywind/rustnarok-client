@@ -1,0 +1,14 @@
+{
+  "about": "Presses in pairs (issues #291, #344): four left presses at one spot on the ground, 200 ms apart and the pointer still, walk on the first and the third: the second press of each pair is a double press, and after it the next press starts afresh. state's player.walks counts the walks sent.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp gef_fild07 61 229"}, {"settle": 1500},
+    {"expect": {"state": {"player.walks": 0}}},
+    {"click": [512, 330]}, {"wait": 200},
+    {"click": [512, 330]}, {"wait": 200},
+    {"click": [512, 330]}, {"wait": 200},
+    {"click": [512, 330]}, {"wait": 1500},
+    {"expect": {"state": {"player.walks": 2}}}
+  ]
+}
