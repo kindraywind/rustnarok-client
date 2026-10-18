@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use image::RgbaImage;
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::LookTables;
-use rustnarok_client::sprite::{self, Act, Palette, Spr};
+use rustnarok_client::sprite::{self, Act, Palette, Pick, Spr};
 
 use crate::render::{Gpu, Texture};
 use crate::world;
@@ -149,6 +149,8 @@ const RIDING: u32 = 0x20;
 const DRAGONS: [u32; 5] = [0x8_0000, 0x80_0000, 0x100_0000, 0x200_0000, 0x400_0000];
 const WOLF_RIDING: u32 = 0x20_0000;
 const MADOGEAR: u32 = 0x40_0000;
+/// The mounts that swap the body for a mounted one.
+const MOUNTS: u32 = RIDING | DRAGONS[0] | DRAGONS[1] | DRAGONS[2] | DRAGONS[3] | DRAGONS[4] | WOLF_RIDING | MADOGEAR;
 /// rathena `OPTION_FALCON` (`src/map/status.hpp`).
 pub const OPTION_FALCON: u32 = 0x10;
 /// rathena `OPTION_WUG`.
@@ -260,12 +262,7 @@ enum Part {
     Robe,
 }
 
-impl Part {
-    /// The head and headgear sit on the body's anchor point.
-    fn on_head(self) -> bool {
-        matches!(self, Part::Head | Part::HeadBottom | Part::HeadMid | Part::HeadTop)
-    }
-}
+impl Part {}
 
 /// How a character looks: job, hair and the view IDs of what it wears.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -633,6 +630,8 @@ pub struct SpriteSet {
     /// Status colour multiplied into every layer. None keeps each layer's own colour.
     tint: Option<[u8; 3]>,
     textures: HashMap<ImageKey, Texture>,
+    /// A mounted rider's body without the mount, when a headgear sits by it.
+    unmounted: Option<Act>,
 }
 
 impl SpriteSet {
@@ -737,9 +736,19 @@ impl SpriteSet {
                     let offsets = std::array::from_fn(|direction| {
                         is_doram(look.job).then(|| rules?.doram_headgear_offset(view, direction, look.sex)).flatten().unwrap_or_default()
                     });
-                    Worn { part, places: place(view, slot, default), offsets }
+                    let layer = usize::from(HEAD_HIDING.contains(&view));
+                    let ignores_riding = rules.is_some_and(|rules| rules.ignores_riding(view));
+                    Worn { part, places: place(view, slot, default), offsets, layer, ignores_riding }
                 })
-                .collect();
+                .collect::<Vec<_>>();
+        // On a mount, headgear the data marks sits by the body without it: that body's ACT, loaded only then.
+        let mounted = job == sprite_job(look.job, look.option & MOUNTS) && job != look.job;
+        let unmounted = (mounted && headgear.iter().any(|worn| worn.ignores_riding))
+            .then(|| {
+                let class = job_sprites(look.job)?.body;
+                Act::parse(&grf.read(&format!("data\\sprite\\{race}\\몸통\\{sex}\\{class}_{sex}.act")).ok()?).ok()
+            })
+            .flatten();
         let dressing = Dressing {
             head_first: grf.read(&format!("data\\imf\\{class}_{sex}.imf")).ok().and_then(|bytes| sprite::parse_imf(&bytes).ok()).unwrap_or_default(),
             robe_over_body,
@@ -758,6 +767,7 @@ impl SpriteSet {
             scale: body_scale(job),
             tint: None,
             textures: HashMap::new(),
+            unmounted,
         })
     }
 
@@ -789,6 +799,7 @@ impl SpriteSet {
             scale: 1.0,
             tint: None,
             textures: HashMap::new(),
+            unmounted: None,
         })
     }
 
@@ -824,6 +835,7 @@ impl SpriteSet {
             scale: 1.0,
             tint: None,
             textures: HashMap::new(),
+            unmounted: None,
         })
     }
 
@@ -913,6 +925,10 @@ impl SpriteSet {
             None => vec![Part::Body, Part::Weapon],
         };
 
+        // A player's parts draw one ACT layer each; the headgear go by the head's anchor.
+        let pc = self.dressing.is_some();
+        let head_frame = frames_of(Part::Head).and_then(|(_, frames)| frames.get(frame_index));
+        let head_shift = head_frame.map_or([0, 0], |head| sprite::head_shift(body_frame, head));
         let mut placed = Vec::new();
         for part in order {
             let Some((number, frames)) = frames_of(part) else { continue };
@@ -925,22 +941,37 @@ impl SpriteSet {
                 Part::Body => Some(frame_index),
                 Part::Robe => layer_frame(frames.len(), head_count, if look.is_some() { 0 } else { frame_index }, frame_index, own),
                 Part::HeadBottom | Part::HeadMid | Part::HeadTop => layer_frame(frames.len(), head_count, frame_index, frame_index, own),
-                // A frame the layer lacks falls back to its first.
-                Part::Head | Part::Weapon | Part::WeaponGlow | Part::Shield => Some(if frame_index < frames.len() { frame_index } else { 0 }),
+                // A frame the layer lacks: nothing drawn.
+                Part::Head | Part::Weapon | Part::WeaponGlow | Part::Shield => Some(frame_index),
             };
             let Some(frame) = frame.and_then(|frame| frames.get(frame)) else { continue };
-            let mut shift = if part.on_head() { sprite::head_shift(body_frame, frame) } else { [0, 0] };
-            // Headgear moved for its wearer, by the way the head looks (turned one way or the other off the body's).
-            if let Some(Worn { offsets, .. }) = self.dressing.as_ref().and_then(|dressing| dressing.headgear.iter().find(|worn| worn.part == part)) {
-                let turn = match look {
-                    Some(1) => 1,
-                    Some(2) => 7,
-                    _ => 0,
-                };
-                let [x, y] = offsets[(index + turn) % 8];
-                shift = [shift[0] + x, shift[1] + y];
-            }
-            placed.extend(sprite::place(&layer.spr, frame, shift).into_iter().map(|placement| {
+            let worn = self.dressing.as_ref().and_then(|dressing| dressing.headgear.iter().find(|worn| worn.part == part));
+            let (shift, pick) = match (part, worn) {
+                (_, None) if !pc => ([0, 0], Pick::All),
+                (Part::Body | Part::Weapon | Part::WeaponGlow, _) => ([0, 0], Pick::Layer(0)),
+                (Part::Head, _) => (head_shift, Pick::Layer(1)),
+                (_, Some(worn)) => {
+                    let mut shift = sprite::gear_shift(head_shift, head_frame, frame);
+                    // On a mount: the body's anchor height without the mount, standing, walking, sitting or dead.
+                    if worn.ignores_riding
+                        && (matches!(action, IDLE | WALK | SIT) || DEAD_ACTIONS.contains(&index))
+                        && let Some(&[_, y, _]) = body_frame.anchors.first()
+                        && let Some(&[_, unmounted, _]) = self.unmounted.as_ref().and_then(|act| act.actions.get(index)?.get(frame_index)?.anchors.first())
+                    {
+                        shift[1] += unmounted - y;
+                    }
+                    // Moved for its wearer, by the way the head looks (turned one way or the other off the body's).
+                    let turn = match look {
+                        Some(1) => 1,
+                        Some(2) => 7,
+                        _ => 0,
+                    };
+                    let [x, y] = worn.offsets[(index + turn) % 8];
+                    ([shift[0] + x, shift[1] + y], Pick::Unzoomed(worn.layer))
+                }
+                _ => ([0, 0], Pick::All),
+            };
+            placed.extend(sprite::place(&layer.spr, frame, shift, pick).into_iter().map(|placement| {
                 (
                     (number, placement.kind, placement.image, layer_color(placement.color, self.tint), 0),
                     placement.position.map(|value| value * self.scale),
@@ -1101,6 +1132,10 @@ struct Worn {
     part: Part,
     places: [Option<i32>; 8],
     offsets: [[i32; 2]; 8],
+    /// The ACT layer drawn: 0, or 1 for a headgear that hides the head.
+    layer: usize,
+    /// On a mount it sits by the body without the mount (the data's `isIgnoreRiding`).
+    ignores_riding: bool,
 }
 
 /// What places a player's garment, head and headgear among its layers.
@@ -2302,7 +2337,7 @@ mod tests {
 
     #[test]
     fn pulls_the_cart_on_a_one_cell_rope() {
-        let sprites = SpriteSet { layers: Vec::new(), player: false, dressing: None, scale: 1.0, tint: None, textures: HashMap::new() };
+        let sprites = SpriteSet { layers: Vec::new(), player: false, dressing: None, scale: 1.0, tint: None, textures: HashMap::new(), unmounted: None };
         // Placed a rope's length behind a leader facing south (0): to its north, facing south.
         let mut cart = Cart::behind(sprites, [50.0, 50.0], 0);
         assert_near(cart.at, [50.0, 55.0]);
@@ -2546,5 +2581,79 @@ mod tests {
         assert_eq!(layers.map(|color| layer_color(color, tint)), [[0, 128, 255, 255], [0, 32, 32, 128], [0, 128, 0, 255]]);
         // Ending the state restores each layer's own colour.
         assert_eq!(layers.map(|color| layer_color(color, status_tint(0, 0))), layers);
+    }
+
+    /// A sprite of one blank 4×4 image (SPR 1.0).
+    fn blank_spr() -> Spr {
+        let mut bytes = b"SP\x00\x01".to_vec();
+        bytes.extend([1u16, 4, 4].iter().flat_map(|value| value.to_le_bytes()));
+        bytes.extend([0u8; 16]);
+        Spr::parse(&bytes).unwrap()
+    }
+
+    /// A frame of `layers` layers (`empty` ones first) and an anchor.
+    fn test_frame(layers: usize, empty: usize, anchor: Option<[i32; 3]>) -> sprite::Frame {
+        let layer =
+            |image| sprite::Layer { offset: [0, 0], image, mirror: false, color: [255; 4], scale: [1.0; 2], angle: 0, kind: 0, size: None, top_left: false };
+        sprite::Frame { layers: (0..layers).map(|index| layer(if index < empty { -1 } else { 0 })).collect(), event: -1, anchors: anchor.into_iter().collect() }
+    }
+
+    /// An ACT whose 104 actions each have `frames` copies of `frame`.
+    fn test_act(frame: sprite::Frame, frames: usize) -> Act {
+        Act { actions: vec![vec![frame; frames]; 104], delays: vec![4.0; 104], events: Vec::new() }
+    }
+
+    /// A player: a two-layer body (anchor at y −80), a head in layer 1, a headgear and a weapon with one frame an action.
+    fn test_player(ignores_riding: bool, unmounted: Option<Act>) -> SpriteSet {
+        let layer = |act, part| Layer { spr: blank_spr(), act, palette: None, part };
+        let worn = Worn { part: Part::HeadTop, places: [Some(200); 8], offsets: [[0, 0]; 8], layer: 0, ignores_riding };
+        let dressing = Dressing {
+            head_first: Vec::new(),
+            robe_over_body: Vec::new(),
+            robe_over_headgear: false,
+            headgear: vec![worn],
+            head_hidden: false,
+            outfit: false,
+            madogear: false,
+            female: false,
+        };
+        SpriteSet {
+            layers: vec![
+                layer(test_act(test_frame(2, 0, Some([0, -80, 0])), 2), Part::Body),
+                layer(test_act(test_frame(2, 1, Some([0, -10, 0])), 2), Part::Head),
+                layer(test_act(test_frame(1, 0, Some([0, -12, 0])), 2), Part::HeadTop),
+                layer(test_act(test_frame(1, 0, None), 1), Part::Weapon),
+            ],
+            player: true,
+            dressing: Some(dressing),
+            scale: 1.0,
+            tint: None,
+            textures: HashMap::new(),
+            unmounted,
+        }
+    }
+
+    #[test]
+    fn draws_one_layer_a_part_and_nothing_for_a_missing_frame() {
+        let sprites = test_player(false, None);
+        let parts = |index, progress| sprites.place(index, 0, Timing::Span(progress)).iter().map(|((number, ..), ..)| *number).collect::<Vec<_>>();
+        // In the battle stance: the body's layer 0 only, the head's layer 1, the headgear, the weapon.
+        let mut drawn = parts(32, 0.0);
+        drawn.sort_unstable();
+        assert_eq!(drawn, [0, 1, 2, 3]);
+        // The weapon has no second frame: it isn't drawn then.
+        assert!(!parts(32, 0.9).contains(&3));
+    }
+
+    #[test]
+    fn sits_riding_headgear_by_the_unmounted_body() {
+        let unmounted = || test_act(test_frame(1, 0, Some([0, -60, 0])), 2);
+        let top = |sprites: &SpriteSet, index| sprites.place(index, 0, Timing::Span(0.0)).iter().find(|((number, ..), ..)| *number == 2).unwrap().1[1];
+        // On the head: (−80 − −10) + (−10 − −12) = −68, the 4×4 image's top 2 above that.
+        let plain = test_player(false, Some(unmounted()));
+        assert_eq!(top(&plain, 0), -70.0);
+        // Flagged, standing: by the unmounted body's anchor, 20 lower; in an attack, by the mounted one.
+        let riding = test_player(true, Some(unmounted()));
+        assert_eq!((top(&riding, 0), top(&riding, 8), top(&riding, 64), top(&riding, 88)), (-50.0, -50.0, -50.0, -70.0));
     }
 }

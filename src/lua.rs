@@ -549,6 +549,12 @@ impl LayerRules {
         self.call::<(bool, mlua::Value)>("_New_DrawOnTop", (robe, sex, job, action, frame)).map(|(over, _)| over)
     }
 
+    /// Headgear (by view) that sits by the unmounted body on a mounted rider: the data's `isIgnoreRiding` items.
+    pub fn ignores_riding(&self, view: u16) -> bool {
+        let items = self.0.globals().get::<mlua::Table>("TB_Layer_Priority").and_then(|table| table.get::<mlua::Table>("Items_List"));
+        items.and_then(|items| items.get::<mlua::Table>(view)).and_then(|item| item.get::<Option<bool>>("isIgnoreRiding")).ok().flatten().unwrap_or(false)
+    }
+
     /// Garments that, when over the body, go over the headgear too (bags).
     pub fn robe_over_headgear(&self, robe: u16) -> bool {
         self.call("IsTopLayer", robe).unwrap_or(false)
