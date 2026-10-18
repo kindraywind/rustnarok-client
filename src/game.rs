@@ -518,6 +518,9 @@ impl Game {
         if let Some(window) = &self.item_window {
             self.item_place = window.position;
         }
+        if let Some(window) = &self.card_window {
+            self.card_place = window.position;
+        }
         if control::driven() {
             return;
         }
@@ -534,7 +537,7 @@ impl Game {
         }
         places += &size_lines(self.inventory.size(), self.cart.size(), self.storage.rows(), self.shop_sizes);
         places += &format!("{VEND_SIZE} {} {} 0\n{SKILL_LIST_SIZE} 0 {} 0\n", self.vend_size.width, self.vend_size.rows, self.skill_window.list_rows());
-        places += &format!("{ITEM_PLACE} {} {} 0\n", self.item_place[0], self.item_place[1]);
+        places += &format!("{ITEM_PLACE} {} {} 0\n{CARD_PLACE} {} {} 0\n", self.item_place[0], self.item_place[1], self.card_place[0], self.card_place[1]);
         let quest = self.quest_window.frame.position;
         places += &format!("{QUEST_PLACE} {} {} 0\n", quest[0], quest[1]);
         if places != self.saved_places {
@@ -542,6 +545,29 @@ impl Game {
                 let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, &places));
             }
             self.saved_places = places;
+        }
+    }
+
+    /// A card from a description's strip, in its own window where that was last (the description stays).
+    pub(crate) fn show_card(&mut self, card: u32, enchant: bool) {
+        if let Some(window) = &self.card_window {
+            self.card_place = window.position;
+        }
+        let mut window = iteminfo::ItemWindow::new(iteminfo::Shown::card(card, enchant));
+        window.position = self.card_place;
+        self.card_window = Some(window);
+    }
+
+    /// A card's picture button: its picture, or shut again when it's that card's already (another card's replaces it).
+    pub(crate) fn toggle_card_view(&mut self, card: u32, pictures: &iteminfo::CardPictures, items: &HashMap<u32, ItemInfo>) {
+        if self.card_view.as_ref().is_some_and(|view| view.card == card) {
+            self.card_view = None;
+            return;
+        }
+        if let Some(name) = pictures.name(card) {
+            let title = items.get(&card).map_or_else(String::new, |info| info.name.clone());
+            self.card_view = Some(iteminfo::CardView::new(iteminfo::cardbmp_path(name), card, title, screen()));
+            escape::touch(&mut self.esc_order, escape::WindowId::CardPicture);
         }
     }
 
@@ -594,6 +620,9 @@ impl Game {
         }
         if let Some(&(place, _)) = saved.get(QUEST_PLACE) {
             self.quest_window.frame.position = quest::restored_place(place, screen());
+        }
+        if let Some(&(place, _)) = saved.get(CARD_PLACE) {
+            self.card_place = iteminfo::restored_card_place(place, screen());
         }
         if let (Some(&([width, goods], _)), Some(&([_, deal], _))) = (saved.get(SHOP_SIZE), saved.get(SHOP_DEAL_SIZE)) {
             self.shop_sizes = (shop::snap_width(width), [goods as usize, deal as usize]);
@@ -1633,6 +1662,7 @@ impl Game {
         self.graphics_window = None;
         self.shortcuts_window = None;
         self.item_window = None;
+        self.card_window = None;
         self.card_view = None;
         self.monster_window = None;
         self.ranking = None;
@@ -1726,6 +1756,7 @@ impl Game {
             || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some())
             || self.item_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.card_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
             || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
             || self.room.as_ref().is_some_and(|room| room.hit(cursor, &self.me.name).is_some())
@@ -2251,6 +2282,7 @@ impl Game {
         push(PickList, self.pick.is_some());
         push(CardPicture, self.card_view.is_some());
         push(ItemInfo, self.item_window.is_some());
+        push(CardInfo, self.card_window.is_some());
         push(ChatRoom, self.room.is_some());
         push(RoomMake, self.room_make.is_some());
         push(EmotionList, self.emotion_list.is_some());
@@ -2610,6 +2642,7 @@ impl Game {
                 self.card_view = None;
             }
             CardPicture => self.card_view = None,
+            CardInfo => self.card_window = None,
             ChatRoom => {
                 let _ = self.session.leave_chat_room();
             }

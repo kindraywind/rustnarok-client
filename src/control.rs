@@ -991,7 +991,11 @@ fn game_state(app: &App, game: &Game) -> Value {
         .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
         .chain(game.inventory.check_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
-            game.item_window.iter().flat_map(|window| window.button_boxes(&app.items)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+            game.card_window
+                .iter()
+                .chain(&game.item_window)
+                .flat_map(|window| window.button_boxes(&app.items))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
         .chain(game.skill_window.skill_boxes(&sheet).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
@@ -1594,6 +1598,9 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["item_window_box"] = json!(game.item_window.as_ref().map(|window| window.area()));
     // The equipment window's View Costume box.
     state["costumes_shown"] = game.equipment.costumes_shown.into();
+    // A card's own window and its picture: where they are and how big, and which card.
+    state["card_window_box"] = json!(game.card_window.as_ref().map(|window| window.area()));
+    state["card_view"] = json!(game.card_view.as_ref().map(|view| json!({"card": view.card, "box": view.area()})));
     state["opened_page"] = game.opened_page.clone().into();
     // Our milliseconds a cell.
     state["player"]["step_ms"] = game.player.step_ms.into();

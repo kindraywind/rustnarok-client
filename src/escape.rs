@@ -79,6 +79,8 @@ pub enum WindowId {
     ItemInfo,
     /// A card's picture.
     CardPicture,
+    /// A card's own window, opened from a description.
+    CardInfo,
     ChatRoom,
     RoomMake,
     EmotionList,
@@ -186,6 +188,7 @@ impl WindowId {
             Self::Trade => "Trade",
             Self::ItemInfo => "ItemInfo",
             Self::CardPicture => "CardPicture",
+            Self::CardInfo => "CardInfo",
             Self::ChatRoom => "ChatRoom",
             Self::RoomMake => "RoomMake",
             Self::EmotionList => "EmotionList",

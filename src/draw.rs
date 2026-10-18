@@ -1382,9 +1382,21 @@ impl App {
         pick_icons.extend(game.upgrade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.achievement_window.icons(achievement_info));
         pick_icons.extend(game.roulette.as_ref().map(|window| window.icons(items)).unwrap_or_default());
-        let compared = compared_windows(&game.inventory, items, messages, pointer.0);
+        // With compare on, the description's item next to what's worn in its slot.
+        let compared = game
+            .item_window
+            .as_ref()
+            .filter(|window| game.inventory.compare && !window.compare)
+            .and_then(|window| Some((window.position, iteminfo::compared(&window.shown, &game.inventory.items)?)))
+            .map(|(position, worn)| {
+                let mut window = iteminfo::ItemWindow::new(iteminfo::Shown::of(worn));
+                window.compare = true;
+                window.position = iteminfo::compare_place(position);
+                window
+            });
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
+        trade_icons.extend(game.card_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         trade_icons.extend(compared.iter().flat_map(|window| window.images(items)));
         trade_icons.extend(game.card_view.iter().map(|view| view.path.clone()));
         trade_icons.extend(game.quest_window.icons(&game.quests, quest_texts));
@@ -2154,15 +2166,22 @@ impl App {
             let names = (card_names, &messages[..], &game.char_names);
             window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, pointer.0);
         }
+        let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
+        if let Some(mut window) = compared {
+            let lines = window.lines(items, messages, unix_now);
+            window.fit(lines.len());
+            let names = (card_names, &messages[..], &game.char_names);
+            window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, pointer.0);
+        }
+        if let Some(window) = &mut game.card_window {
+            let lines = window.lines(items, messages, unix_now);
+            window.fit(lines.len());
+            game.card_lines = lines.len();
+            let names = (card_names, &messages[..], &game.char_names);
+            window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, pointer.0);
+        }
         if let Some(view) = &game.card_view {
             view.draw(shop_layer.window(), &assets.chrome, &assets.item_window, icons, pointer.0);
-        }
-        let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
-        for window in &compared {
-            let lines = window.lines(items, messages, unix_now);
-            let names = (card_names, &messages[..], &game.char_names);
-            let mut under = Layer::default();
-            window.draw(&mut tooltip, &mut under, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, pointer.0);
         }
         if game.apply_asked {
             let dialog = dialog_position(&assets.message);

@@ -48,14 +48,11 @@ const CELL_NAME_UP: f32 = 50.0;
 const CELLS: usize = 4;
 /// Where it first opens.
 pub const DEFAULT_PLACE: [f32; 2] = [280.0, 126.0];
-/// The illustration button, on a card's info.
-// ponytail: the real client's button image isn't known; a labelled chip stands in.
-const VIEW_SIZE: [f32; 2] = [64.0, 16.0];
-const VIEW_LABEL: &str = "Illust";
-/// The word over a compared item's info.
-// ponytail: no msgstringtable id was given for this title; "Worn" stands in until one is confirmed.
-const WORN_TITLE: &str = "Worn";
-const BORDER: [u8; 4] = [0xC0, 0xC0, 0xC0, 0xFF];
+/// A card's window opens here the first time.
+pub const CARD_PLACE: [f32; 2] = [280.0, 278.0];
+/// The picture button, on a card's window (not an enchant's).
+const VIEW: [f32; 2] = [6.0, 6.0];
+const VIEW_SIZE: [f32; 2] = [42.0, 20.0];
 /// The title's colours: an item with one enchant, a broken item's shadow, the maker's shadow, an unidentified broken
 /// item.
 const ONE_ENCHANT: [u8; 3] = [0x66, 0x99, 0x00];
@@ -67,12 +64,19 @@ pub struct Assets {
     /// The background and the sys box under it: plain, then for enchant grades 1 to 4.
     backgrounds: [Texture; 5],
     boxes: [pickup::Assets; 5],
-    border: Texture,
     close: [Texture; 2],
     resize: Texture,
     /// A card cell with nothing in it: an open slot, and past the slots.
     empty_slot: Texture,
     disabled_slot: Texture,
+    /// The compare window's own: background, sys box, grip and empty cells.
+    compare_background: Texture,
+    compare_box: pickup::Assets,
+    compare_resize: Texture,
+    compare_empty_slot: Texture,
+    compare_disabled_slot: Texture,
+    /// The picture button: normal, pointed at, pressed.
+    view: [Texture; 3],
 }
 
 impl Assets {
@@ -81,11 +85,16 @@ impl Assets {
         Self {
             backgrounds: std::array::from_fn(|grade| image(&if grade == 0 { "collection_bg".to_owned() } else { format!("collection_bg_g{grade}") })),
             boxes: std::array::from_fn(|grade| pickup::Assets::named(gpu, grf, &if grade == 0 { "sysbox".to_owned() } else { format!("sysbox_g{grade}") })),
-            border: gpu.solid(BORDER),
             close: [image("sys_close_off"), image("sys_close_on")],
             resize: gpu.load_texture(grf, &format!("{UI}btn_resize.bmp"), false),
             empty_slot: gpu.load_texture(grf, &format!("{UI}empty_card_slot.bmp"), false),
             disabled_slot: gpu.load_texture(grf, &format!("{UI}disable_card_slot.bmp"), false),
+            compare_background: image("collection_comparison_bg"),
+            compare_box: pickup::Assets::named(gpu, grf, "basic_interface\\sysbox_comparison"),
+            compare_resize: image("btn_comparison_resize"),
+            compare_empty_slot: image("comparison_empty_card_slot"),
+            compare_disabled_slot: image("comparison_disable_card_slot"),
+            view: ["", "_a", "_b"].map(|look| gpu.load_texture(grf, &format!("{UI}btn_view{look}.bmp"), false)),
         }
     }
 }
@@ -108,6 +117,9 @@ pub struct Shown {
     pub expires: u32,
     /// A card: its info offers the picture button.
     pub card: bool,
+    /// Where it goes (0: nothing to compare with), and whether it's worn itself (then it isn't compared).
+    pub location: u32,
+    pub worn: bool,
 }
 
 impl Shown {
@@ -122,6 +134,26 @@ impl Shown {
             broken: item.broken,
             expires: item.expires,
             card: item.kind == net::ITEM_CARD,
+            location: item.location,
+            worn: item.worn != 0,
+        }
+    }
+
+    /// A card from a description's strip: as an identified card, or as an enchant (past the item's slots), which has no
+    /// picture button.
+    pub fn card(id: u32, enchant: bool) -> Self {
+        Self {
+            item: id,
+            identified: true,
+            refine: 0,
+            cards: [0; 4],
+            kind: net::ITEM_CARD,
+            grade: 0,
+            broken: false,
+            expires: 0,
+            card: !enchant,
+            location: 0,
+            worn: false,
         }
     }
 
@@ -129,7 +161,8 @@ impl Shown {
     // ponytail: a link doesn't say the item's type; one with slots is taken for equipment.
     pub fn of_link(id: u32, refine: u8, cards: [u32; 4], card: bool, items: &HashMap<u32, ItemInfo>) -> Self {
         let kind = if items.get(&id).is_some_and(|info| info.slots > 0) { net::ITEM_ARMOR } else { 0 };
-        Self { item: id, identified: true, refine, cards, kind, grade: 0, broken: false, expires: 0, card }
+        // ponytail: nor where it's worn, so a link's item isn't compared.
+        Self { item: id, identified: true, refine, cards, kind, grade: 0, broken: false, expires: 0, card, location: 0, worn: false }
     }
 
     /// The same item to describe: ID, refine and cards (not which stack, how many, or where it was clicked).
@@ -161,6 +194,24 @@ impl Shown {
     fn forged(&self) -> bool {
         inventory::maker(&self.cards).is_some()
     }
+}
+
+/// The worn piece a description compares with: the first worn where the item goes (ammo by the ammo slot), unless
+/// the item is worn itself.
+// ponytail: a piece that fits two slots (accessories) compares with the first found.
+pub fn compared<'a>(shown: &Shown, items: &'a [InventoryItem]) -> Option<&'a InventoryItem> {
+    items.iter().find(|item| !shown.worn && shown.location != 0 && item.worn & shown.location != 0)
+}
+
+/// The place a card's window comes back to: as saved, or its first place when that's off this screen.
+pub fn restored_card_place(saved: [f32; 2], screen: [f32; 2]) -> [f32; 2] {
+    let on_screen = (0.0..screen[0]).contains(&saved[0]) && (0.0..screen[1]).contains(&saved[1]);
+    if on_screen { saved } else { CARD_PLACE }
+}
+
+/// The compare window's place: flush left of the description's.
+pub fn compare_place(description: [f32; 2]) -> [f32; 2] {
+    [description[0] - WIDTH, description[1]]
 }
 
 /// "Time Left: %d hours %d minutes".
@@ -285,8 +336,8 @@ pub struct ItemWindow {
     height: f32,
     /// The height has been set from the text (each time an item is shown).
     fitted: bool,
-    /// Compared equipment: the title says it's what's worn.
-    pub worn: bool,
+    /// The compare window: its own look, and its close button does nothing.
+    pub compare: bool,
 }
 
 /// The picture of an item (data\texture\유저인터페이스\collection\).
@@ -296,15 +347,13 @@ pub fn picture_path(info: &ItemInfo, identified: bool) -> String {
 
 impl ItemWindow {
     pub fn new(shown: Shown) -> Self {
-        Self { shown, position: DEFAULT_PLACE, scroll: 0, drag: None, resizing: None, height: BASE_HEIGHT, fitted: false, worn: false }
+        Self { shown, position: DEFAULT_PLACE, scroll: 0, drag: None, resizing: None, height: BASE_HEIGHT, fitted: false, compare: false }
     }
 
-    /// Beside a hovered cell, the `index`th compared item (they stack downward).
-    pub fn place_beside(&mut self, cell: [f32; 4], index: usize) {
-        // Past the hovered item's name tooltip, which sits just right of the cell.
-        let x = (cell[0] + cell[2] + 150.0).min(crate::screen()[0] - WIDTH).max(0.0);
-        let y = (cell[1] + index as f32 * (self.height + 6.0)).min(crate::screen()[1] - self.height).max(0.0);
-        self.position = [x, y];
+    /// The card or enchant in the strip cell under the pointer, and whether it's an enchant (past the slots).
+    pub fn card_under(&self, cursor: [f32; 2], items: &HashMap<u32, ItemInfo>) -> Option<(u32, bool)> {
+        let cell = self.cell_at(offset(cursor, self.position.map(|value| -value)))?;
+        self.card_in(cell, items).map(|card| (card, cell >= self.slots(items)))
     }
 
     /// Sets the height from the text, once for the item shown.
@@ -340,7 +389,7 @@ impl ItemWindow {
     }
 
     fn view_at(&self) -> [f32; 2] {
-        [8.0, self.upper() - 22.0]
+        VIEW
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
@@ -479,10 +528,13 @@ impl ItemWindow {
     ) {
         let at = |local: [f32; 2]| offset(self.position, local);
         // The sys box (its grade's for an enchant grade) with the background on it, and the strip's own box.
+        // The compare window has its own.
         let grade = usize::from(self.shown.grade).min(4);
+        let (sysbox, background) =
+            if self.compare { (&assets.compare_box, &assets.compare_background) } else { (&assets.boxes[grade], &assets.backgrounds[grade]) };
         let [x, y] = self.position;
-        pickup::draw_sysbox(layer, chrome, &assets.boxes[grade], [x, y, WIDTH, self.upper()]);
-        layer.sprites.push((&assets.backgrounds[grade], at([0.0, 0.0]), assets.backgrounds[grade].size));
+        pickup::draw_sysbox(layer, chrome, sysbox, [x, y, WIDTH, self.upper()]);
+        layer.sprites.push((background, at([0.0, 0.0]), background.size));
         let info = items.get(&self.shown.item);
         if let Some(Some(picture)) = info.and_then(|info| images.get(&picture_path(info, self.shown.identified))) {
             layer.sprites.push((picture, at(PICTURE), picture.size));
@@ -491,11 +543,6 @@ impl ItemWindow {
         // ponytail: " [slots]" ends the title as before.
         let item = self.shown.as_item();
         let (name, maker) = inventory::full_name_maker(items, cards, messages, makers, &item, true);
-        let (name, maker) = if self.worn {
-            (format!("{WORN_TITLE}: {name}"), maker.map(|(range, color)| (range.start + WORN_TITLE.len() + 2..range.end + WORN_TITLE.len() + 2, color)))
-        } else {
-            (name, maker)
-        };
         let fitted = crate::window::fit(font, &name, TITLE_WIDTH);
         let mut left = TITLE[0];
         for (piece, color, shadow) in title_pieces(&fitted, maker, &item, items) {
@@ -504,10 +551,8 @@ impl ItemWindow {
             left += font.width(&piece);
         }
         if self.shown.card {
-            let view = self.view_at();
-            layer.sprites.push((&assets.border, at(view), VIEW_SIZE));
-            layer.sprites.push((&chrome.white, at(offset(view, [1.0, 1.0])), [VIEW_SIZE[0] - 2.0, VIEW_SIZE[1] - 2.0]));
-            layer.texts.push((VIEW_LABEL.into(), at(offset(view, [4.0, 1.0])), [0, 0, 0]));
+            let view = &assets.view[usize::from(self.hit(pointer) == Some(Hit::View))];
+            layer.sprites.push((view, at(self.view_at()), VIEW_SIZE));
         }
         let close = &assets.close[usize::from(self.hit(pointer) == Some(Hit::Close))];
         layer.sprites.push((close, at(CLOSE), close.size));
@@ -518,14 +563,17 @@ impl ItemWindow {
                 x += font.width(piece);
             }
         }
-        layer.sprites.push((&assets.resize, at(self.grip_at()), assets.resize.size));
+        let grip = if self.compare { &assets.compare_resize } else { &assets.resize };
+        layer.sprites.push((grip, at(self.grip_at()), grip.size));
 
         // The card strip: four cells, a card or enchant's icon, else an open slot or one past the slots; a forged or
         // brewed piece shows nothing in it. The name of the one under the pointer above it.
         if !self.shown.has_strip() {
             return;
         }
-        pickup::draw_sysbox(layer, chrome, &assets.boxes[grade], [x, y + self.upper(), WIDTH, STRIP]);
+        pickup::draw_sysbox(layer, chrome, sysbox, [x, y + self.upper(), WIDTH, STRIP]);
+        let (empty, disabled) =
+            if self.compare { (&assets.compare_empty_slot, &assets.compare_disabled_slot) } else { (&assets.empty_slot, &assets.disabled_slot) };
         let hovered = self.cell_at(offset(pointer, self.position.map(|value| -value)));
         for cell in 0..CELLS {
             let corner = at([CELL_X + cell as f32 * CELL_STEP, self.height - CELL_UP]);
@@ -540,8 +588,8 @@ impl ItemWindow {
                         crate::window::tooltip(tooltip, chrome, font, name, place, color);
                     }
                 }
-                Some(Cell::Open) => layer.sprites.push((&assets.empty_slot, corner, [CELL, CELL])),
-                Some(Cell::Closed) => layer.sprites.push((&assets.disabled_slot, corner, [CELL, CELL])),
+                Some(Cell::Open) => layer.sprites.push((empty, corner, [CELL, CELL])),
+                Some(Cell::Closed) => layer.sprites.push((disabled, corner, [CELL, CELL])),
                 None => {}
             }
         }
@@ -597,17 +645,26 @@ pub fn cardbmp_path(name: &str) -> String {
     format!("{UI}cardbmp\\{name}.bmp")
 }
 
-/// The card's picture, in its own small window.
+/// The card's picture: 300 × 417 at ((W − 640) / 2, 0), a title bar with the close button alone and the card's name,
+/// the picture unscaled under it.
 pub struct CardView {
     pub path: String,
+    /// Which card, for its button to close it again.
+    pub card: u32,
+    pub name: String,
     pub position: [f32; 2],
     drag: Option<[f32; 2]>,
 }
 
-// ponytail: card bmps are about 300 by 400; this window shows them fitted. The real window's size would replace it.
-const CARD_VIEW: [f32; 2] = [200.0, 270.0];
-const CARD_PICTURE: [f32; 2] = [10.0, 22.0];
+const CARD_VIEW: [f32; 2] = [300.0, 417.0];
+const CARD_PICTURE: [f32; 2] = [0.0, 17.0];
+const CARD_NAME: [f32; 2] = [10.0, 3.0];
 const CARD_CLOSE: [f32; 2] = [CARD_VIEW[0] - 14.0, 3.0];
+
+/// Where a card's picture opens on a screen this size.
+pub fn card_view_place(screen: [f32; 2]) -> [f32; 2] {
+    [((screen[0] - 640.0) / 2.0).floor(), 0.0]
+}
 
 #[derive(Debug, PartialEq)]
 pub enum ViewHit {
@@ -617,8 +674,8 @@ pub enum ViewHit {
 }
 
 impl CardView {
-    pub fn new(path: String) -> Self {
-        Self { path, position: [520.0, 160.0], drag: None }
+    pub fn new(path: String, card: u32, name: String, screen: [f32; 2]) -> Self {
+        Self { path, card, name, position: card_view_place(screen), drag: None }
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<ViewHit> {
@@ -628,11 +685,16 @@ impl CardView {
         }
         Some(if contains(CARD_CLOSE, [11.0, 11.0], local) {
             ViewHit::Close
-        } else if local[1] < 18.0 {
+        } else if local[1] < CARD_PICTURE[1] {
             ViewHit::Grip
         } else {
             ViewHit::Window
         })
+    }
+
+    /// Where it is and how big, for the test driver.
+    pub fn area(&self) -> [f32; 4] {
+        [self.position[0], self.position[1], CARD_VIEW[0], CARD_VIEW[1]]
     }
 
     pub fn start_drag(&mut self, cursor: [f32; 2]) {
@@ -651,13 +713,15 @@ impl CardView {
 
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, images: &'a HashMap<String, Option<Texture>>, pointer: [f32; 2]) {
         let at = |local: [f32; 2]| offset(self.position, local);
-        layer.sprites.push((&assets.border, at([0.0, 0.0]), CARD_VIEW));
-        layer.sprites.push((&chrome.white, at([1.0, 1.0]), [CARD_VIEW[0] - 2.0, CARD_VIEW[1] - 2.0]));
-        if let Some(Some(picture)) = images.get(&self.path) {
-            layer.sprites.push((picture, at(CARD_PICTURE), [CARD_VIEW[0] - 20.0, CARD_VIEW[1] - 32.0]));
-        }
+        chrome.draw_title_bar(layer, at([0.0, 0.0]), CARD_VIEW[0]);
+        layer.texts.push((self.name.clone(), at(offset(CARD_NAME, [1.0, 1.0])), [255; 3]));
+        layer.texts.push((self.name.clone(), at(CARD_NAME), [0, 0, 0]));
         let close = &assets.close[usize::from(self.hit(pointer) == Some(ViewHit::Close))];
         layer.sprites.push((close, at(CARD_CLOSE), close.size));
+        layer.sprites.push((&chrome.white, at(CARD_PICTURE), [CARD_VIEW[0], CARD_VIEW[1] - CARD_PICTURE[1]]));
+        if let Some(Some(picture)) = images.get(&self.path) {
+            layer.sprites.push((picture, at(CARD_PICTURE), picture.size));
+        }
     }
 }
 
@@ -666,7 +730,7 @@ mod tests {
     use super::*;
 
     fn shown(item: u32, kind: u8, cards: [u32; 4]) -> Shown {
-        Shown { item, identified: true, refine: 0, cards, kind, grade: 0, broken: false, expires: 0, card: false }
+        Shown { item, identified: true, refine: 0, cards, kind, grade: 0, broken: false, expires: 0, card: false, location: 0, worn: false }
     }
 
     fn items() -> HashMap<u32, ItemInfo> {
@@ -685,6 +749,42 @@ mod tests {
         // A link: equipment when it has slots.
         assert_eq!(Shown::of_link(1201, 0, [0; 4], false, &items()).kind, net::ITEM_ARMOR);
         assert_eq!(Shown::of_link(4001, 0, [0; 4], true, &items()).kind, 0);
+    }
+
+    #[test]
+    fn opens_a_cards_window_from_the_strip() {
+        let items = items();
+        let mut knife = ItemWindow::new(shown(1201, net::ITEM_WEAPON, [4001, 0, 0, 4700]));
+        knife.fit(4);
+        let cell = |cell: f32| offset(knife.position, [CELL_X + 1.0 + cell * CELL_STEP, knife.height - 20.0]);
+        // A card in a slot opens as a card; an enchant past the slots as an enchant, without the picture button.
+        assert_eq!(knife.card_under(cell(0.0), &items), Some((4001, false)));
+        assert_eq!(knife.card_under(cell(3.0), &items), Some((4700, true)));
+        assert_eq!(knife.card_under(cell(1.0), &items), None);
+        let card = ItemWindow::new(Shown::card(4001, false));
+        let enchant = ItemWindow::new(Shown::card(4700, true));
+        let view = offset(DEFAULT_PLACE, [VIEW[0] + 2.0, VIEW[1] + 2.0]);
+        assert_eq!((card.hit(view), enchant.hit(view)), (Some(Hit::View), Some(Hit::Window)));
+        assert!(!card.shown.has_strip());
+        // The picture: 300 × 417 at ((W − 640) / 2, 0).
+        assert_eq!((card_view_place([1024.0, 768.0]), card_view_place([1280.0, 720.0])), ([192.0, 0.0], [320.0, 0.0]));
+        assert_eq!(CardView::new(String::new(), 4001, String::new(), [1024.0, 768.0]).area(), [192.0, 0.0, 300.0, 417.0]);
+        assert_eq!((restored_card_place([300.0, 300.0], [1024.0, 768.0]), restored_card_place([2000.0, 300.0], [1024.0, 768.0])), ([300.0, 300.0], CARD_PLACE));
+    }
+
+    #[test]
+    fn compares_with_whats_worn_in_the_same_slot() {
+        let worn = |index, location| InventoryItem { index, location, worn: location, ..Default::default() };
+        let items = [worn(1, 2), worn(2, 0x8000), InventoryItem { index: 3, location: 16, ..Default::default() }];
+        let of = |location, worn| Shown { location, worn, ..shown(1101, net::ITEM_WEAPON, [0; 4]) };
+        // A weapon with the Knife worn, arrows with arrows worn; no armor worn; the worn piece itself; a link.
+        assert_eq!(compared(&of(2, false), &items).map(|item| item.index), Some(1));
+        assert_eq!(compared(&of(0x8000, false), &items).map(|item| item.index), Some(2));
+        assert_eq!(compared(&of(16, false), &items), None);
+        assert_eq!(compared(&of(2, true), &items), None);
+        assert_eq!(compared(&of(0, false), &items), None);
+        // Flush left of the description.
+        assert_eq!(compare_place([500.0, 126.0]), [220.0, 126.0]);
     }
 
     #[test]
