@@ -62,7 +62,12 @@ pub struct Assets {
 
 impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
-        let image = |name: &str| gpu.try_load_texture(grf, &format!("{UI}sysbox_{name}.bmp"), false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
+        Self::named(gpu, grf, "sysbox")
+    }
+
+    /// A sys box whose pieces are `<prefix>_lu.bmp` and so on (the plain one's prefix is `sysbox`).
+    pub fn named(gpu: &Gpu, grf: &Grf, prefix: &str) -> Self {
+        let image = |name: &str| gpu.try_load_texture(grf, &format!("{UI}{prefix}_{name}.bmp"), false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
         Self { pieces: ["lu", "mu", "ru", "lm", "rm", "ld", "md", "rd"].map(image) }
     }
 }

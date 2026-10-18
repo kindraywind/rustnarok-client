@@ -770,7 +770,6 @@ const TALKIE_ASKS: usize = 436;
 const DAMAGED: usize = 1301;
 const DAMAGED_WEAPON: usize = 1302;
 const DAMAGED_ARMOR: usize = 1303;
-const ITEM_DAMAGED: usize = 699;
 const BIND_ASKS: usize = 1327;
 const BOUND: usize = 1328;
 /// Rentals: " The [%s] item will disappear in %d minutes.", the same in seconds, and " [%s] item has been deleted
@@ -1199,6 +1198,8 @@ struct Game {
     /// The item description window, and how many lines its text wraps to.
     item_window: Option<iteminfo::ItemWindow>,
     item_lines: usize,
+    /// Where the item description window opens: where it was last (saved), else its first place.
+    item_place: [f32; 2],
     /// A card's picture, opened from its info.
     card_view: Option<iteminfo::CardView>,
     /// Whispers sent and not yet answered: to whom, and what.
@@ -2773,6 +2774,9 @@ impl Game {
     /// Writes where the windows are and which are collapsed, when that changed and none is being dragged. A client
     /// driven over the control socket (scenarios) neither saves nor restores them, so each run starts the same.
     fn save_places(&mut self) {
+        if let Some(window) = &self.item_window {
+            self.item_place = window.position;
+        }
         if control::driven() {
             return;
         }
@@ -2788,12 +2792,23 @@ impl Game {
         }
         places += &size_lines(self.inventory.size(), self.cart.size(), self.storage.rows(), self.shop_sizes);
         places += &format!("{VEND_SIZE} {} {} 0\n{SKILL_LIST_SIZE} 0 {} 0\n", self.vend_size.width, self.vend_size.rows, self.skill_window.list_rows());
+        places += &format!("{ITEM_PLACE} {} {} 0\n", self.item_place[0], self.item_place[1]);
         if places != self.saved_places {
             if let Some(path) = settings_path("windows") {
                 let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, &places));
             }
             self.saved_places = places;
         }
+    }
+
+    /// Opens an item's description where the window was last, in place of the one shown.
+    fn show_item(&mut self, shown: iteminfo::Shown) {
+        if let Some(window) = &self.item_window {
+            self.item_place = window.position;
+        }
+        let mut window = iteminfo::ItemWindow::new(shown);
+        window.position = self.item_place;
+        self.item_window = Some(window);
     }
 
     /// Puts the windows where they were left last time.
@@ -2826,6 +2841,9 @@ impl Game {
         }
         if let Some(&([width, rows], _)) = saved.get(VEND_SIZE) {
             self.vend_size = vend::GridSize::clamped(width, rows as usize);
+        }
+        if let Some(&(place, _)) = saved.get(ITEM_PLACE) {
+            self.item_place = iteminfo::restored_place(place, screen());
         }
         if let (Some(&([width, goods], _)), Some(&([_, deal], _))) = (saved.get(SHOP_SIZE), saved.get(SHOP_DEAL_SIZE)) {
             self.shop_sizes = (shop::snap_width(width), [goods as usize, deal as usize]);
@@ -3793,7 +3811,7 @@ impl Game {
     /// Whether the pointer is over the interface (a window, the chat, a dialog) rather than the world.
     /// Whether the pointer is on a window, or something holds the clicks (a dialog, a menu, a question in the message
     /// box of this size).
-    fn on_ui(&self, cursor: [f32; 2], items: &HashMap<u32, ItemInfo>, message: [f32; 2]) -> bool {
+    fn on_ui(&self, cursor: [f32; 2], message: [f32; 2]) -> bool {
         let asking = self.guild_invite.is_some()
             || self.guild_asked.is_some()
             || self.bind_asked.is_some()
@@ -3851,7 +3869,7 @@ impl Game {
             || self.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some())
-            || self.item_window.as_ref().is_some_and(|window| window.hit(cursor, items).is_some())
+            || self.item_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
             || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
             || self.room.as_ref().is_some_and(|room| room.hit(cursor, &self.me.name).is_some())
@@ -5827,6 +5845,7 @@ const SHOP_DEAL_SIZE: &str = "shop_deal_size";
 const PARTY_MODE: &str = "party_mode";
 const VEND_SIZE: &str = "vend_size";
 const SKILL_LIST_SIZE: &str = "skill_list_size";
+const ITEM_PLACE: &str = "item_info";
 
 /// The sizes' lines of the window places: the inventory's and the cart's columns and rows, the storage's rows, an NPC
 /// shop's goods width and rows, then its deal's rows.
@@ -6158,14 +6177,15 @@ fn compared_windows(inventory: &Inventory, items: &HashMap<u32, ItemInfo>, messa
         return Vec::new();
     };
     let Some(hovered) = inventory.get(index) else { return Vec::new() };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
     inventory::compared_worn(hovered, &inventory.items)
         .into_iter()
         .enumerate()
         .map(|(place, item)| {
-            let damaged = item.broken.then(|| messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
-            let mut window = iteminfo::ItemWindow::new(iteminfo::Shown::of(item, damaged));
+            let mut window = iteminfo::ItemWindow::new(iteminfo::Shown::of(item));
             window.worn = true;
-            window.place_beside(area, place, items);
+            window.fit(window.lines(items, messages, now).len());
+            window.place_beside(area, place);
             window
         })
         .collect()
@@ -7057,21 +7077,8 @@ impl App {
             // A link in the chat log or the NPC window: an item's information, or a navigation to the place.
             Scene::Game(game) if game.link_at(cursor).is_some() => match game.link_at(cursor).cloned().unwrap() {
                 links::Target::Item(item) => {
-                    let shown = iteminfo::Shown {
-                        item: item.id,
-                        identified: true,
-                        refine: item.refine,
-                        cards: item.cards,
-                        damaged: None,
-                        expires: 0,
-                        card: self.card_pictures.name(item.id).is_some(),
-                    };
-                    let position = game.item_window.as_ref().map(|window| window.position);
-                    let mut window = iteminfo::ItemWindow::new(shown);
-                    if let Some(position) = position {
-                        window.position = position;
-                    }
-                    game.item_window = Some(window);
+                    let card = self.card_pictures.name(item.id).is_some();
+                    game.show_item(iteminfo::Shown::of_link(item.id, item.refine, item.cards, card, &self.items));
                 }
                 links::Target::Navi { map, cell } => {
                     let map = navigation::map_key(&map);
@@ -7297,9 +7304,9 @@ impl App {
                     game.card_view = None;
                 }
             }
-            // The item description window: its close button, a card's picture, or a card in a slot.
-            Scene::Game(game) if game.item_window.as_ref().is_some_and(|window| window.hit(cursor, &self.items).is_some()) => {
-                match game.item_window.as_ref().unwrap().hit(cursor, &self.items) {
+            // The item description window: its close button or a card's picture (a click on a card in the strip does nothing).
+            Scene::Game(game) if game.item_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                match game.item_window.as_ref().unwrap().hit(cursor) {
                     Some(iteminfo::Hit::Close) => {
                         game.item_window = None;
                         game.card_view = None;
@@ -7310,23 +7317,6 @@ impl App {
                             game.card_view = Some(iteminfo::CardView::new(iteminfo::cardbmp_path(name)));
                             escape::touch(&mut game.esc_order, escape::WindowId::CardPicture);
                         }
-                    }
-                    Some(iteminfo::Hit::Card(id)) => {
-                        let position = game.item_window.as_ref().map(|window| offset(window.position, [20.0, 20.0]));
-                        let mut window = iteminfo::ItemWindow::new(iteminfo::Shown {
-                            item: id,
-                            identified: true,
-                            refine: 0,
-                            cards: [0; 4],
-                            damaged: None,
-                            expires: 0,
-                            card: true,
-                        });
-                        if let Some(position) = position {
-                            window.position = position;
-                        }
-                        game.item_window = Some(window);
-                        game.card_view = None;
                     }
                     _ => {}
                 }
@@ -8649,7 +8639,7 @@ impl App {
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
             && state == ElementState::Pressed
             && self.modifiers.alt_key()
-            && !game.on_ui(self.cursor, &self.items, assets.message.size)
+            && !game.on_ui(self.cursor, assets.message.size)
             && game.companion_press(true, self.cursor, self.modifiers.shift_key())
         {
             return;
@@ -8802,7 +8792,7 @@ impl App {
             // A right press on an NPC talks too.
             if state == ElementState::Pressed
                 && let Some(assets) = assets
-                && !game.on_ui(self.cursor, &self.items, assets.message.size)
+                && !game.on_ui(self.cursor, assets.message.size)
                 && let Some(Owner::Unit(id)) = hovered_unit(&game.hit_boxes, self.cursor, false)
                 && game.units.get(&id).is_some_and(|actor| actor.kind == NPC && actor.job != WARP_JOB)
             {
@@ -8957,19 +8947,13 @@ impl App {
                 _ => None,
             };
             if let Some(item) = described {
-                let damaged = item.broken.then(|| self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default());
-                let shown = iteminfo::Shown::of(&item, damaged);
+                let shown = iteminfo::Shown::of(&item);
                 // The same item again closes its description; another one takes its place.
                 if game.item_window.as_ref().is_some_and(|window| window.shown.same_item(&shown)) {
                     game.item_window = None;
                     game.card_view = None;
                 } else {
-                    let position = game.item_window.as_ref().map(|window| window.position);
-                    let mut window = iteminfo::ItemWindow::new(shown);
-                    if let Some(position) = position {
-                        window.position = position;
-                    }
-                    game.item_window = Some(window);
+                    game.show_item(shown);
                 }
             } else if let Some((asked, amount)) = moved {
                 game.give(asked, u32::from(amount));
@@ -8989,7 +8973,7 @@ impl App {
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
             && self.modifiers.control_key()
             && game.targeting.is_none()
-            && game.on_ui(self.cursor, &self.items, assets.message.size)
+            && game.on_ui(self.cursor, assets.message.size)
         {
             game.camera_goal.wheel(rows, Instant::now(), true, self.modifiers.shift_key());
             return;
@@ -8998,7 +8982,7 @@ impl App {
             // Over the inventory the wheel scrolls it; elsewhere it zooms (away from you zooms out).
             let on_shop = game.shop.as_ref().is_some_and(|shop| shop.covers(self.cursor));
             let on_pick = game.pick.as_ref().is_some_and(|(list, _)| list.covers(self.cursor));
-            let on_item = game.item_window.as_ref().is_some_and(|window| window.hit(self.cursor, &self.items).is_some());
+            let on_item = game.item_window.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.cart.items).is_some());
             let on_buying_setup = game.buying_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.inventory.items).is_some());
             let on_cashshop = game.cashshop.as_ref().is_some_and(|shop| shop.hit(self.cursor).is_some());
@@ -9217,9 +9201,7 @@ impl App {
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
                     // Let go over the world: dropped at the player's feet, asking how many of a stack. The drop lock holds it.
                     (Some((Dragged::Item(index), _, true)), None)
-                        if inventory::may_ground_drop(game.inventory.lock_drop)
-                            && !game.on_ui(self.cursor, &self.items, message_size)
-                            && !game.store_open() =>
+                        if inventory::may_ground_drop(game.inventory.lock_drop) && !game.on_ui(self.cursor, message_size) && !game.store_open() =>
                     {
                         game.drop_on_ground(index, &self.messages)
                     }
@@ -9372,7 +9354,7 @@ impl App {
                 }
                 return;
             }
-            let on_ui = game.on_ui(cursor, &self.items, assets.message.size);
+            let on_ui = game.on_ui(cursor, assets.message.size);
             let shift = self.modifiers.shift_key();
             if on_ui {
                 game.targeting = None;
@@ -9404,7 +9386,7 @@ impl App {
         // still is ignored. Units and items are the click's (on release).
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
             && game.dragging.is_none()
-            && !game.on_ui(cursor, &self.items, assets.message.size)
+            && !game.on_ui(cursor, assets.message.size)
             && !game.store_open()
             && game.targeting.is_none()
             && !game.capturing
@@ -9488,7 +9470,7 @@ impl App {
             let on_menu = game.escape.as_ref().is_some_and(|menu| menu.hit(cursor, game.can_resurrect()).is_some());
             if !on_menu && game.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some()) {
                 escape::touch(&mut game.esc_order, escape::WindowId::CardPicture);
-            } else if !on_menu && game.item_window.as_ref().is_some_and(|window| window.hit(cursor, &self.items).is_some()) {
+            } else if !on_menu && game.item_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) {
                 escape::touch(&mut game.esc_order, escape::WindowId::ItemInfo);
             } else if !on_menu {
                 game.press_esc(cursor);
@@ -9520,14 +9502,17 @@ impl App {
         {
             return;
         }
-        // The item description window goes by its top (the NPC window's links are over it).
+        // The item description window goes by its top band, and its height by the grip (the NPC window's links are
+        // over it).
         if let Scene::Game(game) = &mut self.scene
             && links::at(&game.dialog_links, cursor).is_none()
             && let Some(window) = &mut game.item_window
-            && let Some(hit) = window.hit(cursor, &self.items)
+            && let Some(hit) = window.hit(cursor)
         {
-            if hit == iteminfo::Hit::Grip {
-                window.start_drag(cursor);
+            match hit {
+                iteminfo::Hit::Grip => window.start_drag(cursor),
+                iteminfo::Hit::Resize => window.start_resize(cursor),
+                _ => {}
             }
             return;
         }
@@ -11029,6 +11014,7 @@ impl App {
                     item_window: None,
                     card_view: None,
                     item_lines: 0,
+                    item_place: iteminfo::DEFAULT_PLACE,
                     whispered: VecDeque::new(),
                     whisper_asked: VecDeque::new(),
                     pick: None,
@@ -11752,23 +11738,16 @@ impl App {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
             }
             MapEvent::ItemPreview { index, cards, refine, broken, grade } => {
-                let damaged_line = self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default();
                 let shown = game.inventory.items.iter_mut().find(|item| item.index == index).map(|item| {
                     item.cards = cards;
                     item.refine = refine;
                     item.grade = grade;
                     item.broken = broken;
-                    let damaged = item.broken.then(|| damaged_line.clone());
-                    iteminfo::Shown::of(item, damaged)
+                    iteminfo::Shown::of(item)
                 });
                 // ponytail: that the preview is the item info window is a guess.
                 if let Some(shown) = shown {
-                    let position = game.item_window.as_ref().map(|window| window.position);
-                    let mut window = iteminfo::ItemWindow::new(shown);
-                    if let Some(position) = position {
-                        window.position = position;
-                    }
-                    game.item_window = Some(window);
+                    game.show_item(shown);
                 }
             }
             // Result 0: rathena has forgotten the window, so close it. The inventory updates arrived on their own.
@@ -16351,19 +16330,23 @@ impl App {
         if let Some(amount) = &game.amount {
             amount.draw(shop_layer.window(), &assets.chrome, &assets.message, [&assets.ok, &assets.cancel], messages, pointer);
         }
-        if let Some(window) = &game.item_window {
+        if let Some(window) = &mut game.item_window {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
-            let lines = window.lines(items, messages, now, &|text, width| wrap_colored(font, text, width));
+            let lines = window.lines(items, messages, now);
+            window.fit(lines.len());
             game.item_lines = lines.len();
-            window.draw(shop_layer.window(), &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
+            let names = (card_names, &messages[..], &game.char_names);
+            window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, pointer.0);
         }
         if let Some(view) = &game.card_view {
             view.draw(shop_layer.window(), &assets.chrome, &assets.item_window, icons, pointer.0);
         }
         let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
         for window in &compared {
-            let lines = window.lines(items, messages, unix_now, &|text, width| wrap_colored(font, text, width));
-            window.draw(&mut tooltip, &assets.chrome, &assets.item_window, icons, items, font, &lines, pointer.0);
+            let lines = window.lines(items, messages, unix_now);
+            let names = (card_names, &messages[..], &game.char_names);
+            let mut under = Layer::default();
+            window.draw(&mut tooltip, &mut under, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, pointer.0);
         }
         if game.apply_asked {
             let dialog = dialog_position(&assets.message);
@@ -16471,7 +16454,7 @@ impl App {
         let (mut sprites, alphas) = flatten(&composed);
 
         // The cursor shows what a click would do.
-        let on_window = game.on_ui(pointer.0, items, assets.message.size);
+        let on_window = game.on_ui(pointer.0, assets.message.size);
         let ground = view.pick_ground([pointer.0[0] / screen()[0], pointer.0[1] / screen()[1]], &game.world.gat);
         let (shift, alt) = (self.modifiers.shift_key(), self.modifiers.alt_key());
         cursor_look.set(if turning_cursor(game.camera_goal.dragging.is_some(), shift, alt) {
@@ -16822,7 +16805,7 @@ impl ApplicationHandler<NetEvent> for App {
                 }
                 if follows_pointer(game.walk_held, game.pending.is_some(), game.last_walk_try, now)
                     && let Some(assets) = &self.assets
-                    && !game.on_ui(self.cursor, &self.items, assets.message.size)
+                    && !game.on_ui(self.cursor, assets.message.size)
                     && let Some(cell) = game.ground_cell(self.cursor)
                 {
                     game.last_walk_try = Some(now);
