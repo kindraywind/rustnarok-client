@@ -1,5 +1,6 @@
 //! The status window (Alt+A): the six stats with their bonuses, the arrows that raise them and what that costs, and
-//! Atk, Matk, Hit, Critical, Def, Mdef, Flee, ASPD, status points and guild, over the client's own background.
+//! Atk, Matk, Hit, Critical, Def, Mdef, Flee, ASPD, status points and guild; under them the 4th jobs' trait panel. The
+//! labels are the backgrounds' own.
 
 use std::collections::HashMap;
 
@@ -11,19 +12,25 @@ use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains};
 
-// ponytail: places over statuswnd\w_statwin_bg.bmp, rows 16px apart from 6px down; calibrate against the real client.
 const WIDTH: f32 = 280.0;
+/// The window's height, title bar and background, with the trait panel shut and open.
+const SHUT_HEIGHT: f32 = 141.0;
+const OPEN_HEIGHT: f32 = 241.0;
 const ROW: f32 = 16.0;
-const FIRST: f32 = 6.0;
-const VALUE: f32 = 40.0;
-const BONUS: f32 = 56.0;
-const ARROW: f32 = 77.0;
-/// How much around an arrow a click takes.
+/// Str to Luk: text tops from y 23, the value at x 36, the bonus at x 49 (from a value of 100 at x 54, 2 lower), the
+/// raise arrow at (78, 24 + 16 a row), what raising costs right-aligned to x 101.
+const STAT_TOP: f32 = 23.0;
+const VALUE: f32 = 36.0;
+const BONUS: f32 = 49.0;
+const BONUS_FROM_100: [f32; 2] = [54.0, 2.0];
+const ARROW: f32 = 78.0;
 const ARROW_BOX: [f32; 2] = [11.0, 11.0];
 const COST_RIGHT: f32 = 101.0;
-const LEFT_COLUMN_RIGHT: f32 = 192.0;
+/// Atk to Critical and Def to the guild: right-aligned, text tops from y 22.
+const DERIVED_TOP: f32 = 22.0;
+const LEFT_COLUMN_RIGHT: f32 = 189.0;
 const RIGHT_COLUMN_RIGHT: f32 = 275.0;
-const POSITION: [f32; 2] = [200.0, 200.0];
+const POSITION: [f32; 2] = [185.0, 300.0];
 const TITLE_MESSAGE: usize = 105;
 const TEXT: [u8; 3] = [0, 0, 0];
 /// The 4th jobs' traits (rathena's SP_POW to SP_CRT), what raising each costs (SP_UPOW on), the trait points
@@ -33,33 +40,35 @@ const TRAIT_COST: u16 = 247;
 const TRAIT_POINTS: u16 = 231;
 const TRAIT_STATS: u16 = 225;
 const TRAITS: [&str; 6] = ["POW", "STA", "WIS", "SPL", "CON", "CRT"];
-const TRAIT_STAT_NAMES: [&str; 6] = ["P.ATK", "S.MATK", "RES", "MRES", "H.PLUS", "C.RATE"];
-/// "Trait Status": the bar under the window that opens the panel.
+/// "Trait Status": the bar that opens and shuts the panel, at (2, 121).
 const TRAIT_STATUS: usize = 3613;
-// ponytail: the panel's layout is ours: the window's own row height, traits on the left, what they make on the right,
-// the trait points under them.
+const BAR: [f32; 2] = [2.0, 121.0];
+const BAR_SIZE: [f32; 2] = [276.0, 18.0];
+const BAR_TEXT: [f32; 2] = [22.0, 122.0];
+/// Pow to Crt in the panel: text tops from y 144, the "+" at (78, 145 + 16 a row).
 const TRAIT_ROWS: usize = 6;
-const TRAIT_VALUE: f32 = 50.0;
-const TRAIT_COST_RIGHT: f32 = 132.0;
-const TRAIT_PLUS: f32 = 112.0;
-const TRAIT_STAT_LEFT: f32 = 150.0;
-const TRAIT_STAT_RIGHT: f32 = 275.0;
-const TRAIT_PANEL: f32 = FIRST + (TRAIT_ROWS + 1) as f32 * ROW + 6.0;
+const TRAIT_TOP: f32 = 144.0;
+/// P.ATK, S.MATK, RES, MRES, H.PLUS, C.RATE and the trait points (225 to 231): right edge and text top.
+const TRAIT_STAT_PLACES: [[f32; 2]; 7] = [[189.0, 143.0], [189.0, 159.0], [275.0, 143.0], [275.0, 159.0], [189.0, 175.0], [189.0, 191.0], [275.0, 207.0]];
+const RES: u16 = 227;
+const MRES: u16 = 228;
 
 pub struct Assets {
-    background: Texture,
-    /// The arrow, and pressed.
-    arrow: [Texture; 2],
-    expand: Texture,
+    /// The background, with the panel shut and open.
+    backgrounds: [Texture; 2],
+    /// The arrow (the same pressed).
+    arrow: Texture,
+    /// The Trait Status bar: shut, shut pressed, open, open pressed.
+    bar: [Texture; 4],
 }
 
 impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let image = |name: &str| gpu.load_texture(grf, &format!("{UI}{name}.bmp"), false);
         Self {
-            background: image("statuswnd\\w_statwin_bg"),
-            arrow: [image("basic_interface\\arw_right"), image("basic_interface\\arw_right_on")],
-            expand: image("statuswnd\\expand_on_normal"),
+            backgrounds: [image("statuswnd\\w_statwin_bg"), image("statuswnd\\w_ex_statwin_bg")],
+            arrow: image("basic_interface\\arw_right"),
+            bar: ["expand_on_normal", "expand_on_press", "expand_off_normal", "expand_off_press"].map(|name| image(&format!("statuswnd\\{name}"))),
         }
     }
 }
@@ -78,13 +87,15 @@ pub enum Hit {
 
 pub struct StatusWindow {
     pub frame: Frame,
-    /// The trait panel (4th jobs) under the window is open.
+    /// The trait panel under the stats is open.
     pub traits_open: bool,
 }
 
 impl Default for StatusWindow {
+    /// Open for every job the first time; the choice isn't saved.
+    // ponytail: a new login makes a new window, so the panel opens again then, not only once per run.
     fn default() -> Self {
-        Self { frame: Frame::new(POSITION, WIDTH).collapsing(), traits_open: false }
+        Self { frame: Frame::new(POSITION, WIDTH).collapsing(), traits_open: true }
     }
 }
 
@@ -94,9 +105,9 @@ pub fn can_raise_trait(status: &HashMap<u16, i64>, trait_id: u16) -> bool {
     cost > 0 && cost <= status.get(&TRAIT_POINTS).copied().unwrap_or(0)
 }
 
-/// Where a trait's "+" sits (by row, POW first), from the panel's top.
+/// Where a trait's "+" sits in the window (by row, POW first).
 fn trait_plus(row: u16) -> [f32; 2] {
-    [TRAIT_PLUS, FIRST + f32::from(row) * ROW]
+    [ARROW, TRAIT_TOP + 1.0 + f32::from(row) * ROW]
 }
 
 /// The six stats' short names, Str to Luk.
@@ -104,12 +115,31 @@ pub const STATS: [&str; 6] = ["str", "agi", "vit", "int", "dex", "luk"];
 
 /// Where the arrow raising a stat (by row, Str first) sits in the window.
 fn arrow_corner(row: u16) -> [f32; 2] {
-    [ARROW, TITLE_HEIGHT + FIRST + f32::from(row) * ROW]
+    [ARROW, STAT_TOP + 1.0 + f32::from(row) * ROW]
 }
 
-/// A value with its bonus the way the window writes it: "12 + 3", "12 - 3".
+/// A value with its bonus the way the window writes it: "12 + 3".
 fn pair(base: i64, bonus: i64) -> String {
-    if bonus < 0 { format!("{base} - {}", -bonus) } else { format!("{base} + {bonus}") }
+    format!("{base} + {bonus}")
+}
+
+/// A bonus and where it goes on a row with text top `top`: "+3" or "-3" at x 49, or from a value of 100 at x 54, 2
+/// lower; nothing for 0.
+fn bonus_text(base: i64, bonus: i64, top: f32) -> Option<(String, [f32; 2])> {
+    let text = if bonus > 0 { format!("+{bonus}") } else { bonus.to_string() };
+    let place = if base >= 100 { [BONUS_FROM_100[0], top + BONUS_FROM_100[1]] } else { [BONUS, top] };
+    (bonus != 0).then_some((text, place))
+}
+
+/// A trait's bonus: only above 0.
+fn trait_bonus_text(base: i64, bonus: i64, top: f32) -> Option<(String, [f32; 2])> {
+    bonus_text(base, bonus.max(0), top)
+}
+
+/// A trait stat as shown: RES and MRES never below 0.
+fn trait_stat(status: &HashMap<u16, i64>, id: u16) -> i64 {
+    let value = status.get(&id).copied().unwrap_or(0);
+    if matches!(id, RES | MRES) { value.max(0) } else { value }
 }
 
 /// What a stat's arrow does: raise it, when there are points enough.
@@ -118,35 +148,27 @@ fn can_raise(status: &HashMap<u16, i64>, stat: u16) -> bool {
     cost > 0 && cost <= status.get(&STATUS_POINTS).copied().unwrap_or(0)
 }
 
+/// The Trait Status bar's picture: shut or open, pressed or not.
+fn bar_image(open: bool, pressed: bool) -> usize {
+    usize::from(open) * 2 + usize::from(pressed)
+}
+
 impl StatusWindow {
-    pub fn height(&self, assets: &Assets) -> f32 {
-        TITLE_HEIGHT + assets.background.size[1] + if self.traits_open { TRAIT_PANEL } else { 0.0 }
+    pub fn height(&self) -> f32 {
+        if self.traits_open { OPEN_HEIGHT } else { SHUT_HEIGHT }
     }
 
-    /// The Trait Status bar's box in the window.
-    fn traits_bar(assets: &Assets) -> ([f32; 2], [f32; 2]) {
-        ([2.0, TITLE_HEIGHT + assets.background.size[1] - assets.expand.size[1] - 3.0], [WIDTH - 4.0, assets.expand.size[1]])
-    }
-
-    /// The trait panel's top in the window: under the background.
-    fn panel_top(assets: &Assets) -> f32 {
-        TITLE_HEIGHT + assets.background.size[1]
-    }
-
-    pub fn hit(&self, cursor: [f32; 2], assets: &Assets, status: &HashMap<u16, i64>) -> Option<Hit> {
-        let local = self.frame.local(cursor, self.height(assets))?;
+    pub fn hit(&self, cursor: [f32; 2], status: &HashMap<u16, i64>) -> Option<Hit> {
+        let local = self.frame.local(cursor, self.height())?;
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
         }
-        let (bar, bar_size) = Self::traits_bar(assets);
-        if contains(bar, bar_size, local) {
+        if contains(BAR, BAR_SIZE, local) {
             return Some(Hit::Traits);
         }
         if self.traits_open {
-            let top = Self::panel_top(assets);
             for row in 0..TRAIT_ROWS as u16 {
-                let [x, y] = trait_plus(row);
-                if can_raise_trait(status, TRAIT_POW + row) && contains([x, top + y], ARROW_BOX, local) {
+                if can_raise_trait(status, TRAIT_POW + row) && contains(trait_plus(row), ARROW_BOX, local) {
                     return Some(Hit::RaiseTrait(TRAIT_POW + row));
                 }
             }
@@ -176,18 +198,15 @@ impl StatusWindow {
 
     /// The "+" boxes on screen that raise a trait now (for the test driver), named `raise_pow` to `raise_crt`, and the
     /// Trait Status bar (`traits`).
-    pub fn trait_boxes(&self, assets: &Assets, status: &HashMap<u16, i64>) -> Vec<(String, [f32; 4])> {
+    pub fn trait_boxes(&self, status: &HashMap<u16, i64>) -> Vec<(String, [f32; 4])> {
         if !self.frame.open || self.frame.minimized {
             return Vec::new();
         }
-        let (bar, size) = Self::traits_bar(assets);
-        let [x, y] = self.frame.at(bar);
-        let mut boxes = vec![("traits".to_owned(), [x, y, size[0], size[1]])];
+        let [x, y] = self.frame.at(BAR);
+        let mut boxes = vec![("traits".to_owned(), [x, y, BAR_SIZE[0], BAR_SIZE[1]])];
         if self.traits_open {
-            let top = Self::panel_top(assets);
             boxes.extend((0..TRAIT_ROWS as u16).filter(|&row| can_raise_trait(status, TRAIT_POW + row)).map(|row| {
-                let [px, py] = trait_plus(row);
-                let [x, y] = self.frame.at([px, top + py]);
+                let [x, y] = self.frame.at(trait_plus(row));
                 (format!("raise_{}", TRAITS[usize::from(row)].to_lowercase()), [x, y, ARROW_BOX[0], ARROW_BOX[1]])
             }));
         }
@@ -226,77 +245,63 @@ impl StatusWindow {
         if self.frame.minimized {
             return;
         }
-        let top = TITLE_HEIGHT;
-        layer.sprites.push((&assets.background, at([0.0, top]), assets.background.size));
-        let hit = self.hit(pointer.0, assets, status);
-        let text_top = |row: usize| top + FIRST + row as f32 * ROW + ((ROW - 2.0 - font.line_height()) / 2.0).floor();
-        let right = |layer: &mut Layer<'a>, text: String, edge: f32, row: usize| {
-            layer.texts.push((text.clone(), at([edge - font.width(&text), text_top(row)]), TEXT));
+        let background = &assets.backgrounds[usize::from(self.traits_open)];
+        layer.sprites.push((background, at([0.0, TITLE_HEIGHT]), background.size));
+        let hit = self.hit(pointer.0, status);
+        let right = |layer: &mut Layer<'a>, text: String, [edge, top]: [f32; 2]| {
+            layer.texts.push((text.clone(), at([edge - font.width(&text), top]), TEXT));
         };
 
         // Str to Luk: the value, the bonus from gear, the arrow while points last, and what going up costs.
         for row in 0..6u16 {
             let stat = STATUS_STR + row;
-            let line = usize::from(row);
-            layer.texts.push((value(stat).to_string(), at([VALUE, text_top(line)]), TEXT));
-            let bonus = value(stat + STATUS_BONUS);
-            if bonus != 0 {
-                let text = if bonus > 0 { format!("+{bonus}") } else { format!("- {}", -bonus) };
-                layer.texts.push((text, at([BONUS, text_top(line)]), TEXT));
+            let top = STAT_TOP + f32::from(row) * ROW;
+            layer.texts.push((value(stat).to_string(), at([VALUE, top]), TEXT));
+            if let Some((text, place)) = bonus_text(value(stat), value(stat + STATUS_BONUS), top) {
+                layer.texts.push((text, at(place), TEXT));
             }
             if can_raise(status, stat) {
-                let pressed = pointer.1 && hit == Some(Hit::Raise(stat));
-                let arrow = &assets.arrow[usize::from(pressed)];
-                layer.sprites.push((arrow, at([ARROW, top + FIRST + f32::from(row) * ROW + 2.0]), arrow.size));
+                layer.sprites.push((&assets.arrow, at(arrow_corner(row)), assets.arrow.size));
             }
-            right(layer, value(STATUS_STR_COST + row).to_string(), COST_RIGHT, line);
+            right(layer, value(STATUS_STR_COST + row).to_string(), [COST_RIGHT, top]);
         }
 
         // Atk (base + gear), Matk, Hit, Critical on the left; Def, Mdef, Flee, ASPD on the right; then points, guild.
         let [atk, atk2, matk1, matk2, def, def2, mdef, mdef2, hit_rate, flee, flee2, critical, aspd] =
             std::array::from_fn(|place| value(STATUS_ATK + place as u16));
+        let derived = |row: usize| DERIVED_TOP + row as f32 * ROW;
         for (row, text) in [pair(atk, atk2), pair(matk2, matk1), hit_rate.to_string(), critical.to_string()].into_iter().enumerate() {
-            right(layer, text, LEFT_COLUMN_RIGHT, row);
+            right(layer, text, [LEFT_COLUMN_RIGHT, derived(row)]);
         }
         let aspd = (200.0 - aspd as f32 / 10.0).floor();
-        for (row, text) in [pair(def, def2), pair(mdef, mdef2), pair(flee, flee2), aspd.to_string()].into_iter().enumerate() {
-            right(layer, text, RIGHT_COLUMN_RIGHT, row);
+        let right_column = [pair(def, def2), pair(mdef, mdef2), pair(flee, flee2), aspd.to_string(), value(STATUS_POINTS).to_string(), guild.to_owned()];
+        for (row, text) in right_column.into_iter().enumerate() {
+            right(layer, text, [RIGHT_COLUMN_RIGHT, derived(row)]);
         }
-        right(layer, value(STATUS_POINTS).to_string(), RIGHT_COLUMN_RIGHT, 4);
-        right(layer, guild.to_owned(), RIGHT_COLUMN_RIGHT, 5);
-        // The Trait Status bar, and the panel under the window when it's open.
-        layer.sprites.push((&assets.expand, at([2.0, top + assets.background.size[1] - assets.expand.size[1] - 3.0]), assets.expand.size));
+        // The Trait Status bar, and the panel when it's open.
+        let bar = &assets.bar[bar_image(self.traits_open, pointer.1 && hit == Some(Hit::Traits))];
+        layer.sprites.push((bar, at(BAR), bar.size));
         if let Some(text) = messages.get(TRAIT_STATUS) {
-            layer.texts.push((text.clone(), at([22.0, top + assets.background.size[1] - assets.expand.size[1] - 1.0]), TEXT));
+            layer.texts.push((text.clone(), at(BAR_TEXT), TEXT));
         }
         if !self.traits_open {
             return;
         }
-        let panel = Self::panel_top(assets);
-        layer.sprites.push((&chrome.white, at([0.0, panel]), [WIDTH, TRAIT_PANEL]));
-        for (corner, size) in [([0.0, panel], [1.0, TRAIT_PANEL]), ([WIDTH - 1.0, panel], [1.0, TRAIT_PANEL]), ([0.0, panel + TRAIT_PANEL - 1.0], [WIDTH, 1.0])]
-        {
-            layer.sprites.push((&chrome.border, at(corner), size));
-        }
-        let line_top = |row: usize| panel + FIRST + row as f32 * ROW + ((ROW - 2.0 - font.line_height()) / 2.0).floor();
-        for row in 0..TRAIT_ROWS {
-            let trait_id = TRAIT_POW + row as u16;
-            layer.texts.push((TRAITS[row].to_owned(), at([8.0, line_top(row)]), TEXT));
-            layer.texts.push((pair(value(trait_id), value(trait_id + STATUS_BONUS)), at([TRAIT_VALUE, line_top(row)]), TEXT));
-            if can_raise_trait(status, trait_id) {
-                let pressed = pointer.1 && hit == Some(Hit::RaiseTrait(trait_id));
-                let [x, y] = trait_plus(row as u16);
-                let arrow = &assets.arrow[usize::from(pressed)];
-                layer.sprites.push((arrow, at([x, panel + y + 2.0]), arrow.size));
+        for row in 0..TRAIT_ROWS as u16 {
+            let trait_id = TRAIT_POW + row;
+            let top = TRAIT_TOP + f32::from(row) * ROW;
+            layer.texts.push((value(trait_id).to_string(), at([VALUE, top]), TEXT));
+            if let Some((text, place)) = trait_bonus_text(value(trait_id), value(trait_id + STATUS_BONUS), top) {
+                layer.texts.push((text, at(place), TEXT));
             }
-            let cost = value(TRAIT_COST + row as u16).to_string();
-            layer.texts.push((cost.clone(), at([TRAIT_COST_RIGHT - font.width(&cost), line_top(row)]), TEXT));
-            layer.texts.push((TRAIT_STAT_NAMES[row].to_owned(), at([TRAIT_STAT_LEFT, line_top(row)]), TEXT));
-            let made = value(TRAIT_STATS + row as u16).to_string();
-            layer.texts.push((made.clone(), at([TRAIT_STAT_RIGHT - font.width(&made), line_top(row)]), TEXT));
+            if can_raise_trait(status, trait_id) {
+                layer.sprites.push((&assets.arrow, at(trait_plus(row)), assets.arrow.size));
+            }
+            right(layer, value(TRAIT_COST + row).to_string(), [COST_RIGHT, top]);
         }
-        let points = format!("Trait Points : {}", value(TRAIT_POINTS));
-        layer.texts.push((points, at([8.0, line_top(TRAIT_ROWS)]), TEXT));
+        for (id, place) in (TRAIT_STATS..).zip(TRAIT_STAT_PLACES) {
+            right(layer, trait_stat(status, id).to_string(), place);
+        }
     }
 }
 
@@ -316,8 +321,8 @@ mod tests {
         let status = HashMap::from([(STATUS_POINTS, 3), (STATUS_STR_COST, 2), (STATUS_STR_COST + 1, 4)]);
         assert!(can_raise(&status, STATUS_STR));
         assert!(!can_raise(&status, STATUS_STR + 1));
-        assert_eq!(pair(10, -2), "10 - 2");
         assert_eq!(pair(10, 3), "10 + 3");
+        assert_eq!(pair(10, -2), "10 + -2");
     }
 
     #[test]
@@ -328,12 +333,53 @@ mod tests {
         assert!(window.raise_boxes(&status).is_empty());
         window.frame.open = true;
         let [x, y] = POSITION;
-        let row = |row: f32| y + TITLE_HEIGHT + FIRST + row * ROW;
         assert_eq!(
             window.raise_boxes(&status),
-            [("raise_int".to_owned(), [x + ARROW, row(3.0), 11.0, 11.0]), ("raise_luk".to_owned(), [x + ARROW, row(5.0), 11.0, 11.0])]
+            [("raise_int".to_owned(), [x + 78.0, y + 24.0 + 48.0, 11.0, 11.0]), ("raise_luk".to_owned(), [x + 78.0, y + 24.0 + 80.0, 11.0, 11.0])]
         );
         window.frame.minimized = true;
         assert!(window.raise_boxes(&status).is_empty());
+    }
+
+    #[test]
+    fn opens_with_the_trait_panel_at_the_games_place() {
+        let mut window = StatusWindow::default();
+        window.frame.open = true;
+        assert_eq!(POSITION, [185.0, 300.0]);
+        assert!(window.traits_open);
+        assert_eq!(window.height(), 241.0);
+        // POW costs 2 of 10 points: its "+" at (78, 145); the bar at (2, 121).
+        let status = HashMap::from([(TRAIT_POINTS, 10), (TRAIT_COST, 2), (TRAIT_COST + 5, 3)]);
+        let [x, y] = POSITION;
+        assert_eq!(
+            window.trait_boxes(&status),
+            [
+                ("traits".to_owned(), [x + 2.0, y + 121.0, 276.0, 18.0]),
+                ("raise_pow".to_owned(), [x + 78.0, y + 145.0, 11.0, 11.0]),
+                ("raise_crt".to_owned(), [x + 78.0, y + 145.0 + 80.0, 11.0, 11.0])
+            ]
+        );
+        assert_eq!(window.hit([x + 80.0, y + 147.0], &status), Some(Hit::RaiseTrait(TRAIT_POW)));
+        // The bar shuts it: 141 tall, the "+" gone.
+        let bar = window.hit([x + 100.0, y + 130.0], &status).unwrap();
+        assert_eq!(window.click(bar), None);
+        assert_eq!(window.height(), 141.0);
+        assert_eq!(window.trait_boxes(&status).len(), 1);
+        // The bar's picture: expand_on while shut, expand_off while open, each with its pressed one.
+        assert_eq!([bar_image(false, false), bar_image(false, true), bar_image(true, false), bar_image(true, true)], [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn writes_bonuses_at_their_place() {
+        assert_eq!(bonus_text(99, 10, 23.0), Some(("+10".to_owned(), [49.0, 23.0])));
+        assert_eq!(bonus_text(100, 10, 23.0), Some(("+10".to_owned(), [54.0, 25.0])));
+        assert_eq!(bonus_text(50, -3, 39.0), Some(("-3".to_owned(), [49.0, 39.0])));
+        assert_eq!(bonus_text(50, 0, 23.0), None);
+        // A trait's bonus shows only above 0; RES and MRES never below 0.
+        assert_eq!(trait_bonus_text(5, -2, 144.0), None);
+        assert_eq!(trait_bonus_text(5, 0, 144.0), None);
+        assert_eq!(trait_bonus_text(100, 2, 144.0), Some(("+2".to_owned(), [54.0, 146.0])));
+        let status = HashMap::from([(RES, -5), (MRES, -1), (TRAIT_STATS, -5)]);
+        assert_eq!([trait_stat(&status, RES), trait_stat(&status, MRES), trait_stat(&status, TRAIT_STATS)], [0, 0, -5]);
     }
 }

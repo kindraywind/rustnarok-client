@@ -22,7 +22,7 @@
     {"wait": 500},
     {"expect": {"state": {"player.stats.int.value": 4, "player.stats.int.cost": 2}}},
     {"move": [700, 600]},
-    {"shot": "build-status", "crop": [200, 200, 280, 150]},
+    {"shot": "build-status", "crop": [185, 300, 280, 241]},
     {"key": "Alt+S"},
     {"wait": 500},
     {"click_on": {"button": "skill_tab:2"}},

@@ -8304,7 +8304,7 @@ impl App {
                         _ => {}
                     },
                     Panel::Status => {
-                        let hit = game.status_window.hit(cursor, &assets.status, &game.status);
+                        let hit = game.status_window.hit(cursor, &game.status);
                         if let Some(stat) = hit.and_then(|hit| game.status_window.click(hit)) {
                             // A trait (4th jobs) has its own request.
                             if (status::TRAIT_POW..status::TRAIT_POW + 6).contains(&stat) {
@@ -15751,7 +15751,7 @@ impl App {
         if game.quest_window.tracker {
             quest_tracker::draw(&mut chat_layer, &quest_tracker::blocks(&game.quests, quest_texts, &game.quest_window.hidden, messages));
         }
-        game.status_height = game.status_window.height(&assets.status);
+        game.status_height = game.status_window.height();
         // Our own HP in the party window comes from our status.
         let own_hp = [net::STATUS_HP, net::STATUS_MAX_HP].map(|kind| game.status.get(&kind).copied().unwrap_or(0) as i32);
         let account = game.account_id;
