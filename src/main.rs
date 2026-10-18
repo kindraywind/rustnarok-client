@@ -12659,7 +12659,9 @@ impl App {
                 },
             };
             let Some(point) = sprite_point(feet, -chatroom::SIGN_ABOVE) else { continue };
-            let rect = chatroom::draw_sign(&mut base, &assets.chatroom, font, sign, point.map(f32::round));
+            // ponytail: the one yellow shop board is the vendor whose shop window is open.
+            let picked = game.shop.as_ref().and_then(|shop| shop.vendor.as_ref()).is_some_and(|(vendor, ..)| vendor == owner);
+            let rect = chatroom::draw_sign(&mut base, &assets.chatroom, font, sign, point.map(f32::round), picked);
             game.sign_rects.push((rect, sign.id, sign.kind));
         }
         for (unit, (text, color, _)) in &game.speech {
