@@ -1,0 +1,31 @@
+{
+  "about": "Corner grips, part 2 (issue #426). A Merchant's vending setup resizes both ways like the cart: 248, 280 or 312 wide and 2 to 5 rows. The skill window's simple list resizes only its height: 400 at most, a row less per 32 px up. Ends a Novice at base level 1 without a cart.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@blvl 40"}, {"wait": 500}, {"say": "@itemreset"}, {"wait": 500},
+    {"say": "@job 5"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500},
+    {"say": "@cart 2"}, {"wait": 1000},
+    {"say": "@useskill 41 1 {first}"}, {"wait_for": {"packet": "0x012d", "ms": 5000}}, {"wait": 500},
+    {"expect": {"state": {"vend_size": {"width": 280.0, "rows": 5}}}},
+    {"mouse_down": {"button": "vend_resize"}}, {"move": [563, 275]}, {"wait": 200},
+    {"mouse_up": {"point": [563, 275]}}, {"wait": 300},
+    {"expect": {"state": {"vend_size": {"width": 248.0, "rows": 2}}}},
+    {"move": [900, 720]},
+    {"shot": "vend-resized", "crop": [300, 120, 360, 300], "threshold": 5},
+    {"key": "Escape"}, {"wait": 400},
+    {"key": "Alt+S"}, {"wait": 500},
+    {"click_on": {"button": "skill_view"}}, {"wait": 300},
+    {"expect": {"state": {"player.skill_list": true, "skill_list_rows": 10}}},
+    {"mouse_down": {"button": "skills_resize"}}, {"move": [560, 380]}, {"wait": 200},
+    {"mouse_up": {"point": [560, 380]}}, {"wait": 300},
+    {"expect": {"state": {"skill_list_rows": 8}}},
+    {"move": [900, 720]},
+    {"shot": "skill-list-resized", "crop": [230, 70, 360, 420], "threshold": 5},
+    {"click_on": {"button": "skill_view"}}, {"wait": 300},
+    {"key": "Alt+S"}, {"wait": 300},
+    {"say": "@cart 0"}, {"wait": 500}, {"say": "@job 0"}, {"wait": 500},
+    {"say": "@itemreset"}, {"wait": 500}, {"say": "@blvl -39"}, {"wait": 500}
+  ]
+}

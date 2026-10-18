@@ -1167,6 +1167,8 @@ struct Game {
     adopt_asked: Option<(u32, u32, String, bool)>,
     /// Setting up our shop, and our open shop.
     vend_setup: Option<vend::Setup>,
+    /// The vending windows' size, kept for the next ones.
+    vend_size: vend::GridSize,
     my_shop: Option<vend::MyShop>,
     /// Setting up our buying store, and our open buying store.
     buying_setup: Option<buying::Setup>,
@@ -2558,6 +2560,7 @@ impl Game {
             self.shop_sizes = sizes;
         }
         places += &size_lines(self.inventory.size(), self.cart.size(), self.storage.rows(), self.shop_sizes);
+        places += &format!("{VEND_SIZE} {} {} 0\n{SKILL_LIST_SIZE} 0 {} 0\n", self.vend_size.width, self.vend_size.rows, self.skill_window.list_rows());
         if places != self.saved_places {
             if let Some(path) = settings_path("windows") {
                 let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, &places));
@@ -2587,6 +2590,12 @@ impl Game {
         }
         if let Some(&([_, rows], _)) = saved.get(STORAGE_SIZE) {
             self.storage.set_rows(rows as usize);
+        }
+        if let Some(&([_, rows], _)) = saved.get(SKILL_LIST_SIZE) {
+            self.skill_window.set_list_rows(rows as usize);
+        }
+        if let Some(&([width, rows], _)) = saved.get(VEND_SIZE) {
+            self.vend_size = vend::GridSize::clamped(width, rows as usize);
         }
         if let (Some(&([width, goods], _)), Some(&([_, deal], _))) = (saved.get(SHOP_SIZE), saved.get(SHOP_DEAL_SIZE)) {
             self.shop_sizes = (shop::snap_width(width), [goods as usize, deal as usize]);
@@ -2657,7 +2666,10 @@ impl Game {
         (top == Some(Panel::Inventory) && self.inventory.hit(cursor) == Some(inventory::Hit::Resize))
             || (top == Some(Panel::Cart) && self.cart.hit(cursor) == Some(inventory::Hit::Resize))
             || (top == Some(Panel::Storage) && self.storage.on_grip(cursor))
+            || (top == Some(Panel::Skills) && self.skill_window.grip_box().is_some_and(|[x, y, w, h]| contains([x, y], [w, h], cursor)))
             || matches!(self.shop.as_ref().and_then(|shop| shop.hit(cursor)), Some(shop::Hit::Resize(_)))
+            || self.vend_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.cart.items) == Some(vend::Hit::Resize))
+            || self.my_shop.as_ref().is_some_and(|shop| shop.on_grip(cursor))
     }
 
     /// Whether the aim cursor shows "valid" here: over a unit a press would take; never for a ground skill.
@@ -5326,6 +5338,8 @@ const CART_SIZE: &str = "cart_size";
 const STORAGE_SIZE: &str = "storage_size";
 const SHOP_SIZE: &str = "shop_size";
 const SHOP_DEAL_SIZE: &str = "shop_deal_size";
+const VEND_SIZE: &str = "vend_size";
+const SKILL_LIST_SIZE: &str = "skill_list_size";
 
 /// The sizes' lines of the window places: the inventory's and the cart's columns and rows, the storage's rows, an NPC
 /// shop's goods width and rows, then its deal's rows.
@@ -7972,6 +7986,17 @@ impl App {
             game.inventory.resize_to(self.cursor);
             game.cart.resize_to(self.cursor);
             game.storage.resize_to(self.cursor);
+            game.skill_window.resize_to(self.cursor);
+            if let Some(setup) = &mut game.vend_setup
+                && setup.resize_to(self.cursor)
+            {
+                game.vend_size = setup.size;
+            }
+            if let Some(shop) = &mut game.my_shop
+                && shop.resize_to(self.cursor)
+            {
+                game.vend_size = shop.size;
+            }
             game.equipment.frame.drag_to(self.cursor, equipment_height);
             let skills_height = game.skill_window.height();
             game.skill_window.frame.drag_to(self.cursor, skills_height);
@@ -8714,6 +8739,9 @@ impl App {
                     | game.inventory.stop_resize()
                     | game.cart.stop_resize()
                     | game.storage.stop_resize()
+                    | game.skill_window.stop_resize()
+                    | game.vend_setup.as_mut().is_some_and(vend::Setup::stop_resize)
+                    | game.my_shop.as_mut().is_some_and(vend::MyShop::stop_resize)
                     | game.shop.as_mut().is_some_and(shop::Shop::stop_resize)
                     | game.equipment.frame.drop_drag()
                     | game.basic_info.frame.drop_drag()
@@ -8963,6 +8991,21 @@ impl App {
             }
             return;
         }
+        // The vending windows' corner grips.
+        if let Scene::Game(game) = &mut self.scene {
+            if let Some(setup) = &mut game.vend_setup
+                && setup.hit(cursor, &game.cart.items) == Some(vend::Hit::Resize)
+            {
+                setup.start_resize(cursor);
+                return;
+            }
+            if let Some(shop) = &mut game.my_shop
+                && shop.on_grip(cursor)
+            {
+                shop.start_resize(cursor);
+                return;
+            }
+        }
         // A shop's row starts a drag at once; its title bar moves the window.
         if let Scene::Game(game) = &mut self.scene
             && let Some(hit) = game.shop.as_ref().and_then(|shop| shop.hit(cursor))
@@ -9139,6 +9182,7 @@ impl App {
                         game.dragging = Some((Dragged::Skill(skill), cursor, false));
                     }
                     Some(skills::Hit::Title(TitleHit::Title)) => game.skill_window.frame.start_drag(cursor),
+                    Some(skills::Hit::Resize) => game.skill_window.start_resize(cursor),
                     _ => {}
                 }
             }
@@ -10500,6 +10544,7 @@ impl App {
                     homunculus_rename: None,
                     homunculus_hunger: None,
                     vend_setup: None,
+                    vend_size: vend::GridSize::default(),
                     my_shop: None,
                     buying_setup: None,
                     my_buying_store: None,
@@ -11697,7 +11742,7 @@ impl App {
             }
             // Vending: setting up, our shop, others' signs and goods.
             MapEvent::VendSetup(most) => {
-                let mut setup = vend::Setup::new(most);
+                let mut setup = vend::Setup::new(most, game.vend_size);
                 // Dev switch RUSTNAROK_CLIENT_VEND=<name>:<price>: everything in the cart at that price, and open.
                 if let Some((name, price)) = std::env::var("RUSTNAROK_CLIENT_VEND")
                     .ok()
@@ -11717,7 +11762,7 @@ impl App {
             MapEvent::MyShop(goods) => {
                 let name = game.vend_setup.take().map(|setup| setup.name).unwrap_or_default();
                 game.signs.insert(game.account_id, chatroom::Sign::shop(game.account_id, name.clone()));
-                game.my_shop = Some(vend::MyShop::new(name, goods));
+                game.my_shop = Some(vend::MyShop::new(name, goods, game.vend_size));
             }
             MapEvent::VendSold { index, amount, .. } => {
                 let Some(shop) = &mut game.my_shop else { return };

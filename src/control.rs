@@ -1006,6 +1006,14 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .chain(game.shop.iter().flat_map(crate::shop::Shop::row_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.storage.grip_box().map(|area| json!({"kind": "button", "name": "storage_resize", "box": area})))
+        .chain(game.skill_window.grip_box().map(|area| json!({"kind": "button", "name": "skills_resize", "box": area})))
+        .chain(
+            game.vend_setup
+                .iter()
+                .map(|setup| setup.grip_box())
+                .chain(game.my_shop.iter().map(|shop| shop.grip_box()))
+                .map(|area| json!({"kind": "button", "name": "vend_resize", "box": area})),
+        )
         .chain(
             game.buying_setup
                 .iter()
@@ -1445,6 +1453,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     });
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
     state["storage_rows"] = game.storage.rows().into();
+    state["skill_list_rows"] = game.skill_window.list_rows().into();
+    state["vend_size"] = json!({"width": game.vend_size.width, "rows": game.vend_size.rows});
     state["shop_size"] = game.shop.as_ref().and_then(crate::shop::Shop::sizes).map(|(width, rows)| json!({"width": width, "rows": rows})).into();
     // The ranking board.
     state["ranking"] = json!(game.ranking.as_ref().map(|board| {
