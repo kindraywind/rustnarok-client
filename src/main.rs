@@ -11756,8 +11756,11 @@ impl App {
             }
             // A cart's, a body's.
             for (_, feet, _) in &carts {
-                billboards
-                    .extend(shadow_placements.iter().map(|(key, position, size, angle)| (shadow.texture(*key), *feet, *position, *size, [1.0; 4], *angle)));
+                billboards.extend(
+                    shadow_placements
+                        .iter()
+                        .map(|(key, position, size, angle)| (shadow.texture(*key), *feet, *position, *size, [1.0; 4], *angle, DepthLayer::default())),
+                );
             }
             // The warg's shadow is twice a body's. The falcon, up in the air, casts none.
             for draw in companion_draws.iter().filter(|draw| draw.warg) {
