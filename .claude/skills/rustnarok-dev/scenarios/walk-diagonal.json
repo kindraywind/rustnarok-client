@@ -1,10 +1,12 @@
 {
-  "about": "A click 6 cells east and 4 north walks the server's way: the 4 diagonal steps first, then 2 straight ones, where it used to go straight first and cut across at the end. Shot 600 ms into the walk (on the diagonal, at 172,362), then the end.",
+  "about": "Clicks walk the server's way, diagonal steps first. 6 east and 4 north: 4 diagonal steps, then 2 straight (shot 600 ms in, on the diagonal at 172,362, then the end). Then 1 west and 4 south: the first step faces south-west, the rest south (shots 100 ms and 450 ms in); it used to walk south first and turn only for the last step.",
   "account": "",
   "slot": 0,
   "steps": [
-    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
-    {"say": "@killmonster2"}, {"wait": 500},
+    {"say": "@warp prt_fild08 170 360"},
+    {"settle": 1500},
+    {"say": "@killmonster2"},
+    {"wait": 500},
     {"click_on": {"cell": [176, 364]}},
     {"wait_for": {"packet": "0x0087", "ms": 3000, "pause": true}},
     {"cmd": {"cmd": "clock", "action": "step", "ms": 600}},
@@ -14,6 +16,18 @@
     {"cmd": {"cmd": "clock", "action": "resume"}},
     {"wait": 1500},
     {"shot": "walk-diagonal-end", "crop": [312, 184, 400, 400], "threshold": 5},
-    {"expect": {"state": {"player.cell": [176, 364], "player.moving": false}}}
+    {"expect": {"state": {"player.cell": [176, 364], "player.moving": false}}},
+    {"click_on": {"cell": [175, 360]}},
+    {"wait_for": {"packet": "0x0087", "ms": 3000, "pause": true}},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 100}},
+    {"move": [1000, 750]},
+    {"shot": "walk-down-left-first", "crop": [412, 234, 200, 300], "threshold": 5},
+    {"expect": {"state": {"player.direction": 1}}},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 350}},
+    {"shot": "walk-down-left-later", "crop": [412, 234, 200, 300], "threshold": 5},
+    {"expect": {"state": {"player.direction": 0}}},
+    {"cmd": {"cmd": "clock", "action": "resume"}},
+    {"wait": 1500},
+    {"expect": {"state": {"player.cell": [175, 360], "player.moving": false}}}
   ]
 }
