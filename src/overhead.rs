@@ -68,14 +68,28 @@ pub fn bar_fill(value: i64, max: i64) -> Option<f32> {
     (max > 0).then(|| ((BAR_WIDTH as i64 - 2) * value.clamp(0, max) / max) as f32)
 }
 
+/// A party member's (or battleground teammate's) row: trunc(0.6 · pct − 2) px with pct a whole percent; none at 0
+/// or less.
+pub fn party_fill(value: i64, max: i64) -> Option<f32> {
+    if max <= 0 {
+        return None;
+    }
+    let percent = 100 * value.clamp(0, max) / max;
+    let width = (0.6 * percent as f32 - 2.0).trunc();
+    (width > 0.0).then_some(width)
+}
+
+/// How a bar's rows fill: `bar_fill` or `party_fill`.
+pub type Fill = fn(i64, i64) -> Option<f32>;
+
 /// A bar under a unit as rectangles from its top left: the border, the background, the lines between rows, then each
-/// row's fill. A row is its value, its maximum, its color, and the color it takes under a quarter full.
-pub fn gage<T: Copy>(rows: &[(i64, i64, T, T)], border: T, background: T) -> Vec<(T, [f32; 4])> {
+/// row's fill (by `fill`). A row is its value, its maximum, its color, and the color it takes under a quarter full.
+pub fn gage<T: Copy>(rows: &[(i64, i64, T, T)], border: T, background: T, fill: Fill) -> Vec<(T, [f32; 4])> {
     let height = 1.0 + 4.0 * rows.len() as f32;
     let mut rects = vec![(border, [0.0, 0.0, BAR_WIDTH, height]), (background, [1.0, 1.0, BAR_WIDTH - 2.0, height - 2.0])];
     rects.extend((1..rows.len()).map(|row| (border, [0.0, 4.0 * row as f32, BAR_WIDTH, 1.0])));
     for (row, &(value, max, color, low)) in rows.iter().enumerate() {
-        if let Some(width) = bar_fill(value, max) {
+        if let Some(width) = fill(value, max) {
             rects.push((if value * 4 < max { low } else { color }, [1.0, 1.0 + 4.0 * row as f32, width, 3.0]));
         }
     }
@@ -157,28 +171,32 @@ mod tests {
 
     /// A bar's fills: (color, top, width).
     fn fills(rows: &[(i64, i64, char, char)]) -> Vec<(char, f32, f32)> {
-        gage(rows, '#', '.').into_iter().filter(|(color, _)| !"#.".contains(*color)).map(|(color, [_, top, width, _])| (color, top, width)).collect()
+        gage(rows, '#', '.', bar_fill).into_iter().filter(|(color, _)| !"#.".contains(*color)).map(|(color, [_, top, width, _])| (color, top, width)).collect()
     }
 
     #[test]
     fn stacks_bars_a_row_a_value() {
         // A homunculus: HP, SP, hunger over 100, 60×13 with border lines at 4 and 8.
         let homunculus = |hp, sp, hunger| [(hp, 200, 'g', 'r'), (sp, 80, 'b', 'b'), (hunger, 100, 'h', 'r')];
-        let rects = gage(&homunculus(200, 0, 100), '#', '.');
+        let rects = gage(&homunculus(200, 0, 100), '#', '.', bar_fill);
         assert_eq!(&rects[..4], [('#', [0.0, 0.0, 60.0, 13.0]), ('.', [1.0, 1.0, 58.0, 11.0]), ('#', [0.0, 4.0, 60.0, 1.0]), ('#', [0.0, 8.0, 60.0, 1.0])]);
         assert_eq!(fills(&homunculus(200, 0, 100)), [('g', 1.0, 58.0), ('b', 5.0, 0.0), ('h', 9.0, 58.0)]);
         // 50 % HP; 20 % HP and hunger 24 both take the low color; SP never does.
         assert_eq!(fills(&homunculus(100, 40, 25)), [('g', 1.0, 29.0), ('b', 5.0, 29.0), ('h', 9.0, 14.0)]);
         assert_eq!(fills(&homunculus(40, 4, 24)), [('r', 1.0, 11.0), ('b', 5.0, 2.0), ('r', 9.0, 13.0)]);
         // A pet: hunger alone, 60×5.
-        assert_eq!(gage(&[(30, 100, 'h', 'r')], '#', '.')[..2], [('#', [0.0, 0.0, 60.0, 5.0]), ('.', [1.0, 1.0, 58.0, 3.0])]);
+        assert_eq!(gage(&[(30, 100, 'h', 'r')], '#', '.', bar_fill)[..2], [('#', [0.0, 0.0, 60.0, 5.0]), ('.', [1.0, 1.0, 58.0, 3.0])]);
         assert_eq!(fills(&[(30, 100, 'h', 'r')]), [('h', 1.0, 17.0)]);
         // A mercenary whose maximum HP isn't known: the frame, no HP fill.
-        assert_eq!(gage(&[(10, 0, 'g', 'r'), (5, 10, 'b', 'b')], '#', '.')[0], ('#', [0.0, 0.0, 60.0, 9.0]));
+        assert_eq!(gage(&[(10, 0, 'g', 'r'), (5, 10, 'b', 'b')], '#', '.', bar_fill)[0], ('#', [0.0, 0.0, 60.0, 9.0]));
         assert_eq!(fills(&[(10, 0, 'g', 'r'), (5, 10, 'b', 'b')]), [('b', 5.0, 29.0)]);
         // A 4th job's own bar: HP, SP and the third row, 60×13; over the maximum fills it.
         let fourth = [(900, 1000, 'g', 'r'), (100, 100, 'b', 'b'), (150, 100, 'a', 'a')];
-        assert_eq!(gage(&fourth, '#', '.')[0], ('#', [0.0, 0.0, 60.0, 13.0]));
+        assert_eq!(gage(&fourth, '#', '.', bar_fill)[0], ('#', [0.0, 0.0, 60.0, 13.0]));
+        // Party members fill by whole percents: trunc(0.6 · pct − 2), nothing at 0 or less.
+        let party = [0, 1, 3, 4, 50, 99, 100].map(|percent| party_fill(percent, 100));
+        assert_eq!(party, [None, None, None, None, Some(28.0), Some(57.0), Some(58.0)]);
+        assert_eq!((party_fill(1, 3), bar_fill(1, 3)), (Some(17.0), Some(19.0)));
         assert_eq!(fills(&fourth), [('g', 1.0, 52.0), ('b', 5.0, 58.0), ('a', 9.0, 58.0)]);
     }
 
