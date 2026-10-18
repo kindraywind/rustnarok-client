@@ -220,7 +220,7 @@ table `effects.txt`), `sound` (music and effects over cpal), `control` (the test
 window, from `basic_info`, `inventory` and `buying` to `pet`, `pin`, `refine` and `worldmap`.
 
 `main.rs` holds the scenes (login, character select, game), the game state, input, the server's events and
-drawing. The UI draws in a fixed 1024×768 canvas, scaled to the window.
+drawing. The UI draws in a canvas 768 high and as wide as the window's shape (at least 1024), scaled to the window.
 
 </details>
 

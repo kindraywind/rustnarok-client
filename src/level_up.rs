@@ -5,7 +5,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::net::{STATUS_BASE_LEVEL, STATUS_JOB_LEVEL};
 
 use crate::render::{Gpu, Texture};
-use crate::{Layer, SCREEN, UI, contains};
+use crate::{Layer, UI, contains, screen};
 
 const SIZE: [f32; 2] = [43.0, 43.0];
 
@@ -20,8 +20,8 @@ pub enum Button {
 impl Button {
     pub fn corner(self) -> [f32; 2] {
         match self {
-            Self::Base => [SCREEN[0] - SIZE[0], SCREEN[1] - SIZE[1]],
-            Self::Job => [0.0, SCREEN[1] - SIZE[1]],
+            Self::Base => [screen()[0] - SIZE[0], screen()[1] - SIZE[1]],
+            Self::Job => [0.0, screen()[1] - SIZE[1]],
         }
     }
 }

@@ -7,7 +7,7 @@ use rustnarok_client::text::Font;
 
 use crate::actor::{Look, Placed, SpriteSet, Timing};
 use crate::render::{Gpu, Texture};
-use crate::{Layer, SCREEN, UI, contains, offset};
+use crate::{Layer, UI, contains, offset, screen};
 
 // ponytail: places come from the bitmap's own boxes (name field, scroll bar, color box, pedestals) where it has
 // them and are estimated otherwise; calibrate against the real client.
@@ -179,7 +179,7 @@ impl Make {
     }
 
     fn origin() -> [f32; 2] {
-        [((SCREEN[0] - WINDOW[0]) / 2.0).floor(), ((SCREEN[1] - WINDOW[1]) / 2.0).floor()]
+        [((screen()[0] - WINDOW[0]) / 2.0).floor(), ((screen()[1] - WINDOW[1]) / 2.0).floor()]
     }
 
     fn at(local: [f32; 2]) -> [f32; 2] {
@@ -293,7 +293,7 @@ impl Make {
             let hovered = hit == Some(target);
             usize::from(hovered) + usize::from(hovered && down)
         };
-        let backdrop = [((SCREEN[0] - BACKDROP[0]) / 2.0).floor(), ((SCREEN[1] - BACKDROP[1]) / 2.0).floor()];
+        let backdrop = [((screen()[0] - BACKDROP[0]) / 2.0).floor(), ((screen()[1] - BACKDROP[1]) / 2.0).floor()];
         layer.sprites.push((&assets.backdrop, backdrop, assets.backdrop.size));
         layer.sprites.push((&assets.window, Self::at([0.0; 2]), assets.window.size));
         layer.texts.push((message(TITLE_MESSAGE).to_owned(), Self::at(TITLE), BLACK));

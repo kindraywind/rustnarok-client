@@ -4,7 +4,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
-use crate::{Layer, SCREEN, UI, contains, offset};
+use crate::{Layer, UI, contains, offset, screen};
 
 pub const TITLE_HEIGHT: f32 = 17.0;
 pub const BUTTON_SIZE: [f32; 2] = [11.0, 11.0];
@@ -112,7 +112,7 @@ impl Frame {
     pub fn drag_to(&mut self, cursor: [f32; 2], height: f32) -> bool {
         let Some(grab) = self.drag else { return false };
         let height = if self.minimized { TITLE_HEIGHT } else { height };
-        self.position = [(cursor[0] - grab[0]).clamp(0.0, SCREEN[0] - self.width), (cursor[1] - grab[1]).clamp(0.0, SCREEN[1] - height)];
+        self.position = [(cursor[0] - grab[0]).clamp(0.0, screen()[0] - self.width), (cursor[1] - grab[1]).clamp(0.0, screen()[1] - height)];
         true
     }
 
@@ -252,7 +252,7 @@ impl<T> Amount<T> {
     }
 
     fn corner(message_box: [f32; 2]) -> [f32; 2] {
-        [((SCREEN[0] - message_box[0]) / 2.0).floor(), ((SCREEN[1] - message_box[1]) / 2.0).floor()]
+        [((screen()[0] - message_box[0]) / 2.0).floor(), ((screen()[1] - message_box[1]) / 2.0).floor()]
     }
 
     /// Over the box: Some(Some(ok)) on its buttons, Some(None) elsewhere on it.

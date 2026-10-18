@@ -11,7 +11,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, SCREEN, UI, contains};
+use crate::{Layer, UI, contains, screen};
 
 const TITLE: usize = 2149;
 /// "Name:", "Goal:", "Format:", "Level:", "Win:", "Draw:", "Loss:".
@@ -130,7 +130,7 @@ pub struct QueueWindow {
 
 impl Default for QueueWindow {
     fn default() -> Self {
-        Self { frame: Frame::new([((SCREEN[0] - WIDTH) / 2.0).floor(), 120.0], WIDTH), picked: None }
+        Self { frame: Frame::new([((screen()[0] - WIDTH) / 2.0).floor(), 120.0], WIDTH), picked: None }
     }
 }
 
