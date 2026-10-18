@@ -11065,7 +11065,10 @@ impl App {
             MapEvent::StatusIcon { kind: actor::PUSH_CART, id, on, value, .. } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor {
-                    actor.cart = if on { SpriteSet::at(grf, &actor::cart_path(value)) } else { None };
+                    let (sprite, act) = actor::cart_path(value, actor.job);
+                    let sprites = SpriteSet::with_act(grf, &sprite, &act).filter(|_| on);
+                    let leader = actor::world_xz(actor.cell.map(|value| value as f32));
+                    actor.cart = sprites.map(|sprites| actor::Cart::behind(sprites, leader, actor.direction));
                 }
                 if id == game.account_id {
                     game.status_icons.retain(|(icon, ..)| *icon != actor::PUSH_CART);
@@ -11614,24 +11617,28 @@ impl App {
         let mut frames = Vec::new();
         let mut sounds: Vec<(String, f32)> = game.player.sound_now(now).map(|sound| (sound, 1.0)).into_iter().collect();
         let (action, timing) = game.player.animation(now);
-        let (direction, head_direction) = (game.player.direction, game.player.head_direction);
+        let head_direction = game.player.head_direction;
         let player_seen = seen_direction(game.player.rot, yaw, rounds_facing(PLAYER, game.player.job, action));
         // Pushcarts, apart from the bodies (their textures are the cart's, and they cast no shadow of their own).
         // A cart's ACT has one action per direction; its frames turn the wheels, so they run only while walking.
         // ponytail: the cart's anchor half a cell behind its owner; place it against the real client.
-        let behind = |feet: [f32; 3], direction: u8| {
-            // RO directions from south, turning west: the cell step each faces.
-            let [dx, dy] = [[0.0, -1.0], [-1.0, -1.0], [-1.0, 0.0], [-1.0, 1.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [1.0, -1.0]][usize::from(direction % 8)];
-            let length = f32::hypot(dx, dy);
-            [feet[0] - dx / length * world::CELL * 0.5, feet[1], feet[2] - dy / length * world::CELL * 0.5]
+        // A cart stands on the ground where its rope has it, facing its owner, its wheels at the distance rolled. Its
+        // ACT has one action per direction.
+        let world = &game.world;
+        let cart_frame = |cart: &mut actor::Cart| {
+            let seen = usize::from(seen_direction(cart.rot, yaw, true));
+            let frame = cart.frame(cart.sprites.frames(seen));
+            let count = cart.sprites.frames(seen).max(1) as f32;
+            let placed = cart.sprites.frame_at(gpu, seen, 0, Timing::Span((frame as f32 + 0.5) / count));
+            (world.ground_under([cart.at[0], 0.0, cart.at[1]]), placed)
         };
         let mut carts = Vec::new();
         let mut companion_draws: Vec<CompanionDraw> = Vec::new();
-        let cart_timing = |action: usize, timing: Timing| if action == actor::WALK { timing } else { Timing::Loop(0.0) };
         if let Some(cart) = &mut game.player.cart
             && actor::seen(game.player.hide_option, true) == actor::Seen::Whole
         {
-            carts.push((Owner::Player, behind(player_feet, direction), cart.frame_at(gpu, usize::from(player_seen), 0, cart_timing(action, timing))));
+            let (feet, placed) = cart_frame(cart);
+            carts.push((Owner::Player, feet, placed));
         }
         let player_tint = actor::status_tint(game.player.body_state, game.player.health_state);
         let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
@@ -11704,14 +11711,15 @@ impl App {
                 sounds.push((sound, 1.0 - distance as f32 / HEARING_CELLS));
             }
             let (action, timing) = actor.animation(now);
-            let (direction, head_direction) = (actor.direction, actor.head_direction);
+            let head_direction = actor.head_direction;
             let seen = seen_direction(actor.rot, yaw, rounds_facing(actor.kind, actor.job, action));
             // NPC names show under them; players' and monsters' on hover (below).
             if !actor.hidden && (actor.kind == NPC || actor.sprites.is_none()) {
                 labels.push((actor.name.clone(), feet, name_color(actor.kind, actor.job, actor.level, our_summons.contains(&Some(id)), own_level)));
             }
             if let Some(cart) = &mut actor.cart {
-                carts.push((Owner::Unit(id), behind(feet, direction), cart.frame_at(gpu, usize::from(seen), 0, cart_timing(action, timing))));
+                let (feet, placed) = cart_frame(cart);
+                carts.push((Owner::Unit(id), feet, placed));
             }
             let tint = crate::actor::status_tint(actor.body_state, actor.health_state);
             let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent);
@@ -11865,6 +11873,14 @@ impl App {
                     }));
                 }
             }
+            // A cart's, a body's.
+            for (_, feet, _) in &carts {
+                billboards.extend(
+                    shadow_placements
+                        .iter()
+                        .map(|(key, position, size, angle)| (shadow.texture(*key), *feet, *position, *size, [1.0; 4], *angle, DepthLayer::default())),
+                );
+            }
             // The warg's shadow is twice a body's. The falcon, up in the air, casts none.
             for draw in companion_draws.iter().filter(|draw| draw.warg) {
                 let scale = actor::WARG_SHADOW;
@@ -11944,8 +11960,8 @@ impl App {
         billboards.extend(behind);
         // Carts before the bodies, so the one pulling a cart draws over it.
         let cart_of = |owner: &Owner| match owner {
-            Owner::Player => game.player.cart.as_ref(),
-            Owner::Unit(id) => game.units.get(id).and_then(|actor| actor.cart.as_ref()),
+            Owner::Player => game.player.cart.as_ref().map(|cart| &cart.sprites),
+            Owner::Unit(id) => game.units.get(id).and_then(|actor| actor.cart.as_ref()).map(|cart| &cart.sprites),
             Owner::Item(_) => None,
         };
         billboards.extend(carts.iter().flat_map(|(owner, feet, placements)| {
