@@ -924,6 +924,25 @@ pub fn in_reach(from: [i32; 2], to: [i32; 2], range: i32) -> bool {
 }
 
 /// RO's direction index (0 south, then clockwise: south-west, west, ... south-east) for a step.
+/// Where a walk aimed at `target` from `from` goes: the target when `ok` takes it; otherwise, stepping from the
+/// target back toward `from` along a straight line, the first cell `ok` takes in the 3×3 around each step, in a fixed
+/// order. None once the line reaches `from`'s row or column.
+// ponytail: the target's own 3×3 is tried even when it's on `from`'s row or column.
+pub fn walk_goal(target: [i32; 2], from: [i32; 2], ok: impl Fn([i32; 2]) -> bool) -> Option<[i32; 2]> {
+    const AROUND: [[i32; 2]; 9] = [[0, 0], [1, 0], [1, 1], [1, -1], [-1, 0], [-1, 1], [-1, -1], [0, 1], [0, -1]];
+    let steps = (target[0] - from[0]).abs().max((target[1] - from[1]).abs());
+    for step in 0..steps {
+        let at = [0, 1].map(|axis| target[axis] + ((from[axis] - target[axis]) as f32 * step as f32 / steps as f32).round() as i32);
+        if step > 0 && (at[0] == from[0] || at[1] == from[1]) {
+            return None;
+        }
+        if let Some(cell) = AROUND.iter().map(|around| [at[0] + around[0], at[1] + around[1]]).find(|&cell| ok(cell)) {
+            return Some(cell);
+        }
+    }
+    None
+}
+
 pub fn direction(step: [i32; 2]) -> u8 {
     match (step[0].signum(), step[1].signum()) {
         (0, -1) => 0,
@@ -940,6 +959,25 @@ pub fn direction(step: [i32; 2]) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn walks_as_close_as_it_can() {
+        // Open ground from 0 to 19 each way, with a wall from x 10 to 12 for y 10 to 12.
+        let wall = |[x, y]: [i32; 2]| (10..=12).contains(&x) && (10..=12).contains(&y);
+        let open = |cell: [i32; 2]| cell.iter().all(|value| (0..20).contains(value)) && !wall(cell);
+        assert_eq!(walk_goal([5, 9], [0, 0], open), Some([5, 9]));
+        // A click on the wall's edge: its own 3×3, (1,0) first.
+        assert_eq!(walk_goal([12, 11], [0, 0], open), Some([13, 11]));
+        // The middle of the wall has nothing open around it: one step back toward the player, (1,-1) is.
+        assert_eq!(walk_goal([11, 11], [0, 0], open), Some([11, 9]));
+        // An island that can't be reached: everything from x 15 on; steps back until it's left.
+        let reachable = |cell: [i32; 2]| open(cell) && cell[0] < 15;
+        assert_eq!(walk_goal([18, 5], [0, 0], reachable), Some([14, 4]));
+        // A line that reaches the player's row gives up.
+        let nothing = |_: [i32; 2]| false;
+        assert_eq!(walk_goal([18, 5], [0, 5], nothing), None);
+        assert_eq!(walk_goal([3, 3], [3, 3], open), None);
+    }
 
     #[test]
     fn melee_reach_matches_the_server() {

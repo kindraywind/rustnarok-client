@@ -629,6 +629,7 @@ fn decode_character(info: &[u8]) -> Character {
 const CZ_ENTER: u16 = 0x0436;
 const CZ_NOTIFY_ACTORINIT: u16 = 0x007D;
 const CZ_REQUEST_MOVE: u16 = 0x035F;
+const CZ_CHANGE_DIRECTION: u16 = 0x0361;
 const CZ_REQUEST_TIME: u16 = 0x0360;
 const CZ_REQUEST_CHAT: u16 = 0x00F3;
 const CZ_WHISPER: u16 = 0x0096;
@@ -3305,6 +3306,11 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Turns the character (rathena's direction: 0 north, counterclockwise), the head straight (0) or to a side.
+    pub fn change_direction(&mut self, direction: u8, head: u8) -> io::Result<()> {
+        self.stream.write_all(&encode_direction(direction, head))
+    }
+
     /// Keeps the connection alive; the client sends this every few seconds.
     pub fn tick(&mut self, client_tick: u32) -> io::Result<()> {
         let mut packet = CZ_REQUEST_TIME.to_le_bytes().to_vec();
@@ -4962,6 +4968,12 @@ fn encode_disband(name: &str) -> Vec<u8> {
     [&CZ_REQ_DISORGANIZE_GUILD.to_le_bytes()[..], &key].concat()
 }
 
+/// CZ_CHANGE_DIRECTION: the head's direction (a u16), then the body's.
+fn encode_direction(direction: u8, head: u8) -> [u8; 5] {
+    let [h0, h1] = CZ_CHANGE_DIRECTION.to_le_bytes();
+    [h0, h1, head, 0, direction]
+}
+
 fn encode_id(header: u16, id: u32) -> [u8; 6] {
     let mut packet = [0u8; 6];
     packet[..2].copy_from_slice(&header.to_le_bytes());
@@ -6578,6 +6590,12 @@ mod tests {
         let Some(MapEvent::MvpExp(90_000)) = decode_map_packet(&packet(ZC_MVP_GETTING_SPECIAL_EXP, 90_000)) else { panic!() };
         let Some(MapEvent::MvpOverweight) = decode_map_packet(&ZC_THROW_MVPITEM.to_le_bytes()) else { panic!() };
         assert_eq!([ZC_MVP, ZC_MVP_GETTING_ITEM, ZC_MVP_GETTING_SPECIAL_EXP, ZC_THROW_MVPITEM].map(packet_length), [Some(6), Some(6), Some(6), Some(2)]);
+    }
+
+    #[test]
+    fn turns() {
+        assert_eq!(encode_direction(6, 0), [0x61, 0x03, 0, 0, 6]);
+        assert_eq!(packet_length(CZ_CHANGE_DIRECTION), Some(5));
     }
 
     #[test]

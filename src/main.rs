@@ -656,6 +656,14 @@ struct Game {
     last_keepalive: Instant,
     /// Dev switch: a cell to walk to shortly after entering.
     auto_walk: Option<[u16; 2]>,
+    /// Walking by the mouse: when the last walk was sent and where, how many were sent, whether the held button
+    /// keeps walking (and when it last tried), and the last press (when, and whether the pointer moved since).
+    last_move: Option<Instant>,
+    walk_goal: Option<[i32; 2]>,
+    walks: u32,
+    walk_held: bool,
+    last_walk_try: Option<Instant>,
+    press_mark: Option<(Instant, bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
     shadow: Option<SpriteSet>,
@@ -1432,6 +1440,63 @@ impl Game {
         }
     }
 
+    /// The cell under a point on screen, on the plane at the player's height.
+    fn ground_cell(&self, cursor: [f32; 2]) -> Option<[i32; 2]> {
+        let height = self.world.cell_position(self.player.cell.map(|value| value as f32))[1];
+        let view = self.camera.view(SCREEN[0] / SCREEN[1]);
+        view.pick([cursor[0] / SCREEN[0], cursor[1] / SCREEN[1]], height)
+            .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32])
+    }
+
+    /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`: not blocked, nobody standing there, a
+    /// path to it); nothing when the last walk went out less than MOVE_GAP ago. Whether a walk was sent.
+    fn walk_toward(&mut self, cell: [i32; 2], now: Instant) -> bool {
+        if !may_move(self.last_move, now) {
+            return false;
+        }
+        let from = self.player.cell;
+        let taken: std::collections::HashSet<[i32; 2]> = self.units.values().map(|actor| actor.cell).collect();
+        let gat = &self.world.gat;
+        let open = |cell: [i32; 2]| gat.walkable(cell) && !taken.contains(&cell) && world::find_path(gat, from, cell).is_some();
+        let Some(goal) = world::walk_goal(cell, from, open) else { return false };
+        self.pending = None;
+        self.last_move = Some(now);
+        self.walk_goal = Some(goal);
+        self.walks += 1;
+        let _ = self.session.walk(goal.map(|value| value as u16));
+        true
+    }
+
+    /// Turns to face a cell, the head straight. rathena counts directions the other way along y from the sprites.
+    fn turn_to(&mut self, cell: [i32; 2]) {
+        let step = [cell[0] - self.player.cell[0], cell[1] - self.player.cell[1]];
+        if step != [0, 0] {
+            let _ = self.session.change_direction(world::direction([step[0], -step[1]]), 0);
+            self.player.direction = world::direction(step);
+            self.player.head_direction = 0;
+        }
+    }
+
+    /// What a left click on the world does: talk to an NPC, attack, swing once at a player, pick up an item, or
+    /// (the ground, anything else) walk.
+    fn world_click(&self, cursor: [f32; 2], shift: bool) -> WorldClick {
+        match hovered(&self.hit_boxes, cursor, shift) {
+            Some(Owner::Unit(id)) => match self.units.get(&id).map(|actor| actor.kind) {
+                Some(NPC) => WorldClick::Talk(id),
+                Some(MONSTER) => WorldClick::Attack(id),
+                // Players: an attack where the map (or Shift, or /noshift) says so; one swing a click on a siege map.
+                Some(PLAYER) => match versus::click(self.side().flags, self.players_first(shift), self.no_shift, self.account_id, id) {
+                    versus::Click::Attack => WorldClick::Attack(id),
+                    versus::Click::Swing => WorldClick::Swing(id),
+                    versus::Click::Walk => WorldClick::Ground,
+                },
+                _ => WorldClick::Ground,
+            },
+            Some(Owner::Item(id)) => WorldClick::PickUp(id),
+            _ => WorldClick::Ground,
+        }
+    }
+
     fn store_open(&self) -> bool {
         self.my_shop.is_some() || self.my_buying_store.is_some()
     }
@@ -1865,12 +1930,39 @@ impl Game {
     }
 
     /// Whether the pointer is over the interface (a window, the chat, a dialog) rather than the world.
-    fn on_ui(&self, cursor: [f32; 2], items: &HashMap<u32, ItemInfo>) -> bool {
+    /// Whether the pointer is on a window, or something holds the clicks (a dialog, a menu, a question in the message
+    /// box of this size).
+    fn on_ui(&self, cursor: [f32; 2], items: &HashMap<u32, ItemInfo>, message: [f32; 2]) -> bool {
+        let asking = self.guild_invite.is_some()
+            || self.guild_asked.is_some()
+            || self.bind_asked.is_some()
+            || self.expansion_asked.is_some()
+            || self.leader_asked.is_some()
+            || self.dismiss_asked
+            || self.homunculus_rename.is_some()
+            || self.pet_asked.is_some()
+            || self.friend_asked.is_some()
+            || self.party_invite.is_some()
+            || self.trade_asked.is_some();
         self.window_at(cursor).is_some()
+            || (asking && contains(dialog_position_of(message), message, cursor))
             || self.dialog.is_some()
             || self.amount.is_some()
             || self.escape.is_some()
             || self.world_map.is_some()
+            || self.deal_choice.is_some()
+            || self.menu.is_some()
+            || self.pick.as_ref().is_some_and(|(list, _)| list.covers(cursor))
+            || self.shop.as_ref().is_some_and(|shop| shop.covers(cursor))
+            || self.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.enchant.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.materials.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.bank.as_ref().is_some_and(|bank| bank.hit(cursor).is_some())
+            || self.viewing.as_ref().is_some_and(|viewed| viewed.window.hit(cursor, &viewed.items).is_some())
+            || self.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some()
+            || self.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some()
+            || self.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some()
+            || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
             || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
             || self.cashshop_buy_asked
@@ -2976,7 +3068,35 @@ fn last_sentence(text: &str) -> &str {
 }
 
 fn dialog_position(dialog: &Texture) -> [f32; 2] {
-    [((SCREEN[0] - dialog.size[0]) / 2.0).floor(), ((SCREEN[1] - dialog.size[1]) / 1.5).floor()]
+    dialog_position_of(dialog.size)
+}
+
+fn dialog_position_of(size: [f32; 2]) -> [f32; 2] {
+    [((SCREEN[0] - size[0]) / 2.0).floor(), ((SCREEN[1] - size[1]) / 1.5).floor()]
+}
+
+/// What a left click on the world does (`Game::world_click`).
+enum WorldClick {
+    Talk(u32),
+    Attack(u32),
+    Swing(u32),
+    PickUp(u32),
+    Ground,
+}
+
+/// CZ_REQUEST_MOVE goes no sooner than this after the last one; a walk asked for sooner is dropped. The held button
+/// tries again this often.
+const MOVE_GAP: Duration = Duration::from_millis(300);
+/// Two presses this close, the pointer not moved at all between them, make a double press.
+const DOUBLE_PRESS: Duration = Duration::from_millis(500);
+
+fn may_move(last: Option<Instant>, now: Instant) -> bool {
+    last.is_none_or(|last| now.saturating_duration_since(last) >= MOVE_GAP)
+}
+
+/// Whether a press now, after the last one (when, and whether the pointer moved since), is a double press.
+fn double_press(last: Option<(Instant, bool)>, now: Instant) -> bool {
+    last.is_some_and(|(at, moved)| !moved && now.saturating_duration_since(at) < DOUBLE_PRESS)
 }
 
 fn offset(origin: [f32; 2], offset: [f32; 2]) -> [f32; 2] {
@@ -4793,47 +4913,14 @@ impl App {
                 if game.store_open() {
                     return;
                 }
-                // Whatever is under the cursor (see `picking::pick`): talk to NPCs, attack monsters, pick items up.
-                match hovered(&game.hit_boxes, cursor, shift) {
-                    Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
-                        Some(NPC) => {
-                            let _ = game.session.talk(id);
-                            return;
-                        }
-                        Some(MONSTER) => {
-                            game.attack(id);
-                            return;
-                        }
-                        // Players: an attack where the map (or Shift, or /noshift) says so; one swing a click on a
-                        // siege map. Otherwise the click walks, below.
-                        Some(PLAYER) => match versus::click(game.side().flags, game.players_first(shift), game.no_shift, game.account_id, id) {
-                            versus::Click::Attack => {
-                                game.attack(id);
-                                return;
-                            }
-                            versus::Click::Swing => {
-                                let _ = game.session.act(id, net::ACT_ATTACK);
-                                return;
-                            }
-                            versus::Click::Walk => {}
-                        },
-                        _ => {}
-                    },
-                    Some(Owner::Item(id)) => {
-                        game.pick_up(id);
-                        return;
-                    }
-                    _ => {}
-                }
-                game.pending = None;
-                // Walk to the clicked cell: pick the ground plane at the player's height.
-                let height = game.world.cell_position(game.player.cell.map(|value| value as f32))[1];
-                let view = game.camera.view(SCREEN[0] / SCREEN[1]);
-                if let Some(point) = view.pick([cursor[0] / SCREEN[0], cursor[1] / SCREEN[1]], height) {
-                    let cell = [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32];
-                    if game.world.gat.walkable(cell) {
-                        let _ = game.session.walk(cell.map(|value| value as u16));
-                    }
+                // Whatever is under the cursor (see `picking::pick`): talk to NPCs, attack monsters, pick items up. The
+                // ground walked when the button went down (`press`).
+                match game.world_click(cursor, shift) {
+                    WorldClick::Talk(id) => drop(game.session.talk(id)),
+                    WorldClick::Attack(id) => game.attack(id),
+                    WorldClick::Swing(id) => drop(game.session.act(id, net::ACT_ATTACK)),
+                    WorldClick::PickUp(id) => game.pick_up(id),
+                    WorldClick::Ground => {}
                 }
             }
             Scene::Message(..) => {
@@ -4856,6 +4943,9 @@ impl App {
     /// The pointer moved: windows and items being dragged follow it.
     fn pointer_moved(&mut self) {
         if let Scene::Game(game) = &mut self.scene {
+            if let Some((_, moved)) = &mut game.press_mark {
+                *moved = true;
+            }
             let (inventory_height, equipment_height, info_height) = (game.inventory.height(), game.equipment.height(), game.basic_info.height());
             game.basic_info.frame.drag_to(self.cursor, info_height);
             let hotkeys_height = game.hotkeys.height();
@@ -5185,6 +5275,12 @@ impl App {
 
     fn left_button(&mut self, event_loop: &ActiveEventLoop, state: ElementState) {
         self.mouse_down = state == ElementState::Pressed;
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+        {
+            game.walk_held = false;
+        }
+        let message_size = self.assets.as_ref().map_or([0.0; 2], |assets| assets.message.size);
         let dragged = match &mut self.scene {
             Scene::Game(game) if state == ElementState::Released => {
                 let item = game.dragging.take();
@@ -5283,7 +5379,7 @@ impl App {
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
                     // Let go over the world: dropped at the player's feet, asking how many of a stack.
-                    (Some((Dragged::Item(index), _, true)), None) if !game.on_ui(self.cursor, &self.items) && !game.store_open() => {
+                    (Some((Dragged::Item(index), _, true)), None) if !game.on_ui(self.cursor, &self.items, message_size) && !game.store_open() => {
                         game.move_item(Asked::Drop(index))
                     }
                     (Some((Dragged::Item(index), _, true)), Some(Panel::Cart)) => game.move_item(Asked::ToCart(index)),
@@ -5373,6 +5469,35 @@ impl App {
     /// A mouse press: grabs a window by its title bar.
     fn press(&mut self) {
         let cursor = self.cursor;
+        // A press on the ground walks there at once, and holding the button keeps following the pointer. Shift turns
+        // to face it, Ctrl does nothing, and sitting only turns. A second press within DOUBLE_PRESS with the pointer
+        // still is ignored. Units and items are the click's (on release).
+        if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
+            && game.dragging.is_none()
+            && !game.on_ui(cursor, &self.items, assets.message.size)
+            && !game.store_open()
+            && game.targeting.is_none()
+            && !game.capturing
+        {
+            let now = Instant::now();
+            let double = double_press(game.press_mark, now);
+            game.press_mark = Some((now, false));
+            let ground = matches!(game.world_click(cursor, self.modifiers.shift_key()), WorldClick::Ground);
+            if !double
+                && ground
+                && !self.modifiers.control_key()
+                && let Some(cell) = game.ground_cell(cursor)
+            {
+                if self.modifiers.shift_key() || game.player.sitting {
+                    game.turn_to(cell);
+                } else {
+                    game.walk_toward(cell, now);
+                    game.walk_held = true;
+                    game.last_walk_try = Some(now);
+                }
+            }
+            return;
+        }
         if let Scene::Game(game) = &mut self.scene {
             let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
             let hit = game.stylist.as_ref().and_then(|window| window.hit(cursor, &self.styling_shop, job));
@@ -6715,6 +6840,12 @@ impl App {
                     attack_range: 1,
                     pending: None,
                     auto_say: std::env::var("RUSTNAROK_CLIENT_SAY").ok(),
+                    last_move: None,
+                    walk_goal: None,
+                    walks: 0,
+                    walk_held: false,
+                    last_walk_try: None,
+                    press_mark: None,
                     auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
                         let (x, y) = cell.split_once(',')?;
                         Some([x.parse().ok()?, y.parse().ok()?])
@@ -10852,7 +10983,7 @@ impl App {
         let mut sprites = flatten(&composed);
 
         // The cursor shows what a click would do.
-        let on_window = game.on_ui(pointer.0, items);
+        let on_window = game.on_ui(pointer.0, items, assets.message.size);
         let ground = view
             .pick([pointer.0[0] / SCREEN[0], pointer.0[1] / SCREEN[1]], player_feet[1])
             .map(|point| [(point[0] / world::CELL).floor() as i32, (point[2] / world::CELL).floor() as i32]);
@@ -11088,6 +11219,19 @@ impl ApplicationHandler<NetEvent> for App {
                 if game.last_keepalive.elapsed() >= KEEPALIVE {
                     game.last_keepalive = Instant::now();
                     let _ = game.session.tick(tick);
+                }
+                // The held button follows the pointer: another walk each time MOVE_GAP has passed since the last
+                // try, not over a window, nor while an attack or a pickup is on its way.
+                let now = Instant::now();
+                if game.walk_held
+                    && game.pending.is_none()
+                    && game.last_walk_try.is_none_or(|last| now.saturating_duration_since(last) > MOVE_GAP)
+                    && let Some(assets) = &self.assets
+                    && !game.on_ui(self.cursor, &self.items, assets.message.size)
+                    && let Some(cell) = game.ground_cell(self.cursor)
+                {
+                    game.last_walk_try = Some(now);
+                    game.walk_toward(cell, now);
                 }
                 if game.entered.elapsed() > Duration::from_secs(1) {
                     if let Some(cell) = game.auto_walk.take() {
@@ -11596,6 +11740,20 @@ mod tests {
         assert_eq!(share_left(start, length, start), 1.0);
         assert_eq!(share_left(start, length, start + Duration::from_millis(200)), 0.75);
         assert_eq!(share_left(start, length, start + Duration::from_secs(2)), 0.0);
+    }
+
+    #[test]
+    fn walks_no_more_than_every_300_ms() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        assert!(may_move(None, start));
+        assert!(!may_move(Some(start), at(299)));
+        assert!(may_move(Some(start), at(300)));
+        // A second press: double only when soon and the pointer stayed still.
+        assert!(double_press(Some((start, false)), at(400)));
+        assert!(!double_press(Some((start, true)), at(400)));
+        assert!(!double_press(Some((start, false)), at(500)));
+        assert!(!double_press(None, start));
     }
 
     #[test]
