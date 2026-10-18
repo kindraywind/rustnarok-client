@@ -736,6 +736,16 @@ fn turning_cursor(dragging: bool, shift: bool, alt: bool) -> bool {
     dragging && !shift && !alt
 }
 
+/// A warp portal's pick box around its feet, in sprite pixels: 50/640 of the screen's width and 50/730 of its height
+/// each way at the default camera, so it grows and shrinks with the zoom like a sprite.
+// ponytail: worked out for the 1024-wide screen; a wider canvas keeps the same box.
+const WARP_PICK: [f32; 2] = [59.7, 39.3];
+
+/// A warp portal's pick box on screen (`0..1`, y down: left, top, right, bottom).
+fn warp_pick_rect(view: &world::View, feet: world::Vector) -> Option<[f32; 4]> {
+    view.sprite_rect(feet, [-WARP_PICK[0], -WARP_PICK[1]], WARP_PICK)
+}
+
 /// JT_WARPNPC: warp portals, drawn as an effect without a name.
 const WARP_JOB: u16 = 45;
 
@@ -827,6 +837,8 @@ struct Game {
     walks: u32,
     walk_held: bool,
     last_walk_try: Option<Instant>,
+    /// A walk asked for during the player's own swing, sent when the swing ends.
+    walk_after_swing: Option<[i32; 2]>,
     press_mark: Option<(Instant, [f32; 2], bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
@@ -1959,6 +1971,10 @@ impl Game {
     /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`: not blocked, nobody standing there, a
     /// path to it); nothing when the last walk went out less than MOVE_GAP ago. Whether a walk was sent.
     fn walk_toward(&mut self, cell: [i32; 2], now: Instant) -> bool {
+        if self.player.swinging(control::now()) {
+            self.walk_after_swing = Some(cell);
+            return false;
+        }
         if !may_move(self.last_move, now) {
             return false;
         }
@@ -1976,13 +1992,18 @@ impl Game {
     }
 
     /// Turns to face a cell, the head straight. rathena counts directions the other way along y from the sprites.
+    /// Only standing, sitting or flinching; see `turn_toward`.
     fn turn_to(&mut self, cell: [i32; 2]) {
         let step = [cell[0] - self.player.cell[0], cell[1] - self.player.cell[1]];
-        if step != [0, 0] {
-            let _ = self.session.change_direction(world::direction([step[0], -step[1]]), 0);
-            self.player.set_direction(world::direction(step));
-            self.player.head_direction = 0;
+        if step == [0, 0] || self.player.moving() || self.player.swinging(control::now()) {
+            return;
         }
+        // The sprites count directions the other way round from rathena: body = (4 - ours) mod 8 and back.
+        let body = (12 - self.player.direction % 8) % 8;
+        let (body, head) = turn_toward(body, self.player.head_direction as u8, world::direction([step[0], -step[1]]));
+        let _ = self.session.change_direction(body, head);
+        self.player.set_direction((12 - body) % 8);
+        self.player.head_direction = u16::from(head);
     }
 
     /// What a left click on the world does: talk to an NPC, attack, swing once at a player, pick up an item, or
@@ -3943,7 +3964,7 @@ impl Game {
         let amount = act.damage + act.left_damage;
         let lands = Instant::now() + Duration::from_secs_f32(hit_ms.unwrap_or(act.source_speed.max(0) as f32) / 1000.0);
         // Misses, endured hits and lucky dodges don't flinch.
-        let flinch = (amount > 0 && !matches!(act.kind, 4 | 9 | 11)).then_some(act.target_speed.max(100) as f32);
+        let flinch = (amount > 0 && !matches!(act.kind, 4 | 9 | 11)).then_some(act.target_speed as f32);
         let kind = match act.kind {
             11 => DamageKind::Lucky,
             10 | 13 => DamageKind::Critical,
@@ -8979,6 +9000,7 @@ impl App {
                     walks: 0,
                     walk_held: false,
                     last_walk_try: None,
+                    walk_after_swing: None,
                     press_mark: None,
                     auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
                         let (x, y) = cell.split_once(',')?;
@@ -11981,15 +12003,21 @@ impl App {
         // Bodies that finished dying leave; hits that land make their target flinch.
         game.units.retain(|_, actor| actor.remove_at.is_none_or(|at| at > now));
         for damage in &mut game.damages {
-            if damage.start <= now && damage.flinch.take().is_some() {
+            if damage.start <= now && damage.flinch.is_some() {
+                let motion = damage.flinch.take();
                 let target = match damage.target {
                     None => Some(&mut game.player),
                     Some(id) => game.units.get_mut(&id),
                 };
-                // A monster already in a special action (attacking, casting) doesn't flinch.
-                if let Some(target) = target.filter(|target| target.remove_at.is_none() && !(target.kind == MONSTER && target.in_action(now))) {
+                // The flinch stops a walk once its step is done and gets a sitting player up.
+                if let Some(target) =
+                    target.filter(|target| target.remove_at.is_none() && !target.dead && actor::flinches(target.kind, target.animation(now).0))
+                    && let Some(motion) = motion
+                {
                     let (_, flinch, _) = actor::combat_actions(target.kind);
-                    target.play_at_pace(flinch, now, 1.0, false);
+                    target.flinch(flinch, now, motion);
+                    target.stop_after_step();
+                    target.sitting = false;
                     target.stand_ready();
                 }
             }
@@ -12208,16 +12236,11 @@ impl App {
             })
             .collect();
 
-        // Warp portals have no sprite: the cell they stand on is their pick box.
-        let half = world::CELL / 2.0;
+        // Warp portals have no sprite: their pick box is drawn around the feet.
         for (&id, actor) in game.units.iter().filter(|(_, actor)| actor.job == WARP_JOB) {
             let feet = game.world.cell_position(actor.cell.map(|value| value as f32));
-            let corners: Option<Vec<_>> = [[-half, -half], [half, -half], [half, half], [-half, half]]
-                .iter()
-                .map(|[dx, dz]| view.project([feet[0] + dx, feet[1], feet[2] + dz]).map(to_screen))
-                .collect();
-            if let Some(corners) = corners {
-                let cell = picking::bounds(&corners);
+            if let Some([left, top, right, bottom]) = warp_pick_rect(&view, feet) {
+                let cell = picking::bounds(&[to_screen([left, top]), to_screen([right, bottom])]);
                 let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]).powi(2)).sum::<f32>();
                 game.hit_boxes.push(picking::Target {
                     owner: Owner::Unit(id),
@@ -13981,6 +14004,10 @@ impl ApplicationHandler<NetEvent> for App {
                 let now = Instant::now();
                 game.attack_step(now);
                 game.pending_step(now);
+                if let Some(cell) = game.walk_after_swing.filter(|_| !game.player.swinging(control::now())) {
+                    game.walk_after_swing = None;
+                    game.walk_toward(cell, now);
+                }
                 if follows_pointer(game.walk_held, game.pending.is_some(), game.last_walk_try, now)
                     && let Some(assets) = &self.assets
                     && !game.on_ui(self.cursor, &self.items, assets.message.size)
@@ -14434,6 +14461,21 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
     1.0 - (now.saturating_duration_since(start).as_secs_f32() / length.as_secs_f32().max(f32::EPSILON)).min(1.0)
 }
 
+/// Turning on the spot toward rathena direction `target` (0 north, counting counter-clockwise): the body and the head
+/// (0 straight, 1 right, 2 left) after. Ahead or behind, the body turns. 45° aside, the head turns, or the body when the
+/// head already looks that way. 90° to 135° aside, the body turns one sector short and the head looks the rest.
+fn turn_toward(body: u8, head: u8, target: u8) -> (u8, u8) {
+    match (body + 8 - target) % 8 {
+        1 if head == 1 => (target, 0),
+        1 => (body, 1),
+        2 | 3 => ((target + 1) % 8, 1),
+        7 if head == 2 => (target, 0),
+        7 => (body, 2),
+        5 | 6 => ((target + 7) % 8, 2),
+        _ => (target, 0),
+    }
+}
+
 /// Why an item can't be dropped on the ground now: `Some(None)` quietly, `Some(Some(message))` saying so; `None` when
 /// it can. In order: a wear asked for under 2 s ago, a deal or talk under way, the equipment window, the storage, the
 /// mail window, the ammunition worn.
@@ -14456,6 +14498,24 @@ fn ground_drop_refused(since_wear: Option<Duration>, busy: bool, equipment: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_head_turns_before_the_body() {
+        // Facing north (0): north-east (7) is 45° right: the head looks right, then the body turns.
+        assert_eq!(turn_toward(0, 0, 7), (0, 1));
+        assert_eq!(turn_toward(0, 1, 7), (7, 0));
+        // East (6), 90° right: the body to north-east, the head right; south-east (5), 135°: the body east.
+        assert_eq!(turn_toward(0, 0, 6), (7, 1));
+        assert_eq!(turn_toward(0, 0, 5), (6, 1));
+        // Left: north-west (1) the head; west (2) and south-west (3) one sector short.
+        assert_eq!(turn_toward(0, 0, 1), (0, 2));
+        assert_eq!(turn_toward(0, 2, 1), (1, 0));
+        assert_eq!(turn_toward(0, 0, 2), (1, 2));
+        assert_eq!(turn_toward(0, 0, 3), (2, 2));
+        // Ahead and behind: the body, the head straight.
+        assert_eq!(turn_toward(0, 2, 0), (0, 0));
+        assert_eq!(turn_toward(0, 1, 4), (4, 0));
+    }
 
     #[test]
     fn some_things_open_keep_items_off_the_ground() {
@@ -14517,6 +14577,20 @@ mod tests {
         // The right button held: no key and Ctrl turn (Ctrl isn't asked); Shift tilts; Alt doesn't.
         assert!(turning_cursor(true, false, false) && !turning_cursor(true, true, false) && !turning_cursor(true, false, true));
         assert!(!turning_cursor(false, false, false));
+    }
+
+    #[test]
+    fn picks_warps_in_a_box_around_their_feet() {
+        let camera = |distance: f32| Camera { target: [100.0, 0.0, 100.0], distance, pitch: 45f32.to_radians(), yaw: 0.0, ground: f32::MIN };
+        let size = |distance: f32| {
+            let [left, top, right, bottom] = warp_pick_rect(&camera(distance).view(4.0 / 3.0), [100.0, 0.0, 100.0]).unwrap();
+            [(right - left) * 1024.0, (bottom - top) * 768.0]
+        };
+        // About 166 by 109 screen pixels at the default distance, centred on the feet; smaller farther out.
+        let [width, height] = size(300.0);
+        assert!((width - 166.0).abs() < 8.0 && (height - 109.0).abs() < 6.0, "{width} {height}");
+        let far = size(400.0);
+        assert!(far[0] < width * 0.8 && far[1] < height * 0.8, "{far:?}");
     }
 
     #[test]

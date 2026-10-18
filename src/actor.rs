@@ -1147,11 +1147,34 @@ struct Shot {
     hold: bool,
 }
 
-/// How a one-shot action plays: stretched over a duration, or at its ACT pace times a scale.
-#[derive(Clone, Copy)]
+/// How a flinch plays for d = the hit's target motion / 288 (`delay`: the action's ACT frame delay). Over 1, at the ACT's
+/// pace with the last frame held until d times its length; up to 1, a player's frames last d times their delay and
+/// anyone else's d × 24 ms each; at 0, as the ACT has it.
+fn flinch_pace(d: f32, player: bool, delay: f32) -> Pace {
+    match d {
+        d if d > 1.0 => Pace::Hold(d),
+        d if d > 0.0 && player => Pace::Act(d),
+        d if d > 0.0 => Pace::Act(d / delay),
+        _ => Pace::Act(1.0),
+    }
+}
+
+/// Whether a hit that lands makes its target flinch, by what it plays now: not a player in its own swing, nor a monster
+/// or NPC in one of its special idle actions (5 to 8). A monster's own attack is cut.
+pub fn flinches(kind: u8, playing: usize) -> bool {
+    match kind {
+        0 => playing != combat_actions(kind).0,
+        _ => !(5..=8).contains(&playing),
+    }
+}
+
+/// How a one-shot action plays: stretched over a duration, at its ACT pace times a scale, or at its ACT pace with the
+/// last frame held until its length times a factor.
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Pace {
     Stretch(f32),
     Act(f32),
+    Hold(f32),
 }
 
 /// The client's damage numbers (data\sprite\이팩트\숫자.spr), one image per digit, and its MISS label (msg.spr).
@@ -1674,13 +1697,27 @@ impl Actor {
         self.remove_at = Some(from + Duration::from_micros((f64::from(ms) * 1000.0).round() as u64));
     }
 
-    pub fn play_at_pace(&mut self, action: usize, start: Instant, scale: f32, hold: bool) {
-        self.shot = Some(Shot { action, started: start, pace: Pace::Act(scale.max(0.01)), hold });
+    /// Flinches (action `action`) from a hit with the target motion `motion` (rathena's dMotion); see `flinch_pace`.
+    pub fn flinch(&mut self, action: usize, start: Instant, motion: f32) {
+        let index = action * 8 + usize::from(self.direction % 8);
+        let delay = self.sprites.as_ref().and_then(|sprites| sprites.layers[0].act.delays.get(index).copied()).unwrap_or(4.0).max(1.0);
+        self.shot = Some(Shot { action, started: start, pace: flinch_pace(motion / 288.0, self.kind == 0, delay), hold: false });
     }
 
-    /// Whether a one-shot action (an attack, a skill's pose, a flinch, dying) is playing now.
-    pub fn in_action(&self, now: Instant) -> bool {
-        !matches!(self.animation(now).0, IDLE | WALK | SIT | READY)
+    /// In its own attack swing now.
+    pub fn swinging(&self, now: Instant) -> bool {
+        self.animation(now).0 == combat_actions(self.kind).0
+    }
+
+    /// Stops walking once the step under way is done (a slide goes on).
+    pub fn stop_after_step(&mut self) {
+        if !self.sliding {
+            self.path.truncate(1);
+        }
+    }
+
+    pub fn play_at_pace(&mut self, action: usize, start: Instant, scale: f32, hold: bool) {
+        self.shot = Some(Shot { action, started: start, pace: Pace::Act(scale.max(0.01)), hold });
     }
 
     /// World units walked since the unit appeared, the step under way included.
@@ -1845,6 +1882,12 @@ impl Actor {
                     let length = self.sprites.as_ref().and_then(|sprites| sprites.index_ms(shot.action * 8 + usize::from(self.direction % 8))).unwrap_or(0.0);
                     if elapsed < length * scale || shot.hold {
                         return (shot.action, Timing::Once(elapsed, scale));
+                    }
+                }
+                Pace::Hold(factor) => {
+                    let length = self.sprites.as_ref().and_then(|sprites| sprites.index_ms(shot.action * 8 + usize::from(self.direction % 8))).unwrap_or(0.0);
+                    if elapsed < length * factor {
+                        return (shot.action, Timing::Once(elapsed, 1.0));
                     }
                 }
                 Pace::Stretch(_) => {}
@@ -2258,6 +2301,20 @@ mod tests {
         assert_eq!(path(1, 4028), ("손수레".to_string(), "베이비손수레.act".to_string()));
         assert_eq!(path(5, 4036), ("손수레4".to_string(), "베이비손수레4.act".to_string()));
         assert_eq!(path(6, 4107), same("손수레5베이비"));
+    }
+
+    #[test]
+    fn flinches_by_who_and_for_how_long() {
+        // A Poring's 480: held to 1.67 times the action; a player's 288 or less: frames shortened; 0: as it is.
+        assert_eq!(flinch_pace(480.0 / 288.0, false, 3.0), Pace::Hold(480.0 / 288.0));
+        assert_eq!(flinch_pace(0.5, true, 3.0), Pace::Act(0.5));
+        assert_eq!(flinch_pace(0.5, false, 4.0), Pace::Act(0.125), "d x 24 ms a frame");
+        assert_eq!(flinch_pace(0.0, false, 4.0), Pace::Act(1.0));
+        // A player mid-swing doesn't flinch; a monster mid-attack does, but not in a special idle.
+        assert!(!flinches(0, 5));
+        assert!(flinches(0, WALK));
+        assert!(flinches(5, 2));
+        assert!(!flinches(5, 6));
     }
 
     #[test]
