@@ -108,10 +108,7 @@
     },
     {
       "as": "second",
-      "click": [
-        11,
-        252
-      ]
+      "click_on": {"button": "tab:etc"}
     },
     {
       "wait": 300

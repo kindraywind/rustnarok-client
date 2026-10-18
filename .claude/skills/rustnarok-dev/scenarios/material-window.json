@@ -8,7 +8,7 @@
     {"say": "@itemreset"}, {"wait": 800},
     {"say": "@item 994 10"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"say": "@useskill 2462 1 self"}, {"wait_for": {"event": "MaterialWindow", "ms": 5000}}, {"wait": 300},
-    {"click": [11, 252]}, {"wait": 300}, {"move": [900, 700]},
+    {"click_on": {"button": "tab:etc"}}, {"wait": 300}, {"move": [900, 700]},
     {"expect": {"windows_open": ["Materials", "Inventory"]}},
     {"shot": "materials-open", "crop": [0, 160, 600, 290]},
     {"drag_on": [{"inventory_item": 994}, {"point": [440, 261]}]}, {"wait": 300},

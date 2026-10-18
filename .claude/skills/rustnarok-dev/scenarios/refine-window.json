@@ -10,7 +10,7 @@
     {"say": "@zeny 1000"}, {"wait": 500},
     {"say": "@refineui"}, {"wait_for": {"packet": "0x0aa0", "ms": 5000}}, {"wait": 300},
     {"expect": {"windows_open": ["Refine", "Inventory"]}},
-    {"click": [11, 225]}, {"wait": 300},
+    {"click_on": {"button": "tab:equip"}}, {"wait": 300},
     {"drag_on": [{"inventory_item": 1201}, {"point": [400, 250]}]}, {"wait_for": {"event": "RefineMaterials", "ms": 5000}},
     {"wait": 300}, {"move": [900, 700]},
     {"shot": "refine-listed", "crop": [270, 110, 470, 440]},

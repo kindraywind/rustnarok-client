@@ -10,7 +10,7 @@
     {"say": "@refresh"}, {"settle": 1500},
     {"expect": {"inventory_has": [{"id": 4035, "worn": 0}]}},
     {"key": "Alt+E"}, {"wait": 400},
-    {"click": [11, 252]}, {"wait": 300},
+    {"click_on": {"button": "tab:etc"}}, {"wait": 300},
     {"click_on": {"inventory_item": 4035}, "count": 2}, {"wait_for": {"event": "CardList", "ms": 5000}},
     {"wait": 300}, {"move": [900, 700]},
     {"expect": {"windows_open": ["PickList"]}},

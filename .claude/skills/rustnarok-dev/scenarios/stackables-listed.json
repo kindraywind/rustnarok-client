@@ -9,7 +9,7 @@
     {"say": "@item 1750 50"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"say": "@refresh"}, {"settle": 1500},
     {"key": "Alt+E"}, {"wait": 400},
-    {"click": [11, 252]}, {"wait": 300},
+    {"click_on": {"button": "tab:etc"}}, {"wait": 300},
     {"click_on": {"inventory_item": 4035}}, {"wait": 200},
     {"click_on": {"inventory_item": 1750}}, {"wait": 200},
     {"move": [700, 600]}, {"wait": 200},
