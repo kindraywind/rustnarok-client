@@ -260,6 +260,14 @@ impl App {
         if let Some(id) = game.homunculus_id {
             game.follow_player(id, true, now);
         }
+        // Our pet left standing may say so.
+        if let Some(actor) = game.pet_id.and_then(|id| game.units.get(&id))
+            && game.pet_idle.due(actor.moving(), now)
+            && crate::effects::pick(0, 3) == 0
+            && let Some(hunger) = game.pet.as_ref().map(|pet| pet.hunger)
+        {
+            game.pet_talk(pet::ACT_STAND, hunger);
+        }
 
         // Where the windows were left is kept for next time.
         game.save_places();

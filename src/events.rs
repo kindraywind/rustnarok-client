@@ -450,6 +450,8 @@ impl App {
                     pet: None,
                     pet_window: pet::PetWindow::default(),
                     pet_asked: None,
+                    pet_hunger_before: 0,
+                    pet_idle: pet::Idle::default(),
                     mercenary: None,
                     refusing_party: None,
                     announcements: announce::Bar::default(),
@@ -2734,17 +2736,19 @@ impl App {
                     game.pick = None;
                 }
             }
-            // ponytail: neglect is told when intimacy falls while the pet starves; when the real client tells it isn't known.
             MapEvent::PetState { kind: net::PET_INTIMACY, value, .. } => {
-                if game.pet.as_ref().is_some_and(|pet| pet.hunger == 0 && value < i32::from(pet.intimacy)) {
-                    game.chat_line(self.messages.get(PET_NEGLECTED).cloned().unwrap_or_default(), CHAT_ERROR);
+                let job = game.me.job;
+                if game.pet.as_ref().is_some_and(|pet| pet::neglected(job, value.clamp(0, 1000) as u16, pet.hunger)) {
+                    game.chat_line(self.messages.get(pet::NEGLECTED).cloned().unwrap_or_default(), pet::NEGLECTED_COLOR);
                 }
                 if let Some(pet) = &mut game.pet {
                     pet.intimacy = value as u16;
                 }
             }
+            // The hunger before this update is what a feeding's line is about.
             MapEvent::PetState { kind: net::PET_HUNGER, value, .. } => {
                 if let Some(pet) = &mut game.pet {
+                    game.pet_hunger_before = pet.hunger;
                     pet.hunger = value as u16;
                 }
             }
@@ -2769,9 +2773,9 @@ impl App {
                 {
                     actor.play(action, Instant::now(), duration, false);
                 }
-                if let Some(pet) = game.pet.as_ref().filter(|_| game.pet_id == Some(id)) {
+                if let Some(hunger) = game.pet.as_ref().filter(|_| game.pet_id == Some(id)).map(|pet| pet.hunger) {
                     let act = if value == 4 { pet::ACT_PERFORMED_SPECIAL } else { pet::ACT_PERFORMED + value.clamp(1, 3) as u8 - 1 };
-                    let _ = game.session.pet_act(&net::PetAct::Talk { monster: pet.monster, act, hunger: pet::hunger_band(pet.hunger) });
+                    game.pet_talk(act, hunger);
                 }
             }
             MapEvent::PetState { .. } => {}
@@ -2794,18 +2798,18 @@ impl App {
                 let name = inventory::item_name(&self.items, food, true, 0);
                 let left: u32 = game.inventory.items.iter().filter(|item| item.id == food).map(|item| u32::from(item.amount)).sum();
                 game.chat_line(messages::fill(self.messages.get(PET_FED).map_or("", String::as_str), &[&name, &left]), PET_FED_COLOR);
-                if let Some(pet) = &game.pet {
-                    let _ = game.session.pet_act(&net::PetAct::Talk { monster: pet.monster, act: pet::ACT_FEEDING, hunger: pet::hunger_band(pet.hunger) });
-                }
+                game.pet_talk(pet::ACT_FEEDING, game.pet_hunger_before);
             }
             MapEvent::PetAct { id, act: net::PetAct::Emotion(kind) } => {
                 if let Some(action) = emotion::sprite_action(kind) {
                     game.emotions.insert(Some(id), (action, Instant::now()));
                 }
             }
+            // ponytail: the line goes to the chat where public talk goes.
             MapEvent::PetAct { id, act: net::PetAct::Talk { monster, act, hunger } } => {
                 if let Some(line) = pets.line(monster, act, hunger) {
-                    game.say(Some(id), line, CHAT_WHITE);
+                    game.say(Some(id), line.clone(), CHAT_WHITE);
+                    game.chat_line(line, PET_TALK_COLOR);
                 }
             }
             MapEvent::UnitName { id, name } => {

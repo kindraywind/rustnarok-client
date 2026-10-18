@@ -397,7 +397,8 @@ const PET_NO_FOOD: usize = 591;
 const PET_FED: usize = 2578;
 const PET_FED_COLOR: [u8; 3] = [0x64, 0xFF, 0xFF];
 const PET_NO_FOOD_COLOR: [u8; 3] = [0xF5, 0x1E, 0x1E];
-const PET_NEGLECTED: usize = 1188;
+/// A pet's line in the chat.
+const PET_TALK_COLOR: [u8; 3] = [0xFA, 0xFA, 0xFA];
 const EQUIPMENT_SHOWN: usize = 1359;
 const EQUIPMENT_HIDDEN: usize = 1358;
 /// Vending: "%s %d sold.", "Items are sold out.", and "There are items priced 0..." (a shop refused for it).
@@ -1346,6 +1347,9 @@ struct Game {
     pet: Option<net::Pet>,
     pet_window: pet::PetWindow,
     pet_asked: Option<PetAsked>,
+    /// The pet's hunger before its last hunger update, and how long it has stood still.
+    pet_hunger_before: u16,
+    pet_idle: pet::Idle,
     /// The player's mercenary, its skills, its window and skill list, how it's steered, and whether dismissing it is
     /// being asked.
     mercenary: Option<net::Mercenary>,
