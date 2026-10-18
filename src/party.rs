@@ -108,9 +108,10 @@ pub enum Button {
     Invite,
     Leave,
     Setup,
-    /// Friends: whisper the one picked, drop them.
+    /// Friends: whisper the one picked, drop them, or open the 1:1 setup.
     Whisper,
     Delete,
+    FriendSetup,
 }
 
 impl Button {
@@ -122,6 +123,7 @@ impl Button {
             Self::Setup => "mesbtn_04",
             Self::Whisper => "mesbtn_02",
             Self::Delete => "mesbtn_05",
+            Self::FriendSetup => "mesbtn_04",
         }
     }
 
@@ -134,6 +136,8 @@ impl Button {
             Self::Setup => 101,
             Self::Whisper => 99,
             Self::Delete => 351,
+            // ponytail: the same tooltip as the party setup button; the client's own words for this one aren't pinned down.
+            Self::FriendSetup => 101,
         }
     }
 }
@@ -168,7 +172,7 @@ impl Assets {
         Self {
             bar: image(format!("{basic}mesbtn_mid.bmp")),
             footer: image(format!("{basic}btnbar_mid.bmp")),
-            buttons: [Button::Create, Button::Invite, Button::Leave, Button::Setup, Button::Whisper, Button::Delete]
+            buttons: [Button::Create, Button::Invite, Button::Leave, Button::Setup, Button::Whisper, Button::Delete, Button::FriendSetup]
                 .into_iter()
                 .map(|button| (button, ["", "_a", "_b"].map(|look| image(format!("{basic}{}{look}.bmp", button.image())))))
                 .collect(),
@@ -356,7 +360,7 @@ impl PartyWindow {
     /// leaving and setting it up within one.
     fn buttons(&self, party: Option<&Party>, me: u32) -> Vec<Button> {
         if self.friends {
-            return vec![Button::Whisper, Button::Delete];
+            return vec![Button::Whisper, Button::Delete, Button::FriendSetup];
         }
         match party {
             None => vec![Button::Create],
@@ -554,7 +558,7 @@ mod tests {
         assert_eq!(window.buttons(Some(&party), 2), [Button::Setup, Button::Leave]);
         assert_eq!(window.buttons(None, 2), [Button::Create]);
         window.friends = true;
-        assert_eq!(window.buttons(None, 2), [Button::Whisper, Button::Delete]);
+        assert_eq!(window.buttons(None, 2), [Button::Whisper, Button::Delete, Button::FriendSetup]);
     }
 
     #[test]

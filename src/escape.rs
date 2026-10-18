@@ -113,6 +113,14 @@ pub enum WindowId {
     AdoptAsked,
     /// A queue question: applying, leaving, or the battle lobby.
     QueueAsked,
+    /// A 1:1 whisper window. Several can be open; Esc closes the front one.
+    Whisper,
+    /// The two checkboxes that open 1:1 windows.
+    FriendSetup,
+    /// /ex: the names whose whispers are blocked.
+    BlockList,
+    /// The away-message box.
+    AwayMessage,
 }
 
 impl WindowId {
@@ -196,6 +204,10 @@ impl WindowId {
             Self::BattleQueue => "BattleQueue",
             Self::AdoptAsked => "AdoptAsked",
             Self::QueueAsked => "QueueAsked",
+            Self::Whisper => "Whisper",
+            Self::FriendSetup => "FriendSetup",
+            Self::BlockList => "BlockList",
+            Self::AwayMessage => "AwayMessage",
         }
     }
 }
