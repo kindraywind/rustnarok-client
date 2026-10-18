@@ -1,6 +1,6 @@
 //! Links in chat and NPC text. The three item forms the server sends (`<ITEM>name<INFO>id</INFO></ITEM>`,
 //! `<ITEMLINK>…</ITEMLINK>` and `<ITEML>…</ITEML>`, see rathena's `create_item_link`) and navigation links
-//! (`<NAVI>name<INFO>map,x,y,…</INFO></NAVI>`) become marked runs in the text the windows already draw: the link's
+//! (`<NAVI>name<INFO>map,x,y,…</INFO></NAVI>`), web links (`<URL>`) and `<QUEST>`/`<TIPBOX>` become marked runs in the text the windows already draw: the link's
 //! words between markers that carry its target, so a line keeps its links through wrapping and the windows can
 //! underline them and take clicks on them.
 
@@ -12,29 +12,44 @@ const WORDS: char = '\u{E001}';
 const END: char = '\u{E002}';
 /// Wrapped text: per line, its pieces' colour, text and the link each is part of.
 pub type LinkedLines = Vec<Vec<([u8; 3], String, Option<Target>)>>;
-/// The colours item links and navigation links are drawn in.
+/// The colours item links and navigation links are drawn in, in the chat.
 pub const COLOR: [u8; 3] = [0x00, 0x70, 0xC0];
 pub const NAVI_COLOR: [u8; 3] = [0xC0, 0x00, 0x00];
+/// In NPC text: web links, and every other link.
+pub const URL_COLOR: [u8; 3] = [0x00, 0xA3, 0xE6];
+pub const NPC_COLOR: [u8; 3] = [0x4A, 0x93, 0xF4];
 
-/// What a link opens: an item's information, or a navigation to a place (x and y 0: the map itself).
+/// What a link opens: an item's information, a navigation to a place (x and y 0: the map itself), a web page (the
+/// address as the script gave it), or nothing yet (`<QUEST>`, `<TIPBOX>`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
     Item(ItemLink),
     Navi { map: String, cell: [u16; 2] },
+    Url(String),
+    // ponytail: a quest or tip link does nothing when clicked until those windows exist.
+    Tip,
 }
 
 impl Target {
+    /// In the chat.
     pub fn color(&self) -> [u8; 3] {
         match self {
             Target::Item(_) => COLOR,
             Target::Navi { .. } => NAVI_COLOR,
+            Target::Url(_) => URL_COLOR,
+            Target::Tip => NPC_COLOR,
         }
+    }
+
+    /// In NPC text.
+    pub fn npc_color(&self) -> [u8; 3] {
+        if matches!(self, Target::Url(_)) { URL_COLOR } else { NPC_COLOR }
     }
 
     pub fn item(&self) -> Option<&ItemLink> {
         match self {
             Target::Item(item) => Some(item),
-            Target::Navi { .. } => None,
+            _ => None,
         }
     }
 
@@ -42,6 +57,8 @@ impl Target {
         match self {
             Target::Item(item) => format!("i {}", item.encode()),
             Target::Navi { map, cell } => format!("n {} {} {map}", cell[0], cell[1]),
+            Target::Url(address) => format!("u {address}"),
+            Target::Tip => "t -".into(),
         }
     }
 
@@ -53,6 +70,8 @@ impl Target {
                 let cell = [fields.next()?.parse().ok()?, fields.next()?.parse().ok()?];
                 Some(Target::Navi { map: fields.next()?.to_owned(), cell })
             }
+            ("u", address) => Some(Target::Url(address.to_owned())),
+            ("t", _) => Some(Target::Tip),
             _ => None,
         }
     }
@@ -143,6 +162,14 @@ pub fn decode_iteml(body: &str) -> Option<ItemLink> {
     Some(link)
 }
 
+/// The page a web link opens: its address up to the first comma (rathena's scripts add ",1024,768"), when it is
+/// http or https.
+// ponytail: the comma cut and the two schemes, until the game's rules are known.
+pub fn page(address: &str) -> Option<&str> {
+    let page = address.split(',').next().unwrap_or_default().trim();
+    (page.starts_with("http://") || page.starts_with("https://")).then_some(page)
+}
+
 /// `words` as a link to `target`.
 pub fn marked(words: &str, target: &Target) -> String {
     format!("{START}{}{WORDS}{words}{END}", target.encode())
@@ -159,7 +186,7 @@ pub fn mark(text: &str, name_of: &dyn Fn(&ItemLink) -> String) -> String {
     let mut shown = String::new();
     let mut rest = text;
     'scan: while let Some(open) = rest.find('<') {
-        for tag in ["ITEMLINK", "ITEML", "ITEM", "NAVI"] {
+        for tag in ["ITEMLINK", "ITEML", "ITEM", "NAVI", "URL", "QUEST", "TIPBOX"] {
             let start = format!("<{tag}>");
             let end = format!("</{tag}>");
             if let Some(inner) = rest[open..].strip_prefix(start.as_str())
@@ -176,6 +203,10 @@ pub fn mark(text: &str, name_of: &dyn Fn(&ItemLink) -> String) -> String {
                         let cell = [fields.next()?.trim().parse().ok()?, fields.next()?.trim().parse().ok()?];
                         Some((words.to_owned(), Target::Navi { map, cell }))
                     }),
+                    // words<INFO>address</INFO>
+                    "URL" => info().map(|(words, address)| (words.to_owned(), Target::Url(address.to_owned()))),
+                    // words<INFO>…</INFO>, or the words alone
+                    "QUEST" | "TIPBOX" => Some((body.split("<INFO>").next().unwrap_or_default().to_owned(), Target::Tip)),
                     // name<INFO>id</INFO>
                     _ => info().and_then(|(words, id)| Some((words.to_owned(), Target::Item(ItemLink { id: id.parse().ok()?, ..ItemLink::default() })))),
                 };
@@ -270,6 +301,26 @@ mod tests {
         // A plain item with nothing after its id, and text that only looks like a tag.
         assert_eq!(decode_iteml("0000000jn").map(|item| item.id), Some(1201));
         assert_eq!(split(&mark("a < b <ITEM>broken</ITEM>", &named)).0, "a < b <ITEM>broken</ITEM>");
+    }
+
+    #[test]
+    fn reads_web_quest_and_tip_links() {
+        let (shown, runs) = split(&mark(
+            "see <URL>our page<INFO>https://example.com/a,1024,768</INFO></URL> or <TIPBOX>[List]<INFO>9163</INFO></TIPBOX> and <QUEST>[Hunt]</QUEST>",
+            &named,
+        ));
+        assert_eq!(shown, "see our page or [List] and [Hunt]");
+        let targets: Vec<&Target> = runs.iter().map(|(_, target)| target).collect();
+        assert_eq!(targets, [&Target::Url("https://example.com/a,1024,768".into()), &Target::Tip, &Target::Tip]);
+        // The address up to its first comma, web addresses only.
+        assert_eq!(page("https://example.com/a,1024,768"), Some("https://example.com/a"));
+        assert_eq!(page("http://example.com"), Some("http://example.com"));
+        assert_eq!(page("file:///etc/passwd"), None);
+        assert_eq!(page("javascript:alert(1)"), None);
+        // NPC text draws web links in their own blue and every other link in another; the chat keeps its colours.
+        assert_eq!([targets[0].npc_color(), targets[1].npc_color()], [URL_COLOR, NPC_COLOR]);
+        let navi = Target::Navi { map: "prontera".into(), cell: [1, 2] };
+        assert_eq!((navi.npc_color(), navi.color()), (NPC_COLOR, NAVI_COLOR));
     }
 
     #[test]

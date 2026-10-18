@@ -1,5 +1,6 @@
-// Item links (issue #279): an NPC whose text links an Apple. Loaded and unloaded by scenarios/item-links.json.
+// Item links (issue #279): an NPC whose text links an Apple, a web page and a tip (issue #450). Loaded and unloaded by scenarios/item-links.json.
 prontera,158,183,4	script	Link Clerk	4_M_01,{
 	mes "Try an <ITEM>[Apple]<INFO>512</INFO></ITEM> today.";
+	mes "Read <URL>the news<INFO>https://example.com/news,1024,768</INFO></URL> or the <TIPBOX>[List]<INFO>9163</INFO></TIPBOX>.";
 	close;
 }
