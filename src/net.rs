@@ -703,6 +703,7 @@ const ZC_BROADCAST: u16 = 0x009A;
 const ZC_MAPPROPERTY_R2: u16 = 0x099B;
 const CZ_BLOCKING_PLAY_CANCEL: u16 = 0x0447;
 const ZC_NOTIFY_MAPPROPERTY2: u16 = 0x01D6;
+const ZC_DRESSROOM_OPEN: u16 = 0x0A02;
 const ZC_NOTIFY_RANKING: u16 = 0x019A;
 const CZ_REQ_PVPPOINT: u16 = 0x020F;
 const ZC_ACK_PVPPOINT: u16 = 0x0210;
@@ -1690,6 +1691,8 @@ pub enum MapEvent {
         property: u16,
         flags: u32,
     },
+    /// A script opens the dress room (`opendressroom`).
+    DressRoom,
     /// The map's type (rathena's `e_map_type`; it only sends 19, a battleground).
     MapType(u16),
     /// A player's PvP rank among the players on the map (rank 0 or 0 players: no counter).
@@ -4673,6 +4676,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // "blue" (and "ssss" for the War of Emperium) at the start are color hints, not words.
         ZC_MAPPROPERTY_R2 => MapEvent::MapProperty { property: u16_at(2), flags: u32_at(4) },
         ZC_NOTIFY_MAPPROPERTY2 => MapEvent::MapType(u16_at(2)),
+        // The view at 2 rathena always sends 0 and calls ignored.
+        ZC_DRESSROOM_OPEN => MapEvent::DressRoom,
         ZC_NOTIFY_RANKING => MapEvent::PvpRank { account: u32_at(2), rank: u32_at(6), players: u32_at(10) },
         ZC_ACK_PVPPOINT => MapEvent::PvpInfo { wins: u32_at(10), losses: u32_at(14), points: u32_at(18) as i32 },
         ZC_BROADCAST => {
@@ -6007,6 +6012,8 @@ mod tests {
         assert_eq!(packet_length(ZC_MAPPROPERTY_R2), Some(8));
         assert_eq!(encode_blocking_play_cancel(), [0x47, 0x04]);
         assert!(matches!(decode_map_packet(&[0xD6, 0x01, 19, 0]), Some(MapEvent::MapType(19))));
+        assert!(matches!(decode_map_packet(&[0x02, 0x0A, 0, 0]), Some(MapEvent::DressRoom)));
+        assert_eq!(packet_length(ZC_DRESSROOM_OPEN), Some(4));
         // clif_pvpset: ours and another player's.
         let rank = |account: u32, rank: u32, players: u32| {
             [&ZC_NOTIFY_RANKING.to_le_bytes()[..], &account.to_le_bytes(), &rank.to_le_bytes(), &players.to_le_bytes()].concat()
