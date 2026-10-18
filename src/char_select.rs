@@ -2,7 +2,7 @@
 //! character's details, the deletion buttons and the Poring that starts the game.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::messages;
@@ -22,46 +22,48 @@ const COLUMNS: usize = 5;
 pub const PER_PAGE: usize = 15;
 const GRID: [f32; 2] = [10.0, 21.0];
 const CELL: [f32; 2] = [157.0, 195.0];
-/// The 161x197 card bitmaps hang 2px left of and 1px above their 157x195 cell.
-const BIG_CARD: [f32; 2] = [-2.0, -1.0];
 /// The visible card inside a cell, what a click hits.
 const CARD: ([f32; 2], [f32; 2]) = ([5.0, 5.0], [147.0, 183.0]);
-/// Where a character stands: the middle of the shadow in the selected card (78,157, less the sprite's 2D lift).
-const FEET: [f32; 2] = [78.0, 140.0];
-// ponytail: job icon and countdown places are estimates; calibrate against the real client.
-const JOB_ICON: [f32; 2] = [120.0, 15.0];
-const COUNTDOWN: [f32; 2] = [55.0, 45.0];
+/// Where a character stands in its card, and its job icon.
+const FEET: [f32; 2] = [80.0, 137.0];
+const JOB_ICON: [f32; 2] = [118.0, 14.0];
+/// A deletion date: the day over the time, centred on x 79 of the card, red while waiting and blue once it has passed.
+const DATE_CENTER: f32 = 79.0;
+const DATE_LINES: [f32; 2] = [40.0, 52.0];
 /// The strip at the bottom of a card that holds the name.
 const NAME_STRIP: [f32; 2] = [159.0, 187.0];
 const NAME_COLOR: [u8; 3] = [0x15, 0x15, 0x4A];
 const COUNTING: [u8; 3] = [0xFF, 0x00, 0x00];
 const COUNTED: [u8; 3] = [0x00, 0x00, 0xFF];
 const INFO: [f32; 2] = [809.0, 26.0];
-/// The stats table of img_info.bmp: values start here, a row every 17px, 104px wide.
-const VALUES: [f32; 2] = [60.0, 87.0];
+/// The selected character's values, window-local: the map from (868, 116), then job, base level, exp, HP, SP and the
+/// six stats a row every 17 px, each in a 107 × 15 box.
+const VALUES: [f32; 2] = [868.0, 116.0];
 const VALUE_ROW: f32 = 17.0;
-const VALUE_HEIGHT: f32 = 16.0;
-const VALUE_WIDTH: f32 = 104.0;
+const VALUE_BOX: [f32; 2] = [107.0, 15.0];
 const BUTTONS: [[f32; 2]; 2] = [[21.0, 296.0], [21.0, 325.0]];
-const START: [f32; 2] = [4.0, 381.0];
-// ponytail: the label's size and color are estimated from the blurred picture.
-/// "게임시작" across the Poring's belly.
-const START_LABEL: [f32; 2] = [82.0, 65.0];
+/// Game Start in the info panel, (816, 407) window-local.
+const START: [f32; 2] = [7.0, 381.0];
+// ponytail: the label's size is estimated from the blurred picture.
+/// "게임시작" on the Poring, its top 57 down the button: white, or #DC747F on the greyed button.
+const START_LABEL_TOP: f32 = 57.0;
 const START_LABEL_SIZE: f32 = 16.0;
-const START_LABEL_COLOR: [u8; 3] = [0xA0, 0x40, 0x60];
-/// "Character List" and the page between the arrows, centered on these heights.
-const LIST_TITLE: f32 = 519.0;
-const PAGE_LINE: f32 = 546.0;
-const TITLE_COLOR: [u8; 3] = [0x3C, 0x4B, 0x82];
-const PAGE_COLOR: [u8; 3] = [0x8E, 0x9A, 0xC0];
+const START_LABEL_COLORS: [[u8; 3]; 2] = [[0xDC, 0x74, 0x7F], [255; 3]];
+/// "Character List" and the page line, window-local, centred on x 896.
+const LIST_CENTER: f32 = 896.0;
+const LIST_TITLE_TOP: f32 = 538.0;
+const PAGE_LINE_TOP: f32 = 564.0;
+const TITLE_COLOR: [u8; 3] = [0x57, 0x66, 0x91];
 const ARROWS: [[f32; 2]; 2] = [[21.0, 532.0], [130.0, 532.0]];
-// ponytail: the close button sits 5px in from the top right.
-const CLOSE: [f32; 2] = [975.0, 5.0];
-/// The selected card's border cycles through its 8 bitmaps this fast.
-const SELECT_FRAME: Duration = Duration::from_millis(250);
-const DEATH: usize = 8;
+/// The close X, 52 in from the right.
+const CLOSE: [f32; 2] = [FRAME[0] - 52.0, 5.0];
+/// The selected card's border cycles through its 8 bitmaps, each for 5 frames of a 60 frame a second screen.
+// ponytail: a fixed 83 ms, whatever the frame rate.
+const SELECT_FRAME: Duration = Duration::from_millis(83);
 
-const COUNTDOWN_MESSAGE: usize = 3349;
+/// "%d월 %d일" and "%d시 %d분 %d초": a deletion's day and time.
+const DATE_MESSAGE: usize = 3104;
+const TIME_MESSAGE: usize = 3349;
 const START_MESSAGE: usize = 3341;
 const LIST_MESSAGE: usize = 3343;
 const MOVE_CHOICE: usize = 2164;
@@ -136,7 +138,8 @@ pub struct Assets {
     start: [Texture; 4],
     arrows: [[Texture; 4]; 2],
     close: [Texture; 3],
-    start_label: Texture,
+    /// Game Start's label, greyed and lit.
+    start_label: [Texture; 2],
 }
 
 impl Assets {
@@ -158,7 +161,7 @@ impl Assets {
             start: lit("bt_gamestart"),
             arrows: [lit("bt_left"), lit("bt_right")],
             close: states("bt_close2", ["normal", "over", "press"]),
-            start_label: gpu.texture(&font.render_sized(label, START_LABEL_COLOR, START_LABEL_SIZE), false),
+            start_label: START_LABEL_COLORS.map(|color| gpu.texture(&font.render_sized(label, color, START_LABEL_SIZE), false)),
         }
     }
 }
@@ -172,14 +175,79 @@ enum Deletion {
     Ready,
 }
 
+/// Every character stands still facing front, frame 0; one with a deletion date sits.
+fn pose_of(deletion: Deletion) -> usize {
+    if deletion == Deletion::None { actor::IDLE } else { actor::SIT }
+}
+
+/// The selected card's border bitmap `elapsed` into the selection.
+fn border_frame(elapsed: Duration, frames: usize) -> usize {
+    (elapsed.as_millis() / SELECT_FRAME.as_millis()) as usize % frames.max(1)
+}
+
+/// Game Start's label: lit while the selected character can start.
+fn start_label(startable: bool) -> usize {
+    usize::from(startable)
+}
+
+/// The time now, in Unix seconds.
+fn unix_now() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |time| time.as_secs() as i64)
+}
+
+/// How far east of UTC local time is, in seconds.
+// ponytail: std has no time zones; this asks `date +%z` once, and takes UTC where that isn't there.
+fn local_offset() -> i64 {
+    static OFFSET: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    *OFFSET.get_or_init(|| {
+        let out = std::process::Command::new("date").arg("+%z").output().ok().and_then(|out| String::from_utf8(out.stdout).ok()).unwrap_or_default();
+        parse_offset(out.trim()).unwrap_or(0)
+    })
+}
+
+/// "+1100" or "-0330" as seconds.
+fn parse_offset(text: &str) -> Option<i64> {
+    let (sign, digits) = text.split_at_checked(1)?;
+    let sign = match sign {
+        "+" => 1,
+        "-" => -1,
+        _ => return None,
+    };
+    let (hours, minutes) = (digits.get(..2)?.parse::<i64>().ok()?, digits.get(2..4)?.parse::<i64>().ok()?);
+    Some(sign * (hours * 3600 + minutes * 60))
+}
+
+/// A Unix time `offset` seconds east of UTC as (month, day, hour, minute, second).
+fn local_date(unix: i64, offset: i64) -> [i64; 5] {
+    let seconds = unix + offset;
+    let (days, rest) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
+    // Days since 1970-01-01 to a civil date (Howard Hinnant's days-to-civil).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z - era * 146_097;
+    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
+    [month, day, rest / 3600, rest / 60 % 60, rest % 60]
+}
+
+/// A deletion's two lines: the day, and the time, at `unix` local time.
+fn date_lines(messages: &[String], unix: i64, offset: i64) -> [String; 2] {
+    let message = |id: usize| messages.get(id).map_or("", String::as_str);
+    let [month, day, hour, minute, second] = local_date(unix, offset);
+    [messages::fill(message(DATE_MESSAGE), &[&month, &day]), messages::fill(message(TIME_MESSAGE), &[&hour, &minute, &second])]
+}
+
 pub struct Select {
     pub characters: Vec<Character>,
     figures: Vec<Option<SpriteSet>>,
     /// How many slots the account may use; the rest show locked.
     pub slots: usize,
     pub selected: usize,
-    /// When each reserved deletion (by character ID) can be completed.
-    deletable_at: HashMap<u32, Instant>,
+    /// When each reserved deletion (by character ID) can be completed, in Unix seconds.
+    deletable_at: HashMap<u32, i64>,
     clicks: Clicks,
     /// When the selection last changed, for its animations.
     since: Instant,
@@ -198,7 +266,7 @@ impl Select {
     pub fn new(characters: Vec<Character>, figures: Vec<Option<SpriteSet>>, slots: usize) -> Self {
         let now = Instant::now();
         let deletable_at =
-            characters.iter().filter(|character| character.deletion != 0).map(|character| (character.id, after(now, character.deletion))).collect();
+            characters.iter().filter(|character| character.deletion != 0).map(|character| (character.id, unix_now() + i64::from(character.deletion))).collect();
         let selected = characters.iter().map(|character| usize::from(character.slot)).min().unwrap_or(0);
         Self {
             characters,
@@ -248,12 +316,10 @@ impl Select {
     }
 
     fn deletion(&self, id: u32) -> Deletion {
-        match self.deletable_at.get(&id) {
+        match self.deletable_at.get(&id).map(|at| at - unix_now()) {
             None => Deletion::None,
-            Some(at) => match at.checked_duration_since(Instant::now()) {
-                Some(left) if left.as_secs() > 0 => Deletion::Waiting(left.as_secs()),
-                _ => Deletion::Ready,
-            },
+            Some(left) if left > 0 => Deletion::Waiting(left as u64),
+            Some(_) => Deletion::Ready,
         }
     }
 
@@ -268,7 +334,7 @@ impl Select {
     /// A reservation the server confirmed (`seconds` until it can be completed), or one canceled (None).
     pub fn set_deletion(&mut self, id: u32, seconds: Option<i32>) {
         match seconds {
-            Some(seconds) => self.deletable_at.insert(id, after(Instant::now(), seconds)),
+            Some(seconds) => self.deletable_at.insert(id, unix_now() + i64::from(seconds)),
             None => self.deletable_at.remove(&id),
         };
         self.since = Instant::now();
@@ -407,23 +473,14 @@ impl Select {
     /// Decodes the frames the page's characters show now; `draw` places them.
     pub fn pose(&mut self, gpu: &Gpu) -> Vec<(usize, Vec<Placed>)> {
         let page = self.page();
-        let elapsed = self.since.elapsed().as_secs_f32() * 1000.0;
-        let poses: Vec<(usize, usize, Timing)> = self
+        let poses: Vec<(usize, usize)> = self
             .characters
             .iter()
             .enumerate()
             .filter(|(_, character)| usize::from(character.slot) / PER_PAGE == page)
-            .map(|(index, character)| {
-                let (action, timing) = match self.deletion(character.id) {
-                    Deletion::Waiting(_) => (actor::SIT, Timing::Loop(0.0)),
-                    Deletion::Ready => (DEATH, Timing::Span(1.0)),
-                    Deletion::None if usize::from(character.slot) == self.selected => (actor::READY, Timing::Loop(elapsed)),
-                    Deletion::None => (actor::IDLE, Timing::Loop(0.0)),
-                };
-                (index, action, timing)
-            })
+            .map(|(index, character)| (index, pose_of(self.deletion(character.id))))
             .collect();
-        poses.into_iter().filter_map(|(index, action, timing)| Some((index, self.figures[index].as_mut()?.flat_frame(gpu, action, 0, 0, timing)))).collect()
+        poses.into_iter().filter_map(|(index, action)| Some((index, self.figures[index].as_mut()?.flat_frame(gpu, action, 0, 0, Timing::Loop(0.0))))).collect()
     }
 
     /// The job icons the page shows, to load before drawing.
@@ -453,7 +510,7 @@ impl Select {
 
         // The cards of this page.
         let first = self.page() * PER_PAGE;
-        let frame = (self.since.elapsed().as_millis() / SELECT_FRAME.as_millis()) as usize % assets.selected.len();
+        let frame = border_frame(self.since.elapsed(), assets.selected.len());
         for slot in first..first + PER_PAGE {
             let cell = Self::cell(slot);
             let hovered = hit == Some(Hit::Card(slot));
@@ -467,8 +524,7 @@ impl Select {
                 (true, None, true) => &assets.empty_selected,
                 (true, None, false) => &assets.empty[look(hovered)],
             };
-            let corner = if image.size[0] > CELL[0] { offset(cell, BIG_CARD) } else { cell };
-            layer.sprites.push((image, corner, image.size));
+            layer.sprites.push((image, cell, image.size));
         }
         for (index, placements) in poses {
             let character = &self.characters[*index];
@@ -487,13 +543,16 @@ impl Select {
             for nudge in [0.0, 1.0] {
                 layer.texts.push((character.name.clone(), offset(cell, [(x + nudge).floor(), name_top.floor()]), NAME_COLOR));
             }
-            match self.deletion(character.id) {
-                Deletion::None => {}
-                Deletion::Waiting(left) => {
-                    let text = messages::fill(message(COUNTDOWN_MESSAGE), &[&(left / 3600), &(left / 60 % 60), &(left % 60)]);
-                    layer.texts.push((text, offset(cell, COUNTDOWN), COUNTING));
-                }
-                Deletion::Ready => layer.texts.push((messages::fill(message(COUNTDOWN_MESSAGE), &[&0, &0, &0]), offset(cell, COUNTDOWN), COUNTED)),
+            // The moment deletion opens, in local time: red while waiting, blue once it has passed.
+            let color = match self.deletion(character.id) {
+                Deletion::None => continue,
+                Deletion::Waiting(_) => COUNTING,
+                Deletion::Ready => COUNTED,
+            };
+            let at = self.deletable_at.get(&character.id).copied().unwrap_or_default();
+            for (line, top) in date_lines(messages, at, local_offset()).into_iter().zip(DATE_LINES) {
+                let left = (DATE_CENTER - font.width(&line) / 2.0).floor();
+                layer.texts.push((line, offset(cell, [left, top]), color));
             }
         }
 
@@ -513,8 +572,8 @@ impl Select {
             .into_iter()
             .chain(character.stats.iter().map(u8::to_string));
             for (row, value) in values.enumerate() {
-                let top = VALUES[1] + row as f32 * VALUE_ROW + ((VALUE_HEIGHT - font.line_height()) / 2.0).floor();
-                layer.texts.push((window::fit(font, &value, VALUE_WIDTH), offset(info, [VALUES[0], top]), [0, 0, 0]));
+                let top = VALUES[1] + row as f32 * VALUE_ROW + ((VALUE_BOX[1] - font.line_height()) / 2.0).floor();
+                layer.texts.push((window::fit(font, &value, VALUE_BOX[0]), Self::at([VALUES[0], top]), [0, 0, 0]));
             }
         }
         for (button, place) in self.buttons().into_iter().zip(BUTTONS) {
@@ -526,25 +585,18 @@ impl Select {
             layer.texts.push((label.to_owned(), text, [0, 0, 0]));
         }
         let start = if self.startable() { 1 + look(hit == Some(Hit::Start)) } else { 0 };
-        layer.sprites.push((&assets.start[start], offset(info, START), assets.start[start].size));
-        let label = &assets.start_label;
-        let label_place = [START[0] + START_LABEL[0] - (label.size[0] / 2.0).floor(), START[1] + START_LABEL[1] - (label.size[1] / 2.0).floor()];
+        let button = &assets.start[start];
+        layer.sprites.push((button, offset(info, START), button.size));
+        let label = &assets.start_label[start_label(self.startable())];
+        let label_place = [START[0] + ((button.size[0] - label.size[0]) / 2.0).floor(), START[1] + START_LABEL_TOP];
         layer.sprites.push((label, offset(info, label_place), label.size));
 
         // The page bar; picking where to move, the moves left instead of the title.
         let moves_left = self.moving.map(|from| messages::fill(message(MOVES_LEFT_MESSAGE), &[&self.moves(from)]));
         let title = moves_left.as_deref().unwrap_or(message(LIST_MESSAGE));
-        let center = assets.info.size[0] / 2.0;
-        layer.texts.push((
-            title.to_owned(),
-            offset(info, [(center - font.width(title) / 2.0).floor(), (LIST_TITLE - font.line_height() / 2.0).floor()]),
-            TITLE_COLOR,
-        ));
-        let (current, rest) = ((self.page() + 1).to_string(), format!(" / {}", self.pages()));
-        let left = (center - font.width(&format!("{current}{rest}")) / 2.0).floor();
-        let top = (PAGE_LINE - font.line_height() / 2.0).floor();
-        layer.texts.push((current.clone(), offset(info, [left, top]), [255; 3]));
-        layer.texts.push((rest, offset(info, [left + font.width(&current), top]), PAGE_COLOR));
+        layer.texts.push((title.to_owned(), Self::at([(LIST_CENTER - font.width(title) / 2.0).floor(), LIST_TITLE_TOP]), TITLE_COLOR));
+        let page_line = format!("{} / {}", self.page() + 1, self.pages());
+        layer.texts.push((page_line.clone(), Self::at([(LIST_CENTER - font.width(&page_line) / 2.0).floor(), PAGE_LINE_TOP]), [255; 3]));
         for (arrow, place) in ARROWS.into_iter().enumerate() {
             let step = if arrow == 0 { -1 } else { 1 };
             let page = self.page() as isize + step;
@@ -579,12 +631,6 @@ fn job_icon(job: u16) -> String {
     format!("{UI}renewalparty\\icon_jobs_{job}.bmp")
 }
 
-/// `seconds` from `now` (before it when negative).
-fn after(now: Instant, seconds: i32) -> Instant {
-    let span = Duration::from_secs(u64::from(seconds.unsigned_abs()));
-    if seconds >= 0 { now + span } else { now.checked_sub(span).unwrap_or(now) }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,6 +645,32 @@ mod tests {
         assert_eq!(select.deletion(7), Deletion::Ready);
         select.set_deletion(7, None);
         assert_eq!(select.deletion(7), Deletion::None);
+    }
+
+    #[test]
+    fn stands_everyone_still_and_seats_deletions() {
+        // Selected or not: standing; a deletion waiting or past: sitting.
+        assert_eq!([Deletion::None, Deletion::Waiting(60), Deletion::Ready].map(pose_of), [actor::IDLE, actor::SIT, actor::SIT]);
+        // The border: a bitmap every 83 ms, round the eight.
+        assert_eq!([0, 82, 83, 166, 8 * 83].map(|ms| border_frame(Duration::from_millis(ms), 8)), [0, 0, 1, 2, 0]);
+        assert_eq!((START_LABEL_COLORS[start_label(false)], START_LABEL_COLORS[start_label(true)]), ([0xDC, 0x74, 0x7F], [255; 3]));
+        // Places, window-local: Game Start at (816, 407), the close X 52 in from the right.
+        assert_eq!((offset(INFO, START), CLOSE), ([816.0, 407.0], [945.0, 5.0]));
+    }
+
+    #[test]
+    fn writes_the_deletion_date_in_local_time() {
+        assert_eq!([parse_offset("+1100"), parse_offset("-0330"), parse_offset("x")], [Some(39_600), Some(-12_600), None]);
+        // 2026-10-19 08:30:05 UTC is 19:30:05 at +11:00, and the next day's 03:30:05 at +19:00.
+        let unix = 1_792_398_605;
+        assert_eq!(local_date(unix, 0), [10, 19, 8, 30, 5]);
+        assert_eq!(local_date(unix, 39_600), [10, 19, 19, 30, 5]);
+        assert_eq!(local_date(unix, 19 * 3600), [10, 20, 3, 30, 5]);
+        assert_eq!(local_date(951_782_400, 0)[..2], [2, 29], "a leap day");
+        let mut messages = vec![String::new(); TIME_MESSAGE + 1];
+        messages[DATE_MESSAGE] = "%d/%d".into();
+        messages[TIME_MESSAGE] = "%d:%d:%d".into();
+        assert_eq!(date_lines(&messages, unix, 39_600), ["10/19".to_owned(), "19:30:5".to_owned()]);
     }
 
     #[test]
