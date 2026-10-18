@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::ItemInfo;
-use rustnarok_client::net::{ITEM_ARMOR, ITEM_PET_ARMOR, ITEM_PET_EGG, ITEM_WEAPON, MapSession, MarketKind};
+use rustnarok_client::net::{BuyingItem, ITEM_ARMOR, ITEM_PET_ARMOR, ITEM_PET_EGG, ITEM_WEAPON, InventoryItem, MapSession, MarketKind};
 use rustnarok_client::text::Font;
 
 use crate::inventory;
@@ -32,6 +32,10 @@ const TOTAL_MESSAGE: usize = 3699;
 const COSTS_MESSAGE: usize = 3553;
 const MONEY_MESSAGE: usize = 3552;
 const EXCHANGE_TITLE: usize = 3689;
+const LIMIT_MESSAGE: usize = 1735;
+const WANTED_TITLE: usize = 1737;
+pub const OVER_WANTED_MESSAGE: usize = 1739;
+pub const OVER_LIMIT_MESSAGE: usize = 1740;
 const GREY: [u8; 3] = [0x70, 0x70, 0x70];
 
 pub struct Assets {
@@ -103,6 +107,8 @@ pub struct Shop {
     pub selling: bool,
     /// A player's shop: the vendor, their shop's ID, and its name (the first window's title).
     pub vendor: Option<(u32, u32, String)>,
+    /// A player's buying store we are selling into: `(owner, store_id, zeny_limit)`.
+    pub buying_store: Option<(u32, u32, u32)>,
     /// A market or barter rather than a plain NPC shop.
     pub market: Option<MarketKind>,
     pub offers: Vec<Offer>,
@@ -121,7 +127,43 @@ impl Shop {
             frame.open = true;
             frame
         });
-        Self { selling, vendor: None, market: None, offers, deal: Vec::new(), frames, scroll: [0; 2], selected: [None; 2], clicks: Clicks::default() }
+        Self {
+            selling,
+            vendor: None,
+            buying_store: None,
+            market: None,
+            offers,
+            deal: Vec::new(),
+            frames,
+            scroll: [0; 2],
+            selected: [None; 2],
+            clicks: Clicks::default(),
+        }
+    }
+
+    /// Opens a seller's window for another player's buying store (0x0818): skips wanted rows at 0 and matches
+    /// carried stacks that are identified, not worn, and have no cards.
+    pub fn new_buying_store(owner: u32, store_id: u32, limit: u32, wanted: &[BuyingItem], inventory: &[InventoryItem]) -> Self {
+        let offers = wanted
+            .iter()
+            .filter(|item| item.amount > 0)
+            .map(|item| {
+                let carried = inventory.iter().find(|inv| inv.id == item.item_id && inv.worn == 0 && inv.identified && inv.cards == [0; 4]);
+                Offer {
+                    item: item.item_id,
+                    price: item.price,
+                    index: carried.map_or(0, |inv| inv.index),
+                    have: carried.map_or(0, |inv| inv.amount),
+                    kind: item.kind,
+                    identified: true,
+                    stock: Some(u32::from(item.amount)),
+                    ..Offer::default()
+                }
+            })
+            .collect();
+        let mut shop = Self::new(true, offers);
+        shop.buying_store = Some((owner, store_id, limit));
+        shop
     }
 
     fn height(window: usize) -> f32 {
@@ -199,6 +241,9 @@ impl Shop {
             return None;
         }
         let offer = &self.offers[row];
+        if self.buying_store.is_some() {
+            return (offer.have > 0).then_some(Action::Ask(row));
+        }
         let single =
             matches!(offer.kind, ITEM_WEAPON | ITEM_ARMOR | ITEM_PET_EGG | ITEM_PET_ARMOR) || ((self.selling || self.vendor.is_some()) && offer.have == 1);
         if single {
@@ -208,10 +253,34 @@ impl Shop {
         Some(Action::Ask(row))
     }
 
-    /// Puts `amount` of an offer in the deal (selling: no more than carried; equipment: once).
-    pub fn add(&mut self, offer: usize, amount: u32) {
+    /// Puts `amount` of an offer in the deal. For a buying store, checks the wanted amount (1739) and the buyer's
+    /// zeny limit (1740), returning `Some((message_id, arg))` when refused.
+    pub fn add_checked(&mut self, offer: usize, amount: u32) -> Option<(usize, Option<u32>)> {
         if amount == 0 {
-            return;
+            return None;
+        }
+        if let Some((_, _, zeny_limit)) = self.buying_store {
+            if self.offers[offer].have == 0 {
+                return None;
+            }
+            let wanted = self.offers[offer].stock.unwrap_or(0);
+            let already = self.deal.iter().find(|(row, _)| *row == offer).map_or(0, |&(_, had)| had);
+            if already + amount > wanted {
+                return Some((OVER_WANTED_MESSAGE, Some(wanted)));
+            }
+            let new_amount = (already + amount).min(u32::from(self.offers[offer].have));
+            if new_amount == already {
+                return None;
+            }
+            let added_cost = u64::from(new_amount - already) * u64::from(self.offers[offer].price);
+            if self.total() + added_cost > u64::from(zeny_limit) {
+                return Some((OVER_LIMIT_MESSAGE, None));
+            }
+            match self.deal.iter_mut().find(|(row, _)| *row == offer) {
+                Some((_, had)) => *had = new_amount,
+                None => self.deal.push((offer, new_amount)),
+            }
+            return None;
         }
         let single = matches!(self.offers[offer].kind, ITEM_WEAPON | ITEM_ARMOR | ITEM_PET_EGG | ITEM_PET_ARMOR);
         // Selling, or buying from a player: no more than there are.
@@ -228,6 +297,12 @@ impl Shop {
             Some((_, had)) => *had = (*had + amount).min(limit),
             None => self.deal.push((offer, amount.min(limit))),
         }
+        None
+    }
+
+    /// Puts `amount` of an offer in the deal (selling: no more than carried; equipment: once).
+    pub fn add(&mut self, offer: usize, amount: u32) {
+        let _ = self.add_checked(offer, amount);
     }
 
     /// Asks the server for the deal.
@@ -242,6 +317,10 @@ impl Shop {
                 return session.expanded_barter_buy(&deal.map(|(offer, amount)| (offer.item, offer.shop_index, amount)).collect::<Vec<_>>());
             }
             None => {}
+        }
+        if let Some((owner, store_id, _)) = self.buying_store {
+            let items: Vec<_> = self.deal.iter().map(|&(offer, amount)| (self.offers[offer].index, self.offers[offer].item, amount as u16)).collect();
+            return session.sell_to_buying_store(owner, store_id, &items);
         }
         if let Some((vendor, shop, _)) = &self.vendor {
             let items: Vec<_> = self.deal.iter().map(|&(offer, amount)| (amount as u16, self.offers[offer].index)).collect();
@@ -334,6 +413,7 @@ impl Shop {
             let barter = matches!(self.market, Some(MarketKind::Barter | MarketKind::Expanded));
             let title = match &self.vendor {
                 Some((.., name)) if window == 0 => name.as_str(),
+                _ if self.buying_store.is_some() && window == 0 => message(WANTED_TITLE),
                 _ if barter && window == 1 => message(EXCHANGE_TITLE),
                 _ => message(TITLES[window][usize::from(self.selling)]),
             };
@@ -357,7 +437,13 @@ impl Shop {
                     layer.sprites.push((icon, frame.at([LEFT + 4.0, top + 4.0]), icon.size));
                 }
                 // How many: carried (selling) on the icon, or in the deal.
-                let count = amount.or(((self.selling || self.vendor.is_some()) && window == 0).then_some(u32::from(offer.have)));
+                let count = amount.or(if self.buying_store.is_some() && window == 0 {
+                    offer.stock
+                } else if (self.selling || self.vendor.is_some()) && window == 0 {
+                    Some(u32::from(offer.have))
+                } else {
+                    None
+                });
                 if let Some(count) = count {
                     let text = count.to_string();
                     let place = frame.at([LEFT + 18.0, top + 18.0]);
@@ -385,6 +471,10 @@ impl Shop {
             // Footer: the deal's total and buttons.
             let footer = height - FOOTER;
             layer.sprites.push((&assets.bar, frame.at([0.0, footer]), [WIDTH, FOOTER]));
+            if let (Some((_, _, limit)), 0) = (self.buying_store, window) {
+                let text = rustnarok_client::messages::fill(message(LIMIT_MESSAGE), &[&group(u64::from(limit))]);
+                layer.texts.push((window::fit(font, &text, WIDTH - 20.0), frame.at([10.0, footer + 7.0]), [0, 0, 0]));
+            }
             if window == 1 {
                 let total = if barter {
                     window::fit(font, &self.costs_text(items, messages, &self.deal.iter().map(|&(offer, amount)| (offer, amount)).collect::<Vec<_>>()), 150.0)
@@ -398,6 +488,25 @@ impl Shop {
                 layer.sprites.push((&assets.buttons[2][look(Hit::Cancel)], frame.at(cancel), BUTTON));
             }
         }
+    }
+
+    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        let (deal, cancel) = self.deal_button(1);
+        let [deal, cancel] = [self.frames[1].at(deal), self.frames[1].at(cancel)];
+        vec![("shop_deal", [deal[0], deal[1], BUTTON[0], BUTTON[1]]), ("shop_cancel", [cancel[0], cancel[1], BUTTON[0], BUTTON[1]])]
+    }
+
+    pub fn row_boxes(&self) -> Vec<(u32, [f32; 4])> {
+        self.rows(0)
+            .into_iter()
+            .enumerate()
+            .skip(self.scroll[0])
+            .take(ROWS[0])
+            .map(|(place, (offer, _))| {
+                let top = self.frames[0].at([0.0, TITLE_HEIGHT + PADDING + (place - self.scroll[0]) as f32 * ROW]);
+                (self.offers[offer].item, [top[0], top[1], WIDTH, ROW])
+            })
+            .collect()
     }
 }
 
@@ -442,5 +551,32 @@ mod tests {
         assert_eq!(market.deal, [(0, 3)]);
         market.bought(&[(1010, 2)]);
         assert_eq!((market.offers[0].stock, market.deal.is_empty()), (Some(1), true));
+    }
+
+    #[test]
+    fn sells_into_buying_store() {
+        let wanted = [BuyingItem { price: 10, amount: 0, kind: 3, item_id: 501 }, BuyingItem { price: 300, amount: 5, kind: 3, item_id: 909 }];
+        let inv = [
+            // Worn or carded stacks are ignored.
+            InventoryItem { index: 2, id: 909, amount: 5, identified: true, worn: 1, ..Default::default() },
+            InventoryItem { index: 3, id: 909, amount: 5, identified: true, cards: [4001, 0, 0, 0], ..Default::default() },
+            InventoryItem { index: 4, id: 909, amount: 5, identified: true, ..Default::default() },
+        ];
+        let mut shop = Shop::new_buying_store(2000001, 42, 1000, &wanted, &inv);
+        assert_eq!(shop.offers.len(), 1);
+        assert_eq!((shop.offers[0].item, shop.offers[0].index, shop.offers[0].have, shop.offers[0].stock), (909, 4, 5, Some(5)));
+
+        // Over wanted amount (6 > 5) -> 1739 with 5.
+        assert_eq!(shop.add_checked(0, 6), Some((1739, Some(5))));
+        assert!(shop.deal.is_empty());
+
+        // Within wanted amount (4 <= 5), but 4 * 300 = 1200 > 1000 zeny limit -> 1740.
+        assert_eq!(shop.add_checked(0, 4), Some((1740, None)));
+        assert!(shop.deal.is_empty());
+
+        // 3 * 300 = 900 <= 1000 zeny limit.
+        assert_eq!(shop.add_checked(0, 3), None);
+        assert_eq!(shop.deal, [(0, 3)]);
+        assert_eq!(shop.total(), 900);
     }
 }

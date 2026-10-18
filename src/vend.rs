@@ -28,11 +28,11 @@ const SETUP_MESSAGE: usize = 232;
 const PICKED: [u8; 4] = [0x34, 0x6A, 0xE1, 0x60];
 
 pub struct Assets {
-    footer: Texture,
-    ok: [Texture; 3],
-    cancel: [Texture; 3],
-    close: [Texture; 3],
-    picked: Texture,
+    pub footer: Texture,
+    pub ok: [Texture; 3],
+    pub cancel: [Texture; 3],
+    pub close: [Texture; 3],
+    pub picked: Texture,
 }
 
 impl Assets {
@@ -266,7 +266,7 @@ impl MyShop {
 }
 
 /// An item's icon, how many, and its name, from `corner`.
-fn draw_item<'a>(
+pub(crate) fn draw_item<'a>(
     layer: &mut Layer<'a>,
     icons: &'a HashMap<String, Option<Texture>>,
     items: &HashMap<u32, ItemInfo>,

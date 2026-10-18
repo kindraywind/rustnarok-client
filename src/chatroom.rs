@@ -44,22 +44,29 @@ pub struct Sign {
 
 /// A vendor's sign, not a room's.
 pub const SHOP: u8 = 100;
+/// A buying store's sign.
+pub const BUYING_STORE: u8 = 101;
 
 impl Sign {
-    /// The words on the sign: the title and how full it is (a shop just its name).
+    /// The words on the sign: the title and how full it is (a shop or buying store just its name).
     pub fn text(&self) -> String {
-        if matches!(self.kind, 3 | SHOP) { self.title.clone() } else { format!("{} ({}/{})", self.title, self.users, self.limit) }
+        if matches!(self.kind, 3 | SHOP | BUYING_STORE) { self.title.clone() } else { format!("{} ({}/{})", self.title, self.users, self.limit) }
     }
 
     /// A vendor's sign for a shop's name.
     pub fn shop(vendor: u32, title: String) -> Self {
         Self { id: vendor, limit: 0, users: 0, kind: SHOP, title }
     }
+
+    /// A buying store's sign for a store's name.
+    pub fn buying_store(owner: u32, title: String) -> Self {
+        Self { id: owner, limit: 0, users: 0, kind: BUYING_STORE, title }
+    }
 }
 
 pub struct Assets {
-    /// Open and password-locked room icons, and a vendor's shop.
-    icons: [Texture; 3],
+    /// Open and password-locked room icons, a vendor's shop, and a buying store.
+    icons: [Texture; 4],
     white: Texture,
     border: Texture,
     ok: [Texture; 3],
@@ -72,7 +79,7 @@ impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let image = |name: &str| gpu.load_texture(grf, &format!("{UI}{name}.bmp"), false);
         Self {
-            icons: [image("chat_open"), image("chat_close"), image("shop")],
+            icons: [image("chat_open"), image("chat_close"), image("shop"), image("buyingshop")],
             white: gpu.solid([255; 4]),
             border: gpu.solid(SIGN_BORDER),
             ok: ["btn_ok", "btn_ok_a", "btn_ok_b"].map(image),
@@ -100,6 +107,7 @@ pub fn draw_sign<'a>(layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, sig
     let icon = &assets.icons[match sign.kind {
         0 => 1,
         SHOP => 2,
+        BUYING_STORE => 3,
         _ => 0,
     }];
     layer.sprites.push((icon, offset(corner, [2.0, 1.0]), icon.size));
@@ -319,6 +327,7 @@ mod tests {
         let sign = Sign { id: 1, limit: 20, users: 3, kind: 1, title: "Hi".into() };
         assert_eq!(sign.text(), "Hi (3/20)");
         assert_eq!(Sign { kind: 3, ..sign }.text(), "Hi");
+        assert_eq!(Sign::buying_store(7, "Buying Jellopy".into()).text(), "Buying Jellopy");
         let mut make = Make::default();
         make.type_text("Trade\u{8} room");
         assert_eq!(make.title, "Trade room");

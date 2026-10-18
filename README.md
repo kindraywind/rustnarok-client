@@ -65,7 +65,7 @@ against `main`.
 | 🧙 **Characters** | Players with heads, headgear, weapons, shields and garments; monsters, NPCs, pets and warp portals; walking, sitting, emotions, spirit spheres and coins, pushcarts; HP/SP bars, names with party, guild, position and emblem on pointing, chat bubbles, cast bars, the MVP banner. |
 | ⚔️ **Combat and skills** | Attacking with reach checks, damage numbers of every kind, death; the skill window and hotkeys, casting with targets, status icons, effects (STR animations, moving textures and sprites, cylinders, sprite animations, camera shakes), skills' units on the ground (Fire Wall, Safety Wall, Pneuma, warp portals, traps), Warp Portal's destination list, Auto Spell and Shadow Spell. |
 | 🪟 **Windows** | Basic info with its menu, inventory (with expansion), equipment (and another player's), item descriptions with card slots, status (raising stats), skills, the hotkey bar, chat with whispers, the emotion list and chat macros, NPC dialogs (menus, number and text input), quests, the option menu (Esc) and audio settings, the right-click menu. |
-| 🛒 **Trade and crafting** | NPC shops, markets and barter shops, trading, vending (one's own shop and others'), storage, cart, the bank, the refine window, card insertion, the Magnifier, making items from a list (Pharmacy, Arrow Crafting, cooking), Repair and Upgrade Weapon, the material window (Change Material, Four Spirit Analysis). |
+| 🛒 **Trade and crafting** | NPC shops, markets and barter shops, trading, vending (one's own shop and others'), buying stores (one's own store and selling into others'), storage, cart, the bank, the refine window, card insertion, the Magnifier, making items from a list (Pharmacy, Arrow Crafting, cooking), Repair and Upgrade Weapon, the material window (Change Material, Four Spirit Analysis). |
 | 🐾 **Pets** | Taming with its slot machine, hatching, the pet window (Alt+J), feeding, renaming, accessories, performances and pet talk. |
 | 👥 **Together** | Parties, guilds (info with the emblem, members, positions, skills, expel list, notice), clans, friends, chat rooms, RODEX mail, server announcements and item news. |
 | 🔊 **Sound** | Each map's music, NPC scripts' sounds and music, sprites' own sounds (attacks, flinches, deaths), effect sounds, volume settings. |
@@ -156,7 +156,7 @@ client's Lua tables run in a sandboxed Lua 5.1: item, skill, job, look, pet and 
 The binary (`src/main.rs` and its modules) is the game: `render` (wgpu: sprites, text, the canvas viewport), `world`
 (the 3D world pass and camera), `actor` (units, their animation and sounds), `effects` (the effect player and its
 table `effects.txt`), `sound` (music and effects over cpal), `control` (the test-driver socket), and one module per
-window, from `basic_info` and `inventory` to `pet`, `pin`, `refine` and `worldmap`.
+window, from `basic_info`, `inventory` and `buying` to `pet`, `pin`, `refine` and `worldmap`.
 
 `main.rs` holds the scenes (login, character select, game), the game state, input, the server's events and
 drawing. The UI draws in a fixed 1024×768 canvas, scaled to the window.

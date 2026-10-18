@@ -678,6 +678,20 @@ const ZC_DELETEITEM_FROM_MCSTORE: u16 = 0x09E5;
 const ZC_ACK_OPENSTORE2: u16 = 0x0A28;
 const ZC_PC_PURCHASE_ITEMLIST_FROMMC: u16 = 0x0B3D;
 const ZC_PC_PURCHASE_MYITEMLIST: u16 = 0x0B40;
+const CZ_REQ_OPEN_BUYING_STORE: u16 = 0x0811;
+const CZ_REQ_CLOSE_BUYING_STORE: u16 = 0x0815;
+const CZ_REQ_CLICK_TO_BUYING_STORE: u16 = 0x0817;
+const CZ_REQ_TRADE_BUYING_STORE: u16 = 0x0819;
+const ZC_OPEN_BUYING_STORE: u16 = 0x0810;
+const ZC_FAILED_OPEN_BUYING_STORE_TO_BUYER: u16 = 0x0812;
+const ZC_MYITEMLIST_BUYING_STORE: u16 = 0x0813;
+const ZC_BUYING_STORE_ENTRY: u16 = 0x0814;
+const ZC_DISAPPEAR_BUYING_STORE_ENTRY: u16 = 0x0816;
+const ZC_ACK_ITEMLIST_BUYING_STORE: u16 = 0x0818;
+const ZC_FAILED_TRADE_BUYING_STORE_TO_BUYER: u16 = 0x081A;
+const ZC_ITEM_DELETE_BUYING_STORE: u16 = 0x081C;
+const ZC_FAILED_TRADE_BUYING_STORE_TO_SELLER: u16 = 0x0824;
+const ZC_UPDATE_ITEM_FROM_BUYING_STORE2: u16 = 0x09E6;
 const ZC_DELETE_ITEM_FROM_CART: u16 = 0x0125;
 const CZ_MOVE_ITEM_FROM_BODY_TO_CART: u16 = 0x0126;
 const CZ_MOVE_ITEM_FROM_CART_TO_BODY: u16 = 0x0127;
@@ -1468,6 +1482,60 @@ pub enum MapEvent {
         index: u16,
         amount: u16,
         result: u8,
+    },
+    /// A buying store license or skill went off: set up a buying store of up to this many items (ZC_OPEN_BUYING_STORE).
+    OpenBuyingStore {
+        slots: u8,
+    },
+    /// Opening our buying store failed (ZC_FAILED_OPEN_BUYING_STORE_TO_BUYER).
+    BuyingStoreOpenFailed {
+        result: u16,
+        weight: u32,
+    },
+    /// Our buying store opened: our account, the zeny limit, and the wanted items (ZC_MYITEMLIST_BUYING_STORE).
+    MyBuyingStore {
+        account: u32,
+        limit: u32,
+        items: Vec<BuyingItem>,
+    },
+    /// A buying store's sign over its owner's head, and its going away (ZC_BUYING_STORE_ENTRY, ZC_DISAPPEAR_BUYING_STORE_ENTRY).
+    BuyingStoreSign {
+        owner: u32,
+        title: String,
+    },
+    BuyingStoreSignGone {
+        owner: u32,
+    },
+    /// What another player's buying store wants to buy (ZC_ACK_ITEMLIST_BUYING_STORE).
+    BuyingStoreItems {
+        owner: u32,
+        store_id: u32,
+        limit: u32,
+        items: Vec<BuyingItem>,
+    },
+    /// The server closed our buying store after a trade or limit check (ZC_FAILED_TRADE_BUYING_STORE_TO_BUYER).
+    BuyingStoreBuyerFailed {
+        result: u16,
+    },
+    /// An item we sold into a buying store left our inventory (ZC_ITEM_DELETE_BUYING_STORE).
+    BuyingStoreSold {
+        index: u16,
+        amount: u16,
+        price: u32,
+    },
+    /// Selling into a buying store failed (ZC_FAILED_TRADE_BUYING_STORE_TO_SELLER).
+    BuyingStoreSellerFailed {
+        result: u16,
+        item_id: u32,
+    },
+    /// Someone sold an item into our buying store (ZC_UPDATE_ITEM_FROM_BUYING_STORE2).
+    BuyingStoreUpdate {
+        item_id: u32,
+        amount: u16,
+        zeny: u32,
+        limit_left: u32,
+        char_id: u32,
+        time: u32,
     },
     /// An announcement: plain ones yellow (or blue when the server asks), ZC_BROADCAST2 in its own color.
     Broadcast {
@@ -2306,6 +2374,15 @@ pub struct VendItem {
     pub price: u32,
 }
 
+/// A wanted item in a buying store: price each, amount still wanted, item type, and item ID.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BuyingItem {
+    pub price: u32,
+    pub amount: u16,
+    pub kind: u8,
+    pub item_id: u32,
+}
+
 /// A monster a quest wants hunted: its objective's ID (the quest's × 1000 + its place), the monster's name, how many
 /// so far and how many in all.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -3109,6 +3186,25 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Opens our buying store (or, with `open` false, cancels setting one up): zeny limit, title, and (item ID, amount, price).
+    pub fn open_buying_store(&mut self, title: &str, limit: u32, open: bool, items: &[(u32, u16, u32)]) -> io::Result<()> {
+        self.stream.write_all(&encode_open_buying_store(title, limit, open, items))
+    }
+
+    pub fn close_buying_store(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_close_buying_store())
+    }
+
+    /// Asks what a buying store wants to buy.
+    pub fn click_buying_store(&mut self, owner: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_click_buying_store(owner))
+    }
+
+    /// Sells to a buying store: (inventory index, item ID, amount) triples.
+    pub fn sell_to_buying_store(&mut self, owner: u32, store_id: u32, items: &[(u16, u32, u16)]) -> io::Result<()> {
+        self.stream.write_all(&encode_sell_to_buying_store(owner, store_id, items))
+    }
+
     /// Takes a quest up again, or puts it aside.
     pub fn set_quest_active(&mut self, id: u32, active: bool) -> io::Result<()> {
         let mut packet = CZ_ACTIVE_QUEST.to_le_bytes().to_vec();
@@ -3837,6 +3933,50 @@ fn encode_whisper_all(allow: bool) -> [u8; 3] {
     [low, high, u8::from(allow)]
 }
 
+/// CZ_REQ_OPEN_BUYING_STORE: zeny limit, 1 to open or 0 to cancel, 80-byte EUC-KR store name, then 10-byte (item, amount, price) rows.
+fn encode_open_buying_store(title: &str, limit: u32, open: bool, items: &[(u32, u16, u32)]) -> Vec<u8> {
+    let mut name = encoding_rs::EUC_KR.encode(title).0.into_owned();
+    name.resize(80, 0);
+    let mut packet = CZ_REQ_OPEN_BUYING_STORE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((89 + items.len() * 10) as u16).to_le_bytes());
+    packet.extend_from_slice(&limit.to_le_bytes());
+    packet.push(u8::from(open));
+    packet.extend_from_slice(&name);
+    for &(item_id, amount, price) in items {
+        packet.extend_from_slice(&item_id.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+        packet.extend_from_slice(&price.to_le_bytes());
+    }
+    packet
+}
+
+/// CZ_REQ_CLOSE_BUYING_STORE.
+fn encode_close_buying_store() -> [u8; 2] {
+    CZ_REQ_CLOSE_BUYING_STORE.to_le_bytes()
+}
+
+/// CZ_REQ_CLICK_TO_BUYING_STORE: owner's account ID.
+fn encode_click_buying_store(owner: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_REQ_CLICK_TO_BUYING_STORE.to_le_bytes());
+    packet[2..].copy_from_slice(&owner.to_le_bytes());
+    packet
+}
+
+/// CZ_REQ_TRADE_BUYING_STORE: owner's account ID, store ID, then 8-byte (inventory index, item ID, amount) rows.
+fn encode_sell_to_buying_store(owner: u32, store_id: u32, items: &[(u16, u32, u16)]) -> Vec<u8> {
+    let mut packet = CZ_REQ_TRADE_BUYING_STORE.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((12 + items.len() * 8) as u16).to_le_bytes());
+    packet.extend_from_slice(&owner.to_le_bytes());
+    packet.extend_from_slice(&store_id.to_le_bytes());
+    for &(index, item_id, amount) in items {
+        packet.extend_from_slice(&index.to_le_bytes());
+        packet.extend_from_slice(&item_id.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+    }
+    packet
+}
+
 /// CZ_CLAN_CHAT: length, then `"<name> : <message>\0"`.
 fn encode_clan_chat(name: &str, message: &str) -> Vec<u8> {
     let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
@@ -3916,6 +4056,10 @@ fn decode_unit(packet: &[u8], layout: &UnitLayout, position: ([u16; 2], u8)) -> 
         // maxHP and HP follow the level and the font; -1 when not told.
         hp: Some([u32_at(packet, layout.level + 8) as i32, u32_at(packet, layout.level + 4) as i32]).filter(|[hp, max]| *hp >= 0 && *max > 0),
     }
+}
+
+fn decode_buying_items(bytes: &[u8]) -> Vec<BuyingItem> {
+    bytes.chunks_exact(11).map(|entry| BuyingItem { price: u32_at(entry, 0), amount: u16_at(entry, 4), kind: entry[6], item_id: u32_at(entry, 7) }).collect()
 }
 
 fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
@@ -4160,6 +4304,25 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 .collect(),
         },
         ZC_PC_PURCHASE_RESULT_FROMMC => MapEvent::VendBought { index: u16_at(2), amount: u16_at(4), result: packet[6] },
+        ZC_OPEN_BUYING_STORE => MapEvent::OpenBuyingStore { slots: packet[2] },
+        ZC_FAILED_OPEN_BUYING_STORE_TO_BUYER => MapEvent::BuyingStoreOpenFailed { result: u16_at(2), weight: u32_at(4) },
+        ZC_MYITEMLIST_BUYING_STORE => MapEvent::MyBuyingStore { account: u32_at(4), limit: u32_at(8), items: decode_buying_items(&packet[12..]) },
+        ZC_BUYING_STORE_ENTRY => MapEvent::BuyingStoreSign { owner: u32_at(2), title: c_string(&packet[6..86]) },
+        ZC_DISAPPEAR_BUYING_STORE_ENTRY => MapEvent::BuyingStoreSignGone { owner: u32_at(2) },
+        ZC_ACK_ITEMLIST_BUYING_STORE => {
+            MapEvent::BuyingStoreItems { owner: u32_at(4), store_id: u32_at(8), limit: u32_at(12), items: decode_buying_items(&packet[16..]) }
+        }
+        ZC_FAILED_TRADE_BUYING_STORE_TO_BUYER => MapEvent::BuyingStoreBuyerFailed { result: u16_at(2) },
+        ZC_ITEM_DELETE_BUYING_STORE => MapEvent::BuyingStoreSold { index: u16_at(2), amount: u16_at(4), price: u32_at(6) },
+        ZC_FAILED_TRADE_BUYING_STORE_TO_SELLER => MapEvent::BuyingStoreSellerFailed { result: u16_at(2), item_id: u32_at(4) },
+        ZC_UPDATE_ITEM_FROM_BUYING_STORE2 => MapEvent::BuyingStoreUpdate {
+            item_id: u32_at(2),
+            amount: u16_at(6),
+            zeny: u32_at(8),
+            limit_left: u32_at(12),
+            char_id: u32_at(16),
+            time: u32_at(20),
+        },
         ZC_NOTIFY_UNREADMAIL => MapEvent::MailUnread(packet[2] != 0),
         // "blue" (and "ssss" for the War of Emperium) at the start are color hints, not words.
         ZC_BROADCAST => {
@@ -5970,6 +6133,122 @@ mod tests {
         let Some(MapEvent::WhisperList(names)) = decode_map_packet(&[0xD4, 0x00, 4, 0]) else { panic!() };
         assert!(names.is_empty());
         for (header, length) in [(ZC_USER_COUNT, 6), (ZC_SETTING_WHISPER_PC, 4), (ZC_SETTING_WHISPER_STATE, 4), (ZC_WHISPER_LIST, -1)] {
+            assert_eq!(packet_length(header), Some(length));
+        }
+    }
+
+    #[test]
+    fn encodes_buying_store_requests() {
+        let open = encode_open_buying_store("Buying Jellopy", 1000, true, &[(909, 5, 10)]);
+        assert_eq!(open.len(), 99);
+        assert_eq!(&open[..2], &[0x11, 0x08]);
+        assert_eq!(u16::from_le_bytes([open[2], open[3]]), 99);
+        assert_eq!(u32::from_le_bytes(open[4..8].try_into().unwrap()), 1000);
+        assert_eq!(open[8], 1);
+        assert_eq!(&open[9..24], b"Buying Jellopy\0");
+        assert_eq!(u32::from_le_bytes(open[89..93].try_into().unwrap()), 909);
+        assert_eq!(u16::from_le_bytes([open[93], open[94]]), 5);
+        assert_eq!(u32::from_le_bytes(open[95..99].try_into().unwrap()), 10);
+
+        let cancel = encode_open_buying_store("", 0, false, &[]);
+        assert_eq!(cancel.len(), 89);
+        assert_eq!(u16::from_le_bytes([cancel[2], cancel[3]]), 89);
+        assert_eq!(cancel[8], 0);
+
+        assert_eq!(encode_close_buying_store(), [0x15, 0x08]);
+        assert_eq!(encode_click_buying_store(2000001), [0x17, 0x08, 0x81, 0x84, 0x1E, 0x00]);
+
+        let sell = encode_sell_to_buying_store(2000001, 42, &[(4, 909, 2)]);
+        assert_eq!(sell.len(), 20);
+        assert_eq!(&sell[..4], &[0x19, 0x08, 20, 0]);
+        assert_eq!(u32::from_le_bytes(sell[4..8].try_into().unwrap()), 2000001);
+        assert_eq!(u32::from_le_bytes(sell[8..12].try_into().unwrap()), 42);
+        assert_eq!(u16::from_le_bytes([sell[12], sell[13]]), 4);
+        assert_eq!(u32::from_le_bytes(sell[14..18].try_into().unwrap()), 909);
+        assert_eq!(u16::from_le_bytes([sell[18], sell[19]]), 2);
+
+        for (header, length) in
+            [(CZ_REQ_OPEN_BUYING_STORE, -1), (CZ_REQ_CLOSE_BUYING_STORE, 2), (CZ_REQ_CLICK_TO_BUYING_STORE, 6), (CZ_REQ_TRADE_BUYING_STORE, -1)]
+        {
+            assert_eq!(packet_length(header), Some(length));
+        }
+    }
+
+    #[test]
+    fn decodes_buying_store_packets() {
+        let Some(MapEvent::OpenBuyingStore { slots: 2 }) = decode_map_packet(&[0x10, 0x08, 2]) else { panic!() };
+        let Some(MapEvent::BuyingStoreOpenFailed { result: 1, weight: 500 }) = decode_map_packet(&[0x12, 0x08, 1, 0, 0xF4, 0x01, 0, 0]) else { panic!() };
+
+        let mut my_list = vec![0x13, 0x08, 23, 0];
+        my_list.extend_from_slice(&2000001u32.to_le_bytes());
+        my_list.extend_from_slice(&1000u32.to_le_bytes());
+        my_list.extend_from_slice(&10u32.to_le_bytes());
+        my_list.extend_from_slice(&5u16.to_le_bytes());
+        my_list.push(3);
+        my_list.extend_from_slice(&909u32.to_le_bytes());
+        let Some(MapEvent::MyBuyingStore { account: 2000001, limit: 1000, items }) = decode_map_packet(&my_list) else { panic!() };
+        assert_eq!(items, [BuyingItem { price: 10, amount: 5, kind: 3, item_id: 909 }]);
+
+        let mut entry = vec![0x14, 0x08];
+        entry.extend_from_slice(&2000001u32.to_le_bytes());
+        let mut title = b"Buying Jellopy".to_vec();
+        title.resize(80, 0);
+        entry.extend_from_slice(&title);
+        let Some(MapEvent::BuyingStoreSign { owner: 2000001, title }) = decode_map_packet(&entry) else { panic!() };
+        assert_eq!(title, "Buying Jellopy");
+
+        let mut gone = vec![0x16, 0x08];
+        gone.extend_from_slice(&2000001u32.to_le_bytes());
+        let Some(MapEvent::BuyingStoreSignGone { owner: 2000001 }) = decode_map_packet(&gone) else { panic!() };
+
+        let mut seller_list = vec![0x18, 0x08, 27, 0];
+        seller_list.extend_from_slice(&2000001u32.to_le_bytes());
+        seller_list.extend_from_slice(&42u32.to_le_bytes());
+        seller_list.extend_from_slice(&1000u32.to_le_bytes());
+        seller_list.extend_from_slice(&10u32.to_le_bytes());
+        seller_list.extend_from_slice(&5u16.to_le_bytes());
+        seller_list.push(3);
+        seller_list.extend_from_slice(&909u32.to_le_bytes());
+        let Some(MapEvent::BuyingStoreItems { owner: 2000001, store_id: 42, limit: 1000, items }) = decode_map_packet(&seller_list) else { panic!() };
+        assert_eq!(items, [BuyingItem { price: 10, amount: 5, kind: 3, item_id: 909 }]);
+
+        let Some(MapEvent::BuyingStoreBuyerFailed { result: 3 }) = decode_map_packet(&[0x1A, 0x08, 3, 0]) else { panic!() };
+
+        let mut sold = vec![0x1C, 0x08];
+        sold.extend_from_slice(&4u16.to_le_bytes());
+        sold.extend_from_slice(&2u16.to_le_bytes());
+        sold.extend_from_slice(&10u32.to_le_bytes());
+        let Some(MapEvent::BuyingStoreSold { index: 4, amount: 2, price: 10 }) = decode_map_packet(&sold) else { panic!() };
+
+        let mut seller_failed = vec![0x24, 0x08, 6, 0];
+        seller_failed.extend_from_slice(&909u32.to_le_bytes());
+        let Some(MapEvent::BuyingStoreSellerFailed { result: 6, item_id: 909 }) = decode_map_packet(&seller_failed) else { panic!() };
+
+        let mut update = vec![0xE6, 0x09];
+        update.extend_from_slice(&909u32.to_le_bytes());
+        update.extend_from_slice(&2u16.to_le_bytes());
+        update.extend_from_slice(&20u32.to_le_bytes());
+        update.extend_from_slice(&980u32.to_le_bytes());
+        update.extend_from_slice(&150001u32.to_le_bytes());
+        update.extend_from_slice(&1_700_000_000u32.to_le_bytes());
+        let Some(MapEvent::BuyingStoreUpdate { item_id: 909, amount: 2, zeny: 20, limit_left: 980, char_id: 150001, time: 1_700_000_000 }) =
+            decode_map_packet(&update)
+        else {
+            panic!()
+        };
+
+        for (header, length) in [
+            (ZC_OPEN_BUYING_STORE, 3),
+            (ZC_FAILED_OPEN_BUYING_STORE_TO_BUYER, 8),
+            (ZC_MYITEMLIST_BUYING_STORE, -1),
+            (ZC_BUYING_STORE_ENTRY, 86),
+            (ZC_DISAPPEAR_BUYING_STORE_ENTRY, 6),
+            (ZC_ACK_ITEMLIST_BUYING_STORE, -1),
+            (ZC_FAILED_TRADE_BUYING_STORE_TO_BUYER, 4),
+            (ZC_ITEM_DELETE_BUYING_STORE, 10),
+            (ZC_FAILED_TRADE_BUYING_STORE_TO_SELLER, 8),
+            (ZC_UPDATE_ITEM_FROM_BUYING_STORE2, 24),
+        ] {
             assert_eq!(packet_length(header), Some(length));
         }
     }
