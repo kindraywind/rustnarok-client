@@ -690,6 +690,8 @@ const RENAME_QUESTION: usize = 1213;
 /// "Ready to change character name in.(%d)": the name prompt, with the renames left.
 const RENAME_PROMPT: usize = 2026;
 const QUIT_MESSAGE: usize = 17;
+/// What I Will Protect You says after the partner's name.
+const PROTECT_WORDS: usize = 759;
 const DELETE_QUESTION: usize = 19;
 const BIRTHDATE_MESSAGE: usize = 1815;
 /// Talking to another NPC while one's window is open.
@@ -4045,13 +4047,14 @@ impl Game {
         pace: f32,
         info: &HashMap<u16, SkillInfo>,
         tables: &LookTables,
+        messages: &[String],
     ) -> Option<f32> {
         let me = self.account_id;
         let actor = (if source == me { Some(&mut self.player) } else { self.units.get_mut(&source) })?;
         if actor.remove_at.is_some() {
             return None;
         }
-        let monster = actor.kind == MONSTER;
+        let (job, kind) = (actor.job, actor.kind);
         let mut hit_ms = None;
         if actor.kind == PLAYER {
             let now = Instant::now();
@@ -4084,11 +4087,13 @@ impl Game {
             }
             actor.stand_ready();
         }
-        if overhead::shouts(skill, level, monster, packet)
-            && let Some(info) = info.get(&skill)
+        let partner = self.partner.as_deref().filter(|_| source == me);
+        let protect_words = messages.get(PROTECT_WORDS).map_or("", String::as_str);
+        if overhead::shouts(skill, level, job, kind, packet)
+            && let Some(text) = overhead::shout_text(skill, |id| info.get(&id).map(|info| info.name.clone()), partner, protect_words)
         {
             let unit = (source != me).then_some(source);
-            self.say(unit, format!("{} !!", info.name), CHAT_WHITE);
+            self.say(unit, text, CHAT_WHITE);
         }
         hit_ms.map(|ms| ms + skill_motions::hit_extra_ms(skill))
     }
@@ -13332,7 +13337,7 @@ impl App {
                         None => game.cast_squares.remove(&(source != me).then_some(source)),
                     };
                 }
-                game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info, look_tables);
+                game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info, look_tables, &self.messages);
                 skill_effects(game, skill, "beginCastEffectId", source);
             }
             MapEvent::SkillHit { skill, level, act } => {
@@ -13350,7 +13355,8 @@ impl App {
                     }
                 }
                 let scale = actor::attack_scale(act.source_speed, false);
-                let hit_ms = game.skill_motion(act.source, skill, i32::from(level as i16), overhead::Shout::Hit, scale, &self.skill_info, look_tables);
+                let hit_ms =
+                    game.skill_motion(act.source, skill, i32::from(level as i16), overhead::Shout::Hit, scale, &self.skill_info, look_tables, &self.messages);
                 // Hits land on the motion's hit frame (else after the attack motion), each `hit_gap_ms` after the last.
                 let hit_ms = hit_ms.unwrap_or(act.source_speed.max(0) as f32);
                 let gap = Duration::from_millis(skill_motions::hit_gap_ms(skill));
@@ -13404,7 +13410,7 @@ impl App {
                 {
                     caster.face(cell);
                 }
-                game.skill_motion(source, skill, amount, overhead::Shout::Used, 1.0, &self.skill_info, look_tables);
+                game.skill_motion(source, skill, amount, overhead::Shout::Used, 1.0, &self.skill_info, look_tables, &self.messages);
                 // A result of 0: only the motion and the name.
                 if !ok {
                     return;
@@ -13460,7 +13466,7 @@ impl App {
                 if let Some(caster) = caster {
                     caster.face([i32::from(cell[0]), i32::from(cell[1])]);
                 }
-                game.skill_motion(source, skill, i32::from(level as i16), overhead::Shout::Hit, 1.0, &self.skill_info, look_tables);
+                game.skill_motion(source, skill, i32::from(level as i16), overhead::Shout::Ground, 1.0, &self.skill_info, look_tables, &self.messages);
             }
             MapEvent::SkillUnit { id, kind, cell } => {
                 game.skill_units.insert(id, (kind, cell));
