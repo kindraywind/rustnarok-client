@@ -1,0 +1,4 @@
+prontera,151,184,0	script	Facing 0	1023,{ end; }
+prontera,154,184,2	script	Facing 2	1023,{ end; }
+prontera,157,184,4	script	Facing 4	1023,{ end; }
+prontera,160,184,6	script	Facing 6	1023,{ end; }
