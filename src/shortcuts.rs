@@ -64,6 +64,8 @@ pub enum Action {
     Bank,
     Status,
     RotateHotkeys,
+    /// Hotbar 1 and 2 trade places.
+    SwitchHotkeys,
     Tip,
     Costume,
     PartyBoard,
@@ -106,6 +108,8 @@ pub struct KeyEvent<'a> {
     pub repeat: bool,
     /// A text box has the caret.
     pub text_focus: bool,
+    /// The hotbar showing (1 or 2): only its slot keys fire.
+    pub bar: u8,
 }
 
 /// The action this key press should fire, or none.
@@ -119,7 +123,12 @@ pub fn action(shortcuts: &Shortcuts, event: &KeyEvent<'_>) -> Option<Action> {
     }
     let modifier = counted_modifier(event.alt, event.shift, event.ctrl);
     let keys = event_keys(event);
-    shortcuts.bindings.iter().find(|binding| binding.modifier == modifier && binding.key.is_some_and(|key| keys.contains(&key))).map(|binding| binding.action)
+    shortcuts
+        .bindings
+        .iter()
+        .filter(|binding| !matches!(binding.action, Action::Hotbar { bar, .. } if bar != event.bar))
+        .find(|binding| binding.modifier == modifier && binding.key.is_some_and(|key| keys.contains(&key)))
+        .map(|binding| binding.action)
 }
 
 impl Shortcuts {
@@ -223,8 +232,15 @@ impl Shortcuts {
     }
 
     fn clear_chord(&mut self, skip: usize, key: ShortcutKey, modifier: Modifier) {
+        // The two hotbars share keys: only the one showing fires.
+        let bar_of = |action: Action| match action {
+            Action::Hotbar { bar, .. } => Some(bar),
+            _ => None,
+        };
+        let kept = bar_of(self.bindings[skip].action);
         for (index, binding) in self.bindings.iter_mut().enumerate() {
-            if index != skip && binding.key == Some(key) && binding.modifier == modifier {
+            let other_bar = kept.is_some_and(|kept| bar_of(binding.action).is_some_and(|bar| bar != kept));
+            if index != skip && !other_bar && binding.key == Some(key) && binding.modifier == modifier {
                 binding.key = None;
             }
         }
@@ -532,6 +548,9 @@ fn exe_action(exe: &str, table: u8, index: u16) -> Action {
     if name.contains("ROTATE") {
         return Action::RotateHotkeys;
     }
+    if name.contains("CHANGE_SKILLBAR") {
+        return Action::SwitchHotkeys;
+    }
     if name.contains("SKILLBAR") || (name.contains("HOTKEY") && name.contains("ONOFF")) {
         return Action::HotkeyBar;
     }
@@ -670,6 +689,7 @@ pub fn action_name(action: Action) -> String {
         Action::Bank => "bank",
         Action::Status => "status",
         Action::RotateHotkeys => "rotate_hotkeys",
+        Action::SwitchHotkeys => "switch_hotkeys",
         Action::Tip => "tip",
         Action::Costume => "costume",
         Action::PartyBoard => "party_board",
@@ -879,7 +899,7 @@ mod tests {
         repeat: bool,
         text_focus: bool,
     ) -> Option<Action> {
-        action(shortcuts, &KeyEvent { key, physical, alt, shift, ctrl, repeat, text_focus })
+        action(shortcuts, &KeyEvent { key, physical, alt, shift, ctrl, repeat, text_focus, bar: 1 })
     }
 
     #[test]
@@ -1032,6 +1052,28 @@ mod tests {
         assert_eq!(fire(&shortcuts, &queue, false, false, false, false, true), None);
         let unbound = Shortcuts::builtin();
         assert_eq!(fire(&unbound, &queue, false, false, false, false, false), None);
+    }
+
+    #[test]
+    fn the_two_hotbars_share_keys_and_the_showing_one_fires() {
+        // The player's file binds Q to row 2 slot 1 of both bars; neither clears the other.
+        let mut shortcuts = Shortcuts::builtin();
+        let rows = lua::hotkey_rows(
+            r#"USERKEY_1 = { [9] = { EXE = "Hotkey 2-1", KEY1 = 81 } }
+               USERKEY_4 = { [9] = { EXE = "Hotkey 2 2-1", KEY1 = 81 } }
+               USERKEY_2 = { [55] = { EXE = "Switch Hotkey Bar", KEY1 = 71, KEY2 = 17 } }"#,
+        )
+        .unwrap();
+        shortcuts.apply_user(&rows);
+        let queue = Key::Character(SmolStr::new("q"));
+        let on = |bar: u8| {
+            action(&shortcuts, &KeyEvent { key: &queue, physical: None, alt: false, shift: false, ctrl: false, repeat: false, text_focus: false, bar })
+        };
+        assert_eq!(on(1), Some(Action::Hotbar { bar: 1, slot: 9 }));
+        assert_eq!(on(2), Some(Action::Hotbar { bar: 2, slot: 9 }));
+        // The data's name for the bar switch isn't the bar's on/off.
+        assert_eq!(exe_action("MSI_HK_CHANGE_SKILLBAR", 2, 55), Action::SwitchHotkeys);
+        assert_eq!(exe_action("MSI_HK_SKILLBAR_ONOFF", 2, 17), Action::HotkeyBar);
     }
 
     #[test]

@@ -51,6 +51,7 @@ mod battle_queue;
 mod battleground;
 mod buying;
 mod cashshop;
+mod cast_square;
 mod catalog;
 mod char_make;
 mod char_select;
@@ -68,6 +69,7 @@ mod equipment;
 mod escape;
 mod grade;
 mod guild;
+mod head_marks;
 mod homunculus;
 mod hotkeys;
 mod inventory;
@@ -402,15 +404,16 @@ const BOW: u32 = 11;
 /// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
 const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
 
-/// A unit that died falls when the killing hit lands. A player lies there until revived (ZC_RESURRECTION) or gone;
-/// any other body goes after a moment.
+/// A unit that died falls when the killing hit lands, playing its death at the sprite's pace. A player lies there until
+/// revived (ZC_RESURRECTION) or gone; any other body then lies on its last frame as a corpse and fades out.
 fn fall(actor: &mut Actor, lands: Instant) {
     let (.., die) = actor::combat_actions(actor.kind);
     actor.play_at_pace(die, lands, 1.0, true);
     if actor.kind == PLAYER {
         actor.dead = true;
     } else {
-        actor.remove_at = Some(lands + CORPSE_TIME);
+        let dying_ms = actor.sprites.as_ref().and_then(|sprites| sprites.action_ms(die, actor.direction)).unwrap_or(0.0);
+        actor.fade_out(lands + Duration::from_micros((f64::from(dying_ms) * 1000.0).round() as u64), CORPSE_FADE_MS);
     }
 }
 
@@ -435,9 +438,24 @@ const PARTY_CREATE: usize = 2054;
 /// What a locked chat room asks ("Please enter Password.").
 const ROOM_PASSWORD: usize = 15;
 const PARTY_INVITE: usize = 2056;
-/// A dropped item starts this many cells up and falls one cell per 40ms.
-const DROP_HEIGHT: f32 = 5.0;
-const DROP_MS_PER_CELL: f32 = 40.0;
+/// An item without a picture of its own shows the apple's.
+const FALLBACK_ITEM_SPRITE: &str = "사과";
+
+/// How high a just-dropped item is over the ground, `ticks` (24 ms each) after it appears: it starts 15 units up, hops
+/// a little, then falls and lands after about 0.42 s.
+fn item_fall_height(ticks: f32) -> f32 {
+    (15.0 + 0.6 * ticks - 0.083 * ticks * ticks).max(0.0)
+}
+
+/// An item on the ground glints yellow for 2 ticks every 92 (48 ms every 2.208 s), counted from when it appeared.
+fn item_glints(ticks: f32) -> bool {
+    (ticks as i32).rem_euclid(92) >= 90
+}
+
+/// The sprite an item lies on the ground as (identified or not), the apple when the data has none.
+fn ground_sprite(items: &HashMap<u32, ItemInfo>, item: u32, identified: bool) -> &str {
+    items.get(&item).map(|info| info.resource(identified)).filter(|resource| !resource.is_empty()).unwrap_or(FALLBACK_ITEM_SPRITE)
+}
 /// Items cast 0.4 of a character's shadow.
 const ITEM_SHADOW: f32 = 0.4;
 
@@ -516,10 +534,10 @@ const MENU_CANCEL: [f32; 2] = [230.0, 91.0];
 const MENU_SELECTION: [u8; 4] = [0xCD, 0xE0, 0xFF, 0xFF];
 /// A player's action while casting or using a skill.
 const SKILL_ACTION: usize = 12;
+/// How far over the ground the magic square under a ground cast floats, so the ground doesn't cover it.
+const CAST_SQUARE_LIFT: f32 = 0.2;
 /// Words over a head stay this long.
 const SPEECH_TIME: Duration = Duration::from_secs(5);
-/// Emotions sit this many sprite pixels above the feet, over the head.
-const EMOTION_HEIGHT: f32 = 70.0;
 /// Spirit spheres and coins: how far from the body they circle, how high, how fast (radians a second), and how
 /// much flatter the circle looks than it is.
 // ponytail: estimates; calibrate against the real client.
@@ -600,14 +618,11 @@ const NOT_TAMED: usize = 1575;
 const BAR_WIDTH: f32 = 60.0;
 const BAR_COLORS: [[u8; 4]; 5] = [[0x14, 0x19, 0x9B, 255], [0x44, 0x44, 0x44, 255], [0x16, 0xEA, 0x25, 255], [0xEA, 0x16, 0x16, 255], [0x1D, 0x65, 0xDB, 255]];
 const MONSTER_BAR_COLORS: [[u8; 4]; 4] = [[0x10, 0x18, 0x9C, 255], [0x42, 0x41, 0x42, 255], [0xFF, 0x00, 0xE7, 255], [0xFF, 0xFF, 0x00, 255]];
-/// Damage numbers rise and shrink over this long.
-const DAMAGE_DURATION: f32 = 1.5;
-const MISS_DURATION: f32 = 0.8;
-/// A multi-hit's total stays this long; the hits come this far apart.
-const COMBO_DURATION: f32 = 3.0;
+/// A multi-hit's hits come this far apart.
 const MULTI_HIT_DELAY: Duration = Duration::from_millis(200);
-/// How long a dead unit stays on the ground.
-const CORPSE_TIME: Duration = Duration::from_millis(1500);
+/// A corpse fades out over this long (one step of alpha every 24 ms); a unit walking out of sight over this.
+const CORPSE_FADE_MS: f32 = 255.0 * 24.0;
+const OUT_OF_SIGHT_FADE_MS: f32 = 510.0;
 
 /// Unit object types (rathena's clif_bl_type).
 const PLAYER: u8 = 0;
@@ -631,6 +646,10 @@ const UNITS_PER_ZOOM: f32 = 2.5;
 /// How near and far the camera goes, outdoors and indoors; a wheel step, and how often the wheel counts.
 const DISTANCE_RANGE: [f32; 2] = [230.0, 400.0];
 const DISTANCE_RANGE_INDOOR: [f32; 2] = [230.0, 300.0];
+/// With /zoom on, outdoors the camera goes out to this; its lines: on, off.
+const ZOOM_OUT_DISTANCE: f32 = 730.0;
+const ZOOM_OUT_ON: usize = 3511;
+const ZOOM_OUT_OFF: usize = 3512;
 const WHEEL_STEP: f32 = 24.3;
 const WHEEL_GAP: Duration = Duration::from_millis(15);
 /// Shift + wheel tilts this many degrees a step.
@@ -705,13 +724,15 @@ struct Game {
     walks: u32,
     walk_held: bool,
     last_walk_try: Option<Instant>,
-    press_mark: Option<(Instant, bool)>,
+    press_mark: Option<(Instant, [f32; 2], bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
     shadow: Option<SpriteSet>,
     /// The emotion sprite, and the emotions showing: by unit (None = the player), the sprite action and when.
     emotion_sprite: Option<SpriteSet>,
     emotions: HashMap<Option<u32>, (usize, Instant)>,
+    /// The status marks' sprites (stun, sleep, curse, the ice block) by name.
+    mark_sprites: HashMap<&'static str, SpriteSet>,
     /// What circles units (None = the player): spheres or coins, shields, charms, souls; the sphere's, the shield's
     /// and the charm's pictures, the coin's sprite.
     spirits: HashMap<Option<u32>, Orbs>,
@@ -720,6 +741,8 @@ struct Game {
     charm: Option<Texture>,
     coin_sprite: Option<SpriteSet>,
     digits: Option<Digits>,
+    /// The message sprite: a critical hit's burst and Lucky (`actor::BURST_ACTION`, `LUCKY_ACTION`).
+    message_sprite: Option<SpriteSet>,
     /// The NPC conversation on screen.
     dialog: Option<Dialog>,
     /// Last frame's clickable units and items.
@@ -750,6 +773,8 @@ struct Game {
     slot: Option<(usize, Instant)>,
     /// Units casting (None = the player): when it began and how long it takes.
     casts: HashMap<Option<u32>, (Instant, Duration)>,
+    /// The magic squares under ground skills being cast, by caster (None = the player); each goes with its cast.
+    cast_squares: HashMap<Option<u32>, cast_square::Square>,
     /// Units that may use their next combo skill (None = the player): when the window opened and how long it lasts.
     combos: HashMap<Option<u32>, (Instant, Duration)>,
     /// Units locked together by Blade Stop or Cursed Circle: source and target.
@@ -1035,24 +1060,26 @@ struct CameraGoal {
     indoor: bool,
     /// The right button is down: where the pointer was last.
     dragging: Option<[f32; 2]>,
-    /// The last right press, and whether the pointer moved since.
-    last_press: Option<(Instant, bool)>,
+    /// The last right press: when, where, and whether the pointer moved off since.
+    last_press: Option<(Instant, [f32; 2], bool)>,
     /// The parts of a tilt and a zoom step dragged but not yet whole.
     carry: [f32; 2],
     last_wheel: Option<Instant>,
     /// The map's own camera table, which then sets the limits (and no double click resets).
     limits: Option<rustnarok_client::map::Viewpoint>,
+    /// /zoom: outdoors the camera goes out to ZOOM_OUT_DISTANCE.
+    zoom_out: bool,
 }
 
 impl CameraGoal {
     #[cfg(test)]
     fn new(indoor: bool) -> Self {
-        Self::arrive(indoor, None, [PITCH, ZOOM * UNITS_PER_ZOOM])
+        Self::arrive(indoor, None, [PITCH, ZOOM * UNITS_PER_ZOOM], false)
     }
 
     /// The goal on arriving on a map: the map's own table's start, or the tilt and distance the player left on this
     /// kind of map (within its limits); turned 0 outdoors, YAW_INDOOR indoors.
-    fn arrive(indoor: bool, limits: Option<rustnarok_client::map::Viewpoint>, saved: [f32; 2]) -> Self {
+    fn arrive(indoor: bool, limits: Option<rustnarok_client::map::Viewpoint>, saved: [f32; 2], zoom_out: bool) -> Self {
         let mut goal = Self {
             yaw: if indoor { YAW_INDOOR } else { 0.0 },
             pitch: PITCH,
@@ -1063,6 +1090,7 @@ impl CameraGoal {
             carry: [0.0; 2],
             last_wheel: None,
             limits,
+            zoom_out,
         };
         match limits {
             Some(table) => {
@@ -1097,9 +1125,15 @@ impl CameraGoal {
         self.zoom * UNITS_PER_ZOOM
     }
 
-    /// Moves the camera to `distance` world units, within the map's range.
+    /// Moves the camera to `distance` world units, within the map's range: its own table's, or the kind of map's
+    /// (further out outdoors with /zoom).
     fn set_distance(&mut self, distance: f32) {
-        let [near, far] = self.limits.map_or(if self.indoor { DISTANCE_RANGE_INDOOR } else { DISTANCE_RANGE }, |table| table.distance);
+        let [near, far] = match self.limits {
+            Some(table) => table.distance,
+            None if self.indoor => DISTANCE_RANGE_INDOOR,
+            None if self.zoom_out => [DISTANCE_RANGE[0], ZOOM_OUT_DISTANCE],
+            None => DISTANCE_RANGE,
+        };
         self.zoom = distance.clamp(near, far) / UNITS_PER_ZOOM;
     }
 
@@ -1111,7 +1145,7 @@ impl CameraGoal {
     /// Right button down. A second press within CAMERA_DOUBLE_CLICK with the pointer not moved at all resets: the
     /// distance with Ctrl, the tilt with Shift, otherwise (outdoors only) the turn, to the nearest whole circle.
     fn press(&mut self, cursor: [f32; 2], now: Instant, ctrl: bool, shift: bool) {
-        if self.limits.is_none() && self.last_press.is_some_and(|(at, moved)| !moved && now.saturating_duration_since(at) < CAMERA_DOUBLE_CLICK) {
+        if self.limits.is_none() && self.last_press.is_some_and(|(at, _, moved)| !moved && now.saturating_duration_since(at) < CAMERA_DOUBLE_CLICK) {
             if ctrl {
                 self.zoom = ZOOM;
             }
@@ -1122,14 +1156,14 @@ impl CameraGoal {
                 self.yaw = (self.yaw / 360.0).round() * 360.0;
             }
         }
-        self.last_press = Some((now, false));
+        self.last_press = Some((now, cursor, false));
         self.dragging = Some(cursor);
     }
 
-    /// The pointer moved: the next right press isn't a double click.
-    fn pointer_moved(&mut self) {
-        if let Some((_, moved)) = &mut self.last_press {
-            *moved = true;
+    /// The pointer moved to `cursor`: off the last press, the next right press isn't a double click.
+    fn pointer_moved(&mut self, cursor: [f32; 2]) {
+        if let Some((_, from, moved)) = &mut self.last_press {
+            *moved |= moved_off(*from, cursor);
         }
     }
 
@@ -1595,6 +1629,8 @@ struct FloorItem {
     /// The server's cell, and where in it the item lies (fractional cells).
     at: [i32; 2],
     cell: [f32; 2],
+    /// When it appeared: it glints from then on.
+    seen: Instant,
     /// Set while it falls after being dropped.
     dropped: Option<Instant>,
 }
@@ -2207,6 +2243,18 @@ impl Game {
                     let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.camera_snap { "1" } else { "0" }));
                 }
                 let line = messages.get(if self.camera_snap { CAMERA_ON } else { CAMERA_OFF }).cloned().unwrap_or_default();
+                self.chat_line(line, CHAT_ITEM);
+                Ok(())
+            }
+            chat::Command::Zoom => {
+                let on = !self.camera_goal.zoom_out;
+                if let Some(path) = settings_path("zoomout") {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if on { "1" } else { "0" }));
+                }
+                self.camera_goal.zoom_out = on;
+                let distance = self.camera_goal.distance();
+                self.camera_goal.set_distance(distance);
+                let line = messages.get(if on { ZOOM_OUT_ON } else { ZOOM_OUT_OFF }).cloned().unwrap_or_default();
                 self.chat_line(line, CHAT_ITEM);
                 Ok(())
             }
@@ -3580,7 +3628,14 @@ impl Game {
     fn show_hit(&mut self, act: &net::Act, hit_ms: Option<f32>) {
         let me = self.account_id;
         let target = (act.target != me).then_some(act.target);
-        let on_player = act.target == me || target.and_then(|id| self.units.get(&id)).is_some_and(|actor| actor.kind == PLAYER);
+        let hit = match target {
+            None => Some(&self.player),
+            Some(id) => self.units.get(&id),
+        };
+        // Red on anything but monsters and NPCs: players (us too), homunculi, mercenaries.
+        let on_player = hit.is_none_or(|actor| !(actor::is_monster_job(actor.job) || actor::is_npc_job(actor.job)));
+        // Hits drift diagonally away from where the target faces.
+        let drift = hit.map_or([1.0, 1.0], |actor| actor::number_drift(actor.rot, actor.facing_from_server));
         let amount = act.damage + act.left_damage;
         let lands = Instant::now() + Duration::from_secs_f32(hit_ms.unwrap_or(act.source_speed.max(0) as f32) / 1000.0);
         // Misses, endured hits and lucky dodges don't flinch.
@@ -3588,15 +3643,22 @@ impl Game {
         let kind = match act.kind {
             11 => DamageKind::Lucky,
             10 | 13 => DamageKind::Critical,
-            _ => DamageKind::Hit { taken: on_player },
+            _ if amount <= 0 => {
+                // MISS shows over the attacker: white when it's a monster or an NPC, red otherwise.
+                let attacker = if act.source == me { Some(&self.player) } else { self.units.get(&act.source) };
+                let red = attacker.is_none_or(|actor| !(actor::is_monster_job(actor.job) || actor::is_npc_job(actor.job)));
+                let over = (act.source != me).then_some(act.source);
+                self.damages.push(Damage { target: over, amount, start: lands, kind: DamageKind::Miss { red }, flinch: None, drift });
+                return;
+            }
+            _ => DamageKind::Hit { taken: on_player, sp: act.sp },
         };
         let hits = if amount > 0 { i32::from(act.hits.max(1)) } else { 1 };
         for hit in 0..hits {
             let start = lands + MULTI_HIT_DELAY * hit as u32;
-            self.damages.push(Damage { target, amount: amount / hits, start, kind, flinch });
+            self.damages.push(Damage { target, amount: amount / hits, start, kind, flinch, drift });
             if hits > 1 && !on_player {
-                let combo = DamageKind::Combo { last: hit + 1 == hits };
-                self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: combo, flinch: None });
+                self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: DamageKind::Combo, flinch: None, drift });
             }
         }
     }
@@ -3662,31 +3724,37 @@ struct Damage {
     start: Instant,
     kind: DamageKind,
     flinch: Option<f32>,
+    /// The ground axes' signs (x east, z north) a hit's number drifts along.
+    drift: [f32; 2],
 }
 
 /// How a number looks and moves.
 #[derive(Clone, Copy, PartialEq)]
 enum DamageKind {
-    /// White, or red on a player (`taken`).
-    Hit { taken: bool },
+    /// White, or red on a player, homunculus or mercenary (`taken`); blue when it's SP.
+    Hit { taken: bool, sp: bool },
     /// Yellow on the critical burst.
     Critical,
     /// "Lucky": the hit was dodged.
     Lucky,
+    /// MISS over the attacker: white from a monster or NPC, red from anyone else.
+    Miss { red: bool },
     /// Green HP or blue SP, rising slowly.
     Heal { sp: bool },
-    /// The running total of a multi-hit, high above in yellow; the last one stays longer.
-    Combo { last: bool },
+    /// The running total of a multi-hit, high above in yellow; each new one replaces the last.
+    Combo,
 }
 
 impl DamageKind {
-    fn duration(self, amount: i32) -> f32 {
-        match self {
-            DamageKind::Lucky => MISS_DURATION,
-            DamageKind::Hit { .. } if amount <= 0 => MISS_DURATION,
-            DamageKind::Combo { .. } => COMBO_DURATION,
-            _ => DAMAGE_DURATION,
-        }
+    fn duration(self, _amount: i32) -> f32 {
+        let ticks = match self {
+            DamageKind::Lucky => return actor::LUCKY_MS / 1000.0,
+            DamageKind::Miss { .. } => actor::MISS_TICKS,
+            DamageKind::Combo => actor::TOTAL_NUMBER_TICKS,
+            DamageKind::Heal { .. } => actor::HEAL_NUMBER_TICKS,
+            DamageKind::Hit { .. } | DamageKind::Critical => actor::HIT_NUMBER_TICKS,
+        };
+        ticks * 0.024
     }
 }
 
@@ -3790,6 +3858,8 @@ struct Assets {
     homunculus: homunculus::Assets,
     party: party::Assets,
     chatroom: chatroom::Assets,
+    /// The magic square under a ground cast.
+    magic_target: Option<Texture>,
     escape: escape::Assets,
     options: options::Assets,
     quest: quest::Assets,
@@ -3908,6 +3978,7 @@ impl Assets {
             homunculus: homunculus::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
+            magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
             quest: quest::Assets::load(gpu, grf),
@@ -4014,6 +4085,11 @@ fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
 
 /// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
 /// folder elsewhere.
+/// Whether /zoom is on (saved; off unless turned on).
+fn zoom_out_saved() -> bool {
+    settings_path("zoomout").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1")
+}
+
 pub(crate) fn settings_path(name: &str) -> Option<std::path::PathBuf> {
     let home = || Some(std::path::PathBuf::from(std::env::var_os("HOME")?));
     let folder = if cfg!(target_os = "macos") {
@@ -4262,8 +4338,18 @@ fn may_move(last: Option<Instant>, now: Instant) -> bool {
 }
 
 /// Whether a press now, after the last one (when, and whether the pointer moved since), is a double press.
-fn double_press(last: Option<(Instant, bool)>, now: Instant) -> bool {
-    last.is_some_and(|(at, moved)| !moved && now.saturating_duration_since(at) < DOUBLE_PRESS)
+fn double_press(last: Option<(Instant, [f32; 2], bool)>, now: Instant) -> bool {
+    last.is_some_and(|(at, _, moved)| !moved && now.saturating_duration_since(at) < DOUBLE_PRESS)
+}
+
+/// How far the pointer may wander from a press and still count as still there (a double click, a click not a
+/// drag), in canvas pixels: a hand's tremor on a mouse or trackpad, which a scaled window turns into fractions.
+// ponytail: an estimate; one canvas pixel was too strict on a scaled window.
+const POINTER_SLACK: f32 = 2.0;
+
+/// Whether the pointer at `to` has moved off a press at `from`.
+fn moved_off(from: [f32; 2], to: [f32; 2]) -> bool {
+    (to[0] - from[0]).abs().max((to[1] - from[1]).abs()) >= POINTER_SLACK
 }
 
 fn offset(origin: [f32; 2], offset: [f32; 2]) -> [f32; 2] {
@@ -6213,10 +6299,11 @@ impl App {
     /// The pointer moved: windows and items being dragged follow it.
     fn pointer_moved(&mut self) {
         if let Scene::Game(game) = &mut self.scene {
-            if let Some((_, moved)) = &mut game.press_mark {
-                *moved = true;
+            let cursor = self.cursor;
+            if let Some((_, from, moved)) = &mut game.press_mark {
+                *moved |= moved_off(*from, cursor);
             }
-            if game.right_press.is_some() {
+            if game.right_press.is_some_and(|(from, _)| moved_off(from, cursor)) {
                 game.right_moved = true;
             }
             let (inventory_height, equipment_height, info_height) = (game.inventory.height(), game.equipment.height(), game.basic_info.height());
@@ -6296,7 +6383,7 @@ impl App {
             if let Some(window) = &mut game.shortcuts_window {
                 window.drag_to(self.cursor);
             }
-            game.camera_goal.pointer_moved();
+            game.camera_goal.pointer_moved(cursor);
             game.camera_goal.drag(self.cursor, self.modifiers);
             if let Some((_, start, moved)) = &mut game.dragging {
                 *moved |= (self.cursor[0] - start[0]).abs() + (self.cursor[1] - start[1]).abs() > 4.0;
@@ -6674,7 +6761,7 @@ impl App {
                     };
                     if let Some(key) = key {
                         game.hotkeys.keys[slot] = Some(key);
-                        let _ = game.session.set_hotkey(0, slot as u16, Some(key));
+                        let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, Some(key));
                     }
                 }
                 // A hotkey moved along the bar trades places with what's there; let go off the bar, it's taken off.
@@ -6688,13 +6775,13 @@ impl App {
                         Some(to) if to != from => {
                             game.hotkeys.keys.swap(from, to);
                             for slot in [from, to] {
-                                let _ = game.session.set_hotkey(0, slot as u16, game.hotkeys.keys[slot]);
+                                let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, game.hotkeys.keys[slot]);
                             }
                         }
                         Some(_) => {}
                         None => {
                             game.hotkeys.keys[from] = None;
-                            let _ = game.session.set_hotkey(0, from as u16, None);
+                            let _ = game.session.set_hotkey(game.hotkeys.tab(), from as u16, None);
                         }
                     }
                 }
@@ -6874,7 +6961,7 @@ impl App {
         {
             let now = Instant::now();
             let double = double_press(game.press_mark, now);
-            game.press_mark = Some((now, false));
+            game.press_mark = Some((now, cursor, false));
             let (shift, ctrl) = (self.modifiers.shift_key(), self.modifiers.control_key());
             // Alt + left press orders the mercenary (when it's out).
             if !double && self.modifiers.alt_key() && game.companion_press(false, cursor, shift) {
@@ -7261,6 +7348,7 @@ impl App {
                 ctrl: self.modifiers.control_key(),
                 repeat: event.repeat,
                 text_focus,
+                bar: if game.hotkeys.tab() == 0 { 1 } else { 2 },
             },
         );
         fired.is_some_and(|fired| self.perform_shortcut(fired))
@@ -7399,6 +7487,7 @@ impl App {
                 game.raise(Panel::Status);
             }
             shortcuts::Action::RotateHotkeys => game.hotkeys.rotate(),
+            shortcuts::Action::SwitchHotkeys => game.hotkeys.switch(),
             shortcuts::Action::Costume => {
                 if game.equipment.frame.open && game.equipment.showing_costume() {
                     game.equipment.frame.open = false;
@@ -7408,16 +7497,16 @@ impl App {
                     game.raise(Panel::Equipment);
                 }
             }
-            shortcuts::Action::Hotbar { bar: 1, slot } => game.press_hotkey(usize::from(slot)),
-            // ponytail: no window yet (memorial, commands, ground cursor, tip, party board, hunting, flags, hotbar 2). The key is eaten.
+            // Only the showing bar's keys come here (see shortcuts::action).
+            shortcuts::Action::Hotbar { slot, .. } => game.press_hotkey(usize::from(slot)),
+            // ponytail: no window yet (memorial, commands, ground cursor, tip, party board, hunting, flags). The key is eaten.
             shortcuts::Action::Memorial
             | shortcuts::Action::Commands
             | shortcuts::Action::GroundCursor
             | shortcuts::Action::Tip
             | shortcuts::Action::PartyBoard
             | shortcuts::Action::Hunting
-            | shortcuts::Action::Flag(_)
-            | shortcuts::Action::Hotbar { .. } => {}
+            | shortcuts::Action::Flag(_) => {}
             shortcuts::Action::Macro(_)
             | shortcuts::Action::Screenshot
             | shortcuts::Action::Minimap
@@ -8063,7 +8152,7 @@ impl App {
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
                 player.sync_companions(me.option, &self.grf);
                 let indoor = self.indoor.contains(&map_key(&map));
-                let camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
+                let camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor), zoom_out_saved());
                 let camera = camera_goal.camera(world.cell_position(position.map(f32::from)));
                 let now = Instant::now();
                 let minimap = minimap::load_map(&self.grf, &map);
@@ -8106,12 +8195,17 @@ impl App {
                     shadow: SpriteSet::at(&self.grf, "data\\sprite\\shadow"),
                     emotion_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\emotion"),
                     emotions: HashMap::new(),
+                    mark_sprites: ["status-stun", "status-sleep", "status-curse", "얼음땡"]
+                        .into_iter()
+                        .filter_map(|name| Some((name, SpriteSet::at(&self.grf, &format!("data\\sprite\\이팩트\\{name}"))?)))
+                        .collect(),
                     spirits: HashMap::new(),
                     sphere: gpu.try_load_texture(&self.grf, "data\\texture\\effect\\기구.bmp", true).ok(),
                     shield: render::load_image(&self.grf, "data\\texture\\effect\\shield.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
                     charm: render::load_image(&self.grf, "data\\texture\\effect\\charm.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
                     coin_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\동전"),
                     digits: Digits::load(gpu, &self.grf),
+                    message_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\msg"),
                     dialog: None,
                     hit_boxes: Vec::new(),
                     ground: HashMap::new(),
@@ -8136,6 +8230,7 @@ impl App {
                     slot_sprite: SpriteSet::at(&self.grf, "data\\sprite\\slotmachine"),
                     slot: None,
                     casts: HashMap::new(),
+                    cast_squares: HashMap::new(),
                     combos: HashMap::new(),
                     locks: Vec::new(),
                     speech: HashMap::new(),
@@ -8399,7 +8494,7 @@ impl App {
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
                 let indoor = self.indoor.contains(&map_key(&map));
-                game.camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor));
+                game.camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor), zoom_out_saved());
                 game.camera = game.camera_goal.camera(world.cell_position(position.map(f32::from)));
                 game.minimap = minimap::load_map(&self.grf, &map);
                 game.minimap_crop = None;
@@ -8516,6 +8611,10 @@ impl App {
                     game.effects.play(gpu, grf, table, EF_WARPZONE2, effects::Target::Unit(Some(unit.id)), at, Instant::now());
                 }
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
+                // Back in sight, or a monster that respawned under its corpse's ID: a unit of its own again.
+                if actor.remove_at.is_some() {
+                    *actor = new_actor(&unit);
+                }
                 actor.body_state = unit.body_state;
                 actor.health_state = unit.health_state;
                 actor.stop_at(unit.position.map(i32::from));
@@ -8548,6 +8647,9 @@ impl App {
             }
             MapEvent::UnitWalk { unit, to, .. } => {
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
+                if actor.remove_at.is_some() {
+                    *actor = new_actor(&unit);
+                }
                 actor.body_state = unit.body_state;
                 actor.health_state = unit.health_state;
                 let from = unit.position.map(i32::from);
@@ -8884,6 +8986,11 @@ impl App {
                 }
                 match (reason, dying) {
                     (1, Some(actor)) => fall(actor, lands),
+                    // Out of sight: it fades out, its shadow gone at once.
+                    (0, Some(actor)) if id != game.account_id => {
+                        actor.fade_out(Instant::now(), OUT_OF_SIGHT_FADE_MS);
+                        game.unit_hp.remove(&id);
+                    }
                     _ => {
                         game.units.remove(&id);
                         game.unit_hp.remove(&id);
@@ -9048,13 +9155,11 @@ impl App {
             }
             MapEvent::AttackRange(range) => game.attack_range = i32::from(range),
             MapEvent::GroundItem(item) => {
-                let info = self.items.get(&item.item);
-                if let Some(info) = info {
-                    let resource = info.resource(item.identified).to_owned();
-                    game.item_sprites.entry(resource.clone()).or_insert_with(|| SpriteSet::at(grf, &format!("data\\sprite\\아이템\\{resource}")));
-                }
+                let resource = ground_sprite(&self.items, item.item, item.identified).to_owned();
+                game.item_sprites.entry(resource.clone()).or_insert_with(|| SpriteSet::at(grf, &format!("data\\sprite\\아이템\\{resource}")));
                 let [x, y] = item.cell;
-                let [sub_x, sub_y] = item.sub.map(|sub| f32::from(sub) / 12.0);
+                // Sixteenths of a cell from its low corner (8 is the middle).
+                let [sub_x, sub_y] = item.sub.map(|sub| f32::from(sub) / 16.0);
                 game.ground.insert(
                     item.id,
                     FloorItem {
@@ -9063,6 +9168,7 @@ impl App {
                         amount: item.amount,
                         at: [i32::from(x), i32::from(y)],
                         cell: [f32::from(x) - 0.5 + sub_x, f32::from(y) - 0.5 + sub_y],
+                        seen: Instant::now(),
                         dropped: item.falling.then(Instant::now),
                     },
                 );
@@ -10630,12 +10736,7 @@ impl App {
                 }
             }
             MapEvent::InventoryExpansion(slots) => game.inventory.expansion = slots,
-            MapEvent::Hotkeys { tab: 0, keys, .. } => {
-                for (slot, key) in keys.into_iter().enumerate().take(game.hotkeys.keys.len()) {
-                    game.hotkeys.keys[slot] = key;
-                }
-            }
-            MapEvent::Hotkeys { .. } => {}
+            MapEvent::Hotkeys { tab, keys, .. } => game.hotkeys.set_tab(tab, keys),
             MapEvent::Skills(skills) => game.skills = skills,
             MapEvent::SkillChanged(changed) => match game.skills.iter_mut().find(|skill| skill.id == changed.id) {
                 // ZC_SKILLINFO_UPDATE doesn't say the kind.
@@ -10657,7 +10758,15 @@ impl App {
                     caster.face(goal.unwrap_or([i32::from(cell[0]), i32::from(cell[1])]));
                 }
                 if cast_ms > 0 {
-                    game.casts.insert((source != me).then_some(source), (Instant::now(), Duration::from_millis(u64::from(cast_ms))));
+                    let (start, length) = (Instant::now(), Duration::from_millis(u64::from(cast_ms)));
+                    game.casts.insert((source != me).then_some(source), (start, length));
+                    // A cast at a cell: the magic square there. The packet has no level: ours is the skill tree's.
+                    // ponytail: our level is the highest learned, not the one picked; others' is level 10.
+                    let level = (source == me).then(|| game.skills.iter().find(|known| known.id == skill).map(|known| known.level)).flatten();
+                    match (target == 0).then(|| cast_square::Square::new(skill, level, cell, start, length)).flatten() {
+                        Some(square) => game.cast_squares.insert((source != me).then_some(source), square),
+                        None => game.cast_squares.remove(&(source != me).then_some(source)),
+                    };
                 }
                 game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info);
                 skill_effects(game, skill, "beginCastEffectId", source);
@@ -10713,6 +10822,7 @@ impl App {
                         start: Instant::now(),
                         kind: DamageKind::Heal { sp: false },
                         flinch: None,
+                        drift: [0.0; 2],
                     });
                 }
                 skill_effects(game, skill, "effectId", target);
@@ -10742,6 +10852,12 @@ impl App {
             // Cooldowns: kept across map changes (the server doesn't repeat them), sent again after a relog.
             MapEvent::SkillCooldown { skill, ms } => game.cooldowns.set(skill, ms, control::now()),
             MapEvent::SkillFailed { ok: true, .. } => {}
+            // A cut-off cast: its bar and its magic square go.
+            MapEvent::CastCancelled(source) => {
+                let caster = (source != game.account_id).then_some(source);
+                game.casts.remove(&caster);
+                game.cast_squares.remove(&caster);
+            }
             MapEvent::SkillFailed { skill, detail, cause, .. } => {
                 game.casts.remove(&None);
                 // The client's messages for why: a skill's own reason, else the general cause.
@@ -10818,7 +10934,14 @@ impl App {
             }
             // Potions and the like: green HP or blue SP over the player.
             MapEvent::Recovered { kind, amount } => {
-                game.damages.push(Damage { target: None, amount, start: Instant::now(), kind: DamageKind::Heal { sp: kind == net::STATUS_SP }, flinch: None });
+                game.damages.push(Damage {
+                    target: None,
+                    amount,
+                    start: Instant::now(),
+                    kind: DamageKind::Heal { sp: kind == net::STATUS_SP },
+                    flinch: None,
+                    drift: [0.0; 2],
+                });
             }
             // Mounting, dismounting or an outfit puts a player in another body. Body and health state colour it.
             MapEvent::OptionChange { id, option, body, health } => {
@@ -11366,21 +11489,21 @@ impl App {
             room.changed = false;
         }
         let dress_placements = match (&game.dressroom, &mut game.dress_figure) {
-            (Some(room), Some(figure)) => figure.frame(gpu, actor::IDLE, room.direction, 0, Timing::Loop(0.0)),
+            (Some(room), Some(figure)) => figure.flat_frame(gpu, actor::IDLE, room.direction, 0, Timing::Loop(0.0)),
             _ => Vec::new(),
         };
         // The equipment window shows the character standing, facing front.
         let preview_feet = game.equipment.preview_feet();
         let viewed_feet = game.viewing.as_ref().and_then(|viewed| viewed.window.preview_feet());
         let viewed_placements = match (viewed_feet, game.viewing.as_mut().and_then(|viewed| viewed.sprites.as_mut())) {
-            (Some(_), Some(sprites)) => sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
+            (Some(_), Some(sprites)) => sprites.flat_frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
             _ => Vec::new(),
         };
         let preview_placements = match (preview_feet, &mut game.player.sprites) {
             (Some(_), Some(sprites)) => {
                 // The equipment figure keeps the sprite's own colours.
                 sprites.set_tint(None);
-                sprites.frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0))
+                sprites.flat_frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0))
             }
             _ => Vec::new(),
         };
@@ -11436,12 +11559,10 @@ impl App {
         }
         // Items on the ground; just-dropped ones fall into place.
         for (&id, item) in &game.ground {
-            let Some(info) = items.get(&item.item) else { continue };
-            let Some(Some(sprites)) = game.item_sprites.get_mut(info.resource(item.identified)) else { continue };
-            let mut feet = game.world.cell_position(item.cell);
+            let Some(Some(sprites)) = game.item_sprites.get_mut(ground_sprite(items, item.item, item.identified)) else { continue };
+            let mut feet = game.world.ground_under(game.world.cell_position(item.cell));
             if let Some(dropped) = item.dropped {
-                let fallen = now.duration_since(dropped).as_secs_f32() * 1000.0 / DROP_MS_PER_CELL;
-                feet[1] += (DROP_HEIGHT - fallen).max(0.0) * world::CELL;
+                feet[1] += item_fall_height(now.saturating_duration_since(dropped).as_secs_f32() / 0.024);
             }
             frames.push((Owner::Item(id), feet, sprites.frame(gpu, 0, 0, 0, Timing::Loop(0.0))));
         }
@@ -11512,6 +11633,27 @@ impl App {
             }
         }
 
+        // The message sprite's frames for critical bursts and Lucky, posed while the sprite can still decode them.
+        let message_frames: Vec<Vec<actor::Placed>> = match &mut game.message_sprite {
+            Some(sprite) => game
+                .damages
+                .iter()
+                .map(|damage| {
+                    let elapsed = now.saturating_duration_since(damage.start).as_secs_f32();
+                    match damage.kind {
+                        _ if damage.start > now => Vec::new(),
+                        DamageKind::Critical => {
+                            let frames = sprite.frames(actor::BURST_ACTION).max(1) as f32;
+                            sprite.frame_at(gpu, actor::BURST_ACTION, 0, Timing::Span((elapsed / 0.024 / 2.0).floor() / frames))
+                        }
+                        DamageKind::Lucky => sprite.frame_at(gpu, actor::LUCKY_ACTION, 0, Timing::Once(elapsed * 1000.0, 1.0)),
+                        _ => Vec::new(),
+                    }
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+
         // Shadows first, so characters standing at the same depth draw over them.
         let shadow_placements = game.shadow.as_mut().map(|shadow| shadow.frame(gpu, 0, 0, 0, Timing::Loop(0.0))).unwrap_or_default();
         let mut billboards: Vec<Billboard> = Vec::new();
@@ -11522,7 +11664,7 @@ impl App {
                 factor * scale
             };
             for (owner, feet, _) in &frames {
-                let dead = matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.remove_at.is_some()));
+                let dead = matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.fading(now)));
                 let scale = match owner {
                     Owner::Item(_) => ITEM_SHADOW,
                     Owner::Player => cast(&game.player, player_scale),
@@ -11567,7 +11709,7 @@ impl App {
             Owner::Unit(id) => game.units[id].sprites.as_ref(),
             Owner::Item(id) => {
                 let item = &game.ground[id];
-                game.item_sprites.get(items[&item.item].resource(item.identified)).and_then(Option::as_ref)
+                game.item_sprites.get(ground_sprite(items, item.item, item.identified)).and_then(Option::as_ref)
             }
         };
         // Spirit spheres, or coins for the Gunslinger line, circling the body at chest height: the far half of the
@@ -11642,9 +11784,16 @@ impl App {
         };
         billboards.extend(frames.iter().flat_map(|(owner, feet, placements)| {
             let sprites = sprites_of(owner).unwrap();
+            let tint = match owner {
+                Owner::Unit(id) => [1.0, 1.0, 1.0, game.units.get(id).map_or(1.0, |actor| actor.alpha(now))],
+                Owner::Item(id) if game.ground.get(id).is_some_and(|item| item_glints(now.saturating_duration_since(item.seen).as_secs_f32() / 0.024)) => {
+                    [1.0, 1.0, 0.0, 1.0]
+                }
+                _ => [1.0; 4],
+            };
             let (player, flat) = stand_of(owner);
             placements.iter().enumerate().map(move |(index, (key, position, size, angle))| {
-                (sprites.texture(*key), *feet, *position, *size, [1.0; 4], *angle, sprite_layer(index, player, flat))
+                (sprites.texture(*key), *feet, *position, *size, tint, *angle, sprite_layer(index, player, flat))
             })
         }));
         for draw in &companion_draws {
@@ -11733,106 +11882,131 @@ impl App {
                 shown.push((feet, sprite.frame_at(gpu, *action, 0, Timing::Loop(elapsed))));
             }
         }
+        // Status marks: stun stars, sleep, curse and silence's "..." over heads, the ice block at a frozen unit's feet.
+        let looped = now.duration_since(game.entered).as_secs_f32() * 1000.0;
+        let mut marked = Vec::new();
+        let states = std::iter::once((player_feet, game.player.body_state, game.player.health_state))
+            .chain(game.units.iter().filter_map(|(id, actor)| feet_of.get(id).map(|&feet| (feet, actor.body_state, actor.health_state))));
+        for (feet, body, health) in states {
+            for mark in head_marks::marks(body, health) {
+                let anchor = head_marks::anchor(feet, mark.height());
+                match mark.sprite() {
+                    Some(name) => {
+                        if let Some(sprite) = game.mark_sprites.get_mut(name) {
+                            marked.push((Some(name), anchor, sprite.frame_at(gpu, 0, 0, Timing::Loop(looped))));
+                        }
+                    }
+                    None => {
+                        if let (Some(sprite), Some(action)) = (&mut game.emotion_sprite, emotion::sprite_action(head_marks::SILENCE_EMOTION)) {
+                            marked.push((None, anchor, sprite.frame_at(gpu, action, 0, Timing::Loop(looped))));
+                        }
+                    }
+                }
+            }
+        }
         if let Some(sprite) = &game.emotion_sprite {
             billboards.extend(shown.into_iter().flat_map(|(feet, placements)| {
+                let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
                 placements.into_iter().map(move |(key, position, size, angle)| {
-                    (
-                        sprite.texture(key),
-                        feet,
-                        [position[0], position[1] - EMOTION_HEIGHT],
-                        size,
-                        [1.0; 4],
-                        angle,
-                        DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() },
-                    )
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
                 })
             }));
         }
+        for (name, anchor, placements) in marked {
+            let sprite = match name {
+                Some(name) => game.mark_sprites.get(name),
+                None => game.emotion_sprite.as_ref(),
+            };
+            if let Some(sprite) = sprite {
+                billboards.extend(placements.into_iter().map(|(key, position, size, angle)| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                }));
+            }
+        }
 
-        // Numbers over units, moving as the client's do: hits drift diagonally on an arc, shrinking and fading; misses
-        // and lucky dodges rise straight up; heals hold, then rise; a multi-hit's total pops up high (the newest only).
+        // Numbers over units: hits arc and drift away from where the target faces, shrinking and fading; MISS rises
+        // over the attacker; heals rise slowly; a multi-hit's total pops up high (the newest only); a critical's burst
+        // follows its number; Lucky plays once over the dodger.
         if let Some(digits) = &game.digits {
             let mut newest_combo: HashMap<Option<u32>, Instant> = HashMap::new();
-            for damage in game.damages.iter().filter(|damage| damage.start <= now && matches!(damage.kind, DamageKind::Combo { .. })) {
+            for damage in game.damages.iter().filter(|damage| damage.start <= now && damage.kind == DamageKind::Combo) {
                 let newest = newest_combo.entry(damage.target).or_insert(damage.start);
                 *newest = (*newest).max(damage.start);
             }
-            for damage in game.damages.iter().filter(|damage| damage.start <= now) {
+            let message_sprite = game.message_sprite.as_ref();
+            for (index, damage) in game.damages.iter().enumerate().filter(|(_, damage)| damage.start <= now) {
                 let Some(feet) = damage.target.map_or(Some(player_feet), |id| feet_of.get(&id).copied()) else { continue };
-                let progress = now.duration_since(damage.start).as_secs_f32() / damage.kind.duration(damage.amount);
-                if progress >= 1.0 {
+                let elapsed = now.duration_since(damage.start).as_secs_f32();
+                let posed = message_frames.get(index).map(Vec::as_slice).unwrap_or_default();
+                if elapsed >= damage.kind.duration(damage.amount) {
                     continue;
                 }
-                let alpha = 1.0 - progress;
-                let at = |rise: f32, drift: f32| [feet[0] + drift * world::CELL, feet[1] + rise * world::CELL, feet[2] - drift * world::CELL];
-                let centered = |texture: &Texture, scale: f32| {
-                    let size = texture.size.map(|value| value * scale);
-                    ([-size[0] / 2.0, -size[1] / 2.0], size)
+                let ticks = elapsed / 0.024;
+                let at = |motion: &actor::NumberMotion| {
+                    let [east, north] = damage.drift.map(|sign| sign * motion.drift);
+                    [feet[0] + east, feet[1] + motion.height, feet[2] + north]
                 };
-                let rising: &[&Texture] = match damage.kind {
-                    DamageKind::Lucky => &[&digits.lucky_background, &digits.lucky],
-                    DamageKind::Hit { .. } if damage.amount <= 0 => &[&digits.miss],
-                    _ => &[],
+                // Digits stand a step in front of a critical's burst behind them.
+                let digits_layer = DepthLayer { nudge: 1.0, ..DepthLayer::default() };
+                let number = |motion: actor::NumberMotion, color: [f32; 3]| {
+                    let tint = [color[0], color[1], color[2], motion.alpha];
+                    let anchor = at(&motion);
+                    digits
+                        .place(damage.amount, motion.scale)
+                        .into_iter()
+                        .map(move |(texture, position, size)| (texture, anchor, position, size, tint, 0.0, digits_layer))
                 };
-                for texture in rising {
-                    // Half the sprite pixel scale.
-                    let (position, size) = centered(texture, 0.5);
-                    billboards.push((texture, at(3.5 + progress * 7.0, 0.0), position, size, [1.0, 1.0, 1.0, alpha], 0.0, DepthLayer::default()));
-                }
                 match damage.kind {
-                    _ if !rising.is_empty() => {}
-                    DamageKind::Hit { .. } | DamageKind::Critical | DamageKind::Lucky => {
-                        let arc = (-std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * (0.5 + progress * 1.5)).sin() * 5.0;
-                        let anchor = at(2.0 + arc, progress * 4.0);
-                        // Drawn at (1 - progress) * 4 times the sprite pixel scale.
-                        let scale = (1.0 - progress) * 4.0;
-                        let tint = match damage.kind {
-                            DamageKind::Critical => {
-                                let (position, size) = centered(&digits.critical, 0.6 * scale);
-                                billboards.push((
-                                    &digits.critical,
-                                    anchor,
-                                    [position[0], position[1] - 6.0],
-                                    size,
-                                    [0.66, 0.66, 0.66, alpha],
-                                    0.0,
-                                    DepthLayer::default(),
-                                ));
-                                [0.9, 0.9, 0.15, alpha]
-                            }
-                            DamageKind::Hit { taken: true } => [1.0, 0.0, 0.0, alpha],
-                            _ => [1.0, 1.0, 1.0, alpha],
+                    DamageKind::Hit { taken, sp } => {
+                        let color = if sp {
+                            [0x1E as f32 / 255.0, 0x90 as f32 / 255.0, 1.0]
+                        } else if taken {
+                            [1.0, 0.0, 0.0]
+                        } else {
+                            [1.0; 3]
                         };
-                        billboards.extend(
-                            digits
-                                .place(damage.amount, scale)
-                                .into_iter()
-                                .map(|(texture, position, size)| (texture, anchor, position, size, tint, 0.0, DepthLayer::default())),
-                        );
+                        billboards.extend(number(actor::hit_number(ticks, false), color));
                     }
-                    DamageKind::Heal { sp } => {
-                        let scale = ((1.0 - progress * 2.0) * 3.0).max(0.8);
-                        let anchor = at(2.0 + if progress < 0.4 { 0.0 } else { (progress - 0.4) * 5.0 }, 0.0);
-                        let tint = if sp { [0.13, 0.19, 0.75, alpha] } else { [0.0, 1.0, 0.0, alpha] };
-                        billboards.extend(
-                            digits
-                                .place(damage.amount, scale)
-                                .into_iter()
-                                .map(|(texture, position, size)| (texture, anchor, position, size, tint, 0.0, DepthLayer::default())),
-                        );
-                    }
-                    DamageKind::Combo { last } => {
-                        if newest_combo.get(&damage.target) != Some(&damage.start) || (!last && progress > 0.15) {
-                            continue;
+                    DamageKind::Critical => {
+                        if let Some(sprite) = message_sprite {
+                            let motion = actor::burst(ticks);
+                            let tint = [0xAA as f32 / 255.0, 0xAA as f32 / 255.0, 0xAA as f32 / 255.0, motion.alpha];
+                            let anchor = at(&motion);
+                            billboards.extend(posed.iter().map(|&(key, position, size, angle)| {
+                                (
+                                    sprite.texture(key),
+                                    anchor,
+                                    position.map(|value| value * motion.scale),
+                                    size.map(|value| value * motion.scale),
+                                    tint,
+                                    angle,
+                                    DepthLayer::default(),
+                                )
+                            }));
                         }
-                        let scale = progress.min(0.05) * 70.0;
-                        let anchor = at(7.0 + progress, 0.0);
-                        billboards.extend(
-                            digits
-                                .place(damage.amount, scale)
-                                .into_iter()
-                                .map(|(texture, position, size)| (texture, anchor, position, size, [0.9, 0.9, 0.15, alpha], 0.0, DepthLayer::default())),
-                        );
+                        billboards.extend(number(actor::hit_number(ticks, true), [1.0, 1.0, 0.0]));
+                    }
+                    DamageKind::Miss { red } => {
+                        let motion = actor::miss_number(ticks);
+                        let size = digits.miss.size.map(|value| value * motion.scale);
+                        let color = if red { [1.0, 0.0, 0.0, motion.alpha] } else { [1.0, 1.0, 1.0, motion.alpha] };
+                        billboards.push((&digits.miss, at(&motion), [-size[0] / 2.0, -size[1] / 2.0], size, color, 0.0, DepthLayer::default()));
+                    }
+                    DamageKind::Lucky => {
+                        if let Some(sprite) = message_sprite {
+                            let anchor = [feet[0], feet[1] + actor::LUCKY_HEIGHT, feet[2]];
+                            billboards.extend(
+                                posed
+                                    .iter()
+                                    .map(|&(key, position, size, angle)| (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer::default())),
+                            );
+                        }
+                    }
+                    DamageKind::Heal { sp } => billboards.extend(number(actor::heal_number(ticks), if sp { [0.0, 0.0, 1.0] } else { [0.0, 1.0, 0.0] })),
+                    DamageKind::Combo => {
+                        if newest_combo.get(&damage.target) == Some(&damage.start) {
+                            billboards.extend(number(actor::total_number(ticks), [1.0, 1.0, 0.0]));
+                        }
                     }
                 }
             }
@@ -12890,8 +13064,28 @@ impl App {
             None => Some(player_feet),
             Some(id) => feet_of.get(&id).copied(),
         };
-        let (effect_quads, effect_meshes) =
+        let (effect_quads, mut effect_meshes) =
             if effects_on { (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit)) } else { (Vec::new(), Vec::new()) };
+        // Magic squares under ground casts, for as long as their casts last; flat on the ground, a little over it.
+        game.cast_squares.retain(|caster, square| square.alive(now) && game.casts.contains_key(caster));
+        if let Some(texture) = &assets.magic_target {
+            for square in game.cast_squares.values() {
+                let steps = square.width.ceil() as usize;
+                let vertices = square
+                    .triangles(now, steps)
+                    .into_iter()
+                    .map(|(cell, uv)| {
+                        let ground = game.world.cell_position(cell);
+                        world::MeshVertex {
+                            position: [cell[0] * world::CELL + world::CELL / 2.0, ground[1] + CAST_SQUARE_LIFT, cell[1] * world::CELL + world::CELL / 2.0],
+                            uv,
+                            tint: [1.0; 4],
+                        }
+                    })
+                    .collect();
+                effect_meshes.push((texture, vertices, true));
+            }
+        }
         let frame = WorldFrame {
             world: &game.world,
             view: &view,
@@ -13534,7 +13728,37 @@ mod tests {
         let mut monster = Actor::new("Poring".into(), None, [10, 10], 0, 150);
         monster.kind = MONSTER;
         fall(&mut monster, now);
-        assert_eq!(monster.remove_at, Some(now + CORPSE_TIME));
+        // No sprite here, so no death to play: the corpse fades at once, over 6.12 s, then goes.
+        assert_eq!(monster.remove_at, Some(now + Duration::from_millis(6120)));
+        assert!(monster.fading(now) && !monster.fading(now - Duration::from_millis(1)));
+        assert_eq!(monster.alpha(now), 1.0);
+        assert!((monster.alpha(now + Duration::from_millis(3060)) - 0.5).abs() < 0.001);
+        assert_eq!(monster.alpha(now + Duration::from_millis(7000)), 0.0);
+    }
+
+    #[test]
+    fn drops_items_with_a_hop_and_lets_them_glint() {
+        // 15 units up, a little higher at about 87 ms, on the ground by about 0.42 s, and staying there.
+        assert_eq!(item_fall_height(0.0), 15.0);
+        assert!(item_fall_height(3.6) > 16.0 && item_fall_height(3.6) < 16.1);
+        assert!(item_fall_height(17.4) > 0.0 && item_fall_height(17.6) == 0.0 && item_fall_height(100.0) == 0.0);
+        // A yellow glint for 2 ticks in every 92.
+        assert_eq!([0.0, 89.9, 90.0, 91.9, 92.0, 182.5].map(item_glints), [false, false, true, true, false, true]);
+        // No picture of its own: the apple.
+        let mut items = HashMap::new();
+        assert_eq!(ground_sprite(&items, 501, true), FALLBACK_ITEM_SPRITE);
+        items.insert(501, ItemInfo { resource: "빨간포션".into(), ..ItemInfo::default() });
+        assert_eq!((ground_sprite(&items, 501, true), ground_sprite(&items, 501, false)), ("빨간포션", FALLBACK_ITEM_SPRITE));
+    }
+
+    #[test]
+    fn units_out_of_sight_fade_quickly() {
+        let now = Instant::now();
+        let mut unit = Actor::new("Poring".into(), None, [10, 10], 0, 150);
+        assert!(!unit.fading(now) && unit.alpha(now) == 1.0);
+        unit.fade_out(now, OUT_OF_SIGHT_FADE_MS);
+        assert_eq!(unit.remove_at, Some(now + Duration::from_millis(510)));
+        assert!((unit.alpha(now + Duration::from_millis(255)) - 0.5).abs() < 0.001);
     }
 
     #[test]
@@ -13655,10 +13879,19 @@ mod tests {
         assert!((follow_step(Duration::from_secs_f32(1.0 / 60.0)) - 0.1).abs() < 1e-4);
         assert!((follow_step(Duration::from_secs_f32(2.0 / 60.0)) - 0.19).abs() < 1e-4);
         // The view left on each kind of map, within that kind's limits.
-        let outdoors = CameraGoal::arrive(false, None, [80.0, 500.0]);
+        let outdoors = CameraGoal::arrive(false, None, [80.0, 500.0], false);
         assert_eq!((outdoors.pitch, outdoors.distance(), outdoors.yaw), (65.0, 400.0, 0.0));
-        let indoors = CameraGoal::arrive(true, None, [20.0, 400.0]);
+        let indoors = CameraGoal::arrive(true, None, [20.0, 400.0], false);
         assert_eq!((indoors.pitch, indoors.distance(), indoors.yaw), (35.0, 300.0, YAW_INDOOR));
+        // /zoom: outdoors out to 730, indoors no further.
+        let mut far = CameraGoal::arrive(false, None, [45.0, 511.3], true);
+        assert!((far.distance() - 511.3).abs() < 0.01);
+        far.set_distance(1000.0);
+        assert_eq!(far.distance(), ZOOM_OUT_DISTANCE);
+        far.zoom_out = false;
+        far.set_distance(far.distance());
+        assert_eq!(far.distance(), 400.0);
+        assert_eq!(CameraGoal::arrive(true, None, [45.0, 511.3], true).distance(), 300.0);
         // A map's own table starts it, and holds it.
         let table = rustnarok_client::map::Viewpoint {
             distance: [210.0, 260.0],
@@ -13668,7 +13901,7 @@ mod tests {
             pitch: [35.0, 45.0],
             pitch_in: 40.0,
         };
-        let mut own = CameraGoal::arrive(false, Some(table), [80.0, 500.0]);
+        let mut own = CameraGoal::arrive(false, Some(table), [80.0, 500.0], true);
         assert_eq!((own.pitch, own.distance(), own.yaw), (40.0, 250.0, 50.0));
         own.steer(100.0, 0.0, false, false, false);
         assert_eq!(own.yaw, 65.0);
@@ -13723,9 +13956,13 @@ mod tests {
         outdoors.press([5.0, 5.0], now + Duration::from_millis(300), false, false);
         assert_eq!(outdoors.yaw, 360.0);
         outdoors.yaw = 30.0;
-        outdoors.pointer_moved();
-        outdoors.press([5.0, 5.0], now + Duration::from_millis(400), false, false);
+        outdoors.pointer_moved([9.0, 5.0]);
+        outdoors.press([9.0, 5.0], now + Duration::from_millis(400), false, false);
         assert_eq!(outdoors.yaw, 30.0, "moved: not a double click");
+        // A hand's tremor between the presses still makes one.
+        outdoors.pointer_moved([9.6, 5.4]);
+        outdoors.press([9.6, 5.4], now + Duration::from_millis(500), false, false);
+        assert_eq!(outdoors.yaw, 0.0, "a tremor isn't a move");
         // Indoors: the turn stays within 25 to 65 and isn't reset; the tilt is fixed at 60 without Ctrl.
         let mut indoors = CameraGoal::new(true);
         indoors.steer(100.0, 0.0, false, false, false);
@@ -13813,9 +14050,12 @@ mod tests {
         assert!(!may_move(Some(start), at(299)));
         assert!(may_move(Some(start), at(300)));
         // A second press: double only when soon and the pointer stayed still.
-        assert!(double_press(Some((start, false)), at(400)));
-        assert!(!double_press(Some((start, true)), at(400)));
-        assert!(!double_press(Some((start, false)), at(500)));
+        assert!(double_press(Some((start, [0.0; 2], false)), at(400)));
+        assert!(!double_press(Some((start, [0.0; 2], true)), at(400)));
+        assert!(!double_press(Some((start, [0.0; 2], false)), at(500)));
+        // A tremor isn't a move; two pixels are.
+        assert!(!moved_off([100.0, 100.0], [101.4, 99.2]));
+        assert!(moved_off([100.0, 100.0], [100.0, 102.0]));
         assert!(!double_press(None, start));
     }
 

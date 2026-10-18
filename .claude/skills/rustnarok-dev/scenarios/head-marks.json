@@ -1,0 +1,217 @@
+{
+  "about": "Marks over heads (issue #195) at prt_fild06 (a field no other scenario uses, so their @killmonster2 leaves these Porings alone): our NPC script (npc/head-marks.txt) puts five Porings in a row, stunned, asleep, cursed, silenced and frozen for ten minutes: stars, zzz, the curse mark lower down, the \"...\" emotion, and an ice block at the frozen one's feet. Then the player's /! at camera pitch 45, 50 and 65: it hangs 20 world units over the feet, so it keeps its place in the world: on screen it sits lower over the head as the camera looks further down (about 99 px at 45). The Porings are killed and the script unloaded at the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild06 190 170"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/head-marks.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/head-marks.txt"
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "expect": {
+        "state": {
+          "marks.Stun": 1,
+          "marks.Sleep": 1,
+          "marks.Curse": 1,
+          "marks.Silence": 1,
+          "marks.Freeze": 1
+        }
+      }
+    },
+    {
+      "shot": "marks-porings",
+      "threshold": 10
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "type": "/!"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "expect": {
+        "state": {
+          "camera.pitch": 45
+        }
+      }
+    },
+    {
+      "shot": "emotion-pitch-45",
+      "crop": [
+        262,
+        130,
+        500,
+        330
+      ],
+      "threshold": 10
+    },
+    {
+      "drag": [
+        [
+          500,
+          300
+        ],
+        [
+          500,
+          305
+        ]
+      ],
+      "button": "right",
+      "mods": "Shift"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "camera.pitch": 50
+        }
+      }
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "type": "/!"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "emotion-pitch-50",
+      "crop": [
+        262,
+        130,
+        500,
+        330
+      ],
+      "threshold": 10
+    },
+    {
+      "drag": [
+        [
+          500,
+          300
+        ],
+        [
+          500,
+          500
+        ]
+      ],
+      "button": "right",
+      "mods": "Shift"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "camera.pitch": 65
+        }
+      }
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "type": "/!"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "emotion-pitch-65",
+      "crop": [
+        262,
+        130,
+        500,
+        330
+      ],
+      "threshold": 10
+    },
+    {
+      "drag": [
+        [
+          500,
+          500
+        ],
+        [
+          500,
+          100
+        ]
+      ],
+      "button": "right",
+      "mods": "Ctrl+Shift"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/head-marks.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

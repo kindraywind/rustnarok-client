@@ -1,0 +1,21 @@
+{
+  "about": "Flat previews (issue #226): the character wears ribbon wings (costume 20541) and the equipment window shows the figure facing front. Standing garments turn layers only seen from the side or a diagonal, so this front view should stay as it was; the stylist and the dress room, which turn the figure, show the turned layers. Costume garments, so it replaces whatever costume garment an earlier scenario left on.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 20541 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"click": [11, 225]}, {"wait": 300},
+    {"click_on": {"inventory_item": 20541}, "count": 2},
+    {"wait_for": {"event": "Equipped", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"key": "Alt+Q"}, {"wait": 500},
+    {"expect": {"windows_open": ["Equipment"]}},
+    {"move": [900, 650]},
+    {"shot": "preview-wings", "crop": [478, 200, 284, 192]},
+    {"key": "Alt+Q"}, {"wait": 300},
+    {"say": "@itemreset"}, {"wait": 800}
+  ]
+}

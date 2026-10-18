@@ -1,0 +1,164 @@
+{
+ "about": "The hotkey bar's switch: hotbar 2 has slots of its own (the server's second tab), and switching back shows hotbar 1 as it was.",
+ "account": "",
+ "slot": 0,
+ "steps": [
+  {
+   "say": "@warp prontera 156 180"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "say": "@itemreset"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "say": "@item 501 5"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "say": "@item 502 5"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "expect": {
+    "state": {
+     "hotkey_tab": 0
+    }
+   }
+  },
+  {
+   "drag_on": [
+    {
+     "inventory_item": 501
+    },
+    {
+     "hotkey": 0
+    }
+   ]
+  },
+  {
+   "wait": 600
+  },
+  {
+   "expect": {
+    "hotkeys": {
+     "0": 501
+    }
+   }
+  },
+  {
+   "click_on": {
+    "button": "hotkey_switch"
+   }
+  },
+  {
+   "wait": 400
+  },
+  {
+   "expect": {
+    "state": {
+     "hotkey_tab": 1
+    },
+    "hotkeys": {
+     "0": null
+    }
+   }
+  },
+  {
+   "drag_on": [
+    {
+     "inventory_item": 502
+    },
+    {
+     "hotkey": 0
+    }
+   ]
+  },
+  {
+   "wait": 600
+  },
+  {
+   "expect": {
+    "hotkeys": {
+     "0": 502
+    }
+   }
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "shot": "hotkey-bar-2",
+   "crop": [
+    220,
+    0,
+    320,
+    90
+   ],
+   "threshold": 2
+  },
+  {
+   "click_on": {
+    "button": "hotkey_switch"
+   }
+  },
+  {
+   "wait": 400
+  },
+  {
+   "expect": {
+    "state": {
+     "hotkey_tab": 0
+    },
+    "hotkeys": {
+     "0": 501
+    }
+   }
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "shot": "hotkey-bar-1",
+   "crop": [
+    220,
+    0,
+    320,
+    90
+   ],
+   "threshold": 2
+  }
+ ]
+}

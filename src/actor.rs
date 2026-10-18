@@ -2,8 +2,9 @@
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use image::RgbaImage;
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::LookTables;
 use rustnarok_client::sprite::{self, Act, Palette, Spr};
@@ -527,12 +528,31 @@ pub fn attack_action(job: u16, sex: u8, weapon_type: u32) -> usize {
     [5, 10, 11][motion]
 }
 
-/// Identifies a decoded image: layer, image kind, index and the layer's tint.
-type ImageKey = (usize, u32, usize, [u8; 4]);
+/// Identifies a decoded image: layer, image kind, index, the layer's tint, and how it was turned ahead of time for a
+/// flat preview (`SpriteSet::flat_frame`): 0 upright, else degrees clockwise, plus 360 when mirrored first.
+type ImageKey = (usize, u32, usize, [u8; 4], u16);
 
 /// One image of a frame: which image, top-left offset from the feet, size (negative width = mirrored), and degrees
 /// to turn it clockwise about its middle.
 pub type Placed = (ImageKey, [f32; 2], [f32; 2], f32);
+
+/// An image turned `degrees` clockwise about its middle (mirrored left to right first when `mirror`), on a canvas just
+/// big enough for it; pixels picked nearest, the rest clear.
+fn turn_image(image: &RgbaImage, degrees: i32, mirror: bool) -> RgbaImage {
+    let (sin, cos) = (degrees as f32).to_radians().sin_cos();
+    let [width, height] = [image.width() as f32, image.height() as f32];
+    let size = [(width * cos.abs() + height * sin.abs()).round().max(1.0), (width * sin.abs() + height * cos.abs()).round().max(1.0)];
+    RgbaImage::from_fn(size[0] as u32, size[1] as u32, |x, y| {
+        let [dx, dy] = [x as f32 + 0.5 - size[0] / 2.0, y as f32 + 0.5 - size[1] / 2.0];
+        // Turned back: where this pixel came from.
+        let [source_x, source_y] = [dx * cos + dy * sin + width / 2.0, -dx * sin + dy * cos + height / 2.0];
+        if source_x < 0.0 || source_y < 0.0 || source_x >= width || source_y >= height {
+            return image::Rgba([0; 4]);
+        }
+        let column = source_x as u32;
+        *image.get_pixel(if mirror { image.width() - 1 - column } else { column }, source_y as u32)
+    })
+}
 
 /// rathena's OPT1_* (status.hpp): the body states that colour a sprite.
 const OPT1_STONE: u16 = 1;
@@ -792,22 +812,52 @@ impl SpriteSet {
     pub fn frame_at(&mut self, gpu: &Gpu, index: usize, head_direction: u16, timing: Timing) -> Vec<Placed> {
         let mut placed = self.place(index, head_direction, timing);
         for &(key, ..) in &placed {
-            if !self.textures.contains_key(&key) {
-                let layer = &self.layers[key.0];
-                if let Some(mut image) = layer.spr.image(key.1, key.2, layer.palette.as_ref()) {
-                    if key.3 != [255; 4] {
-                        for pixel in image.pixels_mut() {
-                            for (channel, tint) in pixel.0.iter_mut().zip(key.3) {
-                                *channel = (u16::from(*channel) * u16::from(tint) / 255) as u8;
-                            }
-                        }
-                    }
-                    self.textures.insert(key, gpu.texture(&image, false));
-                }
-            }
+            self.decode(gpu, key);
         }
         placed.retain(|(key, ..)| self.textures.contains_key(key));
         placed
+    }
+
+    /// A frame for a flat preview (character select, the equipment window): as `frame`, but turned layers come as
+    /// pictures turned ahead of time and placed upright by their bounding box, as 2D sprites don't turn.
+    pub fn flat_frame(&mut self, gpu: &Gpu, action: usize, direction: u8, head_direction: u16, timing: Timing) -> Vec<Placed> {
+        let mut placed = self.frame(gpu, action, direction, head_direction, timing);
+        for (key, position, size, angle) in &mut placed {
+            let degrees = (angle.round() as i32).rem_euclid(360) as u16;
+            if degrees == 0 {
+                continue;
+            }
+            let mirrored = size[0] < 0.0;
+            let turned = (key.0, key.1, key.2, key.3, degrees + if mirrored { 360 } else { 0 });
+            self.decode(gpu, turned);
+            let (Some(upright), Some(image)) = (self.textures.get(key), self.textures.get(&turned)) else { continue };
+            // The picture keeps the layer's zoom: its pixels are as big as the upright image's.
+            let zoom = [size[0].abs() / upright.size[0], size[1] / upright.size[1]];
+            let middle = [position[0] + size[0] / 2.0, position[1] + size[1] / 2.0];
+            let turned_size = [image.size[0] * zoom[0], image.size[1] * zoom[1]];
+            (*key, *position, *size, *angle) = (turned, [middle[0] - turned_size[0] / 2.0, middle[1] - turned_size[1] / 2.0], turned_size, 0.0);
+        }
+        placed
+    }
+
+    /// Decodes an image into a texture once: its layer's palette and tint, and, for a flat preview, turned.
+    fn decode(&mut self, gpu: &Gpu, key: ImageKey) {
+        if self.textures.contains_key(&key) {
+            return;
+        }
+        let layer = &self.layers[key.0];
+        let Some(mut image) = layer.spr.image(key.1, key.2, layer.palette.as_ref()) else { return };
+        if key.3 != [255; 4] {
+            for pixel in image.pixels_mut() {
+                for (channel, tint) in pixel.0.iter_mut().zip(key.3) {
+                    *channel = (u16::from(*channel) * u16::from(tint) / 255) as u8;
+                }
+            }
+        }
+        if key.4 != 0 {
+            image = turn_image(&image, i32::from(key.4 % 360), key.4 >= 360);
+        }
+        self.textures.insert(key, gpu.texture(&image, false));
     }
 
     fn place(&self, index: usize, head_direction: u16, timing: Timing) -> Vec<Placed> {
@@ -862,7 +912,7 @@ impl SpriteSet {
             }
             placed.extend(sprite::place(&layer.spr, frame, shift).into_iter().map(|placement| {
                 (
-                    (number, placement.kind, placement.image, layer_color(placement.color, self.tint)),
+                    (number, placement.kind, placement.image, layer_color(placement.color, self.tint), 0),
                     placement.position.map(|value| value * self.scale),
                     placement.size.map(|value| value * self.scale),
                     placement.angle as f32,
@@ -1067,37 +1117,131 @@ enum Pace {
 pub struct Digits {
     digits: Vec<Texture>,
     pub miss: Texture,
-    /// The burst behind a critical hit's number, and "Lucky" on its background (msg.spr frames 3, 5 and 4).
-    pub critical: Texture,
-    pub lucky: Texture,
-    pub lucky_background: Texture,
 }
 
 impl Digits {
-    /// Pixels between digits.
-    const PADDING: f32 = 2.0;
-
     pub fn load(gpu: &Gpu, grf: &Grf) -> Option<Self> {
         let spr = Spr::parse(&grf.read("data\\sprite\\이팩트\\숫자.spr").ok()?).ok()?;
         let digits = (0..10).map(|digit| Some(gpu.texture(&spr.image(0, digit, None)?, false))).collect::<Option<_>>()?;
         let messages = Spr::parse(&grf.read("data\\sprite\\이팩트\\msg.spr").ok()?).ok()?;
         let frame = |index: usize| messages.image(0, index, None).or_else(|| messages.image(1, index, None)).map(|image| gpu.texture(&image, false));
-        Some(Self { digits, miss: frame(0)?, critical: frame(3)?, lucky: frame(5)?, lucky_background: frame(4)? })
+        Some(Self { digits, miss: frame(0)? })
     }
 
-    /// The digits of `number` centered on the anchor: texture, top-left offset and size in sprite pixels.
+    /// The digits of `number` centered on the anchor: texture, top-left offset and size in sprite pixels. Each digit is
+    /// centred on its own slot, `DIGIT_STEP` apart, whatever its width.
     pub fn place(&self, number: i32, scale: f32) -> Vec<(&Texture, [f32; 2], [f32; 2])> {
         let digits: Vec<&Texture> = number.unsigned_abs().to_string().bytes().map(|digit| &self.digits[usize::from(digit - b'0')]).collect();
-        let width: f32 = digits.iter().map(|texture| texture.size[0] + Self::PADDING).sum::<f32>() - Self::PADDING;
-        let mut x = -width / 2.0;
+        let count = digits.len();
         digits
             .into_iter()
-            .map(|texture| {
-                let placed = (texture, [x * scale, -texture.size[1] / 2.0 * scale], [texture.size[0] * scale, texture.size[1] * scale]);
-                x += texture.size[0] + Self::PADDING;
-                placed
+            .enumerate()
+            .map(|(index, texture)| {
+                let size = texture.size.map(|value| value * scale);
+                let middle = digit_slot(index, count) * scale;
+                (texture, [middle - size[0] / 2.0, -size[1] / 2.0], size)
             })
             .collect()
+    }
+}
+
+/// The middle of digit `index` (the first, leftmost, is 0) of a `count`-digit number, in sprite pixels from the
+/// number's middle at scale 1.
+pub fn digit_slot(index: usize, count: usize) -> f32 {
+    (index as f32 - (count as f32 - 1.0) / 2.0) * DIGIT_STEP
+}
+
+/// Monster jobs (sprite IDs): 1001–3998 and 20021–31999.
+pub fn is_monster_job(job: u16) -> bool {
+    (1001..=3998).contains(&job) || (20021..=31999).contains(&job)
+}
+
+/// NPC jobs: 45–999.
+pub fn is_npc_job(job: u16) -> bool {
+    (45..=999).contains(&job)
+}
+
+/// Sprite pixels between the middles of two digits of a number at scale 1.
+pub const DIGIT_STEP: f32 = 9.55;
+/// A hit's number lasts 70 ticks of 24 ms.
+pub const HIT_NUMBER_TICKS: f32 = 70.0;
+
+/// Where a hit's number is `ticks` (24 ms each) after it shows, and how it looks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NumberMotion {
+    /// World units above the target's feet: up to 32.7 at tick 30, then below the feet by the end.
+    pub height: f32,
+    /// World units it has drifted along each ground axis (`number_drift` gives the signs).
+    pub drift: f32,
+    pub scale: f32,
+    pub alpha: f32,
+}
+
+/// A hit's number: it pops up from 2.7 world units over the feet, arcs up and falls away, drifting diagonally,
+/// shrinking from 5 times its size to 1.2 (1.3 for a critical) and fading.
+pub fn hit_number(ticks: f32, critical: bool) -> NumberMotion {
+    NumberMotion {
+        height: 8.0 / 3.0 + 2.0 * ticks - ticks * ticks / 30.0,
+        drift: 0.8 * (ticks / 3.0 + 3.0),
+        scale: (5.0 - 0.24 * ticks).max(if critical { 1.3 } else { 1.2 }),
+        alpha: ((250.0 - 3.4 * ticks) / 255.0).clamp(0.0, 1.0),
+    }
+}
+
+/// How long, in 24 ms ticks: a heal's number, a multi-hit's total, a MISS.
+pub const HEAL_NUMBER_TICKS: f32 = 120.0;
+pub const TOTAL_NUMBER_TICKS: f32 = 120.0;
+pub const MISS_TICKS: f32 = 80.0;
+/// The message sprite's (`이팩트\msg`) critical burst and Lucky actions; Lucky plays once (28 frames of 24 ms).
+pub const BURST_ACTION: usize = 2;
+pub const LUCKY_ACTION: usize = 3;
+pub const LUCKY_MS: f32 = 672.0;
+/// Lucky shows this many world units over the feet.
+pub const LUCKY_HEIGHT: f32 = 20.0;
+
+/// A heal's number: from 12 units over the feet, rising slowly, shrinking from 5 times its size to 1, fading.
+pub fn heal_number(ticks: f32) -> NumberMotion {
+    NumberMotion { height: 12.0 + 0.18 * ticks, drift: 0.0, scale: (5.0 - 0.24 * ticks).max(1.0), alpha: ((250.0 - 2.0 * ticks) / 255.0).clamp(0.0, 1.0) }
+}
+
+/// A multi-hit's running total: high over the target at 27 units, rising slowly, popping from half its size to 3
+/// times, then fading after tick 90.
+// ponytail: the game grows it by 0.18·t every drawn frame (so faster at higher frame rates); here every 24 ms tick.
+pub fn total_number(ticks: f32) -> NumberMotion {
+    let ticks_whole = ticks.floor();
+    NumberMotion {
+        height: 27.0 + 0.1 * ticks,
+        drift: 0.0,
+        scale: (0.5 + 0.09 * ticks_whole * (ticks_whole + 1.0)).min(3.0),
+        alpha: ((250.0 - 8.0 * (ticks - 90.0).max(0.0)) / 255.0).clamp(0.0, 1.0),
+    }
+}
+
+/// MISS: over the attacker, from 12 units over its feet, rising quickly at its own size, fading.
+pub fn miss_number(ticks: f32) -> NumberMotion {
+    NumberMotion { height: 12.0 + 0.54 * ticks, drift: 0.0, scale: 1.0, alpha: ((250.0 - 3.0 * ticks) / 255.0).clamp(0.0, 1.0) }
+}
+
+/// The burst behind a critical hit's number: on the number's path, shrinking from 3 times its size to 1, fading; its
+/// frames go by every two ticks and hold on the last.
+pub fn burst(ticks: f32) -> NumberMotion {
+    NumberMotion { scale: (3.0 - 0.144 * ticks).max(1.0), alpha: ((255.0 - 3.45 * ticks) / 255.0).clamp(0.0, 1.0), ..hit_number(ticks, true) }
+}
+
+/// Which way (x east, z north: each 1 or -1) a hit's number drifts from a unit facing `rot` (`angle_of`'s degrees):
+/// diagonally away from where it faces. A facing the server set counts from 180 (north) up past 360, so all but
+/// north and north-west drift north-east, as the game does.
+pub fn number_drift(rot: f32, from_server: bool) -> [f32; 2] {
+    let angle = match (from_server, rot) {
+        (true, rot) if rot < 180.0 => rot + 360.0,
+        (false, rot) if rot > 180.0 => rot - 360.0,
+        (_, rot) => rot,
+    };
+    match angle {
+        angle if (0.0..90.0).contains(&angle) => [-1.0, 1.0],
+        angle if (90.0..180.0).contains(&angle) => [-1.0, -1.0],
+        angle if (180.0..270.0).contains(&angle) => [1.0, -1.0],
+        _ => [1.0, 1.0],
     }
 }
 
@@ -1277,6 +1421,8 @@ pub struct Actor {
     /// The facing in the sprites' eight directions, and exactly, in degrees (`angle_of`: 0 south, 90 east).
     pub direction: u8,
     pub rot: f32,
+    /// The facing came from the server (appearing, turning) rather than from walking or turning to a target.
+    pub facing_from_server: bool,
     /// Players only: 0 looking straight ahead, 1 and 2 turned to the sides.
     pub head_direction: u16,
     animation_started: Instant,
@@ -1287,6 +1433,8 @@ pub struct Actor {
     pub sitting: bool,
     /// When a dying unit is removed.
     pub remove_at: Option<Instant>,
+    /// Fading out: from when, over how many milliseconds (a corpse, a unit walking out of sight).
+    pub fade: Option<(Instant, f32)>,
     /// A dead player: lying there until revived (players aren't removed when they die).
     pub dead: bool,
     /// Hiding, cloaking or chase-walking (the unit's option has UNSEEN_OPTIONS).
@@ -1330,12 +1478,14 @@ impl Actor {
             distance: 0.0,
             direction,
             rot: rot_of(direction),
+            facing_from_server: true,
             head_direction: 0,
             animation_started: now,
             shot: None,
             ready: false,
             sitting: false,
             remove_at: None,
+            fade: None,
             dead: false,
             cloaked: false,
             hide_option: 0,
@@ -1378,6 +1528,22 @@ impl Actor {
     }
 
     /// Plays `action` once at its ACT pace times `scale` (attack, flinch), or holds its last frame (death).
+    /// How opaque it's drawn: 1 until a fade starts, then down to 0 over the fade.
+    pub fn alpha(&self, now: Instant) -> f32 {
+        self.fade.map_or(1.0, |(from, ms)| (1.0 - now.saturating_duration_since(from).as_secs_f32() * 1000.0 / ms).clamp(0.0, 1.0))
+    }
+
+    /// Fading now (a corpse, a unit out of sight): it casts no shadow.
+    pub fn fading(&self, now: Instant) -> bool {
+        self.fade.is_some_and(|(from, _)| now >= from)
+    }
+
+    /// Fades out from `from` over `ms`, then goes.
+    pub fn fade_out(&mut self, from: Instant, ms: f32) {
+        self.fade = Some((from, ms));
+        self.remove_at = Some(from + Duration::from_micros((f64::from(ms) * 1000.0).round() as u64));
+    }
+
     pub fn play_at_pace(&mut self, action: usize, start: Instant, scale: f32, hold: bool) {
         self.shot = Some(Shot { action, started: start, pace: Pace::Act(scale.max(0.01)), hold });
     }
@@ -1402,6 +1568,7 @@ impl Actor {
             let step = [toward[0] - self.cell[0], toward[1] - self.cell[1]];
             self.direction = world::direction(step);
             self.rot = angle_of(step);
+            self.facing_from_server = false;
         }
     }
 
@@ -1409,6 +1576,7 @@ impl Actor {
     pub fn set_direction(&mut self, direction: u8) {
         self.direction = direction;
         self.rot = rot_of(direction);
+        self.facing_from_server = true;
     }
 
     pub fn walk(&mut self, path: Vec<[i32; 2]>) {
@@ -1448,6 +1616,7 @@ impl Actor {
             let progress = now.saturating_duration_since(self.step_started).as_secs_f32() * 1000.0 / duration;
             self.direction = world::direction(step);
             self.rot = angle_of(step);
+            self.facing_from_server = false;
             if progress < 1.0 {
                 return [self.cell[0] as f32 + step[0] as f32 * progress, self.cell[1] as f32 + step[1] as f32 * progress];
             }
@@ -1532,6 +1701,78 @@ impl Actor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn turns_images_for_flat_previews() {
+        let (red, blue) = (image::Rgba([255, 0, 0, 255]), image::Rgba([0, 0, 255, 255]));
+        let strip = RgbaImage::from_fn(2, 1, |x, _| if x == 0 { red } else { blue });
+        // A quarter turn clockwise stands the strip up, its left end on top; mirrored first, its right end.
+        let turned = turn_image(&strip, 90, false);
+        assert_eq!((turned.dimensions(), *turned.get_pixel(0, 0), *turned.get_pixel(0, 1)), ((1, 2), red, blue));
+        assert_eq!(*turn_image(&strip, 90, true).get_pixel(0, 0), blue);
+        // Upright stays as it was; a slight turn grows the canvas and leaves its corners clear.
+        assert_eq!(turn_image(&strip, 0, false), strip);
+        let square = RgbaImage::from_pixel(10, 10, red);
+        let tilted = turn_image(&square, 30, false);
+        assert_eq!(tilted.dimensions(), (14, 14));
+        assert_eq!(tilted.get_pixel(0, 0).0[3], 0);
+        assert_eq!(*tilted.get_pixel(7, 7), red);
+    }
+
+    #[test]
+    fn moves_hit_numbers_as_the_game_does() {
+        let close = |a: f32, b: f32| (a - b).abs() < 0.01;
+        // Pops up 2.7 units over the feet, tops out 32.7 up at tick 30 (720 ms), back at 2.7 by tick 60, ends 20.7 below.
+        let [start, top, back, end] = [0.0, 30.0, 60.0, 70.0].map(|ticks| hit_number(ticks, false));
+        assert!(close(start.height, 2.67) && close(top.height, 32.67) && close(back.height, 2.67) && close(end.height, -20.67));
+        // Drifts 2.4 units at once, 21 by the end, on each axis.
+        assert!(close(start.drift, 2.4) && close(end.drift, 21.07));
+        // Five times its size, shrinking to 1.2 (a critical to 1.3) by about 380 ms, and fading out.
+        assert_eq!((start.scale, top.scale, hit_number(30.0, true).scale), (5.0, 1.2, 1.3));
+        assert!(close(start.alpha, 250.0 / 255.0) && close(end.alpha, 12.0 / 255.0));
+        assert_eq!(hit_number(80.0, false).alpha, 0.0);
+    }
+
+    #[test]
+    fn moves_misses_heals_totals_and_bursts() {
+        let close = |a: f32, b: f32| (a - b).abs() < 0.01;
+        // MISS rises 0.54 a tick from 12 units at its own size, gone after 80 ticks.
+        let miss = miss_number(40.0);
+        assert!(close(miss.height, 33.6) && miss.scale == 1.0 && close(miss.alpha, 130.0 / 255.0));
+        assert_eq!(miss_number(MISS_TICKS + 4.0).alpha, 0.0);
+        // A heal rises slowly from 12 units, 5 times its size down to 1.
+        let [heal_start, heal_late] = [0.0, 100.0].map(heal_number);
+        assert!(close(heal_start.height, 12.0) && heal_start.scale == 5.0 && heal_late.scale == 1.0 && close(heal_late.height, 30.0));
+        // A total pops from half its size to 3 times within a few ticks, holds, then fades after tick 90.
+        assert_eq!([0.0, 2.0, 5.0, 60.0].map(|ticks| total_number(ticks).scale), [0.5, 1.04, 3.0, 3.0]);
+        assert!(close(total_number(60.0).alpha, 250.0 / 255.0) && close(total_number(100.0).alpha, 170.0 / 255.0));
+        assert!(close(total_number(0.0).height, 27.0) && total_number(0.0).drift == 0.0);
+        // A critical's burst rides its number, shrinking from 3 times to 1.
+        let burst_now = burst(10.0);
+        assert_eq!((burst_now.height, burst_now.drift), (hit_number(10.0, true).height, hit_number(10.0, true).drift));
+        assert!(close(burst_now.scale, 1.56) && burst(20.0).scale == 1.0);
+    }
+
+    #[test]
+    fn drifts_hit_numbers_away_from_where_the_target_faces() {
+        // Turned by walking or toward a target: diagonally away from the facing.
+        let walked = |direction: u8| number_drift(angle_of(FACING[usize::from(direction)].map(|step| step as i32)), false);
+        assert_eq!(
+            (0..8).map(walked).collect::<Vec<_>>(),
+            [[-1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, -1.0], [-1.0, -1.0], [-1.0, -1.0], [-1.0, 1.0]]
+        );
+        // Facing as the server set it: north and north-west drift south-east, the rest north-east.
+        let set = |direction: u8| number_drift(rot_of(direction), true);
+        assert_eq!((0..8).map(set).collect::<Vec<_>>(), [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [1.0, 1.0], [1.0, 1.0]]);
+    }
+
+    #[test]
+    fn spaces_digits_on_fixed_slots() {
+        assert_eq!(digit_slot(0, 1), 0.0);
+        assert_eq!([digit_slot(0, 2), digit_slot(1, 2)], [-DIGIT_STEP / 2.0, DIGIT_STEP / 2.0]);
+        assert_eq!([digit_slot(0, 3), digit_slot(2, 3)], [-DIGIT_STEP, DIGIT_STEP]);
+        assert!(is_monster_job(1002) && is_monster_job(20021) && !is_monster_job(4001) && is_npc_job(45) && !is_npc_job(1002));
+    }
 
     #[test]
     fn hides_by_option_bits() {
