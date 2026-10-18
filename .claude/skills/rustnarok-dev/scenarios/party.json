@@ -52,6 +52,16 @@
       "wait": 1500
     },
     {
+      "expect": {
+        "windows_open": [
+          "Party"
+        ]
+      }
+    },
+    {
+      "key": "Alt+Z"
+    },
+    {
       "click_on": {
         "unit": "{second}"
       },
@@ -86,11 +96,11 @@
     },
     {
       "expect": {
-        "windows_open": [
-          "Party"
-        ],
         "chat": "Party Setup - How to share EXP"
       }
+    },
+    {
+      "key": "Alt+Z"
     },
     {
       "as": "second",

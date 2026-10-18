@@ -57,6 +57,16 @@
       "wait": 1500
     },
     {
+      "expect": {
+        "windows_open": [
+          "Party"
+        ]
+      }
+    },
+    {
+      "key": "Alt+Z"
+    },
+    {
       "click_on": {
         "unit": "{second}"
       },

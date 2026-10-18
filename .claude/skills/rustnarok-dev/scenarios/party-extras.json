@@ -77,6 +77,16 @@
       "wait": 1500
     },
     {
+      "expect": {
+        "windows_open": [
+          "Party"
+        ]
+      }
+    },
+    {
+      "key": "Alt+Z"
+    },
+    {
       "click_on": {
         "unit": "{second}"
       },
@@ -160,6 +170,18 @@
       }
     },
     {
+      "as": "second",
+      "expect": {
+        "windows_open": [
+          "Party"
+        ]
+      }
+    },
+    {
+      "as": "second",
+      "key": "Alt+Z"
+    },
+    {
       "say": "#item \"{second}\" 1201"
     },
     {
@@ -239,11 +261,7 @@
       "key": "Alt+E"
     },
     {
-      "expect": {
-        "windows_open": [
-          "Party"
-        ]
-      }
+      "key": "Alt+Z"
     },
     {
       "wait": 500

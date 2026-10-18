@@ -9166,6 +9166,12 @@ impl App {
     /// A mouse press: grabs a window by its title bar, and notes it for Esc.
     fn press(&mut self) {
         let cursor = self.cursor;
+        // A press on the right-click menu is the menu's (its choice is taken on the release), not the window's under it.
+        if let Scene::Game(game) = &self.scene
+            && game.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
+        {
+            return;
+        }
         // Aiming a skill: the press on its target uses it; any other press lets go of the aim. On the world that's
         // all it does (no walk); on a window the window gets the press too.
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
