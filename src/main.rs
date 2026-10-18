@@ -241,7 +241,63 @@ const WARP_CANCEL: usize = 218;
 /// What a map doesn't allow: teleporting, memo points, the skill, the item.
 const MAP_FORBIDS: [usize; 4] = [500, 501, 1334, 1335];
 /// How far (in cells) others' sounds carry, fading on the way.
-const HEARING_CELLS: f32 = 20.0;
+/// The sound of a landed hit (under data\wav\). On a player, its body by its job's line (`lineage`): metal for the
+/// Swordman, Monk and Star Gladiator lines, wood for the Archer, Thief, Gunslinger and Ninja lines, cloth for the rest.
+/// On anything else, the attacker's weapon type: unknown (a monster) one of four plain hits, bare hands one of four
+/// fists (`roll` picks).
+fn hit_sound(lineage: Option<&[u16]>, weapon: Option<u32>, roll: u32) -> String {
+    const METAL: [u16; 7] = [1, 4002, 4024, 15, 4016, 4038, 4047];
+    const WOOD: [u16; 8] = [3, 4003, 4026, 6, 4005, 4029, 24, 25];
+    let pick = roll % 4 + 1;
+    let name = match (lineage, weapon) {
+        (Some(jobs), _) if jobs.iter().any(|job| METAL.contains(job)) => "player_metal".to_owned(),
+        (Some(jobs), _) if jobs.iter().any(|job| WOOD.contains(job)) => "player_wooden_male".to_owned(),
+        (Some(_), _) => "player_clothes".to_owned(),
+        (None, None) => format!("_enemy_hit_normal{pick}"),
+        (None, Some(0)) => format!("_hit_fist{pick}"),
+        (None, Some(1..=3)) => "_hit_sword".to_owned(),
+        (None, Some(4 | 5)) => "_hit_spear".to_owned(),
+        (None, Some(6 | 7)) => "_hit_axe".to_owned(),
+        (None, Some(10 | 23)) => "_hit_rod".to_owned(),
+        (None, Some(11)) => "_hit_arrow".to_owned(),
+        (None, Some(17)) => "_hit_권총".to_owned(),
+        (None, Some(18)) => "_hit_라이플".to_owned(),
+        (None, Some(19)) => "_hit_개틀링한발".to_owned(),
+        (None, Some(20)) => "_hit_샷건".to_owned(),
+        (None, Some(21)) => "_hit_그레네이드런쳐".to_owned(),
+        (None, Some(_)) => "_hit_mace".to_owned(),
+    };
+    format!("{name}.wav")
+}
+
+/// The sounds of a unit's state changing (body state OPT1, health bits OPT2): stone setting in and breaking, a freeze
+/// breaking, stun; poison, curse, silence and blindness starting.
+// ponytail: which state change plays which sound is partly guessed from the files' names.
+fn state_sounds(before: (u16, u16), after: (u16, u16)) -> Vec<&'static str> {
+    let (stone, stone_wait, freeze, stun) = (1, 6, 2, 3);
+    let mut sounds = Vec::new();
+    match (before.0, after.0) {
+        (from, to) if from == to => {}
+        (from, to) if (to == stone || to == stone_wait) && from != stone && from != stone_wait => sounds.push("_stonecurse.wav"),
+        (from, _) if from == stone => sounds.push("_stone_explosion.wav"),
+        (from, _) if from == freeze => sounds.push("_frozen_explosion.wav"),
+        (_, to) if to == stun => sounds.push("_stun.wav"),
+        _ => {}
+    }
+    for (bit, sound) in [(0x01, "_poison.wav"), (0x02, "_curse.wav"), (0x04, "_silence.wav"), (0x10, "_blind.wav")] {
+        if after.1 & bit != 0 && before.1 & bit == 0 {
+            sounds.push(sound);
+        }
+    }
+    sounds
+}
+
+/// How loud an effect sound is `cells` away: full within 8 cells (40 world units), then 40 / distance, none from 50
+/// cells (250 units) on.
+fn heard(cells: f32) -> f32 {
+    let distance = cells * world::CELL;
+    if distance >= 250.0 { 0.0 } else { (40.0 / distance).min(1.0) }
+}
 const WHISPER_COLOR: [u8; 3] = [0xFF, 0xFF, 0x00];
 /// "No one of that name is online", then the two ways of being ignored (147 + the result).
 const WHISPER_FAILED: usize = 148;
@@ -367,8 +423,6 @@ const NO_COSTUME_NOTICE: usize = 1772;
 /// "In this Map,Effect of Mirace of Sun and Moon is nullified."
 const NO_MIRACLE_NOTICE: usize = 2381;
 const MAP_NOTICE: [u8; 3] = [0x64, 0xFF, 0xFF];
-/// "You have won %d times and have lost %d times in PVP. Current points %d."
-const PVP_RECORD: usize = 853;
 /// "[Point] You have been rewarded with %d … rank points. Your point total is %d.", by ranking.
 const RANK_POINTS_BLACKSMITH: usize = 901;
 const RANK_POINTS_ALCHEMIST: usize = 902;
@@ -403,10 +457,11 @@ fn counter_glyphs(rank: u32, players: u32, screen: [f32; 2]) -> Vec<(usize, [f32
     glyphs
 }
 
-/// The first-place clock's glyphs (timefont actions): ss, mm:ss, hh:mm:ss or dd:hh:mm:ss.
+/// The first-place clock's glyphs (timefont actions): mm:ss, hh:mm:ss or dd:hh:mm:ss, every part two digits.
 fn clock_glyphs(seconds: u64) -> Vec<usize> {
     let parts = [seconds / 86_400, seconds / 3600 % 24, seconds / 60 % 60, seconds % 60];
-    let first = parts.iter().position(|&part| part > 0).unwrap_or(3).min(3);
+    // Minutes and seconds at the least.
+    let first = parts.iter().position(|&part| part > 0).unwrap_or(2).min(2);
     let mut glyphs = Vec::new();
     for (n, part) in parts[first..].iter().enumerate() {
         if n > 0 {
@@ -2837,7 +2892,6 @@ impl Game {
             }
             chat::Command::Who => self.session.user_count(),
             chat::Command::Memo => self.session.remember_warp_point(),
-            chat::Command::PvpInfo => self.session.pvp_info(self.me.id, self.account_id),
             chat::Command::Ranking(kind) => self.session.ask_ranking(kind),
             chat::Command::BattleChat => {
                 let id = self.battle.toggle_chat();
@@ -4406,7 +4460,7 @@ impl Game {
                 let attacker = if act.source == me { Some(&self.player) } else { self.units.get(&act.source) };
                 let red = attacker.is_none_or(|actor| !(actor::is_monster_job(actor.job) || actor::is_npc_job(actor.job)));
                 let over = (act.source != me).then_some(act.source);
-                self.damages.push(Damage { target: over, amount, start: lands, kind: DamageKind::Miss { red }, flinch: None, drift });
+                self.damages.push(Damage { target: over, amount, start: lands, kind: DamageKind::Miss { red }, flinch: None, drift, source: None });
                 return;
             }
             _ => DamageKind::Hit { taken: on_player, sp: act.sp },
@@ -4414,9 +4468,9 @@ impl Game {
         let hits = if amount > 0 { i32::from(act.hits.max(1)) } else { 1 };
         for hit in 0..hits {
             let start = lands + MULTI_HIT_DELAY * hit as u32;
-            self.damages.push(Damage { target, amount: amount / hits, start, kind, flinch, drift });
+            self.damages.push(Damage { target, amount: amount / hits, start, kind, flinch, drift, source: (amount > 0).then_some(act.source) });
             if hits > 1 && !on_player {
-                self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: DamageKind::Combo, flinch: None, drift });
+                self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: DamageKind::Combo, flinch: None, drift, source: None });
             }
         }
     }
@@ -4478,6 +4532,8 @@ struct Dialog {
 /// A number over a unit: who (None = the player), how much, when it shows, how it looks, and the flinch it causes.
 struct Damage {
     target: Option<u32>,
+    /// Who hit, until the hit's sound has played (none for misses, heals and totals).
+    source: Option<u32>,
     amount: i32,
     start: Instant,
     kind: DamageKind,
@@ -7542,7 +7598,11 @@ impl App {
             && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
             && game.quest_window.tracker
             && game.window_at(self.cursor).is_none()
-            && let Some(id) = quest_tracker::title_at(&quest_tracker::blocks(&game.quests, &self.quest_texts, &self.messages), &self.font, self.cursor)
+            && let Some(id) = quest_tracker::title_at(
+                &quest_tracker::blocks(&game.quests, &self.quest_texts, &game.quest_window.hidden, &self.messages),
+                &self.font,
+                self.cursor,
+            )
         {
             game.right_press = None;
             let label = |message: usize| self.messages.get(message).cloned().unwrap_or_default();
@@ -9553,7 +9613,7 @@ impl App {
                     quests: Vec::new(),
                     quest_window: quest::QuestWindow {
                         tracker: settings_path("quest_tracker").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
-                        ..Default::default()
+                        ..quest::QuestWindow::load()
                     },
                     achievement_totals: net::AchievementTotals::default(),
                     achievements: HashMap::new(),
@@ -10844,9 +10904,9 @@ impl App {
             MapEvent::Sound { file, act: 0 | 1, unit } => {
                 let me = game.player.cell;
                 let at = if unit == game.account_id { Some(me) } else { game.units.get(&unit).map(|actor| actor.cell) };
-                let distance = at.map_or(0, |[x, y]| (x - me[0]).abs().max((y - me[1]).abs()));
+                let distance = at.map_or(0.0, |[x, y]| f32::hypot((x - me[0]) as f32, (y - me[1]) as f32));
                 if let Some(audio) = &mut self.audio {
-                    audio.play(grf, &file, 1.0 - distance as f32 / HEARING_CELLS);
+                    audio.play(grf, &file, heard(distance));
                 }
             }
             MapEvent::Sound { .. } => {}
@@ -11591,10 +11651,6 @@ impl App {
                     game.last_rank = rank;
                 }
             }
-            MapEvent::PvpInfo { wins, losses, points } => {
-                let text = rustnarok_client::messages::fill(self.messages.get(PVP_RECORD).map_or("", String::as_str), &[&wins, &losses, &points]);
-                game.chat_line(text, CHAT_ITEM);
-            }
             MapEvent::PartyChat { account, text } => game.chat_line(text, if account == game.account_id { PARTY_CHAT_OURS } else { PARTY_CHAT }),
             MapEvent::PartyPosition { account, cell } => {
                 if let Some(member) = game.party.as_mut().and_then(|party| party.member(account)) {
@@ -12192,6 +12248,7 @@ impl App {
                         kind: DamageKind::Heal { sp: false },
                         flinch: None,
                         drift: [0.0; 2],
+                        source: None,
                     });
                 }
                 skill_effects(game, skill, "effectId", target);
@@ -12337,14 +12394,23 @@ impl App {
                     kind: DamageKind::Heal { sp: kind == net::STATUS_SP },
                     flinch: None,
                     drift: [0.0; 2],
+                    source: None,
                 });
             }
             // Mounting, dismounting or an outfit puts a player in another body. Body and health state colour it.
             MapEvent::OptionChange { id, option, body, health } => {
+                let me = game.player.cell;
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor {
                     actor.cloaked = option & actor::UNSEEN_OPTIONS != 0;
                     actor.hide_option = option;
+                    let changed = state_sounds((actor.body_state, actor.health_state), (body, health));
+                    if let Some(audio) = &mut self.audio {
+                        let loudness = heard(f32::hypot((actor.cell[0] - me[0]) as f32, (actor.cell[1] - me[1]) as f32));
+                        for sound in changed {
+                            audio.play(grf, sound, loudness);
+                        }
+                    }
                     actor.body_state = body;
                     actor.health_state = health;
                 }
@@ -12792,7 +12858,23 @@ impl App {
 
         // Bodies that finished dying leave; hits that land make their target flinch.
         game.units.retain(|_, actor| actor.remove_at.is_none_or(|at| at > now));
+        // A hit's sound when it lands, at the target.
+        let mut hit_sounds = Vec::new();
         for damage in &mut game.damages {
+            if damage.start <= now
+                && let Some(source) = damage.source.take()
+            {
+                let target = damage.target.map_or(Some(&game.player), |id| game.units.get(&id));
+                let attacker = if source == game.account_id { Some(&game.player) } else { game.units.get(&source) };
+                if let Some(target) = target {
+                    let lineage = (target.kind == PLAYER).then(|| self.skill_trees.lineage(target.job));
+                    let weapon = attacker.and_then(|actor| actor.look.as_ref()).map(|look| self.look_tables.weapon_type(look.weapon));
+                    let roll = damage.start.duration_since(game.entered).subsec_nanos() >> 8;
+                    let at = target.position(now);
+                    let me = game.player.position(now);
+                    hit_sounds.push((hit_sound(lineage.as_deref(), weapon, roll), heard(f32::hypot(at[0] - me[0], at[1] - me[1]))));
+                }
+            }
             if damage.start <= now && damage.flinch.is_some() {
                 let motion = damage.flinch.take();
                 let target = match damage.target {
@@ -12844,7 +12926,7 @@ impl App {
         let view = game.camera.view(screen()[0] / screen()[1]);
         let yaw = game.camera.yaw;
         let mut frames = Vec::new();
-        let mut sounds: Vec<(String, f32)> = game.player.sound_now(now).map(|sound| (sound, 1.0)).into_iter().collect();
+        let mut sounds: Vec<(String, f32)> = game.player.sounds_now(now).into_iter().map(|sound| (sound, 1.0)).chain(hit_sounds).collect();
         let (action, timing) = game.player.animation(now);
         let head_direction = game.player.head_direction;
         let player_seen = seen_direction(game.player.rot, yaw, rounds_facing(PLAYER, game.player.job, action));
@@ -12935,10 +13017,8 @@ impl App {
             }
             let feet = game.world.cell_position(cell);
             feet_of.insert(id, feet);
-            if let Some(sound) = actor.sound_now(now) {
-                let distance = (cell[0] - player_cell[0]).abs().max((cell[1] - player_cell[1]).abs());
-                sounds.push((sound, 1.0 - distance as f32 / HEARING_CELLS));
-            }
+            let loudness = heard(f32::hypot(cell[0] - player_cell[0], cell[1] - player_cell[1]));
+            sounds.extend(actor.sounds_now(now).into_iter().map(|sound| (sound, loudness)));
             let (action, timing) = actor.animation(now);
             let head_direction = actor.head_direction;
             let seen = seen_direction(actor.rot, yaw, rounds_facing(actor.kind, actor.job, action));
@@ -13575,7 +13655,7 @@ impl App {
             if basic_info::fourth_job(game.me.job) {
                 rows.push((status(net::STATUS_AP), status(net::STATUS_MAX_AP), third, third));
             }
-            bars.push(("player".to_string(), player_feet, rows, [border, background]));
+            bars.push(("player".to_string(), player_feet, rows, [border, background], overhead::bar_fill as overhead::Fill));
         }
         // The player's own summons while in sight: HP, SP, and a homunculus's or pet's hunger.
         // ponytail: hunger fills over a maximum of 100.
@@ -13601,22 +13681,25 @@ impl App {
         }
         for (kind, id, rows) in summons {
             if let Some(&feet) = feet_of.get(&id) {
-                bars.push((kind.to_string(), feet, rows, [border, background]));
+                bars.push((kind.to_string(), feet, rows, [border, background], overhead::bar_fill));
             }
         }
-        // Monsters' bars in their own colors; a dying unit's bar shows empty until it's gone.
+        // Monsters' bars in their own colors; a dying unit's bar shows empty until it's gone. Party members and
+        // battleground teammates fill by whole percents.
         bars.extend(game.unit_hp.iter().filter_map(|(id, &(hp, max))| {
             let actor = game.units.get(id)?;
             let hp = if actor.remove_at.is_some() { 0 } else { hp };
-            let [border, background, fill, low] = if actor.kind == MONSTER { assets.monster_bars.each_ref() } else { [border, background, green, red] };
-            Some((id.to_string(), *feet_of.get(id)?, vec![(i64::from(hp), i64::from(max), fill, low)], [border, background]))
+            let monster = actor.kind == MONSTER;
+            let [border, background, fill, low] = if monster { assets.monster_bars.each_ref() } else { [border, background, green, red] };
+            let filled: overhead::Fill = if monster { overhead::bar_fill } else { overhead::party_fill };
+            Some((id.to_string(), *feet_of.get(id)?, vec![(i64::from(hp), i64::from(max), fill, low)], [border, background], filled))
         }));
         game.bars_drawn.clear();
-        for (whose, feet, rows, [border, background]) in bars {
+        for (whose, feet, rows, [border, background], filled) in bars {
             let Some(point) = sprite_point(feet, overhead::BAR_BELOW) else { continue };
             let [x, y] = [point[0].trunc() - overhead::BAR_WIDTH / 2.0, point[1].trunc()];
-            let rects = overhead::gage(&rows, border, background);
-            game.bars_drawn.push((whose, [x, y, rects[0].1[2], rects[0].1[3]], rows.iter().map(|&(value, max, ..)| overhead::bar_fill(value, max)).collect()));
+            let rects = overhead::gage(&rows, border, background, filled);
+            game.bars_drawn.push((whose, [x, y, rects[0].1[2], rects[0].1[3]], rows.iter().map(|&(value, max, ..)| filled(value, max)).collect()));
             for (texture, [left, top, width, height]) in rects {
                 base.sprites.push((texture, [x + left, y + top], [width, height]));
             }
@@ -13968,7 +14051,7 @@ impl App {
         }
         // The quest tracker, under the minimap.
         if game.quest_window.tracker {
-            quest_tracker::draw(&mut chat_layer, &quest_tracker::blocks(&game.quests, quest_texts, messages));
+            quest_tracker::draw(&mut chat_layer, &quest_tracker::blocks(&game.quests, quest_texts, &game.quest_window.hidden, messages));
         }
         // An NPC's illustration, over the world and under the windows.
         let mut cutin_layer = Layer::default();
@@ -14670,12 +14753,11 @@ impl App {
         sprites.extend(cursor_look.draw(gpu, game.cursor_at));
 
         game.effects.advance(gpu, now, yaw);
-        // With /effect off, effects still play on, unseen, and their sounds come due without being heard.
+        // With /effect off, effects still play on, unseen, and their sounds are still heard.
         let effects_on = self.graphics.effects_on;
         if let Some(audio) = audio {
-            for (file, at) in game.effects.due_sounds(now).into_iter().filter(|_| effects_on) {
-                let distance = (at[0] - player_feet[0]).abs().max((at[2] - player_feet[2]).abs()) / world::CELL;
-                audio.play(grf, &file, 1.0 - distance / HEARING_CELLS);
+            for (file, at) in game.effects.due_sounds(now) {
+                audio.play(grf, &file, heard(f32::hypot(at[0] - player_feet[0], at[2] - player_feet[2]) / world::CELL));
             }
         }
         let feet_of_unit = |unit: Option<u32>| match unit {
@@ -15566,11 +15648,13 @@ mod tests {
     #[test]
     fn spells_the_first_place_clock() {
         let colon = GLYPH_SEPARATOR;
-        assert_eq!(clock_glyphs(59), [5, 9]);
+        assert_eq!(clock_glyphs(59), [0, 0, colon, 5, 9]);
         assert_eq!(clock_glyphs(61), [0, 1, colon, 0, 1]);
         assert_eq!(clock_glyphs(3 * 3600 + 2 * 60 + 1), [0, 3, colon, 0, 2, colon, 0, 1]);
         assert_eq!(clock_glyphs(2 * 86_400), [0, 2, colon, 0, 0, colon, 0, 0, colon, 0, 0]);
-        assert_eq!(clock_glyphs(0), [0, 0]);
+        assert_eq!(clock_glyphs(0), [0, 0, colon, 0, 0]);
+        assert_eq!(clock_glyphs(3661), [0, 1, colon, 0, 1, colon, 0, 1]);
+        assert_eq!(clock_glyphs(90_061), [0, 1, colon, 0, 1, colon, 0, 1, colon, 0, 1]);
     }
 
     #[test]
@@ -15807,6 +15891,35 @@ mod tests {
         assert_eq!(companion_mark(Some((1, 9)), 1, 9, false), (None, true));
         assert_eq!(companion_mark(Some((1, 8)), 1, 9, false), (Some((1, 9)), false));
         assert_eq!(companion_mark(None, 1, 9, true), (None, true));
+    }
+
+    #[test]
+    fn hits_sound_by_body_or_weapon() {
+        // A Knight (7 from Swordman 1), a Hunter (11 from Archer 3), a Priest (8 from Acolyte 4).
+        assert_eq!(hit_sound(Some(&[7, 1, 0]), None, 0), "player_metal.wav");
+        assert_eq!(hit_sound(Some(&[11, 3, 0]), Some(1), 0), "player_wooden_male.wav");
+        assert_eq!(hit_sound(Some(&[8, 4, 0]), None, 0), "player_clothes.wav");
+        // On a monster: the attacker's weapon type, bare hands and monsters picking one of four.
+        assert_eq!(hit_sound(None, Some(1), 0), "_hit_sword.wav");
+        assert_eq!(hit_sound(None, Some(11), 0), "_hit_arrow.wav");
+        assert_eq!(hit_sound(None, Some(8), 0), "_hit_mace.wav");
+        assert_eq!(hit_sound(None, Some(0), 6), "_hit_fist3.wav");
+        assert_eq!(hit_sound(None, None, 3), "_enemy_hit_normal4.wav");
+    }
+
+    #[test]
+    fn states_sound_as_they_start_and_break() {
+        assert_eq!(state_sounds((0, 0), (6, 0)), ["_stonecurse.wav"]);
+        assert_eq!(state_sounds((6, 0), (1, 0)), Vec::<&str>::new(), "stone setting in after the wait");
+        assert_eq!(state_sounds((1, 0), (0, 0)), ["_stone_explosion.wav"]);
+        assert_eq!(state_sounds((2, 0), (0, 0)), ["_frozen_explosion.wav"]);
+        assert_eq!(state_sounds((0, 0x01), (3, 0x13)), ["_stun.wav", "_curse.wav", "_blind.wav"]);
+    }
+
+    #[test]
+    fn sounds_fall_off_with_distance() {
+        assert_eq!([heard(0.0), heard(8.0), heard(16.0), heard(50.0)], [1.0, 1.0, 0.5, 0.0]);
+        assert!((heard(30.0) - 40.0 / 150.0).abs() < 1e-6);
     }
 
     #[test]

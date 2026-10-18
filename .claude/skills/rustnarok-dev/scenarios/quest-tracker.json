@@ -1,5 +1,5 @@
 {
-  "about": "Quest tracker (issue #219): a test NPC (quests.txt) gives two quests, a hunt for ten Drops (4275) and one without hunts (1001); the tracker under the minimap lists both, the hunt with '( 0 / 10 )'. Killing a Drops (the character raised for it) updates the line to '( 1 / 10 )'. The NPC erases the quests, the character is put back and the NPC unloaded.",
+  "about": "Quest tracker (issue #219): a test NPC (quests.txt) gives two quests, a hunt for ten Drops (4275) and one without hunts (1001); the tracker under the minimap lists both, the hunt with '( 0 / 10 )'. Killing a Drops (the character raised for it) updates the line to '( 1 / 10 )'. The NPC erases the quests, the character is put back and the NPC unloaded. Then (issue #320) four quests more make six: the tracker lists the first five; switching 1002 off in the quest window (Alt+U) brings 4275 on, and switching it back restores the five; the four are taken out again.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -130,6 +130,95 @@
         300
       ],
       "threshold": 5
+    },
+    {
+      "type": "more"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_tracker.0.id": 1001,
+          "quest_tracker.1.id": 1002,
+          "quest_tracker.2.id": 1003,
+          "quest_tracker.3.id": 1004,
+          "quest_tracker.4.id": 1005
+        }
+      }
+    },
+    {
+      "key": "Alt+U"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click_on": {
+        "button": "quest_switch_1002"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_tracker.0.id": 1001,
+          "quest_tracker.1.id": 1003,
+          "quest_tracker.2.id": 1004,
+          "quest_tracker.3.id": 1005,
+          "quest_tracker.4.id": 4275
+        }
+      }
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "quest-switched-off",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "quest_switch_1002"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_tracker.0.id": 1001,
+          "quest_tracker.1.id": 1002,
+          "quest_tracker.2.id": 1003,
+          "quest_tracker.3.id": 1004,
+          "quest_tracker.4.id": 1005
+        }
+      }
+    },
+    {
+      "key": "Alt+U"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "less"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
     },
     {
       "type": "clear"

@@ -847,8 +847,6 @@ pub enum Command {
     Memo,
     /// /achievement: the achievement window, open or closed.
     Achievements,
-    /// /pvpinfo: the player's PvP wins, losses and points.
-    PvpInfo,
     /// /noshift: a click on a player attacks without Shift, on or off.
     NoShift,
     /// /camera: the camera sticks to the player instead of gliding after them, on or off.
@@ -892,7 +890,6 @@ pub fn command(text: &str) -> Option<Command> {
         "/emo" | "/emotion" => Command::EmotionList,
         "/achievement" => Command::Achievements,
         "/memo" => Command::Memo,
-        "/pvpinfo" => Command::PvpInfo,
         "/noshift" => Command::NoShift,
         "/noctrl" | "/nc" => Command::NoCtrl,
         "/snap" => Command::Snap,
@@ -1098,7 +1095,6 @@ mod tests {
         }
         assert_eq!(command("/where"), Some(Command::Where));
         assert_eq!(command("/memo"), Some(Command::Memo));
-        assert_eq!(command("/pvpinfo"), Some(Command::PvpInfo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
         assert_eq!([command("/noctrl"), command("/nc")], [Some(Command::NoCtrl), Some(Command::NoCtrl)]);
         assert_eq!([command("/snap"), command("/itemsnap"), command("/skillsnap")], [Some(Command::Snap), Some(Command::ItemSnap), Some(Command::SkillSnap)]);

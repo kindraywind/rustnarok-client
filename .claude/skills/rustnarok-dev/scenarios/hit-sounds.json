@@ -1,0 +1,22 @@
+{
+  "about": "Hit sounds (issue #362): a Novice wearing a Knife (a dagger) hits a training dummy: the hit sounds `_hit_sword.wav`, the weapon's own sound, when it lands.",
+  "account": "",
+  "slot": 0,
+  "env": {"RUSTNAROK_CLIENT_SOUND": "1"},
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 300},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 1201 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"click": [12, 224]}, {"wait": 300},
+    {"click_on": {"inventory_item": 1201}, "count": 2}, {"wait": 800},
+    {"expect": {"inventory_has": [{"id": 1201, "worn": 2}]}},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"say": "@monster 2408 1"}, {"wait": 1500},
+    {"click_unit": {"kind": "monster", "name": "Dummy 10"}},
+    {"wait_for": {"event": "Sound _hit_sword.wav", "ms": 6000}},
+    {"say": "@killmonster2"}, {"wait": 300},
+    {"say": "@itemreset"}, {"wait": 500}
+  ]
+}

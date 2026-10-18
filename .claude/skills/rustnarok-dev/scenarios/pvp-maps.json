@@ -1,5 +1,5 @@
 {
-  "about": "Map property and PvP (issue #108): on pvp_y_1-2 the counter shows rank and players, a death drops the rank, /pvpinfo prints the record, @pvpoff and @pvpon switch it; guild_vs1 is a GvG map (property 3) and @gvgoff/@gvgon switch it. Leaves both maps' flags as it found them; a run stopped halfway leaves them changed until the map server restarts. The attack rules are #140's.",
+  "about": "Map property and PvP (issue #108): on pvp_y_1-2 the counter shows rank and players, a death drops the rank, @pvpoff and @pvpon switch it; guild_vs1 is a GvG map (property 3) and @gvgoff/@gvgon switch it. Leaves both maps' flags as it found them; a run stopped halfway leaves them changed until the map server restarts. The attack rules are #140's.",
   "account": "",
   "slot": 0,
   "second": {
@@ -86,30 +86,6 @@
             2
           ]
         }
-      }
-    },
-    {
-      "as": "second",
-      "type": "/pvpinfo"
-    },
-    {
-      "as": "second",
-      "key": "Enter"
-    },
-    {
-      "as": "second",
-      "wait_for": {
-        "packet": "0x0210",
-        "ms": 5000
-      }
-    },
-    {
-      "wait": 300
-    },
-    {
-      "as": "second",
-      "expect": {
-        "chat": "You have won 0 times and have lost 1 times in PVP. Current points 0."
       }
     },
     {

@@ -1,7 +1,7 @@
 //! The quest tracker: active quests on screen under the minimap, each its title in gold, its summary, and how its
 //! hunts stand, so the quest window needn't be opened.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rustnarok_client::net::{Hunt, Quest};
 use rustnarok_client::text::Font;
@@ -23,9 +23,10 @@ const SHADOW: [u8; 3] = [0, 0, 0];
 /// The summary keeps 30 bytes (as the game counts them, two for a Korean letter).
 const SUMMARY_BYTES: usize = 30;
 
-/// The quests it shows: active, in ID order, at most five.
-pub fn tracked(quests: &[Quest]) -> Vec<&Quest> {
-    let mut active: Vec<&Quest> = quests.iter().filter(|quest| quest.active).collect();
+/// The quests it shows: active, not switched off (`hidden`), not cooldown timers, in ID order, at most five.
+pub fn tracked<'q>(quests: &'q [Quest], texts: &HashMap<u32, QuestText>, hidden: &HashSet<u32>) -> Vec<&'q Quest> {
+    let mut active: Vec<&Quest> =
+        quests.iter().filter(|quest| quest.active && !hidden.contains(&quest.id) && !texts.get(&quest.id).is_some_and(|text| text.cooldown)).collect();
     active.sort_by_key(|quest| quest.id);
     active.truncate(MOST);
     active
@@ -106,8 +107,8 @@ pub struct Block {
     pub top: f32,
 }
 
-pub fn blocks(quests: &[Quest], texts: &HashMap<u32, QuestText>, messages: &[String]) -> Vec<Block> {
-    let shown = tracked(quests);
+pub fn blocks(quests: &[Quest], texts: &HashMap<u32, QuestText>, hidden: &HashSet<u32>, messages: &[String]) -> Vec<Block> {
+    let shown = tracked(quests, texts, hidden);
     let tops = block_tops(&shown.iter().map(|quest| quest.hunts.len()).collect::<Vec<_>>());
     shown
         .into_iter()
@@ -118,7 +119,8 @@ pub fn blocks(quests: &[Quest], texts: &HashMap<u32, QuestText>, messages: &[Str
                 if (1..=3).contains(&quest.hunts.len()) { quest.hunts.iter().filter_map(|hunt| hunt_line(hunt, messages)).collect() } else { Vec::new() };
             Block {
                 id: quest.id,
-                title: text.map_or_else(|| quest.id.to_string(), |text| text.title.clone()),
+                // A quest the data doesn't know.
+                title: text.map_or_else(|| format!("Unknown Quest, ID = {}", quest.id), |text| text.title.clone()),
                 summary: text.map(|text| summary(&text.summary)).unwrap_or_default(),
                 hunts,
                 top,
@@ -165,7 +167,20 @@ mod tests {
     fn keeps_five_active_quests_in_order() {
         let quest = |id, active| Quest { id, active, ..Default::default() };
         let quests = [quest(9, true), quest(3, true), quest(5, false), quest(1, true), quest(7, true), quest(8, true), quest(2, true)];
-        assert_eq!(tracked(&quests).iter().map(|quest| quest.id).collect::<Vec<_>>(), [1, 2, 3, 7, 8]);
+        let ids = |hidden: &HashSet<u32>, texts: &HashMap<u32, QuestText>| tracked(&quests, texts, hidden).iter().map(|quest| quest.id).collect::<Vec<_>>();
+        assert_eq!(ids(&HashSet::new(), &HashMap::new()), [1, 2, 3, 7, 8]);
+        // Switched off in the quest window: the sixth comes on.
+        assert_eq!(ids(&[2].into_iter().collect(), &HashMap::new()), [1, 3, 7, 8, 9]);
+        // A cooldown timer is never listed, whatever its switch.
+        let texts = [(3, QuestText { cooldown: true, ..Default::default() })].into_iter().collect();
+        assert_eq!(ids(&HashSet::new(), &texts), [1, 2, 7, 8, 9]);
+    }
+
+    #[test]
+    fn names_unknown_quests() {
+        let quests = [Quest { id: 7001, active: true, ..Default::default() }];
+        let blocks = blocks(&quests, &HashMap::new(), &HashSet::new(), &[]);
+        assert_eq!(blocks[0].title, "Unknown Quest, ID = 7001");
     }
 
     #[test]

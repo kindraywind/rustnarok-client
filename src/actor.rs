@@ -962,6 +962,13 @@ impl SpriteSet {
         Some((frame, sound))
     }
 
+    /// The `.wav` an ACT frame's event plays, if any.
+    pub fn frame_sound(&self, index: usize, frame: usize) -> Option<&str> {
+        let body = &self.layers[0];
+        let event = usize::try_from(body.act.actions.get(index)?.get(frame)?.event).ok()?;
+        body.act.events.get(event).map(String::as_str).filter(|name| name.to_lowercase().ends_with(".wav"))
+    }
+
     /// How long `action` takes to play through once at its own frame delays.
     pub fn action_ms(&self, action: usize, direction: u8) -> Option<f32> {
         self.index_ms(action * 8 + usize::from(direction % 8))
@@ -1156,6 +1163,18 @@ fn flinch_pace(d: f32, player: bool, delay: f32) -> Pace {
         d if d > 0.0 && player => Pace::Act(d),
         d if d > 0.0 => Pace::Act(d / delay),
         _ => Pace::Act(1.0),
+    }
+}
+
+/// The frames whose sounds play when an animation moves from `last` to `now` ((action, frame)) in an action of `count`
+/// frames: those passed since the last, wrapping round a loop. In a new action from frame 1: a sound on frame 0 of an
+/// action just begun doesn't play.
+pub fn frames_passed(last: Option<(usize, usize)>, now: (usize, usize), count: usize) -> Vec<usize> {
+    match last {
+        Some((action, frame)) if action == now.0 && frame == now.1 => Vec::new(),
+        Some((action, frame)) if action == now.0 && frame < now.1 => (frame + 1..=now.1).collect(),
+        Some((action, frame)) if action == now.0 => (frame + 1..count).chain(0..=now.1).collect(),
+        _ => (1..=now.1).collect(),
     }
 }
 
@@ -1654,12 +1673,18 @@ impl Actor {
         }
     }
 
-    /// The sound the animation plays now, if it just reached a frame with one.
-    pub fn sound_now(&mut self, now: Instant) -> Option<String> {
+    /// The sounds of the ACT frames the animation passed since it was last asked (`frames_passed`).
+    pub fn sounds_now(&mut self, now: Instant) -> Vec<String> {
         let (action, timing) = self.animation(now);
-        let (frame, sound) = self.sprites.as_ref()?.body_frame(action * 8 + usize::from(self.direction % 8), timing)?;
-        let heard = self.heard.replace((action, frame));
-        sound.filter(|_| heard != Some((action, frame))).map(str::to_owned)
+        let index = action * 8 + usize::from(self.direction % 8);
+        let Some((frame, _)) = self.sprites.as_ref().and_then(|sprites| sprites.body_frame(index, timing)) else { return Vec::new() };
+        let last = self.heard.replace((action, frame));
+        let Some(sprites) = &self.sprites else { return Vec::new() };
+        frames_passed(last, (action, frame), sprites.frames(index))
+            .into_iter()
+            .filter_map(|frame| sprites.frame_sound(index, frame))
+            .map(str::to_owned)
+            .collect()
     }
 
     /// Plays `action` once from `start` over `duration_ms` (attack, flinch), or holds its last frame (death).
@@ -2306,6 +2331,15 @@ mod tests {
         assert_eq!(path(1, 4028), ("손수레".to_string(), "베이비손수레.act".to_string()));
         assert_eq!(path(5, 4036), ("손수레4".to_string(), "베이비손수레4.act".to_string()));
         assert_eq!(path(6, 4107), same("손수레5베이비"));
+    }
+
+    #[test]
+    fn sounds_every_frame_passed() {
+        assert_eq!(frames_passed(Some((5, 2)), (5, 2), 8), Vec::<usize>::new());
+        assert_eq!(frames_passed(Some((5, 2)), (5, 5), 8), [3, 4, 5]);
+        assert_eq!(frames_passed(Some((1, 6)), (1, 1), 8), [7, 0, 1], "round a loop");
+        assert_eq!(frames_passed(Some((0, 3)), (5, 2), 8), [1, 2], "a new action: not frame 0");
+        assert_eq!(frames_passed(None, (5, 0), 8), Vec::<usize>::new());
     }
 
     #[test]
