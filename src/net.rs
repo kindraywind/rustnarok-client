@@ -837,6 +837,14 @@ const ZC_REFINING_MATERIAL_LIST: u16 = 0x0AA2;
 const CZ_REQ_REFINING: u16 = 0x0AA3;
 const CZ_CLOSE_REFINING_UI: u16 = 0x0AA4;
 const ZC_ACK_ITEMREFINING: u16 = 0x0188;
+/// ZC_UI_OPEN: a window by kind (8 is grade enchanting).
+const ZC_UI_OPEN: u16 = 0x0AE2;
+const CZ_GRADE_ENCHANT_SELECT_EQUIPMENT: u16 = 0x0B59;
+const ZC_GRADE_ENCHANT_MATERIAL_LIST: u16 = 0x0B5A;
+const CZ_GRADE_ENCHANT_REQUEST: u16 = 0x0B5B;
+const CZ_GRADE_ENCHANT_CLOSE_UI: u16 = 0x0B5C;
+const ZC_GRADE_ENCHANT_ACK: u16 = 0x0B5D;
+const ZC_GRADE_ENCHANT_BROADCAST_RESULT: u16 = 0x0B5E;
 const ZC_AUTOSPELLLIST: u16 = 0x0AFB;
 const CZ_SELECTAUTOSPELL: u16 = 0x01CE;
 const ZC_SKILL_SELECT_REQUEST: u16 = 0x0442;
@@ -1374,6 +1382,25 @@ pub struct RoulettePrize {
     pub amount: u16,
 }
 
+/// Blessings on a grade try: the item, how many one step takes, the most steps, and the chance each step adds (percent).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GradeBlessing {
+    pub item: u32,
+    pub per_step: u32,
+    pub most: u32,
+    pub chance: u32,
+}
+
+/// One material row of a grade try. `lowers_refine` and `can_break` are the option's flags (0 or 1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GradeMaterial {
+    pub item: u32,
+    pub amount: u32,
+    pub zeny: u32,
+    pub lowers_refine: bool,
+    pub can_break: bool,
+}
+
 #[derive(Debug)]
 pub enum MapEvent {
     Entered {
@@ -1859,6 +1886,32 @@ pub enum MapEvent {
         result: u16,
         index: u16,
         refine: u16,
+    },
+    /// ZC_UI_OPEN: a window by kind (8 is grade enchanting) and the data it carries.
+    UiOpen {
+        kind: u8,
+        data: u32,
+    },
+    /// What grades an item, or index −1 when its level has none. Chance is a percent. Blessing steps add `chance`
+    /// each, up to `most`. Each material row is one option, in the order the request numbers them.
+    GradeMaterials {
+        index: i16,
+        chance: u32,
+        blessing: GradeBlessing,
+        materials: Vec<GradeMaterial>,
+    },
+    /// A grade try: the item's grade after it, and the result (0 raised, 1 failed, 2 refine down, 3 destroyed, 4 protected).
+    GradeResult {
+        index: u16,
+        grade: u16,
+        result: u32,
+    },
+    /// Someone's grade try, told to every player: success raised it, failure did not.
+    GradeAnnounced {
+        player: String,
+        item: u32,
+        grade: u16,
+        success: bool,
     },
     /// Eggs that can hatch, by inventory index.
     PetEggs(Vec<u16>),
@@ -2773,6 +2826,8 @@ pub struct InventoryItem {
     pub worn: u32,
     pub identified: bool,
     pub refine: u8,
+    /// Enchant grade: 0 none, 1 D, 2 C, 3 B, 4 A.
+    pub grade: u8,
     pub cards: [u32; 4],
     /// Broken: it can't be worn until it's repaired.
     pub broken: bool,
@@ -2846,6 +2901,7 @@ fn decode_equip_item(entry: &[u8]) -> InventoryItem {
         worn: u32_at(entry, 11),
         cards: cards_at(entry, 15),
         refine: entry[65],
+        grade: entry[66],
         identified: entry[67] & 1 != 0,
         broken: entry[67] & 2 != 0,
         bind: u16_at(entry, 35),
@@ -3218,6 +3274,21 @@ impl MapSession {
 
     pub fn close_refine(&mut self) -> io::Result<()> {
         self.stream.write_all(&CZ_CLOSE_REFINING_UI.to_le_bytes())
+    }
+
+    /// Puts an item in the grade window. Its materials come back, or index −1 when that level has no grades.
+    pub fn grade_select(&mut self, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_grade_select(index))
+    }
+
+    /// Starts a grade try. `steps` 0 sends blessings off; more than 0 sends them on with that many steps.
+    pub fn grade_enchant(&mut self, index: u16, material: u32, steps: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_grade_enchant(index, material, steps))
+    }
+
+    /// Closes the grade window. Until this, the server holds the player still.
+    pub fn close_grade(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_close_grade())
     }
 
     /// Hatches the egg at this inventory index (from `PetEggs`).
@@ -4086,6 +4157,32 @@ fn encode_skill_select(why: u32, skill: u16) -> [u8; 8] {
     packet
 }
 
+/// CZ_GRADE_ENCHANT_SELECT_EQUIPMENT: the inventory index.
+fn encode_grade_select(index: u16) -> [u8; 4] {
+    let mut packet = [0u8; 4];
+    packet[..2].copy_from_slice(&CZ_GRADE_ENCHANT_SELECT_EQUIPMENT.to_le_bytes());
+    packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_GRADE_ENCHANT_REQUEST: the item, the material row, and blessing steps (0 sends the flag off). Protect stays 0.
+fn encode_grade_enchant(index: u16, material: u32, steps: u32) -> [u8; 14] {
+    let mut packet = [0u8; 14];
+    packet[..2].copy_from_slice(&CZ_GRADE_ENCHANT_REQUEST.to_le_bytes());
+    packet[2..4].copy_from_slice(&index.to_le_bytes());
+    packet[4..8].copy_from_slice(&material.to_le_bytes());
+    if steps > 0 {
+        packet[8] = 1;
+        packet[9..13].copy_from_slice(&steps.to_le_bytes());
+    }
+    packet
+}
+
+/// CZ_GRADE_ENCHANT_CLOSE_UI.
+fn encode_close_grade() -> [u8; 2] {
+    CZ_GRADE_ENCHANT_CLOSE_UI.to_le_bytes()
+}
+
 /// CZ_REQ_REFINING: the item, the ore, and whether Blacksmith's Blessings go with it.
 fn encode_refine(index: u16, ore: u32, blessings: bool) -> [u8; 9] {
     let mut packet = [0u8; 9];
@@ -4533,6 +4630,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 location: u32_at(28),
                 kind: packet[32],
                 refine: packet[68],
+                grade: packet[69],
                 worn: 0,
                 broken: packet[11] != 0,
                 bind: u16_at(38),
@@ -4804,6 +4902,32 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             materials: packet[7..].chunks_exact(9).map(|ore| (self::u32_at(ore, 0), ore[4], self::u32_at(ore, 5))).collect(),
         },
         ZC_ACK_ITEMREFINING => MapEvent::Refined { result: u16_at(2), index: u16_at(4), refine: u16_at(6) },
+        ZC_UI_OPEN => MapEvent::UiOpen { kind: packet[2], data: u32_at(3) },
+        // Index −1: this level has no grades. Rows of 17 bytes start at 34.
+        ZC_GRADE_ENCHANT_MATERIAL_LIST => {
+            if packet.len() < 34 {
+                return None;
+            }
+            MapEvent::GradeMaterials {
+                index: i16::from_le_bytes([packet[4], packet[5]]),
+                chance: u32_at(6),
+                blessing: GradeBlessing { item: u32_at(10), per_step: u32_at(14), most: u32_at(18), chance: u32_at(22) },
+                materials: packet[34..]
+                    .chunks_exact(17)
+                    .map(|entry| GradeMaterial {
+                        item: self::u32_at(entry, 0),
+                        amount: self::u32_at(entry, 4),
+                        zeny: self::u32_at(entry, 8),
+                        lowers_refine: self::u32_at(entry, 12) != 0,
+                        can_break: entry[16] != 0,
+                    })
+                    .collect(),
+            }
+        }
+        ZC_GRADE_ENCHANT_ACK => MapEvent::GradeResult { index: u16_at(2), grade: u16_at(4), result: u32_at(6) },
+        ZC_GRADE_ENCHANT_BROADCAST_RESULT => {
+            MapEvent::GradeAnnounced { player: c_string(&packet[2..26]), item: u32_at(26), grade: u16_at(30), success: packet[32] != 0 }
+        }
         ZC_PETEGG_LIST => {
             MapEvent::PetEggs(packet[4..usize::from(u16_at(2)).min(packet.len())].chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect())
         }
@@ -5998,6 +6122,95 @@ mod tests {
         assert_eq!(encode_refine(4, 1010, true), [0xA3, 0x0A, 4, 0, 0xF2, 0x03, 0, 0, 1]);
         let ids = [ZC_OPEN_REFINING_UI, CZ_REFINING_SELECT_ITEM, ZC_REFINING_MATERIAL_LIST, CZ_REQ_REFINING, CZ_CLOSE_REFINING_UI, ZC_ACK_ITEMREFINING];
         assert_eq!(ids.map(packet_length), [Some(2), Some(4), Some(-1), Some(9), Some(2), Some(8)]);
+    }
+
+    #[test]
+    fn decodes_grade_enchant() {
+        assert!(matches!(decode_map_packet(&[0xE2, 0x0A, 8, 0, 0, 0, 0]), Some(MapEvent::UiOpen { kind: 8, data: 0 })));
+        assert!(matches!(decode_map_packet(&[0xE2, 0x0A, 1, 7, 0, 0, 0]), Some(MapEvent::UiOpen { kind: 1, data: 7 })));
+
+        // Two rows: 1 Etel Aquamarine for 175,000 z (can break), 5 for 875,000 z. Blessings: 1 a step, 10 steps, +1%.
+        let mut list = ZC_GRADE_ENCHANT_MATERIAL_LIST.to_le_bytes().to_vec();
+        list.extend_from_slice(&68u16.to_le_bytes());
+        list.extend_from_slice(&4i16.to_le_bytes());
+        list.extend_from_slice(&80u32.to_le_bytes());
+        for value in [1_000_337u32, 1, 10, 1, 0, 0] {
+            list.extend_from_slice(&value.to_le_bytes());
+        }
+        for (item, amount, zeny, lowers, breaks) in [(1_000_325u32, 1u32, 175_000u32, 0u32, 1u8), (1_000_325, 5, 875_000, 1, 0)] {
+            list.extend_from_slice(&item.to_le_bytes());
+            list.extend_from_slice(&amount.to_le_bytes());
+            list.extend_from_slice(&zeny.to_le_bytes());
+            list.extend_from_slice(&lowers.to_le_bytes());
+            list.push(breaks);
+        }
+        assert_eq!(list.len(), 68);
+        let Some(MapEvent::GradeMaterials { index: 4, chance: 80, blessing, materials }) = decode_map_packet(&list) else { panic!() };
+        assert_eq!(blessing, GradeBlessing { item: 1_000_337, per_step: 1, most: 10, chance: 1 });
+        assert_eq!(
+            materials,
+            [
+                GradeMaterial { item: 1_000_325, amount: 1, zeny: 175_000, lowers_refine: false, can_break: true },
+                GradeMaterial { item: 1_000_325, amount: 5, zeny: 875_000, lowers_refine: true, can_break: false },
+            ]
+        );
+        let mut none = vec![0u8; 34];
+        none[..2].copy_from_slice(&ZC_GRADE_ENCHANT_MATERIAL_LIST.to_le_bytes());
+        none[2..4].copy_from_slice(&34u16.to_le_bytes());
+        none[4..6].copy_from_slice(&(-1i16).to_le_bytes());
+        let Some(MapEvent::GradeMaterials { index: -1, chance: 0, materials, .. }) = decode_map_packet(&none) else { panic!() };
+        assert!(materials.is_empty());
+
+        let result = [&ZC_GRADE_ENCHANT_ACK.to_le_bytes()[..], &4u16.to_le_bytes(), &1u16.to_le_bytes(), &0u32.to_le_bytes()].concat();
+        let Some(MapEvent::GradeResult { index: 4, grade: 1, result: 0 }) = decode_map_packet(&result) else { panic!() };
+
+        let mut announced = ZC_GRADE_ENCHANT_BROADCAST_RESULT.to_le_bytes().to_vec();
+        let mut name = b"Pori**".to_vec();
+        name.resize(24, 0);
+        announced.extend_from_slice(&name);
+        announced.extend_from_slice(&15282u32.to_le_bytes());
+        announced.extend_from_slice(&1u16.to_le_bytes());
+        announced.push(1);
+        assert_eq!(Some(announced.len() as i32), packet_length(ZC_GRADE_ENCHANT_BROADCAST_RESULT));
+        let Some(MapEvent::GradeAnnounced { player, item: 15282, grade: 1, success: true }) = decode_map_packet(&announced) else { panic!() };
+        assert_eq!(player, "Pori**");
+        announced[32] = 0;
+        let Some(MapEvent::GradeAnnounced { success: false, .. }) = decode_map_packet(&announced) else { panic!() };
+
+        let mut equip = vec![0u8; 5 + EQUIP_ITEM_SIZE];
+        equip[..2].copy_from_slice(&ZC_INVENTORY_ITEMLIST_EQUIP.to_le_bytes());
+        let entry = &mut equip[5..];
+        entry[..2].copy_from_slice(&7u16.to_le_bytes());
+        entry[2..6].copy_from_slice(&15282u32.to_le_bytes());
+        entry[65] = 20;
+        entry[66] = 2;
+        entry[67] = 1;
+        let Some(MapEvent::InventoryItems { items, .. }) = decode_map_packet(&equip) else { panic!() };
+        assert_eq!((items[0].id, items[0].refine, items[0].grade), (15282, 20, 2));
+
+        let mut pickup = vec![0u8; 70];
+        pickup[..2].copy_from_slice(&ZC_ITEM_PICKUP_ACK.to_le_bytes());
+        pickup[2..4].copy_from_slice(&7u16.to_le_bytes());
+        pickup[6..10].copy_from_slice(&15282u32.to_le_bytes());
+        pickup[68] = 20;
+        pickup[69] = 1;
+        let Some(MapEvent::PickedUp { item, .. }) = decode_map_packet(&pickup) else { panic!() };
+        assert_eq!((item.refine, item.grade), (20, 1));
+
+        assert_eq!(encode_grade_select(4), [0x59, 0x0B, 4, 0]);
+        assert_eq!(encode_grade_enchant(4, 0, 2), [0x5B, 0x0B, 4, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0]);
+        assert_eq!(encode_grade_enchant(4, 1, 0), [0x5B, 0x0B, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(encode_close_grade(), [0x5C, 0x0B]);
+        let ids = [
+            ZC_UI_OPEN,
+            CZ_GRADE_ENCHANT_SELECT_EQUIPMENT,
+            ZC_GRADE_ENCHANT_MATERIAL_LIST,
+            CZ_GRADE_ENCHANT_REQUEST,
+            CZ_GRADE_ENCHANT_CLOSE_UI,
+            ZC_GRADE_ENCHANT_ACK,
+            ZC_GRADE_ENCHANT_BROADCAST_RESULT,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(7), Some(4), Some(-1), Some(14), Some(2), Some(10), Some(33)]);
     }
 
     #[test]
