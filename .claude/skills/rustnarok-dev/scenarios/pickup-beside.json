@@ -1,0 +1,22 @@
+{
+  "about": "Picking up from afar: a potion dropped at the player's feet, the player moved 6 cells east, then a click on the potion walks to the cell beside it (on the player's side), not onto it, and picks it up there.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 300},
+    {"say": "@cleanmap"}, {"wait": 300},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 501 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 500},
+    {"drag_on": [{"inventory_item": 501}, {"point": [700, 520]}]}, {"wait_for": {"event": "ItemRemoved", "ms": 5000}}, {"wait": 500},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"say": "@warp prt_fild08 176 360"}, {"settle": 1500},
+    {"click_on": {"ground_item": 501}},
+    {"wait_for": {"event": "PickedUp", "ms": 6000}}, {"wait": 400},
+    {"expect": {"inventory_has": [{"id": 501, "amount": 1}]}},
+    {"move": [1000, 750]},
+    {"shot": "pickup-beside", "crop": [262, 184, 500, 400], "threshold": 5},
+    {"say": "@itemreset"}, {"wait": 500}
+  ]
+}
