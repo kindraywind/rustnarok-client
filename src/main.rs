@@ -752,6 +752,8 @@ enum NetEvent {
 
 /// On a map: the connection, the world and everyone in view.
 struct Game {
+    /// The windows' places as last saved (see `save_places`).
+    saved_places: String,
     session: MapSession,
     world: World,
     map: String,
@@ -2004,6 +2006,72 @@ impl Game {
                 .as_ref()
                 .is_some_and(|homunculus| self.homunculus_skill_list.hit(cursor, &self.homunculus_skills, homunculus.skill_points).is_some()),
         })
+    }
+
+    /// How see-through a window is drawn: half while it's held.
+    fn panel_faded(&self, panel: Panel) -> f32 {
+        match panel {
+            Panel::Hotkeys => self.hotkeys.frame.faded(),
+            Panel::BasicInfo => self.basic_info.frame.faded(),
+            _ => self.titled_frame(panel).map_or(0.0, window::Frame::faded),
+        }
+    }
+
+    /// Every window's frame, by name, for saving where each was left.
+    fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 16] {
+        [
+            ("hotkeys", &mut self.hotkeys.frame),
+            ("basic_info", &mut self.basic_info.frame),
+            ("inventory", &mut self.inventory.frame),
+            ("equipment", &mut self.equipment.frame),
+            ("skills", &mut self.skill_window.frame),
+            ("storage", &mut self.storage.frame),
+            ("party", &mut self.party_window.frame),
+            ("status", &mut self.status_window.frame),
+            ("guild", &mut self.guild_window.frame),
+            ("clan", &mut self.clan_window.frame),
+            ("cart", &mut self.cart.frame),
+            ("pet", &mut self.pet_window.frame),
+            ("mercenary", &mut self.mercenary_window.frame),
+            ("mercenary_skills", &mut self.mercenary_skill_list.frame),
+            ("homunculus", &mut self.homunculus_window.frame),
+            ("homunculus_skills", &mut self.homunculus_skill_list.frame),
+        ]
+    }
+
+    /// Writes where the windows are and which are collapsed, when that changed and none is being dragged. A client
+    /// driven over the control socket (scenarios) neither saves nor restores them, so each run starts the same.
+    fn save_places(&mut self) {
+        if control::driven() {
+            return;
+        }
+        let frames = self.panel_frames();
+        if frames.iter().any(|(_, frame)| frame.dragging()) {
+            return;
+        }
+        let places = window_places(frames.iter().map(|(name, frame)| (*name, frame.position, frame.minimized)));
+        if places != self.saved_places {
+            if let Some(path) = settings_path("windows") {
+                let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, &places));
+            }
+            self.saved_places = places;
+        }
+    }
+
+    /// Puts the windows where they were left last time.
+    fn restore_places(&mut self) {
+        if control::driven() {
+            return;
+        }
+        let Some(text) = settings_path("windows").and_then(|path| std::fs::read_to_string(path).ok()) else { return };
+        let saved = parse_window_places(&text);
+        for (name, frame) in self.panel_frames() {
+            if let Some(&(position, minimized)) = saved.get(name) {
+                frame.position = window::dragged_to(position, [0.0, 0.0]);
+                frame.minimized = minimized;
+            }
+        }
+        self.saved_places = text;
     }
 
     /// The frame of a window with a title bar.
@@ -4181,6 +4249,23 @@ fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
 
 /// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
 /// folder elsewhere.
+/// The windows' places as saved: a line per window, its name, x, y and 1 when collapsed.
+fn window_places<'a>(frames: impl Iterator<Item = (&'a str, [f32; 2], bool)>) -> String {
+    frames.map(|(name, [x, y], minimized)| format!("{name} {x} {y} {}\n", u8::from(minimized))).collect()
+}
+
+/// Reads `window_places`' lines back; a line it can't read is skipped.
+fn parse_window_places(text: &str) -> HashMap<&str, ([f32; 2], bool)> {
+    text.lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let name = words.next()?;
+            let [x, y] = [words.next()?.parse().ok()?, words.next()?.parse().ok()?];
+            Some((name, ([x, y], words.next()? == "1")))
+        })
+        .collect()
+}
+
 /// Whether /zoom is on (saved; off unless turned on).
 fn zoom_out_saved() -> bool {
     settings_path("zoomout").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1")
@@ -4684,6 +4769,8 @@ fn login_error_message(error: &LoginError) -> usize {
 struct Layer<'a> {
     sprites: Vec<Sprite<'a>>,
     texts: Vec<(String, [f32; 2], [u8; 3])>,
+    /// How see-through it is drawn, 0 (opaque) to 1: a window being dragged.
+    faded: f32,
 }
 
 impl Layer<'_> {
@@ -8323,6 +8410,7 @@ impl App {
                     (net::STATUS_ZENY, i64::from(me.zeny)),
                 ]);
                 self.scene = Scene::Game(Box::new(Game {
+                    saved_places: String::new(),
                     session,
                     world,
                     map,
@@ -8628,6 +8716,9 @@ impl App {
                         Some([x.parse().ok()?, y.parse().ok()?])
                     }),
                 }));
+                if let Scene::Game(game) = &mut self.scene {
+                    game.restore_places();
+                }
                 for event in std::mem::take(&mut self.early_events) {
                     self.map_event(event);
                 }
@@ -8700,14 +8791,14 @@ impl App {
         let percent = "0%";
         layer.texts.push((percent.to_owned(), [((screen()[0] - self.font.width(percent)) / 2.0).floor(), corner[1] + 1.0], [255, 255, 0]));
         let composed = compose(gpu, &self.font, vec![layer]);
-        let sprites = flatten(&composed);
+        let (sprites, alphas) = flatten(&composed);
         // Screenshots wait for the game itself, unless RUSTNAROK_CLIENT_SHOT_LOADING asks for this screen.
         match &self.screenshot {
             Some(path) if std::env::var_os("RUSTNAROK_CLIENT_SHOT_LOADING").is_some() => {
-                gpu.capture(None, &sprites, path);
+                gpu.capture(None, &sprites, &alphas, path);
                 event_loop.exit();
             }
-            _ => gpu.draw(None, &sprites),
+            _ => gpu.draw(None, &sprites, &alphas),
         }
         loading.shown = true;
     }
@@ -11526,7 +11617,7 @@ impl App {
             select.draw_menu(&mut card_menu, &assets.context_menu, font, self.cursor);
         }
         let composed = compose(gpu, font, vec![base, card_menu, overlay]);
-        let mut sprites = flatten(&composed);
+        let (mut sprites, alphas) = flatten(&composed);
         if let Some(position) = caret {
             sprites.push((&assets.black, position, [1.0, font.line_height() - 2.0]));
         }
@@ -11545,10 +11636,10 @@ impl App {
             };
         match &self.screenshot {
             Some(path) if settled => {
-                gpu.capture(None, &sprites, path);
+                gpu.capture(None, &sprites, &alphas, path);
                 event_loop.exit();
             }
-            _ => gpu.draw(None, &sprites),
+            _ => gpu.draw(None, &sprites, &alphas),
         }
         self.drawn_blink_phase = blink_phase;
     }
@@ -11583,6 +11674,8 @@ impl App {
             game.follow_player(id, true, now);
         }
 
+        // Where the windows were left is kept for next time.
+        game.save_places();
         // Fireworks weather sets off fireworks around the player.
         for [dx, dy] in game.weather.fireworks_due(now) {
             let cell = [game.player.cell[0] + dx, game.player.cell[1] + dy].map(|value| value.max(0) as u16);
@@ -12901,6 +12994,7 @@ impl App {
                     (card_names, &game.char_names),
                 ),
             }
+            layer.faded = game.panel_faded(id);
             layers.push(layer);
         }
         // A dragged item's or skill's icon follows the pointer.
@@ -13261,7 +13355,7 @@ impl App {
         game.dialog_links = dialog_links;
         layers.extend([catalog_layer, shop_layer, overlay, menu_layer, tooltip, world_layer]);
         let composed = compose(gpu, font, layers);
-        let mut sprites = flatten(&composed);
+        let (mut sprites, alphas) = flatten(&composed);
 
         // The cursor shows what a click would do.
         let on_window = game.on_ui(pointer.0, items, assets.message.size);
@@ -13355,7 +13449,7 @@ impl App {
         };
         if let Some(path) = self.print_screen.take() {
             let _ = path.parent().map(std::fs::create_dir_all);
-            let shot = image::DynamicImage::ImageRgba8(gpu.snapshot(Some(&frame), &sprites)).to_rgb8();
+            let shot = image::DynamicImage::ImageRgba8(gpu.snapshot(Some(&frame), &sprites, &alphas)).to_rgb8();
             if shot.save(&path).is_ok() {
                 self.shot_saved = path.file_name().map(|name| name.to_string_lossy().into_owned());
             }
@@ -13363,16 +13457,16 @@ impl App {
         let shot_delay = std::env::var("RUSTNAROK_CLIENT_SHOT_DELAY").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(2.0);
         match &self.screenshot {
             Some(path) if game.entered.elapsed().as_secs_f32() > shot_delay => {
-                gpu.capture(Some(&frame), &sprites, path);
+                gpu.capture(Some(&frame), &sprites, &alphas, path);
                 event_loop.exit();
             }
-            _ => gpu.draw(Some(&frame), &sprites),
+            _ => gpu.draw(Some(&frame), &sprites, &alphas),
         }
     }
 }
 
 /// A layer with its text rasterized.
-type Composed<'a> = (Vec<Sprite<'a>>, Vec<(Texture, [f32; 2])>);
+type Composed<'a> = (Vec<Sprite<'a>>, Vec<(Texture, [f32; 2])>, f32);
 
 /// Rasterizes each layer's text.
 fn compose<'a>(gpu: &Gpu, font: &Font, layers: Vec<Layer<'a>>) -> Vec<Composed<'a>> {
@@ -13380,17 +13474,22 @@ fn compose<'a>(gpu: &Gpu, font: &Font, layers: Vec<Layer<'a>>) -> Vec<Composed<'
         .into_iter()
         .map(|layer| {
             let texts = layer.texts.iter().map(|(text, position, color)| (gpu.text(font, text, *color), *position)).collect();
-            (layer.sprites, texts)
+            (layer.sprites, texts, layer.faded)
         })
         .collect()
 }
 
-/// Everything to draw, in order: each layer's sprites, then its text, over the layers before it.
-fn flatten<'a>(composed: &'a [Composed<'a>]) -> Vec<Sprite<'a>> {
-    composed
-        .iter()
-        .flat_map(|(sprites, texts)| sprites.iter().copied().chain(texts.iter().map(|(texture, position)| (texture, *position, texture.size))))
-        .collect()
+/// Everything to draw, in order: each layer's sprites, then its text, over the layers before it; and how opaque each is.
+fn flatten<'a>(composed: &'a [Composed<'a>]) -> (Vec<Sprite<'a>>, Vec<f32>) {
+    let mut sprites = Vec::new();
+    let mut alphas = Vec::new();
+    for (layer, texts, faded) in composed {
+        let before = sprites.len();
+        sprites.extend(layer.iter().copied().chain(texts.iter().map(|(texture, position)| (texture, *position, texture.size))));
+        alphas.resize(sprites.len(), 1.0);
+        alphas[before..].fill(1.0 - faded);
+    }
+    (sprites, alphas)
 }
 
 /// The unit or item the pointer is on (see `picking::pick`), the player aside (only skills aim at oneself).
@@ -13981,6 +14080,15 @@ fn share_left(start: Instant, length: Duration, now: Instant) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saves_where_the_windows_were_left() {
+        let saved = window_places([("inventory", [0.0, 120.0], false), ("status", [185.5, 300.0], true)].into_iter());
+        assert_eq!(saved, "inventory 0 120 0\nstatus 185.5 300 1\n");
+        let read = parse_window_places(&saved);
+        assert_eq!((read["inventory"], read["status"]), (([0.0, 120.0], false), ([185.5, 300.0], true)));
+        assert!(parse_window_places("broken line\nskills 1 2 0").contains_key("skills"));
+    }
 
     #[test]
     fn colours_names_by_who_they_are() {
