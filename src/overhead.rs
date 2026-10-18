@@ -17,19 +17,57 @@ pub enum Shout {
     Cast,
     /// A skill without damage (ZC_USE_SKILL).
     Used,
-    /// A skill hit or a ground skill (ZC_NOTIFY_SKILL, ZC_NOTIFY_GROUNDSKILL).
+    /// A skill hit (ZC_NOTIFY_SKILL).
     Hit,
+    /// A skill on the ground (ZC_NOTIFY_GROUNDSKILL).
+    Ground,
 }
+
+/// A monster for who calls what: job 1001–3998 or 20021–31999, whatever the object type (pets and elementals are;
+/// homunculi, mercenaries and NPCs with other jobs aren't).
+pub fn monster_job(job: u16) -> bool {
+    matches!(job, 1001..=3998 | 20021..=31999)
+}
+
+/// The words a unit calls for a skill: "<name> !!"; for our own wedding skills the partner's name first ("<partner>
+/// !!  <words>", Call Partner ending in ♡); the two Summoner follow-ups by their first skill's name. None for a skill
+/// without a name.
+// ponytail: the partner's name only when we cast them (whose name another couple's shows isn't known), and Call
+// Partner's name is the partner's too.
+pub fn shout_text(skill: u16, name_of: impl Fn(u16) -> Option<String>, partner: Option<&str>, protect_words: &str) -> Option<String> {
+    let skill = match skill {
+        SU_CN_METEOR2 => SU_CN_METEOR,
+        SU_LUNATICCARROTBEAT2 => SU_LUNATICCARROTBEAT,
+        skill => skill,
+    };
+    let name = name_of(skill)?;
+    Some(match (skill, partner) {
+        (WE_MALE | WE_FEMALE, Some(partner)) => format!("{partner} !!  {protect_words}"),
+        (WE_CALLPARTNER, Some(partner)) => format!("{partner} !!  {name} ♡"),
+        _ => format!("{name} !!"),
+    })
+}
+
+/// The wedding skills: I Will Protect You (both), Call Partner.
+const WE_MALE: u16 = 334;
+const WE_FEMALE: u16 = 335;
+const WE_CALLPARTNER: u16 = 336;
+/// Summoner follow-ups, called by the skills they follow.
+const SU_CN_METEOR: u16 = 5028;
+const SU_LUNATICCARROTBEAT: u16 = 5036;
+const SU_CN_METEOR2: u16 = 5042;
+const SU_LUNATICCARROTBEAT2: u16 = 5043;
 
 /// Whether a unit calls a skill's name over its head. A level below 0 marks a silent follow-up hit. Monsters call
 /// only skills without damage; everyone else calls every skill but the quiet ones, so a skill with a cast time is
 /// called twice: as the cast starts and as it lands.
-pub fn shouts(skill: u16, level: i32, monster: bool, packet: Shout) -> bool {
+pub fn shouts(skill: u16, level: i32, job: u16, kind: u8, packet: Shout) -> bool {
     if level < 0 || SILENT.contains(&skill) {
         return false;
     }
-    if monster {
-        return packet == Shout::Used;
+    if monster_job(job) {
+        // ponytail: elementals and the like (types 10, 13 and 14) call their ZC_NOTIFY_SKILL hits too.
+        return packet == Shout::Used || (packet == Shout::Hit && matches!(kind, 10 | 13 | 14));
     }
     let quiet = QUIET.contains(&skill) || (packet == Shout::Cast && CALLED_ON_LANDING.contains(&skill)) || (packet == Shout::Used && skill == UNCALLED_USE);
     !quiet
@@ -271,18 +309,51 @@ mod tests {
 
     #[test]
     fn who_calls_which_skill() {
+        let (player, poring) = ((0, 0), (1002, 5));
+        let calls = |skill: u16, level: i32, (job, kind): (u16, u8), packet: Shout| shouts(skill, level, job, kind, packet);
         // Heal: called as it's cast and as it's used, by players; a monster only as it's used.
-        assert!(shouts(28, 10, false, Shout::Cast) && shouts(28, 10, false, Shout::Used));
-        assert!(!shouts(28, 10, true, Shout::Cast) && shouts(28, 10, true, Shout::Used));
+        assert!(calls(28, 10, player, Shout::Cast) && calls(28, 10, player, Shout::Used));
+        assert!(!calls(28, 10, poring, Shout::Cast) && calls(28, 10, poring, Shout::Used));
         // A monster's bolt hits without its name; a player's calls it.
-        assert!(!shouts(19, 5, true, Shout::Hit) && shouts(19, 5, false, Shout::Hit));
+        assert!(!calls(19, 5, poring, Shout::Hit) && calls(19, 5, player, Shout::Hit));
         // Silent follow-ups, hiding, Frost Joke.
-        assert!(!shouts(19, -1, false, Shout::Hit));
-        assert!(!shouts(51, 1, false, Shout::Used) && shouts(51, 1, true, Shout::Used));
-        assert!(!shouts(318, 5, true, Shout::Used) && !shouts(318, 5, false, Shout::Used));
+        assert!(!calls(19, -1, player, Shout::Hit));
+        assert!(!calls(51, 1, player, Shout::Used) && calls(51, 1, poring, Shout::Used));
+        assert!(!calls(318, 5, poring, Shout::Used) && !calls(318, 5, player, Shout::Used));
         // Bowling Bash only as it lands.
-        assert!(!shouts(62, 10, false, Shout::Cast) && shouts(62, 10, false, Shout::Hit));
-        assert!(!shouts(9, 1, false, Shout::Used));
+        assert!(!calls(62, 10, player, Shout::Cast) && calls(62, 10, player, Shout::Hit));
+        assert!(!calls(9, 1, player, Shout::Used));
+        // A pet goes by its job: a monster. An elemental too, but it calls its skill hits; never its casts or ground skills.
+        let (pet, elemental, homunculus) = ((1002, 7), (2114, 10), (6001, 8));
+        assert!(!calls(19, 5, pet, Shout::Hit) && calls(28, 5, pet, Shout::Used));
+        assert!(calls(19, 5, elemental, Shout::Hit) && calls(28, 5, elemental, Shout::Used));
+        assert!(!calls(19, 5, elemental, Shout::Cast) && !calls(19, 5, elemental, Shout::Ground));
+        assert!(calls(19, 5, homunculus, Shout::Cast) && calls(19, 5, homunculus, Shout::Ground));
+        assert_eq!([1000, 1001, 3998, 3999, 20020, 20021, 31999, 32000].map(monster_job), [false, true, true, false, false, true, true, false]);
+    }
+
+    #[test]
+    fn calls_the_wedding_skills_and_the_follow_ups() {
+        let name_of = |skill: u16| match skill {
+            334 | 335 => Some("I Will Protect You".to_owned()),
+            336 => Some("Call Partner".to_owned()),
+            5028 => Some("Meteor".to_owned()),
+            5036 => Some("Carrot Beat".to_owned()),
+            19 => Some("Fire Bolt".to_owned()),
+            _ => None,
+        };
+        let words = "I will protect you!";
+        assert_eq!(shout_text(334, name_of, Some("Juliet"), words).as_deref(), Some("Juliet !!  I will protect you!"));
+        assert_eq!(shout_text(334, name_of, None, words).as_deref(), Some("I Will Protect You !!"));
+        assert_eq!(shout_text(335, name_of, Some("Romeo"), words).as_deref(), Some("Romeo !!  I will protect you!"));
+        assert_eq!(shout_text(4999, name_of, None, words), None, "no name, nothing called");
+        assert_eq!(shout_text(336, name_of, Some("Juliet"), words).as_deref(), Some("Juliet !!  Call Partner ♡"));
+        assert_eq!(shout_text(336, name_of, None, words).as_deref(), Some("Call Partner !!"));
+        assert_eq!(
+            (shout_text(5042, name_of, None, words).as_deref(), shout_text(5043, name_of, None, words).as_deref()),
+            (Some("Meteor !!"), Some("Carrot Beat !!"))
+        );
+        assert_eq!(shout_text(19, name_of, Some("Juliet"), words).as_deref(), Some("Fire Bolt !!"));
     }
 
     #[test]
