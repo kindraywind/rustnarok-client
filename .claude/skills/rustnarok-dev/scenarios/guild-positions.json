@@ -1,0 +1,422 @@
+{
+  "about": "Guild positions (issue #103): the first makes guild PosTest and invites the second (RUSTNAROK_CLIENT_GUILD=accept). On the members page the master right-clicks the second and moves them to 'Position 2'; both windows follow and the title under the second's name follows (ZC_GUILD_POSITION). On the positions page the master switches position 1's invite box, renames it 'Officer' and sets its tax to 10; the second's window and the title follow. The second leaves from their own row on the members page (asked first); the first sees them go. @breakguild ends it. Both characters must start without a guild or clan. If a run stops between the invitation and leaving, the second stays in PosTest and the next run fails at the invitation: log in as the second, leave from the members page, then @breakguild as the first (the scenario reset can't take a member out of a guild).",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0,
+    "env": {
+      "RUSTNAROK_CLIENT_GUILD": "accept"
+    }
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@breakguild"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "say": "@guild PosTest"
+    },
+    {
+      "wait_for": {
+        "event": "GuildMade",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@warp prontera 156 177"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "click_on": {
+        "unit": "{second}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "menu_item": "Guild Invitation"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0169",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "chat": "You have accepted the guild invitation."
+      }
+    },
+    {
+      "key": "Alt+G"
+    },
+    {
+      "wait_for": {
+        "packet": "0x014c",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [
+        276,
+        148
+      ]
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b7d",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "guild.members.{second}": 19
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "member:{second}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "guild-member-menu"
+    },
+    {
+      "click_on": {
+        "menu_item": "Position 2"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0156",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "guild.members.{second}": 1
+        }
+      }
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x0156",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "guild.members.{second}": 1
+        }
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0afd",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "name_tags.{second}.position": "Position 2"
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "guild-members"
+    },
+    {
+      "click": [
+        340,
+        148
+      ]
+    },
+    {
+      "wait_for": {
+        "packet": "0x0160",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "invite:1"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0174",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "title:1"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "Officer"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0174",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "tax:1"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "10"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0174",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "guild.positions.1": {
+            "title": "Officer",
+            "mode": 1,
+            "tax": 10
+          }
+        }
+      }
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "guild.positions.1.title": "Officer"
+        }
+      }
+    },
+    {
+      "expect": {
+        "state": {
+          "name_tags.{second}.position": "Officer"
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "guild-positions"
+    },
+    {
+      "as": "second",
+      "key": "Alt+G"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x014c",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "click": [
+        276,
+        148
+      ]
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x0b7d",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "member:{second}"
+      },
+      "button": "right"
+    },
+    {
+      "as": "second",
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "menu_item": "Leave Guild"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "expect": {
+        "windows_open": [
+          "LeaveAsked"
+        ]
+      }
+    },
+    {
+      "as": "second",
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "as": "second",
+      "shot": "guild-leave-asked"
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x0a83",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "expect": {
+        "chat": "You left the guild.",
+        "state": {
+          "guild": null
+        }
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0a83",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "has left the guild.",
+        "state": {
+          "guild.members.{second}": null
+        }
+      }
+    },
+    {
+      "say": "@breakguild"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "guild": null
+        }
+      }
+    }
+  ]
+}

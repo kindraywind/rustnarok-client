@@ -911,6 +911,9 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .flat_map(|guild| game.guild_window.relation_boxes(guild))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
+        .chain(
+            game.guild.iter().flat_map(|guild| game.guild_window.button_boxes(guild)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(question_buttons)
         .chain(
             game.mercenary
@@ -989,6 +992,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("PartyInvite", game.party_invite.is_some()),
         ("FriendAsked", game.friend_asked.is_some()),
         ("GuildInvite", game.guild_invite.is_some()),
+        ("LeaveAsked", matches!(game.guild_asked, Some(crate::GuildAsked::Leave))),
         ("VendSetup", game.vend_setup.is_some()),
         ("MyShop", game.my_shop.is_some()),
         ("BuyingStoreSetup", game.buying_setup.is_some()),
@@ -1069,8 +1073,32 @@ fn game_state(app: &App, game: &Game) -> Value {
         // The player's guild (null without one): its allies' and antagonists' names.
         "guild": game.guild.as_ref().map(|guild| {
             let names = |antagonist: bool| guild.relations.iter().filter(|relation| relation.antagonist == antagonist).map(|relation| relation.name.as_str()).collect::<Vec<_>>();
-            json!({"id": guild.id, "name": guild.name, "master": guild.master, "allies": names(false), "antagonists": names(true)})
+            // Positions by ID and members by name, so a scenario can name one in a path.
+            let positions: serde_json::Map<String, Value> = guild
+                .position_info
+                .iter()
+                .map(|position| (position.id.to_string(), json!({"title": guild.title(position.id), "mode": position.mode, "tax": position.tax})))
+                .collect();
+            let members: serde_json::Map<String, Value> = guild.members.iter().map(|member| (member.name.clone(), json!(member.position))).collect();
+            json!({
+                "id": guild.id,
+                "name": guild.name,
+                "master": guild.master,
+                "allies": names(false),
+                "antagonists": names(true),
+                "positions": positions,
+                "members": members,
+            })
         }),
+        // The tags under the names of players in view (and the player's own), where known.
+        "name_tags": game
+            .name_tags
+            .iter()
+            .filter_map(|(id, tag)| {
+                let name = if *id == game.account_id { Some(&game.me.name) } else { game.units.get(id).map(|actor| &actor.name) };
+                name.map(|name| (name.clone(), json!({"party": tag.party, "guild": tag.guild, "position": tag.position})))
+            })
+            .collect::<serde_json::Map<String, Value>>(),
         // The item merge window: how many rows, and the picked stacks' indexes.
         "merge": game.pick.as_ref().filter(|(list, _)| list.merging).map(|(list, _)| json!({"rows": list.items.len(), "picked": list.picked_indexes()})),
         "monster_info": game.monster_window.as_ref().map(|window| {
