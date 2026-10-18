@@ -92,6 +92,12 @@ const RIDING: u32 = 0x20;
 const DRAGONS: [u32; 5] = [0x8_0000, 0x80_0000, 0x100_0000, 0x200_0000, 0x400_0000];
 const WOLF_RIDING: u32 = 0x20_0000;
 const MADOGEAR: u32 = 0x40_0000;
+/// rathena `OPTION_FALCON` (`src/map/status.hpp`).
+pub const OPTION_FALCON: u32 = 0x10;
+/// rathena `OPTION_WUG`.
+pub const OPTION_WUG: u32 = 0x10_0000;
+/// rathena `OPTION_WUGRIDER`: the wolf the player is riding. Same bit as the mount body.
+pub const OPTION_WUGRIDER: u32 = WOLF_RIDING;
 /// All of them: the only option bits a look keeps.
 /// rathena's OPTION_HIDE, OPTION_CLOAK and OPTION_CHASEWALK: the unit is out of sight.
 pub const UNSEEN_OPTIONS: u32 = 0x2 | 0x4 | 0x4000;
@@ -957,6 +963,119 @@ impl Digits {
     }
 }
 
+/// The falcon's sprite name (`몬스터\매`, then `npc\매`).
+const FALCON_SPRITE: &str = "매";
+/// The warg's sprite name (`몬스터\워그`, then `npc\워그`).
+const WARG_SPRITE: &str = "워그";
+
+/// How far the cart's rope lets it lag (#196): one cell. The cart is still pinned behind its owner until that lands.
+pub const CART_ROPE: f32 = world::CELL;
+/// The falcon flies this far above the ground.
+pub const FALCON_HEIGHT: f32 = 25.0;
+// ponytail: two cells, longer than the cart's one-cell rope. rope_step is that rope; the cart should call it with CART_ROPE once #196 lands.
+pub const FALCON_REACH: f32 = CART_ROPE * 2.0;
+/// The warg keeps about three cells out.
+pub const WARG_REACH: f32 = world::CELL * 3.0;
+/// The warg's shadow, twice a body's.
+pub const WARG_SHADOW: f32 = 2.0;
+
+/// Cell steps of the eight facings, from south, turning west. World X is east, Z is north.
+const FACING: [[f32; 2]; 8] = [[0.0, -1.0], [-1.0, -1.0], [-1.0, 0.0], [-1.0, 1.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [1.0, -1.0]];
+
+/// World XZ of a fractional cell's center.
+pub fn world_xz(cell: [f32; 2]) -> [f32; 2] {
+    [(cell[0] + 0.5) * world::CELL, (cell[1] + 0.5) * world::CELL]
+}
+
+/// One step of the cart's rope (#196). Farther than `reach` from `leader`, move straight in until exactly `reach` away.
+pub fn rope_step(from: [f32; 2], leader: [f32; 2], reach: f32) -> [f32; 2] {
+    let dx = leader[0] - from[0];
+    let dz = leader[1] - from[1];
+    let distance = (dx * dx + dz * dz).sqrt();
+    if distance <= reach || distance < 1.0e-4 {
+        return from;
+    }
+    let scale = (distance - reach) / distance;
+    [from[0] + dx * scale, from[1] + dz * scale]
+}
+
+/// `reach` world units behind a leader facing `direction`.
+fn place_behind(leader: [f32; 2], direction: u8, reach: f32) -> [f32; 2] {
+    let [dx, dz] = FACING[usize::from(direction % 8)];
+    let length = (dx * dx + dz * dz).sqrt();
+    [leader[0] - dx / length * reach, leader[1] - dz / length * reach]
+}
+
+/// The 8-way facing of a move in world XZ, or none when it barely moved.
+fn move_direction(from: [f32; 2], to: [f32; 2]) -> Option<u8> {
+    let dx = to[0] - from[0];
+    let dz = to[1] - from[1];
+    if dx * dx + dz * dz < 0.05 * 0.05 {
+        return None;
+    }
+    // atan2's 0 is east; facing 6 is east, and the index falls as the turn goes clockwise.
+    let eighth = (dz.atan2(dx) / std::f32::consts::FRAC_PI_4).round() as i32;
+    Some((6 - eighth).rem_euclid(8) as u8)
+}
+
+struct FollowStep {
+    at: [f32; 2],
+    direction: u8,
+    moving: bool,
+}
+
+/// The falcon's rope, longer than the cart's. It faces the way it moved.
+fn falcon_step(from: [f32; 2], facing: u8, leader: [f32; 2]) -> FollowStep {
+    let at = rope_step(from, leader, FALCON_REACH);
+    match move_direction(from, at) {
+        Some(direction) => FollowStep { at, direction, moving: true },
+        None => FollowStep { at, direction: facing, moving: false },
+    }
+}
+
+/// The warg's rope, about three cells. It runs while the player is moving.
+fn warg_step(from: [f32; 2], facing: u8, leader: [f32; 2], player_moving: bool) -> FollowStep {
+    let at = rope_step(from, leader, WARG_REACH);
+    FollowStep { at, direction: move_direction(from, at).unwrap_or(facing), moving: player_moving }
+}
+
+fn falcon_out(option: u32) -> bool {
+    option & OPTION_FALCON != 0
+}
+
+/// The warg on the ground. Hidden while the player is riding it.
+fn warg_out(option: u32) -> bool {
+    option & OPTION_WUG != 0 && option & OPTION_WUGRIDER == 0
+}
+
+/// A falcon or a warg following a player: where it stands, the way it faces, and its sprite.
+pub struct Companion {
+    pub at: [f32; 2],
+    pub direction: u8,
+    pub moving: bool,
+    sprites: Option<SpriteSet>,
+    started: Instant,
+}
+
+impl Companion {
+    fn spawn(grf: &Grf, name: &str, at: [f32; 2], direction: u8) -> Self {
+        // Kind 5: monster folders, `몬스터` then `npc`.
+        Self { at, direction, moving: false, sprites: SpriteSet::single(grf, name, 5), started: Instant::now() }
+    }
+
+    pub fn sprites(&self) -> Option<&SpriteSet> {
+        self.sprites.as_ref()
+    }
+
+    /// The falcon keeps the walk cycle (its flap). The warg walks only while it is running.
+    pub fn frame(&mut self, gpu: &Gpu, direction: u8, now: Instant, flying: bool) -> Vec<Placed> {
+        let Some(sprites) = &mut self.sprites else { return Vec::new() };
+        let action = if (flying || self.moving) && sprites.actions() > WALK { WALK } else { IDLE };
+        let ms = now.saturating_duration_since(self.started).as_secs_f32() * 1000.0;
+        sprites.frame(gpu, action, direction, 0, Timing::Loop(ms))
+    }
+}
+
 /// Something on the map that moves cell by cell.
 pub struct Actor {
     pub name: String,
@@ -993,6 +1112,12 @@ pub struct Actor {
     pub cloaked: bool,
     /// The pushcart it pulls, drawn behind it.
     pub cart: Option<SpriteSet>,
+    /// The server's option word (rathena OPTION_*), falcon and warg included.
+    pub option: u32,
+    /// The falcon, while OPTION_FALCON is set.
+    pub falcon: Option<Companion>,
+    /// The warg, while OPTION_WUG is set and the player is not riding it.
+    pub warg: Option<Companion>,
     /// The action and frame last seen, so a frame's sound plays once each time it comes up.
     heard: Option<(usize, usize)>,
     /// Locked by Blade Stop or Cursed Circle since then: the animation holds that frame.
@@ -1024,6 +1149,9 @@ impl Actor {
             dead: false,
             cloaked: false,
             cart: None,
+            option: 0,
+            falcon: None,
+            warg: None,
             heard: None,
             held: None,
         }
@@ -1130,6 +1258,40 @@ impl Actor {
             IDLE
         };
         (action, Timing::Loop(now.saturating_duration_since(self.animation_started).as_secs_f32() * 1000.0))
+    }
+
+    /// Shows or hides the falcon and the warg from the option word. A new one starts behind the player.
+    pub fn sync_companions(&mut self, option: u32, grf: &Grf) {
+        self.option = option;
+        // Monsters and NPCs carry no player look, so the bits aren't a falcon or a warg.
+        if self.look.is_none() {
+            self.falcon = None;
+            self.warg = None;
+            return;
+        }
+        let leader = world_xz(self.cell.map(|value| value as f32));
+        if falcon_out(option) && self.falcon.is_none() {
+            self.falcon = Some(Companion::spawn(grf, FALCON_SPRITE, place_behind(leader, self.direction, FALCON_REACH), self.direction));
+        } else if !falcon_out(option) {
+            self.falcon = None;
+        }
+        if warg_out(option) && self.warg.is_none() {
+            self.warg = Some(Companion::spawn(grf, WARG_SPRITE, place_behind(leader, self.direction, WARG_REACH), self.direction));
+        } else if !warg_out(option) {
+            self.warg = None;
+        }
+    }
+
+    /// One rope step. `moving` is the player walking this frame, which is when the warg runs.
+    pub fn step_companions(&mut self, leader: [f32; 2], moving: bool) {
+        if let Some(falcon) = &mut self.falcon {
+            let step = falcon_step(falcon.at, falcon.direction, leader);
+            (falcon.at, falcon.direction, falcon.moving) = (step.at, step.direction, step.moving);
+        }
+        if let Some(warg) = &mut self.warg {
+            let step = warg_step(warg.at, warg.direction, leader, moving);
+            (warg.at, warg.direction, warg.moving) = (step.at, step.direction, step.moving);
+        }
     }
 }
 
@@ -1270,5 +1432,95 @@ mod tests {
         assert_eq!(actor.direction, 5);
         assert_eq!(actor.update(at(400)), [12.0, 11.0]);
         assert!(!actor.moving());
+    }
+
+    fn assert_near(a: [f32; 2], b: [f32; 2]) {
+        assert!((a[0] - b[0]).abs() < 1e-3 && (a[1] - b[1]).abs() < 1e-3, "{a:?} != {b:?}");
+    }
+
+    fn apart(a: [f32; 2], b: [f32; 2]) -> f32 {
+        let (dx, dz) = (a[0] - b[0], a[1] - b[1]);
+        (dx * dx + dz * dz).sqrt()
+    }
+
+    #[test]
+    fn companion_bits_match_rathena() {
+        // status.hpp: OPTION_FALCON 0x10, OPTION_WUG 0x100000, OPTION_WUGRIDER 0x200000.
+        assert_eq!(OPTION_FALCON, 0x10);
+        assert_eq!(OPTION_WUG, 0x10_0000);
+        assert_eq!(OPTION_WUGRIDER, 0x20_0000);
+        assert_eq!(BODY_OPTIONS & (OPTION_FALCON | OPTION_WUG), 0);
+        assert_ne!(BODY_OPTIONS & OPTION_WUGRIDER, 0);
+        assert!(falcon_out(OPTION_FALCON) && !falcon_out(0));
+        assert!(warg_out(OPTION_WUG));
+        assert!(!warg_out(OPTION_WUG | OPTION_WUGRIDER), "riding hides the warg");
+        assert!(!warg_out(OPTION_WUGRIDER) && !warg_out(0));
+        assert_eq!(FALCON_HEIGHT, 25.0);
+        assert_eq!(WARG_SHADOW, 2.0);
+        assert_eq!(FALCON_REACH, CART_ROPE * 2.0);
+        assert_eq!(WARG_REACH, world::CELL * 3.0);
+    }
+
+    #[test]
+    fn falcon_follows_on_a_longer_rope() {
+        let leader = [100.0, 200.0];
+        // Closer than the rope: it stays, and keeps its facing.
+        let stay = falcon_step([100.0, 205.0], 4, leader);
+        assert_near(stay.at, [100.0, 205.0]);
+        assert_eq!((stay.direction, stay.moving), (4, false));
+        // Farther: pulled in until exactly the reach, facing the way it moved (south).
+        let pulled = falcon_step([100.0, 200.0 + FALCON_REACH + 12.0], 4, leader);
+        assert_near(pulled.at, [100.0, 200.0 + FALCON_REACH]);
+        assert_eq!((pulled.direction, pulled.moving), (0, true));
+        assert!((apart(pulled.at, leader) - FALCON_REACH).abs() < 1e-3);
+        // Spawned behind a south-facing player, the next step leaves it there.
+        let behind = place_behind(leader, 0, FALCON_REACH);
+        assert_near(behind, [100.0, 200.0 + FALCON_REACH]);
+        let held = falcon_step(behind, 0, leader);
+        assert_near(held.at, behind);
+        assert!(!held.moving);
+        // A diagonal pull lands on the rope and faces the way it moved.
+        let diagonal = falcon_step([100.0 + 40.0, 200.0 + 40.0], 0, leader);
+        assert!((apart(diagonal.at, leader) - FALCON_REACH).abs() < 1e-3);
+        assert_eq!(diagonal.direction, 1);
+    }
+
+    #[test]
+    fn warg_stays_three_cells_out_and_runs_with_the_player() {
+        let leader = [0.0, 0.0];
+        // Inside three cells it stays. It runs because the player is moving, and stands when the player does.
+        let close = warg_step([10.0, 0.0], 6, leader, true);
+        assert_near(close.at, [10.0, 0.0]);
+        assert!(close.moving && close.direction == 6);
+        let idle = warg_step([10.0, 0.0], 6, leader, false);
+        assert_near(idle.at, [10.0, 0.0]);
+        assert!(!idle.moving);
+        // Past three cells the rope pulls it back to exactly that, facing the way it moved.
+        let far = warg_step([WARG_REACH + 8.0, 0.0], 2, leader, true);
+        assert_near(far.at, [WARG_REACH, 0.0]);
+        assert_eq!((far.direction, far.moving), (2, true));
+        assert!((apart(far.at, leader) - 3.0 * world::CELL).abs() < 1e-3);
+        // Standing still still closes the rope, without the run.
+        let stopped = warg_step([WARG_REACH + 8.0, 0.0], 2, leader, false);
+        assert_near(stopped.at, [WARG_REACH, 0.0]);
+        assert!(!stopped.moving);
+        // Behind an east-facing player is three cells west.
+        assert_near(place_behind(leader, 6, WARG_REACH), [-WARG_REACH, 0.0]);
+    }
+
+    #[test]
+    fn faces_each_way_it_moves() {
+        let face = |step: [f32; 2]| move_direction([0.0, 0.0], step).unwrap();
+        assert_eq!(face([0.0, -10.0]), 0);
+        assert_eq!(face([-10.0, -10.0]), 1);
+        assert_eq!(face([-10.0, 0.0]), 2);
+        assert_eq!(face([-10.0, 10.0]), 3);
+        assert_eq!(face([0.0, 10.0]), 4);
+        assert_eq!(face([10.0, 10.0]), 5);
+        assert_eq!(face([10.0, 0.0]), 6);
+        assert_eq!(face([10.0, -10.0]), 7);
+        // A little north of east is still east.
+        assert_eq!(face([10.0, 1.0]), 6);
+        assert_eq!(move_direction([3.0, 3.0], [3.0, 3.0]), None);
     }
 }
