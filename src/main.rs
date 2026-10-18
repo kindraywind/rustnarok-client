@@ -2043,6 +2043,15 @@ impl Game {
                     versus::Click::Swing => WorldClick::Swing(id),
                     versus::Click::Walk => WorldClick::Ground,
                 },
+                // Someone else's homunculus, mercenary or elemental where the map lets them be fought.
+                Some(kind @ (HOMUNCULUS | MERCENARY | ELEMENTAL)) => {
+                    let ours = self.homunculus_id == Some(id) || self.mercenary.as_ref().is_some_and(|mercenary| mercenary.id == id);
+                    match versus::companion_click(self.side().flags, kind, self.players_first(shift), self.no_shift, ours) {
+                        versus::Click::Attack => WorldClick::Attack(id),
+                        versus::Click::Swing => WorldClick::Swing(id),
+                        versus::Click::Walk => WorldClick::Ground,
+                    }
+                }
                 _ => WorldClick::Ground,
             },
             Some(Owner::Item(id)) => WorldClick::PickUp(id),
@@ -7646,13 +7655,15 @@ impl App {
                 _ if double => {}
                 // A monster with Shift (without /noshift): nothing.
                 WorldClick::Attack(id) if shift && !game.no_shift && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER) => {}
-                // An attack: kept up with Ctrl or /noctrl, otherwise while the button is held.
+                // An attack: kept up with Ctrl or /noctrl (on someone else's homunculus always), otherwise while the
+                // button is held.
                 WorldClick::Attack(id) => {
+                    let homunculus = game.units.get(&id).is_some_and(|actor| actor.kind == HOMUNCULUS);
                     let weight = |id: u16| game.status.get(&id).copied().unwrap_or(0);
                     match attack_refused(weight(net::STATUS_WEIGHT), weight(net::STATUS_MAX_WEIGHT), game.riding) {
                         Some(line) => game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR),
                         None => {
-                            game.attack = Some(Attack::new(id, ctrl || game.no_ctrl));
+                            game.attack = Some(Attack::new(id, ctrl || game.no_ctrl || homunculus));
                             game.attack_step(now);
                         }
                     }
