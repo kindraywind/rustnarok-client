@@ -1117,7 +1117,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The windows open: those Esc closes, in its order, then the ones it leaves up.
     let mut windows = game.esc_names();
     windows.extend(
-        [("Hotkeys", game.hotkeys.frame.open), ("BasicInfo", game.basic_info.frame.open)]
+        [("Hotkeys", game.hotkeys.frame.open), ("BasicInfo", game.basic_info.frame.open), ("Shop", game.shop.as_ref().is_some_and(crate::shop::Shop::plain))]
             .into_iter()
             .filter(|(_, open)| *open)
             .map(|(name, _)| name.to_owned()),
