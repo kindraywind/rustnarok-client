@@ -14,7 +14,7 @@
     {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 2000},
     {"as": "second", "say": "@warp gef_fild07 63 229"}, {"wait": 2500},
     {"move": [1000, 750]},
-    {"say": "@kick McpTester4"},
+    {"say": "@kick {second}"},
     {"wait_for": {"packet": "0x0080", "pause": true, "ms": 5000}},
     {"cmd": {"cmd": "clock", "action": "step", "ms": 150}},
     {"shot": "vanish-logout", "crop": [262, 134, 500, 440], "threshold": 5},

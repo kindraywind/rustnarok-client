@@ -92,7 +92,9 @@ completes them again), set `char.inventory_slots` back to 100, `char.pet_id` to 
 egg), `char.title_id` to 0, `char.homun_id` to 0 and delete their `homunculus` and `skill_homunculus` rows (`@makehomun` refuses a character that has one), `char.clan_id` to 0 (a clan a stopped run left the character in; e.g. `UPDATE char SET clan_id=0`), `char.class` to 0 and their `inventory` rows' `equip`, `attribute` and `equip_switch` to 0 (gear a stopped run
 left worn, broken or in the Swap Equipment set), and delete their rentals (`inventory` rows with an `expire_time`: they warn in every scenario) (a job left behind completes job achievements at login). A
 scenario that changes something saved on the character (`@job`, `@vit`) changes it back at its end. `mask` keeps animated rectangles (water, portals) out of the diff; `threshold` sets how much change a shot may take
-before the report flags it. Each scenario starts a fresh client and pauses the clock for every shot. Add one for the
+before the report flags it. Each scenario starts a fresh client, with fresh client settings (`RUSTNAROK_CLIENT_SETTINGS`, a temporary folder its
+clients and relaunches share, so saved options never leak into the next scenario or your own client), and pauses the
+clock for every shot. Add one for the
 feature you touch, and keep it: the set grows into the game's visual regression suite.
 
 `python3 -I $V suite` checks every scenario and writes `report.md` beside the sheets, but it takes about half an hour

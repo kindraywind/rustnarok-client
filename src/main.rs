@@ -5129,6 +5129,10 @@ pub(crate) fn keeps_windows() -> bool {
 }
 
 pub(crate) fn settings_path(name: &str) -> Option<std::path::PathBuf> {
+    // Dev switch: another settings folder (the test harness gives each scenario a fresh one).
+    if let Some(folder) = std::env::var_os("RUSTNAROK_CLIENT_SETTINGS").filter(|folder| !folder.is_empty()) {
+        return Some(std::path::PathBuf::from(folder).join(name));
+    }
     let home = || Some(std::path::PathBuf::from(std::env::var_os("HOME")?));
     let folder = if cfg!(target_os = "macos") {
         home()?.join("Library/Application Support")
