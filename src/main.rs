@@ -138,7 +138,7 @@ use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
-use world::{Billboard, Camera, World, WorldFrame};
+use world::{Billboard, Camera, DepthLayer, World, WorldFrame};
 
 /// The client renders in these logical pixels; Retina scaling happens in the projection.
 pub const SCREEN: [f32; 2] = [1024.0, 768.0];
@@ -1289,6 +1289,15 @@ fn companion_feet(world: &World, at: [f32; 2], lift: f32) -> [f32; 3] {
     let mut feet = world.cell_position([at[0] / world::CELL - 0.5, at[1] / world::CELL - 0.5]);
     feet[1] += lift;
     feet
+}
+
+/// What shows in front of its owner (spirit spheres on the near side, emotions) steps nearer than any of its images.
+const IN_FRONT: f32 = 100.0;
+
+/// The depth layer of a sprite's `index`th image: a player's all share the body's plane, each a step nearer; other
+/// sprites' each sit a layer nearer.
+fn sprite_layer(index: usize, player: bool, flat: bool) -> DepthLayer {
+    if player { DepthLayer { index: 0.0, nudge: index as f32, flat } } else { DepthLayer { index: index as f32, nudge: 0.0, flat } }
 }
 
 struct CompanionDraw {
@@ -11524,7 +11533,15 @@ impl App {
                 if !dead && scale > 0.0 {
                     let ground = game.world.ground_under(*feet);
                     billboards.extend(shadow_placements.iter().map(|(key, position, size, angle)| {
-                        (shadow.texture(*key), ground, position.map(|value| value * scale), size.map(|value| value * scale), [1.0; 4], *angle)
+                        (
+                            shadow.texture(*key),
+                            ground,
+                            position.map(|value| value * scale),
+                            size.map(|value| value * scale),
+                            [1.0; 4],
+                            *angle,
+                            DepthLayer::default(),
+                        )
                     }));
                 }
             }
@@ -11532,7 +11549,15 @@ impl App {
             for draw in companion_draws.iter().filter(|draw| draw.warg) {
                 let scale = actor::WARG_SHADOW;
                 billboards.extend(shadow_placements.iter().map(|(key, position, size, angle)| {
-                    (shadow.texture(*key), draw.feet, position.map(|value| value * scale), size.map(|value| value * scale), [1.0; 4], *angle)
+                    (
+                        shadow.texture(*key),
+                        draw.feet,
+                        position.map(|value| value * scale),
+                        size.map(|value| value * scale),
+                        [1.0; 4],
+                        *angle,
+                        DepthLayer::default(),
+                    )
                 }));
             }
         }
@@ -11550,6 +11575,7 @@ impl App {
         let turned = now.duration_since(game.entered).as_secs_f32();
         let coin = game.coin_sprite.as_mut().map(|sprite| sprite.frame_at(gpu, 0, 0, Timing::Loop(turned * 1000.0))).unwrap_or_default();
         let mut spirits: [Vec<Billboard>; 2] = [Vec::new(), Vec::new()];
+        let orbit_layer = |near: bool| DepthLayer { nudge: if near { IN_FRONT } else { -1.0 }, ..DepthLayer::default() };
         for (unit, orbs) in &game.spirits {
             let (feet, job) = match unit {
                 None => (player_feet, game.me.job),
@@ -11569,7 +11595,15 @@ impl App {
                 let Some(picture) = picture else { continue };
                 let size = picture.size.map(|side| side * scale);
                 for (center, near) in orbit(count, height, turned) {
-                    spirits[usize::from(near)].push((picture, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, tint, 0.0));
+                    spirits[usize::from(near)].push((
+                        picture,
+                        feet,
+                        [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0],
+                        size,
+                        tint,
+                        0.0,
+                        orbit_layer(near),
+                    ));
                 }
             }
             for (center, near) in orbit(orbs.spheres, SPIRIT_HEIGHT, turned) {
@@ -11577,12 +11611,12 @@ impl App {
                 if coin_job(job) {
                     if let Some(sprite) = &game.coin_sprite {
                         side.extend(coin.iter().map(|(key, position, size, angle)| {
-                            (sprite.texture(*key), feet, [center[0] + position[0], center[1] + position[1]], *size, [1.0; 4], *angle)
+                            (sprite.texture(*key), feet, [center[0] + position[0], center[1] + position[1]], *size, [1.0; 4], *angle, orbit_layer(near))
                         }));
                     }
                 } else if let Some(sphere) = &game.sphere {
                     let size = sphere.size.map(|side| side * SPHERE_SCALE);
-                    side.push((sphere, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, [1.0; 4], 0.0));
+                    side.push((sphere, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, [1.0; 4], 0.0, orbit_layer(near)));
                 }
             }
         }
@@ -11596,11 +11630,22 @@ impl App {
         };
         billboards.extend(carts.iter().flat_map(|(owner, feet, placements)| {
             let cart = cart_of(owner).unwrap();
-            placements.iter().map(move |(key, position, size, angle)| (cart.texture(*key), *feet, *position, *size, [1.0; 4], *angle))
+            placements.iter().enumerate().map(move |(index, (key, position, size, angle))| {
+                (cart.texture(*key), *feet, *position, *size, [1.0; 4], *angle, sprite_layer(index, false, false))
+            })
         }));
+        // The dead lie flat.
+        let stand_of = |owner: &Owner| match owner {
+            Owner::Player => (true, game.player.dead),
+            Owner::Unit(id) => game.units.get(id).map_or((false, false), |actor| (actor.kind == PLAYER, actor.dead || actor.remove_at.is_some())),
+            Owner::Item(_) => (false, false),
+        };
         billboards.extend(frames.iter().flat_map(|(owner, feet, placements)| {
             let sprites = sprites_of(owner).unwrap();
-            placements.iter().map(move |(key, position, size, angle)| (sprites.texture(*key), *feet, *position, *size, [1.0; 4], *angle))
+            let (player, flat) = stand_of(owner);
+            placements.iter().enumerate().map(move |(index, (key, position, size, angle))| {
+                (sprites.texture(*key), *feet, *position, *size, [1.0; 4], *angle, sprite_layer(index, player, flat))
+            })
         }));
         for draw in &companion_draws {
             let actor = match draw.owner {
@@ -11612,7 +11657,9 @@ impl App {
                 Owner::Item(_) => continue,
             };
             let Some(sprites) = (if draw.warg { actor.warg.as_ref() } else { actor.falcon.as_ref() }).and_then(actor::Companion::sprites) else { continue };
-            billboards.extend(draw.placed.iter().map(|(key, position, size, angle)| (sprites.texture(*key), draw.feet, *position, *size, [1.0; 4], *angle)));
+            billboards.extend(draw.placed.iter().enumerate().map(|(index, (key, position, size, angle))| {
+                (sprites.texture(*key), draw.feet, *position, *size, [1.0; 4], *angle, sprite_layer(index, false, false))
+            }));
         }
         billboards.extend(in_front);
         // The emotion list's pictures, posed while the sprite can still decode them.
@@ -11688,9 +11735,17 @@ impl App {
         }
         if let Some(sprite) = &game.emotion_sprite {
             billboards.extend(shown.into_iter().flat_map(|(feet, placements)| {
-                placements
-                    .into_iter()
-                    .map(move |(key, position, size, angle)| (sprite.texture(key), feet, [position[0], position[1] - EMOTION_HEIGHT], size, [1.0; 4], angle))
+                placements.into_iter().map(move |(key, position, size, angle)| {
+                    (
+                        sprite.texture(key),
+                        feet,
+                        [position[0], position[1] - EMOTION_HEIGHT],
+                        size,
+                        [1.0; 4],
+                        angle,
+                        DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() },
+                    )
+                })
             }));
         }
 
@@ -11722,7 +11777,7 @@ impl App {
                 for texture in rising {
                     // Half the sprite pixel scale.
                     let (position, size) = centered(texture, 0.5);
-                    billboards.push((texture, at(3.5 + progress * 7.0, 0.0), position, size, [1.0, 1.0, 1.0, alpha], 0.0));
+                    billboards.push((texture, at(3.5 + progress * 7.0, 0.0), position, size, [1.0, 1.0, 1.0, alpha], 0.0, DepthLayer::default()));
                 }
                 match damage.kind {
                     _ if !rising.is_empty() => {}
@@ -11734,14 +11789,25 @@ impl App {
                         let tint = match damage.kind {
                             DamageKind::Critical => {
                                 let (position, size) = centered(&digits.critical, 0.6 * scale);
-                                billboards.push((&digits.critical, anchor, [position[0], position[1] - 6.0], size, [0.66, 0.66, 0.66, alpha], 0.0));
+                                billboards.push((
+                                    &digits.critical,
+                                    anchor,
+                                    [position[0], position[1] - 6.0],
+                                    size,
+                                    [0.66, 0.66, 0.66, alpha],
+                                    0.0,
+                                    DepthLayer::default(),
+                                ));
                                 [0.9, 0.9, 0.15, alpha]
                             }
                             DamageKind::Hit { taken: true } => [1.0, 0.0, 0.0, alpha],
                             _ => [1.0, 1.0, 1.0, alpha],
                         };
                         billboards.extend(
-                            digits.place(damage.amount, scale).into_iter().map(|(texture, position, size)| (texture, anchor, position, size, tint, 0.0)),
+                            digits
+                                .place(damage.amount, scale)
+                                .into_iter()
+                                .map(|(texture, position, size)| (texture, anchor, position, size, tint, 0.0, DepthLayer::default())),
                         );
                     }
                     DamageKind::Heal { sp } => {
@@ -11749,7 +11815,10 @@ impl App {
                         let anchor = at(2.0 + if progress < 0.4 { 0.0 } else { (progress - 0.4) * 5.0 }, 0.0);
                         let tint = if sp { [0.13, 0.19, 0.75, alpha] } else { [0.0, 1.0, 0.0, alpha] };
                         billboards.extend(
-                            digits.place(damage.amount, scale).into_iter().map(|(texture, position, size)| (texture, anchor, position, size, tint, 0.0)),
+                            digits
+                                .place(damage.amount, scale)
+                                .into_iter()
+                                .map(|(texture, position, size)| (texture, anchor, position, size, tint, 0.0, DepthLayer::default())),
                         );
                     }
                     DamageKind::Combo { last } => {
@@ -11762,7 +11831,7 @@ impl App {
                             digits
                                 .place(damage.amount, scale)
                                 .into_iter()
-                                .map(|(texture, position, size)| (texture, anchor, position, size, [0.9, 0.9, 0.15, alpha], 0.0)),
+                                .map(|(texture, position, size)| (texture, anchor, position, size, [0.9, 0.9, 0.15, alpha], 0.0, DepthLayer::default())),
                         );
                     }
                 }
