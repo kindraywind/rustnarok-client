@@ -20,7 +20,7 @@
     {"as": "second", "shot": "alliance-asked", "crop": [262, 330, 500, 260], "threshold": 5},
     {"as": "second", "click_on": {"button": "ok"}},
     {"wait_for": {"packet": "0x0173", "ms": 5000}}, {"wait": 800},
-    {"expect": {"chat": "You accepted the Alliance Request.", "state": {"guild.allies": ["RelTestB"]}}},
+    {"expect": {"chat": "You accept the offer", "state": {"guild.allies": ["RelTestB"]}}},
     {"as": "second", "expect": {"state": {"guild.allies": ["RelTestA"]}}},
     {"key": "Alt+G"}, {"wait_for": {"packet": "0x014c", "ms": 5000}}, {"wait": 300},
     {"click_on": {"button": "RelTestB"}}, {"wait": 300}, {"move": [1000, 750]},
