@@ -1,0 +1,209 @@
+{
+  "about": "Item links (issue #279): the second player Shift-clicks an Apple into a chat line and sends it; the first sees it underlined in the link colour, and a click opens the Apple's information. Then rathena's own <ITEML> link from @iteminfo 1201 (a Knife, named from the item table), and an NPC of our own (npc/item-links.txt) whose text links an Apple: each click opens that item's information. The NPC is unloaded and the second's items reset at the end.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/item-links.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/item-links.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "as": "second",
+      "say": "@warp prontera 157 180"
+    },
+    {
+      "as": "second",
+      "settle": 2500
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@item 512 1"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "key": "Alt+E"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "inventory_item": 512
+      },
+      "mods": "Shift"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "as": "second",
+      "key": "Alt+E"
+    },
+    {
+      "expect": {
+        "chat": "Apple"
+      }
+    },
+    {
+      "move": [
+        1000,
+        300
+      ]
+    },
+    {
+      "shot": "chat-link",
+      "crop": [
+        0,
+        480,
+        620,
+        288
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "item_link": 512
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "expect": {
+        "state": {
+          "item_window": 512
+        }
+      }
+    },
+    {
+      "shot": "chat-link-opened",
+      "threshold": 10
+    },
+    {
+      "say": "@iteminfo 1201"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "click_on": {
+        "item_link": 1201
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "expect": {
+        "state": {
+          "item_window": 1201
+        }
+      }
+    },
+    {
+      "shot": "iteml-opened",
+      "threshold": 10
+    },
+    {
+      "click_on": {
+        "unit": "Link Clerk"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x00b4",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "click_on": {
+        "item_link": 512
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "expect": {
+        "state": {
+          "item_window": 512
+        }
+      }
+    },
+    {
+      "shot": "npc-link-opened",
+      "threshold": 10
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "say": "@itemreset"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/item-links.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

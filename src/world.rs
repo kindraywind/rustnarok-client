@@ -34,6 +34,8 @@ pub fn above_ground(eye: f32, ground: f32) -> f32 {
     eye.max(ground + EYE_CLEARANCE)
 }
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// The projection puts view depth z in the depth buffer as `DEPTH_SCALE · (1 − NEAR / z)`.
+const DEPTH_SCALE: f32 = FAR / (FAR - NEAR);
 
 pub type Vector = [f32; 3];
 /// Column-major, as WGSL reads it.
@@ -85,6 +87,9 @@ pub struct View {
     pub right: Vector,
     pub up: Vector,
     pub aspect: f32,
+    /// The camera's distance and pitch (radians), for the sprites' depth.
+    pub distance: f32,
+    pub pitch: f32,
 }
 
 impl Camera {
@@ -106,9 +111,8 @@ impl Camera {
             [-dot(right, eye), -dot(up, eye), -dot(forward, eye), 1.0],
         ];
         let focal = 1.0 / (FIELD_OF_VIEW.to_radians() / 2.0).tan();
-        let depth = FAR / (FAR - NEAR);
-        let projection = [[focal / aspect, 0.0, 0.0, 0.0], [0.0, focal, 0.0, 0.0], [0.0, 0.0, depth, 1.0], [0.0, 0.0, -NEAR * depth, 0.0]];
-        View { view_projection: multiply(&projection, &view), eye, forward, right, up, aspect }
+        let projection = [[focal / aspect, 0.0, 0.0, 0.0], [0.0, focal, 0.0, 0.0], [0.0, 0.0, DEPTH_SCALE, 1.0], [0.0, 0.0, -NEAR * DEPTH_SCALE, 0.0]];
+        View { view_projection: multiply(&projection, &view), eye, forward, right, up, aspect, distance: self.distance, pitch: self.pitch }
     }
 }
 
@@ -125,9 +129,18 @@ impl View {
 
     /// Screen rectangle (`0..1`, y down: left, top, right, bottom) of a sprite-pixel box anchored at `feet`.
     pub fn sprite_rect(&self, feet: Vector, top_left: [f32; 2], bottom_right: [f32; 2]) -> Option<[f32; 4]> {
-        let corner = |[x, y]: [f32; 2]| self.project([0, 1, 2].map(|axis| feet[axis] + self.right[axis] * x * SPRITE_SCALE - self.up[axis] * y * SPRITE_SCALE));
-        let (a, b) = (corner(top_left)?, corner(bottom_right)?);
+        let (a, b) = (self.sprite_point(feet, top_left)?, self.sprite_point(feet, bottom_right)?);
         Some([a[0].min(b[0]), a[1].min(b[1]), a[0].max(b[0]), a[1].max(b[1])])
+    }
+
+    /// Screen position (`0..1`, y down) of a point `offset` sprite pixels from `feet`.
+    fn sprite_point(&self, feet: Vector, [x, y]: [f32; 2]) -> Option<[f32; 2]> {
+        self.project([0, 1, 2].map(|axis| feet[axis] + self.right[axis] * x * SPRITE_SCALE - self.up[axis] * y * SPRITE_SCALE))
+    }
+
+    /// How far in front of the eye a point is, along the view.
+    fn depth_of(&self, point: Vector) -> f32 {
+        dot(subtract(point, self.eye), self.forward)
     }
 
     /// Screen position (`0..1`, y down) of a world point, if it's in front of the camera.
@@ -148,7 +161,8 @@ struct GroundVertex {
     color: [f32; 4],
 }
 
-const SPRITE_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x4, 4 => Float32x2];
+const SPRITE_ATTRIBUTES: [wgpu::VertexAttribute; 6] =
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x4, 4 => Float32x2, 5 => Float32x3];
 const MESH_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x4];
 
 #[repr(C)]
@@ -160,6 +174,8 @@ struct SpriteVertex {
     tint: [f32; 4],
     /// Screen pixels to move the corner by, after projecting.
     pixel: [f32; 2],
+    /// The sprite's depth plane (see `plane`).
+    plane: [f32; 3],
 }
 
 #[repr(C)]
@@ -172,7 +188,7 @@ struct Globals {
     camera_right: [f32; 4],
     /// w: world units per sprite pixel.
     camera_up: [f32; 4],
-    /// One screen pixel's width and height in clip space.
+    /// One screen pixel's width and height in clip space; z and w: `DEPTH_SCALE` and `NEAR`.
     pixel: [f32; 4],
 }
 
@@ -234,15 +250,22 @@ struct GroundOutput {
     return vec4(texel.rgb * light, 1.0);
 }
 
-// `depth` is the feet's, the same for every layer of a sprite: depth worked out per corner differed between layers
-// by rounding, so a headgear or head could fall behind the layer under it and vanish in some frames.
+// Shadows and effects take their feet's `depth`, flat. Sprites work theirs out per pixel from their `plane` (the
+// feet's view depth and screen y, depth gained per screen pixel down, bias) and `nudge`: worked out per corner, depth
+// differed between layers by rounding, so a headgear or head could fall behind the layer under it in some frames.
 struct SpriteOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) tint: vec4<f32>,
-                      @location(2) @interpolate(flat) depth: f32 };
+                      @location(2) @interpolate(flat) depth: f32, @location(3) @interpolate(flat) plane: vec4<f32>,
+                      @location(4) @interpolate(flat) nudge: f32, @location(5) @interpolate(linear) screen_y: f32 };
 struct SpriteFragment { @location(0) color: vec4<f32>, @builtin(frag_depth) depth: f32 };
 
 @vertex fn sprite_vs(@location(0) feet: vec3<f32>, @location(1) offset: vec2<f32>, @location(2) uv: vec2<f32>,
-                     @location(3) tint: vec4<f32>, @location(4) pixel: vec2<f32>) -> SpriteOutput {
-    return sprite_vertex(feet, offset, uv, tint, pixel);
+                     @location(3) tint: vec4<f32>, @location(4) pixel: vec2<f32>, @location(5) plane: vec3<f32>) -> SpriteOutput {
+    var out = sprite_vertex(feet, offset, uv, tint, pixel);
+    let feet_clip = globals.view_projection * vec4(feet, 1.0);
+    out.plane = vec4(feet_clip.w, feet_clip.y / feet_clip.w, plane.x, plane.y);
+    out.nudge = plane.z;
+    out.screen_y = out.position.y / out.position.w;
+    return out;
 }
 
 fn sprite_vertex(feet: vec3<f32>, offset: vec2<f32>, uv: vec2<f32>, tint: vec4<f32>, pixel: vec2<f32>) -> SpriteOutput {
@@ -268,6 +291,28 @@ fn sprite_vertex(feet: vec3<f32>, offset: vec2<f32>, uv: vec2<f32>, tint: vec4<f
     // Shadows and RGBA sprite images are translucent; palette sprites are fully opaque or clear.
     if (texel.a < 0.02) { discard; }
     return SpriteFragment(texel * in.tint, in.depth);
+}
+
+// A sprite pixel's depth, as `sprite_depth` works it out.
+fn tilted_depth(in: SpriteOutput) -> f32 {
+    let below = (in.plane.y - in.screen_y) / globals.pixel.y;
+    let z = max(in.plane.x + in.plane.z * below, globals.pixel.w);
+    return clamp(globals.pixel.z * (1.0 - globals.pixel.w * (1.0 / z + in.plane.w)) - in.nudge, 0.0, 1.0);
+}
+
+// Sprites draw twice: their solid pixels (alpha 159 and up) writing depth, then their soft ones blending over without.
+const SOLID: f32 = 159.0 / 255.0;
+
+@fragment fn solid_fs(in: SpriteOutput) -> SpriteFragment {
+    let color = textureSample(image, image_sampler, in.uv) * in.tint;
+    if (color.a < SOLID) { discard; }
+    return SpriteFragment(color, tilted_depth(in));
+}
+
+@fragment fn soft_fs(in: SpriteOutput) -> SpriteFragment {
+    let color = textureSample(image, image_sampler, in.uv) * in.tint;
+    if (color.a < 0.02 || color.a >= SOLID) { discard; }
+    return SpriteFragment(color, tilted_depth(in));
 }
 
 // Effect shapes placed in the world (cylinders): texture repeats across, colored and faded by the vertex.
@@ -308,9 +353,37 @@ pub fn sprite_corner([x, y]: [f32; 2], [w, h]: [f32; 2], angle: f32, [u, v]: [f3
 }
 
 /// A sprite image in the world: texture, feet position, top-left offset from the feet and size in sprite pixels
-/// (negative width = mirrored), a color to multiply it by (damage colors, fading), and degrees to turn it clockwise
-/// about its middle.
-pub type Billboard<'a> = (&'a Texture, Vector, [f32; 2], [f32; 2], [f32; 4], f32);
+/// (negative width = mirrored), a color to multiply it by (damage colors, fading), degrees to turn it clockwise
+/// about its middle, and its depth layer.
+pub type Billboard<'a> = (&'a Texture, Vector, [f32; 2], [f32; 2], [f32; 4], f32, DepthLayer);
+
+/// Where a sprite image stands in depth. It takes a tilted depth from its feet, its top nearer the camera (farther
+/// for one lying `flat`: the dead), biased nearer the more images of its sprite are under it (`index`); `nudge` steps
+/// it nearer still without leaving its plane, as a player's head and gear do on the body's.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DepthLayer {
+    pub index: f32,
+    pub nudge: f32,
+    pub flat: bool,
+}
+
+/// A layer's depth plane, for feet at view depth `feet`: depth gained per screen pixel down it, bias nearer (in
+/// 1/depth: about 1.2 cells at the feet with the default camera) and nudge nearer (in the depth buffer).
+fn plane(layer: DepthLayer, feet: f32, pitch: f32, distance: f32) -> [f32; 3] {
+    let per_pixel = 0.16 * 730.0 / SCREEN_HEIGHT;
+    let slope = if layer.flat { -per_pixel / pitch.tan() } else { per_pixel * pitch.tan() };
+    let near = 300.0 / distance;
+    let per_layer = 9e-6 * near * pitch.sin() / std::f32::consts::FRAC_PI_4.sin();
+    // ponytail: the unit's perspective scale as the camera's distance over its feet's depth.
+    let scale = distance / feet.max(NEAR);
+    [slope, (3.0 + layer.index) * per_layer + scale * 3.6e-5 * near, layer.nudge * 1e-6]
+}
+
+/// The depth buffer's value for a sprite pixel `below` screen pixels down from its feet at view depth `feet`.
+fn sprite_depth(feet: f32, below: f32, [slope, bias, nudge]: [f32; 3]) -> f32 {
+    let z = (feet + slope * below).max(NEAR);
+    (DEPTH_SCALE * (1.0 - NEAR * (1.0 / z + bias)) - nudge).clamp(0.0, 1.0)
+}
 
 /// An effect's quad: texture, where it plays, its corners' offsets in sprite pixels (top left, top right, bottom right,
 /// bottom left; y down), a color to multiply it by, and whether it adds to what's behind instead of covering it.
@@ -348,6 +421,8 @@ pub struct World {
     sprite_pipeline: wgpu::RenderPipeline,
     /// Shadows: drawn like sprites, but without writing depth.
     shadow_pipeline: wgpu::RenderPipeline,
+    /// Sprites' soft pixels: blended over without writing depth.
+    soft_pipeline: wgpu::RenderPipeline,
     /// Effects blended over, and added on; the same for effect shapes.
     effect_pipelines: [wgpu::RenderPipeline; 2],
     mesh_pipelines: [wgpu::RenderPipeline; 2],
@@ -478,22 +553,13 @@ impl World {
         let ground_pipeline = pipeline("ground", "ground_fs", ground_layout(), None, true);
         let model_pipeline = pipeline("ground", "model_fs", ground_layout(), None, true);
         let water_pipeline = pipeline("ground", "water_fs", ground_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false);
-        let sprite_pipeline = pipeline(
-            "sprite",
-            "sprite_fs",
-            wgpu::VertexBufferLayout {
-                array_stride: size_of::<SpriteVertex>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &SPRITE_ATTRIBUTES,
-            },
-            Some(wgpu::BlendState::ALPHA_BLENDING),
-            true,
-        );
         let sprite_buffer_layout = || wgpu::VertexBufferLayout {
             array_stride: size_of::<SpriteVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &SPRITE_ATTRIBUTES,
         };
+        let sprite_pipeline = pipeline("sprite", "solid_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), true);
+        let soft_pipeline = pipeline("sprite", "soft_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false);
         // A shadow and its sprite share a depth; rounding in the two quads' divides left the shadow nearer in places,
         // so a shadow writing depth cut holes in its own sprite. Shadows lie on what's under them and hide nothing.
         let shadow_pipeline = pipeline("sprite", "sprite_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false);
@@ -564,6 +630,7 @@ impl World {
             water_pipeline,
             sprite_pipeline,
             shadow_pipeline,
+            soft_pipeline,
             effect_pipelines,
             mesh_pipelines,
             depth: RefCell::new(None),
@@ -606,7 +673,7 @@ impl WorldPass for WorldFrame<'_> {
             diffuse: [diffuse[0], diffuse[1], diffuse[2], 1.0],
             camera_right: [self.view.right[0], self.view.right[1], self.view.right[2], 0.0],
             camera_up: [self.view.up[0], self.view.up[1], self.view.up[2], SPRITE_SCALE],
-            pixel: [2.0 / (SCREEN_HEIGHT * self.view.aspect), 2.0 / SCREEN_HEIGHT, 0.0, 0.0],
+            pixel: [2.0 / (SCREEN_HEIGHT * self.view.aspect), 2.0 / SCREEN_HEIGHT, DEPTH_SCALE, NEAR],
         };
         gpu.queue.write_buffer(&world.globals, 0, bytemuck::bytes_of(&globals));
 
@@ -626,22 +693,39 @@ impl WorldPass for WorldFrame<'_> {
         }
         let depth_view = &depth.as_ref().unwrap().1;
 
+        let view = self.view;
+        let planes: Vec<[f32; 3]> = self.billboards.iter().map(|&(_, feet, .., layer)| plane(layer, view.depth_of(feet), view.pitch, view.distance)).collect();
         let sprite_vertices: Vec<SpriteVertex> = self
             .billboards
             .iter()
-            .flat_map(|&(_, feet, offset, size, tint, angle)| {
+            .zip(&planes)
+            .flat_map(|(&(_, feet, offset, size, tint, angle, _), &plane)| {
                 let corner = |u: f32, v: f32| {
                     let (offset, pixel) = sprite_corner(offset, size, angle, [u, v]);
-                    SpriteVertex { feet, offset, uv: [u, v], tint, pixel }
+                    SpriteVertex { feet, offset, uv: [u, v], tint, pixel, plane }
                 };
                 [corner(0., 0.), corner(1., 0.), corner(0., 1.), corner(0., 1.), corner(1., 0.), corner(1., 1.)]
             })
             .collect();
+        // Sprites back to front by the depth of their images' top edges.
+        let top_depths: Vec<f32> = self
+            .billboards
+            .iter()
+            .zip(&planes)
+            .map(|(&(_, feet, offset, size, _, angle, _), &plane)| {
+                let Some(base) = view.project(feet) else { return 1.0 };
+                let corners = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]].map(|uv| view.sprite_point(feet, sprite_corner(offset, size, angle, uv).0));
+                let top = corners.iter().flatten().map(|corner| corner[1]).reduce(f32::min).unwrap_or(base[1]);
+                sprite_depth(view.depth_of(feet), (top - base[1]) * SCREEN_HEIGHT, plane)
+            })
+            .collect();
+        let mut order: Vec<usize> = (self.shadows..self.billboards.len()).collect();
+        order.sort_by(|&a, &b| top_depths[b].total_cmp(&top_depths[a]));
         let effect_vertices: Vec<SpriteVertex> = self
             .effects
             .iter()
             .flat_map(|&(_, feet, corners, tint, _)| {
-                let corner = |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint, pixel: [0.0; 2] };
+                let corner = |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint, pixel: [0.0; 2], plane: [0.0; 3] };
                 let [top_left, top_right, bottom_right, bottom_left] =
                     [corner(0, [0.0, 0.0]), corner(1, [1.0, 0.0]), corner(2, [1.0, 1.0]), corner(3, [0.0, 1.0])];
                 [top_left, top_right, bottom_left, bottom_left, top_right, bottom_right]
@@ -716,13 +800,16 @@ impl WorldPass for WorldFrame<'_> {
         }
         if let Some(buffer) = &sprite_buffer {
             pass.set_vertex_buffer(0, buffer.slice(..));
-            for (index, (texture, ..)) in self.billboards.iter().enumerate() {
-                if index == 0 || index == self.shadows {
-                    pass.set_pipeline(if index < self.shadows { &world.shadow_pipeline } else { &world.sprite_pipeline });
-                }
+            let draw = |pass: &mut wgpu::RenderPass, index: usize| {
                 let first = index as u32 * 6;
-                pass.set_bind_group(1, texture.bind_group(), &[]);
+                pass.set_bind_group(1, self.billboards[index].0.bind_group(), &[]);
                 pass.draw(first..first + 6, 0..1);
+            };
+            pass.set_pipeline(&world.shadow_pipeline);
+            (0..self.shadows).for_each(|index| draw(&mut pass, index));
+            for pipeline in [&world.sprite_pipeline, &world.soft_pipeline] {
+                pass.set_pipeline(pipeline);
+                order.iter().for_each(|&index| draw(&mut pass, index));
             }
         }
         if let Some(buffer) = &mesh_buffer {
@@ -1067,6 +1154,32 @@ mod tests {
         assert!(find_path(&gat, [0, 0], [1, 1]).is_none());
         assert_eq!(direction([0, 1]), 4);
         assert_eq!(direction([1, -1]), 7);
+    }
+
+    #[test]
+    fn sprites_tilt_their_depth_toward_the_camera() {
+        let pitch = 45f32.to_radians();
+        // The view depth a depth buffer value stands for, and a pixel's at `below` screen pixels down from feet as far
+        // away as the camera.
+        let view_depth = |value: f32| NEAR / (1.0 - value / DEPTH_SCALE);
+        let at = |distance: f32, layer: DepthLayer, below: f32| view_depth(sprite_depth(distance, below, plane(layer, distance, pitch, distance)));
+        let near = |a: f32, b: f32| (a - b).abs() < 0.05;
+        let standing = DepthLayer::default();
+        // Default camera: the feet about 1.1 cells nearer than they are, the top 0.152 nearer per pixel up.
+        let (top, feet, bottom) = (at(300.0, standing, -100.0), at(300.0, standing, 0.0), at(300.0, standing, 20.0));
+        assert!(near(feet, 294.44) && near(top, 279.77) && near(bottom, 297.37), "{top} {feet} {bottom}");
+        // Far camera: less bias.
+        let (top, feet) = (at(400.0, standing, -100.0), at(400.0, standing, 0.0));
+        assert!(near(feet, 392.58) && near(top, 377.92), "{top} {feet}");
+        // Each image of a monster sits a layer nearer; a player's share the body's plane, a step nearer each.
+        assert!(at(300.0, DepthLayer { index: 1.0, ..standing }, 0.0) < feet - 0.5);
+        let player = |nudge: f32, below: f32| sprite_depth(300.0, below, plane(DepthLayer { nudge, ..standing }, 300.0, pitch, 300.0));
+        for below in [-80.0, 0.0, 10.0] {
+            assert!(((player(0.0, below) - player(3.0, below)) - 3e-6).abs() < 2e-7);
+        }
+        // The dead lie flat: their top counts as farther.
+        let flat = DepthLayer { flat: true, ..standing };
+        assert!(near(at(300.0, flat, 0.0), 294.44) && near(at(300.0, flat, -100.0), 309.07), "{}", at(300.0, flat, -100.0));
     }
 
     #[test]

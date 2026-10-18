@@ -14,7 +14,8 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": 
     (targets by name from the control socket's `targets`: inventory_item (item id), pick_item (a pick list's row, item
     id), menu_item (part of a right-click menu choice's label), button (a window button's name, e.g. "feed"),
     hotkey (slot), skill (id), char_slot (a card at character select, by slot), unit (name, from `units`),
-    ground_item (item id, from `ground_items`), cell (a map cell [x, y]: its middle on screen), or
+    ground_item (item id, from `ground_items`), item_link (an item link in the chat log or NPC window, item id),
+    cell (a map cell [x, y]: its middle on screen), or
     {"point": [x, y]}; "offset": [dx, dy] shifts from the centre; a target not on screen fails the step)
   {"wheel": [x, y, rows]}  (the mouse wheel over a point: rows > 0 scrolls down)
   {"mouse_down": <target>} ... {"mouse_up": <target>}  (a button held down between steps; "button": "right")
@@ -182,7 +183,7 @@ def locate(target):
         if kind == "menu_item" and found.get("kind") == kind and value in found.get("label", ""):
             x, y, w, h = found["box"]
             return [round(x + w / 2) + dx, round(y + h / 2) + dy]
-        key = {"inventory_item": "id", "pick_item": "id", "button": "name", "hotkey": "slot", "skill": "id", "char_slot": "slot"}.get(kind)
+        key = {"inventory_item": "id", "item_link": "id", "pick_item": "id", "button": "name", "hotkey": "slot", "skill": "id", "char_slot": "slot"}.get(kind)
         if found.get("kind") == kind and found.get(key) == value:
             x, y, w, h = found["box"]
             return [round(x + w / 2) + dx, round(y + h / 2) + dy]
