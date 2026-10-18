@@ -1067,34 +1067,40 @@ mod tests {
 
     #[test]
     fn words_the_party_lines() {
-        assert_eq!((0..=19).map(invite_result_line).collect::<Vec<_>>(), [
-            Some((80, Tone::Bad)),
-            Some((2060, Tone::Bad)),
-            Some((2061, Tone::Good)),
-            Some((83, Tone::Bad)),
-            Some((608, Tone::Bad)),
-            Some((1324, Tone::Bad)),
-            None,
-            Some((71, Tone::Bad)),
-            Some((1388, Tone::Bad)),
-            Some((1871, Tone::Bad)),
-            Some((3027, Tone::Bad)),
-            Some((3226, Tone::Bad)),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some((3634, Tone::Bad)),
-            None,
-        ]);
+        assert_eq!(
+            (0..=19).map(invite_result_line).collect::<Vec<_>>(),
+            [
+                Some((80, Tone::Bad)),
+                Some((2060, Tone::Bad)),
+                Some((2061, Tone::Good)),
+                Some((83, Tone::Bad)),
+                Some((608, Tone::Bad)),
+                Some((1324, Tone::Bad)),
+                None,
+                Some((71, Tone::Bad)),
+                Some((1388, Tone::Bad)),
+                Some((1871, Tone::Bad)),
+                Some((3027, Tone::Bad)),
+                Some((3226, Tone::Bad)),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some((3634, Tone::Bad)),
+                None,
+            ]
+        );
         assert_eq!([0, 1, 2, 3, 4].map(made_line), [Some((77, Tone::Good)), Some((78, Tone::Bad)), Some((79, Tone::Bad)), Some((1387, Tone::Bad)), None]);
         assert_eq!(setup_lines(0, false, false), [(291, 292, 287, None), (291, 293, 287, None), (291, 738, 287, None)]);
         assert_eq!(setup_lines(1, true, true), [(291, 292, 288, None), (291, 293, 290, None), (291, 738, 288, None)]);
         assert_eq!(setup_lines(2, false, true)[0], (291, 292, 287, Some(1535)));
         assert_eq!(invite_result_text(" accepted your party invitation.", "Second"), "Second accepted your party invitation.");
-        assert_eq!(invite_result_text("(%s) are currently in restricted map to join a party.", "Second"), "(Second) are currently in restricted map to join a party.");
+        assert_eq!(
+            invite_result_text("(%s) are currently in restricted map to join a party.", "Second"),
+            "(Second) are currently in restricted map to join a party."
+        );
         assert_eq!(invite_result_text("Character with this level cannot join the party", "Second"), "Character with this level cannot join the party");
         assert_eq!(invitation_text("QAParty", " Party has sent you an invitation."), "(QAParty) Party has sent you an invitation.");
         assert_eq!(invitation_at([1024.0, 768.0]), [392.0, 320.0]);
