@@ -1,0 +1,204 @@
+{
+  "about": "Attacking players (issue #140): on pvp_y_1-2 another player is an enemy (attack cursor) and a plain click attacks; a party member isn't; on guild_vs1 everyone outside our guild is; in town no one is. Map flags are left as found.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0,
+    "env": {
+      "RUSTNAROK_CLIENT_PARTY": "accept"
+    }
+  },
+  "steps": [
+    {
+      "say": "@warp pvp_y_1-2"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "type": "/leave"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "as": "second",
+      "type": "/leave"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state": {
+          "enemies": [
+            "{second}"
+          ]
+        }
+      }
+    },
+    {
+      "shot": "pvp-enemy"
+    },
+    {
+      "click_on": {
+        "unit": "{second}"
+      }
+    },
+    {
+      "wait_for": {
+        "sent": "0x0437",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "click": [
+        512,
+        560
+      ]
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "as": "second",
+      "say": "@alive"
+    },
+    {
+      "as": "second",
+      "say": "@heal"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "type": "/organize Pvptest"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "click_on": {
+        "unit": "{second}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "party"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x02c5",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "enemies": []
+        }
+      }
+    },
+    {
+      "say": "@warp guild_vs1"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state": {
+          "enemies": [
+            "{second}"
+          ]
+        }
+      }
+    },
+    {
+      "shot": "gvg-enemy"
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "enemies": []
+        }
+      }
+    },
+    {
+      "as": "second",
+      "type": "/leave"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "type": "/leave"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "as": "second",
+      "say": "@heal"
+    },
+    {
+      "wait": 800
+    }
+  ]
+}

@@ -87,6 +87,7 @@ mod status;
 mod storage;
 mod trade;
 mod vend;
+mod versus;
 mod weather;
 mod window;
 mod world;
@@ -505,6 +506,8 @@ const MONSTER: u8 = 5;
 const NPC: u8 = 6;
 const PET: u8 = 7;
 const HOMUNCULUS: u8 = 8;
+/// rathena's NPC_ELEMENTAL_TYPE.
+const ELEMENTAL: u8 = 10;
 const MERCENARY: u8 = 9;
 /// JT_HIDDEN_NPC, JT_HIDDEN_WARP_NPC: invisible script NPCs.
 const HIDDEN_JOBS: [u16; 2] = [111, 139];
@@ -723,6 +726,8 @@ struct Game {
     /// The player's mercenary, its skills, its window and skill list, how it's steered, and whether dismissing it is
     /// being asked.
     mercenary: Option<net::Mercenary>,
+    /// /noshift: a click on a player attacks without Shift (saved).
+    no_shift: bool,
     /// The map's property and flags (net::MAP_*), and its type, as the server last sent them.
     map_property: Option<(u16, u32)>,
     map_type: Option<u16>,
@@ -1188,6 +1193,20 @@ impl Game {
     /// Whether players win over monsters under the pointer: Shift held, or aiming a skill for players, but not both.
     // ponytail: "a skill for players" is one the server flags as for friends (Heal, Blessing); a skill table may list
     // more.
+    /// Who the player sides with on this map, for `versus`: the map's flags, our party's online members, our guild.
+    // ponytail: allies come with the guild alliance list (#102); none until then.
+    fn side(&self) -> versus::Side {
+        let party = self.party.iter().flat_map(|party| &party.members).filter(|member| member.info.online).map(|member| member.info.account).collect();
+        let flags = self.map_property.map_or(0, |(_, flags)| flags);
+        versus::Side { flags, party, guild: self.guild.as_ref().map_or(0, |guild| guild.id), allies: Vec::new() }
+    }
+
+    /// Another player as `versus` sees them.
+    fn opponent(&self, id: u32) -> Option<versus::Other> {
+        let actor = self.units.get(&id).filter(|actor| actor.kind == PLAYER)?;
+        Some(versus::Other { account: id, guild: actor.guild, dead: actor.dead || actor.remove_at.is_some() })
+    }
+
     fn players_first(&self, shift: bool) -> bool {
         let support =
             self.targeting.and_then(|(id, _)| self.skills.iter().find(|skill| skill.id == id)).is_some_and(|skill| skill.kind & net::Skill::FRIEND != 0);
@@ -1507,6 +1526,15 @@ impl Game {
             chat::Command::Who => self.session.user_count(),
             chat::Command::Memo => self.session.remember_warp_point(),
             chat::Command::PvpInfo => self.session.pvp_info(self.me.id, self.account_id),
+            // ponytail: the client's own line for /noshift isn't in this data; a plain one.
+            chat::Command::NoShift => {
+                self.no_shift = !self.no_shift;
+                if let Some(path) = settings_path("noshift") {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.no_shift { "1" } else { "0" }));
+                }
+                self.chat_line(format!("noshift: {}", if self.no_shift { "On" } else { "Off" }), CHAT_ITEM);
+                Ok(())
+            }
             chat::Command::Where => {
                 // ponytail: the map and the cell, plainly; match the official client's wording from a screenshot.
                 let [x, y] = self.player.cell;
@@ -4185,6 +4213,19 @@ impl App {
                             game.attack(id);
                             return;
                         }
+                        // Players: an attack where the map (or Shift, or /noshift) says so; one swing a click on a
+                        // siege map. Otherwise the click walks, below.
+                        Some(PLAYER) => match versus::click(game.side().flags, game.players_first(shift), game.no_shift, game.account_id, id) {
+                            versus::Click::Attack => {
+                                game.attack(id);
+                                return;
+                            }
+                            versus::Click::Swing => {
+                                let _ = game.session.act(id, net::ACT_ATTACK);
+                                return;
+                            }
+                            versus::Click::Walk => {}
+                        },
                         _ => {}
                     },
                     Some(Owner::Item(id)) => {
@@ -5706,6 +5747,7 @@ impl App {
                     refusing_party: None,
                     announcements: announce::Bar::default(),
                     map_property: None,
+                    no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     map_type: None,
                     pvp_rank: None,
                     rank_font: None,
@@ -8336,6 +8378,8 @@ impl App {
         // Clickable areas: each unit's and item's sprite bounds and the cell under it on screen, in logical pixels.
         // The dead and the hidden can't be clicked.
         let to_screen = |[x, y]: [f32; 2]| [x * SCREEN[0], y * SCREEN[1]];
+        let siege_map = game.map_property.is_some_and(|(_, flags)| versus::siege(flags));
+        let our_guild = game.guild.as_ref().map_or(0, |guild| guild.id);
         game.hit_boxes = frames
             .iter()
             .filter(|(owner, ..)| !matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.remove_at.is_some() || actor.hidden)))
@@ -8364,6 +8408,8 @@ impl App {
                         Some(MONSTER) => picking::Kind::Monster,
                         Some(NPC) => picking::Kind::Npc,
                         Some(HOMUNCULUS) => picking::Kind::Homunculus,
+                        // On a siege map players outside our guild rank with monsters.
+                        Some(PLAYER) if siege_map && game.units.get(id).is_some_and(|actor| our_guild == 0 || actor.guild != our_guild) => picking::Kind::Foe,
                         Some(PLAYER) => picking::Kind::Player,
                         _ => picking::Kind::Other,
                     },
@@ -9373,6 +9419,8 @@ impl App {
                 Some(Owner::Unit(id)) => match game.units.get(&id).map(|actor| actor.kind) {
                     Some(MONSTER) => cursor::Kind::Attack,
                     Some(NPC) => cursor::Kind::Talk,
+                    Some(PLAYER) if game.opponent(id).is_some_and(|other| game.side().attack_cursor(&other, players_first, false)) => cursor::Kind::Attack,
+                    Some(HOMUNCULUS | MERCENARY | ELEMENTAL) if versus::companion_cursor(game.side().flags) => cursor::Kind::Attack,
                     _ => cursor::Kind::Default,
                 },
                 Some(Owner::Item(_)) => cursor::Kind::Pick,

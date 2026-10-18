@@ -16,6 +16,8 @@ pub enum Kind {
     Npc,
     Homunculus,
     Player,
+    /// On a siege map, a player outside our guild: they rank with monsters, the nearer one winning.
+    Foe,
     /// Pets, mercenaries and the rest.
     Other,
 }
@@ -25,7 +27,7 @@ impl Kind {
     /// `players_first` (Shift held, or aiming a skill for players) players come first and monsters and NPCs drop.
     fn rank(self, players_first: bool) -> u16 {
         match (self, players_first) {
-            (Kind::Monster, false) | (Kind::Player, true) => 400,
+            (Kind::Monster, false) | (Kind::Player, true) | (Kind::Foe, _) => 400,
             (Kind::Item, _) => 300,
             (Kind::Npc, false) | (Kind::Homunculus, _) | (Kind::Monster, true) => 200,
             (Kind::Player, false) | (Kind::Npc, true) => 100,
@@ -90,6 +92,20 @@ mod tests {
     fn target(owner: u32, kind: Kind, sprite: Rect, cell: Rect, depth: f32) -> Target<u32> {
         let min = if kind == Kind::Item { ITEM_MIN } else { UNIT_MIN };
         Target { owner, kind, sprite, area: area(sprite, cell, min), depth }
+    }
+
+    #[test]
+    fn a_foe_on_a_siege_map_ranks_with_monsters() {
+        let box_at = |x: f32| [x, 100.0, x + 50.0, 180.0];
+        let cell = [0.0, 0.0, 1.0, 1.0];
+        // Overlapping boxes, the pointer inside both: a guildmate loses to the monster, a foe wins by being nearer.
+        let monster = target(1, Kind::Monster, box_at(100.0), cell, 50.0);
+        let guildmate = target(2, Kind::Player, box_at(110.0), cell, 10.0);
+        let foe = target(3, Kind::Foe, box_at(110.0), cell, 10.0);
+        assert_eq!(pick([monster, guildmate], [130.0, 140.0], false), Some(1));
+        assert_eq!(pick([monster, foe], [130.0, 140.0], false), Some(3));
+        let far_foe = target(3, Kind::Foe, box_at(110.0), cell, 90.0);
+        assert_eq!(pick([monster, far_foe], [130.0, 140.0], false), Some(1));
     }
 
     #[test]
