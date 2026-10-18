@@ -1182,7 +1182,6 @@ fn game_state(app: &App, game: &Game) -> Value {
             // The attack asked for with the mouse (null: none), kept up or only while held.
             "attack": game.attack.map(|attack| json!({"target": attack.target, "continuous": attack.continuous})),
             "no_ctrl": game.no_ctrl,
-            "skill_fail": game.skill_fail,
             // The skill being aimed (null: none), and the last one sent by aiming, at a cell or a unit.
             "aiming": game.targeting.map(|(skill, level)| json!({"skill": skill, "level": level})),
             "skill_sent": game.skill_sent.map(|(skill, level, target)| match target {
@@ -1378,6 +1377,14 @@ fn game_state(app: &App, game: &Game) -> Value {
         "chat_locked": game.chat.locked,
         "chat_corner": game.chat.corner_moved(),
         "chat_input": game.chat.input,
+        // The shown tab's log: how many rows it keeps, its first and last, how far it is scrolled back; the whisper
+        // name box and its list.
+        "chat_log_rows": game.chat.tab_lines(game.chat.tab).len(),
+        "chat_log_first": game.chat.tab_lines(game.chat.tab).first().map(|(text, ..)| text.clone()),
+        "chat_log_last": game.chat.tab_lines(game.chat.tab).iter().rev().take(2).rev().map(|(text, ..)| text.clone()).collect::<Vec<_>>(),
+        "chat_scroll": game.chat.scroll(),
+        "chat_whisper": game.chat.whisper,
+        "chat_names": game.chat.recent,
         "block_names": game.block_list.as_ref().map(|list| list.names().to_vec()).unwrap_or_default(),
         "whisper_open": json!({"friends": game.whisper_open.friends, "strangers": game.whisper_open.strangers}),
         "chat_line_open": game.chat_mode.chat_line_open(),

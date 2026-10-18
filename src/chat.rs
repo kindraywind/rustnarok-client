@@ -12,8 +12,8 @@ use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, screen};
 
-/// F10's steps: the input bar alone, then logs of 3, 6, 9, 12 and 15 lines.
-const STEPS: [usize; 6] = [0, 1, 4, 7, 10, 13];
+/// The size steps go 0 to 15; F10 walks 0 → 1 → 4 → 7 → 10 → 13 → 0, dragging the top edge gives any.
+const MOST_STEP: usize = 15;
 /// The step a new window has: 96 tall.
 const DEFAULT_STEP: usize = 1;
 const WIDTH: f32 = 600.0;
@@ -34,8 +34,22 @@ const LIST_BUTTON: [f32; 2] = [97.0, 3.0];
 /// The whisper-name list that drops from the list button. It grows upward: the bar sits on the screen's bottom.
 // ponytail: this button's job is the session's recent whisper names. The list opens upward so it stays on screen.
 const LIST_BUTTON_SIZE: [f32; 2] = [12.0, 18.0];
+/// The whisper-name list: 112 wide, 16 px rows, five at most (the names, then a blank one).
 const LIST_ROW: f32 = 16.0;
-const LIST_WIDTH: f32 = 140.0;
+const LIST_WIDTH: f32 = 112.0;
+const LIST_ROWS: usize = 5;
+/// "No Whisper List.", in red.
+pub const NO_WHISPER_LIST: usize = 192;
+/// Each tab keeps this many lines; a line is cut into pieces of at most this many bytes, then wrapped at this width.
+pub const MOST_LINES: usize = 240;
+const PIECE_BYTES: usize = 94;
+pub const WRAP_WIDTH: f32 = 576.0;
+/// The scrollbar at the log's right: its width and its arrows' height.
+const SCROLLBAR: f32 = 13.0;
+const ARROW: f32 = 10.0;
+/// The invisible strip along the top that resizes the window, and the tallest it goes.
+const RESIZE: ([f32; 2], [f32; 2]) = ([3.0, 16.0], [574.0, 6.0]);
+const TOP_ROW: f32 = 20.0;
 const MESSAGE_BOX: ([f32; 2], [f32; 2]) = ([110.0, 4.0], [460.0, 16.0]);
 const SEND_TO_BUTTON: [f32; 2] = [572.0, 7.0];
 const SIZE_BUTTON: [f32; 2] = [586.0, 7.0];
@@ -69,6 +83,19 @@ const TAB_BORDER: [u8; 4] = [0x95, 0x95, 0x95, 0xFF];
 /// The window's height at step `step`: the input bar alone at 0, else the tabs, the log and the bar.
 fn height(step: usize) -> f32 {
     if step == 0 { INPUT_HEIGHT } else { INPUT_HEIGHT + TAB_HEIGHT + LINE * (step + 3) as f32 }
+}
+
+/// F10's next step: 0 → 1, else up to the next of 1, 4, 7, 10, 13 (a dragged step snaps to it), past 15 back to 0.
+fn next_step(step: usize) -> usize {
+    match step {
+        0 => 1,
+        _ => Some(3 * ((step + 3) / 3) + 1).filter(|&next| next <= MOST_STEP).unwrap_or(0),
+    }
+}
+
+/// The step a window dragged to `height` gets: 0 under 72, else one per 14 px, at most 15.
+fn step_for(height: f32) -> usize {
+    if height < 72.0 { 0 } else { (((height - 72.0) / 14.0) as usize + 1).min(MOST_STEP) }
 }
 
 /// The lines the log box shows at step `step`: those whose 14 rows fit in it.
@@ -149,7 +176,65 @@ impl Kind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tab {
     pub kinds: HashSet<Kind>,
+    /// Its log, wrapped, oldest first (the last 240); pieces still to wrap; how many rows back it is scrolled.
+    rows: Vec<Row>,
+    fresh: Vec<Row>,
     scroll: usize,
+}
+
+impl Tab {
+    fn new(kinds: HashSet<Kind>) -> Self {
+        Self { kinds, rows: Vec::new(), fresh: Vec::new(), scroll: 0 }
+    }
+}
+
+/// A row of a log: its text, colour, kind and speaker (public, party, guild and clan lines).
+pub type Row = (String, [u8; 3], Kind, Option<String>);
+
+/// Who said a line: for public, party, guild and clan lines, what comes before the first " :" if under 24 bytes.
+pub fn speaker(text: &str, kind: Kind) -> Option<String> {
+    if !matches!(kind, Kind::Public | Kind::Party | Kind::Guild | Kind::Clan) {
+        return None;
+    }
+    let name = &text[..text.find(" :")?];
+    (!name.is_empty() && name.len() < NAME_MOST).then(|| name.to_owned())
+}
+
+/// A line cut into pieces of at most 94 bytes, at a space or a newline where it can; a line with links stays whole.
+pub fn pieces(text: &str) -> Vec<String> {
+    if links::has_links(text) {
+        return vec![text.to_owned()];
+    }
+    let mut pieces = Vec::new();
+    let mut rest = text;
+    while rest.len() > PIECE_BYTES {
+        let mut cut = PIECE_BYTES;
+        while !rest.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let at = rest[..cut].rfind([' ', '\n']).filter(|&at| at > 0).unwrap_or(cut);
+        pieces.push(rest[..at].to_owned());
+        rest = rest[at..].trim_start_matches([' ', '\n']);
+    }
+    pieces.push(rest.trim_end_matches('\n').to_owned());
+    pieces
+}
+
+/// A piece wrapped at `width` as `measure` measures it: at the last space that fits, else between characters.
+pub fn wrap(text: &str, width: f32, measure: &dyn Fn(&str) -> f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut rest = text;
+    while measure(rest) > width {
+        // The longest start that fits, at least one character.
+        let first = rest.chars().next().map_or(rest.len(), char::len_utf8);
+        let fit =
+            rest.char_indices().map(|(at, character)| at + character.len_utf8()).take_while(|&end| measure(&rest[..end]) <= width).last().unwrap_or(first);
+        let at = rest[..fit].rfind(' ').filter(|&at| at > 0).unwrap_or(fit);
+        lines.push(rest[..at].to_owned());
+        rest = rest[at..].trim_start_matches(' ');
+    }
+    lines.push(rest.to_owned());
+    lines
 }
 
 /// The tabs' kinds when nothing is saved: Public everything but battle messages; Battle those, whispers, party and
@@ -218,6 +303,11 @@ pub struct Assets {
     /// Item and navigation links' underlines.
     link: Texture,
     navi_link: Texture,
+    /// The scrollbar: its arrows (up, down), black track and thumb; the whisper list's picked row.
+    arrows: [Texture; 2],
+    track: Texture,
+    thumb: Texture,
+    picked: Texture,
 }
 
 impl Assets {
@@ -243,6 +333,11 @@ impl Assets {
             frame_line: gpu.solid(FRAME_LINE),
             link: gpu.solid([crate::links::COLOR[0], crate::links::COLOR[1], crate::links::COLOR[2], 0xFF]),
             navi_link: gpu.solid([crate::links::NAVI_COLOR[0], crate::links::NAVI_COLOR[1], crate::links::NAVI_COLOR[2], 0xFF]),
+            arrows: [image("dialscr_up"), image("dialscr_down")],
+            track: gpu.solid([0, 0, 0, 0xFF]),
+            // ponytail: dialscr_bar stretched as the thumb.
+            thumb: image("dialscr_bar"),
+            picked: gpu.solid([0x73, 0x9C, 0xEF, 0xFF]),
         }
     }
 }
@@ -254,8 +349,16 @@ pub enum Hit {
     Stick,
     Options,
     Lock,
-    /// The tab strip's empty part: it drags the window.
+    /// The bare window outside the top row (the margins beside the log): it drags the window, unlocked.
     Strip,
+    /// The rest of the top row: nothing.
+    TopRow,
+    /// The strip along the top edge that resizes the window.
+    Resize,
+    /// The log's scrollbar: its arrows, and the track above or below the thumb.
+    ScrollUp,
+    ScrollDown,
+    Track(bool),
     List,
     SendTo,
     Size,
@@ -273,10 +376,10 @@ pub struct Chat {
     /// The whisper name box, and whether typing goes there.
     pub whisper: String,
     pub naming: bool,
-    /// Players whispered with this session, newest first, and whether their list is open.
+    /// The whisper-name list, in the order names came, and whether it is dropped down.
     pub recent: Vec<String>,
     list_open: bool,
-    /// Which of F10's steps the window is at.
+    /// The size step, 0 to 15.
     size: usize,
     pub tabs: [Tab; 2],
     /// The tab shown.
@@ -285,6 +388,10 @@ pub struct Chat {
     corner: Option<[f32; 2]>,
     /// The pointer's offset from the corner while the window is dragged.
     drag: Option<[f32; 2]>,
+    /// While the top edge is dragged: the pointer's height and the window's when it started.
+    resize: Option<(f32, f32)>,
+    /// Clicks on the log's rows, for double clicks.
+    clicks: crate::window::Clicks,
     /// The lock: no dragging.
     pub locked: bool,
     pub send_to: SendTo,
@@ -320,11 +427,13 @@ impl Chat {
             naming: false,
             recent: Vec::new(),
             list_open: false,
-            size: STEPS.iter().position(|&step| step == DEFAULT_STEP).unwrap_or(0),
-            tabs: [Tab { kinds: public, scroll: 0 }, Tab { kinds: battle, scroll: 0 }],
+            size: DEFAULT_STEP,
+            tabs: [Tab::new(public), Tab::new(battle)],
             tab: 0,
             corner: None,
             drag: None,
+            resize: None,
+            clicks: crate::window::Clicks::default(),
             locked: false,
             send_to: SendTo::default(),
             settings: None,
@@ -341,13 +450,13 @@ impl Chat {
     }
 
     /// A kept window: its corner (None, the screen's bottom left, when it never moved or wouldn't be wholly on
-    /// `screen` at that step), its F10 step and whether it was hidden.
+    /// `screen` at that step), its size step and whether it was hidden.
     pub fn from_saved(text: &str, screen: [f32; 2]) -> Option<(Option<[f32; 2]>, usize, bool)> {
         let fields: Vec<&str> = text.split_whitespace().collect();
         let [x, y, size, hidden] = fields[..] else { return None };
-        let size: usize = size.parse().ok().filter(|&size| size < STEPS.len())?;
+        let size: usize = size.parse().ok().filter(|&size| size <= MOST_STEP)?;
         let corner = match (x.parse::<f32>(), y.parse::<f32>()) {
-            (Ok(x), Ok(y)) => Some([x, y]).filter(|&[x, y]| x >= 0.0 && x + WIDTH <= screen[0] && y - height(STEPS[size]) >= 0.0 && y <= screen[1]),
+            (Ok(x), Ok(y)) => Some([x, y]).filter(|&[x, y]| x >= 0.0 && x + WIDTH <= screen[0] && y - height(size) >= 0.0 && y <= screen[1]),
             _ => None,
         };
         Some((corner, size, hidden == "1"))
@@ -366,7 +475,7 @@ impl Chat {
     }
 
     fn step(&self) -> usize {
-        STEPS[self.size]
+        self.size
     }
 
     pub fn height(&self) -> f32 {
@@ -398,9 +507,13 @@ impl Chat {
         self.hidden = !self.hidden;
     }
 
-    /// F10: the next size, the same cycle as the size button.
+    /// F10: the next size, the same cycle as the size button; the bottom edge stays.
     pub fn cycle_size(&mut self) {
-        self.size = (self.size + 1) % STEPS.len();
+        self.set_step(next_step(self.size));
+    }
+
+    fn set_step(&mut self, step: usize) {
+        self.size = step;
         self.tabs.iter_mut().for_each(|tab| tab.scroll = 0);
         self.keep_on_screen();
     }
@@ -435,6 +548,19 @@ impl Chat {
                 Hit::Message
             });
         }
+        if self.step() > 0 && on(RESIZE.0, RESIZE.1) {
+            return Some(Hit::Resize);
+        }
+        if self.step() > 0 && on(self.scrollbar_corner(), [SCROLLBAR, self.log_height()]) {
+            let y = local[1] - LOG_BOX[1];
+            return Some(if y < ARROW {
+                Hit::ScrollUp
+            } else if y >= self.log_height() - ARROW {
+                Hit::ScrollDown
+            } else {
+                Hit::Track(y < self.thumb().0)
+            });
+        }
         if local[1] < TAB_HEIGHT {
             let small = [14.0, 14.0];
             return Some(if let Some(tab) = (0..2).find(|&tab| on([tab as f32 * TAB_WIDTH, 0.0], [TAB_WIDTH, TAB_HEIGHT])) {
@@ -446,10 +572,16 @@ impl Chat {
             } else if on(LOCK_BUTTON, small) {
                 Hit::Lock
             } else {
-                Hit::Strip
+                Hit::TopRow
             });
         }
-        Some(if on(LOG_BOX, [LOG_WIDTH, bar - LOG_BOX[1]]) { Hit::Log } else { Hit::Strip })
+        Some(if on(LOG_BOX, [LOG_WIDTH, bar - LOG_BOX[1]]) {
+            Hit::Log
+        } else if local[1] <= TOP_ROW {
+            Hit::TopRow
+        } else {
+            Hit::Strip
+        })
     }
 
     /// The tabs and buttons on screen (for the test driver).
@@ -474,7 +606,10 @@ impl Chat {
                 ("chat_stick", area(FUNCTION_BUTTONS[0], small)),
                 ("chat_options", area(FUNCTION_BUTTONS[2], small)),
                 ("chat_lock", area(LOCK_BUTTON, small)),
-                ("chat_strip", area([2.0 * TAB_WIDTH + 60.0, 2.0], [100.0, 12.0])),
+                ("chat_strip", area([0.0, TOP_ROW + 4.0], [LOG_BOX[0] - 1.0, 12.0])),
+                ("chat_resize", area([RESIZE.0[0] + 300.0, RESIZE.0[1]], [100.0, RESIZE.1[1]])),
+                ("chat_scroll_up", area(self.scrollbar_corner(), [SCROLLBAR, ARROW])),
+                ("chat_scroll_down", area([self.scrollbar_corner()[0], LOG_BOX[1] + self.log_height() - ARROW], [SCROLLBAR, ARROW])),
             ]);
         }
         boxes
@@ -490,18 +625,32 @@ impl Chat {
         }
     }
 
-    /// A press: on the empty part of the tab strip it starts a drag (unless locked).
+    /// A press: on the top edge's strip it starts resizing (locked or not); on the bare window outside the top row
+    /// it starts a drag, unlocked.
     pub fn press(&mut self, cursor: [f32; 2]) -> bool {
-        if self.locked || self.hit(cursor) != Some(Hit::Strip) {
-            return false;
+        match self.hit(cursor) {
+            Some(Hit::Resize) => {
+                self.resize = Some((cursor[1], self.height()));
+                true
+            }
+            Some(Hit::Strip) if !self.locked => {
+                let corner = self.corner();
+                self.drag = Some([cursor[0] - corner[0], cursor[1] - corner[1]]);
+                true
+            }
+            _ => false,
         }
-        let corner = self.corner();
-        self.drag = Some([cursor[0] - corner[0], cursor[1] - corner[1]]);
-        true
     }
 
-    /// The pointer moved: a dragged window follows it, kept on the screen.
+    /// The pointer moved: a dragged window follows it, kept on the screen; a resized one takes the step its new
+    /// height gives (the bottom edge stays).
     pub fn drag_to(&mut self, cursor: [f32; 2]) {
+        if let Some((start, height)) = self.resize {
+            let step = step_for(height + start - cursor[1]);
+            if step != self.size {
+                self.set_step(step);
+            }
+        }
         if let Some(offset) = self.drag {
             self.corner = Some([cursor[0] - offset[0], cursor[1] - offset[1]]);
             self.keep_on_screen();
@@ -510,7 +659,7 @@ impl Chat {
 
     /// The drag ends; whether there was one.
     pub fn drop_drag(&mut self) -> bool {
-        self.drag.take().is_some()
+        self.resize.take().is_some() | self.drag.take().is_some()
     }
 
     fn keep_on_screen(&mut self) {
@@ -525,31 +674,131 @@ impl Chat {
         self.push_kind(text, color, Kind::of_color(color));
     }
 
+    /// A line for the tabs that show its kind, cut into pieces; `layout` wraps them.
     pub fn push_kind(&mut self, text: String, color: [u8; 3], kind: Kind) {
+        let speaker = speaker(&text, kind);
+        for tab in self.tabs.iter_mut().filter(|tab| tab.kinds.contains(&kind)) {
+            tab.fresh.extend(pieces(&text).into_iter().map(|piece| (piece, color, kind, speaker.clone())));
+        }
         self.lines.push((text, color, kind));
-        // New lines show unless the tab is scrolled back.
+    }
+
+    /// Wraps the new pieces at 576 px and keeps each tab's last 240 lines. A tab at the bottom follows the new lines;
+    /// one scrolled back stays on what it shows.
+    pub fn layout(&mut self, measure: &dyn Fn(&str) -> f32) {
+        let shown = rows(self.step());
         for tab in &mut self.tabs {
-            if tab.scroll > 0 && tab.kinds.contains(&kind) {
-                tab.scroll += 1;
+            for (piece, color, kind, speaker) in std::mem::take(&mut tab.fresh) {
+                let wrapped = if links::has_links(&piece) { vec![piece] } else { wrap(&piece, WRAP_WIDTH, measure) };
+                if tab.scroll > 0 {
+                    tab.scroll += wrapped.len();
+                }
+                tab.rows.extend(wrapped.into_iter().map(|row| (row, color, kind, speaker.clone())));
             }
+            let over = tab.rows.len().saturating_sub(MOST_LINES);
+            tab.rows.drain(..over);
+            tab.scroll = tab.scroll.min(tab.rows.len().saturating_sub(shown));
         }
     }
 
-    /// The lines tab `tab` shows, oldest first.
-    pub fn tab_lines(&self, tab: usize) -> Vec<&(String, [u8; 3], Kind)> {
-        self.lines.iter().filter(|(.., kind)| self.tabs[tab].kinds.contains(kind)).collect()
+    /// The rows tab `tab` shows, oldest first (pieces not yet wrapped at the end).
+    pub fn tab_lines(&self, tab: usize) -> Vec<&Row> {
+        self.tabs[tab].rows.iter().chain(&self.tabs[tab].fresh).collect()
     }
 
     /// Scrolls the shown tab's log by `rows` lines (negative: back in time).
     pub fn scroll_by(&mut self, rows: i32) {
-        let most = self.tab_lines(self.tab).len().saturating_sub(self::rows(self.step()));
+        let most = self.tabs[self.tab].rows.len().saturating_sub(self::rows(self.step()));
         let tab = &mut self.tabs[self.tab];
         tab.scroll = (tab.scroll as i32 - rows).clamp(0, most as i32) as usize;
     }
 
-    /// Remembers a player whispered with this session.
+    /// How far the shown tab is scrolled back, in rows.
+    pub fn scroll(&self) -> usize {
+        self.tabs[self.tab].scroll
+    }
+
+    /// PageUp / PageDown: the shown rows less one; with Ctrl, to the top or the bottom.
+    pub fn page(&mut self, down: bool, to_end: bool) {
+        let rows = if to_end { MOST_LINES as i32 } else { (self::rows(self.step()) as i32 - 1).max(1) };
+        self.scroll_by(if down { rows } else { -rows });
+    }
+
+    /// The scrollbar's corner, window-local, and the log box's height.
+    fn scrollbar_corner(&self) -> [f32; 2] {
+        [LOG_BOX[0] + LOG_WIDTH - SCROLLBAR, LOG_BOX[1]]
+    }
+
+    fn log_height(&self) -> f32 {
+        self.height() - LOG_UNDER
+    }
+
+    /// The thumb between the arrows: its top and height, window-local.
+    // ponytail: the thumb's least height is a choice.
+    fn thumb(&self) -> (f32, f32) {
+        let track = self.log_height() - 2.0 * ARROW;
+        let total = self.tabs[self.tab].rows.len().max(1);
+        let shown = rows(self.step()).min(total);
+        let height = (track * shown as f32 / total as f32).max(8.0).min(track);
+        let first = total - shown - self.tabs[self.tab].scroll.min(total - shown);
+        let room = total - shown;
+        let top = if room == 0 { track - height } else { (track - height) * first as f32 / room as f32 };
+        (LOG_BOX[1] + ARROW + top, height)
+    }
+
+    /// The speaker of the log row under `cursor`, if it has one.
+    pub fn speaker_at(&self, cursor: [f32; 2]) -> Option<&str> {
+        if self.hit(cursor) != Some(Hit::Log) {
+            return None;
+        }
+        let local_y = cursor[1] - self.at([0.0, 0.0])[1] - LOG_BOX[1] - LINE_TEXT[1];
+        let row = (local_y / LINE).floor();
+        let (start, end) = self.shown_range();
+        let index = start + usize::try_from(row as i64).ok()?;
+        (index < end).then(|| self.tabs[self.tab].rows[index].3.as_deref()).flatten()
+    }
+
+    /// The shown tab's rows on screen: from the scroll back, filling from the top.
+    fn shown_range(&self) -> (usize, usize) {
+        let rows = &self.tabs[self.tab].rows;
+        let end = rows.len().saturating_sub(self.tabs[self.tab].scroll);
+        (end.saturating_sub(self::rows(self.step())), end)
+    }
+
+    /// A click on the log: the speaker of the row when it completes a double click there.
+    pub fn log_click(&mut self, cursor: [f32; 2]) -> Option<String> {
+        if self.hit(cursor) != Some(Hit::Log) {
+            return None;
+        }
+        let row = ((cursor[1] - self.at([0.0, 0.0])[1] - LOG_BOX[1] - LINE_TEXT[1]) / LINE).floor().max(0.0) as u16;
+        if !self.clicks.double(row) {
+            return None;
+        }
+        self.speaker_at(cursor).map(str::to_owned)
+    }
+
+    /// Adds a name to the end of the whisper-name list, if it isn't there.
     pub fn note_recent(&mut self, name: &str) {
-        crate::whisper::note_recent(&mut self.recent, name);
+        let name = name.trim();
+        if !name.is_empty() && !self.recent.iter().any(|known| known.eq_ignore_ascii_case(name)) {
+            self.recent.push(name.to_owned());
+        }
+    }
+
+    /// A double click on a speaker's line: the name joins the list and the name box, the caret goes to the message.
+    pub fn whisper_to(&mut self, name: &str) {
+        self.note_recent(name);
+        self.whisper = name.to_owned();
+        self.naming = false;
+    }
+
+    /// A whisper came in: the window shows, and so does the log if it was down to the input bar.
+    pub fn whispered_by(&mut self, name: &str) {
+        self.note_recent(name);
+        self.hidden = false;
+        if self.size == 0 {
+            self.set_step(1);
+        }
     }
 
     /// A row of the open recent-name list.
@@ -564,8 +813,8 @@ impl Chat {
         }
         let mut boxes = vec![("whisper_list".into(), self.list_button_box())];
         if self.list_open {
-            for (index, name) in self.recent.iter().enumerate() {
-                boxes.push((format!("recent:{name}"), self.row_box(index)));
+            for (row, name) in self.list_entries().into_iter().enumerate() {
+                boxes.push((if name.is_empty() { "recent:".to_owned() } else { format!("recent:{name}") }, self.row_box(row)));
             }
         }
         boxes
@@ -576,34 +825,50 @@ impl Chat {
         [origin[0], origin[1], LIST_BUTTON_SIZE[0], LIST_BUTTON_SIZE[1]]
     }
 
-    fn row_box(&self, index: usize) -> [f32; 4] {
-        let [x, y, _, _] = self.list_button_box();
-        [x, y - (index as f32 + 1.0) * LIST_ROW, LIST_WIDTH, LIST_ROW]
+    /// The list's rows: the names then a blank one, the last five when there are more.
+    // ponytail: the client's list scrolls past five; here it shows the newest.
+    fn list_entries(&self) -> Vec<&str> {
+        let entries: Vec<&str> = self.recent.iter().map(String::as_str).chain([""]).collect();
+        entries[entries.len().saturating_sub(LIST_ROWS)..].to_vec()
+    }
+
+    /// A row of the dropped list: its bottom one pixel over the input bar's top, at x 1.
+    fn row_box(&self, row: usize) -> [f32; 4] {
+        let height = self.list_entries().len() as f32 * LIST_ROW;
+        let [x, y] = self.at([1.0, self.height() - INPUT_HEIGHT - height + 1.0]);
+        [x, y + row as f32 * LIST_ROW, LIST_WIDTH, LIST_ROW]
     }
 
     fn list_row(&self, cursor: [f32; 2]) -> Option<usize> {
         if !self.list_open {
             return None;
         }
-        self.recent.iter().enumerate().find(|(index, _)| contains_box(self.row_box(*index), cursor)).map(|(index, _)| index)
+        (0..self.list_entries().len()).find(|&row| contains_box(self.row_box(row), cursor))
     }
 
     /// A click on the window: a tab shows its log; the buttons do what they say; the boxes of the input bar take the
-    /// caret. The list button drops the recent names; a row fills the name box.
-    pub fn click(&mut self, cursor: [f32; 2]) {
+    /// caret. The list button drops the whisper names (an empty list says so: the line to print); a row fills the
+    /// name box, the blank one empties it.
+    pub fn click(&mut self, cursor: [f32; 2]) -> Option<usize> {
         // Rows sit above the button and can fall outside the window, so they come before `hit`.
-        if let Some(index) = self.list_row(cursor) {
-            self.whisper = self.recent[index].clone();
+        if let Some(row) = self.list_row(cursor) {
+            self.whisper = self.list_entries()[row].to_owned();
             self.naming = false;
             self.list_open = false;
-            return;
+            return None;
         }
         if self.hit(cursor) == Some(Hit::List) {
+            if self.recent.is_empty() {
+                return Some(NO_WHISPER_LIST);
+            }
             self.list_open = !self.list_open;
-            return;
+            return None;
         }
         self.list_open = false;
         match self.hit(cursor) {
+            Some(Hit::ScrollUp) => self.scroll_by(-1),
+            Some(Hit::ScrollDown) => self.scroll_by(1),
+            Some(Hit::Track(above)) => self.page(!above, false),
             Some(Hit::Tab(tab)) => self.tab = tab,
             // ponytail: "stick" puts the window back at the screen's bottom left.
             Some(Hit::Stick) => self.corner = None,
@@ -622,6 +887,7 @@ impl Chat {
             Some(Hit::Message) => self.naming = false,
             _ => {}
         }
+        None
     }
 
     /// Typing goes to the box with the caret.
@@ -729,13 +995,10 @@ impl Chat {
             layer.sprites.push((&assets.white, corner, [1.0, size[1]]));
             layer.sprites.push((&assets.white, [corner[0] + size[0] - 1.0, corner[1]], [1.0, size[1]]));
             layer.sprites.push((&assets.white, at([2.0 * TAB_WIDTH, LOG_BOX[1]]), [LOG_BOX[0] + size[0] - 2.0 * TAB_WIDTH, 1.0]));
-            let lines = self.tab_lines(self.tab);
-            let shown = rows(self.step());
-            let end = lines.len().saturating_sub(self.tabs[self.tab].scroll);
-            let start = end.saturating_sub(shown);
-            let first_row = shown - (end - start);
-            for (row, (line, color, _)) in lines[start..end].iter().enumerate() {
-                let [mut x, y] = at(line_at(first_row + row));
+            // The rows from the top down, then the scrollbar at the right.
+            let (start, end) = self.shown_range();
+            for (row, (line, color, ..)) in self.tabs[self.tab].rows[start..end].iter().enumerate() {
+                let [mut x, y] = at(line_at(row));
                 // Links in their colour, underlined.
                 for (piece, item) in links::pieces(&links::mark(line, name_of)) {
                     let width = font.width(&piece);
@@ -751,6 +1014,12 @@ impl Chat {
                     x += width;
                 }
             }
+            let [bar_x, bar_y] = self.scrollbar_corner();
+            layer.sprites.push((&assets.track, at([bar_x, bar_y]), [SCROLLBAR, self.log_height()]));
+            let (thumb_top, thumb_height) = self.thumb();
+            layer.sprites.push((&assets.thumb, at([bar_x + 1.0, thumb_top]), [SCROLLBAR - 3.0, thumb_height]));
+            layer.sprites.push((&assets.arrows[0], at([bar_x + 1.0, bar_y]), [ARROW; 2]));
+            layer.sprites.push((&assets.arrows[1], at([bar_x + 1.0, bar_y + self.log_height() - ARROW]), [ARROW; 2]));
             // The line over the input bar.
             layer.sprites.push((&assets.frame_line, at([4.0, self.height() - INPUT_HEIGHT]), [592.0, 1.0]));
         }
@@ -779,11 +1048,13 @@ impl Chat {
             let end = if self.naming { name_x + font.width(&name) } else { message_x + font.width(&typed) };
             layer.sprites.push((&assets.darker, [end + 1.0, text_top + 1.0], [1.0, font.line_height() - 2.0]));
         }
+        // ponytail: the list's look (white rows, the picked name blue) is ours.
         if self.list_open {
-            for (index, recent) in self.recent.iter().enumerate() {
-                let [x, y, w, h] = self.row_box(index);
-                layer.sprites.push((&assets.darker, [x, y], [w, h]));
-                layer.texts.push((recent.clone(), [x + 4.0, y + 1.0], [255, 255, 255]));
+            for (row, name) in self.list_entries().into_iter().enumerate() {
+                let [x, y, w, h] = self.row_box(row);
+                let picked = !name.is_empty() && name == self.whisper;
+                layer.sprites.push((if picked { &assets.picked } else { &assets.white }, [x, y], [w, h]));
+                layer.texts.push((name.to_owned(), [x + 3.0, y + 2.0], [0, 0, 0]));
             }
         }
         link_boxes
@@ -901,8 +1172,6 @@ pub enum Command {
     Zoom,
     /// /noctrl, /nc: a click on a monster keeps attacking without Ctrl, on or off.
     NoCtrl,
-    /// /skillfail, /sf: the red lines for some skill failures, on or off.
-    SkillFail,
     /// /snap, /itemsnap, /skillsnap: the cursor jumps to the middle of a monster, of an item, or of a monster while
     /// aiming a skill; each on or off.
     Snap,
@@ -948,7 +1217,6 @@ pub fn command(text: &str) -> Option<Command> {
         "/noshift" => Command::NoShift,
         "/notrade" | "/nt" => Command::NoTrade,
         "/noctrl" | "/nc" => Command::NoCtrl,
-        "/skillfail" | "/sf" => Command::SkillFail,
         "/snap" => Command::Snap,
         "/itemsnap" => Command::ItemSnap,
         "/skillsnap" => Command::SkillSnap,
@@ -996,6 +1264,9 @@ mod tests {
 
     #[test]
     fn steps_through_six_sizes() {
+        assert_eq!([0, 1, 4, 7, 10, 13, 2, 3, 15].map(next_step), [1, 4, 7, 10, 13, 0, 4, 7, 0]);
+        assert_eq!([60.0, 72.0, 96.0, 292.0, 400.0].map(step_for), [0, 1, 2, 15, 15]);
+        assert_eq!([height(0), height(1), height(15)], [24.0, 96.0, 292.0]);
         let mut chat = fresh();
         let mut heights = Vec::new();
         for _ in 0..7 {
@@ -1047,48 +1318,147 @@ mod tests {
     #[test]
     fn recent_names_fill_the_whisper_box() {
         let mut chat = fresh();
-        chat.note_recent("Drops");
+        let middle = |chat: &Chat, name: &str| {
+            let [x, y, w, h] = chat.list_boxes().into_iter().find(|(box_name, _)| box_name == name).unwrap().1;
+            [x + w / 2.0, y + h / 2.0]
+        };
+        // An empty list says so.
+        assert_eq!(chat.click(middle(&chat, "whisper_list")), Some(NO_WHISPER_LIST));
+        assert!(!chat.whisper_list_open());
+        // Names go at the end, once each; a received whisper doesn't fill the box.
+        chat.whispered_by("Drops");
         chat.note_recent("Poring");
-        let [x, y, w, h] = chat.list_boxes().into_iter().find(|(name, _)| name == "whisper_list").unwrap().1;
-        chat.click([x + w / 2.0, y + h / 2.0]);
+        chat.note_recent("drops");
+        assert_eq!(chat.recent, ["Drops", "Poring"]);
+        assert_eq!(chat.whisper, "");
+        assert_eq!(chat.click(middle(&chat, "whisper_list")), None);
         assert!(chat.whisper_list_open());
-        let [x, y, w, h] = chat.list_boxes().into_iter().find(|(name, _)| name == "recent:Poring").unwrap().1;
-        chat.click([x + w / 2.0, y + h / 2.0]);
+        let names: Vec<String> = chat.list_boxes().into_iter().skip(1).map(|(name, _)| name).collect();
+        assert_eq!(names, ["recent:Drops", "recent:Poring", "recent:"]);
+        // 112 wide, its bottom one pixel over the input bar's top, at x 1.
+        let [x, y, w, h] = chat.row_box(2);
+        assert_eq!([x, y + h, w], [1.0, screen()[1] - INPUT_HEIGHT + 1.0, 112.0]);
+        chat.click(middle(&chat, "recent:Poring"));
         assert_eq!(chat.whisper, "Poring");
         assert!(!chat.whisper_list_open());
-        chat.close_whisper_list();
+        // The blank row empties the box; at most five rows, the newest.
+        chat.click(middle(&chat, "whisper_list"));
+        chat.click(middle(&chat, "recent:"));
+        assert_eq!(chat.whisper, "");
+        (0..6).for_each(|index| chat.note_recent(&format!("N{index}")));
+        assert_eq!(chat.list_entries(), ["N2", "N3", "N4", "N5", ""]);
+        // A whisper brings back a hidden window and a log down to the bar.
+        chat.hidden = true;
+        chat.size = 0;
+        chat.whispered_by("Drops");
+        assert!(!chat.hidden && chat.size == 1);
+    }
+
+    #[test]
+    fn cuts_wraps_and_keeps_240_lines() {
+        // Pieces of at most 94 bytes, at a space where there is one.
+        let long = format!("{} {}", "a".repeat(90), "b".repeat(20));
+        assert_eq!(pieces(&long), ["a".repeat(90), "b".repeat(20)]);
+        assert_eq!(pieces(&"c".repeat(100)), ["c".repeat(94), "c".repeat(6)]);
+        assert_eq!(pieces(&"가".repeat(40)).iter().map(String::len).collect::<Vec<_>>(), [93, 27]);
+        let link = format!("{} <ITEM>Apple<INFO>512</INFO></ITEM>", "x".repeat(100));
+        assert_eq!(pieces(&link).len(), 1);
+        // Wrapped at 576 px: 6 px a character here, so 96 to a row.
+        let measure = |text: &str| text.chars().count() as f32 * 6.0;
+        let words = vec!["word"; 30].join(" ");
+        let rows = wrap(&words, WRAP_WIDTH, &measure);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| measure(row) <= WRAP_WIDTH && !row.starts_with(' ')));
+        // 300 lines: the oldest 60 go.
+        let mut chat = fresh();
+        for line in 0..300 {
+            chat.push(format!("line {line}"), PUBLIC);
+        }
+        chat.layout(&measure);
+        let tab = chat.tab_lines(0);
+        assert_eq!((tab.len(), tab[0].0.as_str()), (MOST_LINES, "line 60"));
+        // A 120-byte line takes two rows (cut at 94 bytes), still 240 in all.
+        chat.push("z ".repeat(60), PUBLIC);
+        chat.layout(&measure);
+        assert_eq!(chat.tab_lines(0).len(), MOST_LINES);
+        assert_eq!(chat.tab_lines(0).last().unwrap().0, "z ".repeat(13));
+    }
+
+    #[test]
+    fn fills_from_the_top_and_names_speakers() {
+        let mut chat = fresh();
+        chat.push("Bob : hi".into(), PUBLIC);
+        chat.push_kind("( From Ann ) : psst".into(), [0xFF, 0xFF, 0x00], Kind::Whisper);
+        chat.layout(&|text: &str| text.len() as f32);
+        assert_eq!(chat.shown_range(), (0, 2));
+        // The first row sits at the top of the log, the second under it.
+        let rows: Vec<[f32; 2]> = (0..3)
+            .map(|index| {
+                let [x, y] = chat.at(line_at(index));
+                [x + 4.0, y + 4.0]
+            })
+            .collect();
+        let row = |index: usize| rows[index];
+        assert_eq!(chat.speaker_at(row(0)), Some("Bob"));
+        assert_eq!(chat.speaker_at(row(1)), None, "a whisper names no speaker");
+        assert_eq!(chat.speaker_at(row(2)), None, "an empty row");
+        assert_eq!(chat.log_click(row(0)), None);
+        assert_eq!(chat.log_click(row(0)).as_deref(), Some("Bob"));
+        chat.whisper_to("Bob");
+        assert_eq!((chat.whisper.as_str(), chat.recent.as_slice()), ("Bob", ["Bob".to_owned()].as_slice()));
+        assert_eq!([speaker("Leader : party", Kind::Party), speaker("You used Bash.", Kind::System)], [Some("Leader".into()), None]);
+        assert_eq!(speaker(&format!("{} : long", "n".repeat(24)), Kind::Public), None);
     }
 
     #[test]
     fn picks_tabs_and_routes_lines_by_kind() {
         let mut chat = fresh();
         let strip = top(&chat) + 8.0;
-        assert_eq!([chat.hit([50.0, strip]), chat.hit([150.0, strip]), chat.hit([400.0, strip])], [Some(Hit::Tab(0)), Some(Hit::Tab(1)), Some(Hit::Strip)]);
+        assert_eq!([chat.hit([50.0, strip]), chat.hit([150.0, strip]), chat.hit([400.0, strip])], [Some(Hit::Tab(0)), Some(Hit::Tab(1)), Some(Hit::TopRow)]);
         chat.push("Poring : hi".into(), PUBLIC);
         chat.push("Leader : party".into(), PARTY);
-        chat.push_kind("(From A) : psst".into(), [0xFF, 0xFF, 0x00], Kind::Whisper);
+        chat.push_kind("( From A ) : psst".into(), [0xFF, 0xFF, 0x00], Kind::Whisper);
         chat.push("You used Bash.".into(), SKILL_MESSAGE);
         let texts = |chat: &Chat, tab: usize| chat.tab_lines(tab).iter().map(|(text, ..)| text.clone()).collect::<Vec<_>>();
-        assert_eq!(texts(&chat, 0), ["Poring : hi", "Leader : party", "(From A) : psst"]);
-        assert_eq!(texts(&chat, 1), ["Leader : party", "(From A) : psst", "You used Bash."]);
+        assert_eq!(texts(&chat, 0), ["Poring : hi", "Leader : party", "( From A ) : psst"]);
+        assert_eq!(texts(&chat, 1), ["Leader : party", "( From A ) : psst", "You used Bash."]);
         chat.click([150.0, strip]);
         assert_eq!(chat.tab, 1);
-        // Party unticked for Public: party lines leave its log.
+        // Party unticked for Public: new party lines stay out of its log.
         chat.tabs[0].kinds.remove(&Kind::Party);
-        assert_eq!(texts(&chat, 0), ["Poring : hi", "(From A) : psst"]);
+        chat.push("Leader : again".into(), PARTY);
+        assert_eq!(texts(&chat, 0), ["Poring : hi", "Leader : party", "( From A ) : psst"]);
+        assert_eq!(texts(&chat, 1).last().map(String::as_str), Some("Leader : again"));
     }
 
     #[test]
     fn scrolls_each_tab_on_its_own() {
+        let measure = |text: &str| text.len() as f32;
         let mut chat = fresh();
-        for line in 0..10 {
+        for line in 0..20 {
             chat.push(format!("line {line}"), PUBLIC);
         }
+        chat.layout(&measure);
         chat.scroll_by(-4);
         assert_eq!((chat.tabs[0].scroll, chat.tabs[1].scroll), (4, 0));
         // A new public line keeps Public where it was scrolled; Battle doesn't show it.
-        chat.push("line 10".into(), PUBLIC);
+        chat.push("line 20".into(), PUBLIC);
+        chat.layout(&measure);
         assert_eq!((chat.tabs[0].scroll, chat.tabs[1].scroll), (5, 0));
+        // Three wheel notches: nine rows; PageUp the shown rows less one; Ctrl+PageDown the bottom.
+        chat.scroll_by(-9);
+        assert_eq!(chat.tabs[0].scroll, 14);
+        chat.page(true, false);
+        assert_eq!(chat.tabs[0].scroll, 12);
+        chat.page(true, true);
+        assert_eq!(chat.tabs[0].scroll, 0);
+        chat.page(false, true);
+        assert_eq!(chat.tabs[0].scroll, 21 - 3);
+        // At the bottom it follows new lines.
+        chat.page(true, true);
+        chat.push("line 21".into(), PUBLIC);
+        chat.layout(&measure);
+        assert_eq!(chat.tabs[0].scroll, 0);
         chat.tab = 1;
         chat.scroll_by(-4);
         assert_eq!(chat.tabs[1].scroll, 0, "nothing to scroll back to");
@@ -1113,20 +1483,55 @@ mod tests {
     }
 
     #[test]
-    fn drags_by_the_strip_and_locks() {
+    fn drags_by_the_margin_and_resizes_by_the_top_edge() {
         let mut chat = fresh();
-        let strip = [400.0, top(&chat) + 8.0];
-        assert!(chat.press(strip));
-        chat.drag_to([500.0, strip[1] - 200.0]);
+        // The top row never drags; the margin beside the log does.
+        assert!(!chat.press([400.0, top(&chat) + 8.0]));
+        let margin = [2.0, top(&chat) + 40.0];
+        assert_eq!(chat.hit(margin), Some(Hit::Strip));
+        assert!(chat.press(margin));
+        chat.drag_to([102.0, margin[1] - 200.0]);
         assert!(chat.drop_drag());
         assert_eq!(chat.corner(), [100.0, screen()[1] - 200.0]);
         // Kept on the screen.
-        assert!(chat.press([500.0, top(&chat) + 8.0]));
+        assert!(chat.press([102.0, top(&chat) + 40.0]));
         chat.drag_to([-500.0, -500.0]);
         chat.drop_drag();
         assert_eq!(chat.corner(), [0.0, chat.height()]);
         chat.locked = true;
-        assert!(!chat.press([400.0, top(&chat) + 8.0]));
+        assert!(!chat.press([2.0, top(&chat) + 40.0]));
+        // The strip along the top resizes, locked too, keeping the bottom edge: 152 px tall makes step 6.
+        chat.corner = None;
+        let edge = [300.0, top(&chat) + 18.0];
+        assert_eq!(chat.hit(edge), Some(Hit::Resize));
+        assert!(chat.press(edge));
+        chat.drag_to([300.0, edge[1] - 56.0]);
+        assert_eq!((chat.size, chat.height()), (6, 166.0));
+        chat.drag_to([300.0, edge[1] - 1000.0]);
+        assert_eq!(chat.height(), 292.0);
+        chat.drag_to([300.0, edge[1] + 50.0]);
+        assert_eq!(chat.size, 0);
+        assert!(chat.drop_drag());
+        assert_eq!(top(&chat) + chat.height(), screen()[1]);
+    }
+
+    #[test]
+    fn pages_by_the_scrollbar() {
+        let mut chat = fresh();
+        for line in 0..20 {
+            chat.push(format!("line {line}"), PUBLIC);
+        }
+        chat.layout(&|text: &str| text.len() as f32);
+        let boxes = chat.button_boxes();
+        let middle = |name: &str| {
+            let [x, y, w, h] = boxes.iter().find(|(box_name, _)| *box_name == name).unwrap().1;
+            [x + w / 2.0, y + h / 2.0]
+        };
+        chat.click(middle("chat_scroll_up"));
+        assert_eq!(chat.tabs[0].scroll, 1);
+        chat.click(middle("chat_scroll_down"));
+        assert_eq!(chat.tabs[0].scroll, 0);
+        assert!(chat.blocks(middle("chat_scroll_up")), "the scrollbar is the window's");
     }
 
     #[test]
@@ -1139,12 +1544,12 @@ mod tests {
         chat.corner = Some([100.0, 500.0]);
         chat.hidden = true;
         let text = chat.saved_text();
-        assert_eq!(text, "100 500 3 1");
-        assert_eq!(Chat::from_saved(&text, screen), Some((Some([100.0, 500.0]), 3, true)));
+        assert_eq!(text, "100 500 7 1");
+        assert_eq!(Chat::from_saved(&text, screen), Some((Some([100.0, 500.0]), 7, true)));
         // Off the screen at that step (the 180-tall log needs 180 above its bottom): back at the bottom left.
-        assert_eq!(Chat::from_saved("100 100 3 0", screen), Some((None, 3, false)));
+        assert_eq!(Chat::from_saved("100 100 7 0", screen), Some((None, 7, false)));
         assert_eq!(Chat::from_saved("900 500 1 0", screen), Some((None, 1, false)));
-        assert_eq!((Chat::from_saved("- - 9 0", screen), Chat::from_saved("junk", screen)), (None, None));
+        assert_eq!((Chat::from_saved("- - 16 0", screen), Chat::from_saved("junk", screen)), (None, None));
     }
 
     #[test]
@@ -1175,7 +1580,6 @@ mod tests {
         assert_eq!(command("/noshift"), Some(Command::NoShift));
         assert_eq!([command("/notrade"), command("/nt")], [Some(Command::NoTrade), Some(Command::NoTrade)]);
         assert_eq!([command("/noctrl"), command("/nc")], [Some(Command::NoCtrl), Some(Command::NoCtrl)]);
-        assert_eq!([command("/skillfail"), command("/sf")], [Some(Command::SkillFail), Some(Command::SkillFail)]);
         assert_eq!([command("/snap"), command("/itemsnap"), command("/skillsnap")], [Some(Command::Snap), Some(Command::ItemSnap), Some(Command::SkillSnap)]);
         assert_eq!(command("/camera"), Some(Command::Camera));
         assert_eq!(command("/zoom"), Some(Command::Zoom));

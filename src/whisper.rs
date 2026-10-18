@@ -61,18 +61,6 @@ impl OpenSettings {
     }
 }
 
-/// Players whispered with this session, newest first, each name once.
-pub fn note_recent(names: &mut Vec<String>, name: &str) {
-    let name = name.trim();
-    if name.is_empty() {
-        return;
-    }
-    names.retain(|known| !known.eq_ignore_ascii_case(name));
-    names.insert(0, name.to_owned());
-    // ponytail: the last 10; the client's own cap isn't known.
-    names.truncate(10);
-}
-
 /// An away message answers each sender once, until the text changes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Away {
@@ -695,21 +683,6 @@ mod tests {
         assert!(both.opens(true) && both.opens(false));
         assert_eq!(OpenSettings::decode(""), off);
         assert_eq!(OpenSettings::decode(&both.encode()), both);
-    }
-
-    #[test]
-    fn recent_names_are_newest_first_and_unique() {
-        let mut names = Vec::new();
-        note_recent(&mut names, "Poring");
-        note_recent(&mut names, "Drops");
-        note_recent(&mut names, "poring");
-        note_recent(&mut names, "  ");
-        assert_eq!(names, ["poring", "Drops"]);
-        for index in 0..12 {
-            note_recent(&mut names, &format!("N{index}"));
-        }
-        assert_eq!(names.len(), 10);
-        assert_eq!(names[0], "N11");
     }
 
     #[test]
