@@ -277,6 +277,14 @@ const PARTY_INVITED: usize = 94;
 const PARTY_LEFT: usize = 84;
 const PARTY_CHAT_OURS: [u8; 3] = [200, 200, 100];
 const PARTY_CHAT: [u8; 3] = [230, 215, 200];
+/// "%s has acquired %s.", a member's pickup.
+const PARTY_PICKUP: usize = 1276;
+const PARTY_REFUSING: usize = 1325;
+const PARTY_ALLOWING: usize = 1326;
+/// "You can't modify Party Setup."
+const PARTY_SETUP_REFUSED: usize = 373;
+const LEADER_CHOICE: usize = 1532;
+const LEADER_QUESTION: usize = 1533;
 const PARTY_CREATE: usize = 2054;
 /// What a locked chat room asks ("Please enter Password.").
 const ROOM_PASSWORD: usize = 15;
@@ -662,6 +670,11 @@ struct Game {
     /// The player's mercenary, its skills, its window and skill list, how it's steered, and whether dismissing it is
     /// being asked.
     mercenary: Option<net::Mercenary>,
+    /// Whether the player refuses party invitations (None until the server says).
+    refusing_party: Option<bool>,
+    /// The party setup window, and the member whose leadership is being asked about.
+    party_setup: Option<party::Setup>,
+    leader_asked: Option<u32>,
     mercenary_skills: Vec<net::Skill>,
     mercenary_window: mercenary::Window,
     mercenary_skill_list: mercenary::SkillList,
@@ -969,6 +982,8 @@ enum Choice {
     ViewEquipment(u32),
     /// A command to the player's pet (net::PET_INFO and on).
     Pet(u8),
+    /// Hand the party to this member (by account).
+    Leader(u32),
 }
 
 /// A pet question waiting for OK: feed it, or rename it (to this).
@@ -1341,6 +1356,11 @@ impl Game {
         }
         if text == "/leave" {
             let _ = self.session.leave_party();
+            return None;
+        }
+        // ponytail: /refuse and /accept are rathena's names for them (clif_parse_PartyTick).
+        if text == "/refuse" || text == "/accept" {
+            let _ = self.session.refuse_parties(text == "/refuse");
             return None;
         }
         if let Some(name) = text.strip_prefix("/expel ") {
@@ -3277,6 +3297,7 @@ impl App {
                 Some(Choice::Pet(net::PET_FEED)) => game.pet_asked = Some(PetAsked::Feed),
                 Some(Choice::Pet(net::PET_INFO)) => game.open_pet_window(),
                 Some(Choice::Pet(command)) => game.pet_command(command),
+                Some(Choice::Leader(account)) => game.leader_asked = Some(account),
                 Some(Choice::Befriend(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         let _ = game.session.add_friend(&actor.name.clone());
@@ -3383,6 +3404,30 @@ impl App {
                         game.expansion_asked = None;
                         let _ = game.session.answer_expansion(yes);
                     }
+                }
+            }
+            // Handing the party over: OK asks the server.
+            Scene::Game(game) if game.leader_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        let account = game.leader_asked.take().unwrap();
+                        if yes {
+                            let _ = game.session.change_party_leader(account);
+                        }
+                    }
+                }
+            }
+            // The party setup window: choices, OK and Cancel.
+            Scene::Game(game) if game.party_setup.as_ref().and_then(|setup| setup.hit(cursor)).is_some() => {
+                let setup = game.party_setup.as_mut().unwrap();
+                match setup.hit(cursor).and_then(|hit| setup.click(hit)) {
+                    Some(party::SetupAction::Send(settings)) => {
+                        game.party_setup = None;
+                        let _ = game.session.party_options(settings.exp_even, settings.pickup, settings.share);
+                    }
+                    Some(party::SetupAction::Close) => game.party_setup = None,
+                    None => {}
                 }
             }
             // Dismissing the mercenary: OK lets it go.
@@ -3742,6 +3787,12 @@ impl App {
                         Some(party::Hit::Button(party::Button::Leave)) => {
                             let _ = game.session.leave_party();
                         }
+                        Some(party::Hit::Button(party::Button::Setup)) => {
+                            if let Some(party) = &game.party {
+                                let leader = party.leader() == Some(game.account_id);
+                                game.party_setup = Some(party::Setup::new(party, leader, game.party_window.frame.position));
+                            }
+                        }
                         _ => {}
                     },
                     Panel::Storage => {
@@ -3979,6 +4030,20 @@ impl App {
             && select.unlocked()
         {
             select.open_menu(self.cursor, &self.font, &self.messages);
+        }
+        // The leader's right click (not a drag) on another member's row in the party window: hand the party over.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+            && let Some((start, None)) = game.right_press
+            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+            && game.window_at(self.cursor) == Some(Panel::Party)
+            && let Some(party::Hit::Member(account)) = game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends, game.account_id)
+            && game.party.as_ref().is_some_and(|party| party.offers_leader(game.account_id, account))
+        {
+            game.right_press = None;
+            let label = self.messages.get(LEADER_CHOICE).cloned().unwrap_or_default();
+            game.menu = Some(menu::Menu::new(self.cursor, vec![Some((label, Choice::Leader(account)))], &self.font));
+            return;
         }
         if let Scene::Game(game) = &mut self.scene {
             let assets = self.assets.as_ref();
@@ -4718,6 +4783,13 @@ impl App {
                 game.expansion_asked = None;
                 let _ = game.session.answer_expansion(*key == Key::Named(NamedKey::Enter));
             }
+            Scene::Game(game) if game.leader_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                let account = game.leader_asked.take().unwrap();
+                if *key == Key::Named(NamedKey::Enter) {
+                    let _ = game.session.change_party_leader(account);
+                }
+            }
+            Scene::Game(game) if game.party_setup.is_some() && *key == Key::Named(NamedKey::Escape) => game.party_setup = None,
             Scene::Game(game) if game.dismiss_asked && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_dismiss(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
@@ -5253,6 +5325,9 @@ impl App {
                     pet_window: pet::PetWindow::default(),
                     pet_asked: None,
                     mercenary: None,
+                    refusing_party: None,
+                    party_setup: None,
+                    leader_asked: None,
                     mercenary_skills: Vec::new(),
                     mercenary_window: mercenary::Window::default(),
                     mercenary_skill_list: mercenary::SkillList::default(),
@@ -6580,6 +6655,7 @@ impl App {
                     5 => 1324,
                     7 => 71,
                     8 => 1388,
+                    10 => 3027,
                     _ => 1871,
                 };
                 let text = rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]);
@@ -6588,8 +6664,22 @@ impl App {
             MapEvent::PartyChat { account, text } => game.chat_line(text, if account == game.account_id { PARTY_CHAT_OURS } else { PARTY_CHAT }),
             MapEvent::PartyPosition { account, cell } => {
                 if let Some(member) = game.party.as_mut().and_then(|party| party.member(account)) {
-                    member.cell = Some(cell.map(i32::from));
+                    member.cell = cell.map(|cell| cell.map(i32::from));
                 }
+            }
+            // ponytail: the line and its color (the party chat's) for a member's pickup are estimates.
+            MapEvent::PartyPickup { account, item, identified, refine } => {
+                let member = game.party.as_mut().and_then(|party| party.member(account)).map(|member| member.info.name.clone());
+                let name = inventory::item_name(&self.items, item, identified, refine);
+                let text = rustnarok_client::messages::fill(self.messages.get(PARTY_PICKUP).map_or("", String::as_str), &[&member.unwrap_or_default(), &name]);
+                game.chat_line(text, PARTY_CHAT);
+            }
+            // It comes at every map load: a line only when it changes.
+            MapEvent::PartyRefusing(refusing) => {
+                if game.refusing_party.is_some_and(|known| known != refusing) {
+                    game.chat_line(self.messages.get(if refusing { PARTY_REFUSING } else { PARTY_ALLOWING }).cloned().unwrap_or_default(), CHAT_ITEM);
+                }
+                game.refusing_party = Some(refusing);
             }
             // Members' HP: in the window, and as a bar under them.
             MapEvent::PartyHp { account, hp, max } => {
@@ -6600,9 +6690,18 @@ impl App {
                     game.unit_hp.insert(account, (hp, max));
                 }
             }
-            MapEvent::PartyOptions { exp, .. } => {
+            // EXP 2: an even share was refused (the levels are too far apart); the item settings still change.
+            MapEvent::PartyOptions { exp, pickup, share } => {
                 if let Some(party) = &mut game.party {
-                    party.exp_shared = exp == 1;
+                    if exp != 2 {
+                        party.exp_shared = exp == 1;
+                    }
+                    party.pickup_shared = pickup;
+                    party.item_shared = share;
+                }
+                if exp == 2 {
+                    // ponytail: which line the official client prints for a refused share is an estimate.
+                    game.chat_line(self.messages.get(PARTY_SETUP_REFUSED).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
             }
             MapEvent::PartyLeader { old, new } => {
@@ -8606,6 +8705,7 @@ impl App {
         // colors.
         let colored_question = match (game.expansion_asked, &game.pet_asked) {
             _ if game.dismiss_asked => Some(message(mercenary::DISMISS_QUESTION).to_owned()),
+            _ if game.leader_asked.is_some() => Some(message(LEADER_QUESTION).to_owned()),
             _ if game.bind_asked.is_some() => Some(message(BIND_ASKS).to_owned()),
             (Some(voucher), _) => {
                 let now = inventory::BASE_SLOTS + usize::from(game.inventory.expansion);
@@ -8665,6 +8765,9 @@ impl App {
         }
         if let Some(menu) = &game.escape {
             menu.draw(&mut shop_layer, &assets.chrome, &assets.escape, messages, pointer);
+        }
+        if let Some(setup) = &game.party_setup {
+            setup.draw(&mut shop_layer, &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), messages, pointer);
         }
         if let Some(window) = &game.audio_window {
             window.draw(&mut shop_layer, &assets.chrome, &assets.options, font, messages, sound, pointer.0);
