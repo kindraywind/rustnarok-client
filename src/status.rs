@@ -18,6 +18,8 @@ const FIRST: f32 = 6.0;
 const VALUE: f32 = 40.0;
 const BONUS: f32 = 56.0;
 const ARROW: f32 = 77.0;
+/// How much around an arrow a click takes.
+const ARROW_BOX: [f32; 2] = [11.0, 11.0];
 const COST_RIGHT: f32 = 101.0;
 const LEFT_COLUMN_RIGHT: f32 = 192.0;
 const RIGHT_COLUMN_RIGHT: f32 = 275.0;
@@ -61,6 +63,14 @@ impl Default for StatusWindow {
     }
 }
 
+/// The six stats' short names, Str to Luk.
+pub const STATS: [&str; 6] = ["str", "agi", "vit", "int", "dex", "luk"];
+
+/// Where the arrow raising a stat (by row, Str first) sits in the window.
+fn arrow_corner(row: u16) -> [f32; 2] {
+    [ARROW, TITLE_HEIGHT + FIRST + f32::from(row) * ROW]
+}
+
 /// A value with its bonus the way the window writes it: "12 + 3", "12 - 3".
 fn pair(base: i64, bonus: i64) -> String {
     if bonus < 0 { format!("{base} - {}", -bonus) } else { format!("{base} + {bonus}") }
@@ -84,11 +94,25 @@ impl StatusWindow {
         }
         for row in 0..6u16 {
             let stat = STATUS_STR + row;
-            if can_raise(status, stat) && contains([ARROW, TITLE_HEIGHT + FIRST + f32::from(row) * ROW], [11.0, 11.0], local) {
+            if can_raise(status, stat) && contains(arrow_corner(row), ARROW_BOX, local) {
                 return Some(Hit::Raise(stat));
             }
         }
         Some(Hit::Window)
+    }
+
+    /// The arrows on screen that raise a stat now (for the test driver), named `raise_str` to `raise_luk`.
+    pub fn raise_boxes(&self, status: &HashMap<u16, i64>) -> Vec<(String, [f32; 4])> {
+        if !self.frame.open || self.frame.minimized {
+            return Vec::new();
+        }
+        (0..6u16)
+            .filter(|&row| can_raise(status, STATUS_STR + row))
+            .map(|row| {
+                let [x, y] = self.frame.at(arrow_corner(row));
+                (format!("raise_{}", STATS[usize::from(row)]), [x, y, ARROW_BOX[0], ARROW_BOX[1]])
+            })
+            .collect()
     }
 
     pub fn click(&mut self, hit: Hit) -> Option<u16> {
@@ -178,5 +202,22 @@ mod tests {
         assert!(!can_raise(&status, STATUS_STR + 1));
         assert_eq!(pair(10, -2), "10 - 2");
         assert_eq!(pair(10, 3), "10 + 3");
+    }
+
+    #[test]
+    fn names_the_arrows_points_pay_for() {
+        // 5 points: Int (cost 4) and Luk (cost 2) can rise, Str (cost 9) can't, and Agi, Vit and Dex have no cost known.
+        let status = HashMap::from([(STATUS_POINTS, 5), (STATUS_STR_COST, 9), (STATUS_STR_COST + 3, 4), (STATUS_STR_COST + 5, 2)]);
+        let mut window = StatusWindow::default();
+        assert!(window.raise_boxes(&status).is_empty());
+        window.frame.open = true;
+        let [x, y] = POSITION;
+        let row = |row: f32| y + TITLE_HEIGHT + FIRST + row * ROW;
+        assert_eq!(
+            window.raise_boxes(&status),
+            [("raise_int".to_owned(), [x + ARROW, row(3.0), 11.0, 11.0]), ("raise_luk".to_owned(), [x + ARROW, row(5.0), 11.0, 11.0])]
+        );
+        window.frame.minimized = true;
+        assert!(window.raise_boxes(&status).is_empty());
     }
 }

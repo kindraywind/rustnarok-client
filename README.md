@@ -16,7 +16,7 @@ As good as the original, and better where it can be.
 [![rathena](https://img.shields.io/badge/server-rathena-2F7D32)](https://github.com/kindraywind/rathena/tree/rustnarok)
 [![Clean room](https://img.shields.io/badge/clean%20room-no%20game%20data%20in%20git-1F6FEB)](#-conventions)
 
-[Quick start](#-quick-start) · [What works](#-what-works) · [Server](#-server) · [Development](#-development) · [Not done yet](#-not-done-yet)
+[Quick start](#-quick-start) · [What works](#-what-works) · [An AI plays it](#-an-ai-plays-it) · [Server](#-server) · [Development](#-development) · [Not done yet](#-not-done-yet)
 
 </div>
 
@@ -49,7 +49,7 @@ Login, char and map servers at PACKETVER 20220406. Every packet length is genera
 <td width="50%" valign="top">
 
 ### 🧪 Tested by playing
-A control socket and an MCP server drive the live client; scenario suites screenshot each change and diff it
+A control socket and an [MCP server](#-driving-the-client) drive the live client; scenario suites screenshot each change and diff it
 against `main`.
 
 </td>
@@ -65,7 +65,7 @@ against `main`.
 | 🧙 **Characters** | Players with heads, headgear, weapons, shields and garments; monsters, NPCs, pets and warp portals; walking, sitting, emotions, spirit spheres and coins, pushcarts; HP/SP bars, names with party, guild, position and emblem on pointing, chat bubbles, cast bars, the MVP banner. |
 | ⚔️ **Combat and skills** | Attacking with reach checks, damage numbers of every kind, death; the skill window and hotkeys, casting with targets, status icons, effects (STR animations, moving textures and sprites, cylinders, sprite animations, camera shakes), skills' units on the ground (Fire Wall, Safety Wall, Pneuma, warp portals, traps), Warp Portal's destination list, Auto Spell and Shadow Spell. |
 | 🪟 **Windows** | Basic info with its menu, inventory (with expansion), equipment (and another player's), item descriptions with card slots, status (raising stats), skills, the hotkey bar, chat with whispers, the emotion list and chat macros, NPC dialogs (menus, number and text input), quests, the option menu (Esc) with audio, graphics and shortcut settings, the right-click menu. |
-| 🛒 **Trade and crafting** | NPC shops, markets and barter shops, trading, vending (one's own shop and others'), buying stores (one's own store and selling into others'), storage, cart, the bank, the refine window, the enchant window, card insertion, the Magnifier, making items from a list (Pharmacy, Arrow Crafting, cooking), Repair and Upgrade Weapon, the material window (Change Material, Four Spirit Analysis). |
+| 🛒 **Trade and crafting** | NPC shops, markets and barter shops, trading, vending (one's own shop and others'), buying stores (one's own store and selling into others'), storage, cart, the bank, the refine window, the enchant window, the grade enchant window, card insertion, the Magnifier, making items from a list (Pharmacy, Arrow Crafting, cooking), Repair and Upgrade Weapon, the material window (Change Material, Four Spirit Analysis). |
 | 🐾 **Pets** | Taming with its slot machine, hatching, the pet window (Alt+J), feeding, renaming, accessories, performances and pet talk. |
 | 🧪 **Homunculus** | Its sprite, the window (Alt+R) with its values, bars and words, the skill list with level up, feeding, renaming, following the player (Alt+T) and Alt + right click orders. |
 | 👥 **Together** | Parties, guilds (info with the emblem, members, positions, skills, expel list, notice), clans, friends, chat rooms, RODEX mail, server announcements and item news. |
@@ -75,6 +75,56 @@ against `main`.
 
 Window places are measured over the client's own bitmaps where they show them. Where they don't, they are estimates
 marked `ponytail:` in the code, to calibrate against screenshots of the real client.
+
+## 🤖 An AI plays it
+
+`rustnarok-client-mcp` hands the client to an AI assistant such as Claude Code. Ask in plain words: it looks at the
+screen, reads the game state and plays through the client's own mouse and keyboard handling.
+
+> **"Reset my skills with a Neuralizer and rebuild me for the War of Emperium."**
+
+```text
+state                     → a Wizard, job level 50
+key Alt+Q, double click   → its gear off: the Neuralizer wants nothing carried
+click (the Kafra's box)   → the Kafra's menu, then her storage
+drag × n                  → everything but the Neuralizer into storage
+key Alt+E, double click   → the Neuralizer: every skill point back
+key Alt+S, state          → the skill tree, each skill's box
+click × n                 → Storm Gust, Quagmire, Safety Wall, Jupitel Thunder ...
+drag × n, double click    → the gear out of storage and on again
+drag × 4                  → the war skills onto F1-F4
+```
+
+> **"Take my Novice through the Acolyte job change."**
+
+```text
+state                    → a Novice, job level 10, in Prontera
+click (the priest's box) → the dialog, as text: the NPC's lines, Next, a menu
+click, key Enter × n     → reads each line, picks the Acolyte choice
+state                    → the priest sends it to a pilgrim outside the town
+click × n                → walks the fields to the pilgrim, talks, walks back
+state                    → job: Acolyte
+```
+
+NPC dialogs come as text, menus as lists to pick from, so quests that are talking, walking and fetching suit it best.
+
+More errands to hand over:
+
+| Ask | What it does |
+|---|---|
+| 🛒 *"Buy 50 Red Potions and put them on F1."* | Walks to the tool dealer, buys them and drags them onto the hotkey bar. |
+| 💇 *"Try every hair color and show me."* | Clicks through the stylist's colors and sends a screenshot of each to pick from. |
+| 📸 *"A photo of me casting Storm Gust by the Prontera fountain."* | Pauses the clock at the effect's best frame, turns the camera and crops the shot. |
+| 🗣️ *"Talk to this NPC and tell me what it says in Thai."* | Reads the dialog, translates it and picks the option you choose. |
+| 🧙 *"Make me a new character for an archer build."* | Creates and names it, then spends its stat points on AGI and DEX. |
+| 💬 *"I'm off to eat. Answer whispers and tell me who wrote."* | Waits for chat, replies, and sums it up when you're back. |
+| 🎉 *"Run a 10-question quiz in chat and give the winner an Old Blue Box."* | Asks, reads the answers, hands out the prize with a GM command: a game master for a server among friends. |
+| ♿ *"Walk to Prontera and sell my loot."* | Plays by typed or spoken words, for players who find the mouse hard. |
+
+It takes a few seconds a step, and a driven client ignores the real mouse and keyboard, so it runs errands rather
+than fights beside you. Use it on your own server: a bot on someone else's breaks its rules.
+
+Setting it up: [Driving the client](#-driving-the-client).
 
 ## 🚀 Quick start
 

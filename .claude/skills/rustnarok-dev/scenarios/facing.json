@@ -1,0 +1,14 @@
+{
+  "about": "Facing (issue #188): four NPCs of our own (npc/facing.txt, Orc Warrior looks) face rathena's directions 0 (north), 2 (west), 4 (south) and 6 (east) near prontera 156 180. North shows the back, south faces the camera, west looks left and east right; Prontera's own south-facing NPCs above them face the camera too. The NPCs live only in the map server's memory, and the scenario unloads them at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/facing.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/facing.txt"}, {"wait": 1500},
+    {"expect": {"chat": "Script loaded."}},
+    {"move": [1000, 750]},
+    {"shot": "facing-npcs", "crop": [230, 0, 520, 290]},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/facing.txt"}, {"wait": 500}
+  ]
+}

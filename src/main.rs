@@ -46,8 +46,11 @@ mod actor;
 mod announce;
 mod bank;
 mod basic_info;
+mod battle_queue;
+mod battleground;
 mod buying;
 mod cashshop;
+mod catalog;
 mod char_make;
 mod char_select;
 mod chat;
@@ -62,6 +65,7 @@ mod emotion_list;
 mod enchant;
 mod equipment;
 mod escape;
+mod grade;
 mod guild;
 mod homunculus;
 mod hotkeys;
@@ -81,13 +85,16 @@ mod party;
 mod pet;
 mod pick_list;
 mod picking;
+mod pickup;
 mod pin;
 mod quest;
 mod ranking;
 mod refine;
+mod reform;
 mod render;
 mod roulette;
 mod shop;
+mod shortcuts;
 mod skills;
 mod sound;
 mod status;
@@ -233,6 +240,22 @@ const TRADE_HEAVY: usize = 73;
 const TRADE_CHOICE: usize = 87;
 /// "Check %s's Equipment Info"; the Show Equipment box's answers, on and off.
 const VIEW_CHOICE: usize = 1360;
+/// "Send an adoption request to %s"; the questions to the one asked: "(name)" + " wishes to adopt you. Do you
+/// accept?", then what a baby class gives up.
+const ADOPT_CHOICE: usize = 887;
+const ADOPT_ASKS: usize = 794;
+const ADOPT_ASKS_AGAIN: usize = 888;
+/// Asking to adopt, refused: a child already, under level 70, the one asked is married.
+const ADOPT_REFUSALS: [usize; 3] = [899, 900, 916];
+/// "%s and %s have divorced from each other."
+const DIVORCED: usize = 836;
+/// The Wedding Rings (a man's, a woman's) and I Miss You, which the ring gives.
+const WEDDING_RINGS: [u32; 2] = [2634, 2635];
+const CALL_PARTNER: u16 = 336;
+/// The wedding effect.
+// ponytail: the effect ZC_CONGRATULATION plays isn't knowable; 347 (EF_COLORPAPER) is the one whose sound the
+// client's table names effect\wedding.
+const WEDDING_EFFECT: u32 = 347;
 /// Pets: the egg list's title, the menu (status, feed, performance, back to the egg, accessory off, by command), the
 /// questions (feeding; the name, then renaming once), no food, and neglect.
 // ponytail: the menu's order is a guess; the strings sit together like one.
@@ -261,6 +284,15 @@ const ANTAGONIST_CHOICE: usize = 403;
 /// "(guild) Guild is asking for an Alliance with them. Do you accept?", "Are you sure that you want to delete it?"
 const ALLY_ASKS: usize = 393;
 const DELETE_ASKS: usize = 356;
+/// "Are you sure that you want to leave?", and the lines when someone leaves: "You left the guild.", "%s has left the
+/// guild.", "Withdrawal Reason: %s". The member menu's "Leave Guild".
+const LEAVE_ASKS: usize = 357;
+const LEFT_GUILD: usize = 489;
+const MEMBER_LEFT: usize = 364;
+const LEFT_BECAUSE: usize = 365;
+const LEAVE_CHOICE: usize = 508;
+/// "Position Title", over the question for a new one.
+const POSITION_TITLE: usize = 511;
 const GUILD_INVITED: usize = 377;
 const GUILD_ONLINE: usize = 485;
 const GUILD_CHAT: [u8; 3] = [180, 255, 180];
@@ -612,6 +644,12 @@ struct Game {
     camera_goal: CameraGoal,
     /// The map's overview picture, for the minimap.
     minimap: Option<Texture>,
+    /// Ctrl+Tab walks this: shown, translucent, hidden.
+    minimap_view: minimap::View,
+    /// The overview at half alpha, built the first time the map goes translucent.
+    minimap_faded: Option<Texture>,
+    /// Alt+End hides the player's HP and SP bars. Monsters keep theirs.
+    show_bars: bool,
     last_frame: Instant,
     chat: chat::Chat,
     entered: Instant,
@@ -719,9 +757,13 @@ struct Game {
     /// The deal under way; someone asking for one (name, character ID, level); whom we asked.
     trade: Option<trade::Trade>,
     refine: Option<refine::Refine>,
+    /// The grade enchant window.
+    grade: Option<grade::GradeEnchant>,
     /// Laphine synthesis and upgrade, open until their close packet or a map change.
     synthesis: Option<laphine::Synthesis>,
     upgrade: Option<laphine::Upgrade>,
+    /// The item reform window (a reform box or an NPC).
+    reform: Option<reform::Reform>,
     /// The enchant window (perfect, random, upgrade, reset).
     enchant: Option<enchant::Enchant>,
     /// The stylist (`@stylist`). The preview is its own figure; the player's look waits for the server.
@@ -748,6 +790,10 @@ struct Game {
     party: Option<party::Party>,
     party_window: party::PartyWindow,
     party_invite: Option<(u32, String)>,
+    /// The partner's name, as the last I Miss You told it (while the player has the ring's skill).
+    partner: Option<String>,
+    /// Being asked to be adopted: by whom (parent, partner accounts; the name), and whether it's the second question.
+    adopt_asked: Option<(u32, u32, String, bool)>,
     /// Setting up our shop, and our open shop.
     vend_setup: Option<vend::Setup>,
     my_shop: Option<vend::MyShop>,
@@ -798,6 +844,11 @@ struct Game {
     /// The ranking board while it's open, characters' names by ID as the server told them (None: it has none), and
     /// the names asked for.
     ranking: Option<ranking::Board>,
+    /// What was just picked up, for five seconds; and whether anything was since the inventory was last open.
+    pickup_popup: Option<pickup::Popup>,
+    new_items: bool,
+    /// The Universal Catalog's store search while it's open.
+    catalog: Option<catalog::Catalog>,
     char_names: HashMap<u32, Option<String>>,
     names_asked: HashSet<u32>,
     /// The dress room's lists, the room while it's open, and its figure.
@@ -811,6 +862,14 @@ struct Game {
     /// The map's property and flags (net::MAP_*), and its type, as the server last sent them.
     map_property: Option<(u16, u32)>,
     map_type: Option<u16>,
+    /// The battleground queue's window, the battleground queued for (and how many wait), and its question up.
+    queue_window: battle_queue::QueueWindow,
+    queued: Option<(String, Option<u32>)>,
+    queue_asked: Option<QueueAsked>,
+    /// The battleground's camps, score, teammates' dots and battle chat; forgotten on a map change.
+    battle: battleground::Battle,
+    /// The minimap dot for teammates, and the marks over heads: our camp's, the other's.
+    camp_looks: Option<(Texture, [Texture; 2])>,
     /// The player's PvP rank and the players on the map, while the server counts them.
     pvp_rank: Option<(u32, u32)>,
     /// The counter's digits (rankfont), the clock's (timefont) and the first-place banner (timeattack), loaded when first
@@ -1065,6 +1124,8 @@ fn change_look(look: &mut Look, kind: u8, value: u32, extra: u32) -> bool {
 /// A map name as the indoor table lists it.
 /// An NPC's mark on the minimap: (NPC, mark ID), cell, image, and until when (None while the NPC keeps it).
 type Mark = ((u32, u8), [i32; 2], Texture, Option<Instant>);
+/// The Universal Catalog's mark, apart from the NPCs'.
+const CATALOG_MARK: (u32, u8) = (u32::MAX, 0);
 
 /// A scripted input (RUSTNAROK_CLIENT_CLICKS): when, right button, where, and where to drag to.
 type ScriptedInput = (Duration, bool, [f32; 2], Option<[f32; 2]>);
@@ -1126,6 +1187,9 @@ enum Asked {
     Material(u16),
     /// The pet's new name.
     PetName,
+    /// A guild position's new title, and its tax (the master's).
+    PositionTitle(u32),
+    PositionTax(u32),
     /// The homunculus's new name.
     HomunculusName,
     /// A Talkie Box's message, before it's placed at the cell.
@@ -1155,6 +1219,20 @@ enum Choice {
     Pet(u8),
     /// Hand the party to this member (by account).
     Leader(u32),
+    /// Ask this party member (by account) to be adopted.
+    Adopt(u32),
+    /// The guild master moves a member (by its place in the member list) to a position.
+    GuildMove(usize, u32),
+    /// Leave the guild (asks first).
+    GuildLeave,
+}
+
+/// A battleground queue question waiting for OK: applying (how, for which), leaving the queue, or entering the
+/// battle (until the time to answer runs out).
+enum QueueAsked {
+    Apply(u16, String),
+    Cancel(String),
+    Lobby(String, Instant),
 }
 
 /// A pet question waiting for OK: feed it, or rename it (to this).
@@ -1286,18 +1364,53 @@ impl Game {
         self.dressroom = Some(dressroom::Room::new(&character_look(&self.me), &self.dress_lists));
     }
 
+    /// A click in the store search window.
+    fn click_catalog(&mut self, hit: catalog::Hit, items: &HashMap<u32, ItemInfo>, messages: &[String]) {
+        let Some(catalog) = &mut self.catalog else { return };
+        match hit {
+            catalog::Hit::Title(TitleHit::Close) | catalog::Hit::Close => self.close_catalog(),
+            catalog::Hit::Title(title) => catalog.frame.click_title(title),
+            catalog::Hit::Kind(buying) => catalog.buying = buying,
+            catalog::Hit::Field(field) => catalog.focus = Some(field),
+            catalog::Hit::Search => match catalog::search(&catalog.name, &catalog.min, &catalog.max, items) {
+                Ok((ids, max, min)) => {
+                    let _ = self.session.search_stores(catalog.buying, max, min, &ids, &[]);
+                }
+                Err(id) => self.chat_line(messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+            },
+            catalog::Hit::Next => {
+                let _ = self.session.next_store_page();
+            }
+            catalog::Hit::Row(index) => {
+                if catalog.click_row(index) {
+                    let row = &catalog.rows[index];
+                    let _ = self.session.pick_store(row.account, row.store, row.item);
+                }
+            }
+            catalog::Hit::Window => catalog.focus = None,
+        }
+    }
+
+    /// Closes the store search, telling the server (CZ_CLOSE_SEARCH_STORE_INFO).
+    fn close_catalog(&mut self) {
+        if self.catalog.take().is_some() {
+            let _ = self.session.close_store_search();
+            self.marks.retain(|(key, ..)| *key != CATALOG_MARK);
+        }
+    }
+
     /// Who the player sides with on this map, for `versus`: the map's flags, our party's online members, our guild.
     // ponytail: allies come with the guild alliance list (#102); none until then.
     fn side(&self) -> versus::Side {
         let party = self.party.iter().flat_map(|party| &party.members).filter(|member| member.info.online).map(|member| member.info.account).collect();
         let flags = self.map_property.map_or(0, |(_, flags)| flags);
-        versus::Side { flags, party, guild: self.guild.as_ref().map_or(0, |guild| guild.id), allies: Vec::new() }
+        versus::Side { flags, party, guild: self.guild.as_ref().map_or(0, |guild| guild.id), allies: Vec::new(), camp: self.battle.camp(self.account_id) }
     }
 
     /// Another player as `versus` sees them.
     fn opponent(&self, id: u32) -> Option<versus::Other> {
         let actor = self.units.get(&id).filter(|actor| actor.kind == PLAYER)?;
-        Some(versus::Other { account: id, guild: actor.guild, dead: actor.dead || actor.remove_at.is_some() })
+        Some(versus::Other { account: id, guild: actor.guild, dead: actor.dead || actor.remove_at.is_some(), camp: self.battle.camps.get(&id).copied() })
     }
 
     fn players_first(&self, shift: bool) -> bool {
@@ -1642,6 +1755,11 @@ impl Game {
             }
             return None;
         }
+        // With /battlechat on, a line goes to the battleground team (not to the party, the guild or a whisper).
+        if self.battle.chat {
+            let _ = self.session.battle_chat(&self.me.name, text);
+            return None;
+        }
         if to.is_empty() && (guild || text.starts_with('$')) {
             let _ = self.session.guild_chat(&self.me.name, text.trim_start_matches('$'));
             return None;
@@ -1677,6 +1795,11 @@ impl Game {
             chat::Command::Memo => self.session.remember_warp_point(),
             chat::Command::PvpInfo => self.session.pvp_info(self.me.id, self.account_id),
             chat::Command::Ranking(kind) => self.session.ask_ranking(kind),
+            chat::Command::BattleChat => {
+                let id = self.battle.toggle_chat();
+                self.chat_line(message(id), CHAT_ITEM);
+                Ok(())
+            }
             chat::Command::DressRoom => {
                 self.open_dressroom();
                 Ok(())
@@ -1734,6 +1857,78 @@ impl Game {
         }
     }
 
+    /// A text box has the caret. The chat line always does, and so does a window's field while it is typed in.
+    fn text_box_focused(&self) -> bool {
+        self.dialog.as_ref().is_some_and(|dialog| dialog.input.is_some())
+            || self.amount.is_some()
+            || self.vend_setup.as_ref().is_some_and(|setup| setup.typing)
+            || self.buying_setup.as_ref().is_some_and(|setup| setup.focus.is_some())
+            || self.mail.typing()
+            || self.macro_window.as_ref().is_some_and(|window| window.editing.is_some())
+            || self.room_make.is_some()
+            || self.room.is_some()
+            || self.cashshop.as_ref().is_some_and(|shop| shop.typing)
+            || self.bank.as_ref().is_some_and(|bank| bank.typing)
+            || self.trade.as_ref().is_some_and(|trade| trade.typing)
+            || self.storage.typing
+            || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
+            || self.chat.input.is_empty()
+            || !self.chat.input.is_empty()
+    }
+
+    /// F11 closes the player's windows. A talk with an NPC stays until the server ends it.
+    fn close_windows(&mut self) {
+        for frame in [
+            &mut self.hotkeys.frame,
+            &mut self.basic_info.frame,
+            &mut self.inventory.frame,
+            &mut self.equipment.frame,
+            &mut self.skill_window.frame,
+            &mut self.storage.frame,
+            &mut self.party_window.frame,
+            &mut self.status_window.frame,
+            &mut self.guild_window.frame,
+            &mut self.clan_window.frame,
+            &mut self.cart.frame,
+            &mut self.pet_window.frame,
+            &mut self.mercenary_window.frame,
+            &mut self.mercenary_skill_list.frame,
+            &mut self.homunculus_window.frame,
+            &mut self.homunculus_skill_list.frame,
+            &mut self.quest_window.frame,
+            &mut self.achievement_window.frame,
+            &mut self.mail.list.frame,
+        ] {
+            frame.open = false;
+        }
+        self.basic_info.menu_open = false;
+        self.equipment.swapping = false;
+        if self.macro_window.take().is_some() {
+            macros::save(macros::path().as_deref(), &self.macro_lines);
+        }
+        self.emotion_list = None;
+        self.world_map = None;
+        self.audio_window = None;
+        self.graphics_window = None;
+        self.shortcuts_window = None;
+        self.item_window = None;
+        self.monster_window = None;
+        self.ranking = None;
+        self.dressroom = None;
+        self.dress_figure = None;
+        self.party_setup = None;
+        self.escape = None;
+        self.room_make = None;
+        self.viewing = None;
+        self.mail.letter = None;
+        self.mail.compose = None;
+        if self.bank.is_some() {
+            let _ = self.session.close_bank(self.account_id);
+            self.bank = None;
+        }
+        self.close_catalog();
+    }
+
     /// Whether the pointer is over the interface (a window, the chat, a dialog) rather than the world.
     /// Whether the pointer is on a window, or something holds the clicks (a dialog, a menu, a question in the message
     /// box of this size).
@@ -1788,6 +1983,8 @@ impl Game {
             || self.synthesis.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.upgrade.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.reform.as_ref().is_some_and(|window| window.hit(cursor, &self.inventory.items).is_some())
+            || self.grade.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || roulette::icon_hit(cursor)
             || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.stylist.as_ref().is_some_and(|window| window.covers(cursor))
@@ -1813,6 +2010,8 @@ impl Game {
             | Asked::BuyingAmount(_)
             | Asked::PetName
             | Asked::HomunculusName
+            | Asked::PositionTitle(_)
+            | Asked::PositionTax(_)
             | Asked::TalkieBox { .. } => None,
         };
         match amount {
@@ -1848,6 +2047,16 @@ impl Game {
                 Ok(())
             }
             Asked::PartyName | Asked::Invite | Asked::PetName | Asked::HomunculusName => Ok(()),
+            // A position's title or tax: the request carries its other values as they are.
+            Asked::PositionTitle(id) if !name.is_empty() => match &self.guild {
+                Some(guild) => self.session.change_position(&guild.position(id), name),
+                None => Ok(()),
+            },
+            Asked::PositionTax(id) if !name.is_empty() => match &self.guild {
+                Some(guild) => self.session.change_position(&net::GuildPosition { tax: amount.value(), ..guild.position(id) }, &guild.title(id)),
+                None => Ok(()),
+            },
+            Asked::PositionTitle(_) | Asked::PositionTax(_) => Ok(()),
             Asked::BuyingPrice(index, item_id) => {
                 if let Some(setup) = &mut self.buying_setup {
                     setup.set_price(index, item_id, amount.value());
@@ -1908,6 +2117,8 @@ impl Game {
             | Asked::RoomPassword(_)
             | Asked::PetName
             | Asked::HomunculusName
+            | Asked::PositionTitle(_)
+            | Asked::PositionTax(_)
             | Asked::BuyingPrice(..)
             | Asked::BuyingAmount(_)
             | Asked::TalkieBox { .. } => Ok(()),
@@ -2109,7 +2320,8 @@ impl Game {
             return;
         }
         match item.kind {
-            net::ITEM_HEALING | net::ITEM_USABLE | net::ITEM_CASH => {
+            // A reform box is a delayed consume: using it only opens the window.
+            net::ITEM_HEALING | net::ITEM_USABLE | net::ITEM_DELAY_CONSUME | net::ITEM_CASH => {
                 let _ = self.session.use_item(index, self.account_id);
             }
             // An egg (armor worn nowhere) hatches from the egg list only.
@@ -2440,6 +2652,8 @@ enum GuildAsked {
     Ally { id: u32, guild: String },
     /// End the relation with this guild.
     End { id: u32, antagonist: bool },
+    /// Leave the guild.
+    Leave,
 }
 
 /// What a pick list's answer is for.
@@ -2593,7 +2807,9 @@ struct Assets {
     storage: storage::Assets,
     trade: trade::Assets,
     refine: refine::Assets,
+    grade: grade::Assets,
     laphine: laphine::Assets,
+    reform: reform::Assets,
     enchant: enchant::Assets,
     stylist: stylist::Assets,
     bank: bank::Assets,
@@ -2601,6 +2817,9 @@ struct Assets {
     context_menu: menu::Assets,
     weather: weather::Assets,
     dressroom: dressroom::Assets,
+    catalog: catalog::Assets,
+    pickup: pickup::Assets,
+    battle_queue: battle_queue::Assets,
     mercenary: mercenary::Assets,
     homunculus: homunculus::Assets,
     party: party::Assets,
@@ -2703,7 +2922,9 @@ impl Assets {
             storage: storage::Assets::load(gpu, grf),
             trade: trade::Assets::load(gpu, grf),
             refine: refine::Assets::load(gpu, grf),
+            grade: grade::Assets::load(gpu, grf),
             laphine: laphine::Assets::load(gpu, grf),
+            reform: reform::Assets::load(gpu, grf),
             enchant: enchant::Assets::load(gpu, grf),
             stylist: stylist::Assets::load(gpu, grf),
             bank: bank::Assets::load(gpu, grf),
@@ -2711,6 +2932,9 @@ impl Assets {
             context_menu: menu::Assets::load(gpu),
             weather: weather::Assets::load(gpu, grf),
             dressroom: dressroom::Assets::load(gpu, grf),
+            catalog: catalog::Assets::load(gpu, grf),
+            pickup: pickup::Assets::load(gpu, grf),
+            battle_queue: battle_queue::Assets::load(gpu, grf, &lua::entry_queue(grf).unwrap_or_default()),
             mercenary: mercenary::Assets::load(gpu, grf),
             homunculus: homunculus::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
@@ -2771,6 +2995,13 @@ fn login_position(window: &Texture) -> [f32; 2] {
     [((SCREEN[0] - window.size[0]) / 2.0).floor(), LOGIN_TOP]
 }
 
+fn shortcut_to_bind(key: options::ShortcutKey) -> Option<shortcuts::ShortcutKey> {
+    match key {
+        options::ShortcutKey::NamedF(number) => shortcuts::function_key(number),
+        options::ShortcutKey::Char(character) => Some(shortcuts::ShortcutKey::Char(character.to_ascii_lowercase())),
+    }
+}
+
 fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
     let number = match key {
         Key::Named(NamedKey::F1) => 1,
@@ -2829,6 +3060,11 @@ fn remember_id(id: Option<&str>) {
         Some(id) => path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&path, id)),
         None => std::fs::remove_file(&path),
     };
+}
+
+/// A message's last sentence (after its last ". "), or all of it.
+fn last_sentence(text: &str) -> &str {
+    text.rsplit_once(". ").map_or(text, |(_, last)| last)
 }
 
 fn dialog_position(dialog: &Texture) -> [f32; 2] {
@@ -3102,6 +3338,12 @@ struct App {
     title_names: HashMap<u32, String>,
     /// Item names and resources by item ID, and the client's numbered messages.
     items: HashMap<u32, ItemInfo>,
+    /// The battlegrounds the queue window lists.
+    battlegrounds: Vec<lua::Battleground>,
+    /// The cards' words in item names.
+    card_names: inventory::CardNames,
+    /// What each reform item can turn into, from the client's reform list.
+    reforms: HashMap<u32, Vec<lua::ReformInfo>>,
     /// Enchant tables from the client's Lua, by table number.
     enchant_tables: HashMap<u64, lua::EnchantTable>,
     /// The styling shop's rows (stylingshopinfo). Empty when the files aren't in the data.
@@ -3133,6 +3375,10 @@ struct App {
     /// /effect: effects are drawn and heard; off, they still play, unseen and silent.
     graphics: options::GraphicsSettings,
     shortcuts: options::ShortcutSettings,
+    /// Keys to actions, from the game's hotkey tables and the player's UserKeys file.
+    keybinds: shortcuts::Shortcuts,
+    /// Print Screen writes the next frame here and keeps running.
+    print_screen: Option<std::path::PathBuf>,
     cursor_look: cursor::Cursor,
     /// The client's loading pictures, and the loading screen while it's up.
     loading_images: Vec<String>,
@@ -3363,6 +3609,7 @@ impl App {
                     }
                 }
                 None if game.storage.typing => game.storage.type_text(text),
+                None if game.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) => game.catalog.as_mut().unwrap().type_text(text),
                 None if game.room_make.is_some() => game.room_make.as_mut().unwrap().type_text(text),
                 None if game.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) => {
                     game.macro_window.as_ref().unwrap().type_text(&mut game.macro_lines, text)
@@ -3774,6 +4021,9 @@ impl App {
                         let _ = game.session.invite_to_party(&actor.name.clone());
                     }
                 }
+                Some(Choice::Adopt(id)) => {
+                    let _ = game.session.ask_adoption(id);
+                }
                 Some(Choice::GuildInvite(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         let _ = game.session.invite_to_guild(&actor.name.clone());
@@ -3790,6 +4040,12 @@ impl App {
                 Some(Choice::Pet(net::PET_INFO)) => game.open_pet_window(),
                 Some(Choice::Pet(command)) => game.pet_command(command),
                 Some(Choice::Leader(account)) => game.leader_asked = Some(account),
+                Some(Choice::GuildMove(row, position)) => {
+                    if let Some(member) = game.guild.as_ref().and_then(|guild| guild.members.get(row)) {
+                        let _ = game.session.move_member(member.account, member.character, position);
+                    }
+                }
+                Some(Choice::GuildLeave) => game.guild_asked = Some(GuildAsked::Leave),
                 Some(Choice::Befriend(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         let _ = game.session.add_friend(&actor.name.clone());
@@ -3875,6 +4131,11 @@ impl App {
                             GuildAsked::Ally { id, .. } => game.session.answer_alliance(id, yes),
                             GuildAsked::End { id, antagonist } if yes => game.session.end_relation(id, antagonist),
                             GuildAsked::End { .. } => Ok(()),
+                            GuildAsked::Leave if yes => match &game.guild {
+                                Some(guild) => game.session.leave_guild(guild.id, game.account_id, game.me.id, ""),
+                                None => Ok(()),
+                            },
+                            GuildAsked::Leave => Ok(()),
                         };
                     }
                 }
@@ -3897,6 +4158,46 @@ impl App {
                         let _ = game.session.answer_expansion(yes);
                     }
                 }
+            }
+            // A queue question: OK applies, leaves the queue or enters the battle; Cancel doesn't (or declines entering).
+            Scene::Game(game) if game.queue_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        let _ = match game.queue_asked.take().unwrap() {
+                            QueueAsked::Apply(kind, name) if yes => game.session.apply_to_queue(kind, &name),
+                            QueueAsked::Cancel(name) if yes => game.session.leave_queue(&name),
+                            QueueAsked::Lobby(name, _) => game.session.answer_lobby(yes, &name),
+                            _ => Ok(()),
+                        };
+                    }
+                }
+            }
+            // The queue window: a battleground picked, applying, cancelling.
+            Scene::Game(game) if game.queue_window.frame.open && game.queue_window.hit(cursor, &self.battlegrounds, game.queued.is_some()).is_some() => {
+                match game.queue_window.hit(cursor, &self.battlegrounds, game.queued.is_some()) {
+                    Some(battle_queue::Hit::Title(title)) => game.queue_window.frame.click_title(title),
+                    Some(battle_queue::Hit::Row(row)) => game.queue_window.picked = Some(row),
+                    Some(battle_queue::Hit::Apply(kind)) => {
+                        if let Some(entry) = game.queue_window.picked.and_then(|row| self.battlegrounds.get(row)) {
+                            game.queue_asked = Some(QueueAsked::Apply(kind, entry.name.clone()));
+                        }
+                    }
+                    Some(battle_queue::Hit::Cancel) => {
+                        if let Some((name, _)) = &game.queued {
+                            game.queue_asked = Some(QueueAsked::Cancel(name.clone()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // The store search: the kind, the fields, searching, paging, and a row twice to find its store.
+            // A store it opened stands over it.
+            Scene::Game(game)
+                if game.catalog.as_ref().and_then(|catalog| catalog.hit(cursor)).is_some() && !game.shop.as_ref().is_some_and(|shop| shop.covers(cursor)) =>
+            {
+                let hit = game.catalog.as_ref().and_then(|catalog| catalog.hit(cursor));
+                game.click_catalog(hit.unwrap(), &self.items, &self.messages);
             }
             // The ranking board: another ranking, or closing it.
             Scene::Game(game) if game.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some() => {
@@ -3987,6 +4288,22 @@ impl App {
                     if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
                         let (account, character, _) = game.friend_asked.take().unwrap();
                         let _ = game.session.answer_friend(account, character, accept);
+                    }
+                }
+            }
+            // Asked to be adopted: OK asks again, then accepts; Cancel at either step refuses.
+            Scene::Game(game) if game.adopt_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        let (parent, partner, name, again) = game.adopt_asked.take().unwrap();
+                        if yes && !again {
+                            // What a baby class gives up doesn't fit the box: the whole of it in the chat, the box asks.
+                            game.chat_line(self.messages.get(ADOPT_ASKS_AGAIN).cloned().unwrap_or_default(), CHAT_ERROR);
+                            game.adopt_asked = Some((parent, partner, name, true));
+                        } else {
+                            let _ = game.session.answer_adoption(parent, partner, yes);
+                        }
                     }
                 }
             }
@@ -4116,6 +4433,20 @@ impl App {
                     None => {}
                 }
             }
+            Scene::Game(game) if game.reform.as_ref().is_some_and(|window| window.hit(cursor, &game.inventory.items).is_some()) => {
+                let hit = game.reform.as_ref().unwrap().hit(cursor, &game.inventory.items).unwrap();
+                match game.reform.as_mut().unwrap().click(hit, &game.inventory.items) {
+                    Some(reform::Action::Reform { item, index }) => {
+                        let _ = game.session.reform(item, index);
+                    }
+                    // Until the server hears it, it holds the player and refuses NPC clicks.
+                    Some(reform::Action::Close) => {
+                        let _ = game.session.close_reform();
+                        game.reform = None;
+                    }
+                    None => {}
+                }
+            }
             Scene::Game(game) if game.enchant.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
                 let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
                 let action = {
@@ -4195,6 +4526,25 @@ impl App {
                     Some(refine::Action::Close) => {
                         let _ = game.session.close_refine();
                         game.refine = None;
+                    }
+                    None => {}
+                }
+            }
+            // Grade enchanting: Start sends the try, a refusal is the client's own line, close tells the server.
+            Scene::Game(game) if game.grade.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
+                let carried = &game.inventory.items;
+                let count = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
+                let window = game.grade.as_mut().unwrap();
+                let hit = window.hit(cursor).unwrap();
+                match window.click(hit, count, zeny) {
+                    Some(grade::Action::Enchant { index, material, steps }) => {
+                        let _ = game.session.grade_enchant(index, material, steps);
+                    }
+                    Some(grade::Action::Refuse(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+                    Some(grade::Action::Close) => {
+                        let _ = game.session.close_grade();
+                        game.grade = None;
                     }
                     None => {}
                 }
@@ -4286,6 +4636,15 @@ impl App {
                                 game.party_window.frame.toggle();
                                 game.raise(Panel::Party);
                             }
+                            // The battleground queue; while queued, how many wait is asked again.
+                            Some("battle") => {
+                                game.queue_window.frame.toggle();
+                                if game.queue_window.frame.open
+                                    && let Some((name, _)) = &game.queued
+                                {
+                                    let _ = game.session.ask_queue_number(name);
+                                }
+                            }
                             Some("status") => {
                                 game.status_window.frame.toggle();
                                 game.raise(Panel::Status);
@@ -4371,6 +4730,14 @@ impl App {
                             let _ = game.session.skill_up(skill);
                         }
                         Some(guild::Hit::Relation(id, antagonist)) => game.guild_asked = Some(GuildAsked::End { id, antagonist }),
+                        // The master's positions page: a box switches its permission; the title and tax are asked for.
+                        Some(guild::Hit::Permission(id, permission)) => {
+                            if let Some(guild) = &game.guild {
+                                let _ = game.session.change_position(&guild.switched(id, permission), &guild.title(id));
+                            }
+                        }
+                        Some(guild::Hit::PositionTitle(id)) => game.amount = Some(window::Amount::name(Asked::PositionTitle(id), POSITION_TITLE)),
+                        Some(guild::Hit::Tax(id)) => game.amount = Some(window::Amount::new(Asked::PositionTax(id), None)),
                         _ => {}
                     },
                     Panel::Clan => {
@@ -4466,7 +4833,7 @@ impl App {
                         }
                     }
                     Panel::Skills => {
-                        let jobs = self.skill_trees.lineage(game.me.job);
+                        let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
                         let points = game.skill_points();
                         let hit = game.skill_window.hit(cursor, &self.skill_trees, &jobs, &game.skills, points);
                         match hit.and_then(|hit| game.skill_window.click(hit)) {
@@ -4623,11 +4990,17 @@ impl App {
             if let Some(window) = &mut game.roulette {
                 window.frame.drag_to(self.cursor, roulette::HEIGHT);
             }
+            if let Some(window) = &mut game.grade {
+                window.frame.drag_to(self.cursor, grade::HEIGHT);
+            }
             if let Some(window) = &mut game.synthesis {
                 window.frame.drag_to(self.cursor, laphine::Synthesis::height());
             }
             if let Some(window) = &mut game.upgrade {
                 window.frame.drag_to(self.cursor, laphine::Upgrade::height());
+            }
+            if let Some(window) = &mut game.reform {
+                window.frame.drag_to(self.cursor, reform::HEIGHT);
             }
             if let Some(window) = &mut game.enchant {
                 window.frame.drag_to(self.cursor, enchant::HEIGHT);
@@ -4703,6 +5076,29 @@ impl App {
             game.menu = Some(menu::Menu::new(self.cursor, vec![Some((label, Choice::Leader(account)))], &self.font));
             return;
         }
+        // A right click on a row of the guild's members page: the master moves someone else, a member leaves.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+            && let Some((start, None)) = game.right_press
+            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+            && game.window_at(self.cursor) == Some(Panel::Guild)
+            && let Some(guild) = &game.guild
+            && let Some(guild::Hit::Member(row)) = game.guild_window.hit(self.cursor, guild)
+        {
+            let choices = guild.member_menu(game.me.id, row);
+            if !choices.is_empty() {
+                game.right_press = None;
+                let entries = choices
+                    .into_iter()
+                    .map(|choice| match choice {
+                        guild::MemberChoice::Move(position) => Some((guild.title(position), Choice::GuildMove(row, position))),
+                        guild::MemberChoice::Leave => Some((self.messages.get(LEAVE_CHOICE).cloned().unwrap_or_default(), Choice::GuildLeave)),
+                    })
+                    .collect();
+                game.menu = Some(menu::Menu::new(self.cursor, entries, &self.font));
+                return;
+            }
+        }
         if let Scene::Game(game) = &mut self.scene {
             let assets = self.assets.as_ref();
             // Alt + right click moves a whole stack between the inventory and the open storage.
@@ -4765,6 +5161,13 @@ impl App {
                     {
                         choices.extend([None, Some((fill(PARTY_ASK), Choice::Invite(id)))]);
                     }
+                    // Married (wearing the ring): a party member can be asked to be adopted.
+                    // ponytail: where it sits in the menu is an estimate.
+                    if game.party.as_ref().is_some_and(|party| party.members.iter().any(|member| member.info.account == id))
+                        && game.inventory.items.iter().any(|item| item.worn != 0 && WEDDING_RINGS.contains(&item.id))
+                    {
+                        choices.extend([None, Some((fill(ADOPT_CHOICE), Choice::Adopt(id)))]);
+                    }
                     // ponytail: last, under a line; where the real client lists it isn't known.
                     choices.extend([None, Some((fill(VIEW_CHOICE), Choice::ViewEquipment(id)))]);
                 }
@@ -4825,6 +5228,7 @@ impl App {
             let on_cashshop = game.cashshop.as_ref().is_some_and(|shop| shop.hit(self.cursor).is_some());
             let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+            let on_reform = game.reform.as_ref().is_some_and(|window| window.hit(self.cursor, &game.inventory.items).is_some());
             match game.window_at(self.cursor) {
                 _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
                 _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
@@ -4834,6 +5238,7 @@ impl App {
                     game.enchant.as_mut().unwrap().scroll_by(rows, item.as_ref());
                 }
                 _ if on_cashshop => game.cashshop.as_mut().unwrap().scroll_at(self.cursor, rows),
+                _ if on_reform => game.reform.as_mut().unwrap().scroll_by(rows, &game.inventory.items),
                 _ if on_setup => {
                     let count = game.cart.items.len();
                     game.vend_setup.as_mut().unwrap().scroll_by(rows, count);
@@ -4923,6 +5328,7 @@ impl App {
                 let on_trade = game.trade.as_ref().is_some_and(|trade| trade.hit(self.cursor).is_some());
                 let on_mail = matches!(game.mail.hit(self.cursor), Some(mail::Hit::Compose(_)));
                 let on_refine = game.refine.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+                let on_grade = game.grade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_enchant = game.enchant.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_materials = game.materials.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
@@ -4951,6 +5357,10 @@ impl App {
                     // Into the refine machine: the server lists what refines it.
                     (Some((Dragged::Item(index), _, true)), _) if on_refine => {
                         let _ = game.session.refine_select(index);
+                    }
+                    // Onto the grade window: the server lists what raises it.
+                    (Some((Dragged::Item(index), _, true)), _) if on_grade => {
+                        let _ = game.session.grade_select(index);
                     }
                     // Into the enchant window: it stays here until a request; the server hears the item with that.
                     (Some((Dragged::Item(index), _, true)), _) if on_enchant => {
@@ -4993,6 +5403,8 @@ impl App {
                     | game.synthesis.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.reform.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.grade.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.enchant.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.stylist.as_mut().is_some_and(|window| window.frame.drop_drag());
@@ -5175,6 +5587,22 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.reform.as_ref().and_then(|window| window.hit(cursor, &game.inventory.items))
+        {
+            if hit == reform::Hit::Title(TitleHit::Title) {
+                game.reform.as_mut().unwrap().frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.grade.as_ref().and_then(|window| window.hit(cursor))
+        {
+            if hit == grade::Hit::Title(TitleHit::Title) {
+                game.grade.as_mut().unwrap().frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
             && game.achievement_window.covers(cursor)
         {
             if game.achievement_window.hit(cursor, &self.achievement_info, &game.achievements) == Some(achievement::Hit::Title(TitleHit::Title)) {
@@ -5240,7 +5668,7 @@ impl App {
                 }
             }
             if id == Panel::Skills {
-                let jobs = self.skill_trees.lineage(game.me.job);
+                let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
                 match game.skill_window.hit(cursor, &self.skill_trees, &jobs, &game.skills, game.skill_points()) {
                     Some(skills::Hit::Skill(skill)) if game.skills.iter().any(|known| known.id == skill && known.level > 0 && known.kind != 0) => {
                         game.dragging = Some((Dragged::Skill(skill), cursor, false));
@@ -5348,6 +5776,195 @@ impl App {
         }
     }
 
+    /// The shortcut this key fires, if it has one. A repeated key-down does not.
+    fn fire_shortcut(&mut self, event: &control::KeyPress) -> bool {
+        let Scene::Game(game) = &self.scene else { return false };
+        let text_focus = game.text_box_focused();
+        let fired = shortcuts::action(
+            &self.keybinds,
+            &shortcuts::KeyEvent {
+                key: &event.logical_key,
+                physical: Some(event.physical_key),
+                alt: self.modifiers.alt_key(),
+                shift: self.modifiers.shift_key(),
+                ctrl: self.modifiers.control_key(),
+                repeat: event.repeat,
+                text_focus,
+            },
+        );
+        fired.is_some_and(|fired| self.perform_shortcut(fired))
+    }
+
+    /// Runs a shortcut. False leaves the key for whatever else is listening (Enter still sends chat).
+    fn perform_shortcut(&mut self, fired: shortcuts::Action) -> bool {
+        if matches!(fired, shortcuts::Action::ChatMode | shortcuts::Action::Unused) {
+            return false;
+        }
+        if let shortcuts::Action::Macro(line) = fired {
+            self.send_macro(usize::from(line));
+            return true;
+        }
+        if fired == shortcuts::Action::Screenshot {
+            let millis = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_millis());
+            self.print_screen = settings_path("screenshots").map(|dir| dir.join(format!("shot-{millis}.png")));
+            return true;
+        }
+        if fired == shortcuts::Action::Minimap {
+            let (view, map, missing) = {
+                let Scene::Game(game) = &mut self.scene else { return true };
+                game.minimap_view = game.minimap_view.next();
+                (game.minimap_view, game.map.clone(), game.minimap_faded.is_none())
+            };
+            if view == minimap::View::Translucent && missing {
+                let faded = self.gpu.as_ref().and_then(|gpu| minimap::faded(gpu, &self.grf, &map));
+                if let Scene::Game(game) = &mut self.scene {
+                    game.minimap_faded = faded;
+                }
+            }
+            return true;
+        }
+        let Scene::Game(game) = &mut self.scene else { return true };
+        match fired {
+            shortcuts::Action::BasicInfo => {
+                game.basic_info.frame.toggle();
+                game.raise(Panel::BasicInfo);
+            }
+            shortcuts::Action::Equipment => {
+                game.equipment.frame.toggle();
+                game.raise(Panel::Equipment);
+            }
+            shortcuts::Action::Skills => {
+                game.skill_window.frame.toggle();
+                game.raise(Panel::Skills);
+            }
+            shortcuts::Action::Quests => game.quest_window.frame.toggle(),
+            shortcuts::Action::Friends => {
+                if game.party_window.frame.open && game.party_window.friends {
+                    game.party_window.frame.open = false;
+                } else {
+                    game.party_window.friends = true;
+                    game.party_window.picked = None;
+                    game.party_window.frame.open = true;
+                    game.raise(Panel::Party);
+                }
+            }
+            shortcuts::Action::Party => {
+                game.party_window.frame.toggle();
+                game.raise(Panel::Party);
+            }
+            shortcuts::Action::ChatRoom => {
+                game.room_make = if game.room_make.is_some() || game.room.is_some() { None } else { Some(chatroom::Make::default()) };
+            }
+            shortcuts::Action::Cart if game.cart.cart.is_some() => {
+                game.cart.frame.toggle();
+                game.raise(Panel::Cart);
+            }
+            shortcuts::Action::Cart => {}
+            shortcuts::Action::WorldMap => {
+                let map = map_key(&game.map);
+                game.world_map = match (game.world_map.take(), &self.gpu) {
+                    (None, Some(gpu)) => worldmap::WorldMap::open(gpu, &self.grf, &self.worlds.0, self.worlds.1, &map),
+                    _ => None,
+                };
+            }
+            shortcuts::Action::Inventory => {
+                game.inventory.frame.toggle();
+                game.raise(Panel::Inventory);
+            }
+            shortcuts::Action::Guild => {
+                game.guild_window.frame.toggle();
+                game.raise(Panel::Guild);
+                if game.guild_window.frame.open {
+                    game.ask_guild_pages();
+                }
+            }
+            shortcuts::Action::Emotions => game.toggle_emotion_list(),
+            shortcuts::Action::Sit => game.toggle_sit(),
+            shortcuts::Action::Macros => game.toggle_macro_window(),
+            shortcuts::Action::CloseWindows => game.close_windows(),
+            shortcuts::Action::HotkeyBar => game.hotkeys.frame.toggle(),
+            shortcuts::Action::Chat => game.chat.toggle_hidden(),
+            shortcuts::Action::ChatSize => game.chat.cycle_size(),
+            shortcuts::Action::HpSp => game.show_bars = !game.show_bars,
+            shortcuts::Action::Pet if game.pet.is_some() => {
+                game.pet_window.frame.toggle();
+                game.raise(Panel::Pet);
+                if game.pet_window.frame.open {
+                    let _ = game.session.pet_command(net::PET_INFO);
+                }
+            }
+            shortcuts::Action::Pet => {}
+            shortcuts::Action::Homunculus if game.homunculus.is_some() => {
+                game.homunculus_window.frame.toggle();
+                game.raise(Panel::Homunculus);
+            }
+            shortcuts::Action::Homunculus => {}
+            shortcuts::Action::Mercenary if game.mercenary.is_some() => {
+                game.mercenary_window.frame.toggle();
+                game.raise(Panel::Mercenary);
+            }
+            shortcuts::Action::Mercenary => {}
+            shortcuts::Action::HomunculusFollow if game.homunculus.is_some() => {
+                game.homunculus_steering.following = !game.homunculus_steering.following;
+            }
+            shortcuts::Action::HomunculusFollow => {}
+            shortcuts::Action::MercenaryFollow if game.mercenary.is_some() => game.steering.following = !game.steering.following,
+            shortcuts::Action::MercenaryFollow => {}
+            shortcuts::Action::Menu => {
+                if !game.basic_info.frame.open {
+                    game.basic_info.frame.open = true;
+                    game.basic_info.menu_open = true;
+                    game.raise(Panel::BasicInfo);
+                } else {
+                    game.basic_info.menu_open = !game.basic_info.menu_open;
+                }
+            }
+            shortcuts::Action::Clan if game.clan.is_some() => {
+                game.clan_window.frame.toggle();
+                game.raise(Panel::Clan);
+            }
+            shortcuts::Action::Clan => {}
+            shortcuts::Action::Bank => {
+                if game.bank.is_some() {
+                    let _ = game.session.close_bank(game.account_id);
+                    game.bank = None;
+                } else {
+                    let _ = game.session.open_bank(game.account_id);
+                }
+            }
+            shortcuts::Action::Status => {
+                game.status_window.frame.toggle();
+                game.raise(Panel::Status);
+            }
+            shortcuts::Action::RotateHotkeys => game.hotkeys.rotate(),
+            shortcuts::Action::Costume => {
+                if game.equipment.frame.open && game.equipment.showing_costume() {
+                    game.equipment.frame.open = false;
+                } else {
+                    game.equipment.show_costume();
+                    game.equipment.frame.open = true;
+                    game.raise(Panel::Equipment);
+                }
+            }
+            shortcuts::Action::Hotbar { bar: 1, slot } => game.press_hotkey(usize::from(slot)),
+            // ponytail: no window yet (memorial, commands, ground cursor, tip, party board, hunting, flags, hotbar 2). The key is eaten.
+            shortcuts::Action::Memorial
+            | shortcuts::Action::Commands
+            | shortcuts::Action::GroundCursor
+            | shortcuts::Action::Tip
+            | shortcuts::Action::PartyBoard
+            | shortcuts::Action::Hunting
+            | shortcuts::Action::Flag(_)
+            | shortcuts::Action::Hotbar { .. } => {}
+            shortcuts::Action::Macro(_)
+            | shortcuts::Action::Screenshot
+            | shortcuts::Action::Minimap
+            | shortcuts::Action::ChatMode
+            | shortcuts::Action::Unused => {}
+        }
+        true
+    }
+
     fn key(&mut self, event: &control::KeyPress) {
         if event.state != ElementState::Pressed {
             return;
@@ -5356,9 +5973,16 @@ impl App {
         if let Scene::Game(game) = &mut self.scene
             && game.shortcuts_window.as_ref().is_some_and(|window| window.listening.is_some())
         {
+            if event.repeat {
+                return;
+            }
             if let Some(key) = shortcut_key(key) {
+                let slot = game.shortcuts_window.as_ref().unwrap().listening;
                 if game.shortcuts_window.as_mut().unwrap().bind_key(key, &mut self.shortcuts) {
                     self.shortcuts.save();
+                    if let Some(slot) = slot {
+                        self.keybinds.set_hotbar(slot, shortcut_to_bind(key));
+                    }
                 }
                 return;
             }
@@ -5377,129 +6001,8 @@ impl App {
             gpu.window.set_fullscreen(gpu.window.fullscreen().is_none().then_some(winit::window::Fullscreen::Borderless(None)));
             return;
         }
-        // Ctrl+G opens or closes the clan window while in a clan.
-        if let Scene::Game(game) = &mut self.scene
-            && self.modifiers.control_key()
-            && !self.modifiers.alt_key()
-            && !self.modifiers.super_key()
-            && event.physical_key == PhysicalKey::Code(KeyCode::KeyG)
-        {
-            if game.clan.is_some() {
-                game.clan_window.frame.toggle();
-                game.raise(Panel::Clan);
-            }
+        if self.fire_shortcut(event) {
             return;
-        }
-        // Alt+E and Alt+Q open the inventory and the equipment anywhere in the game (by physical key: Option+letter
-        // types dead keys on a Mac).
-        // Ctrl+R, the game's key for the mercenary window, and Ctrl+T, its follow switch, while there's a mercenary.
-        if let Scene::Game(game) = &mut self.scene
-            && self.modifiers.control_key()
-            && game.mercenary.is_some()
-        {
-            match event.physical_key {
-                PhysicalKey::Code(KeyCode::KeyR) => {
-                    game.mercenary_window.frame.toggle();
-                    game.raise(Panel::Mercenary);
-                    return;
-                }
-                PhysicalKey::Code(KeyCode::KeyT) => {
-                    game.steering.following = !game.steering.following;
-                    return;
-                }
-                _ => {}
-            }
-        }
-        if let Scene::Game(game) = &mut self.scene
-            && self.modifiers.alt_key()
-        {
-            let window = match event.physical_key {
-                PhysicalKey::Code(KeyCode::KeyE) => Some((Panel::Inventory, &mut game.inventory.frame)),
-                PhysicalKey::Code(KeyCode::KeyQ) => Some((Panel::Equipment, &mut game.equipment.frame)),
-                PhysicalKey::Code(KeyCode::KeyV) => Some((Panel::BasicInfo, &mut game.basic_info.frame)),
-                PhysicalKey::Code(KeyCode::KeyS) => Some((Panel::Skills, &mut game.skill_window.frame)),
-                PhysicalKey::Code(KeyCode::KeyZ) => Some((Panel::Party, &mut game.party_window.frame)),
-                PhysicalKey::Code(KeyCode::KeyA) => Some((Panel::Status, &mut game.status_window.frame)),
-                PhysicalKey::Code(KeyCode::KeyG) => Some((Panel::Guild, &mut game.guild_window.frame)),
-                PhysicalKey::Code(KeyCode::KeyW) if game.cart.cart.is_some() => Some((Panel::Cart, &mut game.cart.frame)),
-                // Alt+J, the game's own key for the pet window, while there's a pet.
-                PhysicalKey::Code(KeyCode::KeyJ) if game.pet.is_some() => Some((Panel::Pet, &mut game.pet_window.frame)),
-                // Alt+R, the game's key for the homunculus window, while there's a homunculus.
-                PhysicalKey::Code(KeyCode::KeyR) if game.homunculus.is_some() => Some((Panel::Homunculus, &mut game.homunculus_window.frame)),
-                _ => None,
-            };
-            if let Some((id, frame)) = window {
-                frame.toggle();
-                game.raise(id);
-                // The guild window asks for what it shows.
-                if id == Panel::Guild && game.guild_window.frame.open {
-                    game.ask_guild_pages();
-                }
-                // The pet window asks for fresh news of the pet.
-                if id == Panel::Pet && game.pet_window.frame.open {
-                    let _ = game.session.pet_command(net::PET_INFO);
-                }
-                return;
-            }
-            // Alt+T, the game's follow switch for the homunculus.
-            if event.physical_key == PhysicalKey::Code(KeyCode::KeyT) && game.homunculus.is_some() {
-                game.homunculus_steering.following = !game.homunculus_steering.following;
-                return;
-            }
-            // Alt+L: the emotion list; Alt+M: the macro window.
-            if event.physical_key == PhysicalKey::Code(KeyCode::KeyL) {
-                game.toggle_emotion_list();
-                return;
-            }
-            if event.physical_key == PhysicalKey::Code(KeyCode::KeyM) {
-                game.toggle_macro_window();
-                return;
-            }
-            // Alt+1 to Alt+0: the ten macro lines.
-            let digits = [
-                KeyCode::Digit1,
-                KeyCode::Digit2,
-                KeyCode::Digit3,
-                KeyCode::Digit4,
-                KeyCode::Digit5,
-                KeyCode::Digit6,
-                KeyCode::Digit7,
-                KeyCode::Digit8,
-                KeyCode::Digit9,
-                KeyCode::Digit0,
-            ];
-            if let PhysicalKey::Code(code) = event.physical_key
-                && let Some(line) = digits.iter().position(|digit| *digit == code)
-            {
-                self.send_macro(line);
-                return;
-            }
-            // Alt+U: the quest window.
-            if event.physical_key == PhysicalKey::Code(KeyCode::KeyU) {
-                game.quest_window.frame.toggle();
-                return;
-            }
-            // Alt+C: make a chat room (not while in one).
-            if event.physical_key == PhysicalKey::Code(KeyCode::KeyC) {
-                game.room_make = if game.room_make.is_some() || game.room.is_some() { None } else { Some(chatroom::Make::default()) };
-                return;
-            }
-        }
-        // Configured function keys press hotkeys; an unbound F12 shows or hides the bar.
-        // ponytail: letter bindings are saved in the shortcuts window for Battle Mode later; without it they
-        // would steal the first character of chat.
-        if let Scene::Game(game) = &mut self.scene
-            && let Some(shortcut) = shortcut_key(key)
-            && matches!(shortcut, options::ShortcutKey::NamedF(_))
-        {
-            if let Some(slot) = self.shortcuts.slot_for(shortcut) {
-                game.press_hotkey(slot);
-                return;
-            }
-            if shortcut == options::ShortcutKey::NamedF(12) {
-                game.hotkeys.frame.toggle();
-                return;
-            }
         }
         match &mut self.scene {
             Scene::Login => {
@@ -5764,6 +6267,22 @@ impl App {
                 }
                 _ => game.storage.type_text(event.text.as_deref().unwrap_or_default()),
             },
+            Scene::Game(game) if game.catalog.is_some() && matches!(key, Key::Named(NamedKey::Escape)) => game.close_catalog(),
+            Scene::Game(game) if game.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) => {
+                let catalog = game.catalog.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Enter) => game.click_catalog(catalog::Hit::Search, &self.items, &self.messages),
+                    Key::Named(NamedKey::Tab) => {
+                        catalog.focus = Some(match catalog.focus {
+                            Some(catalog::Field::Name) => catalog::Field::Min,
+                            Some(catalog::Field::Min) => catalog::Field::Max,
+                            _ => catalog::Field::Name,
+                        })
+                    }
+                    Key::Named(NamedKey::Backspace) => catalog.backspace(),
+                    _ => catalog.type_text(event.text.as_deref().unwrap_or_default()),
+                }
+            }
             Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Escape)) => game.deal_choice = None,
             // Typing always goes to the chat line, as in the client; Enter sends it, whispered when the name box has
             // a name. Tab moves between the name box and the message.
@@ -6075,6 +6594,9 @@ impl App {
                     camera,
                     camera_goal,
                     minimap,
+                    minimap_view: minimap::View::Shown,
+                    minimap_faded: None,
+                    show_bars: true,
                     last_frame: now,
                     chat: chat::Chat::default(),
                     entered: now,
@@ -6146,8 +6668,10 @@ impl App {
                     item_skill: None,
                     trade: None,
                     refine: None,
+                    grade: None,
                     synthesis: None,
                     upgrade: None,
+                    reform: None,
                     enchant: None,
                     stylist: None,
                     materials: None,
@@ -6180,6 +6704,8 @@ impl App {
                         window
                     },
                     party_invite: None,
+                    partner: None,
+                    adopt_asked: None,
                     party_dots: HashMap::new(),
                     friends: Vec::new(),
                     friend_asked: None,
@@ -6200,12 +6726,20 @@ impl App {
                         .unwrap_or_default(),
                     dressroom: None,
                     ranking: None,
+                    catalog: None,
+                    pickup_popup: None,
+                    new_items: false,
                     char_names: HashMap::new(),
                     names_asked: HashSet::new(),
                     dress_figure: None,
                     head_emblems: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     map_type: None,
+                    battle: battleground::Battle::default(),
+                    queue_window: battle_queue::QueueWindow::default(),
+                    queued: None,
+                    queue_asked: None,
+                    camp_looks: None,
                     pvp_rank: None,
                     rank_font: None,
                     time_font: None,
@@ -6345,6 +6879,7 @@ impl App {
                 game.camera_goal = CameraGoal::new(self.indoor.contains(&map_key(&map)));
                 game.camera = game.camera_goal.camera(world.cell_position(position.map(f32::from)));
                 game.minimap = minimap::load_map(gpu, &self.grf, &map);
+                game.minimap_faded = None;
                 game.world = world;
                 game.map = map;
                 game.units.clear();
@@ -6352,6 +6887,8 @@ impl App {
                 game.ground.clear();
                 game.marks.clear();
                 game.signs.clear();
+                // The server ends the search on leaving the map.
+                game.catalog = None;
                 if let Some(shop) = &game.my_shop {
                     game.signs.insert(game.account_id, chatroom::Sign::shop(game.account_id, shop.name.clone()));
                 }
@@ -6594,6 +7131,48 @@ impl App {
                 game.inventory.frame.open = true;
                 game.raise(Panel::Inventory);
             }
+            // Kind 8 is grade enchanting and opens the inventory beside it. Kind 1 is the stylist.
+            MapEvent::UiOpen { kind, .. } => {
+                if kind == grade::UI_KIND {
+                    game.grade = Some(grade::GradeEnchant::new());
+                    game.inventory.frame.open = true;
+                    game.raise(Panel::Inventory);
+                } else if kind == stylist::UI_KIND {
+                    game.stylist = Some(stylist::Window::open());
+                    let look = game.player.look.clone().unwrap_or_default();
+                    if let Some(window) = &mut game.stylist {
+                        dress_stylist(window, grf, look_tables, &look, &self.items, &self.styling_shop);
+                    }
+                }
+            }
+            MapEvent::GradeMaterials { index, chance, blessing, materials } => {
+                if index < 0 {
+                    game.chat_line(self.messages.get(grade::CANT_UPGRADE).cloned().unwrap_or_default(), CHAT_ERROR);
+                    if let Some(window) = &mut game.grade {
+                        window.clear();
+                    }
+                } else if let Some(window) = &mut game.grade {
+                    window.listed(index as u16, chance, blessing, materials);
+                }
+            }
+            // The item's new grade. Result 3 already deleted it. 0 and 1 ask for the list again.
+            MapEvent::GradeResult { index, grade: next, result } => {
+                if result != 3
+                    && let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index)
+                {
+                    grade::apply_result(item, next, result);
+                }
+                if let Some(window) = &mut game.grade {
+                    let again = window.finished(result);
+                    if let Some(&id) = grade::RESULT_LINES.get(result as usize) {
+                        let color = if result == 0 || result == 4 { CHAT_ITEM } else { CHAT_ERROR };
+                        game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+                    }
+                    if again {
+                        let _ = game.session.grade_select(index);
+                    }
+                }
+            }
             MapEvent::SynthesisOpen(id) => match self.synthesis_boxes.get(&id) {
                 Some(info) => {
                     game.synthesis = Some(laphine::Synthesis::new(id, info));
@@ -6612,6 +7191,18 @@ impl App {
                 }
                 None => {
                     let _ = game.session.close_upgrade();
+                }
+            },
+            // A reform item the client has no entries for: tell the server and open nothing.
+            MapEvent::ReformOpen(item) => match self.reforms.get(&item).filter(|entries| !entries.is_empty()) {
+                Some(entries) => {
+                    game.reform = Some(reform::Reform::open(item, entries.clone()));
+                    game.inventory.frame.open = true;
+                    game.raise(Panel::Inventory);
+                }
+                None => {
+                    game.reform = None;
+                    let _ = game.session.close_reform();
                 }
             },
             MapEvent::Synthesized(result) => {
@@ -6641,11 +7232,12 @@ impl App {
                 };
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
             }
-            MapEvent::ItemPreview { index, cards, refine, broken, grade: _ } => {
+            MapEvent::ItemPreview { index, cards, refine, broken, grade } => {
                 let damaged_line = self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default();
                 let shown = game.inventory.items.iter_mut().find(|item| item.index == index).map(|item| {
                     item.cards = cards;
                     item.refine = refine;
+                    item.grade = grade;
                     item.broken = broken;
                     let damaged = item.broken.then(|| damaged_line.clone());
                     iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires }
@@ -6660,6 +7252,9 @@ impl App {
                     game.item_window = Some(window);
                 }
             }
+            // Result 0: rathena has forgotten the window, so close it. The inventory updates arrived on their own.
+            MapEvent::Reformed { result: 0, .. } => game.reform = None,
+            MapEvent::Reformed { .. } => {}
             // A table this client doesn't have: say so, and tell rathena the window is closed.
             MapEvent::EnchantOpen(table) => match self.enchant_tables.get(&table).cloned() {
                 Some(info) => {
@@ -6785,6 +7380,7 @@ impl App {
                 game.weather.clear();
                 game.pvp_rank = None;
                 game.map_type = None;
+                game.battle = battleground::Battle::default();
                 game.last_rank = 0;
                 game.first_since = None;
                 game.top_ten.clear();
@@ -6798,11 +7394,15 @@ impl App {
                 // The NPC is left behind: its shop and its buy-or-sell question close (the server doesn't say so).
                 game.close_shop();
                 game.close_cashshop();
-                // rathena forgets the refine window on a map change; the material window and the roulette go too.
+                // rathena forgets the refine window on a map change; the material window, the roulette and the reform
+                // window go too. The reform window sends no close: the server already forgot it.
+                // rathena forgets the refine window and the grade window on a map change (no packet); the material window and the roulette go too.
                 game.refine = None;
+                game.grade = None;
                 // rathena forgets both Laphine windows, the enchant window and the stylist on a map change, without a close packet.
                 game.synthesis = None;
                 game.upgrade = None;
+                game.reform = None;
                 game.enchant = None;
                 game.stylist = None;
                 game.roulette = None;
@@ -6927,15 +7527,32 @@ impl App {
                 }
             }
             MapEvent::PickedUp { result, item } => {
-                let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
                 let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
-                match result {
-                    0 => {
-                        game.chat_line(messages::fill(&message(messages::GOT_ITEM), &[&name, &item.amount]), CHAT_ITEM);
-                        game.inventory.add(item);
+                let held = game.inventory.get(item.index).map_or(0, |held| held.amount);
+                // A forged or brewed item names its maker: asked for once.
+                if let Some(maker) = inventory::maker(&item.cards)
+                    && !game.char_names.contains_key(&maker)
+                    && game.names_asked.insert(maker)
+                {
+                    let _ = game.session.ask_char_name(maker);
+                }
+                let name = |slots: bool| inventory::full_name(&self.items, &self.card_names, &self.messages, &game.char_names, &item, slots);
+                match pickup::obtained(result, item.amount, held) {
+                    Some(amount) => {
+                        let line = messages::fill(&message(messages::GOT_ITEM), &[&name(true), &amount]);
+                        // The popup: the name without its slot count, how many came, the icon.
+                        let text = format!("{}{}", name(false), messages::fill(&message(pickup::OBTAINED), &[&amount]));
+                        let icon = self.items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)).unwrap_or_default();
+                        game.pickup_popup = Some(pickup::Popup::new(text, icon, self.font.width(&line), control::now()));
+                        game.new_items = true;
+                        game.chat_line(line, CHAT_ITEM);
+                        game.inventory.add(net::InventoryItem { amount, ..item });
                     }
-                    2 => game.chat_line(message(messages::CANT_CARRY_WEIGHT), CHAT_ERROR),
-                    _ => game.chat_line(message(messages::CANT_CARRY), CHAT_ERROR),
+                    None => {
+                        if let Some(id) = pickup::failure_line(result) {
+                            game.chat_line(message(id), CHAT_ERROR);
+                        }
+                    }
                 }
             }
             // The inventory again: what broke since says so; the out pet's egg (marked broken) stays hidden.
@@ -7080,6 +7697,13 @@ impl App {
             MapEvent::RefineAnnounced { player, item, level, success } => {
                 let template = self.messages.get(if success { REFINE_SUCCEEDED } else { REFINE_FAILED }).map_or("", String::as_str);
                 game.chat_line(messages::fill(template, &[&player, &level, &inventory::item_name(&self.items, item, true, 0)]), CHAT_BROADCAST);
+            }
+            // The same yellow as a refine announcement. Refine 0 so the name has no +N.
+            // ponytail: the grade's letter is a guess.
+            MapEvent::GradeAnnounced { player, item, grade: next, success } => {
+                let template = self.messages.get(if success { grade::ANNOUNCE_OK } else { grade::ANNOUNCE_FAIL }).map_or("", String::as_str);
+                let name = inventory::item_name(&self.items, item, true, 0);
+                game.chat_line(messages::fill(template, &[&player, &grade::grade_letter(next), &name]), CHAT_BROADCAST);
             }
             // ponytail: the banner effect alone; the data also has a sprite, data\sprite\이팩트\mvp.spr, the real
             // client may show with it.
@@ -7237,7 +7861,14 @@ impl App {
                 game.signs.remove(&id);
             }
             MapEvent::VendorGoods { vendor, shop: shop_id, goods } => {
-                let name = game.signs.get(&vendor).map(|sign| sign.title.clone()).unwrap_or_default();
+                // A store opened from the catalog may stand out of sight: its name as the search found it.
+                let name = game.signs.get(&vendor).map(|sign| sign.title.clone()).unwrap_or_else(|| {
+                    game.catalog
+                        .as_ref()
+                        .and_then(|catalog| catalog.rows.iter().find(|row| row.account == vendor))
+                        .map(|row| row.shop.clone())
+                        .unwrap_or_default()
+                });
                 let offers = goods
                     .into_iter()
                     .map(|good| shop::Offer {
@@ -7496,6 +8127,22 @@ impl App {
                     guild.positions = positions.into_iter().collect();
                 }
             }
+            MapEvent::GuildPositionChanged(position, title) => {
+                if let Some(guild) = &mut game.guild {
+                    guild.change_position(position, title);
+                }
+            }
+            MapEvent::GuildMemberPosition { character, position, .. } => {
+                if let Some(guild) = &mut game.guild {
+                    guild.move_member(character, position);
+                }
+            }
+            // The line under a player's name; a tag not known yet waits for the whole of it.
+            MapEvent::PositionTitle { account, title } => {
+                if let Some(tag) = game.name_tags.get_mut(&account) {
+                    tag.position = title;
+                }
+            }
             MapEvent::GuildPositionInfo(info) => {
                 if let Some(guild) = &mut game.guild {
                     guild.position_info = info;
@@ -7607,12 +8254,24 @@ impl App {
                 let id = 378 + usize::from(result.min(3));
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 2 { CHAT_ITEM } else { CHAT_ERROR });
             }
-            MapEvent::GuildLeft { character, .. } => {
+            MapEvent::GuildLeft { character, reason, expelled } => {
                 if character == game.me.id {
                     game.guild = None;
                     game.guild_window.frame.open = false;
+                    if !expelled {
+                        game.chat_line(self.messages.get(LEFT_GUILD).cloned().unwrap_or_default(), GUILD_CHAT);
+                    }
                 } else if let Some(guild) = &mut game.guild {
+                    let name = guild.members.iter().find(|member| member.character == character).map(|member| member.name.clone());
                     guild.members.retain(|member| member.character != character);
+                    // ponytail: the leave lines' color (the guild chat's) is an estimate.
+                    if let Some(name) = name.filter(|_| !expelled) {
+                        let line = |id: usize, value: &str| messages::fill(self.messages.get(id).map_or("", String::as_str), &[&value]);
+                        game.chat_line(line(MEMBER_LEFT, &name), GUILD_CHAT);
+                        if !reason.is_empty() {
+                            game.chat_line(line(LEFT_BECAUSE, &reason), GUILD_CHAT);
+                        }
+                    }
                 }
             }
             // The clan: its info at login or on joining, how many are online, leaving, and its chat.
@@ -7756,6 +8415,55 @@ impl App {
                 let _ = game.session.ready_to_play();
             }
             MapEvent::MapType(kind) => game.map_type = Some(kind),
+            // A battleground: teammates' HP bars as party members', their dots, everyone's camp, the score, the team chat.
+            MapEvent::BattleHp { account, hp, max } => {
+                if account != game.account_id {
+                    game.unit_hp.insert(account, (hp, max));
+                }
+            }
+            MapEvent::BattlePosition { account, cell } => game.battle.place(account, cell),
+            MapEvent::BattleCamp { account, camp } => {
+                game.battle.camps.insert(account, camp);
+                if game.camp_looks.is_none()
+                    && let Some(gpu) = gpu
+                {
+                    let solid = |[r, g, b]: [u8; 3]| gpu.solid([r, g, b, 255]);
+                    game.camp_looks = Some((solid(battleground::OUR_COLOR), [solid(battleground::OUR_COLOR), solid(battleground::THEIR_COLOR)]));
+                }
+            }
+            MapEvent::BattleScore(score) => game.battle.score = Some(score),
+            // The queue: applied (a line by result; 0 has rathena's own), how many wait, left, the battle ready.
+            MapEvent::BattleQueue { result, name } => {
+                if result == 1 {
+                    game.queued = Some((name, None));
+                }
+                if let Some(id) = battle_queue::apply_result(result) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 1 { CHAT_ITEM } else { CHAT_ERROR });
+                }
+            }
+            MapEvent::QueueNumber { name, number } => game.queued = Some((name, Some(number))),
+            MapEvent::QueueLeft { result, .. } => {
+                if result == 1 {
+                    game.queued = None;
+                }
+                let id = battle_queue::cancel_result(result);
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
+            }
+            MapEvent::QueueReady { name } => {
+                game.queue_asked = Some(QueueAsked::Lobby(name, Instant::now() + Duration::from_secs(battle_queue::LOBBY_SECONDS)));
+            }
+            // ponytail: no sound for it; which one rathena's "gong" is isn't knowable.
+            MapEvent::QueueAccepted { result: 1, .. } => {
+                game.chat_line(self.messages.get(battle_queue::LOBBY_ACCEPTED).cloned().unwrap_or_default(), CHAT_ITEM);
+            }
+            MapEvent::QueueAccepted { .. } => {}
+            MapEvent::QueueReset => {
+                game.queued = None;
+                if matches!(game.queue_asked, Some(QueueAsked::Lobby(..))) {
+                    game.queue_asked = None;
+                }
+            }
+            MapEvent::BattleChat { text, .. } => game.chat_line(text, battleground::CHAT_COLOR),
             MapEvent::DressRoom => game.open_dressroom(),
             // The board opens (or shows the new ranking); the names it lacks are asked for once each.
             MapEvent::Ranking { kind, ids, points, mine } => {
@@ -8312,6 +9020,25 @@ impl App {
                 let path = format!("{UI}illust\\{image}{}", if image.contains('.') { "" } else { ".bmp" });
                 game.cutin = gpu.filter(|_| !image.is_empty()).and_then(|gpu| gpu.try_load_texture(grf, &path, false).ok()).map(|texture| (texture, place));
             }
+            MapEvent::CatalogOpen { remote, uses } => game.catalog = Some(catalog::Catalog::new(remote, uses)),
+            MapEvent::CatalogResults { first, more, uses, rows } => {
+                if let Some(catalog) = &mut game.catalog {
+                    catalog.page(first, more, uses, rows);
+                }
+            }
+            MapEvent::CatalogFailed(reason) => {
+                game.chat_line(self.messages.get(catalog::failure_message(reason)).cloned().unwrap_or_default(), CHAT_ERROR);
+            }
+            // Where the store picked stands: a yellow mark on the minimap (none: it's gone).
+            MapEvent::CatalogMark(cell) => {
+                game.marks.retain(|(key, ..)| *key != CATALOG_MARK);
+                if let Some(catalog) = &mut game.catalog {
+                    catalog.mark = cell;
+                }
+                if let (Some(cell), Some(gpu)) = (cell, gpu) {
+                    game.marks.push((CATALOG_MARK, cell.map(i32::from), gpu.solid([0xFF, 0xFF, 0x00, 255]), None));
+                }
+            }
             MapEvent::Mark { npc, kind, cell, id, color } => {
                 game.marks.retain(|(key, ..)| *key != (npc, id));
                 if kind != 2
@@ -8592,6 +9319,31 @@ impl App {
                     game.play_effect(gpu, grf, table, effect, id);
                 }
             }
+            // Marriage: the wedding, the partner's name, divorce; adoption: being asked, and refusals.
+            MapEvent::Congratulation(id) => {
+                if let Some(gpu) = gpu {
+                    game.play_effect(gpu, grf, table, WEDDING_EFFECT, id);
+                }
+            }
+            // ponytail: the name comes to everyone near whoever called, without who; taken as ours while we have the
+            // ring's skill, so another couple calling nearby overwrites it.
+            MapEvent::PartnerName(name) => {
+                if !name.is_empty() && game.skills.iter().any(|skill| skill.id == CALL_PARTNER) {
+                    game.partner = Some(name);
+                }
+            }
+            // ponytail: the line names the player, then the partner; the order is an estimate.
+            MapEvent::Divorced(partner) => {
+                let line = rustnarok_client::messages::fill(self.messages.get(DIVORCED).map_or("", String::as_str), &[&game.me.name, &partner]);
+                game.chat_line(line, CHAT_WHITE);
+                game.partner = None;
+            }
+            MapEvent::AdoptAsked { parent, partner, name } => game.adopt_asked = Some((parent, partner, name, false)),
+            MapEvent::AdoptRefused(reason) => {
+                if let Some(&id) = ADOPT_REFUSALS.get(reason as usize) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
             MapEvent::DealChoice { npc } => {
                 game.dialog = None;
                 game.deal_choice = Some(npc);
@@ -8709,16 +9461,6 @@ impl App {
             MapEvent::TooFar { target, target_cell, cell, range } => {
                 game.attack_range = i32::from(range);
                 game.attack_from(target, cell.map(i32::from), target_cell.map(i32::from));
-            }
-            // Kind 1 is the stylist. Other kinds (grade enchant) are not this window.
-            MapEvent::UiOpen { kind, .. } => {
-                if kind == stylist::UI_KIND {
-                    game.stylist = Some(stylist::Window::open());
-                    let look = game.player.look.clone().unwrap_or_default();
-                    if let Some(window) = &mut game.stylist {
-                        dress_stylist(window, grf, look_tables, &look, &self.items, &self.styling_shop);
-                    }
-                }
             }
             MapEvent::StyleChanged(false) => {
                 game.stylist = None;
@@ -8893,6 +9635,7 @@ impl App {
             (&self.grf, &self.items, &self.messages, &mut self.icons, &mut self.cursor_look, &self.pc_job_names);
         let (audio, sound) = (&mut self.audio, &self.sound);
         let (worlds, map_names, quest_texts) = (&self.worlds, &self.map_names, &self.quest_texts);
+        let card_names = &self.card_names;
         let (achievement_info, title_names) = (&self.achievement_info, &self.title_names);
         let (skill_info, skill_trees, status_icon_files) = (&self.skill_info, &self.skill_trees, &self.status_icon_files);
         let font = &self.font;
@@ -9406,6 +10149,19 @@ impl App {
                 base.sprites.push((emblem, [corner(line)[0] - guild::EMBLEM_SIZE[0] - 2.0, top], guild::EMBLEM_SIZE));
             }
         }
+        // ponytail: nothing says how camps look; a square in the camp's color over each player's head, and the score
+        // as "A : B" under the minimap (the top middle is the announcements').
+        if let (Some(ours), Some((_, marks))) = (game.battle.camp(game.account_id), &game.camp_looks) {
+            for (id, camp) in &game.battle.camps {
+                let Some(above) = feet_of.get(id).and_then(|&feet| sprite_point(feet, -100.0)) else { continue };
+                let mark = &marks[usize::from(*camp != ours)];
+                base.sprites.push((mark, [above[0] - 4.0, above[1] - 12.0], [8.0, 8.0]));
+            }
+        }
+        if let Some([a, b]) = game.battle.score {
+            let score = format!("{a} : {b}");
+            base.outlined(&score, [(SCREEN[0] - 12.0 - font.width(&score)).floor(), 166.0]);
+        }
         // On a siege map (not a battleground) other players in a guild, and the guardians, carry its emblem over their
         // heads; it follows the unit but doesn't grow with the zoom.
         game.head_emblems.clear();
@@ -9432,7 +10188,10 @@ impl App {
         let hp = ratio(game.status.get(&net::STATUS_HP), game.status.get(&net::STATUS_MAX_HP));
         let sp = ratio(game.status.get(&net::STATUS_SP), game.status.get(&net::STATUS_MAX_SP));
         let [border, background, green, red, blue] = &assets.bars;
-        let mut bars = vec![(player_feet, hp, sp, [border, background, green, red])];
+        let mut bars = Vec::new();
+        if game.show_bars {
+            bars.push((player_feet, hp, sp, [border, background, green, red]));
+        }
         // Monsters' bars in their own colors; a dying unit's bar shows empty until it's gone.
         bars.extend(game.unit_hp.iter().filter_map(|(id, &(hp, max))| {
             let actor = game.units.get(id)?;
@@ -9575,10 +10334,10 @@ impl App {
                 icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, false).ok());
             }
         }
-        let jobs = skill_trees.lineage(game.me.job);
+        let jobs = skills::tabs(skill_trees, game.me.job, &game.skills);
         let skill_icons = game
             .skill_window
-            .icons(skill_trees, &jobs, skill_info)
+            .icons(skill_trees, &jobs, &game.skills, skill_info)
             .into_iter()
             .chain(game.guild.as_ref().map(|guild| game.guild_window.icons(guild, skill_info)).unwrap_or_default())
             .chain(mercenary::SkillList::icons(&game.mercenary_skills, skill_info))
@@ -9590,6 +10349,8 @@ impl App {
         shop_icons.extend(game.cashshop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default());
         let mut pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
         pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
+        pick_icons.extend(game.reform.as_ref().map(|window| window.icons(items)).unwrap_or_default());
+        pick_icons.extend(game.grade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.enchant.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.synthesis.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
@@ -9611,6 +10372,8 @@ impl App {
             trade_icons.extend(vend::icons(items, store.items.iter().map(|item| (item.item_id, true))));
         }
         trade_icons.extend(game.mail.icons(items));
+        trade_icons.extend(game.pickup_popup.as_ref().map(|popup| popup.icon.clone()).filter(|icon| !icon.is_empty()));
+        trade_icons.extend(game.catalog.as_ref().map(|catalog| catalog.icons(items)).unwrap_or_default());
         for path in skill_icons.chain(status_paths).chain(shop_icons).chain(pick_icons).chain(game.storage.icons(items)).chain(trade_icons) {
             icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, false).ok());
         }
@@ -9621,6 +10384,13 @@ impl App {
         let size = [game.world.gat.width as u32, game.world.gat.height as u32];
         // NPC marks blink, shown half of each second.
         game.marks.retain(|(.., until)| until.is_none_or(|until| until > now));
+        // The pickup popup's five seconds; an open inventory has been seen.
+        if game.pickup_popup.as_ref().is_some_and(|popup| !popup.alive(control::now())) {
+            game.pickup_popup = None;
+        }
+        if game.inventory.frame.open {
+            game.new_items = false;
+        }
         let blink_on = game.entered.elapsed().as_millis() % 1000 > 500;
         let marks: Vec<_> = game.marks.iter().filter(|_| blink_on).map(|(_, cell, color, _)| (*cell, color)).collect();
         // Party members on this map, each in a color of their own, picked at random.
@@ -9638,9 +10408,18 @@ impl App {
                 gpu.solid([r, g, b, 255])
             });
         }
-        let dots: Vec<_> = members.iter().map(|(account, cell)| (*cell, &game.party_dots[account])).collect();
+        // On a battleground, teammates in our camp's color.
+        let mut dots: Vec<_> = members.iter().map(|(account, cell)| (*cell, &game.party_dots[account])).collect();
+        if let Some((team_dot, _)) = &game.camp_looks {
+            dots.extend(game.battle.dots.values().map(|&[x, y]| ([i32::from(x), i32::from(y)], team_dot)));
+        }
         let boss = game.boss.as_ref().map(|(_, cell)| *cell);
-        minimap::draw(&mut chat_layer, &assets.minimap, game.minimap.as_ref(), size, game.player.cell, game.player.direction, &marks, &dots, boss);
+        let overview = match game.minimap_view {
+            minimap::View::Hidden => None,
+            minimap::View::Translucent => game.minimap_faded.as_ref().or(game.minimap.as_ref()),
+            minimap::View::Shown => game.minimap.as_ref(),
+        };
+        minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.player.cell, game.player.direction, &marks, &dots, boss);
         // Status icons down the right, each with the clock of its time (orange in the last minute).
         let per_column = ((SCREEN[1] - STATUS_TOP) / STATUS_STEP[1]) as usize;
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
@@ -9692,6 +10471,11 @@ impl App {
         game.announcements.prepare(gpu, font);
         let mut announce_layer = Layer::default();
         game.announcements.draw(&mut announce_layer);
+        // The pickup popup takes no clicks.
+        if let Some(popup) = &game.pickup_popup {
+            let icon = icons.get(&popup.icon).and_then(Option::as_ref);
+            popup.draw(&mut announce_layer, &assets.chrome, &assets.pickup, icon, font);
+        }
         // Weather over the map, under the names and windows.
         let mut weather_layer = Layer::default();
         if self.graphics.effects_on {
@@ -9737,13 +10521,34 @@ impl App {
                         status: &game.status,
                         unread_mail: game.mail.unread,
                         reward_waiting: game.achievements.values().any(|achievement| achievement::claimable(Some(achievement))),
+                        new_items: game.new_items,
                     };
                     game.basic_info.draw(&mut layer, &assets.chrome, &assets.basic_info, font, messages, &info, pointer.0);
                 }
-                Panel::Inventory => game.inventory.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.inventory, icons, items, messages, font, pointer.0),
-                Panel::Cart if game.cart.cart.is_some() => {
-                    game.cart.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.inventory, icons, items, messages, font, pointer.0)
-                }
+                Panel::Inventory => game.inventory.draw(
+                    &mut layer,
+                    &mut tooltip,
+                    &assets.chrome,
+                    &assets.inventory,
+                    icons,
+                    items,
+                    messages,
+                    font,
+                    pointer.0,
+                    (card_names, &game.char_names),
+                ),
+                Panel::Cart if game.cart.cart.is_some() => game.cart.draw(
+                    &mut layer,
+                    &mut tooltip,
+                    &assets.chrome,
+                    &assets.inventory,
+                    icons,
+                    items,
+                    messages,
+                    font,
+                    pointer.0,
+                    (card_names, &game.char_names),
+                ),
                 Panel::Cart => {}
                 Panel::Pet => {
                     if let Some(pet) = &game.pet {
@@ -9830,6 +10635,7 @@ impl App {
                     pointer.0,
                     &game.inventory.items,
                     preview.take().unwrap_or_default(),
+                    (card_names, &game.char_names),
                 ),
             }
             layers.push(layer);
@@ -9873,6 +10679,11 @@ impl App {
             tooltip.sprites.push((&assets.target_fill, [left, top], [width, 23.0]));
             tooltip.texts.push((text.clone(), [left + 8.0, top + 6.0], [0, 0, 0]));
             tooltip.texts.push((text, [left + 7.0, top + 5.0], [0x00, 0xFF, 0x00]));
+        }
+        // The store search under the shops it opens from afar.
+        let mut catalog_layer = Layer::default();
+        if let Some(catalog) = &game.catalog {
+            catalog.draw(&mut catalog_layer, &assets.chrome, &assets.catalog, icons, items, font, messages, (pointer.0, pointer.1, caret));
         }
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
@@ -9959,10 +10770,17 @@ impl App {
                 pointer.0,
                 &viewed.items,
                 viewed_preview,
+                (card_names, &game.char_names),
             );
         }
         if let Some(window) = &game.refine {
             window.draw(&mut shop_layer, &assets.chrome, &assets.refine, icons, items, &game.inventory.items, messages, font, pointer);
+        }
+        if let Some(window) = &game.reform {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.reform, icons, items, &game.inventory.items, messages, font, pointer);
+        }
+        if let Some(window) = &game.grade {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.grade, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.enchant {
             window.draw(&mut shop_layer, &assets.chrome, &assets.enchant, icons, items, &game.inventory.items, messages, font, pointer);
@@ -10012,6 +10830,7 @@ impl App {
             (Some((_, name)), _) => Some(format!("({name}){}", message(GUILD_INVITED))),
             (_, Some(GuildAsked::Ally { guild, .. })) => Some(format!("({guild}){}", message(ALLY_ASKS))),
             (_, Some(GuildAsked::End { .. })) => Some(message(DELETE_ASKS).to_owned()),
+            (_, Some(GuildAsked::Leave)) => Some(message(LEAVE_ASKS).to_owned()),
             _ => None,
         };
         if let Some(question) = guild_question {
@@ -10062,6 +10881,45 @@ impl App {
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             let question = messages::fill(message(FRIEND_ASKS), &[name]);
+            for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
+                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
+        // The battleground queue, and its question: applying, leaving, or entering with the time left.
+        if game.queue_window.frame.open {
+            game.queue_window.draw(&mut shop_layer, &assets.chrome, &assets.battle_queue, font, messages, &self.battlegrounds, game.queued.as_ref(), pointer);
+        }
+        let queue_question = match &game.queue_asked {
+            Some(QueueAsked::Apply(kind, _)) => {
+                let index = [net::QUEUE_ALONE, net::QUEUE_PARTY, net::QUEUE_GUILD].iter().position(|each| each == kind).unwrap_or(0);
+                Some(message(battle_queue::APPLY_ASKS[index]).to_owned())
+            }
+            Some(QueueAsked::Cancel(_)) => Some(message(battle_queue::CANCEL_ASKS).to_owned()),
+            Some(QueueAsked::Lobby(_, until)) => {
+                let left = until.saturating_duration_since(Instant::now()).as_secs();
+                let note = battle_queue::LOBBY_NOTE.iter().map(|&id| message(id)).collect::<Vec<_>>().join(" ");
+                Some(format!("{} {note} {}", message(battle_queue::LOBBY_ASKS), messages::fill(message(battle_queue::LOBBY_TIME), &[&left])))
+            }
+            None => None,
+        };
+        if let Some(question) = queue_question {
+            let dialog = dialog_position(&assets.message);
+            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
+            for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
+                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
+        // Asked to be adopted: who asks, then whether they're sure (what a baby class gives up is in the chat).
+        // ponytail: the second question (888) is an estimate, and so is splitting it: the box holds three lines, so it
+        // shows the last sentence.
+        if let Some((_, _, name, again)) = &game.adopt_asked {
+            let question = if *again { last_sentence(message(ADOPT_ASKS_AGAIN)).to_owned() } else { format!("({name}){}", message(ADOPT_ASKS)) };
+            let dialog = dialog_position(&assets.message);
+            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
@@ -10120,7 +10978,7 @@ impl App {
         if let Some(world_map) = &game.world_map {
             world_map.draw(&mut world_layer, &assets.chrome, font, &worlds.0, map_names, &map_key(&game.map), pointer.0);
         }
-        layers.extend([shop_layer, overlay, menu_layer, tooltip, world_layer]);
+        layers.extend([catalog_layer, shop_layer, overlay, menu_layer, tooltip, world_layer]);
         let composed = compose(gpu, font, layers);
         let mut sprites = flatten(&composed);
 
@@ -10192,6 +11050,10 @@ impl App {
             meshes: &effect_meshes,
             time: now.duration_since(game.entered).as_secs_f32(),
         };
+        if let Some(path) = self.print_screen.take() {
+            let _ = path.parent().map(std::fs::create_dir_all);
+            let _ = gpu.snapshot(Some(&frame), &sprites).save(&path);
+        }
         let shot_delay = std::env::var("RUSTNAROK_CLIENT_SHOT_DELAY").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(2.0);
         match &self.screenshot {
             Some(path) if game.entered.elapsed().as_secs_f32() > shot_delay => {
@@ -10582,6 +11444,20 @@ fn main() {
         eprintln!("no item names: {error}");
         HashMap::new()
     });
+    let card_names = inventory::CardNames::load(&grf);
+    let battlegrounds = lua::entry_queue(&grf).unwrap_or_else(|error| {
+        eprintln!("no battleground list: {error}");
+        Vec::new()
+    });
+    // ItemDBNameTbl is shared with the enchant window: it calls lua::item_db_names on the same file.
+    let item_names = grf.read(lua::ITEM_DB_NAMES).and_then(lua::item_db_names).unwrap_or_else(|error| {
+        eprintln!("no item name table: {error}");
+        HashMap::new()
+    });
+    let reforms = grf.read(lua::ITEM_REFORM).and_then(|bytes| lua::reform_table(bytes, &item_names)).unwrap_or_else(|error| {
+        eprintln!("no item reform list: {error}");
+        HashMap::new()
+    });
     let enchant_tables = lua::enchants(&grf).unwrap_or_else(|error| {
         eprintln!("no enchant tables: {error}");
         HashMap::new()
@@ -10621,6 +11497,15 @@ fn main() {
     let sound = sound::Settings::load();
     let graphics = options::GraphicsSettings::load();
     let shortcuts = options::ShortcutSettings::load();
+    let mut keybinds = shortcuts::Shortcuts::load(&grf);
+    // ponytail: the shortcut-settings window writes its own file, not UserKeys, so a saved bar overlays hotbar 1.
+    if shortcuts != options::ShortcutSettings::default_bindings() {
+        let mut keys = [None; 36];
+        for (slot, key) in shortcuts.slots.into_iter().enumerate() {
+            keys[slot] = key.and_then(shortcut_to_bind);
+        }
+        keybinds.apply_bar_keys(keys);
+    }
     let mut app = App {
         grf,
         job_names,
@@ -10630,6 +11515,9 @@ fn main() {
         upgrade_boxes,
         title_names,
         items,
+        battlegrounds,
+        card_names,
+        reforms,
         enchant_tables,
         styling_shop,
         messages,
@@ -10654,6 +11542,8 @@ fn main() {
         music,
         graphics,
         shortcuts,
+        keybinds,
+        print_screen: None,
         cursor_look,
         loading_images,
         loading: None,
@@ -10790,6 +11680,12 @@ mod tests {
         assert_eq!(rank_line(0, 11), Some(RANK_DOWN), "a first rank outside the top ten");
         assert_eq!(rank_line(0, 3), Some(RANK_UP));
         assert_eq!(rank_line(5, 3), None);
+    }
+
+    #[test]
+    fn keeps_a_messages_last_sentence() {
+        assert_eq!(last_sentence("Stats are limited. Are you sure?"), "Are you sure?");
+        assert_eq!(last_sentence("Are you sure?"), "Are you sure?");
     }
 
     #[test]
