@@ -1,0 +1,64 @@
+{
+  "about": "Small party windows (issue #483): the party window's menu adds one in the first free cell, (0, 275) at 1024×768, with a band on the member's row; one dropped on another's cell swaps them; one let go at the top of the screen shows \"In the last row\" and goes back; Sort packs them from the first cell; the lock stops dragging; after a relog they come back in their cells.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0,
+    "env": {
+      "RUSTNAROK_CLIENT_PARTY": "accept"
+    }
+  },
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"type": "/leave"}, {"key": "Enter"}, {"as": "second", "type": "/leave"}, {"as": "second", "key": "Enter"}, {"wait": 1500},
+    {"say": "@recall {second}"}, {"as": "second", "settle": 2000},
+    {"type": "/organize QAMini"}, {"key": "Enter"}, {"wait_for": {"event": "PartyMade", "ms": 5000}}, {"wait": 500},
+    {"key": "Alt+Z"},
+    {"click_on": {"unit": "{second}"}, "button": "right"}, {"wait": 400},
+    {"click_on": {"menu_item": "party"}},
+    {"wait_for": {"packet": "0x02c5", "ms": 5000}}, {"wait": 500},
+    {"key": "Alt+Z"}, {"wait": 400},
+
+    {"click_on": {"button": "member:{second}"}, "button": "right"}, {"wait": 300},
+    {"click_on": {"menu_item": "Add small party window"}}, {"wait": 300},
+    {"expect": {"windows_open": ["PartyHp:{second}"], "state": {"small_windows.{second}": [0, 275]}}},
+    {"click_on": {"button": "member:{first}"}, "button": "right"}, {"wait": 300},
+    {"click_on": {"menu_item": "Add small party window"}}, {"wait": 300},
+    {"expect": {"state": {"small_windows.{first}": [0, 330]}}},
+    {"move": [1000, 740]},
+    {"shot": "mini-added"},
+
+    {"drag_on": [{"button": "party_hp:{second}"}, {"point": [90, 356]}]}, {"wait": 300},
+    {"expect": {"state": {"small_windows.{second}": [0, 330], "small_windows.{first}": [0, 275]}}},
+
+    {"drag_on": [{"button": "party_hp:{second}"}, {"point": [400, 40]}]}, {"wait": 300},
+    {"expect": {"windows_open": ["PartyAsked"], "state": {"small_windows.{second}": [0, 330]}}},
+    {"move": [1000, 740]},
+    {"shot": "mini-last-row"},
+    {"click_on": {"button": "ok"}}, {"wait": 300},
+
+    {"drag_on": [{"button": "party_hp:{first}"}, {"point": [620, 520]}]}, {"wait": 300},
+    {"expect": {"state": {"small_windows.{first}": [531, 495]}}},
+    {"click_on": {"button": "sort"}}, {"wait": 300},
+    {"expect": {"state": {"small_windows.{second}": [0, 275], "small_windows.{first}": [0, 330]}}},
+
+    {"click_on": {"button": "lock"}}, {"wait": 200},
+    {"drag_on": [{"button": "party_hp:{second}"}, {"point": [300, 400]}]}, {"wait": 300},
+    {"expect": {"state": {"small_windows.{second}": [0, 275]}}},
+    {"click_on": {"button": "lock"}}, {"wait": 200},
+
+    {"drag_on": [{"button": "party_hp:{second}"}, {"point": [270, 410]}]}, {"wait": 300},
+    {"expect": {"state": {"small_windows.{second}": [177, 385]}}},
+    {"key": "Alt+Z"}, {"wait": 300},
+    {"key": "Escape"}, {"wait": 400},
+    {"click_on": {"button": "char_select"}}, {"wait": 4000},
+    {"expect": {"state": {"scene": "char_select"}}},
+    {"key": "Enter"}, {"settle": 3000},
+    {"expect": {"windows_open": ["PartyHp:{second}", "PartyHp:{first}"], "state": {"small_windows.{second}": [177, 385], "small_windows.{first}": [0, 330]}}},
+    {"move": [1000, 740]},
+    {"shot": "mini-after-relog"},
+
+    {"as": "second", "type": "/leave"}, {"as": "second", "key": "Enter"}, {"type": "/leave"}, {"key": "Enter"}, {"wait": 800}
+  ]
+}

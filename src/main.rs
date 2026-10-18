@@ -1413,6 +1413,8 @@ struct Game {
     party_asked: Option<PartyQuestion>,
     /// The last press on a party member's row (when, whose): a second soon after on the same row is a double click.
     row_press: Option<(Instant, u32)>,
+    /// The small party windows as last saved for this character.
+    small_saved: String,
     /// 1:1 whisper windows, when an incoming whisper opens one, the friend setup, the block list and the away message.
     talks: whisper::Talks,
     whisper_open: whisper::OpenSettings,
@@ -2557,12 +2559,20 @@ impl Game {
     }
 
     /// A party member's small window under the pointer, for aiming a skill.
-    /// The close button is left out: that still closes the window.
     fn party_member_at(&self, cursor: [f32; 2]) -> Option<u32> {
-        match self.member_windows.hit(cursor) {
-            Some((account, party::MemberHit::Body)) => Some(account),
-            Some(_) => None,
-            None => None,
+        self.member_windows.hit(cursor, &party::Grid::new(screen()))
+    }
+
+    /// The small party windows, saved for the character when they change while in a party.
+    // ponytail: kept on each change, so the file is the same as one written when the game ends.
+    fn save_small_windows(&mut self) {
+        if self.party.is_none() {
+            return;
+        }
+        let saved = self.member_windows.saved();
+        if saved != self.small_saved {
+            write_small_windows(&self.me.name, &saved);
+            self.small_saved = saved;
         }
     }
 
@@ -2939,7 +2949,7 @@ impl Game {
             PartyQuestion::Expel(account, name) => {
                 let _ = self.session.expel_from_party(account, &name);
             }
-            PartyQuestion::OnlyLeader => {}
+            PartyQuestion::OnlyLeader | PartyQuestion::LastRow => {}
         }
     }
 
@@ -2965,6 +2975,7 @@ impl Game {
             party::MemberChoice::Expel => self.party_asked = Some(PartyQuestion::Expel(info.account, info.name)),
             party::MemberChoice::Assign if !info.online => self.chat_line(messages.get(LEADER_OFFLINE).cloned().unwrap_or_default(), CHAT_ERROR),
             party::MemberChoice::Assign => self.leader_asked = Some(info.account),
+            party::MemberChoice::AddSmall => self.member_windows.add(info.account, &party::Grid::new(screen())),
             party::MemberChoice::RemoveSmall => self.member_windows.close(info.account),
         }
     }
@@ -2978,7 +2989,8 @@ impl Game {
     /// The menu on a party member (`small`: on their small window), at the pointer + 1.
     fn member_menu(&mut self, account: u32, small: bool, cursor: [f32; 2], messages: &[String], font: &Font) {
         let leader = self.party.as_ref().is_some_and(|party| party.leader() == Some(self.account_id));
-        let choices = party::member_menu(self.account_id, account, leader, small)
+        let online = self.party.as_ref().and_then(|party| party.members.iter().find(|m| m.info.account == account)).is_some_and(|m| m.info.online);
+        let choices = party::member_menu(self.account_id, account, leader, small, online)
             .into_iter()
             .map(|choice| Some((messages.get(choice.message()).cloned().unwrap_or_default(), Choice::Member(choice, account))))
             .collect();
@@ -3831,7 +3843,7 @@ impl Game {
             || self.block_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.away_prompt.as_ref().is_some_and(|prompt| prompt.hit(cursor).is_some())
             || self.chat.on_list(cursor)
-            || self.member_windows.hit(cursor).is_some()
+            || self.party_member_at(cursor).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
             || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
@@ -5294,6 +5306,8 @@ enum PartyQuestion {
     Expel(u32, String),
     /// "Only the leader can invite." (2070), OK only.
     OnlyLeader,
+    /// "In the last row" (3145): a small party window let go outside the used cells. OK only.
+    LastRow,
 }
 
 impl PartyQuestion {
@@ -5303,12 +5317,13 @@ impl PartyQuestion {
             Self::Disband => party::ASK_DISBAND,
             Self::Expel(..) => PARTY_EXPEL_ASKS,
             Self::OnlyLeader => party::ONLY_LEADER_INVITES,
+            Self::LastRow => party::IN_THE_LAST_ROW,
         }
     }
 
     /// Whether it asks (OK and Cancel), else it tells (OK alone).
     fn asks(&self) -> bool {
-        *self != Self::OnlyLeader
+        !matches!(self, Self::OnlyLeader | Self::LastRow)
     }
 }
 
@@ -5865,6 +5880,21 @@ pub(crate) fn keeps_windows() -> bool {
 
 /// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
 /// folder elsewhere.
+/// The small party windows saved for a character (by name): a member's account and cell a line.
+fn small_windows_path(character: &str) -> Option<std::path::PathBuf> {
+    settings_path(&format!("party_mini_{character}"))
+}
+
+fn read_small_windows(character: &str) -> String {
+    small_windows_path(character).and_then(|path| std::fs::read_to_string(path).ok()).unwrap_or_default()
+}
+
+fn write_small_windows(character: &str, saved: &str) {
+    if let Some(path) = small_windows_path(character) {
+        let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, saved));
+    }
+}
+
 pub(crate) fn settings_path(name: &str) -> Option<std::path::PathBuf> {
     // Dev switch: another settings folder (the test harness gives each scenario a fresh one).
     if let Some(folder) = std::env::var_os("RUSTNAROK_CLIENT_SETTINGS").filter(|folder| !folder.is_empty()) {
@@ -8086,12 +8116,8 @@ impl App {
                     Some(shop::Action::AskOut(..) | shop::Action::Say(..)) | None => {}
                 }
             }
-            // A small party window: its close button removes it. A click on the body was a drag (handled on press).
-            Scene::Game(game) if game.member_windows.hit(cursor).is_some() => {
-                if let Some((account, party::MemberHit::Close)) = game.member_windows.hit(cursor) {
-                    game.member_windows.close(account);
-                }
-            }
+            // A small party window: a click on it was a drag (handled on press).
+            Scene::Game(game) if game.party_member_at(cursor).is_some() => {}
             Scene::Game(game) if game.window_at(cursor).is_some() => {
                 let id = game.window_at(cursor).unwrap();
                 game.raise(id);
@@ -8336,6 +8362,7 @@ impl App {
                         // With the lock on, only the lock and the agency take a press.
                         Some(party::Hit::Button(button)) if !game.party_window.takes(button) => {}
                         Some(party::Hit::Button(party::Button::Lock(locked))) => game.party_window.locked = !locked,
+                        Some(party::Hit::Button(party::Button::Sort)) => game.member_windows.sort(&party::Grid::new(screen())),
                         // ponytail: the agency does nothing yet.
                         Some(party::Hit::Button(party::Button::Agency)) => {}
                         Some(party::Hit::Button(party::Button::Create)) => game.amount = Some(window::Amount::name(Asked::PartyName, PARTY_CREATE)),
@@ -8657,10 +8684,7 @@ impl App {
             && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
             && !game.party_window.locked
         {
-            let small = match game.member_windows.hit(self.cursor) {
-                Some((account, party::MemberHit::Body)) => Some(account),
-                _ => None,
-            };
+            let small = game.party_member_at(self.cursor);
             let row = match game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends) {
                 Some(party::Hit::Member(account)) if game.window_at(self.cursor) == Some(Panel::Party) => Some(account),
                 _ => None,
@@ -9247,8 +9271,12 @@ impl App {
                 }
                 let option_windows = game.graphics_window.as_mut().is_some_and(options::GraphicsWindow::drop_drag)
                     | game.shortcuts_window.as_mut().is_some_and(options::ShortcutsWindow::drop_drag);
-                let member_held =
-                    game.member_windows.release(game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends).is_none(), self.cursor);
+                let outside = game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends).is_none();
+                let member_held = game.member_windows.release(outside, &party::Grid::new(screen()));
+                // Let go outside the used cells: it went back, and the box says why.
+                if std::mem::take(&mut game.member_windows.last_row) {
+                    game.party_asked = Some(PartyQuestion::LastRow);
+                }
                 let windows = trade_moved
                     | slid
                     | option_windows
@@ -9685,11 +9713,12 @@ impl App {
             window.press(hit, cursor);
             return;
         }
+        // A small party window: a press anywhere on it grabs it, unless the party window's lock is on.
         if let Scene::Game(game) = &mut self.scene
-            && let Some((account, hit)) = game.member_windows.hit(cursor)
+            && let Some(account) = game.party_member_at(cursor)
         {
-            if hit == party::MemberHit::Body {
-                game.member_windows.press_window(account, cursor);
+            if !game.party_window.locked {
+                game.member_windows.press_window(account, cursor, &party::Grid::new(screen()));
             }
             return;
         }
@@ -9753,7 +9782,8 @@ impl App {
                         let double = game.row_press.is_some_and(|(at, whose)| whose == account && now.saturating_duration_since(at) < DOUBLE_PRESS);
                         game.row_press = (!double).then_some((now, account));
                         if double && account != game.account_id {
-                            let name = game.party.as_ref().and_then(|party| party.members.iter().find(|m| m.info.account == account)).map(|m| m.info.name.clone());
+                            let name =
+                                game.party.as_ref().and_then(|party| party.members.iter().find(|m| m.info.account == account)).map(|m| m.info.name.clone());
                             if let Some(name) = name {
                                 game.whisper_member(&name);
                             }
@@ -9762,9 +9792,7 @@ impl App {
                         }
                     }
                 }
-                Panel::Party
-                    if game.party_window.hit(cursor, game.party.as_ref(), &game.friends) == Some(party::Hit::Title(TitleHit::Title)) =>
-                {
+                Panel::Party if game.party_window.hit(cursor, game.party.as_ref(), &game.friends) == Some(party::Hit::Title(TitleHit::Title)) => {
                     game.party_window.frame.start_drag(cursor)
                 }
                 Panel::Status
@@ -11133,6 +11161,7 @@ impl App {
                     leader_asked: None,
                     party_asked: None,
                     row_press: None,
+                    small_saved: String::new(),
                     talks: whisper::Talks::default(),
                     whisper_open: whisper::OpenSettings::load(),
                     friend_setup: None,
@@ -12966,6 +12995,11 @@ impl App {
                     .collect();
                 game.party = Some(party);
                 game.member_windows.retain(game.party.as_ref());
+                // The windows saved for this character come back for the members in the list.
+                if let Some(party) = &game.party {
+                    let saved = party::parse_saved(&read_small_windows(&game.me.name));
+                    game.member_windows.restore(&saved, party, &party::Grid::new(screen()));
+                }
             }
             MapEvent::PartyMember { party: name, member, cell, .. } => {
                 let party = game.party.get_or_insert_with(party::Party::default);
@@ -12986,6 +13020,8 @@ impl App {
                         game.party = None;
                         game.party_setup = None;
                         game.member_windows.retain(None);
+                        write_small_windows(&game.me.name, "");
+                        game.small_saved.clear();
                         game.chat_line(message(PARTY_LEFT), CHAT_ITEM);
                     }
                     _ => {
@@ -14508,6 +14544,7 @@ impl App {
 
         // Where the windows were left is kept for next time.
         game.save_places();
+        game.save_small_windows();
         // Fireworks weather sets off fireworks around the player.
         for [dx, dy] in game.weather.fireworks_due(now) {
             let cell = [game.player.cell[0] + dx, game.player.cell[1] + dy].map(|value| value.max(0) as u16);
@@ -15917,6 +15954,7 @@ impl App {
                         game.party.as_ref(),
                         &game.friends,
                         (game.account_id, our_hp, &on_screen, &stem),
+                        &game.member_windows.open.iter().map(|window| window.account).collect::<Vec<_>>(),
                         pointer,
                     );
                 }
@@ -15941,8 +15979,26 @@ impl App {
         }
         // Party members dragged out of the list, over the other windows.
         let mut member_layer = Layer::default();
-        game.member_windows.draw(&mut member_layer, &assets.chrome, &assets.party, font, game.party.as_ref(), here.as_str(), pointer.0);
+        let mut member_tooltip = Layer::default();
+        {
+            let stem = |map: &str| self.map_names.get(map.trim_end_matches(".gat")).cloned().unwrap_or_else(|| map.trim_end_matches(".gat").to_owned());
+            let our_hp = [net::STATUS_HP, net::STATUS_MAX_HP].map(|id| game.status.get(&id).copied().unwrap_or(0) as i32);
+            let on_screen = |account: u32| game.units.contains_key(&account);
+            game.member_windows.draw(
+                &mut member_layer,
+                &mut member_tooltip,
+                &assets.chrome,
+                &assets.party,
+                icons,
+                font,
+                game.party.as_ref(),
+                (game.account_id, our_hp, &on_screen, &stem),
+                &party::Grid::new(screen()),
+                pointer.0,
+            );
+        }
         layers.push(member_layer);
+        layers.push(member_tooltip);
         // A dragged item's or skill's icon follows the pointer.
         let dragged_icon = match game.dragging {
             Some((Dragged::Item(index) | Dragged::Worn(index), _, true)) => {

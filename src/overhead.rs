@@ -109,11 +109,17 @@ pub fn bar_fill(value: i64, max: i64) -> Option<f32> {
 /// A party member's (or battleground teammate's) row: trunc(0.6 · pct − 2) px with pct a whole percent; none at 0
 /// or less.
 pub fn party_fill(value: i64, max: i64) -> Option<f32> {
+    party_fill_width(value, max, BAR_WIDTH)
+}
+
+/// The party fill on a bar `width` wide (60 under units, 66 in a small party window): trunc(width·pct/100 − 2), pct a
+/// whole percent; none at 0.
+pub fn party_fill_width(value: i64, max: i64, width: f32) -> Option<f32> {
     if max <= 0 {
         return None;
     }
     let percent = 100 * value.clamp(0, max) / max;
-    let width = (0.6 * percent as f32 - 2.0).trunc();
+    let width = (width * percent as f32 / 100.0 - 2.0).trunc();
     (width > 0.0).then_some(width)
 }
 
@@ -298,6 +304,8 @@ mod tests {
         let party = [0, 1, 3, 4, 50, 99, 100].map(|percent| party_fill(percent, 100));
         assert_eq!(party, [None, None, None, None, Some(28.0), Some(57.0), Some(58.0)]);
         assert_eq!((party_fill(1, 3), bar_fill(1, 3)), (Some(17.0), Some(19.0)));
+        let small = [0, 1, 3, 4, 50, 99, 100].map(|percent| party_fill_width(percent, 100, 66.0));
+        assert_eq!(small, [None, None, None, None, Some(31.0), Some(63.0), Some(64.0)]);
         assert_eq!(fills(&fourth), [('g', 1.0, 52.0), ('b', 5.0, 58.0), ('a', 9.0, 58.0)]);
     }
 
