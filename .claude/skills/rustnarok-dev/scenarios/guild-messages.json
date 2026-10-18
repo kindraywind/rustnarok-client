@@ -1,0 +1,493 @@
+{
+  "about": "Guild messages (issue #515): a member logging back in prints \"Guild Member <name> has connected.\" in cyan; after /loginout it prints nothing; the second leaving with \"bye\" gives the others \"<name> has withdrawn from the guild.\" and \"Secession Reason: bye\" (this data's words for 364 and 365) in yellow and themselves \"You left the guild.\" in red; expelled with \"out\", the others read the expulsion lines in yellow and the second reads 490 in red.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0,
+    "env": {
+      "RUSTNAROK_CLIENT_GUILD": "accept"
+    }
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@breakguild"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "say": "@recall {second}"
+    },
+    {
+      "as": "second",
+      "settle": 2000
+    },
+    {
+      "say": "@guild PosTest"
+    },
+    {
+      "wait_for": {
+        "event": "GuildMade",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@warp prontera 156 117"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "click_on": {
+        "unit": "{second}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "menu_item": "Guild invitation"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0169",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "chat": "Offer Accepted"
+      }
+    },
+    {
+      "key": "Alt+G"
+    },
+    {
+      "wait_for": {
+        "packet": "0x014c",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [
+        276,
+        148
+      ]
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b7d",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "guild.members.{second}": 19
+        }
+      }
+    },
+    {
+      "as": "second",
+      "key": "Escape"
+    },
+    {
+      "as": "second",
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "char_select"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 4000
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "as": "second",
+      "settle": 3000
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "chat": "has connected."
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "guild-login-line",
+      "crop": [
+        0,
+        640,
+        600,
+        128
+      ]
+    },
+    {
+      "type": "/loginout"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "loginout: Off"
+      }
+    },
+    {
+      "say": "filler 1"
+    },
+    {
+      "say": "filler 2"
+    },
+    {
+      "say": "filler 3"
+    },
+    {
+      "say": "filler 4"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "key": "Escape"
+    },
+    {
+      "as": "second",
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "char_select"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 4000
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "as": "second",
+      "settle": 3000
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "no_chat": "has connected."
+      }
+    },
+    {
+      "type": "/loginout"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "loginout: On"
+      }
+    },
+    {
+      "as": "second",
+      "key": "Alt+G"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x014c",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "click": [
+        276,
+        148
+      ]
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x0b7d",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "member:{second}"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 200
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "member:{second}"
+      },
+      "button": "right"
+    },
+    {
+      "as": "second",
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "menu_item": "Leave Guild"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "type": "bye"
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "chat": "Secession Reason: bye"
+      }
+    },
+    {
+      "as": "second",
+      "expect": {
+        "chat": "You left the guild."
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "guild-left-lines",
+      "crop": [
+        0,
+        640,
+        600,
+        128
+      ]
+    },
+    {
+      "as": "second",
+      "key": "Alt+G"
+    },
+    {
+      "key": "Alt+G"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "unit": "{second}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "menu_item": "Guild invitation"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0169",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "key": "Alt+G"
+    },
+    {
+      "wait_for": {
+        "packet": "0x014c",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [
+        276,
+        148
+      ]
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b7d",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "member:{second}"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "member:{second}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "menu_item": "Expel"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "out"
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "chat": "Expulsion Reason: out",
+        "state": {
+          "guild.members.{second}": null
+        }
+      }
+    },
+    {
+      "as": "second",
+      "expect": {
+        "chat": "You have been expelled from the Guild.",
+        "state": {
+          "guild": null
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "guild-expel-lines",
+      "crop": [
+        0,
+        640,
+        600,
+        128
+      ]
+    },
+    {
+      "as": "second",
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "as": "second",
+      "shot": "guild-expelled-line",
+      "crop": [
+        0,
+        640,
+        600,
+        128
+      ]
+    },
+    {
+      "say": "@breakguild"
+    },
+    {
+      "wait": 1500
+    }
+  ]
+}

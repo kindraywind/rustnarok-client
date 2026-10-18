@@ -242,6 +242,42 @@ impl MemberChoice {
     }
 }
 
+/// Colours of the guild's lines: red, cyan, yellow, and the notice's light yellow.
+pub const LINE_RED: [u8; 3] = [0xFF, 0x00, 0x00];
+pub const LINE_CYAN: [u8; 3] = [0x00, 0xFF, 0xFF];
+pub const LINE_YELLOW: [u8; 3] = [0xFF, 0xFF, 0x00];
+pub const NOTICE_LINE: [u8; 3] = [0xFF, 0xFF, 0x80];
+
+/// The line for ZC_ACK_REQ_JOIN_GUILD's answer: 0 378, 1 379, 3 381, 4 2090 in red, 2 380 in cyan; others none.
+pub fn invite_result_line(result: u8) -> Option<(usize, [u8; 3])> {
+    Some(match result {
+        0 => (378, LINE_RED),
+        1 => (379, LINE_RED),
+        2 => (380, LINE_CYAN),
+        3 => (381, LINE_RED),
+        4 => (2090, LINE_RED),
+        _ => return None,
+    })
+}
+
+/// The notice's lines: "[ subject ]" and "[ text ]", each when it isn't empty.
+pub fn notice_lines(subject: &str, text: &str) -> Vec<String> {
+    [subject, text].into_iter().filter(|part| !part.is_empty()).map(|part| format!("[ {part} ]")).collect()
+}
+
+/// Someone left or was expelled (ZC_ACK_LEAVE_GUILD, ZC_ACK_BAN_GUILD): each line's message, what fills its %s, its
+/// colour; all guild lines. Us: "You left the guild." (489) or "You have been expelled
+/// from the Guild." (490) in red; another (`name`, "Nameless" (581) when not in the list): their line (364 or 370)
+/// and the reason's (365 or 371) in yellow.
+pub fn leaving_lines(us: bool, expelled: bool, name: Option<&str>, reason: &str, nameless: &str) -> Vec<(usize, String, [u8; 3])> {
+    if us {
+        return vec![(if expelled { 490 } else { 489 }, String::new(), LINE_RED)];
+    }
+    let name = name.unwrap_or(nameless).to_owned();
+    let (who, why) = if expelled { (370, 371) } else { (364, 365) };
+    vec![(who, name, LINE_YELLOW), (why, reason.to_owned(), LINE_YELLOW)]
+}
+
 /// Whether the player menu offers the guild invitation: we hold the invite right, and the player is in no guild.
 pub fn offers_invite(guild: Option<&Guild>, their_guild: u32) -> bool {
     guild.is_some_and(Guild::can_invite) && their_guild == 0
@@ -1274,6 +1310,22 @@ mod tests {
         assert!(!offers_invite(Some(&guild), 0) && !offers_invite(None, 0), "a member without the invite right");
         guild.mode = 0x01;
         assert!(offers_invite(Some(&guild), 0) && !offers_invite(Some(&guild), 9), "not on one in another guild");
+    }
+
+    #[test]
+    fn words_the_guild_lines() {
+        assert_eq!(
+            (0..=5).map(invite_result_line).collect::<Vec<_>>(),
+            [Some((378, LINE_RED)), Some((379, LINE_RED)), Some((380, LINE_CYAN)), Some((381, LINE_RED)), Some((2090, LINE_RED)), None,]
+        );
+        assert_eq!(notice_lines("Hi", "Welcome"), ["[ Hi ]", "[ Welcome ]"]);
+        assert_eq!(notice_lines("", "Welcome"), ["[ Welcome ]"]);
+        assert_eq!(notice_lines("Hi", ""), ["[ Hi ]"]);
+        assert!(notice_lines("", "").is_empty());
+        assert_eq!(leaving_lines(true, false, None, "bye", "Nameless"), [(489, String::new(), LINE_RED)]);
+        assert_eq!(leaving_lines(true, true, None, "", "Nameless"), [(490, String::new(), LINE_RED)]);
+        assert_eq!(leaving_lines(false, false, Some("Ann"), "bye", "Nameless"), [(364, "Ann".to_owned(), LINE_YELLOW), (365, "bye".to_owned(), LINE_YELLOW)]);
+        assert_eq!(leaving_lines(false, true, None, "", "Nameless"), [(370, "Nameless".to_owned(), LINE_YELLOW), (371, String::new(), LINE_YELLOW)]);
     }
 
     #[test]
