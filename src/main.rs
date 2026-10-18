@@ -95,6 +95,7 @@ mod render;
 mod roulette;
 mod shop;
 mod shortcuts;
+mod skill_descript;
 mod skills;
 mod sound;
 mod status;
@@ -863,6 +864,8 @@ struct Game {
     /// What was just picked up, for five seconds; and whether anything was since the inventory was last open.
     pickup_popup: Option<pickup::Popup>,
     new_items: bool,
+    /// A skill's description, while it shows.
+    skill_description: Option<skill_descript::SkillDescription>,
     /// The Universal Catalog's store search while it's open.
     catalog: Option<catalog::Catalog>,
     char_names: HashMap<u32, Option<String>>,
@@ -2731,6 +2734,7 @@ impl Game {
         push(DressRoom, self.dressroom.is_some());
         push(Ranking, self.ranking.is_some());
         push(Catalog, self.catalog.is_some());
+        push(SkillDescription, self.skill_description.is_some());
         push(Roulette, self.roulette.is_some());
         push(MonsterInfo, self.monster_window.is_some());
         push(Achievements, self.achievement_window.frame.open);
@@ -3016,6 +3020,7 @@ impl Game {
             }
             Ranking => self.ranking = None,
             Catalog => self.close_catalog(),
+            SkillDescription => self.skill_description = None,
             Roulette => self.close_roulette(),
             MonsterInfo => self.monster_window = None,
             Achievements => self.achievement_window.frame.open = false,
@@ -3672,6 +3677,7 @@ struct Assets {
     weather: weather::Assets,
     dressroom: dressroom::Assets,
     catalog: catalog::Assets,
+    skill_descript: skill_descript::Assets,
     pickup: pickup::Assets,
     battle_queue: battle_queue::Assets,
     mercenary: mercenary::Assets,
@@ -3787,6 +3793,7 @@ impl Assets {
             weather: weather::Assets::load(gpu, grf),
             dressroom: dressroom::Assets::load(gpu, grf),
             catalog: catalog::Assets::load(gpu, grf),
+            skill_descript: skill_descript::Assets::load(gpu),
             pickup: pickup::Assets::load(gpu, grf),
             battle_queue: battle_queue::Assets::load(gpu, grf, &lua::entry_queue(grf).unwrap_or_default()),
             mercenary: mercenary::Assets::load(gpu, grf),
@@ -4403,6 +4410,8 @@ struct App {
     worlds: (Vec<rustnarok_client::lua::World>, [[u8; 4]; 2]),
     /// Skill names and icons, the skill window's layout, and status icon files (the client's Lua tables).
     skill_info: HashMap<u16, SkillInfo>,
+    /// Skills' descriptions, line by line.
+    skill_descriptions: HashMap<u16, Vec<String>>,
     skill_trees: SkillTrees,
     status_icon_files: HashMap<u16, (u8, String)>,
     /// What each status icon says when pointed at.
@@ -5248,6 +5257,12 @@ impl App {
                         }
                     }
                     _ => {}
+                }
+            }
+            // A skill's description: its ESC button closes it; a click elsewhere on it does nothing.
+            Scene::Game(game) if game.skill_description.as_ref().is_some_and(|window| window.contains(cursor)) => {
+                if game.skill_description.as_ref().is_some_and(|window| window.on_close(cursor)) {
+                    game.skill_description = None;
                 }
             }
             // The store search: the kind, the fields, searching, paging, and a row twice to find its store.
@@ -6110,6 +6125,46 @@ impl App {
             game.menu = Some(menu::Menu::new(self.cursor, vec![Some((label, Choice::Leader(account)))], &self.font));
             return;
         }
+        // A right click on a skill, in the skill window or on the hotkey bar: its description (the same skill again on
+        // the bar closes it).
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+            && let Some((start, None)) = game.right_press
+            && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
+        {
+            let cursor = self.cursor;
+            let opened = match game.window_at(cursor) {
+                Some(Panel::Skills) => {
+                    let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
+                    match game.skill_window.hit(cursor, &self.skill_trees, &jobs, &game.skills, game.skill_points()) {
+                        Some(skills::Hit::Skill(id)) => Some((id, None)),
+                        _ => None,
+                    }
+                }
+                Some(Panel::Hotkeys) => match game.hotkeys.hit(cursor) {
+                    Some(hotkeys::Hit::Slot(slot)) => game.hotkeys.keys.get(slot).copied().flatten().filter(|key| key.skill).and_then(|key| {
+                        let row = game.hotkeys.slot_boxes().into_iter().find(|(index, _)| *index == slot).map(|(_, area)| [area[1], area[1] + area[3]])?;
+                        Some((key.id as u16, Some(row)))
+                    }),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some((id, row)) = opened {
+                game.right_press = None;
+                if row.is_some() && game.skill_description.as_ref().is_some_and(|window| window.skill == id) {
+                    game.skill_description = None;
+                } else {
+                    let lines = self.skill_descriptions.get(&id).cloned().unwrap_or_default();
+                    game.skill_description = Some(skill_descript::SkillDescription::new(id, &lines, |height| match row {
+                        Some(row) => skill_descript::at_hotbar(cursor[0], row, height),
+                        None => skill_descript::at_window(cursor, height),
+                    }));
+                }
+                game.sync_esc();
+                return;
+            }
+        }
         // A right click on a row of the guild's members page: the master moves someone else, a member leaves.
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Released
@@ -6328,6 +6383,9 @@ impl App {
                     game.item_window.as_mut().unwrap().scroll_by(rows, lines);
                 }
                 _ if on_shop => game.shop.as_mut().unwrap().scroll_by(self.cursor, rows),
+                _ if game.skill_description.as_ref().is_some_and(|window| window.contains(self.cursor)) => {
+                    game.skill_description.as_mut().unwrap().scroll_by(rows);
+                }
                 _ if on_pick => game.pick.as_mut().unwrap().0.scroll_by(rows),
                 _ if game.achievement_window.covers(self.cursor) => game.achievement_window.scroll_by(rows, &self.achievement_info),
                 Some(Panel::Inventory) => game.inventory.scroll_by(rows),
@@ -7909,6 +7967,7 @@ impl App {
                     dressroom: None,
                     ranking: None,
                     catalog: None,
+                    skill_description: None,
                     pickup_popup: None,
                     new_items: false,
                     char_names: HashMap::new(),
@@ -11944,6 +12003,10 @@ impl App {
         }
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
+        // A skill's description, over the windows.
+        if let Some(window) = &game.skill_description {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.skill_descript, font, pointer.0);
+        }
         if let Some((list, _)) = &game.pick {
             list.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, skill_info, messages, font, pointer);
         }
@@ -12750,6 +12813,10 @@ fn main() {
         .map_or_else(SavedView::default, |text| SavedView::parse(&text));
     let pc_job_names = lua::pc_job_names(&grf).unwrap_or_default();
     let map_names = rustnarok_client::map::map_names(&grf).unwrap_or_default();
+    let skill_descriptions = lua::skill_descriptions(&grf).unwrap_or_else(|error| {
+        eprintln!("no skill descriptions: {error}");
+        HashMap::new()
+    });
     let skill_info = lua::skill_info(&grf).unwrap_or_else(|error| {
         eprintln!("no skill names: {error}");
         HashMap::new()
@@ -12814,6 +12881,7 @@ fn main() {
         worlds,
         quest_texts,
         skill_info,
+        skill_descriptions,
         skill_trees,
         status_icon_files,
         state_infos,
