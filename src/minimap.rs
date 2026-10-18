@@ -47,10 +47,39 @@ impl Assets {
     }
 }
 
+/// Ctrl+Tab walks the overview: shown, then translucent, then hidden, then shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum View {
+    #[default]
+    Shown,
+    Translucent,
+    Hidden,
+}
+
+impl View {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Shown => Self::Translucent,
+            Self::Translucent => Self::Hidden,
+            Self::Hidden => Self::Shown,
+        }
+    }
+}
+
 /// The overview picture of a map (data\texture\유저인터페이스\map\<map>.bmp), if the client has one.
 pub fn load_map(gpu: &Gpu, grf: &Grf, map: &str) -> Option<Texture> {
     let name = map.trim_end_matches(".gat").trim_end_matches(".rsw");
     gpu.try_load_texture(grf, &format!("{UI}map\\{name}.bmp"), true).ok()
+}
+
+/// The same overview at half alpha, for the translucent step.
+pub fn faded(gpu: &Gpu, grf: &Grf, map: &str) -> Option<Texture> {
+    let name = map.trim_end_matches(".gat").trim_end_matches(".rsw");
+    let mut image = render::load_image(grf, &format!("{UI}map\\{name}.bmp")).ok()?;
+    for pixel in image.pixels_mut() {
+        pixel.0[3] /= 2;
+    }
+    Some(gpu.texture(&image, true))
 }
 
 /// Draws the minimap: the map scaled into 128x128 (keeping its proportions), the arrow and the coordinates.

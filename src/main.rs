@@ -92,6 +92,7 @@ mod reform;
 mod render;
 mod roulette;
 mod shop;
+mod shortcuts;
 mod skills;
 mod sound;
 mod status;
@@ -625,6 +626,12 @@ struct Game {
     camera_goal: CameraGoal,
     /// The map's overview picture, for the minimap.
     minimap: Option<Texture>,
+    /// Ctrl+Tab walks this: shown, translucent, hidden.
+    minimap_view: minimap::View,
+    /// The overview at half alpha, built the first time the map goes translucent.
+    minimap_faded: Option<Texture>,
+    /// Alt+End hides the player's HP and SP bars. Monsters keep theirs.
+    show_bars: bool,
     last_frame: Instant,
     chat: chat::Chat,
     entered: Instant,
@@ -1746,6 +1753,78 @@ impl Game {
         }
     }
 
+    /// A text box has the caret. The chat line always does, and so does a window's field while it is typed in.
+    fn text_box_focused(&self) -> bool {
+        self.dialog.as_ref().is_some_and(|dialog| dialog.input.is_some())
+            || self.amount.is_some()
+            || self.vend_setup.as_ref().is_some_and(|setup| setup.typing)
+            || self.buying_setup.as_ref().is_some_and(|setup| setup.focus.is_some())
+            || self.mail.typing()
+            || self.macro_window.as_ref().is_some_and(|window| window.editing.is_some())
+            || self.room_make.is_some()
+            || self.room.is_some()
+            || self.cashshop.as_ref().is_some_and(|shop| shop.typing)
+            || self.bank.as_ref().is_some_and(|bank| bank.typing)
+            || self.trade.as_ref().is_some_and(|trade| trade.typing)
+            || self.storage.typing
+            || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
+            || self.chat.input.is_empty()
+            || !self.chat.input.is_empty()
+    }
+
+    /// F11 closes the player's windows. A talk with an NPC stays until the server ends it.
+    fn close_windows(&mut self) {
+        for frame in [
+            &mut self.hotkeys.frame,
+            &mut self.basic_info.frame,
+            &mut self.inventory.frame,
+            &mut self.equipment.frame,
+            &mut self.skill_window.frame,
+            &mut self.storage.frame,
+            &mut self.party_window.frame,
+            &mut self.status_window.frame,
+            &mut self.guild_window.frame,
+            &mut self.clan_window.frame,
+            &mut self.cart.frame,
+            &mut self.pet_window.frame,
+            &mut self.mercenary_window.frame,
+            &mut self.mercenary_skill_list.frame,
+            &mut self.homunculus_window.frame,
+            &mut self.homunculus_skill_list.frame,
+            &mut self.quest_window.frame,
+            &mut self.achievement_window.frame,
+            &mut self.mail.list.frame,
+        ] {
+            frame.open = false;
+        }
+        self.basic_info.menu_open = false;
+        self.equipment.swapping = false;
+        if self.macro_window.take().is_some() {
+            macros::save(macros::path().as_deref(), &self.macro_lines);
+        }
+        self.emotion_list = None;
+        self.world_map = None;
+        self.audio_window = None;
+        self.graphics_window = None;
+        self.shortcuts_window = None;
+        self.item_window = None;
+        self.monster_window = None;
+        self.ranking = None;
+        self.dressroom = None;
+        self.dress_figure = None;
+        self.party_setup = None;
+        self.escape = None;
+        self.room_make = None;
+        self.viewing = None;
+        self.mail.letter = None;
+        self.mail.compose = None;
+        if self.bank.is_some() {
+            let _ = self.session.close_bank(self.account_id);
+            self.bank = None;
+        }
+        self.close_catalog();
+    }
+
     /// Whether the pointer is over the interface (a window, the chat, a dialog) rather than the world.
     fn on_ui(&self, cursor: [f32; 2], items: &HashMap<u32, ItemInfo>) -> bool {
         self.window_at(cursor).is_some()
@@ -2781,6 +2860,13 @@ fn login_position(window: &Texture) -> [f32; 2] {
     [((SCREEN[0] - window.size[0]) / 2.0).floor(), LOGIN_TOP]
 }
 
+fn shortcut_to_bind(key: options::ShortcutKey) -> Option<shortcuts::ShortcutKey> {
+    match key {
+        options::ShortcutKey::NamedF(number) => shortcuts::function_key(number),
+        options::ShortcutKey::Char(character) => Some(shortcuts::ShortcutKey::Char(character.to_ascii_lowercase())),
+    }
+}
+
 fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
     let number = match key {
         Key::Named(NamedKey::F1) => 1,
@@ -3117,6 +3203,10 @@ struct App {
     /// /effect: effects are drawn and heard; off, they still play, unseen and silent.
     graphics: options::GraphicsSettings,
     shortcuts: options::ShortcutSettings,
+    /// Keys to actions, from the game's hotkey tables and the player's UserKeys file.
+    keybinds: shortcuts::Shortcuts,
+    /// Print Screen writes the next frame here and keeps running.
+    print_screen: Option<std::path::PathBuf>,
     cursor_look: cursor::Cursor,
     /// The client's loading pictures, and the loading screen while it's up.
     loading_images: Vec<String>,
@@ -5442,6 +5532,195 @@ impl App {
         }
     }
 
+    /// The shortcut this key fires, if it has one. A repeated key-down does not.
+    fn fire_shortcut(&mut self, event: &control::KeyPress) -> bool {
+        let Scene::Game(game) = &self.scene else { return false };
+        let text_focus = game.text_box_focused();
+        let fired = shortcuts::action(
+            &self.keybinds,
+            &shortcuts::KeyEvent {
+                key: &event.logical_key,
+                physical: Some(event.physical_key),
+                alt: self.modifiers.alt_key(),
+                shift: self.modifiers.shift_key(),
+                ctrl: self.modifiers.control_key(),
+                repeat: event.repeat,
+                text_focus,
+            },
+        );
+        fired.is_some_and(|fired| self.perform_shortcut(fired))
+    }
+
+    /// Runs a shortcut. False leaves the key for whatever else is listening (Enter still sends chat).
+    fn perform_shortcut(&mut self, fired: shortcuts::Action) -> bool {
+        if matches!(fired, shortcuts::Action::ChatMode | shortcuts::Action::Unused) {
+            return false;
+        }
+        if let shortcuts::Action::Macro(line) = fired {
+            self.send_macro(usize::from(line));
+            return true;
+        }
+        if fired == shortcuts::Action::Screenshot {
+            let millis = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_millis());
+            self.print_screen = settings_path("screenshots").map(|dir| dir.join(format!("shot-{millis}.png")));
+            return true;
+        }
+        if fired == shortcuts::Action::Minimap {
+            let (view, map, missing) = {
+                let Scene::Game(game) = &mut self.scene else { return true };
+                game.minimap_view = game.minimap_view.next();
+                (game.minimap_view, game.map.clone(), game.minimap_faded.is_none())
+            };
+            if view == minimap::View::Translucent && missing {
+                let faded = self.gpu.as_ref().and_then(|gpu| minimap::faded(gpu, &self.grf, &map));
+                if let Scene::Game(game) = &mut self.scene {
+                    game.minimap_faded = faded;
+                }
+            }
+            return true;
+        }
+        let Scene::Game(game) = &mut self.scene else { return true };
+        match fired {
+            shortcuts::Action::BasicInfo => {
+                game.basic_info.frame.toggle();
+                game.raise(Panel::BasicInfo);
+            }
+            shortcuts::Action::Equipment => {
+                game.equipment.frame.toggle();
+                game.raise(Panel::Equipment);
+            }
+            shortcuts::Action::Skills => {
+                game.skill_window.frame.toggle();
+                game.raise(Panel::Skills);
+            }
+            shortcuts::Action::Quests => game.quest_window.frame.toggle(),
+            shortcuts::Action::Friends => {
+                if game.party_window.frame.open && game.party_window.friends {
+                    game.party_window.frame.open = false;
+                } else {
+                    game.party_window.friends = true;
+                    game.party_window.picked = None;
+                    game.party_window.frame.open = true;
+                    game.raise(Panel::Party);
+                }
+            }
+            shortcuts::Action::Party => {
+                game.party_window.frame.toggle();
+                game.raise(Panel::Party);
+            }
+            shortcuts::Action::ChatRoom => {
+                game.room_make = if game.room_make.is_some() || game.room.is_some() { None } else { Some(chatroom::Make::default()) };
+            }
+            shortcuts::Action::Cart if game.cart.cart.is_some() => {
+                game.cart.frame.toggle();
+                game.raise(Panel::Cart);
+            }
+            shortcuts::Action::Cart => {}
+            shortcuts::Action::WorldMap => {
+                let map = map_key(&game.map);
+                game.world_map = match (game.world_map.take(), &self.gpu) {
+                    (None, Some(gpu)) => worldmap::WorldMap::open(gpu, &self.grf, &self.worlds.0, self.worlds.1, &map),
+                    _ => None,
+                };
+            }
+            shortcuts::Action::Inventory => {
+                game.inventory.frame.toggle();
+                game.raise(Panel::Inventory);
+            }
+            shortcuts::Action::Guild => {
+                game.guild_window.frame.toggle();
+                game.raise(Panel::Guild);
+                if game.guild_window.frame.open {
+                    game.ask_guild_pages();
+                }
+            }
+            shortcuts::Action::Emotions => game.toggle_emotion_list(),
+            shortcuts::Action::Sit => game.toggle_sit(),
+            shortcuts::Action::Macros => game.toggle_macro_window(),
+            shortcuts::Action::CloseWindows => game.close_windows(),
+            shortcuts::Action::HotkeyBar => game.hotkeys.frame.toggle(),
+            shortcuts::Action::Chat => game.chat.toggle_hidden(),
+            shortcuts::Action::ChatSize => game.chat.cycle_size(),
+            shortcuts::Action::HpSp => game.show_bars = !game.show_bars,
+            shortcuts::Action::Pet if game.pet.is_some() => {
+                game.pet_window.frame.toggle();
+                game.raise(Panel::Pet);
+                if game.pet_window.frame.open {
+                    let _ = game.session.pet_command(net::PET_INFO);
+                }
+            }
+            shortcuts::Action::Pet => {}
+            shortcuts::Action::Homunculus if game.homunculus.is_some() => {
+                game.homunculus_window.frame.toggle();
+                game.raise(Panel::Homunculus);
+            }
+            shortcuts::Action::Homunculus => {}
+            shortcuts::Action::Mercenary if game.mercenary.is_some() => {
+                game.mercenary_window.frame.toggle();
+                game.raise(Panel::Mercenary);
+            }
+            shortcuts::Action::Mercenary => {}
+            shortcuts::Action::HomunculusFollow if game.homunculus.is_some() => {
+                game.homunculus_steering.following = !game.homunculus_steering.following;
+            }
+            shortcuts::Action::HomunculusFollow => {}
+            shortcuts::Action::MercenaryFollow if game.mercenary.is_some() => game.steering.following = !game.steering.following,
+            shortcuts::Action::MercenaryFollow => {}
+            shortcuts::Action::Menu => {
+                if !game.basic_info.frame.open {
+                    game.basic_info.frame.open = true;
+                    game.basic_info.menu_open = true;
+                    game.raise(Panel::BasicInfo);
+                } else {
+                    game.basic_info.menu_open = !game.basic_info.menu_open;
+                }
+            }
+            shortcuts::Action::Clan if game.clan.is_some() => {
+                game.clan_window.frame.toggle();
+                game.raise(Panel::Clan);
+            }
+            shortcuts::Action::Clan => {}
+            shortcuts::Action::Bank => {
+                if game.bank.is_some() {
+                    let _ = game.session.close_bank(game.account_id);
+                    game.bank = None;
+                } else {
+                    let _ = game.session.open_bank(game.account_id);
+                }
+            }
+            shortcuts::Action::Status => {
+                game.status_window.frame.toggle();
+                game.raise(Panel::Status);
+            }
+            shortcuts::Action::RotateHotkeys => game.hotkeys.rotate(),
+            shortcuts::Action::Costume => {
+                if game.equipment.frame.open && game.equipment.showing_costume() {
+                    game.equipment.frame.open = false;
+                } else {
+                    game.equipment.show_costume();
+                    game.equipment.frame.open = true;
+                    game.raise(Panel::Equipment);
+                }
+            }
+            shortcuts::Action::Hotbar { bar: 1, slot } => game.press_hotkey(usize::from(slot)),
+            // ponytail: no window yet (memorial, commands, ground cursor, tip, party board, hunting, flags, hotbar 2). The key is eaten.
+            shortcuts::Action::Memorial
+            | shortcuts::Action::Commands
+            | shortcuts::Action::GroundCursor
+            | shortcuts::Action::Tip
+            | shortcuts::Action::PartyBoard
+            | shortcuts::Action::Hunting
+            | shortcuts::Action::Flag(_)
+            | shortcuts::Action::Hotbar { .. } => {}
+            shortcuts::Action::Macro(_)
+            | shortcuts::Action::Screenshot
+            | shortcuts::Action::Minimap
+            | shortcuts::Action::ChatMode
+            | shortcuts::Action::Unused => {}
+        }
+        true
+    }
+
     fn key(&mut self, event: &control::KeyPress) {
         if event.state != ElementState::Pressed {
             return;
@@ -5450,9 +5729,16 @@ impl App {
         if let Scene::Game(game) = &mut self.scene
             && game.shortcuts_window.as_ref().is_some_and(|window| window.listening.is_some())
         {
+            if event.repeat {
+                return;
+            }
             if let Some(key) = shortcut_key(key) {
+                let slot = game.shortcuts_window.as_ref().unwrap().listening;
                 if game.shortcuts_window.as_mut().unwrap().bind_key(key, &mut self.shortcuts) {
                     self.shortcuts.save();
+                    if let Some(slot) = slot {
+                        self.keybinds.set_hotbar(slot, shortcut_to_bind(key));
+                    }
                 }
                 return;
             }
@@ -5471,129 +5757,8 @@ impl App {
             gpu.window.set_fullscreen(gpu.window.fullscreen().is_none().then_some(winit::window::Fullscreen::Borderless(None)));
             return;
         }
-        // Ctrl+G opens or closes the clan window while in a clan.
-        if let Scene::Game(game) = &mut self.scene
-            && self.modifiers.control_key()
-            && !self.modifiers.alt_key()
-            && !self.modifiers.super_key()
-            && event.physical_key == PhysicalKey::Code(KeyCode::KeyG)
-        {
-            if game.clan.is_some() {
-                game.clan_window.frame.toggle();
-                game.raise(Panel::Clan);
-            }
+        if self.fire_shortcut(event) {
             return;
-        }
-        // Alt+E and Alt+Q open the inventory and the equipment anywhere in the game (by physical key: Option+letter
-        // types dead keys on a Mac).
-        // Ctrl+R, the game's key for the mercenary window, and Ctrl+T, its follow switch, while there's a mercenary.
-        if let Scene::Game(game) = &mut self.scene
-            && self.modifiers.control_key()
-            && game.mercenary.is_some()
-        {
-            match event.physical_key {
-                PhysicalKey::Code(KeyCode::KeyR) => {
-                    game.mercenary_window.frame.toggle();
-                    game.raise(Panel::Mercenary);
-                    return;
-                }
-                PhysicalKey::Code(KeyCode::KeyT) => {
-                    game.steering.following = !game.steering.following;
-                    return;
-                }
-                _ => {}
-            }
-        }
-        if let Scene::Game(game) = &mut self.scene
-            && self.modifiers.alt_key()
-        {
-            let window = match event.physical_key {
-                PhysicalKey::Code(KeyCode::KeyE) => Some((Panel::Inventory, &mut game.inventory.frame)),
-                PhysicalKey::Code(KeyCode::KeyQ) => Some((Panel::Equipment, &mut game.equipment.frame)),
-                PhysicalKey::Code(KeyCode::KeyV) => Some((Panel::BasicInfo, &mut game.basic_info.frame)),
-                PhysicalKey::Code(KeyCode::KeyS) => Some((Panel::Skills, &mut game.skill_window.frame)),
-                PhysicalKey::Code(KeyCode::KeyZ) => Some((Panel::Party, &mut game.party_window.frame)),
-                PhysicalKey::Code(KeyCode::KeyA) => Some((Panel::Status, &mut game.status_window.frame)),
-                PhysicalKey::Code(KeyCode::KeyG) => Some((Panel::Guild, &mut game.guild_window.frame)),
-                PhysicalKey::Code(KeyCode::KeyW) if game.cart.cart.is_some() => Some((Panel::Cart, &mut game.cart.frame)),
-                // Alt+J, the game's own key for the pet window, while there's a pet.
-                PhysicalKey::Code(KeyCode::KeyJ) if game.pet.is_some() => Some((Panel::Pet, &mut game.pet_window.frame)),
-                // Alt+R, the game's key for the homunculus window, while there's a homunculus.
-                PhysicalKey::Code(KeyCode::KeyR) if game.homunculus.is_some() => Some((Panel::Homunculus, &mut game.homunculus_window.frame)),
-                _ => None,
-            };
-            if let Some((id, frame)) = window {
-                frame.toggle();
-                game.raise(id);
-                // The guild window asks for what it shows.
-                if id == Panel::Guild && game.guild_window.frame.open {
-                    game.ask_guild_pages();
-                }
-                // The pet window asks for fresh news of the pet.
-                if id == Panel::Pet && game.pet_window.frame.open {
-                    let _ = game.session.pet_command(net::PET_INFO);
-                }
-                return;
-            }
-            // Alt+T, the game's follow switch for the homunculus.
-            if event.physical_key == PhysicalKey::Code(KeyCode::KeyT) && game.homunculus.is_some() {
-                game.homunculus_steering.following = !game.homunculus_steering.following;
-                return;
-            }
-            // Alt+L: the emotion list; Alt+M: the macro window.
-            if event.physical_key == PhysicalKey::Code(KeyCode::KeyL) {
-                game.toggle_emotion_list();
-                return;
-            }
-            if event.physical_key == PhysicalKey::Code(KeyCode::KeyM) {
-                game.toggle_macro_window();
-                return;
-            }
-            // Alt+1 to Alt+0: the ten macro lines.
-            let digits = [
-                KeyCode::Digit1,
-                KeyCode::Digit2,
-                KeyCode::Digit3,
-                KeyCode::Digit4,
-                KeyCode::Digit5,
-                KeyCode::Digit6,
-                KeyCode::Digit7,
-                KeyCode::Digit8,
-                KeyCode::Digit9,
-                KeyCode::Digit0,
-            ];
-            if let PhysicalKey::Code(code) = event.physical_key
-                && let Some(line) = digits.iter().position(|digit| *digit == code)
-            {
-                self.send_macro(line);
-                return;
-            }
-            // Alt+U: the quest window.
-            if event.physical_key == PhysicalKey::Code(KeyCode::KeyU) {
-                game.quest_window.frame.toggle();
-                return;
-            }
-            // Alt+C: make a chat room (not while in one).
-            if event.physical_key == PhysicalKey::Code(KeyCode::KeyC) {
-                game.room_make = if game.room_make.is_some() || game.room.is_some() { None } else { Some(chatroom::Make::default()) };
-                return;
-            }
-        }
-        // Configured function keys press hotkeys; an unbound F12 shows or hides the bar.
-        // ponytail: letter bindings are saved in the shortcuts window for Battle Mode later; without it they
-        // would steal the first character of chat.
-        if let Scene::Game(game) = &mut self.scene
-            && let Some(shortcut) = shortcut_key(key)
-            && matches!(shortcut, options::ShortcutKey::NamedF(_))
-        {
-            if let Some(slot) = self.shortcuts.slot_for(shortcut) {
-                game.press_hotkey(slot);
-                return;
-            }
-            if shortcut == options::ShortcutKey::NamedF(12) {
-                game.hotkeys.frame.toggle();
-                return;
-            }
         }
         match &mut self.scene {
             Scene::Login => {
@@ -6185,6 +6350,9 @@ impl App {
                     camera,
                     camera_goal,
                     minimap,
+                    minimap_view: minimap::View::Shown,
+                    minimap_faded: None,
+                    show_bars: true,
                     last_frame: now,
                     chat: chat::Chat::default(),
                     entered: now,
@@ -6454,6 +6622,7 @@ impl App {
                 game.camera_goal = CameraGoal::new(self.indoor.contains(&map_key(&map)));
                 game.camera = game.camera_goal.camera(world.cell_position(position.map(f32::from)));
                 game.minimap = minimap::load_map(gpu, &self.grf, &map);
+                game.minimap_faded = None;
                 game.world = world;
                 game.map = map;
                 game.units.clear();
@@ -9688,7 +9857,10 @@ impl App {
         let hp = ratio(game.status.get(&net::STATUS_HP), game.status.get(&net::STATUS_MAX_HP));
         let sp = ratio(game.status.get(&net::STATUS_SP), game.status.get(&net::STATUS_MAX_SP));
         let [border, background, green, red, blue] = &assets.bars;
-        let mut bars = vec![(player_feet, hp, sp, [border, background, green, red])];
+        let mut bars = Vec::new();
+        if game.show_bars {
+            bars.push((player_feet, hp, sp, [border, background, green, red]));
+        }
         // Monsters' bars in their own colors; a dying unit's bar shows empty until it's gone.
         bars.extend(game.unit_hp.iter().filter_map(|(id, &(hp, max))| {
             let actor = game.units.get(id)?;
@@ -9903,7 +10075,12 @@ impl App {
             dots.extend(game.battle.dots.values().map(|&[x, y]| ([i32::from(x), i32::from(y)], team_dot)));
         }
         let boss = game.boss.as_ref().map(|(_, cell)| *cell);
-        minimap::draw(&mut chat_layer, &assets.minimap, game.minimap.as_ref(), size, game.player.cell, game.player.direction, &marks, &dots, boss);
+        let overview = match game.minimap_view {
+            minimap::View::Hidden => None,
+            minimap::View::Translucent => game.minimap_faded.as_ref().or(game.minimap.as_ref()),
+            minimap::View::Shown => game.minimap.as_ref(),
+        };
+        minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.player.cell, game.player.direction, &marks, &dots, boss);
         // Status icons down the right, each with the clock of its time (orange in the last minute).
         let per_column = ((SCREEN[1] - STATUS_TOP) / STATUS_STEP[1]) as usize;
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
@@ -10467,6 +10644,10 @@ impl App {
             meshes: &effect_meshes,
             time: now.duration_since(game.entered).as_secs_f32(),
         };
+        if let Some(path) = self.print_screen.take() {
+            let _ = path.parent().map(std::fs::create_dir_all);
+            let _ = gpu.snapshot(Some(&frame), &sprites).save(&path);
+        }
         let shot_delay = std::env::var("RUSTNAROK_CLIENT_SHOT_DELAY").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(2.0);
         match &self.screenshot {
             Some(path) if game.entered.elapsed().as_secs_f32() > shot_delay => {
@@ -10892,6 +11073,15 @@ fn main() {
     let sound = sound::Settings::load();
     let graphics = options::GraphicsSettings::load();
     let shortcuts = options::ShortcutSettings::load();
+    let mut keybinds = shortcuts::Shortcuts::load(&grf);
+    // ponytail: the shortcut-settings window writes its own file, not UserKeys, so a saved bar overlays hotbar 1.
+    if shortcuts != options::ShortcutSettings::default_bindings() {
+        let mut keys = [None; 36];
+        for (slot, key) in shortcuts.slots.into_iter().enumerate() {
+            keys[slot] = key.and_then(shortcut_to_bind);
+        }
+        keybinds.apply_bar_keys(keys);
+    }
     let mut app = App {
         grf,
         job_names,
@@ -10926,6 +11116,8 @@ fn main() {
         music,
         graphics,
         shortcuts,
+        keybinds,
+        print_screen: None,
         cursor_look,
         loading_images,
         loading: None,

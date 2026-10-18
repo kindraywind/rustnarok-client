@@ -1,0 +1,133 @@
+{
+  "about": "Shortcuts: holding F1 uses a hotkey once, and F11 closes the open windows (issue #177).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp iz_int01 18 26"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "shortcuts.friends": "Alt+H",
+          "shortcuts.inventory": "Alt+E",
+          "shortcuts.close_windows": "F11",
+          "shortcuts.hotbar_1_1": "F1"
+        }
+      }
+    },
+    {
+      "key": "Alt+V"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "BasicInfo"
+        ]
+      }
+    },
+    {
+      "key": "Alt+V"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "BasicInfo"
+        ]
+      }
+    },
+    {
+      "key": "Alt+H"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Party"
+        ]
+      }
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@item 501 5"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@heal -30 0"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "inventory_item": 501
+        },
+        {
+          "hotkey": 0
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F1",
+      "hold": 1000
+    },
+    {
+      "wait_for": {
+        "event": "ItemUsed",
+        "ms": 5000
+      }
+    },
+    {
+      "expect": {
+        "inventory_has": [
+          {
+            "id": 501,
+            "amount": 4
+          }
+        ]
+      }
+    },
+    {
+      "key": "F11"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "windows_open": []
+      }
+    }
+  ]
+}

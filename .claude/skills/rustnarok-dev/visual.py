@@ -200,7 +200,11 @@ def expect(wanted, state):
         elif key == "map" and game.get("map") != value:
             failures.append(f"map {game.get('map')} != {value}")
         elif key == "windows_open":
-            failures += [f"window {w} not open" for w in value if w not in game.get("windows", [])]
+            open_windows = game.get("windows", [])
+            # An empty list means nothing is open. A non-empty list is still the windows that must be among the open ones.
+            if value == [] and open_windows:
+                failures.append(f"windows still open: {open_windows}")
+            failures += [f"window {w} not open" for w in value if w not in open_windows]
         elif key == "windows_closed":
             failures += [f"window {w} open" for w in value if w in game.get("windows", [])]
         elif key == "ground_items_at_least" and len(game.get("ground_items", [])) < value:
@@ -295,7 +299,13 @@ def step_on_client(action, shots_dir, name):
         wait_for_game()
         return time.sleep(action["settle"] / 1000)
     if "key" in action:
-        return drive.send({"cmd": "key", "key": action["key"]})
+        command = {"cmd": "key", "key": action["key"]}
+        if action.get("repeat"):
+            command["repeat"] = True
+        # hold: one press, then auto-repeats for that many milliseconds, still one command.
+        if action.get("hold"):
+            command["hold"] = action["hold"]
+        return drive.send(command)
     if "type" in action:
         return drive.send({"cmd": "type", "text": action["type"]})
     if "move" in action:

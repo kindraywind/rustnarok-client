@@ -1219,6 +1219,66 @@ fn read_reform(entry: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> Option<Ref
     })
 }
 
+/// `data\luafiles514\lua files\hotkey_v2.lub`: the game's shortcut defaults.
+const HOTKEY_V2: &str = "data\\luafiles514\\lua files\\hotkey_v2.lub";
+
+/// One row of `HOTKEY_<n>` or `USERKEY_<n>`: the action name and the virtual-key codes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HotkeyRow {
+    /// 1 hotbar, 2 interface, 3 macros and flags, 4 the second hotbar.
+    pub table: u8,
+    pub index: u16,
+    pub exe: String,
+    /// Missing, or 0, when the row is unbound.
+    pub key1: Option<u16>,
+    pub key2: u16,
+    /// A row from `USERKEY_<n>`, which replaces the default at the same table and index.
+    pub user: bool,
+}
+
+/// The shortcut tables in `grf`'s hotkey_v2.lub.
+pub fn hotkey_defaults(grf: &Grf) -> io::Result<Vec<HotkeyRow>> {
+    hotkey_bytes(&grf.read(HOTKEY_V2)?)
+}
+
+/// Shortcut rows from a Lua source in the same shape as hotkey_v2.lub or UserKeys.lua.
+pub fn hotkey_rows(source: &str) -> io::Result<Vec<HotkeyRow>> {
+    hotkey_bytes(source.as_bytes())
+}
+
+/// `MsgStrID.MSI_HK_…` in older tables is the name itself, so a missing message table still yields the EXE string.
+const MSGSTRID: &str = "MsgStrID = setmetatable({}, { __index = function(_, name) return name end })";
+
+fn hotkey_bytes(bytes: &[u8]) -> io::Result<Vec<HotkeyRow>> {
+    let lua = new_lua()?;
+    lua.load(MSGSTRID).exec().map_err(lua_error)?;
+    exec_bytes(&lua, HOTKEY_V2, bytes.to_vec())?;
+    let mut rows = Vec::new();
+    for table in 1..=4 {
+        rows.extend(hotkey_table(&lua, &format!("HOTKEY_{table}"), table, false)?);
+        rows.extend(hotkey_table(&lua, &format!("USERKEY_{table}"), table, true)?);
+    }
+    Ok(rows)
+}
+
+fn hotkey_table(lua: &Lua, name: &str, table: u8, user: bool) -> io::Result<Vec<HotkeyRow>> {
+    let Ok(entries) = lua.globals().get::<mlua::Table>(name) else { return Ok(Vec::new()) };
+    let mut rows = Vec::new();
+    for pair in entries.pairs::<mlua::Value, mlua::Value>() {
+        let (key, value) = pair.map_err(lua_error)?;
+        let (Some(index), mlua::Value::Table(entry)) = (number(&key).and_then(|index| u16::try_from(index).ok()), value) else { continue };
+        let Some(exe) = entry.get::<mlua::String>("EXE").ok().map(|text| decode(&text)).filter(|exe| !exe.is_empty() && exe != "NULL") else {
+            continue;
+        };
+        // ponytail: KEY1 0 is unbound, the same as leaving it out (the save file omits a 0).
+        let key1 = field_number(&entry, "KEY1").and_then(|code| u16::try_from(code).ok()).filter(|code| *code > 0);
+        let key2 = field_number(&entry, "KEY2").and_then(|code| u16::try_from(code).ok()).unwrap_or(0);
+        rows.push(HotkeyRow { table, index, exe, key1, key2, user });
+    }
+    rows.sort_by_key(|row| row.index);
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;

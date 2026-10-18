@@ -14,9 +14,10 @@
 //!   as base64 PNG (`png`).
 //! - `move` `{x, y}`, `click` `{x, y, button?: "left"|"right", mods?: "Alt+Shift", count?}`, `drag` `{from: [x, y],
 //!   to: [x, y], button?, mods?}`: the pointer and buttons, through the same code as the mouse.
-//! - `key` `{key}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End", "PageUp",
-//!   "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12" or one
-//!   character, after modifiers like "Alt+" or "Ctrl+".
+//! - `key` `{key, repeat?, hold?}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End",
+//!   "PageUp", "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12", "PrintScreen" or one
+//!   character, after modifiers like "Alt+" or "Ctrl+". `repeat` is an auto-repeat; shortcuts ignore it. `hold` is
+//!   milliseconds to keep the key down, auto-repeating after the first press.
 //! - `type` `{text}`: into the focused field; non-ASCII runs (Hangul) come in as the input method's commit.
 //! - `say` `{text}`: a chat line or a GM command.
 //! - `state`: the scene and the login server; at character select the characters, selected slot and `pin` ("ask",
@@ -98,6 +99,12 @@ pub enum Command {
     },
     Key {
         key: String,
+        /// An auto-repeat of a held key. Shortcuts ignore it; typing still takes it.
+        #[serde(default)]
+        repeat: bool,
+        /// Hold the key this many milliseconds, sending auto-repeats. One command, so a following `wait` still sees what the first press caused.
+        #[serde(default)]
+        hold: Option<u64>,
     },
     /// The wheel at a point: `rows` notches, positive toward the player (scrolls down).
     Wheel {
@@ -177,11 +184,19 @@ pub struct KeyPress {
     pub logical_key: Key,
     pub physical_key: PhysicalKey,
     pub text: Option<String>,
+    /// An auto-repeated key-down. Shortcuts ignore it; typing still takes it.
+    pub repeat: bool,
 }
 
 impl From<&KeyEvent> for KeyPress {
     fn from(event: &KeyEvent) -> Self {
-        Self { state: event.state, logical_key: event.logical_key.clone(), physical_key: event.physical_key, text: event.text.as_deref().map(str::to_owned) }
+        Self {
+            state: event.state,
+            logical_key: event.logical_key.clone(),
+            physical_key: event.physical_key,
+            text: event.text.as_deref().map(str::to_owned),
+            repeat: event.repeat,
+        }
     }
 }
 
@@ -462,9 +477,20 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             app.wheel(rows);
             Ok(Value::Null)
         }
-        Command::Key { key } => {
-            let (held, key) = parse_key(&key)?;
-            hold(app, held, |app| app.key(&key));
+        Command::Key { key, repeat, hold: held_ms } => {
+            let (mods, mut key) = parse_key(&key)?;
+            key.repeat = repeat;
+            hold(app, mods, |app| {
+                app.key(&key);
+                let Some(ms) = held_ms.filter(|ms| *ms > 0) else { return };
+                // Auto-repeats while the key stays down. Shortcuts fire on the first press only.
+                key.repeat = true;
+                let end = Instant::now() + Duration::from_millis(ms);
+                while Instant::now() < end {
+                    std::thread::sleep(Duration::from_millis(50));
+                    app.key(&key);
+                }
+            });
             Ok(Value::Null)
         }
         Command::Type { text } => {
@@ -573,6 +599,7 @@ fn parse_key(name: &str) -> Result<(ModifiersState, KeyPress), String> {
         "end" => (NamedKey::End, KeyCode::End),
         "pageup" => (NamedKey::PageUp, KeyCode::PageUp),
         "pagedown" => (NamedKey::PageDown, KeyCode::PageDown),
+        "printscreen" | "print" | "snapshot" => (NamedKey::PrintScreen, KeyCode::PrintScreen),
         "backspace" => (NamedKey::Backspace, KeyCode::Backspace),
         "space" => (NamedKey::Space, KeyCode::Space),
         "up" | "arrowup" => (NamedKey::ArrowUp, KeyCode::ArrowUp),
@@ -585,7 +612,7 @@ fn parse_key(name: &str) -> Result<(ModifiersState, KeyPress), String> {
         },
     };
     let text = (named == NamedKey::Space && !held.alt_key() && !held.control_key()).then(|| " ".to_owned());
-    Ok((held, KeyPress { state: ElementState::Pressed, logical_key: Key::Named(named), physical_key: PhysicalKey::Code(code), text }))
+    Ok((held, KeyPress { state: ElementState::Pressed, logical_key: Key::Named(named), physical_key: PhysicalKey::Code(code), text, repeat: false }))
 }
 
 /// A character key's press; letters and digits carry their physical key, for shortcuts like Alt+E.
@@ -640,6 +667,7 @@ fn typed(character: char, text: bool) -> KeyPress {
         logical_key: Key::Character(SmolStr::new(character.to_string())),
         physical_key,
         text: text.then(|| character.to_string()),
+        repeat: false,
     }
 }
 
@@ -1085,6 +1113,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "grade": item.grade, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires, "switch": item.switch})).collect::<Vec<_>>(),
         // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
+        // Bound shortcuts: action name to the chord ("Alt+V", "F1"). Unbound rows are left out.
+        "shortcuts": app.keybinds.labels(),
         "dialog": dialog,
         // Achievements: whether each is done and its reward taken; the title worn (0: none).
         "achievements": game.achievements.iter().map(|(id, achievement)| (id.to_string(), json!({"completed": achievement.completed, "rewarded": achievement.rewarded}))).collect::<serde_json::Map<_, _>>(),
@@ -1294,7 +1324,7 @@ mod tests {
                 sent: None,
                 fresh: false,
                 pause: true,
-                first: Some(Box::new(Command::Key { key: "F1".into() }))
+                first: Some(Box::new(Command::Key { key: "F1".into(), repeat: false, hold: None }))
             }
         );
         assert!(matches!(parse(r#"{"cmd":"wait","packet":2248,"ms":500}"#), Ok(Command::Wait { packet: Some(0x08c8), ms: Some(500), .. })));
