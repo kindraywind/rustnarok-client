@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use rustnarok_client::grf::Grf;
 use rustnarok_client::text::Font;
 
+use crate::line_edit::{Caret, History, Move};
 use crate::links::{self, ItemLink, Target};
 use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
@@ -308,6 +309,8 @@ pub struct Assets {
     track: Texture,
     thumb: Texture,
     picked: Texture,
+    /// The selection behind typed text.
+    selection: Texture,
 }
 
 impl Assets {
@@ -338,6 +341,8 @@ impl Assets {
             // ponytail: dialscr_bar stretched as the thumb.
             thumb: image("dialscr_bar"),
             picked: gpu.solid([0x73, 0x9C, 0xEF, 0xFF]),
+            // ponytail: the selection's colour is a choice.
+            selection: gpu.solid([0xA8, 0xC8, 0xF0, 0xFF]),
         }
     }
 }
@@ -376,6 +381,9 @@ pub struct Chat {
     /// The whisper name box, and whether typing goes there.
     pub whisper: String,
     pub naming: bool,
+    /// The carets of the message box and the name box, and the lines sent for Up / Down.
+    carets: [Caret; 2],
+    history: History,
     /// The whisper-name list, in the order names came, and whether it is dropped down.
     pub recent: Vec<String>,
     list_open: bool,
@@ -425,6 +433,8 @@ impl Chat {
             preedit: String::new(),
             whisper: String::new(),
             naming: false,
+            carets: [Caret::default(); 2],
+            history: History::default(),
             recent: Vec::new(),
             list_open: false,
             size: DEFAULT_STEP,
@@ -890,25 +900,94 @@ impl Chat {
         None
     }
 
-    /// Typing goes to the box with the caret.
-    pub fn typing(&mut self) -> &mut String {
-        if self.naming { &mut self.whisper } else { &mut self.input }
+    /// The box with the caret, its caret, and the most it takes.
+    fn focused(&mut self) -> (&mut String, &mut Caret, usize) {
+        if self.naming { (&mut self.whisper, &mut self.carets[1], NAME_MOST) } else { (&mut self.input, &mut self.carets[0], MESSAGE_MOST) }
     }
 
-    /// Types `text` into the box with the caret, up to that box's most.
+    /// Types `text` at the caret of the box that has it (over the selection), up to that box's most.
     pub fn type_text(&mut self, text: &str) {
-        let most = if self.naming { NAME_MOST } else { MESSAGE_MOST };
-        let typing = self.typing();
-        let joined = format!("{typing}{text}");
-        *typing = capped(&joined, most).to_owned();
+        let (typing, caret, most) = self.focused();
+        caret.insert(typing, text, &|candidate: &str| capped(candidate, most).len() == candidate.len());
     }
 
-    /// Types `text` whole into the box with the caret if it fits its most (an item link); else nothing.
+    /// Types `text` whole at the caret if the box still takes it all (an item link); else nothing.
     pub fn type_whole(&mut self, text: &str) {
-        let most = if self.naming { NAME_MOST } else { MESSAGE_MOST };
-        let joined = format!("{}{text}", self.typing());
-        if capped(&joined, most).len() == joined.len() {
-            *self.typing() = joined;
+        let (typing, caret, most) = self.focused();
+        let mut trial = typing.clone();
+        let mut trial_caret = *caret;
+        trial_caret.insert(&mut trial, text, &|_: &str| true);
+        if capped(&trial, most).len() == trial.len() {
+            (*typing, *caret) = (trial, trial_caret);
+        }
+    }
+
+    /// Backspace and Delete in the box with the caret.
+    pub fn backspace(&mut self) {
+        let (typing, caret, _) = self.focused();
+        caret.backspace(typing);
+    }
+
+    pub fn delete(&mut self) {
+        let (typing, caret, _) = self.focused();
+        caret.delete(typing);
+    }
+
+    /// Left, Right, Home, End; with Shift they select.
+    pub fn go(&mut self, to: Move, select: bool) {
+        let (typing, caret, _) = self.focused();
+        caret.go(typing, to, select);
+    }
+
+    pub fn select_all(&mut self) {
+        let (typing, caret, _) = self.focused();
+        caret.select_all(typing);
+    }
+
+    /// The selected text, for the clipboard.
+    pub fn selected(&self) -> String {
+        let (typing, caret) = if self.naming { (&self.whisper, &self.carets[1]) } else { (&self.input, &self.carets[0]) };
+        caret.selection(typing).map(|range| typing[range].to_owned()).unwrap_or_default()
+    }
+
+    /// Takes the selection out (Ctrl+X); returns it.
+    pub fn cut(&mut self) -> String {
+        let (typing, caret, _) = self.focused();
+        caret.take_selection(typing)
+    }
+
+    /// Where the caret and the selection are in the box with the caret, in bytes.
+    pub fn caret(&self) -> (usize, Option<std::ops::Range<usize>>) {
+        let (typing, caret) = if self.naming { (&self.whisper, &self.carets[1]) } else { (&self.input, &self.carets[0]) };
+        (caret.at(typing), caret.selection(typing))
+    }
+
+    /// A line was sent: kept for Up / Down.
+    pub fn sent(&mut self, line: &str) {
+        self.history.sent(line);
+        self.carets[0].reset();
+    }
+
+    /// Up / Down: in the message box the lines sent (the unsent text comes back past the newest); in the name box
+    /// the whisper names, a blank after the last.
+    pub fn recall(&mut self, up: bool) {
+        if self.naming {
+            let names: Vec<&str> = self.recent.iter().map(String::as_str).chain([""]).collect();
+            let at = names.iter().position(|name| *name == self.whisper);
+            let next = match (at, up) {
+                (None, true) => names.len().saturating_sub(2),
+                (None, false) => 0,
+                (Some(at), true) => at.saturating_sub(1),
+                (Some(at), false) => (at + 1).min(names.len() - 1),
+            };
+            self.whisper = names[next].to_owned();
+            self.carets[1].reset();
+            return;
+        }
+        let line = if up { self.history.up(&self.input) } else { self.history.down() };
+        if let Some(line) = line {
+            self.input = line.to_owned();
+            self.carets[0].reset();
         }
     }
 
@@ -1037,16 +1116,20 @@ impl Chat {
         }
         let [name_x, text_top] = in_bar([NAME_BOX.0[0], NAME_BOX.0[1] + ((NAME_BOX.1[1] - font.line_height()) / 2.0).round()]);
         let message_x = in_bar(MESSAGE_BOX.0)[0];
-        let (name, typed) = if self.naming {
-            (format!("{}{}", self.whisper, self.preedit), self.input.clone())
-        } else {
-            (self.whisper.clone(), format!("{}{}", self.input, self.preedit))
-        };
-        layer.texts.push((name.clone(), [name_x, text_top], [0, 0, 0]));
-        layer.texts.push((typed.clone(), [message_x, text_top], [0, 0, 0]));
+        // The box with the caret shows what the input method is composing at the caret, and its selection.
+        let (at, selection) = self.caret();
+        let (focused, focused_x) = if self.naming { (&self.whisper, name_x) } else { (&self.input, message_x) };
+        let shown = format!("{}{}{}", &focused[..at], self.preedit, &focused[at..]);
+        if let Some(range) = selection {
+            let left = focused_x + font.width(&focused[..range.start]);
+            layer.sprites.push((&assets.selection, [left, text_top], [font.width(&focused[range]), font.line_height()]));
+        }
+        let (name, typed) = if self.naming { (shown, self.input.clone()) } else { (self.whisper.clone(), shown) };
+        layer.texts.push((name, [name_x, text_top], [0, 0, 0]));
+        layer.texts.push((typed, [message_x, text_top], [0, 0, 0]));
         if caret {
-            let end = if self.naming { name_x + font.width(&name) } else { message_x + font.width(&typed) };
-            layer.sprites.push((&assets.darker, [end + 1.0, text_top + 1.0], [1.0, font.line_height() - 2.0]));
+            let x = focused_x + font.width(&format!("{}{}", &focused[..at], self.preedit));
+            layer.sprites.push((&assets.darker, [x + 1.0, text_top + 1.0], [1.0, font.line_height() - 2.0]));
         }
         // ponytail: the list's look (white rows, the picked name blue) is ours.
         if self.list_open {
@@ -1462,6 +1545,46 @@ mod tests {
         chat.tab = 1;
         chat.scroll_by(-4);
         assert_eq!(chat.tabs[1].scroll, 0, "nothing to scroll back to");
+    }
+
+    #[test]
+    fn recalls_lines_and_edits_at_the_caret() {
+        let mut chat = fresh();
+        for line in ["a", "b", "c"] {
+            chat.type_text(line);
+            let typed = std::mem::take(&mut chat.input);
+            chat.sent(&typed);
+        }
+        chat.type_text("draft");
+        chat.recall(true);
+        chat.recall(true);
+        assert_eq!(chat.input, "b");
+        chat.recall(false);
+        chat.recall(false);
+        assert_eq!(chat.input, "draft");
+        // Shift+Home selects to the start, Ctrl+X cuts it, a paste goes in at the caret.
+        chat.go(Move::Left, false);
+        chat.go(Move::Home, true);
+        assert_eq!(chat.selected(), "draf");
+        assert_eq!(chat.cut(), "draf");
+        assert_eq!((chat.input.as_str(), chat.caret().0), ("t", 0));
+        chat.type_text("pas");
+        chat.delete();
+        assert_eq!(chat.input, "pas");
+        chat.select_all();
+        chat.backspace();
+        assert_eq!(chat.input, "");
+        // Up / Down in the name box walk the whisper names, a blank after the last.
+        chat.naming = true;
+        chat.note_recent("Ann");
+        chat.note_recent("Bob");
+        chat.recall(true);
+        assert_eq!(chat.whisper, "Bob");
+        chat.recall(true);
+        assert_eq!(chat.whisper, "Ann");
+        chat.recall(false);
+        chat.recall(false);
+        assert_eq!(chat.whisper, "");
     }
 
     #[test]

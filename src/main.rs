@@ -79,6 +79,7 @@ mod inventory;
 mod iteminfo;
 mod laphine;
 mod level_up;
+mod line_edit;
 mod links;
 mod macros;
 mod mail;
@@ -329,6 +330,8 @@ const AURA_OFF_FIRST: usize = 2996;
 const EFFECTS_OFF: usize = 24;
 /// Deals: "requests a deal", no one of that name, "can't overlap items", "no more than 10 kinds", how asking went
 /// (70 + the result), how it ended (75 done, 76 failed, 74 cancelled), too heavy.
+/// "Invalid Command", in yellow.
+const INVALID_COMMAND: usize = 95;
 const TRADE_ASKS: usize = 93;
 const TRADE_NO_ONE: usize = 71;
 const TRADE_DONE: usize = 75;
@@ -2758,6 +2761,31 @@ impl Game {
         }
     }
 
+    /// Starts or stops what a status keeps showing on its unit (the player's own works too): its looping effects, the
+    /// copies left behind it (the quickens' afterimage) and Cursed Circle's dark body.
+    fn status_loop(&mut self, gpu: Option<&Gpu>, grf: &Grf, table: &effects::Table, unit: u32, status: u16, on: bool) {
+        let key = (unit != self.account_id).then_some(unit);
+        let shown = table.status(status);
+        self.effects.forget_status(key, status);
+        let actor = match key {
+            None => Some(&mut self.player),
+            Some(id) => self.units.get_mut(&id),
+        };
+        let Some(actor) = actor else { return };
+        if shown.contains(&actor::AFTERIMAGE) {
+            actor.blur(status, on);
+        }
+        if actor::CURSED_CIRCLE.contains(&status) {
+            actor.cursed = on;
+        }
+        let at = self.world.cell_position(actor.cell.map(|value| value as f32));
+        if let Some(gpu) = gpu.filter(|_| on) {
+            for &effect in shown.iter().filter(|&&effect| effect != actor::AFTERIMAGE) {
+                self.effects.play(gpu, grf, table, effect, effects::Target::Status(key, status), at, Instant::now());
+            }
+        }
+    }
+
     /// Plays an effect at a cell.
     fn play_effect_at(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, cell: [u16; 2]) {
         let at = self.world.cell_position(cell.map(f32::from));
@@ -2795,11 +2823,14 @@ impl Game {
     /// Sends what's typed: whispered when the name box has a name, to the party with a leading % (or `party`, Ctrl
     /// held). Returns a message to show when it can't.
     fn send_chat(&mut self, party: bool, guild: bool, messages: &[String], graphics: &mut options::GraphicsSettings) -> Option<usize> {
-        let text = std::mem::take(&mut self.chat.input);
-        let (text, to) = (text.trim(), self.chat.whisper.trim().to_owned());
-        if text.is_empty() {
+        let typed = std::mem::take(&mut self.chat.input);
+        if typed.is_empty() {
             return None;
         }
+        self.chat.sent(&typed);
+        // A line of only spaces is text, and goes as it is.
+        let text = if typed.trim().is_empty() { typed.as_str() } else { typed.trim() };
+        let to = self.chat.whisper.trim().to_owned();
         if let Some(command) = chat::command(text) {
             self.client_command(command, messages, graphics);
             return None;
@@ -2870,6 +2901,11 @@ impl Game {
         // The client's own commands (message 136): /deal, /거래 or /교환 and a name ask for a deal.
         if let Some(name) = ["/deal ", "/거래 ", "/교환 "].iter().find_map(|command| text.strip_prefix(command)) {
             return (!self.ask_trade(name.trim())).then_some(TRADE_NO_ONE);
+        }
+        // A / line nothing above knows: "Invalid Command", and nothing goes out (not as chat, not as a whisper).
+        if text.starts_with('/') {
+            self.chat_line(messages.get(INVALID_COMMAND).cloned().unwrap_or_default(), CHAT_BROADCAST);
+            return None;
         }
         if to.is_empty() {
             let _ = self.session.chat(&self.me.name, text);
@@ -5170,6 +5206,19 @@ fn shortcut_to_bind(key: options::ShortcutKey) -> Option<shortcuts::ShortcutKey>
     match key {
         options::ShortcutKey::NamedF(number) => shortcuts::function_key(number),
         options::ShortcutKey::Char(character) => Some(shortcuts::ShortcutKey::Char(character.to_ascii_lowercase())),
+    }
+}
+
+/// The system clipboard's text up to its first line break, for a one-line box.
+fn clipboard_line() -> String {
+    let text = arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()).unwrap_or_default();
+    text.lines().next().unwrap_or_default().chars().filter(|character| !character.is_control()).collect()
+}
+
+/// Puts text on the system clipboard (nothing for an empty selection).
+fn set_clipboard(text: &str) {
+    if !text.is_empty() {
+        let _ = arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(text.to_owned()));
     }
 }
 
@@ -9766,16 +9815,41 @@ impl App {
                         if typing || !matches!(kind, battle_mode::KeyKind::Char(_)) {
                             match key {
                                 Key::Named(NamedKey::Tab) if typing => game.chat.naming = !game.chat.naming,
+                                // Shift+Insert pastes, Shift+Delete cuts; Ctrl (or Cmd) with A, C, X, V edit.
+                                Key::Named(NamedKey::Insert) if typing && self.modifiers.shift_key() => game.chat.type_text(&clipboard_line()),
+                                Key::Named(NamedKey::Delete) if typing && self.modifiers.shift_key() => set_clipboard(&game.chat.cut()),
+                                Key::Character(letter)
+                                    if typing
+                                        && (self.modifiers.control_key() || self.modifiers.super_key())
+                                        && matches!(letter.to_lowercase().as_str(), "a" | "c" | "x" | "v") =>
+                                {
+                                    match letter.to_lowercase().as_str() {
+                                        "a" => game.chat.select_all(),
+                                        "c" => set_clipboard(&game.chat.selected()),
+                                        "x" => set_clipboard(&game.chat.cut()),
+                                        _ => game.chat.type_text(&clipboard_line()),
+                                    }
+                                }
                                 Key::Named(NamedKey::Insert) => game.toggle_sit(),
+                                // The caret: Left, Right, Home, End (Shift selects); Up / Down recall.
+                                Key::Named(named @ (NamedKey::ArrowLeft | NamedKey::ArrowRight | NamedKey::Home | NamedKey::End)) if typing => {
+                                    let to = match named {
+                                        NamedKey::ArrowLeft => line_edit::Move::Left,
+                                        NamedKey::ArrowRight => line_edit::Move::Right,
+                                        NamedKey::Home => line_edit::Move::Home,
+                                        _ => line_edit::Move::End,
+                                    };
+                                    game.chat.go(to, self.modifiers.shift_key());
+                                }
+                                Key::Named(named @ (NamedKey::ArrowUp | NamedKey::ArrowDown)) if typing => game.chat.recall(*named == NamedKey::ArrowUp),
+                                Key::Named(NamedKey::Delete) if typing => game.chat.delete(),
                                 // PageUp / PageDown page the log; with Ctrl, to its top or bottom.
                                 Key::Named(key @ (NamedKey::PageUp | NamedKey::PageDown)) if game.chat_mode.chat_line_open() => {
                                     game.chat.page(*key == NamedKey::PageDown, self.modifiers.control_key());
                                 }
-                                Key::Named(NamedKey::Enter) if typing && game.chat.naming => game.chat.naming = false,
+                                // Enter sends from either box.
                                 Key::Named(NamedKey::Enter) if typing => self.send_chat_input(self.modifiers.control_key(), self.modifiers.alt_key()),
-                                Key::Named(NamedKey::Backspace) if typing => {
-                                    game.chat.typing().pop();
-                                }
+                                Key::Named(NamedKey::Backspace) if typing => game.chat.backspace(),
                                 _ if typing && !self.modifiers.alt_key() && !self.modifiers.super_key() && !self.modifiers.control_key() => {
                                     let typed: String = event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()).collect();
                                     game.chat.type_text(&typed);
@@ -12985,6 +13059,7 @@ impl App {
                 }
             }
             MapEvent::StatusIcon { kind, id, on, left_ms, value, .. } => {
+                game.status_loop(gpu, grf, table, id, kind, on);
                 // ChangeSize's percent multiplies the size table when the status is on.
                 if kind == actor::CHANGE_SIZE || kind == actor::CHANGE_SIZE_MONSTER {
                     let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
@@ -13588,7 +13663,7 @@ impl App {
             let (feet, placed) = cart_frame(cart);
             carts.push((Owner::Player, feet, placed));
         }
-        let player_tint = actor::status_tint(game.player.body_state, game.player.health_state);
+        let player_tint = game.player.body_tint();
         let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
         // Our own character in Hiding shows its shadow alone (a frame with no sprite); cloaked or GM-hidden, nothing.
         match actor::seen(game.player.hide_option, true) {
@@ -13597,6 +13672,7 @@ impl App {
                     sprites.set_tint(player_tint);
                     let mut placed = sprites.frame(gpu, action, player_seen, head_direction, timing);
                     scale_frame(&mut placed, player_scale);
+                    game.player.leave_ghost(now, player_feet, &placed);
                     frames.push((Owner::Player, player_feet, placed));
                 }
             }
@@ -13666,12 +13742,13 @@ impl App {
                 let (feet, placed) = cart_frame(cart);
                 carts.push((Owner::Unit(id), feet, placed));
             }
-            let tint = crate::actor::status_tint(actor.body_state, actor.health_state);
+            let tint = actor.body_tint();
             let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent);
             if let Some(sprites) = &mut actor.sprites {
                 sprites.set_tint(tint);
                 let mut placed = sprites.frame(gpu, action, seen, head_direction, timing);
                 scale_frame(&mut placed, scale);
+                actor.leave_ghost(now, feet, &placed);
                 frames.push((Owner::Unit(id), feet, placed));
             }
             if !actor.cloaked {
@@ -13924,6 +14001,18 @@ impl App {
                 (sprites.texture(*key), *feet, *position, *size, tint, *angle, sprite_layer(index, player, flat))
             })
         }));
+        // The copies left behind units that blur (the quickens), fading out.
+        let blurring = std::iter::once((Owner::Player, &game.player)).chain(game.units.iter().map(|(&id, actor)| (Owner::Unit(id), actor)));
+        for (owner, actor) in blurring.filter(|(_, actor)| !actor.ghosts.is_empty()) {
+            let Some(sprites) = actor.sprites.as_ref() else { continue };
+            let (player, flat) = stand_of(&owner);
+            for ghost in &actor.ghosts {
+                let alpha = actor::ghost_alpha(now.saturating_duration_since(ghost.left));
+                billboards.extend(ghost.placed.iter().enumerate().filter_map(|(index, (key, position, size, angle))| {
+                    Some((sprites.texture_of(*key)?, ghost.feet, *position, *size, [1.0, 1.0, 1.0, alpha], *angle, sprite_layer(index, player, flat)))
+                }));
+            }
+        }
         for draw in &companion_draws {
             let actor = match draw.owner {
                 Owner::Player => &game.player,
