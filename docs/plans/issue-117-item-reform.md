@@ -47,7 +47,7 @@ Tests first, then the code. They share no file except `main.rs` and `control.rs`
 
 **Tests** (a small Lua source, no data.grf):
 
-- Names resolve, including a cp949 key (`\196\247` bytes `C6 F7`, not UTF-8) to its item id, and that id's `ReformItemList` entry loads. An unknown name is skipped. Materials come out sorted by name.
+- Names resolve, including a cp949 key (Lua `\196\247`, bytes `C4 F7`, not UTF-8) to its item id, and that id's `ReformItemList` entry loads. An unknown name is skipped. Materials come out sorted by name.
 - Listed rows are identified, unworn base items only.
 - The button is on inside the refine range and off one step outside; off when `IsEmptySocket` and any card slot is set, on when sockets may hold cards; on when material stacks sum to the need, off when they fall short.
 
