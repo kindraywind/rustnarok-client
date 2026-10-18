@@ -1,0 +1,32 @@
+{
+  "about": "The item reform window (issue #117): a Thanos Upgrade Box lists a Thanos Sword and Reform turns it into a Thanos Sword-AD; closing the window lets an NPC talk start.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_in 63 66"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 100817"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@item 13441"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"click_on": {"inventory_item": 100817}, "count": 2},
+    {"wait_for": {"packet": "0x0b8f", "ms": 5000}},
+    {"expect": {"windows_open": ["ItemReform", "Inventory"]}},
+    {"move": [900, 700]},
+    {"shot": "reform-listed", "crop": [280, 130, 460, 300]},
+    {"click_on": {"pick_item": 13441}}, {"wait": 300},
+    {"click_on": {"button": "reform"}},
+    {"wait_for": {"packet": "0x0b92", "ms": 5000}},
+    {"expect": {"inventory_has": [{"id": 500024}], "inventory_items": 1, "windows_closed": ["ItemReform"]}},
+    {"move": [900, 700]},
+    {"shot": "reform-done", "crop": [0, 160, 300, 160]},
+    {"say": "@item 100817"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"click_on": {"inventory_item": 100817}, "count": 2},
+    {"wait_for": {"packet": "0x0b8f", "ms": 5000}},
+    {"click_on": {"button": "close"}}, {"wait": 400},
+    {"expect": {"windows_closed": ["ItemReform"]}},
+    {"click_on": {"unit": "Dietrich#ns_prt"}},
+    {"wait_for": {"packet": "0x00b4", "ms": 5000}},
+    {"key": "Escape"}, {"wait": 300},
+    {"say": "@itemreset"}
+  ]
+}

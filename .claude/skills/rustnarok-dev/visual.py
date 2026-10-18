@@ -39,8 +39,10 @@ diff; `threshold` (percent, default 1) is how much change a shot takes before th
 `settle` waits until the map has loaded again, then the given ms (GM commands sent while it loads are lost).
 Two players: "second": {"account": "2", "slot": 0, "env": {...}} starts a second client; a step with
 "as": "second" (a shot too) acts on it. The first account should be a GM (`@recall` brings the second over).
-"{first}" and "{second}" in any string are the two characters' names, so a scenario runs on anyone's server;
-"{repo}" is the repository's absolute path (`@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/merge.txt`).
+"{first}" and "{second}" in any string (dict keys too: {"state": {"guild.members.{second}": 1}}) are the two
+characters' names, so a scenario runs on anyone's server;
+"{repo}" is the repository's absolute path (`@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/merge.txt`), and
+"{scenarios}" the scenarios folder's (`@loadnpc {scenarios}/battleground-team.txt`).
 Each scenario starts a fresh client; the clock is paused for every shot so frames repeat.
 Everything lands under docs/personal/visual/<date>/<HHMMSS>/ (gitignored): game images never go in the repository.
 """
@@ -136,11 +138,11 @@ def with_names(value, names):
     if isinstance(value, str):
         for client, name in names.items():
             value = value.replace("{" + client + "}", name)
-        return value.replace("{repo}", REPO)
+        return value.replace("{repo}", REPO).replace("{scenarios}", os.path.join(HERE, "scenarios"))
     if isinstance(value, list):
         return [with_names(item, names) for item in value]
     if isinstance(value, dict):
-        return {key: with_names(item, names) for key, item in value.items()}
+        return {with_names(key, names): with_names(item, names) for key, item in value.items()}
     return value
 
 
@@ -203,7 +205,11 @@ def expect(wanted, state):
         elif key == "map" and game.get("map") != value:
             failures.append(f"map {game.get('map')} != {value}")
         elif key == "windows_open":
-            failures += [f"window {w} not open" for w in value if w not in game.get("windows", [])]
+            open_windows = game.get("windows", [])
+            # An empty list means nothing is open. A non-empty list is still the windows that must be among the open ones.
+            if value == [] and open_windows:
+                failures.append(f"windows still open: {open_windows}")
+            failures += [f"window {w} not open" for w in value if w not in open_windows]
         elif key == "windows_closed":
             failures += [f"window {w} open" for w in value if w in game.get("windows", [])]
         elif key == "ground_items_at_least" and len(game.get("ground_items", [])) < value:
@@ -298,7 +304,13 @@ def step_on_client(action, shots_dir, name):
         wait_for_game()
         return time.sleep(action["settle"] / 1000)
     if "key" in action:
-        return drive.send({"cmd": "key", "key": action["key"]})
+        command = {"cmd": "key", "key": action["key"]}
+        if action.get("repeat"):
+            command["repeat"] = True
+        # hold: one press, then auto-repeats for that many milliseconds, still one command.
+        if action.get("hold"):
+            command["hold"] = action["hold"]
+        return drive.send(command)
     if "type" in action:
         return drive.send({"cmd": "type", "text": action["type"]})
     if "move" in action:
