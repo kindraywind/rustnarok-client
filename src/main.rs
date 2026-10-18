@@ -403,15 +403,16 @@ const BOW: u32 = 11;
 /// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
 const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
 
-/// A unit that died falls when the killing hit lands. A player lies there until revived (ZC_RESURRECTION) or gone;
-/// any other body goes after a moment.
+/// A unit that died falls when the killing hit lands, playing its death at the sprite's pace. A player lies there until
+/// revived (ZC_RESURRECTION) or gone; any other body then lies on its last frame as a corpse and fades out.
 fn fall(actor: &mut Actor, lands: Instant) {
     let (.., die) = actor::combat_actions(actor.kind);
     actor.play_at_pace(die, lands, 1.0, true);
     if actor.kind == PLAYER {
         actor.dead = true;
     } else {
-        actor.remove_at = Some(lands + CORPSE_TIME);
+        let dying_ms = actor.sprites.as_ref().and_then(|sprites| sprites.action_ms(die, actor.direction)).unwrap_or(0.0);
+        actor.fade_out(lands + Duration::from_micros((f64::from(dying_ms) * 1000.0).round() as u64), CORPSE_FADE_MS);
     }
 }
 
@@ -601,8 +602,9 @@ const BAR_COLORS: [[u8; 4]; 5] = [[0x14, 0x19, 0x9B, 255], [0x44, 0x44, 0x44, 25
 const MONSTER_BAR_COLORS: [[u8; 4]; 4] = [[0x10, 0x18, 0x9C, 255], [0x42, 0x41, 0x42, 255], [0xFF, 0x00, 0xE7, 255], [0xFF, 0xFF, 0x00, 255]];
 /// A multi-hit's hits come this far apart.
 const MULTI_HIT_DELAY: Duration = Duration::from_millis(200);
-/// How long a dead unit stays on the ground.
-const CORPSE_TIME: Duration = Duration::from_millis(1500);
+/// A corpse fades out over this long (one step of alpha every 24 ms); a unit walking out of sight over this.
+const CORPSE_FADE_MS: f32 = 255.0 * 24.0;
+const OUT_OF_SIGHT_FADE_MS: f32 = 510.0;
 
 /// Unit object types (rathena's clif_bl_type).
 const PLAYER: u8 = 0;
@@ -8531,6 +8533,10 @@ impl App {
                     game.effects.play(gpu, grf, table, EF_WARPZONE2, effects::Target::Unit(Some(unit.id)), at, Instant::now());
                 }
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
+                // Back in sight, or a monster that respawned under its corpse's ID: a unit of its own again.
+                if actor.remove_at.is_some() {
+                    *actor = new_actor(&unit);
+                }
                 actor.body_state = unit.body_state;
                 actor.health_state = unit.health_state;
                 actor.stop_at(unit.position.map(i32::from));
@@ -8563,6 +8569,9 @@ impl App {
             }
             MapEvent::UnitWalk { unit, to, .. } => {
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
+                if actor.remove_at.is_some() {
+                    *actor = new_actor(&unit);
+                }
                 actor.body_state = unit.body_state;
                 actor.health_state = unit.health_state;
                 let from = unit.position.map(i32::from);
@@ -8899,6 +8908,11 @@ impl App {
                 }
                 match (reason, dying) {
                     (1, Some(actor)) => fall(actor, lands),
+                    // Out of sight: it fades out, its shadow gone at once.
+                    (0, Some(actor)) if id != game.account_id => {
+                        actor.fade_out(Instant::now(), OUT_OF_SIGHT_FADE_MS);
+                        game.unit_hp.remove(&id);
+                    }
                     _ => {
                         game.units.remove(&id);
                         game.unit_hp.remove(&id);
@@ -11566,7 +11580,7 @@ impl App {
                 factor * scale
             };
             for (owner, feet, _) in &frames {
-                let dead = matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.remove_at.is_some()));
+                let dead = matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.fading(now)));
                 let scale = match owner {
                     Owner::Item(_) => ITEM_SHADOW,
                     Owner::Player => cast(&game.player, player_scale),
@@ -11653,7 +11667,11 @@ impl App {
         }));
         billboards.extend(frames.iter().flat_map(|(owner, feet, placements)| {
             let sprites = sprites_of(owner).unwrap();
-            placements.iter().map(move |(key, position, size, angle)| (sprites.texture(*key), *feet, *position, *size, [1.0; 4], *angle))
+            let alpha = match owner {
+                Owner::Unit(id) => game.units.get(id).map_or(1.0, |actor| actor.alpha(now)),
+                _ => 1.0,
+            };
+            placements.iter().map(move |(key, position, size, angle)| (sprites.texture(*key), *feet, *position, *size, [1.0, 1.0, 1.0, alpha], *angle))
         }));
         for draw in &companion_draws {
             let actor = match draw.owner {
@@ -13544,7 +13562,22 @@ mod tests {
         let mut monster = Actor::new("Poring".into(), None, [10, 10], 0, 150);
         monster.kind = MONSTER;
         fall(&mut monster, now);
-        assert_eq!(monster.remove_at, Some(now + CORPSE_TIME));
+        // No sprite here, so no death to play: the corpse fades at once, over 6.12 s, then goes.
+        assert_eq!(monster.remove_at, Some(now + Duration::from_millis(6120)));
+        assert!(monster.fading(now) && !monster.fading(now - Duration::from_millis(1)));
+        assert_eq!(monster.alpha(now), 1.0);
+        assert!((monster.alpha(now + Duration::from_millis(3060)) - 0.5).abs() < 0.001);
+        assert_eq!(monster.alpha(now + Duration::from_millis(7000)), 0.0);
+    }
+
+    #[test]
+    fn units_out_of_sight_fade_quickly() {
+        let now = Instant::now();
+        let mut unit = Actor::new("Poring".into(), None, [10, 10], 0, 150);
+        assert!(!unit.fading(now) && unit.alpha(now) == 1.0);
+        unit.fade_out(now, OUT_OF_SIGHT_FADE_MS);
+        assert_eq!(unit.remove_at, Some(now + Duration::from_millis(510)));
+        assert!((unit.alpha(now + Duration::from_millis(255)) - 0.5).abs() < 0.001);
     }
 
     #[test]

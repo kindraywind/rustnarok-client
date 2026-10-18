@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use image::RgbaImage;
 use rustnarok_client::grf::Grf;
@@ -1433,6 +1433,8 @@ pub struct Actor {
     pub sitting: bool,
     /// When a dying unit is removed.
     pub remove_at: Option<Instant>,
+    /// Fading out: from when, over how many milliseconds (a corpse, a unit walking out of sight).
+    pub fade: Option<(Instant, f32)>,
     /// A dead player: lying there until revived (players aren't removed when they die).
     pub dead: bool,
     /// Hiding, cloaking or chase-walking (the unit's option has UNSEEN_OPTIONS).
@@ -1483,6 +1485,7 @@ impl Actor {
             ready: false,
             sitting: false,
             remove_at: None,
+            fade: None,
             dead: false,
             cloaked: false,
             hide_option: 0,
@@ -1525,6 +1528,22 @@ impl Actor {
     }
 
     /// Plays `action` once at its ACT pace times `scale` (attack, flinch), or holds its last frame (death).
+    /// How opaque it's drawn: 1 until a fade starts, then down to 0 over the fade.
+    pub fn alpha(&self, now: Instant) -> f32 {
+        self.fade.map_or(1.0, |(from, ms)| (1.0 - now.saturating_duration_since(from).as_secs_f32() * 1000.0 / ms).clamp(0.0, 1.0))
+    }
+
+    /// Fading now (a corpse, a unit out of sight): it casts no shadow.
+    pub fn fading(&self, now: Instant) -> bool {
+        self.fade.is_some_and(|(from, _)| now >= from)
+    }
+
+    /// Fades out from `from` over `ms`, then goes.
+    pub fn fade_out(&mut self, from: Instant, ms: f32) {
+        self.fade = Some((from, ms));
+        self.remove_at = Some(from + Duration::from_micros((f64::from(ms) * 1000.0).round() as u64));
+    }
+
     pub fn play_at_pace(&mut self, action: usize, start: Instant, scale: f32, hold: bool) {
         self.shot = Some(Shot { action, started: start, pace: Pace::Act(scale.max(0.01)), hold });
     }
