@@ -168,18 +168,18 @@ impl Setup {
                 return Err(Some((DUPLICATE_ITEM, None)));
             }
         }
-        let limit = self.limit.parse::<u32>().unwrap_or(0);
+        let limit = self.limit.parse::<u64>().unwrap_or(0);
         if limit == 0 {
             return Err(Some((NO_LIMIT, None)));
         }
-        if limit > zeny {
+        if limit > u64::from(zeny) {
             return Err(Some((LIMIT_OVER_ZENY, None)));
         }
         if self.name.trim().is_empty() {
             return Err(None);
         }
         let items = self.wanted.iter().map(|row| (row.item_id, row.amount, row.price)).collect();
-        Ok((limit, items))
+        Ok((limit as u32, items))
     }
 
     pub fn height() -> f32 {
@@ -449,6 +449,11 @@ mod tests {
         setup.focus = Some(Focus::Limit);
         setup.type_text("20000");
         assert_eq!(setup.validate(&inv, 10_000), Err(Some((1731, None))));
+
+        // Past u32::MAX is still more than carried, not "no limit".
+        setup.limit.clear();
+        setup.type_text("9999999999");
+        assert_eq!(setup.validate(&inv, u32::MAX), Err(Some((1731, None))));
 
         setup.limit.clear();
         setup.type_text("1000");
