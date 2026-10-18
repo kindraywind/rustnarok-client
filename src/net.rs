@@ -840,6 +840,11 @@ pub const HOMUNCULUS_SP: u16 = 7;
 const ZC_PET_ACT: u16 = 0x01AA;
 const CZ_PET_ACT: u16 = 0x01A9;
 const ZC_ACK_REQNAMEALL_NPC: u16 = 0x0ADF;
+const ZC_UI_OPEN: u16 = 0x0AE2;
+const ZC_STYLE_CHANGE_RES: u16 = 0x0A47;
+/// The 16-byte style request. The 14-byte CZ_REQ_STYLE_CHANGE (0x0A46) is not what this version reads.
+const CZ_REQ_STYLE_CHANGE2: u16 = 0x0AFC;
+const CZ_REQ_STYLE_CLOSE: u16 = 0x0A48;
 const ZC_OPEN_REFINING_UI: u16 = 0x0AA0;
 const CZ_REFINING_SELECT_ITEM: u16 = 0x0AA1;
 const ZC_REFINING_MATERIAL_LIST: u16 = 0x0AA2;
@@ -1901,6 +1906,13 @@ pub enum MapEvent {
         why: u32,
         skills: Vec<u16>,
     },
+    /// A UI window opens (ZC_UI_OPEN). Kind 1 is the stylist; the data word is 0 there.
+    UiOpen {
+        kind: u8,
+        data: u32,
+    },
+    /// The stylist's answer (ZC_STYLE_CHANGE_RES): true when the change failed.
+    StyleChanged(bool),
     /// The refine window opens.
     RefineOpen,
     /// The enchant window opens on this enchant table.
@@ -3341,6 +3353,16 @@ impl MapSession {
         self.stream.write_all(&encode_enchant_close())
     }
 
+    /// Buys the stylist's rows (0 leaves a part as it is). Always the 16-byte request.
+    pub fn buy_style(&mut self, picks: StylePicks) -> io::Result<()> {
+        self.stream.write_all(&encode_style_change(picks))
+    }
+
+    /// Closes the stylist. Until this, the server holds the player and refuses another one.
+    pub fn close_stylist(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_style_close())
+    }
+
     /// Hatches the egg at this inventory index (from `PetEggs`).
     pub fn hatch(&mut self, index: u16) -> io::Result<()> {
         self.stream.write_all(&encode_hatch(index))
@@ -4229,6 +4251,29 @@ fn encode_synthesis(box_id: u32, entries: &[(u16, u16)]) -> Vec<u8> {
     packet
 }
 
+/// Rows of the styling shop to buy. 0 leaves that part unchanged. Body style is sent, and this version keeps it 0.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StylePicks {
+    pub hair_color: u16,
+    pub hair_style: u16,
+    pub clothes_color: u16,
+    pub head_top: u16,
+    pub head_mid: u16,
+    pub head_bottom: u16,
+    pub body_style: u16,
+}
+
+/// CZ_REQ_STYLE_CHANGE2: 16 bytes, one u16 row at offsets 2, 4, 6, 8, 10, 12 and 14.
+fn encode_style_change(picks: StylePicks) -> [u8; 16] {
+    let mut packet = [0u8; 16];
+    packet[..2].copy_from_slice(&CZ_REQ_STYLE_CHANGE2.to_le_bytes());
+    let rows = [picks.hair_color, picks.hair_style, picks.clothes_color, picks.head_top, picks.head_mid, picks.head_bottom, picks.body_style];
+    for (index, row) in rows.into_iter().enumerate() {
+        packet[2 + index * 2..4 + index * 2].copy_from_slice(&row.to_le_bytes());
+    }
+    packet
+}
+
 fn encode_synthesis_close() -> [u8; 2] {
     CZ_RANDOM_COMBINE_ITEM_UI_CLOSE.to_le_bytes()
 }
@@ -4287,6 +4332,10 @@ fn encode_enchant_reset(table: u64, index: u16) -> [u8; 12] {
 /// CZ_CLOSE_UI_ENCHANT: the header alone.
 fn encode_enchant_close() -> [u8; 2] {
     CZ_CLOSE_UI_ENCHANT.to_le_bytes()
+}
+
+fn encode_style_close() -> [u8; 2] {
+    CZ_REQ_STYLE_CLOSE.to_le_bytes()
 }
 
 /// CZ_REQ_REFINING: the item, the ore, and whether Blacksmith's Blessings go with it.
@@ -5556,6 +5605,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_ATTACK_FAILURE_FOR_DISTANCE => {
             MapEvent::TooFar { target: u32_at(2), target_cell: [u16_at(6), u16_at(8)], cell: [u16_at(10), u16_at(12)], range: u16_at(14) }
         }
+        ZC_UI_OPEN => MapEvent::UiOpen { kind: packet[2], data: u32_at(3) },
+        ZC_STYLE_CHANGE_RES => MapEvent::StyleChanged(packet[2] != 0),
         _ => return None,
     })
 }
@@ -7006,6 +7057,30 @@ mod tests {
         assert_eq!(packet_length(ZC_ACK_READ_RODEX), Some(-1));
         assert_eq!(packet_length(ZC_ACK_ADD_ITEM_RODEX), Some(64));
         assert_eq!(packet_length(ZC_CHECKNAME), Some(34));
+    }
+
+    #[test]
+    fn decodes_the_stylist() {
+        // ZC_UI_OPEN: kind at 2, data u32 at 3. Kind 1 is the stylist; 8 is grade enchant, decoded the same way.
+        assert!(matches!(decode_map_packet(&[0xE2, 0x0A, 1, 0, 0, 0, 0]), Some(MapEvent::UiOpen { kind: 1, data: 0 })));
+        assert!(matches!(decode_map_packet(&[0xE2, 0x0A, 8, 4, 0, 0, 0]), Some(MapEvent::UiOpen { kind: 8, data: 4 })));
+        // ZC_STYLE_CHANGE_RES: 0 done, 1 failed.
+        assert!(matches!(decode_map_packet(&[0x47, 0x0A, 0]), Some(MapEvent::StyleChanged(false))));
+        assert!(matches!(decode_map_packet(&[0x47, 0x0A, 1]), Some(MapEvent::StyleChanged(true))));
+
+        let picks = StylePicks { hair_color: 3, hair_style: 5, clothes_color: 2, head_top: 1, head_mid: 0, head_bottom: 0, body_style: 0 };
+        let packet = encode_style_change(picks);
+        assert_eq!(packet.len(), 16);
+        // 0x0AFC, never the 14-byte 0x0A46.
+        assert_eq!(&packet[..2], &[0xFC, 0x0A]);
+        assert_ne!(&packet[..2], &[0x46, 0x0A]);
+        let row = |offset: usize| u16::from_le_bytes([packet[offset], packet[offset + 1]]);
+        assert_eq!((row(2), row(4), row(6), row(8), row(10), row(12), row(14)), (3, 5, 2, 1, 0, 0, 0));
+        let body = encode_style_change(StylePicks { body_style: 2, ..StylePicks::default() });
+        assert_eq!(u16::from_le_bytes([body[14], body[15]]), 2);
+        assert_eq!(&body[2..14], &[0; 12]);
+        assert_eq!(encode_style_close(), [0x48, 0x0A]);
+        assert_eq!([ZC_UI_OPEN, ZC_STYLE_CHANGE_RES, CZ_REQ_STYLE_CHANGE2, CZ_REQ_STYLE_CLOSE].map(packet_length), [Some(7), Some(3), Some(16), Some(2)]);
     }
 
     #[test]

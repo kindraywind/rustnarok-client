@@ -24,7 +24,9 @@
 //!   skill, units and ground items (with their sprites' screen boxes and the areas a click picks them in), counts and
 //!   status icons. Everything comes from what the client itself knows, whatever server it plays on.
 //!   `homunculus` is `{id, name, level, hunger, intimacy, hp, skill_points, vaporized, following}` or null; the skill
-//!   list's level up buttons are targets named `raise:<skill id>`.
+//!   list's level up buttons are targets named `raise:<skill id>`. `player.look` is the real look (hair, hair color,
+//!   clothes color, head top, mid and bottom). The stylist's buttons are targets (`hair_style_<row>`, `hair_color_<row>`,
+//!   `clothes_color_<row>`, `tab_hair`, `tab_accessory`, `buy`, `refresh`, `rotate_left`, `rotate_right`, `close`).
 //! - `wait` `{ms?, packet?, event?, fresh?, pause?, do?}`: sleeps `ms`; with a `packet` id ("0x08c8") or an `event`
 //!   (a `MapEvent`/`CharEvent` variant like "Act", or "LoginAccepted"/"LoginRefused"), waits up to `ms` (10 s by
 //!   default) for one seen since the previous command, so a quick answer isn't missed between two calls. `fresh`
@@ -54,6 +56,7 @@ use winit::event::{ElementState, KeyEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, NativeKeyCode, PhysicalKey, SmolStr};
 
+use crate::actor::Look;
 use crate::render::{Gpu, Sprite, WorldPass};
 use crate::{App, DialogButton, Game, HOMUNCULUS, MERCENARY, MONSTER, NPC, NetEvent, Owner, PET, PLAYER, Panel, Scene, inventory};
 
@@ -930,6 +933,15 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .flat_map(|homunculus| game.homunculus_skill_list.raise_boxes(&game.homunculus_skills, homunculus.skill_points))
                 .map(|(id, area)| json!({"kind": "button", "name": format!("raise:{id}"), "box": area})),
         )
+        .chain(
+            game.stylist
+                .iter()
+                .flat_map(|window| {
+                    let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
+                    window.button_boxes(&app.styling_shop, job)
+                })
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .collect();
     let mut windows: Vec<String> = game.windows.iter().filter(|panel| open(panel)).map(|panel| format!("{panel:?}")).collect();
     let overlays = [
@@ -940,6 +952,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("LaphineSynthesis", game.synthesis.is_some()),
         ("LaphineUpgrade", game.upgrade.is_some()),
         ("Enchant", game.enchant.is_some()),
+        ("Stylist", game.stylist.is_some()),
         ("Materials", game.materials.is_some()),
         ("PartySetup", game.party_setup.is_some()),
         ("DressRoom", game.dressroom.is_some()),
@@ -1024,6 +1037,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             "job_level": status(net::STATUS_JOB_LEVEL),
             "zeny": status(net::STATUS_ZENY),
             "screen": screen(Owner::Player),
+            "look": player_look(game.player.look.as_ref().unwrap_or(&Look::default())),
         },
         "windows": windows,
         // What a test can click by name instead of by pixels: inventory items (index and item), hotkey slots, skill
@@ -1124,6 +1138,18 @@ fn game_state(app: &App, game: &Game) -> Value {
     state
 }
 
+/// The player's look as the game state reports it. Zeros until the server has sent one.
+fn player_look(look: &Look) -> Value {
+    json!({
+        "hair": look.hair,
+        "hair_color": look.hair_color,
+        "clothes_color": look.clothes_color,
+        "head_top": look.head_top,
+        "head_mid": look.head_mid,
+        "head_bottom": look.head_bottom,
+    })
+}
+
 /// The player's homunculus as the game state reports it.
 fn homunculus_state(homunculus: &net::Homunculus, id: Option<u32>, following: bool) -> Value {
     json!({
@@ -1190,5 +1216,11 @@ mod tests {
         assert_eq!(pin_kind(PinStep::ChangeNewFirst { old: "1357".into() }), "change");
         assert_eq!(pin_kind(PinStep::ChangeNewConfirm { old: "1357".into(), first: "2468".into() }), "change");
         assert_eq!(None::<PinPad>.as_ref().map_or("none", |pad| pad.kind()), "none");
+    }
+
+    #[test]
+    fn reports_the_players_look() {
+        let look = Look { hair: 1, hair_color: 3, clothes_color: 2, head_top: 16, head_mid: 0, head_bottom: 4, ..Look::default() };
+        assert_eq!(player_look(&look), json!({"hair": 1, "hair_color": 3, "clothes_color": 2, "head_top": 16, "head_mid": 0, "head_bottom": 4}));
     }
 }
