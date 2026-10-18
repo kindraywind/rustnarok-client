@@ -2970,6 +2970,8 @@ pub struct Act {
     pub source_speed: i32,
     pub target_speed: i32,
     pub damage: i32,
+    /// The damage is to SP (shown in blue).
+    pub sp: bool,
     /// Number of hits the damage is split into.
     pub hits: u16,
     /// 0 normal hit, 1 pick up, 2 sit, 3 stand, 8 multi hit, 10 critical, ... (rathena's e_damage_type).
@@ -5255,6 +5257,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             source_speed: u32_at(14) as i32,
             target_speed: u32_at(18) as i32,
             damage: u32_at(22) as i32,
+            sp: packet[26] != 0,
             hits: u16_at(27),
             kind: packet[29],
             left_damage: u32_at(30) as i32,
@@ -5286,6 +5289,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 source_speed: u32_at(16) as i32,
                 target_speed: u32_at(20) as i32,
                 damage: u32_at(24) as i32,
+                sp: false,
                 hits: u16_at(30),
                 kind: packet[32],
                 left_damage: 0,

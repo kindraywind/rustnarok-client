@@ -1124,9 +1124,6 @@ pub struct Digits {
 }
 
 impl Digits {
-    /// Pixels between digits.
-    const PADDING: f32 = 2.0;
-
     pub fn load(gpu: &Gpu, grf: &Grf) -> Option<Self> {
         let spr = Spr::parse(&grf.read("data\\sprite\\이팩트\\숫자.spr").ok()?).ok()?;
         let digits = (0..10).map(|digit| Some(gpu.texture(&spr.image(0, digit, None)?, false))).collect::<Option<_>>()?;
@@ -1135,19 +1132,80 @@ impl Digits {
         Some(Self { digits, miss: frame(0)?, critical: frame(3)?, lucky: frame(5)?, lucky_background: frame(4)? })
     }
 
-    /// The digits of `number` centered on the anchor: texture, top-left offset and size in sprite pixels.
+    /// The digits of `number` centered on the anchor: texture, top-left offset and size in sprite pixels. Each digit is
+    /// centred on its own slot, `DIGIT_STEP` apart, whatever its width.
     pub fn place(&self, number: i32, scale: f32) -> Vec<(&Texture, [f32; 2], [f32; 2])> {
         let digits: Vec<&Texture> = number.unsigned_abs().to_string().bytes().map(|digit| &self.digits[usize::from(digit - b'0')]).collect();
-        let width: f32 = digits.iter().map(|texture| texture.size[0] + Self::PADDING).sum::<f32>() - Self::PADDING;
-        let mut x = -width / 2.0;
+        let count = digits.len();
         digits
             .into_iter()
-            .map(|texture| {
-                let placed = (texture, [x * scale, -texture.size[1] / 2.0 * scale], [texture.size[0] * scale, texture.size[1] * scale]);
-                x += texture.size[0] + Self::PADDING;
-                placed
+            .enumerate()
+            .map(|(index, texture)| {
+                let size = texture.size.map(|value| value * scale);
+                let middle = digit_slot(index, count) * scale;
+                (texture, [middle - size[0] / 2.0, -size[1] / 2.0], size)
             })
             .collect()
+    }
+}
+
+/// The middle of digit `index` (the first, leftmost, is 0) of a `count`-digit number, in sprite pixels from the
+/// number's middle at scale 1.
+pub fn digit_slot(index: usize, count: usize) -> f32 {
+    (index as f32 - (count as f32 - 1.0) / 2.0) * DIGIT_STEP
+}
+
+/// Monster jobs (sprite IDs): 1001–3998 and 20021–31999.
+pub fn is_monster_job(job: u16) -> bool {
+    (1001..=3998).contains(&job) || (20021..=31999).contains(&job)
+}
+
+/// NPC jobs: 45–999.
+pub fn is_npc_job(job: u16) -> bool {
+    (45..=999).contains(&job)
+}
+
+/// Sprite pixels between the middles of two digits of a number at scale 1.
+pub const DIGIT_STEP: f32 = 9.55;
+/// A hit's number lasts 70 ticks of 24 ms.
+pub const HIT_NUMBER_TICKS: f32 = 70.0;
+
+/// Where a hit's number is `ticks` (24 ms each) after it shows, and how it looks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NumberMotion {
+    /// World units above the target's feet: up to 32.7 at tick 30, then below the feet by the end.
+    pub height: f32,
+    /// World units it has drifted along each ground axis (`number_drift` gives the signs).
+    pub drift: f32,
+    pub scale: f32,
+    pub alpha: f32,
+}
+
+/// A hit's number: it pops up from 2.7 world units over the feet, arcs up and falls away, drifting diagonally,
+/// shrinking from 5 times its size to 1.2 (1.3 for a critical) and fading.
+pub fn hit_number(ticks: f32, critical: bool) -> NumberMotion {
+    NumberMotion {
+        height: 8.0 / 3.0 + 2.0 * ticks - ticks * ticks / 30.0,
+        drift: 0.8 * (ticks / 3.0 + 3.0),
+        scale: (5.0 - 0.24 * ticks).max(if critical { 1.3 } else { 1.2 }),
+        alpha: ((250.0 - 3.4 * ticks) / 255.0).clamp(0.0, 1.0),
+    }
+}
+
+/// Which way (x east, z north: each 1 or -1) a hit's number drifts from a unit facing `rot` (`angle_of`'s degrees):
+/// diagonally away from where it faces. A facing the server set counts from 180 (north) up past 360, so all but
+/// north and north-west drift north-east, as the game does.
+pub fn number_drift(rot: f32, from_server: bool) -> [f32; 2] {
+    let angle = match (from_server, rot) {
+        (true, rot) if rot < 180.0 => rot + 360.0,
+        (false, rot) if rot > 180.0 => rot - 360.0,
+        (_, rot) => rot,
+    };
+    match angle {
+        angle if (0.0..90.0).contains(&angle) => [-1.0, 1.0],
+        angle if (90.0..180.0).contains(&angle) => [-1.0, -1.0],
+        angle if (180.0..270.0).contains(&angle) => [1.0, -1.0],
+        _ => [1.0, 1.0],
     }
 }
 
@@ -1327,6 +1385,8 @@ pub struct Actor {
     /// The facing in the sprites' eight directions, and exactly, in degrees (`angle_of`: 0 south, 90 east).
     pub direction: u8,
     pub rot: f32,
+    /// The facing came from the server (appearing, turning) rather than from walking or turning to a target.
+    pub facing_from_server: bool,
     /// Players only: 0 looking straight ahead, 1 and 2 turned to the sides.
     pub head_direction: u16,
     animation_started: Instant,
@@ -1380,6 +1440,7 @@ impl Actor {
             distance: 0.0,
             direction,
             rot: rot_of(direction),
+            facing_from_server: true,
             head_direction: 0,
             animation_started: now,
             shot: None,
@@ -1452,6 +1513,7 @@ impl Actor {
             let step = [toward[0] - self.cell[0], toward[1] - self.cell[1]];
             self.direction = world::direction(step);
             self.rot = angle_of(step);
+            self.facing_from_server = false;
         }
     }
 
@@ -1459,6 +1521,7 @@ impl Actor {
     pub fn set_direction(&mut self, direction: u8) {
         self.direction = direction;
         self.rot = rot_of(direction);
+        self.facing_from_server = true;
     }
 
     pub fn walk(&mut self, path: Vec<[i32; 2]>) {
@@ -1498,6 +1561,7 @@ impl Actor {
             let progress = now.saturating_duration_since(self.step_started).as_secs_f32() * 1000.0 / duration;
             self.direction = world::direction(step);
             self.rot = angle_of(step);
+            self.facing_from_server = false;
             if progress < 1.0 {
                 return [self.cell[0] as f32 + step[0] as f32 * progress, self.cell[1] as f32 + step[1] as f32 * progress];
             }
@@ -1598,6 +1662,41 @@ mod tests {
         assert_eq!(tilted.dimensions(), (14, 14));
         assert_eq!(tilted.get_pixel(0, 0).0[3], 0);
         assert_eq!(*tilted.get_pixel(7, 7), red);
+    }
+
+    #[test]
+    fn moves_hit_numbers_as_the_game_does() {
+        let close = |a: f32, b: f32| (a - b).abs() < 0.01;
+        // Pops up 2.7 units over the feet, tops out 32.7 up at tick 30 (720 ms), back at 2.7 by tick 60, ends 20.7 below.
+        let [start, top, back, end] = [0.0, 30.0, 60.0, 70.0].map(|ticks| hit_number(ticks, false));
+        assert!(close(start.height, 2.67) && close(top.height, 32.67) && close(back.height, 2.67) && close(end.height, -20.67));
+        // Drifts 2.4 units at once, 21 by the end, on each axis.
+        assert!(close(start.drift, 2.4) && close(end.drift, 21.07));
+        // Five times its size, shrinking to 1.2 (a critical to 1.3) by about 380 ms, and fading out.
+        assert_eq!((start.scale, top.scale, hit_number(30.0, true).scale), (5.0, 1.2, 1.3));
+        assert!(close(start.alpha, 250.0 / 255.0) && close(end.alpha, 12.0 / 255.0));
+        assert_eq!(hit_number(80.0, false).alpha, 0.0);
+    }
+
+    #[test]
+    fn drifts_hit_numbers_away_from_where_the_target_faces() {
+        // Turned by walking or toward a target: diagonally away from the facing.
+        let walked = |direction: u8| number_drift(angle_of(FACING[usize::from(direction)].map(|step| step as i32)), false);
+        assert_eq!(
+            (0..8).map(walked).collect::<Vec<_>>(),
+            [[-1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, -1.0], [-1.0, -1.0], [-1.0, -1.0], [-1.0, 1.0]]
+        );
+        // Facing as the server set it: north and north-west drift south-east, the rest north-east.
+        let set = |direction: u8| number_drift(rot_of(direction), true);
+        assert_eq!((0..8).map(set).collect::<Vec<_>>(), [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0], [1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [1.0, 1.0], [1.0, 1.0]]);
+    }
+
+    #[test]
+    fn spaces_digits_on_fixed_slots() {
+        assert_eq!(digit_slot(0, 1), 0.0);
+        assert_eq!([digit_slot(0, 2), digit_slot(1, 2)], [-DIGIT_STEP / 2.0, DIGIT_STEP / 2.0]);
+        assert_eq!([digit_slot(0, 3), digit_slot(2, 3)], [-DIGIT_STEP, DIGIT_STEP]);
+        assert!(is_monster_job(1002) && is_monster_job(20021) && !is_monster_job(4001) && is_npc_job(45) && !is_npc_job(1002));
     }
 
     #[test]
