@@ -63,7 +63,9 @@ mod material;
 mod menu;
 mod mercenary;
 mod minimap;
+mod monster_info;
 mod options;
+mod overhead;
 mod party;
 mod pet;
 mod pick_list;
@@ -335,9 +337,8 @@ const MENU_CANCEL: [f32; 2] = [230.0, 91.0];
 const MENU_SELECTION: [u8; 4] = [0xCD, 0xE0, 0xFF, 0xFF];
 /// A player's action while casting or using a skill.
 const SKILL_ACTION: usize = 12;
-/// Words over a head stay this long; bubbles and cast bars sit this many cells above the feet (90/35).
+/// Words over a head stay this long.
 const SPEECH_TIME: Duration = Duration::from_secs(5);
-const OVERHEAD: f32 = 90.0 / 35.0;
 /// Emotions sit this many sprite pixels above the feet, over the head.
 const EMOTION_HEIGHT: f32 = 70.0;
 /// Spirit spheres and coins: how far from the body they circle, how high, how fast (radians a second), and how
@@ -349,8 +350,6 @@ const SPIRIT_TURN: f32 = 1.5;
 const SPIRIT_TILT: f32 = 0.4;
 /// The sphere picture's ball is about 22px across in a 94px square.
 const SPHERE_SCALE: f32 = 0.5;
-const SPEECH_WIDTH: f32 = 250.0;
-const SPEECH_LINE: f32 = 17.0;
 /// Heal, Highness Heal and Coluceo Heal report how much they healed.
 const HEAL_SKILLS: [u16; 3] = [28, 2043, 2044];
 const CAST_BAR: [f32; 2] = [60.0, 6.0];
@@ -376,6 +375,10 @@ const BOUND: usize = 1328;
 const RENTAL_MINUTES: usize = 1256;
 const RENTAL_SECONDS: usize = 1270;
 const RENTAL_ENDED: usize = 1258;
+/// The Convex Mirror: no boss here, the boss will show on the minimap; its status icon (EFST_CASH_BOSS_ALARM).
+const NO_BOSS: usize = 1223;
+const BOSS_SHOWN: usize = 1225;
+const BOSS_ALARM: u16 = 253;
 const COOLDOWN_LEFT: usize = 3230;
 /// The spark of a landed hit, and a warp portal's rings.
 const EF_HIT1: u32 = 0;
@@ -395,9 +398,10 @@ const SLOT_MISSED: usize = 3;
 const SLOT_HOLD_MS: f32 = 1500.0;
 const TAMED: usize = 1574;
 const NOT_TAMED: usize = 1575;
-/// HP/SP bars under characters: border, background, HP (low HP), SP.
+/// HP/SP bars under characters: border, background, HP, low HP (under a quarter), SP; and monsters' HP bars.
 const BAR_WIDTH: f32 = 60.0;
-const BAR_COLORS: [[u8; 4]; 5] = [[0x10, 0x18, 0x9C, 255], [0x42, 0x42, 0x42, 255], [0x10, 0xEF, 0x21, 255], [0xFF, 0x00, 0x00, 255], [0x18, 0x63, 0xDE, 255]];
+const BAR_COLORS: [[u8; 4]; 5] = [[0x14, 0x19, 0x9B, 255], [0x44, 0x44, 0x44, 255], [0x16, 0xEA, 0x25, 255], [0xEA, 0x16, 0x16, 255], [0x1D, 0x65, 0xDB, 255]];
+const MONSTER_BAR_COLORS: [[u8; 4]; 4] = [[0x10, 0x18, 0x9C, 255], [0x42, 0x41, 0x42, 255], [0xFF, 0x00, 0xE7, 255], [0xFF, 0xFF, 0x00, 255]];
 /// Damage numbers rise and shrink over this long.
 const DAMAGE_DURATION: f32 = 1.5;
 const MISS_DURATION: f32 = 0.8;
@@ -553,6 +557,9 @@ struct Game {
     materials: Option<material::Materials>,
     /// The Lucky Roulette's window.
     roulette: Option<roulette::Roulette>,
+    /// Sense's window, and the map's boss as the Convex Mirror shows it (name and cell).
+    monster_window: Option<monster_info::MonsterWindow>,
+    boss: Option<(String, [i32; 2])>,
     viewing: Option<Viewed>,
     bank: Option<bank::Bank>,
     trade_asked: Option<(String, u32, u16)>,
@@ -1022,12 +1029,27 @@ impl Game {
     }
 
     /// Whether players win over monsters under the pointer: Shift held, or aiming a skill for players, but not both.
-    // ponytail: "a skill for players" is one the server flags as for friends (Heal, Blessing); the official client asks
-    // its skill tables, which may list more.
+    // ponytail: "a skill for players" is one the server flags as for friends (Heal, Blessing); a skill table may list
+    // more.
     fn players_first(&self, shift: bool) -> bool {
         let support =
             self.targeting.and_then(|(id, _)| self.skills.iter().find(|skill| skill.id == id)).is_some_and(|skill| skill.kind & net::Skill::FRIEND != 0);
         shift != support
+    }
+
+    /// A monster coming into view brings its HP bar if it's hurt, and loses it if not.
+    fn monster_hp(&mut self, unit: &net::Unit) {
+        if unit.kind != MONSTER {
+            return;
+        }
+        match unit.hp {
+            Some([hp, max]) => {
+                self.unit_hp.insert(unit.id, (hp, max));
+            }
+            None => {
+                self.unit_hp.remove(&unit.id);
+            }
+        }
     }
 
     fn attack(&mut self, target: u32) {
@@ -1348,6 +1370,7 @@ impl Game {
             || self.achievement_window.covers(cursor)
             || self.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || roulette::icon_hit(cursor)
+            || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.chat.contains(cursor)
             || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
             || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -1574,16 +1597,21 @@ impl Game {
         self.speech.insert(unit, (text, color, Instant::now()));
     }
 
-    /// A unit starts or uses a skill: players strike the skill pose and call its name.
-    fn skill_motion(&mut self, source: u32, skill: u16, duration: f32, info: &HashMap<u16, SkillInfo>) {
+    /// A unit starts or uses a skill: players strike the skill pose, and units call its name (see `overhead::shouts`).
+    fn skill_motion(&mut self, source: u32, skill: u16, level: i32, packet: overhead::Shout, duration: f32, info: &HashMap<u16, SkillInfo>) {
         let me = self.account_id;
         let Some(actor) = (if source == me { Some(&mut self.player) } else { self.units.get_mut(&source) }) else { return };
-        if actor.kind != PLAYER || actor.remove_at.is_some() {
+        if actor.remove_at.is_some() {
             return;
         }
-        actor.play(SKILL_ACTION, Instant::now(), duration.max(100.0), false);
-        actor.stand_ready();
-        if let Some(info) = info.get(&skill) {
+        let monster = actor.kind == MONSTER;
+        if actor.kind == PLAYER {
+            actor.play(SKILL_ACTION, Instant::now(), duration.max(100.0), false);
+            actor.stand_ready();
+        }
+        if overhead::shouts(skill, level, monster, packet)
+            && let Some(info) = info.get(&skill)
+        {
             let unit = (source != me).then_some(source);
             self.say(unit, format!("{} !!", info.name), CHAT_WHITE);
         }
@@ -2009,6 +2037,7 @@ struct Assets {
     close: ButtonImages,
     menu_selection: Texture,
     bars: [Texture; 5],
+    monster_bars: [Texture; 4],
     chrome: window::Chrome,
     inventory: inventory::Assets,
     equipment: equipment::Assets,
@@ -2092,7 +2121,7 @@ impl Assets {
             vend: vend::Assets::load(gpu, grf),
             cast_fill: gpu.solid([0x00, 0xFF, 0x00, 0xFF]),
             speech_fill: gpu.solid([0, 0, 0, 102]),
-            speech_border: gpu.solid([0x52, 0x52, 0x52, 0xFF]),
+            speech_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
             target_fill: gpu.solid([0, 0, 0, 128]),
             clocks: [[255, 255, 255, 166], [255, 150, 50, 166]]
                 .map(|color| (0..=CLOCK_STEPS).map(|step| gpu.texture(&clock(step as f32 / CLOCK_STEPS as f32, color), false)).collect()),
@@ -2109,6 +2138,7 @@ impl Assets {
             close: button(UI, "btn_close"),
             menu_selection: gpu.solid(MENU_SELECTION),
             bars: BAR_COLORS.map(|color| gpu.solid(color)),
+            monster_bars: MONSTER_BAR_COLORS.map(|color| gpu.solid(color)),
             chrome: window::Chrome::load(gpu, grf),
             inventory: inventory::Assets::load(gpu, grf),
             equipment: equipment::Assets::load(gpu, grf),
@@ -3102,6 +3132,12 @@ impl App {
                     }
                 }
             }
+            // Sense's window: its close button.
+            Scene::Game(game) if game.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                if game.monster_window.as_ref().unwrap().hit(cursor) == Some(true) {
+                    game.monster_window = None;
+                }
+            }
             // The Lucky Roulette: START spins, Get Prize claims (neither while the wheel spins), close lets it go.
             Scene::Game(game) if game.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
                 let window = game.roulette.as_mut().unwrap();
@@ -3522,6 +3558,9 @@ impl App {
             if let Some(window) = &mut game.roulette {
                 window.frame.drag_to(self.cursor, roulette::HEIGHT);
             }
+            if let Some(window) = &mut game.monster_window {
+                window.frame.drag_to(self.cursor, monster_info::MonsterWindow::height());
+            }
             if let Some(window) = &mut game.audio_window
                 && window.drag_to(self.cursor, &mut self.sound)
                 && let Some(audio) = &mut self.audio
@@ -3796,7 +3835,8 @@ impl App {
                     | game.mail.drop_drag()
                     | game.quest_window.frame.drop_drag()
                     | game.achievement_window.frame.drop_drag()
-                    | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag());
+                    | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag());
                 // A slider let go keeps its volume for next time.
                 let slid = game.audio_window.as_mut().is_some_and(options::AudioWindow::drop_drag);
                 if slid {
@@ -3888,6 +3928,15 @@ impl App {
             && game.mail.hit(cursor).is_some()
         {
             game.mail.start_drag(cursor);
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(window) = &mut game.monster_window
+            && window.hit(cursor) == Some(false)
+        {
+            if window.frame.local(cursor, monster_info::MonsterWindow::height()).and_then(|local| window.frame.title_hit(local)) == Some(TitleHit::Title) {
+                window.frame.start_drag(cursor);
+            }
             return;
         }
         if let Scene::Game(game) = &mut self.scene
@@ -4382,6 +4431,7 @@ impl App {
                 Key::Named(NamedKey::Escape) if game.pick.is_some() => game.answer_pick(None),
                 Key::Named(NamedKey::Escape) if game.capturing => game.capturing = false,
                 Key::Named(NamedKey::Escape) if game.roulette.is_some() => game.close_roulette(),
+                Key::Named(NamedKey::Escape) if game.monster_window.is_some() => game.monster_window = None,
                 Key::Named(NamedKey::Escape) if game.targeting.is_some() => game.targeting = None,
                 Key::Named(NamedKey::Escape) if !game.chat.typing().is_empty() => game.chat.typing().clear(),
                 Key::Named(NamedKey::Escape) => game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: false }) },
@@ -4699,6 +4749,8 @@ impl App {
                     refine: None,
                     materials: None,
                     roulette: None,
+                    monster_window: None,
+                    boss: None,
                     viewing: None,
                     bank: None,
                     trade_asked: None,
@@ -4955,6 +5007,7 @@ impl App {
                 }
                 actor.guild = unit.guild;
                 game.want_emblem(unit.guild, unit.emblem);
+                game.monster_hp(&unit);
             }
             MapEvent::Turn { id, direction, head_direction } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
@@ -4974,6 +5027,7 @@ impl App {
                     actor.walk(path);
                 }
                 game.want_emblem(unit.guild, unit.emblem);
+                game.monster_hp(&unit);
             }
             // The bank: open on the server's word, then ask the balance; refusals by rathena's reasons.
             // ponytail: which message goes with which reason is read off their words.
@@ -5152,6 +5206,8 @@ impl App {
                 // rathena forgets the refine window on a map change; the material window and the roulette go too.
                 game.refine = None;
                 game.roulette = None;
+                // The mirror's status ends with the warp.
+                game.boss = None;
                 game.materials = None;
                 game.deal_choice = None;
                 if map == game.map {
@@ -5211,6 +5267,10 @@ impl App {
                 game.status.insert(id, value);
             }
             MapEvent::Statuses(values) => game.status.extend(values),
+            // -1 takes the bar away.
+            MapEvent::UnitHp { id, hp, max_hp } if hp < 0 || max_hp <= 0 => {
+                game.unit_hp.remove(&id);
+            }
             MapEvent::UnitHp { id, hp, max_hp } => {
                 game.unit_hp.insert(id, (hp, max_hp));
             }
@@ -6164,6 +6224,30 @@ impl App {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
             }
+            // Sense: the window, named after a unit on screen of that class (the packet has no name).
+            // ponytail: where the real client takes the name from isn't knowable.
+            MapEvent::MonsterInfo(info) => {
+                let name = game.units.values().find(|actor| actor.job == info.class).map(|actor| actor.name.clone()).unwrap_or_default();
+                game.monster_window = Some(monster_info::MonsterWindow::new(info, name));
+            }
+            // The Convex Mirror: none here; the boss found, moving; dead, back in a while.
+            // ponytail: the lines in the server lines' yellow.
+            MapEvent::BossInfo { kind, cell, hours, minutes, name } => {
+                let message = |id: usize| self.messages.get(id).map_or("", String::as_str);
+                match kind {
+                    0 => game.chat_line(message(NO_BOSS).to_owned(), CHAT_BROADCAST),
+                    2 => {
+                        game.chat_line(messages::fill(message(BOSS_SHOWN), &[&name]), CHAT_BROADCAST);
+                        game.boss = Some((name, cell));
+                    }
+                    1 => game.boss = Some((name, cell)),
+                    _ => {
+                        game.boss = None;
+                        let line = messages::fill(message(monster_info::boss_line(hours, minutes)), &[&name, &hours, &minutes]);
+                        game.chat_line(line, CHAT_BROADCAST);
+                    }
+                }
+            }
             MapEvent::IdentifyList(indexes) => {
                 let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
                 if items.is_empty() {
@@ -6312,10 +6396,10 @@ impl App {
                 if cast_ms > 0 {
                     game.casts.insert((source != me).then_some(source), (Instant::now(), Duration::from_millis(u64::from(cast_ms))));
                 }
-                game.skill_motion(source, skill, cast_ms as f32, &self.skill_info);
+                game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info);
                 skill_effects(game, skill, "beginCastEffectId", source);
             }
-            MapEvent::SkillHit { skill, act, .. } => {
+            MapEvent::SkillHit { skill, level, act } => {
                 game.casts.remove(&(act.source != game.account_id).then_some(act.source));
                 let me = game.account_id;
                 let target_cell = if act.target == me { Some(game.player.cell) } else { game.units.get(&act.target).map(|actor| actor.cell) };
@@ -6329,7 +6413,7 @@ impl App {
                         source.play(actor::combat_actions(source.kind).0, Instant::now(), act.source_speed.max(100) as f32, false);
                     }
                 }
-                game.skill_motion(act.source, skill, act.source_speed as f32, &self.skill_info);
+                game.skill_motion(act.source, skill, i32::from(level as i16), overhead::Shout::Hit, act.source_speed as f32, &self.skill_info);
                 if act.damage != 0 && !(act.source == act.target && act.kind == 6) {
                     game.show_hit(&act);
                     // Hit by hit: what comes at the target first (a bolt's arrows), then what shows as it lands.
@@ -6358,7 +6442,7 @@ impl App {
                 {
                     caster.face(cell);
                 }
-                game.skill_motion(source, skill, 400.0, &self.skill_info);
+                game.skill_motion(source, skill, amount, overhead::Shout::Used, 400.0, &self.skill_info);
                 if HEAL_SKILLS.contains(&skill) {
                     game.damages.push(Damage {
                         target: (target != me).then_some(target),
@@ -6371,7 +6455,7 @@ impl App {
                 skill_effects(game, skill, "effectId", target);
                 skill_effects(game, skill, "effectIdOnCaster", source);
             }
-            MapEvent::GroundSkill { skill, source, cell, .. } => {
+            MapEvent::GroundSkill { skill, source, level, cell } => {
                 game.casts.remove(&(source != game.account_id).then_some(source));
                 if let Some(gpu) = gpu {
                     for effect in table.skill(skill, "effectId") {
@@ -6383,7 +6467,7 @@ impl App {
                 if let Some(caster) = caster {
                     caster.face([i32::from(cell[0]), i32::from(cell[1])]);
                 }
-                game.skill_motion(source, skill, 400.0, &self.skill_info);
+                game.skill_motion(source, skill, i32::from(level as i16), overhead::Shout::Hit, 400.0, &self.skill_info);
             }
             MapEvent::SkillUnit { id, kind, cell } => {
                 if let Some(gpu) = gpu {
@@ -6439,6 +6523,10 @@ impl App {
                 }
             }
             MapEvent::StatusIcon { kind, id, on, left_ms, .. } => {
+                // The mirror's 10 minutes are over: the boss leaves the minimap.
+                if id == game.account_id && kind == BOSS_ALARM && !on {
+                    game.boss = None;
+                }
                 if id == game.account_id {
                     game.status_icons.retain(|(icon, ..)| *icon != kind);
                     if on && self.status_icon_files.contains_key(&kind) {
@@ -7227,30 +7315,34 @@ impl App {
             labels.push((messages::fill(message(messages::ITEM_AMOUNT), &[&name, &item.amount]), game.world.cell_position(item.cell)));
         }
 
-        // In-world overlays: names, HP bars, chat.
+        // In-world overlays: under the feet (in sprite pixels, the way sprites are drawn) HP bars and names under them;
+        // over the head cast bars and what's said.
+        let sprite_point = |feet: [f32; 3], y: f32| view.sprite_rect(feet, [0.0, y], [0.0, y]).map(|[x, y, ..]| [x * SCREEN[0], y * SCREEN[1]]);
         let mut base = Layer::default();
         for (name, feet) in &labels {
             let name = name.split('#').next().unwrap_or_default();
-            if let Some(point) = view.project(*feet) {
-                let x = (point[0] * SCREEN[0] - font.width(name) / 2.0).round();
-                base.outlined(name, [x, (point[1] * SCREEN[1] + 4.0).round()]);
+            if let Some(point) = sprite_point(*feet, overhead::NAME_BELOW) {
+                base.outlined(name, overhead::label_corner(point, font.width(name), font.line_height(), SCREEN));
             }
         }
+        // ponytail: a player's title, then their guild, on lines under the name; where titles go isn't known.
+        let mut under_name = 1.0;
         if let Some((title, feet)) = &title_line
-            && let Some(point) = view.project(*feet)
+            && let Some(point) = sprite_point(*feet, overhead::NAME_BELOW)
         {
-            let x = (point[0] * SCREEN[0] - font.width(title) / 2.0).round();
-            base.outlined(title, [x, (point[1] * SCREEN[1] + 4.0 - font.line_height()).round()]);
+            let [x, y] = overhead::label_corner(point, font.width(title), font.line_height(), SCREEN);
+            base.outlined(title, [x, y + font.line_height()]);
+            under_name += 1.0;
         }
         if let Some((name, line, feet, guild_id)) = &guild_line
-            && let Some(point) = view.project(*feet)
+            && let Some(point) = sprite_point(*feet, overhead::NAME_BELOW)
         {
-            let top = (point[1] * SCREEN[1] + 4.0).round();
-            let left = |text: &str| (point[0] * SCREEN[0] - font.width(text) / 2.0).round();
-            base.outlined(line, [left(line), top + font.line_height()]);
-            // ponytail: the emblem left of the wider line, at the top; calibrate against the real client.
+            let corner = |text: &str| overhead::label_corner(point, font.width(text), font.line_height(), SCREEN);
+            let top = corner(name)[1] + under_name * font.line_height();
+            base.outlined(line, [corner(line)[0], top]);
+            // ponytail: the emblem left of the guild line; calibrate against the real client.
             if let Some(emblem) = game.emblems.get(guild_id).and_then(|(_, emblem)| emblem.as_ref()) {
-                base.sprites.push((emblem, [left(name).min(left(line)) - guild::EMBLEM_SIZE[0] - 2.0, top], guild::EMBLEM_SIZE));
+                base.sprites.push((emblem, [corner(line)[0] - guild::EMBLEM_SIZE[0] - 2.0, top], guild::EMBLEM_SIZE));
             }
         }
         let ratio = |value: Option<&i64>, maximum: Option<&i64>| match (value, maximum) {
@@ -7259,26 +7351,25 @@ impl App {
         };
         let hp = ratio(game.status.get(&net::STATUS_HP), game.status.get(&net::STATUS_MAX_HP));
         let sp = ratio(game.status.get(&net::STATUS_SP), game.status.get(&net::STATUS_MAX_SP));
-        let mut bars = vec![(player_feet, hp, sp)];
-        // A monster's bar goes away when it dies.
-        let alive = |id: &u32| game.units.get(id).is_some_and(|actor| actor.remove_at.is_none());
-        bars.extend(
-            game.unit_hp
-                .iter()
-                .filter(|(id, _)| alive(id))
-                .filter_map(|(id, &(hp, max))| Some((*feet_of.get(id)?, (max > 0).then(|| (hp as f32 / max as f32).clamp(0.0, 1.0)), None))),
-        );
-        for (feet, hp, sp) in bars {
-            let (Some(hp), Some(point)) = (hp, view.project(feet)) else { continue };
-            let [x, y] = [(point[0] * SCREEN[0] - BAR_WIDTH / 2.0).round(), (point[1] * SCREEN[1] + 3.0).round()];
+        let [border, background, green, red, blue] = &assets.bars;
+        let mut bars = vec![(player_feet, hp, sp, [border, background, green, red])];
+        // Monsters' bars in their own colors; a dying unit's bar shows empty until it's gone.
+        bars.extend(game.unit_hp.iter().filter_map(|(id, &(hp, max))| {
+            let actor = game.units.get(id)?;
+            let hp = if actor.remove_at.is_some() { 0 } else { hp };
+            let colors = if actor.kind == MONSTER { assets.monster_bars.each_ref() } else { [border, background, green, red] };
+            Some((*feet_of.get(id)?, (max > 0).then(|| (hp as f32 / max as f32).clamp(0.0, 1.0)), None, colors))
+        }));
+        for (feet, hp, sp, [border, background, fill, low]) in bars {
+            let (Some(hp), Some(point)) = (hp, sprite_point(feet, overhead::BAR_BELOW)) else { continue };
+            let [x, y] = [point[0].trunc() - BAR_WIDTH / 2.0, point[1].trunc()];
             let height = if sp.is_some() { 9.0 } else { 5.0 };
-            let [border, background, green, red, blue] = &assets.bars;
             base.sprites.push((border, [x, y], [BAR_WIDTH, height]));
             base.sprites.push((background, [x + 1.0, y + 1.0], [BAR_WIDTH - 2.0, height - 2.0]));
-            base.sprites.push((if hp < 0.25 { red } else { green }, [x + 1.0, y + 1.0], [((BAR_WIDTH - 2.0) * hp).round(), 3.0]));
+            base.sprites.push((if hp < 0.25 { low } else { fill }, [x + 1.0, y + 1.0], [((BAR_WIDTH - 2.0) * hp).floor(), 3.0]));
             if let Some(sp) = sp {
                 base.sprites.push((border, [x, y + 4.0], [BAR_WIDTH, 1.0]));
-                base.sprites.push((blue, [x + 1.0, y + 5.0], [((BAR_WIDTH - 2.0) * sp).round(), 3.0]));
+                base.sprites.push((blue, [x + 1.0, y + 5.0], [((BAR_WIDTH - 2.0) * sp).floor(), 3.0]));
             }
         }
 
@@ -7290,8 +7381,7 @@ impl App {
                 None => player_feet,
                 Some(id) => *feet_of.get(id)?,
             };
-            let point = view.project([feet[0], feet[1] + OVERHEAD * world::CELL, feet[2]])?;
-            Some([(point[0] * SCREEN[0]).round(), (point[1] * SCREEN[1]).round()])
+            sprite_point(feet, -overhead::HEAD).map(|point| point.map(f32::round))
         };
         let [border, background, ..] = &assets.bars;
         for (unit, (start, length)) in &game.casts {
@@ -7314,19 +7404,16 @@ impl App {
             game.sign_rects.push((rect, sign.id, sign.kind));
         }
         for (unit, (text, color, _)) in &game.speech {
-            let Some([x, y]) = head(unit) else { continue };
-            let lines = window::wrap(font, text, SPEECH_WIDTH, 8);
-            let width = lines.iter().map(|line| font.width(line)).fold(0.0, f32::max).ceil() + 14.0;
-            let height = 8.0 + SPEECH_LINE * lines.len() as f32;
-            let corner = [(x - width / 2.0).floor(), y - height - 2.0];
-            base.sprites.push((&assets.speech_fill, corner, [width, height]));
-            for (edge, size) in
-                [([0.0, 0.0], [width, 1.0]), ([0.0, height - 1.0], [width, 1.0]), ([0.0, 0.0], [1.0, height]), ([width - 1.0, 0.0], [1.0, height])]
-            {
-                base.sprites.push((&assets.speech_border, offset(corner, edge), size));
+            let Some(anchor) = head(unit) else { continue };
+            let lines = overhead::lines(text);
+            let size = overhead::size(lines.iter().map(|line| font.width(line)).fold(0.0, f32::max), lines.len());
+            let corner = overhead::corner(anchor, size, SCREEN);
+            base.sprites.push((&assets.speech_fill, corner, size));
+            for (edge, piece) in overhead::border(size) {
+                base.sprites.push((&assets.speech_border, offset(corner, edge), piece));
             }
             for (row, line) in lines.into_iter().enumerate() {
-                let place = offset(corner, [7.0, 3.0 + row as f32 * SPEECH_LINE]);
+                let place = offset(corner, [overhead::TEXT_AT[0], overhead::TEXT_AT[1] + row as f32 * overhead::LINE_STEP]);
                 base.texts.push((line.clone(), offset(place, [1.0, 1.0]), [0, 0, 0]));
                 base.texts.push((line, place, *color));
             }
@@ -7446,7 +7533,8 @@ impl App {
             });
         }
         let dots: Vec<_> = members.iter().map(|(account, cell)| (*cell, &game.party_dots[account])).collect();
-        minimap::draw(&mut chat_layer, &assets.minimap, game.minimap.as_ref(), size, game.player.cell, game.player.direction, &marks, &dots);
+        let boss = game.boss.as_ref().map(|(_, cell)| *cell);
+        minimap::draw(&mut chat_layer, &assets.minimap, game.minimap.as_ref(), size, game.player.cell, game.player.direction, &marks, &dots, boss);
         // Status icons down the right, each with the clock of its time (orange in the last minute).
         let per_column = ((SCREEN[1] - STATUS_TOP) / STATUS_STEP[1]) as usize;
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
@@ -7705,6 +7793,9 @@ impl App {
         );
         // ponytail: the roulette's icon stands left of the minimap; where the real client puts it isn't known.
         roulette::draw_icon(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.roulette, font, messages, pointer.0);
+        if let Some(window) = &game.monster_window {
+            window.draw(&mut shop_layer, &assets.chrome, font, messages, pointer.0);
+        }
         if let Some(window) = &game.roulette {
             window.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.roulette, icons, items, font, messages, control::now(), pointer);
         }

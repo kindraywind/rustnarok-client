@@ -1,5 +1,4 @@
-//! What the pointer is on in the world: each unit's and ground item's clickable area, and which one wins, by the
-//! official client's rules (sizes in its 640-wide units, scaled to our 1024-wide screen).
+//! What the pointer is on in the world: each unit's and ground item's clickable area, and which one wins.
 
 /// A screen rectangle in logical pixels: left, top, right, bottom.
 pub type Rect = [f32; 4];
