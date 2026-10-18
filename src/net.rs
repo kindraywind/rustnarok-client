@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, RwLock};
 use std::time::{Duration, Instant};
 
 /// rathena's NAME_LENGTH: 23 characters plus the terminating NUL.
@@ -115,9 +115,9 @@ fn decode_reply(packet: &[u8]) -> Result<LoginAccepted, LoginError> {
     }
 }
 
-/// A name in a 24-byte EUC-KR field.
+/// A name in a 24-byte field.
 fn name_field(name: &str) -> Vec<u8> {
-    let mut field = encoding_rs::EUC_KR.encode(name).0.into_owned();
+    let mut field = encode_text(name);
     field.resize(24, 0);
     field
 }
@@ -145,7 +145,7 @@ pub fn encode_member_move(account: u32, character: u32, position: u32) -> Vec<u8
 
 /// A battleground's name as rathena keeps it (`name.resize(NAME_LENGTH)`): 23 bytes and a NUL in 24.
 fn queue_name_field(name: &str) -> Vec<u8> {
-    let mut field = encoding_rs::EUC_KR.encode(name).0.into_owned();
+    let mut field = encode_text(name);
     field.truncate(NAME_LENGTH - 1);
     field.resize(NAME_LENGTH, 0);
     field
@@ -198,7 +198,7 @@ pub fn encode_adopt_answer(parent: u32, partner: u32, accept: bool) -> Vec<u8> {
 
 /// CZ_BATTLEFIELD_CHAT: the line as the guild chat writes it, "Name : message" and a NUL.
 pub fn encode_battle_chat(name: &str, message: &str) -> Vec<u8> {
-    let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
+    let text = encode_text(&format!("{name} : {message}"));
     let mut packet = CZ_BATTLEFIELD_CHAT.to_le_bytes().to_vec();
     packet.extend_from_slice(&((4 + text.len() + 1) as u16).to_le_bytes());
     packet.extend_from_slice(&text);
@@ -206,10 +206,40 @@ pub fn encode_battle_chat(name: &str, message: &str) -> Vec<u8> {
     packet
 }
 
-/// Decodes a NUL-terminated EUC-KR field.
+// ponytail: one code page for the whole process, as the client talks to one server at a time; a field of each
+// session if it ever talks to two.
+/// The code page of text on the wire: EUC-KR until the connection's langtype picks another.
+static CODEPAGE: RwLock<&'static encoding_rs::Encoding> = RwLock::new(encoding_rs::EUC_KR);
+
+pub fn set_codepage(codepage: &'static encoding_rs::Encoding) {
+    *CODEPAGE.write().unwrap() = codepage;
+}
+
+pub fn codepage() -> &'static encoding_rs::Encoding {
+    *CODEPAGE.read().unwrap()
+}
+
+/// Text in the code page.
+pub fn encode_text(text: &str) -> Vec<u8> {
+    encode_in(codepage(), text)
+}
+
+/// Text in `codepage`; a letter it has no bytes for becomes `?`, as Windows writes it.
+fn encode_in(codepage: &'static encoding_rs::Encoding, text: &str) -> Vec<u8> {
+    text.chars().flat_map(|character| letter(codepage, character)).collect()
+}
+
+fn letter(codepage: &'static encoding_rs::Encoding, character: char) -> Vec<u8> {
+    match codepage.encode(character.encode_utf8(&mut [0; 4])) {
+        (bytes, _, false) => bytes.into_owned(),
+        _ => vec![b'?'],
+    }
+}
+
+/// Decodes a NUL-terminated field in the code page.
 pub fn c_string(bytes: &[u8]) -> String {
     let end = bytes.iter().position(|&byte| byte == 0).unwrap_or(bytes.len());
-    encoding_rs::EUC_KR.decode_without_bom_handling(&bytes[..end]).0.into_owned()
+    codepage().decode_without_bom_handling(&bytes[..end]).0.into_owned()
 }
 
 const CH_ENTER: u16 = 0x0065;
@@ -394,7 +424,7 @@ impl CharSession {
     pub fn make(&mut self, name: &str, slot: u8, hair_color: u16, hair_style: u16, job: u32, sex: u8) -> io::Result<()> {
         let mut packet = CH_MAKE_CHAR.to_le_bytes().to_vec();
         let mut field = [0u8; 24];
-        let encoded = encoding_rs::EUC_KR.encode(name).0;
+        let encoded = encode_text(name);
         // NUL-terminated: at most 23 bytes of name.
         let length = encoded.len().min(field.len() - 1);
         field[..length].copy_from_slice(&encoded[..length]);
@@ -446,7 +476,7 @@ fn encode_move_slot(from: u16, to: u16, moves: u16) -> [u8; 8] {
     [h0, h1, f0, f1, t0, t1, m0, m1]
 }
 
-/// CH_REQ_CHANGE_CHARNAME: the character and its new name (24 bytes EUC-KR, NUL-terminated).
+/// CH_REQ_CHANGE_CHARNAME: the character and its new name (24 bytes, NUL-terminated).
 fn encode_rename(id: u32, name: &str) -> Vec<u8> {
     let mut field = name_field(name);
     field[23] = 0;
@@ -3429,7 +3459,7 @@ impl MapSession {
     }
 
     pub fn input_text(&mut self, npc: u32, text: &str) -> io::Result<()> {
-        let text = encoding_rs::EUC_KR.encode(text).0.into_owned();
+        let text = encode_text(text);
         let mut packet = CZ_INPUT_EDITDLGSTR.to_le_bytes().to_vec();
         packet.extend_from_slice(&((8 + text.len() + 1) as u16).to_le_bytes());
         packet.extend_from_slice(&npc.to_le_bytes());
@@ -3924,7 +3954,7 @@ impl MapSession {
 
     /// Opens a chat room over the player's head.
     pub fn make_chat_room(&mut self, title: &str, limit: u16, public: bool, password: &str) -> io::Result<()> {
-        let title = encoding_rs::EUC_KR.encode(title).0.into_owned();
+        let title = encode_text(title);
         let mut secret = password.as_bytes().to_vec();
         secret.resize(8, 0);
         let mut packet = CZ_CREATE_CHATROOM.to_le_bytes().to_vec();
@@ -3951,7 +3981,7 @@ impl MapSession {
 
     /// Opens our shop (or, with `open` false, gives up setting one up): its title and (cart index, amount, price).
     pub fn open_shop(&mut self, title: &str, open: bool, items: &[(u16, u16, u32)]) -> io::Result<()> {
-        let mut name = encoding_rs::EUC_KR.encode(title).0.into_owned();
+        let mut name = encode_text(title);
         name.resize(80, 0);
         let mut packet = CZ_REQ_OPENSTORE2.to_le_bytes().to_vec();
         packet.extend_from_slice(&((85 + items.len() * 8) as u16).to_le_bytes());
@@ -4082,7 +4112,7 @@ impl MapSession {
     /// check found (0 if none was made).
     pub fn send_mail(&mut self, to: &str, from: &str, title: &str, text: &str, zeny: u64, receiver: u32) -> io::Result<()> {
         let field = |text: &str| {
-            let mut bytes = encoding_rs::EUC_KR.encode(text).0.into_owned();
+            let mut bytes = encode_text(text);
             bytes.push(0);
             bytes
         };
@@ -4193,7 +4223,7 @@ impl MapSession {
         for value in [guild, account, character] {
             packet.extend_from_slice(&value.to_le_bytes());
         }
-        let mut why = encoding_rs::EUC_KR.encode(reason).0.into_owned();
+        let mut why = encode_text(reason);
         why.resize(40, 0);
         packet.extend_from_slice(&why);
         self.stream.write_all(&packet)
@@ -4235,7 +4265,7 @@ impl MapSession {
 
     /// Says something to the guild.
     pub fn guild_chat(&mut self, name: &str, message: &str) -> io::Result<()> {
-        let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
+        let text = encode_text(&format!("{name} : {message}"));
         let mut packet = CZ_GUILD_CHAT.to_le_bytes().to_vec();
         packet.extend_from_slice(&((4 + text.len() + 1) as u16).to_le_bytes());
         packet.extend_from_slice(&text);
@@ -4360,7 +4390,7 @@ impl MapSession {
 
     /// Says something to the party.
     pub fn party_chat(&mut self, name: &str, message: &str) -> io::Result<()> {
-        let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
+        let text = encode_text(&format!("{name} : {message}"));
         let mut packet = CZ_REQUEST_CHAT_PARTY.to_le_bytes().to_vec();
         packet.extend_from_slice(&((4 + text.len() + 1) as u16).to_le_bytes());
         packet.extend_from_slice(&text);
@@ -4403,9 +4433,9 @@ impl MapSession {
 
     /// Whispers to the character `to`.
     pub fn whisper(&mut self, to: &str, message: &str) -> io::Result<()> {
-        let mut name = encoding_rs::EUC_KR.encode(to).0.into_owned();
+        let mut name = encode_text(to);
         name.resize(24, 0);
-        let text = encoding_rs::EUC_KR.encode(message).0.into_owned();
+        let text = encode_text(message);
         let mut packet = CZ_WHISPER.to_le_bytes().to_vec();
         packet.extend_from_slice(&((4 + 24 + text.len() + 1) as u16).to_le_bytes());
         packet.extend_from_slice(&name);
@@ -4446,7 +4476,7 @@ impl MapSession {
     }
 
     pub fn chat(&mut self, name: &str, message: &str) -> io::Result<()> {
-        let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
+        let text = encode_text(&format!("{name} : {message}"));
         let mut packet = CZ_REQUEST_CHAT.to_le_bytes().to_vec();
         packet.extend_from_slice(&((4 + text.len() + 1) as u16).to_le_bytes());
         packet.extend_from_slice(&text);
@@ -4465,7 +4495,7 @@ impl Drop for MapSession {
 fn encode_whisper_setting(name: &str, allow: bool) -> Vec<u8> {
     let mut packet = CZ_SETTING_WHISPER_PC.to_le_bytes().to_vec();
     let mut field = [0u8; 24];
-    let encoded = encoding_rs::EUC_KR.encode(name).0;
+    let encoded = encode_text(name);
     let length = encoded.len().min(field.len() - 1);
     field[..length].copy_from_slice(&encoded[..length]);
     packet.extend_from_slice(&field);
@@ -4964,7 +4994,7 @@ fn encode_homunculus_command(command: u8) -> [u8; 5] {
 fn encode_named(header: u16, name: &str) -> [u8; 26] {
     let mut packet = [0u8; 26];
     packet[..2].copy_from_slice(&header.to_le_bytes());
-    let bytes = euc_kr_cut(name, 23);
+    let bytes = text_cut(name, 23);
     packet[2..2 + bytes.len()].copy_from_slice(&bytes);
     packet
 }
@@ -4979,11 +5009,12 @@ fn encode_rename_homunculus(name: &str) -> [u8; 26] {
     encode_named(CZ_RENAME_MER, name)
 }
 
-/// Text in EUC-KR, cut to at most `most` bytes of whole characters.
-fn euc_kr_cut(text: &str, most: usize) -> Vec<u8> {
+/// Text in the code page, cut to at most `most` bytes of whole characters.
+fn text_cut(text: &str, most: usize) -> Vec<u8> {
+    let codepage = codepage();
     let mut bytes = Vec::new();
     for character in text.chars() {
-        let encoded = encoding_rs::EUC_KR.encode(character.encode_utf8(&mut [0; 4])).0.into_owned();
+        let encoded = letter(codepage, character);
         if bytes.len() + encoded.len() > most {
             break;
         }
@@ -5001,7 +5032,7 @@ fn encode_skill_at_with_text(skill: u16, level: u16, cell: [u16; 2], text: &str)
     packet[4..6].copy_from_slice(&skill.to_le_bytes());
     packet[6..8].copy_from_slice(&cell[0].to_le_bytes());
     packet[8..10].copy_from_slice(&cell[1].to_le_bytes());
-    let bytes = euc_kr_cut(text, 20);
+    let bytes = text_cut(text, 20);
     packet[10..10 + bytes.len()].copy_from_slice(&bytes);
     packet
 }
@@ -5053,7 +5084,7 @@ fn encode_pair(header: u16, first: u32, second: u32) -> Vec<u8> {
 
 /// CZ_REQ_DISORGANIZE_GUILD: the key (the guild's name) in 40 bytes.
 fn encode_disband(name: &str) -> Vec<u8> {
-    let mut key = encoding_rs::EUC_KR.encode(name).0.into_owned();
+    let mut key = encode_text(name);
     key.resize(40, 0);
     [&CZ_REQ_DISORGANIZE_GUILD.to_le_bytes()[..], &key].concat()
 }
@@ -5090,9 +5121,9 @@ fn encode_whisper_all(allow: bool) -> [u8; 3] {
     [low, high, u8::from(allow)]
 }
 
-/// CZ_REQ_OPEN_BUYING_STORE: zeny limit, 1 to open or 0 to cancel, 80-byte EUC-KR store name, then 10-byte (item, amount, price) rows.
+/// CZ_REQ_OPEN_BUYING_STORE: zeny limit, 1 to open or 0 to cancel, 80-byte store name, then 10-byte (item, amount, price) rows.
 fn encode_open_buying_store(title: &str, limit: u32, open: bool, items: &[(u32, u16, u32)]) -> Vec<u8> {
-    let mut name = encoding_rs::EUC_KR.encode(title).0.into_owned();
+    let mut name = encode_text(title);
     name.resize(80, 0);
     let mut packet = CZ_REQ_OPEN_BUYING_STORE.to_le_bytes().to_vec();
     packet.extend_from_slice(&((89 + items.len() * 10) as u16).to_le_bytes());
@@ -5136,7 +5167,7 @@ fn encode_sell_to_buying_store(owner: u32, store_id: u32, items: &[(u16, u32, u1
 
 /// CZ_CLAN_CHAT: length, then `"<name> : <message>\0"`.
 fn encode_clan_chat(name: &str, message: &str) -> Vec<u8> {
-    let text = encoding_rs::EUC_KR.encode(&format!("{name} : {message}")).0.into_owned();
+    let text = encode_text(&format!("{name} : {message}"));
     let mut packet = CZ_CLAN_CHAT.to_le_bytes().to_vec();
     packet.extend_from_slice(&((4 + text.len() + 1) as u16).to_le_bytes());
     packet.extend_from_slice(&text);
@@ -7860,6 +7891,14 @@ mod tests {
         assert!(name.is_empty());
         assert_eq!([ZC_MONSTER_INFO, ZC_BOSS_INFO].map(packet_length), [Some(29), Some(70)]);
         assert_eq!(boss(1, "").len(), 70);
+    }
+
+    #[test]
+    fn encodes_text_in_the_code_page() {
+        assert_eq!(encode_in(encoding_rs::WINDOWS_874, "hi สวัสดี"), [b'h', b'i', b' ', 0xCA, 0xC7, 0xD1, 0xCA, 0xB4, 0xD5]);
+        // What a code page has no bytes for is a `?` each, not an HTML character reference.
+        assert_eq!(encode_in(encoding_rs::EUC_KR, "가ก気"), [0xB0, 0xA1, b'?', b'?']);
+        assert_eq!(encode_in(encoding_rs::UTF_8, "ก気"), "ก気".as_bytes());
     }
 
     #[test]

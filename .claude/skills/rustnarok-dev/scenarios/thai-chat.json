@@ -1,0 +1,46 @@
+{
+  "about": "Chat in the connection's code page: with langtype 5 (Thai) a line typed in Thai goes out in Windows-874 and comes back as Thai, on the chat window and over the head. In EUC-KR (langtype 0) Thai has no bytes, so it went out as HTML character references.",
+  "account": "",
+  "slot": 0,
+  "env": {
+    "RUSTNAROK_CLIENT_LANGTYPE": "5"
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "move": [
+        600,
+        300
+      ]
+    },
+    {
+      "type": "สวัสดีครับ"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "shot": "thai-chat",
+      "crop": [
+        0,
+        180,
+        620,
+        588
+      ],
+      "threshold": 5
+    },
+    {
+      "expect": {
+        "chat": "{first} : สวัสดีครับ"
+      }
+    }
+  ]
+}
