@@ -1247,6 +1247,8 @@ pub enum Command {
     Achievements,
     /// /noshift: a click on a player attacks without Shift, on or off.
     NoShift,
+    /// /emblem: guild and clan emblems next to hovered players' names, on or off.
+    Emblem,
     /// /notrade, /nt: deal requests are refused at once, on or off.
     NoTrade,
     /// /camera: the camera sticks to the player instead of gliding after them, on or off.
@@ -1298,6 +1300,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/achievement" => Command::Achievements,
         "/memo" => Command::Memo,
         "/noshift" => Command::NoShift,
+        "/emblem" => Command::Emblem,
         "/notrade" | "/nt" => Command::NoTrade,
         "/noctrl" | "/nc" => Command::NoCtrl,
         "/snap" => Command::Snap,
@@ -1701,6 +1704,7 @@ mod tests {
         assert_eq!(command("/where"), Some(Command::Where));
         assert_eq!(command("/memo"), Some(Command::Memo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
+        assert_eq!(command("/emblem"), Some(Command::Emblem));
         assert_eq!([command("/notrade"), command("/nt")], [Some(Command::NoTrade), Some(Command::NoTrade)]);
         assert_eq!([command("/noctrl"), command("/nc")], [Some(Command::NoCtrl), Some(Command::NoCtrl)]);
         assert_eq!([command("/snap"), command("/itemsnap"), command("/skillsnap")], [Some(Command::Snap), Some(Command::ItemSnap), Some(Command::SkillSnap)]);

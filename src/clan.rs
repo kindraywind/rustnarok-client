@@ -35,6 +35,11 @@ pub struct Assets {
 }
 
 impl Assets {
+    /// A clan's emblem, by its id.
+    pub fn emblem(&self, clan: u32) -> Option<&Texture> {
+        self.emblems.get(usize::try_from(clan).ok()?)
+    }
+
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let image = |name: &str| gpu.load_texture(grf, &format!("{UI}{name}.bmp"), false);
         Self {

@@ -113,6 +113,11 @@ pub struct Assets {
 }
 
 impl Assets {
+    /// The frame drawn behind an emblem.
+    pub fn emblem_frame(&self) -> &Texture {
+        &self.frame
+    }
+
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let image = |name: &str| gpu.load_texture(grf, &format!("{UI}{name}.bmp"), false);
         Self {

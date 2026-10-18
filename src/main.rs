@@ -725,6 +725,9 @@ const SWITCH_REMOVED: usize = 3144;
 const NO_BOSS: usize = 1223;
 const BOSS_SHOWN: usize = 1225;
 const BOSS_ALARM: u16 = 253;
+/// EFST_UNKNOWN_NAME: the unit's name shows as ?????? on PvP and siege maps.
+const UNKNOWN_NAME: u16 = 672;
+const HIDDEN_NAME: &str = "??????";
 /// The spark of a landed hit, and a warp portal's rings.
 const EF_HIT1: u32 = 0;
 const EF_WARPZONE2: u32 = 321;
@@ -1218,6 +1221,12 @@ struct Game {
     bars_drawn: Vec<(String, [f32; 4], Vec<Option<f32>>)>,
     /// /noshift: a click on a player attacks without Shift (saved).
     no_shift: bool,
+    /// /emblem: emblems next to hovered players' names (saved; on unless turned off).
+    show_emblems: bool,
+    /// Units under the unknown-name status (672), whose names hide on PvP and siege maps.
+    unknown_names: HashSet<u32>,
+    /// The hovered player's name block as drawn: its lines and the emblem's box (for the test driver).
+    hover_block: Option<(Vec<String>, Option<[f32; 4]>)>,
     /// /noctrl: a click on a monster keeps attacking without Ctrl (saved; on unless turned off).
     no_ctrl: bool,
     /// /snap, /itemsnap, /skillsnap (saved; only /skillsnap on unless changed).
@@ -3125,6 +3134,16 @@ impl Game {
             chat::Command::NoTrade => {
                 self.no_trade = !self.no_trade;
                 self.chat_line(format!("notrade: {}", if self.no_trade { "On" } else { "Off" }), CHAT_ITEM);
+                Ok(())
+            }
+            // ponytail: this data has no line (or help line) of the client's own for /emblem; a plain one.
+            chat::Command::Emblem => {
+                self.show_emblems = !self.show_emblems;
+                if let Some(path) = settings_path("emblem") {
+                    let _ =
+                        path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.show_emblems { "1" } else { "0" }));
+                }
+                self.chat_line(format!("emblem: {}", if self.show_emblems { "On" } else { "Off" }), CHAT_ITEM);
                 Ok(())
             }
             // ponytail: the client's own line for /noshift isn't in this data; a plain one.
@@ -10300,6 +10319,9 @@ impl App {
                     head_emblems: Vec::new(),
                     bars_drawn: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
+                    show_emblems: settings_path("emblem").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
+                    unknown_names: HashSet::new(),
+                    hover_block: None,
                     skill_sent: None,
                     right_moved: false,
                     companion_mark: None,
@@ -12984,6 +13006,13 @@ impl App {
                         actor.size_percent = (on && value != 0).then_some(value);
                     }
                 }
+                if kind == UNKNOWN_NAME {
+                    if on {
+                        game.unknown_names.insert(id);
+                    } else {
+                        game.unknown_names.remove(&id);
+                    }
+                }
                 // The mirror's 10 minutes are over: the boss leaves the minimap.
                 if id == game.account_id && kind == BOSS_ALARM && !on {
                     game.boss = None;
@@ -14171,11 +14200,10 @@ impl App {
         };
 
         // A monster or another player under the pointer shows its name at its feet (NPCs show theirs always). A
-        // player's adds their party, and a line with their guild and position after the guild's emblem (drawn with the
-        // names below); the server tells those each time the pointer comes onto them, as what it sends unasked can be
-        // stale.
-        let mut guild_line = None;
-        let mut title_line = None;
+        // player's is a block: `[Title] Name (Party)` over `Guild [Position]`, their guild's (or our clan's) emblem left
+        // of both lines (drawn with the names below); the server tells those each time the pointer comes onto them, as
+        // what it sends unasked can be stale.
+        let mut name_block = None;
         let pointed = match hovered(&game.hit_boxes, pointer.0, players_first) {
             Some(Owner::Unit(id)) if game.units.get(&id).is_some_and(|actor| !actor.hidden && actor.kind != NPC && actor.sprites.is_some()) => Some(id),
             _ => None,
@@ -14185,19 +14213,25 @@ impl App {
             && let Some(&feet) = feet_of.get(&id)
         {
             let tag = game.name_tags.get(&id).filter(|_| actor.kind == PLAYER);
-            let name = match tag {
-                Some(tag) if !tag.party.is_empty() => format!("{} ({})", actor.name, tag.party),
-                _ => actor.name.clone(),
-            };
-            // ponytail: the title over the name; where the real client shows it isn't known.
-            if let Some(title) = tag.and_then(|tag| title_names.get(&tag.title)) {
-                title_line = Some((format!("[{title}]"), feet));
-            }
-            if let Some(tag) = tag.filter(|tag| !tag.guild.is_empty()) {
-                guild_line = Some((name.clone(), format!("{} [{}]", tag.guild, tag.position), feet, actor.guild));
-            }
             let color = name_color(actor.kind, actor.job, actor.level, our_summons.contains(&Some(id)), own_level);
-            labels.push((name, feet, color));
+            let siege = game.map_property.is_some_and(|(_, flags)| versus::siege(flags));
+            let shown_name = if overhead::name_hidden(game.map_type, siege, game.unknown_names.contains(&id)) { HIDDEN_NAME } else { &actor.name };
+            match tag {
+                Some(tag) => {
+                    let title = title_names.get(&tag.title).map(String::as_str);
+                    let lines = overhead::name_lines(shown_name, title, &tag.party, &tag.guild, &tag.position);
+                    // A guild's emblem; without a guild, rathena tells a clan as the position with no guild name, and
+                    // only our own clan's emblem is known.
+                    // ponytail: a clanmate is told apart by our clan's name in that field.
+                    let emblem = if !tag.guild.is_empty() {
+                        game.emblems.get(&actor.guild).and_then(|(_, emblem)| emblem.as_ref())
+                    } else {
+                        game.clan.as_ref().filter(|clan| !tag.position.is_empty() && clan.name == tag.position).and_then(|clan| assets.clan.emblem(clan.id))
+                    };
+                    name_block = Some((lines, feet, color, emblem.filter(|_| game.show_emblems), siege));
+                }
+                None => labels.push((shown_name.to_owned(), feet, color)),
+            }
             if actor.kind == PLAYER && game.pointed != pointed {
                 let _ = game.session.ask_name(id);
             }
@@ -14222,25 +14256,32 @@ impl App {
                 base.outlined_in(name, [x, y + overhead::NAME_TEXT_TOP], *color);
             }
         }
-        // ponytail: a player's title, then their guild, on lines under the name; where titles go isn't known.
-        let mut under_name = 1.0;
-        if let Some((title, feet)) = &title_line
+        // The hovered player's block: the emblem (and on siege maps its frame) at the left, centred on the lines, the
+        // text after it.
+        // ponytail: each line centred in the text area; the siege frame always drawn (the game's option for it is
+        // unknown).
+        game.hover_block = None;
+        if let Some((lines, feet, color, emblem, siege)) = &name_block
             && let Some(point) = sprite_point(*feet, overhead::NAME_BELOW)
         {
-            let [x, y] = overhead::label_corner(point, font.width(title), font.line_height(), screen());
-            base.outlined(title, [x, y + overhead::NAME_TEXT_TOP + font.line_height()]);
-            under_name += 1.0;
-        }
-        if let Some((name, line, feet, guild_id)) = &guild_line
-            && let Some(point) = sprite_point(*feet, overhead::NAME_BELOW)
-        {
-            let corner = |text: &str| overhead::label_corner(point, font.width(text), font.line_height(), screen());
-            let top = corner(name)[1] + overhead::NAME_TEXT_TOP + under_name * font.line_height();
-            base.outlined(line, [corner(line)[0], top]);
-            // ponytail: the emblem left of the guild line; calibrate against the real client.
-            if let Some(emblem) = game.emblems.get(guild_id).and_then(|(_, emblem)| emblem.as_ref()) {
-                base.sprites.push((emblem, [corner(line)[0] - guild::EMBLEM_SIZE[0] - 2.0, top], guild::EMBLEM_SIZE));
+            let frame = assets.guild.emblem_frame();
+            let layout = overhead::block_layout(emblem.is_some(), siege.then_some(frame.size[0]));
+            let text_width = lines.iter().map(|line| font.width(line)).fold(0.0, f32::max);
+            let height = overhead::NAME_TEXT_TOP + overhead::NAME_LINE * lines.len() as f32;
+            let [left, top] = overhead::label_corner(point, layout.text_x + text_width, height, screen());
+            for (row, line) in lines.iter().enumerate() {
+                let x = left + layout.text_x + ((text_width - font.width(line)) / 2.0).floor();
+                base.outlined_in(line, [x, top + overhead::NAME_TEXT_TOP + overhead::NAME_LINE * row as f32], *color);
             }
+            if let Some(frame_x) = layout.frame_x {
+                base.sprites.push((frame, [left + frame_x, top + overhead::centred_on_lines(lines.len(), frame.size[1])], frame.size));
+            }
+            let emblem_box = emblem.zip(layout.emblem_x).map(|(emblem, x)| {
+                let corner = [left + x, top + overhead::centred_on_lines(lines.len(), guild::EMBLEM_SIZE[1])];
+                base.sprites.push((emblem, corner, guild::EMBLEM_SIZE));
+                [corner[0], corner[1], guild::EMBLEM_SIZE[0], guild::EMBLEM_SIZE[1]]
+            });
+            game.hover_block = Some((lines.clone(), emblem_box));
         }
         // ponytail: nothing says how camps look; a square in the camp's color over each player's head, and the score
         // as "A : B" under the minimap (the top middle is the announcements').

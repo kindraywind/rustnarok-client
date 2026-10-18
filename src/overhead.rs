@@ -144,6 +144,51 @@ pub fn corner(anchor: [f32; 2], size: [f32; 2], screen: [f32; 2]) -> [f32; 2] {
 }
 
 /// A name's top-left corner: centred under `point`, kept on a `screen`.
+/// A hovered player's name block's lines: `[Title] Name (Party)`, then `Guild [Position]` when they have a guild.
+pub fn name_lines(name: &str, title: Option<&str>, party: &str, guild: &str, position: &str) -> Vec<String> {
+    let mut first = title.filter(|title| !title.is_empty()).map_or_else(String::new, |title| format!("[{title}] "));
+    first.push_str(name);
+    if !party.is_empty() {
+        first.push_str(&format!(" ({party})"));
+    }
+    let mut lines = vec![first];
+    if !guild.is_empty() {
+        lines.push(format!("{guild} [{position}]"));
+    }
+    lines
+}
+
+/// A name block's lines are 14 px apart, the first 4 px below its top.
+pub const NAME_LINE: f32 = 14.0;
+/// Where a name block's parts start from its left: the emblem's frame (on siege maps), the emblem (24 px, centred on
+/// the lines) and the text. Without an emblem the text starts at 0.
+#[derive(Debug, PartialEq)]
+pub struct BlockLayout {
+    pub frame_x: Option<f32>,
+    pub emblem_x: Option<f32>,
+    pub text_x: f32,
+}
+
+/// The block's layout with an emblem or not, and with its frame of `frame` px wide or not.
+pub fn block_layout(emblem: bool, frame: Option<f32>) -> BlockLayout {
+    match (emblem, frame) {
+        (false, _) => BlockLayout { frame_x: None, emblem_x: None, text_x: 0.0 },
+        (true, None) => BlockLayout { frame_x: None, emblem_x: Some(4.0), text_x: 32.0 },
+        (true, Some(width)) => BlockLayout { frame_x: Some(2.0), emblem_x: Some(4.0), text_x: width + 4.0 },
+    }
+}
+
+/// The top of something `height` tall centred on a block's `lines` lines.
+pub fn centred_on_lines(lines: usize, height: f32) -> f32 {
+    NAME_TEXT_TOP + NAME_LINE * lines as f32 / 2.0 - height / 2.0
+}
+
+/// A name shown as `??????`: a unit under the unknown-name status (672) on a PvP map (map type 5, 6 or 19) or a
+/// siege map (or map type 8 or 18).
+pub fn name_hidden(map_type: Option<u16>, siege: bool, unknown_name: bool) -> bool {
+    unknown_name && (siege || matches!(map_type, Some(5 | 6 | 8 | 18 | 19)))
+}
+
 pub fn label_corner(point: [f32; 2], width: f32, height: f32, screen: [f32; 2]) -> [f32; 2] {
     let place = |at: f32, size: f32, axis: usize| at.clamp(0.0, (screen[axis] - size).max(0.0)).round();
     [place(point[0] - width / 2.0, width, 0), place(point[1], height, 1)]
@@ -168,6 +213,24 @@ pub fn border([width, height]: [f32; 2]) -> Vec<([f32; 2], [f32; 2])> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lays_out_a_hovered_players_name_block() {
+        // Every part, then without each.
+        assert_eq!(name_lines("Kafra", Some("Hero"), "Crabs", "CrabGuild", "Master"), ["[Hero] Kafra (Crabs)", "CrabGuild [Master]"]);
+        assert_eq!(name_lines("Kafra", None, "Crabs", "CrabGuild", "Member"), ["Kafra (Crabs)", "CrabGuild [Member]"]);
+        assert_eq!(name_lines("Kafra", Some("Hero"), "", "", ""), ["[Hero] Kafra"]);
+        assert_eq!(name_lines("Kafra", Some(""), "", "", ""), ["Kafra"]);
+        // The emblem at 4 and the text at 32; with the siege frame (28 wide) behind it at 2, the text at its width + 4.
+        assert_eq!(block_layout(false, Some(28.0)), BlockLayout { frame_x: None, emblem_x: None, text_x: 0.0 });
+        assert_eq!(block_layout(true, None), BlockLayout { frame_x: None, emblem_x: Some(4.0), text_x: 32.0 });
+        assert_eq!(block_layout(true, Some(28.0)), BlockLayout { frame_x: Some(2.0), emblem_x: Some(4.0), text_x: 32.0 });
+        // The 24 px emblem centred on two lines (4 to 32): from 6.
+        assert_eq!(centred_on_lines(2, 24.0), 6.0);
+        // ?????? under the unknown-name status on a siege map and a type-19 map, not in town or without the status.
+        assert!(name_hidden(Some(0), true, true) && name_hidden(Some(19), false, true));
+        assert!(!name_hidden(Some(0), false, true) && !name_hidden(Some(19), false, false));
+    }
 
     /// A bar's fills: (color, top, width).
     fn fills(rows: &[(i64, i64, char, char)]) -> Vec<(char, f32, f32)> {
