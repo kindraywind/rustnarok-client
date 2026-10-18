@@ -72,6 +72,8 @@ pub enum Action {
     Costume,
     /// The reputation window.
     Reputation,
+    /// The friend setup: when a whisper opens a 1:1 window.
+    FriendSetup,
     PartyBoard,
     Hunting,
     Macro(u8),
@@ -628,6 +630,11 @@ fn exe_action(exe: &str, table: u8, index: u16) -> Action {
     if name.contains("EXE") || name.contains("COMMAND") {
         return Action::Commands;
     }
+    // ponytail: the friend-setup row in hotkey_v2.lub isn't identified. A name with FRIEND and SETUP opens
+    // the two checkboxes until that row is known.
+    if name.contains("FRIEND") && name.contains("SETUP") {
+        return Action::FriendSetup;
+    }
     if name.contains("FRIEND") {
         return Action::Friends;
     }
@@ -678,6 +685,7 @@ pub fn action_name(action: Action) -> String {
         Action::Skills => "skills",
         Action::Quests => "quests",
         Action::Friends => "friends",
+        Action::FriendSetup => "friend_setup",
         Action::Party => "party",
         Action::ChatRoom => "chat_room",
         Action::Cart => "cart",
@@ -929,6 +937,8 @@ mod tests {
         assert_eq!(exe_action("MSI_HK_CHANGE_SKILLBAR", 0, 0), Action::SwitchHotkeys);
         assert_eq!(exe_action("MSI_HK_SWAP_EQUIPMENT", 0, 0), Action::Unused);
         assert_eq!(exe_action("MSI_HK_SKILLBAR_ONOFF", 0, 0), Action::HotkeyBar);
+        assert_eq!(exe_action("MSI_HK_FRIEND_SETUP", 0, 0), Action::FriendSetup);
+        assert_eq!(exe_action("MSI_HK_FRIENDWND_ONOFF", 0, 0), Action::Friends);
         assert_eq!(exe_action("MSI_HK_SINGLEMAP_ONOFF", 2, 43), Action::MinimapWindow);
         assert_eq!(exe_action("MSI_HK_MAPWND_ONOFF", 2, 8), Action::WorldMap);
         assert_eq!(exe_action("MSI_HK_MINIMAP_ONOFF", 2, 13), Action::Minimap);
