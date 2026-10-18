@@ -1,5 +1,5 @@
 {
-  "about": "Teleporting and logging out (issue #302): the second character, two cells east of us, jumps away with @jump and leaves blue rings and the teleport sound where it stood; it comes back and is kicked (a logout), leaving the fainter rings. The clock pauses when each vanish packet (0x0080) comes and the shot is 150 ms on.",
+  "about": "Teleporting and logging out (issue #302): the second character, two cells east of us, jumps away with @jump and leaves pale violet rings and the teleport sound where it stood; it comes back and is kicked (a logout), leaving purple rings (issue #443). Then we turn south and @jump: we land facing the way we faced on entering the map server. The clock pauses when each vanish packet (0x0080) comes and the shot is 150 ms on.",
   "account": "",
   "slot": 0,
   "second": {"account": "2", "slot": 0},
@@ -18,6 +18,10 @@
     {"wait_for": {"packet": "0x0080", "pause": true, "ms": 5000}},
     {"cmd": {"cmd": "clock", "action": "step", "ms": 150}},
     {"shot": "vanish-logout", "crop": [262, 134, 500, 440], "threshold": 5},
-    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 500}
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 500},
+    {"click_on": {"cell": [61, 225]}, "mods": "shift"}, {"wait": 500},
+    {"expect": {"state": {"player.direction": 0, "entered_facing": 4}}},
+    {"say": "@jump"}, {"settle": 1500},
+    {"expect": {"state": {"player.direction": 4}}}
   ]
 }
