@@ -956,10 +956,10 @@ fn game_state(app: &App, game: &Game) -> Value {
     let sheet = crate::skills::Sheet { trees: &app.skill_trees, jobs: &jobs, skills: &game.skills, info: &game.skill_info, points: game.skill_points() };
     let item_of = |index: u16| game.inventory.get(index).map_or(0, |item| item.id);
     // A party question's OK (and Cancel when it asks).
-    let party_question: Vec<(&str, [f32; 4])> = match (&app.assets, &game.party_asked) {
+    let party_question: Vec<(&str, [f32; 4])> = match (&app.assets, &game.question_box) {
         (Some(assets), Some(asked)) => {
             let dialog = crate::dialog_position(&assets.message);
-            crate::party_question_buttons(asked.asks())
+            crate::box_buttons(asked.asks())
                 .into_iter()
                 .map(|(place, yes)| {
                     let images = if yes { &assets.ok } else { &assets.cancel };
@@ -1156,7 +1156,12 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .filter(|_| game.minimap_shown())
                 .map(|name| json!({"kind": "button", "name": format!("minimap_{name}"), "box": crate::minimap::button_box(name)})),
         )
-        .chain(game.minimap_window.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain({
+            let quests = game.big_minimap_quests();
+            let pins = crate::minimap_window::Pins { player: game.player.cell, party: &[], guild: &[], boss: None, quests: &quests };
+            let size = [game.world.gat.width as u32, game.world.gat.height as u32];
+            game.minimap_window.button_boxes(size, &pins).into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area}))
+        })
         .chain(game.hotkeys.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.level_ups.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
@@ -1628,7 +1633,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "shown": game.minimap_shown(),
         "arrow": crate::minimap::arrow_angle(game.player.rot),
         // NPCs' quest marks ([x, y, colour]) and the store search mark.
-        "quests": game.quest_marks.iter().map(|(_, cell, color)| json!([cell[0], cell[1], color])).collect::<Vec<_>>(),
+        "quests": game.quest_marks.iter().map(|(_, cell, _, color)| json!([cell[0], cell[1], color])).collect::<Vec<_>>(),
         "store": game.store_mark,
     });
     // The big minimap and the memos recorded on this map.
@@ -1637,8 +1642,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         "x": game.minimap_window.frame.position[0],
         "y": game.minimap_window.frame.position[1],
         "memos": game.minimap_window.memos.iter().map(|memo| json!({"x": memo.cell[0], "y": memo.cell[1], "name": memo.name})).collect::<Vec<_>>(),
-        "quests": game.minimap_window.show_quests,
-        "boss": game.minimap_window.show_boss,
+        "checks": game.minimap_window.checks,
+        "title": crate::minimap_window::title(
+            app.map_names.get(&crate::map_key(&game.map)).map_or("", String::as_str),
+            &crate::map_key(&game.map),
+            game.player.cell
+        ),
         "recording": game.minimap_window.recording,
     });
     // The level up buttons up in the bottom corners.

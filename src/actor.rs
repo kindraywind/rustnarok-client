@@ -282,6 +282,22 @@ pub struct Look {
     pub option: u32,
 }
 
+/// A character's head alone, in their hair colour: the first standing frame facing front (the big minimap's player).
+pub fn head_image(grf: &Grf, look: &Look) -> Option<RgbaImage> {
+    let sex = if look.sex == 0 { "여" } else { "남" };
+    let race = if is_doram(look.job) { "도람족" } else { "인간족" };
+    let palettes = if is_doram(look.job) { "data\\palette\\도람족\\머리" } else { "data\\palette\\머리" };
+    let hair = look.hair.max(1);
+    let path = format!("data\\sprite\\{race}\\머리통\\{sex}\\{hair}_{sex}");
+    let spr = Spr::parse(&grf.read(&format!("{path}.spr")).ok()?).ok()?;
+    let act = Act::parse(&grf.read(&format!("{path}.act")).ok()?).ok()?;
+    let palette = (look.hair_color > 0)
+        .then(|| grf.read(&format!("{palettes}\\머리{hair}_{sex}_{}.pal", look.hair_color)).ok().and_then(|bytes| sprite::parse_palette(&bytes)))
+        .flatten();
+    let layer = act.actions.first()?.first()?.layers.iter().find(|layer| layer.image >= 0)?;
+    spr.image(layer.kind, layer.image as usize, palette.as_ref())
+}
+
 /// The attack motion for a player's job and weapon type: action 5, 10 or 11.
 pub fn attack_action(job: u16, sex: u8, weapon_type: u32) -> usize {
     // Weapon types (the client's Weapon_IDs, rathena's weapon_type).
