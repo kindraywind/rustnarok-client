@@ -703,6 +703,15 @@ const ZC_BROADCAST: u16 = 0x009A;
 const ZC_MAPPROPERTY_R2: u16 = 0x099B;
 const CZ_BLOCKING_PLAY_CANCEL: u16 = 0x0447;
 const ZC_NOTIFY_MAPPROPERTY2: u16 = 0x01D6;
+const ZC_DRESSROOM_OPEN: u16 = 0x0A02;
+const CZ_REQ_RANKING: u16 = 0x097C;
+const ZC_UPDATE_RANKING_POINT: u16 = 0x097E;
+const ZC_ACK_RANKING2: u16 = 0x0AF6;
+const CZ_REQNAME_BYGID: u16 = 0x0369;
+const ZC_ACK_REQNAME_BYGID: u16 = 0x0AF7;
+const ZC_STARSKILL: u16 = 0x020E;
+/// ZC_STARSKILL's kind for the Taekwon Mission's target.
+pub const STAR_MISSION: u8 = 20;
 const ZC_NOTIFY_RANKING: u16 = 0x019A;
 const CZ_REQ_PVPPOINT: u16 = 0x020F;
 const ZC_ACK_PVPPOINT: u16 = 0x0210;
@@ -845,6 +854,15 @@ const CZ_GRADE_ENCHANT_REQUEST: u16 = 0x0B5B;
 const CZ_GRADE_ENCHANT_CLOSE_UI: u16 = 0x0B5C;
 const ZC_GRADE_ENCHANT_ACK: u16 = 0x0B5D;
 const ZC_GRADE_ENCHANT_BROADCAST_RESULT: u16 = 0x0B5E;
+const ZC_RANDOM_COMBINE_ITEM_UI_OPEN: u16 = 0x0A4E;
+const CZ_REQ_RANDOM_COMBINE_ITEM: u16 = 0x0A4F;
+const ZC_ACK_RANDOM_COMBINE_ITEM: u16 = 0x0A50;
+const CZ_RANDOM_COMBINE_ITEM_UI_CLOSE: u16 = 0x0A70;
+const ZC_RANDOM_UPGRADE_ITEM_UI_OPEN: u16 = 0x0AB4;
+const CZ_RANDOM_UPGRADE_ITEM_UI_CLOSE: u16 = 0x0AB5;
+const CZ_REQ_RANDOM_UPGRADE_ITEM: u16 = 0x0AB6;
+const ZC_ACK_RANDOM_UPGRADE_ITEM: u16 = 0x0AB7;
+const ZC_CHANGE_ITEM_OPTION: u16 = 0x0B43;
 const ZC_AUTOSPELLLIST: u16 = 0x0AFB;
 const CZ_SELECTAUTOSPELL: u16 = 0x01CE;
 const ZC_SKILL_SELECT_REQUEST: u16 = 0x0442;
@@ -1717,6 +1735,34 @@ pub enum MapEvent {
         property: u16,
         flags: u32,
     },
+    /// A script opens the dress room (`opendressroom`).
+    DressRoom,
+    /// A ranking's top ten (0 Blacksmith, 1 Alchemist, 2 Taekwon, 3 Killer): character IDs (0: an empty place) and
+    /// points, and the player's own points.
+    Ranking {
+        kind: u16,
+        ids: [u32; 10],
+        points: [u32; 10],
+        mine: u32,
+    },
+    /// A character's name by ID (none when the server has none).
+    CharName {
+        id: u32,
+        name: Option<String>,
+    },
+    /// Rank points the player earned (or lost), and the new total.
+    RankingPoints {
+        kind: u16,
+        added: i32,
+        total: u32,
+    },
+    /// A Star Gladiator's or Taekwon's target (STAR_MISSION: the Taekwon Mission, `count` kills of 100 done).
+    StarSkill {
+        name: String,
+        monster: u32,
+        count: u8,
+        kind: u8,
+    },
     /// The map's type (rathena's `e_map_type`; it only sends 19, a battleground).
     MapType(u16),
     /// A player's PvP rank among the players on the map (rank 0 or 0 players: no counter).
@@ -1912,6 +1958,22 @@ pub enum MapEvent {
         item: u32,
         grade: u16,
         success: bool,
+    },
+    /// A Laphine synthesis box opened (the box's item ID).
+    SynthesisOpen(u32),
+    /// Synthesis result: 0 done, 5 an amount is wrong, 7 an item isn't wanted.
+    Synthesized(u16),
+    /// A Laphine upgrade box opened (the box's item ID).
+    UpgradeOpen(u32),
+    /// Upgrade result: 0 done, 1 refused. `Upgraded` is already Upgrade Weapon.
+    LaphineUpgraded(u16),
+    /// The item an upgrade just rewrote: its cards, refine and grade. Random options aren't tracked.
+    ItemPreview {
+        index: u16,
+        cards: [u32; 4],
+        refine: u8,
+        grade: u8,
+        broken: bool,
     },
     /// Eggs that can hatch, by inventory index.
     PetEggs(Vec<u16>),
@@ -3291,6 +3353,24 @@ impl MapSession {
         self.stream.write_all(&encode_close_grade())
     }
 
+    /// Sends the synthesis window's materials. Each entry is an inventory index and the amount the list wants.
+    pub fn synthesize(&mut self, box_id: u32, entries: &[(u16, u16)]) -> io::Result<()> {
+        self.stream.write_all(&encode_synthesis(box_id, entries))
+    }
+
+    pub fn close_synthesis(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_synthesis_close())
+    }
+
+    /// Sends the item in the upgrade window.
+    pub fn upgrade_item(&mut self, box_id: u32, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_upgrade_item(box_id, index))
+    }
+
+    pub fn close_upgrade(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_upgrade_close())
+    }
+
     /// Hatches the egg at this inventory index (from `PetEggs`).
     pub fn hatch(&mut self, index: u16) -> io::Result<()> {
         self.stream.write_all(&encode_hatch(index))
@@ -3754,6 +3834,16 @@ impl MapSession {
         self.stream.write_all(&packet)
     }
 
+    /// Asks for a ranking's top ten (0 Blacksmith, 1 Alchemist, 2 Taekwon, 3 Killer); the answer is `Ranking`.
+    pub fn ask_ranking(&mut self, kind: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_ranking_request(kind))
+    }
+
+    /// Asks for a character's name by ID; the answer is `CharName`.
+    pub fn ask_char_name(&mut self, id: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_name_request(id))
+    }
+
     /// Asks for the player's PvP record; the answer is `PvpInfo`.
     pub fn pvp_info(&mut self, character: u32, account: u32) -> io::Result<()> {
         self.stream.write_all(&encode_pvp_info(character, account))
@@ -4178,9 +4268,38 @@ fn encode_grade_enchant(index: u16, material: u32, steps: u32) -> [u8; 14] {
     packet
 }
 
+/// CZ_REQ_RANDOM_COMBINE_ITEM: length, the box's item ID as it came, then index and amount for each material.
+fn encode_synthesis(box_id: u32, entries: &[(u16, u16)]) -> Vec<u8> {
+    let mut packet = CZ_REQ_RANDOM_COMBINE_ITEM.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((8 + entries.len() * 4) as u16).to_le_bytes());
+    packet.extend_from_slice(&box_id.to_le_bytes());
+    for (index, amount) in entries {
+        packet.extend_from_slice(&index.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+    }
+    packet
+}
+
 /// CZ_GRADE_ENCHANT_CLOSE_UI.
 fn encode_close_grade() -> [u8; 2] {
     CZ_GRADE_ENCHANT_CLOSE_UI.to_le_bytes()
+}
+
+fn encode_synthesis_close() -> [u8; 2] {
+    CZ_RANDOM_COMBINE_ITEM_UI_CLOSE.to_le_bytes()
+}
+
+/// CZ_REQ_RANDOM_UPGRADE_ITEM: the box's item ID, then the inventory index.
+fn encode_upgrade_item(box_id: u32, index: u16) -> [u8; 8] {
+    let mut packet = [0u8; 8];
+    packet[..2].copy_from_slice(&CZ_REQ_RANDOM_UPGRADE_ITEM.to_le_bytes());
+    packet[2..6].copy_from_slice(&box_id.to_le_bytes());
+    packet[6..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+fn encode_upgrade_close() -> [u8; 2] {
+    CZ_RANDOM_UPGRADE_ITEM_UI_CLOSE.to_le_bytes()
 }
 
 /// CZ_REQ_REFINING: the item, the ore, and whether Blacksmith's Blessings go with it.
@@ -4198,6 +4317,20 @@ fn encode_hatch(index: u16) -> [u8; 4] {
     let mut packet = [0u8; 4];
     packet[..2].copy_from_slice(&CZ_SELECT_PETEGG.to_le_bytes());
     packet[2..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_REQ_RANKING: the ranking's type.
+fn encode_ranking_request(kind: u16) -> [u8; 4] {
+    let [[h0, h1], [k0, k1]] = [CZ_REQ_RANKING, kind].map(u16::to_le_bytes);
+    [h0, h1, k0, k1]
+}
+
+/// CZ_REQNAME_BYGID: the character ID.
+fn encode_name_request(id: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_REQNAME_BYGID.to_le_bytes());
+    packet[2..].copy_from_slice(&id.to_le_bytes());
     packet
 }
 
@@ -4771,6 +4904,18 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // "blue" (and "ssss" for the War of Emperium) at the start are color hints, not words.
         ZC_MAPPROPERTY_R2 => MapEvent::MapProperty { property: u16_at(2), flags: u32_at(4) },
         ZC_NOTIFY_MAPPROPERTY2 => MapEvent::MapType(u16_at(2)),
+        // The view at 2 rathena always sends 0 and calls ignored.
+        ZC_DRESSROOM_OPEN => MapEvent::DressRoom,
+        ZC_ACK_RANKING2 => MapEvent::Ranking {
+            kind: u16_at(2),
+            ids: std::array::from_fn(|place| u32_at(4 + 4 * place)),
+            points: std::array::from_fn(|place| u32_at(44 + 4 * place)),
+            mine: u32_at(84),
+        },
+        // Flag 3: a name follows; 2: none.
+        ZC_ACK_REQNAME_BYGID => MapEvent::CharName { id: u32_at(4), name: (u16_at(2) == 3).then(|| c_string(&packet[8..32])) },
+        ZC_UPDATE_RANKING_POINT => MapEvent::RankingPoints { kind: u16_at(2), added: u32_at(4) as i32, total: u32_at(8) },
+        ZC_STARSKILL => MapEvent::StarSkill { name: c_string(&packet[2..26]), monster: u32_at(26), count: packet[30], kind: packet[31] },
         ZC_NOTIFY_RANKING => MapEvent::PvpRank { account: u32_at(2), rank: u32_at(6), players: u32_at(10) },
         ZC_ACK_PVPPOINT => MapEvent::PvpInfo { wins: u32_at(10), losses: u32_at(14), points: u32_at(18) as i32 },
         ZC_BROADCAST => {
@@ -4928,6 +5073,18 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_GRADE_ENCHANT_BROADCAST_RESULT => {
             MapEvent::GradeAnnounced { player: c_string(&packet[2..26]), item: u32_at(26), grade: u16_at(30), success: packet[32] != 0 }
         }
+        ZC_RANDOM_COMBINE_ITEM_UI_OPEN => MapEvent::SynthesisOpen(u32_at(2)),
+        ZC_ACK_RANDOM_COMBINE_ITEM => MapEvent::Synthesized(u16_at(2)),
+        ZC_RANDOM_UPGRADE_ITEM_UI_OPEN => MapEvent::UpgradeOpen(u32_at(2)),
+        ZC_ACK_RANDOM_UPGRADE_ITEM => MapEvent::LaphineUpgraded(u16_at(2)),
+        // Index, broken, four cards, five random options (unused), refine, grade.
+        ZC_CHANGE_ITEM_OPTION => MapEvent::ItemPreview {
+            index: u16_at(2),
+            broken: packet[4] != 0,
+            cards: [u32_at(5), u32_at(9), u32_at(13), u32_at(17)],
+            refine: packet[46],
+            grade: packet[47],
+        },
         ZC_PETEGG_LIST => {
             MapEvent::PetEggs(packet[4..usize::from(u16_at(2)).min(packet.len())].chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect())
         }
@@ -6214,12 +6371,97 @@ mod tests {
     }
 
     #[test]
+    fn decodes_laphine_boxes() {
+        let open = [&ZC_RANDOM_COMBINE_ITEM_UI_OPEN.to_le_bytes()[..], &100_000u32.to_le_bytes()].concat();
+        assert!(matches!(decode_map_packet(&open), Some(MapEvent::SynthesisOpen(100_000))));
+        assert!(matches!(decode_map_packet(&[&ZC_ACK_RANDOM_COMBINE_ITEM.to_le_bytes()[..], &5u16.to_le_bytes()].concat()), Some(MapEvent::Synthesized(5))));
+        let entries = [(2u16, 1u16), (4, 1), (5, 2)];
+        let made = encode_synthesis(100_000, &entries);
+        assert_eq!(made.len(), 20);
+        assert_eq!(&made[..8], &[&CZ_REQ_RANDOM_COMBINE_ITEM.to_le_bytes()[..], &20u16.to_le_bytes(), &100_000u32.to_le_bytes()].concat());
+        assert_eq!(&made[8..], &entries.into_iter().flat_map(|(index, amount)| [index.to_le_bytes(), amount.to_le_bytes()].concat()).collect::<Vec<_>>());
+        assert_eq!(encode_synthesis_close(), CZ_RANDOM_COMBINE_ITEM_UI_CLOSE.to_le_bytes());
+
+        let upgrade = [&ZC_RANDOM_UPGRADE_ITEM_UI_OPEN.to_le_bytes()[..], &100_626u32.to_le_bytes()].concat();
+        assert!(matches!(decode_map_packet(&upgrade), Some(MapEvent::UpgradeOpen(100_626))));
+        assert!(matches!(
+            decode_map_packet(&[&ZC_ACK_RANDOM_UPGRADE_ITEM.to_le_bytes()[..], &1u16.to_le_bytes()].concat()),
+            Some(MapEvent::LaphineUpgraded(1))
+        ));
+        let upgrade_request: [u8; 8] =
+            [&CZ_REQ_RANDOM_UPGRADE_ITEM.to_le_bytes()[..], &100_626u32.to_le_bytes(), &7u16.to_le_bytes()].concat().try_into().unwrap();
+        assert_eq!(encode_upgrade_item(100_626, 7), upgrade_request);
+        assert_eq!(encode_upgrade_close(), CZ_RANDOM_UPGRADE_ITEM_UI_CLOSE.to_le_bytes());
+
+        let mut preview = vec![0u8; 48];
+        preview[..2].copy_from_slice(&ZC_CHANGE_ITEM_OPTION.to_le_bytes());
+        preview[2..4].copy_from_slice(&7u16.to_le_bytes());
+        preview[4] = 1;
+        preview[5..9].copy_from_slice(&4001u32.to_le_bytes());
+        preview[46] = 7;
+        preview[47] = 1;
+        match decode_map_packet(&preview) {
+            Some(MapEvent::ItemPreview { index: 7, cards, refine: 7, grade: 1, broken: true }) => assert_eq!(cards, [4001, 0, 0, 0]),
+            other => panic!("{other:?}"),
+        }
+        let ids = [
+            ZC_RANDOM_COMBINE_ITEM_UI_OPEN,
+            CZ_REQ_RANDOM_COMBINE_ITEM,
+            ZC_ACK_RANDOM_COMBINE_ITEM,
+            CZ_RANDOM_COMBINE_ITEM_UI_CLOSE,
+            ZC_RANDOM_UPGRADE_ITEM_UI_OPEN,
+            CZ_RANDOM_UPGRADE_ITEM_UI_CLOSE,
+            CZ_REQ_RANDOM_UPGRADE_ITEM,
+            ZC_ACK_RANDOM_UPGRADE_ITEM,
+            ZC_CHANGE_ITEM_OPTION,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(6), Some(-1), Some(4), Some(2), Some(6), Some(2), Some(8), Some(4), Some(48)]);
+    }
+
+    #[test]
     fn decodes_the_map_property() {
         let packet = [&ZC_MAPPROPERTY_R2.to_le_bytes()[..], &3u16.to_le_bytes(), &(MAP_NO_COSTUME | 1).to_le_bytes()].concat();
         assert!(matches!(decode_map_packet(&packet), Some(MapEvent::MapProperty { property: 3, flags }) if flags == MAP_NO_COSTUME | 1));
         assert_eq!(packet_length(ZC_MAPPROPERTY_R2), Some(8));
         assert_eq!(encode_blocking_play_cancel(), [0x47, 0x04]);
         assert!(matches!(decode_map_packet(&[0xD6, 0x01, 19, 0]), Some(MapEvent::MapType(19))));
+        assert!(matches!(decode_map_packet(&[0x02, 0x0A, 0, 0]), Some(MapEvent::DressRoom)));
+    }
+
+    #[test]
+    fn decodes_rankings() {
+        // clif_ranklist: two filled places, the rest empty, and our 50 points.
+        let mut ranking = vec![0u8; 88];
+        ranking[..2].copy_from_slice(&ZC_ACK_RANKING2.to_le_bytes());
+        ranking[4..8].copy_from_slice(&150_000u32.to_le_bytes());
+        ranking[8..12].copy_from_slice(&150_002u32.to_le_bytes());
+        ranking[44..48].copy_from_slice(&50u32.to_le_bytes());
+        ranking[48..52].copy_from_slice(&10u32.to_le_bytes());
+        ranking[84..88].copy_from_slice(&50u32.to_le_bytes());
+        let Some(MapEvent::Ranking { kind: 0, ids, points, mine: 50 }) = decode_map_packet(&ranking) else { panic!() };
+        assert_eq!((&ids[..3], &points[..3]), (&[150_000, 150_002, 0][..], &[50, 10, 0][..]));
+        let name = [&ZC_ACK_REQNAME_BYGID.to_le_bytes()[..], &3u16.to_le_bytes(), &150_000u32.to_le_bytes(), &name_field("Rndev")].concat();
+        assert!(matches!(decode_map_packet(&name), Some(MapEvent::CharName { id: 150_000, name: Some(name) }) if name == "Rndev"));
+        let nameless = [&ZC_ACK_REQNAME_BYGID.to_le_bytes()[..], &2u16.to_le_bytes(), &7u32.to_le_bytes(), &[0u8; 24]].concat();
+        assert!(matches!(decode_map_packet(&nameless), Some(MapEvent::CharName { id: 7, name: None })));
+        // @addfame -50 arrives as a negative amount.
+        let points = [&ZC_UPDATE_RANKING_POINT.to_le_bytes()[..], &0u16.to_le_bytes(), &(-50i32).to_le_bytes(), &0u32.to_le_bytes()].concat();
+        assert!(matches!(decode_map_packet(&points), Some(MapEvent::RankingPoints { kind: 0, added: -50, total: 0 })));
+        let mut star = vec![0u8; 32];
+        star[..2].copy_from_slice(&ZC_STARSKILL.to_le_bytes());
+        star[2..8].copy_from_slice(b"Poring");
+        star[26..30].copy_from_slice(&1002u32.to_le_bytes());
+        star[30] = 7;
+        star[31] = STAR_MISSION;
+        assert!(matches!(decode_map_packet(&star), Some(MapEvent::StarSkill { monster: 1002, count: 7, kind: STAR_MISSION, .. })));
+        assert_eq!(encode_ranking_request(3), [0x7C, 0x09, 3, 0]);
+        assert_eq!(encode_name_request(150_000), [0x69, 0x03, 0xF0, 0x49, 0x02, 0]);
+        for (header, length) in
+            [(ZC_ACK_RANKING2, 88), (ZC_ACK_REQNAME_BYGID, 32), (ZC_UPDATE_RANKING_POINT, 12), (ZC_STARSKILL, 32), (CZ_REQ_RANKING, 4), (CZ_REQNAME_BYGID, 6)]
+        {
+            assert_eq!(packet_length(header), Some(length), "{header:#06x}");
+        }
+        assert_eq!(packet_length(ZC_DRESSROOM_OPEN), Some(4));
         // clif_pvpset: ours and another player's.
         let rank = |account: u32, rank: u32, players: u32| {
             [&ZC_NOTIFY_RANKING.to_le_bytes()[..], &account.to_le_bytes(), &rank.to_le_bytes(), &players.to_le_bytes()].concat()

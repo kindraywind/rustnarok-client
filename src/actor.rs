@@ -93,6 +93,8 @@ const DRAGONS: [u32; 5] = [0x8_0000, 0x80_0000, 0x100_0000, 0x200_0000, 0x400_00
 const WOLF_RIDING: u32 = 0x20_0000;
 const MADOGEAR: u32 = 0x40_0000;
 /// All of them: the only option bits a look keeps.
+/// rathena's OPTION_HIDE, OPTION_CLOAK and OPTION_CHASEWALK: the unit is out of sight.
+pub const UNSEEN_OPTIONS: u32 = 0x2 | 0x4 | 0x4000;
 pub const BODY_OPTIONS: u32 =
     WEDDING | UNION | XMAS | SUMMER | HANBOK | OKTOBERFEST | RIDING | DRAGONS[0] | DRAGONS[1] | DRAGONS[2] | DRAGONS[3] | DRAGONS[4] | WOLF_RIDING | MADOGEAR;
 
@@ -982,6 +984,8 @@ pub struct Actor {
     pub remove_at: Option<Instant>,
     /// A dead player: lying there until revived (players aren't removed when they die).
     pub dead: bool,
+    /// Hiding, cloaking or chase-walking (the unit's option has UNSEEN_OPTIONS).
+    pub cloaked: bool,
     /// The pushcart it pulls, drawn behind it.
     pub cart: Option<SpriteSet>,
     /// The action and frame last seen, so a frame's sound plays once each time it comes up.
@@ -1013,6 +1017,7 @@ impl Actor {
             sitting: false,
             remove_at: None,
             dead: false,
+            cloaked: false,
             cart: None,
             heard: None,
             held: None,

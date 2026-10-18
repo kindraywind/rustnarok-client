@@ -1,0 +1,107 @@
+{
+  "about": "The dress room (issue #114): /dressroom opens the preview on the player's own look; the stage, hairstyle and turning change only the preview; Escape closes it and the player is as before.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "shot": "before-dressroom",
+      "crop": [
+        412,
+        250,
+        200,
+        180
+      ]
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "type": "/dressroom"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "DressRoom"
+        ],
+        "state": {
+          "dressroom.stage": 0
+        }
+      }
+    },
+    {
+      "shot": "dressroom"
+    },
+    {
+      "click_on": {
+        "button": "dress_stage_next"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "dressroom.stage": 1
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "dress_hair_next"
+      }
+    },
+    {
+      "click_on": {
+        "button": "dress_turn_left"
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "dressroom.direction": 1
+        }
+      }
+    },
+    {
+      "shot": "dressroom-changed"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "DressRoom"
+        ]
+      }
+    },
+    {
+      "shot": "after-dressroom",
+      "crop": [
+        412,
+        250,
+        200,
+        180
+      ]
+    }
+  ]
+}

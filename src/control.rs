@@ -866,6 +866,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.synthesis.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.upgrade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
             game.achievement_window
                 .button_boxes(&app.achievement_info, &game.achievements)
@@ -880,6 +882,8 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.inventory.tab_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.ranking.iter().flat_map(|board| board.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.dressroom.iter().flat_map(|room| room.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.party_setup.iter().flat_map(|setup| setup.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(leader_question.into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
@@ -924,8 +928,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("Shop", game.shop.is_some()),
         ("Refine", game.refine.is_some()),
         ("GradeEnchant", game.grade.is_some()),
+        ("LaphineSynthesis", game.synthesis.is_some()),
+        ("LaphineUpgrade", game.upgrade.is_some()),
         ("Materials", game.materials.is_some()),
         ("PartySetup", game.party_setup.is_some()),
+        ("DressRoom", game.dressroom.is_some()),
+        ("Ranking", game.ranking.is_some()),
         ("LeaderAsked", game.leader_asked.is_some()),
         ("Roulette", game.roulette.is_some()),
         ("MonsterInfo", game.monster_window.is_some()),
@@ -1067,6 +1075,15 @@ fn game_state(app: &App, game: &Game) -> Value {
             .filter(|&(&id, actor)| actor.kind == PLAYER && game.opponent(id).is_some_and(|other| game.side().attack_cursor(&other, false, false)))
             .map(|(_, actor)| actor.name.clone())
             .collect::<Vec<_>>(),
+        // Seconds held at first place while the clock shows, else null.
+        "first_place_seconds": game.first_since.filter(|_| game.pvp_rank.is_some_and(|(_, players)| players > 1)).map(|since| crate::control::now().saturating_duration_since(since).as_secs()),
+        "top_rank_auras": game.units.iter().filter(|(id, _)| game.top_ten.contains(id)).map(|(_, actor)| actor.name.clone())
+            .chain(game.top_ten.contains(&game.account_id).then(|| game.me.name.clone())).collect::<Vec<_>>(),
+        "dressroom": game.dressroom.as_ref().map(|room| {
+            let look = room.look(&crate::character_look(&game.me), &game.dress_lists);
+            json!({"hair": look.hair, "hair_color": look.hair_color, "clothes_color": look.clothes_color, "stage": room.stage, "direction": room.direction})
+        }),
+        "head_emblems": game.head_emblems.iter().map(|(name, guild, area)| json!({"name": name, "guild": guild, "box": area})).collect::<Vec<_>>(),
         "map_property": game.map_property.map(|(property, flags)| json!({"type": property, "flags": flags})),
         "map_type": game.map_type,
         // The PvP counter as it shows (rank, players), or null.
@@ -1082,6 +1099,17 @@ fn game_state(app: &App, game: &Game) -> Value {
         "status_icons": game.status_icons.iter().map(|(id, _, ends)| json!({"id": id, "left_ms": ends.map(|end| end.saturating_duration_since(now).as_millis() as u64)})).collect::<Vec<_>>(),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
     });
+    // The ranking board.
+    state["ranking"] = json!(game.ranking.as_ref().map(|board| {
+        let rows = board.rows(&game.char_names);
+        json!({
+            "type": board.kind,
+            "mine": board.mine,
+            "listed": board.ids.contains(&game.me.id),
+            "unnamed": rows.iter().filter(|row| !game.char_names.contains_key(&row.id)).count(),
+            "rows": rows.iter().map(|row| json!({"char_id": row.id, "name": row.name, "points": row.points})).collect::<Vec<_>>(),
+        })
+    }));
     orbs(&mut state["player"], None);
     state
 }

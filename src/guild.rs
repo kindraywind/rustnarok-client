@@ -37,6 +37,22 @@ const LABELS: [usize; 8] = [328, 329, 330, 331, 332, 333, 335, 337];
 // ponytail: the emblem's frame top left of the info page, the labels right of it.
 const EMBLEM: [f32; 2] = [12.0, PAGE_TOP + 8.0];
 pub const EMBLEM_SIZE: [f32; 2] = [24.0, 24.0];
+/// The guardians' monster IDs: they carry their castle's guild emblem too.
+const GUARDIANS: [u16; 3] = [1285, 1286, 1287];
+
+/// Whether a unit carries its guild's emblem over its head on a siege map: other players in a guild and the guardians,
+/// not while out of sight.
+pub fn wears_head_emblem(player: bool, job: u16, guild: u32, cloaked: bool, ours: bool) -> bool {
+    !ours && guild != 0 && !cloaked && (player || GUARDIANS.contains(&job))
+}
+
+/// The emblem's box over a unit (left, top, right, bottom): `floor(10·W/640)·s` left of and `floor(100·H/480)·s`
+/// above its feet on screen, `s` its sprite scale; it doesn't grow with the zoom.
+pub fn head_emblem_box(feet: [f32; 2], screen: [f32; 2], scale: f32) -> [f32; 4] {
+    let left = feet[0] - (10.0 * screen[0] / 640.0).floor() * scale;
+    let top = feet[1] - (100.0 * screen[1] / 480.0).floor() * scale;
+    [left, top, left + EMBLEM_SIZE[0], top + EMBLEM_SIZE[1]]
+}
 const INFO_LEFT: f32 = 52.0;
 /// Member columns: name, position, job, level.
 const COLUMNS: [(usize, f32); 4] = [(407, 10.0), (503, 150.0), (504, 250.0), (408, 340.0)];
@@ -489,5 +505,19 @@ mod tests {
         assert_eq!(emblem.get_pixel(0, 0).0, [0; 4]);
         assert_eq!(emblem.get_pixel(5, 5).0, [0x20, 0x40, 0x80, 0xFF]);
         assert!(decode_emblem(b"not zlib").is_none());
+    }
+
+    #[test]
+    fn places_emblems_over_heads() {
+        assert_eq!(head_emblem_box([500.0, 400.0], [1024.0, 768.0], 1.0), [484.0, 240.0, 508.0, 264.0]);
+        assert_eq!(head_emblem_box([500.0, 400.0], [1024.0, 768.0], 0.8), [487.2, 272.0, 511.2, 296.0]);
+        assert_eq!(head_emblem_box([500.0, 400.0], [1280.0, 720.0], 1.0), [480.0, 250.0, 504.0, 274.0]);
+        assert_eq!(head_emblem_box([500.0, 400.0], [1280.0, 720.0], 0.8), [484.0, 280.0, 508.0, 304.0]);
+        assert!(wears_head_emblem(true, 0, 5, false, false));
+        assert!(!wears_head_emblem(true, 0, 5, false, true), "not ourselves");
+        assert!(!wears_head_emblem(true, 0, 0, false, false), "no guild");
+        assert!(!wears_head_emblem(true, 0, 5, true, false), "hidden");
+        assert!(wears_head_emblem(false, 1286, 5, false, false), "a guardian");
+        assert!(!wears_head_emblem(false, 1002, 5, false, false), "another monster");
     }
 }

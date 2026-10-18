@@ -1,0 +1,208 @@
+{
+  "about": "Rankings (issue #106): rank points from @addfame print their lines, /blacksmith and the board's type choice show the top ten with names, the Taekwon Mission prints its target, /pk shows the empty killer list. It undoes its fame and ends a Novice; RUSTNAROK_CLIENT_SCENARIO_RESET should also zero the characters' char.fame and drop their TK_MISSION_ID / TK_MISSION_COUNT rows in char_reg_num, for a run stopped halfway.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@job 10"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@addfame 50"
+    },
+    {
+      "wait_for": {
+        "packet": "0x097e",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "[Point] You have been rewarded with 50 Blacksmith rank points. Your point total is 50."
+      }
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "type": "/blacksmith"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0af6",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Ranking"
+        ],
+        "state": {
+          "ranking.type": 0,
+          "ranking.mine": 50,
+          "ranking.listed": true,
+          "ranking.unnamed": 0
+        }
+      }
+    },
+    {
+      "shot": "ranking-blacksmith"
+    },
+    {
+      "click_on": {
+        "button": "alchemist"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0af6",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "ranking.type": 1
+        }
+      }
+    },
+    {
+      "shot": "ranking-alchemist"
+    },
+    {
+      "say": "@addfame -50"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "chat": "Your point total is 0."
+      }
+    },
+    {
+      "say": "@job 4046"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@allskill"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@useskill 493 1 self"
+    },
+    {
+      "wait_for": {
+        "packet": "0x020e",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "[Taekwon Mission] Target Monster:"
+      }
+    },
+    {
+      "shot": "mission-chat",
+      "crop": [
+        0,
+        600,
+        620,
+        168
+      ]
+    },
+    {
+      "say": "@addfame 10"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "chat": "10 Tae-Kwon Mission rank points"
+      }
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "type": "/pk"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0af6",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "ranking.type": 3,
+          "ranking.listed": false
+        }
+      }
+    },
+    {
+      "say": "@addfame -10"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Ranking"
+        ]
+      }
+    },
+    {
+      "say": "@job 0"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

@@ -212,6 +212,10 @@ pub enum Command {
     PvpInfo,
     /// /noshift: a click on a player attacks without Shift, on or off.
     NoShift,
+    /// /dressroom: the dress room.
+    DressRoom,
+    /// /blacksmith, /alchemist, /taekwon, /pk: a ranking's top ten (0 to 3).
+    Ranking(u16),
 }
 
 /// The command typed, if `text` is one; a name is the rest of the line, quotes taken off.
@@ -231,6 +235,12 @@ pub fn command(text: &str) -> Option<Command> {
         "/memo" => Command::Memo,
         "/pvpinfo" => Command::PvpInfo,
         "/noshift" => Command::NoShift,
+        "/dressroom" => Command::DressRoom,
+        "/blacksmith" => Command::Ranking(0),
+        "/alchemist" => Command::Ranking(1),
+        "/taekwon" => Command::Ranking(2),
+        // Only the bare /pk: /pk on and /pk off are another command.
+        "/pk" if name.is_empty() => Command::Ranking(3),
         _ => return None,
     })
 }
@@ -251,6 +261,11 @@ mod tests {
         assert_eq!(command("/memo"), Some(Command::Memo));
         assert_eq!(command("/pvpinfo"), Some(Command::PvpInfo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
+        assert_eq!(command("/dressroom"), Some(Command::DressRoom));
+        for (text, kind) in [("/blacksmith", 0), ("/alchemist", 1), ("/taekwon", 2), ("/pk", 3)] {
+            assert_eq!(command(text), Some(Command::Ranking(kind)), "{text}");
+        }
+        assert_eq!(command("/pk on"), None);
         assert_eq!(command("/ex"), Some(Command::BlockList));
         assert_eq!(command("/ex Poring"), Some(Command::Whispers { name: "Poring".into(), allow: false }));
         assert_eq!(command("/in \"Big Poring\" "), Some(Command::Whispers { name: "Big Poring".into(), allow: true }));

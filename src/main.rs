@@ -38,6 +38,9 @@
 //! `none` for the archive alone),
 //! `RUSTNAROK_CLIENT_SCREENSHOT=out.png` (save a settled frame and quit; in the game after `RUSTNAROK_CLIENT_SHOT_DELAY` seconds, 2 by default).
 
+// The control socket's game state is one json! literal deeper than the macro's default limit.
+#![recursion_limit = "256"]
+
 mod achievement;
 mod actor;
 mod announce;
@@ -52,6 +55,7 @@ mod chatroom;
 mod clan;
 mod control;
 mod cursor;
+mod dressroom;
 mod effects;
 mod emotion;
 mod emotion_list;
@@ -63,6 +67,7 @@ mod homunculus;
 mod hotkeys;
 mod inventory;
 mod iteminfo;
+mod laphine;
 mod macros;
 mod mail;
 mod material;
@@ -78,6 +83,7 @@ mod pick_list;
 mod picking;
 mod pin;
 mod quest;
+mod ranking;
 mod refine;
 mod render;
 mod roulette;
@@ -290,17 +296,63 @@ const NO_MIRACLE_NOTICE: usize = 2381;
 const MAP_NOTICE: [u8; 3] = [0x64, 0xFF, 0xFF];
 /// "You have won %d times and have lost %d times in PVP. Current points %d."
 const PVP_RECORD: usize = 853;
-/// rankfont's action for the slash between rank and players (0 to 9 are the digits).
-const RANK_SLASH: usize = 10;
-// ponytail: the PvP counter's place (right-aligned under the minimap) and size are estimates.
-const RANK_RIGHT: f32 = 1012.0;
-const RANK_TOP: f32 = 168.0;
-const RANK_SCALE: f32 = 0.6;
+/// "[Point] You have been rewarded with %d … rank points. Your point total is %d.", by ranking.
+const RANK_POINTS_BLACKSMITH: usize = 901;
+const RANK_POINTS_ALCHEMIST: usize = 902;
+const RANK_POINTS_TAEKWON: usize = 926;
+const RANK_POINTS_SLAYER: usize = 953;
+/// "[Taekwon Mission] Target Monster: %s (%d%%)"
+const MISSION_TARGET: usize = 927;
+/// rankfont's and timefont's action for the slash or colon (0 to 9 are the digits).
+const GLYPH_SEPARATOR: usize = 10;
+/// "Congratulations! %s's rank has gone up to %d." / "What a pity! %s's rank has gone down to %d."
+const RANK_UP: usize = 582;
+const RANK_DOWN: usize = 583;
+const RANK_LINE: [u8; 3] = [0xFF, 0xFF, 0x00];
+/// EF_TOPRANK, on every player ranked 1 to 10.
+const TOP_RANK_EFFECT: u32 = 159;
+/// How long the "time attack" banner shows after reaching first place.
+const FIRST_PLACE_BANNER: Duration = Duration::from_secs(3);
 
-/// The counter's rankfont actions for "<rank>/<players>".
-fn rank_frames(rank: u32, players: u32) -> Vec<usize> {
-    let digits = |number: u32| number.to_string().bytes().map(|digit| usize::from(digit - b'0')).collect::<Vec<_>>();
-    [digits(rank), vec![RANK_SLASH], digits(players)].concat()
+fn digits(number: u64) -> Vec<usize> {
+    number.to_string().bytes().map(|digit| usize::from(digit - b'0')).collect()
+}
+
+/// The PvP counter's glyphs (rankfont actions) and where each is anchored: the rank right-aligned with its last digit
+/// at W − 105, H − 50, 25 px apart; the slash at W − 80, H − 40; the player count (at most 9999) from W − 55, H − 30.
+fn counter_glyphs(rank: u32, players: u32, screen: [f32; 2]) -> Vec<(usize, [f32; 2])> {
+    let [width, height] = screen;
+    let rank = digits(u64::from(rank));
+    let count = rank.len() as f32;
+    let mut glyphs: Vec<_> = rank.into_iter().enumerate().map(|(n, digit)| (digit, [width - 105.0 - (count - 1.0 - n as f32) * 25.0, height - 50.0])).collect();
+    glyphs.push((GLYPH_SEPARATOR, [width - 80.0, height - 40.0]));
+    glyphs.extend(digits(u64::from(players.min(9999))).into_iter().enumerate().map(|(n, digit)| (digit, [width - 55.0 + n as f32 * 25.0, height - 30.0])));
+    glyphs
+}
+
+/// The first-place clock's glyphs (timefont actions): ss, mm:ss, hh:mm:ss or dd:hh:mm:ss.
+fn clock_glyphs(seconds: u64) -> Vec<usize> {
+    let parts = [seconds / 86_400, seconds / 3600 % 24, seconds / 60 % 60, seconds % 60];
+    let first = parts.iter().position(|&part| part > 0).unwrap_or(3).min(3);
+    let mut glyphs = Vec::new();
+    for (n, part) in parts[first..].iter().enumerate() {
+        if n > 0 {
+            glyphs.push(GLYPH_SEPARATOR);
+        }
+        glyphs.extend(digits(*part / 10).into_iter().chain(digits(*part % 10)));
+    }
+    glyphs
+}
+
+/// The chat line when our rank moves into or out of the top ten (the first rank compares with 0).
+fn rank_line(before: u32, now: u32) -> Option<usize> {
+    let top = |rank: u32| (1..=10).contains(&rank);
+    match (top(before), top(now)) {
+        (false, true) => Some(RANK_UP),
+        (true, false) => Some(RANK_DOWN),
+        (false, false) if before == 0 && now > 10 => Some(RANK_DOWN),
+        _ => None,
+    }
 }
 /// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
 const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
@@ -660,6 +712,9 @@ struct Game {
     refine: Option<refine::Refine>,
     /// The grade enchant window.
     grade: Option<grade::GradeEnchant>,
+    /// Laphine synthesis and upgrade, open until their close packet or a map change.
+    synthesis: Option<laphine::Synthesis>,
+    upgrade: Option<laphine::Upgrade>,
     /// The material window (Change Material, Four Spirit Analysis).
     materials: Option<material::Materials>,
     /// The Lucky Roulette's window.
@@ -729,6 +784,17 @@ struct Game {
     /// The player's mercenary, its skills, its window and skill list, how it's steered, and whether dismissing it is
     /// being asked.
     mercenary: Option<net::Mercenary>,
+    /// The ranking board while it's open, characters' names by ID as the server told them (None: it has none), and
+    /// the names asked for.
+    ranking: Option<ranking::Board>,
+    char_names: HashMap<u32, Option<String>>,
+    names_asked: HashSet<u32>,
+    /// The dress room's lists, the room while it's open, and its figure.
+    dress_lists: dressroom::Lists,
+    dressroom: Option<dressroom::Room>,
+    dress_figure: Option<SpriteSet>,
+    /// The emblems drawn over heads this frame: whose, their guild, the box (for the test driver).
+    head_emblems: Vec<(String, u32, [f32; 4])>,
     /// /noshift: a click on a player attacks without Shift (saved).
     no_shift: bool,
     /// The map's property and flags (net::MAP_*), and its type, as the server last sent them.
@@ -736,8 +802,16 @@ struct Game {
     map_type: Option<u16>,
     /// The player's PvP rank and the players on the map, while the server counts them.
     pvp_rank: Option<(u32, u32)>,
-    /// The counter's digits (rankfont), loaded when first shown.
+    /// The counter's digits (rankfont), the clock's (timefont) and the first-place banner (timeattack), loaded when first
+    /// shown.
     rank_font: Option<Option<SpriteSet>>,
+    time_font: Option<Option<SpriteSet>>,
+    time_attack: Option<Option<SpriteSet>>,
+    /// Our last rank (0 before any), and since when we've held first place.
+    last_rank: u32,
+    first_since: Option<Instant>,
+    /// Players ranked 1 to 10 (by account): they carry the top-ten aura.
+    top_ten: HashSet<u32>,
     /// Server announcements in the bar across the top.
     announcements: announce::Bar,
     /// The names whose whispers (and speaker announcements) the player blocks, as far as the server has said.
@@ -1196,6 +1270,11 @@ impl Game {
     /// Whether players win over monsters under the pointer: Shift held, or aiming a skill for players, but not both.
     // ponytail: "a skill for players" is one the server flags as for friends (Heal, Blessing); a skill table may list
     // more.
+    /// Opens the dress room on the player's own look.
+    fn open_dressroom(&mut self) {
+        self.dressroom = Some(dressroom::Room::new(&character_look(&self.me), &self.dress_lists));
+    }
+
     /// Who the player sides with on this map, for `versus`: the map's flags, our party's online members, our guild.
     // ponytail: allies come with the guild alliance list (#102); none until then.
     fn side(&self) -> versus::Side {
@@ -1529,6 +1608,11 @@ impl Game {
             chat::Command::Who => self.session.user_count(),
             chat::Command::Memo => self.session.remember_warp_point(),
             chat::Command::PvpInfo => self.session.pvp_info(self.me.id, self.account_id),
+            chat::Command::Ranking(kind) => self.session.ask_ranking(kind),
+            chat::Command::DressRoom => {
+                self.open_dressroom();
+                Ok(())
+            }
             // ponytail: the client's own line for /noshift isn't in this data; a plain one.
             chat::Command::NoShift => {
                 self.no_shift = !self.no_shift;
@@ -1606,6 +1690,8 @@ impl Game {
             || self.mail.hit(cursor).is_some()
             || self.quest_window.hit(cursor, &self.quests).is_some()
             || self.achievement_window.covers(cursor)
+            || self.synthesis.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.upgrade.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.grade.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || roulette::icon_hit(cursor)
@@ -2413,10 +2499,12 @@ struct Assets {
     trade: trade::Assets,
     refine: refine::Assets,
     grade: grade::Assets,
+    laphine: laphine::Assets,
     bank: bank::Assets,
     cashshop: cashshop::Assets,
     context_menu: menu::Assets,
     weather: weather::Assets,
+    dressroom: dressroom::Assets,
     mercenary: mercenary::Assets,
     homunculus: homunculus::Assets,
     party: party::Assets,
@@ -2520,10 +2608,12 @@ impl Assets {
             trade: trade::Assets::load(gpu, grf),
             refine: refine::Assets::load(gpu, grf),
             grade: grade::Assets::load(gpu, grf),
+            laphine: laphine::Assets::load(gpu, grf),
             bank: bank::Assets::load(gpu, grf),
             cashshop: cashshop::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
             weather: weather::Assets::load(gpu, grf),
+            dressroom: dressroom::Assets::load(gpu, grf),
             mercenary: mercenary::Assets::load(gpu, grf),
             homunculus: homunculus::Assets::load(gpu, grf),
             party: party::Assets::load(gpu, grf),
@@ -2881,6 +2971,9 @@ struct App {
     pets: pet::Data,
     /// The achievements (the translation's achievements.lub) and the titles they give, by ID.
     achievement_info: HashMap<u32, lua::AchievementInfo>,
+    /// Laphine boxes by the box's item ID.
+    synthesis_boxes: HashMap<u32, lua::SynthesisBox>,
+    upgrade_boxes: HashMap<u32, lua::UpgradeBox>,
     title_names: HashMap<u32, String>,
     /// Item names and resources by item ID, and the client's numbered messages.
     items: HashMap<u32, ItemInfo>,
@@ -3676,6 +3769,25 @@ impl App {
                     }
                 }
             }
+            // The ranking board: another ranking, or closing it.
+            Scene::Game(game) if game.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some() => {
+                match game.ranking.as_ref().and_then(|board| board.hit(cursor)) {
+                    Some(ranking::Hit::Kind(kind)) => {
+                        let _ = game.session.ask_ranking(kind);
+                    }
+                    Some(ranking::Hit::Title(TitleHit::Close)) => game.ranking = None,
+                    Some(ranking::Hit::Title(title)) => game.ranking.as_mut().unwrap().frame.click_title(title),
+                    _ => {}
+                }
+            }
+            // The dress room: pickers, turning, closing.
+            Scene::Game(game) if game.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some() => {
+                let room = game.dressroom.as_mut().unwrap();
+                if room.hit(cursor).is_some_and(|hit| room.click(hit, &game.dress_lists)) {
+                    game.dressroom = None;
+                    game.dress_figure = None;
+                }
+            }
             // Handing the party over: OK asks the server.
             Scene::Game(game) if game.leader_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
@@ -3840,6 +3952,39 @@ impl App {
                     let entries = if ok { window.entries.clone() } else { Vec::new() };
                     let _ = game.session.send_materials(window.kind, ok, &entries);
                     game.materials = None;
+                }
+            }
+            Scene::Game(game) if game.synthesis.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let hit = game.synthesis.as_ref().unwrap().hit(cursor).unwrap();
+                match game.synthesis.as_mut().unwrap().click(hit) {
+                    Some(laphine::Action::Make) => {
+                        let (box_id, entries) = {
+                            let window = game.synthesis.as_ref().unwrap();
+                            (window.box_id, window.entries())
+                        };
+                        let _ = game.session.synthesize(box_id, &entries);
+                    }
+                    Some(laphine::Action::Close) => {
+                        let _ = game.session.close_synthesis();
+                        game.synthesis = None;
+                    }
+                    None => {}
+                }
+            }
+            Scene::Game(game) if game.upgrade.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let hit = game.upgrade.as_ref().unwrap().hit(cursor).unwrap();
+                match game.upgrade.as_mut().unwrap().click(hit) {
+                    Some(laphine::Action::Make) => {
+                        if let Some(index) = game.upgrade.as_ref().unwrap().index() {
+                            let box_id = game.upgrade.as_ref().unwrap().box_id;
+                            let _ = game.session.upgrade_item(box_id, index);
+                        }
+                    }
+                    Some(laphine::Action::Close) => {
+                        let _ = game.session.close_upgrade();
+                        game.upgrade = None;
+                    }
+                    None => {}
                 }
             }
             Scene::Game(game) if game.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
@@ -4337,6 +4482,12 @@ impl App {
             if let Some(window) = &mut game.grade {
                 window.frame.drag_to(self.cursor, grade::HEIGHT);
             }
+            if let Some(window) = &mut game.synthesis {
+                window.frame.drag_to(self.cursor, laphine::Synthesis::height());
+            }
+            if let Some(window) = &mut game.upgrade {
+                window.frame.drag_to(self.cursor, laphine::Upgrade::height());
+            }
             if let Some(window) = &mut game.monster_window {
                 window.frame.drag_to(self.cursor, monster_info::MonsterWindow::height());
             }
@@ -4525,7 +4676,11 @@ impl App {
             let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.cart.items).is_some());
             let on_buying_setup = game.buying_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.inventory.items).is_some());
             let on_cashshop = game.cashshop.as_ref().is_some_and(|shop| shop.hit(self.cursor).is_some());
+            let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+            let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             match game.window_at(self.cursor) {
+                _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
+                _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
                 _ if on_cashshop => game.cashshop.as_mut().unwrap().scroll_at(self.cursor, rows),
                 _ if on_setup => {
                     let count = game.cart.items.len();
@@ -4612,7 +4767,27 @@ impl App {
                 let on_refine = game.refine.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_grade = game.grade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_materials = game.materials.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+                let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+                let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 match (item, game.window_at(self.cursor)) {
+                    (Some((Dragged::Item(index), _, true)), _) if on_synthesis || on_upgrade => {
+                        if let Some(item) = game.inventory.get(index).cloned() {
+                            let said = if on_synthesis {
+                                game.synthesis.as_mut().and_then(|window| match window.put(&item) {
+                                    laphine::Put::Say(id) => Some(id),
+                                    _ => None,
+                                })
+                            } else {
+                                game.upgrade.as_mut().and_then(|window| match window.put(&item) {
+                                    laphine::Put::Say(id) => Some(id),
+                                    _ => None,
+                                })
+                            };
+                            if let Some(id) = said {
+                                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                            }
+                        }
+                    }
                     (Some((Dragged::Item(index), _, true)), _) if on_mail => game.move_item(Asked::Mail(index)),
                     (Some((Dragged::Item(index), _, true)), _) if on_materials => game.move_item(Asked::Material(index)),
                     // Into the refine machine: the server lists what refines it.
@@ -4651,6 +4826,8 @@ impl App {
                     | game.mail.drop_drag()
                     | game.quest_window.frame.drop_drag()
                     | game.achievement_window.frame.drop_drag()
+                    | game.synthesis.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.grade.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag());
@@ -4758,6 +4935,22 @@ impl App {
         {
             if window.frame.local(cursor, monster_info::MonsterWindow::height()).and_then(|local| window.frame.title_hit(local)) == Some(TitleHit::Title) {
                 window.frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.synthesis.as_ref().and_then(|window| window.hit(cursor))
+        {
+            if hit == laphine::Hit::Title(TitleHit::Title) {
+                game.synthesis.as_mut().unwrap().frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.upgrade.as_ref().and_then(|window| window.hit(cursor))
+        {
+            if hit == laphine::Hit::Title(TitleHit::Title) {
+                game.upgrade.as_mut().unwrap().frame.start_drag(cursor);
             }
             return;
         }
@@ -5227,6 +5420,11 @@ impl App {
                 }
             }
             Scene::Game(game) if game.party_setup.is_some() && *key == Key::Named(NamedKey::Escape) => game.party_setup = None,
+            Scene::Game(game) if game.ranking.is_some() && *key == Key::Named(NamedKey::Escape) => game.ranking = None,
+            Scene::Game(game) if game.dressroom.is_some() && *key == Key::Named(NamedKey::Escape) => {
+                game.dressroom = None;
+                game.dress_figure = None;
+            }
             Scene::Game(game) if game.dismiss_asked && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_dismiss(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
@@ -5745,6 +5943,8 @@ impl App {
                     trade: None,
                     refine: None,
                     grade: None,
+                    synthesis: None,
+                    upgrade: None,
                     materials: None,
                     roulette: None,
                     monster_window: None,
@@ -5790,10 +5990,24 @@ impl App {
                     refusing_party: None,
                     announcements: announce::Bar::default(),
                     map_property: None,
+                    dress_lists: lua::dress_lists(&self.grf)
+                        .map(|[hair, hair_color, clothes_color]| dressroom::Lists { hair, hair_color, clothes_color })
+                        .unwrap_or_default(),
+                    dressroom: None,
+                    ranking: None,
+                    char_names: HashMap::new(),
+                    names_asked: HashSet::new(),
+                    dress_figure: None,
+                    head_emblems: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     map_type: None,
                     pvp_rank: None,
                     rank_font: None,
+                    time_font: None,
+                    time_attack: None,
+                    last_rank: 0,
+                    first_since: None,
+                    top_ten: HashSet::new(),
                     blocked: HashSet::new(),
                     party_setup: None,
                     leader_asked: None,
@@ -6013,6 +6227,7 @@ impl App {
             actor.job = unit.job;
             actor.look = (unit.kind == PLAYER).then(|| unit_look(unit));
             actor.hidden = HIDDEN_JOBS.contains(&unit.job) || unit.job == WARP_JOB;
+            actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
             actor.head_direction = unit.head_direction;
             actor.guild = unit.guild;
             actor
@@ -6203,6 +6418,73 @@ impl App {
                     }
                 }
             }
+            MapEvent::SynthesisOpen(id) => match self.synthesis_boxes.get(&id) {
+                Some(info) => {
+                    game.synthesis = Some(laphine::Synthesis::new(id, info));
+                    game.inventory.frame.open = true;
+                    game.raise(Panel::Inventory);
+                }
+                None => {
+                    let _ = game.session.close_synthesis();
+                }
+            },
+            MapEvent::UpgradeOpen(id) => match self.upgrade_boxes.get(&id) {
+                Some(info) => {
+                    game.upgrade = Some(laphine::Upgrade::new(id, info));
+                    game.inventory.frame.open = true;
+                    game.raise(Panel::Inventory);
+                }
+                None => {
+                    let _ = game.session.close_upgrade();
+                }
+            },
+            MapEvent::Synthesized(result) => {
+                if result == 0
+                    && let Some(window) = &mut game.synthesis
+                {
+                    window.clear();
+                }
+                let id = match result {
+                    5 => Some(laphine::NOT_ENOUGH),
+                    7 => Some(laphine::NOTHING),
+                    _ => None,
+                };
+                if let Some(id) = id {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
+            MapEvent::LaphineUpgraded(result) => {
+                // ponytail: 2971 and 2972 are guesses for the upgrade's result lines.
+                let (id, color) = if result == 0 {
+                    if let Some(window) = &mut game.upgrade {
+                        window.clear();
+                    }
+                    (laphine::UPGRADE_OK, CHAT_ITEM)
+                } else {
+                    (laphine::UPGRADE_FAIL, CHAT_ERROR)
+                };
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+            }
+            MapEvent::ItemPreview { index, cards, refine, broken, grade } => {
+                let damaged_line = self.messages.get(ITEM_DAMAGED).cloned().unwrap_or_default();
+                let shown = game.inventory.items.iter_mut().find(|item| item.index == index).map(|item| {
+                    item.cards = cards;
+                    item.refine = refine;
+                    item.grade = grade;
+                    item.broken = broken;
+                    let damaged = item.broken.then(|| damaged_line.clone());
+                    iteminfo::Shown { item: item.id, identified: item.identified, refine: item.refine, cards: item.cards, damaged, expires: item.expires }
+                });
+                // ponytail: that the preview is the item info window is a guess.
+                if let Some(shown) = shown {
+                    let position = game.item_window.as_ref().map(|window| window.position);
+                    let mut window = iteminfo::ItemWindow::new(shown);
+                    if let Some(position) = position {
+                        window.position = position;
+                    }
+                    game.item_window = Some(window);
+                }
+            }
             MapEvent::RefineMaterials { index, blessings, materials } => {
                 if materials.is_empty() {
                     game.chat_line(self.messages.get(CANT_REFINE).cloned().unwrap_or_default(), CHAT_ERROR);
@@ -6304,6 +6586,9 @@ impl App {
                 game.weather.clear();
                 game.pvp_rank = None;
                 game.map_type = None;
+                game.last_rank = 0;
+                game.first_since = None;
+                game.top_ten.clear();
                 game.forget_mercenary(false);
                 game.forget_homunculus(false);
                 // Back at the save point: up again.
@@ -6317,6 +6602,9 @@ impl App {
                 // rathena forgets the refine window and the grade window on a map change (no packet); the material window and the roulette go too.
                 game.refine = None;
                 game.grade = None;
+                // rathena forgets both Laphine windows on a map change, without a close packet.
+                game.synthesis = None;
+                game.upgrade = None;
                 game.roulette = None;
                 // The mirror's status ends with the warp.
                 game.boss = None;
@@ -7275,12 +7563,76 @@ impl App {
                 let _ = game.session.ready_to_play();
             }
             MapEvent::MapType(kind) => game.map_type = Some(kind),
+            MapEvent::DressRoom => game.open_dressroom(),
+            // The board opens (or shows the new ranking); the names it lacks are asked for once each.
+            MapEvent::Ranking { kind, ids, points, mine } => {
+                let frame = game.ranking.as_ref().map(|board| board.frame.position);
+                let mut board = ranking::Board::new(kind, ids, points, mine);
+                if let Some(position) = frame {
+                    board.frame.position = position;
+                }
+                for id in ranking::missing_names(&ids, &game.char_names) {
+                    if game.names_asked.insert(id) {
+                        let _ = game.session.ask_char_name(id);
+                    }
+                }
+                game.ranking = Some(board);
+            }
+            MapEvent::CharName { id, name } => {
+                game.char_names.insert(id, name);
+            }
+            // ponytail: the point and mission lines' color is an estimate.
+            MapEvent::RankingPoints { kind, added, total } => {
+                let id = match kind {
+                    0 => RANK_POINTS_BLACKSMITH,
+                    1 => RANK_POINTS_ALCHEMIST,
+                    2 => RANK_POINTS_TAEKWON,
+                    _ => RANK_POINTS_SLAYER,
+                };
+                let text = rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&added, &total]);
+                game.chat_line(text, CHAT_ITEM);
+            }
+            MapEvent::StarSkill { name, count, kind: net::STAR_MISSION, .. } => {
+                let text = rustnarok_client::messages::fill(self.messages.get(MISSION_TARGET).map_or("", String::as_str), &[&name, &count]);
+                game.chat_line(text, CHAT_ITEM);
+            }
+            // The Star Gladiator's Feeling and Hatred aren't shown yet.
+            MapEvent::StarSkill { .. } => {}
             // Sent to the area: only our own counts. Rank 0 or no players hides the counter; a hidden player's (all
             // ones) shows nothing.
-            MapEvent::PvpRank { account, rank, players } if account == game.account_id => {
-                game.pvp_rank = (rank != 0 && rank != u32::MAX && players != 0).then_some((rank, players));
+            // Only on a map that counts.
+            MapEvent::PvpRank { .. } if game.map_property.is_none_or(|(_, flags)| flags & net::MAP_COUNT_PK == 0) => {}
+            MapEvent::PvpRank { account, rank, players } => {
+                // ponytail: what EF_TOPRANK looks like isn't in this data or rathena's sources ("PvP circle"); the effect
+                // plays (nothing until effects.txt has it) and who carries it is kept.
+                if (1..=10).contains(&rank) {
+                    if game.top_ten.insert(account)
+                        && let Some(gpu) = gpu
+                    {
+                        game.play_effect(gpu, grf, table, TOP_RANK_EFFECT, account);
+                    }
+                } else {
+                    game.top_ten.remove(&account);
+                }
+                if account == game.account_id {
+                    game.pvp_rank = (rank != 0 && rank != u32::MAX && players != 0).then_some((rank, players));
+                    if rank != game.last_rank {
+                        if let Some(id) = rank_line(game.last_rank, rank) {
+                            let text = rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&game.me.name, &rank]);
+                            game.chat_line(text, RANK_LINE);
+                        }
+                        if let Some(audio) = &mut self.audio {
+                            audio.play(grf, "effect\\number_change.wav", 1.0);
+                        }
+                    }
+                    game.first_since = match (rank, game.first_since) {
+                        (1, Some(since)) => Some(since),
+                        (1, None) => Some(control::now()),
+                        _ => None,
+                    };
+                    game.last_rank = rank;
+                }
             }
-            MapEvent::PvpRank { .. } => {}
             MapEvent::PvpInfo { wins, losses, points } => {
                 let text = rustnarok_client::messages::fill(self.messages.get(PVP_RECORD).map_or("", String::as_str), &[&wins, &losses, &points]);
                 game.chat_line(text, CHAT_ITEM);
@@ -7959,6 +8311,10 @@ impl App {
             // Mounting, dismounting or an outfit puts a player in another body.
             MapEvent::OptionChange { id, option } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
+                if let Some(actor) = actor {
+                    actor.cloaked = option & actor::UNSEEN_OPTIONS != 0;
+                }
+                let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor
                     && let Some(look) = &mut actor.look
                     && look.option != option & actor::BODY_OPTIONS
@@ -8405,6 +8761,17 @@ impl App {
         if let Some(sprites) = &mut game.player.sprites {
             frames.push((Owner::Player, player_feet, sprites.frame(gpu, action, seen_direction(direction, yaw), head_direction, timing)));
         }
+        // The dress room's figure: rebuilt when a pick changes, standing the way it's turned.
+        if let Some(room) = &mut game.dressroom
+            && room.changed
+        {
+            game.dress_figure = SpriteSet::player(grf, &room.look(&character_look(&game.me), &game.dress_lists), &self.look_tables);
+            room.changed = false;
+        }
+        let dress_placements = match (&game.dressroom, &mut game.dress_figure) {
+            (Some(room), Some(figure)) => figure.frame(gpu, actor::IDLE, room.direction, 0, Timing::Loop(0.0)),
+            _ => Vec::new(),
+        };
         // The equipment window shows the character standing, facing front.
         let preview_feet = game.equipment.preview_feet();
         let viewed_feet = game.viewing.as_ref().and_then(|viewed| viewed.window.preview_feet());
@@ -8593,16 +8960,39 @@ impl App {
             _ => Vec::new(),
         };
         // Taming's slot machine: its result played once, then held a moment.
-        // The PvP counter while the map counts and a rank came: each character's frame, left to right.
+        // The PvP counter while the map counts and a rank came, the first-place clock while we're first among more than
+        // one, and the banner its first 3 s: each glyph's frame at its anchor.
         let counting = game.map_property.is_some_and(|(_, flags)| flags & net::MAP_COUNT_PK != 0);
-        let rank_placed: Vec<Vec<actor::Placed>> = match game.pvp_rank.filter(|_| counting) {
-            Some((rank, players)) => {
-                let font = game.rank_font.get_or_insert_with(|| SpriteSet::at(grf, "data\\sprite\\이팩트\\rankfont"));
-                match font {
-                    Some(font) => rank_frames(rank, players).into_iter().map(|action| font.frame_at(gpu, action, 0, Timing::Span(0.5))).collect(),
+        let glyph_frames =
+            |font: &mut Option<Option<SpriteSet>>, path: &str, glyphs: Vec<(usize, [f32; 2])>, timing: Timing| -> Vec<(Vec<actor::Placed>, [f32; 2])> {
+                match font.get_or_insert_with(|| SpriteSet::at(grf, path)) {
+                    Some(font) => glyphs.into_iter().map(|(action, at)| (font.frame_at(gpu, action, 0, timing), at)).collect(),
                     None => Vec::new(),
                 }
+            };
+        let counter = match game.pvp_rank.filter(|_| counting) {
+            Some((rank, players)) => {
+                glyph_frames(&mut game.rank_font, "data\\sprite\\이팩트\\rankfont", counter_glyphs(rank, players, SCREEN), Timing::Span(0.0))
             }
+            None => Vec::new(),
+        };
+        let first_place = game.first_since.filter(|_| counting && game.pvp_rank.is_some_and(|(_, players)| players > 1));
+        let clock = match first_place {
+            Some(since) => {
+                let glyphs = clock_glyphs(now.saturating_duration_since(since).as_secs());
+                let left = SCREEN[0] / 2.0 - 20.0 * glyphs.len() as f32;
+                let placed = glyphs.into_iter().enumerate().map(|(n, glyph)| (glyph, [left + n as f32 * 40.0, 40.0])).collect();
+                glyph_frames(&mut game.time_font, "data\\sprite\\이팩트\\timefont", placed, Timing::Span(0.0))
+            }
+            None => Vec::new(),
+        };
+        let banner = match first_place.map(|since| now.saturating_duration_since(since)).filter(|elapsed| *elapsed < FIRST_PLACE_BANNER) {
+            Some(elapsed) => glyph_frames(
+                &mut game.time_attack,
+                "data\\sprite\\이팩트\\timeattack",
+                vec![(0, [SCREEN[0] / 2.0, 120.0])],
+                Timing::Loop(elapsed.as_secs_f32() * 1000.0),
+            ),
             None => Vec::new(),
         };
         let slot_frame = match (&mut game.slot_sprite, game.slot) {
@@ -8799,19 +9189,23 @@ impl App {
                 base.sprites.push((emblem, [corner(line)[0] - guild::EMBLEM_SIZE[0] - 2.0, top], guild::EMBLEM_SIZE));
             }
         }
-        // ponytail: on a GvG map (not a battleground) each player's guild emblem over their head; where it sits is an
-        // estimate.
-        let siege = game.map_property.is_some_and(|(_, flags)| flags & net::MAP_SIEGE != 0 && flags & net::MAP_BATTLEFIELD == 0);
-        if siege {
-            let ours = game.guild.as_ref().map(|guild| (guild.id, player_feet));
-            let others = game.units.iter().filter(|(_, actor)| actor.kind == PLAYER && actor.guild != 0 && !actor.hidden);
-            let heads = others.filter_map(|(id, actor)| Some((actor.guild, *feet_of.get(id)?))).chain(ours);
-            for (guild_id, feet) in heads {
-                if let (Some(emblem), Some(point)) = (game.emblems.get(&guild_id).and_then(|(_, emblem)| emblem.as_ref()), sprite_point(feet, -overhead::HEAD))
-                {
-                    let size = guild::EMBLEM_SIZE;
-                    base.sprites.push((emblem, [(point[0] - size[0] / 2.0).round(), (point[1] - size[1] - 4.0).round()], size));
-                }
+        // On a siege map (not a battleground) other players in a guild, and the guardians, carry its emblem over their
+        // heads; it follows the unit but doesn't grow with the zoom.
+        game.head_emblems.clear();
+        if game.map_property.is_some_and(|(_, flags)| versus::siege(flags)) {
+            for (id, actor) in &game.units {
+                let wears = guild::wears_head_emblem(actor.kind == PLAYER, actor.job, actor.guild, actor.cloaked || actor.hidden, *id == game.account_id);
+                let Some(&feet) = feet_of.get(id).filter(|_| wears) else { continue };
+                let (Some(emblem), Some(at_feet), Some(above)) =
+                    (game.emblems.get(&actor.guild).and_then(|(_, emblem)| emblem.as_ref()), sprite_point(feet, 0.0), sprite_point(feet, -100.0))
+                else {
+                    continue;
+                };
+                // The unit's sprite scale: screen pixels a sprite pixel.
+                let scale = (at_feet[1] - above[1]) / 100.0;
+                let [left, top, right, bottom] = guild::head_emblem_box(at_feet, SCREEN, scale);
+                base.sprites.push((emblem, [left.round(), top.round()], guild::EMBLEM_SIZE));
+                game.head_emblems.push((actor.name.clone(), actor.guild, [left, top, right, bottom]));
             }
         }
         let ratio = |value: Option<&i64>, maximum: Option<&i64>| match (value, maximum) {
@@ -8981,6 +9375,8 @@ impl App {
         pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.grade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
+        pick_icons.extend(game.synthesis.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
+        pick_icons.extend(game.upgrade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.achievement_window.icons(achievement_info));
         pick_icons.extend(game.roulette.as_ref().map(|window| window.icons(items)).unwrap_or_default());
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
@@ -9357,6 +9753,12 @@ impl App {
         if let Some(window) = &game.materials {
             window.draw(&mut shop_layer, &assets.chrome, &assets.pick_list, icons, items, &game.inventory.items, messages, font, pointer);
         }
+        if let Some(window) = &game.synthesis {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
+        }
+        if let Some(window) = &game.upgrade {
+            window.draw(&mut shop_layer, &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
+        }
         if let Some(trade) = &game.trade {
             trade.draw(&mut shop_layer, &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);
         }
@@ -9469,6 +9871,17 @@ impl App {
         if let Some(setup) = &game.party_setup {
             setup.draw(&mut shop_layer, &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), messages, pointer);
         }
+        if let Some(board) = &game.ranking {
+            board.draw(&mut shop_layer, &assets.chrome, font, messages, &game.char_names, pointer.0);
+        }
+        if let Some(room) = &game.dressroom {
+            let feet = room.feet();
+            let figure = match &game.dress_figure {
+                Some(sprites) => dress_placements.iter().map(|(key, position, size)| (sprites.texture(*key), offset(feet, *position), *size)).collect(),
+                None => Vec::new(),
+            };
+            room.draw(&mut shop_layer, &assets.chrome, &assets.dressroom, font, messages, &game.dress_lists, figure, pointer);
+        }
         if let Some(window) = &game.audio_window {
             window.draw(&mut shop_layer, &assets.chrome, &assets.options, font, messages, sound, pointer.0);
         }
@@ -9521,30 +9934,11 @@ impl App {
                 },
             }
         });
-        if let Some(Some(font)) = &game.rank_font
-            && !rank_placed.is_empty()
-        {
-            // Each character's box from its parts, laid side by side, right-aligned.
-            let bounds = |placed: &[actor::Placed]| {
-                placed
-                    .iter()
-                    .fold([f32::MAX, f32::MIN, f32::MAX], |[left, right, top], (_, at, size)| [left.min(at[0]), right.max(at[0] + size[0]), top.min(at[1])])
-            };
-            let width: f32 = rank_placed
-                .iter()
-                .map(|placed| {
-                    let [left, right, _] = bounds(placed);
-                    (right - left) * RANK_SCALE
-                })
-                .sum();
-            let mut x = RANK_RIGHT - width;
-            for placed in &rank_placed {
-                let [left, right, top] = bounds(placed);
-                for (key, at, size) in placed {
-                    let corner = [x + (at[0] - left) * RANK_SCALE, RANK_TOP + (at[1] - top) * RANK_SCALE];
-                    sprites.push((font.texture(*key), corner, [size[0] * RANK_SCALE, size[1] * RANK_SCALE]));
+        for (font, frames) in [(&game.rank_font, &counter), (&game.time_font, &clock), (&game.time_attack, &banner)] {
+            if let Some(Some(font)) = font {
+                for (placed, anchor) in frames {
+                    sprites.extend(placed.iter().map(|(key, at, size)| (font.texture(*key), [anchor[0] + at[0], anchor[1] + at[1]], *size)));
                 }
-                x += (right - left) * RANK_SCALE;
             }
         }
         if let Some(sprite) = &game.slot_sprite {
@@ -9937,6 +10331,14 @@ fn main() {
     let pets = pet::Data::load(&grf);
     // ponytail: without the translation's achievements.lub the window lists nothing and names achievements by ID.
     let achievement_info = lua::achievements(&grf).unwrap_or_default();
+    let synthesis_boxes = lua::synthesis_boxes(&grf).unwrap_or_else(|error| {
+        eprintln!("no laphine synthesis table: {error}");
+        HashMap::new()
+    });
+    let upgrade_boxes = lua::upgrade_boxes(&grf).unwrap_or_else(|error| {
+        eprintln!("no laphine upgrade table: {error}");
+        HashMap::new()
+    });
     let title_names = lua::titles(&grf).unwrap_or_default();
     let job_names = lua::job_names(&grf).unwrap_or_else(|error| {
         eprintln!("no NPC/monster sprite names: {error}");
@@ -9982,6 +10384,8 @@ fn main() {
         job_names,
         pets,
         achievement_info,
+        synthesis_boxes,
+        upgrade_boxes,
         title_names,
         items,
         messages,
@@ -10111,9 +10515,32 @@ mod tests {
     }
 
     #[test]
-    fn spells_the_pvp_counter() {
-        assert_eq!(rank_frames(3, 12), [3, RANK_SLASH, 1, 2]);
-        assert_eq!(rank_frames(10, 100), [1, 0, RANK_SLASH, 1, 0, 0]);
+    fn places_the_pvp_counter() {
+        let screen = [1024.0, 768.0];
+        assert_eq!(counter_glyphs(3, 12, screen), [(3, [919.0, 718.0]), (GLYPH_SEPARATOR, [944.0, 728.0]), (1, [969.0, 738.0]), (2, [994.0, 738.0])]);
+        // A two-digit rank ends at the same place; the count stops at 9999.
+        let glyphs = counter_glyphs(12, 15_000, screen);
+        assert_eq!(&glyphs[..2], [(1, [894.0, 718.0]), (2, [919.0, 718.0])]);
+        assert_eq!(glyphs[3..].iter().map(|(digit, _)| *digit).collect::<Vec<_>>(), [9, 9, 9, 9]);
+    }
+
+    #[test]
+    fn spells_the_first_place_clock() {
+        let colon = GLYPH_SEPARATOR;
+        assert_eq!(clock_glyphs(59), [5, 9]);
+        assert_eq!(clock_glyphs(61), [0, 1, colon, 0, 1]);
+        assert_eq!(clock_glyphs(3 * 3600 + 2 * 60 + 1), [0, 3, colon, 0, 2, colon, 0, 1]);
+        assert_eq!(clock_glyphs(2 * 86_400), [0, 2, colon, 0, 0, colon, 0, 0, colon, 0, 0]);
+        assert_eq!(clock_glyphs(0), [0, 0]);
+    }
+
+    #[test]
+    fn tells_when_the_rank_crosses_the_top_ten() {
+        assert_eq!(rank_line(11, 10), Some(RANK_UP));
+        assert_eq!(rank_line(10, 11), Some(RANK_DOWN));
+        assert_eq!(rank_line(0, 11), Some(RANK_DOWN), "a first rank outside the top ten");
+        assert_eq!(rank_line(0, 3), Some(RANK_UP));
+        assert_eq!(rank_line(5, 3), None);
     }
 
     #[test]
