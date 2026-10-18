@@ -550,6 +550,8 @@ pub enum MapEvent {
     },
     /// Another player's equipment, as asked for.
     OtherEquipment(Equipped),
+    /// The pet window's automatic feeding box, as the server says.
+    PetAutoFeed(bool),
     /// The Show Equipment box: the server's answer to a click, or the saved state at a map change.
     ShowEquipment {
         shown: bool,

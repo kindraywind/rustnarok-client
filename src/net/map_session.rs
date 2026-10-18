@@ -294,6 +294,11 @@ impl MapSession {
     }
 
     /// The Show Equipment box: whether others may see what the player wears.
+    /// The pet window's automatic feeding box.
+    pub fn pet_auto_feed(&mut self, on: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_config(CONFIG_PET_AUTOFEED, on))
+    }
+
     pub fn show_equipment(&mut self, shown: bool) -> io::Result<()> {
         self.stream.write_all(&encode_config(CONFIG_OPEN_EQUIPMENT, shown))
     }

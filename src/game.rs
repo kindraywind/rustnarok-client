@@ -466,7 +466,7 @@ impl Game {
             Panel::Guild => self.guild.is_some() && self.guild_window.frame.local(cursor, self.guild_window.height()).is_some(),
             Panel::Clan => self.clan.is_some() && self.clan_window.frame.local(cursor, self.clan_window.height()).is_some(),
             Panel::Cart => self.cart.cart.is_some() && self.cart.hit(cursor).is_some(),
-            Panel::Pet => self.pet.as_ref().is_some_and(|pet| self.pet_window.hit(cursor, pet).is_some()),
+            Panel::Pet => self.pet.is_some() && self.pet_window.hit(cursor).is_some(),
             Panel::Mercenary => self.mercenary.is_some() && self.mercenary_window.hit(cursor).is_some(),
             Panel::MercenarySkills => self.mercenary.is_some() && self.mercenary_skill_list.hit(cursor, &self.mercenary_skills).is_some(),
             Panel::Homunculus => self.homunculus.as_ref().is_some_and(|homunculus| self.homunculus_window.hit(cursor, homunculus).is_some()),
@@ -1568,6 +1568,7 @@ impl Game {
             || self.party_dialog.as_ref().is_some_and(|dialog| dialog.typing)
             || self.reason_box.is_some()
             || self.storage.typing
+            || self.pet_window.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
             || self.talks.typing()
             || self.away_prompt.is_some()
@@ -1759,7 +1760,6 @@ impl Game {
             | Asked::VendPrice(_)
             | Asked::BuyingPrice(..)
             | Asked::BuyingAmount(_)
-            | Asked::PetName
             | Asked::HomunculusName
             | Asked::PositionTitle(_)
             | Asked::PositionTax(_)
@@ -1778,11 +1778,6 @@ impl Game {
         let name = amount.typed.trim();
         let _ = match amount.what {
             Asked::RoomPassword(id) => self.session.enter_chat_room(id, name),
-            // A name for the pet asks once more: it can be renamed only once.
-            Asked::PetName if !name.is_empty() => {
-                self.pet_asked = Some(PetAsked::Rename(name.to_owned()));
-                Ok(())
-            }
             // The message is in: the box goes where it was aimed (walking there first if need be).
             Asked::TalkieBox { level, cell } => {
                 self.talkie_text = Some(name.to_owned());
@@ -1795,7 +1790,7 @@ impl Game {
                 self.homunculus_rename = Some(name.to_owned());
                 Ok(())
             }
-            Asked::PetName | Asked::HomunculusName => Ok(()),
+            Asked::HomunculusName => Ok(()),
             // A position's title or tax: the request carries its other values as they are.
             Asked::PositionTitle(id) if !name.is_empty() => match &self.guild {
                 Some(guild) => self.session.change_position(&guild.position(id), name),
@@ -1886,7 +1881,6 @@ impl Game {
                 _ => self.session.drop_item(index, amount as u16),
             },
             Asked::RoomPassword(_)
-            | Asked::PetName
             | Asked::HomunculusName
             | Asked::PositionTitle(_)
             | Asked::PositionTax(_)
@@ -2479,7 +2473,7 @@ impl Game {
             return;
         }
         if self.pet_asked.is_some() {
-            self.answer_pet(false);
+            self.decline_pet();
             return;
         }
         if self.cashshop_buy_asked {
@@ -2672,7 +2666,7 @@ impl Game {
             PartyAsked | Notice => self.question_box = None,
             DismissAsked => self.answer_dismiss(false, &[]),
             HomunculusRename => self.answer_homunculus_name(false),
-            PetAsked => self.answer_pet(false),
+            PetAsked => self.decline_pet(),
             CashShopBuy => self.cashshop_buy_asked = false,
             GuildAsked => {
                 self.guild_asked = None;
@@ -2858,7 +2852,10 @@ impl Game {
             (Picking::SkillSelect(why), skill) => self.session.select_skill(why, skill.map_or(0, |skill| skill.id as u16)),
             (Picking::Upgrade, item) => self.session.upgrade_weapon(item.map_or(0, |item| u32::from(item.index))),
             // An egg list left unanswered is let go (rathena drops it on the next skill).
-            (Picking::Hatch, Some(egg)) => self.session.hatch(egg.index),
+            (Picking::Hatch, Some(egg)) => {
+                self.pet_window.egg = Some(egg.id);
+                self.session.hatch(egg.index)
+            }
             (Picking::Hatch, None) => Ok(()),
             (Picking::Merge, _) => self.session.cancel_merge(),
         };
@@ -2886,13 +2883,6 @@ impl Game {
         self.roulette = None;
     }
 
-    /// Opens the pet window (or brings it up) with fresh news of the pet.
-    pub(crate) fn open_pet_window(&mut self) {
-        self.pet_window.frame.open = true;
-        self.raise(Panel::Pet);
-        let _ = self.session.pet_command(net::PET_INFO);
-    }
-
     /// A command to the pet; sent back to its egg, it's gone and its window closes.
     pub(crate) fn pet_command(&mut self, command: u8) {
         let _ = self.session.pet_command(command);
@@ -2902,13 +2892,62 @@ impl Game {
         }
     }
 
-    /// Answers the pet question: OK feeds it, or renames it.
-    pub(crate) fn answer_pet(&mut self, yes: bool) {
-        let _ = match self.pet_asked.take() {
-            Some(PetAsked::Feed) if yes => self.session.pet_command(net::PET_FEED),
-            Some(PetAsked::Rename(name)) if yes => self.session.rename_pet(&name),
-            _ => Ok(()),
-        };
+    /// Feeding, from the command list or the menu: not while a mail is written, else asked first.
+    pub(crate) fn ask_feed(&mut self, messages: &[String]) {
+        if self.mail.compose.is_some() {
+            self.chat_line(messages.get(pet::FEED_WHILE_MAIL).cloned().unwrap_or_default(), CHAT_ERROR);
+        } else {
+            self.pet_asked = Some(PetAsked::Feed);
+        }
+    }
+
+    /// The pet window's rename button, on what the name box holds: turned down, or asked.
+    pub(crate) fn ask_rename(&mut self) {
+        let Some(pet) = &self.pet else { return };
+        let name = self.pet_window.name(pet).to_owned();
+        self.pet_window.typing = false;
+        self.pet_asked = Some(match pet::rename_refusal(&name) {
+            Some(why) => PetAsked::Refused(why),
+            None => PetAsked::Rename(name),
+        });
+    }
+
+    /// Answers the pet question. Feeding: not while trading; without the pet's food in the bag it says so and sends
+    /// nothing. Renaming: sent, the window shows the new name at once.
+    pub(crate) fn answer_pet(&mut self, yes: bool, pets: &pet::Data, items: &HashMap<u32, ItemInfo>, messages: &[String]) {
+        if !yes {
+            return self.decline_pet();
+        }
+        match self.pet_asked.take() {
+            Some(PetAsked::Feed) => {
+                let food = self.pet.as_ref().and_then(|pet| pets.tables.food.get(&pet.monster)).copied();
+                // ponytail: a pet the food table leaves out is fed, and the server decides.
+                let has_food = food.is_none_or(|food| self.inventory.items.iter().any(|item| item.id == food));
+                match pet::feeding(self.trade.is_some(), has_food) {
+                    pet::Feeding::Trading => self.chat_line(messages.get(pet::FEED_WHILE_TRADING).cloned().unwrap_or_default(), CHAT_ERROR),
+                    pet::Feeding::NoFood => {
+                        let name = inventory::item_name(items, food.unwrap_or_default(), true, 0);
+                        self.chat_line(rustnarok_client::messages::fill(messages.get(PET_NO_FOOD).map_or("", String::as_str), &[&name]), PET_NO_FOOD_COLOR);
+                    }
+                    pet::Feeding::Send => drop(self.session.pet_command(net::PET_FEED)),
+                }
+            }
+            Some(PetAsked::Rename(name)) => {
+                let _ = self.session.rename_pet(&name);
+                if let Some(pet) = &mut self.pet {
+                    pet.name = name;
+                }
+                self.pet_window.name_text = None;
+            }
+            Some(PetAsked::Refused(_)) | None => {}
+        }
+    }
+
+    /// No to the pet question: a refused rename puts the old name back in the box.
+    pub(crate) fn decline_pet(&mut self) {
+        if let Some(PetAsked::Rename(_)) = self.pet_asked.take() {
+            self.pet_window.name_text = None;
+        }
     }
 
     /// The mercenary is gone (dismissed, its contract over, dead): its windows close. On a map change the server sends
