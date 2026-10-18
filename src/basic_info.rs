@@ -80,6 +80,7 @@ pub struct Assets {
     /// The mail button while unread mail waits, and the achievement button while a reward waits.
     mail_new: Option<Texture>,
     achievement_new: Option<Texture>,
+    item_new: Option<Texture>,
 }
 
 impl Assets {
@@ -97,6 +98,7 @@ impl Assets {
             icons: MENU.iter().map(|name| gpu.try_load_texture(grf, &format!("{menu}bt_{name}.bmp"), false).ok()).collect(),
             mail_new: gpu.try_load_texture(grf, &format!("{menu}bt_mail_new.bmp"), false).ok(),
             achievement_new: gpu.try_load_texture(grf, &format!("{menu}bt_achievement_new.bmp"), false).ok(),
+            item_new: gpu.try_load_texture(grf, &format!("{menu}bt_item_new.bmp"), false).ok(),
         }
     }
 }
@@ -131,6 +133,8 @@ pub struct Info<'a> {
     pub status: &'a HashMap<u16, i64>,
     pub unread_mail: bool,
     pub reward_waiting: bool,
+    /// Something was picked up since the inventory was last open.
+    pub new_items: bool,
 }
 
 impl BasicInfo {
@@ -272,6 +276,7 @@ impl BasicInfo {
                 let icon = match MENU[button] {
                     "mail" if info.unread_mail => assets.mail_new.as_ref().or(icon.as_ref()),
                     "achievement" if info.reward_waiting => assets.achievement_new.as_ref().or(icon.as_ref()),
+                    "item" if info.new_items => assets.item_new.as_ref().or(icon.as_ref()),
                     _ => icon.as_ref(),
                 };
                 if let Some(icon) = icon {

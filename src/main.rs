@@ -85,6 +85,7 @@ mod party;
 mod pet;
 mod pick_list;
 mod picking;
+mod pickup;
 mod pin;
 mod quest;
 mod ranking;
@@ -828,6 +829,9 @@ struct Game {
     /// The ranking board while it's open, characters' names by ID as the server told them (None: it has none), and
     /// the names asked for.
     ranking: Option<ranking::Board>,
+    /// What was just picked up, for five seconds; and whether anything was since the inventory was last open.
+    pickup_popup: Option<pickup::Popup>,
+    new_items: bool,
     /// The Universal Catalog's store search while it's open.
     catalog: Option<catalog::Catalog>,
     char_names: HashMap<u32, Option<String>>,
@@ -2643,6 +2647,7 @@ struct Assets {
     weather: weather::Assets,
     dressroom: dressroom::Assets,
     catalog: catalog::Assets,
+    pickup: pickup::Assets,
     battle_queue: battle_queue::Assets,
     mercenary: mercenary::Assets,
     homunculus: homunculus::Assets,
@@ -2757,6 +2762,7 @@ impl Assets {
             weather: weather::Assets::load(gpu, grf),
             dressroom: dressroom::Assets::load(gpu, grf),
             catalog: catalog::Assets::load(gpu, grf),
+            pickup: pickup::Assets::load(gpu, grf),
             battle_queue: battle_queue::Assets::load(gpu, grf, &lua::entry_queue(grf).unwrap_or_default()),
             mercenary: mercenary::Assets::load(gpu, grf),
             homunculus: homunculus::Assets::load(gpu, grf),
@@ -2876,6 +2882,14 @@ fn remember_id(id: Option<&str>) {
         Some(id) => path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&path, id)),
         None => std::fs::remove_file(&path),
     };
+}
+
+/// An item's name without its slot count ("Knife [3]" -> "Knife").
+fn without_slots(name: &str) -> &str {
+    match name.strip_suffix(']').and_then(|rest| rest.rsplit_once(" [")) {
+        Some((bare, slots)) if slots.chars().all(|digit| digit.is_ascii_digit()) => bare.trim_end(),
+        _ => name,
+    }
 }
 
 /// A message's last sentence (after its last ". "), or all of it.
@@ -6426,6 +6440,8 @@ impl App {
                     dressroom: None,
                     ranking: None,
                     catalog: None,
+                    pickup_popup: None,
+                    new_items: false,
                     char_names: HashMap::new(),
                     names_asked: HashSet::new(),
                     dress_figure: None,
@@ -7219,13 +7235,20 @@ impl App {
             MapEvent::PickedUp { result, item } => {
                 let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
                 let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
-                match result {
-                    0 => {
-                        game.chat_line(messages::fill(&message(messages::GOT_ITEM), &[&name, &item.amount]), CHAT_ITEM);
-                        game.inventory.add(item);
+                let held = game.inventory.get(item.index).map_or(0, |held| held.amount);
+                match pickup::obtained(result, item.amount, held) {
+                    Some(amount) => {
+                        let line = messages::fill(&message(messages::GOT_ITEM), &[&name, &amount]);
+                        // The popup: the name without its slot count, how many came, the icon.
+                        let text = format!("{}{}", without_slots(&name), messages::fill(&message(pickup::OBTAINED), &[&amount]));
+                        let icon = self.items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)).unwrap_or_default();
+                        game.pickup_popup = Some(pickup::Popup::new(text, icon, self.font.width(&line), control::now()));
+                        game.new_items = true;
+                        game.chat_line(line, CHAT_ITEM);
+                        game.inventory.add(net::InventoryItem { amount, ..item });
                     }
-                    2 => game.chat_line(message(messages::CANT_CARRY_WEIGHT), CHAT_ERROR),
-                    _ => game.chat_line(message(messages::CANT_CARRY), CHAT_ERROR),
+                    None if result == 2 => game.chat_line(message(messages::CANT_CARRY_WEIGHT), CHAT_ERROR),
+                    None => game.chat_line(message(messages::CANT_CARRY), CHAT_ERROR),
                 }
             }
             // The inventory again: what broke since says so; the out pet's egg (marked broken) stays hidden.
@@ -10041,6 +10064,7 @@ impl App {
             trade_icons.extend(vend::icons(items, store.items.iter().map(|item| (item.item_id, true))));
         }
         trade_icons.extend(game.mail.icons(items));
+        trade_icons.extend(game.pickup_popup.as_ref().map(|popup| popup.icon.clone()).filter(|icon| !icon.is_empty()));
         trade_icons.extend(game.catalog.as_ref().map(|catalog| catalog.icons(items)).unwrap_or_default());
         for path in skill_icons.chain(status_paths).chain(shop_icons).chain(pick_icons).chain(game.storage.icons(items)).chain(trade_icons) {
             icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, false).ok());
@@ -10052,6 +10076,13 @@ impl App {
         let size = [game.world.gat.width as u32, game.world.gat.height as u32];
         // NPC marks blink, shown half of each second.
         game.marks.retain(|(.., until)| until.is_none_or(|until| until > now));
+        // The pickup popup's five seconds; an open inventory has been seen.
+        if game.pickup_popup.as_ref().is_some_and(|popup| !popup.alive(control::now())) {
+            game.pickup_popup = None;
+        }
+        if game.inventory.frame.open {
+            game.new_items = false;
+        }
         let blink_on = game.entered.elapsed().as_millis() % 1000 > 500;
         let marks: Vec<_> = game.marks.iter().filter(|_| blink_on).map(|(_, cell, color, _)| (*cell, color)).collect();
         // Party members on this map, each in a color of their own, picked at random.
@@ -10127,6 +10158,11 @@ impl App {
         game.announcements.prepare(gpu, font);
         let mut announce_layer = Layer::default();
         game.announcements.draw(&mut announce_layer);
+        // The pickup popup takes no clicks.
+        if let Some(popup) = &game.pickup_popup {
+            let icon = icons.get(&popup.icon).and_then(Option::as_ref);
+            popup.draw(&mut announce_layer, &assets.chrome, &assets.pickup, icon, font);
+        }
         // Weather over the map, under the names and windows.
         let mut weather_layer = Layer::default();
         if self.graphics.effects_on {
@@ -10172,6 +10208,7 @@ impl App {
                         status: &game.status,
                         unread_mail: game.mail.unread,
                         reward_waiting: game.achievements.values().any(|achievement| achievement::claimable(Some(achievement))),
+                        new_items: game.new_items,
                     };
                     game.basic_info.draw(&mut layer, &assets.chrome, &assets.basic_info, font, messages, &info, pointer.0);
                 }
