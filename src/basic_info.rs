@@ -42,7 +42,8 @@ const EXP_FILL: [u8; 4] = [0x42, 0x62, 0xA5, 0xFF];
 const RED: [u8; 3] = [0xFF, 0x00, 0x00];
 
 /// The menu's buttons in order (menu_icon\bt_<name>.bmp).
-pub const MENU: [&str; 20] = [
+// ponytail: the cash shop follows the existing menu entries; the official order is unknown.
+pub const MENU: [&str; 21] = [
     "status",
     "equip",
     "item",
@@ -63,6 +64,7 @@ pub const MENU: [&str; 20] = [
     "attendance",
     "adventureragency",
     "repute",
+    "shop",
 ];
 
 pub struct Assets {
@@ -169,6 +171,21 @@ impl BasicInfo {
             Hit::Title | Hit::Window => {}
         }
         None
+    }
+
+    pub fn menu_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        if !self.frame.open || !self.menu_open || self.frame.minimized {
+            return Vec::new();
+        }
+        MENU.iter()
+            .enumerate()
+            .map(|(button, &name)| {
+                let place = self
+                    .frame
+                    .at([MENU_ICON[0] + (button % MENU_COLUMNS) as f32 * MENU_CELL, MENU_TOP + MENU_ICON[1] + (button / MENU_COLUMNS) as f32 * MENU_CELL]);
+                (name, [place[0], place[1], MENU_CELL, MENU_CELL])
+            })
+            .collect()
     }
 
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, font: &Font, messages: &[String], info: &Info, cursor: [f32; 2]) {

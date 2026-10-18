@@ -82,6 +82,8 @@ pub enum Action {
     Close,
 }
 
+pub type BuyRequest = (u32, Vec<(u32, u32, u16)>);
+
 pub struct CashShop {
     pub cash_points: u32,
     pub free_points: u32,
@@ -154,7 +156,7 @@ impl CashShop {
         self.set_free_spend(self.free_to_spend);
     }
 
-    pub fn buy_request(&self, confirmed: bool) -> Option<(u32, Vec<(u32, u32, u16)>)> {
+    pub fn buy_request(&self, confirmed: bool) -> Option<BuyRequest> {
         (confirmed && !self.cart.is_empty()).then(|| (self.free_to_spend, self.cart.iter().map(|&(item, amount, tab, _)| (item, amount, tab)).collect()))
     }
 
@@ -307,12 +309,12 @@ impl CashShop {
             None => layer.sprites.push((&assets.fill, at([0.0, TITLE_HEIGHT]), [WIDTH, HEIGHT - TITLE_HEIGHT])),
         }
         let hit = self.hit(pointer.0);
-        for tab in 0..self.tabs.len() {
+        for (tab, &message_id) in TAB_MESSAGES.iter().enumerate().take(self.tabs.len()) {
             let place = offset(TABS, [tab as f32 * TAB_SIZE[0], 0.0]);
             if let Some(texture) = if tab == self.selected_tab { assets.tab_on.as_ref() } else { assets.tab.as_ref() } {
                 layer.sprites.push((texture, at(place), TAB_SIZE));
             }
-            let label = message(TAB_MESSAGES[tab]);
+            let label = message(message_id);
             let color = if self.tabs[tab].is_empty() { GREY } else { [0, 0, 0] };
             layer.texts.push((label.to_owned(), at(offset(place, [(TAB_SIZE[0] - font.width(label)) / 2.0, 5.0])), color));
         }

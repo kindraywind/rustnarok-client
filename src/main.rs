@@ -607,6 +607,10 @@ struct Game {
     boss: Option<(String, [i32; 2])>,
     viewing: Option<Viewed>,
     bank: Option<bank::Bank>,
+    cashshop: Option<cashshop::CashShop>,
+    cashshop_lists: Vec<Vec<(u32, u32)>>,
+    cashshop_list_requested: bool,
+    cashshop_buy_asked: bool,
     trade_asked: Option<(String, u32, u16)>,
     trade_with: String,
     /// The status window, and its height (its background's).
@@ -1456,6 +1460,8 @@ impl Game {
             || self.escape.is_some()
             || self.world_map.is_some()
             || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
+            || self.cashshop_buy_asked
             || self.item_window.as_ref().is_some_and(|window| window.hit(cursor, items).is_some())
             || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
             || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
@@ -1806,6 +1812,13 @@ impl Game {
         if let Some(kind) = self.shop.take().and_then(|shop| shop.market) {
             let _ = self.session.close_market(kind);
         }
+    }
+
+    fn close_cashshop(&mut self) {
+        if self.cashshop.take().is_some() {
+            let _ = self.session.close_cashshop();
+        }
+        self.cashshop_buy_asked = false;
     }
 
     /// The answer to a pick list: the row picked, or None to cancel.
@@ -2182,6 +2195,7 @@ struct Assets {
     trade: trade::Assets,
     refine: refine::Assets,
     bank: bank::Assets,
+    cashshop: cashshop::Assets,
     context_menu: menu::Assets,
     weather: weather::Assets,
     mercenary: mercenary::Assets,
@@ -2286,6 +2300,7 @@ impl Assets {
             trade: trade::Assets::load(gpu, grf),
             refine: refine::Assets::load(gpu, grf),
             bank: bank::Assets::load(gpu, grf),
+            cashshop: cashshop::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
             weather: weather::Assets::load(gpu, grf),
             mercenary: mercenary::Assets::load(gpu, grf),
@@ -3404,6 +3419,18 @@ impl App {
                     }
                 }
             }
+            // A cash shop purchase: OK sends the cart.
+            Scene::Game(game) if game.cashshop_buy_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, accept) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
+                        game.cashshop_buy_asked = false;
+                        if let Some((free, items)) = game.cashshop.as_ref().and_then(|shop| shop.buy_request(accept)) {
+                            let _ = game.session.buy_cashshop(free, &items);
+                        }
+                    }
+                }
+            }
             // Someone wants to be friends: OK or cancel.
             Scene::Game(game) if game.friend_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
@@ -3451,6 +3478,15 @@ impl App {
                         let _ = game.session.close_bank(account);
                         game.bank = None;
                     }
+                    None => {}
+                }
+            }
+            Scene::Game(game) if game.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some()) => {
+                let shop = game.cashshop.as_mut().unwrap();
+                let hit = shop.hit(cursor).unwrap();
+                match shop.click(hit) {
+                    Some(cashshop::Action::Buy) => game.cashshop_buy_asked = true,
+                    Some(cashshop::Action::Close) => game.close_cashshop(),
                     None => {}
                 }
             }
@@ -3618,6 +3654,9 @@ impl App {
                             // The bank opens when the server says so: it answers in its own words where banking is off.
                             Some("bank") => {
                                 let _ = game.session.open_bank(game.account_id);
+                            }
+                            Some("shop") => {
+                                let _ = game.session.open_cashshop(0);
                             }
                             Some("achievement") => game.achievement_window.frame.toggle(),
                             Some("mail") => {
@@ -4725,6 +4764,12 @@ impl App {
             Scene::Game(game) if game.pet_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_pet(*key == Key::Named(NamedKey::Enter));
             }
+            Scene::Game(game) if game.cashshop_buy_asked && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.cashshop_buy_asked = false;
+                if let Some((free, items)) = game.cashshop.as_ref().and_then(|shop| shop.buy_request(*key == Key::Named(NamedKey::Enter))) {
+                    let _ = game.session.buy_cashshop(free, &items);
+                }
+            }
             Scene::Game(game) if game.amount.is_some() => match key {
                 Key::Named(NamedKey::Enter) => game.answer_amount(true, &self.messages),
                 Key::Named(NamedKey::Escape) => game.answer_amount(false, &self.messages),
@@ -4806,6 +4851,14 @@ impl App {
                     _ => {}
                 }
             }
+            Scene::Game(game) if game.cashshop.as_ref().is_some_and(|shop| shop.typing) => {
+                let shop = game.cashshop.as_mut().unwrap();
+                match key {
+                    Key::Named(NamedKey::Enter | NamedKey::Escape) => shop.typing = false,
+                    Key::Named(NamedKey::Backspace) => shop.backspace(),
+                    _ => shop.type_text(event.text.as_deref().unwrap_or_default()),
+                }
+            }
             Scene::Game(game) if game.bank.as_ref().is_some_and(|bank| bank.typing) => {
                 let bank = game.bank.as_mut().unwrap();
                 match key {
@@ -4848,6 +4901,7 @@ impl App {
                 Key::Named(NamedKey::Escape) if game.world_map.is_some() => game.world_map = None,
                 Key::Named(NamedKey::Escape) if game.pick.is_some() => game.answer_pick(None),
                 Key::Named(NamedKey::Escape) if game.capturing => game.capturing = false,
+                Key::Named(NamedKey::Escape) if game.cashshop.is_some() => game.close_cashshop(),
                 Key::Named(NamedKey::Escape) if game.roulette.is_some() => game.close_roulette(),
                 Key::Named(NamedKey::Escape) if game.monster_window.is_some() => game.monster_window = None,
                 Key::Named(NamedKey::Escape) if game.targeting.is_some() => game.targeting = None,
@@ -5222,6 +5276,10 @@ impl App {
                     boss: None,
                     viewing: None,
                     bank: None,
+                    cashshop: None,
+                    cashshop_lists: vec![Vec::new(); 9],
+                    cashshop_list_requested: false,
+                    cashshop_buy_asked: false,
                     trade_asked: None,
                     trade_with: String::new(),
                     menu: None,
@@ -5535,6 +5593,38 @@ impl App {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
             }
+            MapEvent::CashShopOpen { cash, free, tab } => {
+                let mut shop = cashshop::CashShop::new(cash, free);
+                shop.tabs.clone_from(&game.cashshop_lists);
+                if usize::try_from(tab).ok().is_some_and(|tab| tab < shop.tabs.len() && !shop.tabs[tab].is_empty()) {
+                    shop.selected_tab = tab as usize;
+                }
+                game.cashshop = Some(shop);
+                if !game.cashshop_list_requested {
+                    game.cashshop_list_requested = true;
+                    let _ = game.session.request_cashshop_list();
+                }
+            }
+            MapEvent::CashShopList { tab, items } => {
+                if let Some(list) = usize::try_from(tab).ok().and_then(|tab| game.cashshop_lists.get_mut(tab)) {
+                    list.extend(items.iter().copied());
+                }
+                if let Some(shop) = &mut game.cashshop {
+                    shop.append(tab, items);
+                    if shop.tabs[shop.selected_tab].is_empty()
+                        && let Some(first) = shop.tabs.iter().position(|items| !items.is_empty())
+                    {
+                        shop.selected_tab = first;
+                    }
+                }
+            }
+            MapEvent::CashShopBuyResult { result, cash, free, .. } => {
+                if let Some(shop) = &mut game.cashshop {
+                    shop.clear_cart_on_success(result, cash, free);
+                }
+                let id = cashshop::buy_result_message(result);
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 0 { CHAT_ITEM } else { CHAT_ERROR });
+            }
             // Another player's equipment: their window with their figure, its weapon and shield from what they wear.
             MapEvent::OtherEquipment(equipped) => {
                 let held = |location: u32| equipped.items.iter().find(|(item, _)| item.worn & location != 0).map_or(0, |(_, look)| u32::from(*look));
@@ -5694,6 +5784,7 @@ impl App {
                 game.player.revive();
                 // The NPC is left behind: its shop and its buy-or-sell question close (the server doesn't say so).
                 game.close_shop();
+                game.close_cashshop();
                 // rathena forgets the refine window on a map change; the material window and the roulette go too.
                 game.refine = None;
                 game.roulette = None;
@@ -7421,7 +7512,6 @@ impl App {
                 game.attack_range = i32::from(range);
                 game.attack_from(target, cell.map(i32::from), target_cell.map(i32::from));
             }
-            MapEvent::CashShopOpen { .. } | MapEvent::CashShopList { .. } | MapEvent::CashShopBuyResult { .. } => {}
             MapEvent::Entered { .. } => unreachable!("handled above"),
             MapEvent::Disconnected(_) => self.message(self.messages.get(DISCONNECTED_MESSAGE).cloned().unwrap_or_default(), Scene::Login),
         }
@@ -8217,7 +8307,8 @@ impl App {
             .chain(game.hotkeys.keys.iter().flatten().filter(|key| key.skill).filter_map(|key| skill_info.get(&(key.id as u16)).map(skills::icon_path)));
         let status_paths =
             game.status_icons.iter().filter_map(|(kind, ..)| status_icon_files.get(kind).map(|(_, file)| format!("data\\texture\\effect\\{file}")));
-        let shop_icons = game.shop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default();
+        let mut shop_icons = game.shop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default();
+        shop_icons.extend(game.cashshop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default());
         let mut pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
         pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
@@ -8552,6 +8643,9 @@ impl App {
             let carried = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
             bank.draw(&mut shop_layer, &assets.chrome, &assets.bank, messages, font, pointer, caret, carried);
         }
+        if let Some(shop) = &game.cashshop {
+            shop.draw(&mut shop_layer, &assets.chrome, &assets.cashshop, icons, items, messages, font, pointer, caret);
+        }
         if let Some(viewed) = &game.viewing {
             let window = &viewed.window;
             window.draw(
@@ -8585,6 +8679,19 @@ impl App {
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             let lines = [format!("({name}){}", message(TRADE_ASKS)), format!("PN: {}     Lv.{level}", trade::id_code(*id))];
             for (row, line) in lines.into_iter().enumerate() {
+                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
+        if game.cashshop_buy_asked
+            && let Some(shop) = &game.cashshop
+        {
+            let dialog = dialog_position(&assets.message);
+            shop_layer.sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
+            let cash = shop.cart_total().saturating_sub(shop.free_to_spend);
+            let question = messages::fill(message(1312), &[&cash, &shop.free_to_spend]);
+            for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }
