@@ -142,6 +142,30 @@ pub fn parse_palette(bytes: &[u8]) -> Option<Palette> {
     Some(palette)
 }
 
+/// An .imf file (data\imf\<job>_<sex>.imf): by action and frame, whether a player's head goes behind its body. It
+/// holds a priority per layer (0 the body, 1 the head), action and frame; the higher one is drawn first.
+pub fn parse_imf(bytes: &[u8]) -> io::Result<Vec<Vec<bool>>> {
+    let mut reader = Reader { bytes, position: 0 };
+    let (_version, _checksum, last_layer) = (reader.f32()?, reader.i32()?, reader.i32()?);
+    let mut layers = Vec::new();
+    for _ in 0..=last_layer.clamp(0, 1) {
+        let actions = reader.i32()?.max(0);
+        let mut priorities = Vec::new();
+        for _ in 0..actions {
+            let mut frames = Vec::new();
+            for _ in 0..reader.i32()?.max(0) {
+                frames.push(reader.i32()?);
+                // A point not needed for the order.
+                reader.take(8)?;
+            }
+            priorities.push(frames);
+        }
+        layers.push(priorities);
+    }
+    let [body, head] = <[_; 2]>::try_from(layers).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "IMF without a head layer"))?;
+    Ok(body.iter().zip(&head).map(|(body, head)| body.iter().zip(head).map(|(body, head)| head > body).collect()).collect())
+}
+
 #[derive(Debug, Clone)]
 pub struct Layer {
     /// Image center relative to the entity's feet.
@@ -302,5 +326,23 @@ mod tests {
         let shift = head_shift(standing, &head_act.actions[0][0]);
         let head_placements = place(&head, &head_act.actions[0][0], shift);
         assert!(head_placements.iter().all(|placement| placement.position[1] < placements[0].position[1] + 10.0));
+    }
+
+    #[test]
+    fn reads_which_frames_put_the_head_behind() {
+        // Two layers, two actions: the body first everywhere but in action 1's second frame.
+        let mut bytes = [1.01f32.to_le_bytes(), 0i32.to_le_bytes(), 1i32.to_le_bytes()].concat();
+        let layers: [[&[i32]; 2]; 2] = [[&[1], &[1, 0]], [&[0], &[0, 1]]];
+        for priorities in layers {
+            bytes.extend(2i32.to_le_bytes());
+            for frames in priorities {
+                bytes.extend((frames.len() as i32).to_le_bytes());
+                for &priority in frames {
+                    bytes.extend([priority, 0, 0].iter().flat_map(|value| value.to_le_bytes()));
+                }
+            }
+        }
+        assert_eq!(parse_imf(&bytes).unwrap(), [vec![false], vec![false, true]]);
+        assert!(parse_imf(&bytes[..bytes.len() - 4]).is_err());
     }
 }
