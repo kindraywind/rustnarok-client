@@ -1056,6 +1056,9 @@ fn game_state(app: &App, game: &Game) -> Value {
             "direction": game.player.direction,
             "moving": game.player.moving(),
             "casting": game.casts.contains_key(&None),
+            // The attack asked for with the mouse (null: none), kept up or only while held.
+            "attack": game.attack.map(|attack| json!({"target": attack.target, "continuous": attack.continuous})),
+            "no_ctrl": game.no_ctrl,
             // The last cell a mouse walk went to, and how many have gone out.
             "walk_goal": game.walk_goal,
             "walks": game.walks,
