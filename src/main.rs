@@ -516,11 +516,7 @@ const CHARM_NAMES: [&str; 4] = ["water", "earth", "fire", "wind"];
 /// Heal, Highness Heal and Coluceo Heal report how much they healed.
 const HEAL_SKILLS: [u16; 3] = [28, 2043, 2044];
 const CAST_BAR: [f32; 2] = [60.0, 6.0];
-/// Status icons down the right side, 32px a row of 36, columns 45 apart.
-const STATUS_TOP: f32 = 166.0;
-const STATUS_RIGHT: f32 = 20.0;
-const STATUS_ICON: f32 = 32.0;
-const STATUS_STEP: [f32; 2] = [45.0, 36.0];
+const STATUS_ICON: f32 = status_tip::ICON;
 /// Steps of the clock drawn over a status icon.
 const CLOCK_STEPS: usize = 32;
 /// A skill still blocked: "There is a Delay after using a Skill.", and the words after a cooldown's seconds left.
@@ -11717,19 +11713,15 @@ impl App {
         };
         minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.player.cell, game.player.direction, &marks, &dots, boss);
         // Status icons down the right, each with the clock of its time (orange in the last minute).
-        let per_column = ((SCREEN[1] - STATUS_TOP) / STATUS_STEP[1]) as usize;
         let shown = game.status_icons.iter().filter_map(|(kind, start, end)| {
             let (_, file) = status_icon_files.get(kind)?;
             Some((*kind, icons.get(&format!("data\\texture\\effect\\{file}"))?.as_ref()?, start, end))
         });
         game.status_tip = None;
         for (order, (kind, icon, start, end)) in shown.enumerate() {
-            let corner = [
-                SCREEN[0] - STATUS_RIGHT - STATUS_ICON - (order / per_column) as f32 * STATUS_STEP[0],
-                STATUS_TOP + (order % per_column) as f32 * STATUS_STEP[1],
-            ];
+            let corner = status_tip::icon_corner(order, SCREEN);
             // Pointed at: what it is and the time it has left, in a box at its left, rebuilt each frame.
-            if contains(corner, [STATUS_ICON; 2], pointer.0)
+            if status_tip::on_icon(corner, pointer.0)
                 && let Some(info) = state_infos.get(&kind)
             {
                 let left = end.filter(|_| info.time_limit).map(|end| end.saturating_duration_since(now).as_secs());

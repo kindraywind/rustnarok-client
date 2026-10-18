@@ -1,5 +1,5 @@
-//! What a status icon says when pointed at: its name in its colour, its description, and the time it has left, in a
-//! small dark box beside the icon.
+//! Status icons: where each sits down the right side, and what one says when pointed at (its name in its colour, its
+//! description, and the time it has left, in a small dark box beside it).
 
 use rustnarok_client::lua::StateInfo;
 use rustnarok_client::messages;
@@ -13,6 +13,28 @@ const UNITS: [usize; 3] = [1697, 1807, 1808];
 const PLAIN: [u8; 3] = [255, 255, 255];
 /// Padding left and on top, and between lines.
 const PAD: [f32; 2] = [6.0, 4.0];
+
+/// A status icon's size, and the grid: 45 between columns, 35 between rows, from (W - 48, 169).
+pub const ICON: f32 = 32.0;
+const STEP: [f32; 2] = [45.0, 35.0];
+const FIRST: [f32; 2] = [48.0, 169.0];
+
+/// Rows in a column on a screen this high: a column ends when 150 + 35 * row reaches the height less 50.
+pub fn rows(height: f32) -> usize {
+    ((height - 50.0 - 150.0) / STEP[1]).ceil().max(1.0) as usize
+}
+
+/// The `order`th icon's box corner (columns right to left, rows top down).
+// ponytail: icons go in the order they came; the game sorts them in five priority passes from its icon table.
+pub fn icon_corner(order: usize, [width, height]: [f32; 2]) -> [f32; 2] {
+    let per = rows(height);
+    [width - FIRST[0] - (order / per) as f32 * STEP[0], FIRST[1] + (order % per) as f32 * STEP[1]]
+}
+
+/// Whether the pointer is on an icon whose box is at `corner`: 30 by 30, from its left edge and one pixel up.
+pub fn on_icon(corner: [f32; 2], pointer: [f32; 2]) -> bool {
+    (corner[0]..corner[0] + 30.0).contains(&pointer[0]) && pointer[1] > corner[1] - 1.0 && pointer[1] <= corner[1] + 29.0
+}
 
 /// The time left as the tooltip says it: hours, minutes and seconds, each left out when 0.
 pub fn time_text(messages: &[String], seconds: u64) -> String {
@@ -84,6 +106,21 @@ mod tests {
         );
         // No time limit: no time line.
         assert_eq!(lines(&blessing, None, &messages).len(), 2);
+    }
+
+    #[test]
+    fn lays_icons_on_the_games_grid() {
+        // 17 to a column at 768 high, 12 at 600; the 18th starts a column 45 to the left.
+        assert_eq!((rows(768.0), rows(600.0)), (17, 12));
+        assert_eq!(icon_corner(0, [1024.0, 768.0]), [976.0, 169.0]);
+        assert_eq!(icon_corner(16, [1024.0, 768.0]), [976.0, 169.0 + 16.0 * 35.0]);
+        assert_eq!(icon_corner(17, [1024.0, 768.0]), [931.0, 169.0]);
+        assert_eq!(icon_corner(16, [800.0, 600.0]), [707.0, 169.0 + 4.0 * 35.0]);
+        assert_eq!(icon_corner(17, [800.0, 600.0]), [707.0, 169.0 + 5.0 * 35.0]);
+        // The hit box: x in [976, 1006), y in (168, 198].
+        let corner = icon_corner(0, [1024.0, 768.0]);
+        assert!(on_icon(corner, [976.0, 198.0]) && on_icon(corner, [1005.9, 168.5]));
+        assert!(!on_icon(corner, [1006.0, 180.0]) && !on_icon(corner, [980.0, 168.0]) && !on_icon(corner, [980.0, 198.5]));
     }
 
     #[test]

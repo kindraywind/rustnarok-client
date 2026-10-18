@@ -1,0 +1,100 @@
+{
+  "about": "Status icons on the game's grid (issue #213): a test NPC (status-icons.txt) starts twenty buffs (nineteen with icons here); their icons stand 32x32 from (W - 48, 169), 35 apart, 17 to a column at 768 high, the rest in a second column 45 to the left. Pointing at the second column's first icon shows its tooltip. The NPC ends them and is unloaded.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@unloadnpcfile {scenarios}/status-icons.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {scenarios}/status-icons.txt"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokIcons"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "buffs"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "status_icons.18.left_ms": 1000
+        }
+      }
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "status-icons",
+      "crop": [
+        860,
+        150,
+        164,
+        618
+      ],
+      "threshold": 5
+    },
+    {
+      "move": [
+        945,
+        182
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "status-icons-tip",
+      "crop": [
+        660,
+        150,
+        364,
+        200
+      ],
+      "threshold": 5
+    },
+    {
+      "type": "clear"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@unloadnpcfile {scenarios}/status-icons.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}
