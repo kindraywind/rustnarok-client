@@ -434,6 +434,9 @@ pub struct MeshVertex {
 
 pub struct World {
     pub gat: Gat,
+    /// RSM 2 instances whose tracks play, and the buffer they're posed into each frame.
+    animated: Vec<Animated>,
+    animated_buffer: Option<wgpu::Buffer>,
     /// How many RSM 2 model instances stand on the map.
     pub rsm_2_models: usize,
     /// The map's ambient sound sources.
@@ -497,7 +500,27 @@ impl World {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let (model_vertices, model_draws, model_texture_names, rsm_2_models) = model_mesh(grf, &rsw, &gnd);
+        let (model_vertices, model_draws, model_texture_names, rsm_2_models, mut animated) = model_mesh(grf, &rsw, &gnd);
+        // The moving models' buffer: each instance's triangles in their order, its draws by texture.
+        let mut moving = 0u32;
+        for instance in &mut animated {
+            instance.draws = std::mem::take(&mut instance.runs)
+                .into_iter()
+                .map(|(texture, count)| {
+                    let range = moving..moving + count;
+                    moving += count;
+                    (texture, range)
+                })
+                .collect();
+        }
+        let animated_buffer = (moving > 0).then(|| {
+            gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("moving models"),
+                size: u64::from(moving) * std::mem::size_of::<GroundVertex>() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
         let model_textures = model_texture_names
             .iter()
             .map(|name| {
@@ -652,6 +675,8 @@ impl World {
         let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
         let ambient = crate::ambient::Ambient::new(rsw.sounds.iter().map(|source| crate::ambient::Source::placed(source, half)).collect());
         Ok(Self {
+            animated,
+            animated_buffer,
             rsm_2_models,
             ambient,
             gat,
@@ -830,6 +855,14 @@ impl WorldPass for WorldFrame<'_> {
                 pass.draw(range.clone(), 0..1);
             }
         }
+        if let Some(buffer) = &world.animated_buffer {
+            pass.set_pipeline(&world.model_pipeline);
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            for (texture, range) in world.animated.iter().flat_map(|instance| &instance.draws) {
+                pass.set_bind_group(1, world.model_textures[*texture].bind_group(), &[]);
+                pass.draw(range.clone(), 0..1);
+            }
+        }
         if let Some((buffer, frames, frames_per_change)) = &world.water
             && !frames.is_empty()
         {
@@ -967,52 +1000,136 @@ fn ground_mesh(gnd: &Gnd, columns: usize, atlas_size: [f32; 2]) -> (Vec<GroundVe
 
 /// Every RSW model instance baked into world space, grouped by texture; returns vertices, draws and texture names.
 /// Models' vertices, the ranges of them each texture draws, and the textures.
-/// Also how many RSM 2 instances were placed.
-type ModelMesh = (Vec<GroundVertex>, Vec<(usize, Range<u32>)>, Vec<String>, usize);
+/// A model read once for a map, with its triangles at rest.
+type LoadedModel = (std::rc::Rc<Rsm>, Vec<model::Triangle>);
+
+/// Also how many RSM 2 instances were placed, and those that move, apart.
+type ModelMesh = (Vec<GroundVertex>, Vec<(usize, Range<u32>)>, Vec<String>, usize, Vec<Animated>);
+
+/// An RSM 2 instance whose tracks play: its model, where it stands, its clock, and its triangles' order (by texture)
+/// and draws in the animated buffer.
+pub struct Animated {
+    rsm: std::rc::Rc<Rsm>,
+    placement: model::Matrix,
+    anim_type: i32,
+    speed: f32,
+    start: Option<std::time::Instant>,
+    order: Vec<usize>,
+    /// The texture and vertex count of each run of its ordered triangles, then those runs' places in the buffer.
+    runs: Vec<(usize, u32)>,
+    draws: Vec<(usize, Range<u32>)>,
+}
+
+impl World {
+    /// How many RSM 2 instances move on this map.
+    pub fn rsm_2_moving(&self) -> usize {
+        self.animated.len()
+    }
+
+    /// Poses the moving RSM 2 models for `now`: each on its own clock (started the first time it's drawn), instances of
+    /// a model at the same frame posed once.
+    pub fn animate(&mut self, gpu: &Gpu, now: std::time::Instant) {
+        let Some(buffer) = &self.animated_buffer else { return };
+        let mut vertices = Vec::new();
+        let mut posed: HashMap<(*const Rsm, u32), Vec<model::Triangle>> = HashMap::new();
+        for instance in &mut self.animated {
+            let start = *instance.start.get_or_insert(now);
+            let elapsed = now.saturating_duration_since(start).as_millis() as u64;
+            let (frame, again) = model::clock(elapsed, instance.speed, instance.anim_type, instance.rsm.frames, instance.rsm.fps);
+            if again {
+                instance.start = Some(now);
+            }
+            let triangles = posed.entry((std::rc::Rc::as_ptr(&instance.rsm), frame.to_bits())).or_insert_with(|| instance.rsm.triangles_at(frame));
+            for &triangle in &instance.order {
+                if let Some(triangle) = triangles.get(triangle) {
+                    vertices.extend(placed_vertices(&instance.placement, triangle));
+                }
+            }
+        }
+        gpu.queue.write_buffer(buffer, 0, bytemuck::cast_slice(&vertices));
+    }
+}
+
+/// Where an RSW model instance stands: its scale, then Ry, Rx and Rz, then its position (moved by `half` from the
+/// map's centre). RSM 2's y flip and RSM 1's centring come before, in the model's triangles.
+fn placement(instance: &rustnarok_client::map::Model, half: [f32; 2]) -> model::Matrix {
+    let [rx, ry, rz] = instance.rotation.map(f32::to_radians);
+    [
+        model::translation([instance.position[0] + half[0], instance.position[1], instance.position[2] + half[1]]),
+        model::rotation([0.0, 0.0, 1.0], rz),
+        model::rotation([1.0, 0.0, 0.0], rx),
+        model::rotation([0.0, 1.0, 0.0], ry),
+        model::scaling(instance.scale),
+    ]
+    .iter()
+    .fold(model::IDENTITY, |matrix, next| model::multiply(&matrix, next))
+}
+
+/// A triangle's three vertices placed in the world (y up), with its face normal.
+fn placed_vertices(placement: &model::Matrix, triangle: &model::Triangle) -> [GroundVertex; 3] {
+    // Native space has Y down; the world has Y up.
+    let positions = triangle.positions.map(|position| {
+        let [x, y, z] = model::transform(placement, position);
+        [x, -y, z]
+    });
+    let normal = normalize(cross(subtract(positions[1], positions[0]), subtract(positions[2], positions[0])));
+    std::array::from_fn(|corner| GroundVertex { position: positions[corner], normal, uv: triangle.uvs[corner], lightmap_uv: [0.0; 2], color: [1.0; 4] })
+}
 
 fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
     let mut texture_index: HashMap<String, usize> = HashMap::new();
     let mut per_texture: Vec<Vec<GroundVertex>> = Vec::new();
-    let mut models: HashMap<&str, Option<(Rsm, Vec<model::Triangle>)>> = HashMap::new();
+    let mut models: HashMap<&str, Option<LoadedModel>> = HashMap::new();
     // RSW positions are relative to the map's center.
     let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
     let mut rsm_2 = 0;
+    let mut animated = Vec::new();
 
     for instance in &rsw.models {
         let entry = models.entry(instance.file.as_str()).or_insert_with(|| {
             let rsm = Rsm::parse(&grf.read(&format!("data\\model\\{}", instance.file)).ok()?).ok()?;
             let triangles = rsm.triangles();
-            Some((rsm, triangles))
+            Some((std::rc::Rc::new(rsm), triangles))
         });
         let Some((rsm, triangles)) = entry else { continue };
         rsm_2 += usize::from(rsm.version >= (2, 0));
 
-        let [rx, ry, rz] = instance.rotation.map(f32::to_radians);
-        let placement = [
-            model::translation([instance.position[0] + half[0], instance.position[1], instance.position[2] + half[1]]),
-            model::rotation([0.0, 0.0, 1.0], rz),
-            model::rotation([1.0, 0.0, 0.0], rx),
-            model::rotation([0.0, 1.0, 0.0], ry),
-            model::scaling(instance.scale),
-        ]
-        .iter()
-        .fold(model::IDENTITY, |matrix, next| model::multiply(&matrix, next));
+        let placement = placement(instance, half);
 
-        for triangle in triangles.iter() {
-            let name = &rsm.textures[triangle.texture];
-            let texture = *texture_index.entry(name.clone()).or_insert_with(|| {
+        let mut texture_of = |name: &String, per_texture: &mut Vec<Vec<GroundVertex>>| {
+            *texture_index.entry(name.clone()).or_insert_with(|| {
                 per_texture.push(Vec::new());
                 per_texture.len() - 1
-            });
-            // Native space has Y down; the world has Y up.
-            let positions = triangle.positions.map(|position| {
-                let [x, y, z] = model::transform(&placement, position);
-                [x, -y, z]
-            });
-            let normal = normalize(cross(subtract(positions[1], positions[0]), subtract(positions[2], positions[0])));
-            for (position, uv) in positions.into_iter().zip(triangle.uvs) {
-                per_texture[texture].push(GroundVertex { position, normal, uv, lightmap_uv: [0.0; 2], color: [1.0; 4] });
+            })
+        };
+        // RSM 2 that plays (a type and tracks that move) is posed again each frame, in a buffer of its own.
+        if instance.anim_type != 0 && rsm.animated() {
+            let textures: Vec<usize> = rsm.textures.iter().map(|name| texture_of(name, &mut per_texture)).collect();
+            let mut order: Vec<usize> = (0..triangles.len()).collect();
+            order.sort_by_key(|&triangle| textures[triangles[triangle].texture]);
+            let mut runs: Vec<(usize, u32)> = Vec::new();
+            for &triangle in &order {
+                let texture = textures[triangles[triangle].texture];
+                match runs.last_mut() {
+                    Some((last, count)) if *last == texture => *count += 3,
+                    _ => runs.push((texture, 3)),
+                }
             }
+            animated.push(Animated {
+                rsm: rsm.clone(),
+                placement,
+                anim_type: instance.anim_type,
+                speed: instance.anim_speed,
+                start: None,
+                order,
+                runs,
+                draws: Vec::new(),
+            });
+            continue;
+        }
+        for triangle in triangles.iter() {
+            let texture = texture_of(&rsm.textures[triangle.texture], &mut per_texture);
+            per_texture[texture].extend(placed_vertices(&placement, triangle));
         }
     }
 
@@ -1027,7 +1144,7 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
         vertices.extend(triangles);
         draws.push((texture, start..vertices.len() as u32));
     }
-    (vertices, draws, names, rsm_2)
+    (vertices, draws, names, rsm_2, animated)
 }
 
 /// Cells walked from `from` to `to` (excluding `from`), 8-directional; diagonals need both sides open, as on the server.
@@ -1133,6 +1250,28 @@ pub fn direction(step: [i32; 2]) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn places_an_rsm_2_vertex_without_centring() {
+        // One vertex 1 up (model y is down, so -1) and 2 east, in a file whose origin is the vertex's base: the y flip
+        // makes it 1 down in native space, then the instance doubles it, turns it a quarter about y and moves it.
+        let instance = rustnarok_client::map::Model {
+            name: String::new(),
+            file: "a.rsm2".into(),
+            position: [10.0, 0.0, 20.0],
+            rotation: [0.0, 90.0, 0.0],
+            scale: [2.0; 3],
+            anim_type: 0,
+            anim_speed: 1.0,
+        };
+        let matrix = placement(&instance, [100.0, 200.0]);
+        let flipped = [2.0, 1.0, 0.0];
+        let [x, y, z] = model::transform(&matrix, flipped);
+        assert!((x - 110.0).abs() < 1e-3 && (y - 2.0).abs() < 1e-3 && (z - 216.0).abs() < 1e-3, "{x} {y} {z}");
+        // In the world (y up) it stands 2 below the native y, as every model does.
+        let triangle = model::Triangle { texture: 0, positions: [flipped; 3], uvs: [[0.0; 2]; 3] };
+        assert_eq!(placed_vertices(&matrix, &triangle)[0].position[1], -y);
+    }
 
     #[test]
     fn walks_as_close_as_it_can() {

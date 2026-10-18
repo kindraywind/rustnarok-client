@@ -85,6 +85,9 @@ pub struct Model {
     /// Degrees.
     pub rotation: [f32; 3],
     pub scale: [f32; 3],
+    /// How it plays its animation (0 none, 1 once, 2 looping) and how fast.
+    pub anim_type: i32,
+    pub anim_speed: f32,
 }
 
 /// An ambient sound source (an RSW type-3 object): a wav played every `cycle` seconds from a box `width` × `height`
@@ -160,19 +163,21 @@ impl Rsw {
         for _ in 0..reader.i32()?.max(0) {
             match reader.i32()? {
                 1 => {
-                    let name = if version >= (1, 3) {
+                    let (name, anim_type, anim_speed) = if version >= (1, 3) {
                         let name = reader.string(40)?;
-                        reader.take(12)?; // animation type, animation speed, block type
-                        name
+                        let (anim_type, anim_speed) = (reader.i32()?, reader.f32()?);
+                        reader.i32()?; // block type
+                        (name, anim_type, anim_speed)
                     } else {
-                        String::new()
+                        (String::new(), 0, 0.0)
                     };
                     if version >= (2, 6) && build >= 186 {
                         reader.u8()?;
                     }
                     let file = reader.string(80)?;
                     reader.string(80)?; // node name
-                    models.push(Model { name, file, position: reader.vector()?, rotation: reader.vector()?, scale: reader.vector()? });
+                    let (position, rotation, scale) = (reader.vector()?, reader.vector()?, reader.vector()?);
+                    models.push(Model { name, file, position, rotation, scale, anim_type, anim_speed });
                 }
                 // Light sources and effects aren't drawn yet; their sizes are fixed.
                 2 => drop(reader.take(80 + 12 + 12 + 4)?),
