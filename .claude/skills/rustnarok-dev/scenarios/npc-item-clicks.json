@@ -7,7 +7,7 @@
     {"say": "@itemreset"}, {"wait": 800},
     {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/merge.txt"}, {"wait": 500},
     {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/merge.txt"}, {"wait": 1000},
-    {"click_on": {"cell": [163, 180]}}, {"wait": 150},
+    {"click_on": {"cell": [156, 173]}}, {"wait": 150},
     {"click_unit": {"kind": "npc", "name": "Merge Test"}}, {"wait": 800},
     {"expect": {"no_chat": "Merge items available"}},
     {"wait": 2000},
