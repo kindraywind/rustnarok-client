@@ -151,6 +151,9 @@ lead's call, 2026-10-18).
    issue on GitHub (drag it into the comment box); never commit it.
 2. Check the protocol facts against rathena before planning; plan before writing code.
 3. Branch off a fresh `origin/main` (or `lane.sh new`), build, run `verify.sh` until `VERIFY: PASS`.
+   A rebase or merge that stops on a conflict in a file whose code has moved to other files (as main.rs's methods
+   did to `input.rs`, `events.rs`, `draw.rs` and `game.rs`): `python3 -I tools/port-moved.py <that file>` applies
+   your hunks wherever that code is now.
 4. QA in the client: the fix, then try to break it (edges, Esc, resizing, other windows open, the second account).
    Screenshot before and after.
 5. Open the PR answering the three questions, each with evidence:
