@@ -1,5 +1,5 @@
 {
-  "about": "A homunculus (issue #46): @makehomun makes a Lif, which shows and follows; the window (Alt+R); feeding; @homlevel gives a skill point and the skill list raises Healing Hands; Alt+Shift + right click sends it at a Poring; Alt+T stops it following; vaporizing it shows. RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's homunculus (rathena's `homunculus` and `skill_homunculus` rows, and `char.homun_id` set to 0), or @makehomun is refused.",
+  "about": "A homunculus (issue #46): @makehomun makes a Lif, which shows and follows; the window (Alt+R) at the game's layout; feeding after its question; a new name typed into the name box asks first (No keeps the old one); @homlevel gives a skill point and the skill list raises Healing Hands; Alt+Shift + right click sends it at a Poring; Alt+T stops it following; vaporizing it shows. RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's homunculus (rathena's `homunculus` and `skill_homunculus` rows, and `char.homun_id` set to 0), or @makehomun is refused.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -79,6 +79,19 @@
       }
     },
     {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "HomunculusAsked"
+        ]
+      }
+    },
+    {
+      "key": "Enter"
+    },
+    {
       "wait_for": {
         "packet": "0x022f",
         "ms": 5000
@@ -91,6 +104,79 @@
       "expect": {
         "state": {
           "homunculus.hunger": 60
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "homunculus_name"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "type": "Leaf"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "rename"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "HomunculusAsked"
+        ]
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "homunculus-rename",
+      "crop": [
+        140,
+        90,
+        600,
+        600
+      ],
+      "threshold": 20
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "HomunculusAsked"
+        ],
+        "state": {
+          "homunculus.name": "Lif"
         }
       }
     },

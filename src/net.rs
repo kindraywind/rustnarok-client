@@ -1164,8 +1164,10 @@ const CZ_RENAME_MER: u16 = 0x0231;
 pub const HOMUNCULUS_OWNED: u8 = 0;
 pub const HOMUNCULUS_INTIMACY: u8 = 1;
 pub const HOMUNCULUS_HUNGER: u8 = 2;
-/// CZ_COMMAND_MER's feed.
+/// CZ_COMMAND_MER's commands: its status, feed it, delete it.
+pub const HOMUNCULUS_STATUS: u8 = 0;
 pub const HOMUNCULUS_FEED: u8 = 1;
+pub const HOMUNCULUS_DELETE: u8 = 2;
 /// ZC_HO_PAR_CHANGE2's kinds.
 pub const HOMUNCULUS_EXP: u16 = 1;
 pub const HOMUNCULUS_HP: u16 = 5;
@@ -1264,6 +1266,8 @@ const HIDE_COSTUMES: u32 = 0x3C00;
 const CZ_UNINSTALLATION: u16 = 0x0B35;
 /// CZ_CONFIG's setting for a pet eating by itself (rathena's CONFIG_PET_AUTOFEED).
 const CONFIG_PET_AUTOFEED: u32 = 2;
+/// The same for the homunculus (rathena's CONFIG_HOMUNCULUS_AUTOFEED).
+const CONFIG_HOMUNCULUS_AUTOFEED: u32 = 3;
 const CZ_REQ_OPEN_BANKING: u16 = 0x09B6;
 const ZC_ACK_OPEN_BANKING: u16 = 0x09B7;
 const CZ_REQ_BANKING_CHECK: u16 = 0x09AB;

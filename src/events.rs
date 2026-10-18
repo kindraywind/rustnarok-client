@@ -564,8 +564,8 @@ impl App {
                     homunculus_window: homunculus::Window::default(),
                     homunculus_skill_list: homunculus::SkillList::default(),
                     homunculus_steering: mercenary::Steering::default(),
-                    homunculus_rename: None,
-                    homunculus_hunger: None,
+                    homunculus_asked: None,
+                    homunculus_warned: None,
                     vend_setup: None,
                     vend_size: vend::GridSize::default(),
                     my_shop: None,
@@ -1745,19 +1745,24 @@ impl App {
                 }
             }
             MapEvent::HomunculusState { state: net::HOMUNCULUS_HUNGER, value, .. } => {
+                // Only the full status says "starving".
                 let hunger = value.min(u32::from(u16::MAX)) as u16;
-                if homunculus::starving_now(game.homunculus_hunger, hunger) {
-                    game.chat_line(self.messages.get(homunculus::STARVING).cloned().unwrap_or_default(), CHAT_ERROR);
-                }
-                game.homunculus_hunger = Some(hunger);
                 if let Some(homunculus) = &mut game.homunculus {
                     homunculus.hunger = hunger;
                 }
             }
             MapEvent::HomunculusState { .. } => {}
             MapEvent::HomunculusInfo(info) => {
-                game.homunculus_hunger = Some(info.hunger);
+                if homunculus::starving_now(game.homunculus_warned, info.hunger) {
+                    game.homunculus_warned = Some(info.hunger);
+                    game.chat_line(self.messages.get(homunculus::STARVING).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
                 game.homunculus = Some(info);
+            }
+            MapEvent::HomunculusAutoFeed(on) => {
+                game.homunculus_window.auto_feed = on;
+                let line = self.messages.get(if on { homunculus::AUTO_FEED_ON } else { homunculus::AUTO_FEED_OFF });
+                game.chat_line(line.cloned().unwrap_or_default(), homunculus::AUTO_FEED_COLOR);
             }
             MapEvent::HomunculusChanged { kind, value } => {
                 if let Some(homunculus) = &mut game.homunculus {
@@ -1774,12 +1779,17 @@ impl App {
                 }
                 None => game.homunculus_skills.push(update),
             },
-            // ponytail: the table has no homunculus line for this; the pet's "food not available" says it.
-            MapEvent::HomunculusFed { ok: false, food } => {
+            // Fed: the food and how many are left (rathena takes it before it answers); not fed: what it eats.
+            MapEvent::HomunculusFed { ok, food } => {
                 let name = inventory::item_name(&self.items, food, true, 0);
-                game.chat_line(messages::fill(self.messages.get(PET_NO_FOOD).map_or("", String::as_str), &[&name]), CHAT_ERROR);
+                let message = |id: usize| self.messages.get(id).map_or("", String::as_str);
+                if ok {
+                    let left: u32 = game.inventory.items.iter().filter(|item| item.id == food).map(|item| u32::from(item.amount)).sum();
+                    game.chat_line(messages::fill(message(homunculus::FED), &[&name, &left]), homunculus::FED_COLOR);
+                } else {
+                    game.chat_line(messages::fill(message(homunculus::NOT_FED), &[&name]), homunculus::NOT_FED_COLOR);
+                }
             }
-            MapEvent::HomunculusFed { ok: true, .. } => {}
             MapEvent::MercenaryInfo(hired) => game.mercenary = Some(hired),
             MapEvent::ElementalInfo { id, values } => game.elemental = Some((id, values)),
             MapEvent::ElementalChanged { kind, value } => {

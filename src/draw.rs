@@ -1746,7 +1746,8 @@ impl App {
                 }
                 Panel::Homunculus => {
                     if let Some(homunculus) = &game.homunculus {
-                        game.homunculus_window.draw(&mut layer, &assets.chrome, &assets.homunculus, font, messages, homunculus, pointer);
+                        let blink = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+                        game.homunculus_window.draw(&mut layer, &assets.chrome, &assets.homunculus, font, messages, homunculus, pointer, blink);
                     }
                 }
                 Panel::HomunculusSkills => {
@@ -2100,7 +2101,12 @@ impl App {
         // colors.
         let colored_question = match (game.expansion_asked, &game.pet_asked) {
             _ if game.dismiss_asked => Some(message(mercenary::DISMISS_QUESTION).to_owned()),
-            _ if game.homunculus_rename.is_some() => Some(messages::fill(message(homunculus::RENAME_QUESTION), &[game.homunculus_rename.as_ref().unwrap()])),
+            _ if game.homunculus_asked.is_some() => Some(match game.homunculus_asked.as_ref().unwrap() {
+                HomunculusAsked::Feed => message(homunculus::FEED_ASKS).to_owned(),
+                HomunculusAsked::Delete => message(homunculus::DELETE_ASKS).to_owned(),
+                HomunculusAsked::Rename(name) => messages::fill(message(homunculus::RENAME_ASKS), &[name]),
+                HomunculusAsked::Refused(why) => message(*why).to_owned(),
+            }),
             _ if game.leader_asked.is_some() => Some(message(LEADER_QUESTION).to_owned()),
             _ if game.bind_asked.is_some() => Some(message(BIND_ASKS).to_owned()),
             (Some(voucher), _) => {

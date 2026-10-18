@@ -299,6 +299,11 @@ impl MapSession {
         self.stream.write_all(&encode_config(CONFIG_PET_AUTOFEED, on))
     }
 
+    /// The homunculus window's automatic feeding box.
+    pub fn homunculus_auto_feed(&mut self, on: bool) -> io::Result<()> {
+        self.stream.write_all(&encode_config(CONFIG_HOMUNCULUS_AUTOFEED, on))
+    }
+
     pub fn show_equipment(&mut self, shown: bool) -> io::Result<()> {
         self.stream.write_all(&encode_config(CONFIG_OPEN_EQUIPMENT, shown))
     }

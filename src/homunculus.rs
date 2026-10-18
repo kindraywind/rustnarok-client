@@ -1,4 +1,5 @@
-//! The player's homunculus: its window (Alt+R), its skill list, the words for its hunger and intimacy.
+//! The player's homunculus: its window (Alt+R), its skill list, the words for its intimacy, when it says it's
+//! starving.
 
 use std::collections::HashMap;
 
@@ -7,40 +8,42 @@ use rustnarok_client::lua::SkillInfo;
 use rustnarok_client::net::{Homunculus, Skill};
 use rustnarok_client::text::Font;
 
-use crate::mercenary::{
-    BACKGROUND_HEIGHT, BACKGROUND_TOP, BARS, BUTTON, FOOTER, LOWER_ROWS, RIGHT_LABEL, RIGHT_VALUE, TEXT, UPPER_ROWS, WIDTH, draw_background, draw_bars,
-    draw_values, load_bars, right_text,
-};
+use crate::mercenary::draw_values;
 use crate::render::{Gpu, Texture};
-use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
+use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, messages, offset, screen, skills};
 
 const TITLE: usize = 936;
 const SKILLS_TITLE: usize = 937;
-const NAME: usize = 282;
+const NAME: usize = 407;
 const SKILL_POINTS: usize = 284;
 const LEVEL: usize = 408;
 const HUNGER: usize = 585;
 const INTIMACY: usize = 586;
 const EXP: usize = 1019;
-/// " Very Hungry" to " Stuffed", by hunger band.
-const HUNGER_WORDS: [usize; 5] = [667, 668, 669, 670, 671];
-/// The message of the starving line.
+/// "receives 10% of master's experience", red in the white band.
+const NOTE: usize = 3284;
+const NOTE_COLOR: [u8; 3] = [0xFF, 0, 0];
+/// The automatic feeding box's two-line label.
+const AUTO_FEED: usize = 3279;
+/// The starving line.
 pub const STARVING: usize = 1018;
-/// The question before a rename, and the name box's text.
-pub const RENAME_QUESTION: usize = 939;
-pub const RENAME_PROMPT: usize = 938;
-
-/// The message naming how full it is.
-pub fn hunger_word(hunger: u16) -> usize {
-    match hunger {
-        91.. => HUNGER_WORDS[4],
-        76..=90 => HUNGER_WORDS[3],
-        26..=75 => HUNGER_WORDS[2],
-        11..=25 => HUNGER_WORDS[1],
-        _ => HUNGER_WORDS[0],
-    }
-}
+/// A new name: too long, or holding an item link (boxes); else asked with the name.
+pub const NAME_TOO_LONG: usize = 938;
+pub const RENAME_ASKS: usize = 2977;
+pub const FEED_ASKS: usize = 601;
+pub const DELETE_ASKS: usize = 955;
+/// Feeding refused while trading.
+pub const FEED_WHILE_TRADING: usize = 3551;
+/// Fed: "[food] - n remaining", cyan; not fed, red.
+pub const FED: usize = 3281;
+pub const FED_COLOR: [u8; 3] = [0x64, 0xFF, 0xFF];
+pub const NOT_FED: usize = 591;
+pub const NOT_FED_COLOR: [u8; 3] = [0xF5, 0x1E, 0x1E];
+/// The server's word on automatic feeding: on, off.
+pub const AUTO_FEED_ON: usize = 3282;
+pub const AUTO_FEED_OFF: usize = 3283;
+pub const AUTO_FEED_COLOR: [u8; 3] = [0xFF, 0xFF, 0x64];
 
 /// The message naming how fond it is (rathena's `intimacy_grades`, divided by 100).
 pub fn intimacy_word(intimacy: u16) -> usize {
@@ -55,105 +58,199 @@ pub fn intimacy_word(intimacy: u16) -> usize {
     }
 }
 
-/// Whether a hunger update says "starving" now: it's at 10 or less and wasn't before.
-// ponytail: when the official client says it isn't knowable; once per fall to 10 or less.
-pub fn starving_now(previous: Option<u16>, hunger: u16) -> bool {
-    hunger <= 10 && previous.is_none_or(|previous| previous > 10)
+/// Whether the homunculus's full status says "starving": hunger at exactly 1, 5 or 10, and not the hunger last
+/// warned about.
+pub fn starving_now(warned: Option<u16>, hunger: u16) -> bool {
+    matches!(hunger, 1 | 5 | 10) && warned != Some(hunger)
 }
 
-// ponytail: the layout off the background (the buttons on a footer bar, the words in place of the bars) is an estimate.
-const VAPORIZED: &str = "Vaporized";
-const DEAD: &str = "Dead";
-const BUTTON_GAP: f32 = 4.0;
+/// Places from the window's corner (its title bar included).
+const WIDTH: f32 = 280.0;
+const HEIGHT: f32 = 208.0;
+const POSITION: [f32; 2] = [150.0, 100.0];
+/// The white band under the background, and the note in it.
+const BAND_TOP: f32 = 168.0;
+const NOTE_AT: [f32; 2] = [8.0, 180.0];
+const LABEL: f32 = 100.0;
+const VALUE: f32 = 135.0;
+const NAME_TOP: f32 = 24.0;
+const NAME_BOX: [f32; 4] = [135.0, 22.0, 80.0, 16.0];
+const LEVEL_TOP: f32 = 47.0;
+const BUTTON: [f32; 2] = [42.0, 20.0];
+const RENAME: [f32; 2] = [232.0, 21.0];
+const DELETE: [f32; 2] = [187.0, 44.0];
+const SKILLS: [f32; 2] = [232.0, 44.0];
+const FEED: [f32; 2] = [210.0, 105.0];
+const FEED_SIZE: [f32; 2] = [64.0, 20.0];
+/// HP and SP: 157 × 9 each; the fill's left end is 4 px, its middle starts there.
+const HP_BAR: [f32; 2] = [117.0, 73.0];
+const SP_BAR: [f32; 2] = [117.0, 88.0];
+const BAR: [f32; 2] = [157.0, 9.0];
+const FILL_END: f32 = 4.0;
+const EXP_TOP: f32 = 105.0;
+const EXP_RIGHT: f32 = 205.0;
+const EXP_BAR: [f32; 4] = [101.0, 119.0, 102.0, 6.0];
+const HUNGER_TOP: f32 = 131.0;
+const HUNGER_RIGHT: f32 = 200.0;
+const HUNGER_BAR: [f32; 4] = [101.0, 145.0, 102.0, 6.0];
+const AUTO_BOX: [f32; 2] = [210.0, 142.0];
+const CHECK: [f32; 2] = [12.0, 12.0];
+const AUTO_LABEL: [f32; 2] = [225.0, 136.0];
+const INTIMACY_TOP: f32 = 159.0;
+const COLON: f32 = 140.0;
+const WORD: f32 = 150.0;
+const TEXT: [u8; 3] = [0, 0, 0];
+const BAR_FRAME: [u8; 4] = [0xAF, 0xAF, 0xAF, 0xFF];
+const BAR_BLUE: [u8; 4] = [0x56, 0x7F, 0xCF, 0xFF];
+const BAR_RED: [u8; 4] = [0xFF, 0x00, 0x00, 0xFF];
+/// The exp a level with no next one asks for.
+const NO_NEXT: i64 = 99_999_999;
 
 pub struct Assets {
     background: Option<Texture>,
-    /// Blue and red bars' left, middle and right.
-    bars: [[Texture; 3]; 2],
-    footer: Texture,
+    /// The HP and SP bars' track, blue and red fills: left, middle, right.
+    track: [Texture; 3],
+    fills: [[Texture; 3]; 2],
     /// Normal, hovered, pressed.
-    feed: [Texture; 3],
-    skill: [Texture; 3],
     rename: [Texture; 3],
+    delete: [Texture; 3],
+    skill: [Texture; 3],
+    feed: [Texture; 3],
+    check: [Texture; 2],
+    bar_frame: Texture,
+    bar_blue: Texture,
+    bar_red: Texture,
 }
 
 impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
-        let basic = format!("{UI}basic_interface\\");
+        let basic = |name: &str| gpu.load_texture(grf, &format!("{UI}basic_interface\\{name}.bmp"), false);
         let button = |name: &str| ["", "_a", "_b"].map(|suffix| gpu.load_texture(grf, &format!("{UI}btn_{name}{suffix}.bmp"), false));
+        let pieces = |color: &str| ["left", "mid", "right"].map(|part| basic(&format!("gze{color}_{part}")));
         Self {
-            background: gpu.try_load_texture(grf, &format!("{basic}homuninfo_bg.bmp"), false).ok(),
-            bars: load_bars(gpu, grf),
-            footer: gpu.load_texture(grf, &format!("{basic}btnbar_mid2.bmp"), false),
-            feed: button("feed"),
-            skill: button("skill"),
+            background: gpu.try_load_texture(grf, &format!("{UI}basic_interface\\homuninfo_bg.bmp"), false).ok(),
+            track: ["gze_bg_left", "gze_bg_mid", "gze_bg_right"].map(basic),
+            fills: [pieces("blue"), pieces("red")],
             rename: button("rewrite"),
+            delete: button("del"),
+            skill: button("skill"),
+            feed: button("feed"),
+            check: ["checkbox_0", "checkbox_1"].map(|name| gpu.load_texture(grf, &format!("{UI}{name}.bmp"), false)),
+            bar_frame: gpu.solid(BAR_FRAME),
+            bar_blue: gpu.solid(BAR_BLUE),
+            bar_red: gpu.solid(BAR_RED),
         }
     }
 }
 
+/// An HP or SP bar: nothing past its maximum; else the track, and unless the maximum or the value is 0, the fill's
+/// middle width and whether it's red (under a quarter).
+#[derive(Debug, PartialEq)]
+pub enum Gauge {
+    Hidden,
+    Empty,
+    Filled(f32, bool),
+}
+
+pub fn gauge(value: u32, most: u32) -> Gauge {
+    if value > most {
+        Gauge::Hidden
+    } else if value == 0 || most == 0 {
+        Gauge::Empty
+    } else {
+        let middle = ((BAR[0] - 2.0 * FILL_END) * value as f32 / most as f32).trunc();
+        Gauge::Filled(middle, u64::from(value) * 4 < u64::from(most))
+    }
+}
+
+/// The numbers over an HP or SP bar: three wide, two spaces each side of the slash.
+pub fn gauge_text(value: u32, most: u32) -> String {
+    format!("{value:>3}  /  {most:>3}")
+}
+
+/// The exp bar's fill width, or None when there's no bar: exp past the next level's, or no next level.
+pub fn exp_fill(exp: i64, next: i64) -> Option<f32> {
+    (exp <= next && next != 0 && next != NO_NEXT).then(|| ((EXP_BAR[2] - 2.0) * exp.max(0) as f32 / next as f32).trunc())
+}
+
+/// The hunger bar's fill width and whether it's red (under 25), or None past 100.
+pub fn hunger_fill(hunger: u16) -> Option<(f32, bool)> {
+    (hunger <= 100).then(|| (((HUNGER_BAR[2] - 2.0) * f32::from(hunger) / 100.0).trunc(), hunger < 25))
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Hit {
-    Title(TitleHit),
-    Feed,
-    Skills,
+    Close,
     Rename,
+    /// The name box: typing goes to it.
+    NameBox,
+    Delete,
+    Skills,
+    Feed,
+    AutoFeed,
+    /// Anywhere else: the window drags from it.
     Window,
 }
 
 pub struct Window {
     pub frame: Frame,
+    /// The name box's text once it's been typed in (None: the homunculus's name), and whether typing goes to it.
+    pub name_text: Option<String>,
+    pub typing: bool,
+    /// The automatic feeding box, as the server last said.
+    pub auto_feed: bool,
 }
 
 impl Default for Window {
     fn default() -> Self {
-        Self { frame: Frame::new([((screen()[0] - WIDTH) / 2.0).floor() + 120.0, 170.0], WIDTH) }
+        Self { frame: Frame::new(POSITION, WIDTH), name_text: None, typing: false, auto_feed: false }
     }
 }
 
 impl Window {
     pub fn height() -> f32 {
-        BACKGROUND_TOP + BACKGROUND_HEIGHT + FOOTER
+        HEIGHT
     }
 
-    /// A button's corner: feed, skill and rename from the left.
-    fn button_at(slot: usize) -> [f32; 2] {
-        [8.0 + slot as f32 * (BUTTON[0] + BUTTON_GAP), BACKGROUND_TOP + BACKGROUND_HEIGHT + 4.0]
+    /// The name the box shows: what's typed, else the homunculus's.
+    pub fn name<'a>(&'a self, homunculus: &'a Homunculus) -> &'a str {
+        self.name_text.as_deref().unwrap_or(&homunculus.name)
     }
 
-    /// The buttons on screen (for the test driver): rename only until it has been renamed.
-    pub fn button_boxes(&self, homunculus: &Homunculus) -> Vec<(&'static str, [f32; 4])> {
-        if !self.frame.open || self.frame.minimized {
+    const PARTS: [(Hit, [f32; 2], [f32; 2]); 6] = [
+        (Hit::Rename, RENAME, BUTTON),
+        (Hit::NameBox, [NAME_BOX[0], NAME_BOX[1]], [NAME_BOX[2], NAME_BOX[3]]),
+        (Hit::Delete, DELETE, BUTTON),
+        (Hit::Skills, SKILLS, BUTTON),
+        (Hit::Feed, FEED, FEED_SIZE),
+        (Hit::AutoFeed, AUTO_BOX, CHECK),
+    ];
+
+    /// The buttons and boxes on screen (for the test driver).
+    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        if !self.frame.open {
             return Vec::new();
         }
-        let place = |slot: usize| {
-            let [x, y] = self.frame.at(Self::button_at(slot));
-            [x, y, BUTTON[0], BUTTON[1]]
-        };
-        let mut boxes = vec![("feed", place(0)), ("skill", place(1))];
-        if !homunculus.renamed() {
-            boxes.push(("rename", place(2)));
-        }
-        boxes
+        let names = ["rename", "homunculus_name", "delete", "skill", "feed", "homunculus_auto_feed"];
+        names
+            .into_iter()
+            .zip(Self::PARTS)
+            .map(|(name, (_, at, size))| {
+                let [x, y] = self.frame.at(at);
+                (name, [x, y, size[0], size[1]])
+            })
+            .collect()
     }
 
-    pub fn hit(&self, cursor: [f32; 2], homunculus: &Homunculus) -> Option<Hit> {
-        let local = self.frame.local(cursor, Self::height())?;
-        if let Some(hit) = self.frame.title_hit(local) {
-            return Some(Hit::Title(hit));
+    pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
+        let local = self.frame.local(cursor, HEIGHT)?;
+        if self.frame.title_hit(local) == Some(TitleHit::Close) {
+            return Some(Hit::Close);
         }
-        if contains(Self::button_at(0), BUTTON, local) {
-            return Some(Hit::Feed);
-        }
-        if contains(Self::button_at(1), BUTTON, local) {
-            return Some(Hit::Skills);
-        }
-        if !homunculus.renamed() && contains(Self::button_at(2), BUTTON, local) {
-            return Some(Hit::Rename);
-        }
-        Some(Hit::Window)
+        Some(Self::PARTS.iter().find(|(_, at, size)| contains(*at, *size, local)).map_or(Hit::Window, |&(hit, ..)| hit))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw<'a>(
         &'a self,
         layer: &mut Layer<'a>,
@@ -163,49 +260,101 @@ impl Window {
         messages: &[String],
         homunculus: &Homunculus,
         pointer: ([f32; 2], bool),
+        blink: bool,
     ) {
         if !self.frame.open {
             return;
         }
         let frame = &self.frame;
+        let at = |local: [f32; 2]| frame.at(local);
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
-        if !frame.minimized {
-            draw_background(layer, frame, chrome, assets.background.as_ref());
-        }
-        frame.draw_title(layer, chrome, message(TITLE), pointer.0);
-        if frame.minimized {
-            return;
-        }
-        let h = homunculus;
-        draw_values(layer, frame, font, [h.atk, h.matk, h.hit, h.critical, h.def, h.mdef, h.flee], h.aspd);
-        if h.vaporized() || !h.alive() {
-            let word = if h.vaporized() { VAPORIZED } else { DEAD };
-            layer.texts.push((word.to_owned(), frame.at([BARS[0][0], BACKGROUND_TOP + BARS[0][1]]), TEXT));
-        } else {
-            draw_bars(layer, frame, &assets.bars, (h.hp, h.max_hp), (h.sp, h.max_sp));
-        }
-        let exp = format!("{}/{}", h.exp, h.next_exp);
-        let rows = [
-            (UPPER_ROWS[0], NAME, crate::window::fit(font, &h.name, RIGHT_VALUE - RIGHT_LABEL - font.width(message(NAME)) - 4.0)),
-            (UPPER_ROWS[1], LEVEL, h.level.to_string()),
-            (LOWER_ROWS[0], EXP, crate::window::fit(font, &exp, RIGHT_VALUE - RIGHT_LABEL - font.width(message(EXP)) - 4.0)),
-            (LOWER_ROWS[1], HUNGER, message(hunger_word(h.hunger)).trim().to_owned()),
-            (LOWER_ROWS[2], INTIMACY, message(intimacy_word(h.intimacy)).trim().to_owned()),
-        ];
-        for (top, label, value) in rows {
-            layer.texts.push((message(label).to_owned(), frame.at([RIGHT_LABEL, BACKGROUND_TOP + top]), TEXT));
-            layer.texts.push(right_text(font, frame, value, RIGHT_VALUE, top));
-        }
-        layer.sprites.push((&assets.footer, frame.at([0.0, BACKGROUND_TOP + BACKGROUND_HEIGHT]), [WIDTH, FOOTER]));
-        let hit = self.hit(pointer.0, homunculus);
+        let text = |layer: &mut Layer<'a>, text: String, place: [f32; 2]| layer.texts.push((text, at(place), TEXT));
+        let right = |layer: &mut Layer<'a>, value: String, edge: f32, top: f32| {
+            let x = (edge - font.width(&value)).floor();
+            layer.texts.push((value, at([x, top]), TEXT));
+        };
+        let hit = self.hit(pointer.0);
         let look = |target: Hit| {
             let hovered = hit == Some(target);
             usize::from(hovered) + usize::from(hovered && pointer.1)
         };
-        layer.sprites.push((&assets.feed[look(Hit::Feed)], frame.at(Self::button_at(0)), BUTTON));
-        layer.sprites.push((&assets.skill[look(Hit::Skills)], frame.at(Self::button_at(1)), BUTTON));
-        if !homunculus.renamed() {
-            layer.sprites.push((&assets.rename[look(Hit::Rename)], frame.at(Self::button_at(2)), BUTTON));
+        // The white band with its red note, the background (bringing its title strip) over it.
+        layer.sprites.push((&chrome.white, at([0.0, BAND_TOP]), [WIDTH, HEIGHT - BAND_TOP]));
+        match &assets.background {
+            Some(background) => layer.sprites.push((background, at([0.0, 0.0]), background.size)),
+            None => chrome.draw_title_bar(layer, at([0.0, 0.0]), WIDTH),
+        }
+        for (row, line) in message(NOTE).lines().enumerate() {
+            layer.texts.push((line.to_owned(), at([NOTE_AT[0], NOTE_AT[1] + row as f32 * font.line_height()]), NOTE_COLOR));
+        }
+        frame.draw_bare_title(layer, chrome, message(TITLE), pointer.0);
+        let h = homunculus;
+        draw_values(layer, frame, font, [h.atk, h.matk, h.hit, h.critical, h.def, h.mdef, h.flee], h.aspd);
+        // Name (edited in place) and level, the buttons.
+        text(layer, message(NAME).to_owned(), [LABEL, NAME_TOP]);
+        let [x, y, w, h_box] = NAME_BOX;
+        let shown = if self.typing && blink { format!("{}|", self.name(h)) } else { self.name(h).to_owned() };
+        text(layer, window::fit(font, &shown, w - 4.0), [x + 2.0, y + ((h_box - font.line_height()) / 2.0).floor()]);
+        text(layer, message(LEVEL).to_owned(), [LABEL, LEVEL_TOP]);
+        text(layer, h.level.to_string(), [VALUE, LEVEL_TOP]);
+        for (images, target, place, size) in [
+            (&assets.rename, Hit::Rename, RENAME, BUTTON),
+            (&assets.delete, Hit::Delete, DELETE, BUTTON),
+            (&assets.skill, Hit::Skills, SKILLS, BUTTON),
+            (&assets.feed, Hit::Feed, FEED, FEED_SIZE),
+        ] {
+            layer.sprites.push((&images[look(target)], at(place), size));
+        }
+        // HP and SP.
+        for (place, (value, most)) in [(HP_BAR, (h.hp, h.max_hp)), (SP_BAR, (h.sp, h.max_sp))] {
+            let gauge = gauge(value, most);
+            if gauge == Gauge::Hidden {
+                continue;
+            }
+            let [left, middle, end] = &assets.track;
+            layer.sprites.push((left, at(place), [left.size[0], BAR[1]]));
+            layer.sprites.push((middle, at([place[0] + left.size[0], place[1]]), [BAR[0] - left.size[0] - end.size[0], BAR[1]]));
+            layer.sprites.push((end, at([place[0] + BAR[0] - end.size[0], place[1]]), [end.size[0], BAR[1]]));
+            if let Gauge::Filled(width, red) = gauge {
+                let [left, middle, end] = &assets.fills[usize::from(red)];
+                layer.sprites.push((left, at(place), [FILL_END, BAR[1]]));
+                layer.sprites.push((middle, at([place[0] + FILL_END, place[1]]), [width, BAR[1]]));
+                layer.sprites.push((end, at([place[0] + FILL_END + width, place[1]]), [end.size[0], BAR[1]]));
+                // ponytail: centred on the bar.
+                let numbers = gauge_text(value, most);
+                let x = place[0] + ((BAR[0] - font.width(&numbers)) / 2.0).floor();
+                text(layer, numbers, [x, place[1] - 2.0]);
+            }
+        }
+        // Exp: the next level's total, its bar.
+        text(layer, message(EXP).to_owned(), [LABEL, EXP_TOP]);
+        right(layer, h.next_exp.to_string(), EXP_RIGHT, EXP_TOP - 1.0);
+        self.small_bar(layer, assets, chrome, EXP_BAR, exp_fill(h.exp, h.next_exp).map(|width| (width, false)));
+        // Hunger: "n / 100", its bar.
+        text(layer, message(HUNGER).to_owned(), [LABEL, HUNGER_TOP]);
+        right(layer, format!("{} / 100", h.hunger), HUNGER_RIGHT, HUNGER_TOP - 1.0);
+        if let Some(fill) = hunger_fill(h.hunger) {
+            self.small_bar(layer, assets, chrome, HUNGER_BAR, Some(fill));
+        }
+        // Automatic feeding.
+        let check = &assets.check[usize::from(self.auto_feed)];
+        layer.sprites.push((check, at(AUTO_BOX), CHECK));
+        for (row, line) in message(AUTO_FEED).lines().enumerate() {
+            text(layer, line.to_owned(), [AUTO_LABEL[0], AUTO_LABEL[1] + row as f32 * font.line_height()]);
+        }
+        // Intimacy (the word keeps its leading space).
+        text(layer, message(INTIMACY).to_owned(), [LABEL, INTIMACY_TOP]);
+        text(layer, ":".to_owned(), [COLON, INTIMACY_TOP]);
+        text(layer, message(intimacy_word(h.intimacy)).trim().to_owned(), [WORD, INTIMACY_TOP]);
+    }
+
+    /// A thin bar: the grey frame, white inside, the fill (`None`: no bar).
+    fn small_bar<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, chrome: &'a Chrome, [x, y, w, h]: [f32; 4], fill: Option<(f32, bool)>) {
+        let Some((width, red)) = fill else { return };
+        layer.sprites.push((&assets.bar_frame, self.frame.at([x, y]), [w, h]));
+        layer.sprites.push((&chrome.white, self.frame.at([x + 1.0, y + 1.0]), [w - 2.0, h - 2.0]));
+        if width > 0.0 {
+            layer.sprites.push((if red { &assets.bar_red } else { &assets.bar_blue }, self.frame.at([x + 1.0, y + 1.0]), [width, h - 2.0]));
         }
     }
 }
@@ -369,54 +518,55 @@ mod tests {
     }
 
     #[test]
-    fn names_hunger_and_intimacy() {
-        assert_eq!([0, 10, 11, 25, 26, 75, 76, 90, 91, 100].map(hunger_word), [667, 667, 668, 668, 669, 669, 670, 670, 671, 671]);
+    fn names_intimacy_and_says_starving() {
         assert_eq!(
             [0, 3, 4, 10, 11, 100, 101, 250, 251, 750, 751, 910, 911, 1000].map(intimacy_word),
             [1022, 1022, 1021, 1021, 672, 672, 673, 673, 669, 669, 674, 674, 675, 675]
         );
-    }
-
-    #[test]
-    fn says_starving_once_per_crossing() {
-        assert!(starving_now(Some(11), 10));
-        assert!(!starving_now(Some(10), 9));
-        assert!(starving_now(None, 5));
-        assert!(!starving_now(Some(5), 50));
-        assert!(!starving_now(None, 11));
+        // At exactly 1, 5 or 10, and not the hunger last warned about.
+        assert_eq!([0, 1, 2, 5, 9, 10, 11].map(|hunger| starving_now(None, hunger)), [false, true, false, true, false, true, false]);
+        assert!(!starving_now(Some(10), 10));
+        assert!(starving_now(Some(10), 5));
     }
 
     #[test]
     fn hits_the_window_buttons() {
         let window = open_window();
-        let homunculus = Homunculus::default();
-        let boxes = window.button_boxes(&homunculus);
-        assert_eq!(boxes.iter().map(|(name, _)| *name).collect::<Vec<_>>(), ["feed", "skill", "rename"]);
-        for (name, rect) in &boxes {
-            let expected = match *name {
-                "feed" => Hit::Feed,
-                "skill" => Hit::Skills,
-                _ => Hit::Rename,
-            };
-            assert_eq!(window.hit(centre(*rect), &homunculus), Some(expected), "{name}");
+        let boxes = window.button_boxes();
+        let expected = [Hit::Rename, Hit::NameBox, Hit::Delete, Hit::Skills, Hit::Feed, Hit::AutoFeed];
+        for ((name, rect), hit) in boxes.iter().zip(expected) {
+            assert_eq!(window.hit(centre(*rect)), Some(hit), "{name}");
         }
+        // At (150, 100): Rename (382, 121), Delete (337, 144), Skills (382, 144), Feed (360, 205).
+        let corner = |name: &str| boxes.iter().find(|(found, _)| *found == name).map(|(_, [x, y, ..])| [*x, *y]).unwrap();
+        assert_eq!([corner("rename"), corner("delete"), corner("skill"), corner("feed")], [[382.0, 121.0], [337.0, 144.0], [382.0, 144.0], [360.0, 205.0]]);
+        // Only the close button on the title bar; the rest drags.
+        let [x, y] = window.frame.position;
+        assert_eq!(window.hit([x + 270.0, y + 8.0]), Some(Hit::Close));
+        assert_eq!(window.hit([x + 255.0, y + 8.0]), Some(Hit::Window));
+        assert_eq!(window.hit([x + 20.0, y + 190.0]), Some(Hit::Window));
+        assert_eq!(window.hit([x + 20.0, y + 208.0]), None);
+        assert!(Window::default().button_boxes().is_empty());
+        // A new name: too long, then an item link, then asked.
+        assert_eq!(crate::pet::rename_refusal(&"a".repeat(24), NAME_TOO_LONG), Some(938));
+        assert_eq!(crate::pet::rename_refusal("<ITEML>", NAME_TOO_LONG), Some(2812));
     }
 
     #[test]
-    fn renaming_is_once() {
-        let window = open_window();
-        let renamed = Homunculus { flags: 0b001, ..Default::default() };
-        let boxes = window.button_boxes(&renamed);
-        assert_eq!(boxes.iter().map(|(name, _)| *name).collect::<Vec<_>>(), ["feed", "skill"]);
-        let unnamed = window.button_boxes(&Homunculus::default());
-        let rename = unnamed.iter().find(|(name, _)| *name == "rename").unwrap().1;
-        assert_ne!(window.hit(centre(rename), &renamed), Some(Hit::Rename));
-    }
-
-    #[test]
-    fn a_closed_window_has_no_boxes() {
-        let window = Window::default();
-        assert!(window.button_boxes(&Homunculus::default()).is_empty());
+    fn fills_the_bars() {
+        // HP and SP: the middle over 149 px, red under a quarter, nothing past the maximum, no fill at 0.
+        assert_eq!(gauge(100, 100), Gauge::Filled(149.0, false));
+        assert_eq!(gauge(25, 100), Gauge::Filled(37.0, false));
+        assert_eq!(gauge(24, 100), Gauge::Filled(35.0, true));
+        assert_eq!(gauge(101, 100), Gauge::Hidden);
+        assert_eq!([gauge(0, 100), gauge(0, 0)], [Gauge::Empty, Gauge::Empty]);
+        assert_eq!(gauge_text(20, 150), " 20  /  150");
+        // Exp: none past the next level's or without one.
+        assert_eq!(exp_fill(50, 100), Some(50.0));
+        assert_eq!([exp_fill(101, 100), exp_fill(0, 0), exp_fill(5, NO_NEXT)], [None, None, None]);
+        // Hunger: red under 25, nothing past 100, only the frame at 0.
+        assert_eq!([hunger_fill(20), hunger_fill(25), hunger_fill(0)], [Some((20.0, true)), Some((25.0, false)), Some((0.0, true))]);
+        assert_eq!(hunger_fill(101), None);
     }
 
     #[test]
