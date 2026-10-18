@@ -847,6 +847,16 @@ const CZ_RANDOM_UPGRADE_ITEM_UI_CLOSE: u16 = 0x0AB5;
 const CZ_REQ_RANDOM_UPGRADE_ITEM: u16 = 0x0AB6;
 const ZC_ACK_RANDOM_UPGRADE_ITEM: u16 = 0x0AB7;
 const ZC_CHANGE_ITEM_OPTION: u16 = 0x0B43;
+
+/// ZC_UI_OPEN_V3's enchant window.
+const ENCHANT_UI: u8 = 10;
+const ZC_UI_OPEN_V3: u16 = 0x0B9A;
+const CZ_REQUEST_RANDOM_ENCHANT: u16 = 0x0B9B;
+const CZ_REQUEST_PERFECT_ENCHANT: u16 = 0x0B9C;
+const CZ_REQUEST_UPGRADE_ENCHANT: u16 = 0x0B9D;
+const CZ_REQUEST_RESET_ENCHANT: u16 = 0x0B9E;
+const ZC_RESPONSE_ENCHANT: u16 = 0x0B9F;
+const CZ_CLOSE_UI_ENCHANT: u16 = 0x0BA0;
 const ZC_AUTOSPELLLIST: u16 = 0x0AFB;
 const CZ_SELECTAUTOSPELL: u16 = 0x01CE;
 const ZC_SKILL_SELECT_REQUEST: u16 = 0x0442;
@@ -1859,6 +1869,13 @@ pub enum MapEvent {
     },
     /// The refine window opens.
     RefineOpen,
+    /// The enchant window opens on this enchant table.
+    EnchantOpen(u64),
+    /// An enchant's answer: a message number, and the enchant put in (0 on a failure and after a reset).
+    Enchanted {
+        message: u32,
+        item: u32,
+    },
     /// What an item in the refine window can be refined with: ores (item, chance %, zeny), and how many Blacksmith's
     /// Blessings protect it (0: they can't).
     RefineMaterials {
@@ -2801,6 +2818,8 @@ pub struct InventoryItem {
     pub worn: u32,
     pub identified: bool,
     pub refine: u8,
+    /// Grade enchant (0 none, 1 D, 2 C, 3 B, 4 A).
+    pub grade: u8,
     pub cards: [u32; 4],
     /// Broken: it can't be worn until it's repaired.
     pub broken: bool,
@@ -2874,6 +2893,7 @@ fn decode_equip_item(entry: &[u8]) -> InventoryItem {
         worn: u32_at(entry, 11),
         cards: cards_at(entry, 15),
         refine: entry[65],
+        grade: entry[66],
         identified: entry[67] & 1 != 0,
         broken: entry[67] & 2 != 0,
         bind: u16_at(entry, 35),
@@ -3264,6 +3284,27 @@ impl MapSession {
 
     pub fn close_upgrade(&mut self) -> io::Result<()> {
         self.stream.write_all(&encode_upgrade_close())
+    }
+
+    /// The enchant window: a random enchant, a chosen perfect one, an upgrade, a reset, or closing it.
+    pub fn enchant_random(&mut self, table: u64, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_enchant_random(table, index))
+    }
+
+    pub fn enchant_perfect(&mut self, table: u64, index: u16, item: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_enchant_perfect(table, index, item))
+    }
+
+    pub fn enchant_upgrade(&mut self, table: u64, index: u16, slot: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_enchant_upgrade(table, index, slot))
+    }
+
+    pub fn enchant_reset(&mut self, table: u64, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_enchant_reset(table, index))
+    }
+
+    pub fn close_enchant(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_enchant_close())
     }
 
     /// Hatches the egg at this inventory index (from `PetEggs`).
@@ -4161,6 +4202,49 @@ fn encode_upgrade_close() -> [u8; 2] {
     CZ_RANDOM_UPGRADE_ITEM_UI_CLOSE.to_le_bytes()
 }
 
+/// CZ_REQUEST_RANDOM_ENCHANT: the enchant table and the item's inventory index.
+fn encode_enchant_random(table: u64, index: u16) -> [u8; 12] {
+    let mut packet = [0u8; 12];
+    packet[..2].copy_from_slice(&CZ_REQUEST_RANDOM_ENCHANT.to_le_bytes());
+    packet[2..10].copy_from_slice(&table.to_le_bytes());
+    packet[10..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_REQUEST_PERFECT_ENCHANT: the table, the item, and the enchant's item ID.
+fn encode_enchant_perfect(table: u64, index: u16, item: u32) -> [u8; 16] {
+    let mut packet = [0u8; 16];
+    packet[..2].copy_from_slice(&CZ_REQUEST_PERFECT_ENCHANT.to_le_bytes());
+    packet[2..10].copy_from_slice(&table.to_le_bytes());
+    packet[10..12].copy_from_slice(&index.to_le_bytes());
+    packet[12..].copy_from_slice(&item.to_le_bytes());
+    packet
+}
+
+/// CZ_REQUEST_UPGRADE_ENCHANT: the table, the item, and the card slot (0-3).
+fn encode_enchant_upgrade(table: u64, index: u16, slot: u16) -> [u8; 14] {
+    let mut packet = [0u8; 14];
+    packet[..2].copy_from_slice(&CZ_REQUEST_UPGRADE_ENCHANT.to_le_bytes());
+    packet[2..10].copy_from_slice(&table.to_le_bytes());
+    packet[10..12].copy_from_slice(&index.to_le_bytes());
+    packet[12..].copy_from_slice(&slot.to_le_bytes());
+    packet
+}
+
+/// CZ_REQUEST_RESET_ENCHANT: the table and the item.
+fn encode_enchant_reset(table: u64, index: u16) -> [u8; 12] {
+    let mut packet = [0u8; 12];
+    packet[..2].copy_from_slice(&CZ_REQUEST_RESET_ENCHANT.to_le_bytes());
+    packet[2..10].copy_from_slice(&table.to_le_bytes());
+    packet[10..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+/// CZ_CLOSE_UI_ENCHANT: the header alone.
+fn encode_enchant_close() -> [u8; 2] {
+    CZ_CLOSE_UI_ENCHANT.to_le_bytes()
+}
+
 /// CZ_REQ_REFINING: the item, the ore, and whether Blacksmith's Blessings go with it.
 fn encode_refine(index: u16, ore: u32, blessings: bool) -> [u8; 9] {
     let mut packet = [0u8; 9];
@@ -4608,6 +4692,7 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 location: u32_at(28),
                 kind: packet[32],
                 refine: packet[68],
+                grade: packet[69],
                 worn: 0,
                 broken: packet[11] != 0,
                 bind: u16_at(38),
@@ -4875,6 +4960,8 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_AUTOSPELLLIST => MapEvent::SpellList(packet[4..].chunks_exact(4).map(|skill| self::u32_at(skill, 0)).collect()),
         ZC_SKILL_SELECT_REQUEST => MapEvent::SkillSelect { why: u32_at(4), skills: packet[8..].chunks_exact(2).map(|skill| self::u16_at(skill, 0)).collect() },
         ZC_OPEN_REFINING_UI => MapEvent::RefineOpen,
+        ZC_UI_OPEN_V3 if packet[2] == ENCHANT_UI => MapEvent::EnchantOpen(u64_at(packet, 3)),
+        ZC_RESPONSE_ENCHANT => MapEvent::Enchanted { message: u32_at(2), item: u32_at(6) },
         ZC_REFINING_MATERIAL_LIST => MapEvent::RefineMaterials {
             index: u16_at(4),
             blessings: packet[6],
@@ -6545,9 +6632,11 @@ mod tests {
         entry[..2].copy_from_slice(&5u16.to_le_bytes());
         entry[2..6].copy_from_slice(&1201u32.to_le_bytes());
         entry[35..37].copy_from_slice(&2u16.to_le_bytes());
+        entry[65] = 9;
+        entry[66] = 4;
         entry[67] = 3;
         let item = decode_equip_item(&entry);
-        assert_eq!((item.index, item.id, item.identified, item.broken, item.bind), (5, 1201, true, true, 2));
+        assert_eq!((item.index, item.id, item.identified, item.broken, item.bind, item.refine, item.grade), (5, 1201, true, true, 2, 9, 4));
         entry[67] = 1;
         assert!(!decode_equip_item(&entry).broken);
         // ZC_ITEM_PICKUP_ACK: broken at 11, bind at 38.
@@ -6556,8 +6645,10 @@ mod tests {
         pickup[6..10].copy_from_slice(&2301u32.to_le_bytes());
         pickup[11] = 1;
         pickup[38..40].copy_from_slice(&1u16.to_le_bytes());
+        pickup[68] = 7;
+        pickup[69] = 2;
         let Some(MapEvent::PickedUp { item, .. }) = decode_map_packet(&pickup) else { panic!() };
-        assert_eq!((item.id, item.broken, item.bind), (2301, true, 1));
+        assert_eq!((item.id, item.broken, item.bind, item.refine, item.grade), (2301, true, 1, 7, 2));
         let Some(MapEvent::BoundOnEquip(7)) = decode_map_packet(&[0xD3, 0x02, 7, 0]) else { panic!() };
         let Some(MapEvent::TookOffAll { refused: false }) = decode_map_packet(&[0xAE, 0x0B, 0]) else { panic!() };
         let Some(MapEvent::TookOffAll { refused: true }) = decode_map_packet(&[0xAE, 0x0B, 1]) else { panic!() };
@@ -7115,6 +7206,40 @@ mod tests {
         for (header, length) in [(ZC_NOTIFY_CLAN_CONNECTINFO, 6), (ZC_ACK_CLAN_LEAVE, 2), (ZC_CLANINFO, -1), (CZ_CLAN_CHAT, -1), (ZC_NOTIFY_CLAN_CHAT, -1)] {
             assert_eq!(packet_length(header), Some(length));
         }
+    }
+
+    #[test]
+    fn decodes_enchant() {
+        let mut open = ZC_UI_OPEN_V3.to_le_bytes().to_vec();
+        open.resize(11, 0);
+        open[2] = ENCHANT_UI;
+        open[3..11].copy_from_slice(&33u64.to_le_bytes());
+        let Some(MapEvent::EnchantOpen(33)) = decode_map_packet(&open) else { panic!() };
+        open[2] = 1;
+        assert!(decode_map_packet(&open).is_none());
+        let answer = [&ZC_RESPONSE_ENCHANT.to_le_bytes()[..], &3857u32.to_le_bytes(), &4818u32.to_le_bytes()].concat();
+        let Some(MapEvent::Enchanted { message: 3857, item: 4818 }) = decode_map_packet(&answer) else { panic!() };
+        let failed = [&ZC_RESPONSE_ENCHANT.to_le_bytes()[..], &3858u32.to_le_bytes(), &0u32.to_le_bytes()].concat();
+        let Some(MapEvent::Enchanted { message: 3858, item: 0 }) = decode_map_packet(&failed) else { panic!() };
+        assert_eq!(encode_enchant_random(33, 4)[0..2], CZ_REQUEST_RANDOM_ENCHANT.to_le_bytes());
+        assert_eq!(u64::from_le_bytes(encode_enchant_random(33, 4)[2..10].try_into().unwrap()), 33);
+        assert_eq!(u16::from_le_bytes(encode_enchant_random(33, 4)[10..12].try_into().unwrap()), 4);
+        let perfect = encode_enchant_perfect(33, 4, 4818);
+        assert_eq!((u16::from_le_bytes(perfect[10..12].try_into().unwrap()), u32::from_le_bytes(perfect[12..16].try_into().unwrap())), (4, 4818));
+        let upgrade = encode_enchant_upgrade(33, 4, 3);
+        assert_eq!(u16::from_le_bytes(upgrade[12..14].try_into().unwrap()), 3);
+        assert_eq!(encode_enchant_reset(33, 4)[10..12], 4u16.to_le_bytes());
+        assert_eq!(encode_enchant_close(), CZ_CLOSE_UI_ENCHANT.to_le_bytes());
+        let ids = [
+            ZC_UI_OPEN_V3,
+            CZ_REQUEST_RANDOM_ENCHANT,
+            CZ_REQUEST_PERFECT_ENCHANT,
+            CZ_REQUEST_UPGRADE_ENCHANT,
+            CZ_REQUEST_RESET_ENCHANT,
+            ZC_RESPONSE_ENCHANT,
+            CZ_CLOSE_UI_ENCHANT,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(11), Some(12), Some(16), Some(14), Some(12), Some(10), Some(2)]);
     }
 
     /// Against a running rathena: `RUSTNAROK_CLIENT_TEST_ACCOUNT=user:password cargo test -- --ignored`.
