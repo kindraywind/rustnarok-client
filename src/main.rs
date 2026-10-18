@@ -516,6 +516,62 @@ const BOW: u32 = 11;
 /// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
 const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
 
+/// What a unit coming into view shows. Only a spawn in view (ZC_NOTIFY_NEWENTRY) of a unit the client doesn't have,
+/// and not our own character: a player gets the blue rings unless a GM hides it; anything else fades in.
+#[derive(Debug, PartialEq)]
+enum Arrival {
+    Fade,
+    Rings,
+    Plain,
+}
+
+fn arrival(spawned: bool, known: bool, own: bool, kind: u8, option: u32) -> Arrival {
+    match () {
+        _ if !spawned || known || own => Arrival::Plain,
+        _ if kind == PLAYER && option & GM_HIDE != 0 => Arrival::Plain,
+        _ if kind == PLAYER => Arrival::Rings,
+        _ => Arrival::Fade,
+    }
+}
+
+/// A GM hidden from view (rathena's OPTION_INVISIBLE).
+const GM_HIDE: u32 = 0x40;
+/// The blue rings and the portal sound of a player arriving (EF_ENTRY2).
+const EF_ENTRY2: u32 = 344;
+/// Where a unit that comes back while fading out leaves its fading copy: under its ID with the top bit set (no ID the
+/// server gives has it).
+const LEFT_BEHIND: u32 = 0x8000_0000;
+
+/// A unit fading out (or a corpse) whose ID comes back: its copy moves aside to fade out where it was.
+fn leave_behind(units: &mut HashMap<u32, Actor>, id: u32) {
+    if units.get(&id).is_some_and(|actor| actor.remove_at.is_some())
+        && let Some(old) = units.remove(&id)
+    {
+        units.insert(id | LEFT_BEHIND, old);
+    }
+}
+
+/// A stand entry's state byte, for players only: 1 dead (lying as after a death in view, falling once), 2 sitting,
+/// anything else standing (a dead or sitting player stands up).
+fn take_posture(actor: &mut Actor, posture: Option<u8>, now: Instant) {
+    let Some(posture) = posture.filter(|_| actor.kind == PLAYER) else { return };
+    match posture {
+        1 if !actor.dead => fall(actor, now),
+        1 => {}
+        _ => {
+            if actor.dead {
+                actor.revive();
+            }
+            actor.sitting = posture == 2;
+        }
+    }
+}
+
+/// Monsters whose sprites face the other way round: turned (dir + 4) on the entry that brings them.
+fn turned_round(job: u16) -> bool {
+    matches!(job, 21064..=21088 | 22551..=22668)
+}
+
 /// A unit that died falls when the killing hit lands, playing its death at the sprite's pace. A player lies there until
 /// revived (ZC_RESURRECTION) or gone; any other body then lies on its last frame as a corpse and fades out.
 fn fall(actor: &mut Actor, lands: Instant) {
@@ -2420,6 +2476,10 @@ impl Game {
 
     /// Talks to an NPC, turned to face it; only standing still or sitting (walking or attacking, nothing).
     /// rathena answers when it's too far.
+    fn leave_behind(&mut self, id: u32) {
+        leave_behind(&mut self.units, id);
+    }
+
     /// Talks to an NPC, facing it. While a say window is open another talk is refused with a chat line.
     fn talk_to(&mut self, id: u32, messages: &[String]) {
         if !may_talk(self.player.moving(), self.attack.is_some(), self.player.sitting) {
@@ -10889,18 +10949,22 @@ impl App {
                     let at = game.world.cell_position(unit.position.map(f32::from));
                     game.effects.play(gpu, grf, table, EF_WARPZONE2, effects::Target::Unit(Some(unit.id)), at, Instant::now());
                 }
+                // Back in sight while fading out, or a monster that respawned under its corpse's ID: a unit of its own
+                // again, the old copy fading where it was.
+                game.leave_behind(unit.id);
+                let known = game.units.contains_key(&unit.id);
+                let cue = arrival(unit.spawned, known, unit.id == game.account_id, unit.kind, unit.option);
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
-                // Back in sight, or a monster that respawned under its corpse's ID: a unit of its own again.
-                if actor.remove_at.is_some() {
-                    *actor = new_actor(&unit);
-                }
                 actor.body_state = unit.body_state;
                 actor.health_state = unit.health_state;
                 actor.level = unit.level;
                 actor.stop_at(unit.position.map(i32::from));
-                actor.set_direction(unit.direction);
+                actor.set_direction(if !known && unit.kind == MONSTER && turned_round(unit.job) { (unit.direction + 4) % 8 } else { unit.direction });
                 actor.head_direction = unit.head_direction;
-                actor.sitting = unit.sitting;
+                take_posture(actor, unit.posture, control::now());
+                if cue == Arrival::Fade {
+                    actor.fade_in = Some(control::now());
+                }
                 // A player seen again may have changed clothes (or guilds) meanwhile.
                 if actor.look.as_ref().is_some_and(|look| *look != unit_look(&unit)) {
                     actor.look = Some(unit_look(&unit));
@@ -10917,6 +10981,11 @@ impl App {
                 }
                 game.want_emblem(unit.guild, unit.emblem);
                 game.monster_hp(&unit);
+                if cue == Arrival::Rings
+                    && let Some(gpu) = gpu
+                {
+                    game.play_effect(gpu, grf, table, EF_ENTRY2, unit.id);
+                }
             }
             MapEvent::Turn { id, direction, head_direction } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
@@ -10926,11 +10995,9 @@ impl App {
                 }
             }
             MapEvent::UnitWalk { unit, to, start_time, sub } => {
-                let known = game.units.get(&unit.id).is_some_and(|actor| actor.remove_at.is_none());
+                game.leave_behind(unit.id);
+                let known = game.units.contains_key(&unit.id);
                 let actor = game.units.entry(unit.id).or_insert_with(|| new_actor(&unit));
-                if actor.remove_at.is_some() {
-                    *actor = new_actor(&unit);
-                }
                 actor.body_state = unit.body_state;
                 actor.health_state = unit.health_state;
                 actor.level = unit.level;
@@ -14221,7 +14288,7 @@ impl App {
                 factor * scale
             };
             for (owner, feet, _) in &frames {
-                let dead = matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.fading(now)));
+                let dead = matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.shadowless(now)));
                 let scale = match owner {
                     Owner::Item(_) => ITEM_SHADOW,
                     Owner::Player => cast(&game.player, player_scale),
@@ -16799,6 +16866,62 @@ mod tests {
         assert_eq!(ground_sprite(&items, 501, true), FALLBACK_ITEM_SPRITE);
         items.insert(501, ItemInfo { resource: "빨간포션".into(), ..ItemInfo::default() });
         assert_eq!((ground_sprite(&items, 501, true), ground_sprite(&items, 501, false)), ("빨간포션", FALLBACK_ITEM_SPRITE));
+    }
+
+    #[test]
+    fn units_spawned_in_view_fade_in() {
+        let ms = |ms: u64| Duration::from_millis(ms);
+        let byte = |since: Duration| (actor::spawn_alpha(since) * 255.0).round() as u32;
+        assert_eq!([byte(ms(0)), byte(Duration::from_secs_f32(1.0 / 60.0)), byte(ms(383)), byte(ms(400)), byte(ms(1000))], [68, 76, 252, 255, 255]);
+        let now = Instant::now();
+        let mut poring = Actor::new("Poring".into(), None, [10, 10], 0, 150);
+        poring.fade_in = Some(now);
+        assert!(poring.shadowless(now + ms(383)) && !poring.shadowless(now + ms(400)));
+        // Which units fade, which get the rings, which simply show.
+        assert_eq!(arrival(true, false, false, MONSTER, 0), Arrival::Fade);
+        assert_eq!(arrival(true, false, false, NPC, 0), Arrival::Fade);
+        assert_eq!(arrival(true, false, false, PLAYER, 0), Arrival::Rings);
+        assert_eq!(arrival(true, false, false, PLAYER, GM_HIDE), Arrival::Plain);
+        assert_eq!(arrival(false, false, false, MONSTER, 0), Arrival::Plain, "already there or walking in");
+        assert_eq!(arrival(true, true, false, MONSTER, 0), Arrival::Plain, "known to the client");
+        assert_eq!(arrival(true, false, true, PLAYER, 0), Arrival::Plain, "our own character");
+        // Turned round: the two job ranges and their edges.
+        assert_eq!([21063, 21064, 21088, 21089, 22550, 22551, 22668, 22669].map(turned_round), [false, true, true, false, false, true, true, false]);
+    }
+
+    #[test]
+    fn players_in_view_lie_sit_or_stand() {
+        let now = Instant::now();
+        let mut player = Actor::new("Someone".into(), None, [10, 10], 0, 150);
+        player.kind = PLAYER;
+        take_posture(&mut player, Some(1), now);
+        assert!(player.dead && player.remove_at.is_none());
+        take_posture(&mut player, Some(2), now);
+        assert!(!player.dead && player.sitting);
+        take_posture(&mut player, Some(0), now);
+        assert!(!player.dead && !player.sitting);
+        take_posture(&mut player, None, now);
+        assert!(!player.dead && !player.sitting, "no state byte: as it was");
+        // A monster's byte is ignored.
+        let mut poring = Actor::new("Poring".into(), None, [10, 10], 0, 150);
+        poring.kind = MONSTER;
+        take_posture(&mut poring, Some(1), now);
+        take_posture(&mut poring, Some(2), now);
+        assert!(!poring.dead && !poring.sitting && poring.remove_at.is_none());
+    }
+
+    #[test]
+    fn a_returning_unit_leaves_its_fading_copy() {
+        let now = Instant::now();
+        let mut units = HashMap::new();
+        let mut leaving = Actor::new("Poring".into(), None, [10, 10], 0, 150);
+        leaving.fade_out(now, OUT_OF_SIGHT_FADE_MS);
+        units.insert(110_000_001, leaving);
+        units.insert(110_000_002, Actor::new("Lunatic".into(), None, [12, 10], 0, 150));
+        leave_behind(&mut units, 110_000_001);
+        leave_behind(&mut units, 110_000_002);
+        assert!(!units.contains_key(&110_000_001) && units[&(110_000_001 | LEFT_BEHIND)].remove_at.is_some());
+        assert!(units.contains_key(&110_000_002), "a unit not fading stays itself");
     }
 
     #[test]

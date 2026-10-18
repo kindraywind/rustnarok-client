@@ -1,0 +1,33 @@
+{
+  "about": "Units appearing (issue #441): a Poring spawned in view (@monster, ZC_NOTIFY_NEWENTRY) fades in from alpha 68/255 to opaque in 400 ms, the clock paused at its packet and stepped; the second character warping in next to us gets the blue rings and the portal sound; dead (@die), then seen again after we leave and come back, they lie dead; @alive stands them up.",
+  "account": "",
+  "slot": 0,
+  "env": {"RUSTNAROK_CLIENT_SOUND": "1"},
+  "second": {"account": "2", "slot": 0},
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"as": "second", "say": "@warp prontera 120 120"}, {"as": "second", "settle": 2000},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"say": "@monster 1002 1"}, {"wait_for": {"packet": "0x09fe", "pause": true, "ms": 3000}},
+    {"expect": {"unit": {"name": "Poring", "alpha": 68}}},
+    {"shot": "spawn-0", "crop": [212, 184, 600, 400], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 200}},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 200}},
+    {"expect": {"unit": {"name": "Poring", "alpha": 255}}},
+    {"shot": "spawn-400", "crop": [212, 184, 600, 400], "threshold": 5},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 300},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"as": "second", "say": "@warp prontera 158 180"}, {"wait_for": {"event": "Sound effect\\ef_portal.wav", "ms": 5000}}, {"wait": 400},
+    {"expect": {"unit": {"name": "{second}", "alpha": 255}}},
+    {"shot": "arrival-rings", "crop": [362, 184, 400, 350], "threshold": 10},
+    {"wait": 1500},
+    {"as": "second", "say": "@die"}, {"wait": 1500},
+    {"say": "@warp prontera 156 240"}, {"settle": 1500},
+    {"say": "@warp prontera 156 180"}, {"settle": 2000},
+    {"expect": {"unit": {"name": "{second}", "dead": true}}},
+    {"shot": "dead-in-view", "crop": [362, 184, 400, 350], "threshold": 10},
+    {"as": "second", "say": "@alive"}, {"wait": 1500},
+    {"expect": {"unit": {"name": "{second}", "dead": null}}},
+    {"as": "second", "say": "@warp prontera 120 120"}, {"wait": 500}
+  ]
+}
