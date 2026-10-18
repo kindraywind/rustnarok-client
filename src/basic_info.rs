@@ -25,10 +25,14 @@ const EXP_INNER: f32 = 110.0;
 /// Zeny's right edge, and the gap to the weight left of it.
 const ZENY_RIGHT: f32 = 215.0;
 const WEIGHT_GAP: f32 = 10.0;
-/// The menu toggle's strip under the window, and the icons it opens, five to a row.
-const MENU_TOGGLE: f32 = 10.0;
-const MENU_CELL: f32 = 44.0;
-const MENU_ICON: [f32; 2] = [6.0, 6.0];
+/// The menu window under the basic info: the toggle bar (219 by 9) 4 down, the menu's back 13 down, and its buttons
+/// (32 by 34) from (9, 23), 42 and 43 apart, five to a row.
+const TOGGLE_AT: f32 = 4.0;
+const TOGGLE_HEIGHT: f32 = 9.0;
+const MENU_AT: f32 = 13.0;
+const MENU_BUTTONS: [f32; 2] = [9.0, 23.0];
+const MENU_STEP: [f32; 2] = [42.0, 43.0];
+const MENU_BUTTON_SIZE: [f32; 2] = [32.0, 34.0];
 const MENU_COLUMNS: usize = 5;
 const BASIC_INFO_MESSAGE: usize = 238;
 const EXP_BORDER: [u8; 4] = [0xAF, 0xAF, 0xAF, 0xFF];
@@ -125,13 +129,13 @@ pub fn mini_lines(base: i64, job: &str, job_level: i64, exp: i64, next: i64) -> 
     [format!("Lv.{base:2} / {job} / Lv.{job_level:2} / Exp. {percent:.1} %"), format!("Lv{base:2} / {job} / Lv{job_level:2} / Exp{percent:.1}%")]
 }
 
-/// The menu's buttons in order (menu_icon\bt_<name>.bmp).
-// ponytail: the cash shop follows the existing menu entries; the official order is unknown.
-pub const MENU: [&str; 21] = [
+/// The menu's buttons in the game's order (menu_icon\bt_<name>.bmp).
+pub const ORDER: [&str; 24] = [
     "status",
     "equip",
     "item",
     "skill",
+    "booking",
     "party",
     "guild",
     "battle",
@@ -144,12 +148,36 @@ pub const MENU: [&str; 21] = [
     "mail",
     "achievement",
     "tip",
+    "shop",
     "keyboard",
     "attendance",
-    "adventureragency",
+    "adventurerAgency",
     "repute",
-    "shop",
+    "adventureguide",
+    "probability",
 ];
+
+/// The buttons the game shows.
+const SHOWN: [&str; 14] = ["status", "equip", "item", "skill", "party", "guild", "quest", "map", "navigation", "option", "bank", "mail", "keyboard", "repute"];
+
+/// Buttons shown besides the game's fourteen, for windows this client has that open from nowhere else.
+// ponytail: the game hides battle and shop; here battle shows when the data lists battlegrounds (their queue opens
+// from it, #107) and shop opens the cash shop.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct Features {
+    pub battle: bool,
+    pub shop: bool,
+}
+
+/// The buttons that show, in the game's order.
+pub fn visible(features: Features) -> Vec<&'static str> {
+    ORDER.into_iter().filter(|name| SHOWN.contains(name) || (*name == "battle" && features.battle) || (*name == "shop" && features.shop)).collect()
+}
+
+/// Doram have their own status button.
+pub fn doram(job: u16) -> bool {
+    matches!(job, 4218 | 4220 | 4308)
+}
 
 pub struct Assets {
     /// The window's back: the game's, and the 4th jobs'; the mini window's.
@@ -164,7 +192,9 @@ pub struct Assets {
     /// Menu toggle closed and open, the menu's back and its buttons.
     toggles: [Texture; 2],
     menu: Texture,
-    icons: Vec<Option<Texture>>,
+    icons: HashMap<&'static str, Option<Texture>>,
+    /// The status button for Doram.
+    status_doram: Option<Texture>,
     /// The mail button while unread mail waits, and the achievement button while a reward waits.
     mail_new: Option<Texture>,
     achievement_new: Option<Texture>,
@@ -189,7 +219,8 @@ impl Assets {
             exp_fill: gpu.solid(EXP_FILL),
             toggles: [image(format!("{menu}bt_menu_normal.bmp")), image(format!("{menu}bt_menu_close_normal.bmp"))],
             menu: image(format!("{menu}bg_menu.tga")),
-            icons: MENU.iter().map(|name| gpu.try_load_texture(grf, &format!("{menu}bt_{name}.bmp"), false).ok()).collect(),
+            icons: ORDER.iter().map(|name| (*name, gpu.try_load_texture(grf, &format!("{menu}bt_{}.bmp", name.to_lowercase()), false).ok())).collect(),
+            status_doram: gpu.try_load_texture(grf, &format!("{menu}bt_status_doram.bmp"), false).ok(),
             mail_new: gpu.try_load_texture(grf, &format!("{menu}bt_mail_new.bmp"), false).ok(),
             achievement_new: gpu.try_load_texture(grf, &format!("{menu}bt_achievement_new.bmp"), false).ok(),
             item_new: gpu.try_load_texture(grf, &format!("{menu}bt_item_new.bmp"), false).ok(),
@@ -205,8 +236,8 @@ pub enum Hit {
     Title,
     Minimize,
     MenuToggle,
-    /// A menu button, by its place in `MENU`.
-    Menu(usize),
+    /// A menu button, by name.
+    Menu(&'static str),
     Window,
 }
 
@@ -215,13 +246,16 @@ pub struct BasicInfo {
     pub menu_open: bool,
     /// The player is a 4th job (the taller window).
     pub fourth: bool,
+    /// The player is a Doram (their own status button).
+    pub doram: bool,
+    pub features: Features,
 }
 
 impl Default for BasicInfo {
     fn default() -> Self {
         let mut frame = Frame::new([0.0, 0.0], WIDTH);
         frame.open = true;
-        Self { frame, menu_open: false, fourth: false }
+        Self { frame, menu_open: false, fourth: false, doram: false, features: Features::default() }
     }
 }
 
@@ -248,19 +282,25 @@ impl BasicInfo {
         if self.frame.minimized {
             layout.mini
         } else if self.menu_open {
-            self.menu_top() + MENU.len().div_ceil(MENU_COLUMNS) as f32 * MENU_CELL + MENU_ICON[1]
+            self.button_corner(0)[1] + visible(self.features).len().div_ceil(MENU_COLUMNS) as f32 * MENU_STEP[1]
         } else {
-            layout.height + MENU_TOGGLE - 1.0
+            self.menu_top()
         }
     }
 
-    /// The menu toggle's top, under the window; the menu's, under it.
+    /// The menu window starts at the basic info's bottom edge: its toggle bar 4 down, the menu's back 13 down.
     fn toggle_top(&self) -> f32 {
-        layout(self.fourth).height
+        layout(self.fourth).height + TOGGLE_AT
     }
 
     fn menu_top(&self) -> f32 {
-        self.toggle_top() + MENU_TOGGLE
+        layout(self.fourth).height + MENU_AT
+    }
+
+    /// The `place`th visible button's corner in the window.
+    pub fn button_corner(&self, place: usize) -> [f32; 2] {
+        let base = layout(self.fourth).height;
+        [MENU_BUTTONS[0] + (place % MENU_COLUMNS) as f32 * MENU_STEP[0], base + MENU_BUTTONS[1] + (place / MENU_COLUMNS) as f32 * MENU_STEP[1]]
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
@@ -271,19 +311,21 @@ impl BasicInfo {
             Hit::Title
         } else if self.frame.minimized {
             Hit::Window
-        } else if (self.toggle_top()..self.menu_top()).contains(&local[1]) {
+        } else if (self.toggle_top()..self.toggle_top() + TOGGLE_HEIGHT).contains(&local[1]) {
             Hit::MenuToggle
         } else if self.menu_open && local[1] >= self.menu_top() {
-            let [column, row] = [((local[0] - MENU_ICON[0]) / MENU_CELL).floor(), ((local[1] - self.menu_top() - MENU_ICON[1]) / MENU_CELL).floor()];
-            let button = row as usize * MENU_COLUMNS + column as usize;
-            if column >= 0.0 && row >= 0.0 && (column as usize) < MENU_COLUMNS && button < MENU.len() { Hit::Menu(button) } else { Hit::Window }
+            visible(self.features)
+                .into_iter()
+                .enumerate()
+                .find(|(place, _)| contains(self.button_corner(*place), MENU_BUTTON_SIZE, local))
+                .map_or(Hit::Window, |(_, name)| Hit::Menu(name))
         } else {
             Hit::Window
         })
     }
 
     /// Reacts to a click; returns the menu button pressed.
-    pub fn click(&mut self, hit: Hit) -> Option<usize> {
+    pub fn click(&mut self, hit: Hit) -> Option<&'static str> {
         match hit {
             Hit::Minimize => self.frame.minimized = !self.frame.minimized,
             Hit::MenuToggle => self.menu_open = !self.menu_open,
@@ -297,7 +339,7 @@ impl BasicInfo {
     pub fn toggle_box(&self) -> Option<[f32; 4]> {
         (self.frame.open && !self.frame.minimized).then(|| {
             let [x, y] = self.frame.at([0.0, self.toggle_top()]);
-            [x, y, WIDTH, MENU_TOGGLE]
+            [x, y, WIDTH, TOGGLE_HEIGHT]
         })
     }
 
@@ -305,14 +347,12 @@ impl BasicInfo {
         if !self.frame.open || !self.menu_open || self.frame.minimized {
             return Vec::new();
         }
-        MENU.iter()
+        visible(self.features)
+            .into_iter()
             .enumerate()
-            .map(|(button, &name)| {
-                let place = self.frame.at([
-                    MENU_ICON[0] + (button % MENU_COLUMNS) as f32 * MENU_CELL,
-                    self.menu_top() + MENU_ICON[1] + (button / MENU_COLUMNS) as f32 * MENU_CELL,
-                ]);
-                (name, [place[0], place[1], MENU_CELL, MENU_CELL])
+            .map(|(place, name)| {
+                let [x, y] = self.frame.at(self.button_corner(place));
+                (name, [x, y, MENU_BUTTON_SIZE[0], MENU_BUTTON_SIZE[1]])
             })
             .collect()
     }
@@ -415,21 +455,19 @@ impl BasicInfo {
         layer.sprites.push((toggle, at([0.0, self.toggle_top()]), toggle.size));
         if self.menu_open {
             layer.sprites.push((&assets.menu, at([0.0, self.menu_top()]), assets.menu.size));
-            for (button, icon) in assets.icons.iter().enumerate() {
-                let icon = match MENU[button] {
-                    "mail" if info.unread_mail => assets.mail_new.as_ref().or(icon.as_ref()),
-                    "achievement" if info.reward_waiting => assets.achievement_new.as_ref().or(icon.as_ref()),
-                    "item" if info.new_items => assets.item_new.as_ref().or(icon.as_ref()),
-                    "status" if info.new_level => assets.status_new.as_ref().or(icon.as_ref()),
-                    "skill" if info.new_job_level => assets.skill_new.as_ref().or(icon.as_ref()),
-                    _ => icon.as_ref(),
+            for (place, name) in visible(self.features).into_iter().enumerate() {
+                let icon = assets.icons.get(name).and_then(Option::as_ref);
+                let icon = match name {
+                    "mail" if info.unread_mail => assets.mail_new.as_ref().or(icon),
+                    "achievement" if info.reward_waiting => assets.achievement_new.as_ref().or(icon),
+                    "item" if info.new_items => assets.item_new.as_ref().or(icon),
+                    "status" if info.new_level => assets.status_new.as_ref().or(icon),
+                    "status" if self.doram => assets.status_doram.as_ref().or(icon),
+                    "skill" if info.new_job_level => assets.skill_new.as_ref().or(icon),
+                    _ => icon,
                 };
                 if let Some(icon) = icon {
-                    let place = [
-                        MENU_ICON[0] + (button % MENU_COLUMNS) as f32 * MENU_CELL,
-                        self.menu_top() + MENU_ICON[1] + (button / MENU_COLUMNS) as f32 * MENU_CELL,
-                    ];
-                    layer.sprites.push((icon, at(place), icon.size));
+                    layer.sprites.push((icon, at(self.button_corner(place)), icon.size));
                 }
             }
         }
@@ -451,9 +489,33 @@ mod tests {
         assert_eq!((layout(true).height, layout(true).mini), (150.0, 71.0));
         // The menu toggle follows the window's height.
         let mut window = BasicInfo::default();
-        assert_eq!(window.height(), 134.0 + MENU_TOGGLE - 1.0);
+        assert_eq!(window.height(), 134.0 + MENU_AT);
         window.fourth = true;
-        assert_eq!(window.height(), 150.0 + MENU_TOGGLE - 1.0);
+        assert_eq!(window.height(), 150.0 + MENU_AT);
+    }
+
+    #[test]
+    fn shows_the_games_buttons_on_its_grid() {
+        let base = visible(Features::default());
+        assert_eq!(base, ["status", "equip", "item", "skill", "party", "guild", "quest", "map", "navigation", "option", "bank", "mail", "keyboard", "repute"]);
+        // Battle and shop come in their places in the game's order.
+        let more = visible(Features { battle: true, shop: true });
+        assert_eq!(more.len(), 16);
+        assert_eq!((more[6], more[13]), ("battle", "shop"));
+        // Five a row, 42 and 43 apart, from (9, 23) under the window.
+        let mut window = BasicInfo::default();
+        assert_eq!(
+            (window.button_corner(0), window.button_corner(4), window.button_corner(5), window.button_corner(13)),
+            ([9.0, 157.0], [177.0, 157.0], [9.0, 200.0], [135.0, 243.0])
+        );
+        window.frame.open = true;
+        window.menu_open = true;
+        let corner = window.button_corner(6);
+        assert_eq!(window.hit(window.frame.at([corner[0] + 5.0, corner[1] + 5.0])), Some(Hit::Menu("quest")));
+        assert_eq!(window.menu_boxes().len(), 14);
+        assert_eq!(window.height(), 134.0 + 23.0 + 3.0 * 43.0);
+        window.fourth = true;
+        assert_eq!(window.button_corner(0), [9.0, 173.0]);
     }
 
     #[test]

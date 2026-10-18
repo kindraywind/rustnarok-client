@@ -1,0 +1,131 @@
+{
+  "about": "Menu buttons (issue #211): the menu under the basic info shows the game's buttons five to a row on its 42 x 43 grid (plus battle and shop, which this client opens from there); quest opens the quest window, option the game settings, keyboard the shortcut settings, each closing again on a second click.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "click_on": {
+        "button": "menu"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "menu-open",
+      "crop": [
+        0,
+        0,
+        230,
+        320
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "menu_item": "quest"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Quests"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "menu_item": "quest"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Quests"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "menu_item": "option"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "GraphicsSettings"
+        ]
+      }
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "menu-option",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "menu_item": "option"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "keyboard"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "ShortcutSettings"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "menu_item": "keyboard"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "menu"
+      }
+    },
+    {
+      "wait": 300
+    }
+  ]
+}
