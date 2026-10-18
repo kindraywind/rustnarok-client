@@ -50,6 +50,10 @@ const SKILL_INFO_F: &str = "data\\luafiles514\\lua files\\skillinfoz\\skillinfo_
 const SKILL_TREE: &str = "data\\luafiles514\\lua files\\skillinfoz\\skilltreeview.lub";
 const EFST_IDS: &str = "data\\luafiles514\\lua files\\stateicon\\efstids.lub";
 const STATE_ICON_IMAGES: &str = "data\\luafiles514\\lua files\\stateicon\\stateiconimginfo.lub";
+/// Laphine synthesis boxes (`tblLapineDdukddakBox`).
+const SYNTHESIS_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\lapineddukddakbox.lub";
+/// Laphine upgrade boxes (`tblLapineUpgradeBox`).
+const UPGRADE_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\lapineupgradebox.lub";
 /// The world maps: their names (the language file first, which the others use), list, colors and areas.
 const WORLD_VIEW: [&str; 4] = [
     "data\\luafiles514\\lua files\\worldviewdata\\worldviewdata_language.lub",
@@ -553,6 +557,141 @@ pub fn worlds(grf: &Grf) -> io::Result<(Vec<World>, [[u8; 4]; 2])> {
     Ok((worlds, [color("Run"), color("SelectBox")]))
 }
 
+/// One material a synthesis box accepts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SynthesisSource {
+    pub name: String,
+    pub amount: u16,
+    pub id: u32,
+}
+
+/// A synthesis box, keyed later by `ItemID`. `NeedSource_String` is left out.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SynthesisBox {
+    pub need_count: u32,
+    pub refine_min: u32,
+    pub refine_max: u32,
+    pub sources: Vec<SynthesisSource>,
+}
+
+/// One item an upgrade box accepts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpgradeTarget {
+    pub name: String,
+    pub id: u32,
+}
+
+/// An upgrade box, keyed later by `ItemID`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpgradeBox {
+    pub refine_min: u32,
+    pub refine_max: u32,
+    /// Random options the item must have. The client doesn't track those, so the window doesn't check it.
+    pub option_min: u32,
+    /// `NotSocketEnchantItem`: no cards allowed.
+    pub no_cards: bool,
+    pub targets: Vec<UpgradeTarget>,
+}
+
+fn lua_u32(table: &mlua::Table, key: &str) -> u32 {
+    table.get::<Option<u32>>(key).ok().flatten().unwrap_or(0)
+}
+
+fn lua_flag(table: &mlua::Table, key: &str) -> bool {
+    match table.get::<mlua::Value>(key).ok() {
+        Some(mlua::Value::Boolean(value)) => value,
+        Some(mlua::Value::Integer(value)) => value != 0,
+        Some(mlua::Value::Number(value)) => value != 0.0,
+        _ => false,
+    }
+}
+
+fn lua_name(table: &mlua::Table, index: i64) -> String {
+    table.get::<mlua::String>(index).map(|text| decode(&text)).unwrap_or_default()
+}
+
+/// `tblLapineDdukddakBox.sources` from the file's bytes. Its functions aren't called.
+pub fn synthesis_table(source: Vec<u8>) -> io::Result<HashMap<u32, SynthesisBox>> {
+    let lua = new_lua()?;
+    exec_bytes(&lua, SYNTHESIS_TABLE, source)?;
+    let root: mlua::Table = lua.globals().get("tblLapineDdukddakBox").map_err(lua_error)?;
+    let sources: mlua::Table = root.get("sources").map_err(lua_error)?;
+    let mut boxes = HashMap::new();
+    for pair in sources.pairs::<mlua::Value, mlua::Table>() {
+        let (_, entry) = pair.map_err(lua_error)?;
+        let item_id = lua_u32(&entry, "ItemID");
+        if item_id == 0 {
+            continue;
+        }
+        let mut items = Vec::new();
+        if let Ok(list) = entry.get::<mlua::Table>("SourceItems") {
+            for row in list.sequence_values::<mlua::Table>() {
+                let row = row.map_err(lua_error)?;
+                let id = row.get::<u32>(3).unwrap_or(0);
+                if id == 0 {
+                    continue;
+                }
+                items.push(SynthesisSource { name: lua_name(&row, 1), amount: row.get::<u32>(2).unwrap_or(1) as u16, id });
+            }
+        }
+        let refine_max = entry.get::<Option<u32>>("NeedRefineMax").ok().flatten().unwrap_or(u32::from(u8::MAX));
+        boxes.insert(
+            item_id,
+            SynthesisBox { need_count: lua_u32(&entry, "NeedCount"), refine_min: lua_u32(&entry, "NeedRefineMin"), refine_max, sources: items },
+        );
+    }
+    Ok(boxes)
+}
+
+/// `tblLapineUpgradeBox.targets` from the file's bytes.
+pub fn upgrade_table(source: Vec<u8>) -> io::Result<HashMap<u32, UpgradeBox>> {
+    let lua = new_lua()?;
+    exec_bytes(&lua, UPGRADE_TABLE, source)?;
+    let root: mlua::Table = lua.globals().get("tblLapineUpgradeBox").map_err(lua_error)?;
+    let targets: mlua::Table = root.get("targets").map_err(lua_error)?;
+    let mut boxes = HashMap::new();
+    for pair in targets.pairs::<mlua::Value, mlua::Table>() {
+        let (_, entry) = pair.map_err(lua_error)?;
+        let item_id = lua_u32(&entry, "ItemID");
+        if item_id == 0 {
+            continue;
+        }
+        let mut items = Vec::new();
+        if let Ok(list) = entry.get::<mlua::Table>("TargetItems") {
+            for row in list.sequence_values::<mlua::Table>() {
+                let row = row.map_err(lua_error)?;
+                let id = row.get::<u32>(2).unwrap_or(0);
+                if id == 0 {
+                    continue;
+                }
+                items.push(UpgradeTarget { name: lua_name(&row, 1), id });
+            }
+        }
+        let refine_max = entry.get::<Option<u32>>("NeedRefineMax").ok().flatten().unwrap_or(u32::from(u8::MAX));
+        boxes.insert(
+            item_id,
+            UpgradeBox {
+                refine_min: lua_u32(&entry, "NeedRefineMin"),
+                refine_max,
+                option_min: lua_u32(&entry, "NeedOptionNumMin"),
+                no_cards: lua_flag(&entry, "NotSocketEnchantItem"),
+                targets: items,
+            },
+        );
+    }
+    Ok(boxes)
+}
+
+/// Synthesis boxes from data.grf, by the box's item ID.
+pub fn synthesis_boxes(grf: &Grf) -> io::Result<HashMap<u32, SynthesisBox>> {
+    synthesis_table(grf.read(SYNTHESIS_TABLE)?)
+}
+
+/// Upgrade boxes from data.grf, by the box's item ID.
+pub fn upgrade_boxes(grf: &Grf) -> io::Result<HashMap<u32, UpgradeBox>> {
+    upgrade_table(grf.read(UPGRADE_TABLE)?)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
@@ -605,6 +744,53 @@ mod tests {
         assert!(hunter.counted);
         assert_eq!(hunter.objectives, [("Porings".to_owned(), 10), ("Lunatics".to_owned(), 5)]);
         assert_eq!((hunter.reward_title, hunter.details.as_str()), (0, ""));
+    }
+
+    #[test]
+    fn reads_laphine_boxes() {
+        let synthesis = r#"
+            tblLapineDdukddakBox = {
+                sources = {
+                    IDTest = {
+                        ItemID = 100000, NeedCount = 3, NeedRefineMin = 0, NeedRefineMax = 6,
+                        NeedSource_String = "leave this out",
+                        SourceItems = { { "Jellopy", 1, 909 }, { "Fluff", 1, 914 }, { "Shell", 1, 935 } }
+                    }
+                }
+            }
+            function set_resource_item_list() end
+        "#;
+        let boxes = super::synthesis_table(synthesis.as_bytes().to_vec()).unwrap();
+        let test = &boxes[&100000];
+        assert_eq!((test.need_count, test.refine_min, test.refine_max), (3, 0, 6));
+        assert_eq!(
+            test.sources,
+            [
+                super::SynthesisSource { name: "Jellopy".into(), amount: 1, id: 909 },
+                super::SynthesisSource { name: "Fluff".into(), amount: 1, id: 914 },
+                super::SynthesisSource { name: "Shell".into(), amount: 1, id: 935 },
+            ]
+        );
+
+        let upgrade = r#"
+            tblLapineUpgradeBox = {
+                targets = {
+                    GrayWolf = {
+                        ItemID = 100626, NeedRefineMin = 0, NeedRefineMax = 6,
+                        NeedOptionNumMin = 2, NotSocketEnchantItem = true,
+                        NeedSource_String = "leave this out",
+                        TargetItems = { { "Gray Wolf Suit", 450177 } }
+                    },
+                    Open = { ItemID = 100001, NeedRefineMin = 1, TargetItems = { { "Knife", 1201 } } }
+                }
+            }
+        "#;
+        let boxes = super::upgrade_table(upgrade.as_bytes().to_vec()).unwrap();
+        let wolf = &boxes[&100626];
+        assert_eq!((wolf.refine_min, wolf.refine_max, wolf.option_min, wolf.no_cards), (0, 6, 2, true));
+        assert_eq!(wolf.targets, [super::UpgradeTarget { name: "Gray Wolf Suit".into(), id: 450177 }]);
+        let open = &boxes[&100001];
+        assert_eq!((open.refine_max, open.no_cards, open.targets[0].id), (u32::from(u8::MAX), false, 1201));
     }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.

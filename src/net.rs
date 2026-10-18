@@ -837,6 +837,15 @@ const ZC_REFINING_MATERIAL_LIST: u16 = 0x0AA2;
 const CZ_REQ_REFINING: u16 = 0x0AA3;
 const CZ_CLOSE_REFINING_UI: u16 = 0x0AA4;
 const ZC_ACK_ITEMREFINING: u16 = 0x0188;
+const ZC_RANDOM_COMBINE_ITEM_UI_OPEN: u16 = 0x0A4E;
+const CZ_REQ_RANDOM_COMBINE_ITEM: u16 = 0x0A4F;
+const ZC_ACK_RANDOM_COMBINE_ITEM: u16 = 0x0A50;
+const CZ_RANDOM_COMBINE_ITEM_UI_CLOSE: u16 = 0x0A70;
+const ZC_RANDOM_UPGRADE_ITEM_UI_OPEN: u16 = 0x0AB4;
+const CZ_RANDOM_UPGRADE_ITEM_UI_CLOSE: u16 = 0x0AB5;
+const CZ_REQ_RANDOM_UPGRADE_ITEM: u16 = 0x0AB6;
+const ZC_ACK_RANDOM_UPGRADE_ITEM: u16 = 0x0AB7;
+const ZC_CHANGE_ITEM_OPTION: u16 = 0x0B43;
 const ZC_AUTOSPELLLIST: u16 = 0x0AFB;
 const CZ_SELECTAUTOSPELL: u16 = 0x01CE;
 const ZC_SKILL_SELECT_REQUEST: u16 = 0x0442;
@@ -1859,6 +1868,22 @@ pub enum MapEvent {
         result: u16,
         index: u16,
         refine: u16,
+    },
+    /// A Laphine synthesis box opened (the box's item ID).
+    SynthesisOpen(u32),
+    /// Synthesis result: 0 done, 5 an amount is wrong, 7 an item isn't wanted.
+    Synthesized(u16),
+    /// A Laphine upgrade box opened (the box's item ID).
+    UpgradeOpen(u32),
+    /// Upgrade result: 0 done, 1 refused. `Upgraded` is already Upgrade Weapon.
+    LaphineUpgraded(u16),
+    /// The item an upgrade just rewrote: its cards, refine and grade. Random options aren't tracked.
+    ItemPreview {
+        index: u16,
+        cards: [u32; 4],
+        refine: u8,
+        grade: u8,
+        broken: bool,
     },
     /// Eggs that can hatch, by inventory index.
     PetEggs(Vec<u16>),
@@ -3220,6 +3245,24 @@ impl MapSession {
         self.stream.write_all(&CZ_CLOSE_REFINING_UI.to_le_bytes())
     }
 
+    /// Sends the synthesis window's materials. Each entry is an inventory index and the amount the list wants.
+    pub fn synthesize(&mut self, box_id: u32, entries: &[(u16, u16)]) -> io::Result<()> {
+        self.stream.write_all(&encode_synthesis(box_id, entries))
+    }
+
+    pub fn close_synthesis(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_synthesis_close())
+    }
+
+    /// Sends the item in the upgrade window.
+    pub fn upgrade_item(&mut self, box_id: u32, index: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_upgrade_item(box_id, index))
+    }
+
+    pub fn close_upgrade(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_upgrade_close())
+    }
+
     /// Hatches the egg at this inventory index (from `PetEggs`).
     pub fn hatch(&mut self, index: u16) -> io::Result<()> {
         self.stream.write_all(&encode_hatch(index))
@@ -4086,6 +4129,35 @@ fn encode_skill_select(why: u32, skill: u16) -> [u8; 8] {
     packet
 }
 
+/// CZ_REQ_RANDOM_COMBINE_ITEM: length, the box's item ID as it came, then index and amount for each material.
+fn encode_synthesis(box_id: u32, entries: &[(u16, u16)]) -> Vec<u8> {
+    let mut packet = CZ_REQ_RANDOM_COMBINE_ITEM.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((8 + entries.len() * 4) as u16).to_le_bytes());
+    packet.extend_from_slice(&box_id.to_le_bytes());
+    for (index, amount) in entries {
+        packet.extend_from_slice(&index.to_le_bytes());
+        packet.extend_from_slice(&amount.to_le_bytes());
+    }
+    packet
+}
+
+fn encode_synthesis_close() -> [u8; 2] {
+    CZ_RANDOM_COMBINE_ITEM_UI_CLOSE.to_le_bytes()
+}
+
+/// CZ_REQ_RANDOM_UPGRADE_ITEM: the box's item ID, then the inventory index.
+fn encode_upgrade_item(box_id: u32, index: u16) -> [u8; 8] {
+    let mut packet = [0u8; 8];
+    packet[..2].copy_from_slice(&CZ_REQ_RANDOM_UPGRADE_ITEM.to_le_bytes());
+    packet[2..6].copy_from_slice(&box_id.to_le_bytes());
+    packet[6..].copy_from_slice(&index.to_le_bytes());
+    packet
+}
+
+fn encode_upgrade_close() -> [u8; 2] {
+    CZ_RANDOM_UPGRADE_ITEM_UI_CLOSE.to_le_bytes()
+}
+
 /// CZ_REQ_REFINING: the item, the ore, and whether Blacksmith's Blessings go with it.
 fn encode_refine(index: u16, ore: u32, blessings: bool) -> [u8; 9] {
     let mut packet = [0u8; 9];
@@ -4804,6 +4876,18 @@ fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             materials: packet[7..].chunks_exact(9).map(|ore| (self::u32_at(ore, 0), ore[4], self::u32_at(ore, 5))).collect(),
         },
         ZC_ACK_ITEMREFINING => MapEvent::Refined { result: u16_at(2), index: u16_at(4), refine: u16_at(6) },
+        ZC_RANDOM_COMBINE_ITEM_UI_OPEN => MapEvent::SynthesisOpen(u32_at(2)),
+        ZC_ACK_RANDOM_COMBINE_ITEM => MapEvent::Synthesized(u16_at(2)),
+        ZC_RANDOM_UPGRADE_ITEM_UI_OPEN => MapEvent::UpgradeOpen(u32_at(2)),
+        ZC_ACK_RANDOM_UPGRADE_ITEM => MapEvent::LaphineUpgraded(u16_at(2)),
+        // Index, broken, four cards, five random options (unused), refine, grade.
+        ZC_CHANGE_ITEM_OPTION => MapEvent::ItemPreview {
+            index: u16_at(2),
+            broken: packet[4] != 0,
+            cards: [u32_at(5), u32_at(9), u32_at(13), u32_at(17)],
+            refine: packet[46],
+            grade: packet[47],
+        },
         ZC_PETEGG_LIST => {
             MapEvent::PetEggs(packet[4..usize::from(u16_at(2)).min(packet.len())].chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect())
         }
@@ -5998,6 +6082,54 @@ mod tests {
         assert_eq!(encode_refine(4, 1010, true), [0xA3, 0x0A, 4, 0, 0xF2, 0x03, 0, 0, 1]);
         let ids = [ZC_OPEN_REFINING_UI, CZ_REFINING_SELECT_ITEM, ZC_REFINING_MATERIAL_LIST, CZ_REQ_REFINING, CZ_CLOSE_REFINING_UI, ZC_ACK_ITEMREFINING];
         assert_eq!(ids.map(packet_length), [Some(2), Some(4), Some(-1), Some(9), Some(2), Some(8)]);
+    }
+
+    #[test]
+    fn decodes_laphine_boxes() {
+        let open = [&ZC_RANDOM_COMBINE_ITEM_UI_OPEN.to_le_bytes()[..], &100_000u32.to_le_bytes()].concat();
+        assert!(matches!(decode_map_packet(&open), Some(MapEvent::SynthesisOpen(100_000))));
+        assert!(matches!(decode_map_packet(&[&ZC_ACK_RANDOM_COMBINE_ITEM.to_le_bytes()[..], &5u16.to_le_bytes()].concat()), Some(MapEvent::Synthesized(5))));
+        let entries = [(2u16, 1u16), (4, 1), (5, 2)];
+        let made = encode_synthesis(100_000, &entries);
+        assert_eq!(made.len(), 20);
+        assert_eq!(&made[..8], &[&CZ_REQ_RANDOM_COMBINE_ITEM.to_le_bytes()[..], &20u16.to_le_bytes(), &100_000u32.to_le_bytes()].concat());
+        assert_eq!(&made[8..], &entries.into_iter().flat_map(|(index, amount)| [index.to_le_bytes(), amount.to_le_bytes()].concat()).collect::<Vec<_>>());
+        assert_eq!(encode_synthesis_close(), CZ_RANDOM_COMBINE_ITEM_UI_CLOSE.to_le_bytes());
+
+        let upgrade = [&ZC_RANDOM_UPGRADE_ITEM_UI_OPEN.to_le_bytes()[..], &100_626u32.to_le_bytes()].concat();
+        assert!(matches!(decode_map_packet(&upgrade), Some(MapEvent::UpgradeOpen(100_626))));
+        assert!(matches!(
+            decode_map_packet(&[&ZC_ACK_RANDOM_UPGRADE_ITEM.to_le_bytes()[..], &1u16.to_le_bytes()].concat()),
+            Some(MapEvent::LaphineUpgraded(1))
+        ));
+        let upgrade_request: [u8; 8] =
+            [&CZ_REQ_RANDOM_UPGRADE_ITEM.to_le_bytes()[..], &100_626u32.to_le_bytes(), &7u16.to_le_bytes()].concat().try_into().unwrap();
+        assert_eq!(encode_upgrade_item(100_626, 7), upgrade_request);
+        assert_eq!(encode_upgrade_close(), CZ_RANDOM_UPGRADE_ITEM_UI_CLOSE.to_le_bytes());
+
+        let mut preview = vec![0u8; 48];
+        preview[..2].copy_from_slice(&ZC_CHANGE_ITEM_OPTION.to_le_bytes());
+        preview[2..4].copy_from_slice(&7u16.to_le_bytes());
+        preview[4] = 1;
+        preview[5..9].copy_from_slice(&4001u32.to_le_bytes());
+        preview[46] = 7;
+        preview[47] = 1;
+        match decode_map_packet(&preview) {
+            Some(MapEvent::ItemPreview { index: 7, cards, refine: 7, grade: 1, broken: true }) => assert_eq!(cards, [4001, 0, 0, 0]),
+            other => panic!("{other:?}"),
+        }
+        let ids = [
+            ZC_RANDOM_COMBINE_ITEM_UI_OPEN,
+            CZ_REQ_RANDOM_COMBINE_ITEM,
+            ZC_ACK_RANDOM_COMBINE_ITEM,
+            CZ_RANDOM_COMBINE_ITEM_UI_CLOSE,
+            ZC_RANDOM_UPGRADE_ITEM_UI_OPEN,
+            CZ_RANDOM_UPGRADE_ITEM_UI_CLOSE,
+            CZ_REQ_RANDOM_UPGRADE_ITEM,
+            ZC_ACK_RANDOM_UPGRADE_ITEM,
+            ZC_CHANGE_ITEM_OPTION,
+        ];
+        assert_eq!(ids.map(packet_length), [Some(6), Some(-1), Some(4), Some(2), Some(6), Some(2), Some(8), Some(4), Some(48)]);
     }
 
     #[test]
