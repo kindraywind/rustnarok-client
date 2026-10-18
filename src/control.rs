@@ -838,6 +838,17 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.basic_info.menu_boxes().into_iter().map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::item_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.enchant
+                .iter()
+                .flat_map(|window| {
+                    let index = window.item;
+                    let item = index.and_then(|index| game.inventory.items.iter().find(|item| item.index == index));
+                    window.row_boxes(item)
+                })
+                .map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})),
+        )
+        .chain(game.enchant.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.pick.iter().flat_map(|(list, _)| list.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.pick.iter().flat_map(|(list, _)| list.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
@@ -930,6 +941,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         ("GradeEnchant", game.grade.is_some()),
         ("LaphineSynthesis", game.synthesis.is_some()),
         ("LaphineUpgrade", game.upgrade.is_some()),
+        ("Enchant", game.enchant.is_some()),
         ("Materials", game.materials.is_some()),
         ("PartySetup", game.party_setup.is_some()),
         ("DressRoom", game.dressroom.is_some()),
