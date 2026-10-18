@@ -189,8 +189,8 @@ pub struct Layer {
 pub struct Frame {
     pub layers: Vec<Layer>,
     pub event: i32,
-    /// Attach points: where the head sits on a body frame, and the matching point on a head frame.
-    pub anchors: Vec<[i32; 2]>,
+    /// Attach points (x, y and a kind): where the head sits on a body frame, and the matching point on a head frame.
+    pub anchors: Vec<[i32; 3]>,
 }
 
 pub struct Act {
@@ -238,8 +238,7 @@ impl Act {
                 if version >= (2, 3) {
                     for _ in 0..reader.i32()?.max(0) {
                         reader.take(4)?;
-                        anchors.push([reader.i32()?, reader.i32()?]);
-                        reader.take(4)?;
+                        anchors.push([reader.i32()?, reader.i32()?, reader.i32()?]);
                     }
                 }
                 frames.push(Frame { layers, event, anchors });
@@ -273,12 +272,31 @@ pub struct Placement {
     pub angle: i32,
 }
 
-/// Places a frame's layers, shifted by `shift` (used to attach heads to bodies) in the layer's own zoomed pixels.
-pub fn place(spr: &Spr, frame: &Frame, shift: [i32; 2]) -> Vec<Placement> {
+/// Which of a frame's layers a part draws, and how its shift goes on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Pick {
+    /// Every layer, the shift zoomed with each (shields, garments, monsters and NPCs).
+    All,
+    /// One layer, the shift zoomed with it (a player's body, head and weapon).
+    Layer(usize),
+    /// One layer, the shift kept as it is whatever the layer's zoom (headgear).
+    Unzoomed(usize),
+}
+
+/// Places a frame's layers (those `pick` takes), shifted by `shift` (used to attach heads to bodies) in the layer's own
+/// zoomed pixels, or in plain pixels for `Pick::Unzoomed`.
+pub fn place(spr: &Spr, frame: &Frame, shift: [i32; 2], pick: Pick) -> Vec<Placement> {
+    let (only, unzoomed) = match pick {
+        Pick::All => (None, false),
+        Pick::Layer(index) => (Some(index), false),
+        Pick::Unzoomed(index) => (Some(index), true),
+    };
     frame
         .layers
         .iter()
-        .filter_map(|layer| {
+        .enumerate()
+        .filter(|&(index, _)| only.is_none_or(|only| only == index))
+        .filter_map(|(_, layer)| {
             let image = usize::try_from(layer.image).ok()?;
             let [width, height] = spr.size(layer.kind, image)?;
             let [zoom_x, zoom_y] = layer.scale;
@@ -286,8 +304,9 @@ pub fn place(spr: &Spr, frame: &Frame, shift: [i32; 2]) -> Vec<Placement> {
                 return None;
             }
             let centring = layer.size.unwrap_or([width as i32, height as i32]);
-            let left = (corner(layer, 0, centring[0], zoom_x) + shift[0] as f32) * zoom_x;
-            let top = (corner(layer, 1, centring[1], zoom_y) + shift[1] as f32) * zoom_y;
+            let [shift_x, shift_y] = if unzoomed { [shift[0] as f32 / zoom_x, shift[1] as f32 / zoom_y] } else { shift.map(|value| value as f32) };
+            let left = (corner(layer, 0, centring[0], zoom_x) + shift_x) * zoom_x;
+            let top = (corner(layer, 1, centring[1], zoom_y) + shift_y) * zoom_y;
             let size = [width as f32 * zoom_x, height as f32 * zoom_y];
             Some(Placement {
                 kind: layer.kind,
@@ -308,11 +327,19 @@ fn corner(layer: &Layer, axis: usize, size: i32, zoom: f32) -> f32 {
     if layer.top_left { offset } else { ((offset - ((size + 1) / 2) as f32 * zoom) / zoom).trunc() }
 }
 
-/// The shift that puts a head frame's anchor on the body frame's anchor.
+/// The shift that puts a head frame's anchor on the body frame's anchor: none unless both have one of the same kind.
 pub fn head_shift(body: &Frame, head: &Frame) -> [i32; 2] {
     match (body.anchors.first(), head.anchors.first()) {
-        (Some(body), Some(head)) => [body[0] - head[0], body[1] - head[1]],
+        (Some(body), Some(head)) if body[2] == head[2] => [body[0] - head[0], body[1] - head[1]],
         _ => [0, 0],
+    }
+}
+
+/// A headgear's shift: the head's, plus what puts the headgear's anchor on the head's (none without both).
+pub fn gear_shift(head_shift: [i32; 2], head: Option<&Frame>, gear: &Frame) -> [i32; 2] {
+    match (head.and_then(|head| head.anchors.first()), gear.anchors.first()) {
+        (Some(head), Some(gear)) => [head_shift[0] + head[0] - gear[0], head_shift[1] + head[1] - gear[1]],
+        _ => head_shift,
     }
 }
 
@@ -336,7 +363,7 @@ mod tests {
         assert_eq!(body_act.delays.len(), body_act.actions.len());
 
         let standing = &body_act.actions[0][0];
-        let placements = place(&body, standing, [0, 0]);
+        let placements = place(&body, standing, [0, 0], Pick::All);
         assert!(!placements.is_empty());
         let image = body.image(placements[0].kind, placements[0].image, None).unwrap();
         assert!(image.pixels().any(|pixel| pixel.0[3] == 255));
@@ -344,7 +371,7 @@ mod tests {
 
         // The head attaches above the feet, where the body's anchor is.
         let shift = head_shift(standing, &head_act.actions[0][0]);
-        let head_placements = place(&head, &head_act.actions[0][0], shift);
+        let head_placements = place(&head, &head_act.actions[0][0], shift, Pick::All);
         assert!(head_placements.iter().all(|placement| placement.position[1] < placements[0].position[1] + 10.0));
     }
 
@@ -362,7 +389,7 @@ mod tests {
     fn centres_layers_with_the_odd_pixel_on_the_left_and_top() {
         let spr = images(&[[10, 8], [11, 9]]);
         let frame = |layers: Vec<Layer>| Frame { layers, event: -1, anchors: Vec::new() };
-        let place_one = |layer: Layer, shift: [i32; 2]| place(&spr, &frame(vec![layer]), shift).remove(0);
+        let place_one = |layer: Layer, shift: [i32; 2]| place(&spr, &frame(vec![layer]), shift, Pick::All).remove(0);
 
         // Even sizes: half each way. Odd sizes: the extra column and row go left and up.
         assert_eq!(place_one(layer([0, 0], 0, false, [1.0; 2]), [0, 0]).position, [-5.0, -4.0]);
@@ -382,7 +409,34 @@ mod tests {
         // Old ACTs give the top-left.
         assert_eq!(place_one(Layer { top_left: true, ..layer([4, 6], 1, false, [1.0; 2]) }, [0, 0]).position, [4.0, 6.0]);
         // A layer zoomed to nothing isn't drawn.
-        assert!(place(&spr, &frame(vec![layer([0, 0], 0, false, [0.0, 1.0])]), [0, 0]).is_empty());
+        assert!(place(&spr, &frame(vec![layer([0, 0], 0, false, [0.0, 1.0])]), [0, 0], Pick::All).is_empty());
+    }
+
+    #[test]
+    fn draws_the_picked_layer_and_keeps_a_headgears_shift_unzoomed() {
+        let spr = images(&[[10, 8], [12, 12]]);
+        let frame = Frame { layers: vec![layer([0, 0], 0, false, [1.0; 2]), layer([0, 0], 1, false, [1.0; 2])], event: -1, anchors: Vec::new() };
+        let images = |pick| place(&spr, &frame, [0, 0], pick).iter().map(|placement| placement.image).collect::<Vec<_>>();
+        // A two-layer headgear frame draws layer 0; a head-hiding headgear layer 1; a shield every layer.
+        assert_eq!((images(Pick::Unzoomed(0)), images(Pick::Unzoomed(1)), images(Pick::All)), (vec![0], vec![1], vec![0, 1]));
+        // Zoomed 2: a head's shift doubles with its layer; a headgear's lands where it would unzoomed.
+        let zoomed = Frame { layers: vec![layer([0, 0], 0, false, [2.0; 2])], ..frame.clone() };
+        let at = |shift, pick| place(&spr, &zoomed, shift, pick)[0].position;
+        let still = at([0, 0], Pick::Layer(0));
+        assert_eq!(at([6, -4], Pick::Layer(0)), [still[0] + 12.0, still[1] - 8.0]);
+        assert_eq!(at([6, -4], Pick::Unzoomed(0)), [still[0] + 6.0, still[1] - 4.0]);
+    }
+
+    #[test]
+    fn shifts_heads_by_anchors_of_one_kind() {
+        let frame = |anchors: Vec<[i32; 3]>| Frame { layers: Vec::new(), event: -1, anchors };
+        let (body, head) = (frame(vec![[2, -70, 0]]), frame(vec![[-1, -10, 0]]));
+        assert_eq!(head_shift(&body, &head), [3, -60]);
+        assert_eq!(head_shift(&body, &frame(vec![[-1, -10, 1]])), [0, 0], "anchors of another kind");
+        assert_eq!(head_shift(&body, &frame(Vec::new())), [0, 0]);
+        // A headgear: the head's shift, then from the head's anchor to its own.
+        assert_eq!(gear_shift([3, -60], Some(&head), &frame(vec![[1, -12, 0]])), [1, -58]);
+        assert_eq!(gear_shift([3, -60], None, &frame(vec![[1, -12, 0]])), [3, -60]);
     }
 
     #[test]
