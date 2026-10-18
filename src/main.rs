@@ -13534,9 +13534,9 @@ impl App {
                 else {
                     continue;
                 };
-                // The unit's sprite scale: screen pixels a sprite pixel.
-                let scale = (at_feet[1] - above[1]) / 100.0;
-                let [left, top, right, bottom] = guild::head_emblem_box(at_feet, screen(), scale);
+                // The unit's perspective factor, from the screen pixels a sprite pixel takes at its feet.
+                let perspective = guild::perspective((at_feet[1] - above[1]) / 100.0, screen()[1]);
+                let [left, top, right, bottom] = guild::head_emblem_box(at_feet, screen(), perspective);
                 base.sprites.push((emblem, [left.round(), top.round()], guild::EMBLEM_SIZE));
                 game.head_emblems.push((actor.name.clone(), actor.guild, [left, top, right, bottom]));
             }
