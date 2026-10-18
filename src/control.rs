@@ -1163,6 +1163,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         "inventory_items": game.inventory.items.len(),
         "skills": game.skills.len(),
         "status_icons": game.status_icons.iter().map(|(id, _, ends)| json!({"id": id, "left_ms": ends.map(|end| end.saturating_duration_since(now).as_millis() as u64)})).collect::<Vec<_>>(),
+        // Where the camera is steered to: the turn (within a circle) and tilt in degrees, the distance in world units.
+        "camera": json!({
+            "yaw": game.camera_goal.yaw.rem_euclid(360.0).round(),
+            "pitch": game.camera_goal.pitch.round(),
+            "distance": (game.camera_goal.distance() * 10.0).round() / 10.0,
+        }),
         // What the mouse cursor shows.
         "cursor": format!("{:?}", app.cursor_look.kind()),
         "chat": game.chat.lines.iter().rev().take(5).rev().map(|(text, _)| text.as_str()).collect::<Vec<_>>(),
