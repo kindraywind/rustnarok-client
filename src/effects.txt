@@ -1726,6 +1726,12 @@ spr	685	폭죽_생일	1	-
 spr	686	폭죽_크리스마스	1	-
 spr	729	mashofa	0	-
 spr	1240	digital_space\digital_space	1	repeat=true
+# 326 EF_FOOT and 327 EF_FOOT2: a chase walk's footprints.
+# ponytail: no sprite file is confirmed (no data.grf here). A public effect catalog lists the textures
+# effect\foot_l_b.tga (326) and effect\foot_r_b.tga (327) as what these ids load; those names would replace a
+# sprite under data\sprite\이팩트\ if one is the real file. How big a print is and how long it stays are estimates.
+part	326	2D	file=effect/foot_l_b.tga;attachedEntity=false;duration=800;fadeOut=true;alphaMax=1;size=32
+part	327	2D	file=effect/foot_r_b.tga;attachedEntity=false;duration=800;fadeOut=true;alphaMax=1;size=32
 func	79	quake	0	200
 func	92	quake	600	650
 func	102	quake	350	650

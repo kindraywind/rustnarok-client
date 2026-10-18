@@ -1127,6 +1127,9 @@ mod tests {
         // Earth Spike shakes the camera; Fire Bolt's arrows fall before each hit.
         assert_eq!(table.quakes[&79], (Duration::ZERO, Duration::from_millis(200)));
         assert_eq!(table.skill(19, "beforeHitEffectId"), [31]);
+        // Chase Walk's footprints: the catalog's textures, played on the ground.
+        assert_eq!(table.floaters[&326][0]["file"], "effect/foot_l_b.tga");
+        assert_eq!(table.floaters[&327][0]["file"], "effect/foot_r_b.tga");
         // Fire Wall, Safety Wall (its rise once), Pneuma and warp portals on the ground; Ankle Snare's model.
         assert_eq!([127, 126, 133, 129, 128].map(|kind| table.units[&kind]), [25, 315, 141, 316, 317]);
         assert!(table.parts[&315][0].once && !table.parts[&25][0].once);

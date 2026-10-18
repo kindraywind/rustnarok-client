@@ -157,7 +157,6 @@ pub const OPTION_FALCON: u32 = 0x10;
 pub const OPTION_WUG: u32 = 0x10_0000;
 /// rathena `OPTION_WUGRIDER`: the wolf the player is riding. Same bit as the mount body.
 pub const OPTION_WUGRIDER: u32 = WOLF_RIDING;
-/// All of them: the only option bits a look keeps.
 /// rathena's OPTION_HIDE, OPTION_CLOAK and OPTION_CHASEWALK: the unit is out of sight.
 pub const UNSEEN_OPTIONS: u32 = OPTION_HIDE | OPTION_CLOAK | OPTION_CHASEWALK;
 /// rathena's option bits that keep a unit out of sight: Hiding, Cloaking, a GM's @hide, Chase Walk.
@@ -165,7 +164,14 @@ pub const OPTION_HIDE: u32 = 0x2;
 pub const OPTION_CLOAK: u32 = 0x4;
 pub const OPTION_INVISIBLE: u32 = 0x40;
 pub const OPTION_CHASEWALK: u32 = 0x4000;
+/// rathena OPTION_ORCISH: the head is the orc face.
+pub const OPTION_ORCISH: u32 = 0x800;
 const HIDDEN_OPTIONS: u32 = UNSEEN_OPTIONS | OPTION_INVISIBLE;
+/// rathena EFST_CLAIRVOYANCE. While it is on, hidden units show as silhouettes.
+pub const CLAIRVOYANCE: u16 = 184;
+/// rathena EF_FOOT and EF_FOOT2 (EF_HIT1 is 0, so these are 326 and 327): a chase walk's footprints.
+pub const EF_FOOT: u32 = 326;
+pub const EF_FOOT2: u32 = 327;
 
 /// How much of a unit shows.
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -173,23 +179,50 @@ pub enum Seen {
     Whole,
     /// Its shadow only: our own character in Hiding.
     Shadow,
+    /// A black figure, no shadow: someone hidden while Clairvoyance is on.
+    Silhouette,
     Nothing,
 }
 
-/// What shows of a unit with these option bits: others hidden in any way not at all; our own character in Hiding
-/// as a shadow, cloaked, chase-walking or GM-hidden not at all.
-// ponytail: our own Chase Walk is taken as Cloaking (nothing); the issue names Hide and Cloak.
-pub fn seen(option: u32, own: bool) -> Seen {
+/// What shows of a unit with these option bits. Others in Hiding, Cloaking or Chase Walk are silhouettes while
+/// `clairvoyance` (status 184) is on; GM hide shows nothing. Our own character in Hiding is a shadow, and is never
+/// a silhouette.
+// ponytail: clairvoyance is taken from our own character's status icons.
+pub fn seen(option: u32, own: bool, clairvoyance: bool) -> Seen {
     if option & HIDDEN_OPTIONS == 0 {
         Seen::Whole
     } else if own && option & (OPTION_CLOAK | OPTION_INVISIBLE | OPTION_CHASEWALK) == 0 {
         Seen::Shadow
+    } else if !own && clairvoyance && option & OPTION_INVISIBLE == 0 && option & UNSEEN_OPTIONS != 0 {
+        Seen::Silhouette
     } else {
         Seen::Nothing
     }
 }
-pub const BODY_OPTIONS: u32 =
-    WEDDING | UNION | XMAS | SUMMER | HANBOK | OKTOBERFEST | RIDING | DRAGONS[0] | DRAGONS[1] | DRAGONS[2] | DRAGONS[3] | DRAGONS[4] | WOLF_RIDING | MADOGEAR;
+
+/// The footprint a chase walk leaves on step `n` (0 the first): 326, then 327.
+// ponytail: they alternate, one per cell stepped, and only our own walker leaves them (others don't see the walker,
+// so they don't see our footprints). A new chase starts again at 326.
+pub fn chase_footprint(step: u32) -> u32 {
+    if step.is_multiple_of(2) { EF_FOOT } else { EF_FOOT2 }
+}
+
+/// The option bits that change what a player wears (`Look::option`): outfits, mounts and the orcish face.
+pub const BODY_OPTIONS: u32 = WEDDING
+    | UNION
+    | XMAS
+    | SUMMER
+    | HANBOK
+    | OKTOBERFEST
+    | RIDING
+    | DRAGONS[0]
+    | DRAGONS[1]
+    | DRAGONS[2]
+    | DRAGONS[3]
+    | DRAGONS[4]
+    | WOLF_RIDING
+    | MADOGEAR
+    | OPTION_ORCISH;
 
 /// The job whose body a player of `job` is drawn with under `option`: a wedding or holiday outfit (not in the union),
 /// else its mount's or union's body, else its own.
@@ -240,6 +273,20 @@ pub fn is_doram(job: u16) -> bool {
     matches!(job, 4217..=4221 | 4308 | 4315)
 }
 
+/// The head sprite under `data\sprite\` when `option` has the orcish bit. None keeps the hair.
+pub fn orcish_head(job: u16, option: u32) -> Option<&'static str> {
+    (option & OPTION_ORCISH != 0).then_some(if is_doram(job) { r"이팩트\orcface_doram" } else { r"이팩트\orcface" })
+}
+
+/// The glow sprite under `data\sprite\` for a mercenary of `job`. Archers, and jobs outside 6017–6046, have none.
+pub fn mercenary_glow(job: u16) -> Option<&'static str> {
+    match job {
+        6027..=6036 => Some(r"인간족\용병\창용병_창_검광"),
+        6037..=6046 => Some(r"인간족\용병\검용병_검_검광"),
+        _ => None,
+    }
+}
+
 struct Layer {
     spr: Spr,
     act: Act,
@@ -278,7 +325,7 @@ pub struct Look {
     pub head_mid: u16,
     pub head_bottom: u16,
     pub robe: u16,
-    /// The option bits that change the body (`BODY_OPTIONS`): outfits and mounts.
+    /// The option bits that change the body (`BODY_OPTIONS`): outfits, mounts and the orcish face.
     pub option: u32,
 }
 
@@ -662,20 +709,26 @@ impl SpriteSet {
             dye(format!("{body_palettes}\\{}_{sex}_{}.pal", names.palette, look.clothes_color), look.clothes_color),
             Part::Body,
         )?;
-        let head = load(
-            format!("data\\sprite\\{race}\\머리통\\{sex}\\{hair}_{sex}"),
-            dye(format!("{palettes}\\머리{hair}_{sex}_{}.pal", look.hair_color), look.hair_color),
-            Part::Head,
-        );
+        // The orcish bit replaces the hair with the orc face, placed as the head.
+        let head = match orcish_head(look.job, look.option) {
+            Some(face) => load(format!("data\\sprite\\{face}"), None, Part::Head),
+            None => load(
+                format!("data\\sprite\\{race}\\머리통\\{sex}\\{hair}_{sex}"),
+                dye(format!("{palettes}\\머리{hair}_{sex}_{}.pal", look.hair_color), look.hair_color),
+                Part::Head,
+            ),
+        };
+        // ponytail: the orc face replaces the head, so headgear is left off.
+        let orcish = orcish_head(look.job, look.option).is_some();
         // A headgear filling several slots shows once. Doram wear their own cut of some.
         let headgear = |view: u16, part: Part| {
             let name = tables.headgears.get(&view)?;
             let doram = is_doram(look.job).then(|| load(format!("data\\sprite\\악세사리\\{sex}_doram\\{sex}{name}"), None, part)).flatten();
             doram.or_else(|| load(format!("data\\sprite\\악세사리\\{sex}\\{sex}{name}"), None, part))
         };
-        let bottom = headgear(look.head_bottom, Part::HeadBottom);
-        let mid = (look.head_mid != look.head_bottom).then(|| headgear(look.head_mid, Part::HeadMid)).flatten();
-        let top = (look.head_top != look.head_bottom && look.head_top != look.head_mid).then(|| headgear(look.head_top, Part::HeadTop)).flatten();
+        let bottom = (!orcish).then(|| headgear(look.head_bottom, Part::HeadBottom)).flatten();
+        let mid = (!orcish && look.head_mid != look.head_bottom).then(|| headgear(look.head_mid, Part::HeadMid)).flatten();
+        let top = (!orcish && look.head_top != look.head_bottom && look.head_top != look.head_mid).then(|| headgear(look.head_top, Part::HeadTop)).flatten();
         let weapon = (look.weapon > 0).then(|| {
             let view = tables.view(look.weapon);
             let name = tables.weapons.get(&view).cloned().unwrap_or_else(|| format!("_{view}"));
@@ -754,7 +807,7 @@ impl SpriteSet {
             robe_over_body,
             robe_over_headgear: robe.is_some() && rules.is_some_and(|rules| rules.robe_over_headgear(look.robe)),
             headgear,
-            head_hidden: [look.head_top, look.head_mid, look.head_bottom].iter().any(|view| HEAD_HIDING.contains(view)),
+            head_hidden: !orcish && [look.head_top, look.head_mid, look.head_bottom].iter().any(|view| HEAD_HIDING.contains(view)),
             outfit: outfit(job),
             madogear: MADOGEAR_BODIES.contains(&job),
             female: look.sex == 0,
@@ -773,9 +826,9 @@ impl SpriteSet {
 
     /// An NPC or monster: one sprite named in the client's `JobNameTable`.
     /// A mercenary (jobs 6017 to 6046): its body by the job name table's path under the human bodies (`여\활용병`), laid
-    /// out like a player's, and the weapon of its kind (the unit carries none).
+    /// out like a player's, and the weapon of its kind (the unit carries none). Lancers and swordsmen also draw the
+    /// weapon's glow, right after the weapon, on the weapon's frame.
     pub fn mercenary(grf: &Grf, job: u16, name: &str) -> Option<Self> {
-        // ponytail: the weapons' glow sprites (`_검광`) are left out.
         let weapon = match job {
             6017..=6026 => "활용병_활",
             6027..=6036 => "창용병_창",
@@ -792,8 +845,9 @@ impl SpriteSet {
         };
         let body = load(format!("data\\sprite\\인간족\\몸통\\{name}"), Part::Body)?;
         let weapon = load(format!("data\\sprite\\인간족\\용병\\{weapon}"), Part::Weapon);
+        let glow = mercenary_glow(job).and_then(|path| load(format!("data\\sprite\\{path}"), Part::WeaponGlow));
         Some(Self {
-            layers: [Some(body), weapon].into_iter().flatten().collect(),
+            layers: [Some(body), weapon, glow].into_iter().flatten().collect(),
             player: true,
             dressing: None,
             scale: 1.0,
@@ -922,7 +976,7 @@ impl SpriteSet {
         let head_count = frames_of(Part::Head).map(|(_, frames)| frames.len()).filter(|&count| count > 0).unwrap_or(body_frames.len());
         let order = match &self.dressing {
             Some(dressing) => dressing.order(index, frame_index),
-            None => vec![Part::Body, Part::Weapon],
+            None => vec![Part::Body, Part::Weapon, Part::WeaponGlow],
         };
 
         // A player's parts draw one ACT layer each; the headgear go by the head's anchor.
@@ -1787,6 +1841,10 @@ pub struct Actor {
     pub step_ms: f32,
     /// World units walked in finished steps since the unit appeared.
     distance: f32,
+    /// Cells a finished step just left (not a slide). Cleared at the start of the next update.
+    stepped: Vec<[i32; 2]>,
+    /// Chase-walk footprints left so far, so 326 and 327 alternate.
+    pub footprints: u32,
     /// The facing in the sprites' eight directions, and exactly, in degrees (`angle_of`: 0 south, 90 east).
     pub direction: u8,
     pub rot: f32,
@@ -1881,6 +1939,8 @@ impl Actor {
             blend: None,
             step_ms: f32::from(speed.max(1)),
             distance: 0.0,
+            stepped: Vec::new(),
+            footprints: 0,
             direction,
             rot: rot_of(direction),
             facing_from_server: true,
@@ -2132,8 +2192,14 @@ impl Actor {
         !self.path.is_empty()
     }
 
+    /// Cells a step finished on this update just left, until the next update.
+    pub fn steps_left(&self) -> &[[i32; 2]] {
+        &self.stepped
+    }
+
     /// Advances along the path; returns the (fractional) cell the actor is at now.
     pub fn update(&mut self, now: Instant) -> [f32; 2] {
+        self.stepped.clear();
         while let Some(&(next, arrives)) = self.path.first() {
             if !self.sliding {
                 let step = [next[0] - self.cell[0], next[1] - self.cell[1]];
@@ -2146,6 +2212,9 @@ impl Actor {
             }
             let from = self.leg.0;
             self.distance += f32::hypot(next[0] as f32 - from[0], next[1] as f32 - from[1]) * world::CELL;
+            if !self.sliding {
+                self.stepped.push(self.cell);
+            }
             self.cell = next;
             self.path.remove(0);
             self.leg = (next.map(|value| value as f32), arrives);
@@ -2355,16 +2424,69 @@ mod tests {
 
     #[test]
     fn hides_by_option_bits() {
-        assert_eq!(seen(0, false), Seen::Whole);
+        assert_eq!(seen(0, false, false), Seen::Whole);
         for bit in [OPTION_HIDE, OPTION_CLOAK, OPTION_INVISIBLE, OPTION_CHASEWALK] {
-            assert_eq!(seen(bit, false), Seen::Nothing, "others with {bit:#x}");
+            assert_eq!(seen(bit, false, false), Seen::Nothing, "others with {bit:#x}");
         }
-        assert_eq!(seen(OPTION_HIDE, true), Seen::Shadow);
+        assert_eq!(seen(OPTION_HIDE, true, false), Seen::Shadow);
         assert_eq!(
-            (seen(OPTION_CLOAK, true), seen(OPTION_INVISIBLE, true), seen(OPTION_HIDE | OPTION_CLOAK, true)),
+            (seen(OPTION_CLOAK, true, false), seen(OPTION_INVISIBLE, true, false), seen(OPTION_HIDE | OPTION_CLOAK, true, false)),
             (Seen::Nothing, Seen::Nothing, Seen::Nothing)
         );
-        assert_eq!(seen(0x8, true), Seen::Whole, "other option bits (a cart) don't hide");
+        assert_eq!(seen(0x8, true, false), Seen::Whole, "other option bits (a cart) don't hide");
+    }
+
+    #[test]
+    fn silhouettes_hidden_units_while_clairvoyance_is_on() {
+        // Status 184 draws others in Hiding, Cloaking or Chase Walk as black figures. GM hide stays invisible.
+        for bit in [OPTION_HIDE, OPTION_CLOAK, OPTION_CHASEWALK] {
+            assert_eq!(seen(bit, false, false), Seen::Nothing, "without 184, {bit:#x}");
+            assert_eq!(seen(bit, false, true), Seen::Silhouette, "with 184, {bit:#x}");
+        }
+        assert_eq!(seen(OPTION_INVISIBLE, false, true), Seen::Nothing);
+        assert_eq!(seen(OPTION_HIDE | OPTION_INVISIBLE, false, true), Seen::Nothing);
+        // Our own character is never a silhouette: Hiding stays a shadow, Cloaking and Chase Walk stay hidden.
+        assert_eq!(seen(OPTION_HIDE, true, true), Seen::Shadow);
+        assert_eq!(seen(OPTION_CLOAK, true, true), Seen::Nothing);
+        assert_eq!(seen(OPTION_CHASEWALK, true, true), Seen::Nothing);
+        assert_eq!(seen(OPTION_INVISIBLE, true, true), Seen::Nothing);
+        assert_eq!(seen(0, false, true), Seen::Whole);
+        assert_eq!(seen(0x8, false, true), Seen::Whole);
+        // The figure is the sprite's own colour multiplied by black, which keeps the alpha.
+        assert_eq!(layer_color([10, 20, 30, 128], Some([0, 0, 0])), [0, 0, 0, 128]);
+    }
+
+    #[test]
+    fn names_mercenary_glows_and_the_orcish_head() {
+        assert_eq!(mercenary_glow(6017), None);
+        assert_eq!(mercenary_glow(6026), None);
+        assert_eq!(mercenary_glow(6027), Some(r"인간족\용병\창용병_창_검광"));
+        assert_eq!(mercenary_glow(6036), Some(r"인간족\용병\창용병_창_검광"));
+        assert_eq!(mercenary_glow(6037), Some(r"인간족\용병\검용병_검_검광"));
+        assert_eq!(mercenary_glow(6046), Some(r"인간족\용병\검용병_검_검광"));
+        assert_eq!(mercenary_glow(6047), None);
+        assert_eq!(mercenary_glow(0), None);
+        assert_eq!(orcish_head(0, 0), None);
+        assert_eq!(orcish_head(4008, OPTION_ORCISH), Some(r"이팩트\orcface"));
+        assert_eq!(orcish_head(4218, 0), None);
+        assert_eq!(orcish_head(4218, OPTION_ORCISH), Some(r"이팩트\orcface_doram"));
+        assert_eq!(orcish_head(4308, OPTION_ORCISH | RIDING), Some(r"이팩트\orcface_doram"));
+        assert_ne!(BODY_OPTIONS & OPTION_ORCISH, 0);
+    }
+
+    #[test]
+    fn leaves_a_footprint_on_each_cell_a_chase_walk_steps() {
+        assert_eq!([0, 1, 2].map(chase_footprint), [EF_FOOT, EF_FOOT2, EF_FOOT]);
+        let mut actor = Actor::new("a".into(), None, [10, 10], 0, 100);
+        let start = Instant::now();
+        actor.walk_from([10, 10], [8, 8], vec![[11, 10], [12, 10]], start, start, false);
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        actor.update(at(50));
+        assert!(actor.steps_left().is_empty(), "still on the first cell");
+        actor.update(at(150));
+        assert_eq!(actor.steps_left(), &[[10, 10]]);
+        actor.update(at(250));
+        assert_eq!(actor.steps_left(), &[[11, 10]]);
     }
 
     #[test]

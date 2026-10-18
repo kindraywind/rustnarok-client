@@ -14082,7 +14082,8 @@ impl App {
                 }
                 if id == game.account_id {
                     game.status_icons.retain(|(icon, ..)| *icon != kind);
-                    if on && self.status_icon_files.contains_key(&kind) {
+                    // Clairvoyance has no icon in the built-in table; it is still kept so hidden units can be silhouettes.
+                    if on && (self.status_icon_files.contains_key(&kind) || kind == actor::CLAIRVOYANCE) {
                         let now = Instant::now();
                         let ends = (left_ms > 0).then(|| now + Duration::from_millis(u64::from(left_ms)));
                         game.status_icons.push((kind, now, ends));
@@ -14637,6 +14638,19 @@ impl App {
         // Move everyone, follow the player, then decode the sprite frames (mutably) before borrowing them.
         let walking = game.player.moving();
         let player_cell = game.player.update(now);
+        // ponytail: footprints alternate 326 and 327, one on each cell just left, only while we are chase-walking.
+        // Others don't see the walker, so they don't see our prints. A new chase starts again at 326.
+        if game.player.hide_option & actor::OPTION_CHASEWALK != 0 {
+            let stepped = game.player.steps_left().to_vec();
+            for cell in stepped {
+                let effect = actor::chase_footprint(game.player.footprints);
+                game.player.footprints = game.player.footprints.wrapping_add(1);
+                let at = [cell[0].max(0) as u16, cell[1].max(0) as u16];
+                game.play_effect_at(gpu, grf, &self.effect_table, effect, at);
+            }
+        } else {
+            game.player.footprints = 0;
+        }
         game.player.step_companions(actor::world_xz(player_cell), now);
         if walking
             && !game.player.moving()
@@ -14683,16 +14697,19 @@ impl App {
         };
         let mut carts = Vec::new();
         let mut companion_draws: Vec<CompanionDraw> = Vec::new();
+        // ponytail: Clairvoyance is status 184 on our own character.
+        let clairvoyance = game.status_icons.iter().any(|(kind, ..)| *kind == actor::CLAIRVOYANCE);
         if let Some(cart) = &mut game.player.cart
-            && actor::seen(game.player.hide_option, true) == actor::Seen::Whole
+            && actor::seen(game.player.hide_option, true, clairvoyance) == actor::Seen::Whole
         {
             let (feet, placed) = cart_frame(cart);
             carts.push((Owner::Player, feet, placed));
         }
         let player_tint = game.player.body_tint();
         let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
-        // Our own character in Hiding shows its shadow alone (a frame with no sprite); cloaked or GM-hidden, nothing.
-        match actor::seen(game.player.hide_option, true) {
+        // Our own character in Hiding shows its shadow alone (a frame with no sprite); cloaked, chase-walking or
+        // GM-hidden, nothing. We are never drawn as a silhouette.
+        match actor::seen(game.player.hide_option, true, clairvoyance) {
             actor::Seen::Whole => {
                 if let Some(sprites) = &mut game.player.sprites {
                     sprites.set_tint(player_tint);
@@ -14703,7 +14720,7 @@ impl App {
                 }
             }
             actor::Seen::Shadow => frames.push((Owner::Player, player_feet, Vec::new())),
-            actor::Seen::Nothing => {}
+            actor::Seen::Nothing | actor::Seen::Silhouette => {}
         }
         if !game.player.cloaked {
             if let Some(falcon) = &mut game.player.falcon {
@@ -14749,26 +14766,31 @@ impl App {
         for (&id, actor) in &mut game.units {
             let cell = actor.update(now);
             actor.step_companions(actor::world_xz(cell), now);
-            // Hidden players aren't drawn at all: no sprite, shadow, name or bar, nothing to click.
-            if actor::seen(actor.hide_option, false) != actor::Seen::Whole {
+            // Hidden units aren't drawn, except as black silhouettes while we have Clairvoyance. GM hide stays hidden.
+            let show = actor::seen(actor.hide_option, false, clairvoyance);
+            if show == actor::Seen::Nothing {
                 continue;
             }
+            let silhouette = show == actor::Seen::Silhouette;
             let feet = game.world.cell_position(cell);
             feet_of.insert(id, feet);
-            let loudness = heard(f32::hypot(cell[0] - player_cell[0], cell[1] - player_cell[1]));
-            sounds.extend(actor.sounds_now(now).into_iter().map(|sound| (sound, loudness)));
+            if !silhouette {
+                let loudness = heard(f32::hypot(cell[0] - player_cell[0], cell[1] - player_cell[1]));
+                sounds.extend(actor.sounds_now(now).into_iter().map(|sound| (sound, loudness)));
+            }
             let (action, timing) = actor.animation(now);
             let head_direction = actor.head_direction;
             let seen = seen_direction(actor.rot, yaw, rounds_facing(actor.kind, actor.job, action));
             // NPC names show under them; players' and monsters' on hover (below).
-            if !actor.hidden && (actor.kind == NPC || actor.sprites.is_none()) {
+            if !silhouette && !actor.hidden && (actor.kind == NPC || actor.sprites.is_none()) {
                 labels.push((actor.name.clone(), feet, name_color(actor.kind, actor.job, actor.level, our_summons.contains(&Some(id)), own_level)));
             }
-            if let Some(cart) = &mut actor.cart {
+            if !silhouette && let Some(cart) = &mut actor.cart {
                 let (feet, placed) = cart_frame(cart);
                 carts.push((Owner::Unit(id), feet, placed));
             }
-            let tint = actor.body_tint();
+            // A silhouette multiplies the sprite's RGB by 0 and keeps its alpha. It casts no shadow.
+            let tint = if silhouette { Some([0, 0, 0]) } else { actor.body_tint() };
             let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent);
             if let Some(sprites) = &mut actor.sprites {
                 sprites.set_tint(tint);
@@ -14777,7 +14799,7 @@ impl App {
                 actor.leave_ghost(now, feet, &placed);
                 frames.push((Owner::Unit(id), feet, placed));
             }
-            if !actor.cloaked {
+            if !silhouette && !actor.cloaked {
                 if let Some(falcon) = &mut actor.falcon {
                     push_companion(falcon, false, Owner::Unit(id), gpu, &game.world, yaw, now, &mut companion_draws);
                 }
@@ -14910,9 +14932,11 @@ impl App {
                     Owner::Item(_) => ITEM_SHADOW,
                     Owner::SkillUnit(_) => 0.0,
                     Owner::Player => cast(&game.player, player_scale),
-                    Owner::Unit(id) => {
-                        game.units.get(id).map(|actor| cast(actor, unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent))).unwrap_or(1.0)
-                    }
+                    Owner::Unit(id) => match game.units.get(id) {
+                        Some(actor) if actor::seen(actor.hide_option, false, clairvoyance) == actor::Seen::Silhouette => 0.0,
+                        Some(actor) => cast(actor, unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent)),
+                        None => 1.0,
+                    },
                 };
                 if !dead && scale > 0.0 {
                     let ground = game.world.ground_under(*feet);
