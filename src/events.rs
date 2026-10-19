@@ -385,6 +385,8 @@ impl App {
                     effects: effects::Effects::default(),
                     deal_choice: None,
                     shop: None,
+                    deal_confirm: None,
+                    shop_asked: None,
                     storage: storage::Storage::default(),
                     cutin: None,
                     marks: Vec::new(),
@@ -1910,13 +1912,17 @@ impl App {
                     .iter()
                     .find(|good| good.index == index)
                     .map(|good| inventory::item_name(&self.items, good.item.id, good.item.identified, good.item.refine));
-                shop.sold(index, amount);
-                let sold_out = shop.goods.is_empty();
+                let sold_out = shop.sold(index, amount);
                 if let Some(name) = name {
-                    game.chat_line(rustnarok_client::messages::fill(self.messages.get(VEND_SOLD).map_or("", String::as_str), &[&name, &amount]), CHAT_ITEM);
+                    game.chat_line(
+                        rustnarok_client::messages::fill(self.messages.get(VEND_SOLD).map_or("", String::as_str), &[&name, &amount]),
+                        VEND_SOLD_COLOR,
+                    );
                 }
+                // Sold out: the client closes the shop itself.
                 if sold_out {
-                    game.chat_line(self.messages.get(VEND_SOLD_OUT).cloned().unwrap_or_default(), CHAT_ITEM);
+                    game.chat_line(self.messages.get(VEND_SOLD_OUT).cloned().unwrap_or_default(), CHAT_SELF);
+                    game.close_esc(escape::WindowId::MyShop);
                 }
             }
             MapEvent::VendorSign { id, title } => {

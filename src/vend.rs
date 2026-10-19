@@ -2,6 +2,7 @@
 //! window of what's still for sale, with the button that closes it.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::ItemInfo;
@@ -29,6 +30,23 @@ const POSITION: [f32; 2] = [330.0, 150.0];
 const SHOP_MESSAGE: usize = 227;
 const SETUP_MESSAGE: usize = 232;
 const PICKED: [u8; 4] = [0x34, 0x6A, 0xE1, 0x60];
+/// The most a price may be; past it the price is held there, with 2467 to say so.
+pub const MOST_PRICE: u32 = 1_000_000_000;
+pub const PRICE_HELD: usize = 2467;
+/// "Price: ", the price box's question.
+pub const PRICE_ASKS: usize = 369;
+/// OK refused: nothing on sale (2494), no name (225); a price of 0 asks first (604).
+const NOTHING_ON_SALE: usize = 2494;
+const NO_NAME: usize = 225;
+pub const FREE_ASKS: usize = 604;
+/// A shop's name: 36 characters.
+const NAME_LENGTH: usize = 36;
+
+/// Whether a click on a shop's sign asks for the shop: not on your own, not while dead, not for the shop already open,
+/// and at most once a second (`since` the last ask).
+pub fn may_ask(sign: u32, me: u32, dead: bool, open: Option<u32>, since: Option<Duration>) -> bool {
+    sign != me && !dead && open != Some(sign) && since.is_none_or(|since| since >= Duration::from_secs(1))
+}
 
 /// The size both vending windows take: width and rows.
 // ponytail: one size kept for both windows; they open at 5 rows.
@@ -101,6 +119,10 @@ pub enum Action {
     /// Ask the price of a cart item (by index).
     Price(u16),
     Open,
+    /// Something is on sale for 0: ask (604) before opening.
+    AskFree,
+    /// OK refused, with this message in the message box.
+    Refused(usize),
     Cancel,
 }
 
@@ -158,6 +180,27 @@ impl Setup {
         [x, y, window::GRIP, window::GRIP]
     }
 
+    /// The cart rows shown, by item id (for the test driver).
+    pub fn row_boxes(&self, cart: &[InventoryItem]) -> Vec<(u32, [f32; 4])> {
+        let rows = cart.iter().enumerate().skip(self.scroll).take(self.size.rows);
+        rows.map(|(place, item)| {
+            let [x, y] = self.frame.at([0.0, TITLE_HEIGHT + NAME_FIELD + (place - self.scroll) as f32 * ROW]);
+            (item.id, [x, y, self.size.width, ROW])
+        })
+        .collect()
+    }
+
+    /// The name field, OK and Cancel (for the test driver).
+    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        let [ok, cancel] = self.buttons().map(|place| self.frame.at(place));
+        let [x, y] = self.frame.at([5.0, TITLE_HEIGHT + 3.0]);
+        vec![
+            ("vend_name", [x, y, self.size.width - 10.0, 18.0]),
+            ("vend_ok", [ok[0], ok[1], BUTTON[0], BUTTON[1]]),
+            ("vend_cancel", [cancel[0], cancel[1], BUTTON[0], BUTTON[1]]),
+        ]
+    }
+
     pub fn hit(&self, cursor: [f32; 2], cart: &[InventoryItem]) -> Option<Hit> {
         let local = self.frame.local(cursor, self.height())?;
         if let Some(hit) = self.frame.title_hit(local) {
@@ -196,13 +239,23 @@ impl Setup {
                 }
                 None
             }
-            Hit::Ok if !self.prices.is_empty() && !self.name.trim().is_empty() => Some(Action::Open),
+            // ponytail: the name is checked before the price of 0, the game checks it after.
+            Hit::Ok if self.prices.is_empty() => Some(Action::Refused(NOTHING_ON_SALE)),
+            Hit::Ok if self.name.trim().is_empty() => Some(Action::Refused(NO_NAME)),
+            Hit::Ok if self.prices.values().any(|&price| price == 0) => Some(Action::AskFree),
+            Hit::Ok => Some(Action::Open),
             _ => None,
         }
     }
 
+    /// A cart item's price, no more than 1,000,000,000; returns whether it was held there.
+    pub fn set_price(&mut self, index: u16, price: u32) -> bool {
+        self.prices.insert(index, price.min(MOST_PRICE));
+        price > MOST_PRICE
+    }
+
     pub fn type_text(&mut self, text: &str) {
-        let room = 80usize.saturating_sub(self.name.len());
+        let room = NAME_LENGTH.saturating_sub(self.name.chars().count());
         self.name.extend(text.chars().filter(|character| !character.is_control()).take(room));
     }
 
@@ -321,8 +374,8 @@ impl MyShop {
         Some(contains(self.close_button(), BUTTON, local) || self.frame.title_hit(local) == Some(TitleHit::Close))
     }
 
-    /// Something sold: fewer left, and gone when none are.
-    pub fn sold(&mut self, index: u16, amount: u16) {
+    /// Something sold: fewer left, and gone when none are. Returns whether the shop is sold out.
+    pub fn sold(&mut self, index: u16, amount: u16) -> bool {
         if let Some(position) = self.goods.iter().position(|good| good.index == index) {
             let left = &mut self.goods[position].item.amount;
             *left = left.saturating_sub(amount);
@@ -330,6 +383,7 @@ impl MyShop {
                 self.goods.remove(position);
             }
         }
+        self.goods.is_empty()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -423,8 +477,9 @@ mod tests {
         let cart = [item(2, 5), item(3, 1)];
         let mut setup = Setup::new(2, GridSize::default());
         assert_eq!(setup.click(Hit::Row(0), &cart), Some(Action::Price(2)));
+        assert_eq!(setup.click(Hit::Ok, &cart), Some(Action::Refused(NOTHING_ON_SALE)));
         setup.prices.insert(2, 15);
-        assert_eq!(setup.click(Hit::Ok, &cart), None, "no name yet");
+        assert_eq!(setup.click(Hit::Ok, &cart), Some(Action::Refused(NO_NAME)));
         setup.type_text("Apples");
         assert_eq!(setup.click(Hit::Ok, &cart), Some(Action::Open));
         assert_eq!(setup.goods(&cart), [(2, 5, 15)]);
@@ -432,9 +487,33 @@ mod tests {
         assert_eq!(setup.click(Hit::Row(0), &cart), None);
         assert!(setup.prices.is_empty());
         let mut shop = MyShop::new("Apples".into(), vec![VendItem { index: 2, item: item(2, 5), price: 15 }], GridSize::default());
-        shop.sold(2, 3);
+        assert!(!shop.sold(2, 3));
         assert_eq!(shop.goods[0].item.amount, 2);
-        shop.sold(2, 2);
+        assert!(shop.sold(2, 2), "the last one sold closes the shop");
         assert!(shop.goods.is_empty());
+    }
+
+    #[test]
+    fn signs_ask_once_a_second_and_not_for_your_own() {
+        assert!(may_ask(5, 1, false, None, None));
+        assert!(!may_ask(1, 1, false, None, None), "your own sign");
+        assert!(!may_ask(5, 1, true, None, None), "dead");
+        assert!(!may_ask(5, 1, false, Some(5), None), "already open");
+        assert!(may_ask(5, 1, false, Some(6), Some(Duration::from_millis(1000))));
+        assert!(!may_ask(5, 1, false, None, Some(Duration::from_millis(999))));
+    }
+
+    #[test]
+    fn prices_go_to_a_billion_and_zero_asks() {
+        let cart = [item(2, 5), item(3, 1)];
+        let mut setup = Setup::new(2, GridSize::default());
+        setup.type_text("A shop name longer than thirty-six characters");
+        assert_eq!(setup.name.chars().count(), 36);
+        assert!(!setup.set_price(2, 2_500_000));
+        assert_eq!(setup.goods(&cart), [(2, 5, 2_500_000)]);
+        assert!(setup.set_price(3, 1_500_000_000), "held at the most");
+        assert_eq!(setup.prices[&3], MOST_PRICE);
+        assert!(!setup.set_price(3, 0));
+        assert_eq!(setup.click(Hit::Ok, &cart), Some(Action::AskFree));
     }
 }

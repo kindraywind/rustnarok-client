@@ -821,6 +821,72 @@ pub fn group(number: u64) -> String {
     grouped
 }
 
+/// "Confirm Deal" (2326): Buy on a vendor's shop closes it and its deal waits here, the total shown, for Buy (0x0801)
+/// or Cancel; either closes it.
+pub struct Confirm {
+    pub shop: Shop,
+    frame: Frame,
+}
+
+const CONFIRM_SIZE: [f32; 2] = [300.0, 150.0];
+const CONFIRM_TITLE: usize = 2326;
+/// "Below is the total cost:", "<total> Zeny", "Press buy to confirm." at (10, 20 + 20k).
+const CONFIRM_LINES: [usize; 3] = [2327, 2328, 2329];
+/// Buy and Cancel.
+const CONFIRM_BUTTONS: [[f32; 2]; 2] = [[194.0, 126.0], [239.0, 126.0]];
+
+impl Confirm {
+    // ponytail: in the middle of the screen; where the game puts it isn't known.
+    pub fn new(shop: Shop, screen: [f32; 2]) -> Self {
+        let mut frame = Frame::new([((screen[0] - CONFIRM_SIZE[0]) / 2.0).floor(), ((screen[1] - CONFIRM_SIZE[1]) / 2.0).floor()], CONFIRM_SIZE[0]);
+        frame.open = true;
+        Self { shop, frame }
+    }
+
+    /// Over the box: Some(true) on Buy, Some(false) on Cancel.
+    pub fn hit(&self, cursor: [f32; 2]) -> Option<Option<bool>> {
+        let local = self.frame.local(cursor, CONFIRM_SIZE[1])?;
+        Some(CONFIRM_BUTTONS.iter().position(|&button| contains(button, BUTTON, local)).map(|button| button == 0))
+    }
+
+    pub fn lines(&self, messages: &[String]) -> [String; 3] {
+        let message = |id: usize| messages.get(id).cloned().unwrap_or_default();
+        let [cost, zeny, press] = CONFIRM_LINES;
+        [message(cost), format!("{} {}", group(self.shop.total()), message(zeny)), message(press)]
+    }
+
+    /// Buy and Cancel on screen (for the test driver).
+    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        ["confirm_buy", "confirm_cancel"]
+            .into_iter()
+            .zip(CONFIRM_BUTTONS)
+            .map(|(name, place)| {
+                let [x, y] = self.frame.at(place);
+                (name, [x, y, BUTTON[0], BUTTON[1]])
+            })
+            .collect()
+    }
+
+    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, messages: &[String], pointer: ([f32; 2], bool)) {
+        let frame = &self.frame;
+        frame.draw_bar(layer, chrome);
+        let title = messages.get(CONFIRM_TITLE).cloned().unwrap_or_default();
+        layer.texts.push((title.clone(), frame.at([17.0, 3.0]), [255; 3]));
+        layer.texts.push((title, frame.at([16.0, 2.0]), [0, 0, 0]));
+        let [width, height] = CONFIRM_SIZE;
+        layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [width, height - TITLE_HEIGHT - FOOTER]));
+        layer.sprites.push((&assets.bar, frame.at([0.0, height - FOOTER]), [width, FOOTER]));
+        for (row, line) in self.lines(messages).into_iter().enumerate() {
+            layer.texts.push((line, frame.at([10.0, 20.0 + 20.0 * row as f32]), [0, 0, 0]));
+        }
+        let hit = self.hit(pointer.0).flatten();
+        for (images, place, buy) in [(&assets.buttons[0], CONFIRM_BUTTONS[0], true), (&assets.buttons[2], CONFIRM_BUTTONS[1], false)] {
+            let look = if hit == Some(buy) { 1 + usize::from(pointer.1) } else { 0 };
+            layer.sprites.push((&images[look], frame.at(place), BUTTON));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -857,6 +923,22 @@ mod tests {
 
     fn offer(item: u32, price: u32, have: u16, kind: u8) -> Offer {
         Offer { item, price, index: 2, have, kind, identified: true, ..Offer::default() }
+    }
+
+    #[test]
+    fn a_vendors_deal_waits_for_confirm_deal() {
+        let mut shop = Shop::new(false, vec![offer(501, 2_500_000, 3, 0)]);
+        shop.vendor = Some((1, 2, "Shop".into()));
+        shop.add(0, 2);
+        let confirm = Confirm::new(shop, [1024.0, 768.0]);
+        let messages: Vec<String> = (0..=2329).map(|id| format!("m{id}")).collect();
+        assert_eq!(confirm.lines(&messages), ["m2327", "5,000,000 m2328", "m2329"]);
+        let [(_, buy), (_, cancel)] = confirm.button_boxes()[..] else { panic!() };
+        assert_eq!(buy, [556.0, 435.0, 42.0, 20.0]);
+        assert_eq!(confirm.hit([buy[0] + 1.0, buy[1] + 1.0]), Some(Some(true)));
+        assert_eq!(confirm.hit([cancel[0] + 1.0, cancel[1] + 1.0]), Some(Some(false)));
+        assert_eq!(confirm.hit([buy[0] - 100.0, buy[1]]), Some(None));
+        assert_eq!(confirm.hit([0.0, 0.0]), None);
     }
 
     #[test]

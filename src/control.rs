@@ -1091,6 +1091,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})),
         )
         .chain(game.shop.iter().flat_map(crate::shop::Shop::row_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
+        .chain(game.vend_setup.iter().flat_map(|setup| setup.row_boxes(&game.cart.items)).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.storage.grip_box().map(|area| json!({"kind": "button", "name": "storage_resize", "box": area})))
         .chain(
             app.assets
@@ -1120,6 +1121,8 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .flat_map(crate::buying::Setup::button_boxes)
                 .chain(game.my_buying_store.iter().flat_map(crate::buying::MyStore::button_boxes))
                 .chain(game.shop.iter().flat_map(crate::shop::Shop::button_boxes))
+                .chain(game.deal_confirm.iter().flat_map(crate::shop::Confirm::button_boxes))
+                .chain(game.vend_setup.iter().flat_map(crate::vend::Setup::button_boxes))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.sign_rects.iter().map(|&(rect, _, kind)| {

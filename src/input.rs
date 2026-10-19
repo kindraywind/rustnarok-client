@@ -185,6 +185,15 @@ impl App {
                     }
                 }
             }
+            // Confirm Deal: Buy sends the vendor's deal; either button closes it.
+            Scene::Game(game) if game.deal_confirm.as_ref().is_some_and(|confirm| confirm.hit(cursor).is_some()) => {
+                if let Some(buy) = game.deal_confirm.as_ref().unwrap().hit(cursor).unwrap() {
+                    let confirm = game.deal_confirm.take().unwrap();
+                    if buy {
+                        let _ = confirm.shop.send(&mut game.session);
+                    }
+                }
+            }
             // The message box, over every window: OK (alone when it only tells) or Cancel.
             Scene::Game(game) if game.question_box.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
@@ -307,11 +316,10 @@ impl App {
                 let setup = game.vend_setup.as_mut().unwrap();
                 let hit = setup.hit(cursor, &game.cart.items).unwrap();
                 match setup.click(hit, &game.cart.items) {
-                    Some(vend::Action::Price(index)) => game.amount = Some(window::Amount::new(Asked::VendPrice(index), None)),
-                    Some(vend::Action::Open) => {
-                        let goods = setup.goods(&game.cart.items);
-                        let _ = game.session.open_shop(&setup.name.clone(), true, &goods);
-                    }
+                    Some(vend::Action::Price(index)) => game.amount = Some(window::Amount::vend_price(Asked::VendPrice(index))),
+                    Some(vend::Action::Open) => game.open_vending(),
+                    Some(vend::Action::AskFree) => game.question_box = Some(BoxQuestion::FreeGoods),
+                    Some(vend::Action::Refused(message)) => game.question_box = Some(BoxQuestion::Notice(message)),
                     Some(vend::Action::Cancel) => {
                         let _ = game.session.open_shop("", false, &[]);
                         game.vend_setup = None;
@@ -592,12 +600,20 @@ impl App {
             {
                 let &(_, id, kind) =
                     game.sign_rects.iter().rev().find(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)).unwrap();
+                let now = crate::control::now();
+                let open = game.shop.as_ref().and_then(|shop| shop.vendor.as_ref().map(|vendor| vendor.0).or(shop.buying_store.map(|store| store.0)));
+                let since = game.shop_asked.map(|at| now.saturating_duration_since(at));
                 let _ = match kind {
-                    // A vendor's sign opens their shop.
-                    chatroom::SHOP if id != game.account_id => game.session.browse_vendor(id),
-                    chatroom::SHOP => Ok(()),
-                    chatroom::BUYING_STORE if id != game.account_id => game.session.click_buying_store(id),
-                    chatroom::BUYING_STORE => Ok(()),
+                    // A vendor's or buyer's sign opens their shop.
+                    chatroom::SHOP | chatroom::BUYING_STORE if !vend::may_ask(id, game.account_id, game.player.dead, open, since) => Ok(()),
+                    chatroom::SHOP => {
+                        game.shop_asked = Some(now);
+                        game.session.browse_vendor(id)
+                    }
+                    chatroom::BUYING_STORE => {
+                        game.shop_asked = Some(now);
+                        game.session.click_buying_store(id)
+                    }
                     0 => {
                         game.amount = Some(window::Amount::name(Asked::RoomPassword(id), ROOM_PASSWORD));
                         Ok(())
@@ -1233,6 +1249,12 @@ impl App {
                 let shop = game.shop.as_mut().unwrap();
                 let hit = shop.hit(cursor).unwrap();
                 match shop.click(hit) {
+                    // A vendor's deal asks "Confirm Deal" first, its windows closed.
+                    Some(shop::Action::Deal) if shop.vendor.is_some() => {
+                        if !shop.deal.is_empty() {
+                            game.deal_confirm = Some(shop::Confirm::new(game.shop.take().unwrap(), screen()));
+                        }
+                    }
                     Some(shop::Action::Deal) => {
                         let _ = shop.send(&mut game.session);
                         // An NPC shop closes as the deal goes.
@@ -2773,10 +2795,10 @@ impl App {
         {
             return;
         }
-        // So is a press on the message box: nothing under it starts a drag, so its release still clicks OK.
+        // So is a press on the message box or Confirm Deal: nothing under it starts a drag, so its release still clicks.
         if let (Scene::Game(game), Some(assets)) = (&self.scene, &self.assets)
-            && game.question_box.is_some()
-            && contains(dialog_position(&assets.message), assets.message.size, cursor)
+            && (game.question_box.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor)
+                || game.deal_confirm.as_ref().is_some_and(|confirm| confirm.hit(cursor).is_some()))
         {
             return;
         }
@@ -3315,7 +3337,8 @@ impl App {
             focused: game.focused_text(),
             conversation: game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()),
             question: game.question_open(),
-            newest: game.esc_order.first().copied(),
+            // Esc never closes the own shop or buying store.
+            newest: game.esc_order.iter().copied().find(|id| !matches!(id, escape::WindowId::MyShop | escape::WindowId::MyBuyingStore)),
         };
         let act = escape::decide(false, view);
         let Scene::Game(game) = &mut self.scene else { return };
