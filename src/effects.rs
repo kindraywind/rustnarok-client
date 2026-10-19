@@ -1492,6 +1492,8 @@ pub const AIMED: [u32; 5] = [SOUL_STRIKE, FIRE_BALL, FROST_DIVER, JUPITEL, GRIMT
 /// EF_EARTHSPIKE and EF_HEAVENSDRIVE: stone spikes where they play (`prims`).
 const EARTH_SPIKE: u32 = 79;
 const HEAVENS_DRIVE: u32 = 142;
+/// EF_ICEWALL: the ice spikes of a wall's cell, standing with their unit (`prims::stone`).
+const ICE_WALL: u32 = 74;
 
 /// Cold Bolt's and Fire Bolt's falling arrows (EF_ICEARROW, EF_FIREARROW), drawn in code (`prims::bolts`).
 const BOLTS: [u32; 2] = [26, FIRE_BOLT];
@@ -1650,6 +1652,11 @@ impl Effects {
         if matches!(id, EARTH_SPIKE | HEAVENS_DRIVE) {
             self.textures.entry(stone::STONE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, stone::STONE, true).ok());
             if id == EARTH_SPIKE { self.prims.stone.earth_spike(at, now) } else { self.prims.stone.heavens_drive(at, now) }
+        }
+        // Ice Wall's cell: a skill unit's, the spikes standing until it goes.
+        if let (ICE_WALL, Target::Lasting(unit) | Target::Kept(unit)) = (id, target) {
+            self.textures.entry(crate::prims::ICE_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crate::prims::ICE_TEXTURE, true).ok());
+            self.prims.stone.ice_wall(unit, at, now, |n| pick(0, n.saturating_sub(1)));
         }
         // Blessing, made in code.
         // A song's puffs and Steel Body's glints, made in code.
@@ -2060,6 +2067,7 @@ impl Effects {
 
     pub fn forget(&mut self, unit: u32) {
         self.prims.sage.forget(unit);
+        self.prims.stone.forget(unit);
         self.hits.retain(|hit| !hit.anchor.on(unit));
         self.status_prims.retain(|prim| !prim.anchor.on(unit));
         self.blessings.retain(|blessing| !blessing.anchor.on(unit));
