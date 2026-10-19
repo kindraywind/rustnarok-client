@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, bolts, boomerang, burst, sage, stone};
+use crate::prims::{balls, blitz, bolts, boomerang, burst, sage, stone};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -1497,6 +1497,8 @@ const SOUL_STRIKE: u32 = 15;
 const FIRE_BALL: u32 = 24;
 /// EF_SPEARBMR: Spear Boomerang's four spears from the caster to the target (`prims::balls`).
 const SPEAR_BOOMERANG: u32 = 80;
+/// EF_BLITZBEAT: the streaks and the ring on Blitz Beat's target, made in code (`prims::blitz`).
+pub const BLITZ_BEAT: u32 = 115;
 /// EF_SHIELDBOOMERANG: Shield Boomerang's shield, out to the target, round and back past the caster (`prims::boomerang`).
 const SHIELD_BOOMERANG: u32 = 249;
 const JUPITEL: u32 = 93;
@@ -1551,6 +1553,15 @@ impl Effects {
         if let Target::Unit(unit) = target {
             self.bolt(gpu, grf, id, unit, hits, now);
         }
+    }
+
+    /// Blitz Beat's effect (115) on a unit (None = the player) facing `facing` degrees: ten streaks, and a ring if
+    /// `rings` is 1 (the hit effect's; the server's own 115 has none).
+    pub fn blitz_beat(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, facing: f32, rings: u32, now: Instant) {
+        for path in [blitz::STREAK, blitz::RING] {
+            self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+        }
+        self.prims.blitzes.push(blitz::Blitz::new(unit, facing, rings, now, |n| pick(0, n.saturating_sub(1))));
     }
 
     /// The texture of a Sage ground look or loop.
@@ -2231,6 +2242,25 @@ impl Effects {
                 arrows.chain(rings).collect::<Vec<_>>()
             })
             .collect();
+        // Blitz Beat's streaks and ring on its target, blended over.
+        let blitz_meshes: Vec<EffectMesh<'_>> = self
+            .prims
+            .blitzes
+            .iter()
+            .filter_map(|blitz| Some((blitz, position_of(blitz.unit)?)))
+            .flat_map(|(blitz, feet)| {
+                let texture = |path: &str| self.textures.get(path).and_then(Option::as_ref);
+                let streaks = blitz.streaks(now, feet).into_iter().filter_map(|(quads, alpha)| {
+                    let tint = [1.0, 1.0, 1.0, alpha];
+                    Some((texture(blitz::STREAK)?, quads.iter().flatten().map(|&(position, uv)| MeshVertex { position, uv, tint }).collect(), false))
+                });
+                let rings = blitz.rings(now, feet).into_iter().filter_map(|(triangles, alpha)| {
+                    let tint = [1.0, 1.0, 1.0, alpha];
+                    Some((texture(blitz::RING)?, triangles.into_iter().map(|(position, uv)| MeshVertex { position, uv, tint }).collect(), false))
+                });
+                streaks.chain(rings).collect::<Vec<_>>()
+            })
+            .collect();
         // The spikes, in ice and in stone, blended over.
         let spikes = [crate::prims::ICE_TEXTURE, stone::STONE]
             .into_iter()
@@ -2251,7 +2281,7 @@ impl Effects {
             Some((texture, corners.into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] }).collect(), additive))
         });
         // The effects made in code are none of them force-drawn.
-        let prims = spikes.chain(bolt_meshes).chain(sage).chain(burst_rings).filter(|_| !self.only_forced);
+        let prims = spikes.chain(bolt_meshes).chain(blitz_meshes).chain(sage).chain(burst_rings).filter(|_| !self.only_forced);
         rings.chain(models).chain(hits).chain(auras).chain(prims).collect()
     }
 
@@ -3055,6 +3085,13 @@ mod tests {
         assert_eq!(sounds.len(), 11);
         assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
         assert!(!table.sounds.contains_key(&149));
+        // Blitz Beat: 115 (drawn in code) is its second hit effect, not its fallback, with its two sounds.
+        assert_eq!(table.hit(129), Some([None, Some(115)]));
+        assert!(table.skill(129, "effectId").is_empty());
+        assert_eq!(
+            table.sounds[&115].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(),
+            [("effect\\hunter_blitzbeat_1st", 80), ("effect\\hunter_blitzbeat", 480)]
+        );
         // Sonic Blow: its ring (drawn in code, so no parts) and SonicBlow.str on the caster.
         assert_eq!(table.struck(136), Some(&[(Who::Caster, 121), (Who::Caster, 143)][..]));
         assert!(!table.floaters.contains_key(&121) && !table.parts.contains_key(&121) && !table.sprites.contains_key(&121));

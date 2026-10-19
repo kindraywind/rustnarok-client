@@ -3289,6 +3289,10 @@ impl App {
                     return;
                 }
                 let target_cell = if act.target == me { Some(game.player.cell) } else { game.units.get(&act.target).map(|actor| actor.cell) };
+                // Blitz Beat's packet sends the caster's falcon at the target, once whatever the hit count.
+                if skill == actor::BLITZ_BEAT {
+                    game.dive_falcon(act.source, act.target);
+                }
                 let caster = if act.source == me { Some(&game.player) } else { game.units.get(&act.source) };
                 let bow = caster.is_some_and(|caster| caster.holds_bow(look_tables));
                 let scale = actor::attack_scale(act.source_speed, bow);
@@ -3766,7 +3770,8 @@ impl App {
             }
             MapEvent::Effect { id, effect } => {
                 if let Some(gpu) = gpu {
-                    game.play_effect(gpu, grf, table, effect, id);
+                    // The server's own effect has no hit count (Blitz Beat's makes no ring).
+                    game.play_effect_hits(gpu, grf, table, effect, id, Instant::now(), 0);
                 }
             }
             // Marriage: the wedding, the partner's name, divorce; adoption: being asked, and refusals.

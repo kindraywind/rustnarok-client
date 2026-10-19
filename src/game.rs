@@ -1249,6 +1249,16 @@ impl Game {
         self.play_effect_hits(gpu, grf, table, effect, unit, start, 1);
     }
 
+    /// A Blitz Beat's damage packet sends `caster`'s falcon, if it has one, diving at where `target`'s feet are drawn.
+    pub(crate) fn dive_falcon(&mut self, caster: u32, target: u32) {
+        let Some(feet) = self.feet(target, control::now()) else { return };
+        let actor = if caster == self.account_id { Some(&mut self.player) } else { self.units.get_mut(&caster) };
+        if let Some(falcon) = actor.and_then(|actor| actor.falcon.as_mut()) {
+            let ground = crate::companion_feet(&self.world, falcon.at, 0.0)[1];
+            falcon.dive(feet, ground);
+        }
+    }
+
     /// Where a unit's feet are drawn now.
     fn feet(&self, unit: u32, now: Instant) -> Option<world::Vector> {
         let actor = if unit == self.account_id { Some(&self.player) } else { self.units.get(&unit) }?;
@@ -1298,6 +1308,11 @@ impl Game {
         if let Some(cell) = cell {
             let at = self.world.cell_position(cell.map(|value| value as f32));
             self.effects.play_hits(gpu, grf, table, effect, effects::Target::Unit(key), at, start, hits);
+            // Blitz Beat's streaks and ring: one ring from the hit effect, none from the server's own.
+            if effect == effects::BLITZ_BEAT {
+                let rot = key.map_or(Some(self.player.rot), |id| self.units.get(&id).map(|actor| actor.rot));
+                self.effects.blitz_beat(gpu, grf, key, rot.unwrap_or(0.0), u32::from(hits > 0), start);
+            }
             // EF_HIT1 is made in code, flying the exact way the target faces.
             if effect == EF_HIT1 {
                 let rot = key.map_or(Some(self.player.rot), |id| self.units.get(&id).map(|actor| actor.rot));

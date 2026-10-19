@@ -390,7 +390,6 @@ skill	121	hitEffectId	108
 skill	122	hitEffectId	106
 skill	123	hitEffectId	107
 skill	124	effectId	100
-skill	129	effectId	115
 skill	130	effectId	119
 skill	131	effectId	111
 skill	135	effectId	120
@@ -1849,7 +1848,8 @@ wav	108	effect\hunter_freezingtrap	0
 wav	111	effect\hunter_springtrap	0
 wav	112	effect\priest_kyrie_eleison_a	0
 wav	113	effect\priest_magnus	0
-wav	115	effect\hunter_blitzbeat	0
+wav	115	effect\hunter_blitzbeat_1st	80
+wav	115	effect\hunter_blitzbeat	480
 wav	116	effect\wizard_waterball_chulung	0
 wav	117	effect\wizard_waterball_chulung	0
 wav	119	effect\hunter_detecting	0
@@ -2222,6 +2222,7 @@ hit	112	0	-1
 hit	113	0	-1
 hit	114	0	-1
 hit	115	0	-1
+hit	129	-1	115
 hit	116	0	-1
 hit	117	0	-1
 hit	118	0	-1

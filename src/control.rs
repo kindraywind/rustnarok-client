@@ -1377,7 +1377,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             "head_direction": game.player.head_direction,
             "moving": game.player.moving(),
             // The falcon (25 above the ground) and the warg (on the ground), or null. Riding leaves the warg null.
-            "falcon": companion_state(game.player.falcon.as_ref(), crate::actor::FALCON_HEIGHT),
+            "falcon": companion_state(game.player.falcon.as_ref(), game.player.falcon.as_ref().map_or(0.0, |falcon| falcon.lift)),
             // Copies left behind while a status blurs the player (the quickens).
             "ghosts": game.player.ghosts.len(),
             "warg": companion_state(game.player.warg.as_ref(), 0.0),

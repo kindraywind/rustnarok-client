@@ -1544,8 +1544,12 @@ pub const CART_ROPE: f32 = world::CELL;
 const CART_FRAMES: f32 = 0.92;
 /// The falcon flies this far above the ground.
 pub const FALCON_HEIGHT: f32 = 25.0;
+/// Blitz Beat: its damage packet sends the caster's falcon diving at the target.
+pub const BLITZ_BEAT: u16 = 129;
 /// The falcon and warg move by rules per game tick, 1/60 s.
 const TICK: f32 = 1.0 / 60.0;
+/// The falcon's dive and follow counter run on 16 ms ticks.
+const TICK_MS: u128 = 16;
 // ponytail: a new falcon starts two cells behind its hunter, a new warg three behind its ranger.
 const FALCON_START: f32 = world::CELL * 2.0;
 const WARG_START: f32 = world::CELL * 3.0;
@@ -1745,8 +1749,22 @@ impl Cart {
     }
 }
 
+/// A falcon's dive at a Blitz Beat's target: what it moves each tick (world units: x, height, z), and whether its
+/// swing (the vertical flips) has started.
+struct Dive {
+    v: [f32; 3],
+    swing: bool,
+}
+
 pub struct Companion {
     pub at: [f32; 2],
+    /// The falcon's height over the ground: 25, but for a dive and its way back.
+    pub lift: f32,
+    /// Its follow counter c: 1…6 while following, counting on through a dive. It ticks on whole 16 ms, counted up to
+    /// `counted`.
+    count: u32,
+    counted: Instant,
+    dive: Option<Dive>,
     /// The exact way it faces, in degrees (as `Actor::rot`): always toward its owner.
     pub rot: f32,
     /// It moved in its last step (the falcon flying in, the warg running).
@@ -1768,7 +1786,76 @@ impl Companion {
         let sprites = tries.iter().find_map(|(path, act)| SpriteSet::with_act(grf, path, act));
         let now = Instant::now();
         let action = if warg { IDLE } else { WALK };
-        Self { at, rot: facing(at, owner, 0.0), moving: false, arriving: !warg, action: (action, now), stepped: now, shadow, sprites }
+        Self {
+            at,
+            lift: FALCON_HEIGHT,
+            count: 0,
+            counted: now,
+            dive: None,
+            rot: facing(at, owner, 0.0),
+            moving: false,
+            arriving: !warg,
+            action: (action, now),
+            stepped: now,
+            shadow,
+            sprites,
+        }
+    }
+
+    /// Sends the falcon at a Blitz Beat's `target` (its feet, world units), `ground` being the ground's height where
+    /// the falcon is: a tenth of the way each tick it flies, to the feet at the first 10. A packet in a dive turns it
+    /// to the new target; its counter and swing stay.
+    pub fn dive(&mut self, target: world::Vector, ground: f32) {
+        let y = ground + self.lift;
+        let v = [(target[0] - self.at[0]) / 10.0, (target[1] - y) / 10.0, (target[2] - self.at[1]) / 10.0];
+        match &mut self.dive {
+            Some(dive) => dive.v = v,
+            None => self.dive = Some(Dive { v, swing: false }),
+        }
+    }
+
+    /// One whole 16 ms tick of the falcon's own motion. In a dive, with c as it is before the step: with the swing
+    /// started and c > 35 it ends (no move; the falcon follows again, arriving); else x moves, z too, and the height
+    /// unless 10 < c < 25, from c = 25 on flipping its climb ×−1.9 each tick as the swing; then c + 1. Following, c runs
+    /// 1…6 and a falcon off its height settles back by a 25th of the gap.
+    fn tick(&mut self) {
+        let Some(dive) = &mut self.dive else {
+            self.count = if self.count.is_multiple_of(6) { 1 } else { self.count + 1 };
+            // ponytail: the way back to 25 over the ground is a 25th of the gap a tick; the game's isn't known.
+            if self.lift != FALCON_HEIGHT {
+                self.lift += (FALCON_HEIGHT - self.lift) / 25.0;
+                if (self.lift - FALCON_HEIGHT).abs() < 0.01 {
+                    self.lift = FALCON_HEIGHT;
+                }
+            }
+            return;
+        };
+        let c = self.count;
+        if dive.swing && c > 35 {
+            self.dive = None;
+            self.arriving = true;
+            return;
+        }
+        self.at[0] += dive.v[0];
+        self.at[1] += dive.v[2];
+        if !(c > 10 && c < 25) {
+            self.lift += dive.v[1];
+            if c >= 25 {
+                dive.v[1] *= -1.9;
+                dive.swing = true;
+            }
+        }
+        self.count += 1;
+    }
+
+    /// Runs the whole ticks up to `now`; whether a dive is still on.
+    fn run_ticks(&mut self, now: Instant) -> bool {
+        let whole = (now.saturating_duration_since(self.counted).as_millis() / TICK_MS).min(10_000) as u32;
+        for _ in 0..whole {
+            self.tick();
+        }
+        self.counted += Duration::from_millis(u64::from(whole) * TICK_MS as u64);
+        self.dive.is_some()
     }
 
     pub fn sprites(&self) -> Option<&SpriteSet> {
@@ -1790,6 +1877,7 @@ impl Companion {
         let action = if action < sprites.actions() / 8 { action } else { IDLE };
         let ms = now.saturating_duration_since(since).as_secs_f32() * 1000.0;
         let timing = match action {
+            _ if self.dive.is_some() => Timing::Span(0.0),
             WARG_HURT | WARG_DEAD => Timing::Once(ms, 1.0),
             _ => Timing::Loop(ms),
         };
@@ -2644,6 +2732,13 @@ impl Actor {
         }
         let owner_action = self.animation(now).0;
         if let Some(falcon) = &mut self.falcon {
+            // In a dive it faces straight away from its owner and holds its walk action's first frame.
+            if falcon.run_ticks(now) {
+                (falcon.moving, falcon.stepped) = (true, now);
+                falcon.rot = (facing(falcon.at, leader, falcon.rot) + 180.0).rem_euclid(360.0);
+                falcon.play(WALK, now);
+                return self.step_warg(leader, now, owner_action);
+            }
             let ticks = now.saturating_duration_since(falcon.stepped).as_secs_f32() / TICK;
             let (at, arriving) = falcon_step(falcon.at, leader, falcon.arriving, ticks);
             falcon.moving = f32::hypot(at[0] - falcon.at[0], at[1] - falcon.at[1]) > 1e-3;
@@ -2651,6 +2746,11 @@ impl Actor {
             falcon.play(if arriving { WALK } else { IDLE }, now);
             falcon.rot = facing(at, leader, falcon.rot);
         }
+        self.step_warg(leader, now, owner_action);
+    }
+
+    /// The warg's step, flinching when its owner does and lying down when they die.
+    fn step_warg(&mut self, leader: [f32; 2], now: Instant, owner_action: usize) {
         if let Some(warg) = &mut self.warg {
             let ticks = now.saturating_duration_since(warg.stepped).as_secs_f32() / TICK;
             let (at, ran) = warg_step(warg.at, leader, ticks);
@@ -2890,6 +2990,85 @@ mod tests {
         actor.flurry(ms(2000));
         actor.start_walking(ms(700));
         assert!(actor.swings.is_empty() && actor.flurry_until.is_none(), "walking off ends the flurry");
+    }
+
+    fn falcon_at(at: [f32; 2], count: u32) -> Companion {
+        let now = Instant::now();
+        Companion {
+            at,
+            lift: FALCON_HEIGHT,
+            count,
+            counted: now,
+            dive: None,
+            rot: 0.0,
+            moving: false,
+            arriving: false,
+            action: (WALK, now),
+            stepped: now,
+            shadow: 0.0,
+            sprites: None,
+        }
+    }
+
+    #[test]
+    fn a_falcon_dives_skims_swings_and_goes_home() {
+        // The follow counter runs 1…6 from 0 and starts over.
+        let mut falcon = falcon_at([20.0, 0.0], 0);
+        let counts: Vec<u32> = (0..8).map(|_| (falcon.tick(), falcon.count).1).collect();
+        assert_eq!(counts, [1, 2, 3, 4, 5, 6, 1, 2]);
+        // The target's feet at the origin, the falcon 20 east of them and 25 over: with c = 1, 10 ticks straight at the
+        // feet, 14 skimming on past at that height, 11 of a vertical swing, one still tick, then home.
+        let mut falcon = falcon_at([20.0, 0.0], 1);
+        falcon.dive([0.0; 3], 0.0);
+        assert!(falcon.dive.is_some());
+        for _ in 0..10 {
+            falcon.tick();
+        }
+        assert!(falcon.at[0].abs() < 1e-4 && falcon.lift.abs() < 1e-4, "{:?} {}", falcon.at, falcon.lift);
+        for _ in 0..14 {
+            falcon.tick();
+        }
+        assert!((falcon.at[0] + 28.0).abs() < 1e-3 && falcon.lift.abs() < 1e-4);
+        for _ in 0..11 {
+            falcon.tick();
+        }
+        // 50 west, ≈ 1005.09 under (vy · (1 − (−1.9)^11)/2.9 with vy = −2.5), the swing started.
+        assert!((falcon.at[0] + 50.0).abs() < 1e-2 && (falcon.lift + 1005.09).abs() < 0.2, "{:?} {}", falcon.at, falcon.lift);
+        assert!(falcon.dive.as_ref().is_some_and(|dive| dive.swing));
+        let before = (falcon.at, falcon.lift);
+        falcon.tick();
+        assert_eq!((falcon.at, falcon.lift, falcon.dive.is_none(), falcon.arriving), (before.0, before.1, true, true));
+        // From c = 0 it dives 11 ticks (1.1 of the way down) and covers 3.6 times the offset across; from 6, 5 ticks (half)
+        // and 3.0 times.
+        for (count, down, across) in [(0, 1.1, 3.6), (6, 0.5, 3.0)] {
+            let mut falcon = falcon_at([20.0, 0.0], count);
+            falcon.dive([0.0; 3], 0.0);
+            let mut moved = 0;
+            while falcon.dive.is_some() {
+                let was = falcon.at[0];
+                falcon.tick();
+                moved += u32::from(falcon.at[0] != was);
+                if moved == 36 - count {
+                    break;
+                }
+            }
+            assert!((20.0 - falcon.at[0] - 20.0 * across).abs() < 1e-2, "from {count}: {:?}", falcon.at);
+            let straight = 11 - count;
+            let mut down_by = falcon_at([20.0, 0.0], count);
+            down_by.dive([0.0; 3], 0.0);
+            (0..straight).for_each(|_| down_by.tick());
+            assert!((FALCON_HEIGHT - down_by.lift - 25.0 * down).abs() < 1e-3, "from {count}: {}", down_by.lift);
+        }
+        // A second packet in a dive turns it to the new target; its counter stays. It settles back to 25 by a 25th a tick.
+        let mut falcon = falcon_at([20.0, 0.0], 1);
+        falcon.dive([0.0; 3], 0.0);
+        falcon.tick();
+        falcon.dive([100.0, 0.0, 0.0], 0.0);
+        assert_eq!(falcon.count, 2);
+        falcon.dive = None;
+        falcon.lift = 0.0;
+        falcon.tick();
+        assert!((falcon.lift - 1.0).abs() < 1e-5);
     }
 
     #[test]
