@@ -263,10 +263,9 @@ pub fn tiers(jobs: &[u16]) -> Vec<Vec<u16>> {
     tiers
 }
 
-/// Whether a skill's level to use can be picked: any skill that is used (not a passive one) with a level to go down to,
-/// since rathena takes every level up to the learned one, and the ones the game's data marks (`separate`) even at level 1.
-pub fn level_pickable(kind: u32, learned: u16, separate: bool) -> bool {
-    learned > 0 && (separate || (kind != 0 && learned > 1))
+/// Whether a skill's level to use can be picked: the ones the game's data marks (`separate`), once learned.
+pub fn level_pickable(learned: u16, separate: bool) -> bool {
+    learned > 0 && separate
 }
 
 /// Plans one more level of `id`: first every prerequisite it's still missing, up to the level it needs (and theirs
@@ -428,8 +427,7 @@ impl Sheet<'_> {
     /// The learned level when the skill's level to use can be picked (the level arrows show).
     fn steppable(&self, id: u16) -> Option<u16> {
         let learned = self.learned(id);
-        let kind = self.skills.iter().find(|skill| skill.id == id).map_or(0, |skill| skill.kind);
-        level_pickable(kind, learned, self.info.get(&id).is_some_and(|info| info.separate_level)).then_some(learned)
+        level_pickable(learned, self.info.get(&id).is_some_and(|info| info.separate_level)).then_some(learned)
     }
 }
 
@@ -1253,14 +1251,13 @@ mod tests {
         window.click(Hit::Step { id: 34, up: false, learned: 5 });
         assert_eq!(window.use_level(34, 2), 2);
         assert_eq!(window.use_level(29, 3), 3);
-        // Arrows for a learned skill whose level can be picked: any used skill past level 1, and the data's ones at level 1.
+        // Arrows for a learned skill whose level can be picked, even at level 1.
         let trees = SkillTrees::default();
-        let skill = |id, kind, level| Skill { id, kind, level, sp: 13, range: 9, upgradable: false };
-        let skills = [skill(1, 0, 9), skill(28, Skill::FRIEND, 1), skill(17, Skill::ENEMY, 10), skill(18, Skill::GROUND, 1)];
+        let skill = |id, level| Skill { id, kind: Skill::FRIEND, level, sp: 13, range: 9, upgradable: false };
+        let skills = [skill(1, 9), skill(28, 1)];
         let skill_info = HashMap::from([(1, info(9, Vec::new())), (28, SkillInfo { separate_level: true, ..info(10, Vec::new()) })]);
         let sheet = Sheet { trees: &trees, jobs: &[], skills: &skills, info: &skill_info, points: 0 };
         assert_eq!((sheet.steppable(1), sheet.steppable(28), sheet.steppable(29)), (None, Some(1), None));
-        assert_eq!((sheet.steppable(17), sheet.steppable(18)), (Some(10), None));
     }
 
     #[test]

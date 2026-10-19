@@ -2043,7 +2043,7 @@ impl App {
             // A skill whose level can be picked (the wheel) shows the one it goes off at.
             let separate = skill_info.get(&id).is_some_and(|info| info.separate_level);
             if let Some(skill) = game.skills.iter().find(|skill| skill.id == id)
-                && skills::level_pickable(skill.kind, skill.level, separate)
+                && skills::level_pickable(skill.level, separate)
             {
                 name = format!("{name} Lv {level}/{}", skill.level);
             }
