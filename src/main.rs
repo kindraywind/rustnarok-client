@@ -78,6 +78,7 @@ mod events;
 mod game;
 mod grade;
 mod guild;
+mod guild_companion;
 mod head_marks;
 mod homunculus;
 mod hotkeys;
@@ -1318,6 +1319,8 @@ struct Game {
     guild_asked: Option<GuildAsked>,
     /// The reason box for leaving the guild or expelling a member.
     reason_box: Option<guild::ReasonBox>,
+    /// Without a guild: the Guild Companion, its tip and create window (the disband window too).
+    guild_companion: guild_companion::Companion,
     /// Dev switch RUSTNAROK_CLIENT_GUILD=window ran.
     guild_shown: bool,
     /// The clan we're in, and its window.
@@ -2635,6 +2638,7 @@ struct Assets {
     roulette: roulette::Assets,
     item_window: iteminfo::Assets,
     guild: guild::Assets,
+    guild_companion: guild_companion::Assets,
     clan: clan::Assets,
     vend: vend::Assets,
     /// The cast bar's fill, the speech bubble's box and border, the aimed skill's box, and status icons' clocks
@@ -2750,6 +2754,7 @@ impl Assets {
             roulette: roulette::Assets::load(gpu, grf),
             item_window: iteminfo::Assets::load(gpu, grf),
             guild: guild::Assets::load(gpu, grf),
+            guild_companion: guild_companion::Assets::load(gpu, grf),
             clan: clan::Assets::load(gpu, grf),
             vend: vend::Assets::load(gpu, grf),
             cast_fill: gpu.solid([0x16, 0xEA, 0x25, 0xFF]),
@@ -3949,6 +3954,7 @@ impl App {
                 }
                 None if game.party_dialog.as_ref().is_some_and(|dialog| dialog.typing) => game.party_dialog.as_mut().unwrap().type_text(text),
                 None if game.reason_box.is_some() => game.reason_box.as_mut().unwrap().type_text(text),
+                None if game.guild_companion.typing() => game.guild_companion.create.as_mut().unwrap().type_text(text),
                 None if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
                     let window = game.navi_window.as_mut().unwrap();
                     window.text.push_str(text);

@@ -727,6 +727,34 @@ impl Game {
     }
 
     /// The reason box answered: OK sends the reason as typed (empty is fine), Cancel only closes.
+    /// OK in the create (or disband) window: the name's checks, then CZ_REQ_MAKE_GUILD (the window stays open) or,
+    /// for the guild's own name, CZ_REQ_DISORGANIZE_GUILD (the window closes).
+    pub(crate) fn guild_name_ok(&mut self, messages: &[String]) {
+        let Some(create) = &self.guild_companion.create else { return };
+        let checked = if create.disband {
+            guild_companion::check_disband(&create.name, self.guild.as_ref().map_or("", |guild| guild.name.as_str()))
+        } else {
+            guild_companion::check_create(&create.name, self.clan.is_some())
+        };
+        let disband = create.disband;
+        match checked {
+            guild_companion::Checked::Line(message, color) => self.chat_line(messages.get(message).cloned().unwrap_or_default(), color),
+            guild_companion::Checked::Box(message) => {
+                if disband {
+                    self.guild_companion.create = None;
+                }
+                self.question_box = Some(BoxQuestion::Notice(message));
+            }
+            guild_companion::Checked::Send(name) if disband => {
+                self.guild_companion.create = None;
+                let _ = self.session.disband_guild(&name);
+            }
+            guild_companion::Checked::Send(name) => {
+                let _ = self.session.make_guild(self.me.id, &name);
+            }
+        }
+    }
+
     pub(crate) fn answer_reason(&mut self, ok: bool) {
         let Some(asked) = self.reason_box.take() else { return };
         let Some(guild) = &self.guild else { return };
@@ -1168,8 +1196,14 @@ impl Game {
             return None;
         }
         // The guild's name is the key; rathena does nothing for a wrong one.
+        // ponytail: /breakguild takes the disband window's name check.
         if let Some(name) = text.strip_prefix("/breakguild ") {
-            let _ = self.session.disband_guild(name.trim().trim_matches('"'));
+            let name = name.trim().trim_matches('"');
+            match guild_companion::check_disband(name, self.guild.as_ref().map_or("", |guild| guild.name.as_str())) {
+                guild_companion::Checked::Send(name) => drop(self.session.disband_guild(&name)),
+                guild_companion::Checked::Box(message) => self.question_box = Some(BoxQuestion::Notice(message)),
+                guild_companion::Checked::Line(..) => {}
+            }
             return None;
         }
         // ponytail: /cl sends to the clan until the chat window has the send-to choice (messages 85, 86, 437, 2361).
@@ -1602,6 +1636,7 @@ impl Game {
             || self.booking.as_ref().is_some_and(|window| window.focus.is_some())
             || self.party_dialog.as_ref().is_some_and(|dialog| dialog.typing)
             || self.reason_box.is_some()
+            || self.guild_companion.typing()
             || self.guild_window.typing.is_some()
             || self.storage.typing
             || self.pet_window.typing
@@ -1755,6 +1790,7 @@ impl Game {
             || self.away_prompt.as_ref().is_some_and(|prompt| prompt.hit(cursor).is_some())
             || self.chat.on_list(cursor)
             || self.party_member_at(cursor).is_some()
+            || self.guild_companion.hit(cursor).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
             || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
@@ -2297,6 +2333,10 @@ impl Game {
         push(BindAsked, self.bind_asked.is_some());
         push(ExpansionAsked, self.expansion_asked.is_some());
         push(LeaderAsked, self.leader_asked.is_some());
+        push(GuildCompanion, self.guild_companion.frame.open);
+        push(GuildCreate, self.guild_companion.create.as_ref().is_some_and(|create| !create.disband));
+        push(GuildDisband, self.guild_companion.create.as_ref().is_some_and(|create| create.disband));
+        push(GuildTip, self.guild_companion.tip.is_some());
         push(PartyAsked, self.question_box.as_ref().is_some_and(|asked| !matches!(asked, BoxQuestion::Notice(_))));
         push(Notice, matches!(self.question_box, Some(BoxQuestion::Notice(_))));
         push(DismissAsked, self.dismiss_asked);
@@ -2692,6 +2732,9 @@ impl Game {
                 self.leader_asked = None;
             }
             PartyAsked | Notice => self.question_box = None,
+            GuildCompanion => self.guild_companion.close(),
+            GuildCreate | GuildDisband => self.guild_companion.create = None,
+            GuildTip => self.guild_companion.tip = None,
             DismissAsked => self.answer_dismiss(false, &[]),
             HomunculusRename => self.answer_homunculus_name(false),
             PetAsked => self.decline_pet(),

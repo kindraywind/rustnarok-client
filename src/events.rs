@@ -555,6 +555,7 @@ impl App {
                     guild_invite: None,
                     guild_asked: None,
                     reason_box: None,
+                    guild_companion: guild_companion::Companion::default(),
                     guild_shown: false,
                     clan: None,
                     clan_window: clan::ClanWindow::default(),
@@ -2214,19 +2215,20 @@ impl App {
                     }
                 }
             }
+            // Made: the companion and its windows close.
             MapEvent::GuildMade(result) => {
-                let (id, color) = match result {
-                    0 => (374, CHAT_ITEM),
-                    1 => (375, CHAT_ERROR),
-                    2 => (376, CHAT_ERROR),
-                    _ => (405, CHAT_ERROR),
-                };
-                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+                if let Some((id, color)) = guild_companion::make_result(result) {
+                    game.chat_line_kind(self.messages.get(id).cloned().unwrap_or_default(), color, chat::Kind::Guild);
+                }
+                if result == 0 {
+                    game.guild_companion.close();
+                }
             }
             MapEvent::GuildInvite { id, name } => {
                 // Dev switch: join.
                 if std::env::var("RUSTNAROK_CLIENT_GUILD").is_ok_and(|answer| answer.split(',').any(|part| part == "accept")) {
                     let _ = game.session.answer_guild(id, true);
+                    game.guild_companion.close();
                 } else {
                     game.guild_invite = Some((id, name));
                 }
@@ -2248,12 +2250,13 @@ impl App {
             }
             // Disbanded: the guild is gone, as if the player had left it.
             MapEvent::GuildDisbanded(result) => {
-                let (line, good) = guild::disband_result(result);
-                if good {
-                    game.guild = None;
-                    game.guild_window.frame.open = false;
+                if let Some((line, gone)) = guild_companion::disband_result(result) {
+                    if gone {
+                        game.guild = None;
+                        game.guild_window.frame.open = false;
+                    }
+                    game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), guild_companion::YELLOW);
                 }
-                game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), if good { CHAT_ITEM } else { CHAT_ERROR });
             }
             MapEvent::GuildInviteResult(result) => {
                 if let Some((id, color)) = guild::invite_result_line(result) {

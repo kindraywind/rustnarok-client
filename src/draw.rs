@@ -2051,7 +2051,8 @@ impl App {
             _ => None,
         };
         if let Some(question) = guild_question {
-            let dialog = dialog_position(&assets.message);
+            // The invitation sits where the party's does.
+            let dialog = if game.guild_invite.is_some() { party::invitation_at(screen()) } else { dialog_position(&assets.message) };
             shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
@@ -2153,6 +2154,11 @@ impl App {
             for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
+        }
+        // The Guild Companion and its windows.
+        {
+            let caret = (now.saturating_duration_since(game.entered).as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+            game.guild_companion.draw(shop_layer.window(), &assets.chrome, &assets.guild_companion, font, messages, caret, pointer);
         }
         // The guild's reason box.
         if let Some(reason) = &game.reason_box {

@@ -1,0 +1,272 @@
+{
+  "about": "Guild Companion (issue #517): without a guild Alt+G shows the companion; its create button docks the create window; an empty name and one starting with a full-width space are refused in the chat; a good name (with an Emperium) makes the guild and closes both; the master's Disband warns, then a wrong name shows 'You have failed to disband the guild.' and the guild stays; the right name disbands it.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@breakguild"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@item 714 1"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "key": "Alt+G"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "GuildCompanion"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "button": "companion_create"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "GuildCompanion",
+          "GuildCreate"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "button": "guild_name_ok"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "You must enter the name of your guild."
+      }
+    },
+    {
+      "click_on": {
+        "button": "guild_name_box"
+      }
+    },
+    {
+      "type": "　Crabs"
+    },
+    {
+      "click_on": {
+        "button": "guild_name_ok"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "Guild Cannot use Space in the name."
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "guild-companion",
+      "crop": [
+        380,
+        240,
+        420,
+        180
+      ]
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "type": "CompanionG"
+    },
+    {
+      "click_on": {
+        "button": "guild_name_ok"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "GuildMade",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "chat": "Guild has been Created.",
+        "windows_closed": [
+          "GuildCompanion",
+          "GuildCreate"
+        ],
+        "state": {
+          "guild.name": "CompanionG"
+        }
+      }
+    },
+    {
+      "key": "Alt+G"
+    },
+    {
+      "wait_for": {
+        "packet": "0x014c",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "guild_disband"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Notice",
+          "GuildDisband"
+        ]
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "guild-disband-asked"
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "guild_name_box"
+      }
+    },
+    {
+      "type": "Wrong"
+    },
+    {
+      "click_on": {
+        "button": "guild_name_ok"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Notice"
+        ],
+        "windows_closed": [
+          "GuildDisband"
+        ],
+        "state": {
+          "guild.name": "CompanionG"
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "guild_disband"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "guild_name_box"
+      }
+    },
+    {
+      "type": "CompanionG"
+    },
+    {
+      "click_on": {
+        "button": "guild_name_ok"
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "chat": "Guild was successfully disbanded.",
+        "state": {
+          "guild": null
+        }
+      }
+    }
+  ]
+}
