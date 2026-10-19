@@ -1,0 +1,87 @@
+{
+  "about": "Basic info and the hotbar: lots of zeny widens the window (it grew over the bar at the start); the bar steps right of it. Minimised, the HP and SP line gets room too.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@zeny -2147483647"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "say": "@zeny 5000"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "wait": 800
+    },
+    {
+      "shot": "basic-info-poor",
+      "crop": [
+        0,
+        0,
+        560,
+        160
+      ]
+    },
+    {
+      "say": "@zeny 2000000000"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "basic_info.width": 230,
+          "hotkey_position.0": 234
+        }
+      }
+    },
+    {
+      "shot": "basic-info-rich",
+      "crop": [
+        0,
+        0,
+        560,
+        160
+      ]
+    },
+    {
+      "click": [
+        225,
+        8
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "basic-info-rich-minimised",
+      "crop": [
+        0,
+        0,
+        560,
+        160
+      ]
+    },
+    {
+      "click": [
+        225,
+        8
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@zeny -2147483647"
+    },
+    {
+      "wait": 600
+    }
+  ]
+}

@@ -43,7 +43,7 @@
 //! `RUSTNAROK_CLIENT_PACKETVER=20250402` (speak a newer rathena; 20220406 by default).
 
 // The control socket's game state is one json! literal deeper than the macro's default limit.
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 
 mod achievement;
 mod actor;

@@ -41,6 +41,8 @@ const DEFAULT_POSITION: [f32; 2] = [230.0, 0.0];
 /// The bar is held to move by its margins: left of x 15, from x 276 on, above y 4.
 const MARGIN_RIGHT: f32 = 276.0;
 const DEFAULT_ROWS: usize = 2;
+/// What `clear_of` leaves between the bar and the window it moved away from.
+const CLEARANCE: f32 = 4.0;
 
 pub struct Assets {
     frame: Texture,
@@ -171,6 +173,19 @@ impl Hotkeys {
     pub fn grabbed(&self, cursor: [f32; 2]) -> bool {
         let Some(local) = self.frame.local(cursor, self.height()) else { return false };
         self.hit(cursor) == Some(Hit::Window) && (local[0] < FIRST_SLOT[0] - 1.0 || local[0] >= MARGIN_RIGHT || local[1] < FIRST_SLOT[1])
+    }
+
+    /// Moves the bar right of `other` (x, y, width, height) when they overlap and the bar still fits on a screen `screen_width`
+    /// wide that way; false when it stayed.
+    pub fn clear_of(&mut self, other: [f32; 4], screen_width: f32) -> bool {
+        let [x, y] = self.frame.position;
+        let overlaps = x < other[0] + other[2] && other[0] < x + WIDTH && y < other[1] + other[3] && other[1] < y + self.height();
+        let clear = (other[0] + other[2] + CLEARANCE).ceil();
+        if !self.frame.open || self.frame.dragging() || !overlaps || clear + WIDTH > screen_width {
+            return false;
+        }
+        self.frame.position[0] = clear;
+        true
     }
 
     /// The server's tab of the bar showing: 0 for hotbar 1, 1 for hotbar 2.
@@ -496,5 +511,18 @@ mod tests {
         assert_eq!(bar.slot_boxes()[2 * PER_ROW].0, 36);
         bar.click(Hit::Quick);
         assert_eq!(bar.height(), 76.0);
+    }
+    #[test]
+    fn moves_out_of_the_way_of_a_window_that_grew() {
+        let mut bar = Hotkeys::default();
+        let at = |bar: &Hotkeys| bar.frame.position;
+        // The default place, right of a 220 wide window: nothing to do. A 234 wide one overlaps and the bar steps aside.
+        assert!(!bar.clear_of([0.0, 0.0, 220.0, 150.0], 1024.0));
+        assert!(bar.clear_of([0.0, 0.0, 234.0, 150.0], 1024.0));
+        assert_eq!(at(&bar), [238.0, 0.0]);
+        // Not a window below it, nor one it can't clear on a narrow screen.
+        assert!(!bar.clear_of([0.0, 300.0, 400.0, 100.0], 1024.0));
+        assert!(!bar.clear_of([200.0, 0.0, 300.0, 100.0], 700.0));
+        assert_eq!(at(&bar), [238.0, 0.0]);
     }
 }
