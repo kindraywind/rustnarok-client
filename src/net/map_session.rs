@@ -344,6 +344,11 @@ impl MapSession {
         self.stream.write_all(&header.to_le_bytes())
     }
 
+    /// An NPC shop closed without buying or selling: rathena refuses other NPCs until it hears this.
+    pub fn quit_npc_trade(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_NPC_TRADE_QUIT.to_le_bytes())
+    }
+
     /// Answers a making list: the item, or 0 to give it up (rathena then forgets the list).
     pub fn make(&mut self, item: u32) -> io::Result<()> {
         self.stream.write_all(&encode_make(item))

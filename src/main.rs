@@ -673,7 +673,7 @@ fn scale_frame(placed: &mut [actor::Placed], scale: f32) {
 /// Offsets inside the 280x120 dialog bitmaps (win_login, win_service, win_msgbox).
 const LEFT_BUTTON: [f32; 2] = [189.0, 96.0];
 /// A shop's question: buy, sell or cancel, in a message box.
-const DEAL_BUTTONS: [[f32; 2]; 3] = [[143.0, 96.0], [189.0, 96.0], [235.0, 96.0]];
+const DEAL_BUTTONS: [[f32; 2]; 3] = [[144.0, 96.0], [189.0, 96.0], [234.0, 96.0]];
 const DEAL_MESSAGE: usize = 92;
 const RIGHT_BUTTON: [f32; 2] = [235.0, 96.0];
 const FIELD_PADDING: f32 = 3.0;
@@ -3060,6 +3060,12 @@ fn remember_id(id: Option<&str>) {
 /// A message's last sentence (after its last ". "), or all of it.
 fn last_sentence(text: &str) -> &str {
     text.rsplit_once(". ").map_or(text, |(_, last)| last)
+}
+
+/// The deal-type box (Buy, Sell, Cancel): right of the middle, 300 of 480 down; (377, 480) at 1024×768.
+fn deal_box_position() -> [f32; 2] {
+    let [width, height] = screen();
+    [((width - 640.0) / 2.0 + 185.0).floor(), (300.0 * height / 480.0).floor()]
 }
 
 fn dialog_position(dialog: &Texture) -> [f32; 2] {

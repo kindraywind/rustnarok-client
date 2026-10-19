@@ -46,6 +46,19 @@ const MARKET_NAME_WIDTH: f32 = 120.0;
 const PRICE_RIGHT: f32 = 18.0;
 const PADDING: f32 = 5.0;
 const LEFT: f32 = 16.0;
+/// In a row (from its top, 17 + 32 per row): the icon, the name, and the selected row's box (28 high, to 17 short of
+/// the right edge).
+const ICON: [f32; 2] = [44.0, 4.0];
+const NAME: [f32; 2] = [76.0, 12.0];
+const SELECTED_BOX: [f32; 2] = [72.0, 2.0];
+const SELECTED_HEIGHT: f32 = 28.0;
+/// The tooltip: 16 px above the row, stepping 32 px with the pointer from x 40.
+const TIP_ABOVE: f32 = 16.0;
+const TIP_STEP: [f32; 2] = [40.0, 32.0];
+/// "Toggle Item Amount.": selling to an NPC, a whole stack moves at once. The box at (12, h − 20) of the goods.
+const WHOLE_MESSAGE: usize = 295;
+const WHOLE_BOX: [f32; 2] = [200.0, 12.0];
+const WHOLE_UP: f32 = 20.0;
 const FOOTER: f32 = 27.0;
 const BUTTON: [f32; 2] = [42.0, 20.0];
 const SELECTED: [u8; 4] = [0x34, 0x6A, 0xE1, 0x80];
@@ -76,6 +89,7 @@ pub struct Assets {
     selected: Texture,
     /// The corner grip.
     resize: Texture,
+    check: [Texture; 2],
 }
 
 impl Assets {
@@ -93,6 +107,7 @@ impl Assets {
             buttons: [button("buy"), button("sell"), button("cancel"), button("exchange")],
             selected: gpu.solid(SELECTED),
             resize: image(format!("{UI}btn_resize.bmp")),
+            check: ["0", "1"].map(|look| image(format!("{UI}checkbox_{look}.bmp"))),
         }
     }
 }
@@ -127,6 +142,8 @@ pub enum Hit {
     Cancel,
     /// A window's corner grip.
     Resize(usize),
+    /// The "Toggle Item Amount." box.
+    Whole,
     Window(usize),
 }
 
@@ -165,6 +182,8 @@ pub struct Shop {
     clicks: Clicks,
     /// The zeny carried, for what buying from an NPC may add.
     pub zeny: u64,
+    /// "Toggle Item Amount." is ticked: off at start, not kept.
+    whole: bool,
 }
 
 impl Shop {
@@ -189,6 +208,7 @@ impl Shop {
             selected: [None; 2],
             clicks: Clicks::default(),
             zeny: u64::MAX,
+            whole: false,
         }
     }
 
@@ -262,6 +282,7 @@ impl Shop {
         match self.hit(cursor)? {
             Hit::Title(window, _) | Hit::Row(window, _) | Hit::Resize(window) | Hit::Window(window) => Some(window),
             Hit::Deal | Hit::Cancel => Some(1),
+            Hit::Whole => Some(0),
         }
     }
 
@@ -278,6 +299,9 @@ impl Shop {
         if self.buying_store.is_some() {
             return (offer.have > 0).then_some(Action::Ask(row, u32::from(offer.have)));
         }
+        if self.whole_moves() {
+            return self.add_checked(row, u32::from(offer.have)).map(|(message, arg)| Action::Say(message, arg));
+        }
         let selling = self.selling || self.vendor.is_some();
         let single = matches!(offer.kind, ITEM_WEAPON | ITEM_ARMOR | ITEM_PET_EGG | ITEM_PET_ARMOR) || (selling && offer.have == 1);
         if single {
@@ -286,11 +310,12 @@ impl Shop {
         Some(Action::Ask(row, if self.selling { u32::from(offer.have) } else { 1 }))
     }
 
-    /// A deal row dragged back onto the goods: one comes out at once, more asks how many.
+    /// A deal row dragged back onto the goods: one (or with the box ticked, all) comes out at once, more asks how
+    /// many.
     pub fn drop_deal(&mut self, row: usize) -> Option<Action> {
         let &(_, amount) = self.deal.get(row)?;
-        if amount == 1 {
-            self.take_out(row, 1);
+        if amount == 1 || self.whole_moves() {
+            self.take_out(row, amount);
             return None;
         }
         Some(Action::AskOut(row, amount))
@@ -336,6 +361,16 @@ impl Shop {
         height(self.rows[window])
     }
 
+    /// Selling to an NPC with "Toggle Item Amount." ticked: stacks move whole, without asking.
+    fn whole_moves(&self) -> bool {
+        self.whole && self.selling && self.plain()
+    }
+
+    /// Where the box is, when it shows: selling to an NPC, in the goods' footer.
+    fn whole_box(&self) -> Option<[f32; 2]> {
+        (self.selling && self.plain()).then(|| [12.0, self.height(0) - WHOLE_UP])
+    }
+
     /// The rows a window lists: offers, or the deal's offers with their amounts.
     fn rows(&self, window: usize) -> Vec<(usize, Option<u32>)> {
         if window == 0 {
@@ -370,7 +405,10 @@ impl Shop {
             if contains(cancel, BUTTON, local) {
                 return Some(Hit::Cancel);
             }
-            let top = TITLE_HEIGHT + PADDING;
+            if window == 0 && self.whole_box().is_some_and(|at| contains(at, WHOLE_BOX, local)) {
+                return Some(Hit::Whole);
+            }
+            let top = TITLE_HEIGHT;
             if local[1] >= top && local[1] < top + self.rows[window] as f32 * ROW {
                 let row = ((local[1] - top) / ROW) as usize + self.scroll[window];
                 if row < self.rows(window).len() {
@@ -390,8 +428,8 @@ impl Shop {
             Hit::Row(window, row) => {
                 self.selected[window] = Some(row);
                 // Rows of both windows share the double click tracker: tell them apart. A plain NPC shop moves items
-                // only by dragging.
-                if self.clicks.double((window * 1000 + row) as u16) && !self.plain() {
+                // by dragging, and by double clicks only selling with the box ticked.
+                if self.clicks.double((window * 1000 + row) as u16) && (!self.plain() || self.whole_moves()) {
                     return self.pick(window, row);
                 }
             }
@@ -399,6 +437,7 @@ impl Shop {
             Hit::Deal if self.deal.is_empty() && self.plain() => return Some(Action::Close),
             Hit::Deal => return (!self.deal.is_empty()).then_some(Action::Deal),
             Hit::Cancel => return Some(Action::Close),
+            Hit::Whole => self.whole = !self.whole,
             Hit::Resize(_) | Hit::Window(_) => {}
         }
         None
@@ -415,6 +454,10 @@ impl Shop {
         let offer = &self.offers[row];
         if self.buying_store.is_some() {
             return (offer.have > 0).then_some(Action::Ask(row, 0));
+        }
+        if self.whole_moves() {
+            self.add(row, u32::from(offer.have));
+            return None;
         }
         let single =
             matches!(offer.kind, ITEM_WEAPON | ITEM_ARMOR | ITEM_PET_EGG | ITEM_PET_ARMOR) || ((self.selling || self.vendor.is_some()) && offer.have == 1);
@@ -568,7 +611,9 @@ impl Shop {
         for (window, frame) in self.frames.iter().enumerate() {
             if frame.local(cursor, self.height(window)).is_some() {
                 let most = self.rows(window).len().saturating_sub(self.rows[window]);
-                self.scroll[window] = (self.scroll[window] as i32 + rows).clamp(0, most as i32) as usize;
+                // As the inventory: up to 3 rows a notch, one less than it shows.
+                let step = self.rows[window].saturating_sub(1).clamp(1, 3) as i32;
+                self.scroll[window] = (self.scroll[window] as i32 + rows * step).clamp(0, most as i32) as usize;
             }
         }
     }
@@ -618,22 +663,23 @@ impl Shop {
             layer.sprites.push((&assets.strip, frame.at([0.0, TITLE_HEIGHT]), [assets.strip.size[0], list_height]));
             layer.sprites.push((&chrome.border, frame.at([width - 1.0, TITLE_HEIGHT]), [1.0, list_height]));
             for (place, (offer_index, amount)) in self.rows(window).into_iter().enumerate().skip(self.scroll[window]).take(self.rows[window]) {
-                let top = TITLE_HEIGHT + PADDING + (place - self.scroll[window]) as f32 * ROW;
+                let top = TITLE_HEIGHT + (place - self.scroll[window]) as f32 * ROW;
                 let offer = &self.offers[offer_index];
                 if self.selected[window] == Some(place) {
-                    layer.sprites.push((&assets.selected, frame.at([LEFT, top]), [width - LEFT - 1.0, ROW]));
+                    let [x, y] = SELECTED_BOX;
+                    layer.sprites.push((&assets.selected, frame.at([x, top + y]), [width - x - 17.0, SELECTED_HEIGHT]));
                 }
-                // A market's goods sit further right, the name wider.
+                // A market's goods sit further left, the name wider.
                 let market_goods = window == 0 && self.market == Some(MarketKind::Market);
-                let (icon_x, name_x) = if market_goods { (MARKET_ICON, MARKET_NAME) } else { (LEFT + 4.0, LEFT + 32.0) };
+                let (icon_x, name_x) = if market_goods { (MARKET_ICON, MARKET_NAME) } else { (ICON[0], NAME[0]) };
                 let icon = items.get(&offer.item).and_then(|info| icons.get(&inventory::icon_path(info, offer.identified))).and_then(Option::as_ref);
                 if let Some(icon) = icon {
-                    layer.sprites.push((icon, frame.at([icon_x, top + 4.0]), icon.size));
+                    layer.sprites.push((icon, frame.at([icon_x, top + ICON[1]]), icon.size));
                 }
                 if let Some(count) = self.icon_count(window, offer, amount) {
                     let text = count.to_string();
                     // From 1000 up the number starts at the icon's left.
-                    let place = frame.at([icon_x + if count < 1000 { 14.0 } else { 0.0 }, top + 18.0]);
+                    let place = frame.at([icon_x + if count < 1000 { 14.0 } else { 0.0 }, top + ICON[1] + 14.0]);
                     layer.texts.push((text.clone(), offset(place, [-1.0, -1.0]), [255; 3]));
                     layer.texts.push((text, place, [0, 0, 0]));
                 }
@@ -647,14 +693,19 @@ impl Shop {
                 }
                 let (price, name_width) = price_text(offer.listed, offer.price);
                 let name_width = if market_goods { MARKET_NAME_WIDTH } else { name_width };
-                layer.texts.push((window::fit(font, &name, name_width), frame.at([name_x, top + 10.0]), [0, 0, 0]));
-                layer.texts.push((price.clone(), frame.at([width - PRICE_RIGHT - font.width(&price), top + 10.0]), [0, 0, 0]));
+                layer.texts.push((window::fit(font, &name, name_width), frame.at([name_x, top + NAME[1]]), [0, 0, 0]));
+                layer.texts.push((price.clone(), frame.at([width - PRICE_RIGHT - font.width(&price), top + NAME[1]]), [0, 0, 0]));
             }
             // Footer: the deal's total and buttons.
             let footer = height - FOOTER;
             layer.sprites.push((&assets.bar, frame.at([0.0, footer]), [width, FOOTER]));
             if self.resizable() {
                 layer.sprites.push((&assets.resize, frame.at([width - window::GRIP, height - window::GRIP]), assets.resize.size));
+            }
+            if let (Some(at), 0) = (self.whole_box(), window) {
+                let check = &assets.check[usize::from(self.whole)];
+                layer.sprites.push((check, frame.at(at), check.size));
+                layer.texts.push((message(WHOLE_MESSAGE).to_owned(), frame.at([at[0] + check.size[0] + 4.0, at[1] - 1.0]), [0, 0, 0]));
             }
             if let (Some((_, _, limit)), 0) = (self.buying_store, window) {
                 let text = rustnarok_client::messages::fill(message(LIMIT_MESSAGE), &[&group(u64::from(limit))]);
@@ -674,6 +725,17 @@ impl Shop {
                 layer.sprites.push((&deal_images[look(Hit::Deal)], frame.at(deal), BUTTON));
                 layer.sprites.push((&assets.buttons[2][look(Hit::Cancel)], frame.at(cancel), BUTTON));
             }
+        }
+        // An NPC shop's row under the pointer: its name and price over it.
+        if let (Some(Hit::Row(window, row)), true) = (hit, self.plain()) {
+            let (Some(offer), frame) = (self.offer_at(window, row), &self.frames[window]) else { return };
+            let count = if window == 0 { u32::from(offer.have) } else { self.deal[row].1 };
+            let item = InventoryItem { id: offer.item, kind: offer.kind, identified: offer.identified, refine: offer.refine, ..Default::default() };
+            let text = tooltip_text(&inventory::item_name(items, offer.item, offer.identified, offer.refine), offer, count, self.selling);
+            let local = pointer.0[0] - frame.position[0];
+            let x = TIP_STEP[0] + TIP_STEP[1] * ((local - TIP_STEP[0]) / TIP_STEP[1]).floor();
+            let top = TITLE_HEIGHT + (row - self.scroll[window]) as f32 * ROW - TIP_ABOVE;
+            window::tooltip(layer.window(), chrome, font, &text, frame.at([x, top]), inventory::name_color(&item, items));
         }
     }
 
@@ -696,6 +758,9 @@ impl Shop {
         let (deal, cancel) = self.deal_button(1);
         let [deal, cancel] = [self.frames[1].at(deal), self.frames[1].at(cancel)];
         let mut boxes = vec![("shop_deal", [deal[0], deal[1], BUTTON[0], BUTTON[1]]), ("shop_cancel", [cancel[0], cancel[1], BUTTON[0], BUTTON[1]])];
+        if let Some([x, y]) = self.whole_box().map(|at| self.frames[0].at(at)) {
+            boxes.push(("shop_whole", [x, y, WHOLE_BOX[0], WHOLE_BOX[1]]));
+        }
         if self.resizable() {
             for (window, name) in ["shop_resize_0", "shop_resize_1"].into_iter().enumerate() {
                 let [x, y] = self.frames[window].at([self.window_width(window) - window::GRIP, self.height(window) - window::GRIP]);
@@ -712,11 +777,20 @@ impl Shop {
             .skip(self.scroll[0])
             .take(self.rows[0])
             .map(|(place, (offer, _))| {
-                let top = self.frames[0].at([0.0, TITLE_HEIGHT + PADDING + (place - self.scroll[0]) as f32 * ROW]);
+                let top = self.frames[0].at([0.0, TITLE_HEIGHT + (place - self.scroll[0]) as f32 * ROW]);
                 (self.offers[offer].item, [top[0], top[1], self.width, ROW])
             })
             .collect()
     }
+}
+
+/// An NPC shop row's tooltip: buying "name 1,200 Zeny" or "name 1500 -> 1,200 Zeny"; selling the count carried (or
+/// in the deal) after the name, "name 5 ea 1,200 Zeny".
+// ponytail: the spacing follows the random-option forms (2758–2761); those forms aren't used, offers carry no options.
+fn tooltip_text(name: &str, offer: &Offer, count: u32, selling: bool) -> String {
+    let price = group(u64::from(offer.price));
+    let price = if offer.listed == 0 || offer.listed == offer.price { price } else { format!("{} -> {price}", offer.listed) };
+    if selling { format!("{name} {count} ea {price} Zeny") } else { format!("{name} {price} Zeny") }
 }
 
 /// A row's unit price, " 1,234 Z", or with a discount or overcharge " 1500 -> 1,200 Z" (the original not grouped); and
@@ -845,6 +919,57 @@ mod tests {
         // Selling: the box holds the whole stack.
         let mut selling = Shop::new(true, vec![offer(909, 3, 40, 3)]);
         assert_eq!(selling.drop_offer(0), Some(Action::Ask(0, 40)));
+    }
+
+    #[test]
+    fn says_name_and_price_over_a_row() {
+        let plain = offer(501, 1200, 5, 0);
+        assert_eq!(tooltip_text("Red Potion", &plain, 5, false), "Red Potion 1,200 Zeny");
+        let discounted = Offer { listed: 1500, ..plain.clone() };
+        assert_eq!(tooltip_text("Red Potion", &discounted, 5, false), "Red Potion 1500 -> 1,200 Zeny");
+        assert_eq!(tooltip_text("Red Potion", &plain, 5, true), "Red Potion 5 ea 1,200 Zeny");
+    }
+
+    #[test]
+    fn lays_rows_out_from_the_title() {
+        let mut shop = Shop::new(false, (0..10).map(|n| offer(501 + n, 50, 0, 0)).collect());
+        let [x, y] = shop.frames[0].position;
+        // Row r is 32 px from y 17: the band's first and last pixel.
+        assert_eq!(shop.hit([x + 100.0, y + 17.0]), Some(Hit::Row(0, 0)));
+        assert_eq!(shop.hit([x + 100.0, y + 48.9]), Some(Hit::Row(0, 0)));
+        assert_eq!(shop.hit([x + 100.0, y + 49.0]), Some(Hit::Row(0, 1)));
+        assert_eq!(shop.row_boxes()[1].1[1], y + 49.0);
+        // The wheel: 3 rows a notch with 8 showing, 1 with 2.
+        shop.scroll_by([x + 100.0, y + 50.0], 1);
+        assert_eq!(shop.scroll[0], 2, "only 2 more than it shows");
+        shop.set_size(0, None, 2);
+        shop.scroll_by([x + 100.0, y + 50.0], -1);
+        assert_eq!(shop.scroll[0], 1);
+    }
+
+    #[test]
+    fn moves_whole_stacks_with_the_box_ticked() {
+        let mut shop = Shop::new(true, vec![offer(909, 3, 40, 3), offer(910, 5, 7, 3)]);
+        let whole = |shop: &Shop| shop.button_boxes().into_iter().find(|(name, _)| *name == "shop_whole").map(|(_, [x, y, ..])| [x + 1.0, y + 1.0]);
+        // Off at start: a drop asks, a double click does nothing.
+        assert_eq!(shop.drop_offer(0), Some(Action::Ask(0, 40)));
+        let corner = whole(&shop).unwrap();
+        assert_eq!(shop.hit(corner), Some(Hit::Whole));
+        shop.click(Hit::Whole);
+        // Ticked: the stack goes in whole, by a drop or a double click, and comes back out whole.
+        assert_eq!(shop.drop_offer(0), None);
+        assert_eq!(shop.deal, [(0, 40)]);
+        assert_eq!(shop.drop_deal(0), None);
+        assert!(shop.deal.is_empty());
+        shop.click(Hit::Row(0, 1));
+        shop.click(Hit::Row(0, 1));
+        assert_eq!(shop.deal, [(1, 7)]);
+        // Buying has no box, and a double click does nothing.
+        let mut buying = Shop::new(false, vec![offer(501, 50, 0, 0)]);
+        assert!(whole(&buying).is_none());
+        buying.click(Hit::Row(0, 0));
+        assert_eq!(buying.click(Hit::Row(0, 0)), None);
+        assert!(buying.deal.is_empty());
     }
 
     #[test]

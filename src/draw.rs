@@ -1876,7 +1876,7 @@ impl App {
             shop.draw(shop_layer.window(), &assets.chrome, &assets.shop, icons, items, messages, font, pointer);
         }
         if game.deal_choice.is_some() {
-            let dialog = dialog_position(&assets.message);
+            let dialog = deal_box_position();
             shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             for (images, place) in assets.shop_buttons().into_iter().zip(DEAL_BUTTONS) {
                 shop_layer.sprites.push(button_sprite(pointer, offset(dialog, place), images));
