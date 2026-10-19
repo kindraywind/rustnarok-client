@@ -1478,6 +1478,9 @@ pub const FROST_DIVER_HIT: u32 = 28;
 /// EF_COLDHIT: Cold Bolt's, Frost Diver's and Storm Gust's hit, ice shards and smoke drawn on the screen (`prims`).
 pub const COLD_HIT: u32 = 51;
 
+/// EF_NAPALMBEAT: explosion puffs flat on the screen round the target (`prims::napalm`).
+pub const NAPALM_BEAT: u32 = 32;
+
 /// EF_BASH: the burst on a damaging skill's caster (`prims::burst`); none at all under /mineffect.
 const BASH: u32 = 16;
 /// EF_TURNUNDEAD: its burst round the priest and the ring on the ground (`prims::burst`).
@@ -1613,6 +1616,13 @@ impl Effects {
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
             }
             self.prims.cold_hit(unit, now, |n| pick(0, n.saturating_sub(1)));
+        }
+        // Napalm Beat is drawn in code, flat on the screen over its unit.
+        if let (NAPALM_BEAT, Target::Unit(unit)) = (id, target) {
+            for path in crate::prims::napalm::TEXTURES {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            self.prims.napalm_beat(unit, now, |n| pick(0, n.saturating_sub(1)));
         }
         let anchor = |attached: bool| match target {
             Target::Unit(unit) if attached => Anchor::Unit(unit),
@@ -2589,12 +2599,17 @@ mod tests {
     fn says_what_skills_show() {
         let table = Table::load();
         // Hit effects: Bash 0 and EF_HIT2 with its first hit, Magnum Break 49 on each target, Pierce none (not in the
-        // table, so the skill lines).
+        // table, so the skill lines). Napalm Beat (11) keeps [0, 1], no caster effect, no 32.
         assert_eq!((table.hit(5), table.hit(7)), (Some([Some(0), Some(1)]), Some([Some(49), None])));
+        assert_eq!(table.hit(11), Some([Some(0), Some(1)]));
         assert_eq!(table.hit(56), None);
-        // On the caster: Bash and the default 16, Brandish Spear 144, the bolts none, the newest jobs' none.
+        // On the caster: Bash and the default 16, Brandish Spear 144, the bolts none, the newest jobs' none, Napalm Beat none.
         assert_eq!((table.caster(5), table.caster(57), table.caster(19), table.caster(5450)), (Some(16), Some(144), None, None));
+        assert_eq!(table.caster(11), None);
         assert_eq!(table.caster(4000), Some(16));
+        // Effect 32 plays effect\ef_napalmbeat at 0 ms.
+        assert_eq!(table.sounds[&32][0].file, "effect\\ef_napalmbeat");
+        assert_eq!(table.sounds[&32][0].delay_ms, 0);
         // As the packet comes: Cold Bolt's falling arrows on the target.
         assert_eq!(table.struck(14), Some(&[(Who::Target, 26)][..]));
         // Ground skills: Volcano and Land Protector at the cell; Ice Wall too.
