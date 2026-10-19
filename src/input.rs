@@ -3444,7 +3444,7 @@ impl App {
         self.print_screen = Some(screenshot::next_path(folder, &server));
     }
 
-    /// The shortcut this key fires, if it has one. A repeated key-down does not.
+    /// The shortcut this key fires, if it has one. A repeat fires only for the key pressed last.
     pub(crate) fn fire_shortcut(&mut self, event: &control::KeyPress) -> bool {
         let Scene::Game(game) = &self.scene else { return false };
         let text_focus = game.text_box_focused();
@@ -3458,6 +3458,7 @@ impl App {
                 ctrl: self.modifiers.control_key(),
                 tab: self.tab_held && event.logical_key != Key::Named(NamedKey::Tab),
                 repeat: event.repeat,
+                last: self.last_key.as_ref(),
                 text_focus,
                 bar: if game.hotkeys.tab() == 0 { 1 } else { 2 },
             },
@@ -3663,6 +3664,9 @@ impl App {
         if event.logical_key == Key::Named(NamedKey::Tab) {
             self.tab_held = event.state == ElementState::Pressed;
         }
+        if event.state == ElementState::Pressed && !event.repeat {
+            self.last_key = Some(event.logical_key.clone());
+        }
         // Print Screen on its release (Windows sends no press for it), Scroll Lock, and on Macs Cmd+Shift+S (they have
         // no Print Screen; a ponytail choice): a screenshot.
         let pressed = event.state == ElementState::Pressed && !event.repeat;
@@ -3704,6 +3708,7 @@ impl App {
                     ctrl: self.modifiers.control_key(),
                     tab: self.tab_held && *key != Key::Named(NamedKey::Tab),
                     repeat: false,
+                    last: None,
                     text_focus: false,
                     bar: 1,
                 });

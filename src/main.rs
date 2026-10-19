@@ -4288,6 +4288,8 @@ struct App {
     quitting: bool,
     /// Tab is held down (the fourth shortcut modifier).
     tab_held: bool,
+    /// The key pressed last. An auto-repeat fires its shortcut only for this key.
+    last_key: Option<Key>,
     /// The game went back to character select at least once.
     returned: bool,
     /// The slot of the character last played, selected again back at character select.
@@ -5351,6 +5353,7 @@ fn main() {
         char_server: 0,
         quitting: false,
         tab_held: false,
+        last_key: None,
         returned: false,
         account: None,
         playing: None,
