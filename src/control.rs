@@ -951,6 +951,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             let (action, frame) = animation(actor);
             unit["action"] = action.into();
             unit["frame"] = frame.into();
+            // Its exact facing in degrees (0 south, 90 east).
+            unit["rot"] = actor.rot.round().into();
             // Copies left behind it while a status blurs it (the quickens).
             unit["ghosts"] = actor.ghosts.len().into();
             orbs(&mut unit, Some(id));
@@ -1664,6 +1666,18 @@ fn game_state(app: &App, game: &Game) -> Value {
         *entry = entry.as_u64().map_or(ms, |have| have.min(ms)).into();
     }
     state["unit_str_ms"] = Value::Object(youngest);
+    // The hit sparks: the way each ring flies (x east, z north, to 0.01), ms until it lands, its drawn tick, and its cell
+    // once landed.
+    state["hit_sparks"] = game
+        .effects
+        .hit_sparks(self::now())
+        .into_iter()
+        .map(|(way, landing, tick, at)| {
+            let cell = at.map(|at| [(at[0] / crate::world::CELL).floor(), (at[2] / crate::world::CELL).floor()]);
+            json!({"way": way.map(|value| (value * 100.0).round() / 100.0), "landing_ms": landing, "tick": tick, "cell": cell})
+        })
+        .collect::<Vec<_>>()
+        .into();
     state["cutin_window"] = cutin_window.into();
     // The inventory window's size and its columns and rows of cells.
     state["inventory_window"] = json!({"size": game.inventory.window_size(), "cells": game.inventory.size()});
