@@ -1655,7 +1655,7 @@ impl Effects {
             for (at, alpha, scale) in self.prims.ghosts() {
                 for &(key, position, size, layer_angle) in &self.ghost {
                     let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * scale));
-                    quads.push((sprite.texture(key), at, corners, [1.0, 1.0, 1.0, alpha], false));
+                    quads.push((sprite.texture(key), at, corners, [1.0, 1.0, 1.0, alpha], false, false));
                 }
             }
         }
