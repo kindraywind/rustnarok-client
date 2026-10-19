@@ -1,0 +1,26 @@
+{
+  "about": "Attack clicks (issue #593) on a training dummy 10 cells east (npc/attack-clicks.txt). Sitting, a click on it sends nothing and leaves no attack. Standing, a double click starts the chase (one walk) and the attack lands. While chasing, a click on the NPC beside the way leaves the chase going. Main used to attack from sitting, end the attack on the double press, and drop the chase on the NPC click.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild06 180 180"}, {"settle": 1500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/attack-clicks.txt"}, {"wait": 1500},
+    {"key": "Insert"}, {"wait": 800},
+    {"expect": {"state": {"player.action": 2}}},
+    {"click_on": {"unit": "Dummy 10"}},
+    {"wait_for": {"sent": "0x0437", "ms": 800}, "none": true},
+    {"expect": {"state": {"player.attack": null, "player.action": 2}}},
+    {"key": "Insert"}, {"wait": 800},
+    {"click_on": {"unit": "Dummy 10"}, "count": 2},
+    {"wait_for": {"sent": "0x035f", "ms": 2000}},
+    {"wait": 300},
+    {"click_on": {"unit": "Chase Sign"}},
+    {"wait_for": {"sent": "0x0437", "ms": 6000}},
+    {"wait": 600},
+    {"move": [1000, 750]},
+    {"shot": "attack-clicks", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"expect": {"state": {"player.moving": false}}},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/attack-clicks.txt"}, {"wait": 300},
+    {"say": "@killmonster2"}, {"wait": 500}
+  ]
+}

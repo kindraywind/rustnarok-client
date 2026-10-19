@@ -956,9 +956,9 @@ fn attack_goal(units: &HashMap<u32, Actor>, skill_units: &HashMap<u32, (u32, [u1
 }
 
 /// Skill units on the ground a plain attack breaks (rathena's `battle_check_target` takes them): Ice Wall, Blast Mine,
-/// Claymore Trap, Reverberation, Poem of Netherworld and the four Windhawk traps.
+/// Claymore Trap, Reverberation, Poem of Netherworld, Wall of Thorns and the four Windhawk traps.
 fn attackable_ground_unit(kind: u32) -> bool {
-    matches!(kind, 0x8d | 0x8f | 0x98 | 0xda | 0xde | 0x5174..=0x5177)
+    matches!(kind, 0x8d | 0x8f | 0x98 | 0xda | 0xde | 0xe6 | 0x5174..=0x5177)
 }
 
 fn warp_pick_rect(view: &world::View, feet: world::Vector) -> Option<[f32; 4]> {
@@ -1420,7 +1420,7 @@ struct Game {
     /// The attack asked for with the mouse, and when the last attack packet went out; riding a mount that can't
     /// attack.
     attack: Option<Attack>,
-    last_attack: Option<Instant>,
+    last_attack: Option<u64>,
     /// The attack as the last frame left it, for a 0x0139 after it ended.
     attack_was: Option<Attack>,
     /// The cell the last walk toward an attack asked for (`chase_walk`), when that was asked (whole ms), and the
@@ -3114,6 +3114,9 @@ struct Attack {
     /// Fixed at the click (`slow_target`): a fast target is chased toward where it's walking to, every CHASE_GAP_MS;
     /// a slow one toward where it's drawn, every ATTACK_GAP_MS.
     fast: bool,
+    /// Ice Wall or a trap (a skill unit on the ground): its own reach and chase (`ground_unit_reach`), and a 0x0139
+    /// ends it.
+    ground: bool,
 }
 
 /// The attack a 0x0139 brings back on `target`, not sent, fast and slow swapped (anything but fast becomes fast).
@@ -3129,6 +3132,11 @@ fn rearmed(attack: Option<Attack>, was: Option<Attack>, target: u32) -> Attack {
     Attack { held, fast, ..Attack::new(target, continuous) }
 }
 
+/// Whether a 0x0139 for `target` ends the attack instead of bringing it back: one on Ice Wall or a trap.
+fn too_far_ends(attack: Option<Attack>, was: Option<Attack>, target: u32) -> bool {
+    attack.or(was).is_some_and(|attack| attack.ground && attack.target == target)
+}
+
 /// What letting go of the button does to an attack.
 #[derive(Debug, PartialEq)]
 enum Release {
@@ -3139,7 +3147,7 @@ enum Release {
 
 impl Attack {
     fn new(target: u32, continuous: bool) -> Self {
-        Self { target, continuous, held: true, sent: false, fast: true }
+        Self { target, continuous, held: true, sent: false, fast: true, ground: false }
     }
 
     fn release(&mut self) -> Release {
@@ -3156,9 +3164,8 @@ impl Attack {
     }
 }
 
-/// An attack packet goes no sooner than this after the last.
-const ATTACK_GAP: Duration = Duration::from_millis(1200);
-/// A chase walk goes more than this many whole ms after the last one: toward a fast target, a slow one.
+/// A chase walk goes more than this many whole ms after the last one: toward a fast target, a slow one. An attack
+/// packet goes more than ATTACK_GAP_MS after the last one too.
 const CHASE_GAP_MS: u64 = 450;
 const ATTACK_GAP_MS: u64 = 1200;
 /// "Attacks and skills cannot be used when your Weight is over 90%.", "Unable to attack while riding."
@@ -3169,6 +3176,74 @@ const ALL_RIDING: u16 = 613;
 /// /noctrl's lines: on, off.
 const NO_CTRL_ON: usize = 717;
 const NO_CTRL_OFF: usize = 718;
+
+/// What the player is doing, as far as a pending attack goes (`Game::player_motion`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PlayerMotion {
+    Stand,
+    Walk,
+    Flinch,
+    Cast,
+    /// A skill's motion.
+    Skill,
+    /// Its own swing, the pickup, sitting, dead.
+    Other,
+}
+
+/// Whether a pending attack is worked on (reach, chase, send) in this motion; otherwise it waits. Standing, walking
+/// or flinching; casting too for Sage, Professor and Baby Sage; casting and skill motions too for Gunslinger, Ninja,
+/// Taekwon and every job after. One on a ground skill unit: in skill motions too, never casting.
+fn attack_works(motion: PlayerMotion, job: u16, ground: bool) -> bool {
+    let later = matches!(job, 24 | 25 | 4046..=4360);
+    match motion {
+        PlayerMotion::Stand | PlayerMotion::Walk | PlayerMotion::Flinch => true,
+        PlayerMotion::Cast => !ground && (later || matches!(job, 16 | 4017 | 4039)),
+        PlayerMotion::Skill => ground || later,
+        PlayerMotion::Other => false,
+    }
+}
+
+/// What an attack in reach does now.
+#[derive(Debug, PartialEq)]
+enum AttackSend {
+    Send,
+    Wait,
+    /// A single swing let go of before it reached, in reach too soon after the last attack packet: dropped.
+    Drop,
+}
+
+/// The attack packet goes more than ATTACK_GAP_MS whole ms after the last one. Sooner, a single swing let go of is
+/// dropped and anything else waits.
+fn attack_send(attack: &Attack, last: Option<u64>, now: u64) -> AttackSend {
+    if last.is_none_or(|last| now > last + ATTACK_GAP_MS) {
+        AttackSend::Send
+    } else if !attack.continuous && !attack.held {
+        AttackSend::Drop
+    } else {
+        AttackSend::Wait
+    }
+}
+
+/// In reach of Ice Wall or a trap: max(5, attack range) cells, flat, from the player's drawn point to the unit's cell
+/// centre.
+fn ground_unit_reach(from: [f32; 2], centre: [f32; 2], attack_range: i32) -> (bool, i32) {
+    let range = attack_range.max(5);
+    let [dx, dz] = [centre[0] - from[0], centre[1] - from[1]];
+    ((range * 5) as f32 + 5.5 >= (dx * dx + dz * dz).sqrt(), range)
+}
+
+/// What a world press does to what's pending: whether it ends the attack, and whether it drops a pending skill or
+/// pickup. One pending action at a time: an attack click replaces the attack and drops the others, a pickup click or
+/// a ground walk ends the attack (the pickup or walk then takes the place of a pending skill or pickup itself). A
+/// double press and an NPC click leave everything.
+fn press_ends(click: &WorldClick, double: bool) -> (bool, bool) {
+    match click {
+        _ if double => (false, false),
+        WorldClick::Talk(_) => (false, false),
+        WorldClick::Attack(_) => (true, true),
+        WorldClick::Swing(_) | WorldClick::PickUp(_) | WorldClick::Warp(_) | WorldClick::Ground => (true, false),
+    }
+}
 
 /// A target is slow when 4/3 of the player's ms per cell (whole ms, truncated) is less than its own; otherwise fast.
 fn slow_target(own_ms: f32, target_ms: f32) -> bool {
@@ -3193,10 +3268,6 @@ fn clears_walk_cell(before: (usize, bool), now: usize) -> bool {
     let standing = |action| if action == actor::READY { actor::IDLE } else { action };
     let (action, dead) = before;
     !dead && standing(action) != standing(now) && now != actor::WALK
-}
-
-fn may_attack(last: Option<Instant>, now: Instant) -> bool {
-    last.is_none_or(|last| now.saturating_duration_since(last) >= ATTACK_GAP)
 }
 
 /// Why an attack can't start: weight at 90% or more, riding a mount that can't attack.
@@ -5599,10 +5670,68 @@ mod tests {
     }
 
     #[test]
+    fn works_on_an_attack_only_in_some_motions() {
+        use PlayerMotion::*;
+        // Any job: standing, walking, flinching; not its own swing, the pickup or sitting.
+        for job in [0, 7, 4008] {
+            assert!([Stand, Walk, Flinch].into_iter().all(|motion| attack_works(motion, job, false)));
+            assert!(!attack_works(Other, job, false) && !attack_works(Cast, job, false) && !attack_works(Skill, job, false));
+        }
+        // Casting too for Sage, Professor and Baby Sage.
+        assert!([16, 4017, 4039].into_iter().all(|job| attack_works(Cast, job, false) && !attack_works(Skill, job, false)));
+        // Casting and skill motions for Gunslinger, Ninja, Taekwon and later.
+        assert!([24, 25, 4046, 4211, 4360].into_iter().all(|job| attack_works(Cast, job, false) && attack_works(Skill, job, false)));
+        assert!(!attack_works(Cast, 4361, false));
+        // Ice Wall and traps: skill motions too, never casting.
+        assert!(attack_works(Skill, 0, true) && !attack_works(Cast, 16, true) && !attack_works(Other, 0, true));
+    }
+
+    #[test]
+    fn keeps_one_pending_action() {
+        // (ends the attack, drops a pending skill or pickup)
+        assert_eq!(press_ends(&WorldClick::Attack(5), false), (true, true));
+        assert_eq!(press_ends(&WorldClick::PickUp(9), false), (true, false));
+        assert_eq!(press_ends(&WorldClick::Ground, false), (true, false));
+        assert_eq!(press_ends(&WorldClick::Warp([3, 4]), false), (true, false));
+        assert_eq!(press_ends(&WorldClick::Talk(7), false), (false, false), "an NPC click leaves the attack");
+        assert_eq!(press_ends(&WorldClick::Attack(5), true), (false, false), "a double press does nothing");
+        assert_eq!(press_ends(&WorldClick::Ground, true), (false, false));
+    }
+
+    #[test]
+    fn sends_an_attack_more_than_1200_ms_apart() {
+        let kept = Attack::new(5, true);
+        assert_eq!(attack_send(&kept, None, 0), AttackSend::Send);
+        assert_eq!(attack_send(&kept, Some(1000), 2200), AttackSend::Wait);
+        assert_eq!(attack_send(&kept, Some(1000), 2201), AttackSend::Send);
+        // Held: waits for the gap too.
+        assert_eq!(attack_send(&Attack::new(5, false), Some(1000), 2000), AttackSend::Wait);
+        // A single swing let go of before reach, in reach too soon: dropped, not sent later.
+        let single = Attack { held: false, ..Attack::new(5, false) };
+        assert_eq!(attack_send(&single, Some(1000), 2200), AttackSend::Drop);
+        assert_eq!(attack_send(&single, Some(1000), 2201), AttackSend::Send);
+    }
+
+    #[test]
+    fn reaches_walls_and_traps_from_their_own_range() {
+        // A melee weapon: max(5, 1) cells, 30.5 units, flat, to the cell's centre.
+        let from = world::drawn_point([10.0, 10.0]);
+        let reach = |dx: f32, dy: f32| ground_unit_reach(from, world::drawn_point([10.0 + dx, 10.0 + dy]), 1);
+        assert_eq!(reach(6.0, 0.0), (true, 5));
+        assert!(reach(6.0, 1.0).0 && !reach(6.0, 2.0).0);
+        // A bow's 9 cells stay 9.
+        assert_eq!(ground_unit_reach(from, world::drawn_point([20.0, 10.0]), 9), (true, 9));
+        // Its walk: 25 units short of the centre, on the line from the player.
+        let gat = rustnarok_client::map::Gat { width: 40, height: 40, cells: vec![([0.0; 4], 0); 1600] };
+        assert_eq!(world::chase_cell(&gat, from, world::drawn_point([20.0, 10.0]), 5), [15, 10]);
+        // A 0x0139 for it ends it, where a monster's comes back.
+        let wall = Attack { ground: true, sent: true, ..Attack::new(3354, true) };
+        assert!(too_far_ends(Some(wall), None, 3354) && too_far_ends(None, Some(wall), 3354));
+        assert!(!too_far_ends(Some(Attack::new(5, true)), None, 5) && !too_far_ends(None, None, 3354));
+    }
+
+    #[test]
     fn attacks_as_the_player_asked() {
-        let start = Instant::now();
-        assert!(may_attack(None, start) && !may_attack(Some(start), start + Duration::from_millis(1199)));
-        assert!(may_attack(Some(start), start + ATTACK_GAP));
         // Kept up: letting go changes nothing.
         let mut kept = Attack::new(5, true);
         assert_eq!((kept.release(), kept.action()), (Release::Keep, net::ACT_ATTACK_REPEAT));
@@ -5782,7 +5911,7 @@ mod tests {
     #[test]
     fn attacks_walls_and_traps_on_their_cells() {
         // Which ground units a click attacks.
-        assert!([0x8d, 0x8f, 0x98, 0xda, 0xde, 0x5174, 0x5177].into_iter().all(attackable_ground_unit));
+        assert!([0x8d, 0x8f, 0x98, 0xda, 0xde, 0xe6, 0x5174, 0x5177].into_iter().all(attackable_ground_unit));
         assert!(![0x7e, 0x86, 0x8c, 0x90, 0x5173, 0x5178].into_iter().any(attackable_ground_unit));
         // The attack goes for the wall's cell, and ends once the wall is gone.
         let units = HashMap::new();

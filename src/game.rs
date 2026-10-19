@@ -174,8 +174,34 @@ impl Game {
 
     /// Attacks `target` and keeps at it, walking into reach first.
     pub(crate) fn attack(&mut self, target: u32) {
-        self.attack = Some(Attack { fast: self.fast_target(target), ..Attack::new(target, true) });
+        self.attack = Some(self.new_attack(target, true));
         self.attack_step(Instant::now());
+    }
+
+    /// An attack on `target` as clicked: fast or slow, and whether it's a skill unit on the ground.
+    pub(crate) fn new_attack(&self, target: u32, continuous: bool) -> Attack {
+        let ground = !self.units.contains_key(&target) && self.skill_units.contains_key(&target);
+        Attack { fast: self.fast_target(target), ground, ..Attack::new(target, continuous) }
+    }
+
+    /// What the player is doing, for a pending attack (`attack_works`).
+    pub(crate) fn player_motion(&self, now: Instant) -> PlayerMotion {
+        let player = &self.player;
+        if player.sitting || player.dead {
+            return PlayerMotion::Other;
+        }
+        if self.casts.contains_key(&None) {
+            return PlayerMotion::Cast;
+        }
+        let (action, timing) = player.animation(now);
+        let (swing, flinch, _) = actor::combat_actions(player.kind);
+        match action {
+            actor::WALK => PlayerMotion::Walk,
+            _ if !matches!(timing, actor::Timing::Once(..) | actor::Timing::Span(_)) => PlayerMotion::Stand,
+            _ if action == flinch => PlayerMotion::Flinch,
+            _ if action == swing || action == actor::PICKUP => PlayerMotion::Other,
+            _ => PlayerMotion::Skill,
+        }
     }
 
     /// Whether an attack on `target` chases it as a fast one (`slow_target`); ground skill units are.
@@ -208,22 +234,41 @@ impl Game {
             self.attack = None;
             return;
         };
-        if attack.sent || self.store_open() {
+        if attack.sent || self.store_open() || !attack_works(self.player_motion(clock), self.player.job, attack.ground) {
             return;
         }
         let from = world::drawn_point(self.player.position(clock));
         let gat = &self.world.gat;
         let arrived = self.walk_cell == Some(world::floor_cell(from));
-        if arrived || world::in_attack_reach(world::attack_distance(gat, from, drawn), self.attack_range) {
-            if may_attack(self.last_attack, now) {
-                let _ = self.session.act(attack.target, attack.action());
-                self.last_attack = Some(now);
-                attack.sent = true;
+        // Ice Wall and traps: their own range, flat, and a walk whenever the chase cell changes (no timer).
+        let (in_reach, range) = if attack.ground {
+            ground_unit_reach(from, drawn, self.attack_range)
+        } else {
+            (world::in_attack_reach(world::attack_distance(gat, from, drawn), self.attack_range), self.attack_range)
+        };
+        if arrived || in_reach {
+            match attack_send(&attack, self.last_attack, whole_ms(now)) {
+                AttackSend::Send => {
+                    let _ = self.session.act(attack.target, attack.action());
+                    self.last_attack = Some(whole_ms(Instant::now()));
+                    attack.sent = true;
+                }
+                AttackSend::Drop => {
+                    self.attack_was = Some(attack);
+                    self.attack = None;
+                    return;
+                }
+                AttackSend::Wait => {}
             }
         } else {
-            let cell = world::chase_cell(gat, from, aim, self.attack_range);
+            let cell = world::chase_cell(gat, from, aim, range);
             let gap = if attack.fast { CHASE_GAP_MS } else { ATTACK_GAP_MS };
-            if let Some(cell) = chase_walk(cell, &mut self.walk_cell, &mut self.last_chase_walk, gap, whole_ms(now))
+            let asked = if attack.ground {
+                (self.walk_cell != Some(cell)).then(|| *self.walk_cell.insert(cell))
+            } else {
+                chase_walk(cell, &mut self.walk_cell, &mut self.last_chase_walk, gap, whole_ms(now))
+            };
+            if let Some(cell) = asked
                 && may_move(self.last_move, whole_ms(now))
             {
                 self.last_move = Some(whole_ms(Instant::now()));
@@ -1078,6 +1123,8 @@ impl Game {
         if self.store_open() {
             return;
         }
+        // One pending action: the skill takes the attack's place.
+        self.attack = None;
         // Out of reach it walks there first: `pending_step` checks every frame.
         self.pending = Some((Pending::Skill { id, level, target }, None));
         self.pending_walk = None;
