@@ -5,6 +5,7 @@
 
 pub mod balls;
 pub mod bolts;
+pub mod boomerang;
 pub mod burst;
 pub mod sage;
 pub mod stone;
@@ -77,6 +78,7 @@ pub struct Prims {
     pub volleys: Vec<bolts::Volley>,
     pub sage: sage::Sage,
     pub bursts: Vec<burst::Burst>,
+    pub boomerangs: boomerang::Boomerangs,
 }
 
 /// COLDHIT's shard and smoke textures.

@@ -1283,7 +1283,7 @@ impl Game {
         let cell = |unit: u32| if unit == self.account_id { Some(self.player.cell) } else { self.units.get(&unit).map(|actor| actor.cell) };
         if let (Some(from), Some(to)) = (cell(caster), cell(target)) {
             let [from, to] = [from, to].map(|cell| self.world.cell_position(cell.map(|value| value as f32)));
-            self.effects.aimed(gpu, grf, table, effect, from, to, hits, Instant::now());
+            self.effects.aimed(gpu, grf, table, effect, (caster != self.account_id).then_some(caster), from, to, hits, Instant::now());
         }
     }
 
