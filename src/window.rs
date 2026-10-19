@@ -383,6 +383,10 @@ pub struct Amount<T> {
     pub typed: String,
     /// The question (a message number).
     message: usize,
+    /// A custom label (the item's name for a shop).
+    label: Option<String>,
+    /// OK only (no Cancel).
+    ok_only: bool,
     /// How many digits go in; 0 takes a name instead.
     max_digits: usize,
 }
@@ -393,22 +397,27 @@ impl<T> Amount<T> {
 
     /// Asks how many ("Input Number"), with `start` already typed in.
     pub fn new(what: T, start: Option<u32>) -> Self {
-        Self { what, typed: start.map(|amount| amount.to_string()).unwrap_or_default(), message: 1259, max_digits: 5 }
+        Self { what, typed: start.map(|amount| amount.to_string()).unwrap_or_default(), message: 1259, label: None, ok_only: false, max_digits: 5 }
+    }
+
+    /// Asks how many of a shop item to buy or sell: the item's name as its label, with OK only.
+    pub fn shop(what: T, label: String, start: Option<u32>) -> Self {
+        Self { what, typed: start.map(|amount| amount.to_string()).unwrap_or_default(), message: 1259, label: Some(label), ok_only: true, max_digits: 5 }
     }
 
     /// Asks for a buying-store price ("Price: "), up to 8 digits (the most is 99,990,000).
     pub fn price(what: T) -> Self {
-        Self { what, typed: String::new(), message: 1721, max_digits: 8 }
+        Self { what, typed: String::new(), message: 1721, label: None, ok_only: false, max_digits: 8 }
     }
 
     /// Asks for a vending price ("Price: "), up to 10 digits: past 1,000,000,000 is held there by the setup.
     pub fn vend_price(what: T) -> Self {
-        Self { what, typed: String::new(), message: crate::vend::PRICE_ASKS, max_digits: 10 }
+        Self { what, typed: String::new(), message: crate::vend::PRICE_ASKS, label: None, ok_only: false, max_digits: 10 }
     }
 
     /// Asks for a name, under that message.
     pub fn name(what: T, message: usize) -> Self {
-        Self { what, typed: String::new(), message, max_digits: 0 }
+        Self { what, typed: String::new(), message, label: None, ok_only: false, max_digits: 0 }
     }
 
     /// The number typed; one too big for 32 bits is the most there is.
@@ -424,14 +433,25 @@ impl<T> Amount<T> {
         );
     }
 
-    fn corner(message_box: [f32; 2]) -> [f32; 2] {
+    /// The box's buttons and whether each answers yes (true for OK, false for Cancel):
+    /// OK and Cancel, or OK alone where Cancel would be.
+    pub fn buttons(&self) -> Vec<([f32; 2], bool)> {
+        if self.ok_only { vec![(crate::RIGHT_BUTTON, true)] } else { vec![(crate::LEFT_BUTTON, true), (crate::RIGHT_BUTTON, false)] }
+    }
+
+    /// The question's label: the item's name when set, else the message.
+    pub fn label<'a>(&'a self, messages: &'a [String]) -> &'a str {
+        self.label.as_deref().unwrap_or_else(|| messages.get(self.message).map_or("", String::as_str))
+    }
+
+    pub fn corner(message_box: [f32; 2]) -> [f32; 2] {
         [((screen()[0] - message_box[0]) / 2.0).floor(), ((screen()[1] - message_box[1]) / 2.0).floor()]
     }
 
     /// Over the box: Some(Some(ok)) on its buttons, Some(None) elsewhere on it.
-    pub fn hit(cursor: [f32; 2], message_box: [f32; 2], button: [f32; 2]) -> Option<Option<bool>> {
+    pub fn hit(&self, cursor: [f32; 2], message_box: [f32; 2], button: [f32; 2]) -> Option<Option<bool>> {
         let corner = Self::corner(message_box);
-        for (place, ok) in [(crate::LEFT_BUTTON, true), (crate::RIGHT_BUTTON, false)] {
+        for (place, ok) in self.buttons() {
             if contains(offset(corner, place), button, cursor) {
                 return Some(Some(ok));
             }
@@ -450,12 +470,14 @@ impl<T> Amount<T> {
     ) {
         let corner = Self::corner(message_box.size);
         layer.sprites.push((message_box, corner, message_box.size));
-        let hit = Self::hit(pointer.0, message_box.size, ok_cancel[0][0].size);
-        for (images, (place, ok)) in ok_cancel.into_iter().zip([(crate::LEFT_BUTTON, true), (crate::RIGHT_BUTTON, false)]) {
+        let hit = self.hit(pointer.0, message_box.size, ok_cancel[0][0].size);
+        for (place, ok) in self.buttons() {
+            let images = &ok_cancel[usize::from(!ok)];
             let look = if hit == Some(Some(ok)) { 1 + usize::from(pointer.1) } else { 0 };
             layer.sprites.push((&images[look], offset(corner, place), images[look].size));
         }
-        layer.texts.push((messages.get(self.message).cloned().unwrap_or_default(), offset(corner, [20.0, 30.0]), [0, 0, 0]));
+        let text = self.label(messages);
+        layer.texts.push((text.to_owned(), offset(corner, [20.0, 30.0]), [0, 0, 0]));
         let field = offset(corner, [20.0, 55.0]);
         layer.sprites.push((&chrome.border, offset(field, [-1.0, -1.0]), [242.0, 20.0]));
         layer.sprites.push((&chrome.white, field, [240.0, 18.0]));
@@ -553,5 +575,29 @@ mod tests {
         price.type_text("99999999999");
         assert_eq!(price.typed, "9999999999");
         assert_eq!(price.value(), u32::MAX);
+    }
+
+    #[test]
+    fn amount_box_shows_item_name_and_ok_only() {
+        let messages = vec!["".to_owned(); 2000];
+        let generic = Amount::new((), Some(5));
+        assert_eq!(generic.label(&messages), "");
+        assert_eq!(generic.buttons(), vec![(crate::LEFT_BUTTON, true), (crate::RIGHT_BUTTON, false)]);
+
+        let shop_box = Amount::shop((), "Red Potion".to_owned(), Some(1));
+        assert_eq!(shop_box.label(&messages), "Red Potion");
+        assert_eq!(shop_box.buttons(), vec![(crate::RIGHT_BUTTON, true)]);
+
+        let msg_size = [280.0, 120.0];
+        let btn_size = [42.0, 20.0];
+        let corner = Amount::<()>::corner(msg_size);
+        let right_btn = offset(corner, crate::RIGHT_BUTTON);
+        let left_btn = offset(corner, crate::LEFT_BUTTON);
+        // Generic has Cancel on right, OK on left:
+        assert_eq!(generic.hit(right_btn, msg_size, btn_size), Some(Some(false)));
+        assert_eq!(generic.hit(left_btn, msg_size, btn_size), Some(Some(true)));
+        // Shop box has OK on right, body on left:
+        assert_eq!(shop_box.hit(right_btn, msg_size, btn_size), Some(Some(true)));
+        assert_eq!(shop_box.hit(left_btn, msg_size, btn_size), Some(None));
     }
 }

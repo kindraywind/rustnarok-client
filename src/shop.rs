@@ -60,7 +60,38 @@ const WHOLE_MESSAGE: usize = 295;
 const WHOLE_BOX: [f32; 2] = [200.0, 12.0];
 const WHOLE_UP: f32 = 20.0;
 const FOOTER: f32 = 27.0;
-const BUTTON: [f32; 2] = [42.0, 20.0];
+pub const BUTTON: [f32; 2] = [42.0, 20.0];
+/// The deal-type box (Buy / Sell / Cancel): 280×120 at ((W − 640)/2 + 185, 300·H/480).
+pub const DEAL_SIZE: [f32; 2] = [280.0, 120.0];
+pub const DEAL_BUTTONS: [[f32; 2]; 3] = [[144.0, 96.0], [189.0, 96.0], [234.0, 96.0]];
+pub const DEAL_MESSAGE: usize = 92;
+
+/// Where the deal-type box sits at first: right of the middle, 300 of 480 down; (377, 480) at 1024×768.
+pub fn deal_box_position() -> [f32; 2] {
+    let [width, height] = crate::screen();
+    [((width - 640.0) / 2.0 + 185.0).floor(), (300.0 * height / 480.0).floor()]
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum DealHit {
+    Buy,
+    Sell,
+    Cancel,
+    Body,
+}
+
+/// Where a click falls on the deal-type box: one of its buttons, or anywhere else on its body.
+pub fn deal_hit(position: [f32; 2], cursor: [f32; 2]) -> Option<DealHit> {
+    if !contains(position, DEAL_SIZE, cursor) {
+        return None;
+    }
+    for (choice, place) in [DealHit::Buy, DealHit::Sell, DealHit::Cancel].into_iter().zip(DEAL_BUTTONS) {
+        if contains(offset(position, place), BUTTON, cursor) {
+            return Some(choice);
+        }
+    }
+    Some(DealHit::Body)
+}
 const SELECTED: [u8; 4] = [0x34, 0x6A, 0xE1, 0x80];
 /// Titles: the goods when buying and selling, the deal when buying and selling.
 const TITLES: [[usize; 2]; 2] = [[186, 185], [166, 168]];
@@ -1079,5 +1110,31 @@ mod tests {
         assert_eq!(shop.add_checked(0, 3), None);
         assert_eq!(shop.deal, [(0, 3)]);
         assert_eq!(shop.total(), 900);
+    }
+
+    #[test]
+    fn drags_deal_type_box_and_clicks_buttons() {
+        let pos = [377.0, 480.0];
+        // Buttons still press:
+        assert_eq!(deal_hit(pos, [pos[0] + 144.0 + 5.0, pos[1] + 96.0 + 5.0]), Some(DealHit::Buy));
+        assert_eq!(deal_hit(pos, [pos[0] + 189.0 + 5.0, pos[1] + 96.0 + 5.0]), Some(DealHit::Sell));
+        assert_eq!(deal_hit(pos, [pos[0] + 234.0 + 5.0, pos[1] + 96.0 + 5.0]), Some(DealHit::Cancel));
+        // Any other part of the body is DealHit::Body:
+        assert_eq!(deal_hit(pos, [pos[0] + 10.0, pos[1] + 10.0]), Some(DealHit::Body));
+        assert_eq!(deal_hit(pos, [pos[0] + 100.0, pos[1] + 50.0]), Some(DealHit::Body));
+        // Outside the box:
+        assert_eq!(deal_hit(pos, [pos[0] - 1.0, pos[1]]), None);
+        assert_eq!(deal_hit(pos, [pos[0] + 281.0, pos[1]]), None);
+
+        // An ordinary frame dragged by its body:
+        let mut frame = Frame::new(pos, DEAL_SIZE[0]);
+        frame.open = true;
+        assert!(!frame.dragging());
+        frame.start_drag([pos[0] + 20.0, pos[1] + 20.0]);
+        assert!(frame.dragging());
+        frame.drag_to([pos[0] + 70.0, pos[1] + 50.0], DEAL_SIZE[1]);
+        assert_eq!(frame.position, [pos[0] + 50.0, pos[1] + 30.0]);
+        assert!(frame.drop_drag());
+        assert!(!frame.dragging());
     }
 }
