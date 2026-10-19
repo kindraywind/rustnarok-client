@@ -386,10 +386,8 @@ struct GroundOutput {
 @fragment fn model_fs(in: GroundOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(image, image_sampler, in.uv);
     if (texel.a < 0.5) { discard; }
-    // Faces are drawn from both sides, so light them from whichever side faces the light.
-    let weight = abs(dot(normalize(in.normal), globals.light_direction.xyz));
-    let light = clamp(globals.ambient.rgb + globals.diffuse.rgb * weight, vec3(0.0), vec3(1.0));
-    return vec4(apply_fog(texel.rgb * in.color.rgb * light, in.fog), 1.0);
+    // The light is baked into the corners' colour at load.
+    return vec4(apply_fog(texel.rgb * in.color.rgb, in.fog), 1.0);
 }
 
 // Shadows and effects take their feet's `depth`, flat. Sprites work theirs out per pixel from their `plane` (the
@@ -595,7 +593,7 @@ pub struct World {
     draws: Vec<(usize, Range<u32>)>,
     model_textures: Vec<Texture>,
     model_vertices: Option<wgpu::Buffer>,
-    model_draws: Vec<(usize, Range<u32>)>,
+    model_draws: Vec<ModelDraw>,
     /// Waving water, one quad per tile that dips under it.
     water: Option<MapWater>,
     light: (Vector, [f32; 3], [f32; 3]),
@@ -607,7 +605,7 @@ pub struct World {
     globals: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     ground_pipeline: wgpu::RenderPipeline,
-    model_pipeline: wgpu::RenderPipeline,
+    model_pipelines: [wgpu::RenderPipeline; 2],
     /// Water blended over, then the same with depth write for the lava pass.
     water_pipelines: [wgpu::RenderPipeline; 2],
     sprite_pipeline: wgpu::RenderPipeline,
@@ -663,10 +661,10 @@ impl World {
         for instance in &mut animated {
             instance.draws = std::mem::take(&mut instance.runs)
                 .into_iter()
-                .map(|(texture, count)| {
+                .map(|(texture, two_sided, count)| {
                     let range = moving..moving + count;
                     moving += count;
-                    (texture, range)
+                    (texture, two_sided, range)
                 })
                 .collect();
         }
@@ -725,12 +723,13 @@ impl World {
             bind_group_layouts: &[Some(&globals_layout), Some(&gpu.texture_layout), Some(&gpu.texture_layout)],
             immediate_size: 0,
         });
-        let pipeline_compared = |entry: &str,
-                                 fragment: &str,
-                                 buffer: wgpu::VertexBufferLayout,
-                                 blend: Option<wgpu::BlendState>,
-                                 depth_write: bool,
-                                 compare: wgpu::CompareFunction|
+        let pipeline_culled = |entry: &str,
+                               fragment: &str,
+                               buffer: wgpu::VertexBufferLayout,
+                               blend: Option<wgpu::BlendState>,
+                               depth_write: bool,
+                               compare: wgpu::CompareFunction,
+                               cull: Option<wgpu::Face>|
          -> wgpu::RenderPipeline {
             gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(entry),
@@ -741,7 +740,7 @@ impl World {
                     compilation_options: Default::default(),
                     buffers: &[buffer],
                 },
-                primitive: Default::default(),
+                primitive: wgpu::PrimitiveState { cull_mode: cull, front_face: wgpu::FrontFace::Ccw, ..Default::default() },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
                     depth_write_enabled: Some(depth_write),
@@ -760,6 +759,13 @@ impl World {
                 cache: None,
             })
         };
+        let pipeline_compared =
+            |entry: &str,
+             fragment: &str,
+             buffer: wgpu::VertexBufferLayout,
+             blend: Option<wgpu::BlendState>,
+             depth_write: bool,
+             compare: wgpu::CompareFunction| { pipeline_culled(entry, fragment, buffer, blend, depth_write, compare, None) };
         let pipeline = |entry: &str, fragment: &str, buffer: wgpu::VertexBufferLayout, blend: Option<wgpu::BlendState>, depth_write: bool| {
             pipeline_compared(entry, fragment, buffer, blend, depth_write, wgpu::CompareFunction::LessEqual)
         };
@@ -771,7 +777,9 @@ impl World {
             attributes: &GROUND_ATTRIBUTES,
         };
         let ground_pipeline = pipeline("ground", "ground_fs", ground_layout(), None, true);
-        let model_pipeline = pipeline("ground", "model_fs", ground_layout(), None, true);
+        // One-sided model faces show only their front (counter-clockwise on screen); two-sided ones both sides.
+        let model_pipelines = [Some(wgpu::Face::Back), None]
+            .map(|cull| pipeline_culled("ground", "model_fs", ground_layout(), None, true, wgpu::CompareFunction::LessEqual, cull));
         let water_blend = Some(wgpu::BlendState::ALPHA_BLENDING);
         let water_pipelines =
             [pipeline("ground", "water_fs", ground_layout(), water_blend, false), pipeline("ground", "water_fs", ground_layout(), water_blend, true)];
@@ -835,7 +843,7 @@ impl World {
             globals,
             globals_bind_group,
             ground_pipeline,
-            model_pipeline,
+            model_pipelines,
             water_pipelines,
             sprite_pipeline,
             shadow_pipeline,
@@ -1410,18 +1418,12 @@ impl WorldPass for WorldFrame<'_> {
             pass.set_bind_group(1, world.textures[*texture].bind_group(), &[]);
             pass.draw(range.clone(), 0..1);
         }
-        if let Some(buffer) = &world.model_vertices {
-            pass.set_pipeline(&world.model_pipeline);
+        let moving = world.animated.iter().flat_map(|instance| &instance.draws);
+        for (buffer, draws) in [(&world.model_vertices, world.model_draws.iter().collect::<Vec<_>>()), (&world.animated_buffer, moving.collect())] {
+            let Some(buffer) = buffer else { continue };
             pass.set_vertex_buffer(0, buffer.slice(..));
-            for (texture, range) in &world.model_draws {
-                pass.set_bind_group(1, world.model_textures[*texture].bind_group(), &[]);
-                pass.draw(range.clone(), 0..1);
-            }
-        }
-        if let Some(buffer) = &world.animated_buffer {
-            pass.set_pipeline(&world.model_pipeline);
-            pass.set_vertex_buffer(0, buffer.slice(..));
-            for (texture, range) in world.animated.iter().flat_map(|instance| &instance.draws) {
+            for (texture, two_sided, range) in draws {
+                pass.set_pipeline(&world.model_pipelines[usize::from(*two_sided)]);
                 pass.set_bind_group(1, world.model_textures[*texture].bind_group(), &[]);
                 pass.draw(range.clone(), 0..1);
             }
@@ -1666,26 +1668,29 @@ fn ground_mesh(
 type LoadedModel = (std::rc::Rc<Rsm>, Vec<model::Triangle>);
 
 /// Also how many RSM 2 instances were placed, and those that move, apart.
-type ModelMesh = (Vec<GroundVertex>, Vec<(usize, Range<u32>)>, Vec<String>, usize, Vec<Animated>);
+type ModelMesh = (Vec<GroundVertex>, Vec<ModelDraw>, Vec<String>, usize, Vec<Animated>);
+
+/// A run of model vertices with one texture: the texture, whether its faces are drawn from both sides, the range.
+type ModelDraw = (usize, bool, Range<u32>);
 
 /// An RSM 2 instance whose tracks play: its model, where it stands, its clock, and its triangles' order (by texture)
 /// and draws in the animated buffer.
 pub struct Animated {
     rsm: std::rc::Rc<Rsm>,
     placement: model::Matrix,
-    color: [f32; 4],
+    mirror: bool,
     anim_type: i32,
     speed: f32,
     start: Option<std::time::Instant>,
-    /// RSM 1: its frame, the 16 ms tick it was last stepped at, and its triangles' normals at frame 0 (its light
-    /// isn't redone while it moves).
+    /// RSM 1: its frame and the 16 ms tick it was last stepped at; its ordered triangles' corner colours, baked at
+    /// frame 0 (its light isn't redone while it moves).
     frame: i32,
     tick: Option<u64>,
-    normals: Vec<Vector>,
+    colors: Vec<[[f32; 4]; 3]>,
     order: Vec<usize>,
-    /// The texture and vertex count of each run of its ordered triangles, then those runs' places in the buffer.
-    runs: Vec<(usize, u32)>,
-    draws: Vec<(usize, Range<u32>)>,
+    /// The texture, sidedness and vertex count of each run of its ordered triangles, then those runs' draws.
+    runs: Vec<(usize, bool, u32)>,
+    draws: Vec<ModelDraw>,
 }
 
 impl World {
@@ -1725,12 +1730,8 @@ impl World {
             };
             let triangles = posed.entry((std::rc::Rc::as_ptr(&instance.rsm), frame.to_bits())).or_insert_with(|| instance.rsm.triangles_at(frame));
             for (place, &triangle) in instance.order.iter().enumerate() {
-                if let Some(triangle) = triangles.get(triangle) {
-                    let mut placed = placed_vertices(&instance.placement, instance.color, triangle);
-                    if let Some(&normal) = instance.normals.get(place) {
-                        placed.iter_mut().for_each(|vertex| vertex.normal = normal);
-                    }
-                    vertices.extend(placed);
+                if let (Some(triangle), Some(&colors)) = (triangles.get(triangle), instance.colors.get(place)) {
+                    vertices.extend(placed_vertices(&instance.placement, colors, triangle, instance.mirror));
                 }
             }
         }
@@ -1753,27 +1754,68 @@ fn placement(instance: &rustnarok_client::map::Model, half: [f32; 2]) -> model::
     .fold(model::IDENTITY, |matrix, next| model::multiply(&matrix, next))
 }
 
-fn model_color([r, g, b]: [u8; 3]) -> [f32; 4] {
-    [f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0, 1.0]
+/// The sun in model space (y down): (sin lat · sin lon, cos lat, sin lat · cos lon), with the map's diffuse and
+/// ambient.
+#[derive(Clone, Copy)]
+struct ModelLight {
+    direction: Vector,
+    diffuse: [f32; 3],
+    ambient: [f32; 3],
 }
 
-/// A triangle's three vertices placed in the world (y up), with its face normal and the instance's colour.
-fn placed_vertices(placement: &model::Matrix, color: [f32; 4], triangle: &model::Triangle) -> [GroundVertex; 3] {
+impl ModelLight {
+    fn of(light: &rustnarok_client::map::Light) -> Self {
+        let (longitude, latitude) = ((light.longitude as f32).to_radians(), (light.latitude as f32).to_radians());
+        let direction = [latitude.sin() * longitude.sin(), latitude.cos(), latitude.sin() * longitude.cos()];
+        Self { direction, diffuse: light.diffuse, ambient: light.ambient }
+    }
+}
+
+/// A triangle's corner colours, baked once: shade 0 the tint; else d = max(0, n′ · L) with n′ the corner's normal under
+/// the instance (normalized), c = min(1, d · diffuse + ambient) and trunc(min(255, c · tint)) per channel. A corner
+/// turned away gets the ambient only.
+fn corner_colors(shade: i32, triangle: &model::Triangle, placement: &model::Matrix, light: ModelLight, tint: [u8; 3]) -> [[f32; 4]; 3] {
+    triangle.normals.map(|normal| {
+        let rgb: [f32; 3] = std::array::from_fn(|channel| {
+            let tint = f32::from(tint[channel]);
+            if shade == 0 {
+                return tint / 255.0;
+            }
+            let turned = normalize(model::direction(placement, normal));
+            let d = dot(turned, light.direction).max(0.0);
+            let c = (d * light.diffuse[channel] + light.ambient[channel]).min(1.0);
+            (c * tint).min(255.0).trunc() / 255.0
+        });
+        [rgb[0], rgb[1], rgb[2], 1.0]
+    })
+}
+
+/// Whether an instance is mirrored: an odd number of its scale's components is negative.
+fn mirrored(scale: [f32; 3]) -> bool {
+    scale.iter().filter(|&&value| value < 0.0).count() % 2 == 1
+}
+
+/// A triangle's three vertices placed in the world (y up), with its face normal and baked corner colours. A mirrored
+/// instance's corners go the other way round, so its one-sided faces still show their front.
+fn placed_vertices(placement: &model::Matrix, colors: [[f32; 4]; 3], triangle: &model::Triangle, mirror: bool) -> [GroundVertex; 3] {
     // Native space has Y down; the world has Y up.
     let positions = triangle.positions.map(|position| {
         let [x, y, z] = model::transform(placement, position);
         [x, -y, z]
     });
     let normal = normalize(cross(subtract(positions[1], positions[0]), subtract(positions[2], positions[0])));
-    std::array::from_fn(|corner| GroundVertex { position: positions[corner], normal, uv: triangle.uvs[corner], lightmap_uv: [0.0; 2], color })
+    let corners = if mirror { [0, 2, 1] } else { [0, 1, 2] };
+    corners.map(|corner| GroundVertex { position: positions[corner], normal, uv: triangle.uvs[corner], lightmap_uv: [0.0; 2], color: colors[corner] })
 }
 
 fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
     let mut texture_index: HashMap<String, usize> = HashMap::new();
-    let mut per_texture: Vec<Vec<GroundVertex>> = Vec::new();
+    // Per texture, its one-sided and its two-sided faces' vertices.
+    let mut per_texture: Vec<[Vec<GroundVertex>; 2]> = Vec::new();
     let mut models: HashMap<&str, Option<LoadedModel>> = HashMap::new();
     // RSW positions are relative to the map's center.
     let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
+    let light = ModelLight::of(&rsw.light);
     let mut rsm_2 = 0;
     let mut animated = Vec::new();
 
@@ -1787,45 +1829,45 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
         rsm_2 += usize::from(rsm.version >= (2, 0));
 
         let placement = placement(instance, half);
-        let color = model_color(instance.tint);
+        let mirror = mirrored(instance.scale);
 
-        let mut texture_of = |name: &String, per_texture: &mut Vec<Vec<GroundVertex>>| {
+        let mut texture_of = |name: &String, per_texture: &mut Vec<[Vec<GroundVertex>; 2]>| {
             *texture_index.entry(name.clone()).or_insert_with(|| {
-                per_texture.push(Vec::new());
+                per_texture.push([Vec::new(), Vec::new()]);
                 per_texture.len() - 1
             })
         };
-        // A model that plays (a type and something that moves) is posed again each frame, in a buffer of its own.
+        // A model that plays (a type and something that moves) is posed again each frame, in a buffer of its own; its
+        // light stays as at frame 0.
         if instance.anim_type != 0 && rsm.animated() {
             let textures: Vec<usize> = rsm.textures.iter().map(|name| texture_of(name, &mut per_texture)).collect();
+            let key = |triangle: &model::Triangle| (textures[triangle.texture], triangle.two_sided);
             let mut order: Vec<usize> = (0..triangles.len()).collect();
-            order.sort_by_key(|&triangle| textures[triangles[triangle].texture]);
-            let mut runs: Vec<(usize, u32)> = Vec::new();
+            order.sort_by_key(|&triangle| key(&triangles[triangle]));
+            let mut runs: Vec<(usize, bool, u32)> = Vec::new();
             for &triangle in &order {
-                let texture = textures[triangles[triangle].texture];
+                let (texture, two_sided) = key(&triangles[triangle]);
                 match runs.last_mut() {
-                    Some((last, count)) if *last == texture => *count += 3,
-                    _ => runs.push((texture, 3)),
+                    Some((last, sided, count)) if *last == texture && *sided == two_sided => *count += 3,
+                    _ => runs.push((texture, two_sided, 3)),
                 }
             }
-            // RSM 1 keeps the light of its frame-0 pose.
-            let normals = match rsm.version >= (2, 0) {
-                true => Vec::new(),
-                false => {
-                    let still = rsm.triangles_at(0.0);
-                    order.iter().filter_map(|&triangle| still.get(triangle)).map(|triangle| placed_vertices(&placement, color, triangle)[0].normal).collect()
-                }
-            };
+            let still = if rsm.version >= (2, 0) { rsm.triangles() } else { rsm.triangles_at(0.0) };
+            let colors = order
+                .iter()
+                .filter_map(|&triangle| still.get(triangle))
+                .map(|triangle| corner_colors(rsm.shade, triangle, &placement, light, instance.tint))
+                .collect();
             animated.push(Animated {
                 rsm: rsm.clone(),
                 placement,
-                color,
+                mirror,
                 anim_type: instance.anim_type,
                 speed: instance.anim_speed,
                 start: None,
                 frame: 0,
                 tick: None,
-                normals,
+                colors,
                 order,
                 runs,
                 draws: Vec::new(),
@@ -1834,7 +1876,8 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
         }
         for triangle in triangles.iter() {
             let texture = texture_of(&rsm.textures[triangle.texture], &mut per_texture);
-            per_texture[texture].extend(placed_vertices(&placement, color, triangle));
+            let colors = corner_colors(rsm.shade, triangle, &placement, light, instance.tint);
+            per_texture[texture][usize::from(triangle.two_sided)].extend(placed_vertices(&placement, colors, triangle, mirror));
         }
     }
 
@@ -1844,10 +1887,15 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
     }
     let mut vertices = Vec::new();
     let mut draws = Vec::new();
-    for (texture, triangles) in per_texture.into_iter().enumerate() {
-        let start = vertices.len() as u32;
-        vertices.extend(triangles);
-        draws.push((texture, start..vertices.len() as u32));
+    for (texture, sides) in per_texture.into_iter().enumerate() {
+        for (two_sided, triangles) in [false, true].into_iter().zip(sides) {
+            if triangles.is_empty() {
+                continue;
+            }
+            let start = vertices.len() as u32;
+            vertices.extend(triangles);
+            draws.push((texture, two_sided, start..vertices.len() as u32));
+        }
     }
     (vertices, draws, names, rsm_2, animated)
 }
@@ -2150,10 +2198,33 @@ mod tests {
         let [x, y, z] = model::transform(&matrix, flipped);
         assert!((x - 110.0).abs() < 1e-3 && (y - 2.0).abs() < 1e-3 && (z - 216.0).abs() < 1e-3, "{x} {y} {z}");
         // In the world (y up) it stands 2 below the native y, as every model does, and takes the instance's tint.
-        let triangle = model::Triangle { texture: 0, positions: [flipped; 3], uvs: [[0.0; 2]; 3] };
-        let vertex = placed_vertices(&matrix, model_color(instance.tint), &triangle)[0];
+        let triangle = model::Triangle { texture: 0, positions: [flipped; 3], uvs: [[0.0; 2]; 3], normals: [[0.0, 1.0, 0.0]; 3], two_sided: false };
+        let light = ModelLight { direction: [0.0, 1.0, 0.0], diffuse: [1.0; 3], ambient: [0.3; 3] };
+        let vertex = placed_vertices(&matrix, corner_colors(0, &triangle, &matrix, light, instance.tint), &triangle, false)[0];
         assert_eq!(vertex.position[1], -y);
         assert_eq!(vertex.color, [0x33 as f32 / 255.0, 0x66 as f32 / 255.0, 0x99 as f32 / 255.0, 1.0]);
+    }
+
+    #[test]
+    fn bakes_model_corners_by_shade_and_light() {
+        let light = ModelLight { direction: [0.0, 1.0, 0.0], diffuse: [0.5; 3], ambient: [0.3; 3] };
+        let triangle = |normal: Vector| model::Triangle { texture: 0, positions: [[0.0; 3]; 3], uvs: [[0.0; 2]; 3], normals: [normal; 3], two_sided: false };
+        let byte = |colors: [[f32; 4]; 3]| (colors[0][0] * 255.0).round() as u8;
+        // Shade 0: the tint, no light.
+        assert_eq!(byte(corner_colors(0, &triangle([0.0, -1.0, 0.0]), &model::IDENTITY, light, [200; 3])), 200);
+        // Facing the light: min(1, 0.5 + 0.3) × 255 = 204; turned away: the ambient only, trunc(0.3 × 255) = 76.
+        assert_eq!(byte(corner_colors(1, &triangle([0.0, 2.0, 0.0]), &model::IDENTITY, light, [255; 3])), 204);
+        assert_eq!(byte(corner_colors(2, &triangle([0.0, -1.0, 0.0]), &model::IDENTITY, light, [255; 3])), 76);
+        // The tint scales it: trunc(0.8 × 100) = 80.
+        assert_eq!(byte(corner_colors(1, &triangle([0.0, 1.0, 0.0]), &model::IDENTITY, light, [100; 3])), 80);
+        // Mirrored by an odd count of negative scales; its corners go the other way round.
+        assert!(mirrored([-1.0, 1.0, 1.0]) && !mirrored([-1.0, -1.0, 1.0]) && !mirrored([1.0; 3]) && mirrored([-1.0; 3]));
+        let mut corners = triangle([0.0, 1.0, 0.0]);
+        corners.positions = [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let colors = [[0.0; 4]; 3];
+        let ([_, plain, _], [_, flipped, _]) =
+            (placed_vertices(&model::IDENTITY, colors, &corners, false), placed_vertices(&model::IDENTITY, colors, &corners, true));
+        assert_eq!((plain.position, flipped.position), ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0]));
     }
 
     #[test]

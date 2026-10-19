@@ -1,0 +1,13 @@
+{
+  "about": "Map model light baked per vertex (issue #435): each model's corners lit once by the map's light vector and its shade type, one-sided faces culled, mirrored instances turned right way out. Prontera's walls turned away from the light are ambient-dark and its smooth models show no facets; Geffen's walls are bright on the side the light comes from.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 120"}, {"settle": 1500},
+    {"move": [1000, 750]},
+    {"shot": "model-light-prontera", "threshold": 3},
+    {"say": "@warp geffen 119 70"}, {"settle": 1500},
+    {"move": [1000, 750]},
+    {"shot": "model-light-geffen", "threshold": 3}
+  ]
+}
