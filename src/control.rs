@@ -1166,6 +1166,10 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.trade.iter().flat_map(|trade| trade.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.card_view.iter().map(|view| json!({"kind": "button", "name": "card_picture_close", "box": view.close_box()})))
         .chain(question_buttons)
+        .chain(game.slot.iter().map(|_| {
+            let [x, y] = crate::taming::place(crate::screen());
+            json!({"kind": "button", "name": "slot_machine", "box": [x, y, crate::taming::SIZE[0], crate::taming::SIZE[1]]})
+        }))
         .chain(invitation_buttons)
         .chain(
             ["plus", "minus", "mini", "viewon"]
@@ -1603,6 +1607,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     // A card's own window and its picture: where they are and how big, and which card.
     state["card_window_box"] = json!(game.card_window.as_ref().map(|window| window.area()));
     state["card_view"] = json!(game.card_view.as_ref().map(|view| json!({"card": view.card, "box": view.area()})));
+    // The taming slot machine: the unit it's open for.
+    state["slot_machine"] = json!(game.slot.as_ref().map(|machine| machine.monster));
     state["opened_page"] = game.opened_page.clone().into();
     // Our milliseconds a cell.
     state["player"]["step_ms"] = game.player.step_ms.into();

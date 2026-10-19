@@ -816,17 +816,17 @@ impl App {
             ),
             None => Vec::new(),
         };
-        let slot_frame = match (&mut game.slot_sprite, game.slot) {
-            (Some(sprite), Some((action, start))) => {
-                let length = sprite.index_ms(action).unwrap_or(1000.0).max(1.0);
-                let elapsed = now.saturating_duration_since(start).as_secs_f32() * 1000.0;
-                if elapsed > length + SLOT_HOLD_MS {
+        let slot_frame = match (&mut game.slot_sprite, game.slot.as_ref()) {
+            (Some(sprite), Some(machine)) => match machine.frame(now, [0, 1].map(|action| sprite.frames(action))) {
+                Some((action, frame)) => {
+                    let count = sprite.frames(action).max(1);
+                    sprite.frame_at(gpu, action, 0, Timing::Span((frame as f32 + 0.5) / count as f32))
+                }
+                None => {
                     game.slot = None;
                     Vec::new()
-                } else {
-                    sprite.frame_at(gpu, action, 0, Timing::Span((elapsed / length).min(1.0)))
                 }
-            }
+            },
             _ => Vec::new(),
         };
         // Emotions play once over heads.

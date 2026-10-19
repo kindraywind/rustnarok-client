@@ -1614,14 +1614,22 @@ impl App {
                     }
                 }
             }
-            // Taming: a monster under the pointer is the one to try (rathena checks the distance); anything else keeps
-            // aiming.
+            // The slot machine: the first press on it makes the try.
+            Scene::Game(game) if game.slot.is_some() && contains(taming::place(screen()), taming::SIZE, cursor) => {
+                let machine = game.slot.as_mut().unwrap();
+                if machine.press(Instant::now()) {
+                    let _ = game.session.try_capture(machine.monster);
+                }
+            }
+            // Taming: a press on a unit opens the slot machine for it (rathena checks the rest); a player or our own pet,
+            // nothing, and it keeps aiming.
             Scene::Game(game) if game.capturing => {
                 if let Some(Owner::Unit(id)) = hovered_unit(&game.hit_boxes, cursor, false)
-                    && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER)
+                    && let Some(actor) = game.units.get(&id)
+                    && taming::tameable(actor.kind == PLAYER, id, game.pet_id)
                 {
                     game.capturing = false;
-                    let _ = game.session.try_capture(id);
+                    game.slot = Some(taming::Machine::new(id, Instant::now()));
                 }
             }
             Scene::Game(game) => {

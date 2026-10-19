@@ -2821,15 +2821,11 @@ impl App {
                 game.targeting = None;
                 game.capturing = true;
             }
+            // The reel slows and stops on the result; nothing in the chat.
             MapEvent::CaptureResult(caught) => {
-                let action = if caught { SLOT_CAUGHT } else { SLOT_MISSED };
-                game.slot = Some((action, Instant::now()));
-                let sound = game.slot_sprite.as_ref().and_then(|sprite| sprite.body_frame(action, Timing::Span(0.0))?.1.map(str::to_owned));
-                if let (Some(audio), Some(sound)) = (&mut self.audio, sound) {
-                    audio.play(grf, &sound, 1.0);
+                if let Some(machine) = &mut game.slot {
+                    machine.answer(caught, Instant::now());
                 }
-                let (line, color) = if caught { (TAMED, CHAT_ITEM) } else { (NOT_TAMED, CHAT_ERROR) };
-                game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), color);
             }
             // Achievements: the whole list, or one changed; a newly done one says so.
             MapEvent::Achievements { totals, list } => {
