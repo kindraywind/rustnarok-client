@@ -69,6 +69,8 @@ const FRAME_LINE: [u8; 4] = [142, 142, 142, 0xFF];
 // ponytail: counted in CP949 bytes, as the server reads them, not in characters.
 pub const NAME_MOST: usize = 24;
 pub const MESSAGE_MOST: usize = 234;
+/// Battle messages (category 16), the party members' (17) in party chat's pink.
+pub const BATTLE_OWN: [u8; 3] = [255, 255, 0];
 /// Party chat: the player's own lines and the others'.
 pub const PARTY_OURS: [u8; 3] = [255, 200, 0];
 pub const PARTY: [u8; 3] = [255, 200, 200];
@@ -78,6 +80,8 @@ const PUBLIC: [u8; 3] = [255, 255, 255];
 const GUILD: [u8; 3] = [180, 255, 180];
 const CLAN: [u8; 3] = [180, 220, 255];
 const SKILL_MESSAGE: [u8; 3] = [0xCD, 0xCD, 0xFF];
+/// Pure red: an error line the game shows in every tab.
+const ERROR_RED: [u8; 3] = [0xFF, 0x00, 0x00];
 const DARK: [u8; 4] = [0, 0, 0, 0x80];
 const DARKER: [u8; 4] = [0, 0, 0, 0xBF];
 const TAB_BORDER: [u8; 4] = [0x95, 0x95, 0x95, 0xFF];
@@ -110,26 +114,80 @@ fn line_at(row: usize) -> [f32; 2] {
     [LOG_BOX[0] + LINE_TEXT[0], LOG_BOX[1] + LINE_TEXT[1] + LINE * row as f32]
 }
 
-/// What kind of line a chat line is, for which tab shows it.
-// ponytail: the kinds and how a line's colour tells its kind (whispers say so themselves) are ours.
+/// The game's category of a chat line (its t, 0 to 25), for which tab shows it.
+// ponytail: how a line's colour tells its kind (whispers say so themselves) is ours; the kinds the call sites name are the game's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
+    /// 0: system notices and errors.
+    General,
+    /// 1: others' chat, and ours (`Own`, shown with it).
     Public,
-    Own,
     Whisper,
     Party,
     Guild,
-    Clan,
-    /// Party booking's search messages (nothing sends these yet).
+    /// 5: ally chat (nothing sends it yet).
+    Ally,
+    /// 6: "You got %s (%d)."
+    ItemLog,
+    Equipment,
+    Status,
+    PartyItemLog,
+    PartyStatus,
+    SkillFailure,
+    PartyConfig,
+    DamagedEquipment,
+    /// 14: the woe broadcasts.
+    Woe,
+    /// 15: party booking's search messages (nothing sends these yet).
     PartySearch,
+    /// 16 and 17: damage lines, ours and party members'.
     Battle,
-    System,
+    PartyBattle,
+    Experience,
+    Quest,
+    Battlefield,
+    Clan,
+    DisplayCall,
+    GuildExp,
+    EquipProperties,
+    /// 25: broadcasts, in every tab.
+    Broadcast,
+    /// Our own chat line: category 1, but its speaker isn't ours to pick (a double click does nothing).
+    Own,
     /// What an agent on the control socket does, shown in its own tab (not in `ALL`: no settings, nothing saved).
     Mcp,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 9] = [Kind::Public, Kind::Own, Kind::Whisper, Kind::Party, Kind::Guild, Kind::Clan, Kind::PartySearch, Kind::Battle, Kind::System];
+    /// The game's categories in order, 0 to 25.
+    pub const ALL: [Kind; 26] = [
+        Kind::General,
+        Kind::Public,
+        Kind::Whisper,
+        Kind::Party,
+        Kind::Guild,
+        Kind::Ally,
+        Kind::ItemLog,
+        Kind::Equipment,
+        Kind::Status,
+        Kind::PartyItemLog,
+        Kind::PartyStatus,
+        Kind::SkillFailure,
+        Kind::PartyConfig,
+        Kind::DamagedEquipment,
+        Kind::Woe,
+        Kind::PartySearch,
+        Kind::Battle,
+        Kind::PartyBattle,
+        Kind::Experience,
+        Kind::Quest,
+        Kind::Battlefield,
+        Kind::Clan,
+        Kind::DisplayCall,
+        Kind::GuildExp,
+        Kind::EquipProperties,
+        Kind::Broadcast,
+    ];
 
     /// The kind a line in `color` is.
     pub fn of_color(color: [u8; 3]) -> Self {
@@ -139,40 +197,80 @@ impl Kind {
             PARTY | PARTY_OURS => Kind::Party,
             GUILD => Kind::Guild,
             CLAN => Kind::Clan,
-            SKILL_MESSAGE => Kind::Battle,
-            _ => Kind::System,
+            SKILL_MESSAGE => Kind::SkillFailure,
+            _ => Kind::General,
         }
     }
 
-    /// Its name in the tab settings window: the game's where it has one.
-    // ponytail: the names the game's table doesn't have are ours.
+    /// The category a tab's options are about: our own chat is public chat.
+    fn category(self) -> Kind {
+        if self == Kind::Own { Kind::Public } else { self }
+    }
+
+    /// Its name in the tab settings window: the game's message, or ours where the data has none (4028-4031 are past the
+    /// end of its table).
     pub fn label(self, messages: &[String]) -> String {
-        let message = |id: usize, fallback: &str| messages.get(id).filter(|text| !text.is_empty()).cloned().unwrap_or_else(|| fallback.to_owned());
-        match self {
-            Kind::Public => "Public Chat".into(),
-            Kind::Own => "My Chat".into(),
-            Kind::Whisper => message(1278, "Whisper"),
-            Kind::Party => message(1279, "Party Chat"),
-            Kind::Guild => message(1280, "Guild Chat"),
-            Kind::Clan => "Clan Chat".into(),
-            Kind::PartySearch => message(1549, "Party member search"),
-            Kind::Battle => "Battle Messages".into(),
-            Kind::System => "System Messages".into(),
-            Kind::Mcp => "MCP".into(),
-        }
+        let (id, fallback) = match self {
+            Kind::General => (1291, "Chat"),
+            Kind::Public | Kind::Own => (1277, "Public Chat"),
+            Kind::Whisper => (1278, "Whisper"),
+            Kind::Party => (1279, "Party Chat"),
+            Kind::Guild => (1280, "Guild Chat"),
+            Kind::Ally => (4031, "Ally Chat"),
+            Kind::ItemLog => (1281, "Item Log"),
+            Kind::Equipment => (1282, "Equipment On/Off"),
+            Kind::Status => (1283, "Status Log"),
+            Kind::PartyItemLog => (1284, "Party Member Item Log"),
+            Kind::PartyStatus => (1285, "Party Member Status Log"),
+            Kind::SkillFailure => (1286, "Skill Failure"),
+            Kind::PartyConfig => (1287, "Party Configuration"),
+            Kind::DamagedEquipment => (1288, "Damaged Equipment"),
+            Kind::Woe => (1331, "WOE Information"),
+            Kind::PartySearch => (1549, "Party member search"),
+            Kind::Battle => (1618, "Battle message"),
+            Kind::PartyBattle => (1619, "Party member's battle message"),
+            Kind::Experience => (1620, "Experience message"),
+            Kind::Quest => (1622, "Quest information"),
+            Kind::Battlefield => (1623, "Battlefield message"),
+            Kind::Clan => (2365, "Clan Chat"),
+            Kind::DisplayCall => (2980, "Display Call messages"),
+            Kind::GuildExp => (4028, "Guild EXP tribute"),
+            Kind::EquipProperties => (4030, "Equipment properties"),
+            Kind::Broadcast => (0, "Broadcasts"),
+            Kind::Mcp => (0, "MCP"),
+        };
+        messages.get(id).filter(|text| id != 0 && !text.is_empty()).cloned().unwrap_or_else(|| fallback.to_owned())
     }
 
     fn name(self) -> &'static str {
         match self {
+            Kind::General => "general",
             Kind::Public => "public",
             Kind::Own => "own",
             Kind::Whisper => "whisper",
             Kind::Party => "party",
             Kind::Guild => "guild",
-            Kind::Clan => "clan",
+            Kind::Ally => "ally",
+            Kind::ItemLog => "item_log",
+            Kind::Equipment => "equipment",
+            Kind::Status => "status",
+            Kind::PartyItemLog => "party_item_log",
+            Kind::PartyStatus => "party_status",
+            Kind::SkillFailure => "skill_failure",
+            Kind::PartyConfig => "party_config",
+            Kind::DamagedEquipment => "damaged_equipment",
+            Kind::Woe => "woe",
             Kind::PartySearch => "party_search",
             Kind::Battle => "battle",
-            Kind::System => "system",
+            Kind::PartyBattle => "party_battle",
+            Kind::Experience => "experience",
+            Kind::Quest => "quest",
+            Kind::Battlefield => "battlefield",
+            Kind::Clan => "clan",
+            Kind::DisplayCall => "display_call",
+            Kind::GuildExp => "guild_exp",
+            Kind::EquipProperties => "equip_properties",
+            Kind::Broadcast => "broadcast",
             Kind::Mcp => "mcp",
         }
     }
@@ -248,16 +346,22 @@ pub fn wrap(text: &str, width: f32, measure: &dyn Fn(&str) -> f32) -> Vec<String
     lines
 }
 
-/// The tabs' kinds when nothing is saved: Public everything but battle messages; Battle those, whispers, party and
-/// guild.
-// ponytail: the defaults are a choice.
+/// The tabs' kinds when nothing is saved: the game's tab 1 shows its first 14 options (categories 0 to 13); its tab 2 none,
+/// here the battle messages.
+// ponytail: the game's own battle tab starts with every option off; ours shows the damage lines, as a player's saved tab does.
 pub fn default_kinds() -> [HashSet<Kind>; 2] {
-    [Kind::ALL.into_iter().filter(|kind| *kind != Kind::Battle).collect(), [Kind::Battle, Kind::Whisper, Kind::Party, Kind::Guild].into_iter().collect()]
+    [Kind::ALL[..14].iter().copied().collect(), [Kind::Battle, Kind::PartyBattle].into_iter().collect()]
 }
 
-/// The tabs' kinds as saved: a line a tab, its kinds' names.
+/// The first line of a saved tabs file: the file's kinds are the game's 25 categories (the first version's weren't).
+const KINDS_HEADER: &str = "v2";
+
+/// The tabs' kinds as saved: the header, then a line a tab, its kinds' names.
 pub fn kinds_from(text: &str) -> Option<[HashSet<Kind>; 2]> {
     let mut lines = text.lines();
+    if lines.next()? != KINDS_HEADER {
+        return None;
+    }
     let mut tab = || -> Option<HashSet<Kind>> {
         Some(lines.next()?.split_whitespace().filter_map(|name| Kind::ALL.into_iter().find(|kind| kind.name() == name)).collect())
     };
@@ -265,11 +369,8 @@ pub fn kinds_from(text: &str) -> Option<[HashSet<Kind>; 2]> {
 }
 
 pub fn kinds_text(kinds: &[HashSet<Kind>; 2]) -> String {
-    kinds
-        .iter()
-        .map(|kinds| Kind::ALL.into_iter().filter(|kind| kinds.contains(kind)).map(Kind::name).collect::<Vec<_>>().join(" "))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let tabs = kinds.iter().map(|kinds| Kind::ALL.into_iter().filter(|kind| kinds.contains(kind)).map(Kind::name).collect::<Vec<_>>().join(" "));
+    std::iter::once(KINDS_HEADER.to_owned()).chain(tabs).collect::<Vec<_>>().join("\n")
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -283,6 +384,32 @@ pub enum SendTo {
     Public,
     Party,
     Guild,
+}
+
+/// Who a unit in a hit is to the player.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Role {
+    Me,
+    Party,
+    Other,
+}
+
+/// The battle message of a hit (categories 16 and 17), if the player or a party member is in it: damage we take
+/// (" [name] inflicts 'N' damage points on you."), damage we deal ("[name] receives 'N' damage points."), and a member
+/// attacked or attacking.
+// ponytail: the client picks the pair by the map's type (a table it reads); here both pairs show on every map.
+pub fn battle_line(messages: &[String], source: (Role, &str), target: (Role, &str), amount: i32) -> Option<(String, [u8; 3], Kind)> {
+    if amount <= 0 {
+        return None;
+    }
+    let template = |id: usize| messages.get(id).map_or("", String::as_str);
+    Some(match (source.0, target.0) {
+        (_, Role::Me) => (crate::messages::fill(template(crate::BATTLE_ON_YOU), &[&source.1, &amount]), BATTLE_OWN, Kind::Battle),
+        (Role::Me, _) => (crate::messages::fill(template(crate::BATTLE_RECEIVES), &[&target.1, &amount]), BATTLE_OWN, Kind::Battle),
+        (_, Role::Party) => (crate::messages::fill(template(crate::BATTLE_ATTACKED_BY), &[&target.1, &source.1, &amount]), PARTY, Kind::PartyBattle),
+        (Role::Party, _) => (crate::messages::fill(template(crate::BATTLE_ATTACKS), &[&source.1, &target.1, &amount]), PARTY, Kind::PartyBattle),
+        _ => return None,
+    })
 }
 
 /// How much of `text` fits in `most` bytes as sent (CP949), whole characters.
@@ -766,7 +893,9 @@ impl Chat {
     /// A line for the tabs that show its kind, cut into pieces; `layout` wraps them.
     pub fn push_kind(&mut self, text: String, color: [u8; 3], kind: Kind) {
         let speaker = speaker(&text, kind);
-        for tab in self.tabs.iter_mut().filter(|tab| tab.kinds.contains(&kind)) {
+        // Broadcasts and the pure red errors are in every tab.
+        let forced = kind == Kind::Broadcast || (kind == Kind::General && color == ERROR_RED);
+        for tab in self.tabs.iter_mut().filter(|tab| forced || tab.kinds.contains(&kind.category())) {
             tab.fresh.extend(pieces(&text).into_iter().map(|piece| (piece, color, kind, speaker.clone())));
         }
         self.lines.push((text, color, kind));
@@ -1085,6 +1214,17 @@ impl Chat {
         }
     }
 
+    /// The "all on" box: every option on, or off when they all were on. Saves the tabs.
+    pub fn set_all(&mut self) {
+        let Some(settings) = &self.settings else { return };
+        let tab = &mut self.tabs[settings.tab];
+        flip_all(&mut tab.kinds);
+        tab.scroll = 0;
+        if let Some(path) = settings_path() {
+            self.save_to(&path);
+        }
+    }
+
     pub fn save_to(&self, path: &Path) {
         let kinds = [self.tabs[0].kinds.clone(), self.tabs[1].kinds.clone()];
         let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, kinds_text(&kinds)));
@@ -1255,19 +1395,56 @@ fn contains_box(box_: [f32; 4], cursor: [f32; 2]) -> bool {
 pub struct Settings {
     pub frame: Frame,
     pub tab: usize,
+    /// The first row shown of `SETTINGS_KINDS`.
+    first: usize,
 }
 
-const SETTINGS_WIDTH: f32 = 200.0;
-const SETTINGS_ROW: f32 = 18.0;
-const SETTINGS_TOP: f32 = TITLE_HEIGHT + 6.0;
-/// The kinds the settings window lists. Party search stays a kind; the game skips that row.
-const SETTINGS_KINDS: [Kind; 8] = [Kind::Public, Kind::Own, Kind::Whisper, Kind::Party, Kind::Guild, Kind::Clan, Kind::Battle, Kind::System];
-const SETTINGS_HEIGHT: f32 = SETTINGS_TOP + SETTINGS_KINDS.len() as f32 * SETTINGS_ROW + 8.0;
+const SETTINGS_WIDTH: f32 = 280.0;
+const SETTINGS_HEIGHT: f32 = 200.0;
+const SETTINGS_ROW: f32 = 20.0;
+const SETTINGS_TOP: f32 = TITLE_HEIGHT + 5.0;
+const SETTINGS_SHOWN: usize = 8;
+const SETTINGS_ARROW: f32 = 12.0;
+/// The "all on" box: ticked when every option is on, and a press sets all.
+const SETTINGS_ALL: ([f32; 2], [f32; 2]) = ([20.0, SETTINGS_HEIGHT - 16.0], [70.0, 12.0]);
+/// The message after the tab's name in the title.
+const SETTINGS_TITLE: usize = 1777;
+/// The kinds the settings window lists, in the game's order. Party search stays a kind; the game skips that row.
+const SETTINGS_KINDS: [Kind; 24] = [
+    Kind::General,
+    Kind::Public,
+    Kind::Whisper,
+    Kind::Party,
+    Kind::Guild,
+    Kind::Ally,
+    Kind::ItemLog,
+    Kind::Equipment,
+    Kind::Status,
+    Kind::PartyItemLog,
+    Kind::PartyStatus,
+    Kind::SkillFailure,
+    Kind::PartyConfig,
+    Kind::DamagedEquipment,
+    Kind::Woe,
+    Kind::Battle,
+    Kind::PartyBattle,
+    Kind::Experience,
+    Kind::Quest,
+    Kind::Battlefield,
+    Kind::Clan,
+    Kind::DisplayCall,
+    Kind::GuildExp,
+    Kind::EquipProperties,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SettingsHit {
     Title(TitleHit),
     Kind(Kind),
+    /// The "all on" box.
+    All,
+    ScrollUp,
+    ScrollDown,
     Window,
 }
 
@@ -1275,7 +1452,22 @@ impl Settings {
     pub fn new(tab: usize) -> Self {
         let mut frame = Frame::new([620.0, screen()[1] - 360.0], SETTINGS_WIDTH);
         frame.open = true;
-        Self { frame, tab }
+        Self { frame, tab, first: 0 }
+    }
+
+    /// The rows on screen: their place in the window and their kind.
+    fn rows(&self) -> impl Iterator<Item = (usize, Kind)> + '_ {
+        SETTINGS_KINDS.iter().copied().skip(self.first).take(SETTINGS_SHOWN).enumerate()
+    }
+
+    /// Scrolls the list by `rows`.
+    pub fn scroll(&mut self, rows: i32) {
+        self.first = (self.first as i32 + rows).clamp(0, (SETTINGS_KINDS.len() - SETTINGS_SHOWN) as i32) as usize;
+    }
+
+    fn arrow(&self, down: bool) -> ([f32; 2], [f32; 2]) {
+        let y = if down { SETTINGS_TOP + SETTINGS_SHOWN as f32 * SETTINGS_ROW - SETTINGS_ARROW } else { SETTINGS_TOP };
+        ([SETTINGS_WIDTH - 15.0, y], [SETTINGS_ARROW, SETTINGS_ARROW])
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<SettingsHit> {
@@ -1283,29 +1475,42 @@ impl Settings {
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(SettingsHit::Title(hit));
         }
+        let on = |(at, size): ([f32; 2], [f32; 2])| local[0] >= at[0] && local[0] < at[0] + size[0] && local[1] >= at[1] && local[1] < at[1] + size[1];
+        if on(SETTINGS_ALL) {
+            return Some(SettingsHit::All);
+        }
+        if on(self.arrow(false)) {
+            return Some(SettingsHit::ScrollUp);
+        }
+        if on(self.arrow(true)) {
+            return Some(SettingsHit::ScrollDown);
+        }
         let row = ((local[1] - SETTINGS_TOP) / SETTINGS_ROW).floor();
-        Some(if local[1] >= SETTINGS_TOP && (row as usize) < SETTINGS_KINDS.len() {
-            SettingsHit::Kind(SETTINGS_KINDS[row as usize])
-        } else {
-            SettingsHit::Window
+        Some(match self.rows().nth(row.max(0.0) as usize) {
+            Some((_, kind)) if local[1] >= SETTINGS_TOP && local[0] < SETTINGS_WIDTH - 17.0 => SettingsHit::Kind(kind),
+            _ => SettingsHit::Window,
         })
     }
 
-    /// Each kind's row on screen (for the test driver), named "tab_<kind>".
+    /// Each kind's row on screen (for the test driver), named "tab_<kind>", and the scroll arrows and the all box.
     pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
-        SETTINGS_KINDS
-            .iter()
-            .enumerate()
-            .map(|(row, kind)| {
-                let [x, y] = self.frame.at([8.0, SETTINGS_TOP + row as f32 * SETTINGS_ROW]);
-                (format!("tab_{}", kind.name()), [x, y, SETTINGS_WIDTH - 16.0, SETTINGS_ROW])
-            })
-            .collect()
+        let boxed = |name: String, at: [f32; 2], size: [f32; 2]| {
+            let [x, y] = self.frame.at(at);
+            (name, [x, y, size[0], size[1]])
+        };
+        let mut boxes: Vec<_> = self
+            .rows()
+            .map(|(row, kind)| boxed(format!("tab_{}", kind.name()), [8.0, SETTINGS_TOP + row as f32 * SETTINGS_ROW], [SETTINGS_WIDTH - 26.0, SETTINGS_ROW]))
+            .collect();
+        for (name, (at, size)) in [("tab_all", SETTINGS_ALL), ("tab_scroll_up", self.arrow(false)), ("tab_scroll_down", self.arrow(true))] {
+            boxes.push(boxed(name.to_owned(), at, size));
+        }
+        boxes
     }
 
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, messages: &[String], kinds: &HashSet<Kind>, pointer: [f32; 2]) {
         let at = |local: [f32; 2]| self.frame.at(local);
-        let title = tab_title(self.tab, messages).to_owned();
+        let title = format!("{} {}", tab_title(self.tab, messages), messages.get(SETTINGS_TITLE).map_or("", |text| text.trim())).trim().to_owned();
         self.frame.draw_title(layer, chrome, &title, pointer);
         if self.frame.minimized {
             return;
@@ -1315,11 +1520,34 @@ impl Settings {
             layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, SETTINGS_HEIGHT - TITLE_HEIGHT]));
         }
         layer.sprites.push((&chrome.border, at([0.0, SETTINGS_HEIGHT - 1.0]), [SETTINGS_WIDTH, 1.0]));
-        for (row, kind) in SETTINGS_KINDS.iter().enumerate() {
-            let mark = if kinds.contains(kind) { "■" } else { "□" };
+        for (row, kind) in self.rows() {
+            let mark = if kinds.contains(&kind) { "■" } else { "□" };
             layer.texts.push((format!("{mark} {}", kind.label(messages)), at([8.0, SETTINGS_TOP + row as f32 * SETTINGS_ROW]), [0, 0, 0]));
         }
+        for (down, mark) in [(false, "▲"), (true, "▼")] {
+            layer.texts.push((
+                mark.to_owned(),
+                at(self.arrow(down).0),
+                if (down && self.first + SETTINGS_SHOWN < SETTINGS_KINDS.len()) || (!down && self.first > 0) { [0, 0, 0] } else { [160; 3] },
+            ));
+        }
+        let all = if all_on(kinds) { "■" } else { "□" };
+        layer.texts.push((format!("{all} All"), at(SETTINGS_ALL.0), [0, 0, 0]));
     }
+}
+
+/// The "all on" box's press: all on, or all off when they were.
+fn flip_all(kinds: &mut HashSet<Kind>) {
+    if all_on(kinds) {
+        kinds.clear();
+    } else {
+        kinds.extend(SETTINGS_KINDS.iter().chain(&[Kind::PartySearch]));
+    }
+}
+
+/// Whether every option the window lists is on (the party search row too, which it hides).
+fn all_on(kinds: &HashSet<Kind>) -> bool {
+    SETTINGS_KINDS.iter().chain(&[Kind::PartySearch]).all(|kind| kinds.contains(kind))
 }
 
 /// The chat commands the client answers itself (the sound, party and emotion ones are elsewhere).
@@ -1613,7 +1841,7 @@ mod tests {
         assert_eq!(chat.log_click(row(0)).as_deref(), Some("Bob"));
         chat.whisper_to("Bob");
         assert_eq!((chat.whisper.as_str(), chat.recent.as_slice()), ("Bob", ["Bob".to_owned()].as_slice()));
-        assert_eq!([speaker("Leader : party", Kind::Party), speaker("You used Bash.", Kind::System)], [Some("Leader".into()), None]);
+        assert_eq!([speaker("Leader : party", Kind::Party), speaker("You used Bash.", Kind::General)], [Some("Leader".into()), None]);
         assert_eq!(speaker(&format!("{} : long", "n".repeat(24)), Kind::Public), None);
     }
 
@@ -1626,16 +1854,55 @@ mod tests {
         chat.push("Leader : party".into(), PARTY);
         chat.push_kind("( From A ) : psst".into(), [0xFF, 0xFF, 0x00], Kind::Whisper);
         chat.push("You used Bash.".into(), SKILL_MESSAGE);
+        chat.push_kind("Poring hits you".into(), [0xFF, 0xFF, 0x00], Kind::Battle);
         let texts = |chat: &Chat, tab: usize| chat.tab_lines(tab).iter().map(|(text, ..)| text.clone()).collect::<Vec<_>>();
-        assert_eq!(texts(&chat, 0), ["Poring : hi", "Leader : party", "( From A ) : psst"]);
-        assert_eq!(texts(&chat, 1), ["Leader : party", "( From A ) : psst", "You used Bash."]);
+        // Tab 1 has the first 14 categories (a skill failure is one), tab 2 the battle lines.
+        assert_eq!(texts(&chat, 0), ["Poring : hi", "Leader : party", "( From A ) : psst", "You used Bash."]);
+        assert_eq!(texts(&chat, 1), ["Poring hits you"]);
         chat.click([150.0, strip]);
         assert_eq!(chat.tab, 1);
         // Party unticked for Public: new party lines stay out of its log.
         chat.tabs[0].kinds.remove(&Kind::Party);
         chat.push("Leader : again".into(), PARTY);
-        assert_eq!(texts(&chat, 0), ["Poring : hi", "Leader : party", "( From A ) : psst"]);
-        assert_eq!(texts(&chat, 1).last().map(String::as_str), Some("Leader : again"));
+        assert_eq!(texts(&chat, 0), ["Poring : hi", "Leader : party", "( From A ) : psst", "You used Bash."]);
+        // Ticked for Battle: it gets them.
+        chat.tabs[1].kinds.insert(Kind::Party);
+        chat.push("Leader : third".into(), PARTY);
+        assert_eq!(texts(&chat, 1).last().map(String::as_str), Some("Leader : third"));
+    }
+
+    #[test]
+    fn words_the_battle_messages() {
+        let mut messages = vec![String::new(); 1700];
+        messages[crate::BATTLE_ON_YOU] = " [%s] inflicts '%d' damage points on you.".into();
+        messages[crate::BATTLE_ATTACKED_BY] = " [%s] attacked by [%s] with '%d' damage points.".into();
+        messages[crate::BATTLE_RECEIVES] = " [%s] receives '%d' damage points.".into();
+        messages[crate::BATTLE_ATTACKS] = " [%s] attacks [%s] with '%d' damage points.".into();
+        let line = |source: (Role, &str), target: (Role, &str), amount| battle_line(&messages, source, target, amount);
+        let (me, ann, poring) = ((Role::Me, "Me"), (Role::Party, "Ann"), (Role::Other, "Poring"));
+        assert_eq!(line(poring, me, 12), Some((" [Poring] inflicts '12' damage points on you.".into(), BATTLE_OWN, Kind::Battle)));
+        assert_eq!(line(me, poring, 40), Some((" [Poring] receives '40' damage points.".into(), BATTLE_OWN, Kind::Battle)));
+        assert_eq!(line(poring, ann, 7), Some((" [Ann] attacked by [Poring] with '7' damage points.".into(), PARTY, Kind::PartyBattle)));
+        assert_eq!(line(ann, poring, 9), Some((" [Ann] attacks [Poring] with '9' damage points.".into(), PARTY, Kind::PartyBattle)));
+        // Neither of us, a miss, and a party member hitting us all work out as the player's own.
+        assert_eq!([line(poring, (Role::Other, "Drops"), 5), line(poring, me, 0), line(poring, me, -1)], [None, None, None]);
+        assert_eq!(line(ann, me, 3).map(|line| line.2), Some(Kind::Battle));
+    }
+
+    #[test]
+    fn shows_broadcasts_and_red_errors_in_every_tab() {
+        let mut chat = fresh();
+        chat.tabs[0].kinds.clear();
+        chat.push_kind("Server: hello".into(), [0xFF, 0xFF, 0x00], Kind::Broadcast);
+        chat.push("Cannot do that".into(), ERROR_RED);
+        chat.push("Notice".into(), [0xFF, 0xFF, 0x64]);
+        let texts = |chat: &Chat, tab: usize| chat.tab_lines(tab).iter().map(|(text, ..)| text.clone()).collect::<Vec<_>>();
+        assert_eq!(texts(&chat, 0), ["Server: hello", "Cannot do that"]);
+        assert_eq!(texts(&chat, 1), ["Server: hello", "Cannot do that"]);
+        // Our own chat is public chat for the tabs.
+        chat.tabs[0].kinds.insert(Kind::Public);
+        chat.push("Me : hi".into(), OWN);
+        assert_eq!(texts(&chat, 0).last().map(String::as_str), Some("Me : hi"));
     }
 
     #[test]
@@ -1781,6 +2048,45 @@ mod tests {
     }
 
     #[test]
+    fn lists_the_games_categories_in_a_scrolling_window() {
+        let mut settings = Settings::new(0);
+        settings.frame.open = true;
+        let at = |settings: &Settings, name: &str| {
+            let (_, [x, y, width, height]) = settings.button_boxes().into_iter().find(|(box_name, _)| box_name == name).unwrap_or_else(|| panic!("{name}"));
+            [x + width / 2.0, y + height / 2.0]
+        };
+        // Eight rows at a time, the game's first eight.
+        let names: Vec<String> =
+            settings.button_boxes().into_iter().map(|(name, _)| name).filter(|name| !name.starts_with("tab_scroll") && name != "tab_all").collect();
+        assert_eq!(names, ["tab_general", "tab_public", "tab_whisper", "tab_party", "tab_guild", "tab_ally", "tab_item_log", "tab_equipment"]);
+        assert_eq!(settings.hit(at(&settings, "tab_guild")), Some(SettingsHit::Kind(Kind::Guild)));
+        assert_eq!(settings.hit(at(&settings, "tab_all")), Some(SettingsHit::All));
+        assert_eq!(settings.hit(at(&settings, "tab_scroll_down")), Some(SettingsHit::ScrollDown));
+        // Scrolling stops at both ends; the last row is the equipment properties, and the party search row isn't listed.
+        settings.scroll(100);
+        let names: Vec<String> = settings.button_boxes().into_iter().map(|(name, _)| name).collect();
+        assert!(names.contains(&"tab_equip_properties".to_owned()) && !names.contains(&"tab_general".to_owned()));
+        assert_eq!(settings.hit(at(&settings, "tab_party_battle")), Some(SettingsHit::Kind(Kind::PartyBattle)));
+        settings.scroll(-100);
+        assert_eq!(settings.rows().next(), Some((0, Kind::General)));
+        assert!(SETTINGS_KINDS.iter().all(|kind| *kind != Kind::PartySearch) && SETTINGS_KINDS.len() + 1 == Kind::ALL.len() - 1);
+        // The all box: everything on, then everything off.
+        let mut kinds = default_kinds()[0].clone();
+        assert!(!all_on(&kinds));
+        flip_all(&mut kinds);
+        assert!(all_on(&kinds));
+        flip_all(&mut kinds);
+        assert!(kinds.is_empty());
+        // Labels come from the game's table, else ours.
+        let mut messages = vec![String::new(); 1700];
+        messages[1618] = "Battle message".into();
+        assert_eq!(
+            [Kind::Battle.label(&messages), Kind::Ally.label(&messages), Kind::Experience.label(&messages)],
+            ["Battle message", "Ally Chat", "Experience message"]
+        );
+    }
+
+    #[test]
     fn caps_what_is_typed() {
         let mut chat = fresh();
         chat.type_text(&"a".repeat(300));
@@ -1872,15 +2178,19 @@ mod tests {
     fn saves_the_tabs_kinds() {
         let kinds = default_kinds();
         let text = kinds_text(&kinds);
-        assert_eq!(text.lines().nth(1), Some("whisper party guild battle"));
+        assert_eq!(text.lines().next(), Some("v2"));
+        assert_eq!(text.lines().nth(2), Some("battle party_battle"));
         assert_eq!(kinds_from(&text), Some(kinds));
-        assert_eq!(kinds_from("public"), None);
+        // A file from before the game's 25 categories is dropped for the defaults.
+        assert_eq!(kinds_from("public own\nbattle"), None);
+        assert_eq!(kinds_from("v2\npublic"), None);
     }
 
     #[test]
     fn colors_party_chat() {
         assert_eq!([PARTY_OURS, PARTY], [[255, 200, 0], [255, 200, 200]]);
-        assert_eq!([Kind::of_color(PARTY), Kind::of_color(GUILD), Kind::of_color([0xFF, 0, 0])], [Kind::Party, Kind::Guild, Kind::System]);
+        assert_eq!([Kind::of_color(PARTY), Kind::of_color(GUILD), Kind::of_color([0xFF, 0, 0])], [Kind::Party, Kind::Guild, Kind::General]);
+        assert_eq!(Kind::of_color(SKILL_MESSAGE), Kind::SkillFailure);
     }
 
     #[test]

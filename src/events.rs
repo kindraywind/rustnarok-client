@@ -1489,6 +1489,9 @@ impl App {
                         }
                     }
                 }
+                if matches!(act.kind, 0 | 4 | 8 | 9 | 10 | 11 | 13) {
+                    game.battle_lines(&act, &self.messages);
+                }
                 game.act(act, look_tables, grf);
             }
             MapEvent::Status { id, value } => {
@@ -1562,7 +1565,7 @@ impl App {
                         popup.maker = maker;
                         game.pickup_popup = Some(popup);
                         game.new_items = true;
-                        game.chat_line(line, CHAT_ITEM);
+                        game.chat_line_kind(line, CHAT_ITEM, chat::Kind::ItemLog);
                         game.inventory.mark_new(item.index);
                         game.inventory.add(net::InventoryItem { amount, ..item });
                     }
@@ -1659,7 +1662,7 @@ impl App {
             // A new quest: its line and icon; one already known is refreshed in place.
             MapEvent::QuestAdded(quest) => {
                 if quest_notice::add(&mut game.quests, quest) {
-                    game.chat_line(self.messages.get(quest_notice::RECEIVED).cloned().unwrap_or_default(), quest_notice::YELLOW);
+                    game.chat_line_kind(self.messages.get(quest_notice::RECEIVED).cloned().unwrap_or_default(), quest_notice::YELLOW, chat::Kind::Quest);
                     game.quest_icon = true;
                 }
             }
@@ -1667,7 +1670,7 @@ impl App {
                 if game.quests.iter().any(|quest| quest.id == id) {
                     let title = self.quest_texts.get(&id).map_or_else(|| id.to_string(), |text| text.title.clone());
                     let line = messages::fill(self.messages.get(quest_notice::DELETED).map_or("", String::as_str), &[&title]);
-                    game.chat_line(line, quest_notice::YELLOW);
+                    game.chat_line_kind(line, quest_notice::YELLOW, chat::Kind::Quest);
                 }
                 game.quests.retain(|quest| quest.id != id);
                 if game.quest_window.picked == Some(id) {
@@ -1689,7 +1692,7 @@ impl App {
                     (hunt.count, hunt.needed) = (count, needed);
                     let hunt = hunt.clone();
                     let title = self.quest_texts.get(&quest_id).map_or_else(|| quest_id.to_string(), |text| text.title.clone());
-                    game.chat_line(quest_notice::progress_line(&self.messages, &title, &hunt), quest_notice::YELLOW);
+                    game.chat_line_kind(quest_notice::progress_line(&self.messages, &title, &hunt), quest_notice::YELLOW, chat::Kind::Quest);
                     game.banners.show(quest_notice::banner_line(&self.messages, &hunt), now);
                 }
             }
@@ -1726,7 +1729,7 @@ impl App {
                 {
                     return;
                 }
-                game.chat_line(text.clone(), color);
+                game.chat_line_kind(text.clone(), color, chat::Kind::Broadcast);
                 game.announcements.push(text, color, size.unwrap_or(announce::SIZE), control::now());
             }
             // ponytail: in the announcements' yellow; a monster's drop says the box's line with the monster's name, as
@@ -1739,18 +1742,22 @@ impl App {
                     (_, Some(monster)) => messages::fill(template(ITEM_FROM_BOX), &[&player, &monster, &name(item)]),
                     _ => messages::fill(template(ITEM_FROM_NPC), &[&player, &name(item)]),
                 };
-                game.chat_line(text, CHAT_BROADCAST);
+                game.chat_line_kind(text, CHAT_BROADCAST, chat::Kind::Broadcast);
             }
             MapEvent::RefineAnnounced { player, item, level, success } => {
                 let template = self.messages.get(if success { REFINE_SUCCEEDED } else { REFINE_FAILED }).map_or("", String::as_str);
-                game.chat_line(messages::fill(template, &[&player, &level, &inventory::item_name(&self.items, item, true, 0)]), CHAT_BROADCAST);
+                game.chat_line_kind(
+                    messages::fill(template, &[&player, &level, &inventory::item_name(&self.items, item, true, 0)]),
+                    CHAT_BROADCAST,
+                    chat::Kind::Broadcast,
+                );
             }
             // The same yellow as a refine announcement. Refine 0 so the name has no +N.
             // ponytail: the grade's letter is a guess.
             MapEvent::GradeAnnounced { player, item, grade: next, success } => {
                 let template = self.messages.get(if success { grade::ANNOUNCE_OK } else { grade::ANNOUNCE_FAIL }).map_or("", String::as_str);
                 let name = inventory::item_name(&self.items, item, true, 0);
-                game.chat_line(messages::fill(template, &[&player, &grade::grade_letter(next), &name]), CHAT_BROADCAST);
+                game.chat_line_kind(messages::fill(template, &[&player, &grade::grade_letter(next), &name]), CHAT_BROADCAST, chat::Kind::Broadcast);
             }
             // The banner effect, and the MVP sprite over the winner.
             // ponytail: ZC_MVP starts the sprite and it plays once through, like an emotion; neither is pinned down.
@@ -1767,7 +1774,7 @@ impl App {
             }
             MapEvent::MvpExp(exp) => {
                 let [before, after] = MVP_EXP.map(|id| self.messages.get(id).cloned().unwrap_or_default());
-                game.chat_line(format!("{before}{exp}{after}"), CHAT_ITEM);
+                game.chat_line_kind(format!("{before}{exp}{after}"), CHAT_ITEM, chat::Kind::Experience);
             }
             MapEvent::OverweightPercent(percent) => game.overweight = percent,
             MapEvent::GuildMemberPlace { account, cell: Some(cell) } => {
@@ -1861,7 +1868,11 @@ impl App {
                     _ => template.to_owned(),
                 };
                 // ponytail: plain ones in red, as nearly all of them are refusals; calibrate against the real client.
-                game.chat_line(text, color.unwrap_or(if skill.is_some() { CHAT_SKILL_MESSAGE } else { CHAT_ERROR }));
+                game.chat_line_kind(
+                    text,
+                    color.unwrap_or(if skill.is_some() { CHAT_SKILL_MESSAGE } else { CHAT_ERROR }),
+                    if skill.is_some() { chat::Kind::SkillFailure } else { chat::Kind::General },
+                );
             }
             MapEvent::ActionFailure(kind) => {
                 let id = ACTION_FAILURES.get(usize::from(kind)).copied().unwrap_or(ACTION_FAILURES[0]);
@@ -2551,7 +2562,11 @@ impl App {
                     game.queued = Some((name, None));
                 }
                 if let Some(id) = battle_queue::apply_result(result) {
-                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 1 { CHAT_ITEM } else { CHAT_ERROR });
+                    game.chat_line_kind(
+                        self.messages.get(id).cloned().unwrap_or_default(),
+                        if result == 1 { CHAT_ITEM } else { CHAT_ERROR },
+                        chat::Kind::Battlefield,
+                    );
                 }
             }
             MapEvent::QueueNumber { name, number } => game.queued = Some((name, Some(number))),
@@ -2560,14 +2575,14 @@ impl App {
                     game.queued = None;
                 }
                 let id = battle_queue::cancel_result(result);
-                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
+                game.chat_line_kind(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM, chat::Kind::Battlefield);
             }
             MapEvent::QueueReady { name } => {
                 game.queue_asked = Some(QueueAsked::Lobby(name, Instant::now() + Duration::from_secs(battle_queue::LOBBY_SECONDS)));
             }
             // ponytail: no sound for it; which one rathena's "gong" is isn't knowable.
             MapEvent::QueueAccepted { result: 1, .. } => {
-                game.chat_line(self.messages.get(battle_queue::LOBBY_ACCEPTED).cloned().unwrap_or_default(), CHAT_ITEM);
+                game.chat_line_kind(self.messages.get(battle_queue::LOBBY_ACCEPTED).cloned().unwrap_or_default(), CHAT_ITEM, chat::Kind::Battlefield);
             }
             MapEvent::QueueAccepted { .. } => {}
             MapEvent::QueueReset => {
@@ -2666,11 +2681,15 @@ impl App {
                 let member = game.party.as_mut().and_then(|party| party.member(account)).map(|member| member.info.name.clone());
                 let name = inventory::item_name(&self.items, item, identified, refine);
                 let text = rustnarok_client::messages::fill(self.messages.get(PARTY_PICKUP).map_or("", String::as_str), &[&member.unwrap_or_default(), &name]);
-                game.chat_line(text, PARTY_CHAT);
+                game.chat_line_kind(text, PARTY_CHAT, chat::Kind::PartyItemLog);
             }
             // Every time it comes (each map load too): whether invitations are taken.
             MapEvent::PartyRefusing(refusing) => {
-                game.chat_line(self.messages.get(if refusing { PARTY_REFUSING } else { PARTY_ALLOWING }).cloned().unwrap_or_default(), PARTY_NOTICE);
+                game.chat_line_kind(
+                    self.messages.get(if refusing { PARTY_REFUSING } else { PARTY_ALLOWING }).cloned().unwrap_or_default(),
+                    PARTY_NOTICE,
+                    chat::Kind::PartyConfig,
+                );
                 game.refusing_party = Some(refusing);
             }
             // Members' HP: in the window, and as a bar under them.
@@ -2695,7 +2714,11 @@ impl App {
                 let message = |id: usize| self.messages.get(id).map_or("", String::as_str).trim();
                 for (setup, label, value, note) in party::setup_lines(exp, pickup, share) {
                     let note = note.map(|note| format!(" ({})", message(note))).unwrap_or_default();
-                    game.chat_line(format!("{} - {} : {}{note}", message(setup), message(label), message(value)), PARTY_SETUP_LINE);
+                    game.chat_line_kind(
+                        format!("{} - {} : {}{note}", message(setup), message(label), message(value)),
+                        PARTY_SETUP_LINE,
+                        chat::Kind::PartyConfig,
+                    );
                 }
             }
             MapEvent::PartyLeader { old, new } => {
@@ -2706,7 +2729,7 @@ impl App {
                 }
                 let leader = game.party.as_mut().and_then(|party| party.member(new)).map(|member| member.info.name.clone()).unwrap_or_default();
                 let text = rustnarok_client::messages::fill(self.messages.get(PARTY_NEW_LEADER).map_or("", String::as_str), &[&leader]);
-                game.chat_line(text, PARTY_SETUP_LINE);
+                game.chat_line_kind(text, PARTY_SETUP_LINE, chat::Kind::PartyConfig);
             }
             MapEvent::PartyMemberInfo { account, job, level } => {
                 if let Some(member) = game.party.as_mut().and_then(|party| party.member(account)) {
@@ -3254,6 +3277,7 @@ impl App {
                 if act.source != me && !game.units.contains_key(&act.source) && game.skill_units.contains_key(&act.source) {
                     if act.damage != 0 {
                         let gap = Duration::from_millis(skill_motions::UNIT_HIT_GAP_MS);
+                        game.battle_lines(&act, &self.messages);
                         game.show_hit(&act, Some(0.0), gap, HitFrom::Unit);
                         if let (Some(gpu), Some(effect)) = (gpu, effects::unit_hit_effect(skill)) {
                             let now = Instant::now();
@@ -3320,6 +3344,7 @@ impl App {
                     // A splash skill's preamble on its first target (Grimtooth's −30000): the hit effects alone.
                     if !game::preamble(&act) {
                         let hits = net::Act { hits: if splash { 1 } else { act.hits }, ..act };
+                        game.battle_lines(&hits, &self.messages);
                         game.show_hit(&hits, Some(hit_ms), gap, if splash { HitFrom::Splash } else { HitFrom::Skill });
                     }
                     // Hit by hit, as each lands: the skill's hit effects on the target; the second only with the first

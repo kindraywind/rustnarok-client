@@ -1,0 +1,27 @@
+{
+  "about": "The Battle tab and the tab settings (chat categories). A Poring is hit: the damage line (\" [Poring] receives 'N' damage points.\") is a battle message, so it is in the chat but not in Public (the first tab has the first 14 categories), and it lands in Battle. The tab settings window lists the game's categories eight at a time: the wheel scrolls it to the battle rows, which are ticked for Battle.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp gef_fild07 61 229"}, {"settle": 1500},
+    {"say": "@heal"}, {"wait": 300},
+    {"say": "@monster poring 1"}, {"wait": 1500},
+    {"click_unit": {"kind": "monster", "name": "Poring"}}, {"wait": 3500},
+    {"expect": {"chat": "receives '", "state": {"chat_tab": 0}}},
+    {"move": [1000, 300]},
+    {"shot": "tab-public-no-battle", "crop": [0, 560, 620, 208], "threshold": 5},
+    {"click_on": {"button": "chat_tab_1"}}, {"wait": 300},
+    {"expect": {"state": {"chat_tab": 1}}},
+    {"move": [1000, 300]},
+    {"shot": "tab-battle-lines", "crop": [0, 560, 620, 208], "threshold": 5},
+    {"click_on": {"button": "chat_options"}}, {"wait": 300},
+    {"expect": {"state": {"chat_tab": 1}}},
+    {"move": [1000, 100]},
+    {"shot": "settings-first-rows", "crop": [560, 380, 464, 300], "threshold": 5},
+    {"wheel": [700, 500, 10]}, {"wait": 300},
+    {"move": [1000, 100]},
+    {"shot": "settings-battle-rows", "crop": [560, 380, 464, 300], "threshold": 5},
+    {"click_on": {"button": "chat_options"}}, {"wait": 300},
+    {"click_on": {"button": "chat_tab_0"}}
+  ]
+}

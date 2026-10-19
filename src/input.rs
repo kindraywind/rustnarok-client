@@ -1748,6 +1748,9 @@ impl App {
                     chat::SettingsHit::Title(TitleHit::Close) => game.chat.settings = None,
                     chat::SettingsHit::Title(title) => game.chat.settings.as_mut().unwrap().frame.click_title(title),
                     chat::SettingsHit::Kind(kind) => game.chat.toggle_kind(kind),
+                    chat::SettingsHit::All => game.chat.set_all(),
+                    chat::SettingsHit::ScrollUp => game.chat.settings.as_mut().unwrap().scroll(-1),
+                    chat::SettingsHit::ScrollDown => game.chat.settings.as_mut().unwrap().scroll(1),
                     chat::SettingsHit::Window => {}
                 }
             }
@@ -2398,6 +2401,9 @@ impl App {
                     let separate = self.skill_info.get(&id).is_some_and(|info| info.separate_level);
                     let learned = game.skills.iter().find(|skill| skill.id == id).map_or(level, |skill| skill.level);
                     game.targeting = Some((id, aim_level(level, learned, rows, separate)));
+                }
+                _ if game.chat.settings.as_ref().is_some_and(|settings| settings.hit(self.cursor).is_some()) => {
+                    game.chat.settings.as_mut().unwrap().scroll(rows)
                 }
                 _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
                 _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
