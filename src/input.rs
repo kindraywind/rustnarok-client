@@ -172,6 +172,16 @@ impl App {
                     }
                 }
             }
+            // The message box, over every window: OK (alone when it only tells) or Cancel.
+            Scene::Game(game) if game.question_box.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                let asks = game.question_box.as_ref().is_some_and(BoxQuestion::asks);
+                for (place, yes) in box_buttons(asks) {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.answer_box(yes, &self.messages);
+                    }
+                }
+            }
             // The option menu keeps the pointer until it's closed, but for the settings windows it opened over it and the
             // menu buttons' "option", which shuts it.
             // ponytail: a click off them does nothing.
@@ -831,16 +841,6 @@ impl App {
                     Some(guild::ReasonHit::Ok) => game.answer_reason(true),
                     Some(guild::ReasonHit::Cancel) => game.answer_reason(false),
                     _ => {}
-                }
-            }
-            // The message box: OK (alone when it only tells) or Cancel.
-            Scene::Game(game) if game.question_box.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
-                let dialog = dialog_position(&assets.message);
-                let asks = game.question_box.as_ref().is_some_and(BoxQuestion::asks);
-                for (place, yes) in box_buttons(asks) {
-                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
-                        game.answer_box(yes, &self.messages);
-                    }
                 }
             }
             // The party's docked windows (setup, create, invite): choices, the edit box, OK and Cancel.

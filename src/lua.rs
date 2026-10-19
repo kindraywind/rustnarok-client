@@ -760,6 +760,8 @@ fn skill_levels(list: &mlua::Table) -> Vec<(u16, u16)> {
 
 /// The quests' titles, descriptions and summaries (`QuestInfoList`), from the translation's System folder.
 const QUEST_INFO: &str = "system\\OngoingQuestInfoList_True.lub";
+/// The same list as an English translation names it.
+const QUEST_INFO_TRANSLATED: &str = "system\\OngoingQuests.lub";
 
 /// A quest's words, and the NPC cell the big minimap marks when the table gives one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -787,7 +789,7 @@ pub struct QuestInfo {
 /// A quest's words: title, description lines, summary, its NPC (cell, sprite, map) when listed, whether it's a cooldown
 /// timer, its rewards.
 pub fn quest_info(grf: &Grf) -> io::Result<HashMap<u32, QuestInfo>> {
-    quest_infos(&run(grf, &[QUEST_INFO])?)
+    quest_infos(&run(grf, &[QUEST_INFO]).or_else(|_| run(grf, &[QUEST_INFO_TRANSLATED]))?)
 }
 
 fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
