@@ -455,7 +455,6 @@ skill	215	successEffectId	269
 skill	216	successEffectId	270
 skill	217	successEffectId	271
 skill	218	successEffectId	272
-skill	219	effectId	227
 skill	229	groundEffectId	302
 skill	230	beforeHitEffectId	298
 skill	234	effectId	300
@@ -1822,12 +1821,13 @@ wav	210	_heal_effect	0
 wav	211	effect\흡기	0
 wav	218	effect\ac_concentration	0
 wav	219	effect\ac_concentration	0
-wav	220	effect\ac_concentration	288
+wav	220	effect\ac_concentration	288	listener
 wav	226	effect\cru_grand cross	0
-wav	227	effect\rog_intimidate	0
+wav	227	effect\EF_Bash	0	listener
+wav	227	effect\rog_intimidate	560
 wav	234	effect\sage_spell breake	0
 wav	244	effect\sage_magic rod	0
-wav	245	effect\cru_holy cross	0
+wav	245	effect\cru_holy cross	0	listener
 wav	249	effect\cru_shield boomerang	0
 wav	250	effect\knight_twohandquicken	0
 wav	253	effect\흡기	0
@@ -4134,6 +4134,8 @@ struck	160	caster	80
 struck	212	caster	275
 struck	250	target	246
 struck	251	caster	249
+struck	219	caster	227
+struck	674	target	227
 struck	253	target	245
 struck	338	target	245
 struck	254	caster	226
