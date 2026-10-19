@@ -3239,13 +3239,16 @@ impl App {
             },
             MapEvent::SkillRemoved(id) => game.skills.retain(|skill| skill.id != id),
             MapEvent::Casting { source, target, cell, skill, element, cast_ms } => {
-                // A cast with a cast time glows in its element's color under the caster (EF_BEGINSPELL*).
+                // A cast with a cast time glows under the caster in its skill's aura: the element's color (EF_BEGINSPELL*),
+                // Bash's burst, a fixed effect or none (`Table::cast_aura`).
                 if cast_ms > 0
                     && let Some(gpu) = gpu
+                    && let Some(effect) = table.cast_aura(skill, CAST_AURAS.get(element as usize).copied().unwrap_or(CAST_AURAS[0]))
                 {
-                    let effect = CAST_AURAS.get(element as usize).copied().unwrap_or(CAST_AURAS[0]);
-                    game.play_effect(gpu, grf, table, effect, source);
-                    game.effects.play_aura(gpu, grf, (source != game.account_id).then_some(source), effect, cast_ms, Instant::now());
+                    game.play_cast_aura(gpu, grf, table, effect, source, cast_ms);
+                    if effects::is_cast_aura(effect) {
+                        game.effects.play_aura(gpu, grf, (source != game.account_id).then_some(source), effect, cast_ms, Instant::now());
+                    }
                 }
                 let me = game.account_id;
                 let goal = if target == me { Some(game.player.cell) } else { game.units.get(&target).map(|actor| actor.cell) };

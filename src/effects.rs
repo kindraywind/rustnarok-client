@@ -68,6 +68,8 @@ pub struct Table {
     /// comes (on the caster or the target).
     hits: HashMap<u16, [Option<u32>; 2]>,
     casters: HashMap<u16, Option<u32>>,
+    /// The aura of a cast with a cast time, by skill: 12 by element, −1 none, else that effect.
+    casts: HashMap<u16, i32>,
     struck: HashMap<u16, Vec<(Who, u32)>>,
     /// Skills without damage, and ground skills (at the cell or on the caster).
     used: HashMap<u16, Vec<(Who, u32)>>,
@@ -121,6 +123,7 @@ impl Table {
             sounds: HashMap::new(),
             hits: HashMap::new(),
             casters: HashMap::new(),
+            casts: HashMap::new(),
             struck: HashMap::new(),
             used: HashMap::new(),
             grounds: HashMap::new(),
@@ -141,6 +144,11 @@ impl Table {
                 _ => Who::Target,
             };
             match fields[..] {
+                ["cast", skill, effect] => {
+                    if let (Ok(skill), Ok(effect)) = (skill.parse(), effect.parse()) {
+                        table.casts.insert(skill, effect);
+                    }
+                }
                 ["str", _, file, folder, attached, ..] => {
                     let Some(id) = number(1) else { continue };
                     let folder = if folder == "-" { String::new() } else { folder.to_owned() };
@@ -247,6 +255,19 @@ impl Table {
 
     /// What a damaging skill shows on its caster as the packet comes: the table's, none for the newest jobs' skills,
     /// else 16.
+    /// The aura a cast of `skill` with a cast time glows in: `by_element` (the cast's element's aura) for the table's 12,
+    /// none for −1, else the row's effect; a skill not listed shows Bash's burst (16), the 4th jobs' none.
+    // ponytail: the table's own `None` rows show no aura.
+    pub fn cast_aura(&self, skill: u16, by_element: u32) -> Option<u32> {
+        match self.casts.get(&skill) {
+            Some(-1) => None,
+            Some(12) => Some(by_element),
+            Some(&effect) => u32::try_from(effect).ok(),
+            None if NO_CASTER_EFFECT.iter().any(|range| range.contains(&skill)) => None,
+            None => Some(CASTER_EFFECT),
+        }
+    }
+
     pub fn caster(&self, skill: u16) -> Option<u32> {
         match self.casters.get(&skill) {
             Some(&effect) => effect,
@@ -1540,6 +1561,24 @@ impl Effects {
         self.show(gpu, grf, table, id, target, at, now);
     }
 
+    /// A cast's aura `id` on `unit` at `at`: Bash's burst (16) lasts the cast (`cast_ms`, so one under 640 ms shows only
+    /// its sound), any other effect plays as it is.
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_cast_aura(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, unit: Option<u32>, at: Vector, cast_ms: u32, now: Instant) {
+        if id != BASH {
+            return self.play(gpu, grf, table, id, Target::Unit(unit), at, now);
+        }
+        if self.min {
+            return;
+        }
+        self.play_sounds(table, id, at, now);
+        for path in [burst::DISC, burst::RAY, burst::RING] {
+            self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+        }
+        let length = cast_ms / crate::prims::TICK.as_millis() as u32;
+        self.prims.bursts.push(burst::Burst::bash(unit, now, length, |n| pick(0, n.saturating_sub(1))));
+    }
+
     /// Plays effect `id` told how many hits it has (`hits`): a bolt drops that many arrows (`bolt_drops`), anything
     /// else plays once.
     #[allow(clippy::too_many_arguments)]
@@ -2639,6 +2678,27 @@ mod tests {
         assert_eq!(bolt_drops(26, 0).len(), 1);
         assert_eq!(bolt_drops(26, 99).len(), 50);
         assert!(bolt_drops(29, 10).is_empty() && bolt_drops(24, 5).is_empty());
+    }
+
+    #[test]
+    fn picks_a_casts_aura_by_skill() {
+        let table = Table::load();
+        // Heal's and Fire Bolt's follow the cast's element (here a stand-in 55 or 58); Assumptio's 58 is fixed.
+        assert_eq!([table.cast_aura(28, 58), table.cast_aura(19, 55), table.cast_aura(361, 55)], [Some(58), Some(55), Some(58)]);
+        // Bash's burst (16) for Bash and for a skill not listed; none for Sonic Blow, Pierce and the table's None rows.
+        assert_eq!([table.cast_aura(5, 12), table.cast_aura(2000, 12)], [Some(16), Some(16)]);
+        assert_eq!([table.cast_aura(136, 12), table.cast_aura(56, 12), table.cast_aura(271, 12)], [None; 3]);
+        // A fixed effect: a song 441, and a few skills with effects of their own.
+        assert_eq!(
+            [table.cast_aura(317, 12), table.cast_aura(45, 12), table.cast_aura(57, 12), table.cast_aura(2052, 12)],
+            [Some(441), Some(43), Some(144), Some(1560)]
+        );
+        // The 4th jobs' ranges show none; the edges of the ranges and just outside.
+        assert_eq!([5401, 5507, 6001, 6006, 6525, 6606].map(|skill| table.cast_aura(skill, 12)), [None; 6]);
+        assert_eq!([5400, 6007, 6607].map(|skill| table.cast_aura(skill, 12)).len(), 3);
+        // The table's rows, as the issue lists them: 766 skills and 5 None rows.
+        assert_eq!(table.casts.len(), 771);
+        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 771);
     }
 
     #[test]

@@ -1244,6 +1244,19 @@ impl Game {
         self.play_effect_from(gpu, grf, table, effect, unit, Instant::now());
     }
 
+    /// A cast's aura `effect` on `unit` for a cast of `cast_ms` (`Effects::play_cast_aura`).
+    pub(crate) fn play_cast_aura(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, cast_ms: u32) {
+        let key = (unit != self.account_id).then_some(unit);
+        let cell = match key {
+            None => Some(self.player.cell),
+            Some(id) => self.units.get(&id).map(|actor| actor.cell),
+        };
+        if let Some(cell) = cell {
+            let at = self.world.cell_position(cell.map(|value| value as f32));
+            self.effects.play_cast_aura(gpu, grf, table, effect, key, at, cast_ms, Instant::now());
+        }
+    }
+
     /// Plays an effect on a unit from a moment on (a hit when it lands).
     pub(crate) fn play_effect_from(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, start: Instant) {
         self.play_effect_hits(gpu, grf, table, effect, unit, start, 1);
