@@ -213,6 +213,8 @@ str	815	ignorance	-	1
 str	816	laziness	-	1
 str	817	unlucky	-	1
 str	818	weakness	-	1
+str	912	mineffect/new_wallofthorn/new_wallofthorn_cast/new_wallofthorn_cast	mineffect/new_wallofthorn/new_wallofthorn_cast/	0
+str	912	new_wallofthorn/new_wallofthorn_cast_bottom/new_wallofthorn_cast_bottom	new_wallofthorn/new_wallofthorn_cast_bottom/	0
 str	920	firewall_per	-	1
 str	926	hunter_shockwave_blue	-	1
 str	959	poison_mist	-	1

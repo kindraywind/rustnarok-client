@@ -1647,6 +1647,23 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["entered_facing"] = game.entered_facing.into();
     // The skill units on the ground standing as models (their UNT_ numbers).
     state["standing_models"] = game.effects.standing_kinds().into();
+    // The kinds of skills' units on the ground in sight.
+    let mut kinds: Vec<u32> = game.skill_units.values().map(|&(kind, _)| kind).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    state["ground_unit_kinds"] = kinds.into();
+    // What skills' ground units play: [kind, effect, starts again] once each, and by kind the milliseconds since the
+    // youngest of its STRs started (small while it starts again, growing when it plays once).
+    let unit_strs = game.effects.unit_strs(self::now());
+    let mut shown: Vec<_> = unit_strs.iter().map(|&(kind, effect, again, _)| (kind, effect, again)).collect();
+    shown.dedup();
+    state["unit_strs"] = json!(shown);
+    let mut youngest = serde_json::Map::new();
+    for &(kind, _, _, ms) in &unit_strs {
+        let entry = youngest.entry(kind.to_string()).or_insert(ms.into());
+        *entry = entry.as_u64().map_or(ms, |have| have.min(ms)).into();
+    }
+    state["unit_str_ms"] = Value::Object(youngest);
     state["cutin_window"] = cutin_window.into();
     // The inventory window's size and its columns and rows of cells.
     state["inventory_window"] = json!({"size": game.inventory.window_size(), "cells": game.inventory.size()});
