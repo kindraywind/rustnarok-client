@@ -569,7 +569,7 @@ pub struct DepthLayer {
 /// A layer's depth plane, for feet at view depth `feet`: depth gained per screen pixel down it, bias nearer (in
 /// 1/depth: about 1.2 cells at the feet with the default camera) and nudge nearer (in the depth buffer).
 fn plane(layer: DepthLayer, feet: f32, pitch: f32, distance: f32) -> [f32; 3] {
-    let per_pixel = 0.16 * 730.0 / SCREEN_HEIGHT;
+    let per_pixel = 0.16 * 480.0 / SCREEN_HEIGHT;
     let slope = if layer.flat { -per_pixel / pitch.tan() } else { per_pixel * pitch.tan() };
     let near = 300.0 / distance;
     let per_layer = 9e-6 * near * pitch.sin() / std::f32::consts::FRAC_PI_4.sin();
@@ -2859,12 +2859,13 @@ mod tests {
         let at = |distance: f32, layer: DepthLayer, below: f32| view_depth(sprite_depth(distance, below, plane(layer, distance, pitch, distance)));
         let near = |a: f32, b: f32| (a - b).abs() < 0.05;
         let standing = DepthLayer::default();
-        // Default camera: the feet about 1.1 cells nearer than they are, the top 0.152 nearer per pixel up.
+        assert!((plane(standing, 300.0, pitch, 300.0)[0] - 0.1).abs() < 1e-6);
+        // Default camera: the feet about 1.1 cells nearer than they are, the top 0.1 nearer per pixel up.
         let (top, feet, bottom) = (at(300.0, standing, -100.0), at(300.0, standing, 0.0), at(300.0, standing, 20.0));
-        assert!(near(feet, 294.44) && near(top, 279.77) && near(bottom, 297.37), "{top} {feet} {bottom}");
+        assert!(near(feet, 294.44) && near(top, 284.80) && near(bottom, 296.36), "{top} {feet} {bottom}");
         // Far camera: less bias.
         let (top, feet) = (at(400.0, standing, -100.0), at(400.0, standing, 0.0));
-        assert!(near(feet, 392.58) && near(top, 377.92), "{top} {feet}");
+        assert!(near(feet, 392.58) && near(top, 382.94), "{top} {feet}");
         // Each image of a monster sits a layer nearer; a player's share the body's plane, a step nearer each.
         assert!(at(300.0, DepthLayer { index: 1.0, ..standing }, 0.0) < feet - 0.5);
         let player = |nudge: f32, below: f32| sprite_depth(300.0, below, plane(DepthLayer { nudge, ..standing }, 300.0, pitch, 300.0));
@@ -2873,7 +2874,7 @@ mod tests {
         }
         // The dead lie flat: their top counts as farther.
         let flat = DepthLayer { flat: true, ..standing };
-        assert!(near(at(300.0, flat, 0.0), 294.44) && near(at(300.0, flat, -100.0), 309.07), "{}", at(300.0, flat, -100.0));
+        assert!(near(at(300.0, flat, 0.0), 294.44) && near(at(300.0, flat, -100.0), 304.06), "{}", at(300.0, flat, -100.0));
     }
 
     #[test]

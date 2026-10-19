@@ -968,10 +968,10 @@ fn turning_cursor(dragging: bool, shift: bool, alt: bool) -> bool {
     dragging && !shift && !alt
 }
 
-/// A warp portal's pick box around its feet, in sprite pixels: 50/640 of the screen's width and 50/730 of its height
+/// A warp portal's pick box around its feet, in sprite pixels: 50/640 of the screen's width and 50/480 of its height
 /// each way at the default camera, so it grows and shrinks with the zoom like a sprite.
 // ponytail: worked out for the 1024-wide screen; a wider canvas keeps the same box.
-const WARP_PICK: [f32; 2] = [59.7, 39.3];
+const WARP_PICK: [f32; 2] = [59.7, 59.7];
 
 /// A warp portal's pick box on screen (`0..1`, y down: left, top, right, bottom).
 /// Where an attack's target is: a unit still there, or a skill's unit on the ground; none ends the attack.
@@ -1052,7 +1052,7 @@ const UNITS_PER_ZOOM: f32 = 2.5;
 const DISTANCE_RANGE: [f32; 2] = [230.0, 400.0];
 const DISTANCE_RANGE_INDOOR: [f32; 2] = [230.0, 300.0];
 /// With /zoom on, outdoors the camera goes out to this; its lines: on, off.
-const ZOOM_OUT_DISTANCE: f32 = 730.0;
+const ZOOM_OUT_DISTANCE: f32 = 480.0;
 const ZOOM_OUT_ON: usize = 3511;
 const ZOOM_OUT_OFF: usize = 3512;
 const WHEEL_STEP: f32 = 24.3;
@@ -5624,9 +5624,10 @@ mod tests {
             let [left, top, right, bottom] = warp_pick_rect(&camera(distance).view(4.0 / 3.0), [100.0, 0.0, 100.0]).unwrap();
             [(right - left) * 1024.0, (bottom - top) * 768.0]
         };
-        // About 166 by 109 screen pixels at the default distance, centred on the feet; smaller farther out.
+        // About 166 by 166 screen pixels at the default distance, centred on the feet; smaller farther out.
         let [width, height] = size(300.0);
-        assert!((width - 166.0).abs() < 8.0 && (height - 109.0).abs() < 6.0, "{width} {height}");
+        assert!((width - 166.0).abs() < 8.0 && (height - 166.0).abs() < 8.0, "{width} {height}");
+        assert!((width - height).abs() < 1e-4, "square pick box: {width} vs {height}");
         let far = size(400.0);
         assert!(far[0] < width * 0.8 && far[1] < height * 0.8, "{far:?}");
     }
@@ -5944,15 +5945,17 @@ mod tests {
         assert_eq!((outdoors.pitch, outdoors.distance(), outdoors.yaw), (65.0, 400.0, 0.0));
         let indoors = CameraGoal::arrive(true, None, [20.0, 400.0], false);
         assert_eq!((indoors.pitch, indoors.distance(), indoors.yaw), (35.0, 300.0, YAW_INDOOR));
-        // /zoom: outdoors out to 730, indoors no further.
-        let mut far = CameraGoal::arrive(false, None, [45.0, 511.3], true);
-        assert!((far.distance() - 511.3).abs() < 0.01);
+        // /zoom: outdoors out to 480, indoors no further.
+        let mut far = CameraGoal::arrive(false, None, [45.0, 450.0], true);
+        assert!((far.distance() - 450.0).abs() < 0.01);
         far.set_distance(1000.0);
         assert_eq!(far.distance(), ZOOM_OUT_DISTANCE);
+        assert_eq!(far.distance(), 480.0);
         far.zoom_out = false;
         far.set_distance(far.distance());
         assert_eq!(far.distance(), 400.0);
-        assert_eq!(CameraGoal::arrive(true, None, [45.0, 511.3], true).distance(), 300.0);
+        assert_eq!(CameraGoal::arrive(true, None, [45.0, 450.0], true).distance(), 300.0);
+        assert_eq!(CameraGoal::arrive(true, None, [45.0, 1000.0], true).distance(), 300.0);
         // A map's own table starts it, and holds it.
         let table = rustnarok_client::map::Viewpoint {
             distance: [210.0, 260.0],
