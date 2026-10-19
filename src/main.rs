@@ -1112,6 +1112,8 @@ struct Game {
     stored_walk: StoredWalk,
     /// The client's skill table: names, levels to pick, ranges by level.
     skill_info: HashMap<u16, SkillInfo>,
+    /// Big monsters: the jobs standing on a radius of r cells (`lua::location_radii`).
+    location_radii: HashMap<u16, f32>,
     press_mark: Option<(Instant, [f32; 2], bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
@@ -3301,19 +3303,67 @@ enum AimAt {
     Player,
 }
 
-/// A skill's range in cells at `level`: its range by level (1 where the table has none) plus what the skill list adds
-/// to it at the learned level; the list's range when the table has nothing.
-fn skill_range(per_level: &[u16], level: u16, learned: u16, listed: u16) -> f32 {
+/// A skill's range in cells at `level`: r1 + listed − r2, with r1 its range at `level` (1 where `AttackRange` has
+/// none) and r2 its range at the learned level, capped at `MaxLv` when the entry has one (0 where none, or at level
+/// 0). Listed + 1 when the entry has no ranges.
+fn skill_range(per_level: &[u16], max_lv: Option<u16>, level: u16, learned: u16, listed: u16) -> f32 {
     if per_level.is_empty() {
-        return f32::from(listed.max(1));
+        return f32::from(listed) + 1.0;
     }
-    let at = |level: u16| per_level.get(usize::from(level.max(1)) - 1).map_or(1.0, |&range| f32::from(range));
-    at(level) + f32::from(listed) - at(learned)
+    let at = |level: u16| usize::from(level).checked_sub(1).and_then(|index| per_level.get(index)).map(|&range| f32::from(range));
+    let learned = max_lv.map_or(learned, |max| learned.min(max));
+    at(level).unwrap_or(1.0) + f32::from(listed) - at(learned).unwrap_or(0.0)
 }
 
-/// Whether a skill reaches from `from` to `to` (cells, drawn positions): within range × 5 + 5.5 world units.
-fn skill_in_reach(from: [f32; 2], to: [f32; 2], range: f32) -> bool {
-    f32::hypot(to[0] - from[0], to[1] - from[1]) * world::CELL <= range * world::CELL + 5.5
+/// In reach at `range` cells: range × 5 + 5.5 world units or more than the distance (a NaN is out).
+fn skill_in_reach(distance: f32, range: f32) -> bool {
+    range * world::CELL + 5.5 >= distance
+}
+
+/// Jobs 1181 and 1284 count as big monsters whatever their radius.
+fn big_job(job: u16) -> bool {
+    matches!(job, 1181 | 1284)
+}
+
+/// The reach distance to a big monster: 20 units less for jobs 1181 and 1284, 4 × (r + 1) less for one standing on a
+/// radius of r > 0 cells, never below 0.
+fn reach_to(distance: f32, job: u16, radius: f32) -> f32 {
+    let cut = if big_job(job) {
+        20.0
+    } else if radius > 0.0 {
+        4.0 * (radius + 1.0)
+    } else {
+        0.0
+    };
+    (distance - cut).max(0.0)
+}
+
+/// How a unit skill's walk toward a big monster shifts the cell it sends, s cells by the angle θ (degrees, from the
+/// player toward the target).
+fn shift_by_angle(theta: f32, s: i32) -> [i32; 2] {
+    match theta {
+        theta if theta < 25.0 => [0, s],
+        theta if theta < 70.0 => [s, s],
+        theta if theta < 115.0 => [s, 0],
+        theta if theta < 160.0 => [s, -s],
+        theta if theta < 205.0 => [0, -s],
+        theta if theta < 250.0 => [-s, s],
+        theta if theta < 295.0 => [-s, 0],
+        theta if theta < 340.0 => [-s, -s],
+        _ => [0, s],
+    }
+}
+
+/// The cell a unit skill's walk sends toward a big monster at `aim` from `from` (ground points): shifted by
+/// `shift_by_angle` with s = 5 for jobs 1181 and 1284, else the radius; other targets' cells as they are.
+fn big_walk_cell(cell: [i32; 2], job: u16, radius: f32, from: [f32; 2], aim: [f32; 2]) -> [i32; 2] {
+    let s = if big_job(job) { 5 } else { radius as i32 };
+    if s <= 0 {
+        return cell;
+    }
+    let theta = (aim[0] - from[0]).atan2(-(aim[1] - from[1])).to_degrees().rem_euclid(360.0);
+    let [dx, dy] = shift_by_angle(theta, s);
+    [cell[0] + dx, cell[1] + dy]
 }
 
 /// Whether a press while aiming takes the unit: a monster with Shift up and another player with Shift down, the other
@@ -3795,6 +3845,7 @@ struct App {
     monster_sizes: HashMap<u16, f32>,
     /// Shadow width by sprite job, in cells (`actor::shadow_factor`).
     shadow_factors: HashMap<u16, f32>,
+    location_radii: HashMap<u16, f32>,
     /// Pets' tables and what they say.
     pets: pet::Data,
     /// The achievements (the translation's achievements.lub) and the titles they give, by ID.
@@ -4736,6 +4787,10 @@ fn main() {
         eprintln!("no shadow table: {error}");
         HashMap::new()
     });
+    let location_radii = lua::location_radii(&grf).unwrap_or_else(|error| {
+        eprintln!("no NPC location radii: {error}");
+        HashMap::new()
+    });
     let items = lua::item_info(&grf).unwrap_or_else(|error| {
         eprintln!("no item names: {error}");
         HashMap::new()
@@ -4827,6 +4882,7 @@ fn main() {
         job_names,
         monster_sizes,
         shadow_factors,
+        location_radii,
         pets,
         achievement_info,
         synthesis_boxes,
@@ -5576,14 +5632,64 @@ mod tests {
 
     #[test]
     fn skills_reach_by_level_and_world_distance() {
-        // Fire Bolt's table: 9 at every level. A list that says 10 at the learned level adds 1 at any level.
-        assert_eq!(skill_range(&[9; 10], 3, 10, 10), 10.0);
-        assert_eq!(skill_range(&[1, 2, 3], 1, 3, 3), 1.0, "a range that grows by level, used at level 1");
-        assert_eq!(skill_range(&[], 5, 5, 0), 1.0, "nothing known: 1");
-        assert_eq!(skill_range(&[], 5, 5, 9), 9.0);
-        // range x 5 + 5.5 world units: 9 cells reach 10.1 cells away, not 10.2.
-        assert!(skill_in_reach([0.0, 0.0], [10.1, 0.0], 9.0) && !skill_in_reach([0.0, 0.0], [10.2, 0.0], 9.0));
-        assert!(skill_in_reach([0.0, 0.0], [1.0, 1.0], 1.0));
+        // r1 + listed − r2, the learned level capped at MaxLv.
+        let ranges = [1, 2, 3, 4, 5];
+        assert_eq!(skill_range(&ranges, Some(5), 3, 7, 11), 9.0);
+        assert_eq!(skill_range(&ranges, Some(5), 3, 4, 11), 10.0);
+        assert_eq!(skill_range(&ranges, None, 3, 7, 11), 14.0, "no MaxLv: no cap, and r2 is 0 past the table");
+        assert_eq!(skill_range(&ranges, Some(0), 3, 7, 11), 14.0, "MaxLv 0: r2 is 0");
+        assert_eq!(skill_range(&ranges, Some(5), 9, 3, 3), 1.0, "r1 is 1 past the table");
+        // No ranges in the entry (or no entry): listed + 1.
+        assert_eq!(skill_range(&[], Some(5), 5, 5, 1), 2.0);
+        assert_eq!(skill_range(&[], None, 5, 5, 3), 4.0);
+        // range × 5 + 5.5 world units: 9 cells reach 10.1 cells away, not 10.2.
+        assert!(skill_in_reach(10.1 * world::CELL, 9.0) && !skill_in_reach(10.2 * world::CELL, 9.0));
+        assert!(!skill_in_reach(f32::NAN, 9.0));
+        // On a unit, the distance takes the height: range 9 at (10, 0), 7.0 height units in, 7.5 out.
+        let gat = |rise: f32| rustnarok_client::map::Gat {
+            width: 32,
+            height: 32,
+            cells: (0..32 * 32).map(|index| ([if index % 32 >= 11 { rise } else { 0.0 }; 4], 0)).collect(),
+        };
+        let reach = |rise| skill_in_reach(world::attack_distance(&gat(rise), world::drawn_point([1.0, 1.0]), world::drawn_point([11.0, 1.0])), 9.0);
+        assert!(reach(-7.0) && !reach(-7.5));
+    }
+
+    #[test]
+    fn walks_a_skill_into_range_without_a_path() {
+        // Toward where the target is drawn, range 9 short: as a chase, no path needed.
+        let open = rustnarok_client::map::Gat { width: 64, height: 64, cells: vec![([0.0; 4], 0); 64 * 64] };
+        let walk =
+            |gat: &rustnarok_client::map::Gat, from: [f32; 2], aim: [f32; 2]| world::chase_cell(gat, world::drawn_point(from), world::drawn_point(aim), 9);
+        assert_eq!(walk(&open, [30.0, 32.0], [40.0, 32.0]), [31, 32]);
+        assert_eq!(walk(&open, [29.0, 25.0], [40.0, 32.0]), [32, 27]);
+        // A ground skill on wall cells: it walks up all the same.
+        let walled = rustnarok_client::map::Gat {
+            width: 64,
+            height: 64,
+            cells: (0..64 * 64).map(|index| ([0.0; 4], u8::from(index % 64 >= 48 || [index % 64, index / 64] == [50, 32]))).collect(),
+        };
+        assert_eq!(walk(&walled, [35.0, 32.0], [55.0, 32.0]), [46, 32]);
+        assert_eq!(walk(&walled, [35.0, 20.0], [50.0, 32.0]), [43, 26]);
+    }
+
+    #[test]
+    fn reaches_big_monsters_sooner() {
+        assert_eq!(reach_to(30.0, 1181, 0.0), 10.0);
+        assert_eq!(reach_to(30.0, 1284, 2.0), 10.0);
+        assert_eq!(reach_to(30.0, 1002, 1.0), 22.0);
+        assert_eq!(reach_to(5.0, 1002, 2.0), 0.0);
+        assert_eq!(reach_to(30.0, 1002, 0.0), 30.0);
+        // The cell a unit skill sends, shifted by the angle toward the target.
+        assert_eq!(
+            [0.0, 24.9, 25.0, 70.0, 205.0, 250.0, 340.0].map(|theta| shift_by_angle(theta, 2)),
+            [[0, 2], [0, 2], [2, 2], [2, 0], [-2, 2], [-2, 0], [0, 2]]
+        );
+        // Straight east of the player (θ 90): x + s; s = 5 for job 1181, the radius else, nothing for others.
+        let [from, aim] = [world::drawn_point([10.0, 10.0]), world::drawn_point([20.0, 10.0])];
+        assert_eq!(big_walk_cell([11, 10], 1181, 0.0, from, aim), [16, 10]);
+        assert_eq!(big_walk_cell([11, 10], 1900, 2.0, from, aim), [13, 10]);
+        assert_eq!(big_walk_cell([11, 10], 1002, 0.0, from, aim), [11, 10]);
     }
 
     #[test]
