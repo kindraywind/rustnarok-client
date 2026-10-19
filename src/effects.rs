@@ -17,8 +17,10 @@ use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 /// A quad's corners as texture coordinates: top left, top right, bottom right, bottom left.
 const QUAD_UV: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
-/// Effects not following a unit sit half a cell lower, in sprite pixels.
-const GROUND_DROP: f32 = 17.5;
+/// An STR moves on one frame each 16 ms tick, whatever its file says.
+const STR_TICK_MS: f32 = 16.0;
+/// An STR's (320, 240) sits this many screen pixels above its owner's feet, at any zoom.
+pub const STR_RISE: f32 = 80.0;
 
 /// One STR part of an effect.
 struct Part {
@@ -55,6 +57,8 @@ pub struct Table {
     /// Units whose effect plays once and is kept rather than starting again.
     units_once: std::collections::HashSet<u32>,
     models: HashMap<u32, String>,
+    /// Effects that end (or, on a ground unit, start again) by their own length in ticks rather than their STR's.
+    lengths: HashMap<u32, u32>,
     misc: HashMap<u32, u32>,
     skills: HashMap<(u16, String), Vec<u32>>,
     items: HashMap<u32, u32>,
@@ -109,6 +113,7 @@ impl Table {
             units: HashMap::new(),
             units_once: std::collections::HashSet::new(),
             models: HashMap::new(),
+            lengths: HashMap::new(),
             misc: HashMap::new(),
             skills: HashMap::new(),
             items: HashMap::new(),
@@ -158,6 +163,11 @@ impl Table {
                         if fields.get(3) == Some(&"once") {
                             table.units_once.insert(kind);
                         }
+                    }
+                }
+                ["length", ..] => {
+                    if let (Some(id), Some(ticks)) = (number(1), number(2)) {
+                        table.lengths.insert(id, ticks);
                     }
                 }
                 ["rsm", _, file] => {
@@ -331,9 +341,52 @@ pub enum Target {
 
 struct Playing {
     loaded: Rc<Loaded>,
+    /// Its files to pick from again at each restart (`%d` ones), else just `loaded`.
+    variants: Vec<Rc<Loaded>>,
     start: Instant,
     anchor: Anchor,
     again: bool,
+    /// The effect's own length in ticks, when shorter than its STR (or how often a ground unit's starts again).
+    length: Option<u32>,
+    effect: u32,
+}
+
+impl Playing {
+    /// A copy as it stands, to play out under its restart.
+    fn clone_now(&self) -> Self {
+        Self {
+            loaded: self.loaded.clone(),
+            variants: self.variants.clone(),
+            start: self.start,
+            anchor: self.anchor,
+            again: self.again,
+            length: self.length,
+            effect: self.effect,
+        }
+    }
+}
+
+/// The ticks an STR shows: to its last key, or its effect's length if that's shorter.
+fn str_ticks(str: &Str, length: Option<u32>) -> u32 {
+    let keys = str.last_key().max(0) as u32 + 1;
+    length.map_or(keys, |length| length.min(keys))
+}
+
+/// How often a ground unit's effect starts again, in ticks: 8 before its length ends (Quagmire's 20).
+fn restart_ticks(effect: u32, length: u32) -> u32 {
+    length.saturating_sub(if effect == 95 { 20 } else { 8 }).max(1)
+}
+
+/// The STR frame `elapsed` into an effect: whole 16 ms ticks.
+fn str_frame(elapsed: Duration) -> u32 {
+    (elapsed.as_secs_f32() * 1000.0 / STR_TICK_MS) as u32
+}
+
+/// A key's corner in sprite pixels from the anchor: STR space is centred on (320, 240).
+fn str_corner(position: [f32; 2], corner: [f32; 2], angle: f32) -> [f32; 2] {
+    let (sin, cos) = angle.to_radians().sin_cos();
+    let [x, y] = corner;
+    [x * cos - y * sin + position[0] - 320.0, x * sin + y * cos + position[1] - 240.0]
 }
 
 /// A sprite playing one of its actions (SPR effects).
@@ -1220,15 +1273,26 @@ impl Effects {
             });
         }
         for part in table.parts.get(&id).into_iter().flatten() {
-            let file = match part.random {
-                Some((from, to)) => part.file.replace("%d", &pick(from, to).to_string()),
-                None => part.file.clone(),
+            // Every file a `%d` names is loaded, so each restart can pick again.
+            let files: Vec<String> = match part.random {
+                Some((from, to)) => (from..=to).map(|number| part.file.replace("%d", &number.to_string())).collect(),
+                None => vec![part.file.clone()],
             };
-            let key = format!("{}|{file}", part.folder);
-            let loaded = self.loaded.entry(key).or_insert_with(|| load(gpu, grf, &file, &part.folder)).clone();
-            if let Some(loaded) = loaded {
-                self.playing.push(Playing { loaded, start: now, anchor: anchor(part.attached), again: lasting && !part.once });
-            }
+            let variants: Vec<Rc<Loaded>> = files
+                .iter()
+                .filter_map(|file| self.loaded.entry(format!("{}|{file}", part.folder)).or_insert_with(|| load(gpu, grf, file, &part.folder)).clone())
+                .collect();
+            let Some(loaded) = variants.get(pick(0, variants.len().saturating_sub(1) as u32) as usize).cloned() else { continue };
+            let again = lasting && !part.once;
+            self.playing.push(Playing {
+                loaded,
+                variants,
+                start: now,
+                anchor: anchor(part.attached),
+                again,
+                length: table.lengths.get(&id).copied(),
+                effect: id,
+            });
         }
     }
 
@@ -1347,21 +1411,24 @@ impl Effects {
             }
         }
         self.rings.retain(|ring| now < ring.end);
-        // A repeating one starts again 8 frames before it ends, so there's no gap: the old one plays out underneath.
+        // An STR ends at its last key or its effect's length; a ground unit's starts again 8 ticks before its length
+        // (Quagmire's 20), picking its file again, while the copy before plays out.
         let mut tails = Vec::new();
+        let tick = Duration::from_secs_f32(STR_TICK_MS / 1000.0);
         self.playing.retain_mut(|playing| {
-            let animation = &playing.loaded.animation;
-            let fps = animation.fps.max(1) as f32;
-            let length = Duration::from_secs_f32(animation.frames as f32 / fps);
-            let period = Duration::from_secs_f32(animation.frames.saturating_sub(8).max(1) as f32 / fps);
-            while playing.again && !length.is_zero() && now >= playing.start + period {
-                let previous = playing.start;
+            let length = tick * str_ticks(&playing.loaded.animation, playing.length);
+            let period = tick * restart_ticks(playing.effect, playing.length.unwrap_or(str_ticks(&playing.loaded.animation, None)));
+            while playing.again && now >= playing.start + period {
+                let previous = Playing { variants: Vec::new(), again: false, ..playing.clone_now() };
                 playing.start += period;
-                if now < previous + length {
-                    tails.push(Playing { loaded: playing.loaded.clone(), start: previous, anchor: playing.anchor, again: false });
+                if let Some(next) = playing.variants.get(pick(0, playing.variants.len().saturating_sub(1) as u32) as usize) {
+                    playing.loaded = next.clone();
+                }
+                if now < previous.start + length {
+                    tails.push(previous);
                 }
             }
-            now < playing.start + length
+            now < playing.start + tick * str_ticks(&playing.loaded.animation, playing.length)
         });
         self.playing.extend(tails);
 
@@ -1513,7 +1580,7 @@ impl Effects {
                         let [x, y] = world::sprite_corner(position, size, layer_angle, uv).0;
                         corner([x * scale[0], y * scale[1]])
                     });
-                    quads.push((sprite.texture(key), anchor, corners, color, floating.additive));
+                    quads.push((sprite.texture(key), anchor, corners, color, floating.additive, false));
                 }
                 continue;
             }
@@ -1522,7 +1589,7 @@ impl Effects {
             // A ray reaches out from the center; anything else is centered on it.
             let top = if floating.ray { -height } else { -height / 2.0 };
             let corners = [[-width / 2.0, top], [width / 2.0, top], [width / 2.0, top + height], [-width / 2.0, top + height]].map(corner);
-            quads.push((texture, anchor, corners, color, floating.additive));
+            quads.push((texture, anchor, corners, color, floating.additive, false));
         }
         // Heal's sparkles rising and fading.
         if let Some(Some(texture)) = self.textures.get(SPARKLE_TEXTURE) {
@@ -1538,6 +1605,7 @@ impl Effects {
                         [[-half, -half], [half, -half], [half, half], [-half, half]],
                         [1.0, 1.0, 1.0, alpha],
                         true,
+                        false,
                     ));
                 }
             }
@@ -1551,7 +1619,7 @@ impl Effects {
                         let anchor = std::array::from_fn(|axis| at[axis] + place[axis]);
                         for &(key, position, size, layer_angle) in &hit.placed {
                             let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * spark.scale));
-                            quads.push((sprite.texture(key), anchor, corners, [1.0, 1.0, 1.0, alpha], false));
+                            quads.push((sprite.texture(key), anchor, corners, [1.0, 1.0, 1.0, alpha], false, false));
                         }
                     }
                 }
@@ -1566,25 +1634,20 @@ impl Effects {
                     let [left, top] = world::sprite_corner(position, size, layer_angle, uv).0;
                     [left + x, top + y]
                 });
-                quads.push((sprite.texture(key), at, corners, [1.0; 4], false));
+                quads.push((sprite.texture(key), at, corners, [1.0; 4], false, false));
             }
         }
         for playing in self.playing.iter().filter(|playing| playing.start <= now) {
             let Some(at) = playing.anchor.place(&position_of) else { continue };
-            let drop = if matches!(playing.anchor, Anchor::Unit(_)) { 0.0 } else { GROUND_DROP };
             let animation = &playing.loaded.animation;
-            let frame = now.duration_since(playing.start).as_secs_f32() * animation.fps as f32;
+            // Whole ticks: the state changes once each 16 ms, with nothing in between.
+            let frame = str_frame(now.duration_since(playing.start)) as f32;
             for (layer, textures) in animation.layers.iter().zip(&playing.loaded.textures) {
                 let Some(state) = layer.state(frame) else { continue };
                 let Some(Some(texture)) = textures.get(state.texture) else { continue };
-                // STR space is 640x640 around (320, 320), in sprite pixels, y down; quads turn by their angle.
-                let (sin, cos) = state.angle.to_radians().sin_cos();
-                let center = [state.position[0] - 320.0, state.position[1] - 320.0 + drop];
-                let corner = |index: usize| {
-                    let [x, y] = [state.corners[index], state.corners[4 + index]];
-                    [x * cos - y * sin + center[0], x * sin + y * cos + center[1]]
-                };
-                quads.push((texture, at, [corner(0), corner(1), corner(2), corner(3)], state.color, state.additive));
+                // In sprite pixels, y down, turned by the key's angle; drawn over everything, `STR_RISE` up.
+                let corner = |index: usize| str_corner(state.position, [state.corners[index], state.corners[4 + index]], state.angle);
+                quads.push((texture, at, [corner(0), corner(1), corner(2), corner(3)], state.color, state.additive, true));
             }
         }
         // Soul Strike's ghosts, each copy of a trail a little fainter.
@@ -1700,6 +1763,46 @@ mod tests {
         let ice = &table.sounds[&26][0];
         assert_eq!((ice.file.as_str(), ice.delay_ms, ice.random), ("effect\\ef_icearrow%d", 0, Some((1, 3))));
         assert!((0..100).map(|_| pick(1, 3)).all(|picked| (1..=3).contains(&picked)));
+    }
+
+    #[test]
+    fn times_and_places_strs() {
+        // One frame each whole 16 ms tick.
+        assert_eq!([0, 15, 16, 31, 32].map(|ms| str_frame(Duration::from_millis(ms))), [0, 0, 1, 1, 2]);
+        // To the last key (frames 0–120: 121 ticks), or a shorter length.
+        let key = rustnarok_client::effect::Key {
+            frame: 0,
+            kind: 0,
+            position: [320.0, 240.0],
+            corners: [-10.0, 10.0, 10.0, -10.0, -10.0, -10.0, 10.0, 10.0],
+            texture: 0.0,
+            texture_motion: 0,
+            delay: 0.0,
+            angle: 0.0,
+            color: [1.0; 4],
+            source_blend: 5,
+            destination_blend: 6,
+        };
+        let layer = rustnarok_client::effect::Layer { textures: Vec::new(), keys: vec![key, rustnarok_client::effect::Key { frame: 120, ..key }] };
+        let str = Str { fps: 60, frames: 160, layers: vec![layer] };
+        assert_eq!((str_ticks(&str, None), str_ticks(&str, Some(40)), str_ticks(&str, Some(500))), (121, 40, 121));
+        // A ground unit's starts again 8 ticks before its length; Quagmire's 20.
+        assert_eq!((restart_ticks(25, 40), restart_ticks(95, 150)), (32, 130));
+        // (320, 240) is the anchor: a corner 10 left and 10 up of it is (−10, −10) sprite pixels, and on screen that's
+        // q times it from the feet, then 80 screen pixels up whatever q is (the shader's pixel offset).
+        let corner = str_corner([320.0, 240.0], [-10.0, -10.0], 0.0);
+        assert_eq!(corner, [-10.0, -10.0]);
+        let screen = |q: f32| [500.0 + q * corner[0], 400.0 + q * corner[1] - STR_RISE];
+        assert_eq!(screen(1.0), [490.0, 310.0]);
+        let [x, y] = screen(1.39);
+        assert!((x - 486.1).abs() < 1e-3 && (y - 306.1).abs() < 1e-3);
+        // Turned 90°: (10, 0) goes to (0, 10).
+        let turned = str_corner([320.0, 240.0], [10.0, 0.0], 90.0);
+        assert!(turned[0].abs() < 1e-4 && (turned[1] - 10.0).abs() < 1e-4);
+        // The table's lengths and the units that play once.
+        let table = Table::load();
+        assert_eq!([table.lengths[&25], table.lengths[&95], table.lengths[&920]], [40, 150, 40]);
+        assert!([130, 136, 221].iter().all(|kind| table.units_once.contains(kind)));
     }
 
     #[test]
