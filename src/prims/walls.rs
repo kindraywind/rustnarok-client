@@ -1,4 +1,5 @@
-//! Walls and puffs built in code a 16 ms tick at a time: the Fire Pillar's three funnels (138), Venom Dust's violet puffs
+//! Walls and puffs built in code a 16 ms tick at a time: Providence's tubes (248), Reflect Shield's yellow crescents (252), Absorb
+//! Spirits' curtains (253), the Fire Pillar's three funnels (138), Venom Dust's violet puffs
 //! (171), Berserk Pitcher's tint, rising cylinder and streaks (220), Defender's four crescent walls (222) and Grand
 //! Cross's cross of light (226).
 //!
@@ -15,6 +16,7 @@ pub const MAGIC_RED: &str = "data\\texture\\effect\\magic_red.tga";
 pub const RING_BLACK: &str = "data\\texture\\effect\\ring_black.tga";
 pub const RING_WHITE: &str = "data\\texture\\effect\\ring_white.tga";
 pub const RING_YELLOW: &str = first::RING_YELLOW;
+pub const RING_BLUE: &str = "data\\texture\\effect\\ring_blue.tga";
 pub const ALPHA_DOWN: &str = first::ALPHA_DOWN;
 pub const STREAK: &str = first::STREAK;
 
@@ -32,6 +34,13 @@ const STREAK_LIFE: u32 = 40;
 /// Defender plays 200 ticks (drawn on the first 199); its four bands: radius, height, start turn, turn a tick.
 const DEFENDER_TICKS: u32 = 199;
 const DEFENDER_BANDS: [(f32, f32, f32, f32); 4] = [(8.0, 40.0, 180.0, 1.0), (7.9, 39.0, 270.0, 2.0), (7.8, 38.0, 0.0, 1.0), (7.7, 37.0, 90.0, 2.0)];
+/// Providence's tubes: drawn on ticks 0 to 75; four of them, their base radius 6 + k / 2 and lean 83 − k degrees.
+const TUBE_TICKS: u32 = 76;
+/// Absorb Spirits' curtains are drawn on ticks 0 to 98; four bands: radius, height, lean and fixed turn.
+const CURTAIN_TICKS: u32 = 99;
+const CURTAINS: [(f32, f32, f32, f32); 4] = [(4.6, 60.0, 90.0, 0.0), (5.0, 60.0, 90.0, 180.0), (5.0, 18.0, 50.0, 0.0), (5.2, 18.0, 48.0, 0.0)];
+/// The curtains' tint (#6464FF).
+const CURTAIN_RGB: [f32; 3] = [100.0 / 255.0, 100.0 / 255.0, 1.0];
 /// Grand Cross's four arcs: where from the caster's spot and the turn they start at.
 const ARCS: [([f32; 2], f32); 4] = [([23.0, 23.0], 180.0), ([23.0, -23.0], 90.0), ([-23.0, -23.0], 0.0), ([-23.0, 23.0], 270.0)];
 /// The arcs are drawn on ages 1…98, the bars on 1…89.
@@ -82,6 +91,21 @@ struct Berserk {
 struct Defender {
     unit: Option<u32>,
     start: Instant,
+    /// Its walls' texture: black for Defender, yellow for Reflect Shield.
+    texture: &'static str,
+}
+
+/// Providence's four tubes round a unit.
+struct Providence {
+    unit: Option<u32>,
+    start: Instant,
+}
+
+/// Absorb Spirits' two curtains and two skirts round a unit; the last two bands' turns are drawn at the start.
+struct Curtains {
+    unit: Option<u32>,
+    start: Instant,
+    turns: [f32; 4],
 }
 
 /// One Grand Cross where its caster stood.
@@ -95,6 +119,8 @@ pub struct Walls {
     standing: Vec<Standing>,
     berserks: Vec<Berserk>,
     defenders: Vec<Defender>,
+    providences: Vec<Providence>,
+    curtains: Vec<Curtains>,
     crosses: Vec<Cross>,
 }
 
@@ -190,6 +216,50 @@ impl Streak {
         };
         [blade(true), blade(false)].concat()
     }
+}
+
+/// A Providence tube's profile at tick t: 120 sin(t + 1)° while t + 1 is up to 90.
+pub fn tube_height(t: u32) -> f32 {
+    120.0 * ((t + 1).min(90) as f32).to_radians().sin()
+}
+
+/// A tube's alpha at tick t: 40 to tick 49, then 1 less a tick.
+pub fn tube_alpha(t: u32) -> f32 {
+    if t <= 49 { 40.0 } else { (40.0 - (t - 49) as f32).max(0.0) }
+}
+
+fn tube(feet: Vector, k: usize, t: u32) -> Vec<MeshVertex> {
+    let (radius, lean, turn) = (6.0 + 0.5 * k as f32, 83.0 - k as f32, 90.0 * k as f32 + t as f32);
+    let points: Vec<_> = (0..=20).map(|s| ring_point(feet, turn + 18.0 * s as f32, radius, tube_height(t), lean)).collect();
+    vertices(ring_quads(&points, tube_alpha(t) / 255.0), [1.0; 3])
+}
+
+/// A curtain's alpha at age a: 5 a tick to 75, held, then from age 40 2 less a tick.
+pub fn curtain_alpha(a: u32) -> f32 {
+    match a {
+        0..=15 => 5.0 * a as f32,
+        16..=39 => 75.0,
+        _ => (75.0 - 2.0 * (a - 39) as f32).max(0.0),
+    }
+}
+
+/// The height of band k's curtain at its point s (0 to 20) at age a: a wave round the band, the rim rising with sin a.
+pub fn curtain_top(k: usize, s: u32, a: u32) -> f32 {
+    let h = CURTAINS[k].1;
+    let (s, a) = (s as f32, a as f32);
+    let wave = match k {
+        0 => (34.0 * s + 4.0 * a) % 360.0,
+        1 => (34.0 * s + 3.0 * a) % 360.0,
+        _ => 2.0 * (a + 17.0 * s) % 360.0,
+    };
+    let rise = if a <= 90.0 { a.to_radians().sin() } else { 1.0 };
+    ((h * 0.25 * wave.to_radians().sin() + h * 0.75) * rise).max(0.0)
+}
+
+fn curtain(feet: Vector, k: usize, turn: f32, a: u32) -> Vec<MeshVertex> {
+    let (radius, _, lean, _) = CURTAINS[k];
+    let points: Vec<_> = (0..=20).map(|s| ring_point(feet, turn + 18.0 * s as f32, radius, curtain_top(k, s, a), lean)).collect();
+    vertices(ring_quads(&points, curtain_alpha(a) / 255.0), CURTAIN_RGB)
 }
 
 /// Defender's alpha at age a: a up to 80, 80 to a = 179, then 5 less a tick.
@@ -319,8 +389,23 @@ impl Walls {
         self.berserks.push(Berserk { unit, start: now, streaks });
     }
 
-    pub fn defender(&mut self, unit: Option<u32>, now: Instant) {
-        self.defenders.push(Defender { unit, start: now });
+    /// Defender's walls (black) or Reflect Shield's (yellow) on `unit`.
+    pub fn defender(&mut self, unit: Option<u32>, now: Instant, texture: &'static str) {
+        self.defenders.push(Defender { unit, start: now, texture });
+    }
+
+    /// Providence's four tubes on `unit`.
+    pub fn providence(&mut self, unit: Option<u32>, now: Instant) {
+        self.providences.push(Providence { unit, start: now });
+    }
+
+    /// Absorb Spirits' curtains on `unit`; the turns of the two short ones come from `rand(n)` (0 to n − 1).
+    // ponytail: the game plays its sound half as loud (80 units up); ours is at full volume.
+    pub fn curtains(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let mut turns = CURTAINS.map(|(.., turn)| turn);
+        turns[2] = rand(360) as f32;
+        turns[3] = rand(360) as f32;
+        self.curtains.push(Curtains { unit, start: now, turns });
     }
 
     /// A Grand Cross where its caster stood at `at`.
@@ -345,6 +430,8 @@ impl Walls {
         let ended = |start: Instant, ticks: u32| passes(start, now) > ticks;
         self.berserks.retain(|berserk| !ended(berserk.start, BERSERK_HELD + 20));
         self.defenders.retain(|defender| !ended(defender.start, DEFENDER_TICKS));
+        self.providences.retain(|providence| !ended(providence.start, TUBE_TICKS));
+        self.curtains.retain(|curtains| !ended(curtains.start, CURTAIN_TICKS));
         self.crosses.retain(|cross| !ended(cross.start, ARC_AGES));
     }
 
@@ -402,8 +489,20 @@ impl Walls {
             let (Some(feet), Some(p)) = (position_of(defender.unit), passes(defender.start, now).checked_sub(1)) else { continue };
             if p < DEFENDER_TICKS {
                 for k in 0..DEFENDER_BANDS.len() {
-                    walls.push(Wall { texture: RING_BLACK, vertices: defender_band(feet, k, p + 1), additive: false, forced: false });
+                    walls.push(Wall { texture: defender.texture, vertices: defender_band(feet, k, p + 1), additive: false, forced: false });
                 }
+            }
+        }
+        for providence in &self.providences {
+            let (Some(feet), Some(t)) = (position_of(providence.unit), passes(providence.start, now).checked_sub(1)) else { continue };
+            if t < TUBE_TICKS {
+                walls.extend((0..4).map(|k| Wall { texture: RING_YELLOW, vertices: tube(feet, k, t), additive: true, forced: false }));
+            }
+        }
+        for curtains in &self.curtains {
+            let (Some(feet), Some(t)) = (position_of(curtains.unit), passes(curtains.start, now).checked_sub(1)) else { continue };
+            if t < CURTAIN_TICKS {
+                walls.extend((0..4).map(|k| Wall { texture: RING_BLUE, vertices: curtain(feet, k, curtains.turns[k], t + 1), additive: true, forced: false }));
             }
         }
         for cross in &self.crosses {
@@ -531,7 +630,7 @@ mod tests {
     fn defender_turns_four_humped_walls() {
         let start = Instant::now();
         let mut walls = Walls::default();
-        walls.defender(None, start);
+        walls.defender(None, start, RING_BLACK);
         let at = [0.0; 3];
         let bands = |tick: u32| walls.meshes(start + TICK * tick, |_| Some(at));
         assert_eq!(bands(0).len(), 4);
@@ -554,7 +653,7 @@ mod tests {
         assert!(walls.defenders.is_empty());
         // It follows its unit: off with it.
         let mut other = Walls::default();
-        other.defender(Some(3), start);
+        other.defender(Some(3), start, RING_BLACK);
         assert!(other.meshes(start, |_| None).is_empty());
     }
 
@@ -606,5 +705,73 @@ mod tests {
         assert_eq!(walls.meshes(start, |_| Some([0.0; 3])).len(), 4 + 6);
         walls.advance(start + TICK * 99, |_| 0);
         assert!(walls.crosses.is_empty());
+    }
+
+    #[test]
+    fn providence_shoots_four_leaning_tubes_up() {
+        let start = Instant::now();
+        let mut walls = Walls::default();
+        walls.providence(Some(4), start);
+        // p = 120 sin(t + 1)°: 2.09 at tick 0, 60 at 29, 116.44 at 75; alpha 40 to tick 49, 39 at 50, 14 at 75.
+        assert!(near(tube_height(0), 2.094) && near(tube_height(29), 60.0) && near(tube_height(75), 116.44));
+        assert_eq!([0, 49, 50, 75].map(tube_alpha), [40.0, 40.0, 39.0, 14.0]);
+        let feet = [5.0, 1.0, 6.0];
+        let at = |tick: u32| walls.meshes(start + TICK * tick, |_| Some(feet));
+        assert!(at(75).len() == 4 && at(76).is_empty());
+        assert!(at(0).iter().all(|wall| wall.texture == RING_YELLOW && wall.additive && wall.vertices.len() == 120));
+        // The tops of tube 0 at tick 75: radius 6 + 116.44 cos 83°, height 116.44 sin 83°; the feet at radius 6.
+        let tube0 = &at(75)[0];
+        let top = tube0.vertices.iter().find(|vertex| vertex.uv[1] == 0.0).unwrap();
+        assert!(near(radius(top, feet), 6.0 + 116.44 * 83.0_f32.to_radians().cos()) && near(top.position[1], feet[1] + 116.44 * 83.0_f32.to_radians().sin()));
+        let foot = tube0.vertices.iter().find(|vertex| vertex.uv[1] == 1.0).unwrap();
+        assert!(near(radius(foot, feet), 6.0));
+        assert!(near(radius(at(75)[3].vertices.iter().find(|vertex| vertex.uv[1] == 1.0).unwrap(), feet), 7.5));
+        assert!((at(75)[0].vertices[0].tint[3] * 255.0).round() == 14.0);
+        // It follows its unit.
+        assert!(walls.meshes(start, |_| None).is_empty());
+    }
+
+    #[test]
+    fn reflect_shield_is_defenders_walls_in_yellow() {
+        let start = Instant::now();
+        let mut walls = Walls::default();
+        walls.defender(None, start, RING_YELLOW);
+        let at = |tick: u32| walls.meshes(start + TICK * tick, |_| Some([0.0; 3]));
+        assert_eq!(at(0).len(), 4);
+        assert!(at(0).iter().all(|wall| wall.texture == RING_YELLOW && !wall.additive));
+        let alpha = |tick: u32| (at(tick)[0].vertices[0].tint[3] * 255.0).round();
+        assert_eq!([0, 79, 179, 194].map(alpha), [1.0, 80.0, 75.0, 0.0]);
+        assert!(at(198).len() == 4 && at(199).is_empty());
+    }
+
+    #[test]
+    fn absorb_spirits_waves_two_curtains_and_two_skirts() {
+        let start = Instant::now();
+        let mut walls = Walls::default();
+        let mut draws = [200, 300].into_iter();
+        walls.curtains(Some(2), start, |_| draws.next().unwrap());
+        assert_eq!(walls.curtains[0].turns, [0.0, 180.0, 200.0, 300.0]);
+        // Alpha 75 at ticks 14 and 38, 73 at 39, 1 at 75, 0 at 76.
+        assert_eq!([15, 39, 40, 76, 77].map(curtain_alpha), [75.0, 75.0, 73.0, 1.0, 0.0]);
+        assert_eq!(curtain_alpha(1), 5.0);
+        // The profile: k 0 at a = 1, s = 0: 0.804; at a = 90, s = 10: 39.87; k 2 at a = 100, s = 5: 14.28.
+        assert!(near(curtain_top(0, 0, 1), 0.804) && near(curtain_top(0, 10, 90), 39.87) && near(curtain_top(2, 5, 100), 14.28));
+        let feet = [0.0, 3.0, 0.0];
+        let at = |tick: u32| walls.meshes(start + TICK * tick, |_| Some(feet));
+        let first = at(0);
+        assert!(first.len() == 4 && first.iter().all(|wall| wall.texture == RING_BLUE && wall.additive && wall.vertices.len() == 120));
+        assert_eq!(first[0].vertices[0].tint[..3], CURTAIN_RGB);
+        assert_eq!(at(98).len(), 4);
+        assert!(at(99).is_empty());
+        // The top of band 2 at a = 100 sits 5 + 14.28 cos 50° out and 14.28 sin 50° up; the feet 5 out.
+        let late = at(98);
+        let wall = &late[2];
+        let foot = wall.vertices.iter().find(|vertex| vertex.uv == [0.0, 1.0]).unwrap();
+        assert!(near(radius(foot, feet), 5.0));
+        // The bands never turn: the same corner at two ticks.
+        assert_eq!(at(10)[0].vertices[0].uv, at(20)[0].vertices[0].uv);
+        let a = at(10)[1].vertices[0].position;
+        let b = at(20)[1].vertices[0].position;
+        assert!(near(a[0], b[0]) && near(a[2], b[2]), "the foot of the first point stays put");
     }
 }
