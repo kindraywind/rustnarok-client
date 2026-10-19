@@ -10,7 +10,7 @@ use rustnarok_client::lua::ItemInfo;
 use rustnarok_client::net::InventoryItem;
 use rustnarok_client::text::Font;
 
-use crate::inventory::{self, UNIDENTIFIED};
+use crate::inventory;
 use crate::render::{self, Gpu, Sprite, Texture};
 use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, offset};
@@ -35,12 +35,34 @@ const TAB_HEIGHT: f32 = 17.0;
 const TAB_PADDING: f32 = 15.0;
 const ROW: f32 = 26.0;
 const ICON: f32 = 24.0;
-/// Icons sit 4px in from either side; names fill up to 80px beside them, two lines at most.
-const ICON_MARGIN: f32 = 4.0;
-const NAME_WIDTH: f32 = 80.0;
+/// A slot's icon at x 6 or 251, top 38 + 26r; its name box 70 wide at x 33 or 172, top 45 + 26r, two lines at most.
+const ICON_X: [f32; 2] = [6.0, 251.0];
+const ICON_TOP: f32 = 38.0;
+const NAME_X: [f32; 2] = [33.0, 172.0];
+const NAME_TOP: f32 = 45.0;
+const NAME_BOX: f32 = 70.0;
+/// The slot rows: from y 37, 26 apart, above y 165. A press takes the icon only, a hover or a right press the icon
+/// and the name: x from and to, left and right.
+const ROWS_TOP: f32 = 37.0;
+const ROWS_END: f32 = 165.0;
+const PRESS_X: [[f32; 2]; 2] = [[6.0, 30.0], [251.0, 275.0]];
+const HOVER_X: [[f32; 2]; 2] = [[6.0, 106.0], [170.0, 274.0]];
+/// The ammo (General, the player's own window): its icon at (115, 64), taken on 115 < x < 139, 64 < y < 88, and its
+/// name under it, 40 wide.
+const AMMO: u32 = 0x8000;
+const AMMO_ICON: [f32; 2] = [115.0, 64.0];
+const AMMO_NAME: [f32; 2] = [115.0, 88.0];
+const AMMO_NAME_WIDTH: f32 = 40.0;
+/// Where a dragged item may go: an oval (28×15) at x 4 or 248, top 45 + 26r, for each slot its location names.
+const OVAL_X: [f32; 2] = [4.0, 248.0];
+/// The grade's mark (12×12) under the icon's top.
+const GRADE_AT: [f32; 2] = [0.0, 12.0];
+/// One enchant's name colour here; more take the inventory's tiers.
+const ONE_ENCHANT: [u8; 3] = [0x66, 0x99, 0x00];
+/// A stack's tooltip, "%s: %d ea." (the ammo).
+const STACK_MESSAGE: usize = 183;
+/// A name's lines, this far apart.
 const NAME_LINE: f32 = 12.0;
-/// Each side's slots take this much of the width; the character stands between them.
-const COLUMN_WIDTH: f32 = 115.0;
 /// Where the character stands: the shadow baked into equipwin_bg.bmp.
 const PREVIEW_FEET: [f32; 2] = [140.0, PANEL_TOP + 114.0];
 /// Where it first opens.
@@ -159,6 +181,9 @@ pub struct Assets {
     swap_panels: [Texture; 2],
     swap_hover: Texture,
     change: [Texture; 3],
+    /// The drop oval, and the grades' marks (1 to 4).
+    oval: Texture,
+    grades: Vec<Option<Texture>>,
 }
 
 impl Assets {
@@ -186,6 +211,8 @@ impl Assets {
             swap_panels: ["bg2", "special"].map(|panel| image(format!("{UI}swap_equipment\\equipwin_{panel}_change.bmp"))),
             swap_hover: image(format!("{basic}btn_e_change_b.bmp")),
             change: ["normal", "over", "disable"].map(|look| image(format!("{UI}swap_equipment\\btn_change2_{look}.bmp"))),
+            oval: image(format!("{basic}item_invert.bmp")),
+            grades: (1..=4).map(|grade| gpu.try_load_texture(grf, &format!("{UI}grade_enchant\\grade_icon{grade}.bmp"), false).ok()).collect(),
         }
     }
 }
@@ -194,8 +221,10 @@ impl Assets {
 pub enum Hit {
     Title(TitleHit),
     Tab(usize),
-    /// A worn item, by inventory index.
+    /// A worn item's icon (or the ammo), by inventory index: presses, drags, double clicks.
     Slot(u16),
+    /// A worn item's name: hovers and right presses only.
+    Name(u16),
     /// The Show Equipment box and its label.
     ShowBox,
     /// The View Costume box and its label.
@@ -310,10 +339,41 @@ fn change_at() -> [f32; 2] {
     [6.0, PANEL_TOP + PANEL_HEIGHT + 4.0]
 }
 
-/// A slot's top-left corner and size inside the window.
-fn slot_area(column: usize, row: usize) -> ([f32; 2], [f32; 2]) {
-    let x = if column == 0 { 0.0 } else { WIDTH - COLUMN_WIDTH };
-    ([x, PANEL_TOP + row as f32 * ROW], [COLUMN_WIDTH, ROW])
+/// The slot row under a window-local y.
+fn slot_row(y: f32) -> Option<usize> {
+    (ROWS_TOP..ROWS_END).contains(&y).then(|| ((y - ROWS_TOP) / ROW) as usize)
+}
+
+/// Whether a window-local point is on the ammo.
+fn on_ammo([x, y]: [f32; 2]) -> bool {
+    x > AMMO_ICON[0] && x < AMMO_ICON[0] + ICON && y > AMMO_ICON[1] && y < AMMO_ICON[1] + ICON
+}
+
+/// A slot's tooltip corner for the window-local pointer: x 6 left, 175 right, 120 between (the ammo); y one 26 px step
+/// per 24 px from y 37, plus 17 (so low in a row it lands a step lower).
+fn tooltip_at([x, y]: [f32; 2]) -> [f32; 2] {
+    let left = if x < 106.0 {
+        6.0
+    } else if x >= 170.0 {
+        175.0
+    } else {
+        WIDTH / 2.0 - 20.0
+    };
+    [left, ROW * ((y - ROWS_TOP) / 24.0).floor() + 17.0]
+}
+
+/// A worn item's name colour in its box: black, or by its enchants (#669900 for one, then the inventory's tiers).
+pub fn slot_name_color(item: &InventoryItem, items: &HashMap<u32, ItemInfo>) -> [u8; 3] {
+    match inventory::enchants(item, items) {
+        0 => [0, 0, 0],
+        1 => ONE_ENCHANT,
+        count => inventory::ENCHANTED[count.min(4) - 1],
+    }
+}
+
+/// The General slots a dragged item's location (bits 0–9) names: column and row, up to three for a headgear.
+fn drop_slots(location: u32) -> Vec<(usize, usize)> {
+    SLOTS[0].iter().filter(|(bit, ..)| location & 0x3FF & bit != 0).map(|&(_, column, row)| (column, row)).collect()
 }
 
 impl Equipment {
@@ -417,14 +477,21 @@ impl Equipment {
         if own && self.tab == 0 && self.cart && contains(CART_ITEMS, CART_ITEMS_SIZE, local) {
             return Some(Hit::CartItems);
         }
-        Some(
-            self.slots(items)
-                .find(|&(column, row, _)| {
-                    let (corner, size) = slot_area(column, row);
-                    contains(corner, size, local)
-                })
-                .map_or(Hit::Window, |(.., item)| Hit::Slot(item.index)),
-        )
+        if let Some(ammo) = self.ammo(items).filter(|_| on_ammo(local)) {
+            return Some(Hit::Slot(ammo.index));
+        }
+        let within = |[from, to]: [f32; 2]| (from..to).contains(&local[0]);
+        let slot = slot_row(local[1]).and_then(|row| {
+            let column = (0..2).find(|&column| within(HOVER_X[column]))?;
+            let item = self.slots(items).find(|&(each, at, _)| each == column && at == row)?.2;
+            Some(if within(PRESS_X[column]) { Hit::Slot(item.index) } else { Hit::Name(item.index) })
+        });
+        Some(slot.unwrap_or(Hit::Window))
+    }
+
+    /// The worn ammo, shown on General in the player's own window.
+    fn ammo<'i>(&self, items: &'i [InventoryItem]) -> Option<&'i InventoryItem> {
+        (self.tab == 0 && self.owner.is_none() && !self.swapping).then(|| items.iter().find(|item| item.worn & AMMO != 0)).flatten()
     }
 
     /// Reacts to a click; returns the item double-clicked: to take off, or in the swap view to take out of the set.
@@ -440,6 +507,7 @@ impl Equipment {
                 self.tab = self.tab.min(self.tabs() - 1);
             }
             Hit::Slot(_)
+            | Hit::Name(_)
             | Hit::ShowBox
             | Hit::ViewCostume
             | Hit::Dismount
@@ -567,6 +635,7 @@ impl Equipment {
         worn: &[InventoryItem],
         preview: Vec<Sprite<'a>>,
         names: (&inventory::CardNames, &HashMap<u32, Option<String>>),
+        dropping: Option<u32>,
     ) {
         if !self.frame.open {
             return;
@@ -641,25 +710,55 @@ impl Equipment {
             }
         }
 
-        for (column, row, item) in self.slots(worn) {
-            let (corner, size) = slot_area(column, row);
-            let top = PANEL_TOP + row as f32 * ROW + 1.0;
-            let icon_x = if column == 0 { ICON_MARGIN } else { WIDTH - ICON_MARGIN - ICON };
-            let info = items.get(&item.id);
-            if let Some(Some(icon)) = info.and_then(|info| icons.get(&inventory::icon_path(info, item.identified))) {
-                layer.sprites.push((icon, at([icon_x, top]), icon.size));
+        // While an inventory item is dragged over General: an oval on each slot it would go to, under the icons.
+        if let Some(location) = dropping.filter(|_| self.tab == 0 && contains(at([0.0, 0.0]), [WIDTH, self.height()], cursor)) {
+            for (column, row) in drop_slots(location) {
+                layer.sprites.push((&assets.oval, at([OVAL_X[column], NAME_TOP + row as f32 * ROW]), assets.oval.size));
             }
+        }
+        let hovered = self.frame.local(cursor, self.height()).filter(|_| self.frame.open);
+        let pointed = match hovered.and_then(|_| self.hit(cursor, worn)) {
+            Some(Hit::Slot(index) | Hit::Name(index)) => Some(index),
+            _ => None,
+        };
+        let icon = |layer: &mut Layer<'a>, item: &InventoryItem, corner: [f32; 2]| {
+            if let Some(Some(icon)) = items.get(&item.id).and_then(|info| icons.get(&inventory::icon_path(info, item.identified))) {
+                layer.sprites.push((icon, at(corner), icon.size));
+            }
+            if let Some(Some(mark)) = usize::from(item.grade).checked_sub(1).and_then(|grade| assets.grades.get(grade)) {
+                layer.sprites.push((mark, at(offset(corner, GRADE_AT)), mark.size));
+            }
+        };
+        let shown = self.slots(worn).map(|(column, row, item)| (Some((column, row)), item)).chain(self.ammo(worn).map(|item| (None, item)));
+        for (place, item) in shown {
             let name = inventory::full_name(items, names.0, messages, names.1, item, false);
-            let lines = window::wrap(font, &name, NAME_WIDTH, 2);
-            let first_line = top + (ICON - lines.len() as f32 * NAME_LINE) / 2.0 - 2.0;
-            for (number, line) in lines.iter().enumerate() {
-                let x = if column == 0 { icon_x + ICON + 2.0 } else { icon_x - 2.0 - font.width(line) };
-                let place = at([x, first_line + number as f32 * NAME_LINE]);
-                layer.texts.push((line.clone(), offset(place, [1.0, 1.0]), [255; 3]));
-                layer.texts.push((line.clone(), place, [0, 0, 0]));
+            match place {
+                // ponytail: names break where `window::wrap` breaks them, left-aligned in both columns.
+                Some((column, row)) => {
+                    icon(layer, item, [ICON_X[column], ICON_TOP + row as f32 * ROW]);
+                    let color = slot_name_color(item, items);
+                    for (number, line) in window::wrap(font, &name, NAME_BOX, 2).into_iter().enumerate() {
+                        layer.texts.push((line, at([NAME_X[column], NAME_TOP + row as f32 * ROW + number as f32 * NAME_LINE]), color));
+                    }
+                }
+                None => {
+                    icon(layer, item, AMMO_ICON);
+                    layer.texts.push((window::fit(font, &name, AMMO_NAME_WIDTH), at(AMMO_NAME), slot_name_color(item, items)));
+                }
             }
-            if contains(at(corner), size, cursor) {
-                window::tooltip(tooltip, chrome, font, &name, offset(cursor, [12.0, 12.0]), if item.identified { [255; 3] } else { UNIDENTIFIED });
+            // The tooltip at its fixed place: the name with its slots, or "name: n ea." for the ammo's stack.
+            if pointed == Some(item.index)
+                && let Some(local) = hovered
+            {
+                let text = if place.is_none() {
+                    rustnarok_client::messages::fill(
+                        message(STACK_MESSAGE),
+                        &[&inventory::full_name(items, names.0, messages, names.1, item, false), &item.amount],
+                    )
+                } else {
+                    inventory::full_name(items, names.0, messages, names.1, item, true)
+                };
+                window::tooltip(tooltip, chrome, font, &text, at(tooltip_at(local)), inventory::name_color(item, items));
             }
         }
 
@@ -731,6 +830,49 @@ impl Equipment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colours_worn_names_by_enchants() {
+        let items: HashMap<u32, ItemInfo> = [2301, 4700].into_iter().map(|id| (id, ItemInfo { slots: 1, ..ItemInfo::default() })).collect();
+        let shirt = |cards: [u32; 4]| InventoryItem { id: 2301, identified: true, cards, ..Default::default() };
+        // The cards past its one slot: none black, one #669900, two #00BFFF, three and four the further tiers.
+        assert_eq!(slot_name_color(&shirt([0; 4]), &items), [0, 0, 0]);
+        assert_eq!(slot_name_color(&shirt([0, 4700, 0, 0]), &items), [0x66, 0x99, 0x00]);
+        assert_eq!(slot_name_color(&shirt([0, 4700, 4700, 0]), &items), [0x00, 0xBF, 0xFF]);
+        assert_eq!(slot_name_color(&shirt([4700, 4700, 4700, 4700]), &items), [0xFF, 0xA5, 0x00]);
+        // The inventory's (the tooltip's) form says #ADFF2F for one; a maker's or a pet's item has none.
+        assert_eq!(inventory::name_color(&shirt([0, 4700, 0, 0]), &items), [0xAD, 0xFF, 0x2F]);
+        assert_eq!([0x00FF, 0x00FE, 0x0100].map(|mark| slot_name_color(&shirt([mark, 4700, 4700, 0]), &items)), [[0, 0, 0]; 3]);
+    }
+
+    #[test]
+    fn takes_presses_on_icons_and_hovers_on_names() {
+        let mut window = Equipment::default();
+        window.frame.open = true;
+        let armor = InventoryItem { index: 7, id: 2301, location: 16, worn: 16, ..Default::default() };
+        let arrows = InventoryItem { index: 8, id: 1750, location: AMMO, worn: AMMO, amount: 100, ..Default::default() };
+        let items = [armor, arrows];
+        let at = |x: f32, y: f32| window.frame.at([x, y]);
+        // The armor: right column, row 1 (y 63–88). Its icon takes presses, its name only hovers.
+        assert_eq!(window.hit(at(260.0, 70.0), &items), Some(Hit::Slot(7)));
+        assert_eq!(window.hit(at(200.0, 70.0), &items), Some(Hit::Name(7)));
+        assert_eq!(window.hit(at(160.0, 70.0), &items), Some(Hit::Window));
+        // Rows end at y 165; the left column's empty slot is the window.
+        assert_eq!(window.hit(at(20.0, 70.0), &items), Some(Hit::Window));
+        // The ammo, strictly inside 115–139 × 64–88, on General in the player's own window only.
+        assert_eq!(window.hit(at(120.0, 70.0), &items), Some(Hit::Slot(8)));
+        assert_eq!(window.hit(at(115.0, 70.0), &items), Some(Hit::Window));
+        window.tab = 1;
+        assert_eq!(window.hit(at(120.0, 70.0), &items), Some(Hit::Window));
+        // The tooltip: x 6, 175 or 120 by the pointer; y a 26 px step per 24 px, so low in the last row it's 147.
+        assert_eq!([tooltip_at([50.0, 40.0]), tooltip_at([200.0, 70.0]), tooltip_at([120.0, 70.0])], [[6.0, 17.0], [175.0, 43.0], [120.0, 43.0]]);
+        assert_eq!(tooltip_at([50.0, 161.0]), [6.0, 147.0]);
+        assert_eq!(tooltip_at([50.0, 150.0]), [6.0, 121.0]);
+        // The drop ovals: a top headgear one slot, a full headgear three, a weapon its own.
+        assert_eq!(drop_slots(256), [(0, 0)]);
+        assert_eq!(drop_slots(256 | 512 | 1), [(0, 0), (1, 0), (0, 1)]);
+        assert_eq!(drop_slots(2 | AMMO), [(0, 2)]);
+    }
 
     #[test]
     fn takes_off_all_from_its_button() {

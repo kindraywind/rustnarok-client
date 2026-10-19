@@ -1704,6 +1704,11 @@ impl App {
         let mut layers = vec![weather_layer, base, announce_layer, chat_layer];
         let mut preview = Some(preview);
         let cooling = skills::Cooling { cooldowns: &game.cooldowns, fan: &assets.fan, now: control::now() };
+        // An inventory item being dragged: where it could be worn, for the equipment window's ovals.
+        let dropping = match game.dragging {
+            Some((Dragged::Item(index), _, true)) => game.inventory.get(index).map(|item| item.location),
+            _ => None,
+        };
         for &id in &game.windows {
             let mut layer = Layer::default();
             match id {
@@ -1861,6 +1866,7 @@ impl App {
                     &game.inventory.items,
                     preview.take().unwrap_or_default(),
                     (card_names, &game.char_names),
+                    dropping,
                 ),
             }
             layer.faded = game.panel_faded(id);
@@ -2051,6 +2057,7 @@ impl App {
                 &viewed.items,
                 viewed_preview,
                 (card_names, &game.char_names),
+                None,
             );
         }
         if let Some(window) = &game.refine {
