@@ -13,7 +13,7 @@
     {"say": "@storeall"}, {"wait": 1500},
     {"say": "@storage"}, {"wait_for": {"packet": "0x0b08", "ms": 8000}}, {"wait": 1500},
     {"expect": {"windows_open": ["Storage"], "windows_closed": ["Inventory", "Cart"]}},
-    {"click_on": {"button": "storage_tab:6"}}, {"wait": 300},
+    {"click_on": {"button": "storage_tab:7"}}, {"wait": 300},
     {"click_on": {"button": "storage_item:909"}, "button": "right", "mods": "Alt"},
     {"wait_for": {"sent": "0x0128", "ms": 1500}, "none": true},
     {"wait_for": {"sent": "0x0365", "ms": 500}, "none": true},
