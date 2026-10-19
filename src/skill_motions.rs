@@ -18,11 +18,11 @@ pub enum Motion {
 }
 
 // ponytail: the dance, song, Taekwon, gun and ninja motions of the table play the skill pose until those actions exist.
-const ATTACK: [u16; 105] = [
+const ATTACK: [u16; 106] = [
     5, 7, 42, 46, 47, 56, 57, 58, 61, 62, 109, 212, 214, 219, 253, 266, 267, 338, 366, 367, 368, 370, 372, 379, 382, 397, 398, 399, 406, 484, 499, 502, 503,
     512, 513, 514, 515, 518, 519, 520, 661, 674, 712, 728, 732, 740, 1001, 1005, 1009, 1016, 2002, 2004, 2005, 2006, 2017, 2022, 2023, 2029, 2030, 2031, 2036,
     2037, 2233, 2236, 2259, 2261, 2279, 2280, 2284, 2288, 2298, 2314, 2317, 2320, 2324, 2342, 2476, 5245, 5248, 5249, 5250, 5277, 5283, 5287, 5289, 5294, 5295,
-    5296, 5314, 5315, 5316, 5320, 5322, 5344, 5345, 5346, 5348, 5382, 8202, 8601, 8602, 8603, 8604, 8605, 2055,
+    5296, 5314, 5315, 5316, 5320, 5322, 5344, 5345, 5346, 5348, 5382, 8202, 8601, 8602, 8603, 8604, 8605, 2055, 136,
 ];
 const THROW: [u16; 18] = [59, 149, 152, 229, 230, 231, 232, 250, 251, 480, 1004, 2278, 2480, 2493, 5340, 5341, 5342, 5343];
 const THIRD_ATTACK: [u16; 9] = [316, 324, 394, 530, 2258, 2307, 2308, 2312, 5330];
@@ -78,6 +78,10 @@ pub fn turns(motion: Motion, mid_swing: bool) -> bool {
     motion != Motion::Attack || !mid_swing
 }
 
+/// Sonic Blow: the caster swings once a hit.
+// ponytail: the game's table gives one skill pose; the swing a hit (hits 200 ms apart) is how it plays for the project's lead.
+pub const SONIC_BLOW: u16 = 136;
+
 /// Meteor Storm: each meteor's ground packet leaves its caster as it is, unturned (casting or standing).
 pub const METEOR_STORM: u16 = 83;
 
@@ -104,6 +108,7 @@ mod tests {
             [motion(5), motion(59), motion(394), motion(123), motion(34), motion(19)],
             [Motion::Attack, Motion::Throw, Motion::ThirdAttack, Motion::PickUp, Motion::Skill, Motion::Skill]
         );
+        assert_eq!(motion(SONIC_BLOW), Motion::Attack, "Sonic Blow swings");
         assert_eq!([motion(29), motion(272)], [Motion::Keep, Motion::Keep], "Increase AGI stands, a combo keeps going");
         assert!(cast_standing(34) && !cast_standing(19));
         assert!(ready_instead(14) && ready_instead(4047) && !ready_instead(7));
