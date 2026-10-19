@@ -598,6 +598,11 @@ pub type CoverQuad<'a> = (&'a Texture, Vector, [[f32; 2]; 4], [[f32; 2]; 4], [f3
 /// colors. Drawn over everything, blended.
 pub type ScreenShape<'a> = (&'a Texture, Vector, Vec<([f32; 2], [f32; 2], [f32; 4])>);
 
+/// A unit's part drawn again for a status (its body flags): texture, feet, corners in sprite pixels (top left, top
+/// right, bottom right, bottom left), colour, whether it adds on, and the screen pixels it's grown by on every side.
+/// Drawn after the units with a depth test and no depth write.
+pub type Glow<'a> = (&'a Texture, Vector, [[f32; 2]; 4], [f32; 4], bool, f32);
+
 /// An effect shape in the world: texture, triangles (position, texture coordinates, color) and whether it adds on.
 pub type EffectMesh<'a> = (&'a Texture, Vec<MeshVertex>, bool);
 
@@ -1457,6 +1462,7 @@ pub struct WorldFrame<'a> {
     /// How many of the billboards, first, are shadows.
     pub shadows: usize,
     pub effects: &'a [EffectQuad<'a>],
+    pub glows: &'a [Glow<'a>],
     pub meshes: &'a [EffectMesh<'a>],
     pub screen: &'a [ScreenShape<'a>],
     /// The blind overlay, drawn last with no depth test.
@@ -1581,6 +1587,27 @@ impl WorldPass for WorldFrame<'_> {
                 usage: wgpu::BufferUsages::VERTEX,
             })
         });
+        let glow_vertices: Vec<SpriteVertex> = self
+            .glows
+            .iter()
+            .flat_map(|&(_, feet, corners, tint, _, grow)| {
+                let corner = |index: usize, uv: [f32; 2], pixel: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint, pixel, plane: [0.0; 3] };
+                let [top_left, top_right, bottom_right, bottom_left] = [
+                    corner(0, [0.0, 0.0], [-grow, -grow]),
+                    corner(1, [1.0, 0.0], [grow, -grow]),
+                    corner(2, [1.0, 1.0], [grow, grow]),
+                    corner(3, [0.0, 1.0], [-grow, grow]),
+                ];
+                [top_left, top_right, bottom_left, bottom_left, top_right, bottom_right]
+            })
+            .collect();
+        let glow_buffer = (!glow_vertices.is_empty()).then(|| {
+            gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("glows"),
+                contents: bytemuck::cast_slice(&glow_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
+        });
         let mesh_vertices: Vec<MeshVertex> = self.meshes.iter().chain(self.top_meshes).flat_map(|(_, vertices, _)| vertices.iter().copied()).collect();
         let mesh_buffer = (!mesh_vertices.is_empty()).then(|| {
             gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1655,6 +1682,16 @@ impl WorldPass for WorldFrame<'_> {
             for pipeline in [&world.sprite_pipeline, &world.soft_pipeline] {
                 pass.set_pipeline(pipeline);
                 order.iter().for_each(|&index| draw(&mut pass, index));
+            }
+        }
+        // The parts drawn again for statuses, over the units.
+        if let Some(buffer) = &glow_buffer {
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            for (index, (texture, .., additive, _)) in self.glows.iter().enumerate() {
+                let first = index as u32 * 6;
+                pass.set_pipeline(&world.effect_pipelines[usize::from(*additive)]);
+                pass.set_bind_group(1, texture.bind_group(), &[]);
+                pass.draw(first..first + 6, 0..1);
             }
         }
         // Translucent model textures after the sprites: the static batches back to front by their first vertex's depth,
