@@ -15,11 +15,6 @@ use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, offset};
 
-/// The box grid other skill lists (guild, homunculus, mercenary) lay their skills out on.
-pub const CELL: [f32; 2] = [62.0, 58.0];
-pub const BOX: f32 = 28.0;
-/// Where a level up button sits by a box in those lists.
-pub const UP: [f32; 2] = [BOX + 1.0, 2.0];
 const GREY: [u8; 3] = [0x80, 0x80, 0x80];
 
 const WIDTH: f32 = 560.0;
@@ -368,40 +363,6 @@ impl<'a> Cooling<'a> {
 
 pub fn icon_path(info: &SkillInfo) -> String {
     format!("{UI}item\\{}.bmp", info.resource.to_lowercase())
-}
-
-/// A skill's box with its corner at `corner` on screen: the icon, the level in its corner and the name under it; a
-/// level of 0 is a skill not learned, veiled and greyed.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_box<'a>(
-    layer: &mut Layer<'a>,
-    assets: &'a Assets,
-    icons: &'a HashMap<String, Option<Texture>>,
-    font: &Font,
-    corner: [f32; 2],
-    info: Option<&SkillInfo>,
-    name: &str,
-    level: u16,
-) {
-    layer.sprites.push((&assets.slot, offset(corner, [2.0, 2.0]), assets.slot.size));
-    if let Some(Some(icon)) = info.map(icon_path).and_then(|path| icons.get(&path)) {
-        layer.sprites.push((icon, offset(corner, [2.0, 2.0]), icon.size));
-        if level == 0 {
-            layer.sprites.push((&assets.veil, offset(corner, [2.0, 2.0]), icon.size));
-        }
-    }
-    if level > 0 {
-        // The level in the box's corner, white on a dark outline.
-        let text = level.to_string();
-        let place = offset(corner, [BOX - font.width(&text) - 1.0, BOX - font.line_height() + 2.0]);
-        for nudge in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
-            layer.texts.push((text.clone(), offset(place, nudge), [0x2F, 0x2F, 0x2F]));
-        }
-        layer.texts.push((text, place, [255; 3]));
-    }
-    let shown = window::fit(font, name, CELL[0] - 2.0);
-    let place = [corner[0] + (BOX - font.width(&shown)) / 2.0, corner[1] + BOX + 2.0].map(f32::floor);
-    layer.texts.push((shown, place, if level > 0 { [0, 0, 0] } else { GREY }));
 }
 
 /// What the window shows from: the line's trees and jobs, the skills as the server has them, the client's skill
