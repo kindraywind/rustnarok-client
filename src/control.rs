@@ -5,6 +5,8 @@
 //! ignores the real mouse and keyboard, opens behind the window in use and draws on screen only while it has the focus
 //! (click it to watch); screenshots don't need that.
 //!
+//! With `RUSTNAROK_CLIENT_CONTROL_SHARED` as well, the player plays the same client (see mcp.rs).
+//!
 //! The `rustnarok-client-mcp` binary (src/bin/rustnarok-client-mcp.rs) offers these commands to Claude Code as MCP tools. Build with
 //! `cargo build --release`, then register it once with
 //! `claude mcp add rustnarok-client-dev -- <repo>/target/release/rustnarok-client-mcp`.
@@ -69,6 +71,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, NativeKeyCode, PhysicalKey, SmolStr};
 
 use crate::actor::Look;
+use crate::mcp;
 use crate::render::{Gpu, Sprite, WorldPass};
 use crate::{App, DialogButton, Game, HOMUNCULUS, MERCENARY, MONSTER, NPC, NetEvent, Owner, PET, PLAYER, Panel, Scene, inventory};
 
@@ -430,15 +433,20 @@ fn trace_ms() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() % 100_000
 }
 
-/// Whether the client takes commands from the socket. Then the real mouse and keyboard are ignored: between commands
-/// they'd move the pointer, type into the chat line or hold modifiers down.
+/// Whether the client takes commands from the socket and is the driver's alone. Then the real mouse and keyboard are
+/// ignored: between commands they'd move the pointer, type into the chat line or hold modifiers down.
 pub fn driven() -> bool {
+    ON.load(Ordering::Relaxed) && !mcp::shared()
+}
+
+/// Whether the control socket is open, shared with the player or not.
+fn socket_on() -> bool {
     ON.load(Ordering::Relaxed)
 }
 
 /// Notes an effect sound played (`wait` event `Sound <file>`, the file under data\wav\ as asked for).
 pub fn sound_played(name: &str) {
-    if driven() {
+    if socket_on() {
         record(Seen::Event(format!("Sound {name}")), format!("{:05} == Sound {name}", trace_ms()));
         RECENT_SOUNDS.lock().unwrap().push_back((now(), name.to_owned()));
     }
@@ -456,7 +464,7 @@ fn recent_sounds() -> Vec<String> {
 
 /// Notes an event from the servers for `wait`: its variant's name, and what it says (a disconnection's reason, say).
 pub fn observe(event: &NetEvent) {
-    if !driven() {
+    if !socket_on() {
         return;
     }
     let (name, debug) = match event {
@@ -497,6 +505,7 @@ pub fn run(app: &mut App, event_loop: &ActiveEventLoop, Request { command, reply
 }
 
 fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Result<Value, String> {
+    mcp::note(&mut app.scene, &command);
     match command {
         Command::Screenshot { crop, scale } => screenshot(app, event_loop, crop, scale),
         Command::MouseDown { x, y, button } | Command::MouseUp { x, y, button } => {

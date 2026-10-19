@@ -35,6 +35,7 @@ fn tools() -> Value {
                 "account": {"type": "string", "description": "which pair of lines: \"2\" for `username2:` and `password2:` (the first by default)"},
                 "slot": {"type": "integer", "description": "character slot to play"},
                 "timeout_s": {"type": "integer", "description": "how long to wait for the client (90 by default)"},
+                "shared": {"type": "boolean", "description": "true (the default): the player plays the same client with the real mouse and keyboard, and its chat has an MCP tab listing what you do. false: the client is yours alone and ignores the real mouse and keyboard"},
             }),
             &[],
         ),
@@ -162,6 +163,9 @@ impl Server {
         let mut command = Command::new(&game);
         // The client finds data.grf and the data folders in the repository.
         command.current_dir(env!("CARGO_MANIFEST_DIR")).env("RUSTNAROK_CLIENT_CONTROL", &self.socket);
+        if arguments["shared"].as_bool().unwrap_or(true) {
+            command.env("RUSTNAROK_CLIENT_CONTROL_SHARED", "1");
+        }
         if let Some(server) = arguments["server"].as_str() {
             command.env("RUSTNAROK_CLIENT_SERVER", server);
         }

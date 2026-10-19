@@ -31,6 +31,7 @@
 //! `RUSTNAROK_CLIENT_PARTY=accept,window,friends` (join the first party that invites, open the party window),
 //! `RUSTNAROK_CLIENT_WHISPER=<name>|<text>[;...]` (whisper those a second in, through the chat's name box),
 //! `RUSTNAROK_CLIENT_CONTROL=<socket>` (take commands from a test driver on that Unix socket; see control.rs),
+//! `RUSTNAROK_CLIENT_CONTROL_SHARED=1` (with it: the player plays too, and the chat has an MCP tab),
 //! `RUSTNAROK_CLIENT_CLICKS=[r]x,y[>x,y][;...]` (click, or drag, one a second from `RUSTNAROK_CLIENT_CLICKS_AT` seconds in, 4 by
 //! default; `r` for the right button),
 //! `RUSTNAROK_CLIENT_MAKE=<slot>[:<name>]` (open character creation on that slot; with a name, make it),
@@ -96,6 +97,7 @@ mod macros;
 mod mail;
 mod map_effects;
 mod material;
+mod mcp;
 mod memorial;
 mod menu;
 mod mercenary;
@@ -3221,7 +3223,7 @@ fn toggle_big_minimap(game: &mut Game, gpu: &render::Gpu, grf: &Grf, exceptions:
 /// driver runs (`RUSTNAROK_CLIENT_CONTROL`) only with the dev switch `RUSTNAROK_CLIENT_KEEP_WINDOWS`, so one
 /// scenario's windows don't move the next one's.
 pub(crate) fn keeps_windows() -> bool {
-    std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_none() || std::env::var_os("RUSTNAROK_CLIENT_KEEP_WINDOWS").is_some()
+    !mcp::scripted() || std::env::var_os("RUSTNAROK_CLIENT_KEEP_WINDOWS").is_some()
 }
 
 /// Where the player's settings file `name` is kept: Application Support on a Mac, %APPDATA% on Windows, the XDG config
@@ -5187,10 +5189,7 @@ fn main() {
     let mut event_loop = EventLoop::<NetEvent>::with_user_event();
     // A client driven over the control socket opens without taking the keyboard from the app in use.
     #[cfg(target_os = "macos")]
-    winit::platform::macos::EventLoopBuilderExtMacOS::with_activate_ignoring_other_apps(
-        &mut event_loop,
-        std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_none(),
-    );
+    winit::platform::macos::EventLoopBuilderExtMacOS::with_activate_ignoring_other_apps(&mut event_loop, !mcp::scripted());
     let event_loop = event_loop.build().expect("event loop");
     control::listen(event_loop.create_proxy());
     let pets = pet::Data::load(&grf);
@@ -5253,7 +5252,7 @@ fn main() {
     let minimap_exceptions = minimap_window::load_exceptions(&grf);
     let viewpoints = rustnarok_client::map::viewpoints(&grf).unwrap_or_default();
     // A client the harness drives starts from the default view and keeps it to itself.
-    let driven = std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_some();
+    let driven = mcp::scripted();
     let saved_view = if driven {
         SavedView::harness()
     } else {
@@ -5338,7 +5337,7 @@ fn main() {
         effect_table: effects::Table::load(),
         // Driven or screenshot runs stay quiet unless RUSTNAROK_CLIENT_SOUND=1.
         audio: (std::env::var("RUSTNAROK_CLIENT_SOUND").is_ok_and(|sound| sound == "1")
-            || std::env::var_os("RUSTNAROK_CLIENT_SCREENSHOT").is_none() && std::env::var_os("RUSTNAROK_CLIENT_CONTROL").is_none())
+            || std::env::var_os("RUSTNAROK_CLIENT_SCREENSHOT").is_none() && !mcp::scripted())
         .then(|| sound::Audio::new(&sound))
         .flatten(),
         sound,

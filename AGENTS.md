@@ -23,6 +23,8 @@ screenshots in git; `cargo fmt` and `clippy -D warnings` stay clean; dev switche
     `window.rs` has what windows share, and `escape.rs` has the Esc order's `WindowId`.
   - `control.rs`: the test driver's socket. `game_state` builds the JSON that `state` returns: windows, units, and the
     named click targets that scenarios use.
+  - `mcp.rs`: a client shared with an agent (`RUSTNAROK_CLIENT_CONTROL_SHARED`): the player plays it too, and the chat's
+    MCP tab lists what the agent does.
 
 ## A new packet
 
