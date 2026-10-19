@@ -58,16 +58,19 @@ const SU_LUNATICCARROTBEAT: u16 = 5036;
 const SU_CN_METEOR2: u16 = 5042;
 const SU_LUNATICCARROTBEAT2: u16 = 5043;
 
-/// Whether a unit calls a skill's name over its head. A level below 0 marks a silent follow-up hit. Monsters call
-/// only skills without damage; everyone else calls every skill but the quiet ones, so a skill with a cast time is
-/// called twice: as the cast starts and as it lands.
+/// Whether a unit calls a skill's name over its head. A level below 0 marks a silent follow-up for anyone who isn't
+/// a monster. Monsters call only skills without damage, whatever the level; everyone else calls every skill but the
+/// quiet ones, so a skill with a cast time is called twice: as the cast starts and as it lands.
 pub fn shouts(skill: u16, level: i32, job: u16, kind: u8, packet: Shout) -> bool {
-    if level < 0 || SILENT.contains(&skill) {
+    if SILENT.contains(&skill) {
         return false;
     }
     if monster_job(job) {
         // ponytail: elementals and the like (types 10, 13 and 14) call their ZC_NOTIFY_SKILL hits too.
         return packet == Shout::Used || (packet == Shout::Hit && matches!(kind, 10 | 13 | 14));
+    }
+    if level < 0 {
+        return false;
     }
     let quiet = QUIET.contains(&skill) || (packet == Shout::Cast && CALLED_ON_LANDING.contains(&skill)) || (packet == Shout::Used && skill == UNCALLED_USE);
     !quiet
@@ -324,8 +327,11 @@ mod tests {
         assert!(!calls(28, 10, poring, Shout::Cast) && calls(28, 10, poring, Shout::Used));
         // A monster's bolt hits without its name; a player's calls it.
         assert!(!calls(19, 5, poring, Shout::Hit) && calls(19, 5, player, Shout::Hit));
-        // Silent follow-ups, hiding, Frost Joke.
+        // A level below 0 hides the name for a player. A monster still calls a skill it used.
         assert!(!calls(19, -1, player, Shout::Hit));
+        assert!(calls(19, -1, poring, Shout::Used));
+        assert!(!calls(19, -1, poring, Shout::Hit));
+        assert!(calls(19, -1, (2114, 10), Shout::Hit));
         assert!(!calls(51, 1, player, Shout::Used) && calls(51, 1, poring, Shout::Used));
         assert!(!calls(318, 5, poring, Shout::Used) && !calls(318, 5, player, Shout::Used));
         // Bowling Bash only as it lands.

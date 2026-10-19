@@ -764,6 +764,9 @@ pub struct World {
     shadow_pipeline: wgpu::RenderPipeline,
     /// Sprites' soft pixels: blended over without writing depth.
     soft_pipeline: wgpu::RenderPipeline,
+    /// Hit numbers: the sprite pipelines with no depth test, so they draw over walls and the ground.
+    // ponytail: a no-depth twin of the sprite pipelines, rather than the STR quads.
+    number_pipelines: [wgpu::RenderPipeline; 2],
     /// Effects blended over, and added on; the same for effect shapes.
     effect_pipelines: [wgpu::RenderPipeline; 2],
     /// STRs: no depth test, over everything.
@@ -967,6 +970,17 @@ impl World {
         };
         let sprite_pipeline = pipeline("sprite", "solid_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), true);
         let soft_pipeline = pipeline("sprite", "soft_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false);
+        // ponytail: hit numbers use this twin (no depth test, no depth write) so a wall doesn't hide them.
+        let number_pipelines = [true, false].map(|solid| {
+            pipeline_compared(
+                "sprite",
+                if solid { "solid_fs" } else { "soft_fs" },
+                sprite_buffer_layout(),
+                Some(wgpu::BlendState::ALPHA_BLENDING),
+                false,
+                wgpu::CompareFunction::Always,
+            )
+        });
         // A shadow and its sprite share a depth; rounding in the two quads' divides left the shadow nearer in places,
         // so a shadow writing depth cut holes in its own sprite. Shadows lie on what's under them and hide nothing.
         let shadow_pipeline = pipeline("sprite", "sprite_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false);
@@ -1039,6 +1053,7 @@ impl World {
             sprite_pipeline,
             shadow_pipeline,
             soft_pipeline,
+            number_pipelines,
             effect_pipelines,
             str_pipelines,
             cover_pipeline,
@@ -1461,6 +1476,8 @@ pub struct WorldFrame<'a> {
     pub billboards: &'a [Billboard<'a>],
     /// How many of the billboards, first, are shadows.
     pub shadows: usize,
+    /// Hit numbers, MISS, Lucky and totals: drawn like sprites, with no depth test, after the ground and models.
+    pub numbers: &'a [Billboard<'a>],
     pub effects: &'a [EffectQuad<'a>],
     pub glows: &'a [Glow<'a>],
     pub meshes: &'a [EffectMesh<'a>],
@@ -1616,6 +1633,40 @@ impl WorldPass for WorldFrame<'_> {
                 usage: wgpu::BufferUsages::VERTEX,
             })
         });
+        let number_planes: Vec<[f32; 3]> =
+            self.numbers.iter().map(|&(_, feet, .., layer)| plane(layer, view.depth_of(feet), view.pitch, view.distance)).collect();
+        let number_vertices: Vec<SpriteVertex> = self
+            .numbers
+            .iter()
+            .zip(&number_planes)
+            .flat_map(|(&(_, feet, offset, size, tint, angle, _), &plane)| {
+                let corner = |u: f32, v: f32| {
+                    let (offset, pixel) = sprite_corner(offset, size, angle, [u, v]);
+                    SpriteVertex { feet, offset, uv: [u, v], tint, pixel, plane }
+                };
+                [corner(0., 0.), corner(1., 0.), corner(0., 1.), corner(0., 1.), corner(1., 0.), corner(1., 1.)]
+            })
+            .collect();
+        let number_depths: Vec<f32> = self
+            .numbers
+            .iter()
+            .zip(&number_planes)
+            .map(|(&(_, feet, offset, size, _, angle, _), &plane)| {
+                let Some(base) = view.project(feet) else { return 1.0 };
+                let corners = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]].map(|uv| view.sprite_point(feet, sprite_corner(offset, size, angle, uv).0));
+                let top = corners.iter().flatten().map(|corner| corner[1]).reduce(f32::min).unwrap_or(base[1]);
+                sprite_depth(view.depth_of(feet), (top - base[1]) * SCREEN_HEIGHT, plane)
+            })
+            .collect();
+        let mut number_order: Vec<usize> = (0..self.numbers.len()).collect();
+        number_order.sort_by(|&a, &b| number_depths[b].total_cmp(&number_depths[a]));
+        let number_buffer = (!number_vertices.is_empty()).then(|| {
+            gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("hit numbers"),
+                contents: bytemuck::cast_slice(&number_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
+        });
         let sprite_buffer = (!sprite_vertices.is_empty()).then(|| {
             gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("sprites"),
@@ -1727,6 +1778,19 @@ impl WorldPass for WorldFrame<'_> {
                 pass.set_vertex_buffer(0, batch.buffer.slice(..));
                 pass.set_bind_group(1, batch.texture.bind_group(), &[]);
                 pass.draw(0..batch.count, 0..1);
+            }
+        }
+        // Hit numbers over the ground, walls and models. Digits sort in front of their burst.
+        if let Some(buffer) = &number_buffer {
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            let draw = |pass: &mut wgpu::RenderPass, index: usize| {
+                let first = index as u32 * 6;
+                pass.set_bind_group(1, self.numbers[index].0.bind_group(), &[]);
+                pass.draw(first..first + 6, 0..1);
+            };
+            for pipeline in &world.number_pipelines {
+                pass.set_pipeline(pipeline);
+                number_order.iter().for_each(|&index| draw(&mut pass, index));
             }
         }
         if let Some(buffer) = &mesh_buffer {
