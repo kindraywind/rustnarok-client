@@ -1064,6 +1064,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.memorial.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.storage_log.iter().flat_map(crate::storage_log::Log::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::item_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
@@ -1656,6 +1657,11 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["sounds_recent"] = recent_sounds().into();
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
     state["storage_rows"] = game.storage.rows().into();
+    // The guild storage log: null when shut, else its place, tab, page and how many it lists.
+    state["storage_log"] = game
+        .storage_log
+        .as_ref()
+        .map_or(Value::Null, |log| json!({"position": log.position, "tab": format!("{:?}", log.tab), "page": log.page_text(), "listed": log.listed().len()}));
     // The category windows that are on (a bit each, Use first) and those open now.
     state["storage_mask"] = game.storage.mask.into();
     // The main window's list in its order, and the Search window's, by item id; what's typed in the box.

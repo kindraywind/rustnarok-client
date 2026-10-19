@@ -897,6 +897,11 @@ pub enum MapEvent {
     MailUnread(bool),
     /// The mailbox, newest first.
     MailList(Vec<MailHeader>),
+    /// A page of the guild storage's log: result 0 more to come, 1 the last, 2 no log, else refused.
+    GuildStorageLog {
+        result: u16,
+        entries: Vec<GuildStorageEntry>,
+    },
     /// A mail opened: its text, and the zeny and items still in it.
     MailRead {
         kind: u8,

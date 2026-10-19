@@ -1915,6 +1915,7 @@ impl Game {
             || self.catalog.as_ref().and_then(|catalog| catalog.hit(cursor)).is_some()
             || self.queue_window.covers(cursor)
             || self.memorial.covers(cursor)
+            || self.storage_log.as_ref().is_some_and(|log| log.covers(cursor))
             || self.skill_description.as_ref().is_some_and(|window| window.contains(cursor))
             || self.level_ups.hit(cursor).is_some()
             || (self.quest_icon && quest_notice::on_icon(cursor))

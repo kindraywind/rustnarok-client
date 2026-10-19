@@ -2199,6 +2199,10 @@ impl App {
         if game.memorial.frame.open {
             game.memorial.draw(shop_layer.window(), &assets.chrome, font, messages, pointer.0, memorial::unix_now());
         }
+        if let Some(log) = &game.storage_log {
+            let names = (&messages[..], card_names, &game.char_names);
+            log.draw(shop_layer.window(), &assets.chrome, &assets.storage_log, items, names, font, pointer);
+        }
         // The battleground queue, and its question: applying, leaving, or entering with the time left.
         if game.queue_window.frame.open {
             game.queue_window.draw(

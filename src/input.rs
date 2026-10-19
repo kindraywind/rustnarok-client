@@ -1871,6 +1871,9 @@ impl App {
             }
             let memorial_height = game.memorial.height();
             game.memorial.frame.drag_to(self.cursor, memorial_height);
+            if let Some(log) = &mut game.storage_log {
+                log.drag_to(self.cursor);
+            }
             if let Some(window) = &mut game.stylist {
                 window.frame.drag_to(self.cursor, stylist::HEIGHT);
             }
@@ -2560,7 +2563,8 @@ impl App {
                     | game.enchant.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.stylist.as_mut().is_some_and(|window| window.frame.drop_drag())
-                    | game.memorial.frame.drop_drag();
+                    | game.memorial.frame.drop_drag()
+                    | game.storage_log.as_mut().is_some_and(storage_log::Log::drop_drag);
                 // A slider let go keeps its volume for next time.
                 let slid = game.audio_window.as_mut().is_some_and(options::AudioWindow::drop_drag);
                 if slid {
@@ -2827,6 +2831,16 @@ impl App {
             } else if !on_menu {
                 game.press_esc(cursor);
             }
+        }
+        // The guild storage log: its tabs and arrows on the press, Close too, and anywhere else drags it.
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(log) = &mut game.storage_log
+            && let Some(hit) = log.hit(cursor)
+        {
+            if log.press(hit, cursor) {
+                game.storage_log = None;
+            }
+            return;
         }
         if let Scene::Game(game) = &mut self.scene
             && game.memorial.hit(cursor).is_some()

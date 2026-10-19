@@ -131,6 +131,7 @@ mod sound;
 mod status;
 mod status_tip;
 mod storage;
+mod storage_log;
 mod stylist;
 mod taming;
 mod trade;
@@ -1466,6 +1467,9 @@ struct Game {
     /// The memorial dungeon, and whether Destroy is asking yes or no.
     memorial: memorial::Window,
     memorial_asked: bool,
+    /// The guild storage's log window, and the log's entries heard before its last page.
+    storage_log: Option<storage_log::Log>,
+    storage_log_heard: Vec<net::GuildStorageEntry>,
     queued: Option<(String, Option<u32>)>,
     queue_asked: Option<QueueAsked>,
     /// The battleground's camps, score, teammates' dots and battle chat; forgotten on a map change.
@@ -2728,6 +2732,7 @@ struct Assets {
     shop: shop::Assets,
     pick_list: pick_list::Assets,
     storage: storage::Assets,
+    storage_log: storage_log::Assets,
     trade: trade::Assets,
     refine: refine::Assets,
     grade: grade::Assets,
@@ -2853,6 +2858,7 @@ impl Assets {
             shop: shop::Assets::load(gpu, grf),
             pick_list: pick_list::Assets::load(gpu, grf),
             storage: storage::Assets::load(gpu, grf),
+            storage_log: storage_log::Assets::load(gpu, grf),
             trade: trade::Assets::load(gpu, grf),
             refine: refine::Assets::load(gpu, grf),
             grade: grade::Assets::load(gpu, grf),
