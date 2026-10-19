@@ -3314,7 +3314,7 @@ fn press_ends(click: &WorldClick, double: bool) -> (bool, bool) {
         _ if double => (false, false),
         WorldClick::Talk(_) => (false, false),
         WorldClick::Attack(_) => (true, true),
-        WorldClick::Swing(_) | WorldClick::PickUp(_) | WorldClick::Warp(_) | WorldClick::Ground => (true, false),
+        WorldClick::Swing(_) | WorldClick::PickUp(_) | WorldClick::Warp | WorldClick::Ground => (true, false),
     }
 }
 
@@ -3562,8 +3562,8 @@ const NO_MAGNIFIER: usize = 2735;
 
 /// What a left click on the world does (`Game::world_click`).
 enum WorldClick {
-    /// A warp portal's cell.
-    Warp([i32; 2]),
+    /// A warp portal: a press on it is a ground press.
+    Warp,
     Talk(u32),
     Attack(u32),
     Swing(u32),
@@ -3644,11 +3644,34 @@ fn press_pair(last: Option<(Instant, [f32; 2], bool)>, now: Instant, cursor: [f3
     (double, (!double).then_some((now, cursor, false)))
 }
 
-/// Whether the button held down after a double press on the ground goes on following the pointer: as after a first
-/// press, not with Ctrl or Shift, nor sitting.
-// ponytail: only when the double press was on the ground.
-fn double_holds(ctrl: bool, shift: bool, sitting: bool) -> bool {
-    !ctrl && !shift && !sitting
+/// What a press on the ground (or a warp) or a held try does with the cell under the pointer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum GroundAct {
+    Walk,
+    Turn,
+    Nothing,
+}
+
+/// A press on the ground or a warp: nothing with Ctrl or the right button down; a turn with Shift, in a chat room or
+/// sitting; else a walk. Nothing where no cell is under the pointer.
+fn ground_press(ctrl: bool, shift: bool, sitting: bool, in_room: bool, right_down: bool, cell: bool) -> GroundAct {
+    match () {
+        _ if ctrl || right_down || !cell => GroundAct::Nothing,
+        _ if shift || in_room || sitting => GroundAct::Turn,
+        _ => GroundAct::Walk,
+    }
+}
+
+/// A held try, once MOVE_GAP_MS has passed with nothing pending and the pointer off the windows: None (no try, the
+/// try time left alone) with Ctrl down or no cell under the pointer; else a turn or a walk as a press decides, the
+/// right button aside.
+fn held_try(ctrl: bool, shift: bool, sitting: bool, in_room: bool, cell: bool) -> Option<GroundAct> {
+    (!ctrl && cell).then(|| ground_press(false, shift, sitting, in_room, false, true))
+}
+
+/// Whether a world press starts the hold (`walk_held`, the try time now): every press but one on something to attack.
+fn press_holds(click: &WorldClick) -> bool {
+    !matches!(click, WorldClick::Attack(_) | WorldClick::Swing(_))
 }
 
 /// Whether a press now, after the last one (when, and whether the pointer moved since), is a double press.
@@ -3656,10 +3679,16 @@ fn double_press(last: Option<(Instant, [f32; 2], bool)>, now: Instant) -> bool {
     last.is_some_and(|(at, _, moved)| !moved && now.saturating_duration_since(at) < DOUBLE_PRESS)
 }
 
-/// How far the pointer may wander from a press and still count as still there (a double click, a click not a
-/// drag), in canvas pixels: a hand's tremor on a mouse or trackpad, which a scaled window turns into fractions.
+/// How far the pointer may wander from a right press and still count as still there (the camera's double click, a
+/// click not a drag), in canvas pixels: a hand's tremor on a mouse or trackpad, which a scaled window turns into
+/// fractions.
 // ponytail: an estimate; one canvas pixel was too strict on a scaled window.
 const POINTER_SLACK: f32 = 2.0;
+
+/// Whether the pointer at `to` is on another whole canvas pixel than at `from`: a left double press allows no slack.
+fn left_pixel(from: [f32; 2], to: [f32; 2]) -> bool {
+    from.map(f32::floor) != to.map(f32::floor)
+}
 
 /// Whether the pointer at `to` has moved off a press at `from`.
 fn moved_off(from: [f32; 2], to: [f32; 2]) -> bool {
@@ -4077,6 +4106,8 @@ struct App {
     focus: usize,
     cursor: [f32; 2],
     mouse_down: bool,
+    /// The right button is down: a left press on the ground then neither walks nor turns.
+    right_down: bool,
     button: ButtonRead,
     /// Dev switch RUSTNAROK_CLIENT_CLICKS: when (after entering the map), where, and where to drag to, last first.
     auto_input: Vec<ScriptedInput>,
@@ -4707,13 +4738,22 @@ impl ApplicationHandler<NetEvent> for App {
                 if let Some(goal) = game.stored_walk.frame(game.player.busy(control::now()), game.player.dead) {
                     game.send_walk(goal, now);
                 }
-                if follows_pointer(game.walk_held, game.pending.is_some(), game.last_walk_try, whole_ms(now))
+                // Each try decides again: Ctrl does nothing, Shift, a chat room or sitting turn, else a walk.
+                if follows_pointer(game.walk_held, game.pending.is_some() || game.attack.is_some(), game.last_walk_try, whole_ms(now))
+                    && !game.trade_or_storage()
                     && let Some(assets) = &self.assets
                     && !game.on_ui(self.cursor, assets.message.size)
-                    && let Some(cell) = game.ground_cell(self.cursor)
                 {
-                    game.last_walk_try = Some(whole_ms(now));
-                    game.walk_toward(cell, now);
+                    let cell = game.ground_cell(self.cursor);
+                    let (ctrl, shift) = (self.modifiers.control_key(), self.modifiers.shift_key());
+                    if let (Some(cell), Some(act)) = (cell, held_try(ctrl, shift, game.player.sitting, game.room.is_some(), cell.is_some())) {
+                        game.last_walk_try = Some(whole_ms(now));
+                        match act {
+                            GroundAct::Walk => drop(game.walk_toward(cell, now)),
+                            GroundAct::Turn => game.turn_to(cell),
+                            GroundAct::Nothing => {}
+                        }
+                    }
                 }
                 if game.entered.elapsed() > Duration::from_secs(1) {
                     if let Some(cell) = game.auto_walk.take() {
@@ -5108,6 +5148,7 @@ fn main() {
             })
             .unwrap_or([-1.0; 2]),
         mouse_down: false,
+        right_down: false,
         button: ButtonRead::default(),
         auto_input: {
             let start = std::env::var("RUSTNAROK_CLIENT_CLICKS_AT").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(4);
@@ -5939,12 +5980,46 @@ mod tests {
     }
 
     #[test]
+    fn decides_presses_and_held_tries_on_the_ground() {
+        use GroundAct::*;
+        // (ctrl, shift, sitting, chat room, right button, cell)
+        assert_eq!(ground_press(false, false, false, false, false, true), Walk);
+        assert_eq!(ground_press(true, false, false, false, false, true), Nothing);
+        assert_eq!(ground_press(false, false, false, false, true, true), Nothing, "the right button down");
+        assert_eq!(ground_press(false, false, false, false, false, false), Nothing, "no cell");
+        for (shift, sitting, room) in [(true, false, false), (false, true, false), (false, false, true), (true, true, true)] {
+            assert_eq!(ground_press(false, shift, sitting, room, false, true), Turn);
+            assert_eq!(ground_press(true, shift, sitting, room, false, true), Nothing);
+        }
+        // Every mix: a press walks only with nothing of these.
+        for bits in 0..64u8 {
+            let [ctrl, shift, sitting, room, right, cell] = [0, 1, 2, 3, 4, 5].map(|bit| bits & (1 << bit) != 0);
+            let expected = if ctrl || right || !cell {
+                Nothing
+            } else if shift || sitting || room {
+                Turn
+            } else {
+                Walk
+            };
+            assert_eq!(ground_press(ctrl, shift, sitting, room, right, cell), expected, "{bits:06b}");
+            // A held try: none with Ctrl or no cell (the try time stays); else the press's answer without the right button.
+            let held = held_try(ctrl, shift, sitting, room, cell);
+            assert_eq!(held, (!ctrl && cell).then(|| ground_press(false, shift, sitting, room, false, true)), "{bits:06b}");
+        }
+        // Letting go of Shift mid-hold walks at the next try.
+        assert_eq!([held_try(false, true, false, false, true), held_try(false, false, false, false, true)], [Some(Turn), Some(Walk)]);
+        // The hold starts on every press but an attack.
+        assert!([WorldClick::Ground, WorldClick::Warp, WorldClick::Talk(1), WorldClick::PickUp(2)].iter().all(press_holds));
+        assert!(!press_holds(&WorldClick::Attack(3)) && !press_holds(&WorldClick::Swing(3)));
+    }
+
+    #[test]
     fn keeps_one_pending_action() {
         // (ends the attack, drops a pending skill or pickup)
         assert_eq!(press_ends(&WorldClick::Attack(5), false), (true, true));
         assert_eq!(press_ends(&WorldClick::PickUp(9), false), (true, false));
         assert_eq!(press_ends(&WorldClick::Ground, false), (true, false));
-        assert_eq!(press_ends(&WorldClick::Warp([3, 4]), false), (true, false));
+        assert_eq!(press_ends(&WorldClick::Warp, false), (true, false));
         assert_eq!(press_ends(&WorldClick::Talk(7), false), (false, false), "an NPC click leaves the attack");
         assert_eq!(press_ends(&WorldClick::Attack(5), true), (false, false), "a double press does nothing");
         assert_eq!(press_ends(&WorldClick::Ground, true), (false, false));
@@ -6112,10 +6187,8 @@ mod tests {
         // A move off the press between two presses makes both fresh.
         let (_, first) = press_pair(None, start, [5.0, 5.0]);
         assert!(!press_pair(first.map(|(at, from, _)| (at, from, true)), at(200), [9.0, 5.0]).0);
-        // Held after a double press on the ground, the button follows the pointer; not with Ctrl, Shift or sitting.
-        assert!(
-            double_holds(false, false, false) && !double_holds(true, false, false) && !double_holds(false, true, false) && !double_holds(false, false, true)
-        );
+        // No slack for the left button: a whole pixel off is a move, 0.4 inside the same pixel isn't.
+        assert!(left_pixel([5.2, 5.0], [6.2, 5.0]) && !left_pixel([5.2, 5.0], [5.6, 5.0]));
     }
 
     #[test]

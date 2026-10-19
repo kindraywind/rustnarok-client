@@ -1680,7 +1680,7 @@ impl App {
                 }
             }
             Scene::Game(game) => {
-                if game.store_open() {
+                if game.store_open() || game.trade_or_storage() {
                     return;
                 }
                 // Whatever is under the cursor (see `picking::pick`): talk to NPCs, attack monsters, pick items up. The
@@ -1690,7 +1690,7 @@ impl App {
                     WorldClick::Attack(_) => {}
                     WorldClick::Swing(id) => drop(game.session.act(id, net::ACT_ATTACK)),
                     // The rest went with the press.
-                    WorldClick::Talk(_) | WorldClick::PickUp(_) | WorldClick::Warp(_) | WorldClick::Ground => {}
+                    WorldClick::Talk(_) | WorldClick::PickUp(_) | WorldClick::Warp | WorldClick::Ground => {}
                 }
             }
             Scene::Message(..) => {
@@ -1721,7 +1721,7 @@ impl App {
         if let Scene::Game(game) = &mut self.scene {
             let cursor = self.cursor;
             if let Some((_, from, moved)) = &mut game.press_mark {
-                *moved |= moved_off(*from, cursor);
+                *moved |= left_pixel(*from, cursor);
             }
             if game.right_press.is_some_and(|(from, _)| moved_off(from, cursor)) {
                 game.right_moved = true;
@@ -1857,6 +1857,7 @@ impl App {
 
     /// The right button: Alt moves stacks to storage, a click on a player opens their menu, a press aims the camera.
     pub(crate) fn right_button(&mut self, state: ElementState) {
+        self.right_down = state == ElementState::Pressed;
         // A right press lets go of a held drag and closes the box asking how many of an item.
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Pressed
@@ -2586,10 +2587,15 @@ impl App {
         game.dragging.is_none() && !game.on_ui(self.cursor, assets.message.size) && !game.store_open() && game.targeting.is_none() && !game.capturing
     }
 
+    /// Whether a world press does anything: not with the trade or storage window open (it's taken, and dropped).
+    fn world_acts(&self) -> bool {
+        matches!(&self.scene, Scene::Game(game) if !game.trade_or_storage())
+    }
+
     /// The left button read once a frame (`ButtonRead`): a press since the last read, still down, acts in the world
     /// at the pointer now.
     pub(crate) fn read_button(&mut self) {
-        if self.button.read(self.mouse_down) && self.world_takes_press() {
+        if self.button.read(self.mouse_down) && self.world_takes_press() && self.world_acts() {
             self.world_press();
         }
     }
@@ -2618,13 +2624,17 @@ impl App {
             game.pending = None;
             game.pending_walk = None;
         }
-        match click {
-            // A double press does nothing, but held on the ground the button goes on following the pointer.
-            WorldClick::Ground if double => {
-                if double_holds(ctrl, shift, game.player.sitting) {
-                    game.walk_held = true;
-                }
+        // Every press but an attack starts the hold (a double press leaves the try time alone); each held try then
+        // decides again.
+        if press_holds(&click) {
+            game.walk_held = true;
+            if !double {
+                game.last_walk_try = Some(whole_ms(now));
             }
+        }
+        let in_room = game.room.is_some();
+        match click {
+            // A double press does nothing in the world.
             _ if double => {}
             // Sitting or hidden (option 0x2): an attack click does nothing.
             WorldClick::Attack(_) if game.player.sitting || game.player.option & 0x2 != 0 => {}
@@ -2645,25 +2655,14 @@ impl App {
             }
             WorldClick::Talk(id) => game.talk_to(id, &self.messages),
             // Held, the button follows the pointer again once the item is picked up.
-            WorldClick::PickUp(id) if !game.player.sitting => {
-                game.pick_up(id, now);
-                game.walk_held = true;
-                game.last_walk_try = Some(whole_ms(now));
-            }
-            WorldClick::Warp(cell) if !ctrl => {
-                game.walk_toward(cell, now);
-                game.walk_held = true;
-                game.last_walk_try = Some(whole_ms(now));
-            }
-            WorldClick::Ground if !ctrl => {
-                if let Some(cell) = game.ground_cell(cursor) {
-                    if shift || game.player.sitting {
-                        game.turn_to(cell);
-                    } else {
-                        game.walk_toward(cell, now);
-                        game.walk_held = true;
-                        game.last_walk_try = Some(whole_ms(now));
-                    }
+            WorldClick::PickUp(id) if !game.player.sitting => game.pick_up(id, now),
+            // A warp is ground: the cell under the pointer, not the portal's own.
+            WorldClick::Warp | WorldClick::Ground => {
+                let cell = game.ground_cell(cursor);
+                match (cell, ground_press(ctrl, shift, game.player.sitting, in_room, self.right_down, cell.is_some())) {
+                    (Some(cell), GroundAct::Walk) => drop(game.walk_toward(cell, now)),
+                    (Some(cell), GroundAct::Turn) => game.turn_to(cell),
+                    _ => {}
                 }
             }
             _ => {}

@@ -341,7 +341,7 @@ impl Game {
         match hovered(&self.hit_boxes, cursor, shift) {
             Some(Owner::Unit(id)) => match self.units.get(&id).map(|actor| actor.kind) {
                 // A warp portal: walk onto it.
-                Some(NPC) if self.units[&id].job == WARP_JOB => WorldClick::Warp(self.units[&id].cell),
+                Some(NPC) if self.units[&id].job == WARP_JOB => WorldClick::Warp,
                 Some(NPC) => WorldClick::Talk(id),
                 Some(MONSTER) => WorldClick::Attack(id),
                 // Players: an attack where the map (or Shift, or /noshift) says so; one swing a click on a siege map.
@@ -437,6 +437,11 @@ impl Game {
             return;
         }
         let _ = self.session.talk(id);
+    }
+
+    /// The trade or storage window is open: the world takes no presses and the held button makes no tries.
+    pub(crate) fn trade_or_storage(&self) -> bool {
+        self.trade.is_some() || self.storage.frame.open
     }
 
     pub(crate) fn talk_blocks(&self) -> bool {
