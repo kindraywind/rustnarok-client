@@ -1873,16 +1873,14 @@ fn seen_direction(rot: f32, yaw: f32, round: bool) -> u8 {
     actor::view_direction(rot, yaw.to_degrees(), round)
 }
 
-/// Whether a unit rounds the camera's angle (to the nearest direction) rather than flooring it: players standing,
-/// walking or sitting; NPCs (jobs 46 to 999) standing; jobs 6018 to 6052 standing, walking or sitting. Monsters,
-/// and players in any other action, floor.
-// ponytail: the battle stance counts as standing.
-fn rounds_facing(kind: u8, job: u16, action: usize) -> bool {
-    let still_or_walking = matches!(action, actor::IDLE | actor::WALK | actor::SIT | actor::READY);
-    match kind {
-        PLAYER => still_or_walking,
-        _ if (6018..=6052).contains(&job) => still_or_walking,
-        NPC => (46..=999).contains(&job) && action == actor::IDLE,
+/// Whether a unit rounds the camera's angle (to the nearest direction) rather than flooring it, by the job it's drawn
+/// with (`Actor::drawn_job`) whatever its type: jobs up to 30 and 4001 to 5999 standing, walking or sitting; 46 to 999
+/// standing; 6018 to 6052 standing, walking or sitting. Everything else floors, the ready stance included.
+fn rounds_facing(job: u16, action: usize) -> bool {
+    let still_or_walking = matches!(action, actor::IDLE | actor::WALK | actor::SIT);
+    match job {
+        0..=30 | 4001..=5999 | 6018..=6052 => still_or_walking,
+        46..=999 => action == actor::IDLE,
         _ => false,
     }
 }
@@ -5758,11 +5756,16 @@ mod tests {
     #[test]
     fn rounds_or_floors_the_facing_by_unit() {
         let attack = actor::attack_action(0, 0, 1);
-        assert!(rounds_facing(PLAYER, 0, actor::IDLE) && rounds_facing(PLAYER, 0, actor::WALK) && rounds_facing(PLAYER, 0, actor::SIT));
-        assert!(!rounds_facing(PLAYER, 0, attack));
-        assert!(!rounds_facing(MONSTER, 1002, actor::IDLE) && !rounds_facing(MONSTER, 1002, actor::WALK));
-        assert!(rounds_facing(NPC, 100, actor::IDLE) && !rounds_facing(NPC, 100, actor::WALK) && !rounds_facing(NPC, WARP_JOB, actor::IDLE));
-        assert!(rounds_facing(MONSTER, 6020, actor::WALK) && !rounds_facing(MONSTER, 6020, attack));
+        // By the job drawn, whatever the unit's type: a player (job 0) rounds standing, walking and sitting, floors in
+        // the ready stance or attacking; drawn as job 1002 it floors.
+        assert!(rounds_facing(0, actor::IDLE) && rounds_facing(0, actor::WALK) && rounds_facing(0, actor::SIT));
+        assert!(!rounds_facing(0, actor::READY) && !rounds_facing(0, attack));
+        assert!(!rounds_facing(1002, actor::IDLE) && !rounds_facing(1002, actor::WALK));
+        // An NPC with job 1 rounds walking; a monster with job 100 rounds standing, floors walking.
+        assert!(rounds_facing(1, actor::WALK) && rounds_facing(100, actor::IDLE) && !rounds_facing(100, actor::WALK));
+        assert!(rounds_facing(4008, actor::SIT) && !rounds_facing(WARP_JOB, actor::IDLE));
+        // 6018–6052: standing, walking or sitting; not the ready stance.
+        assert!(rounds_facing(6020, actor::WALK) && !rounds_facing(6020, actor::READY) && !rounds_facing(6020, attack));
     }
 
     #[test]

@@ -700,6 +700,8 @@ pub struct SpriteSet {
     textures: HashMap<ImageKey, Texture>,
     /// A mounted rider's body without the mount, when a headgear sits by it.
     unmounted: Option<Act>,
+    /// The action the unit is in and the frame delay it took when it started it (`action_delay`).
+    delay: std::cell::Cell<Option<(usize, f32)>>,
 }
 
 impl SpriteSet {
@@ -842,6 +844,7 @@ impl SpriteSet {
             tint: None,
             textures: HashMap::new(),
             unmounted,
+            delay: Default::default(),
         })
     }
 
@@ -875,6 +878,7 @@ impl SpriteSet {
             tint: None,
             textures: HashMap::new(),
             unmounted: None,
+            delay: Default::default(),
         })
     }
 
@@ -911,6 +915,7 @@ impl SpriteSet {
             tint: None,
             textures: HashMap::new(),
             unmounted: None,
+            delay: Default::default(),
         })
     }
 
@@ -980,7 +985,10 @@ impl SpriteSet {
     fn place(&self, index: usize, head_direction: u16, timing: Timing) -> Vec<Placed> {
         let action = index / 8;
         let Some(body_frames) = self.layers[0].act.actions.get(index).filter(|frames| !frames.is_empty()) else { return Vec::new() };
-        let animated = |layer: &Layer, count: usize| animated(layer, index, count, timing);
+        // One delay for the action, in every direction and for every layer.
+        // ponytail: garments and headgear with frames of their own play them at the body's delay too.
+        let delay = self.action_delay(action);
+        let animated = |_: &Layer, count: usize| animated(delay, count, timing);
         // A player standing or sitting has its frames in three groups, one per head direction: the body holds its
         // group's frame and the head animates within its group. Cycling through the groups shakes the head side to
         // side, as the head anchors differ.
@@ -1063,7 +1071,7 @@ impl SpriteSet {
     pub fn body_frame(&self, index: usize, timing: Timing) -> Option<(usize, Option<&str>)> {
         let body = &self.layers[0];
         let frames = body.act.actions.get(index).filter(|frames| !frames.is_empty())?;
-        let frame = animated(body, index, frames.len(), timing);
+        let frame = animated(self.action_delay(index / 8), frames.len(), timing);
         let sound = usize::try_from(frames[frame].event).ok().and_then(|event| body.act.events.get(event)).map(String::as_str).filter(|&name| name != "atk");
         Some((frame, sound))
     }
@@ -1109,14 +1117,35 @@ impl SpriteSet {
 
     /// When frame `frame` of action `index` comes, played at `scale` times its ACT pace.
     pub fn frame_ms(&self, index: usize, frame: usize, scale: f32) -> Option<f32> {
-        let delay = self.layers[0].act.delays.get(index).copied().unwrap_or(4.0).max(1.0);
+        let delay = self.first_delay(index / 8);
         self.layers[0].act.actions.get(index).map(|_| frame as f32 * delay * DELAY_UNIT_MS * scale)
     }
 
     pub fn index_ms(&self, index: usize) -> Option<f32> {
         let frames = self.layers[0].act.actions.get(index)?.len();
-        let delay = self.layers[0].act.delays.get(index).copied().unwrap_or(4.0).max(1.0);
-        Some(frames as f32 * delay * DELAY_UNIT_MS)
+        Some(frames as f32 * self.first_delay(index / 8) * DELAY_UNIT_MS)
+    }
+
+    /// An action's frame delay, the same in every direction: its direction 0's (4 when the ACT has none there), at
+    /// least 1. Used for how long an action lasts; see `action_delay` for what's drawn.
+    // ponytail: a delay of 0 or less, which keeps the previous action's when drawn, counts as 4 here.
+    fn first_delay(&self, action: usize) -> f32 {
+        let delay = self.layers[0].act.delays.get(action * 8).copied().unwrap_or(4.0);
+        if delay > 0.0 { delay.max(1.0) } else { 4.0 }
+    }
+
+    /// The frame delay the unit's frames play at in `action`: taken when the action starts from its direction 0 (4
+    /// when the ACT has none there; under 1 is 1), or the one it had when that's 0 or less, and kept in every direction
+    /// until the next action.
+    fn action_delay(&self, action: usize) -> f32 {
+        let (was, had) = self.delay.get().unwrap_or((usize::MAX, 4.0));
+        if was == action {
+            return had;
+        }
+        let delay = self.layers[0].act.delays.get(action * 8).copied().unwrap_or(4.0);
+        let delay = if delay > 0.0 { delay.max(1.0) } else { had };
+        self.delay.set(Some((action, delay)));
+        delay
     }
 
     pub fn texture(&self, key: ImageKey) -> &Texture {
@@ -1129,10 +1158,8 @@ impl SpriteSet {
     }
 }
 
-/// Which of `count` frames of the layer's action `index` plays at `timing`, at the layer's own frame delay (4 when
-/// it has none, at least 1).
-fn animated(layer: &Layer, index: usize, count: usize, timing: Timing) -> usize {
-    let delay = layer.act.delays.get(index).copied().unwrap_or(4.0).max(1.0);
+/// Which of `count` frames plays at `timing`, at the action's frame `delay` (`SpriteSet::action_delay`).
+fn animated(delay: f32, count: usize, timing: Timing) -> usize {
     match timing {
         Timing::Loop(elapsed_ms) => loop_frame(elapsed_ms, delay, count),
         Timing::Span(progress) => ((progress * count as f32) as usize).min(count - 1),
@@ -1885,8 +1912,10 @@ pub struct Actor {
     sliding: bool,
     /// Frames left showing the walk after a stop that put it on the stop cell's centre.
     walk_frames: u8,
-    /// Players only: 0 looking straight ahead, 1 and 2 turned to the sides.
+    /// Players only: 0 looking straight ahead, 1 and 2 turned to the sides. `kept_head` is the one its last entry
+    /// packet or own turn gave, which it goes back to after doing something else (`turn`).
     pub head_direction: u16,
+    kept_head: u16,
     animation_started: Instant,
     shot: Option<Shot>,
     /// A player who fought stands ready until moving again.
@@ -1982,6 +2011,7 @@ impl Actor {
             facing_from_server: true,
             sliding: false,
             head_direction: 0,
+            kept_head: 0,
             animation_started: now,
             shot: None,
             ready: false,
@@ -2060,6 +2090,26 @@ impl Actor {
 
     pub fn play(&mut self, action: usize, start: Instant, duration_ms: f32, hold: bool) {
         self.shot = Some(Shot { action, started: start, pace: Pace::Stretch(duration_ms.max(50.0)), hold });
+        self.head_direction = self.kept_head;
+    }
+
+    /// The head as an entry packet or our own turn gives it: shown, and gone back to after doing something else.
+    pub fn set_head(&mut self, head: u16) {
+        (self.head_direction, self.kept_head) = (head, head);
+    }
+
+    /// ZC_CHANGE_DIRECTION: the body turns; the head turn shows only on one standing or sitting as it comes, and isn't
+    /// kept (a turn heard while walking is dropped).
+    pub fn turn(&mut self, direction: u8, head: u16, now: Instant) {
+        self.set_direction(direction);
+        if !self.moving() && matches!(self.animation(now).0, IDLE | READY | SIT) {
+            self.head_direction = head;
+        }
+    }
+
+    /// The job the unit is drawn with: a player look's `sprite_job` (outfits, the wedding dress), else its job.
+    pub fn drawn_job(&self) -> u16 {
+        if self.look.is_some() { sprite_job(self.job, self.option) } else { self.job }
     }
 
     /// Plays `action` once at its ACT pace times `scale` (attack, flinch), or holds its last frame (death).
@@ -2096,6 +2146,7 @@ impl Actor {
     pub fn hold_for(&mut self, action: usize, start: Instant, ms: f32) {
         let length = self.sprites.as_ref().and_then(|sprites| sprites.index_ms(action * 8 + usize::from(self.direction % 8))).unwrap_or(0.0);
         self.shot = Some(Shot { action, started: start, pace: Pace::Hold((ms / length.max(1.0)).max(1.0)), hold: false });
+        self.head_direction = self.kept_head;
     }
 
     /// Back to standing from a held `action` (a cast cut short).
@@ -2128,6 +2179,7 @@ impl Actor {
 
     pub fn play_at_pace(&mut self, action: usize, start: Instant, scale: f32, hold: bool) {
         self.shot = Some(Shot { action, started: start, pace: Pace::Act(scale.max(0.01)), hold });
+        self.head_direction = self.kept_head;
     }
 
     /// Where the unit is drawn, in cells (centres on the integers), as the last update left it, whatever `now`.
@@ -2201,7 +2253,7 @@ impl Actor {
         self.ready = false;
         self.sitting = false;
         // Walking looks straight ahead again.
-        self.head_direction = 0;
+        self.set_head(0);
         // Walking interrupts an attack or flinch, not a death.
         if self.shot.as_ref().is_some_and(|shot| !shot.hold) {
             self.shot = None;
@@ -3073,7 +3125,16 @@ mod tests {
 
     #[test]
     fn pulls_the_cart_on_a_one_cell_rope() {
-        let sprites = SpriteSet { layers: Vec::new(), player: false, dressing: None, scale: 1.0, tint: None, textures: HashMap::new(), unmounted: None };
+        let sprites = SpriteSet {
+            layers: Vec::new(),
+            player: false,
+            dressing: None,
+            scale: 1.0,
+            tint: None,
+            textures: HashMap::new(),
+            unmounted: None,
+            delay: Default::default(),
+        };
         // Placed a rope's length behind a leader facing south (0): to its north, facing south.
         let mut cart = Cart::behind(sprites, [50.0, 50.0], 0);
         assert_near(cart.at, [50.0, 55.0]);
@@ -3325,6 +3386,76 @@ mod tests {
         Act { actions: vec![vec![frame; frames]; 104], delays: vec![4.0; 104], events: Vec::new() }
     }
 
+    /// A monster's body: 13 actions of 8 directions, `frames` frames each but 3 facing direction 2, at `delays`.
+    fn test_monster(delays: Vec<f32>, frames: usize) -> SpriteSet {
+        let mut act = test_act(test_frame(1, 0, None), frames);
+        for action in 0..13 {
+            act.actions[action * 8 + 2].truncate(3);
+        }
+        act.delays = delays;
+        SpriteSet {
+            layers: vec![Layer { spr: blank_spr(), act, palette: None, part: Part::Body }],
+            player: false,
+            dressing: None,
+            scale: 1.0,
+            tint: None,
+            textures: HashMap::new(),
+            unmounted: None,
+            delay: Default::default(),
+        }
+    }
+
+    #[test]
+    fn plays_an_action_at_its_direction_0_delay_every_way() {
+        // A walk whose ACT gives its directions [2, 1, 1, 1, 1, 1, 1, 1]: 2 every way.
+        let mut delays = vec![4.0; 104];
+        delays[8..16].copy_from_slice(&[2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
+        let ghoul = test_monster(delays.clone(), 8);
+        assert_eq!(ghoul.action_delay(WALK), 2.0);
+        let frames: Vec<usize> = [0, 1, 4, 7].iter().map(|&direction| ghoul.body_frame(8 + direction, Timing::Loop(130.0)).unwrap().0).collect();
+        assert_eq!(frames, [2, 2, 2, 2], "130 ms at 2 × 25 ms a frame");
+        // The frame count is the drawn direction's: 3 facing direction 2.
+        assert_eq!(ghoul.body_frame(8 + 2, Timing::Loop(130.0)).unwrap().0, 2);
+        assert_eq!(ghoul.body_frame(8 + 2, Timing::Loop(180.0)).unwrap().0, 0);
+        // No delay at direction 0: 4. Under 1: 1.
+        assert_eq!(test_monster(vec![4.0; 8], 8).action_delay(WALK), 4.0);
+        delays[8] = 0.5;
+        assert_eq!(test_monster(delays.clone(), 8).action_delay(WALK), 1.0);
+        // 0 keeps the previous action's delay.
+        delays[0] = 3.0;
+        delays[8] = 0.0;
+        let kept = test_monster(delays, 8);
+        assert_eq!((kept.action_delay(IDLE), kept.action_delay(WALK)), (3.0, 3.0));
+    }
+
+    #[test]
+    fn head_turns_show_only_standing_or_sitting_and_are_not_kept() {
+        let mut player = Actor::new("a".into(), None, [10, 10], 0, 150);
+        player.set_map([40, 40]);
+        player.set_head(1);
+        // Standing: a turn's head shows.
+        player.turn(2, 2, ms(1000));
+        assert_eq!((player.direction, player.head_direction), (2, 2));
+        // Walking: it's dropped; after the walk the head is straight.
+        player.walk_from([10, 10], [8, 8], vec![[11, 10], [12, 10]], ms(1000), ms(1000), true);
+        player.turn(4, 1, ms(1010));
+        assert_eq!(player.head_direction, 0);
+        player.update(ms(1400));
+        assert!(!player.moving());
+        assert_eq!(player.head_direction, 0);
+        // Standing again after a swing: the head goes back to the one the last entry packet or own turn gave.
+        player.set_head(1);
+        player.turn(0, 2, ms(1500));
+        assert_eq!(player.head_direction, 2);
+        player.play(5, ms(1500), 300.0, false);
+        assert_eq!(player.head_direction, 1);
+        // Sitting: it shows.
+        let mut sitting = Actor::new("b".into(), None, [10, 10], 0, 150);
+        sitting.sitting = true;
+        sitting.turn(0, 2, ms(1000));
+        assert_eq!(sitting.head_direction, 2);
+    }
+
     /// A player: a two-layer body (anchor at y −80), a head in layer 1, a headgear and a weapon with one frame an action.
     fn test_player(ignores_riding: bool, unmounted: Option<Act>) -> SpriteSet {
         let layer = |act, part| Layer { spr: blank_spr(), act, palette: None, part };
@@ -3352,6 +3483,7 @@ mod tests {
             tint: None,
             textures: HashMap::new(),
             unmounted,
+            delay: Default::default(),
         }
     }
 

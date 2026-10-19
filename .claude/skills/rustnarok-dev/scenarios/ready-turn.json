@@ -1,0 +1,19 @@
+{
+  "about": "A player in the ready stance floors the camera's angle like a monster (issue #581): after attacking a training dummy (npc/attack-chase.txt) and the dummy gone, the camera is turned a few degrees with the right button. The player's image changes to the next direction at once; it used to round, keeping the old image until the camera had turned half a direction.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild06 180 180"}, {"settle": 1500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/attack-chase.txt"}, {"wait": 1500},
+    {"click_on": {"unit": "Dummy 10"}},
+    {"wait_for": {"sent": "0x0437", "ms": 4000}},
+    {"wait": 2500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/attack-chase.txt"}, {"wait": 300},
+    {"say": "@killmonster2"}, {"wait": 800},
+    {"expect": {"state": {"player.action": 4}}},
+    {"drag": [[700, 300], [712, 300]], "button": "right"}, {"wait": 300},
+    {"move": [1000, 750]},
+    {"shot": "ready-turn", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"expect": {"state": {"player.action": 4}}}
+  ]
+}
