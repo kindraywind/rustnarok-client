@@ -26,11 +26,15 @@
       "wait": 1500
     },
     {
+      "as": "second",
+      "settle": 2000
+    },
+    {
       "say": "@recall {second}"
     },
     {
       "as": "second",
-      "settle": 2000
+      "settle": 1500
     },
     {
       "say": "@guild PosTest"
