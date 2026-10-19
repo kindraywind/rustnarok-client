@@ -2131,6 +2131,16 @@ impl Actor {
         [0, 1].map(|axis| (self.at[axis] - 2.5) / world::CELL + self.half[axis])
     }
 
+    /// The cell and sub-cell under its drawn point, as the game works them out from the map-centred point: per axis
+    /// v = (W div 2) + x / 5, the cell floor(v) and the sub-cell the sixteenths past it. On an odd-sized map a unit on a
+    /// cell's centre gets sub 0.
+    pub fn cell_and_sub(&self) -> ([i32; 2], [u8; 2]) {
+        let v = [0, 1].map(|axis| ((self.half[axis] * 2.0) as i32 / 2) as f32 + self.at[axis] / world::CELL);
+        let cell = v.map(|value| value.floor() as i32);
+        let sub = [0, 1].map(|axis| (((v[axis] - cell[axis] as f32) * 16.0).floor() as i32).rem_euclid(16) as u8);
+        (cell, sub)
+    }
+
     /// The map it's on, its GAT's width and height: the frame its drawn point is kept in. It stays where it's drawn.
     pub fn set_map(&mut self, size: [usize; 2]) {
         let drawn = self.position(Instant::now());
@@ -2828,6 +2838,51 @@ mod tests {
         // A player being hit (flinching) or picking up keeps a fresh time too.
         assert_close(first_walking_frame(0, 1208, |unit: &mut Actor| unit.play(6, ms(1000), 2000.0, false)), 16.0 / 238.0);
         assert_close(first_walking_frame(0, 1208, |unit: &mut Actor| unit.play(PICKUP, ms(1000), 2000.0, false)), 16.0 / 238.0);
+    }
+
+    #[test]
+    fn replays_a_late_walk_at_ten_thirteenths_of_a_whole_speed() {
+        let times = |speed: u16, path: &[[i32; 2]], begin: u64, now: u64| {
+            let mut unit = Actor::new("a".into(), None, [10, 10], 0, speed);
+            unit.set_map([40, 40]);
+            unit.walk_from([10, 10], [8, 8], path.to_vec(), ms(begin), ms(now), false);
+            unit.path.iter().map(|&(_, at)| at - begin.max(now)).collect::<Vec<_>>()
+        };
+        let path = [[11, 10], [12, 10], [13, 11], [14, 11], [15, 11], [16, 12], [17, 12]];
+        // On time: from t0 at full speed.
+        assert_eq!(times(150, &path, 5000, 5000), [150, 300, 512, 662, 812, 1024, 1174]);
+        // Heard after its end: from now at 150·10/13 = 115 a cell, 162 a diagonal.
+        assert_eq!(times(150, &path, 1000, 5000), [115, 230, 392, 507, 622, 784, 899]);
+        let east: Vec<[i32; 2]> = (11..16).map(|x| [x, 10]).collect();
+        assert_eq!(times(75, &east, 1000, 5000), [57, 114, 171, 228, 285]);
+    }
+
+    #[test]
+    fn a_new_unit_with_no_path_stands_on_its_sub_cell() {
+        let mut unit = Actor::new("a".into(), None, [10, 10], 0, 150);
+        unit.set_map([40, 40]);
+        unit.walk_from([10, 10], [2, 14], Vec::new(), ms(1000), ms(1000), false);
+        assert_near(unit.position(ms(1000)), [9.625, 10.375]);
+        assert_close(unit.rot, 0.0);
+    }
+
+    #[test]
+    fn finds_the_cell_and_sub_cell_under_the_drawn_point() {
+        let under = |size: usize, p: [f32; 2]| {
+            let mut unit = Actor::new("a".into(), None, [10, 10], 0, 150);
+            unit.set_map([size, size]);
+            unit.at = world_point(p, unit.half);
+            unit.cell_and_sub()
+        };
+        // Even: v = p + 0.5.
+        assert_eq!(under(40, [10.3, 10.3]), ([10, 10], [12, 12]));
+        assert_eq!(under(40, [9.97, 9.97]), ([10, 10], [7, 7]));
+        assert_eq!(under(40, [10.0, 10.0]), ([10, 10], [8, 8]));
+        // Odd: v = p, so a cell's centre is sub 0.
+        assert_eq!(under(41, [10.0, 10.0]), ([10, 10], [0, 0]));
+        // Our own walk whose source is its destination, drawn on that cell: there's no path, so nothing changes.
+        let gat = rustnarok_client::map::Gat { width: 40, height: 40, cells: vec![([0.0; 4], 0); 1600] };
+        assert_eq!(world::find_unit_path(&gat, [10, 10], [10, 10], 0), None);
     }
 
     #[test]
