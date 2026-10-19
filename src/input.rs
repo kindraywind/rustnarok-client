@@ -1838,6 +1838,7 @@ impl App {
             game.inventory.resize_to(self.cursor);
             game.cart.resize_to(self.cursor);
             game.storage.resize_to(self.cursor);
+            game.party_window.resize_to(self.cursor);
             for category in &mut game.storage.categories {
                 category.resize_to(self.cursor);
                 let height = category.height();
@@ -2677,6 +2678,7 @@ impl App {
                     | game.inventory.stop_resize()
                     | game.cart.stop_resize()
                     | game.storage.stop_resize()
+                    | game.party_window.stop_resize()
                     | game.skill_window.stop_resize()
                     | game.vend_setup.as_mut().is_some_and(vend::Setup::stop_resize)
                     | game.my_shop.as_mut().is_some_and(vend::MyShop::stop_resize)
@@ -3248,6 +3250,9 @@ impl App {
                 }
                 Panel::Party if game.party_window.hit(cursor, game.party.as_ref(), &game.friends) == Some(party::Hit::Title(TitleHit::Title)) => {
                     game.party_window.frame.start_drag(cursor)
+                }
+                Panel::Party if game.party_window.hit(cursor, game.party.as_ref(), &game.friends) == Some(party::Hit::Resize) => {
+                    game.party_window.start_resize(cursor)
                 }
                 Panel::Status
                     if game.status_window.frame.local(cursor, game.status_height).and_then(|local| game.status_window.frame.title_hit(local))

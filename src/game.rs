@@ -658,6 +658,8 @@ impl Game {
         let mut places = window_places(frames.iter().map(|(name, frame)| (*name, frame.position, frame.minimized)));
         // Sizes ride along as lines of their own ("inventory_size columns rows 0", "shop_size width rows 0").
         places += &format!("{PARTY_MODE} 0 {} 0\n", self.party_window.mode);
+        let [mode_0, mode_1] = self.party_window.grip_rows();
+        places += &format!("{PARTY_SIZE} {mode_0} {mode_1} 0\n");
         places += &minimap_window::checks_line(self.minimap_window.checks);
         if let Some(sizes) = self.shop.as_ref().and_then(shop::Shop::sizes) {
             self.shop_sizes = sizes;
@@ -731,6 +733,9 @@ impl Game {
         }
         if let Some(&checks) = saved.get(minimap_window::CHECKS_LINE) {
             self.minimap_window.checks = minimap_window::checks_from(checks);
+        }
+        if let Some(&([mode_0, mode_1], _)) = saved.get(PARTY_SIZE) {
+            self.party_window.set_grip_rows([mode_0 as usize, mode_1 as usize]);
         }
         if let Some(&([_, mode], _)) = saved.get(PARTY_MODE) {
             self.party_window.set_mode(mode as usize);
@@ -1092,6 +1097,7 @@ impl Game {
         (top == Some(Panel::Inventory) && self.inventory.hit(cursor) == Some(inventory::Hit::Resize))
             || (top == Some(Panel::Cart) && self.cart.hit(cursor) == Some(inventory::Hit::Resize))
             || (top == Some(Panel::Storage) && self.storage.on_grip(cursor))
+            || (top == Some(Panel::Party) && self.party_window.on_grip(cursor))
             || top.and_then(storage_list).is_some_and(|which| self.storage.list_window(which).on_grip(cursor))
             || (top == Some(Panel::Skills) && self.skill_window.grip_box().is_some_and(|[x, y, w, h]| contains([x, y], [w, h], cursor)))
             || matches!(self.shop.as_ref().and_then(|shop| shop.hit(cursor)), Some(shop::Hit::Resize(_)))

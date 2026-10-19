@@ -1102,6 +1102,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.shop.iter().flat_map(crate::shop::Shop::row_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.vend_setup.iter().flat_map(|setup| setup.row_boxes(&game.cart.items)).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.storage.grip_box().map(|area| json!({"kind": "button", "name": "storage_resize", "box": area})))
+        .chain(game.party_window.grip_box().map(|area| json!({"kind": "button", "name": "party_resize", "box": area})))
         .chain(
             app.assets
                 .as_ref()
@@ -1736,6 +1737,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     });
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
     state["storage_rows"] = game.storage.rows().into();
+    // The party window's size, and the rows it shows.
+    state["party_window_size"] = json!({"size": game.party_window.size(), "rows": game.party_window.shown_rows()});
     // The guild storage log: null when shut, else its place, tab, page and how many it lists.
     state["storage_log"] = game
         .storage_log
