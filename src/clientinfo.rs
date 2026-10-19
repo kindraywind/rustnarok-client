@@ -102,7 +102,7 @@ mod tests {
         let mut file = b"<?xml version=\"1.0\" encoding=\"euc-kr\" ?>\n<clientinfo>\n<connection>\n<display>".to_vec();
         file.extend_from_slice(&encoding_rs::EUC_KR.encode("로컬").0);
         file.extend_from_slice(
-            b"</display>\n  <address> 192.168.86.244 </address>\n  <port>6900</port>\n  <version>55</version>\n\
+            b"</display>\n  <address> 127.0.0.1 </address>\n  <port>6900</port>\n  <version>55</version>\n\
             <loading>\n<image>loading00.jpg</image>\n<image>loading01.jpg</image>\n</loading>\n</connection>\n\
             <!--\n<connection><display>Old</display><address>10.0.0.1</address></connection>\n-->\n\
             <connection><display>Test</display><address>example.test</address><langtype>5</langtype></connection>\n\
@@ -111,7 +111,7 @@ mod tests {
         let connections = parse(&file);
         assert_eq!(connections.len(), 2);
         assert_eq!(connections[0].display, "로컬");
-        assert_eq!((connections[0].server().as_str(), connections[0].version), ("192.168.86.244:6900", 55));
+        assert_eq!((connections[0].server().as_str(), connections[0].version), ("127.0.0.1:6900", 55));
         assert_eq!(connections[0].loading, ["loading00.jpg", "loading01.jpg"]);
         assert_eq!((connections[1].server().as_str(), connections[1].version), ("example.test:6900", 0));
         assert_eq!((connections[0].langtype, connections[1].langtype), (0, 5));
