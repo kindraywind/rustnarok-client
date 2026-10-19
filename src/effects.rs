@@ -883,6 +883,9 @@ pub struct Effects {
     unit_kinds: HashMap<u32, u32>,
     hits: Vec<HitSpark>,
     auras: Vec<CastAura>,
+    /// The game's hand-made effects (Soul Strike's ghosts), and the ghost sprite's layers.
+    prims: crate::prims::Prims,
+    ghost: Vec<Placed>,
 }
 
 /// A whole number in `from..=to`.
@@ -1006,6 +1009,9 @@ impl Floating {
         })
     }
 }
+
+/// EF_SOULSTRIKE: ghosts from the caster to the target, a hit each (`prims`).
+pub const SOUL_STRIKE: u32 = 15;
 
 /// Cold Bolt's and Fire Bolt's falling arrows (EF_ICEARROW, EF_FIREARROW).
 const BOLTS: [u32; 2] = [26, 31];
@@ -1197,9 +1203,23 @@ impl Effects {
         due.into_iter().map(|(_, file, at)| (file, at)).collect()
     }
 
+    /// Soul Strike from `from` at `to` with `hits` hits: a ghost a hit, each with its sound as it leaves.
+    #[allow(clippy::too_many_arguments)]
+    pub fn soul_strike(&mut self, grf: &Grf, from: Vector, to: Vector, hits: u16, now: Instant) {
+        self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
+        for at in crate::prims::ghost_times(hits) {
+            self.sounds.push((now + at, "effect\\EF_SoulStrike.wav".to_owned(), from));
+        }
+        self.prims.soul_strike(from, to, hits, now);
+    }
+
     /// Effects that finished go and those that repeat start again; sprites pick their images for `now`, seen through
     /// a camera turned `yaw` radians.
     pub fn advance(&mut self, gpu: &Gpu, now: Instant, yaw: f32) {
+        self.prims.advance(now);
+        if let Some(Some(sprite)) = self.sprites.get_mut(crate::prims::GHOST_SPRITE) {
+            self.ghost = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
+        }
         for floating in self.floating.iter_mut().filter(|floating| floating.again && floating.end <= now) {
             let period = floating.end.duration_since(floating.start);
             while floating.end <= now {
@@ -1436,6 +1456,15 @@ impl Effects {
                     [x * cos - y * sin + center[0], x * sin + y * cos + center[1]]
                 };
                 quads.push((texture, at, [corner(0), corner(1), corner(2), corner(3)], state.color, state.additive));
+            }
+        }
+        // Soul Strike's ghosts, each copy of a trail a little fainter.
+        if let Some(Some(sprite)) = self.sprites.get(crate::prims::GHOST_SPRITE) {
+            for (at, alpha, scale) in self.prims.ghosts() {
+                for &(key, position, size, layer_angle) in &self.ghost {
+                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * scale));
+                    quads.push((sprite.texture(key), at, corners, [1.0, 1.0, 1.0, alpha], false));
+                }
             }
         }
         quads

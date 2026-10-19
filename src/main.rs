@@ -110,6 +110,7 @@ mod pick_list;
 mod picking;
 mod pickup;
 mod pin;
+mod prims;
 mod quest;
 mod quest_notice;
 mod quest_tracker;

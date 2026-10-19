@@ -1186,6 +1186,15 @@ impl Game {
         self.play_effect_hits(gpu, grf, table, effect, unit, start, 1);
     }
 
+    /// Soul Strike's ghosts from `caster` to `target`, a ghost a hit.
+    pub(crate) fn soul_strike(&mut self, grf: &Grf, caster: u32, target: u32, hits: u16) {
+        let cell = |unit: u32| if unit == self.account_id { Some(self.player.cell) } else { self.units.get(&unit).map(|actor| actor.cell) };
+        if let (Some(from), Some(to)) = (cell(caster), cell(target)) {
+            let [from, to] = [from, to].map(|cell| self.world.cell_position(cell.map(|value| value as f32)));
+            self.effects.soul_strike(grf, from, to, hits, Instant::now());
+        }
+    }
+
     /// Plays an effect on a unit told the skill's hit count (a bolt drops an arrow a hit).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn play_effect_hits(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, start: Instant, hits: u16) {

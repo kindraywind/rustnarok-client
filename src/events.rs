@@ -3234,6 +3234,11 @@ impl App {
                     if let Some(struck) = table.struck(skill) {
                         // Told the hit count, as the game tells them: a bolt drops an arrow a hit.
                         for &(who, effect) in struck {
+                            // Soul Strike's ghosts fly from the caster to the target.
+                            if effect == effects::SOUL_STRIKE {
+                                game.soul_strike(grf, act.source, act.target, act.hits);
+                                continue;
+                            }
                             let unit = if who == effects::Who::Caster { act.source } else { act.target };
                             game.play_effect_hits(gpu, grf, table, effect, unit, Instant::now(), act.hits);
                         }

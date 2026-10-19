@@ -3408,6 +3408,7 @@ caster	2533	-1
 caster	2534	-1
 caster	2536	-1
 caster	5004	-1
+struck	13	caster	15
 struck	14	target	26
 struck	15	caster	27
 struck	17	caster	24
