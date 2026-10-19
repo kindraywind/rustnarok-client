@@ -1377,8 +1377,15 @@ impl App {
                     }
                     Panel::Guild => match game.guild.as_ref().and_then(|guild| game.guild_window.hit(cursor, guild)) {
                         Some(guild::Hit::Title(title)) => game.guild_window.frame.click_title(title),
+                        // The Announcement tab is the master's, with the notice as it is to start from.
+                        Some(guild::Hit::Tab(guild::NOTICE)) if !game.guild.as_ref().is_some_and(|guild| guild.master) => {}
                         Some(guild::Hit::Tab(tab)) => {
                             game.guild_window.show_tab(tab);
+                            if tab == guild::NOTICE
+                                && let Some(guild) = &game.guild
+                            {
+                                game.guild_window.notice_draft = guild.notice.clone();
+                            }
                             // Each page but the notice is asked for when shown.
                             if tab <= 4 {
                                 let _ = game.session.guild_page(tab as u32);
@@ -1401,14 +1408,28 @@ impl App {
                         }
                         Some(guild::Hit::SkillClose) => game.guild_window.frame.open = false,
                         Some(guild::Hit::Relation(id, antagonist)) => game.guild_window.selected = Some((id, antagonist)),
-                        // The master's positions page: a box switches its permission; the title and tax are asked for.
-                        Some(guild::Hit::Permission(id, permission)) => {
+                        // The master's positions page: edits wait for OK, which sends them all; a row selects.
+                        Some(hit @ (guild::Hit::Permission(..) | guild::Hit::PositionTitle(_) | guild::Hit::Tax(_) | guild::Hit::ListRow(_))) => {
                             if let Some(guild) = &game.guild {
-                                let _ = game.session.change_position(&guild.switched(id, permission), &guild.title(id));
+                                game.guild_window.click_position(hit, guild);
                             }
                         }
-                        Some(guild::Hit::PositionTitle(id)) => game.amount = Some(window::Amount::name(Asked::PositionTitle(id), POSITION_TITLE)),
-                        Some(guild::Hit::Tax(id)) => game.amount = Some(window::Amount::new(Asked::PositionTax(id), None)),
+                        Some(guild::Hit::PositionsOk) => {
+                            if let Some(edits) = game.guild_window.take_position_edits(Instant::now()) {
+                                let _ = game.session.change_positions(&edits);
+                            }
+                        }
+                        // The Announcement tab: the boxes take the caret; Send writes the notice and closes the window.
+                        Some(guild::Hit::NoticeSubject) => game.guild_window.typing = Some(guild::GuildTyping::NoticeSubject),
+                        Some(guild::Hit::NoticeText) => game.guild_window.typing = Some(guild::GuildTyping::NoticeText),
+                        Some(guild::Hit::NoticeSend) => {
+                            if let Some(guild) = &game.guild {
+                                let (subject, text) = &game.guild_window.notice_draft;
+                                let _ = game.session.set_guild_notice(guild.id, subject, text);
+                            }
+                            game.guild_window.typing = None;
+                            game.guild_window.frame.open = false;
+                        }
                         // The members page: select, sort, online first.
                         // The master's moves: OK sends them all at once.
                         Some(guild::Hit::MovesOk) => {
@@ -3567,6 +3588,20 @@ impl App {
             Scene::Game(game) if game.question_box.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_box(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
+            // The guild window's text boxes: Enter or Esc leaves the box.
+            Scene::Game(game) if game.guild_window.typing.is_some() && game.reason_box.is_none() => match key {
+                Key::Named(NamedKey::Enter | NamedKey::Escape) => game.guild_window.typing = None,
+                Key::Named(NamedKey::Backspace) => {
+                    if let Some(guild) = &game.guild {
+                        game.guild_window.backspace(guild);
+                    }
+                }
+                _ => {
+                    if let Some(guild) = &game.guild {
+                        game.guild_window.type_text(guild, event.text.as_deref().unwrap_or_default());
+                    }
+                }
+            },
             // The guild's reason box: Enter is OK, Esc cancels.
             Scene::Game(game) if game.reason_box.is_some() => match key {
                 Key::Named(NamedKey::Enter) => game.answer_reason(true),

@@ -853,7 +853,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         // rathena sends one entry a packet: ID, permissions, rank, tax, title.
         ZC_ACK_CHANGE_GUILD_POSITIONINFO if packet.len() >= 44 => {
-            MapEvent::GuildPositionChanged(GuildPosition { id: u32_at(4), mode: u32_at(8), tax: u32_at(16) }, c_string(&packet[20..44]))
+            MapEvent::GuildPositionChanged(GuildPosition { id: u32_at(4), mode: u32_at(8), rank: u32_at(12), tax: u32_at(16) }, c_string(&packet[20..44]))
         }
         // One member a packet: account, character, position.
         ZC_ACK_REQ_CHANGE_MEMBERS if packet.len() >= 16 => {
@@ -864,7 +864,12 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_POSITION_INFO => MapEvent::GuildPositionInfo(
             packet[4..]
                 .chunks_exact(16)
-                .map(|entry| GuildPosition { id: self::u32_at(entry, 0), mode: self::u32_at(entry, 4), tax: self::u32_at(entry, 12) })
+                .map(|entry| GuildPosition {
+                    id: self::u32_at(entry, 0),
+                    mode: self::u32_at(entry, 4),
+                    rank: self::u32_at(entry, 8),
+                    tax: self::u32_at(entry, 12),
+                })
                 .collect(),
         ),
         // The points left, then each skill as ZC_SKILLINFO_LIST has them.

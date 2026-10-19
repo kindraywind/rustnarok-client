@@ -889,8 +889,14 @@ impl MapSession {
     }
 
     /// The master changes a position: its permissions, tax and title.
-    pub fn change_position(&mut self, position: &GuildPosition, title: &str) -> io::Result<()> {
-        self.stream.write_all(&encode_position_change(position, title))
+    /// The master changes positions: permissions, tax and title each, in one packet.
+    pub fn change_positions(&mut self, positions: &[(GuildPosition, String)]) -> io::Result<()> {
+        self.stream.write_all(&encode_position_changes(positions))
+    }
+
+    /// The master writes the guild's notice.
+    pub fn set_guild_notice(&mut self, guild: u32, subject: &str, text: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_guild_notice(guild, subject, text))
     }
 
     /// The master moves members to other positions (account, character, position each), in one packet.

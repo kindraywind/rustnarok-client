@@ -1602,6 +1602,7 @@ impl Game {
             || self.booking.as_ref().is_some_and(|window| window.focus.is_some())
             || self.party_dialog.as_ref().is_some_and(|dialog| dialog.typing)
             || self.reason_box.is_some()
+            || self.guild_window.typing.is_some()
             || self.storage.typing
             || self.pet_window.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
@@ -1804,8 +1805,6 @@ impl Game {
             | Asked::BuyingPrice(..)
             | Asked::BuyingAmount(_)
             | Asked::HomunculusName
-            | Asked::PositionTitle(_)
-            | Asked::PositionTax(_)
             | Asked::TalkieBox { .. } => None,
         };
         match amount {
@@ -1834,16 +1833,6 @@ impl Game {
                 Ok(())
             }
             Asked::HomunculusName => Ok(()),
-            // A position's title or tax: the request carries its other values as they are.
-            Asked::PositionTitle(id) if !name.is_empty() => match &self.guild {
-                Some(guild) => self.session.change_position(&guild.position(id), name),
-                None => Ok(()),
-            },
-            Asked::PositionTax(id) if !name.is_empty() => match &self.guild {
-                Some(guild) => self.session.change_position(&net::GuildPosition { tax: amount.value(), ..guild.position(id) }, &guild.title(id)),
-                None => Ok(()),
-            },
-            Asked::PositionTitle(_) | Asked::PositionTax(_) => Ok(()),
             Asked::BuyingPrice(index, item_id) => {
                 if let Some(setup) = &mut self.buying_setup {
                     setup.set_price(index, item_id, amount.value());
@@ -1923,13 +1912,7 @@ impl Game {
                 have if amount > have => Ok(()),
                 _ => self.session.drop_item(index, amount as u16),
             },
-            Asked::RoomPassword(_)
-            | Asked::HomunculusName
-            | Asked::PositionTitle(_)
-            | Asked::PositionTax(_)
-            | Asked::BuyingPrice(..)
-            | Asked::BuyingAmount(_)
-            | Asked::TalkieBox { .. } => Ok(()),
+            Asked::RoomPassword(_) | Asked::HomunculusName | Asked::BuyingPrice(..) | Asked::BuyingAmount(_) | Asked::TalkieBox { .. } => Ok(()),
             Asked::VendPrice(index) => {
                 if let Some(setup) = &mut self.vend_setup {
                     setup.prices.insert(index, amount);

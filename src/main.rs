@@ -428,8 +428,6 @@ const RELATION_DELETE: usize = 351;
 /// A tracked quest's menu: "Quest information", "Delete".
 const QUEST_INFO_CHOICE: usize = 1622;
 const QUEST_DELETE_CHOICE: usize = 351;
-/// "Position Title", over the question for a new one.
-const POSITION_TITLE: usize = 511;
 const GUILD_INVITED: usize = 377;
 const GUILD_ONLINE: usize = 485;
 const GUILD_CHAT: [u8; 3] = [180, 255, 180];
@@ -2082,9 +2080,6 @@ enum Asked {
     Mail(u16),
     /// An inventory item, into the material window.
     Material(u16),
-    /// A guild position's new title, and its tax (the master's).
-    PositionTitle(u32),
-    PositionTax(u32),
     /// The homunculus's new name.
     HomunculusName,
     /// A Talkie Box's message, before it's placed at the cell.
@@ -3947,6 +3942,11 @@ impl App {
                 None if game.storage.typing => game.storage.type_text(text),
                 None if game.pet_window.typing => game.pet_window.name_text.get_or_insert_with(String::new).push_str(text),
                 None if game.booking.as_ref().is_some_and(|window| window.focus.is_some()) => game.booking.as_mut().unwrap().type_text(text),
+                None if game.guild_window.typing.is_some() => {
+                    if let Some(guild) = &game.guild {
+                        game.guild_window.type_text(guild, text);
+                    }
+                }
                 None if game.party_dialog.as_ref().is_some_and(|dialog| dialog.typing) => game.party_dialog.as_mut().unwrap().type_text(text),
                 None if game.reason_box.is_some() => game.reason_box.as_mut().unwrap().type_text(text),
                 None if game.navi_window.as_ref().is_some_and(|window| window.typing) => {

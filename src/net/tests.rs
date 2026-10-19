@@ -304,9 +304,10 @@ fn decodes_guild_pages() {
     let mut position = [0u8; 16];
     position[..4].copy_from_slice(&19u32.to_le_bytes());
     position[4..8].copy_from_slice(&0x111u32.to_le_bytes());
+    position[8..12].copy_from_slice(&7u32.to_le_bytes());
     position[12..16].copy_from_slice(&50u32.to_le_bytes());
     let Some(MapEvent::GuildPositionInfo(positions)) = decode_map_packet(&packet(ZC_POSITION_INFO, &position)) else { panic!() };
-    assert_eq!(positions, [GuildPosition { id: 19, mode: 0x111, tax: 50 }]);
+    assert_eq!(positions, [GuildPosition { id: 19, mode: 0x111, rank: 7, tax: 50 }], "the ranking at 8");
 
     let mut skills = 3u16.to_le_bytes().to_vec();
     let mut skill = [0u8; SKILL_SIZE];
@@ -1802,7 +1803,7 @@ fn decodes_guild_position_changes() {
     }
     changed.extend_from_slice(&name_field("Officer"));
     let Some(MapEvent::GuildPositionChanged(position, title)) = decode_map_packet(&changed) else { panic!() };
-    assert_eq!((position, title.as_str()), (GuildPosition { id: 1, mode: 0x11, tax: 10 }, "Officer"));
+    assert_eq!((position, title.as_str()), (GuildPosition { id: 1, mode: 0x11, rank: 1, tax: 10 }, "Officer"));
 
     let mut moved = ZC_ACK_REQ_CHANGE_MEMBERS.to_le_bytes().to_vec();
     moved.extend_from_slice(&16u16.to_le_bytes());
@@ -1823,10 +1824,23 @@ fn decodes_guild_position_changes() {
     assert!(matches!(decode_map_packet(&none), Some(MapEvent::PositionTitle { account: 2_000_001, title }) if title.is_empty()));
 
     // The master's requests: one position, the title padded to 24 bytes; one member.
-    let request = encode_position_change(&GuildPosition { id: 1, mode: 0x01, tax: 10 }, "Officer");
+    let request = encode_position_changes(&[(GuildPosition { id: 1, mode: 0x01, rank: 1, tax: 10 }, "Officer".into())]);
     assert_eq!(request.len(), 44);
     assert_eq!(&request[..20], &[0x61, 0x01, 44, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0]);
     assert_eq!(&request[20..], &name_field("Officer")[..]);
+    // Three positions in one packet, each with its ranking as received.
+    let three = encode_position_changes(&[
+        (GuildPosition { id: 1, mode: 0x01, rank: 1, tax: 0 }, "A".into()),
+        (GuildPosition { id: 2, mode: 0x11, rank: 2, tax: 0 }, "B".into()),
+        (GuildPosition { id: 5, mode: 0, rank: 9, tax: 7 }, "Renamed".into()),
+    ]);
+    assert_eq!((three.len(), &three[2..4], &three[84..100]), (124, &[124u8, 0][..], &[5u8, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 7, 0, 0, 0][..]));
+    // The notice: a 60-character subject loses its last character to the NUL.
+    let notice = encode_guild_notice(3, &"s".repeat(60), "hello");
+    assert_eq!(
+        (notice.len(), &notice[..6], notice[6 + 58], notice[6 + 59], &notice[66..71], notice[71]),
+        (186, &[0x6E, 0x01, 3, 0, 0, 0][..], b's', 0, &b"hello"[..], 0)
+    );
     assert_eq!(encode_member_moves(&[(7, 8, 19)]), [0x55, 0x01, 16, 0, 7, 0, 0, 0, 8, 0, 0, 0, 19, 0, 0, 0]);
     // Two moves in one packet: 4 + 12 · 2 bytes.
     let two = encode_member_moves(&[(7, 8, 19), (9, 10, 0)]);
