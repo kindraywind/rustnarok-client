@@ -1434,26 +1434,37 @@ pub fn in_reach(from: [i32; 2], to: [i32; 2], range: i32) -> bool {
     ((dx * dx + dy * dy).sqrt() - 0.1) as i32 <= range
 }
 
-/// RO's direction index (0 south, then clockwise: south-west, west, ... south-east) for a step.
-/// Where a walk aimed at `target` from `from` goes: the target when `ok` takes it; otherwise, stepping from the
-/// target back toward `from` along a straight line, the first cell `ok` takes in the 3×3 around each step, in a fixed
-/// order. None once the line reaches `from`'s row or column.
-// ponytail: the target's own 3×3 is tried even when it's on `from`'s row or column.
-pub fn walk_goal(target: [i32; 2], from: [i32; 2], ok: impl Fn([i32; 2]) -> bool) -> Option<[i32; 2]> {
+/// Where a click on `target` walks from `from` (the cell the player is drawn on): the target when it's `free` (in the
+/// map, walkable, not blocked by a unit) and `reachable` (the path search); otherwise the game's fallback line. Along
+/// the major axis (x on a tie) the major coordinate steps from the click's toward `from`'s, giving up on reaching it;
+/// the minor one is `minor_click + (m − m_click) · d_minor / d_major`, truncated. At each step the first free cell of
+/// the 3×3, in a fixed order, is the only candidate: the goal when reachable, else no walk.
+pub fn walk_goal(target: [i32; 2], from: [i32; 2], free: impl Fn([i32; 2]) -> bool, reachable: impl Fn([i32; 2]) -> bool) -> Option<[i32; 2]> {
     const AROUND: [[i32; 2]; 9] = [[0, 0], [1, 0], [1, 1], [1, -1], [-1, 0], [-1, 1], [-1, -1], [0, 1], [0, -1]];
-    let steps = (target[0] - from[0]).abs().max((target[1] - from[1]).abs());
-    for step in 0..steps {
-        let at = [0, 1].map(|axis| target[axis] + ((from[axis] - target[axis]) as f32 * step as f32 / steps as f32).round() as i32);
-        if step > 0 && (at[0] == from[0] || at[1] == from[1]) {
-            return None;
+    if free(target) && reachable(target) {
+        return Some(target);
+    }
+    let delta = [from[0] - target[0], from[1] - target[1]];
+    let major = usize::from(delta[0].abs() < delta[1].abs());
+    let minor = 1 - major;
+    if delta[major] == 0 {
+        return None;
+    }
+    let step = delta[major].signum();
+    let mut m = target[major];
+    while m != from[major] {
+        let mut at = [0; 2];
+        at[major] = m;
+        at[minor] = target[minor] + (m - target[major]) * delta[minor] / delta[major];
+        if let Some(cell) = AROUND.iter().map(|around| [at[0] + around[0], at[1] + around[1]]).find(|&cell| free(cell)) {
+            return reachable(cell).then_some(cell);
         }
-        if let Some(cell) = AROUND.iter().map(|around| [at[0] + around[0], at[1] + around[1]]).find(|&cell| ok(cell)) {
-            return Some(cell);
-        }
+        m += step;
     }
     None
 }
 
+/// RO's direction index (0 south, then clockwise: south-west, west, ... south-east) for a step.
 pub fn direction(step: [i32; 2]) -> u8 {
     match (step[0].signum(), step[1].signum()) {
         (0, -1) => 0,
@@ -1501,18 +1512,48 @@ mod tests {
         // Open ground from 0 to 19 each way, with a wall from x 10 to 12 for y 10 to 12.
         let wall = |[x, y]: [i32; 2]| (10..=12).contains(&x) && (10..=12).contains(&y);
         let open = |cell: [i32; 2]| cell.iter().all(|value| (0..20).contains(value)) && !wall(cell);
-        assert_eq!(walk_goal([5, 9], [0, 0], open), Some([5, 9]));
+        let any = |_: [i32; 2]| true;
+        assert_eq!(walk_goal([5, 9], [0, 0], open, any), Some([5, 9]));
         // A click on the wall's edge: its own 3×3, (1,0) first.
-        assert_eq!(walk_goal([12, 11], [0, 0], open), Some([13, 11]));
+        assert_eq!(walk_goal([12, 11], [0, 0], open, any), Some([13, 11]));
         // The middle of the wall has nothing open around it: one step back toward the player, (1,-1) is.
-        assert_eq!(walk_goal([11, 11], [0, 0], open), Some([11, 9]));
-        // An island that can't be reached: everything from x 15 on; steps back until it's left.
-        let reachable = |cell: [i32; 2]| open(cell) && cell[0] < 15;
-        assert_eq!(walk_goal([18, 5], [0, 0], reachable), Some([14, 4]));
-        // A line that reaches the player's row gives up.
+        assert_eq!(walk_goal([11, 11], [0, 0], open, any), Some([11, 9]));
+        // An island that can't be reached (x from 15): the first free cell is the only candidate, so nothing.
+        assert_eq!(walk_goal([18, 5], [0, 0], open, |cell: [i32; 2]| cell[0] < 15), None);
+        // Nothing free on the line: it gives up only on reaching the player's major coordinate.
         let nothing = |_: [i32; 2]| false;
-        assert_eq!(walk_goal([18, 5], [0, 5], nothing), None);
-        assert_eq!(walk_goal([3, 3], [3, 3], open), None);
+        assert_eq!(walk_goal([18, 5], [0, 5], nothing, any), None);
+        // The player's own cell: no path to itself.
+        let path = |from: [i32; 2]| move |cell: [i32; 2]| cell != from;
+        assert_eq!(walk_goal([3, 3], [3, 3], open, path([3, 3])), None);
+    }
+
+    #[test]
+    fn falls_back_along_the_games_line() {
+        fn grid(width: i32, wall: impl Fn([i32; 2]) -> bool) -> impl Fn([i32; 2]) -> bool {
+            move |cell: [i32; 2]| cell.iter().all(|value| (0..width).contains(value)) && !wall(cell)
+        }
+        // Walls x 9–11 × y 9–11: from (20, 15), a click on (10, 10) → (12, 10) (the minor truncates).
+        let free = grid(40, |[x, y]: [i32; 2]| (9..=11).contains(&x) && (9..=11).contains(&y));
+        let open = Gat { width: 40, height: 40, cells: (0..1600).map(|index| ([0.0; 4], u8::from(!free([index % 40, index / 40])))).collect() };
+        let reach = |from: [i32; 2]| move |cell: [i32; 2]| find_path(&open, from, cell).is_some();
+        assert_eq!(walk_goal([10, 10], [20, 15], &free, reach([20, 15])), Some([12, 10]));
+        // Walls x 10–14 × y 13–17: from (3, 15), a click on (12, 15) on the player's row goes on along it → (9, 15).
+        let free = grid(30, |[x, y]: [i32; 2]| (10..=14).contains(&x) && (13..=17).contains(&y));
+        assert_eq!(walk_goal([12, 15], [3, 15], free, |_: [i32; 2]| true), Some([9, 15]));
+        // Walls (6, 5), (7, 4), (7, 5), (7, 6): from (5, 5), a click on (6, 5): the candidate is the player's own cell.
+        let free = grid(20, |cell: [i32; 2]| [[6, 5], [7, 4], [7, 5], [7, 6]].contains(&cell));
+        assert_eq!(walk_goal([6, 5], [5, 5], free, |cell: [i32; 2]| cell != [5, 5]), None);
+        // A wall on x = 10 for every y: from (5, 15), a click on (12, 18): the first free cell is behind the wall.
+        let free = grid(30, |[x, _]: [i32; 2]| x == 10);
+        assert_eq!(walk_goal([12, 18], [5, 15], free, |cell: [i32; 2]| cell[0] < 10), None);
+        // 149 nodes: from (20, 20), (67, 20) is a goal and (68, 20) gives nothing.
+        let field = Gat { width: 100, height: 100, cells: vec![([0.0; 4], 0); 10_000] };
+        let free = |cell: [i32; 2]| field.walkable(cell);
+        let reach = |cell: [i32; 2]| find_path(&field, [20, 20], cell).is_some();
+        assert_eq!(walk_goal([67, 20], [20, 20], free, reach), Some([67, 20]));
+        assert_eq!(walk_goal([68, 20], [20, 20], free, reach), None);
+        assert_eq!(walk_goal([20, 20], [20, 20], free, reach), None);
     }
 
     #[test]
