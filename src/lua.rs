@@ -1187,7 +1187,7 @@ fn job_pairs(globals: &mlua::Table, list: &str) -> Vec<(u16, u16)> {
 
 /// Status effect icons by EFST id (`StateIconImgList`): the file under data\texture\effect\ and its priority.
 pub fn status_icons(grf: &Grf) -> io::Result<HashMap<u16, (u8, String)>> {
-    let lua = run(grf, &[EFST_IDS, STATE_ICON_IMAGES])?;
+    let lua = run_with_efst_ids(grf, STATE_ICON_IMAGES)?;
     let list: mlua::Table = lua.globals().get("StateIconImgList").map_err(lua_error)?;
     // The effects older than the Lua table, which the client knows by itself.
     let mut icons: HashMap<u16, (u8, String)> = include_str!("status_icons.txt")
@@ -1216,7 +1216,18 @@ pub struct StateInfo {
 }
 
 pub fn state_info(grf: &Grf) -> io::Result<HashMap<u16, StateInfo>> {
-    state_infos(&run(grf, &[EFST_IDS, STATE_ICON_INFO])?)
+    state_infos(&run_with_efst_ids(grf, STATE_ICON_INFO)?)
+}
+
+/// A translated table may name effects this efstids doesn't know: they all land on one unused key.
+const UNKNOWN_EFSTS: &str = "setmetatable(EFST_IDs, { __index = function() return -1 end })";
+
+/// Runs efstids.lub, then `file`, a table keyed by its names.
+fn run_with_efst_ids(grf: &Grf, file: &str) -> io::Result<Lua> {
+    let lua = run(grf, &[EFST_IDS])?;
+    lua.load(UNKNOWN_EFSTS).exec().map_err(lua_error)?;
+    exec(&lua, grf, &[file])?;
+    Ok(lua)
 }
 
 /// `StateIconList` by EFST.
@@ -2219,6 +2230,23 @@ mod tests {
             [("Blessing".into(), Some([155, 202, 155])), ("%s".into(), Some([255, 176, 98])), ("Increases STR, DEX and INT".into(), None)]
         );
         assert!(!infos[&107].time_limit);
+    }
+
+    #[test]
+    fn status_icon_text_skips_effects_efstids_does_not_know() {
+        let lua = super::new_lua().unwrap();
+        lua.load("EFST_IDs = { EFST_BLESSING = 10 }").exec().unwrap();
+        lua.load(super::UNKNOWN_EFSTS).exec().unwrap();
+        lua.load(
+            r#"StateIconList = {}
+            StateIconList[EFST_IDs.EFST_CONTENTS_23] = { descript = { { "Unknown" } } }
+            StateIconList[EFST_IDs.EFST_BLESSING] = { descript = { { "Blessing" } } }"#,
+        )
+        .exec()
+        .unwrap();
+        let infos = super::state_infos(&lua).unwrap();
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[&10].lines, [("Blessing".into(), None)]);
     }
 
     #[test]
