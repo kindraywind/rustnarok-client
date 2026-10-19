@@ -133,8 +133,6 @@ pub const NOTICE: usize = 5;
 const PERMISSIONS: [u32; 3] = [GuildPosition::INVITE, GuildPosition::EXPEL, GuildPosition::STORAGE];
 /// Expel list columns: name, reason.
 const EXPEL_COLUMNS: [(usize, f32); 2] = [(407, 8.0), (462, 91.0)];
-const GREY: [u8; 3] = [0x88, 0x88, 0x88];
-const TAB_FILL: [u8; 4] = [0xE7, 0xEB, 0xF4, 0xFF];
 /// The info page's allies and antagonists, stacked on its right: each heading, its box under it, and three 16 px
 /// rows in it (rathena's default max_guild_alliance).
 const RELATION_HEADINGS: [usize; 2] = [338, 339];
@@ -798,7 +796,6 @@ fn online_icon_x(line_width: f32) -> f32 {
 fn exp_color(level: u32) -> [u8; 3] {
     if level >= RED_EXP_LEVEL { RED } else { [0, 0, 0] }
 }
-}
 
 /// A guild emblem from the server: a zlib-compressed BMP, its magenta keyed out.
 pub fn decode_emblem(data: &[u8]) -> Option<RgbaImage> {
@@ -1261,6 +1258,7 @@ impl GuildWindow {
     pub fn draw<'a>(
         &self,
         layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
