@@ -1253,7 +1253,6 @@ item	14549	685
 item	14550	686
 item	662	507
 item	12262	507
-part	0	3D	duplicate=4;timeBetweenDupli=0;file=effect/pok3.tga;duration=300;alphaMax=0.8;alphaMin=0.3;fadeIn=true;fadeOut=true;poszStart=1;posxStart=0;posyStart=0;posxEndRand=2;posyEndRand=2;poszEndRand=2;zIndex=1;size=10;red=1;green=1;blue=1;sizeRand=20;sizeSmooth=true;attachedEntity=false;sparkling=true
 part	1	2D	alphaMax=12;angleRand=0,35;attachedEntity=false;duration=250;durationRand=200,350;fadeOut=true;fade=true;file=effect/lens1.tga;sizeEndX=1;sizeRandEndY=250,300;sizeRandStartX=25,40;sizeRandStartY=10,10;circlePattern=true;circleOuterSizeRand=5,6;circleInnerSize=2.2;overlay=true;zIndex=1;wav=effect/ef_hit2
 part	1	2D	alphaMax=12;angleRand=50,85;attachedEntity=false;duration=250;durationRand=200,350;fadeOut=true;fade=true;file=effect/lens2.tga;sizeEndX=1;sizeRandEndY=250,300;sizeRandStartX=25,40;sizeRandStartY=10,10;circlePattern=true;circleOuterSizeRand=5,6;circleInnerSize=2.2;overlay=true;zIndex=1
 part	1	2D	alphaMax=12;angleRand=100,135;attachedEntity=false;duration=250;durationRand=200,350;fadeOut=true;fade=true;file=effect/lens1.tga;sizeEndX=1;sizeRandEndY=250,300;sizeRandStartX=25,40;sizeRandStartY=10,10;circlePattern=true;circleOuterSizeRand=5,6;circleInnerSize=2.2;overlay=true;zIndex=1
