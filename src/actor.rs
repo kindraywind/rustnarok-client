@@ -1984,6 +1984,8 @@ pub struct Actor {
     shot: Option<Shot>,
     /// Swings still to start (a multi-hit skill's later hits): the action, when, and its pace.
     swings: Vec<(usize, Instant, f32)>,
+    /// Until then it's in a flurry of swings (Sonic Blow's), which a walk doesn't wait for.
+    flurry_until: Option<Instant>,
     /// A player who fought stands ready until moving again.
     ready: bool,
     /// Sitting down (until it stands or walks).
@@ -2149,6 +2151,7 @@ impl Actor {
             animation_started: now,
             shot: None,
             swings: Vec::new(),
+            flurry_until: None,
             ready: false,
             sitting: false,
             remove_at: None,
@@ -2331,7 +2334,8 @@ impl Actor {
         let (_, flinch, death) = combat_actions(self.kind);
         let (action, timing) = self.animation(now);
         let held_cast = self.shot.as_ref().is_some_and(|shot| matches!(shot.pace, Pace::Hold(_)));
-        self.sitting || (matches!(timing, Timing::Once(..) | Timing::Span(_)) && action != flinch && action != death && !held_cast)
+        let flurry = self.flurry_until.is_some_and(|until| now < until);
+        self.sitting || (!flurry && matches!(timing, Timing::Once(..) | Timing::Span(_)) && action != flinch && action != death && !held_cast)
     }
 
     /// Stops walking once the step under way is done (a slide goes on).
@@ -2339,6 +2343,11 @@ impl Actor {
         if !self.sliding {
             self.path.truncate(1);
         }
+    }
+
+    /// In a flurry of swings until `until`: a click to walk goes out at once rather than waiting for the swings.
+    pub fn flurry(&mut self, until: Instant) {
+        self.flurry_until = Some(until);
     }
 
     /// Plays `action` again from `start`, once it comes.
@@ -2424,6 +2433,7 @@ impl Actor {
         // Walking looks straight ahead again.
         self.set_head(0);
         self.swings.clear();
+        self.flurry_until = None;
         // Walking interrupts an attack or flinch, not a death.
         if self.shot.as_ref().is_some_and(|shot| !shot.hold) {
             self.shot = None;
@@ -2877,8 +2887,9 @@ mod tests {
         actor.update(ms(650));
         assert_eq!((actor.swings.len(), actor.shot.as_ref().map(|shot| shot.started)), (0, Some(ms(600))));
         actor.swing_later(5, ms(900), 1.0);
+        actor.flurry(ms(2000));
         actor.start_walking(ms(700));
-        assert!(actor.swings.is_empty(), "walking off ends the flurry");
+        assert!(actor.swings.is_empty() && actor.flurry_until.is_none(), "walking off ends the flurry");
     }
 
     #[test]
