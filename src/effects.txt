@@ -1806,6 +1806,9 @@ wav	77	effect\priest_resurrection	0
 wav	78	effect\priest_recovery	0
 wav	79	effect\wizard_earthspike	0
 wav	80	effect\ef_fireball	0
+wav	80	effect\ef_fireball	64
+wav	80	effect\ef_fireball	128
+wav	80	effect\ef_fireball	192
 wav	81	effect\ef_bash	0
 wav	82	effect\ef_bash	592
 wav	83	effect\priest_sanctuary	0

@@ -1274,6 +1274,8 @@ pub struct Effects {
     prims: crate::prims::Prims,
     ghost: Vec<Placed>,
     fire_ball: Vec<Vec<Placed>>,
+    /// Spear Boomerang's spear, its first frame's layers.
+    spear: Vec<Placed>,
     yaw: f32,
     /// Fire Bolt's spark sprite's layers, frame by frame.
     spark_frames: Vec<Vec<Placed>>,
@@ -1485,10 +1487,12 @@ const SONIC_BLOW: u32 = 121;
 const SOUL_STRIKE: u32 = 15;
 /// EF_FIREBALL, EF_YUFITEL (Jupitel Thunder) and EF_GRIMTOOTH (`prims`).
 const FIRE_BALL: u32 = 24;
+/// EF_SPEARBMR: Spear Boomerang's four spears from the caster to the target (`prims::balls`).
+const SPEAR_BOOMERANG: u32 = 80;
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 5] = [SOUL_STRIKE, FIRE_BALL, FROST_DIVER, JUPITEL, GRIMTOOTH];
+pub const AIMED: [u32; 6] = [SOUL_STRIKE, FIRE_BALL, FROST_DIVER, JUPITEL, GRIMTOOTH, SPEAR_BOOMERANG];
 /// EF_EARTHSPIKE and EF_HEAVENSDRIVE: stone spikes where they play (`prims`).
 const EARTH_SPIKE: u32 = 79;
 const HEAVENS_DRIVE: u32 = 142;
@@ -1876,6 +1880,12 @@ impl Effects {
                 }
                 self.prims.balls.fire_ball(from, to, now);
             }
+            SPEAR_BOOMERANG => {
+                self.sprites.entry(balls::SPEAR_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, balls::SPEAR_SPRITE));
+                // A sound with each spear, set by the table's delays.
+                self.play_sounds(table, id, from, now);
+                self.prims.balls.spear_boomerang(from, to, now);
+            }
             JUPITEL => {
                 for path in std::iter::once(balls::THUNDER_CORE).chain(balls::THUNDER_BALL) {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
@@ -1924,6 +1934,10 @@ impl Effects {
         if let Some(Some(sprite)) = self.sprites.get_mut(balls::FIRE_BALL_SPRITE).filter(|_| self.fire_ball.is_empty()) {
             let frames = sprite.frames(0).max(1);
             self.fire_ball = (0..frames).map(|frame| sprite.frame_at(gpu, 0, 0, Timing::Span((frame as f32 + 0.5) / frames as f32))).collect();
+        }
+        if let Some(Some(sprite)) = self.sprites.get_mut(balls::SPEAR_SPRITE).filter(|_| self.spear.is_empty()) {
+            let frames = sprite.frames(0).max(1);
+            self.spear = sprite.frame_at(gpu, 0, 0, Timing::Span(0.5 / frames as f32));
         }
         self.yaw = yaw.to_degrees();
         if self.spark_frames.is_empty()
@@ -2395,7 +2409,8 @@ impl Effects {
             }
         }
         let fire_ball = self.sprites.get(balls::FIRE_BALL_SPRITE).and_then(Option::as_ref);
-        quads.extend(self.prims.balls.quads(fire_ball, &self.fire_ball, &self.textures, self.yaw));
+        let spear = (self.sprites.get(balls::SPEAR_SPRITE).and_then(Option::as_ref), self.spear.as_slice());
+        quads.extend(self.prims.balls.quads(fire_ball, &self.fire_ball, spear, &self.textures, self.yaw));
         quads
     }
 }
