@@ -1,5 +1,5 @@
 {
-  "about": "Quest tracker (issue #219): a test NPC (quests.txt) gives two quests, a hunt for ten Drops (4275) and one without hunts (1001); the tracker under the minimap lists both, the hunt with '( 0 / 10 )'. Killing a Drops (the character raised for it) updates the line to '( 1 / 10 )'. The NPC erases the quests, the character is put back and the NPC unloaded. Then (issue #320) four quests more make six: the tracker lists the first five; switching 1002 off in the quest window (Alt+U) brings 4275 on, and switching it back restores the five; the four are taken out again. Picking the Drops quest opens its details right of the list (issue #534): its title, the Description, Monster and Reward panels and the Deadline; their Close shuts them. Filters, the search and links (issue #535): Daily lists only the Drops quest and Normal the other five; 'Archer' in the box, Enter, lists only 1004; reopening clears both. The Drops quest put on hold, the NPC's line links it and a quest nobody has: that one says it isn't found, and the Drops link opens the window on On hold with it picked.",
+  "about": "Quest tracker (issue #219): a test NPC (quests.txt) gives two quests, a hunt for ten Drops (4275) and one without hunts (1001); the tracker under the minimap lists both, the hunt with '( 0 / 10 )'. Killing a Drops (the character raised for it) updates the line to '( 1 / 10 )'. The NPC erases the quests, the character is put back and the NPC unloaded. Then (issue #320) four quests more make six: the tracker lists the first five; switching 1002 off in the quest window (Alt+U) brings 4275 on, and switching it back restores the five; the four are taken out again. Picking the Drops quest opens its details right of the list (issue #534): its title, the Description, Monster and Reward panels and the Deadline; their Close shuts them. Filters, the search and links (issue #535): with a normal quest (1109) and a daily one (1298) given, Daily lists only 1298 and Normal only 1109; 'Archer' in the box, Enter, lists only 1004; reopening clears both. The Drops quest put on hold, the NPC's line links it and a quest nobody has: that one says it isn't found, and the Drops link opens the window on On hold with it picked.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -206,6 +206,15 @@
       }
     },
     {
+      "type": "icons"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
       "click_on": {
         "button": "quest_filter:daily"
       }
@@ -217,7 +226,7 @@
       "expect": {
         "state": {
           "quest_list.ids": [
-            4275
+            1298
           ]
         }
       }
@@ -244,11 +253,7 @@
       "expect": {
         "state": {
           "quest_list.ids": [
-            1001,
-            1002,
-            1003,
-            1004,
-            1005
+            1109
           ]
         }
       }
@@ -318,6 +323,8 @@
             1003,
             1004,
             1005,
+            1109,
+            1298,
             4275
           ]
         }
@@ -476,6 +483,15 @@
     },
     {
       "wait": 300
+    },
+    {
+      "type": "noicons"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
     },
     {
       "type": "less"
