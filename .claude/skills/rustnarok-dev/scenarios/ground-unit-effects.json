@@ -1,0 +1,23 @@
+{
+  "about": "Two skills' ground units (issue #409): Earth Strain (0xcb) plays effect 142 once (Heaven's Drive's spikes, quake and sound) and keeps it; Wall of Thorns (0xe6) plays 912 (its cast and its ground STRs), started again for as long as it stands. On a field (towns bar Wall of Thorns), a Warlock casts Earth Strain, then a Genetic Wall of Thorns, both on their own cell, a warp apart. Ends a Novice at base level 1.",
+  "account": "",
+  "slot": 0,
+  "env": {"RUSTNAROK_CLIENT_SOUND": "1"},
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@job 4055"}, {"wait": 500}, {"say": "@blvl 199"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500}, {"say": "@heal"}, {"wait": 500},
+    {"say": "@useskill 2216 5 self"},
+    {"wait_for": {"event": "Sound effect\\wizard_earthspike.wav", "ms": 12000}},
+    {"expect": {"state": {"unit_strs": []}}},
+    {"shot": "earth-strain", "crop": [262, 120, 500, 400], "threshold": 5},
+    {"say": "@warp prt_fild08 170 300"}, {"settle": 1500},
+    {"say": "@job 4071"}, {"wait": 500}, {"say": "@allskill"}, {"wait": 500}, {"say": "@item 6210 2"}, {"wait": 500}, {"say": "@heal"}, {"wait": 500},
+    {"say": "@useskill 2482 5 self"},
+    {"wait_for": {"event": "SkillUnit", "ms": 8000}},
+    {"wait": 3000},
+    {"expect": {"state": {"ground_unit_kinds": [230], "unit_strs": [[230, 912, true]]}}},
+    {"shot": "wall-of-thorns", "crop": [262, 120, 500, 400], "threshold": 5},
+    {"say": "@itemreset"}, {"wait": 300}, {"say": "@blvl -300"}, {"wait": 500}, {"say": "@job 0"}, {"wait": 500},
+    {"say": "@warp prontera 156 180"}, {"settle": 1000}
+  ]
+}

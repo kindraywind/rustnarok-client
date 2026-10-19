@@ -1436,6 +1436,24 @@ impl Effects {
         kinds
     }
 
+    /// The STRs playing on skills' units on the ground (for the test driver): the unit's kind (rathena's UNT_ number),
+    /// the effect, whether it starts again, and its milliseconds since it (last) started; sorted.
+    pub fn unit_strs(&self, now: Instant) -> Vec<(u32, u32, bool, u64)> {
+        let mut strs: Vec<_> = self
+            .playing
+            .iter()
+            .filter_map(|playing| match playing.anchor {
+                Anchor::Lasting(id, _) => {
+                    let kind = self.unit_kinds.get(&id).copied()?;
+                    Some((kind, playing.effect, playing.again, now.saturating_duration_since(playing.start).as_millis() as u64))
+                }
+                _ => None,
+            })
+            .collect();
+        strs.sort_unstable();
+        strs
+    }
+
     /// The camera shake this frame at `now`: `[sideways, distance, pitch_degrees]`, with the sign flipping each frame
     /// and fresh noise each frame; `None` when no shake runs.
     pub fn quake(&mut self, now: Instant) -> Option<[f32; 3]> {
@@ -2021,6 +2039,21 @@ mod tests {
         assert_eq!((table.units.get(&0x82), table.units.get(&0xb3), table.units.get(&0xcb)), (Some(&91), Some(&370), Some(&142)));
         // Earth Strain and Gospel play once and are kept; a warp portal starts again.
         assert!(table.units_once.contains(&0xcb) && table.units_once.contains(&0xb3) && !table.units_once.contains(&0x80));
+        // Wall of Thorns shows 912, started again while it stands: its cast and the ground under it.
+        assert_eq!(table.units.get(&0xe6), Some(&912));
+        assert!(!table.units_once.contains(&0xe6));
+        let thorns: Vec<(&str, &str, bool, bool)> =
+            table.parts[&912].iter().map(|part| (part.file.as_str(), part.folder.as_str(), part.attached, part.once)).collect();
+        assert_eq!(
+            thorns,
+            [
+                ("mineffect/new_wallofthorn/new_wallofthorn_cast/new_wallofthorn_cast", "mineffect/new_wallofthorn/new_wallofthorn_cast/", false, false),
+                ("new_wallofthorn/new_wallofthorn_cast_bottom/new_wallofthorn_cast_bottom", "new_wallofthorn/new_wallofthorn_cast_bottom/", false, false)
+            ]
+        );
+        // Earth Strain's 142 keeps its quake and sound, which play once with it.
+        assert_eq!(table.quakes[&142], [(Duration::ZERO, QUAKE_LONG)]);
+        assert_eq!(table.sounds[&142][0].file, "effect\\wizard_earthspike");
     }
 
     #[test]
