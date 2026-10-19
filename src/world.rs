@@ -434,6 +434,8 @@ pub struct MeshVertex {
 
 pub struct World {
     pub gat: Gat,
+    /// One RGB light per GAT cell, from the ground lightmaps.
+    cell_light: Vec<[f32; 3]>,
     /// RSM 2 instances whose tracks play, and the buffer they're posed into each frame.
     animated: Vec<Animated>,
     animated_buffer: Option<wgpu::Buffer>,
@@ -674,12 +676,14 @@ impl World {
         // Sound sources sit, like models, relative to the map's center.
         let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
         let ambient = crate::ambient::Ambient::new(rsw.sounds.iter().map(|source| crate::ambient::Source::placed(source, half)).collect());
+        let cell_light = cell_lights(&gnd, &gat);
         Ok(Self {
             animated,
             animated_buffer,
             rsm_2_models,
             ambient,
             gat,
+            cell_light,
             textures,
             lightmap,
             vertices,
@@ -713,6 +717,104 @@ impl World {
         let height = self.gat.height_at([cell[0] + 0.5, cell[1] + 0.5]);
         [(cell[0] + 0.5) * CELL, -height, (cell[1] + 0.5) * CELL]
     }
+
+    /// The map light on a unit drawn at `feet`: that GAT cell's triple, or full bright off the map.
+    pub fn sprite_light(&self, feet: Vector) -> [f32; 3] {
+        light_at(&self.cell_light, self.gat.width, self.gat.height, feet)
+    }
+}
+
+/// The cell and its four edge neighbours. Light changes in a step at the cell border, with no blend.
+const LIGHT_SAMPLES: [(i32, i32); 5] = [(0, 0), (0, -1), (0, 1), (1, 0), (-1, 0)];
+
+/// One RGB triple per GAT cell. A cell more than 2.5 units above its GND tile stays full bright.
+fn cell_lights(gnd: &Gnd, gat: &Gat) -> Vec<[f32; 3]> {
+    let mut lights = Vec::with_capacity(gat.width.saturating_mul(gat.height));
+    for y in 0..gat.height {
+        for x in 0..gat.width {
+            lights.push(if above_mesh(gnd, gat, x, y) { [1.0; 3] } else { sampled_light(gnd, x, y) });
+        }
+    }
+    lights
+}
+
+/// The mean of the cell's four GAT corners (world Y, up) is more than 2.5 above the GND tile's highest corner.
+fn above_mesh(gnd: &Gnd, gat: &Gat, x: usize, y: usize) -> bool {
+    let (tile_x, tile_y) = (x / 2, y / 2);
+    if tile_x >= gnd.width || tile_y >= gnd.height {
+        return false;
+    }
+    let Some(cube) = gnd.cubes.get(tile_y * gnd.width + tile_x) else { return false };
+    let Some(&(corners, _)) = gat.cells.get(y * gat.width + x) else { return false };
+    // File heights are negative-up. The highest corner is the greatest world Y.
+    let mesh = cube.heights.into_iter().map(|height| -height).fold(f32::NEG_INFINITY, f32::max);
+    let cell = corners.into_iter().map(|height| -height).sum::<f32>() / 4.0;
+    cell > mesh + 2.5
+}
+
+/// light_c = mean(shadow) / 255 + mean(channel) / 128, then divided by the largest channel when that is above 1.
+fn sampled_light(gnd: &Gnd, x: usize, y: usize) -> [f32; 3] {
+    let mut shadow = 0.0;
+    let mut color = [0.0; 3];
+    for (dx, dy) in LIGHT_SAMPLES {
+        let [alpha, red, green, blue] = light_sample(gnd, x as i32 + dx, y as i32 + dy);
+        shadow += f32::from(alpha);
+        color[0] += f32::from(red);
+        color[1] += f32::from(green);
+        color[2] += f32::from(blue);
+    }
+    let count = LIGHT_SAMPLES.len() as f32;
+    let mut light = color.map(|channel| shadow / count / 255.0 + channel / count / 128.0);
+    let peak = light[0].max(light[1]).max(light[2]);
+    if peak > 1.0 {
+        light = light.map(|channel| channel / peak);
+    }
+    light
+}
+
+/// Shadow and RGB of one GAT cell's quarter of its GND tile's top lightmap. Off the map, or a tile with no top, is 255.
+fn light_sample(gnd: &Gnd, x: i32, y: i32) -> [u8; 4] {
+    const FULL: [u8; 4] = [255; 4];
+    if x < 0 || y < 0 {
+        return FULL;
+    }
+    let (x, y) = (x as usize, y as usize);
+    let (tile_x, tile_y) = (x / 2, y / 2);
+    if tile_x >= gnd.width || tile_y >= gnd.height {
+        return FULL;
+    }
+    let Some(cube) = gnd.cubes.get(tile_y * gnd.width + tile_x) else { return FULL };
+    if cube.top < 0 {
+        return FULL;
+    }
+    let Some(surface) = usize::try_from(cube.top).ok().and_then(|index| gnd.surfaces.get(index)) else { return FULL };
+    let Some(lightmap) = gnd.lightmaps.get(usize::from(surface.lightmap)) else { return FULL };
+    let [width, height] = gnd.lightmap_size;
+    // West-south (1, 1), east-south (5, 1), west-north (1, 5), east-north (5, 5), row 0 on the south edge.
+    // ponytail: a lightmap that is not 8×8 has no such quarter, so the sample stays full bright.
+    let column = if x % 2 == 0 { 1 } else { 5 };
+    let row = if y % 2 == 0 { 1 } else { 5 };
+    if column >= width || row >= height {
+        return FULL;
+    }
+    let texel = row * width + column;
+    let Some(&shadow) = lightmap.get(texel) else { return FULL };
+    let color = width * height + texel * 3;
+    let Some(rgb) = lightmap.get(color..color + 3) else { return FULL };
+    [shadow, rgb[0], rgb[1], rgb[2]]
+}
+
+/// The GAT cell under a world point, or full bright off the table. No blending across the border.
+fn light_at(table: &[[f32; 3]], width: usize, height: usize, [x, _, z]: Vector) -> [f32; 3] {
+    let (cell_x, cell_z) = ((x / CELL).floor(), (z / CELL).floor());
+    if cell_x < 0.0 || cell_z < 0.0 {
+        return [1.0; 3];
+    }
+    let (cell_x, cell_z) = (cell_x as usize, cell_z as usize);
+    if cell_x >= width || cell_z >= height {
+        return [1.0; 3];
+    }
+    table.get(cell_z * width + cell_x).copied().unwrap_or([1.0; 3])
 }
 
 /// Everything one frame of the world needs.
@@ -1571,5 +1673,129 @@ mod tests {
         assert_eq!(ground_hit(&gat, above, toward(above, [27.5, -10.0, 27.5])), Some([5, 5]));
         // Off the map's edge: none.
         assert_eq!(ground_hit(&gat, eye, toward(eye, [25.0, 0.0, -10.0])), None);
+    }
+
+    use rustnarok_client::map::{Cube, Surface};
+
+    fn paint(texel: impl Fn(usize, usize) -> [u8; 4]) -> Vec<u8> {
+        let mut bytes = vec![0; 8 * 8 * 4];
+        for row in 0..8 {
+            for column in 0..8 {
+                let [shadow, red, green, blue] = texel(column, row);
+                let index = row * 8 + column;
+                bytes[index] = shadow;
+                let color = 64 + index * 3;
+                bytes[color] = red;
+                bytes[color + 1] = green;
+                bytes[color + 2] = blue;
+            }
+        }
+        bytes
+    }
+
+    fn flat_light(shadow: u8, rgb: [u8; 3]) -> Vec<u8> {
+        paint(|_, _| [shadow, rgb[0], rgb[1], rgb[2]])
+    }
+
+    fn ground(width: usize, height: usize, heights: [f32; 4], top: i32, lightmap: Vec<u8>) -> Gnd {
+        Gnd {
+            width,
+            height,
+            zoom: 10.0,
+            textures: vec!["ground.bmp".into()],
+            lightmap_size: [8, 8],
+            lightmaps: vec![lightmap],
+            surfaces: vec![Surface { u: [0.0; 4], v: [0.0; 4], texture: 0, lightmap: 0, color: [255; 4] }],
+            cubes: vec![Cube { heights, top, north: -1, east: -1 }; width * height],
+        }
+    }
+
+    fn altitude(width: usize, height: usize, corners: [f32; 4]) -> Gat {
+        Gat { width, height, cells: vec![(corners, 0); width * height] }
+    }
+
+    fn near(light: [f32; 3], expected: [f32; 3]) {
+        assert!(light.iter().zip(expected).all(|(channel, want)| (channel - want).abs() < 1e-5), "{light:?} {expected:?}");
+    }
+
+    fn lit_cell(lights: &[[f32; 3]], width: usize, x: usize, y: usize) -> [f32; 3] {
+        lights[y * width + x]
+    }
+
+    #[test]
+    fn full_light_is_white() {
+        let gnd = ground(2, 2, [0.0; 4], 0, flat_light(255, [0, 0, 0]));
+        let gat = altitude(4, 4, [0.0; 4]);
+        let lights = cell_lights(&gnd, &gat);
+        near(lit_cell(&lights, 4, 1, 1), [1.0; 3]);
+    }
+
+    #[test]
+    fn half_shadow_is_half_the_shadow_byte() {
+        // A 128 and colour 0 is 128/255, the half shadow the light formula calls 0.50.
+        let gnd = ground(2, 2, [0.0; 4], 0, flat_light(128, [0, 0, 0]));
+        let gat = altitude(4, 4, [0.0; 4]);
+        let lights = cell_lights(&gnd, &gat);
+        near(lit_cell(&lights, 4, 1, 1), [128.0 / 255.0; 3]);
+    }
+
+    #[test]
+    fn a_coloured_lightmap_is_divided_by_its_largest_channel() {
+        // 200/128, 100/128 and 0, then divided by 200/128.
+        let gnd = ground(2, 2, [0.0; 4], 0, flat_light(0, [200, 100, 0]));
+        let gat = altitude(4, 4, [0.0; 4]);
+        let lights = cell_lights(&gnd, &gat);
+        near(lit_cell(&lights, 4, 1, 1), [1.0, 0.5, 0.0]);
+    }
+
+    #[test]
+    fn off_map_and_missing_tops_sample_full_bright() {
+        // One neighbour of an edge cell is off the map (shadow and colour 255); the rest of the tile is black.
+        let gnd = ground(2, 2, [0.0; 4], 0, flat_light(0, [0, 0, 0]));
+        let gat = altitude(4, 4, [0.0; 4]);
+        let lights = cell_lights(&gnd, &gat);
+        let mixed = 51.0 / 255.0 + 51.0 / 128.0;
+        near(lit_cell(&lights, 4, 0, 1), [mixed; 3]);
+        // A tile with no top ignores its lightmap.
+        let open = ground(2, 2, [0.0; 4], -1, flat_light(0, [0, 0, 0]));
+        let lights = cell_lights(&open, &gat);
+        near(lit_cell(&lights, 4, 1, 1), [1.0; 3]);
+    }
+
+    #[test]
+    fn reads_the_quarter_texel_of_the_8x8_lightmap() {
+        // Only west-south (1, 1) is dark. Cell (2, 2) is that quarter; its four neighbours read bright texels.
+        let gnd = ground(2, 2, [0.0; 4], 0, paint(|column, row| if (column, row) == (1, 1) { [0, 0, 0, 0] } else { [255, 0, 0, 0] }));
+        let gat = altitude(4, 4, [0.0; 4]);
+        let lights = cell_lights(&gnd, &gat);
+        near(lit_cell(&lights, 4, 2, 2), [204.0 / 255.0; 3]);
+    }
+
+    #[test]
+    fn a_cell_more_than_2_5_above_the_mesh_stays_bright() {
+        let dark = flat_light(0, [0, 0, 0]);
+        let level = ground(2, 2, [0.0; 4], 0, dark.clone());
+        // Exactly 2.5 above stays on the lightmap. More than that is a bridge or a model.
+        let on_it = cell_lights(&level, &altitude(4, 4, [-2.5; 4]));
+        near(lit_cell(&on_it, 4, 1, 1), [0.0; 3]);
+        let bridge = cell_lights(&level, &altitude(4, 4, [-3.0; 4]));
+        near(lit_cell(&bridge, 4, 1, 1), [1.0; 3]);
+        // The highest GND corner wins: file height -10 is world Y 10, so 2.5 above it is file height -12.5.
+        let raised = ground(2, 2, [0.0, 0.0, 0.0, -10.0], 0, dark);
+        near(lit_cell(&cell_lights(&raised, &altitude(4, 4, [-12.5; 4])), 4, 1, 1), [0.0; 3]);
+        near(lit_cell(&cell_lights(&raised, &altitude(4, 4, [-13.0; 4])), 4, 1, 1), [1.0; 3]);
+    }
+
+    #[test]
+    fn light_steps_at_the_cell_border() {
+        let table = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]];
+        assert_eq!(light_at(&table, 3, 1, [9.999, 8.0, 0.1]), [0.4, 0.5, 0.6]);
+        assert_eq!(light_at(&table, 3, 1, [10.0, 8.0, 0.1]), [0.7, 0.8, 0.9]);
+        let rows = [[0.2, 0.0, 0.0], [0.8, 0.0, 0.0]];
+        assert_eq!(light_at(&rows, 1, 2, [0.1, 0.0, 4.999]), [0.2, 0.0, 0.0]);
+        assert_eq!(light_at(&rows, 1, 2, [0.1, 0.0, 5.0]), [0.8, 0.0, 0.0]);
+        assert_eq!(light_at(&table, 3, 1, [-0.01, 0.0, 0.0]), [1.0; 3]);
+        assert_eq!(light_at(&table, 3, 1, [0.0, 0.0, -0.01]), [1.0; 3]);
+        assert_eq!(light_at(&table, 3, 1, [15.0, 0.0, 0.0]), [1.0; 3]);
     }
 }

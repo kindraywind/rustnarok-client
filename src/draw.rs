@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// A unit sprite's vertex RGB is its tint times the map light. Alpha stays the fade.
+fn lit_tint(tint: [f32; 4], light: [f32; 3]) -> [f32; 4] {
+    [tint[0] * light[0], tint[1] * light[1], tint[2] * light[2], tint[3]]
+}
+
 impl App {
     /// The loading screen: the picture over everything and an empty progress bar.
     pub(crate) fn draw_loading(&mut self, event_loop: &ActiveEventLoop) {
@@ -743,6 +748,11 @@ impl App {
                 }
                 _ => [1.0; 4],
             };
+            // Layer colour and status tints are already in the sprite image. Shadows, items and skill units stay unlit.
+            let tint = match owner {
+                Owner::Player | Owner::Unit(_) => lit_tint(tint, game.world.sprite_light(*feet)),
+                _ => tint,
+            };
             let (player, flat) = stand_of(owner);
             placements.iter().enumerate().map(move |(index, (key, position, size, angle))| {
                 (sprites.texture(*key), *feet, *position, *size, tint, *angle, sprite_layer(index, player, flat))
@@ -755,8 +765,9 @@ impl App {
             let (player, flat) = stand_of(&owner);
             for ghost in &actor.ghosts {
                 let alpha = actor::ghost_alpha(now.saturating_duration_since(ghost.left));
+                let tint = lit_tint([1.0, 1.0, 1.0, alpha], game.world.sprite_light(ghost.feet));
                 billboards.extend(ghost.placed.iter().enumerate().filter_map(|(index, (key, position, size, angle))| {
-                    Some((sprites.texture_of(*key)?, ghost.feet, *position, *size, [1.0, 1.0, 1.0, alpha], *angle, sprite_layer(index, player, flat)))
+                    Some((sprites.texture_of(*key)?, ghost.feet, *position, *size, tint, *angle, sprite_layer(index, player, flat)))
                 }));
             }
         }
