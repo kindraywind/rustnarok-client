@@ -1605,6 +1605,8 @@ impl App {
         let caret = open && (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
         let name_of = |item: &links::ItemLink| inventory::item_name(items, item.id, true, item.refine);
         // The basic info and chat windows are kept as they're left.
+        let status_val = |id: u16| game.status.get(&id).copied().unwrap_or(0);
+        game.basic_info.update_width(font, status_val(net::STATUS_WEIGHT), status_val(net::STATUS_MAX_WEIGHT), status_val(net::STATUS_ZENY));
         game.basic_info.save_if_changed();
         game.chat.save_if_changed();
         game.chat.layout(&|text| font.width(text));

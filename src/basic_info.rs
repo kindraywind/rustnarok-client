@@ -13,7 +13,6 @@ use crate::{Layer, UI, contains, offset};
 
 const WIDTH: f32 = 220.0;
 const BASE_BUTTON: [f32; 2] = [3.0, 3.0];
-const MINIMIZE_BUTTON: [f32; 2] = [206.0, 3.0];
 const BUTTON_SIZE: [f32; 2] = [11.0, 11.0];
 /// The title: white at (18, 3) under black at (17, 2); the only text with a shadow.
 const TITLE: [f32; 2] = [17.0, 2.0];
@@ -26,8 +25,9 @@ const BAR_SIZE: [f32; 2] = [135.0, 9.0];
 const BAR_FULL: f32 = 127.0;
 const EXP_SIZE: [f32; 2] = [112.0, 6.0];
 const EXP_INNER: f32 = 110.0;
-/// Zeny's right edge, and the gap to the weight left of it.
-const ZENY_RIGHT: f32 = 215.0;
+/// Margins for the weight and zeny line, and the gap between them.
+const WEIGHT_MARGIN: f32 = 3.0;
+const ZENY_MARGIN: f32 = 5.0;
 const WEIGHT_GAP: f32 = 10.0;
 /// The menu window under the basic info: the toggle bar (219 by 9) 4 down, the menu's back 13 down, and its buttons
 /// (32 by 34) from (9, 23), 42 and 43 apart, five to a row.
@@ -126,19 +126,27 @@ pub fn percent_text(now: i64, most: i64) -> String {
 }
 
 /// Where the minimised window's short first line starts: centred, at least 3 from the left.
-pub fn mini_line_x(width: f32) -> f32 {
-    ((WIDTH - width) / 2.0).floor().max(3.0)
+pub fn mini_line_x(window_width: f32, width: f32) -> f32 {
+    ((window_width - width) / 2.0).floor().max(3.0)
 }
 
 /// The minimised window's grey box under the title bar, its bottom corners cut 3 px: (x, y, width, height) pieces.
-pub fn mini_box(height: f32) -> Vec<[f32; 4]> {
+pub fn mini_box(width: f32, height: f32) -> Vec<[f32; 4]> {
     let body = height - MINI_BOX_TOP - 3.0;
-    let mut pieces = vec![[0.0, MINI_BOX_TOP, WIDTH, body]];
+    let mut pieces = vec![[0.0, MINI_BOX_TOP, width, body]];
     pieces.extend((0..3).map(|row| {
         let inset = row as f32 + 1.0;
-        [inset, MINI_BOX_TOP + body + row as f32, WIDTH - 2.0 * inset, 1.0]
+        [inset, MINI_BOX_TOP + body + row as f32, width - 2.0 * inset, 1.0]
     }));
     pieces
+}
+
+/// The window's width: wide enough that the weight and zeny line fits inside with margins on both sides, and at least 220.
+pub fn window_width(weight: i64, limit: i64, zeny: i64, font: &Font) -> f32 {
+    let weight_text = format!("Weight : {:3} / {:3}", weight / 10, limit / 10);
+    let zeny_text = zeny_text(zeny);
+    let needed = WEIGHT_MARGIN + font.width(&weight_text) + WEIGHT_GAP + font.width(&zeny_text) + ZENY_MARGIN;
+    needed.ceil().max(WIDTH)
 }
 
 /// The numbers over a bar: "%3d  /  %3d".
@@ -270,6 +278,7 @@ pub enum Hit {
 
 pub struct BasicInfo {
     pub frame: Frame,
+    pub width: f32,
     pub menu_open: bool,
     /// The player is a 4th job (the taller window).
     pub fourth: bool,
@@ -283,7 +292,7 @@ impl Default for BasicInfo {
     fn default() -> Self {
         let mut frame = Frame::new([0.0, 0.0], WIDTH);
         frame.open = true;
-        Self { frame, menu_open: false, fourth: false, doram: false, saved: String::new() }
+        Self { frame, width: WIDTH, menu_open: false, fourth: false, doram: false, saved: String::new() }
     }
 }
 
@@ -304,14 +313,25 @@ pub struct Info<'a> {
 }
 
 impl BasicInfo {
+    pub fn update_width(&mut self, font: &Font, weight: i64, limit: i64, zeny: i64) {
+        let width = window_width(weight, limit, zeny, font);
+        self.width = width;
+        self.frame.set_width(width);
+    }
+
+    /// The minimize button's corner inside the window (14 px from the right edge).
+    pub fn minimize_button(&self) -> [f32; 2] {
+        [self.width - 14.0, 3.0]
+    }
+
     /// The window as kept between logins (the game's BASICINFOWNDINFO): x, y, width, its own height (55 or 71
     /// minimised, 134 or 149 not) and whether it shows.
     pub fn saved_text(&self) -> String {
         let [x, y] = self.frame.position;
-        format!("{} {} {} {} {}", x as i32, y as i32, WIDTH as i32, self.body() as i32, u8::from(self.frame.open))
+        format!("{} {} {} {} {}", x as i32, y as i32, self.width as i32, self.body() as i32, u8::from(self.frame.open))
     }
 
-    /// A kept window's place, whether it was minimised and whether it showed; None unless it's 220 wide, one of the
+    /// A kept window's place, whether it was minimised and whether it showed; None unless it's at least 220 wide, one of the
     /// window's heights, and wholly on `screen`.
     pub fn from_saved(text: &str, screen: [f32; 2]) -> Option<([f32; 2], bool, bool)> {
         let values: Vec<i32> = text.split_whitespace().map(|value| value.parse().ok()).collect::<Option<_>>()?;
@@ -319,7 +339,7 @@ impl BasicInfo {
         let [x, y, w, h] = [x, y, w, h].map(|value| value as f32);
         let sizes = [NORMAL.mini, NORMAL.height, FOURTH.mini, FOURTH.height];
         let on_screen = x >= 0.0 && y >= 0.0 && x + w <= screen[0] && y + h <= screen[1];
-        (w == WIDTH && sizes.contains(&h) && on_screen).then_some(([x, y], h == NORMAL.mini || h == FOURTH.mini, shown != 0))
+        (w >= WIDTH && sizes.contains(&h) && on_screen).then_some(([x, y], h == NORMAL.mini || h == FOURTH.mini, shown != 0))
     }
 
     /// The window as it was left, or the default.
@@ -377,10 +397,10 @@ impl BasicInfo {
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         // Its own reach, minimised or not: the window and the menu strip under it.
         let local = [cursor[0] - self.frame.position[0], cursor[1] - self.frame.position[1]];
-        if !self.frame.open || !contains([0.0, 0.0], [WIDTH, self.height()], local) {
+        if !self.frame.open || !contains([0.0, 0.0], [self.width, self.height()], local) {
             return None;
         }
-        Some(if contains(MINIMIZE_BUTTON, BUTTON_SIZE, local) {
+        Some(if contains(self.minimize_button(), BUTTON_SIZE, local) {
             Hit::Minimize
         } else if local[1] < TITLE_HEIGHT {
             Hit::Title
@@ -412,7 +432,7 @@ impl BasicInfo {
     pub fn toggle_box(&self) -> Option<[f32; 4]> {
         self.frame.open.then(|| {
             let [x, y] = self.frame.at([0.0, self.toggle_top()]);
-            [x, y, WIDTH, TOGGLE_HEIGHT]
+            [x, y, self.width, TOGGLE_HEIGHT]
         })
     }
 
@@ -441,17 +461,18 @@ impl BasicInfo {
 
         if self.frame.minimized {
             // The standard title bar over a grey box with cut corners, white inside.
-            chrome.draw_title_bar(layer, at([0.0, 0.0]), WIDTH);
-            for [x, y, w, h] in mini_box(layout.mini) {
+            chrome.draw_title_bar(layer, at([0.0, 0.0]), self.width);
+            for [x, y, w, h] in mini_box(self.width, layout.mini) {
                 layer.sprites.push((&assets.mini_edge, at([x, y]), [w, h]));
             }
-            layer.sprites.push((&chrome.white, at([1.0, MINI_BOX_TOP]), [WIDTH - 2.0, layout.mini - MINI_BOX_TOP - 2.0]));
+            layer.sprites.push((&chrome.white, at([1.0, MINI_BOX_TOP]), [self.width - 2.0, layout.mini - MINI_BOX_TOP - 2.0]));
         } else {
             let background = &assets.backgrounds[usize::from(self.fourth)];
-            layer.sprites.push((background, at([0.0, 0.0]), [WIDTH, layout.height]));
+            layer.sprites.push((background, at([0.0, 0.0]), [self.width, layout.height]));
         }
-        for place in [BASE_BUTTON, MINIMIZE_BUTTON] {
-            let button = usize::from(place == MINIMIZE_BUTTON);
+        let minimize_button = self.minimize_button();
+        for place in [BASE_BUTTON, minimize_button] {
+            let button = usize::from(place == minimize_button);
             let image = chrome.button(button, contains(at(place), BUTTON_SIZE, cursor));
             layer.sprites.push((image, at(place), image.size));
         }
@@ -466,10 +487,10 @@ impl BasicInfo {
                 value(net::STATUS_BASE_EXP),
                 value(net::STATUS_NEXT_BASE_EXP),
             );
-            if font.width(&long) <= WIDTH - 18.0 {
+            if font.width(&long) <= self.width - 18.0 {
                 text(layer, long, [9.0, 20.0], BLACK);
             } else {
-                let x = mini_line_x(font.width(&short));
+                let x = mini_line_x(self.width, font.width(&short));
                 text(layer, short, [x, 20.0], BLACK);
             }
             let mut x = 9.0;
@@ -513,7 +534,7 @@ impl BasicInfo {
                 text(layer, numbers.clone(), [corner[0] + ((BAR_SIZE[0] - font.width(&numbers)) / 2.0).floor(), corner[1] - 2.0], BLACK);
             }
             let percent = percent_text(now, most);
-            let x = layout.percent.unwrap_or(WIDTH - 20.0 - font.width(&percent));
+            let x = layout.percent.unwrap_or(self.width - 20.0 - font.width(&percent));
             text(layer, percent, [x, label[1]], BLACK);
         }
 
@@ -538,7 +559,7 @@ impl BasicInfo {
         let (weight, limit) = (value(net::STATUS_WEIGHT), value(net::STATUS_MAX_WEIGHT));
         let zeny = zeny_text(value(net::STATUS_ZENY));
         let weight_text = format!("Weight : {:3} / {:3}", weight / 10, limit / 10);
-        let zeny_x = ZENY_RIGHT - font.width(&zeny);
+        let zeny_x = self.width - ZENY_MARGIN - font.width(&zeny);
         text(layer, zeny, [zeny_x, layout.extra], BLACK);
         let weight_x = zeny_x - WEIGHT_GAP - font.width(&weight_text);
         text(layer, weight_text, [weight_x, layout.extra], if heavy(weight, limit, info.overweight) { RED } else { BLACK });
@@ -555,7 +576,7 @@ impl BasicInfo {
             Some(new) if !self.menu_open && marked => new,
             _ => &assets.toggles[usize::from(self.menu_open)],
         };
-        layer.sprites.push((toggle, at([0.0, self.toggle_top()]), toggle.size));
+        layer.sprites.push((toggle, at([0.0, self.toggle_top()]), [self.width, TOGGLE_HEIGHT]));
         if self.menu_open {
             layer.sprites.push((&assets.menu, at([0.0, self.menu_top()]), assets.menu.size));
             for (place, name) in visible().into_iter().enumerate() {
@@ -695,9 +716,9 @@ mod tests {
         // The percentage isn't cut at 100.
         assert_eq!([percent_text(41, 40), percent_text(0, 40), percent_text(20, 40), percent_text(5, 0)], ["102%", "0%", "50%", "0%"]);
         // The short mini line: centred, never nearer the left than 3.
-        assert_eq!((mini_line_x(200.0), mini_line_x(500.0)), (((WIDTH - 200.0) / 2.0).floor(), 3.0));
+        assert_eq!((mini_line_x(WIDTH, 200.0), mini_line_x(WIDTH, 500.0)), (((WIDTH - 200.0) / 2.0).floor(), 3.0));
         // The grey box under the title bar, its bottom corners cut 3 px.
-        let pieces = mini_box(55.0);
+        let pieces = mini_box(WIDTH, 55.0);
         assert_eq!(pieces[0], [0.0, 17.0, WIDTH, 35.0]);
         assert_eq!(pieces[1..], [[1.0, 52.0, WIDTH - 2.0, 1.0], [2.0, 53.0, WIDTH - 4.0, 1.0], [3.0, 54.0, WIDTH - 6.0, 1.0]]);
         assert_eq!(bar_text(7, 40), "  7  /   40");
@@ -707,5 +728,31 @@ mod tests {
         assert!(!heavy(999, 2000, 50) && heavy(1000, 2000, 50) && heavy(1800, 2000, 90) && !heavy(1799, 2000, 90) && !heavy(5, 0, 50));
         assert_eq!(mini_lines(5, "Novice", 3, 25, 200)[0], "Lv. 5 / Novice / Lv. 3 / Exp. 12.5 %");
         assert_eq!(mini_lines(99, "Novice", 10, 0, 0)[1], "Lv99 / Novice / Lv10 / Exp100.0%");
+    }
+
+    #[test]
+    fn window_width_grows_for_long_numbers() {
+        let font = Font::load();
+        // Short numbers: width is at least 220.
+        let w_short = window_width(1000, 2000, 500, &font);
+        assert_eq!(w_short, WIDTH);
+
+        // 1026 / 2630 weight and 100,000,000 zeny:
+        let w_100m = window_width(10260, 26300, 100_000_000, &font);
+        assert!(w_100m > WIDTH, "w_100m = {w_100m} should grow beyond {WIDTH}");
+
+        // 5-digit weights and 2,147,483,647 zeny:
+        let w_max = window_width(999990, 999990, 2_147_483_647, &font);
+        assert!(w_max > w_100m, "w_max = {w_max} should grow beyond {w_100m}");
+
+        // Check that with w_100m and w_max, both margins are preserved.
+        for (weight, limit, zeny, w) in [(10260, 26300, 100_000_000, w_100m), (999990, 999990, 2_147_483_647, w_max)] {
+            let weight_text = format!("Weight : {:3} / {:3}", weight / 10, limit / 10);
+            let zeny_text = zeny_text(zeny);
+            let zeny_x = w - ZENY_MARGIN - font.width(&zeny_text);
+            let weight_x = zeny_x - WEIGHT_GAP - font.width(&weight_text);
+            assert!(weight_x >= WEIGHT_MARGIN, "weight_x {weight_x} should be >= {WEIGHT_MARGIN}");
+            assert_eq!(zeny_x + font.width(&zeny_text), w - ZENY_MARGIN);
+        }
     }
 }
