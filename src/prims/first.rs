@@ -41,6 +41,9 @@ pub const FIRST_AID: u32 = 309;
 pub const SPRINKLE_SAND: u32 = 310;
 pub const HEAL_UNDEAD: u32 = 320;
 pub const ASPERSIO: u32 = 86;
+pub const ADRENALINE_RUSH: u32 = 98;
+pub const FLASHER_FX: u32 = 99;
+pub const REMOVE_TRAP: u32 = 100;
 
 pub fn makes(effect: u32) -> bool {
     matches!(
@@ -58,6 +61,9 @@ pub fn makes(effect: u32) -> bool {
             | SPRINKLE_SAND
             | HEAL_UNDEAD
             | ASPERSIO
+            | ADRENALINE_RUSH
+            | FLASHER_FX
+            | REMOVE_TRAP
     )
 }
 
@@ -72,6 +78,9 @@ fn length(effect: u32) -> u32 {
         SPRINKLE_SAND => 300,
         HEAL_UNDEAD => 100,
         ASPERSIO => 175,
+        ADRENALINE_RUSH => 300,
+        FLASHER_FX => 250,
+        REMOVE_TRAP => 70,
         _ => 50,
     }
 }
@@ -224,6 +233,24 @@ impl First {
                     seed(born, y, [d, speed, half, 0.0]);
                 }
             }
+            ADRENALINE_RUSH => {
+                // Four sparks starting at yaws 0, 90, 180 and 270.
+                for yaw in [0.0, 90.0, 180.0, 270.0] {
+                    seed(0, yaw, [0.0; 4]);
+                }
+            }
+            FLASHER_FX => seed(0, 0.0, [0.0; 4]),
+            REMOVE_TRAP => {
+                // 12 sparks at ticks 0 and 7: one draw thrown away, the pull of gravity, the yaw.
+                for born in [0, 7] {
+                    for _ in 0..12 {
+                        let _ = rand(2);
+                        let gravity = 0.08 + rand(10) as f32 / 1000.0;
+                        let yaw = rand(360) as f32;
+                        seed(born, yaw, [gravity, 0.0, 0.0, 0.0]);
+                    }
+                }
+            }
             ASPERSIO => {
                 // A sparkle every 5 ticks from 65 to 135, each with a bearing.
                 for born in (65..=135).step_by(5) {
@@ -307,7 +334,20 @@ impl First {
             id,
             start: now,
             unit,
-            follows: !matches!(id, MAGNUM_BREAK | STEAL | DETOXIFY | CART_REVOLUTION | FIRST_AID | SPRINKLE_SAND | HEAL_UNDEAD | ASPERSIO),
+            follows: !matches!(
+                id,
+                MAGNUM_BREAK
+                    | STEAL
+                    | DETOXIFY
+                    | CART_REVOLUTION
+                    | FIRST_AID
+                    | SPRINKLE_SAND
+                    | HEAL_UNDEAD
+                    | ASPERSIO
+                    | ADRENALINE_RUSH
+                    | FLASHER_FX
+                    | REMOVE_TRAP
+            ),
             at,
             seeds,
             sparks,
@@ -503,6 +543,22 @@ impl First {
         let _ = &position_of;
         for effect in &self.list {
             match effect.id {
+                FLASHER_FX => {
+                    // The flash: a 40 by 40 square (half-diagonal 20·√2, turned 45°) 10 up, at full strength for ages 0…68.
+                    if let Some(a) = Self::age(effect, now, 0, 69) {
+                        let _ = a;
+                        let at = [effect.at[0], effect.at[1] + 10.0, effect.at[2]];
+                        squares.push(Square {
+                            texture: THUNDER_CENTER,
+                            at,
+                            radius: 20.0 * std::f32::consts::SQRT_2,
+                            spin: 45.0,
+                            alpha: 255.0,
+                            mirrored: false,
+                            tint: [255; 3],
+                        });
+                    }
+                }
                 FIRST_AID => {
                     for seed in &effect.seeds {
                         let Some(a) = Self::age(effect, now, seed.born, 299) else { continue };
@@ -571,6 +627,27 @@ impl First {
         for effect in &self.list {
             let Some(at) = Self::place(effect, &position_of) else { continue };
             match effect.id {
+                ADRENALINE_RUSH => {
+                    for seed in &effect.seeds {
+                        let Some(a) = Self::age(effect, now, seed.born, 100) else { continue };
+                        let n = (a + 1) as f32;
+                        let (sin, cos) = trig(seed.y + 0.3 * n + 0.1 * n * (n + 1.0));
+                        let place = [at[0] + 7.0 * sin, at[1] + 0.1 * n + 0.001 * n * (n + 1.0), at[2] + 7.0 * cos];
+                        let alpha = if a <= 89 { 254.0 } else { (254.0 - 25.4 * (a - 89) as f32).max(0.0) };
+                        particles.push(Particle { sprite: STAR, at: place, scale: 1.2, alpha, spin: 0.0 });
+                    }
+                }
+                REMOVE_TRAP => {
+                    for seed in &effect.seeds {
+                        let Some(a) = Self::age(effect, now, seed.born, 50) else { continue };
+                        let n = (a + 1) as f32;
+                        let gravity = seed.r[0];
+                        let (sin, cos) = trig(seed.y);
+                        let place = [at[0] + 0.2 * n * sin, at[1] + 2.0 * n - gravity * n * (n + 1.0) / 2.0, at[2] + 0.2 * n * cos];
+                        let alpha = if a <= 34 { 254.0 } else { (254.0 - 254.0 / 15.0 * (a - 34) as f32).max(0.0) };
+                        particles.push(Particle { sprite: STAR, at: place, scale: 0.8, alpha, spin: 0.0 });
+                    }
+                }
                 ASPERSIO => {
                     for seed in &effect.seeds {
                         let Some(a) = Self::age(effect, now, seed.born, 40) else { continue };
@@ -948,6 +1025,47 @@ mod tests {
         assert!(near(particle(9).alpha, 254.0) && near(particle(31).alpha, 254.0) && near(particle(32).alpha, 222.25) && near(particle(39).alpha, 0.0));
         assert!(near(particle(0).alpha, 25.4) && near(particle(2).spin, 9.0));
         assert!(first.particles(tick(start, 40), |_| None).iter().all(|particle| particle.at[1] > 0.0));
+    }
+
+    #[test]
+    fn adrenaline_rush_spirals_four_sparks() {
+        let (first, start) = effect_at(ADRENALINE_RUSH, |_| 0, false);
+        assert_eq!(first.list[0].seeds.iter().map(|seed| seed.y).collect::<Vec<_>>(), [0.0, 90.0, 180.0, 270.0]);
+        let at = |e: u32| first.particles(tick(start, e), |_| Some([0.0; 3]));
+        assert_eq!((at(0).len(), at(99).len(), at(100).len()), (4, 4, 0));
+        // 7 out from the feet; up 0.1 n + 0.001 n (n + 1) with n = age + 1: 0.102 at age 0, 20.1 at 99.
+        assert!(near(f32::hypot(at(0)[0].at[0], at(0)[0].at[2]), 7.0) && near(at(0)[0].at[1], 0.102) && near(at(99)[0].at[1], 20.1));
+        // Alpha 254 to age 89, 228.6 at 90, 25.4 at 98, 0 at 99; scale 1.2.
+        let alpha = |e: u32| at(e)[0].alpha;
+        assert!(near(alpha(89), 254.0) && near(alpha(90), 228.6) && near(alpha(98), 25.4) && near(alpha(99), 0.0) && at(0)[0].scale == 1.2);
+    }
+
+    #[test]
+    fn flasher_flashes_a_40_unit_square_10_up() {
+        let (first, start) = effect_at(FLASHER_FX, |_| 0, false);
+        let at = |e: u32| first.squares(tick(start, e), |_| None);
+        // 40 by 40 (half-diagonal 20·√2, turned 45°), 10 up, at full strength for ages 0…68.
+        let flash = &at(0)[0];
+        assert!(near(flash.radius, 28.284) && flash.spin == 45.0 && flash.at == [0.0, 10.0, 0.0] && flash.texture == THUNDER_CENTER && flash.alpha == 255.0);
+        assert!(at(68).len() == 1 && at(69).is_empty());
+    }
+
+    #[test]
+    fn remove_trap_throws_a_fountain() {
+        let (first, start) = effect_at(REMOVE_TRAP, |_| 0, false);
+        // 12 sparks at ticks 0 and 7, each living ages 0…49.
+        assert_eq!(first.list[0].seeds.len(), 24);
+        let at = |e: u32| first.particles(tick(start, e), |_| Some([0.0; 3]));
+        assert_eq!((at(0).len(), at(6).len(), at(7).len(), at(49).len(), at(50).len(), at(56).len(), at(57).len()), (12, 12, 24, 24, 12, 12, 0));
+        // A pull of 0.08: up 2n − g n (n + 1)/2, n = age + 1: 24.0 at age 23, −2.0 at 49.
+        assert!(near(at(23)[0].at[1], 24.0) && near(at(49)[0].at[1], -2.0));
+        // A pull of 0.089 (draws 0, 9, 0 a spark) drops it 13.475.
+        let mut draws = [0, 9, 0].into_iter().cycle();
+        let (heavy, heavy_start) = effect_at(REMOVE_TRAP, |_| draws.next().unwrap(), false);
+        let got = heavy.particles(tick(heavy_start, 49), |_| Some([0.0; 3]))[0].at[1];
+        assert!(near(got, -13.475), "{got}");
+        // Alpha 254 to age 34, 237.07 at 35, 0 at 49; scale 0.8.
+        assert!(near(at(34)[0].alpha, 254.0) && near(at(35)[0].alpha, 237.07) && near(at(49)[0].alpha, 0.0) && at(0)[0].scale == 0.8);
     }
 
     #[test]
