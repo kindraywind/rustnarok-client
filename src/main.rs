@@ -3140,6 +3140,8 @@ const SHOP_SIZE: &str = "shop_size";
 const SHOP_DEAL_SIZE: &str = "shop_deal_size";
 /// The party window's size mode, kept with the places.
 const PARTY_MODE: &str = "party_mode";
+/// Each party window mode's corner grip rows (0: the mode's own height).
+const PARTY_SIZE: &str = "party_size";
 const VEND_SIZE: &str = "vend_size";
 const SKILL_LIST_SIZE: &str = "skill_list_size";
 /// The homunculus's and the mercenary's skill lists' heights.
