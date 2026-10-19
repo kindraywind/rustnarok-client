@@ -3563,7 +3563,7 @@ impl App {
                         self.make_action(action);
                     }
                 }
-                Key::Named(NamedKey::Escape) => self.make_action(char_make::Action::Back),
+                Key::Named(NamedKey::Escape) => self.escape_before_map(),
                 Key::Named(NamedKey::Backspace) => {
                     make.name.pop();
                 }

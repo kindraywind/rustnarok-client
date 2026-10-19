@@ -137,7 +137,7 @@ impl App {
                     3 => 1355,
                     _ => 11,
                 });
-                let back = std::mem::replace(&mut self.scene, Scene::Login);
+                let back = after_make_refused(std::mem::replace(&mut self.scene, Scene::Login));
                 self.message(text, back);
             }
             NetEvent::Char(CharEvent::ZoneServer { map, ip, port, character_id }) => {
