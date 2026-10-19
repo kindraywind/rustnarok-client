@@ -12,7 +12,7 @@
     {"expect": {"hotkeys": {"0": 21}}},
     {"key": "Alt+S"}, {"wait": 300},
     {"key": "F1"}, {"wait": 200},
-    {"click_on": {"cell": [136, 103]}},
+    {"click_on": {"cell": [136, 103], "offset": [1, 0]}},
     {"wait_for": {"sent": "0x035f", "ms": 2000}},
     {"wait": 5000},
     {"move": [1000, 750]},

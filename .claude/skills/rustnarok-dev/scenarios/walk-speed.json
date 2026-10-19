@@ -3,14 +3,14 @@
   "account": "",
   "slot": 0,
   "steps": [
-    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@warp prontera 156 120"}, {"settle": 1500},
     {"say": "@speed 100"}, {"wait": 800},
     {"expect": {"state": {"player.step_ms": 100.0}}},
-    {"click_on": {"cell": [156, 190]}}, {"wait_for": {"packet": "0x0087", "ms": 2000}},
+    {"click_on": {"cell": [156, 130], "offset": [1, 0]}}, {"wait_for": {"packet": "0x0087", "ms": 2000}},
     {"wait": 700},
     {"expect": {"state": {"player.moving": true}}},
     {"wait": 700},
-    {"expect": {"state": {"player.cell": [156, 190], "player.moving": false}}},
+    {"expect": {"state": {"player.cell": [156, 130], "player.moving": false}}},
     {"say": "@speed"}, {"wait": 500}
   ]
 }

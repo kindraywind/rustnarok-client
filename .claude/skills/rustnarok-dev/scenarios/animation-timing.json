@@ -5,7 +5,7 @@
   "steps": [
     {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
     {"say": "@killmonster2"}, {"wait": 500},
-    {"click_on": {"cell": [170, 367]}}, {"wait": 250},
+    {"click_on": {"cell": [170, 367], "offset": [1, 0]}}, {"wait": 250},
     {"cmd": {"cmd": "clock", "action": "pause"}},
     {"expect": {"state": {"player.action": 1}}},
     {"shot": "walk-a", "crop": [362, 184, 300, 290], "threshold": 5},

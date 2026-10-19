@@ -4,16 +4,16 @@
   "slot": 0,
   "steps": [
     {"say": "@warp gef_fild07 61 229"}, {"settle": 1500},
-    {"move": {"cell": [61, 233]}}, {"wait": 300},
+    {"move": {"cell": [61, 233], "offset": [1, 0]}}, {"wait": 300},
     {"expect": {"state": {"player.ground_cell": [61, 233]}}},
     {"shot": "ground-pick-up", "crop": [262, 134, 500, 440], "threshold": 5},
-    {"click_on": {"cell": [61, 233]}}, {"wait": 2500},
+    {"click_on": {"cell": [61, 233], "offset": [1, 0]}}, {"wait": 2500},
     {"expect": {"state": {"player.walk_goal": [61, 233], "player.cell": [61, 233]}}},
     {"say": "@warp gef_fild07 61 233"}, {"settle": 1500},
-    {"move": {"cell": [61, 229]}}, {"wait": 300},
+    {"move": {"cell": [61, 229], "offset": [1, 0]}}, {"wait": 300},
     {"expect": {"state": {"player.ground_cell": [61, 229]}}},
     {"shot": "ground-pick-down", "crop": [262, 134, 500, 440], "threshold": 5},
-    {"click_on": {"cell": [61, 229]}}, {"wait": 2500},
+    {"click_on": {"cell": [61, 229], "offset": [1, 0]}}, {"wait": 2500},
     {"expect": {"state": {"player.walk_goal": [61, 229], "player.cell": [61, 229]}}},
     {"say": "@warp prt_fild08 170 360"}, {"settle": 1500}
   ]

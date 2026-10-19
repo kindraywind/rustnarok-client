@@ -4,16 +4,16 @@
   "slot": 0,
   "steps": [
     {"say": "@warp prontera 156 28"}, {"settle": 1500},
-    {"move": {"cell": [156, 22]}}, {"wait": 300},
+    {"move": {"cell": [156, 22], "offset": [1, 0]}}, {"wait": 300},
     {"expect": {"state": {"cursor": "Warp"}}},
     {"move": {"cell": [157, 22]}}, {"wait": 300},
     {"expect": {"state": {"cursor": "Warp"}}},
     {"shot": "warp-pick-beside", "crop": [262, 284, 500, 440], "threshold": 5},
     {"move": {"cell": [155, 22]}}, {"wait": 300},
     {"expect": {"state": {"cursor": "Warp"}}},
-    {"move": {"cell": [156, 23]}}, {"wait": 300},
+    {"move": {"cell": [156, 23], "offset": [1, 0]}}, {"wait": 300},
     {"expect": {"state": {"cursor": "Warp"}}},
-    {"move": {"cell": [156, 26]}}, {"wait": 300},
+    {"move": {"cell": [156, 26], "offset": [1, 0]}}, {"wait": 300},
     {"expect": {"state": {"cursor": "Default"}}}
   ]
 }

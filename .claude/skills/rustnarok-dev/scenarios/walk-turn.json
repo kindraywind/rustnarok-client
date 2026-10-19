@@ -7,7 +7,7 @@
     {"say": "@killmonster2"}, {"wait": 500},
     {"click_on": {"cell": [178, 360]}}, {"wait": 400},
     {"cmd": {"cmd": "clock", "action": "pause"}},
-    {"click_on": {"cell": [170, 366]}},
+    {"click_on": {"cell": [170, 366], "offset": [1, 0]}},
     {"wait_for": {"packet": "0x0087", "ms": 3000}}, {"wait": 50},
     {"move": [1000, 750]},
     {"shot": "walk-turn-a", "crop": [362, 234, 300, 300], "threshold": 5},
