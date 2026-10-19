@@ -3407,7 +3407,9 @@ impl App {
                         for &(who, effect) in struck {
                             // What flies or runs from the caster to the target (Soul Strike's ghosts, Frost Diver's ice…).
                             if effects::AIMED.contains(&effect) {
-                                game.aimed(gpu, grf, table, effect, act.source, act.target, act.hits);
+                                // Duple Light's sphere always has 3 hits; the other counts follow the game's rule.
+                                let hits = if effect == 265 && matches!(skill, 2055 | 2056) { 3 } else { effects::hit_count(effect, act.hits, act.kind) };
+                                game.aimed(gpu, grf, table, effect, act.source, act.target, hits);
                                 continue;
                             }
                             let unit = if who == effects::Who::Caster { act.source } else { act.target };
@@ -3775,6 +3777,8 @@ impl App {
                 if let Some(gpu) = gpu {
                     if effects::aimed_at_centre(effect) {
                         game.aimed_at_centre(gpu, grf, table, effect, id);
+                    } else if effect == 451 {
+                        // Dark Strike's balls come only with the packet's own damage.
                     } else {
                         // The server's own effect has no hit count (Blitz Beat's makes no ring).
                         game.play_effect_hits(gpu, grf, table, effect, id, Instant::now(), 0);

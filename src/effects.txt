@@ -1326,7 +1326,6 @@ part	253	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;red=0.3;green=0.3;blue=
 part	253	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;red=0.3;green=0.3;blue=1;duration=1300;delayOffset=400;duplicate=20;fadeIn=true;fadeOut=true;file=effect/pok3.tga;posxRand=1.5;posyRand=1.5;poszEndRand=3;poszEndRandMiddle=6;poszStart=0;size=9;sizeRand=2;sparkling=true;sparkNumber=2;timeBetweenDupli=10;zIndex=1
 part	253	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;red=0.3;green=0.3;blue=1;duration=1100;delayLate=200;duplicate=10;fadeIn=true;fadeOut=true;file=effect/pok3.tga;posxRand=1;posyRand=1;poszEnd=6;poszStartRand=1;poszStartRandMiddle=0;size=9;sizeRand=2;timeBetweenDupli=50;zIndex=1
 part	262	3D	wav=effect/mon_폭기;duplicate=12;timeBetweenDupli=0;file=effect/alpha_center.tga;delayStart=250;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;overlay=true;rotateToTarget=true;rotateWithCamera=true
-part	265	3D	file=effect/blue_ivy.bmp;alphaMax=1;blendMode=2;duration=150;toSrc=true;rotateWithCamera=true;rotateToTarget=true;angle=90;zOffset=1;size=50;wav=effect/mon_탄지신통;attachedEntity=true
 part	266	3D	wav=effect/mon_아수라 패황권;duplicate=24;timeBetweenDupli=0;file=effect/lens1.tga;delayStart=100;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;overlay=true;rotateToTarget=true;rotateWithCamera=true
 part	274	2D	overlay=true;file=effect/coin_a.bmp;blendMode=2;alphaMax=0.8;duplicate=30;timeBetweenDupli=50;duration=1500;fadeOut=true;posxEndRand=10;posyEndRand=10;posz=2;size=20;rotateToTarget=true;attachedEntity=true
 part	276	3D	duplicate=20;timeBetweenDupli=0;file=effect/lens1.tga;delayStart=100;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;red=0.1;green=0.1;blue=1.0;overlay=true;rotateToTarget=true;rotateWithCamera=true
@@ -1369,8 +1368,6 @@ part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;z
 part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=0.7;posxEnd=3.53;posyStart=0.7;posyEnd=3.53;rotateWithCamera=true;angle=-225
 part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=0;posxEnd=0;posyStart=1;posyEnd=5;rotateWithCamera=true;angle=-270
 part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=-0.7;posxEnd=-3.53;posyStart=0.7;posyEnd=3.53;rotateWithCamera=true;angle=-315
-part	451	3D	alphaMax=1;attachedEntity=true;blue=1;duration=200;delayLate=250;duplicate=-1;fadeIn=true;fadeOut=true;file=effect/pok3.tga;toSrc=true;green=1;poszEnd=1;poszSmooth=true;poszStartRand=5;poszStartRandMiddle=6;red=1;size=50;timeBetweenDupli=150;wav=effect/ef_soulstrike;zIndex=1
-part	451	3D	duration=250;duplicate=5;timeBetweenDupli=20;absoluteSpriteName=data/sprite/이팩트/particle5;playSprite=true;toSrc=true;rotateToTarget=true;sizeStart=100.0;sizeEnd=500.0;zOffsetStart=3;arc=4.0;retreat=4.0;soulStrikePattern=true
 part	452	3D	file=effect/pokjuk_d.bmp;duration=100;sizeStart=0;sizeEnd=25;blendMode=2;rotateToTarget=true;fadeOut=true;overlay=true;attachedEntity=true
 part	452	3D	fileList=effect/twirl_soft.bmp,effect/thunder_ball_b.bmp,effect/twirl_soft.bmp,effect/thunder_ball_c.bmp,effect/twirl_soft.bmp;frameDelay=10;duration=300;size=75;blendMode=2;overlay=true;attachedEntity=true
 part	467	3D	alphaMax=1;blendMode=2;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=100;sizeSmooth=true;sizeStart=300;zIndex=10;file=effect/hanmoon1.tga
@@ -2366,7 +2363,7 @@ hit	263	0	-1
 hit	264	0	-1
 hit	265	0	-1
 hit	266	0	-1
-hit	267	0	-1
+hit	267	0	1
 hit	268	0	-1
 hit	269	0	-1
 hit	270	0	-1
@@ -4164,6 +4161,7 @@ cast	2223	-1
 cast	2224	-1
 cast	2229	-1
 struck	13	caster	15
+struck	340	caster	451
 struck	14	target	26
 struck	15	caster	27
 struck	17	caster	24
