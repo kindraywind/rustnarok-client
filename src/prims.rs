@@ -7,6 +7,7 @@ pub mod balls;
 pub mod bolts;
 pub mod boomerang;
 pub mod burst;
+pub mod napalm;
 pub mod sage;
 pub mod stone;
 
@@ -79,6 +80,7 @@ pub struct Prims {
     pub sage: sage::Sage,
     pub bursts: Vec<burst::Burst>,
     pub boomerangs: boomerang::Boomerangs,
+    pub napalms: Vec<napalm::Napalm>,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -265,6 +267,11 @@ impl Prims {
         self.cold_hits.push(ColdHit { start: now, unit, shards, smokes });
     }
 
+    /// Napalm Beat (EF_NAPALMBEAT 32) on a unit (None = the player) from `now`, its random choices from `rand(n)`.
+    pub fn napalm_beat(&mut self, unit: Option<u32>, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.napalms.push(napalm::Napalm::new(unit, now, rand));
+    }
+
     /// What the cold hits and bursts draw at `now`, in screen pixels from their units' feet.
     pub fn screen_shapes(&self, now: Instant) -> Vec<ScreenShape> {
         let mut shapes = Vec::new();
@@ -280,6 +287,7 @@ impl Prims {
             }
         }
         shapes.extend(self.bursts.iter().flat_map(|burst| burst.shapes(now)));
+        shapes.extend(self.napalms.iter().flat_map(|napalm| napalm.shapes(now)));
         shapes
     }
 
@@ -308,6 +316,7 @@ impl Prims {
         self.volleys.retain(|volley| volley.alive(now));
         self.sage.advance(now);
         self.bursts.retain(|burst| burst.alive(now));
+        self.napalms.retain(|napalm| napalm.alive(now));
     }
 
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is
@@ -388,5 +397,21 @@ mod tests {
         flying.ghosts.clear();
         prims.advance(start + TICK * 200);
         assert!(prims.ghosts.is_empty() && prims.builders.is_empty());
+    }
+
+    #[test]
+    fn napalm_beat_bursts_puffs() {
+        let start = Instant::now();
+        let mut prims = Prims::default();
+        prims.napalm_beat(None, start, |_| 0);
+        assert_eq!(prims.screen_shapes(start).len(), 1);
+        assert_eq!(prims.screen_shapes(start + TICK * 1).len(), 2);
+        assert_eq!(prims.screen_shapes(start + TICK * 14).len(), 14);
+        assert_eq!(prims.screen_shapes(start + TICK * 27).len(), 1);
+        assert_eq!(prims.screen_shapes(start + TICK * 28).len(), 0);
+        prims.advance(start + TICK * 27);
+        assert_eq!(prims.napalms.len(), 1);
+        prims.advance(start + TICK * 28);
+        assert!(prims.napalms.is_empty());
     }
 }
