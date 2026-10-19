@@ -83,6 +83,19 @@ pub enum MapEvent {
     NpcNext {
         npc: u32,
     },
+    /// The say window's size in pixels (ZC_DIALOG_WINDOW_SIZE). A 0 axis is the default size.
+    NpcWindowSize {
+        width: i32,
+        height: i32,
+    },
+    /// Where the say window sits: pixels, or a percent of the free screen (ZC_DIALOG_WINDOW_POS2).
+    NpcWindowPos {
+        x: i32,
+        y: i32,
+        percent: bool,
+    },
+    /// A special popup by id (ZC_SPECIALPOPUP). The picture and lines are System/spopup.lub's.
+    SpecialPopup(i32),
     /// Show the dialog's "close" button.
     NpcClose {
         npc: u32,

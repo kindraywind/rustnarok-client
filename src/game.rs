@@ -47,7 +47,7 @@ impl Game {
             }
             DialogButton::Close => {
                 let _ = self.session.close_dialog(dialog.npc);
-                self.dialog = None;
+                self.dismiss_dialog();
             }
             DialogButton::None => {}
         }
@@ -62,7 +62,7 @@ impl Game {
         // Warp Portal and Teleport: the map as it came; the row after the maps (Cancel) and Esc cancel.
         if let Some((skill, maps)) = dialog.warp.take() {
             let _ = self.session.select_warp_point(skill, maps.get(selected).filter(|_| !cancel).map_or("cancel", String::as_str));
-            self.dialog = None;
+            self.dismiss_dialog();
             return;
         }
         let cancel = cancel || menu.items.is_empty();
@@ -71,9 +71,15 @@ impl Game {
             // ponytail: the say window counts as open whenever there's a talk; CZ_CLOSE_DIALOG for a menu-only talk
             // is harmless to rathena.
             let _ = self.session.close_dialog(dialog.npc);
-            self.dialog = None;
+            self.dismiss_dialog();
             self.cutin = None;
         }
+    }
+
+    /// The NPC talk is over: the window goes, and a script-set size returns to the default. Where it was left stays.
+    pub(crate) fn dismiss_dialog(&mut self) {
+        self.dialog = None;
+        self.say.end_talk();
     }
 
     /// The menu's OK, on the say window's 300 ms timer.
@@ -1996,6 +2002,7 @@ impl Game {
             || self.adopt_asked.is_some()
             || self.memorial_asked;
         self.window_at(cursor).is_some()
+            || (self.special_popup.is_some() && special_popup::covers(cursor))
             || self.catalog.as_ref().and_then(|catalog| catalog.hit(cursor)).is_some()
             || self.queue_window.covers(cursor)
             || self.memorial.covers(cursor)

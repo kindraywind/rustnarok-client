@@ -1454,7 +1454,7 @@ impl App {
             // A warp list is the menu alone.
             if dialog.warp.is_none() {
                 let lines: links::LinkedLines =
-                    dialog.lines.iter().flat_map(|line| wrap_linked_by(font, line, npc_say::WRAP_WIDTH, true, links::Target::npc_color)).collect();
+                    dialog.lines.iter().flat_map(|line| wrap_linked_by(font, line, game.say.wrap_width(), true, links::Target::npc_color)).collect();
                 let pitch = font.line_height() + npc_say::LINE_GAP;
                 game.say.text_height = lines.len() as f32 * pitch;
                 game.say.scroll_by(0.0);
@@ -2486,7 +2486,11 @@ impl App {
             let pins = minimap_window::Pins { player: game.player.cell, party: &party_cells, guild: &guild, boss, quests: &quests };
             game.minimap_window.draw(&mut minimap_layer, &mut minimap_tooltip, &assets.chrome, font, messages, &title, size, &pins, pointer, naming_caret);
         }
-        layers.extend([catalog_layer, shop_layer, minimap_layer, overlay, menu_layer, tooltip, minimap_tooltip, world_layer]);
+        let mut popup_layer = Layer::default();
+        if let Some(id) = game.special_popup {
+            special_popup::draw(&mut popup_layer, &assets.chrome, &assets.pickup, id);
+        }
+        layers.extend([catalog_layer, shop_layer, popup_layer, minimap_layer, overlay, menu_layer, tooltip, minimap_tooltip, world_layer]);
         let composed = compose(gpu, font, layers);
         let (mut sprites, alphas) = flatten(&composed);
 
