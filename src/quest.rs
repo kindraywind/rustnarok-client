@@ -87,6 +87,7 @@ impl Default for Filters {
         let icons = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
         Self {
             icons: [icons(&[]), icons(&["ico_ep", "ico_gq", "ico_lq"]), icons(&["ico_sub"]), icons(&["ico_dq"]), icons(&["ico_ev"]), icons(&[])],
+            // ponytail: the tooltips are only in the client's table; without it the buttons have none.
             tooltips: Default::default(),
         }
     }
