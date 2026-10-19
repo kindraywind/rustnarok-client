@@ -766,6 +766,10 @@ fn decodes_others_equipment() {
     assert_eq!(worn, [(1201, 2, 1), (2301, 16, 0)]);
 
     assert_eq!(encode_config(CONFIG_OPEN_EQUIPMENT, true), [0xD8, 0x02, 0, 0, 0, 0, 1, 0, 0, 0]);
+    // Storage and cart, both ways: index then amount.
+    assert_eq!(encode_moved(CZ_MOVE_ITEM_FROM_CART_TO_STORE, 3, 5), [0x29, 0x01, 3, 0, 5, 0, 0, 0]);
+    assert_eq!(encode_moved(CZ_MOVE_ITEM_FROM_STORE_TO_CART, 3, 5)[..2], [0x28, 0x01]);
+    let Some(MapEvent::MoveFailed { index: 4, amount: 2 }) = decode_map_packet(&[0xA7, 0x0A, 4, 0, 2, 0]) else { panic!() };
     // ZC_INVENTORY_START: the storage's name from byte 5, up to its NUL; an empty one.
     let start = |name: &[u8]| decode_map_packet(&[&[0x08, 0x0B, 6 + name.len() as u8, 0, 2], name].concat());
     let Some(MapEvent::InventoryStart { kind: 2, name }) = start(b"Guild Storage\0") else { panic!() };

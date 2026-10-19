@@ -200,6 +200,11 @@ pub enum MapEvent {
         index: u16,
         amount: u32,
     },
+    /// A move between the inventory, the storage or the cart that the server turned down.
+    MoveFailed {
+        index: u16,
+        amount: u16,
+    },
     StorageClosed,
     /// A unit shows an emotion (the client's ET_* number).
     Emotion {

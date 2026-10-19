@@ -12,7 +12,7 @@
     {"say": "@item2 2301 1 1 0 0 0 0 4700 4700"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"say": "@item 501 10"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"say": "@storeall"}, {"wait": 1500},
-    {"say": "@storage"}, {"wait": 1500},
+    {"say": "@storage"}, {"wait_for": {"packet": "0x0b08", "ms": 8000}}, {"wait": 500},
     {"expect": {"windows_open": ["Storage"], "windows_closed": ["Inventory"], "state": {"storage_rows": 12, "storage_title": "Storage"}}},
     {"move": [1000, 750]},
     {"shot": "storage-usable", "crop": [350, 190, 300, 478]},
@@ -25,7 +25,7 @@
     {"click_on": {"button": "storage_tab:3"}}, {"wait": 300},
     {"move": [1000, 750]},
     {"shot": "storage-weapon", "crop": [350, 190, 300, 478]},
-    {"key": "Escape"}, {"wait": 500},
+    {"click_on": {"button": "storage_close"}}, {"wait": 500},
     {"say": "@clearstorage"}, {"wait": 800}
   ]
 }

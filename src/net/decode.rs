@@ -206,6 +206,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             ..Default::default()
         }),
         ZC_DELETE_ITEM_FROM_STORE => MapEvent::StorageRemoved { index: u16_at(2), amount: u32_at(4) },
+        ZC_MOVE_ITEM_FAILED => MapEvent::MoveFailed { index: u16_at(2), amount: u16_at(4) },
         ZC_CLOSE_STORE => MapEvent::StorageClosed,
         // Sender's ID, name, admin flag, then the text; a leading "|NN" is a code page mark.
         ZC_WHISPER => {

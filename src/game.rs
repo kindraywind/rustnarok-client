@@ -2053,8 +2053,8 @@ impl Game {
             Asked::Store(index) | Asked::Drop(index) | Asked::Trade(index) | Asked::ToCart(index) | Asked::Mail(index) | Asked::Material(index) => {
                 self.inventory.get(index).map(|item| item.amount)
             }
-            Asked::FromCart(index) => self.cart.get(index).map(|item| item.amount),
-            Asked::Take(index) => self.storage.get(index).map(|item| item.amount),
+            Asked::FromCart(index) | Asked::CartToStore(index) => self.cart.get(index).map(|item| item.amount),
+            Asked::Take(index) | Asked::StoreToCart(index) => self.storage.get(index).map(|item| item.amount),
             Asked::Shop(_)
             | Asked::ShopOut(_)
             | Asked::RoomPassword(_)
@@ -2127,7 +2127,7 @@ impl Game {
                 Ok(())
             }
             // None or less into storage or the cart is one.
-            what @ (Asked::Store(_) | Asked::ToCart(_)) => {
+            what @ (Asked::Store(_) | Asked::ToCart(_) | Asked::StoreToCart(_) | Asked::CartToStore(_)) => {
                 self.give(what, amount.value().max(1));
                 Ok(())
             }
@@ -2182,6 +2182,14 @@ impl Game {
             Asked::FromCart(index) => {
                 let have = self.cart.get(index).map_or(0, |item| u32::from(item.amount));
                 self.session.take_from_cart(index, amount.min(have))
+            }
+            Asked::StoreToCart(index) => {
+                let have = self.storage.get(index).map_or(0, |item| u32::from(item.amount));
+                self.session.storage_to_cart(index, between_one_and(amount, have))
+            }
+            Asked::CartToStore(index) => {
+                let have = self.cart.get(index).map_or(0, |item| u32::from(item.amount));
+                self.session.cart_to_storage(index, between_one_and(amount, have))
             }
             // Nothing goes to the server until the window's OK.
             Asked::Material(index) => {
@@ -2253,7 +2261,12 @@ impl Game {
     pub(crate) fn quick_move(&mut self, index: u16) -> Option<usize> {
         let amount = u32::from(self.inventory.get(index)?.amount);
         match quick_target(self.storage.frame.open, self.trade.is_some(), self.cart.cart.is_some() && self.cart.frame.open)? {
-            QuickTo::Storage => self.give(Asked::Store(index), amount),
+            // One quick move with the storage at a time, until the server answers.
+            QuickTo::Storage if self.quick_moving => {}
+            QuickTo::Storage => {
+                self.quick_moving = true;
+                self.give(Asked::Store(index), amount);
+            }
             QuickTo::Trade => return self.offer(index, true),
             QuickTo::Cart => self.give(Asked::ToCart(index), amount),
         }
@@ -2479,7 +2492,6 @@ impl Game {
             Panel::Inventory,
             Panel::Equipment,
             Panel::Skills,
-            Panel::Storage,
             Panel::Party,
             Panel::Status,
             Panel::Guild,
@@ -2608,6 +2620,10 @@ impl Game {
         }
         if self.deal_confirm.is_some() {
             names.push("ConfirmDeal".into());
+        }
+        // Not Esc's to close, but open.
+        if self.storage.frame.open {
+            names.push("Storage".into());
         }
         if matches!(self.queue_asked, Some(QueueAsked::Lobby(..))) {
             names.push("BattleLobby".into());
@@ -2819,10 +2835,6 @@ impl Game {
             Inventory => self.inventory.frame.open = false,
             Equipment => self.equipment.frame.open = false,
             Skills => self.skill_window.frame.open = false,
-            Storage => {
-                self.storage.close();
-                let _ = self.session.close_storage();
-            }
             StorageCategory(tab) => self.storage.close_category(tab),
             StorageSearch => self.storage.search_window.frame.open = false,
             Party => self.party_window.frame.open = false,
@@ -2835,8 +2847,8 @@ impl Game {
             MercenarySkills => self.mercenary_skill_list.frame.open = false,
             Homunculus => self.homunculus_window.frame.open = false,
             HomunculusSkills => self.homunculus_skill_list.frame.open = false,
-            // Esc never gets here for the input box.
-            NpcInput => {}
+            // Esc never gets here for the input box, nor for the storage (its search box keeps Esc too).
+            NpcInput | Storage => {}
             Shop => self.close_shop(),
             Refine => {
                 let _ = self.session.close_refine();

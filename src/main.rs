@@ -1281,6 +1281,8 @@ struct Game {
     card_place: [f32; 2],
     card_lines: usize,
     item_lines: usize,
+    /// A quick move (Alt + right press) with the storage is waiting for the server's answer.
+    quick_moving: bool,
     /// Where the item description window opens: where it was last (saved), else its first place.
     item_place: [f32; 2],
     /// A card's picture, opened from its info.
@@ -2098,7 +2100,8 @@ fn esc_panel(id: Panel) -> Option<escape::WindowId> {
         Panel::Inventory => Inventory,
         Panel::Equipment => Equipment,
         Panel::Skills => Skills,
-        Panel::Storage => Storage,
+        // Esc never closes the storage.
+        Panel::Storage => return None,
         Panel::StorageCategory(tab) => StorageCategory(tab),
         Panel::StorageSearch => StorageSearch,
         Panel::Party => Party,
@@ -2163,6 +2166,9 @@ enum Asked {
     /// An inventory item into the cart, and a cart item out.
     ToCart(u16),
     FromCart(u16),
+    /// A stored item into the cart, and a cart item into storage.
+    StoreToCart(u16),
+    CartToStore(u16),
     /// The password of a chat room, by ID.
     RoomPassword(u32),
     /// An inventory item, into the mail being written.
@@ -2189,6 +2195,8 @@ impl Asked {
                 | Asked::Trade(_)
                 | Asked::ToCart(_)
                 | Asked::FromCart(_)
+                | Asked::StoreToCart(_)
+                | Asked::CartToStore(_)
                 | Asked::Mail(_)
                 | Asked::Material(_)
         )
@@ -3708,6 +3716,35 @@ fn inventory_right(alt: bool, shift: bool, ctrl: bool) -> Option<InventoryRight>
 /// A window that a button opens and shuts: shut when it's open, else a new one.
 fn toggled<T>(window: Option<T>, open: impl FnOnce() -> T) -> Option<T> {
     if window.is_some() { None } else { Some(open()) }
+}
+
+/// Where Alt + right press sends a stored stack: the inventory while its window is open, else the open cart window.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum StorageTo {
+    Inventory,
+    Cart,
+}
+
+fn storage_quick_target(inventory_open: bool, cart_open: bool) -> Option<StorageTo> {
+    if inventory_open { Some(StorageTo::Inventory) } else { cart_open.then_some(StorageTo::Cart) }
+}
+
+/// How many a move between the cart and the storage takes: none or less is one, more than there is all of them.
+fn between_one_and(asked: u32, have: u32) -> u32 {
+    asked.max(1).min(have)
+}
+
+/// The server's answers that end a quick move's wait: an item gone from the storage (amount 0 too: refused), the
+/// inventory or the cart, a move turned down, or an item added to a deal.
+fn frees_quick_move(event: &MapEvent) -> bool {
+    matches!(
+        event,
+        MapEvent::StorageRemoved { .. }
+            | MapEvent::ItemRemoved { .. }
+            | MapEvent::CartRemoved { .. }
+            | MapEvent::MoveFailed { .. }
+            | MapEvent::TradeAdded { .. }
+    )
 }
 
 /// Where Alt + right click sends a stack: the first that's open of the storage, a trade, the cart.
@@ -5871,6 +5908,34 @@ mod tests {
             [inventory_right(true, true, false), inventory_right(false, true, true), inventory_right(false, false, true), inventory_right(false, false, false)],
             [Some(InventoryRight::QuickMove), Some(InventoryRight::Favorite), Some(InventoryRight::Identify), None]
         );
+        // A stored stack: to the open inventory, else the open cart window, else nowhere.
+        assert_eq!(storage_quick_target(true, true), Some(StorageTo::Inventory));
+        assert_eq!(storage_quick_target(false, true), Some(StorageTo::Cart));
+        assert_eq!(storage_quick_target(false, false), None);
+        // The five answers that free the quick move's lock; others don't.
+        for event in [
+            MapEvent::StorageRemoved { index: 1, amount: 0 },
+            MapEvent::ItemRemoved { index: 1, amount: 1 },
+            MapEvent::CartRemoved { index: 1, amount: 1 },
+            MapEvent::MoveFailed { index: 1, amount: 1 },
+            MapEvent::TradeAdded { index: 1, result: 0 },
+        ] {
+            assert!(frees_quick_move(&event));
+        }
+        assert!(!frees_quick_move(&MapEvent::StorageClosed));
+        // Cart and storage: none moves one, too many moves all.
+        assert_eq!([0, 3, 9].map(|asked| between_one_and(asked, 5)), [1, 3, 5]);
+        // Esc never closes the storage, and its search box keeps Esc.
+        assert_eq!(esc_panel(Panel::Storage), None);
+        let typing = escape::EscView {
+            battle_line: false,
+            whisper_list: false,
+            focused: Some(escape::WindowId::Storage),
+            conversation: false,
+            question: false,
+            newest: Some(escape::WindowId::Inventory),
+        };
+        assert_eq!(escape::decide(false, typing), None);
         assert_eq!(quick_target(true, true, true), Some(QuickTo::Storage));
         assert_eq!(quick_target(false, true, true), Some(QuickTo::Trade));
         assert_eq!(quick_target(false, false, true), Some(QuickTo::Cart));
