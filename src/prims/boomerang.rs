@@ -94,7 +94,7 @@ impl Shield {
     /// One tick, the caster at `caster` (x, z): the copies move up a place on every third, then it moves by its phase.
     fn step(&mut self, caster: Option<[f32; 2]>) {
         self.ticks += 1;
-        if self.ticks % COPY_EVERY == 0 {
+        if self.ticks.is_multiple_of(COPY_EVERY) {
             self.copies = [Some(Copy { at: self.at, spin: self.spin }), self.copies[0], self.copies[1]];
         }
         match self.phase {
