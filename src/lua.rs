@@ -277,6 +277,115 @@ fn lua_error(error: mlua::Error) -> io::Error {
     io::Error::other(error.to_string())
 }
 
+/// The sky table (`lua files\mapskydata\mapskydata`): functions first, then the rows, when the file is split.
+const MAP_SKY: [&str; 2] = ["data\\luafiles514\\lua files\\mapskydata\\mapskydata_f.lub", "data\\luafiles514\\lua files\\mapskydata\\mapskydata.lub"];
+
+/// One map's sky row. `color` is missing on the entries that stay black.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkyRow {
+    pub color: Option<[u8; 3]>,
+    pub fog: bool,
+}
+
+/// The sky row for `map` (a name, or `name.rsw`), or none when the map is not in the table.
+pub fn sky_for(grf: &Grf, map: &str) -> Option<SkyRow> {
+    let lua = load_sky(grf).ok()?;
+    let key = sky_key(map);
+    sky_from_lua(&lua, &key)
+}
+
+/// The colour the frame is cleared to. A map with no row, or a row with no BG_Color, is black. With BG_Fog and a fog
+/// colour, the background is mixed toward the fog by the fog colour's alpha.
+pub fn clear_color(row: Option<SkyRow>, fog: Option<([u8; 3], u8)>) -> [f32; 3] {
+    let Some(SkyRow { color: Some(background), fog: blends }) = row else { return [0.0; 3] };
+    let background = background.map(|channel| f32::from(channel) / 255.0);
+    if blends && let Some((rgb, alpha)) = fog {
+        let cover = f32::from(alpha) / 255.0;
+        let fog = rgb.map(|channel| f32::from(channel) / 255.0);
+        return [0, 1, 2].map(|index| background[index] * (1.0 - cover) + fog[index] * cover);
+    }
+    background
+}
+
+fn sky_key(map: &str) -> String {
+    let name = map.trim_end_matches(".gat").trim_end_matches(".rsw");
+    format!("{name}.rsw")
+}
+
+fn load_sky(grf: &Grf) -> io::Result<Lua> {
+    let lua = new_lua()?;
+    let mut loaded = false;
+    for file in MAP_SKY {
+        if let Ok(bytes) = grf.read(file) {
+            exec_bytes(&lua, file, bytes)?;
+            loaded = true;
+        }
+    }
+    loaded.then_some(lua).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "map sky"))
+}
+
+/// `IsExistMapSkyData`, `GetBackgroundColor` and `IsBackGroundFog`. A file that only has the `MapSkyData` table is
+/// read from that instead.
+fn sky_from_lua(lua: &Lua, key: &str) -> Option<SkyRow> {
+    if lua.globals().contains_key("IsExistMapSkyData").unwrap_or(false) {
+        let exists = call_value(lua, "IsExistMapSkyData", key)?;
+        if !lua_truth(&exists) {
+            return None;
+        }
+        let color = call_value(lua, "GetBackgroundColor", key).and_then(lua_rgb);
+        let fog = call_value(lua, "IsBackGroundFog", key).is_some_and(|value| lua_truth(&value));
+        return Some(SkyRow { color, fog });
+    }
+    let table: mlua::Table = lua.globals().get("MapSkyData").ok()?;
+    let entry: mlua::Table = table.get(key).ok()?;
+    let color = entry.get::<mlua::Value>("BG_Color").ok().and_then(lua_rgb);
+    let fog = entry.get::<mlua::Value>("BG_Fog").ok().is_some_and(|value| lua_truth(&value));
+    Some(SkyRow { color, fog })
+}
+
+fn call_value(lua: &Lua, name: &str, key: &str) -> Option<mlua::Value> {
+    lua.globals().get::<mlua::Function>(name).ok()?.call(key).ok()
+}
+
+fn lua_truth(value: &mlua::Value) -> bool {
+    match value {
+        mlua::Value::Boolean(flag) => *flag,
+        mlua::Value::Integer(number) => *number != 0,
+        mlua::Value::Number(number) => *number != 0.0,
+        mlua::Value::String(text) => {
+            let text = decode(text);
+            !text.is_empty() && text != "0"
+        }
+        _ => false,
+    }
+}
+
+/// `#RRGGBB`, `0xRRGGBB`, or `0xAARRGGBB`.
+fn lua_rgb(value: mlua::Value) -> Option<[u8; 3]> {
+    match value {
+        mlua::Value::String(text) => rgb_text(&decode(&text)),
+        mlua::Value::Integer(number) => rgb_number(number as u32),
+        mlua::Value::Number(number) => rgb_number(number as u32),
+        _ => None,
+    }
+}
+
+fn rgb_text(text: &str) -> Option<[u8; 3]> {
+    let text = text.trim().trim_start_matches('#');
+    let text = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")).unwrap_or(text);
+    let number = u32::from_str_radix(text, 16).ok()?;
+    if text.len() >= 8 { rgb_number(number) } else { Some([((number >> 16) & 0xFF) as u8, ((number >> 8) & 0xFF) as u8, (number & 0xFF) as u8]) }
+}
+
+fn rgb_number(number: u32) -> Option<[u8; 3]> {
+    if number > 0x00FF_FFFF {
+        let [_, red, green, blue] = number.to_be_bytes();
+        Some([red, green, blue])
+    } else {
+        Some([((number >> 16) & 0xFF) as u8, ((number >> 8) & 0xFF) as u8, (number & 0xFF) as u8])
+    }
+}
+
 /// The client's Lua strings are EUC-KR; in the newer tables those bytes were read as Windows-1252 and saved as
 /// UTF-8, which this undoes.
 fn decode(text: &mlua::String) -> String {
@@ -2308,5 +2417,49 @@ mod tests {
         assert_eq!((slot.perfect[0].cost.zeny, slot.perfect[0].cost.materials.as_slice()), (100000, [(25669, 20)].as_slice()));
         assert_eq!(slot.upgrades[0].1.result, 4817);
         assert_eq!(slot.upgrades[0].1.cost.materials, [(25669, 40)]);
+    }
+
+    #[test]
+    fn sky_colour_blends_with_fog_and_is_black_when_missing() {
+        let yuno = super::SkyRow { color: Some([0x99, 0xCC, 0xFF]), fog: true };
+        let background = [0x99 as f32 / 255.0, 0xCC as f32 / 255.0, 0xFF as f32 / 255.0];
+        assert_eq!(super::clear_color(Some(yuno), None), background);
+        assert_eq!(super::clear_color(Some(yuno), Some(([255, 255, 255], 255))), [1.0; 3]);
+        let cover = 128.0 / 255.0;
+        let mixed = super::clear_color(Some(yuno), Some(([255, 255, 255], 128)));
+        for (channel, ground) in mixed.into_iter().zip(background) {
+            assert!((channel - (ground * (1.0 - cover) + cover)).abs() < 1e-5, "{mixed:?}");
+        }
+        assert_eq!(super::clear_color(None, Some(([255, 255, 255], 255))), [0.0; 3]);
+        assert_eq!(super::clear_color(Some(super::SkyRow { color: None, fog: true }), Some(([255, 0, 0], 255))), [0.0; 3]);
+    }
+
+    #[test]
+    fn reads_the_sky_functions() {
+        let lua = super::new_lua().unwrap();
+        let source = br#"
+            MapSkyData = {
+                ["yuno.rsw"] = { BG_Color = "0x99CCFF", BG_Fog = 1 },
+                ["gef_fild07.rsw"] = { BG_Fog = 1 },
+            }
+            function IsExistMapSkyData(name)
+                return MapSkyData[name] ~= nil
+            end
+            function GetBackgroundColor(name)
+                local row = MapSkyData[name]
+                if row == nil then return nil end
+                return row.BG_Color
+            end
+            function IsBackGroundFog(name)
+                local row = MapSkyData[name]
+                if row == nil or row.BG_Fog == nil then return 0 end
+                return row.BG_Fog
+            end
+        "#;
+        super::exec_bytes(&lua, "mapskydata", source.to_vec()).unwrap();
+        assert_eq!(super::sky_from_lua(&lua, "yuno.rsw"), Some(super::SkyRow { color: Some([0x99, 0xCC, 0xFF]), fog: true }));
+        assert_eq!(super::sky_from_lua(&lua, "gef_fild07.rsw"), Some(super::SkyRow { color: None, fog: true }));
+        assert_eq!(super::sky_from_lua(&lua, "izlude.rsw"), None);
+        assert_eq!(super::clear_color(super::sky_from_lua(&lua, "izlude.rsw"), None), [0.0; 3]);
     }
 }

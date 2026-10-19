@@ -312,6 +312,10 @@ struct Globals {
     camera_up: [f32; 4],
     /// One screen pixel's width and height in clip space; z and w: `DEPTH_SCALE` and `NEAR`.
     pixel: [f32; 4],
+    /// Fog colour. Unused when `fog_range.y` is not past `fog_range.x`.
+    fog_color: [f32; 4],
+    /// x: depth where fog starts, y: depth where it is solid.
+    fog_range: [f32; 4],
 }
 
 const SHADER: &str = r"
@@ -323,6 +327,8 @@ struct Globals {
     camera_right: vec4<f32>,
     camera_up: vec4<f32>,
     pixel: vec4<f32>,
+    fog_color: vec4<f32>,
+    fog_range: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var image: texture_2d<f32>;
@@ -330,12 +336,23 @@ struct Globals {
 @group(2) @binding(0) var lightmap: texture_2d<f32>;
 @group(2) @binding(1) var lightmap_sampler: sampler;
 
+fn fog_of(depth: f32) -> f32 {
+    let span = globals.fog_range.y - globals.fog_range.x;
+    if (span <= 0.0) { return 0.0; }
+    return clamp((depth - globals.fog_range.x) / span, 0.0, 1.0);
+}
+
+fn apply_fog(color: vec3<f32>, amount: f32) -> vec3<f32> {
+    return color * (1.0 - amount) + globals.fog_color.rgb * amount;
+}
+
 struct GroundOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) lightmap_uv: vec2<f32>,
     @location(2) normal: vec3<f32>,
     @location(3) color: vec4<f32>,
+    @location(4) fog: f32,
 };
 
 @vertex fn ground_vs(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
@@ -346,6 +363,7 @@ struct GroundOutput {
     out.lightmap_uv = lightmap_uv;
     out.normal = normal;
     out.color = color;
+    out.fog = fog_of(out.position.w);
     return out;
 }
 
@@ -355,12 +373,13 @@ struct GroundOutput {
     if (texel.a < 0.5) { discard; }
     let weight = max(dot(normalize(in.normal), globals.light_direction.xyz), 0.0);
     let light = clamp(globals.ambient.rgb + globals.diffuse.rgb * weight, vec3(0.0), vec3(1.0));
-    return vec4(texel.rgb * in.color.rgb * light * light_map.a + light_map.rgb, 1.0);
+    let lit = texel.rgb * in.color.rgb * light * light_map.a + light_map.rgb;
+    return vec4(apply_fog(lit, in.fog), 1.0);
 }
 
 @fragment fn water_fs(in: GroundOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(image, image_sampler, in.uv);
-    return vec4(texel.rgb, 0.6);
+    return vec4(apply_fog(texel.rgb, in.fog), 0.6);
 }
 
 @fragment fn model_fs(in: GroundOutput) -> @location(0) vec4<f32> {
@@ -369,7 +388,7 @@ struct GroundOutput {
     // Faces are drawn from both sides, so light them from whichever side faces the light.
     let weight = abs(dot(normalize(in.normal), globals.light_direction.xyz));
     let light = clamp(globals.ambient.rgb + globals.diffuse.rgb * weight, vec3(0.0), vec3(1.0));
-    return vec4(texel.rgb * in.color.rgb * light, 1.0);
+    return vec4(apply_fog(texel.rgb * in.color.rgb * light, in.fog), 1.0);
 }
 
 // Shadows and effects take their feet's `depth`, flat. Sprites work theirs out per pixel from their `plane` (the
@@ -377,7 +396,8 @@ struct GroundOutput {
 // differed between layers by rounding, so a headgear or head could fall behind the layer under it in some frames.
 struct SpriteOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) tint: vec4<f32>,
                       @location(2) @interpolate(flat) depth: f32, @location(3) @interpolate(flat) plane: vec4<f32>,
-                      @location(4) @interpolate(flat) nudge: f32, @location(5) @interpolate(linear) screen_y: f32 };
+                      @location(4) @interpolate(flat) nudge: f32, @location(5) @interpolate(linear) screen_y: f32,
+                      @location(6) fog: f32 };
 struct SpriteFragment { @location(0) color: vec4<f32>, @builtin(frag_depth) depth: f32 };
 
 @vertex fn sprite_vs(@location(0) feet: vec3<f32>, @location(1) offset: vec2<f32>, @location(2) uv: vec2<f32>,
@@ -405,6 +425,7 @@ fn sprite_vertex(feet: vec3<f32>, offset: vec2<f32>, uv: vec2<f32>, tint: vec4<f
     out.uv = uv;
     out.tint = tint;
     out.depth = depth;
+    out.fog = fog_of(clip.w);
     return out;
 }
 
@@ -412,7 +433,8 @@ fn sprite_vertex(feet: vec3<f32>, offset: vec2<f32>, uv: vec2<f32>, tint: vec4<f
     let texel = textureSample(image, image_sampler, in.uv);
     // Shadows and RGBA sprite images are translucent; palette sprites are fully opaque or clear.
     if (texel.a < 0.02) { discard; }
-    return SpriteFragment(texel * in.tint, in.depth);
+    let color = texel * in.tint;
+    return SpriteFragment(vec4(apply_fog(color.rgb, in.fog), color.a), in.depth);
 }
 
 // A sprite pixel's depth, as `sprite_depth` works it out.
@@ -428,37 +450,61 @@ const SOLID: f32 = 159.0 / 255.0;
 @fragment fn solid_fs(in: SpriteOutput) -> SpriteFragment {
     let color = textureSample(image, image_sampler, in.uv) * in.tint;
     if (color.a < SOLID) { discard; }
-    return SpriteFragment(color, tilted_depth(in));
+    return SpriteFragment(vec4(apply_fog(color.rgb, in.fog), color.a), tilted_depth(in));
 }
 
 @fragment fn soft_fs(in: SpriteOutput) -> SpriteFragment {
     let color = textureSample(image, image_sampler, in.uv) * in.tint;
     if (color.a < 0.02 || color.a >= SOLID) { discard; }
-    return SpriteFragment(color, tilted_depth(in));
+    return SpriteFragment(vec4(apply_fog(color.rgb, in.fog), color.a), tilted_depth(in));
 }
 
 // Effect shapes placed in the world (cylinders): texture repeats across, colored and faded by the vertex.
-struct MeshOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) tint: vec4<f32> };
+struct MeshOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) tint: vec4<f32>, @location(2) fog: f32 };
 
-@vertex fn mesh_vs(@location(0) position: vec3<f32>, @location(1) uv: vec2<f32>, @location(2) tint: vec4<f32>) -> MeshOutput {
+fn mesh_vertex(position: vec3<f32>, uv: vec2<f32>, tint: vec4<f32>) -> MeshOutput {
     var out: MeshOutput;
     out.position = globals.view_projection * vec4(position, 1.0);
     out.uv = uv;
     out.tint = tint;
+    out.fog = fog_of(out.position.w);
+    return out;
+}
+
+@vertex fn mesh_vs(@location(0) position: vec3<f32>, @location(1) uv: vec2<f32>, @location(2) tint: vec4<f32>) -> MeshOutput {
+    return mesh_vertex(position, uv, tint);
+}
+
+// Additive shapes are not fogged.
+@vertex fn mesh_add_vs(@location(0) position: vec3<f32>, @location(1) uv: vec2<f32>, @location(2) tint: vec4<f32>) -> MeshOutput {
+    var out = mesh_vertex(position, uv, tint);
+    out.fog = 0.0;
     return out;
 }
 
 @fragment fn mesh_fs(in: MeshOutput) -> @location(0) vec4<f32> {
-    let texel = textureSample(image, image_sampler, vec2(fract(in.uv.x), in.uv.y));
-    return texel * in.tint;
+    let color = textureSample(image, image_sampler, vec2(fract(in.uv.x), in.uv.y)) * in.tint;
+    return vec4(apply_fog(color.rgb, in.fog), color.a);
 }
 
 // Effects stand in front of what they play on, pulled toward the camera.
-@vertex fn effect_vs(@location(0) feet: vec3<f32>, @location(1) offset: vec2<f32>, @location(2) uv: vec2<f32>,
-                     @location(3) tint: vec4<f32>, @location(4) pixel: vec2<f32>) -> SpriteOutput {
+fn effect_vertex(feet: vec3<f32>, offset: vec2<f32>, uv: vec2<f32>, tint: vec4<f32>, pixel: vec2<f32>) -> SpriteOutput {
     var out = sprite_vertex(feet, offset, uv, tint, pixel);
     out.position.z = max(out.position.z - 0.01 * out.position.w, 0.0);
     out.depth = max(out.depth - 0.01, 0.0);
+    return out;
+}
+
+@vertex fn effect_vs(@location(0) feet: vec3<f32>, @location(1) offset: vec2<f32>, @location(2) uv: vec2<f32>,
+                     @location(3) tint: vec4<f32>, @location(4) pixel: vec2<f32>) -> SpriteOutput {
+    return effect_vertex(feet, offset, uv, tint, pixel);
+}
+
+// Additive effects are not fogged.
+@vertex fn effect_add_vs(@location(0) feet: vec3<f32>, @location(1) offset: vec2<f32>, @location(2) uv: vec2<f32>,
+                         @location(3) tint: vec4<f32>, @location(4) pixel: vec2<f32>) -> SpriteOutput {
+    var out = effect_vertex(feet, offset, uv, tint, pixel);
+    out.fog = 0.0;
     return out;
 }
 ";
@@ -547,6 +593,11 @@ pub struct World {
     /// Water plane and its animation frames, with frames per texture change (at 60 per second).
     water: Option<(wgpu::Buffer, Vec<Texture>, u32)>,
     light: (Vector, [f32; 3], [f32; 3]),
+    /// The colour cleared behind the world.
+    clear_color: [f32; 3],
+    /// Fog colour, and the view depths where it starts and becomes solid. End at or before the start means no fog.
+    fog_color: [f32; 3],
+    fog_range: [f32; 2],
     globals: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     ground_pipeline: wgpu::RenderPipeline,
@@ -733,17 +784,17 @@ impl World {
         };
         let effect_pipelines = [
             pipeline("effect", "sprite_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false),
-            pipeline("effect", "sprite_fs", sprite_buffer_layout(), Some(additive), false),
+            pipeline("effect_add", "sprite_fs", sprite_buffer_layout(), Some(additive), false),
         ];
         let str_pipelines = [
             pipeline_compared("effect", "sprite_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false, wgpu::CompareFunction::Always),
-            pipeline_compared("effect", "sprite_fs", sprite_buffer_layout(), Some(additive), false, wgpu::CompareFunction::Always),
+            pipeline_compared("effect_add", "sprite_fs", sprite_buffer_layout(), Some(additive), false, wgpu::CompareFunction::Always),
         ];
         let mesh_buffer_layout =
             || wgpu::VertexBufferLayout { array_stride: size_of::<MeshVertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &MESH_ATTRIBUTES };
         let mesh_pipelines = [
             pipeline("mesh", "mesh_fs", mesh_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false),
-            pipeline("mesh", "mesh_fs", mesh_buffer_layout(), Some(additive), false),
+            pipeline("mesh_add", "mesh_fs", mesh_buffer_layout(), Some(additive), false),
         ];
 
         // ponytail: flat water; the client also waves it (wave height/speed/pitch from the RSW).
@@ -784,6 +835,7 @@ impl World {
         let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
         let ambient = crate::ambient::Ambient::new(rsw.sounds.iter().map(|source| crate::ambient::Source::placed(source, half)).collect());
         let cell_light = cell_lights(&gnd, &gat);
+        let (clear_color, fog_color, fog_range) = atmosphere(grf, map);
         let tile_heights = (gnd.cubes.iter().map(|cube| cube.heights.map(|height| -height)).collect(), gnd.width);
         Ok(Self {
             animated,
@@ -802,6 +854,9 @@ impl World {
             model_draws,
             water,
             light: (direction, rsw.light.ambient, rsw.light.diffuse),
+            clear_color,
+            fog_color,
+            fog_range,
             globals,
             globals_bind_group,
             ground_pipeline,
@@ -941,6 +996,116 @@ fn light_at(table: &[[f32; 3]], width: usize, height: usize, [x, _, z]: Vector) 
     table.get(cell_z * width + cell_x).copied().unwrap_or([1.0; 3])
 }
 
+/// One fog-table row. Density is kept and not used.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Fog {
+    near: f32,
+    far: f32,
+    /// 0xAARRGGBB.
+    color: u32,
+    density: f32,
+}
+
+impl Fog {
+    fn rgb(self) -> [f32; 3] {
+        let [_, red, green, blue] = self.color.to_be_bytes();
+        [red, green, blue].map(|channel| f32::from(channel) / 255.0)
+    }
+
+    fn channels(self) -> ([u8; 3], u8) {
+        let [alpha, red, green, blue] = self.color.to_be_bytes();
+        ([red, green, blue], alpha)
+    }
+
+    fn range(self) -> [f32; 2] {
+        [10.0 + 1490.0 * self.near, 10.0 + 1490.0 * self.far]
+    }
+}
+
+/// Clear colour, fog colour and the depths where fog starts and is solid.
+fn atmosphere(grf: &Grf, map: &str) -> ([f32; 3], [f32; 3], [f32; 2]) {
+    let looked_up = instance_map(map);
+    let fog = fog_for(&parse_fog_table(&grf_text(grf, "data\\fogParameterTable.txt")), &looked_up);
+    let sky = crate::lua::sky_for(grf, &looked_up);
+    let clear = crate::lua::clear_color(sky, fog.map(Fog::channels));
+    match fog {
+        Some(fog) => (clear, fog.rgb(), fog.range()),
+        None => (clear, [0.0; 3], [1.0, 0.0]),
+    }
+}
+
+fn grf_text(grf: &Grf, path: &str) -> String {
+    grf.read(path).map(|bytes| encoding_rs::EUC_KR.decode_without_bom_handling(&bytes).0.into_owned()).unwrap_or_default()
+}
+
+/// `0001@tower` loses the three characters that start four before `@`, so it is looked up as `1@tower`.
+fn instance_map(map: &str) -> String {
+    let map = map.trim_end_matches(".gat").trim_end_matches(".rsw");
+    let Some(at) = map.rfind('@') else { return map.to_string() };
+    if at < 4 {
+        return map.to_string();
+    }
+    let start = at - 4;
+    let mut name = String::with_capacity(map.len() - 3);
+    name.push_str(&map[..start]);
+    name.push_str(&map[start + 3..]);
+    name
+}
+
+/// Tokens end with `#`. Five make an entry: `map.rsw`, near, far, `0xAARRGGBB`, density. `//` lines are comments.
+fn parse_fog_table(text: &str) -> HashMap<String, Fog> {
+    let mut tokens = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        tokens.extend(line.split('#').map(str::trim).filter(|token| !token.is_empty()).map(str::to_string));
+    }
+    let mut table = HashMap::new();
+    for entry in tokens.chunks(5) {
+        let [name, near, far, color, density] = entry else { break };
+        let Some(color) = parse_fog_color(color) else { continue };
+        let (Some(near), Some(far), Some(density)) = (near.parse().ok(), far.parse().ok(), density.parse().ok()) else { continue };
+        table.insert(name.to_lowercase(), Fog { near, far, color, density });
+    }
+    table
+}
+
+/// A hex colour. A 7-digit value is padded on the left, so `0xff89003` is `0x0FF89003`.
+fn parse_fog_color(token: &str) -> Option<u32> {
+    let hex = token.trim().trim_start_matches('#').trim_start_matches("0x").trim_start_matches("0X");
+    if hex.is_empty() || !hex.chars().all(|digit| digit.is_ascii_hexdigit()) {
+        return None;
+    }
+    let padded = if hex.len() % 2 == 1 { format!("0{hex}") } else { hex.to_string() };
+    u32::from_str_radix(&padded, 16).ok()
+}
+
+fn fog_for(table: &HashMap<String, Fog>, map: &str) -> Option<Fog> {
+    let name = instance_map(map).to_lowercase();
+    table.get(&format!("{name}.rsw")).copied()
+}
+
+/// How much fog covers a view depth: 0 at `10 + 1490 · near`, 1 at `10 + 1490 · far`. The shader uses the same ramp.
+#[cfg(test)]
+fn fog_amount(near: f32, far: f32, depth: f32) -> f32 {
+    let start = 10.0 + 1490.0 * near;
+    let end = 10.0 + 1490.0 * far;
+    let span = end - start;
+    // ponytail: a row whose far is not past its near draws no fog.
+    if span <= 0.0 {
+        return 0.0;
+    }
+    ((depth - start) / span).clamp(0.0, 1.0)
+}
+
+/// The colour after linear fog.
+#[cfg(test)]
+fn fogged(color: [f32; 3], fog: [f32; 3], amount: f32) -> [f32; 3] {
+    [0, 1, 2].map(|index| color[index] * (1.0 - amount) + fog[index] * amount)
+}
+
 /// Everything one frame of the world needs.
 pub struct WorldFrame<'a> {
     pub world: &'a World,
@@ -966,6 +1131,8 @@ impl WorldPass for WorldFrame<'_> {
             camera_right: [self.view.right[0], self.view.right[1], self.view.right[2], 0.0],
             camera_up: [self.view.up[0], self.view.up[1], self.view.up[2], SPRITE_SCALE],
             pixel: [2.0 / (SCREEN_HEIGHT * self.view.aspect), 2.0 / SCREEN_HEIGHT, DEPTH_SCALE, NEAR],
+            fog_color: [world.fog_color[0], world.fog_color[1], world.fog_color[2], 0.0],
+            fog_range: [world.fog_range[0], world.fog_range[1], 0.0, 0.0],
         };
         gpu.queue.write_buffer(&world.globals, 0, bytemuck::bytes_of(&globals));
 
@@ -1053,7 +1220,15 @@ impl WorldPass for WorldFrame<'_> {
                 view: target,
                 depth_slice: None,
                 resolve_target: None,
-                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: world.clear_color[0] as f64,
+                        g: world.clear_color[1] as f64,
+                        b: world.clear_color[2] as f64,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
@@ -2078,5 +2253,58 @@ mod tests {
         assert_eq!(light_at(&table, 3, 1, [-0.01, 0.0, 0.0]), [1.0; 3]);
         assert_eq!(light_at(&table, 3, 1, [0.0, 0.0, -0.01]), [1.0; 3]);
         assert_eq!(light_at(&table, 3, 1, [15.0, 0.0, 0.0]), [1.0; 3]);
+    }
+
+    #[test]
+    fn parses_a_fog_table_and_cuts_an_instance_prefix() {
+        let text = "
+            // skipped
+            prontera.rsw#
+            0.23#
+            0.9#
+            0xFFFFFFFF#
+            0.4#
+            hu_fild01.rsw#
+            0.2#
+            0.6#
+            0xFFDDD7CC#
+            0#
+            mag_dun01.rsw#
+            0.0#
+            0.5#
+            0xff89003#
+            1.5#
+            1@tower.rsw#
+            0.1#
+            0.2#
+            0xFF000000#
+            0#
+        ";
+        let table = parse_fog_table(text);
+        let prontera = table["prontera.rsw"];
+        assert_eq!((prontera.near, prontera.far, prontera.color, prontera.density), (0.23, 0.9, 0xFFFF_FFFF, 0.4));
+        assert_eq!(table["mag_dun01.rsw"].color, 0x0FF8_9003);
+        assert!(!table.contains_key("izlude.rsw"));
+        assert_eq!(instance_map("0001@tower"), "1@tower");
+        assert_eq!(instance_map("prontera"), "prontera");
+        assert_eq!(instance_map("6@tower"), "6@tower");
+        assert_eq!(fog_for(&table, "0001@tower").unwrap().color, 0xFF00_0000);
+    }
+
+    #[test]
+    fn fog_runs_from_the_start_depth_to_the_end() {
+        // hu_fild01: near 0.2, far 0.6 → depth 308 to 904.
+        let (start, end) = (10.0 + 1490.0 * 0.2, 10.0 + 1490.0 * 0.6);
+        assert!((start - 308.0_f32).abs() < 1e-3 && (end - 904.0_f32).abs() < 1e-3, "{start} {end}");
+        assert_eq!(fog_amount(0.2, 0.6, start), 0.0);
+        assert!((fog_amount(0.2, 0.6, (start + end) / 2.0) - 0.5).abs() < 1e-5);
+        assert_eq!(fog_amount(0.2, 0.6, end), 1.0);
+        assert_eq!(fog_amount(0.2, 0.6, 0.0), 0.0);
+        assert_eq!(fog_amount(0.2, 0.6, 2000.0), 1.0);
+        let white = [1.0; 3];
+        let ground = [0.0, 0.5, 1.0];
+        assert_eq!(fogged(ground, white, 0.0), ground);
+        assert_eq!(fogged(ground, white, 1.0), white);
+        assert_eq!(fogged(ground, white, 0.5), [0.5, 0.75, 1.0]);
     }
 }
