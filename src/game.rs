@@ -3402,14 +3402,14 @@ impl Game {
             source.stand_ready();
             hit_ms = source.sprites.as_ref().and_then(|sprites| sprites.hit_ms(attack * 8 + usize::from(source.direction % 8), scale));
         }
-        self.show_hit(&act, hit_ms, MULTI_HIT_DELAY);
+        self.show_hit(&act, hit_ms, MULTI_HIT_DELAY, HitFrom::Attack);
     }
 
     /// The numbers of a hit as it lands: split over a multi-hit's hits (with the running total over monsters),
     /// yellow for a critical, "Lucky" for a lucky dodge.
     /// The numbers (and the flinch) of a hit, landing `hit_ms` after now (the attacker's "atk" frame), or after its
     /// attack motion when its sprite doesn't say.
-    pub(crate) fn show_hit(&mut self, act: &net::Act, hit_ms: Option<f32>, gap: Duration) {
+    pub(crate) fn show_hit(&mut self, act: &net::Act, hit_ms: Option<f32>, gap: Duration, from: HitFrom) {
         let me = self.account_id;
         let target = (act.target != me).then_some(act.target);
         let hit = match target {
@@ -3422,8 +3422,7 @@ impl Game {
         let drift = hit.map_or([1.0, 1.0], |actor| actor::number_drift(actor.rot, actor.facing_from_server));
         let amount = act.damage + act.left_damage;
         let lands = Instant::now() + Duration::from_secs_f32(hit_ms.unwrap_or(act.source_speed.max(0) as f32) / 1000.0);
-        // Misses, endured hits and lucky dodges don't flinch.
-        let flinch = (amount > 0 && !matches!(act.kind, 4 | 9 | 11)).then_some(act.target_speed as f32);
+        let flinch = (amount > 0 && !endured(act.kind, from)).then_some(act.target_speed as f32);
         let kind = match act.kind {
             11 => DamageKind::Lucky,
             10 | 13 => DamageKind::Critical,
@@ -3441,17 +3440,42 @@ impl Game {
         for hit in 0..hits {
             let start = lands + gap * hit as u32;
             self.damages.push(Damage { target, amount: amount / hits, start, kind, flinch, drift, source: (amount > 0).then_some(act.source) });
-            if hits > 1 && !on_player {
+            if shows_total(hits, from) && !on_player {
                 self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: DamageKind::Combo, flinch: None, drift, source: None });
             }
         }
     }
 }
 
+/// Whether a hit doesn't flinch its target: misses aside, an endured hit or a lucky dodge. A skill's endured multi-hit
+/// does flinch (each hit comes with a running total, which no longer counts as endured), and so does every hit from a
+/// skill's ground unit.
+fn endured(kind: u8, from: HitFrom) -> bool {
+    match from {
+        HitFrom::Attack => matches!(kind, 4 | 9 | 11),
+        HitFrom::Skill => matches!(kind, 4 | 11),
+        HitFrom::Unit => false,
+    }
+}
+
+/// Whether a monster's hits show the running total too: a multi-hit's, and every hit from a skill's ground unit.
+fn shows_total(hits: i32, from: HitFrom) -> bool {
+    hits > 1 || from == HitFrom::Unit
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rustnarok_client::map::Gat;
+
+    #[test]
+    fn skill_hits_flinch_and_total_as_the_game() {
+        // An endured hit: an attack's double and a skill's single don't flinch; a skill's multi-hit and a ground unit's do.
+        assert!(endured(9, HitFrom::Attack) && endured(4, HitFrom::Skill));
+        assert!(!endured(9, HitFrom::Skill) && !endured(4, HitFrom::Unit) && !endured(9, HitFrom::Unit));
+        // A ground unit's single hit shows the total; a skill's single hit doesn't.
+        assert!(shows_total(1, HitFrom::Unit) && !shows_total(1, HitFrom::Skill) && shows_total(2, HitFrom::Skill));
+    }
 
     #[test]
     fn units_block_where_they_stand() {

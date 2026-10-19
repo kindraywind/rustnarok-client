@@ -808,7 +808,7 @@ struct Banded {
 }
 
 /// A cast's aura: one a caster has at a time.
-fn is_cast_aura(effect: u32) -> bool {
+pub fn is_cast_aura(effect: u32) -> bool {
     matches!(effect, 12 | 54..=59)
 }
 
@@ -1158,6 +1158,23 @@ impl Floating {
     }
 }
 
+/// Skills whose splash's other targets still get the whole hit (hit effects, the caster's pose): Napalm Beat.
+pub const SPLASH_FULL: [u16; 1] = [11];
+
+/// The hit effect on each hit of damage from a skill's ground unit: Fire Wall's FIREHIT, Magnus Exorcismus's,
+/// Lord of Vermilion's WINDHIT, Storm Gust's and its monster version's COLDHIT, else EF_HIT1 below skill 493.
+// ponytail: the game's table goes on for higher ids (428–430, 0xa1b, 0x1461, 5219–5371); EF_HIT1 stands in below 493 only.
+pub fn unit_hit_effect(skill: u16) -> Option<u32> {
+    match skill {
+        18 => Some(49),
+        79 => Some(152),
+        85 => Some(52),
+        89 | 723 => Some(51),
+        _ if skill < 493 => Some(0),
+        _ => None,
+    }
+}
+
 /// EF_SOULSTRIKE: ghosts from the caster to the target, a hit each (`prims`).
 pub const SOUL_STRIKE: u32 = 15;
 
@@ -1311,6 +1328,13 @@ impl Effects {
         let anchor = Anchor::Unit(unit);
         self.auras.retain(|aura| !(is_cast_aura(aura.effect) && matches!(aura.anchor, Anchor::Unit(each) if each == unit)));
         self.auras.push(Banded { effect, anchor, start, ticks: aura_ticks(effect, cast_ms), turns: [0.0; 2], sparkles: Vec::new() });
+    }
+
+    /// A cast aura launched again with a skill's damage: it blooms for its own length, beside any cast's aura.
+    pub fn bloom_aura(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, effect: u32, start: Instant) {
+        let texture = aura_texture(effect);
+        self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
+        self.auras.push(Banded { effect, anchor: Anchor::Unit(unit), start, ticks: aura_ticks(effect, 0), turns: [0.0; 2], sparkles: Vec::new() });
     }
 
     /// Queues a camera shake starting at `start` for `length` (`QUAKE_SHORT` or `QUAKE_LONG`).
@@ -1703,6 +1727,14 @@ mod tests {
                 "effect\\flametrap\\fla_trap.rsm2"
             ]
         );
+    }
+
+    #[test]
+    fn ground_units_hit_with_their_own_effect() {
+        // Storm Gust COLDHIT, Lord of Vermilion WINDHIT, Fire Wall FIREHIT, Heaven's Drive EF_HIT1, none for new jobs.
+        assert_eq!([89, 85, 18, 91, 2000].map(unit_hit_effect), [Some(51), Some(52), Some(49), Some(0), None]);
+        // Napalm Beat's splash targets still get the whole hit; Fire Ball's don't.
+        assert!(SPLASH_FULL.contains(&11) && !SPLASH_FULL.contains(&17));
     }
 
     #[test]

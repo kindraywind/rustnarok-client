@@ -23,7 +23,6 @@ str	23	stonecurse	-	1
 str	25	firewall%d	-	0	1	2
 str	28	freeze	-	1
 str	29	lightning	-	1
-str	29	windhit%d	-	1	1	3
 str	30	thunderstorm	-	0
 str	40	cross	-	1
 str	41	angelus	-	1
@@ -1792,9 +1791,7 @@ wav	40	effect\ef_signum	0
 wav	41	effect\ef_angelus	0
 wav	42	effect\ef_blessing	0
 wav	43	effect\ef_incagidex	0
-wav	49	effect\ef_firehit	0
-wav	51	_hit_fist%d	0	3	4
-wav	52	_hit_fist%d	0	1	3
+wav	49	_enemy_hit_fire%d	0	1	2
 wav	53	effect\ef_poisonattack	0
 wav	54	effect\ef_beginspell	0
 wav	55	effect\ef_beginspell	0
@@ -2128,9 +2125,9 @@ hit	6	0	-1
 hit	8	0	-1
 hit	9	0	-1
 hit	10	0	-1
-hit	11	0	-1
+hit	11	0	1
 hit	12	0	-1
-hit	13	0	-1
+hit	13	0	1
 hit	16	0	-1
 hit	18	0	-1
 hit	21	0	-1
