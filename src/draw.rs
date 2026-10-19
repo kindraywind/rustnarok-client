@@ -2,6 +2,22 @@
 
 use super::*;
 
+/// The blind overlay's quads, or none while the player isn't blind. Textures that failed to load are left out.
+fn blind_cover<'a>(textures: &'a [Option<Texture>; 2], feet: world::Vector, alpha: f32, showing: bool) -> Vec<world::CoverQuad<'a>> {
+    if !showing {
+        return Vec::new();
+    }
+    let tint = effects::blind_color(alpha);
+    let at = effects::blind_center(feet);
+    effects::blind_pieces()
+        .into_iter()
+        .filter_map(|piece| {
+            let texture = textures[usize::from(!piece.fullb)].as_ref()?;
+            Some((texture, at, effects::blind_offsets(&piece), piece.uv, tint))
+        })
+        .collect()
+}
+
 /// A unit sprite's vertex RGB is its tint times the map light. Alpha stays the fade.
 fn lit_tint(tint: [f32; 4], light: [f32; 3]) -> [f32; 4] {
     [tint[0] * light[0], tint[1] * light[1], tint[2] * light[2], tint[3]]
@@ -2562,6 +2578,8 @@ impl App {
             let [a, b, c, d] = [vertex(0, [0.0, 1.0]), vertex(1, [1.0, 1.0]), vertex(2, [0.0, 0.0]), vertex(3, [1.0, 0.0])];
             effect_meshes.push((texture, vec![a, b, d, a, d, c], false));
         }
+        // The overlay follows the player and stays up with /effect off. 334 is not an effect that switch hides.
+        let cover = blind_cover(&assets.blind_textures, player_feet, game.blind.alpha(now), game.blind.showing());
         let frame = WorldFrame {
             world: &game.world,
             view: &view,
@@ -2570,8 +2588,9 @@ impl App {
             effects: &effect_quads,
             meshes: &effect_meshes,
             screen: &screen_shapes,
+            cover: &cover,
             time: now.duration_since(game.entered).as_secs_f32(),
-            blind: game.player.health_state & 0x10 != 0,
+            blind: game.blind.showing(),
         };
         if let Some(path) = self.print_screen.take() {
             let _ = path.parent().map(std::fs::create_dir_all);

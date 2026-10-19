@@ -1222,10 +1222,21 @@ impl Game {
         }
     }
 
+    /// Blind (health bit 0x10) or Deep Blind on the player: one overlay, ended the tick both are off.
+    pub(crate) fn note_blind(&mut self, now: Instant) {
+        let on = self.player.health_state & effects::BLIND_BIT != 0 || self.deep_blind;
+        self.blind.update(true, on, now);
+    }
+
     /// Starts or stops what a status keeps showing on its unit (the player's own works too): its looping effects, the
     /// copies left behind it (the quickens' afterimage) and Cursed Circle's dark body.
     pub(crate) fn status_loop(&mut self, gpu: Option<&Gpu>, grf: &Grf, table: &effects::Table, unit: u32, status: u16, on: bool) {
         let key = (unit != self.account_id).then_some(unit);
+        // Deep Blind is the player's overlay. A repeat while it shows does not start the fade again.
+        if key.is_none() && status == effects::DEEP_BLIND {
+            self.deep_blind = on;
+            self.note_blind(control::now());
+        }
         let shown = table.status(status);
         self.effects.forget_status(key, status);
         let actor = match key {

@@ -454,6 +454,8 @@ impl App {
                     trade_give_zeny: None,
                     menu: None,
                     weather: weather::Weather::default(),
+                    blind: effects::BlindView::default(),
+                    deep_blind: false,
                     right_press: None,
                     party: None,
                     status_window: {
@@ -3557,6 +3559,9 @@ impl App {
                     }
                     actor.body_state = body;
                     actor.health_state = health;
+                }
+                if id == game.account_id {
+                    game.note_blind(control::now());
                 }
                 game.hold_locked();
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };

@@ -1934,7 +1934,6 @@ wav	329	effect\ef_hit4	200
 wav	329	effect\ef_hit2	400
 wav	331	_heal_effect	0
 wav	332	effect\흡기	0
-wav	334	_blind	0
 wav	336	effect\kyrie_guard	0
 wav	339	permeter_attack	0
 wav	339	effect\ef_magnumbreak	300

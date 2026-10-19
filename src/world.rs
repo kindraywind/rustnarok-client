@@ -559,6 +559,10 @@ fn sprite_depth(feet: f32, below: f32, [slope, bias, nudge]: [f32; 3]) -> f32 {
 /// it's an STR's: `STR_RISE` screen pixels up, drawn last over everything with no depth test.
 pub type EffectQuad<'a> = (&'a Texture, Vector, [[f32; 2]; 4], [f32; 4], bool, bool);
 
+/// A camera-facing quad drawn last in the world, unfogged, with no depth test. Corners are sprite-pixel offsets
+/// (y down) with their own texture coordinates, and a colour to multiply the texture by.
+pub type CoverQuad<'a> = (&'a Texture, Vector, [[f32; 2]; 4], [[f32; 2]; 4], [f32; 4]);
+
 /// A shape drawn flat on the screen over a point in the world (the game's screen prims, COLDHIT's shards): texture, the
 /// point, and its triangles' corners in screen pixels from the point's projection (y down), texture coordinates and
 /// colors. Drawn over everything, blended.
@@ -619,6 +623,8 @@ pub struct World {
     effect_pipelines: [wgpu::RenderPipeline; 2],
     /// STRs: no depth test, over everything.
     str_pipelines: [wgpu::RenderPipeline; 2],
+    /// The blind overlay: blended, unfogged, no depth test, drawn last.
+    cover_pipeline: wgpu::RenderPipeline,
     mesh_pipelines: [wgpu::RenderPipeline; 2],
     depth: RefCell<Option<([u32; 2], wgpu::TextureView)>>,
 }
@@ -797,6 +803,9 @@ impl World {
             pipeline_compared("effect", "sprite_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false, wgpu::CompareFunction::Always),
             pipeline_compared("effect_add", "sprite_fs", sprite_buffer_layout(), Some(additive), false, wgpu::CompareFunction::Always),
         ];
+        // Same unfogged vertex shader as additive effects, blended, and drawn over everything.
+        let cover_pipeline =
+            pipeline_compared("effect_add", "sprite_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false, wgpu::CompareFunction::Always);
         let mesh_buffer_layout =
             || wgpu::VertexBufferLayout { array_stride: size_of::<MeshVertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &MESH_ATTRIBUTES };
         let mesh_pipelines = [
@@ -842,6 +851,7 @@ impl World {
             soft_pipeline,
             effect_pipelines,
             str_pipelines,
+            cover_pipeline,
             mesh_pipelines,
             depth: RefCell::new(None),
         })
@@ -1258,9 +1268,11 @@ pub struct WorldFrame<'a> {
     pub effects: &'a [EffectQuad<'a>],
     pub meshes: &'a [EffectMesh<'a>],
     pub screen: &'a [ScreenShape<'a>],
+    /// The blind overlay, drawn last with no depth test.
+    pub cover: &'a [CoverQuad<'a>],
     /// Seconds since the map was entered, for animated textures.
     pub time: f32,
-    /// The player is blind: lava draws as ordinary water.
+    /// The player is blind (health bit 0x10 or status 1205): lava draws as ordinary water.
     pub blind: bool,
 }
 
@@ -1355,6 +1367,21 @@ impl WorldPass for WorldFrame<'_> {
             gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("screen shapes"),
                 contents: bytemuck::cast_slice(&screen_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
+        });
+        let cover_vertices: Vec<SpriteVertex> = self
+            .cover
+            .iter()
+            .flat_map(|&(_, feet, corners, uvs, tint)| {
+                let corner = |index: usize| SpriteVertex { feet, offset: corners[index], uv: uvs[index], tint, pixel: [0.0; 2], plane: [0.0; 3] };
+                [corner(0), corner(1), corner(3), corner(3), corner(1), corner(2)]
+            })
+            .collect();
+        let cover_buffer = (!cover_vertices.is_empty()).then(|| {
+            gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("blind overlay"),
+                contents: bytemuck::cast_slice(&cover_vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             })
         });
@@ -1482,6 +1509,16 @@ impl WorldPass for WorldFrame<'_> {
                 pass.set_bind_group(1, texture.bind_group(), &[]);
                 pass.draw(first..first + count, 0..1);
                 first += count;
+            }
+        }
+        // Last in the world, over the ground, models, units and effects, and not fogged.
+        if let Some(buffer) = &cover_buffer {
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            pass.set_pipeline(&world.cover_pipeline);
+            for (index, (texture, ..)) in self.cover.iter().enumerate() {
+                let first = index as u32 * 6;
+                pass.set_bind_group(1, texture.bind_group(), &[]);
+                pass.draw(first..first + 6, 0..1);
             }
         }
     }

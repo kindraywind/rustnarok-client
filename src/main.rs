@@ -1544,6 +1544,10 @@ struct Game {
     room_tried: bool,
     /// The map's weather, from the server's weather effects until the map changes.
     weather: weather::Weather,
+    /// When Blind or Deep Blind started covering the player's view.
+    blind: effects::BlindView,
+    /// Status 1205 (Deep Blind) is on the player.
+    deep_blind: bool,
     /// The right-click menu, and where a right press began (and on whom).
     menu: Option<menu::Menu<Choice>>,
     right_press: Option<([f32; 2], Option<MenuFor>)>,
@@ -2747,6 +2751,8 @@ struct Assets {
     magic_target: Option<Texture>,
     /// The ground cursor's square.
     ground_grid: Option<Texture>,
+    /// fullb.tga and white02.bmp for the blind overlay. A missing file leaves that part unseen.
+    blind_textures: [Option<Texture>; 2],
     aura: aura::Textures,
     escape: escape::Assets,
     options: options::Assets,
@@ -2867,6 +2873,10 @@ impl Assets {
             link_line: gpu.solid([links::NPC_COLOR[0], links::NPC_COLOR[1], links::NPC_COLOR[2], 0xFF]),
             magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
             ground_grid: gpu.try_load_texture(grf, "data\\texture\\grid.tga", false).ok(),
+            blind_textures: [
+                gpu.try_load_texture(grf, "data\\texture\\effect\\fullb.tga", true).ok(),
+                gpu.try_load_texture(grf, "data\\texture\\effect\\white02.bmp", true).ok(),
+            ],
             aura: aura::Textures::load(gpu, grf),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),

@@ -1866,6 +1866,100 @@ fn load_model(grf: &Grf, file: &str) -> Option<Model> {
     Some(model)
 }
 
+/// Blind is health bit 0x10. Deep Blind is status 1205.
+pub const BLIND_BIT: u16 = 0x10;
+pub const DEEP_BLIND: u16 = 1205;
+/// The overlay's centre sits this many world units above the feet.
+pub const BLIND_ABOVE: f32 = 9.0;
+/// Each inner square's side, in world units. The bands start here.
+pub const BLIND_INNER: f32 = 65.0;
+/// The bands' outer edge. The overlay is twice this across.
+pub const BLIND_OUTER: f32 = 165.0;
+/// #0A0A0A.
+const BLIND_RGB: f32 = 10.0 / 255.0;
+
+/// Overlay alpha after this many 16 ms ticks: it starts at 0 and gains 1 a tick, held at 255.
+pub fn blind_alpha(ticks: u32) -> f32 {
+    (ticks.min(255) as f32) / 255.0
+}
+
+/// The overlay's colour at this fade alpha.
+pub fn blind_color(alpha: f32) -> [f32; 4] {
+    [BLIND_RGB, BLIND_RGB, BLIND_RGB, alpha]
+}
+
+/// When the own character's overlay started. Another packet while it shows does not start the fade again.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlindView {
+    since: Option<Instant>,
+}
+
+impl BlindView {
+    /// `own` is the player's character. `on` is health bit 0x10 or status 1205. Other units change nothing.
+    pub fn update(&mut self, own: bool, on: bool, now: Instant) {
+        if !own {
+            return;
+        }
+        if on {
+            self.since.get_or_insert(now);
+        } else {
+            self.since = None;
+        }
+    }
+
+    pub fn showing(&self) -> bool {
+        self.since.is_some()
+    }
+
+    /// Ticks since it started, or 0 while it's off. Not capped at the fade.
+    pub fn ticks(&self, now: Instant) -> u32 {
+        let Some(since) = self.since else { return 0 };
+        u32::try_from(now.saturating_duration_since(since).as_millis() / 16).unwrap_or(u32::MAX)
+    }
+
+    pub fn alpha(&self, now: Instant) -> f32 {
+        if self.showing() { blind_alpha(self.ticks(now)) } else { 0.0 }
+    }
+}
+
+/// One piece of the overlay, in world units from its centre (x right, y down on the camera): corners top left, top
+/// right, bottom right, bottom left, and each corner's texture coordinates. `fullb` is fullb.tga; the bands are white02.bmp.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlindPiece {
+    pub corners: [[f32; 2]; 4],
+    pub uv: [[f32; 2]; 4],
+    pub fullb: bool,
+}
+
+/// The centre of the overlay: 9 world units above the feet. World y is up.
+pub fn blind_center(feet: Vector) -> Vector {
+    [feet[0], feet[1] + BLIND_ABOVE, feet[2]]
+}
+
+/// Four squares of side 65 around the centre, then four bands from 65 out to 165. Each square's texture coordinate
+/// (0, 0) — fullb.tga's clear corner — sits on the centre.
+pub fn blind_pieces() -> [BlindPiece; 8] {
+    let (s, o) = (BLIND_INNER, BLIND_OUTER);
+    let square = |corners: [[f32; 2]; 4], uv: [[f32; 2]; 4]| BlindPiece { corners, uv, fullb: true };
+    let band = |corners: [[f32; 2]; 4]| BlindPiece { corners, uv: QUAD_UV, fullb: false };
+    [
+        square([[0.0, 0.0], [s, 0.0], [s, s], [0.0, s]], [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
+        square([[-s, 0.0], [0.0, 0.0], [0.0, s], [-s, s]], [[1.0, 0.0], [0.0, 0.0], [0.0, 1.0], [1.0, 1.0]]),
+        square([[0.0, -s], [s, -s], [s, 0.0], [0.0, 0.0]], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]),
+        square([[-s, -s], [0.0, -s], [0.0, 0.0], [-s, 0.0]], [[1.0, 1.0], [0.0, 1.0], [0.0, 0.0], [1.0, 0.0]]),
+        band([[-o, -o], [o, -o], [o, -s], [-o, -s]]),
+        band([[-o, s], [o, s], [o, o], [-o, o]]),
+        band([[-o, -s], [-s, -s], [-s, s], [-o, s]]),
+        band([[s, -s], [o, -s], [o, s], [s, s]]),
+    ]
+}
+
+/// A piece's corners in sprite pixels (y down). One world unit is 35/CELL sprite pixels.
+pub fn blind_offsets(piece: &BlindPiece) -> [[f32; 2]; 4] {
+    let scale = 35.0 / CELL;
+    piece.corners.map(|[x, y]| [x * scale, y * scale])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2219,5 +2313,77 @@ mod tests {
         effects.play_quakes(&table, 666, start);
         assert!(effects.quake(start + Duration::from_millis(1769)).is_some());
         assert!(effects.quake(start + Duration::from_millis(1770)).is_none());
+    }
+
+    #[test]
+    fn blind_starts_once_for_the_player() {
+        let start = Instant::now();
+        let later = start + Duration::from_millis(100 * 16);
+        let mut view = BlindView::default();
+        // Another unit turning blind, or ending it, leaves the player's overlay alone.
+        view.update(false, true, start);
+        assert!(!view.showing());
+        view.update(true, true, start);
+        view.update(false, false, later);
+        assert!(view.showing());
+        // A repeat while it shows does not start the fade again.
+        view.update(true, true, later);
+        assert_eq!(view.ticks(later), 100);
+        assert_eq!(view.alpha(start), 0.0);
+        view.update(true, false, later);
+        assert!(!view.showing());
+        assert_eq!(view.alpha(later), 0.0);
+    }
+
+    #[test]
+    fn blind_fades_one_alpha_a_tick() {
+        assert_eq!(blind_alpha(0), 0.0);
+        assert_eq!(blind_alpha(100), 100.0 / 255.0);
+        assert_eq!(blind_alpha(255), 1.0);
+        assert_eq!(blind_alpha(400), 1.0);
+        let start = Instant::now();
+        let mut view = BlindView::default();
+        view.update(true, true, start);
+        assert_eq!(view.alpha(start), blind_alpha(0));
+        assert_eq!(view.alpha(start + Duration::from_millis(100 * 16)), blind_alpha(100));
+        assert_eq!(view.alpha(start + Duration::from_millis(255 * 16)), blind_alpha(255));
+        assert_eq!(view.alpha(start + Duration::from_millis(400 * 16)), blind_alpha(400));
+        assert_eq!(blind_color(1.0), [10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 1.0]);
+    }
+
+    #[test]
+    fn blind_squares_keep_the_clear_corner_at_the_centre() {
+        let pieces = blind_pieces();
+        let squares = pieces.into_iter().filter(|piece| piece.fullb).collect::<Vec<_>>();
+        let bands = pieces.into_iter().filter(|piece| !piece.fullb).collect::<Vec<_>>();
+        assert_eq!((squares.len(), bands.len()), (4, 4));
+        for square in &squares {
+            let centre = square.corners.iter().position(|[x, y]| *x == 0.0 && *y == 0.0).unwrap();
+            assert_eq!(square.uv[centre], [0.0, 0.0]);
+        }
+        assert_eq!(squares[0].corners, [[0.0, 0.0], [65.0, 0.0], [65.0, 65.0], [0.0, 65.0]]);
+        assert_eq!(squares[0].uv, [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+        assert_eq!(squares[1].corners, [[-65.0, 0.0], [0.0, 0.0], [0.0, 65.0], [-65.0, 65.0]]);
+        assert_eq!(squares[1].uv, [[1.0, 0.0], [0.0, 0.0], [0.0, 1.0], [1.0, 1.0]]);
+        assert_eq!(squares[2].corners, [[0.0, -65.0], [65.0, -65.0], [65.0, 0.0], [0.0, 0.0]]);
+        assert_eq!(squares[2].uv, [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
+        assert_eq!(squares[3].corners, [[-65.0, -65.0], [0.0, -65.0], [0.0, 0.0], [-65.0, 0.0]]);
+        assert_eq!(squares[3].uv, [[1.0, 1.0], [0.0, 1.0], [0.0, 0.0], [1.0, 0.0]]);
+        assert_eq!(bands[0].corners, [[-165.0, -165.0], [165.0, -165.0], [165.0, -65.0], [-165.0, -65.0]]);
+        assert_eq!(bands[1].corners, [[-165.0, 65.0], [165.0, 65.0], [165.0, 165.0], [-165.0, 165.0]]);
+        assert_eq!(bands[2].corners, [[-165.0, -65.0], [-65.0, -65.0], [-65.0, 65.0], [-165.0, 65.0]]);
+        assert_eq!(bands[3].corners, [[65.0, -65.0], [165.0, -65.0], [165.0, 65.0], [65.0, 65.0]]);
+        for band in &bands {
+            assert_eq!(band.uv, QUAD_UV);
+        }
+        assert_eq!(blind_center([1.0, 2.0, 3.0]), [1.0, 11.0, 3.0]);
+        assert_eq!(blind_offsets(&squares[0])[2], [65.0 * 7.0, 65.0 * 7.0]);
+    }
+
+    #[test]
+    fn deep_blind_keeps_its_effect_and_drops_the_wav() {
+        let table = Table::load();
+        assert_eq!(table.status(DEEP_BLIND), &[334, 164]);
+        assert!(!table.sounds.contains_key(&334));
     }
 }

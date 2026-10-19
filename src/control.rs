@@ -1581,6 +1581,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         }).collect::<serde_json::Map<_, _>>(),
         "chat_height": game.chat.height(),
     });
+    // The blind overlay's age in 16 ms ticks (0 while off). The fade holds at 255.
+    state["blind"] = json!(game.blind.ticks(crate::control::now()));
     // The ground cursor (Alt+Home): on or off, and the cell its square is on.
     state["ground_cursor"] = json!({"on": game.ground_cursor, "cell": game.ground_mark});
     // The party window's size mode and size.
