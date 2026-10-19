@@ -338,6 +338,44 @@ pub struct Look {
     pub robe: u16,
     /// The option bits that change the body (`BODY_OPTIONS`): outfits, mounts and the orcish face.
     pub option: u32,
+    /// 2nd outfit: 1, or the outfit's job id (4332–4349). Anything else is the normal body.
+    pub body: u16,
+}
+
+/// A 2nd-outfit body: the flag 1, or an outfit job id.
+pub fn second_outfit(body: u16) -> bool {
+    body == 1 || (4332..=4349).contains(&body)
+}
+
+/// A player's body sprite and dye. `fallback` is the normal body when the 2nd outfit's files are missing.
+pub struct BodyFiles {
+    pub sprite: String,
+    pub dye: String,
+    pub fallback: Option<(String, String)>,
+}
+
+/// Sprite and dye paths for sprite job `job`. Sex is male when `male` is set. A 2nd outfit uses `costume_1`.
+pub fn body_files(job: u16, male: bool, color: u16, style: u16) -> Option<BodyFiles> {
+    let names = job_sprites(job)?;
+    let sex = if male { "남" } else { "여" };
+    let race = if is_doram(job) { "도람족" } else { "인간족" };
+    let dye_root = if is_doram(job) { "data\\palette\\도람족\\body" } else { "data\\palette\\몸" };
+    let sprite = format!("data\\sprite\\{race}\\몸통\\{sex}\\{}_{sex}", names.body);
+    let dye = format!("{dye_root}\\{}_{sex}_{color}.pal", names.palette);
+    if second_outfit(style) {
+        Some(BodyFiles {
+            sprite: format!("data\\sprite\\{race}\\몸통\\{sex}\\costume_1\\{}_{sex}_1", names.body),
+            dye: format!("{dye_root}\\costume_1\\{}_{sex}_{color}_1.pal", names.palette),
+            fallback: Some((sprite, dye)),
+        })
+    } else {
+        Some(BodyFiles { sprite, dye, fallback: None })
+    }
+}
+
+/// The body to load: the 2nd outfit when `present`, otherwise the normal body.
+pub fn chosen_body<'a>(style: u16, costume: &'a str, normal: &'a str, present: bool) -> &'a str {
+    if second_outfit(style) && present { costume } else { normal }
 }
 
 /// A character's head alone, in their hair colour: the first standing frame facing front (the big minimap's player).
@@ -746,14 +784,16 @@ impl SpriteSet {
         };
         // Color 0 is the sprite's own palette.
         let dye = |path: String, color: u16| -> Option<Palette> { (color > 0).then(|| grf.read(&path).ok().and_then(|bytes| sprite::parse_palette(&bytes)))? };
-        let body_palettes = if is_doram(look.job) { "data\\palette\\도람족\\body" } else { "data\\palette\\몸" };
         // ponytail: there is no head sprite 0; rathena allows hair 0, so show the first style.
         let hair = look.hair.max(1);
-        let body = load(
-            format!("data\\sprite\\{race}\\몸통\\{sex}\\{class}_{sex}"),
-            dye(format!("{body_palettes}\\{}_{sex}_{}.pal", names.palette, look.clothes_color), look.clothes_color),
-            Part::Body,
-        )?;
+        let files = body_files(job, look.sex != 0, look.clothes_color, look.body)?;
+        let costume = load(files.sprite.clone(), dye(files.dye.clone(), look.clothes_color), Part::Body);
+        let body = match &files.fallback {
+            Some((sprite, dye_path)) if chosen_body(look.body, &files.sprite, sprite, costume.is_some()) != files.sprite.as_str() => {
+                load(sprite.clone(), dye(dye_path.clone(), look.clothes_color), Part::Body)
+            }
+            _ => costume,
+        }?;
         // The orcish bit replaces the hair with the orc face, placed as the head.
         let head = match orcish_head(look.job, look.option) {
             Some(face) => load(format!("data\\sprite\\{face}"), None, Part::Head),
@@ -2934,6 +2974,40 @@ mod tests {
         assert_eq!(job_sprites(4008).map(|names| (names.body, names.weapon)), Some(("로드나이트", "기사")));
         assert_eq!(job_sprites(4218).map(|names| names.palette), Some("묘족"));
         assert!(job_sprites(4023).is_some() && job_sprites(4080).is_some() && job_sprites(31).is_none());
+    }
+
+    #[test]
+    fn dyes_mounted_jobs_and_the_second_outfit() {
+        assert_eq!(job_sprites(14).map(|names| names.palette), Some("크루"));
+        assert_eq!(job_sprites(4159).map(|names| names.palette), Some("페코검사"));
+        assert_eq!(job_sprites(4110).map(|names| names.palette), Some("그리폰가드"));
+        assert_eq!(job_sprites(4171).map(|names| names.body), Some("dancer_b_riding"));
+        assert_eq!(job_sprites(4171).map(|names| names.palette), Some("dancer_b_riding"));
+        for job in [4170, 4231, 4237] {
+            let names = job_sprites(job).unwrap();
+            assert_eq!(names.palette, names.body, "{job}");
+        }
+        // A mounted Rune Knight and a Ranger on her wolf, in the 2nd outfit and out of it.
+        let knight = body_files(4080, true, 1, 1).unwrap();
+        assert_eq!(knight.sprite, r"data\sprite\인간족\몸통\남\costume_1\룬나이트쁘띠_남_1");
+        assert_eq!(knight.dye, r"data\palette\몸\costume_1\룬드래곤_남_1_1.pal");
+        let wolf = body_files(4084, false, 2, 4332).unwrap();
+        assert_eq!(wolf.sprite, r"data\sprite\인간족\몸통\여\costume_1\레인져늑대_여_1");
+        assert_eq!(wolf.dye, r"data\palette\몸\costume_1\울프레인저_여_2_1.pal");
+        let plain = body_files(4080, true, 1, 0).unwrap();
+        assert_eq!(plain.sprite, r"data\sprite\인간족\몸통\남\룬나이트쁘띠_남");
+        assert_eq!(plain.dye, r"data\palette\몸\룬드래곤_남_1.pal");
+        assert!(plain.fallback.is_none());
+        assert_eq!(knight.fallback.as_ref().map(|(sprite, dye)| (sprite.as_str(), dye.as_str())), Some((plain.sprite.as_str(), plain.dye.as_str())));
+        // A Doram's 2nd outfit lives under 도람족.
+        let doram = body_files(4218, true, 3, 4349).unwrap();
+        assert_eq!(doram.sprite, r"data\sprite\도람족\몸통\남\costume_1\summoner_남_1");
+        assert_eq!(doram.dye, r"data\palette\도람족\body\costume_1\묘족_남_3_1.pal");
+        // Missing costume files fall back to the normal body. The class id itself is the normal body.
+        assert_eq!(chosen_body(1, "costume", "normal", false), "normal");
+        assert_eq!(chosen_body(4332, "costume", "normal", true), "costume");
+        assert_eq!(chosen_body(0, "costume", "normal", true), "normal");
+        assert_eq!(chosen_body(4054, "costume", "normal", true), "normal");
     }
 
     #[test]

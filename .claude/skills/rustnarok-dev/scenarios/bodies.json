@@ -1,5 +1,5 @@
 {
- "about": "Bodies: a knight on a Peco, a Lord Knight's sword in the battle stance, a baby drawn smaller, and the wedding outfit. Puts the job and options back at the end.",
+ "about": "Bodies: a knight on a Peco, a Lord Knight's sword in the battle stance, a baby drawn smaller, the wedding outfit, a dyed Crusader, and a Rune Knight's 2nd outfit. Puts the job, dye and options back at the end.",
  "account": "",
  "slot": 0,
  "env": {
@@ -206,6 +206,122 @@
   },
   {
    "wait": 500
+  },
+  {
+   "say": "@job 14"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "say": "@dye 1"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "expect": {
+    "state": {
+     "player.job": 14,
+     "player.look.clothes_color": 1
+    }
+   }
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "shot": "body-crusader",
+   "crop": [
+    352,
+    140,
+    320,
+    320
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@dye 0"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "say": "@job 4054"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "say": "@bodystyle 4332"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "expect": {
+    "state": {
+     "player.job": 4054,
+     "player.look.body": 4332
+    }
+   }
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "shot": "body-second-outfit",
+   "crop": [
+    352,
+    140,
+    320,
+    320
+   ],
+   "threshold": 2
+  },
+  {
+   "say": "@bodystyle off"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "expect": {
+    "state": {
+     "player.look.body": 0
+    }
+   }
+  },
+  {
+   "move": [
+    1000,
+    740
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "shot": "body-outfit-off",
+   "crop": [
+    352,
+    140,
+    320,
+    320
+   ],
+   "threshold": 2
   },
   {
    "say": "@job 0"
