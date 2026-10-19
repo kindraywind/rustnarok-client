@@ -1,0 +1,77 @@
+{
+  "about": "Comodo's etcinfo fireworks (issue #521): about 7 s after the warp, 640 sparks burst 15 units west of the player. A same-map warp starts them again. /effect off at the load starts none.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp comodo 209 143"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "map": "comodo.gat",
+        "weather": [
+          297,
+          301
+        ]
+      }
+    },
+    {
+      "wait": 9000
+    },
+    {
+      "shot": "fireworks-comodo",
+      "crop": [
+        200,
+        80,
+        824,
+        560
+      ],
+      "threshold": 40
+    },
+    {
+      "say": "@warp comodo 209 143"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "weather": [
+          297,
+          301
+        ]
+      }
+    },
+    {
+      "say": "/effect"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@warp comodo 195 150"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "weather": []
+      }
+    },
+    {
+      "say": "/effect"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "weather": []
+      }
+    }
+  ]
+}

@@ -333,11 +333,6 @@ impl App {
         // Where the windows were left is kept for next time.
         game.save_places();
         game.save_small_windows();
-        // Fireworks weather sets off fireworks around the player.
-        for [dx, dy] in game.weather.fireworks_due(now) {
-            let cell = [game.player.cell[0] + dx, game.player.cell[1] + dy].map(|value| value.max(0) as u16);
-            game.play_effect_at(gpu, grf, &self.effect_table, weather::FIREWORK, cell);
-        }
 
         // Bodies that finished dying leave; hits that land make their target flinch.
         game.units.retain(|_, actor| actor.remove_at.is_none_or(|at| at > now));
@@ -408,6 +403,14 @@ impl App {
             *arrived = Some(now);
         }
         let player_feet = game.world.cell_position(player_cell);
+        if game.weather.take_map_launch() && self.graphics.effects_on {
+            for &(effect, count) in assets.weather.map_launches(&game.map) {
+                game.weather.launch(effect, count, now, player_feet);
+            }
+        }
+        // Sparks and the bang keep time with /effect off. Sparks draw only while it's on; the bang is heard either way.
+        game.weather.step(now, player_feet);
+        let bangs = game.weather.take_bangs(now);
         game.camera_goal.drag_frame();
         game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame), player_feet, game.camera_snap);
         // An earthquake shakes the view sideways, in and out and in tilt, the other way each frame, and snaps back when it ends.
@@ -2499,6 +2502,9 @@ impl App {
             for (file, at) in game.effects.due_sounds(now) {
                 audio.play(grf, &file, heard(f32::hypot(at[0] - player_feet[0], at[2] - player_feet[2]) / world::CELL));
             }
+            for _ in 0..bangs {
+                audio.play(grf, weather::BANG_SOUND, 1.0);
+            }
         }
         let feet_of_unit = |unit: Option<u32>| match unit {
             None => Some(player_feet),
@@ -2506,6 +2512,9 @@ impl App {
         };
         let (mut effect_quads, mut effect_meshes) =
             if effects_on { (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit)) } else { (Vec::new(), Vec::new()) };
+        if effects_on {
+            effect_quads.extend(game.weather.spark_quads(&assets.weather, now));
+        }
         let screen_shapes = if effects_on { game.effects.screen_shapes(now, feet_of_unit) } else { Vec::new() };
         // Max-level auras under the feet of those in sight, with the effects (unless /aura2 has them off).
         if effects_on && !self.graphics.aura_off {

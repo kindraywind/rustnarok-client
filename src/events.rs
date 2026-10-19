@@ -678,6 +678,7 @@ impl App {
                 }));
                 if let Scene::Game(game) = &mut self.scene {
                     game.restore_places();
+                    game.weather.begin_map();
                 }
                 for event in std::mem::take(&mut self.early_events) {
                     self.map_event(event);
@@ -3656,7 +3657,10 @@ impl App {
                 }
             }
             // Weather comes as effects on the player: it shows until the map changes.
-            MapEvent::Effect { id, effect } if id == game.account_id && weather::is_weather(effect) => game.weather.start(effect, control::now()),
+            MapEvent::Effect { id, effect } if id == game.account_id && weather::is_weather(effect) => {
+                let at = game.world.cell_position(game.player.cell.map(|cell| cell as f32));
+                game.weather.start(effect, control::now(), at);
+            }
             MapEvent::Effect { id, effect } => {
                 if let Some(gpu) = gpu {
                     game.play_effect(gpu, grf, table, effect, id);
