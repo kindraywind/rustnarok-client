@@ -1217,6 +1217,33 @@ impl Game {
         self.play_effect_hits(gpu, grf, table, effect, unit, start, 1);
     }
 
+    /// Where a unit's feet are drawn now.
+    fn feet(&self, unit: u32, now: Instant) -> Option<world::Vector> {
+        let actor = if unit == self.account_id { Some(&self.player) } else { self.units.get(&unit) }?;
+        Some(self.world.cell_position(actor.position(now)))
+    }
+
+    /// A bow's arrow from over `archer` at `target`, leaving after `wait_ms` (`arrows`).
+    pub(crate) fn shoot_arrow(&mut self, grf: &Grf, archer: u32, target: u32, wait_ms: f32) {
+        let now = Instant::now();
+        let Some(from) = self.feet(archer, now) else { return };
+        let aim = arrows::Aim::Unit((target != self.account_id).then_some(target));
+        self.effects.shoot_arrow(grf, from, aim, now, Duration::from_secs_f32(wait_ms.max(0.0) / 1000.0));
+    }
+
+    /// Arrow Shower's arrows from `archer` at points: the middles of the eight cells round `cell`, and `unit`'s feet
+    /// when one is hit there.
+    pub(crate) fn arrow_shower(&mut self, grf: &Grf, archer: u32, cell: [i32; 2], unit: Option<u32>) {
+        let now = Instant::now();
+        let Some(from) = self.feet(archer, now) else { return };
+        let round = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]
+            .map(|step| self.world.cell_position([cell[0] + step[0], cell[1] + step[1]].map(|value| value as f32)));
+        let points: Vec<_> = unit.and_then(|unit| self.feet(unit, now)).into_iter().chain(round).collect();
+        for point in points {
+            self.effects.shoot_arrow(grf, from, arrows::Aim::Point(point), now, arrows::POINT_WAIT);
+        }
+    }
+
     /// An effect from `caster` aimed at where `target` stands (`effects::AIMED`: Soul Strike's ghosts, Fire Ball's
     /// balls…), told the skill's hit count.
     #[allow(clippy::too_many_arguments)]
@@ -3411,7 +3438,7 @@ impl Game {
     }
 
     /// Starts the attacker's swing now; the number and the flinch come when the hit lands.
-    pub(crate) fn act(&mut self, act: net::Act, tables: &LookTables) {
+    pub(crate) fn act(&mut self, act: net::Act, tables: &LookTables, grf: &Grf) {
         // Sitting down and standing up.
         if matches!(act.kind, 2 | 3) {
             let who = if act.source == self.account_id { Some(&mut self.player) } else { self.units.get_mut(&act.source) };
@@ -3441,18 +3468,23 @@ impl Game {
         let target_cell = if act.target == me { Some(self.player.cell) } else { self.units.get(&act.target).map(|actor| actor.cell) };
         let source = if act.source == me { Some(&mut self.player) } else { self.units.get_mut(&act.source) };
         let mut hit_ms = None;
+        let mut bow = false;
         if let Some(source) = source {
             if let Some(cell) = target_cell {
                 source.face(cell);
             }
             let attack = source.attack_motion(tables);
-            let bow = source.holds_bow(tables);
+            bow = source.holds_bow(tables);
             let scale = actor::attack_scale(act.source_speed, bow);
             source.play_at_pace(attack, Instant::now(), scale, false);
             source.stand_ready();
             hit_ms = source.sprites.as_ref().and_then(|sprites| sprites.hit_ms(attack * 8 + usize::from(source.direction % 8), scale));
-            hit_ms = hit_ms.map(|ms| actor::bow_flight(ms, bow));
         }
+        // A bow shoots its arrow at the swing's hit frame; the hit lands with it.
+        if let Some(ms) = hit_ms.filter(|_| bow) {
+            self.shoot_arrow(grf, act.source, act.target, ms);
+        }
+        let hit_ms = hit_ms.map(|ms| actor::bow_flight(ms, bow));
         self.show_hit(&act, hit_ms, MULTI_HIT_DELAY, HitFrom::Attack);
     }
 

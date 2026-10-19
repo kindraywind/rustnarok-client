@@ -1484,7 +1484,7 @@ impl App {
                         }
                     }
                 }
-                game.act(act, look_tables);
+                game.act(act, look_tables, grf);
             }
             MapEvent::Status { id, value } => {
                 let before = game.status.insert(id, value);
@@ -3281,10 +3281,18 @@ impl App {
                         &self.messages,
                     );
                     // Hits land on the motion's hit frame (else after the attack motion), each `hit_gap_ms` after the last;
-                    // a swing with a bow, with its arrow.
-                    let hit_ms = hit_ms.map_or(act.source_speed.max(0) as f32, |ms| {
-                        actor::bow_flight(ms, bow && skill_motions::motion(skill) == skill_motions::Motion::Attack)
-                    });
+                    // a swing with a bow shoots its arrow then, and its hits land with it.
+                    let shoots = bow && skill_motions::motion(skill) == skill_motions::Motion::Attack;
+                    if let Some(ms) = hit_ms.filter(|_| shoots) {
+                        game.shoot_arrow(grf, act.source, act.target, ms);
+                    }
+                    // Arrow Shower: arrows at the target and the cells round it, twice for an endured hit.
+                    if let Some(cell) = target_cell.filter(|_| skill == ARROW_SHOWER) {
+                        for _ in 0..if act.kind == 14 { 2 } else { 1 } {
+                            game.arrow_shower(grf, act.source, cell, Some(act.target));
+                        }
+                    }
+                    let hit_ms = hit_ms.map_or(act.source_speed.max(0) as f32, |ms| actor::bow_flight(ms, shoots));
                     game.skill_lands.insert(act.source, Instant::now() + Duration::from_secs_f32(hit_ms / 1000.0));
                     hit_ms
                 };
@@ -3413,6 +3421,11 @@ impl App {
                     caster.face([i32::from(cell[0]), i32::from(cell[1])]);
                 }
                 game.skill_motion(source, skill, i32::from(level as i16), overhead::Shout::Ground, 1.0, &self.skill_info, look_tables, &self.messages);
+                // Arrow Shower: arrows at the cells round the one picked (not a monster's).
+                let monster = game.units.get(&source).is_some_and(|actor| actor.kind == MONSTER);
+                if skill == ARROW_SHOWER && !monster {
+                    game.arrow_shower(grf, source, [i32::from(cell[0]), i32::from(cell[1])], None);
+                }
             }
             MapEvent::SkillUnit { id, kind, cell } => {
                 game.skill_units.insert(id, (kind, cell));

@@ -1096,6 +1096,9 @@ pub struct Effects {
     pub only_forced: bool,
     /// /mineffect: the lighter effects (`min_file`, the hit spark's ring only).
     pub min: bool,
+    /// Bows' arrows, and the arrow sprite's layers by direction.
+    arrows: crate::arrows::Arrows,
+    arrow: Vec<Vec<Placed>>,
 }
 
 /// The effects drawn even with /effect off (the data's ForceRenderEffect list): warp portals, Safety Wall, the
@@ -1659,6 +1662,17 @@ impl Effects {
         self.prims.soul_strike(from, to, hits, now);
     }
 
+    /// A bow's arrow from over the archer's `feet`, leaving `wait` after `now` (`arrows`).
+    pub fn shoot_arrow(&mut self, grf: &Grf, feet: Vector, aim: crate::arrows::Aim, now: Instant, wait: Duration) {
+        self.sprites.entry(crate::arrows::SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::arrows::SPRITE));
+        self.arrows.shoot(feet, aim, now, wait);
+    }
+
+    /// Arrows leaving now take their aim at where their units are (`position_of`).
+    pub fn aim_arrows(&mut self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) {
+        self.arrows.aim(now, position_of);
+    }
+
     /// Effects that finished go and those that repeat start again; sprites pick their images for `now`, seen through
     /// a camera turned `yaw` radians.
     pub fn advance(&mut self, gpu: &Gpu, now: Instant, yaw: f32) {
@@ -1676,6 +1690,9 @@ impl Effects {
         {
             let count = sprite.frames(0).max(1);
             self.spark_frames = (0..count).map(|frame| sprite.frame_at(gpu, 0, 0, Timing::Span(frame as f32 / count as f32))).collect();
+        }
+        if let Some(Some(sprite)) = self.sprites.get_mut(crate::arrows::SPRITE).filter(|_| !self.arrows.is_empty()) {
+            self.arrow = (0..8).map(|direction| sprite.frame_at(gpu, direction, 0, Timing::Loop(0.0))).collect();
         }
         for floating in self.floating.iter_mut().filter(|floating| floating.again && floating.end <= now) {
             let period = floating.end.duration_since(floating.start);
@@ -1998,6 +2015,16 @@ impl Effects {
                         let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * scale));
                         quads.push((sprite.texture(key), anchor, corners, [1.0, 1.0, 1.0, alpha], false, false));
                     }
+                }
+            }
+        }
+        // Arrows, each in the direction of its flight as the camera sees it.
+        if let Some(Some(sprite)) = self.sprites.get(crate::arrows::SPRITE) {
+            for (at, [x, z]) in self.arrows.flying(now) {
+                let seen = crate::actor::view_direction(x.atan2(-z).to_degrees(), self.yaw, true);
+                for &(key, position, size, layer_angle) in self.arrow.get(usize::from(seen)).into_iter().flatten() {
+                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0);
+                    quads.push((sprite.texture(key), at, corners, [1.0; 4], false, false));
                 }
             }
         }
