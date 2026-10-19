@@ -7,6 +7,7 @@
 
 use std::time::Instant;
 
+use super::burst;
 use super::passes;
 use crate::world::{MeshVertex, Vector};
 
@@ -17,6 +18,10 @@ pub const DOME: &str = "data\\texture\\effect\\대폭발.tga";
 pub const SLOW: &str = "data\\texture\\effect\\slow.bmp";
 pub const STREAK: &str = "data\\texture\\effect\\ac_center2.tga";
 pub const STAR: &str = "data\\sprite\\이팩트\\particle1";
+/// Enchant Poison's purple sparkle.
+pub const POISON_STAR: &str = "data\\sprite\\이팩트\\particle3";
+/// Detecting's soft ring.
+pub const FASHASHA: &str = "data\\texture\\effect\\fashasha.tga";
 pub const GOLD_STAR: &str = "data\\sprite\\이팩트\\particle7";
 pub const CYAN_STAR: &str = "data\\sprite\\이팩트\\particle2";
 pub const PIKAPIKA: &str = "data\\texture\\effect\\pikapika2.bmp";
@@ -44,6 +49,10 @@ pub const ASPERSIO: u32 = 86;
 pub const ADRENALINE_RUSH: u32 = 98;
 pub const FLASHER_FX: u32 = 99;
 pub const REMOVE_TRAP: u32 = 100;
+pub const DETECTING: u32 = 119;
+pub const ENCHANT_POISON: u32 = 125;
+/// Enchant Poison's sparkles made after this tick are never drawn.
+const POISON_LAST: u32 = 210;
 
 pub fn makes(effect: u32) -> bool {
     matches!(
@@ -64,6 +73,8 @@ pub fn makes(effect: u32) -> bool {
             | ADRENALINE_RUSH
             | FLASHER_FX
             | REMOVE_TRAP
+            | DETECTING
+            | ENCHANT_POISON
     )
 }
 
@@ -81,6 +92,7 @@ fn length(effect: u32) -> u32 {
         ADRENALINE_RUSH => 300,
         FLASHER_FX => 250,
         REMOVE_TRAP => 70,
+        DETECTING | ENCHANT_POISON => 250,
         _ => 50,
     }
 }
@@ -251,6 +263,17 @@ impl First {
                     }
                 }
             }
+            DETECTING => seed(0, 0.0, [0.0; 4]),
+            ENCHANT_POISON => {
+                // A sparkle every 5 ticks: yaw, distance, speed, size.
+                for born in (0..=245).step_by(5) {
+                    let y = rand(360) as f32;
+                    let d = (2 + rand(6)) as f32;
+                    let speed = (30 + rand(30)) as f32 / 100.0;
+                    let scale = (40 + rand(50)) as f32 / 100.0;
+                    seed(born, y, [d, speed, scale, 0.0]);
+                }
+            }
             ASPERSIO => {
                 // A sparkle every 5 ticks from 65 to 135, each with a bearing.
                 for born in (65..=135).step_by(5) {
@@ -347,6 +370,8 @@ impl First {
                     | ADRENALINE_RUSH
                     | FLASHER_FX
                     | REMOVE_TRAP
+                    | DETECTING
+                    | ENCHANT_POISON
             ),
             at,
             seeds,
@@ -495,6 +520,11 @@ impl First {
                     for seed in &effect.seeds {
                         let Some(a) = Self::age(effect, now, seed.born, 50) else { continue };
                         meshes.push((STREAK, rising_blades(at, seed, a)));
+                    }
+                }
+                DETECTING => {
+                    if let Some(a) = Self::age(effect, now, 0, 57) {
+                        meshes.push((FASHASHA, detecting_ring(at, a)));
                     }
                 }
                 _ => {}
@@ -648,6 +678,27 @@ impl First {
                         particles.push(Particle { sprite: STAR, at: place, scale: 0.8, alpha, spin: 0.0 });
                     }
                 }
+                ENCHANT_POISON => {
+                    for seed in effect.seeds.iter().filter(|seed| seed.born <= POISON_LAST) {
+                        let Some(a) = Self::age(effect, now, seed.born, 40) else { continue };
+                        let [d, speed, scale, _] = seed.r;
+                        let (sin, cos) = trig(seed.y);
+                        // Each tick the speed drops by an 80th of the first, then it rises.
+                        let (mut left, mut height) = (speed, 0.0);
+                        for _ in 0..=a {
+                            left -= speed / 80.0;
+                            height += left;
+                        }
+                        let place = [at[0] + d * sin, at[1] + height, at[2] + d * cos];
+                        particles.push(Particle {
+                            sprite: POISON_STAR,
+                            at: place,
+                            scale,
+                            alpha: burst::alpha(a, 0.0, 25.4, 254.0, 32, 40),
+                            spin: 3.0 * (a + 1) as f32,
+                        });
+                    }
+                }
                 ASPERSIO => {
                     for seed in &effect.seeds {
                         let Some(a) = Self::age(effect, now, seed.born, 40) else { continue };
@@ -794,6 +845,29 @@ fn ring(at: Vector, a: u32, alpha: f32, swell: f32, widest: f32) -> Vec<MeshVert
             [inner0, outer1, outer0, inner0, inner1, outer1]
         })
         .collect()
+}
+
+/// Detecting's ring: a square 5 up from the ground, half-width `detecting_half(a)`, alpha 254 to age 39 then fading to 0 at 56.
+fn detecting_ring(at: Vector, a: u32) -> Vec<MeshVertex> {
+    let half = detecting_half(a);
+    let tint = [1.0, 1.0, 1.0, burst::alpha(a, 254.0, 0.0, 254.0, 40, 57) / 255.0];
+    let corner = |across: f32, along: f32, uv| MeshVertex { position: [at[0] + across * half, at[1] + 5.0, at[2] + along * half], uv, tint };
+    let [a, b, c, d] = [corner(1.0, 1.0, [0.0, 0.0]), corner(1.0, -1.0, [1.0, 0.0]), corner(-1.0, 1.0, [0.0, 1.0]), corner(-1.0, -1.0, [1.0, 1.0])];
+    vec![a, b, c, d, c, b]
+}
+
+/// Detecting's half-width at age `a`: each tick the rate gains a 14th of 1.5 (from 1.5), then the width grows by it; from
+/// age 17 the rate is 0.1 and gains a 30th of that.
+fn detecting_half(a: u32) -> f32 {
+    let (mut half, mut rate, mut gain) = (0.0_f32, 1.5_f32, 1.5_f32 / 14.0);
+    for age in 0..=a {
+        if age == 17 {
+            (rate, gain) = (0.1, 0.1 / 30.0);
+        }
+        rate += gain;
+        half += rate;
+    }
+    half
 }
 
 /// Magnum Break's dome at age `a`: a sphere of radius 1.15 n − 0.0095833 n (n + 1) centred on the feet, turning 3° a tick, 5
@@ -1066,6 +1140,55 @@ mod tests {
         assert!(near(got, -13.475), "{got}");
         // Alpha 254 to age 34, 237.07 at 35, 0 at 49; scale 0.8.
         assert!(near(at(34)[0].alpha, 254.0) && near(at(35)[0].alpha, 237.07) && near(at(49)[0].alpha, 0.0) && at(0)[0].scale == 0.8);
+    }
+
+    #[test]
+    fn detecting_bursts_a_soft_ring_on_the_ground() {
+        let (first, start) = effect_at(DETECTING, |_| 0, false);
+        // Half-width: 1.607 after age 0, 41.893 at 16, 42.0 at 17 (the rate drops to 0.1), 48.63 at 56.
+        assert!(near(detecting_half(0), 1.607) && near(detecting_half(1), 3.321) && near(detecting_half(16), 41.893));
+        assert!(near(detecting_half(17), 42.0) && near(detecting_half(26), 43.07) && near(detecting_half(39), 45.11) && near(detecting_half(56), 48.63));
+        // One square for ages 0…56, 5 up from the ground, alpha 254 to 39, 239 at 40, 0 at 56; none at 57.
+        let mesh = |e: u32| first.meshes(tick(start, e), |_| None);
+        assert!((0..57).all(|e| mesh(e).len() == 1) && mesh(57).is_empty());
+        let (path, vertices) = &mesh(0)[0];
+        assert!(*path == FASHASHA && vertices.len() == 6 && vertices.iter().all(|vertex| vertex.position[1] == 5.0));
+        let alpha = |e: u32| (mesh(e)[0].1[0].tint[3] * 255.0).round();
+        assert_eq!([0, 39, 40, 48, 56].map(alpha), [254.0, 254.0, 239.0, 119.0, 0.0]);
+        // The corners as Turn Undead's ring: (+W, +W) at uv (0, 0), (+W, −W) at (1, 0).
+        assert!(near(vertices[0].position[0], 1.607) && near(vertices[0].position[2], 1.607) && vertices[0].uv == [0.0, 0.0]);
+        assert!(near(vertices[1].position[2], -1.607) && vertices[1].uv == [1.0, 0.0] && vertices[3].uv == [1.0, 1.0]);
+        // It stays on its cell.
+        let (other, other_start) = effect_at(DETECTING, |_| 0, false);
+        assert!(near(other.meshes(other_start, |_| Some([9.0; 3]))[0].1[0].position[0], 1.607));
+    }
+
+    #[test]
+    fn enchant_poison_lets_43_purple_sparkles_rise() {
+        let (first, start) = effect_at(ENCHANT_POISON, |_| 0, false);
+        // A sparkle every 5 ticks to 245: 50; those from 215 on are never drawn.
+        assert_eq!(first.list[0].seeds.iter().map(|seed| seed.born).collect::<Vec<_>>(), (0..=245).step_by(5).collect::<Vec<_>>());
+        let at = |e: u32| first.particles(tick(start, e), |_| Some([0.0; 3]));
+        // Drawn first at alpha 25: 43 times over the 250 ticks.
+        assert_eq!((0..250).map(|e| at(e).iter().filter(|particle| particle.alpha == 25.0).count()).sum::<usize>(), 43);
+        assert_eq!((at(210).len(), at(215).len(), at(245).len()), (8, 7, 1));
+        // The one born at 210 is drawn 39 times (ages 0…38); the one born at 0, 40.
+        assert!(at(248).len() == 1 && at(249).is_empty());
+        assert!(at(39).len() == 8 && at(40).len() == 8, "one ends and one begins every 5 ticks");
+        // Draws all 0: 2 out at yaw 0, speed 0.30, scale 0.4; up 29.75 × 0.30 = 8.925 after age 39.
+        let sparkle = |e: u32| at(e)[0];
+        assert!(near(sparkle(0).at[2], 2.0) && near(sparkle(0).at[1], 0.30 * (1.0 - 2.0 / 160.0)) && near(sparkle(39).at[1], 8.925));
+        assert!(sparkle(39).scale == 0.4 && sparkle(0).sprite == POISON_STAR);
+        // Alpha 25, 253 at age 9, 254 at 10, 222 at 32, 0 at 39; turned 3° (a + 1) clockwise.
+        let alpha = |e: u32| sparkle(e).alpha;
+        assert_eq!([0, 9, 10, 31, 32, 39].map(alpha), [25.0, 253.0, 254.0, 254.0, 222.0, 0.0]);
+        assert_eq!([0, 9, 39].map(|e| sparkle(e).spin), [3.0, 30.0, 120.0]);
+        // Out 2 to 7 from the feet at the yaw, even after the unit walks away.
+        let mut draws = [359, 5, 29, 49].into_iter().cycle();
+        let (far, far_start) = effect_at(ENCHANT_POISON, |_| draws.next().unwrap(), false);
+        let particle = far.particles(tick(far_start, 0), |_| Some([100.0, 0.0, 100.0]))[0];
+        assert!(near(f32::hypot(particle.at[0], particle.at[2]), 7.0) && particle.at[0] < 0.0 && near(particle.scale, 0.89));
+        assert!(particle.at[0].abs() < 8.0, "{:?}", particle.at);
     }
 
     #[test]

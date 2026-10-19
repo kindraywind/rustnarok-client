@@ -265,6 +265,8 @@ pub struct Burst {
     drawn: u32,
     /// A burst over a place in the world (Flasher's) rather than a unit.
     pub fixed: Option<Vector>,
+    /// Over Thrust's ring (the same as Sonic Blow's).
+    pub over_thrust: bool,
 }
 
 impl Burst {
@@ -276,6 +278,11 @@ impl Burst {
     /// Sonic Blow's ring, on the caster.
     pub fn sonic_blow(unit: Option<u32>, now: Instant) -> Self {
         Self::new(&SONIC_BLOW, unit, now, LIFE, |_| 0)
+    }
+
+    /// Over Thrust's ring, on the caster: Sonic Blow's.
+    pub fn over_thrust(unit: Option<u32>, now: Instant) -> Self {
+        Self { over_thrust: true, ..Self::sonic_blow(unit, now) }
     }
 
     /// Adrenaline Rush's rays on a unit (None = the player).
@@ -301,7 +308,7 @@ impl Burst {
     /// Parts outliving a shorter effect never show (a quick cast's aura).
     fn new(look: &'static Look, unit: Option<u32>, now: Instant, length: u32, mut rand: impl FnMut(u32) -> u32) -> Self {
         let drawn = if length < look.life { 0 } else { look.life.min(length - 1) };
-        Self { start: now, unit, look, rays: (0..look.rays).map(|_| Ray::new(look, &mut rand)).collect(), drawn, fixed: None }
+        Self { start: now, unit, look, rays: (0..look.rays).map(|_| Ray::new(look, &mut rand)).collect(), drawn, fixed: None, over_thrust: false }
     }
 
     fn tick(&self, now: Instant) -> Option<u32> {
@@ -437,6 +444,16 @@ mod tests {
         assert!(shapes[0].2.iter().all(|corner| corner.2[..3] == [1.0; 3]));
         // Gone from tick 39; the effect is 40 ticks.
         assert!(ring.shapes(start + TICK * 39).is_empty() && LIFE == 40);
+    }
+
+    #[test]
+    fn over_thrust_draws_sonic_blows_ring() {
+        let start = Instant::now();
+        let burst = Burst::over_thrust(Some(7), start);
+        assert!(burst.over_thrust && burst.unit == Some(7) && !Burst::sonic_blow(None, start).over_thrust);
+        // Drawn on ticks 0…38 like Sonic Blow's, nothing after.
+        assert!((0..39).all(|tick| burst.shapes(start + TICK * tick).len() == 1) && burst.shapes(start + TICK * 39).is_empty());
+        assert!(burst.alive(start + TICK * 38) && !burst.alive(start + TICK * 39));
     }
 
     #[test]
