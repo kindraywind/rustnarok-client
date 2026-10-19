@@ -1853,9 +1853,11 @@ impl App {
                     let names = (&messages[..], card_names, &game.char_names);
                     game.storage.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.storage, icons, items, names, font, pointer, caret);
                 }
-                Panel::StorageCategory(tab) => {
+                Panel::StorageCategory(_) | Panel::StorageSearch => {
                     let names = (&messages[..], card_names, &game.char_names);
-                    game.storage.draw_category(tab, &mut layer, &mut tooltip, &assets.chrome, &assets.storage, icons, items, names, font, pointer.0);
+                    if let Some(which) = storage_list(id) {
+                        game.storage.draw_category(which, &mut layer, &mut tooltip, &assets.chrome, &assets.storage, icons, items, names, font, pointer.0);
+                    }
                 }
                 Panel::Equipment => game.equipment.draw(
                     &mut layer,

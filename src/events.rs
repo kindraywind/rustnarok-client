@@ -633,6 +633,7 @@ impl App {
                     ]
                     .into_iter()
                     .chain((0..storage::TABS).map(Panel::StorageCategory))
+                    .chain([Panel::StorageSearch])
                     .collect(),
                     damages: Vec::new(),
                     status,
