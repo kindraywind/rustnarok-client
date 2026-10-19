@@ -381,11 +381,6 @@ impl Sheet<'_> {
         self.skills.iter().find(|skill| skill.id == id).map_or(0, |skill| skill.level)
     }
 
-    /// The job the player is (the line's last), whose prerequisite lists count.
-    fn job(&self) -> u16 {
-        self.jobs.iter().rev().copied().find(|&job| job != ETC).unwrap_or(0)
-    }
-
     /// Whether a skill sits in a tree of the line: one to learn here.
     fn in_line(&self, id: u16) -> bool {
         self.jobs.iter().filter(|&&job| job != ETC).filter_map(|job| self.trees.trees.get(job)).any(|tree| tree.iter().any(|&(_, each)| each == id))
@@ -405,7 +400,7 @@ impl Sheet<'_> {
     }
 
     fn needs(&self, id: u16) -> Vec<(u16, u16)> {
-        self.info.get(&id).map(|info| info.needs_for(self.job()).to_vec()).unwrap_or_default()
+        self.info.get(&id).map(|info| info.needs_for(self.jobs).to_vec()).unwrap_or_default()
     }
 
     /// Every skill `id` needs, however far back, each with the level it needs (the highest asked).

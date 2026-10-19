@@ -945,9 +945,10 @@ pub struct SkillInfo {
 }
 
 impl SkillInfo {
-    /// The skills it needs first for a job: the job's own list if it has one, else the usual.
-    pub fn needs_for(&self, job: u16) -> &[(u16, u16)] {
-        self.job_needs.get(&job).unwrap_or(&self.needs)
+    /// The skills it needs first for a job's line (the first job first): the own list of the latest job that has one,
+    /// else the usual.
+    pub fn needs_for(&self, line: &[u16]) -> &[(u16, u16)] {
+        line.iter().rev().find_map(|job| self.job_needs.get(job)).unwrap_or(&self.needs)
     }
 }
 
@@ -1085,7 +1086,10 @@ fn skill_descripts(lua: &Lua) -> io::Result<HashMap<u16, Vec<String>>> {
 }
 
 pub fn skill_info(grf: &Grf) -> io::Result<HashMap<u16, SkillInfo>> {
-    let lua = run(grf, &[JOB_INHERIT, SKILL_ID, SKILL_INFO])?;
+    skill_infos(&run(grf, &[JOB_INHERIT, SKILL_ID, SKILL_INFO])?)
+}
+
+fn skill_infos(lua: &Lua) -> io::Result<HashMap<u16, SkillInfo>> {
     let list: mlua::Table = lua.globals().get("SKILL_INFO_LIST").map_err(lua_error)?;
     let mut skills = HashMap::new();
     for pair in list.pairs::<i64, mlua::Table>() {
@@ -1108,6 +1112,16 @@ pub fn skill_info(grf: &Grf) -> io::Result<HashMap<u16, SkillInfo>> {
         };
         if let Ok(id) = u16::try_from(id) {
             skills.insert(id, info);
+        }
+    }
+    // A transcendent third job counts as its third job (`JOB_INHERIT_LIST2`) for the jobs' own lists, as the data's
+    // lookup maps it.
+    let same = job_pairs(&lua.globals(), "JOB_INHERIT_LIST2");
+    for info in skills.values_mut() {
+        for &(job, third) in &same {
+            if let Some(needs) = info.job_needs.get(&third).cloned() {
+                info.job_needs.entry(job).or_insert(needs);
+            }
         }
     }
     Ok(skills)
@@ -1151,22 +1165,24 @@ fn skill_trees_from(lua: &Lua) -> io::Result<SkillTrees> {
         tree.sort_unstable();
         trees.trees.insert(job as u16, tree);
     }
-    // The inherit lists are their own metatables, so a `__newindex` key sits among the jobs; typed pairs would stop there.
-    let jobs = |list: &str| -> Vec<(u16, u16)> {
-        let Ok(table) = globals.get::<mlua::Table>(list) else { return Vec::new() };
-        let job = |value: &mlua::Value| number(value).and_then(|job| u16::try_from(job).ok());
-        table.pairs::<mlua::Value, mlua::Value>().flatten().filter_map(|(key, parent)| Some((job(&key)?, job(&parent)?))).collect()
-    };
     // The line runs through `JOB_INHERIT_LIST` alone, a transcendent third job through its transcendent second job.
-    trees.parents = jobs("JOB_INHERIT_LIST").into_iter().collect();
+    trees.parents = job_pairs(&globals, "JOB_INHERIT_LIST").into_iter().collect();
     // `JOB_INHERIT_LIST2` names the third job a transcendent one counts as (the data's prerequisite lookups use it):
     // its skills, where it has no tree of its own.
-    for (job, same) in jobs("JOB_INHERIT_LIST2") {
+    for (job, same) in job_pairs(&globals, "JOB_INHERIT_LIST2") {
         if let Some(tree) = trees.trees.get(&same).filter(|_| !trees.trees.contains_key(&job)).cloned() {
             trees.trees.insert(job, tree);
         }
     }
     Ok(trees)
+}
+
+/// An inherit list's `job → job` pairs. The lists are their own metatables, so a `__newindex` key sits among the jobs;
+/// typed pairs would stop there.
+fn job_pairs(globals: &mlua::Table, list: &str) -> Vec<(u16, u16)> {
+    let Ok(table) = globals.get::<mlua::Table>(list) else { return Vec::new() };
+    let job = |value: &mlua::Value| number(value).and_then(|job| u16::try_from(job).ok());
+    table.pairs::<mlua::Value, mlua::Value>().flatten().filter_map(|(key, parent)| Some((job(&key)?, job(&parent)?))).collect()
 }
 
 /// Status effect icons by EFST id (`StateIconImgList`): the file under data\texture\effect\ and its priority.
@@ -2457,6 +2473,31 @@ mod tests {
     }
 
     #[test]
+    fn finds_a_skills_prerequisites_along_the_line() {
+        let lua = super::new_lua().unwrap();
+        // Heal (28) asks a Crusader (14) for Faith (248) and Demon Bane (23); Moonlit Water Mill (395) asks a Minstrel
+        // (4068) for Musical Lesson (315), and a transcendent Minstrel (4075) counts as one.
+        lua.load(
+            r#"JOB_INHERIT_LIST2 = { [4075] = 4068, [4060] = 4054 }
+            JOB_INHERIT_LIST2.__newindex = function() error("unknown state") end
+            setmetatable(JOB_INHERIT_LIST2, JOB_INHERIT_LIST2)
+            SKILL_INFO_LIST = {
+                [28] = { "AL_HEAL", _NeedSkillList = { { 22, 1 } }, NeedSkillList = { [14] = { { 248, 10 }, { 23, 5 } } } },
+                [395] = { "CG_MOONLIT", NeedSkillList = { [4068] = { { 315, 7 } } } },
+            }"#,
+        )
+        .exec()
+        .unwrap();
+        let skills = super::skill_infos(&lua).unwrap();
+        let heal = &skills[&28];
+        // A Paladin (4015) gets the Crusader's list, a Priest (8) the usual.
+        assert_eq!(heal.needs_for(&[0, 1, 14, 4015]), [(248, 10), (23, 5)]);
+        assert_eq!(heal.needs_for(&[0, 4, 8]), [(22, 1)]);
+        assert_eq!(skills[&395].needs_for(&[0, 3, 19, 4020, 4075]), [(315, 7)]);
+        assert!(skills[&395].needs_for(&[0, 3, 19, 4020]).is_empty());
+    }
+
+    #[test]
     fn reads_every_job_of_the_inherit_lists() {
         let lua = super::new_lua().unwrap();
         // As in jobinheritlist: each list is its own metatable, so `__newindex` is one of its keys.
@@ -2490,6 +2531,8 @@ mod tests {
         let skills = super::skill_info(&grf).unwrap();
         let heal = &skills[&28];
         assert_eq!((heal.resource.as_str(), heal.name.as_str(), heal.max_level), ("AL_HEAL", "힐", 10));
+        // A Paladin's Heal needs the Crusader's Faith (248).
+        assert!(heal.needs_for(&[0, 1, 14, 4015]).contains(&(248, 10)));
         let trees = super::skill_trees(&grf).unwrap();
         // Novice: Basic Skill, First Aid and Play Dead down the first column.
         assert_eq!(trees.trees[&0], [(0, 1), (7, 142), (14, 143)]);
