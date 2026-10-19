@@ -1,0 +1,13 @@
+{
+  "about": "Translucent model textures (issue #438): a texture with its own alpha channel (a TGA) is blended after the sprites, back to front, so its soft edges and see-through parts show; opaque texels need alpha 207 and up, and only exact #FF00FF is keyed. Izlude's enchant model (iz_enchant.rsm, north of 89,116) and Dicastes' factory models use TGA textures.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp izlude 89 116"}, {"settle": 1500},
+    {"move": [1000, 750]},
+    {"shot": "model-alpha-izlude", "threshold": 3},
+    {"say": "@warp dicastes01 198 187"}, {"settle": 2000},
+    {"move": [1000, 750]},
+    {"shot": "model-alpha-dicastes", "threshold": 3}
+  ]
+}
