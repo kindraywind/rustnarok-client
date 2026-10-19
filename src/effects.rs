@@ -23,6 +23,11 @@ const STR_TICK_MS: f32 = 16.0;
 /// An STR's (320, 240) sits this many screen pixels above its owner's feet, at any zoom.
 pub const STR_RISE: f32 = 80.0;
 
+/// How many pixels above the feet an effect's STR is anchored: 80, but for Shield Charge's anchor, which sits on the feet.
+pub fn str_rise(effect: u32) -> f32 {
+    if effect == SHIELD_CHARGE { 0.0 } else { STR_RISE }
+}
+
 /// One STR part of an effect.
 struct Part {
     file: String,
@@ -341,6 +346,14 @@ impl Anchor {
         match self {
             Anchor::Unit(unit) | Anchor::Status(unit, _) => position_of(unit),
             Anchor::At(at) | Anchor::Lasting(_, at) => Some(at),
+        }
+    }
+
+    /// The unit (None = the player) it is on, if it is on one.
+    fn unit(self) -> Option<Option<u32>> {
+        match self {
+            Anchor::Unit(unit) | Anchor::Status(unit, _) => Some(unit),
+            _ => None,
         }
     }
 
@@ -1325,6 +1338,8 @@ fn glint_at(first_alpha: i32, age: u32) -> (i32, u32) {
 
 #[derive(Default)]
 pub struct Effects {
+    /// How much higher (or lower) a unit's glints sit: set each frame (`glint_rise`).
+    pub rises: HashMap<Option<u32>, f32>,
     loaded: HashMap<String, Option<Rc<Loaded>>>,
     playing: Vec<Playing>,
     textures: HashMap<String, Option<Texture>>,
@@ -1650,6 +1665,11 @@ const OVER_THRUST: u32 = 128;
 /// Berserk Pitcher's tint, cylinder and streaks, Defender's walls and Grand Cross's cross of light (`prims::walls`).
 /// EF_INTIMIDATE: its shards stay in the world where they burst (`prims::shards`).
 const INTIMIDATE: u32 = 227;
+/// EF_SHIELDCHARGE's anchor; EF_PROVIDENCE's tubes, EF_REFLECTSHIELD's yellow walls and EF_ABSORBSPIRITS' curtains (`prims::walls`).
+const SHIELD_CHARGE: u32 = 246;
+const PROVIDENCE: u32 = 248;
+const REFLECT_SHIELD: u32 = 252;
+const ABSORB_SPIRITS: u32 = 253;
 const FIRE_PILLAR: u32 = 138;
 const VENOM_DUST: u32 = 171;
 const GUMGANG: u32 = 203;
@@ -1897,6 +1917,8 @@ impl Effects {
         let wall_textures: &[&str] = match id {
             BERSERK => &[walls::ALPHA_DOWN, walls::STREAK],
             DEFENDER => &[walls::RING_BLACK],
+            PROVIDENCE | REFLECT_SHIELD => &[walls::RING_YELLOW],
+            ABSORB_SPIRITS => &[walls::RING_BLUE],
             GRAND_CROSS => &[walls::RING_WHITE, walls::RING_YELLOW],
             _ => &[],
         };
@@ -1905,7 +1927,10 @@ impl Effects {
         }
         match (id, target) {
             (BERSERK, Target::Unit(unit)) => self.prims.walls.berserk(unit, now, |n| pick(0, n.saturating_sub(1))),
-            (DEFENDER, Target::Unit(unit)) => self.prims.walls.defender(unit, now),
+            (DEFENDER, Target::Unit(unit)) => self.prims.walls.defender(unit, now, walls::RING_BLACK),
+            (REFLECT_SHIELD, Target::Unit(unit)) => self.prims.walls.defender(unit, now, walls::RING_YELLOW),
+            (PROVIDENCE, Target::Unit(unit)) => self.prims.walls.providence(unit, now),
+            (ABSORB_SPIRITS, Target::Unit(unit)) => self.prims.walls.curtains(unit, now, |n| pick(0, n.saturating_sub(1))),
             (GRAND_CROSS, _) => self.prims.walls.grand_cross(at, now),
             _ => {}
         }
@@ -2826,6 +2851,8 @@ impl Effects {
         // Steel Body's glints (four sets) and Explosion Spirits' (one): camera-facing squares round the feet, added on in #6464FF.
         for prim in self.status_prims.iter().filter(|prim| prim.kind == PrimKind::Glints && prim.start <= now && self.shows(prim.effect)) {
             let Some(at) = prim.anchor.place(&position_of) else { continue };
+            // A rider's glints sit higher, a baby's or a Doram's lower.
+            let lift = prim.anchor.unit().and_then(|unit| self.rises.get(&unit)).copied().unwrap_or(0.0);
             let age = str_frame(now.duration_since(prim.start));
             let half = GLINT_RADIUS * std::f32::consts::FRAC_1_SQRT_2 * PIXELS_PER_UNIT;
             for glint in 0..4 * glint_sets(prim.effect) {
@@ -2834,7 +2861,7 @@ impl Effects {
                 let Some(Some(texture)) = self.textures.get(GLINT_TEXTURES[(pick(0) % 5) as usize]) else { continue };
                 let (sin, cos) = ((pick(1) % 360) as f32).to_radians().sin_cos();
                 let height = if round == 0 { (pick(2) % 10) as f32 } else { 3.0 + (pick(2) % 8) as f32 };
-                let place = [at[0] + GLINT_CIRCLE * cos, at[1] + height, at[2] + GLINT_CIRCLE * sin];
+                let place = [at[0] + GLINT_CIRCLE * cos, at[1] + height + lift, at[2] + GLINT_CIRCLE * sin];
                 let [red, green, blue] = GLINT_COLOR.map(|value| f32::from(value) / 255.0);
                 let corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
                 quads.push((texture, place, corners, [red, green, blue, alpha as f32 / 255.0], true, false));
@@ -2900,7 +2927,12 @@ impl Effects {
                 let Some(state) = layer.state(frame) else { continue };
                 let Some(Some(texture)) = textures.get(state.texture) else { continue };
                 // In sprite pixels, y down, turned by the key's angle; drawn over everything, `STR_RISE` up.
-                let corner = |index: usize| str_corner(state.position, [state.corners[index], state.corners[4 + index]], state.angle);
+                // (Drawn `STR_RISE` up, so an anchor with less rise is moved down by the difference.)
+                let drop = STR_RISE - str_rise(playing.effect);
+                let corner = |index: usize| {
+                    let [x, y] = str_corner(state.position, [state.corners[index], state.corners[4 + index]], state.angle);
+                    [x, y + drop]
+                };
                 quads.push((texture, at, [corner(0), corner(1), corner(2), corner(3)], state.color, state.additive, true));
             }
         }
@@ -4116,5 +4148,28 @@ mod tests {
         assert!(view.showing());
         view.update(true, false, start);
         assert!(!view.showing());
+    }
+
+    #[test]
+    fn shield_charge_providence_reflect_shield_absorb_spirits_and_the_endows() {
+        let table = Table::load();
+        // Shield Charge's anchor sits on the feet, every other file's 80 px up.
+        assert_eq!((str_rise(246), str_rise(248), str_rise(220)), (0.0, 80.0, 80.0));
+        assert_eq!(table.struck(250), Some(&[(Who::Target, 246)][..]));
+        // Providence's file plays with its code-made tubes; Reflect Shield and Absorb Spirits are no longer rings and parts.
+        assert_eq!(table.used(256), Some(&[(Who::Target, 248)][..]));
+        for id in [252, 253] {
+            assert!(!table.rings.contains_key(&id) && !table.floaters.contains_key(&id), "{id}");
+        }
+        assert_eq!((table.used(252), table.struck(8401).map(|list| list.contains(&(Who::Target, 252)))), (Some(&[(Who::Caster, 252)][..]), Some(true)));
+        assert_eq!(
+            (table.used(262), table.used(335), table.used(8604)),
+            (Some(&[(Who::Caster, 253)][..]), Some(&[(Who::Target, 253)][..]), Some(&[(Who::Target, 253)][..]))
+        );
+        assert_eq!(table.sounds[&253].iter().map(|sound| sound.delay_ms).collect::<Vec<_>>(), [0]);
+        // The Endows' sound comes at tick 10 (160 ms).
+        for id in [255, 256] {
+            assert_eq!(table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("_enemy_hit_wind1", 160)], "{id}");
+        }
     }
 }
