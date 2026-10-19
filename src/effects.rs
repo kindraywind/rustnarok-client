@@ -867,13 +867,14 @@ pub fn is_cast_aura(effect: u32) -> bool {
 
 /// The effects made of bands.
 pub fn is_banded(effect: u32) -> bool {
-    matches!(effect, 12 | 54..=59 | 304 | 312 | 313 | 314 | 325 | 344)
+    matches!(effect, 12 | 54..=59 | 304 | 312 | 313 | 314 | 325 | 344 | 367)
 }
 
-/// How long a band effect lasts, in ticks: Heal and the arrival 100, the teleport and logout 200.
+/// How long a band effect lasts, in ticks: Heal and the arrival 100, the teleport and logout 200, Aura Blade's bloom 60.
 fn banded_ticks(effect: u32) -> u32 {
     match effect {
         304 | 314 => 200,
+        367 => 60,
         _ => 100,
     }
 }
@@ -917,6 +918,8 @@ fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
 /// A band effect's texture, colour and whether it adds on.
 fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
     match effect {
+        // ponytail: Aura Blade's two bloom sets both in ring_white (the game's second is ring_yellow).
+        367 => ("ring_white", [0xA4, 0xCD, 0xFE], true),
         312 | 313 | 325 => ("alpha_down", [0x8C, 0xD2, 0x8C], true),
         304 => ("Magic_Violet", [0x64, 0x64, 0xFF], true),
         314 => ("ring_purple", [0x64, 0x64, 0xFF], true),
@@ -1049,7 +1052,7 @@ impl Banded {
             344 => return shaped(&arrival_bands(age), rising_height),
             _ => {}
         }
-        if matches!(self.effect, 12 | 58) {
+        if matches!(self.effect, 12 | 58 | 367) {
             (0..2)
                 .flat_map(|set| (0..4).filter_map(move |band| bloom(set, band, self.ticks, age).map(|shape| (band, shape))))
                 .map(|(band, shape)| (shape, heights(band, shape.height, bloom_height)))
@@ -1122,6 +1125,127 @@ fn sparkle_place(heading: [f32; 2], since: u32) -> Option<(Vector, f32)> {
     })
 }
 
+/// A status's looping effect made in code: a song's coloured puffs (861, 865, 867, 871, 873, 875, 877) or Steel Body's
+/// glints (254), on its unit while the status is on.
+struct StatusPrim {
+    kind: PrimKind,
+    start: Instant,
+    anchor: Anchor,
+    /// Picks every "random" choice (yaws, places, textures) from its own numbers.
+    seed: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PrimKind {
+    /// A song's puffs, by colour variant (2 green … 8 grey).
+    Puffs(u8),
+    Glints,
+}
+
+/// The song effects' colour variants.
+fn song_variant(effect: u32) -> Option<u8> {
+    match effect {
+        861 => Some(2),
+        865 => Some(3),
+        867 => Some(4),
+        871 => Some(5),
+        873 => Some(6),
+        875 => Some(7),
+        877 => Some(8),
+        _ => None,
+    }
+}
+
+const PUFF_TEXTURE: &str = "data\\texture\\effect\\freeze_a.bmp";
+/// A song's effect lasts 400 ticks: the next status packet plays it again.
+const PUFF_TICKS: u32 = 400;
+/// The eight puffs' first ticks: two sets of four, 20 apart, the second 10 later.
+const PUFF_STARTS: [u32; 8] = [0, 20, 40, 60, 10, 30, 50, 70];
+/// Each puff's other channels by its place in its set.
+const PUFF_SHADES: [u8; 4] = [105, 5, 55, 155];
+
+/// A small hash for the effects' random choices: the same numbers give the same choice.
+fn noise(seed: u32, a: u32, b: u32) -> u32 {
+    let mut x = seed ^ a.wrapping_mul(0x9E37_79B1) ^ b.wrapping_mul(0x85EB_CA6B);
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7FEB_352D);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846C_A68B);
+    x ^ (x >> 16)
+}
+
+/// A puff `age` ticks after its start: its size r, alpha (0–100), pulse angle and yaw (degrees); None before it
+/// starts or once it has stopped. r starts at 10 and grows ×1.02 a tick; the alpha holds at 100 until r passes 20, then
+/// falls 3 a tick; at nothing the puff starts again with a new yaw, but not after age 300.
+fn puff_at(seed: u32, puff: u32, age: i64) -> Option<(f32, f32, f32, f32)> {
+    if age < 0 {
+        return None;
+    }
+    let (mut r, mut alpha, mut round) = (10.0f32, 100.0f32, 0);
+    let pulse = (noise(seed, puff, 1_000) % 360) as f32;
+    for tick in 0..age {
+        r *= 1.02;
+        if r > 20.0 {
+            alpha -= 3.0;
+        }
+        if alpha <= 0.0 {
+            if tick + 1 > 300 {
+                return None;
+            }
+            (r, alpha, round) = (10.0, 100.0, round + 1);
+        }
+    }
+    let yaw = (noise(seed, puff, round) % 360) as f32;
+    Some((r, alpha, pulse + age as f32, yaw))
+}
+
+/// A puff's colour: the variant's full channels at 255 and the others at the puff's shade.
+fn puff_color(variant: u8, index: usize) -> [u8; 3] {
+    let v = PUFF_SHADES[index % 4];
+    match variant {
+        2 => [v, 255, v],
+        3 => [v, v, 255],
+        4 => [255, 255, v],
+        5 => [255, v, v],
+        6 => [255, v, 255],
+        7 => [v, 255, 255],
+        8 if index % 4 == 3 => [255, 255, 255],
+        8 => [v, v, v],
+        _ => [v, v, 255],
+    }
+}
+
+const GLINT_TEXTURES: [&str; 5] = [
+    "data\\texture\\effect\\super1.bmp",
+    "data\\texture\\effect\\super2.bmp",
+    "data\\texture\\effect\\super3.bmp",
+    "data\\texture\\effect\\super4.bmp",
+    "data\\texture\\effect\\super5.bmp",
+];
+/// Steel Body's 16 glints: four sets whose glints start at these alphas.
+const GLINT_ALPHAS: [i32; 4] = [70, 130, 190, 250];
+/// A glint's half diagonal and the circle it sits on, in units; #6464FF.
+const GLINT_RADIUS: f32 = 3.5;
+const GLINT_CIRCLE: f32 = 4.0;
+const GLINT_COLOR: [u8; 3] = [0x64, 0x64, 0xFF];
+/// Sprite pixels to a world unit.
+const PIXELS_PER_UNIT: f32 = 7.0;
+
+/// A glint `age` ticks in: its alpha (0–255), and which round it's on (each round a new place, height and texture).
+/// It starts at its set's alpha with a counter of 10; each tick the counter goes up, and the alpha +25 while it's under
+/// 10, −12 from there; under 12 it starts a new round at 0.
+fn glint_at(first_alpha: i32, age: u32) -> (i32, u32) {
+    let (mut counter, mut alpha, mut round) = (10, first_alpha, 0);
+    for _ in 0..age {
+        counter += 1;
+        alpha += if counter < 10 { 25 } else { -12 };
+        if alpha < 12 {
+            (counter, alpha, round) = (0, 0, round + 1);
+        }
+    }
+    (alpha.max(0), round)
+}
+
 #[derive(Default)]
 pub struct Effects {
     loaded: HashMap<String, Option<Rc<Loaded>>>,
@@ -1161,6 +1285,7 @@ pub struct Effects {
     arrows: crate::arrows::Arrows,
     arrow: Vec<Vec<Placed>>,
     blessings: Vec<Blessing>,
+    status_prims: Vec<StatusPrim>,
 }
 
 /// The effects drawn even with /effect off (the data's ForceRenderEffect list): warp portals, Safety Wall, the
@@ -1521,6 +1646,15 @@ impl Effects {
             if id == EARTH_SPIKE { self.prims.stone.earth_spike(at, now) } else { self.prims.stone.heavens_drive(at, now) }
         }
         // Blessing, made in code.
+        // A song's puffs and Steel Body's glints, made in code.
+        let kind = song_variant(id).map(PrimKind::Puffs).or((id == 254).then_some(PrimKind::Glints));
+        if let Some(kind) = kind {
+            let paths: &[&str] = if kind == PrimKind::Glints { &GLINT_TEXTURES } else { &[PUFF_TEXTURE] };
+            for path in paths {
+                self.textures.entry((*path).to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, kind == PrimKind::Glints).ok());
+            }
+            self.status_prims.push(StatusPrim { kind, start: now, anchor: anchor(true), seed: random(0.0, 1.0e9) as u32 });
+        }
         if id == 42 {
             for path in [ANGEL_SPRITE, BLESSING_SPARKLE] {
                 self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
@@ -1768,6 +1902,8 @@ impl Effects {
     /// Effects that finished go and those that repeat start again; sprites pick their images for `now`, seen through
     /// a camera turned `yaw` radians.
     pub fn advance(&mut self, gpu: &Gpu, now: Instant, yaw: f32) {
+        // A song's puffs end with their 400 ticks.
+        self.status_prims.retain(|prim| !matches!(prim.kind, PrimKind::Puffs(_)) || str_frame(now.saturating_duration_since(prim.start)) < PUFF_TICKS);
         self.prims.advance(now);
         if let Some(Some(sprite)) = self.sprites.get_mut(crate::prims::GHOST_SPRITE) {
             self.ghost = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
@@ -1908,6 +2044,8 @@ impl Effects {
     /// Stops what a status plays on its unit (None = the player).
     pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
         let on = |anchor: Anchor| matches!(anchor, Anchor::Status(each, kind) if each == unit && kind == status);
+        self.status_prims.retain(|prim| !on(prim.anchor));
+        self.auras.retain(|aura| !on(aura.anchor));
         self.playing.retain(|playing| !on(playing.anchor));
         self.floating.retain(|floating| !on(floating.anchor));
         self.rings.retain(|ring| !on(ring.anchor));
@@ -1917,6 +2055,7 @@ impl Effects {
     pub fn forget(&mut self, unit: u32) {
         self.prims.sage.forget(unit);
         self.hits.retain(|hit| !hit.anchor.on(unit));
+        self.status_prims.retain(|prim| !prim.anchor.on(unit));
         self.blessings.retain(|blessing| !blessing.anchor.on(unit));
         self.auras.retain(|aura| !aura.anchor.on(unit));
         self.playing.retain(|playing| !playing.anchor.on(unit));
@@ -1931,26 +2070,49 @@ impl Effects {
         !self.only_forced || force_drawn(effect)
     }
 
-    /// Shapes drawn over everything, with no depth test: Blessing's glow lying flat under the feet.
+    /// Shapes drawn over everything, with no depth test: Blessing's glow lying flat under the feet, and the songs' puffs.
     pub fn top_meshes(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<EffectMesh<'_>> {
-        let Some(Some(texture)) = self.textures.get(BLESSING_GLOW).filter(|_| self.shows(42)) else { return Vec::new() };
-        self.blessings
-            .iter()
-            .filter(|blessing| blessing.start <= now)
-            .filter_map(|blessing| {
-                let at = blessing.anchor.place(&position_of)?;
-                let alpha = glow_alpha(str_frame(now.duration_since(blessing.start))) / 255.0;
-                let tint = [f32::from(GLOW_COLOR[0]) / 255.0, f32::from(GLOW_COLOR[1]) / 255.0, f32::from(GLOW_COLOR[2]) / 255.0, alpha];
-                let corner = |x: f32, z: f32, uv: [f32; 2]| MeshVertex { position: [at[0] + x, at[1] + 0.2, at[2] + z], uv, tint };
-                let [a, b, c, d] = [
-                    corner(-GLOW_HALF, -GLOW_HALF, [0.0, 0.0]),
-                    corner(GLOW_HALF, -GLOW_HALF, [1.0, 0.0]),
-                    corner(GLOW_HALF, GLOW_HALF, [1.0, 1.0]),
-                    corner(-GLOW_HALF, GLOW_HALF, [0.0, 1.0]),
-                ];
-                Some((texture, vec![a, b, c, a, c, d], false))
-            })
-            .collect()
+        let mut meshes = self.puff_meshes(now, &position_of);
+        let Some(Some(texture)) = self.textures.get(BLESSING_GLOW).filter(|_| self.shows(42)) else { return meshes };
+        let glows = self.blessings.iter().filter(|blessing| blessing.start <= now).filter_map(|blessing| {
+            let at = blessing.anchor.place(&position_of)?;
+            let alpha = glow_alpha(str_frame(now.duration_since(blessing.start))) / 255.0;
+            let tint = [f32::from(GLOW_COLOR[0]) / 255.0, f32::from(GLOW_COLOR[1]) / 255.0, f32::from(GLOW_COLOR[2]) / 255.0, alpha];
+            let corner = |x: f32, z: f32, uv: [f32; 2]| MeshVertex { position: [at[0] + x, at[1] + 0.2, at[2] + z], uv, tint };
+            let [a, b, c, d] = [
+                corner(-GLOW_HALF, -GLOW_HALF, [0.0, 0.0]),
+                corner(GLOW_HALF, -GLOW_HALF, [1.0, 0.0]),
+                corner(GLOW_HALF, GLOW_HALF, [1.0, 1.0]),
+                corner(-GLOW_HALF, GLOW_HALF, [0.0, 1.0]),
+            ];
+            Some((texture, vec![a, b, c, a, c, d], false))
+        });
+        meshes.extend(glows);
+        meshes
+    }
+
+    /// The songs' puffs: upright squares turned by their yaws, 10 above the feet, added on.
+    fn puff_meshes(&self, now: Instant, position_of: &impl Fn(Option<u32>) -> Option<Vector>) -> Vec<EffectMesh<'_>> {
+        let Some(Some(texture)) = self.textures.get(PUFF_TEXTURE).filter(|_| !self.only_forced) else { return Vec::new() };
+        let mut triangles = Vec::new();
+        for prim in self.status_prims.iter().filter(|prim| prim.start <= now) {
+            let PrimKind::Puffs(variant) = prim.kind else { continue };
+            let age = str_frame(now.duration_since(prim.start));
+            let Some(at) = prim.anchor.place(position_of).filter(|_| age < PUFF_TICKS) else { continue };
+            for (puff, &first) in PUFF_STARTS.iter().enumerate() {
+                let Some((r, alpha, pulse, yaw)) = puff_at(prim.seed, puff as u32, i64::from(age) - i64::from(first)) else { continue };
+                let half = r * (0.9 + 0.1 * pulse.to_radians().sin()) / 2.0;
+                let [red, green, blue] = puff_color(variant, puff).map(|value| f32::from(value) / 255.0);
+                let tint = [red, green, blue, alpha / 255.0];
+                let (sin, cos) = yaw.to_radians().sin_cos();
+                let corner =
+                    |across: f32, up: f32, uv: [f32; 2]| MeshVertex { position: [at[0] + across * cos, at[1] + 10.0 + up, at[2] + across * sin], uv, tint };
+                let [a, b, c, d] =
+                    [corner(-half, half, [0.0, 0.0]), corner(half, half, [1.0, 0.0]), corner(half, -half, [1.0, 1.0]), corner(-half, -half, [0.0, 1.0])];
+                triangles.extend([a, b, c, a, c, d]);
+            }
+        }
+        if triangles.is_empty() { Vec::new() } else { vec![(texture, triangles, true)] }
     }
 
     /// The effect shapes showing now: cylinders and models.
@@ -2099,6 +2261,23 @@ impl Effects {
                         false,
                     ));
                 }
+            }
+        }
+        // Steel Body's glints: camera-facing squares round the feet, added on in #6464FF.
+        for prim in self.status_prims.iter().filter(|prim| prim.kind == PrimKind::Glints && prim.start <= now && !self.only_forced) {
+            let Some(at) = prim.anchor.place(&position_of) else { continue };
+            let age = str_frame(now.duration_since(prim.start));
+            let half = GLINT_RADIUS * std::f32::consts::FRAC_1_SQRT_2 * PIXELS_PER_UNIT;
+            for glint in 0..16u32 {
+                let (alpha, round) = glint_at(GLINT_ALPHAS[(glint % 4) as usize], age);
+                let pick = |what: u32| noise(prim.seed, glint * 1_000 + round, what);
+                let Some(Some(texture)) = self.textures.get(GLINT_TEXTURES[(pick(0) % 5) as usize]) else { continue };
+                let (sin, cos) = ((pick(1) % 360) as f32).to_radians().sin_cos();
+                let height = if round == 0 { (pick(2) % 10) as f32 } else { 3.0 + (pick(2) % 8) as f32 };
+                let place = [at[0] + GLINT_CIRCLE * cos, at[1] + height, at[2] + GLINT_CIRCLE * sin];
+                let [red, green, blue] = GLINT_COLOR.map(|value| f32::from(value) / 255.0);
+                let corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
+                quads.push((texture, place, corners, [red, green, blue, alpha as f32 / 255.0], true, false));
             }
         }
         // Blessing's angels (25 units up, sized like a unit's sprite) and its sparkles.
@@ -2425,6 +2604,29 @@ mod tests {
         let ice = &table.sounds[&26][0];
         assert_eq!((ice.file.as_str(), ice.delay_ms, ice.random), ("effect\\ef_icearrow%d", 0, Some((1, 3))));
         assert!((0..100).map(|_| pick(1, 3)).all(|picked| (1..=3).contains(&picked)));
+    }
+
+    #[test]
+    fn puffs_songs_and_glints_steel_body() {
+        // A puff: none before its start; r 10 growing ×1.02, alpha 100 until r passes 20 (tick 36), then −3 a tick
+        // to nothing at 69, where it starts again; not after age 300.
+        assert_eq!(puff_at(7, 0, -1), None);
+        let (r, alpha, ..) = puff_at(7, 0, 0).unwrap();
+        assert_eq!((r, alpha), (10.0, 100.0));
+        assert_eq!(puff_at(7, 0, 35).unwrap().1, 100.0);
+        assert_eq!(puff_at(7, 0, 36).unwrap().1, 97.0);
+        let (r, alpha, ..) = puff_at(7, 0, 69).unwrap();
+        assert!((r - 10.0).abs() < 1e-4 && alpha == 100.0);
+        assert!(puff_at(7, 0, 399).is_none());
+        // Eight puffs in two sets of four; the variants' colours by the puff's place.
+        assert_eq!(PUFF_STARTS, [0, 20, 40, 60, 10, 30, 50, 70]);
+        assert_eq!([puff_color(2, 0), puff_color(3, 1), puff_color(5, 2), puff_color(8, 3)], [[105, 255, 105], [5, 5, 255], [255, 55, 55], [255; 3]]);
+        assert_eq!([861, 865, 877, 868].map(song_variant), [Some(2), Some(3), Some(8), None]);
+        // A glint: from its set's alpha down 12 a tick, a new round under 12, then 9 ticks up 25 to 225.
+        assert_eq!([glint_at(70, 0), glint_at(70, 1), glint_at(70, 5), glint_at(70, 14), glint_at(70, 15)], [(70, 0), (58, 0), (0, 1), (225, 1), (213, 1)]);
+        // Aura Blade's bloom: 60 ticks of the cast aura's bands, light blue and added on.
+        assert!(is_banded(367) && banded_ticks(367) == 60);
+        assert_eq!(aura_look(367).1, [0xA4, 0xCD, 0xFE]);
     }
 
     #[test]

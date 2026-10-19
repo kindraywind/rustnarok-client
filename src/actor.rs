@@ -716,6 +716,17 @@ pub struct SpriteSet {
 }
 
 impl SpriteSet {
+    /// Which part an image is (`PartGroup`).
+    pub fn part_group(&self, key: ImageKey) -> PartGroup {
+        match self.layers.get(key.0).map(|layer| layer.part) {
+            Some(Part::Weapon | Part::WeaponGlow) => PartGroup::Weapon,
+            Some(Part::Shield | Part::Robe) => PartGroup::Gear,
+            _ => PartGroup::Body,
+        }
+    }
+}
+
+impl SpriteSet {
     pub fn player(grf: &Grf, look: &Look, tables: &LookTables) -> Option<Self> {
         let sex = if look.sex == 0 { "여" } else { "남" };
         // Outfits and mounts change the body; the weapons and dyes go by it too.
@@ -1966,6 +1977,8 @@ pub struct Actor {
     pub size_percent: Option<i32>,
     /// The statuses on that leave copies of the unit behind it (the quickens and the like), and the copies.
     blurs: Vec<u16>,
+    /// What statuses do to how its own parts are drawn: by status, the body flags and colour (`status_body`).
+    glows: Vec<(u16, u32, Option<[u8; 3]>)>,
     pub ghosts: Vec<Ghost>,
     /// Cursed Circle: the body darkened.
     pub cursed: bool,
@@ -1973,6 +1986,72 @@ pub struct Actor {
 
 /// The effect that leaves copies of a unit behind it while a status is on (the quickens, Overthrust...).
 pub const AFTERIMAGE: u32 = 166;
+
+/// How a status has its unit's own parts drawn: the body, head and headgears added on; the weapon added on; two grown
+/// added-on copies of the body, head and headgears (Assumptio); four growing copies of every part, the part itself at
+/// alpha 150 (Kaite).
+pub const GLOW_ADDITIVE: u32 = 0x1;
+pub const GLOW_WEAPON: u32 = 0x2;
+pub const GLOW_OUTLINE: u32 = 0x8;
+pub const GLOW_REFLECT: u32 = 0x200;
+
+/// The body flags and colour a status's looping effect gives its unit: Berserk red, Marionette pink with the outline,
+/// Assumptio's outline, Kaite's copies, Aura Blade's weapon.
+pub fn status_body(effect: u32) -> Option<(u32, Option<[u8; 3]>)> {
+    match effect {
+        368 => Some((GLOW_ADDITIVE, Some([0xFF, 0x64, 0x64]))),
+        396 => Some((GLOW_ADDITIVE | GLOW_OUTLINE, Some([0xFF, 0x59, 0xB6]))),
+        375 => Some((GLOW_OUTLINE, None)),
+        419 => Some((GLOW_REFLECT, None)),
+        474 => Some((GLOW_WEAPON, None)),
+        _ => None,
+    }
+}
+
+/// Which of a unit's parts an image is, for the body flags.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PartGroup {
+    /// The body, head and headgears (and a monster's or an NPC's one sprite).
+    Body,
+    /// The weapon and its glow.
+    Weapon,
+    /// The shield and the garment.
+    Gear,
+}
+
+/// One copy drawn for a part under the body flags: added on or blended, the colour to multiply by (alpha included),
+/// and how many screen pixels it's grown by on every side.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlowCopy {
+    pub additive: bool,
+    pub color: [f32; 4],
+    pub grow: f32,
+}
+
+/// How a part is drawn under the body flags `flags` and colour `tint`: its own copy (added on, or blended at its own
+/// alpha), and the copies around it. `breath` is Assumptio's angle in degrees (0–180), `spread` Kaite's 0–20, and
+/// `unit` the screen pixels one unit of growth takes (400 / the camera's distance).
+pub fn glow_copies(flags: u32, tint: Option<[u8; 3]>, group: PartGroup, breath: f32, spread: f32, unit: f32) -> (GlowCopy, Vec<GlowCopy>) {
+    let color = tint.map_or([1.0; 4], |[red, green, blue]| [f32::from(red) / 255.0, f32::from(green) / 255.0, f32::from(blue) / 255.0, 1.0]);
+    let body = group == PartGroup::Body;
+    let additive = (body && flags & GLOW_ADDITIVE != 0) || (group == PartGroup::Weapon && flags & GLOW_WEAPON != 0);
+    let mut part = GlowCopy { additive, color, grow: 0.0 };
+    let mut copies = Vec::new();
+    if body && flags & GLOW_OUTLINE != 0 {
+        let sin = breath.to_radians().sin();
+        copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 100.0 / 255.0], grow: (3.0 + sin) * unit });
+        copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 120.0 / 255.0], grow: (5.0 + 2.0 * sin) * unit });
+    }
+    if flags & GLOW_REFLECT != 0 && !part.additive {
+        for k in [5.0, 10.0, 15.0, 20.0] {
+            let s = (spread + k) % 20.0;
+            copies.push(GlowCopy { additive: false, color: [1.0, 1.0, 1.0, (100.0 - 5.0 * s) / 255.0], grow: s * unit });
+        }
+        part.color = [1.0, 1.0, 1.0, 150.0 / 255.0];
+    }
+    (part, copies)
+}
+
 /// Cursed Circle's statuses, which darken the body to this.
 pub const CURSED_CIRCLE: [u16; 2] = [416, 417];
 pub const CURSED_TINT: [u8; 3] = [64, 64, 64];
@@ -2044,6 +2123,7 @@ impl Actor {
             held: None,
             size_percent: None,
             blurs: Vec::new(),
+            glows: Vec::new(),
             ghosts: Vec::new(),
             cursed: false,
         }
@@ -2052,6 +2132,19 @@ impl Actor {
     /// The colour the body is drawn in: Cursed Circle's dark, else the body and health states' (see `status_tint`).
     pub fn body_tint(&self) -> Option<[u8; 3]> {
         if self.cursed { Some(CURSED_TINT) } else { status_tint(self.body_state, self.health_state) }
+    }
+
+    /// A status comes on or goes off: what its looping effects do to how the parts are drawn.
+    pub fn glow(&mut self, status: u16, effects: &[u32], on: bool) {
+        self.glows.retain(|&(each, ..)| each != status);
+        if on {
+            self.glows.extend(effects.iter().filter_map(|&effect| status_body(effect)).map(|(flags, tint)| (status, flags, tint)));
+        }
+    }
+
+    /// The body flags of every status on, and the first colour.
+    pub fn glow_flags(&self) -> (u32, Option<[u8; 3]>) {
+        (self.glows.iter().fold(0, |flags, &(_, each, _)| flags | each), self.glows.iter().find_map(|&(.., tint)| tint))
     }
 
     /// A status that leaves copies behind it comes on or goes off.
@@ -2510,6 +2603,36 @@ impl Actor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn draws_parts_again_for_statuses() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        // Berserk: the body added on in #FF6464, the weapon blended in the same colour, nothing grown.
+        let (flags, tint) = status_body(368).unwrap();
+        let (body, copies) = glow_copies(flags, tint, PartGroup::Body, 0.0, 0.0, 1.0);
+        assert!(body.additive && copies.is_empty() && near(body.color[1], 100.0 / 255.0));
+        assert!(!glow_copies(flags, tint, PartGroup::Weapon, 0.0, 0.0, 1.0).0.additive);
+        // Assumptio: two added-on copies of the body, grown 3 + sin and 5 + 2·sin units (at 90°: 4 and 7), alpha 100 and
+        // 120; none for the weapon.
+        let (flags, tint) = status_body(375).unwrap();
+        let (body, copies) = glow_copies(flags, tint, PartGroup::Body, 90.0, 0.0, 400.0 / 300.0);
+        assert!(!body.additive);
+        assert_eq!(copies.len(), 2);
+        assert!(copies.iter().all(|copy| copy.additive));
+        assert!(near(copies[0].grow, 4.0 * 400.0 / 300.0) && near(copies[1].grow, 7.0 * 400.0 / 300.0));
+        assert!(near(copies[0].color[3], 100.0 / 255.0) && near(copies[1].color[3], 120.0 / 255.0));
+        assert!(glow_copies(flags, tint, PartGroup::Weapon, 90.0, 0.0, 1.0).1.is_empty());
+        // Kaite: every part at alpha 150 with four growing copies 5 apart, fainter as they grow.
+        let (flags, tint) = status_body(419).unwrap();
+        let (part, copies) = glow_copies(flags, tint, PartGroup::Gear, 0.0, 2.0, 1.0);
+        assert!(near(part.color[3], 150.0 / 255.0));
+        assert_eq!(copies.iter().map(|copy| copy.grow).collect::<Vec<_>>(), [7.0, 12.0, 17.0, 2.0]);
+        assert!(near(copies[3].color[3], 90.0 / 255.0) && !copies[0].additive);
+        // Aura Blade: the weapon added on; Marionette pink with the outline.
+        assert!(glow_copies(status_body(474).unwrap().0, None, PartGroup::Weapon, 0.0, 0.0, 1.0).0.additive);
+        assert_eq!(status_body(396), Some((GLOW_ADDITIVE | GLOW_OUTLINE, Some([0xFF, 0x59, 0xB6]))));
+        assert_eq!(status_body(166), None);
+    }
 
     #[test]
     fn stops_where_drawn() {

@@ -1308,6 +1308,7 @@ impl Game {
         if actor::CURSED_CIRCLE.contains(&status) {
             actor.cursed = on;
         }
+        actor.glow(status, shown, on);
         let at = self.world.cell_position(actor.cell.map(|value| value as f32));
         if let Some(gpu) = gpu.filter(|_| on) {
             for &effect in shown.iter().filter(|&&effect| effect != actor::AFTERIMAGE) {

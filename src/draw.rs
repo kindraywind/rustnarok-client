@@ -838,7 +838,14 @@ impl App {
             Owner::Unit(id) => game.units.get(id).map_or((false, false), |actor| (actor.kind == PLAYER, actor.dead || actor.remove_at.is_some())),
             Owner::Item(_) | Owner::SkillUnit(_) => (false, false),
         };
-        billboards.extend(frames.iter().flat_map(|(owner, feet, placements)| {
+        // A status's body flags draw a part again (added on or grown) or in place of itself (`actor::glow_copies`).
+        let mut glows: Vec<world::Glow> = Vec::new();
+        let grow_unit = 400.0 / game.camera.distance.max(1.0);
+        // ponytail: Assumptio breathes once each 1.5 s and Kaite's copies spread over 1.1 s by the clock; the game steps
+        // both once per part it draws.
+        let seconds = now.saturating_duration_since(game.entered).as_secs_f32();
+        let (breath, spread) = ((seconds / 1.5).fract() * 180.0, (seconds / 1.1).fract() * 20.0);
+        for (owner, feet, placements) in &frames {
             let sprites = sprites_of(owner).unwrap();
             let tint = match owner {
                 Owner::Unit(id) => [1.0, 1.0, 1.0, game.units.get(id).map_or(1.0, |actor| actor.alpha(now))],
@@ -853,10 +860,29 @@ impl App {
                 _ => tint,
             };
             let (player, flat) = stand_of(owner);
-            placements.iter().enumerate().map(move |(index, (key, position, size, angle))| {
-                (sprites.texture(*key), *feet, *position, *size, tint, *angle, sprite_layer(index, player, flat))
-            })
-        }));
+            let glow = match owner {
+                Owner::Player => Some(game.player.glow_flags()),
+                Owner::Unit(id) => game.units.get(id).map(actor::Actor::glow_flags),
+                Owner::Item(_) | Owner::SkillUnit(_) => None,
+            };
+            for (index, &(key, position, size, angle)) in placements.iter().enumerate() {
+                let texture = sprites.texture(key);
+                let layer = sprite_layer(index, player, flat);
+                let Some((flags, body_tint)) = glow.filter(|(flags, _)| *flags != 0) else {
+                    billboards.push((texture, *feet, position, size, tint, angle, layer));
+                    continue;
+                };
+                let (part, copies) = actor::glow_copies(flags, body_tint, sprites.part_group(key), breath, spread, grow_unit);
+                let corners = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].map(|uv| world::sprite_corner(position, size, angle, uv).0);
+                let times = |color: [f32; 4]| std::array::from_fn(|channel| tint[channel] * color[channel]);
+                glows.extend(copies.iter().map(|copy| (texture, *feet, corners, times(copy.color), copy.additive, copy.grow)));
+                if part.additive {
+                    glows.push((texture, *feet, corners, times(part.color), true, 0.0));
+                } else {
+                    billboards.push((texture, *feet, position, size, times(part.color), angle, layer));
+                }
+            }
+        }
         // The copies left behind units that blur (the quickens), fading out.
         let blurring = std::iter::once((Owner::Player, &game.player)).chain(game.units.iter().map(|(&id, actor)| (Owner::Unit(id), actor)));
         for (owner, actor) in blurring.filter(|(_, actor)| !actor.ghosts.is_empty()) {
@@ -2650,6 +2676,7 @@ impl App {
             billboards: &billboards,
             shadows,
             effects: &effect_quads,
+            glows: &glows,
             meshes: &effect_meshes,
             screen: &screen_shapes,
             cover: &cover,
