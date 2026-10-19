@@ -17,6 +17,7 @@ pub mod sparkle;
 pub mod stone;
 pub mod tanji;
 pub mod throw;
+pub mod walls;
 pub mod waterball;
 
 use std::collections::VecDeque;
@@ -103,6 +104,7 @@ pub struct Prims {
     pub first: first::First,
     pub sights: sight::Sights,
     pub waterballs: waterball::Waterballs,
+    pub walls: walls::Walls,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -398,6 +400,7 @@ impl Prims {
     /// Drops any prims attached to `unit`.
     pub fn forget(&mut self, unit: u32) {
         self.sparkles.retain(|s| s.unit != Some(unit));
+        self.walls.forget(unit);
     }
 
     /// The camera-facing squares for effect 793 at `now`.
@@ -457,6 +460,7 @@ impl Prims {
         self.cold_hits.retain(|hit| due(hit.start) < SECOND_SMOKE + SMOKE_LIFE && hit.age.is_none_or(|age| age < COLD_FRAMES));
         self.balls.advance(now);
         self.waterballs.advance(now);
+        self.walls.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
         self.stone.advance(now);
         self.volleys.retain(|volley| volley.alive(now));
         self.sage.advance(now);

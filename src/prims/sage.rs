@@ -67,7 +67,7 @@ pub struct Sage {
 }
 
 /// A point `radius` out at `angle` (degrees: 0 east, 90 north) with a top `height` along a `lean` from the ground.
-fn ring_point(at: Vector, angle: f32, radius: f32, height: f32, lean: f32) -> (Vector, Vector) {
+pub(super) fn ring_point(at: Vector, angle: f32, radius: f32, height: f32, lean: f32) -> (Vector, Vector) {
     let (sin, cos) = angle.to_radians().sin_cos();
     let (lean_sin, lean_cos) = lean.to_radians().sin_cos();
     let out = radius + height * lean_cos;
@@ -75,7 +75,7 @@ fn ring_point(at: Vector, angle: f32, radius: f32, height: f32, lean: f32) -> (V
 }
 
 /// Quads round a ring, `u` stepping a 21st each, `v` 1 at the foot and 0 at the top.
-fn ring_quads(points: &[(Vector, Vector)], alpha: f32) -> Vec<Corner> {
+pub(super) fn ring_quads(points: &[(Vector, Vector)], alpha: f32) -> Vec<Corner> {
     points
         .windows(2)
         .enumerate()

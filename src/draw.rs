@@ -476,7 +476,7 @@ impl App {
             carts.push((Owner::Player, feet, placed));
         }
         game.player.step_blur(now, || crate::effects::pick(0, 13) == 0);
-        let player_tint = game.player.body_tint();
+        let player_tint = effects::mix_tints(game.player.body_tint(), game.effects.body_tint(None, now));
         let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
         // Our own character in Hiding shows its shadow alone (a frame with no sprite); cloaked, chase-walking or
         // GM-hidden, nothing. We are never drawn as a silhouette.
@@ -573,7 +573,7 @@ impl App {
             }
             // A silhouette multiplies the sprite's RGB by 0 and keeps its alpha. It casts no shadow.
             actor.step_blur(now, || crate::effects::pick(0, 13) == 0);
-            let tint = if silhouette { Some([0, 0, 0]) } else { actor.body_tint() };
+            let tint = if silhouette { Some([0, 0, 0]) } else { effects::mix_tints(actor.body_tint(), game.effects.body_tint(Some(id), now)) };
             let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent);
             if let Some(sprites) = &mut actor.sprites {
                 sprites.set_tint(tint);
@@ -2623,7 +2623,9 @@ impl App {
         game.effects.advance(gpu, now, yaw);
         if let Some(audio) = audio {
             for (file, at) in game.effects.due_sounds(now) {
-                audio.play(grf, &file, heard(f32::hypot(at[0] - player_feet[0], at[2] - player_feet[2]) / world::CELL));
+                // A sound made at the listener (NaN) is heard at full volume.
+                let distance = if at[0].is_nan() { 0.0 } else { f32::hypot(at[0] - player_feet[0], at[2] - player_feet[2]) / world::CELL };
+                audio.play(grf, &file, heard(distance));
             }
             for _ in 0..bangs {
                 audio.play(grf, weather::BANG_SOUND, 1.0);
