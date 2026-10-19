@@ -1,5 +1,5 @@
 {
-  "about": "Quest tracker (issue #219): a test NPC (quests.txt) gives two quests, a hunt for ten Drops (4275) and one without hunts (1001); the tracker under the minimap lists both, the hunt with '( 0 / 10 )'. Killing a Drops (the character raised for it) updates the line to '( 1 / 10 )'. The NPC erases the quests, the character is put back and the NPC unloaded. Then (issue #320) four quests more make six: the tracker lists the first five; switching 1002 off in the quest window (Alt+U) brings 4275 on, and switching it back restores the five; the four are taken out again. Picking the Drops quest opens its details right of the list (issue #534): its title, the Description, Monster and Reward panels and the Deadline; their Close shuts them.",
+  "about": "Quest tracker (issue #219): a test NPC (quests.txt) gives two quests, a hunt for ten Drops (4275) and one without hunts (1001); the tracker under the minimap lists both, the hunt with '( 0 / 10 )'. Killing a Drops (the character raised for it) updates the line to '( 1 / 10 )'. The NPC erases the quests, the character is put back and the NPC unloaded. Then (issue #320) four quests more make six: the tracker lists the first five; switching 1002 off in the quest window (Alt+U) brings 4275 on, and switching it back restores the five; the four are taken out again. Picking the Drops quest opens its details right of the list (issue #534): its title, the Description, Monster and Reward panels and the Deadline; their Close shuts them. Filters, the search and links (issue #535): Daily lists only the Drops quest and Normal the other five; 'Archer' in the box, Enter, lists only 1004; reopening clears both. The Drops quest put on hold, the NPC's line links it and a quest nobody has: that one says it isn't found, and the Drops link opens the window on On hold with it picked.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -207,6 +207,124 @@
     },
     {
       "click_on": {
+        "button": "quest_filter:daily"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_list.ids": [
+            4275
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        600,
+        700
+      ]
+    },
+    {
+      "shot": "quest-filter-daily",
+      "threshold": 10
+    },
+    {
+      "click_on": {
+        "button": "quest_filter:normal"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_list.ids": [
+            1001,
+            1002,
+            1003,
+            1004,
+            1005
+          ]
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "quest_filter:all"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "quest_search_box"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "type": "Archer"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_list.ids": [
+            1004
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        600,
+        700
+      ]
+    },
+    {
+      "shot": "quest-search",
+      "threshold": 10
+    },
+    {
+      "key": "Alt+U"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+U"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_list.ids": [
+            1001,
+            1002,
+            1003,
+            1004,
+            1005,
+            4275
+          ]
+        }
+      }
+    },
+    {
+      "click_on": {
         "button": "quest_row_4275"
       }
     },
@@ -250,6 +368,108 @@
           "quest_picked": null
         }
       }
+    },
+    {
+      "click_on": {
+        "button": "quest_lock_4275"
+      }
+    },
+    {
+      "wait": 800
+    },
+    {
+      "key": "Alt+U"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "link"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "packet": "0x00b4",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "click_on": {
+        "quest_link": 9999
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Notice"
+        ]
+      }
+    },
+    {
+      "move": [
+        600,
+        700
+      ]
+    },
+    {
+      "shot": "quest-link-missing",
+      "threshold": 10
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "quest_link": 4275
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_list.tab": 2,
+          "quest_picked": 4275
+        }
+      }
+    },
+    {
+      "move": [
+        600,
+        700
+      ]
+    },
+    {
+      "shot": "quest-link",
+      "threshold": 10
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "quest_detail_close"
+      }
+    },
+    {
+      "wait": 300
     },
     {
       "key": "Alt+U"

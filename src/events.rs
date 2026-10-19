@@ -391,6 +391,7 @@ impl App {
                     quests: Vec::new(),
                     quest_window: {
                         let mut window = quest::QuestWindow::load();
+                        window.filters = self.quest_filters.clone();
                         window.tracker =
                             settings_path("quest_tracker").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0");
                         window

@@ -13,6 +13,7 @@ impl App {
             game.storage.typing = false;
             game.pet_window.typing = false;
             game.homunculus_window.typing = false;
+            game.quest_window.typing = false;
             if let Some(trade) = &mut game.trade {
                 trade.typing = false;
             }
@@ -108,6 +109,12 @@ impl App {
                 links::Target::Url(address) => {
                     if let Some(page) = links::page(&address) {
                         open_page(game, page);
+                    }
+                }
+                // The quest window at that quest, or a notice that no list has it.
+                links::Target::Quest(id) => {
+                    if !game.quest_window.show_quest(id, &game.quests, &self.quest_texts) {
+                        game.question_box = Some(BoxQuestion::Said(format!("Not found Quest Info = {id}")));
                     }
                 }
                 links::Target::Tip => {}
@@ -3848,6 +3855,13 @@ impl App {
                 }
                 window.search(&self.navi_tables);
             }
+            // The quest search box: Enter applies it, Esc leaves it.
+            Scene::Game(game) if game.quest_window.typing => match key {
+                Key::Named(NamedKey::Enter) => game.quest_window.apply_search(),
+                Key::Named(NamedKey::Escape) => game.quest_window.typing = false,
+                Key::Named(NamedKey::Backspace) => game.quest_window.backspace(),
+                _ => game.quest_window.type_text(event.text.as_deref().unwrap_or_default()),
+            },
             // The pet's name box: Enter keeps what's typed, Esc puts the name back.
             Scene::Game(game) if game.pet_window.typing => match key {
                 Key::Named(NamedKey::Enter) => game.pet_window.typing = false,

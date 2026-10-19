@@ -61,6 +61,73 @@ const LOCK: [f32; 2] = [306.0, 22.0];
 const LOCK_SIZE: [f32; 2] = [20.0, 17.0];
 const CHECK_TIP: usize = 3409;
 const LOCK_TIP: usize = 3407;
+/// The search strip: six 26×22 filter buttons from (35, 414), 31 apart; the box (at most 20 characters) and its button.
+const FILTER_NAMES: [&str; 6] = ["all", "normal", "sub", "daily", "event", "etc"];
+const FILTER_AT: [f32; 2] = [35.0, 414.0];
+const FILTER_STEP: f32 = 31.0;
+const FILTER_SIZE: [f32; 2] = [26.0, 22.0];
+const SEARCH_BOX: [f32; 4] = [223.0, 417.0, 119.0, 16.0];
+const SEARCH_RIM: [u8; 4] = [0xC6, 0xC6, 0xC6, 0xFF];
+const SEARCH_BUTTON: [f32; 2] = [342.0, 416.0];
+const SEARCH_BUTTON_SIZE: [f32; 2] = [23.0, 18.0];
+const SEARCH_CHARACTERS: usize = 20;
+/// The client's filter table's ids for the buttons, left to right (ALL, NORMAL, SUB, DAILY, EVENT, ETC).
+pub const FILTER_IDS: [i64; 6] = [0, 2, 3, 4, 5, 1];
+
+/// The filters: each button's quest icons (lower case, no ".bmp") and tooltip, from the client's QuestFilterTable.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Filters {
+    pub icons: [Vec<String>; 6],
+    pub tooltips: [String; 6],
+}
+
+impl Default for Filters {
+    /// What the client's table holds.
+    fn default() -> Self {
+        let icons = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
+        Self {
+            icons: [icons(&[]), icons(&["ico_ep", "ico_gq", "ico_lq"]), icons(&["ico_sub"]), icons(&["ico_dq"]), icons(&["ico_ev"]), icons(&[])],
+            tooltips: Default::default(),
+        }
+    }
+}
+
+/// An icon's name as the filters compare it: lower case, without ".bmp".
+fn icon_key(name: &str) -> String {
+    name.trim().to_ascii_lowercase().trim_end_matches(".bmp").to_owned()
+}
+
+impl Filters {
+    /// The client's table where the data has it (by its ids), else the built-in one.
+    pub fn load(grf: &Grf) -> Self {
+        let Ok(table) = rustnarok_client::lua::quest_filters(grf) else { return Self::default() };
+        let mut filters = Self::default();
+        for (button, id) in FILTER_IDS.iter().enumerate() {
+            if let Some((tooltip, icons)) = table.get(id) {
+                filters.tooltips[button] = tooltip.clone();
+                filters.icons[button] = icons.iter().map(|icon| icon_key(icon)).collect();
+            }
+        }
+        filters
+    }
+
+    /// Whether a filter keeps a quest with this icon (its IconName): All every quest, Etc one whose icon is in no other
+    /// filter (or none), the rest their icons.
+    fn keeps(&self, button: usize, icon: Option<&str>) -> bool {
+        let icon = icon.map(icon_key);
+        match button {
+            0 => true,
+            5 => icon.is_none_or(|icon| !self.icons[1..5].iter().any(|icons| icons.contains(&icon))),
+            _ => icon.is_some_and(|icon| self.icons[button].contains(&icon)),
+        }
+    }
+}
+
+/// Whether a quest passes the search: the text in its title or summary, as written; an empty search passes all.
+fn found(text: Option<&QuestText>, search: &str) -> bool {
+    search.is_empty() || text.is_some_and(|text| text.title.contains(search) || text.summary.contains(search))
+}
+
 /// The details window, right of the list: places from its corner.
 const DETAIL_WIDTH: f32 = 342.0;
 pub const DETAIL_HEIGHT: f32 = 412.0;
@@ -184,6 +251,10 @@ pub struct Assets {
     arrows: [Texture; 2],
     thumb: [Texture; 3],
     /// The details: background, the bullet, the line between panels, an item's frame.
+    /// The filters, off and on; the search button: normal, over, press; the box's rim.
+    filters: [[Texture; 2]; 6],
+    search_button: [Texture; 3],
+    rim: Texture,
     detail: Texture,
     bullet: Texture,
     line: Texture,
@@ -208,6 +279,9 @@ impl Assets {
             lock: ["bt_lock", "bt_lock_open"].map(image),
             arrows: ["bt_scrollbar_arrow_upper", "bt_scrollbar_arrow_down"].map(image),
             thumb: ["bt_scrollbar_up", "bt_scrollbar_mid", "bt_scrollbar_down"].map(image),
+            filters: FILTER_NAMES.map(|name| ["off", "on"].map(|look| image(&format!("btn_{name}_{look}")))),
+            search_button: ["normal", "over", "press"].map(|look| image(&format!("btn_search_{look}"))),
+            rim: gpu.solid(SEARCH_RIM),
             detail: image("bg_detail_quest"),
             bullet: image("img_poring"),
             line: image("img_line"),
@@ -229,6 +303,10 @@ pub enum Hit {
     Close,
     ScrollUp,
     ScrollDown,
+    /// A filter button, the search box, the search button.
+    Filter(usize),
+    SearchBox,
+    Search,
     /// The details: Close, the NPC's picture, anywhere else (it drags).
     DetailClose,
     DetailNpc,
@@ -246,6 +324,11 @@ fn tab_of(quest: &Quest, texts: &HashMap<u32, QuestText>) -> usize {
     } else {
         2
     }
+}
+
+/// A filter button's corner on the search strip.
+fn filter_at(filter: usize) -> [f32; 2] {
+    [FILTER_AT[0] + filter as f32 * FILTER_STEP, FILTER_AT[1]]
 }
 
 /// The details' place: right of the list with the tops aligned, or with the list shut, the middle of the screen.
@@ -300,6 +383,12 @@ pub struct QuestWindow {
     detail_scroll: f32,
     reward_scroll: usize,
     description: Vec<String>,
+    /// The filters, the one on, the search typed and the one applied (to every tab), and whether typing goes to the box.
+    pub filters: Filters,
+    filter: usize,
+    search: String,
+    applied: String,
+    pub typing: bool,
     /// The quest tracker shows on screen.
     pub tracker: bool,
     /// Quests whose switch is off: the tracker leaves them out (saved, as the game's OngoingSimpleViewList).
@@ -317,6 +406,11 @@ impl Default for QuestWindow {
             detail_scroll: 0.0,
             reward_scroll: 0,
             description: Vec::new(),
+            filters: Filters::default(),
+            filter: 0,
+            search: String::new(),
+            applied: String::new(),
+            typing: false,
             tracker: true,
             hidden: HashSet::new(),
         }
@@ -436,6 +530,49 @@ impl QuestWindow {
         self.tab = 0;
         self.scroll = 0;
         self.picked = None;
+        // On All with an empty box.
+        self.filter = 0;
+        self.search.clear();
+        self.applied.clear();
+        self.typing = false;
+    }
+
+    /// Typed into the search box, up to 20 characters.
+    pub fn type_text(&mut self, text: &str) {
+        for character in text.chars().filter(|character| !character.is_control()) {
+            if self.search.chars().count() < SEARCH_CHARACTERS {
+                self.search.push(character);
+            }
+        }
+    }
+
+    pub fn backspace(&mut self) {
+        self.search.pop();
+    }
+
+    /// Enter in the box, or the search button: the text applies to every tab.
+    pub fn apply_search(&mut self) {
+        self.applied = self.search.clone();
+        self.scroll = 0;
+        self.typing = false;
+    }
+
+    /// A `<QUEST>` link: the window open on the quest's tab, its row in view and picked; false when no list has it.
+    pub fn show_quest(&mut self, id: u32, quests: &[Quest], texts: &HashMap<u32, QuestText>) -> bool {
+        if !self.frame.open {
+            self.open();
+        }
+        let tab = self.tab;
+        for candidate in 0..TABS.len() {
+            self.tab = candidate;
+            if let Some(place) = self.shown(quests, texts).iter().position(|quest| quest.id == id) {
+                self.scroll = self.scroll.clamp((place + 1).saturating_sub(ROWS), place);
+                self.pick(id, crate::screen());
+                return true;
+            }
+        }
+        self.tab = tab;
+        false
     }
 
     /// Shuts, with the details.
@@ -460,8 +597,18 @@ impl QuestWindow {
     }
 
     /// The quests the open tab lists, by id.
+    /// The listed quests' ids on the tab, filtered and searched (for the test driver).
+    pub fn listed(&self, quests: &[Quest], texts: &HashMap<u32, QuestText>) -> Vec<u32> {
+        self.shown(quests, texts).iter().map(|quest| quest.id).collect()
+    }
+
     fn shown<'q>(&self, quests: &'q [Quest], texts: &HashMap<u32, QuestText>) -> Vec<&'q Quest> {
-        let mut shown: Vec<&Quest> = quests.iter().filter(|quest| tab_of(quest, texts) == self.tab).collect();
+        let mut shown: Vec<&Quest> = quests
+            .iter()
+            .filter(|quest| tab_of(quest, texts) == self.tab)
+            .filter(|quest| self.filters.keeps(self.filter, texts.get(&quest.id).and_then(|text| text.icon.as_deref())))
+            .filter(|quest| found(texts.get(&quest.id), &self.applied))
+            .collect();
         shown.sort_by_key(|quest| quest.id);
         shown
     }
@@ -523,6 +670,16 @@ impl QuestWindow {
         if contains(SHOW_BOX, SHOW_AREA, local) {
             return Some(Hit::ShowTracker);
         }
+        if let Some(filter) = (0..FILTER_NAMES.len()).find(|&filter| contains(filter_at(filter), FILTER_SIZE, local)) {
+            return Some(Hit::Filter(filter));
+        }
+        let [x, y, w, h] = SEARCH_BOX;
+        if contains([x, y], [w, h], local) {
+            return Some(Hit::SearchBox);
+        }
+        if contains(SEARCH_BUTTON, SEARCH_BUTTON_SIZE, local) {
+            return Some(Hit::Search);
+        }
         if contains(SCROLLBAR, [SCROLL_WIDTH, ARROW_HEIGHT], local) {
             return Some(Hit::ScrollUp);
         }
@@ -537,7 +694,8 @@ impl QuestWindow {
     }
 
     /// The tabs, Close, the rows and the listed quests' tracker checks on screen (for the test driver):
-    /// "quest_tab:<n>", "quest_close", "quest_row_<id>", "quest_switch_<id>".
+    /// "quest_tab:<n>", "quest_close", "quest_filter:<name>", "quest_search_box", "quest_search", "quest_row_<id>",
+    /// "quest_switch_<id>", "quest_lock_<id>".
     pub fn button_boxes(&self, quests: &[Quest], texts: &HashMap<u32, QuestText>) -> Vec<(String, [f32; 4])> {
         if !self.frame.open {
             return Vec::new();
@@ -549,6 +707,10 @@ impl QuestWindow {
         let mut boxes: Vec<(String, [f32; 4])> =
             TAB_TOPS.iter().enumerate().map(|(tab, &top)| (format!("quest_tab:{tab}"), place([0.0, top], TAB_SIZE))).collect();
         boxes.push(("quest_close".into(), place(CLOSE, CLOSE_SIZE)));
+        boxes.extend(FILTER_NAMES.iter().enumerate().map(|(filter, name)| (format!("quest_filter:{name}"), place(filter_at(filter), FILTER_SIZE))));
+        let [x, y, w, h] = SEARCH_BOX;
+        boxes.push(("quest_search_box".into(), place([x, y], [w, h])));
+        boxes.push(("quest_search".into(), place(SEARCH_BUTTON, SEARCH_BUTTON_SIZE)));
         if self.picked.is_some() {
             let [x, y] = self.detail.at(DETAIL_CLOSE);
             boxes.push(("quest_detail_close".into(), [x, y, CLOSE_SIZE[0], CLOSE_SIZE[1]]));
@@ -561,6 +723,7 @@ impl QuestWindow {
             boxes.push((format!("quest_row_{}", quest.id), place(top, ROW)));
             if self.tab != WAITING {
                 boxes.push((format!("quest_switch_{}", quest.id), place(offset(top, CHECK), CHECK_SIZE)));
+                boxes.push((format!("quest_lock_{}", quest.id), place(offset(top, LOCK), LOCK_SIZE)));
             }
         }
         boxes
@@ -590,6 +753,13 @@ impl QuestWindow {
             Hit::Close => self.close(),
             Hit::ScrollUp => self.scroll_by(-1, quests, texts),
             Hit::ScrollDown => self.scroll_by(1, quests, texts),
+            // A filter, Enter or the search button: the filter and the text apply to every tab.
+            Hit::Filter(filter) => {
+                self.filter = filter;
+                self.apply_search();
+            }
+            Hit::SearchBox => self.typing = true,
+            Hit::Search => self.apply_search(),
             Hit::DetailClose => self.picked = None,
             Hit::DetailNpc | Hit::Detail | Hit::Window => {}
         }
@@ -653,6 +823,27 @@ impl QuestWindow {
         layer.texts.push((message(TITLE).to_owned(), at([BAR[0] + BAR_TITLE, title_top]), [0, 0, 0]));
         layer.sprites.push((&assets.background, at(BACKGROUND), assets.background.size));
         layer.sprites.push((&assets.search, at(SEARCH_BAR), assets.search.size));
+        // The filters (one on), with their tooltips; the see-through box, its rim and text; the search button.
+        for (filter, images) in assets.filters.iter().enumerate() {
+            let image = &images[usize::from(filter == self.filter)];
+            layer.sprites.push((image, at(filter_at(filter)), FILTER_SIZE));
+            let tip = &self.filters.tooltips[filter];
+            if hit == Some(Hit::Filter(filter)) && !tip.is_empty() {
+                window::tooltip(tooltip, chrome, font, tip, offset(pointer.0, [12.0, 12.0]), [255; 3]);
+            }
+        }
+        let [x, y, w, h] = SEARCH_BOX;
+        for (corner, size) in [([x, y], [w, 1.0]), ([x, y + h - 1.0], [w, 1.0]), ([x, y], [1.0, h]), ([x + w - 1.0, y], [1.0, h])] {
+            layer.sprites.push((&assets.rim, at(corner), size));
+        }
+        let cursor = if self.typing { "|" } else { "" };
+        let box_text = window::fit(font, &format!("{}{cursor}", self.search), w - 4.0);
+        layer.texts.push((box_text, at([x + 2.0, y + ((h - font.line_height()) / 2.0).floor()]), [0, 0, 0]));
+        let look = match hit {
+            Some(Hit::Search) => 1 + usize::from(pointer.1),
+            _ => 0,
+        };
+        layer.sprites.push((&assets.search_button[look], at(SEARCH_BUTTON), SEARCH_BUTTON_SIZE));
         for (tab, &top) in TAB_TOPS.iter().enumerate() {
             let image = &assets.tabs[tab][usize::from(tab == self.tab)];
             layer.sprites.push((image, at([0.0, top]), TAB_SIZE));
@@ -843,6 +1034,72 @@ mod tests {
         let quests = [quest(9, true), quest(5, true), quest(7, true)];
         let window = QuestWindow::default();
         assert_eq!(window.shown(&quests, &texts).iter().map(|quest| quest.id).collect::<Vec<_>>(), [5, 7, 9]);
+    }
+
+    #[test]
+    fn filters_by_icon_and_searches_titles_and_summaries() {
+        let filters = Filters::default();
+        // All, Normal, Sub, Daily, Event, Etc on each icon, an unknown one and none.
+        let kept = |icon: Option<&str>| (0..6).filter(|&button| filters.keeps(button, icon)).collect::<Vec<_>>();
+        assert_eq!(kept(Some("ico_ep.bmp")), [0, 1]);
+        assert_eq!(kept(Some("ICO_GQ.BMP")), [0, 1]);
+        assert_eq!(kept(Some("ico_lq")), [0, 1]);
+        assert_eq!(kept(Some("ico_sub.bmp")), [0, 2]);
+        assert_eq!(kept(Some("ico_dq.bmp")), [0, 3]);
+        assert_eq!(kept(Some("ico_ev.bmp")), [0, 4]);
+        assert_eq!(kept(Some("ico_other.bmp")), [0, 5]);
+        assert_eq!(kept(None), [0, 5]);
+        // A plain case-sensitive substring of the title or summary; an empty search passes all.
+        let text = QuestText { title: "Hunting Porings".into(), summary: "Poring x10".into(), ..QuestText::default() };
+        assert!(found(Some(&text), "Hunt") && found(Some(&text), "x10") && found(Some(&text), ""));
+        assert!(!found(Some(&text), "hunt") && !found(None, "Hunt") && found(None, ""));
+    }
+
+    #[test]
+    fn narrows_every_tab_and_takes_twenty_characters() {
+        let texts: HashMap<u32, QuestText> = [
+            (1, QuestText { title: "Daily hunt".into(), icon: Some("ico_dq.bmp".into()), ..Default::default() }),
+            (2, QuestText { title: "Story".into(), icon: Some("ico_ep.bmp".into()), ..Default::default() }),
+        ]
+        .into();
+        let quests = [quest(1, true), quest(2, true), quest(3, false)];
+        let mut window = QuestWindow::default();
+        window.open();
+        let ids = |window: &QuestWindow| window.shown(&quests, &texts).iter().map(|quest| quest.id).collect::<Vec<_>>();
+        window.click(Hit::Filter(3), &quests, &texts);
+        assert_eq!(ids(&window), [1]);
+        window.click(Hit::Filter(1), &quests, &texts);
+        assert_eq!(ids(&window), [2]);
+        window.click(Hit::Filter(0), &quests, &texts);
+        assert_eq!(ids(&window), [1, 2]);
+        // Typed text applies on Enter (or the button), on every tab.
+        window.type_text("Story");
+        assert_eq!(ids(&window), [1, 2]);
+        window.apply_search();
+        assert_eq!(ids(&window), [2]);
+        window.tab = 2;
+        assert!(ids(&window).is_empty());
+        window.type_text("abcdefghijklmnopqrstuvwxyz");
+        assert_eq!(window.search.chars().count(), 20);
+        // Opening again: All with an empty box.
+        window.open();
+        assert_eq!((window.filter, window.search.as_str(), window.applied.as_str()), (0, "", ""));
+    }
+
+    #[test]
+    fn shows_a_linked_quest_on_its_tab() {
+        let quests: Vec<Quest> = (1..=12).map(|id| quest(id, true)).chain([quest(20, false)]).collect();
+        let texts = HashMap::new();
+        let mut window = QuestWindow::default();
+        // On hold, in view and picked; then the twelfth row of In progress, scrolled to.
+        assert!(window.show_quest(20, &quests, &texts));
+        assert_eq!((window.frame.open, window.tab, window.picked), (true, 2, Some(20)));
+        assert!(window.show_quest(12, &quests, &texts));
+        assert_eq!((window.tab, window.picked), (0, Some(12)));
+        assert!((window.scroll..window.scroll + ROWS).contains(&11));
+        // A quest no list has.
+        assert!(!window.show_quest(99, &quests, &texts));
+        assert_eq!(window.tab, 0);
     }
 
     #[test]

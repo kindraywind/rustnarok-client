@@ -1,6 +1,7 @@
 // Two quests for the quest-tracker scenario (issue #219): a hunt (4275, ten Drops) and one without hunts (1001). Load it
 // with @loadnpc <absolute path>, take it out with @unloadnpcfile <absolute path>. Whisper npc:RustnarokQuests "give" or
-// "clear"; "more" and "less" add and take out four quests more (1002 to 1005, issue #320).
+// "clear"; "more" and "less" add and take out four quests more (1002 to 1005, issue #320); "link" says a line with a
+// link to the Drops quest and one to a quest nobody has (issue #535).
 -	script	RustnarokQuests	-1,{
 	end;
 OnWhisperGlobal:
@@ -20,6 +21,9 @@ OnWhisperGlobal:
 		erasequest 1003;
 		erasequest 1004;
 		erasequest 1005;
+	} else if (@whispervar0$ == "link") {
+		mes "Go on with the <QUEST>Drops hunt<INFO>4275</INFO></QUEST> or the <QUEST>lost one<INFO>9999</INFO></QUEST>.";
+		close;
 	}
 	end;
 }

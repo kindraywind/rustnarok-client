@@ -929,7 +929,7 @@ impl Game {
             BoxQuestion::GuildLeader { account, character, .. } => {
                 let _ = self.session.move_members(&[(account, character, 0)]);
             }
-            BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) => {}
+            BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) | BoxQuestion::Said(_) => {}
         }
     }
 
@@ -1773,6 +1773,7 @@ impl Game {
             || self.storage.typing
             || self.pet_window.typing
             || self.homunculus_window.typing
+            || self.quest_window.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
             || self.talks.typing()
             || self.away_prompt.is_some()
@@ -2463,8 +2464,8 @@ impl Game {
         push(GuildCreate, self.guild_companion.create.as_ref().is_some_and(|create| !create.disband));
         push(GuildDisband, self.guild_companion.create.as_ref().is_some_and(|create| create.disband));
         push(GuildTip, self.guild_companion.tip.is_some());
-        push(PartyAsked, self.question_box.as_ref().is_some_and(|asked| !matches!(asked, BoxQuestion::Notice(_))));
-        push(Notice, matches!(self.question_box, Some(BoxQuestion::Notice(_))));
+        push(PartyAsked, self.question_box.as_ref().is_some_and(|asked| !matches!(asked, BoxQuestion::Notice(_) | BoxQuestion::Said(_))));
+        push(Notice, matches!(self.question_box, Some(BoxQuestion::Notice(_) | BoxQuestion::Said(_))));
         push(DismissAsked, self.dismiss_asked);
         push(HomunculusAsked, self.homunculus_asked.is_some());
         push(PetAsked, self.pet_asked.is_some());
