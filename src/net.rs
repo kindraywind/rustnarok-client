@@ -430,6 +430,8 @@ pub struct Character {
     pub hair_color: u16,
     pub clothes_color: u16,
     pub robe: u16,
+    /// 2nd outfit: 1, or the outfit's job id. 0 is the normal body.
+    pub body: u16,
     /// Option bits (rathena's OPTION_*: mounts, outfits, ...).
     pub option: u32,
     pub name: String,
@@ -814,6 +816,7 @@ fn decode_character(info: &[u8]) -> Character {
         speed: i16_at(82),
         job: i16_at(84),
         hair: i16_at(86),
+        body: i16_at(88),
         weapon: i16_at(90),
         base_level: i16_at(92),
         head_bottom: i16_at(96),
@@ -1555,6 +1558,8 @@ pub const LOOK_HAIR_COLOR: u8 = 6;
 pub const LOOK_CLOTHES_COLOR: u8 = 7;
 pub const LOOK_SHIELD: u8 = 8;
 pub const LOOK_ROBE: u8 = 12;
+/// 2nd outfit (rathena's LOOK_BODY2).
+pub const LOOK_BODY: u8 = 13;
 
 /// Item types as the server sends them (rathena's item_types).
 pub const ITEM_HEALING: u8 = 0;
@@ -1612,6 +1617,8 @@ pub struct Unit {
     pub health_state: u16,
     /// Option bits (rathena's OPTION_*: mounts, outfits, hiding, ...).
     pub option: u32,
+    /// 2nd outfit, the u16 just before the name: 1 or an outfit job id.
+    pub body: u16,
     /// A player's guild and its emblem's version (0 for none).
     pub guild: u32,
     pub emblem: u32,
@@ -3105,6 +3112,7 @@ fn decode_unit(packet: &[u8], layout: &UnitLayout, position: ([u16; 2], u8)) -> 
         position: position.0,
         direction: position.1,
         level: u16_at(layout.level),
+        body: u16_at(layout.name.saturating_sub(2)),
         name: c_string(&packet[layout.name..(layout.name + 24).min(packet.len())]),
         posture: layout.state.and_then(|state| packet.get(state).copied()),
         spawned: false,
