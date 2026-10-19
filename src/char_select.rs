@@ -71,25 +71,65 @@ const RENAME_CHOICE: usize = 2165;
 /// "Ready to change character slot in.(%d)", the moves left, shown while picking where to move.
 const MOVES_LEFT_MESSAGE: usize = 2025;
 
-/// The buttons under the stats; which ones show depends on the selected character's deletion.
+/// The buttons under the stats; which ones show depends on the selected card's deletion.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Button {
-    // ponytail: the client's picture shows "과금정보" (billing) first; rathena has no billing, so it does nothing.
-    Billing,
-    Reserve,
-    CancelReserve,
+    /// Reserves the deletion at once, without a question.
+    DeleteCharacter,
+    CancelDeletion,
+    Notice,
+    /// Asks, then the birthdate.
     Delete,
 }
 
 impl Button {
     fn message(self) -> usize {
         match self {
-            Button::Billing => 3338,
-            Button::Reserve => 3339,
-            Button::CancelReserve => 3340,
+            Button::DeleteCharacter => 3339,
+            Button::CancelDeletion => 3340,
+            Button::Notice => 3344,
             Button::Delete => 3342,
         }
     }
+}
+
+/// The buttons' labels.
+const BUTTON_LABEL: [u8; 3] = [0x31, 0x31, 0x31];
+/// Notice's box.
+// ponytail: the game picks one of messages 533–541 by the account's billing kind; rathena has none.
+pub const NOTICE_MESSAGE: usize = 100;
+
+/// The line HC_DELETE_CHAR3_RESERVED's result shows, or none (2, and 1: reserved).
+pub fn reserve_answer(result: u32) -> Option<usize> {
+    match result {
+        1 | 2 => None,
+        3 => Some(1817),
+        4 => Some(1818),
+        5 => Some(1819),
+        6 => Some(2981),
+        7 => Some(3092),
+        _ => Some(1816),
+    }
+}
+
+/// The line HC_DELETE_CHAR3's result (not 1: deleted) shows.
+pub fn delete_answer(result: u32) -> usize {
+    match result {
+        2 => 1820,
+        3 => 1817,
+        4 => 1821,
+        5 => 1822,
+        6 => 2369,
+        7 => 301,
+        8 => 3044,
+        _ => 1816,
+    }
+}
+
+/// The card character select opens on for the last slot picked: its page (the first when that page doesn't exist)
+/// and its place on it.
+pub fn opening_slot(saved: usize, pages: usize) -> usize {
+    if saved / PER_PAGE < pages { saved } else { saved % PER_PAGE }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -105,6 +145,8 @@ pub enum Hit {
 #[derive(Debug, PartialEq)]
 pub enum Action {
     Start,
+    /// Notice's box.
+    Notice,
     /// Make a character in this slot.
     Make(u8),
     Reserve(u32),
@@ -261,6 +303,8 @@ pub struct Select {
     pub moving: Option<usize>,
     /// Where a move sent to the server goes, for the selection to follow once it's done.
     pub moved_to: Option<usize>,
+    /// The selection last kept (to keep each change).
+    kept: Option<usize>,
 }
 
 impl Select {
@@ -283,6 +327,7 @@ impl Select {
             menu: None,
             moving: None,
             moved_to: None,
+            kept: None,
         }
     }
 
@@ -304,8 +349,24 @@ impl Select {
         self.selected / PER_PAGE
     }
 
-    fn pages(&self) -> usize {
+    pub fn pages(&self) -> usize {
         self.slots.div_ceil(PER_PAGE).max(1)
+    }
+
+    /// The two buttons under the stats and Game Start on screen (for the test driver): "char_top", "char_bottom",
+    /// "char_start".
+    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+        let info = Self::at(INFO);
+        let place = |local: [f32; 2], size: [f32; 2]| {
+            let [x, y] = offset(info, local);
+            [x, y, size[0], size[1]]
+        };
+        vec![("char_top", place(BUTTONS[0], [131.0, 24.0])), ("char_bottom", place(BUTTONS[1], [131.0, 24.0])), ("char_start", place(START, [165.0, 110.0]))]
+    }
+
+    /// The selection when it changed since last asked, to keep.
+    pub fn changed_selection(&mut self) -> Option<usize> {
+        (self.kept != Some(self.selected)).then(|| *self.kept.insert(self.selected))
     }
 
     fn index_in(&self, slot: usize) -> Option<usize> {
@@ -343,9 +404,9 @@ impl Select {
 
     fn buttons(&self) -> [Button; 2] {
         match self.selected_character().map(|character| self.deletion(character.id)) {
-            Some(Deletion::Ready) => [Button::CancelReserve, Button::Delete],
-            Some(Deletion::Waiting(_)) => [Button::Billing, Button::CancelReserve],
-            _ => [Button::Billing, Button::Reserve],
+            Some(Deletion::Ready) => [Button::CancelDeletion, Button::Delete],
+            Some(Deletion::Waiting(_)) => [Button::CancelDeletion, Button::Notice],
+            _ => [Button::DeleteCharacter, Button::Notice],
         }
     }
 
@@ -435,10 +496,13 @@ impl Select {
                     return self.enter();
                 }
             }
-            Hit::Card(_) | Hit::Button(Button::Billing) => {}
-            Hit::Button(Button::Reserve) => return character.map(Action::Reserve),
-            Hit::Button(Button::CancelReserve) => return character.map(Action::CancelReserve),
+            Hit::Card(_) => {}
+            Hit::Button(Button::DeleteCharacter) => return character.map(Action::Reserve),
+            Hit::Button(Button::CancelDeletion) => return character.map(Action::CancelReserve),
             Hit::Button(Button::Delete) => return character.map(Action::Delete),
+            Hit::Button(Button::Notice) => return Some(Action::Notice),
+            // Game Start: the character, or on an empty usable card, making one there.
+            Hit::Start if self.selected_character().is_none() => return (self.selected < self.slots).then_some(Action::Make(self.selected as u8)),
             Hit::Start => return self.startable().then_some(Action::Start),
             Hit::Page(step) => {
                 let page = self.page() as isize + step;
@@ -583,7 +647,7 @@ impl Select {
             let label = message(button.message());
             let text =
                 offset(info, [place[0] + ((image.size[0] - font.width(label)) / 2.0).floor(), place[1] + ((image.size[1] - font.line_height()) / 2.0).floor()]);
-            layer.texts.push((label.to_owned(), text, [0, 0, 0]));
+            layer.texts.push((label.to_owned(), text, BUTTON_LABEL));
         }
         let start = if self.startable() { 1 + look(hit == Some(Hit::Start)) } else { 0 };
         let button = &assets.start[start];
@@ -635,6 +699,45 @@ fn job_icon(job: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offers_the_buttons_by_deletion() {
+        let mut select = Select::new(vec![Character { id: 7, slot: 0, ..Character::default() }], Vec::new(), 15);
+        select.pin_verified = true;
+        // No deletion: Delete Character (at once) and Notice.
+        assert_eq!(select.buttons(), [Button::DeleteCharacter, Button::Notice]);
+        assert_eq!(select.buttons().map(Button::message), [3339, 3344]);
+        assert_eq!(select.click(Hit::Button(Button::DeleteCharacter)), Some(Action::Reserve(7)));
+        assert_eq!(select.click(Hit::Button(Button::Notice)), Some(Action::Notice));
+        // Waiting: Cancel Deletion and Notice; past: Cancel Deletion and Delete.
+        select.set_deletion(7, Some(90));
+        assert_eq!(select.buttons(), [Button::CancelDeletion, Button::Notice]);
+        assert_eq!(select.click(Hit::Button(Button::CancelDeletion)), Some(Action::CancelReserve(7)));
+        select.set_deletion(7, Some(-5));
+        assert_eq!(select.buttons(), [Button::CancelDeletion, Button::Delete]);
+        assert_eq!(select.click(Hit::Button(Button::Delete)), Some(Action::Delete(7)));
+        // With a deletion date Game Start does nothing; on an empty card it makes one there; Delete Character there,
+        // nothing.
+        assert_eq!(select.click(Hit::Start), None);
+        select.click(Hit::Card(3));
+        assert_eq!(select.buttons(), [Button::DeleteCharacter, Button::Notice]);
+        assert_eq!(select.click(Hit::Start), Some(Action::Make(3)));
+        assert_eq!(select.click(Hit::Button(Button::DeleteCharacter)), None);
+    }
+
+    #[test]
+    fn keeps_the_last_slot_and_answers_deletions() {
+        // Its page and place; a page that doesn't exist, the first.
+        assert_eq!([opening_slot(1, 1), opening_slot(17, 2), opening_slot(17, 1), opening_slot(46, 3)], [1, 17, 2, 1]);
+        let mut select = Select::new(Vec::new(), Vec::new(), 15);
+        assert_eq!(select.changed_selection(), Some(0));
+        assert_eq!(select.changed_selection(), None);
+        select.click(Hit::Card(1));
+        assert_eq!(select.changed_selection(), Some(1));
+        // The answers' lines.
+        assert_eq!([1, 2, 3, 4, 5, 6, 7, 9].map(reserve_answer), [None, None, Some(1817), Some(1818), Some(1819), Some(2981), Some(3092), Some(1816)]);
+        assert_eq!([2, 3, 4, 5, 6, 7, 8, 9].map(delete_answer), [1820, 1817, 1821, 1822, 2369, 301, 3044, 1816]);
+    }
 
     #[test]
     fn walks_the_deletion_states() {

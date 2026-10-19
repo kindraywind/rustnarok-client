@@ -55,6 +55,12 @@ impl App {
         // Character figures decode their textures first (mutably), then the frame borrows them.
         let poses = match self.scene.base_mut() {
             Scene::CharSelect(select) => {
+                // Each change of the selection is kept, for the next time character select opens.
+                if let Some(slot) = select.changed_selection()
+                    && let Some(path) = settings_path("char_slot")
+                {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, slot.to_string()));
+                }
                 for path in select.job_icons() {
                     self.icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(&self.grf, &path, false).ok());
                 }

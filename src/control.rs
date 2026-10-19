@@ -839,6 +839,7 @@ fn state(app: &mut App) -> Value {
                 .into_iter()
                 .map(|(slot, area)| json!({"kind": "char_slot", "slot": slot, "box": area}))
                 .chain(select.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
+                .chain(select.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
                 .collect();
         }
         Scene::Game(game) => state["game"] = game_state(app, game),

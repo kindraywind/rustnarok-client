@@ -29,9 +29,11 @@ impl App {
                 if let Scene::CharSelect(previous) = self.scene.base() {
                     select.selected = previous.selected;
                     select.pin_verified = previous.pin_verified;
-                } else if let Some(slot) = self.played_slot.take() {
-                    // Back from the game: the character just played.
-                    select.selected = slot;
+                } else if let Some(saved) =
+                    settings_path("char_slot").and_then(|path| std::fs::read_to_string(path).ok()).and_then(|text| text.trim().parse().ok())
+                {
+                    // The last card picked, kept between runs (the character just played, back from the game).
+                    select.selected = char_select::opening_slot(saved, select.pages());
                 }
                 let autostart = std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok().and_then(|slot| slot.parse::<usize>().ok());
                 // Only the first list: later ones (after a move or a rename) keep the player's selection.
@@ -55,16 +57,13 @@ impl App {
                 self.settle();
                 match (result, &mut self.scene) {
                     (1, Scene::CharSelect(select)) => select.set_deletion(id, Some(seconds)),
-                    // Already reserved, a database error, in a guild, in a party.
+                    // Already reserved, a database error, in a guild, in a party, and the rest; 2 says nothing.
                     (code, _) => {
-                        let text = self.message_text(match code {
-                            3 => 1817,
-                            4 => 1818,
-                            5 => 1819,
-                            _ => 1816,
-                        });
-                        let back = std::mem::replace(&mut self.scene, Scene::Login);
-                        self.message(text, back);
+                        if let Some(line) = char_select::reserve_answer(code) {
+                            let text = self.message_text(line);
+                            let back = std::mem::replace(&mut self.scene, Scene::Login);
+                            self.message(text, back);
+                        }
                     }
                 }
             }
@@ -116,13 +115,7 @@ impl App {
             NetEvent::Char(CharEvent::Deleted { result: 1, .. }) => {}
             NetEvent::Char(CharEvent::Deleted { result, .. }) => {
                 self.settle();
-                let text = self.message_text(match result {
-                    2 => 1820,
-                    3 => 1817,
-                    4 => 1821,
-                    5 => 1822,
-                    _ => 1816,
-                });
+                let text = self.message_text(char_select::delete_answer(result));
                 let back = std::mem::replace(&mut self.scene, Scene::Login);
                 self.message(text, back);
             }
@@ -1997,7 +1990,7 @@ impl App {
                 let Some(account) = self.account.clone() else { return };
                 let proxy = self.proxy.clone();
                 self.scene = Scene::Login;
-                self.played_slot = self.playing.take().map(|character| usize::from(character.slot));
+                self.playing = None;
                 self.returned = true;
                 self.play_music(None);
                 match CharSession::connect(&account.char_servers[self.char_server.min(account.char_servers.len() - 1)], &account, move |event| {
