@@ -11,11 +11,12 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
+use crate::prims::{balls, stone};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
 /// A quad's corners as texture coordinates: top left, top right, bottom right, bottom left.
-const QUAD_UV: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+pub(crate) const QUAD_UV: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
 /// An STR moves on one frame each 16 ms tick, whatever its file says.
 const STR_TICK_MS: f32 = 16.0;
@@ -1031,9 +1032,12 @@ pub struct Effects {
     unit_kinds: HashMap<u32, u32>,
     hits: Vec<HitSpark>,
     auras: Vec<Banded>,
-    /// The game's hand-made effects (Soul Strike's ghosts), and the ghost sprite's layers.
+    /// The game's hand-made effects (Soul Strike's ghosts, Fire Ball's balls, spikes…), the ghost sprite's layers, the
+    /// fire ball's frame by frame, and the camera's turn in degrees (fire balls turn with it).
     prims: crate::prims::Prims,
     ghost: Vec<Placed>,
+    fire_ball: Vec<Vec<Placed>>,
+    yaw: f32,
 }
 
 /// A whole number in `from..=to`.
@@ -1179,14 +1183,23 @@ pub fn unit_hit_effect(skill: u16) -> Option<u32> {
 
 /// EF_FROSTDIVER: Frost Diver's line of ice spikes from the caster to the target; EF_FROSTDIVER2: the spikes round the
 /// target with its first hit (`prims`).
-pub const FROST_DIVER: u32 = 27;
+const FROST_DIVER: u32 = 27;
 pub const FROST_DIVER_HIT: u32 = 28;
 
 /// EF_COLDHIT: Cold Bolt's, Frost Diver's and Storm Gust's hit, ice shards and smoke drawn on the screen (`prims`).
 pub const COLD_HIT: u32 = 51;
 
 /// EF_SOULSTRIKE: ghosts from the caster to the target, a hit each (`prims`).
-pub const SOUL_STRIKE: u32 = 15;
+const SOUL_STRIKE: u32 = 15;
+/// EF_FIREBALL, EF_YUFITEL (Jupitel Thunder) and EF_GRIMTOOTH (`prims`).
+const FIRE_BALL: u32 = 24;
+const JUPITEL: u32 = 93;
+const GRIMTOOTH: u32 = 123;
+/// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
+pub const AIMED: [u32; 5] = [SOUL_STRIKE, FIRE_BALL, FROST_DIVER, JUPITEL, GRIMTOOTH];
+/// EF_EARTHSPIKE and EF_HEAVENSDRIVE: stone spikes where they play (`prims`).
+const EARTH_SPIKE: u32 = 79;
+const HEAVENS_DRIVE: u32 = 142;
 
 /// Cold Bolt's and Fire Bolt's falling arrows (EF_ICEARROW, EF_FIREARROW).
 const BOLTS: [u32; 2] = [26, 31];
@@ -1296,6 +1309,10 @@ impl Effects {
             self.animations.push(animation);
         }
         self.play_quakes(table, id, now);
+        if matches!(id, EARTH_SPIKE | HEAVENS_DRIVE) {
+            self.textures.entry(stone::STONE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, stone::STONE, true).ok());
+            if id == EARTH_SPIKE { self.prims.stone.earth_spike(at, now) } else { self.prims.stone.heavens_drive(at, now) }
+        }
         // Heal, the teleport, the arrival and the logout: bands made in code (a cast's aura comes by `play_aura`).
         if is_banded(id) && !is_cast_aura(id) {
             for path in [format!("data\\texture\\effect\\{}.tga", aura_look(id).0), SPARKLE_TEXTURE.to_owned()] {
@@ -1425,14 +1442,43 @@ impl Effects {
     }
 
     /// Frost Diver from `from` at `to`: its line of ice spikes.
-    pub fn frost_diver(&mut self, gpu: &Gpu, grf: &Grf, from: Vector, to: Vector, now: Instant) {
+    fn frost_diver(&mut self, gpu: &Gpu, grf: &Grf, from: Vector, to: Vector, now: Instant) {
         self.textures.entry(crate::prims::ICE_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crate::prims::ICE_TEXTURE, true).ok());
         self.prims.frost_diver(from, to, now, |n| pick(0, n.saturating_sub(1)));
     }
 
-    /// Soul Strike from `from` at `to` with `hits` hits: a ghost a hit, each with its sound as it leaves.
+    /// An effect launched on the caster at `from`, aimed at `to` (one of `AIMED`), told the skill's hit count.
     #[allow(clippy::too_many_arguments)]
-    pub fn soul_strike(&mut self, grf: &Grf, from: Vector, to: Vector, hits: u16, now: Instant) {
+    pub fn aimed(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, from: Vector, to: Vector, hits: u16, now: Instant) {
+        match id {
+            SOUL_STRIKE => self.soul_strike(grf, from, to, hits, now),
+            FROST_DIVER => self.frost_diver(gpu, grf, from, to, now),
+            FIRE_BALL => {
+                self.sprites.entry(balls::FIRE_BALL_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, balls::FIRE_BALL_SPRITE));
+                // Each ball sounds as it leaves.
+                for tick in balls::FIRE_BALL_TICKS {
+                    self.play_sounds(table, id, from, now + crate::prims::TICK * tick);
+                }
+                self.prims.balls.fire_ball(from, to, now);
+            }
+            JUPITEL => {
+                for path in std::iter::once(balls::THUNDER_CORE).chain(balls::THUNDER_BALL) {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.play_sounds(table, id, from, now);
+                self.prims.balls.thunder(from, to, now);
+            }
+            GRIMTOOTH => {
+                self.textures.entry(stone::STONE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, stone::STONE, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.stone.grimtooth(from, to, now);
+            }
+            _ => {}
+        }
+    }
+
+    /// Soul Strike from `from` at `to` with `hits` hits: a ghost a hit, each with its sound as it leaves.
+    fn soul_strike(&mut self, grf: &Grf, from: Vector, to: Vector, hits: u16, now: Instant) {
         self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
         for at in crate::prims::ghost_times(hits) {
             self.sounds.push((now + at, "effect\\EF_SoulStrike.wav".to_owned(), from));
@@ -1447,6 +1493,11 @@ impl Effects {
         if let Some(Some(sprite)) = self.sprites.get_mut(crate::prims::GHOST_SPRITE) {
             self.ghost = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
         }
+        if let Some(Some(sprite)) = self.sprites.get_mut(balls::FIRE_BALL_SPRITE).filter(|_| self.fire_ball.is_empty()) {
+            let frames = sprite.frames(0).max(1);
+            self.fire_ball = (0..frames).map(|frame| sprite.frame_at(gpu, 0, 0, Timing::Span((frame as f32 + 0.5) / frames as f32))).collect();
+        }
+        self.yaw = yaw.to_degrees();
         for floating in self.floating.iter_mut().filter(|floating| floating.again && floating.end <= now) {
             let period = floating.end.duration_since(floating.start);
             while floating.end <= now {
@@ -1603,7 +1654,8 @@ impl Effects {
             let vertices = spike.faces(tick).into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] }).collect();
             Some((ice?, vertices, false))
         });
-        rings.chain(models).chain(hits).chain(auras).chain(spikes).collect()
+        let stone = self.textures.get(stone::STONE).and_then(Option::as_ref).map(|texture| (texture, self.prims.stone.mesh(), false));
+        rings.chain(models).chain(hits).chain(auras).chain(spikes).chain(stone).collect()
     }
 
     /// What's drawn flat on the screen over units now (COLDHIT's shards and smoke): texture, the unit's feet, and the
@@ -1727,6 +1779,8 @@ impl Effects {
                 }
             }
         }
+        let fire_ball = self.sprites.get(balls::FIRE_BALL_SPRITE).and_then(Option::as_ref);
+        quads.extend(self.prims.balls.quads(fire_ball, &self.fire_ball, &self.textures, self.yaw));
         quads
     }
 }
@@ -2060,6 +2114,10 @@ mod tests {
     #[test]
     fn shakes_restarts_and_multi_shake_effects() {
         let table = Table::load();
+        // Heaven's Drive shakes 650 ms, Earth Spike 200; Jupitel Thunder throws its ball twice.
+        assert_eq!(table.quakes[&142], [(Duration::ZERO, QUAKE_LONG)]);
+        assert_eq!(table.quakes[&79], [(Duration::ZERO, QUAKE_SHORT)]);
+        assert_eq!(table.struck(84), Some(&[(Who::Caster, JUPITEL); 2][..]));
         // 563 (EF_SCREEN_QUAKE): 20 shakes at ticks 0, 5, ..., 95 (every 80 ms), each 650 ms.
         let expected_563: Vec<(Duration, Duration)> = (0..20).map(|step| (Duration::from_millis(step * 80), QUAKE_LONG)).collect();
         assert_eq!(table.quakes[&563], expected_563);

@@ -1,0 +1,331 @@
+//! Spikes the game makes in code (its prim kind 9): open four-sided pyramids that rise out of the ground along their
+//! own axis. Earth Spike's (EF_EARTHSPIKE 79), Heaven's Drive's field (EF_HEAVENSDRIVE 142) and Grimtooth's train
+//! (EF_GRIMTOOTH 123).
+
+use std::time::Instant;
+
+use super::{TICK, passes};
+use crate::effects::pick;
+use crate::world::{MeshVertex, Vector};
+
+/// What the spikes are made of.
+pub const STONE: &str = "data\\texture\\effect\\stone.bmp";
+
+/// Earth Spike's and Heaven's Drive's lengths in ticks (Heaven's Drive raises its 250 by 50 as it starts).
+const EARTH_SPIKE_TICKS: u32 = 250;
+const HEAVENS_DRIVE_TICKS: u32 = 300;
+/// Grimtooth's length: its point walks the whole of it, leaving a spike every 3rd tick.
+const TRAIN_TICKS: u32 = 250;
+const TRAIN_EVERY: u32 = 3;
+/// How far Grimtooth's point walks a tick, and how near the caster must stand to the target for the train to stop
+/// after its first spike (world units).
+const TRAIN_STEP: f32 = 2.0;
+const TRAIN_STOP: f32 = 2.5;
+
+/// A spike: an open pyramid `half` wide each way from its middle at the base and `height` from the base to the apex
+/// along its axis (world units), moving along that axis.
+struct Spike {
+    born: Instant,
+    /// Ticks run, ticks it lives, and ticks it's drawn: its effect ends sooner for one made late (a train's last).
+    age: u32,
+    life: u32,
+    ends: u32,
+    /// Where its base started, and its axes: across, across, and up its length (turned by its yaw and pitch).
+    base: Vector,
+    axes: [Vector; 3],
+    half: f32,
+    height: f32,
+    /// How far it has moved along its axis, its speed a tick and the speed's change a tick.
+    rise: f32,
+    speed: f32,
+    change: f32,
+    /// At this age the speed becomes this and stops changing (Earth Spike's centre, Heaven's Drive's: it settles).
+    turn: Option<(u32, f32)>,
+    /// At this age it stops for good.
+    stop: u32,
+    /// None: it fades out from age `fade` (alpha 0–255). Some: it never fades, and 30 ticks before its end takes this
+    /// speed and change (Heaven's Drive's sink back into the ground).
+    sink: Option<(f32, f32)>,
+    alpha: f32,
+    alpha_step: f32,
+    fade: u32,
+}
+
+/// The axes of a spike turned `yaw` about the vertical, then pitched `pitch` from lying along it (90: upright), in
+/// degrees: the game's x-turn then y-turn, its y down flipped up.
+// ponytail: that a spike moves up its own axis (rises) is how the game's numbers read, not seen in it.
+fn axes(yaw: f32, pitch: f32) -> [Vector; 3] {
+    let (sy, cy) = yaw.to_radians().sin_cos();
+    let (sp, cp) = pitch.to_radians().sin_cos();
+    [[cy, 0.0, -sy], [sp * sy, -cp, sp * cy], [cp * sy, sp, cp * cy]]
+}
+
+/// A random whole number below `n`, as a float.
+fn below(n: u32) -> f32 {
+    pick(0, n - 1) as f32
+}
+
+impl Spike {
+    /// A spike born at `born`, its base `down` units under `at`, turned `[yaw, pitch]`, `[half, height]` big, living
+    /// `life` ticks in an effect that lets it be drawn `left` more; standing still and opaque until told otherwise.
+    fn new(born: Instant, at: Vector, down: f32, [yaw, pitch]: [f32; 2], [half, height]: [f32; 2], life: u32, left: u32) -> Self {
+        // One that would outlive its effect fades out over what the effect has left, from the start.
+        let alpha_step = if life > left + 1 { -254.0 / left.max(1) as f32 } else { 0.0 };
+        Self {
+            born,
+            age: 0,
+            life,
+            ends: life.min(left),
+            base: [at[0], at[1] - down, at[2]],
+            axes: axes(yaw, pitch),
+            half,
+            height,
+            rise: 0.0,
+            speed: 0.0,
+            change: 0.0,
+            turn: None,
+            stop: 0,
+            sink: None,
+            alpha: 254.0,
+            alpha_step,
+            fade: life - 10,
+        }
+    }
+
+    /// One tick: the speed changes and it moves on its axis; then it stops, sinks or fades as told.
+    fn step(&mut self) {
+        let speed = match self.turn {
+            Some((age, speed)) if age == self.age => {
+                self.change = 0.0;
+                speed
+            }
+            _ => self.speed,
+        };
+        self.speed = speed + self.change;
+        self.rise += self.speed;
+        if self.age == self.stop {
+            self.speed = 0.0;
+            self.change = 0.0;
+        }
+        match self.sink {
+            Some((speed, change)) if self.age + 30 == self.life => {
+                self.speed = speed;
+                self.change = change;
+            }
+            Some(_) => {}
+            None => {
+                if self.age == self.fade {
+                    self.alpha_step = -self.alpha / (self.life - self.age) as f32;
+                }
+                self.alpha = (self.alpha + self.alpha_step).clamp(0.0, 254.0);
+            }
+        }
+        self.age += 1;
+    }
+
+    /// Its four faces: base corner, apex, base corner, with the texture across them a fifth at a time.
+    fn faces(&self) -> [MeshVertex; 12] {
+        let [across, side, up] = self.axes;
+        let point =
+            |x: f32, y: f32, z: f32| -> Vector { std::array::from_fn(|axis| self.base[axis] + across[axis] * x + side[axis] * y + up[axis] * (self.rise + z)) };
+        // ponytail: a spike that never fades draws fully opaque (the game leaves its colour white, alpha 255).
+        let alpha = if self.sink.is_some() { 1.0 } else { self.alpha / 255.0 };
+        let tint = [1.0, 1.0, 1.0, alpha];
+        let [s, h] = [self.half, self.height];
+        let apex = point(0.0, 0.0, h);
+        let sides = [[[-s, -s], [s, -s]], [[-s, -s], [-s, s]], [[-s, s], [s, s]], [[s, s], [s, -s]]];
+        let mut faces = [MeshVertex { position: apex, uv: [0.0; 2], tint }; 12];
+        for (face, [[ax, ay], [cx, cy]]) in sides.into_iter().enumerate() {
+            let u = face as f32 * 0.2;
+            faces[face * 3] = MeshVertex { position: point(ax, ay, 0.0), uv: [u, 1.0], tint };
+            faces[face * 3 + 1].uv = [u, 0.0];
+            faces[face * 3 + 2] = MeshVertex { position: point(cx, cy, 0.0), uv: [u + 0.2, 1.0], tint };
+        }
+        faces
+    }
+}
+
+/// Grimtooth's train: from where the caster stood, a point walks toward where the target stood and on past it.
+struct Train {
+    start: Instant,
+    /// Ticks run.
+    ticks: u32,
+    from: Vector,
+    /// The way it walks across the ground.
+    way: [f32; 2],
+    /// Stops after its first spike (the caster stood on the target).
+    short: bool,
+}
+
+/// The spikes standing and the trains leaving them.
+#[derive(Default)]
+pub struct Stone {
+    trains: Vec<Train>,
+    spikes: Vec<Spike>,
+}
+
+impl Stone {
+    /// Earth Spike at `at` from `now`: a centre spike that rises and settles back a little, never fading, and six
+    /// leaning outer ones round it that push up a little and fade over their last 10 ticks. All stand 240 ticks.
+    pub fn earth_spike(&mut self, at: Vector, now: Instant) {
+        // ponytail: the spikes stand where the target stood; whether the game's follow it isn't known.
+        let left = EARTH_SPIKE_TICKS - 1;
+        let size = [3.0 + below(50) / 100.0, 18.0];
+        let centre = Spike::new(now, at, 10.0, [below(360), 80.0 + below(20)], size, 240, left);
+        self.spikes.push(Spike { speed: 1.0, change: 0.01, turn: Some((12, -1.2)), stop: 15, sink: Some((0.0, 0.0)), ..centre });
+        // Each at a random way out, its lean in a widening random range.
+        for k in 1..=6 {
+            let (sin, cos) = below(360).to_radians().sin_cos();
+            let at = [at[0] + 3.5 * sin, at[1], at[2] - 3.5 * cos];
+            let yaw = ((60 * (k - 1)) as f32 + below(60 * k)).min(360.0);
+            let outer = Spike::new(now, at, 20.0, [yaw, 100.0], [4.0 + below(100) / 100.0, 20.0], 240, left);
+            self.spikes.push(Spike { speed: 1.5, stop: 2, alpha: 250.0, ..outer });
+        }
+    }
+
+    /// Heaven's Drive at `at` from `now`: 25 spikes on a 5 by 5 grid a cell apart, rising for 11 ticks and settling
+    /// back a little, standing unfaded and sinking into the ground over their last 30 ticks of 290 to 319 (the effect
+    /// ends at 299).
+    pub fn heavens_drive(&mut self, at: Vector, now: Instant) {
+        // ponytail: the effect lives its 300 ticks; whether the game's launcher (260 ticks) cuts it short isn't known.
+        for x in [-10.0, -5.0, 0.0, 5.0, 10.0] {
+            for z in [-10.0, -5.0, 0.0, 5.0, 10.0] {
+                let size = [3.0 + below(50) / 100.0, 9.0 + (below(60) + 1.0) / 10.0];
+                let life = HEAVENS_DRIVE_TICKS - 10 + pick(0, 29);
+                let spike = Spike::new(now, [at[0] + x, at[1], at[2] + z], 10.0, [below(360), 80.0 + below(20)], size, life, HEAVENS_DRIVE_TICKS - 1);
+                self.spikes.push(Spike { speed: 1.0, change: 0.01, turn: Some((11, -1.2)), stop: 14, sink: Some((-1.0, -0.01)), ..spike });
+            }
+        }
+    }
+
+    /// Grimtooth from `from` toward `to` from `now`: a spike every 3rd tick along the way, 6 units apart, for the
+    /// effect's whole 250 ticks, on past the target; just one when the caster stands within 2.5 units of it.
+    pub fn grimtooth(&mut self, from: Vector, to: Vector, now: Instant) {
+        // ponytail: running about 500 units past the target is how the game's code reads, not seen in it; straight at
+        // the target, where the game's turn truncates to whole degrees, 1–2° off.
+        let [dx, dz] = [to[0] - from[0], to[2] - from[2]];
+        let distance = f32::hypot(dx, dz);
+        let way = if distance > 0.0 { [dx / distance, dz / distance] } else { [0.0, 1.0] };
+        self.trains.push(Train { start: now, ticks: 0, from, way, short: distance <= TRAIN_STOP });
+    }
+
+    /// Runs the trains and the spikes up to `now`, a tick at a time.
+    pub fn advance(&mut self, now: Instant) {
+        for train in &mut self.trains {
+            let due = passes(train.start, now).min(TRAIN_TICKS);
+            for age in train.ticks..due {
+                if age % TRAIN_EVERY != 0 || (train.short && age > 0) {
+                    continue;
+                }
+                // The point has walked a step more than the ticks run.
+                let out = TRAIN_STEP * (age + 1) as f32;
+                let at = [train.from[0] + train.way[0] * out, train.from[1], train.from[2] + train.way[1] * out];
+                let size = [0.6 + below(40) / 100.0, 10.0];
+                let spike = Spike::new(train.start + TICK * age, at, 20.0, [below(360), 75.0 + below(30)], size, 40, TRAIN_TICKS - age - 1);
+                self.spikes.push(Spike { speed: 3.0, change: -0.15, stop: 6, ..spike });
+            }
+            train.ticks = train.ticks.max(due);
+        }
+        self.trains.retain(|train| train.ticks < TRAIN_TICKS && !(train.short && train.ticks > 0));
+        for spike in &mut self.spikes {
+            while spike.age < passes(spike.born, now).min(spike.ends) {
+                spike.step();
+            }
+        }
+        self.spikes.retain(|spike| passes(spike.born, now) <= spike.ends);
+    }
+
+    /// The triangles of every spike showing, in stone.
+    pub fn mesh(&self) -> Vec<MeshVertex> {
+        self.spikes.iter().filter(|spike| spike.age > 0).flat_map(Spike::faces).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn earth_spike_stands_seven_spikes_240_ticks() {
+        let start = Instant::now();
+        let mut spikes = Stone::default();
+        spikes.earth_spike([0.0; 3], start);
+        spikes.advance(start);
+        assert_eq!(spikes.spikes.len(), 7);
+        assert_eq!(spikes.mesh().len(), 7 * 12);
+        // The centre rises 12 ticks (1.01 to 1.12 a tick), settles 1.2 a tick for 4 and stands, never fading.
+        spikes.advance(start + TICK * 30);
+        let centre = &spikes.spikes[0];
+        assert!((centre.rise - (12.78 - 4.8)).abs() < 1e-3, "{}", centre.rise);
+        assert_eq!(centre.alpha, 254.0);
+        // The outer ones push up 1.5 a tick for 3 ticks, then fade over their last 10.
+        let outer = &spikes.spikes[1];
+        assert!((outer.rise - 4.5).abs() < 1e-4 && outer.alpha == 250.0);
+        for k in 1..=6 {
+            let pitch = spikes.spikes[k].axes[2][1].asin().to_degrees();
+            assert!((pitch - 80.0).abs() < 1e-3, "outer {k} leans 10°: {pitch}");
+        }
+        spikes.advance(start + TICK * 235);
+        assert!((spikes.spikes[1].alpha - 250.0 * 4.0 / 10.0).abs() < 1e-3, "{}", spikes.spikes[1].alpha);
+        spikes.advance(start + TICK * 239);
+        assert_eq!(spikes.spikes.len(), 7);
+        spikes.advance(start + TICK * 240);
+        assert!(spikes.spikes.is_empty());
+    }
+
+    #[test]
+    fn heavens_drive_raises_25_spikes_and_sinks_them() {
+        let start = Instant::now();
+        let mut spikes = Stone::default();
+        spikes.heavens_drive([0.0; 3], start);
+        spikes.advance(start + TICK * 20);
+        assert_eq!(spikes.spikes.len(), 25);
+        // A cell apart, x and z from −10 to 10.
+        let corners: Vec<[f32; 2]> = spikes.spikes.iter().map(|spike| [spike.base[0], spike.base[2]]).collect();
+        assert_eq!((corners[0], corners[1], corners[24]), ([-10.0, -10.0], [-10.0, -5.0], [10.0, 10.0]));
+        // Up 11 ticks (1.01 to 1.11), back 1.2 a tick for 4 (stopped at 14, 176 ms in), then standing.
+        for spike in &spikes.spikes {
+            assert!((spike.rise - (11.66 - 4.8)).abs() < 1e-3, "{}", spike.rise);
+            assert!((290..320).contains(&spike.life) && (9.1..=15.0).contains(&spike.height));
+        }
+        // 30 ticks before its end each starts to sink, faster each tick; the last go with the effect at 299 ticks.
+        let life = spikes.spikes[0].life;
+        spikes.advance(start + TICK * (life - 30));
+        let sinking = spikes.spikes[0].rise;
+        spikes.advance(start + TICK * (life - 28));
+        assert!((spikes.spikes[0].rise - (sinking - 1.01 - 1.02)).abs() < 1e-3);
+        spikes.advance(start + TICK * 298);
+        assert!(spikes.spikes.iter().all(|spike| spike.life >= 299));
+        spikes.advance(start + TICK * 299);
+        assert!(spikes.spikes.is_empty());
+    }
+
+    #[test]
+    fn grimtooth_walks_a_spike_train_past_the_target() {
+        let start = Instant::now();
+        let mut spikes = Stone::default();
+        spikes.grimtooth([0.0; 3], [0.0, 0.0, 30.0], start);
+        // Spikes at ticks 0, 3, 6: 2, 8 and 14 units out, 20 under the ground, rising 6 ticks to 16.8.
+        spikes.advance(start + TICK * 6);
+        let out: Vec<f32> = spikes.spikes.iter().map(|spike| spike.base[2]).collect();
+        assert_eq!(out, [2.0, 8.0, 14.0]);
+        assert_eq!(spikes.spikes[0].base[1], -20.0);
+        assert!((spikes.spikes[0].rise - 16.8).abs() < 1e-3, "{}", spikes.spikes[0].rise);
+        // Each lives 40 ticks, fading over its last 10.
+        spikes.advance(start + TICK * 35);
+        assert!((spikes.spikes[0].alpha - 254.0 * 4.0 / 10.0).abs() < 1e-3, "{}", spikes.spikes[0].alpha);
+        // It walks the effect's whole 250 ticks, on past the target: the spikes made in its last 40 fade out with it,
+        // the last drawn 494 units out, 3 ticks; the one made on its last tick never shows.
+        spikes.advance(start + TICK * 248);
+        assert_eq!(spikes.spikes.len(), 13);
+        let last = spikes.spikes.last().unwrap();
+        assert_eq!((last.base[2], last.ends), (494.0, 3));
+        assert!(last.alpha < 254.0 * 2.0 / 3.0 + 1e-3, "{}", last.alpha);
+        spikes.advance(start + TICK * 249);
+        assert!(spikes.spikes.is_empty() && spikes.trains.is_empty());
+        // A caster on the target: one spike.
+        spikes.grimtooth([0.0; 3], [0.0, 0.0, 2.0], start);
+        spikes.advance(start + TICK * 30);
+        assert_eq!(spikes.spikes.len(), 1);
+    }
+}

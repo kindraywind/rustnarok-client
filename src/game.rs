@@ -1192,21 +1192,14 @@ impl Game {
         self.play_effect_hits(gpu, grf, table, effect, unit, start, 1);
     }
 
-    /// Soul Strike's ghosts from `caster` to `target`, a ghost a hit.
-    pub(crate) fn soul_strike(&mut self, grf: &Grf, caster: u32, target: u32, hits: u16) {
+    /// An effect from `caster` aimed at where `target` stands (`effects::AIMED`: Soul Strike's ghosts, Fire Ball's
+    /// balls…), told the skill's hit count.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn aimed(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, caster: u32, target: u32, hits: u16) {
         let cell = |unit: u32| if unit == self.account_id { Some(self.player.cell) } else { self.units.get(&unit).map(|actor| actor.cell) };
         if let (Some(from), Some(to)) = (cell(caster), cell(target)) {
             let [from, to] = [from, to].map(|cell| self.world.cell_position(cell.map(|value| value as f32)));
-            self.effects.soul_strike(grf, from, to, hits, Instant::now());
-        }
-    }
-
-    /// Frost Diver's line of ice spikes from `caster` to `target`.
-    pub(crate) fn frost_diver(&mut self, gpu: &Gpu, grf: &Grf, caster: u32, target: u32) {
-        let cell = |unit: u32| if unit == self.account_id { Some(self.player.cell) } else { self.units.get(&unit).map(|actor| actor.cell) };
-        if let (Some(from), Some(to)) = (cell(caster), cell(target)) {
-            let [from, to] = [from, to].map(|cell| self.world.cell_position(cell.map(|value| value as f32)));
-            self.effects.frost_diver(gpu, grf, from, to, Instant::now());
+            self.effects.aimed(gpu, grf, table, effect, from, to, hits, Instant::now());
         }
     }
 
