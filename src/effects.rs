@@ -1402,7 +1402,7 @@ impl Effects {
         // Frost Diver's second hit effect: ice spikes round the target.
         if id == FROST_DIVER_HIT {
             self.textures.entry(crate::prims::ICE_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crate::prims::ICE_TEXTURE, true).ok());
-            self.prims.frost_hit(at, now, |n| pick(0, n.saturating_sub(1)));
+            self.prims.stone.frost_hit(at, now, |n| pick(0, n.saturating_sub(1)));
         }
         // COLDHIT is drawn in code, flat on the screen over its unit.
         if let (COLD_HIT, Target::Unit(unit)) = (id, target) {
@@ -1636,7 +1636,7 @@ impl Effects {
     /// Frost Diver from `from` at `to`: its line of ice spikes.
     fn frost_diver(&mut self, gpu: &Gpu, grf: &Grf, from: Vector, to: Vector, now: Instant) {
         self.textures.entry(crate::prims::ICE_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crate::prims::ICE_TEXTURE, true).ok());
-        self.prims.frost_diver(from, to, now, |n| pick(0, n.saturating_sub(1)));
+        self.prims.stone.frost_diver(from, to, now, |n| pick(0, n.saturating_sub(1)));
     }
 
     /// An effect launched on the caster at `from`, aimed at `to` (one of `AIMED`), told the skill's hit count.
@@ -1885,13 +1885,10 @@ impl Effects {
                 arrows.chain(rings).collect::<Vec<_>>()
             })
             .collect();
-        // Frost Diver's ice spikes, blended over.
-        let ice = self.textures.get(crate::prims::ICE_TEXTURE).and_then(Option::as_ref);
-        let spikes = self.prims.spikes(now).filter_map(|(spike, tick)| {
-            let vertices = spike.faces(tick).into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] }).collect();
-            Some((ice?, vertices, false))
-        });
-        let stone = self.textures.get(stone::STONE).and_then(Option::as_ref).map(|texture| (texture, self.prims.stone.mesh(), false));
+        // The spikes, in ice and in stone, blended over.
+        let spikes = [crate::prims::ICE_TEXTURE, stone::STONE]
+            .into_iter()
+            .filter_map(|path| Some((self.textures.get(path)?.as_ref()?, self.prims.stone.mesh(path), false)));
         // Turn Undead's ring, flat over the caster's feet.
         let ring = self.textures.get(burst::RING).and_then(Option::as_ref);
         let burst_rings = self.prims.bursts.iter().filter_map(|burst| {
@@ -1908,7 +1905,7 @@ impl Effects {
             Some((texture, corners.into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] }).collect(), additive))
         });
         // The effects made in code are none of them force-drawn.
-        let prims = spikes.chain(stone).chain(bolt_meshes).chain(sage).chain(burst_rings).filter(|_| !self.only_forced);
+        let prims = spikes.chain(bolt_meshes).chain(sage).chain(burst_rings).filter(|_| !self.only_forced);
         rings.chain(models).chain(hits).chain(auras).chain(prims).collect()
     }
 
