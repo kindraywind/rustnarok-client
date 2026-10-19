@@ -3773,8 +3773,12 @@ impl App {
             }
             MapEvent::Effect { id, effect } => {
                 if let Some(gpu) = gpu {
-                    // The server's own effect has no hit count (Blitz Beat's makes no ring).
-                    game.play_effect_hits(gpu, grf, table, effect, id, Instant::now(), 0);
+                    if effects::aimed_at_centre(effect) {
+                        game.aimed_at_centre(gpu, grf, table, effect, id);
+                    } else {
+                        // The server's own effect has no hit count (Blitz Beat's makes no ring).
+                        game.play_effect_hits(gpu, grf, table, effect, id, Instant::now(), 0);
+                    }
                 }
             }
             // Marriage: the wedding, the partner's name, divorce; adoption: being asked, and refusals.

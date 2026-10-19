@@ -239,9 +239,10 @@ impl Stone {
     /// Frost Diver (EF_FROSTDIVER) from `from` at `to` from `now`: one ice spike a tick in a line toward the target,
     /// its random choices from `rand(n)` (0 to n − 1).
     pub fn frost_diver(&mut self, from: Vector, to: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
-        let [dx, dz] = [to[0] - from[0], to[2] - from[2]];
-        let distance = f32::hypot(dx, dz);
-        let way = if distance > 0.0 { [dx / distance, dz / distance] } else { [0.0, 1.0] };
+        // Along the whole degree before the bearing's (ψ), 1° to 2° off the line toward smaller bearings; 0 below 1°.
+        let heading = crate::actor::step_rot(to[0] - from[0], to[2] - from[2]).trunc();
+        let (sin, cos) = (if heading == 0.0 { 0.0 } else { heading - 1.0 }).to_radians().sin_cos();
+        let way = [sin, -cos];
         for tick in 0..FROST_TICKS {
             let out = FROST_FIRST + FROST_STEP * tick as f32;
             let at = [from[0] + way[0] * out, from[1], from[2] + way[1] * out];
@@ -310,6 +311,11 @@ impl Stone {
     /// Takes down what ground unit `unit` stood with.
     pub fn forget(&mut self, unit: u32) {
         self.spikes.retain(|spike| spike.unit != Some(unit));
+    }
+
+    /// Stops the lines of spikes still to come (Frost Diver's, under /mineffect): the ones not yet born.
+    pub fn stop_lines(&mut self, now: Instant) {
+        self.spikes.retain(|spike| spike.born <= now);
     }
 
     /// Runs the trains and the spikes up to `now`, a tick at a time.
@@ -411,7 +417,9 @@ mod tests {
         spikes.frost_diver([0.0; 3], [0.0, 0.0, 45.0], start, |_| 0);
         assert_eq!(spikes.spikes.len(), 20);
         // (each a little off its point: half a unit the way its random turn points)
-        assert_eq!((spikes.spikes[1].born - start, spikes.spikes[19].base[2]), (TICK, 42.5));
+        // (along 179°, 1° off the line: the last, 43 out, lies 0.75 east of it)
+        assert_eq!(spikes.spikes[1].born - start, TICK);
+        assert!((spikes.spikes[19].base[0] - 0.75).abs() < 0.01 && (spikes.spikes[19].base[2] - 42.5).abs() < 0.05, "{:?}", spikes.spikes[19].base);
         // A spike rises 2.85 the first tick and settles 28.35 up after tick 20, 30 under where it stands at first.
         spikes.advance(start);
         assert!((spikes.spikes[0].rise - 2.85).abs() < 1e-4, "{}", spikes.spikes[0].rise);
@@ -471,6 +479,20 @@ mod tests {
         spikes.forget(7);
         assert_eq!(spikes.spikes.len(), 3);
         assert!(spikes.spikes.iter().all(|spike| spike.unit == Some(8)));
+    }
+
+    #[test]
+    fn a_frost_diver_line_stops_under_mineffect() {
+        let start = Instant::now();
+        let mut spikes = Stone::default();
+        spikes.frost_diver([0.0; 3], [0.0, 0.0, 45.0], start, |_| 0);
+        assert_eq!(spikes.spikes.len(), 20);
+        // Turned on three ticks in, the line stops: the spikes already born stand, the rest never come.
+        spikes.stop_lines(start + TICK * 3);
+        assert_eq!(spikes.spikes.len(), 4);
+        spikes.frost_hit([0.0; 3], start + TICK * 3, |_| 0);
+        spikes.stop_lines(start + TICK * 3);
+        assert_eq!(spikes.spikes.len(), 12, "the hit's own spikes aren't a line's");
     }
 
     #[test]

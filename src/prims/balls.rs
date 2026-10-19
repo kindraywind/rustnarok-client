@@ -47,6 +47,14 @@ const THUNDER_LIFE: u32 = 20;
 const THUNDER_RISE: f32 = 5.0;
 const THUNDER_SIZES: [f32; 2] = [3.5, 4.5];
 
+/// A fire ball's turn on the screen in whole degrees: 180 − the true bearing (+ 360 when negative) less the camera's
+/// turn, truncated, a negative one looked up a degree up.
+fn fire_ball_turn(bearing: f32, yaw: f32) -> f32 {
+    let base = 180.0 - bearing;
+    let turn = ((if base < 0.0 { base + 360.0 } else { base }) - yaw).trunc();
+    if turn < 0.0 { turn + 1.0 } else { turn }
+}
+
 /// A spear's turn on the screen, in whole degrees: 180 + (180 − its heading) − the camera's turn, so it points along its
 /// flight; a negative angle is looked up a degree up.
 fn spear_turn(heading: f32, yaw: f32) -> f32 {
@@ -63,17 +71,20 @@ struct Flight {
     from: Vector,
     step: [f32; 2],
     aim: [f32; 2],
+    /// The true bearing to the aim (as `actor::step_rot`), which a fire ball's turn on the screen keeps.
+    bearing: f32,
 }
 
 impl Flight {
-    // ponytail: straight at the target; the game's turn truncates to whole degrees, 1–2° off.
+    // ponytail: Jupitel Thunder's ball goes straight at the target; the game's turn truncates to whole degrees, 1–2° off.
     fn new(born: Instant, from: Vector, rise: f32, to: Vector, life: u32) -> Self {
         let step = [(to[0] - from[0]) / life as f32, (to[2] - from[2]) / life as f32];
-        Self { born, ticks: 0, from: [from[0], from[1] + rise, from[2]], step, aim: [to[0], to[2]] }
+        let bearing = crate::actor::step_rot(to[0] - from[0], to[2] - from[2]);
+        Self { born, ticks: 0, from: [from[0], from[1] + rise, from[2]], step, aim: [to[0], to[2]], bearing }
     }
 
-    /// Like `new`, but along the whole degree before the heading's own (up to 2° off the line, as the game's spears
-    /// fly), the same distance: heading 0 toward −z, 90 toward +x.
+    /// Like `new`, but along the whole degree before the heading's own (up to 2° off the line, as the game's fire balls
+    /// and spears fly), the same distance: heading 0 toward −z, 90 toward +x.
     fn skewed(born: Instant, from: Vector, rise: f32, to: Vector, life: u32) -> Self {
         let [dx, dz] = [to[0] - from[0], to[2] - from[2]];
         let heading = crate::actor::step_rot(dx, dz).trunc();
@@ -163,7 +174,7 @@ impl Balls {
             let due = passes(fire_ball.start, now);
             for age in fire_ball.ticks..due {
                 if let Some(look) = FIRE_BALL_TICKS.iter().position(|&tick| tick == age) {
-                    let flight = Flight::new(fire_ball.start + TICK * age, fire_ball.from, FIRE_BALL_RISE, fire_ball.to, FIRE_BALL_LIFE);
+                    let flight = Flight::skewed(fire_ball.start + TICK * age, fire_ball.from, FIRE_BALL_RISE, fire_ball.to, FIRE_BALL_LIFE);
                     self.balls.push(Ball { flight, look, gone: false });
                 }
             }
@@ -207,8 +218,7 @@ impl Balls {
         }
         if let Some(sprite) = sprite.filter(|_| !frames.is_empty()) {
             for ball in self.balls.iter().filter(|ball| ball.flight.ticks > 0) {
-                let [x, z] = ball.flight.step;
-                let turn = 180.0 - crate::actor::step_rot(x, z) - yaw;
+                let turn = fire_ball_turn(ball.flight.bearing, yaw);
                 let [red, green, blue, alpha] = FIRE_BALL_LOOKS[ball.look].map(|value| value / 255.0);
                 for &(key, position, size, angle) in &frames[ball.flight.ticks as usize % frames.len()] {
                     let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, angle + turn, uv).0.map(|value| value * FIRE_BALL_SCALE));
@@ -238,6 +248,7 @@ mod tests {
     fn fire_ball_lets_four_balls_out_that_reach_the_target() {
         let start = Instant::now();
         let mut balls = Balls::default();
+        // Due north (+z): heading 179, 1° off, so the ball drifts a little east.
         balls.fire_ball([0.0; 3], [0.0, 0.0, 45.0], start);
         // Ticks 20, 24, 28 and 32.
         balls.advance(start + TICK * 19);
@@ -245,9 +256,12 @@ mod tests {
         balls.advance(start + TICK * 32);
         assert_eq!(balls.balls.iter().map(|ball| ball.look).collect::<Vec<_>>(), [0, 1, 2, 3]);
         assert!(balls.fire_balls.is_empty());
-        // 15 units up, 2.25 units a tick: 9 cells away a ball is drawn 18 ticks, then goes within 3 units of it.
+        // 15 units up, 2.25 units a tick along 179°: 9 cells away a ball is drawn 18 ticks, then goes within 3 units of it.
         let lead = &balls.balls[0];
-        assert_eq!((lead.flight.ticks, lead.flight.at()), (13, [0.0, 15.0, 13.0 * 2.25]));
+        let (sin, cos) = 179.0_f32.to_radians().sin_cos();
+        let at = lead.flight.at();
+        assert_eq!(lead.flight.ticks, 13);
+        assert!((at[0] - 13.0 * 2.25 * sin).abs() < 1e-3 && (at[2] + 13.0 * 2.25 * cos).abs() < 1e-3 && at[1] == 15.0, "{at:?}");
         balls.advance(start + TICK * (20 + 17));
         assert_eq!(balls.balls[0].flight.ticks, 18);
         balls.advance(start + TICK * (20 + 18));
@@ -258,6 +272,26 @@ mod tests {
         balls.fire_ball([0.0; 3], [0.0, 0.0, 3.0], start);
         balls.advance(start + TICK * 40);
         assert!(balls.balls.is_empty());
+        // Far off (200 units due north) a ball never comes within 3 of the aim: it shows all 20 ticks and ends 3.49 east of it.
+        balls.fire_ball([0.0; 3], [0.0, 0.0, 200.0], start);
+        balls.advance(start + TICK * 39);
+        let far = &balls.balls[0];
+        assert_eq!(far.flight.ticks, 20);
+        assert!((far.flight.at()[0] - 3.49).abs() < 0.01, "{:?}", far.flight.at());
+    }
+
+    #[test]
+    fn a_fire_ball_turns_by_the_true_bearing() {
+        // The heading is the whole degree before the bearing's, 0 below 1°.
+        let heading = |dx: f32, dz: f32| {
+            let flight = Flight::skewed(Instant::now(), [0.0; 3], 0.0, [dx, 0.0, dz], 10);
+            flight.step[0].atan2(-flight.step[1]).to_degrees().rem_euclid(360.0)
+        };
+        assert!((heading(0.0, 10.0) - 179.0).abs() < 1e-3);
+        assert!(heading(0.0087, -10.0).abs() < 1e-3, "0.5° gives 0");
+        // The screen turn: 180 − bearing (+360 when negative) less the camera, whole degrees, a negative one a degree up.
+        assert_eq!([fire_ball_turn(180.0, 0.0), fire_ball_turn(90.5, 10.0), fire_ball_turn(270.0, 30.0)], [0.0, 79.0, 240.0]);
+        assert_eq!(fire_ball_turn(180.0, 45.0), -44.0);
     }
 
     #[test]

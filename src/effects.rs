@@ -1516,6 +1516,12 @@ const SONIC_BLOW: u32 = 121;
 const SOUL_STRIKE: u32 = 15;
 /// EF_FIREBALL, EF_YUFITEL (Jupitel Thunder) and EF_GRIMTOOTH (`prims`).
 const FIRE_BALL: u32 = 24;
+/// Whether the server sends this effect (ZC_NOTIFY_EFFECT2) with no target, so it flies from its unit at the map's
+/// centre: Fire Ball's and Frost Diver's.
+pub fn aimed_at_centre(effect: u32) -> bool {
+    matches!(effect, FIRE_BALL | FROST_DIVER)
+}
+
 /// EF_SPEARBMR: Spear Boomerang's four spears from the caster to the target (`prims::balls`).
 const SPEAR_BOOMERANG: u32 = 80;
 /// EF_BLITZBEAT: the streaks and the ring on Blitz Beat's target, made in code (`prims::blitz`).
@@ -1940,6 +1946,10 @@ impl Effects {
 
     /// Frost Diver from `from` at `to`: its line of ice spikes.
     fn frost_diver(&mut self, gpu: &Gpu, grf: &Grf, from: Vector, to: Vector, now: Instant) {
+        // /mineffect: no line at all.
+        if self.min {
+            return;
+        }
         self.textures.entry(crate::prims::ICE_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crate::prims::ICE_TEXTURE, true).ok());
         self.prims.stone.frost_diver(from, to, now, |n| pick(0, n.saturating_sub(1)));
     }
@@ -2015,6 +2025,10 @@ impl Effects {
     pub fn advance(&mut self, gpu: &Gpu, now: Instant, yaw: f32) {
         // A song's puffs end with their 400 ticks.
         self.status_prims.retain(|prim| !matches!(prim.kind, PrimKind::Puffs(_)) || str_frame(now.saturating_duration_since(prim.start)) < PUFF_TICKS);
+        // The game checks /mineffect each tick, so turning it on stops a Frost Diver's line.
+        if self.min {
+            self.prims.stone.stop_lines(now);
+        }
         self.prims.advance(now);
         if let Some(Some(sprite)) = self.sprites.get_mut(crate::prims::GHOST_SPRITE) {
             self.ghost = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
@@ -3145,6 +3159,10 @@ mod tests {
         assert_eq!(sounds.len(), 11);
         assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
         assert!(!table.sounds.contains_key(&149));
+        // Fire Ball (24) and Frost Diver (27) from the server fly from their unit at the map's centre; 24 has no floater.
+        assert!(aimed_at_centre(24) && aimed_at_centre(27) && !aimed_at_centre(26));
+        assert!(!table.floaters.contains_key(&24) && !table.parts.contains_key(&24) && !table.sprites.contains_key(&24));
+        assert_eq!(table.sounds[&24].iter().map(|sound| sound.delay_ms).collect::<Vec<_>>(), [0]);
         // Blitz Beat: 115 (drawn in code) is its second hit effect, not its fallback, with its two sounds.
         assert_eq!(table.hit(129), Some([None, Some(115)]));
         assert!(table.skill(129, "effectId").is_empty());

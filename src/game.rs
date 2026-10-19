@@ -1303,11 +1303,19 @@ impl Game {
     /// balls…), told the skill's hit count.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn aimed(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, caster: u32, target: u32, hits: u16) {
-        let cell = |unit: u32| if unit == self.account_id { Some(self.player.cell) } else { self.units.get(&unit).map(|actor| actor.cell) };
-        if let (Some(from), Some(to)) = (cell(caster), cell(target)) {
-            let [from, to] = [from, to].map(|cell| self.world.cell_position(cell.map(|value| value as f32)));
+        // From and to are the feet as drawn, not the cells' centres.
+        let now = control::now();
+        if let (Some(from), Some(to)) = (self.feet(caster, now), self.feet(target, now)) {
             self.effects.aimed(gpu, grf, table, effect, (caster != self.account_id).then_some(caster), from, to, hits, Instant::now());
         }
+    }
+
+    /// An effect the server sent with no target (`effects::aimed_at_centre`): from `unit`'s feet now, at the map's centre.
+    pub(crate) fn aimed_at_centre(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32) {
+        let now = control::now();
+        let Some(from) = self.feet(unit, now) else { return };
+        let to = [self.world.gat.width as f32 * world::CELL / 2.0, from[1], self.world.gat.height as f32 * world::CELL / 2.0];
+        self.effects.aimed(gpu, grf, table, effect, (unit != self.account_id).then_some(unit), from, to, 1, Instant::now());
     }
 
     /// Plays an effect on a unit told the skill's hit count (a bolt drops an arrow a hit).
