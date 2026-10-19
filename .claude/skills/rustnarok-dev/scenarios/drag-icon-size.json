@@ -1,0 +1,58 @@
+{
+  "about": "Items: the icon that follows the pointer while an item is held is drawn larger than its slot's.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@item 501 30"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "drag": [
+        [
+          56,
+          153
+        ],
+        [
+          400,
+          350
+        ]
+      ],
+      "held": true
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "drag-icon-held",
+      "crop": [
+        0,
+        100,
+        520,
+        300
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "release"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 200
+    }
+  ]
+}
