@@ -1151,7 +1151,8 @@ impl Game {
             }
             net::Skill::SELF => {}
             net::Skill::ENEMY | net::Skill::GROUND | net::Skill::FRIEND => {
-                self.targeting = Some((id, if self.skill_info.get(&id).is_some_and(|info| info.separate_level) { level } else { learned }));
+                let separate = self.skill_info.get(&id).is_some_and(|info| info.separate_level);
+                self.targeting = Some((id, if skills::level_pickable(kind, learned, separate) { level } else { learned }));
             }
             // ponytail: trap skills (32) aim at ground skill units in the game; not made yet.
             _ => {}
