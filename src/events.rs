@@ -3314,6 +3314,17 @@ impl App {
                             source.play_at_pace(actor::combat_actions(source.kind).0, Instant::now(), scale, false);
                         }
                     }
+                    // Sonic Blow: a swing for each hit after the first, 200 ms apart.
+                    if skill == skill_motions::SONIC_BLOW
+                        && let Some(source) = if act.source == me { Some(&mut game.player) } else { game.units.get_mut(&act.source) }
+                        && source.kind == PLAYER
+                    {
+                        let swing = source.attack_motion(look_tables);
+                        let now = Instant::now();
+                        for hit in 1..u32::from(act.hits) {
+                            source.swing_later(swing, now + gap * hit, scale);
+                        }
+                    }
                     let hit_ms = game.skill_motion(
                         act.source,
                         skill,

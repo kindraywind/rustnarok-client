@@ -1982,6 +1982,8 @@ pub struct Actor {
     kept_head: u16,
     animation_started: Instant,
     shot: Option<Shot>,
+    /// Swings still to start (a multi-hit skill's later hits): the action, when, and its pace.
+    swings: Vec<(usize, Instant, f32)>,
     /// A player who fought stands ready until moving again.
     ready: bool,
     /// Sitting down (until it stands or walks).
@@ -2146,6 +2148,7 @@ impl Actor {
             kept_head: 0,
             animation_started: now,
             shot: None,
+            swings: Vec::new(),
             ready: false,
             sitting: false,
             remove_at: None,
@@ -2338,6 +2341,11 @@ impl Actor {
         }
     }
 
+    /// Plays `action` again from `start`, once it comes.
+    pub fn swing_later(&mut self, action: usize, start: Instant, scale: f32) {
+        self.swings.push((action, start, scale));
+    }
+
     pub fn play_at_pace(&mut self, action: usize, start: Instant, scale: f32, hold: bool) {
         self.shot = Some(Shot { action, started: start, pace: Pace::Act(scale.max(0.01)), hold });
         self.head_direction = self.kept_head;
@@ -2415,6 +2423,7 @@ impl Actor {
         self.sitting = false;
         // Walking looks straight ahead again.
         self.set_head(0);
+        self.swings.clear();
         // Walking interrupts an attack or flinch, not a death.
         if self.shot.as_ref().is_some_and(|shot| !shot.hold) {
             self.shot = None;
@@ -2470,6 +2479,11 @@ impl Actor {
         let now_ms = crate::shown_ms(now);
         self.stepped.clear();
         self.walk_frames = self.walk_frames.saturating_sub(1);
+        // The latest swing that has come starts; the earlier ones are skipped, not played over each other.
+        if let Some(&(action, start, scale)) = self.swings.iter().filter(|(_, start, _)| *start <= now).max_by_key(|(_, start, _)| *start) {
+            self.swings.retain(|(_, later, _)| *later > now);
+            self.play_at_pace(action, start, scale, false);
+        }
         // The shown clock stepped back: nodes it hasn't reached again come back ahead, for the glide. The cell stays
         // where the walk got to.
         while let Some(&node) = self.passed.last().filter(|&&(_, arrives)| arrives > now_ms) {
@@ -2847,6 +2861,24 @@ mod tests {
         assert_eq!(orcish_head(4218, OPTION_ORCISH), Some(r"이팩트\orcface_doram"));
         assert_eq!(orcish_head(4308, OPTION_ORCISH | RIDING), Some(r"이팩트\orcface_doram"));
         assert_ne!(BODY_OPTIONS & OPTION_ORCISH, 0);
+    }
+
+    #[test]
+    fn starts_a_multi_hits_later_swings_as_they_come() {
+        let mut actor = Actor::new("a".into(), None, [10, 10], 0, 100);
+        for hit in 1..=3 {
+            actor.swing_later(5, ms(200 * hit), 1.0);
+        }
+        actor.update(ms(100));
+        assert_eq!(actor.swings.len(), 3, "none yet");
+        actor.update(ms(250));
+        assert_eq!((actor.swings.len(), actor.shot.as_ref().map(|shot| shot.started)), (2, Some(ms(200))));
+        // A late frame starts the latest swing that has come and drops the one it skipped.
+        actor.update(ms(650));
+        assert_eq!((actor.swings.len(), actor.shot.as_ref().map(|shot| shot.started)), (0, Some(ms(600))));
+        actor.swing_later(5, ms(900), 1.0);
+        actor.start_walking(ms(700));
+        assert!(actor.swings.is_empty(), "walking off ends the flurry");
     }
 
     #[test]
