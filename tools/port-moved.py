@@ -1,7 +1,8 @@
 """For a rebase, merge or cherry-pick stopped on a conflict in a file whose code has since moved into other files (such as
 src/main.rs's methods into src/input.rs, src/events.rs, src/draw.rs and src/game.rs): takes the other side's version of
 that file, then applies this branch's own hunks of it wherever their code now is, in that file or in the files it moved
-to. A method that moved into another module got `pub(crate)`, which the hunks are retried with.
+to. A function that moved into another module got `pub(crate)`, and a module's body that became a file of its own (a
+`mod tests { }` in tests.rs) lost an indent: the hunks are retried with those.
 
 Usage, while git is stopped on the conflict:
     python3 -I tools/port-moved.py src/main.rs
@@ -59,7 +60,15 @@ git("checkout", theirs, "--", path)
 
 
 def made_public(hunk):
-    return [hunk[0]] + [re.sub(r"^([ +-])    fn ", r"\1    pub(crate) fn ", line) for line in hunk[1:]]
+    return [hunk[0]] + [re.sub(r"^([ +-])((?:    )?)fn ", r"\1\2pub(crate) fn ", line) for line in hunk[1:]]
+
+
+def dedented(hunk):
+    return [hunk[0]] + [line[0] + line[5:] if line[1:5] == "    " else line for line in hunk[1:]]
+
+
+def variants(hunk):
+    return (hunk, made_public(hunk), dedented(hunk), made_public(dedented(hunk)))
 
 
 def apply(place, lines, *flags):
@@ -83,13 +92,13 @@ def only_home(lines):
 touched, left = set(), []
 for hunk in hunks:
     placed = None
-    for lines in (hunk, made_public(hunk)):
+    for lines in variants(hunk):
         placed = next((place for place in places if apply(place, lines)), None)
         if placed:
             break
     # A hunk at the edge of what moved has context from a neighbour that stayed or went elsewhere: with less context,
     # where a removed line pins it to one spot.
-    for lines in (hunk, made_public(hunk)):
+    for lines in variants(hunk):
         home = None if placed else only_home(lines)
         if home and apply(home, lines, "-C0"):
             placed = home

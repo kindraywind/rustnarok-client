@@ -434,6 +434,8 @@ pub struct MeshVertex {
 
 pub struct World {
     pub gat: Gat,
+    /// One RGB light per GAT cell, from the ground lightmaps.
+    cell_light: Vec<[f32; 3]>,
     /// RSM 2 instances whose tracks play, and the buffer they're posed into each frame.
     animated: Vec<Animated>,
     animated_buffer: Option<wgpu::Buffer>,
@@ -674,12 +676,14 @@ impl World {
         // Sound sources sit, like models, relative to the map's center.
         let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
         let ambient = crate::ambient::Ambient::new(rsw.sounds.iter().map(|source| crate::ambient::Source::placed(source, half)).collect());
+        let cell_light = cell_lights(&gnd, &gat);
         Ok(Self {
             animated,
             animated_buffer,
             rsm_2_models,
             ambient,
             gat,
+            cell_light,
             textures,
             lightmap,
             vertices,
@@ -713,6 +717,104 @@ impl World {
         let height = self.gat.height_at([cell[0] + 0.5, cell[1] + 0.5]);
         [(cell[0] + 0.5) * CELL, -height, (cell[1] + 0.5) * CELL]
     }
+
+    /// The map light on a unit drawn at `feet`: that GAT cell's triple, or full bright off the map.
+    pub fn sprite_light(&self, feet: Vector) -> [f32; 3] {
+        light_at(&self.cell_light, self.gat.width, self.gat.height, feet)
+    }
+}
+
+/// The cell and its four edge neighbours. Light changes in a step at the cell border, with no blend.
+const LIGHT_SAMPLES: [(i32, i32); 5] = [(0, 0), (0, -1), (0, 1), (1, 0), (-1, 0)];
+
+/// One RGB triple per GAT cell. A cell more than 2.5 units above its GND tile stays full bright.
+fn cell_lights(gnd: &Gnd, gat: &Gat) -> Vec<[f32; 3]> {
+    let mut lights = Vec::with_capacity(gat.width.saturating_mul(gat.height));
+    for y in 0..gat.height {
+        for x in 0..gat.width {
+            lights.push(if above_mesh(gnd, gat, x, y) { [1.0; 3] } else { sampled_light(gnd, x, y) });
+        }
+    }
+    lights
+}
+
+/// The mean of the cell's four GAT corners (world Y, up) is more than 2.5 above the GND tile's highest corner.
+fn above_mesh(gnd: &Gnd, gat: &Gat, x: usize, y: usize) -> bool {
+    let (tile_x, tile_y) = (x / 2, y / 2);
+    if tile_x >= gnd.width || tile_y >= gnd.height {
+        return false;
+    }
+    let Some(cube) = gnd.cubes.get(tile_y * gnd.width + tile_x) else { return false };
+    let Some(&(corners, _)) = gat.cells.get(y * gat.width + x) else { return false };
+    // File heights are negative-up. The highest corner is the greatest world Y.
+    let mesh = cube.heights.into_iter().map(|height| -height).fold(f32::NEG_INFINITY, f32::max);
+    let cell = corners.into_iter().map(|height| -height).sum::<f32>() / 4.0;
+    cell > mesh + 2.5
+}
+
+/// light_c = mean(shadow) / 255 + mean(channel) / 128, then divided by the largest channel when that is above 1.
+fn sampled_light(gnd: &Gnd, x: usize, y: usize) -> [f32; 3] {
+    let mut shadow = 0.0;
+    let mut color = [0.0; 3];
+    for (dx, dy) in LIGHT_SAMPLES {
+        let [alpha, red, green, blue] = light_sample(gnd, x as i32 + dx, y as i32 + dy);
+        shadow += f32::from(alpha);
+        color[0] += f32::from(red);
+        color[1] += f32::from(green);
+        color[2] += f32::from(blue);
+    }
+    let count = LIGHT_SAMPLES.len() as f32;
+    let mut light = color.map(|channel| shadow / count / 255.0 + channel / count / 128.0);
+    let peak = light[0].max(light[1]).max(light[2]);
+    if peak > 1.0 {
+        light = light.map(|channel| channel / peak);
+    }
+    light
+}
+
+/// Shadow and RGB of one GAT cell's quarter of its GND tile's top lightmap. Off the map, or a tile with no top, is 255.
+fn light_sample(gnd: &Gnd, x: i32, y: i32) -> [u8; 4] {
+    const FULL: [u8; 4] = [255; 4];
+    if x < 0 || y < 0 {
+        return FULL;
+    }
+    let (x, y) = (x as usize, y as usize);
+    let (tile_x, tile_y) = (x / 2, y / 2);
+    if tile_x >= gnd.width || tile_y >= gnd.height {
+        return FULL;
+    }
+    let Some(cube) = gnd.cubes.get(tile_y * gnd.width + tile_x) else { return FULL };
+    if cube.top < 0 {
+        return FULL;
+    }
+    let Some(surface) = usize::try_from(cube.top).ok().and_then(|index| gnd.surfaces.get(index)) else { return FULL };
+    let Some(lightmap) = gnd.lightmaps.get(usize::from(surface.lightmap)) else { return FULL };
+    let [width, height] = gnd.lightmap_size;
+    // West-south (1, 1), east-south (5, 1), west-north (1, 5), east-north (5, 5), row 0 on the south edge.
+    // ponytail: a lightmap that is not 8×8 has no such quarter, so the sample stays full bright.
+    let column = if x % 2 == 0 { 1 } else { 5 };
+    let row = if y % 2 == 0 { 1 } else { 5 };
+    if column >= width || row >= height {
+        return FULL;
+    }
+    let texel = row * width + column;
+    let Some(&shadow) = lightmap.get(texel) else { return FULL };
+    let color = width * height + texel * 3;
+    let Some(rgb) = lightmap.get(color..color + 3) else { return FULL };
+    [shadow, rgb[0], rgb[1], rgb[2]]
+}
+
+/// The GAT cell under a world point, or full bright off the table. No blending across the border.
+fn light_at(table: &[[f32; 3]], width: usize, height: usize, [x, _, z]: Vector) -> [f32; 3] {
+    let (cell_x, cell_z) = ((x / CELL).floor(), (z / CELL).floor());
+    if cell_x < 0.0 || cell_z < 0.0 {
+        return [1.0; 3];
+    }
+    let (cell_x, cell_z) = (cell_x as usize, cell_z as usize);
+    if cell_x >= width || cell_z >= height {
+        return [1.0; 3];
+    }
+    table.get(cell_z * width + cell_x).copied().unwrap_or([1.0; 3])
 }
 
 /// Everything one frame of the world needs.
@@ -1154,65 +1256,158 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
     (vertices, draws, names, rsm_2, animated)
 }
 
-/// Cells walked from `from` to `to` (excluding `from`), 8-directional; diagonals need both sides open, as on the server.
+/// A walk's path: the search with the game's 149-node limit.
 pub fn find_path(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]>> {
-    use std::cmp::Reverse;
-    use std::collections::{BinaryHeap, HashMap};
+    search(gat, from, to, Some(WALK_NODES), None)
+}
 
-    if from == to {
-        return Some(Vec::new());
+/// A unit's walk heard from the server, by its object type: an NPC with a monster's look (12) may step onto type-5
+/// cells.
+pub fn find_unit_path(gat: &Gat, from: [i32; 2], to: [i32; 2], kind: u8) -> Option<Vec<[i32; 2]>> {
+    search(gat, from, to, Some(WALK_NODES), Some(kind))
+}
+
+/// rathena's object type for an NPC whose look is a monster class (`clif_bl_type`).
+const MONSTER_LOOK: u8 = 12;
+
+/// The navigation trail's path: the same search with no limit.
+pub fn find_trail(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]>> {
+    search(gat, from, to, None, None)
+}
+
+/// The most cells a walk's search reaches: the start is the first, and the 150th ends it with no path.
+const WALK_NODES: usize = 149;
+
+/// Cells walked from `from` to `to` (excluding `from`), 8-directional; diagonals need both sides open. The server's
+/// search, step for step, so both walk the same cells: A* at 10 a straight step and 14 a diagonal, with 10 times the
+/// Manhattan distance left as the estimate, neighbours tried from south-east round anticlockwise, and a binary heap on
+/// that sum alone, ties falling where the heap leaves them. A walk across open ground takes its diagonal steps first.
+/// At most `limit` cells are reached; there's no path from a cell to itself. The walker's object type (`kind`) lets an
+/// NPC with a monster's look step onto type-5 cells; a diagonal's side cells still block on 1 and 5.
+fn search(gat: &Gat, from: [i32; 2], to: [i32; 2], limit: Option<usize>, kind: Option<u8>) -> Option<Vec<[i32; 2]>> {
+    use std::collections::HashMap;
+
+    struct Node {
+        cell: [i32; 2],
+        parent: Option<usize>,
+        cost: i32,
+        sum: i32,
+        open: bool,
     }
-    if !gat.walkable(to) {
+    if from == to {
         return None;
     }
-    let estimate = |cell: [i32; 2]| {
-        let (dx, dy) = ((cell[0] - to[0]).abs(), (cell[1] - to[1]).abs());
-        10 * dx.max(dy) + 4 * dx.min(dy)
-    };
-    let mut open = BinaryHeap::from([Reverse((estimate(from), 0, from))]);
-    let mut came_from: HashMap<[i32; 2], [i32; 2]> = HashMap::new();
-    let mut cost: HashMap<[i32; 2], i32> = HashMap::from([(from, 0)]);
-    // rathena caps searches too; this keeps a click across the map from stalling a frame.
-    let mut budget = 20_000;
-    while let Some(Reverse((_, spent, cell))) = open.pop() {
+    let monster_look = kind == Some(MONSTER_LOOK);
+    if !gat.walkable_by(to, monster_look) {
+        return None;
+    }
+    let estimate = |cell: [i32; 2]| 10 * ((cell[0] - to[0]).abs() + (cell[1] - to[1]).abs());
+    let mut nodes = vec![Node { cell: from, parent: None, cost: 0, sum: estimate(from), open: true }];
+    let mut known = HashMap::from([(from, 0)]);
+    let mut heap = vec![0];
+    while !heap.is_empty() {
+        let current = heap_pop(&mut heap, &nodes, |node| node.sum);
+        nodes[current].open = false;
+        let (cell, spent) = (nodes[current].cell, nodes[current].cost);
         if cell == to {
-            let mut path = vec![to];
-            while let Some(&previous) = came_from.get(path.last().unwrap()) {
-                if previous == from {
-                    break;
-                }
-                path.push(previous);
+            let mut path = vec![];
+            let mut at = current;
+            while let Some(parent) = nodes[at].parent {
+                path.push(nodes[at].cell);
+                at = parent;
             }
             path.reverse();
             return Some(path);
         }
-        budget -= 1;
-        if budget == 0 || spent > cost[&cell] {
-            if budget == 0 {
-                return None;
+        // A diagonal's side cells block on 1 and 5; the cell stepped onto takes the walker's own test.
+        let open = |dx: i32, dy: i32| gat.walkable([cell[0] + dx, cell[1] + dy]);
+        let onto = |dx: i32, dy: i32| gat.walkable_by([cell[0] + dx, cell[1] + dy], monster_look);
+        let (north, south, east, west) = (open(0, 1), open(0, -1), open(1, 0), open(-1, 0));
+        let ways = [
+            (1, -1, south && east),
+            (1, 0, true),
+            (1, 1, north && east),
+            (0, 1, true),
+            (-1, 1, north && west),
+            (-1, 0, true),
+            (-1, -1, south && west),
+            (0, -1, true),
+        ];
+        for (dx, dy, sides) in ways {
+            if !sides || !onto(dx, dy) {
+                continue;
             }
-            continue;
-        }
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                let next = [cell[0] + dx, cell[1] + dy];
-                let diagonal = dx != 0 && dy != 0;
-                if (dx == 0 && dy == 0)
-                    || !gat.walkable(next)
-                    || (diagonal && !(gat.walkable([cell[0] + dx, cell[1]]) && gat.walkable([cell[0], cell[1] + dy])))
-                {
-                    continue;
+            let diagonal = dx != 0 && dy != 0;
+            let next = [cell[0] + dx, cell[1] + dy];
+            let cost = spent + if diagonal { 14 } else { 10 };
+            match known.get(&next) {
+                Some(&index) if cost < nodes[index].cost => {
+                    let node = &mut nodes[index];
+                    (node.cost, node.parent, node.sum) = (cost, Some(current), cost + estimate(next));
+                    if node.open {
+                        let at = heap.iter().position(|&queued| queued == index).expect("an open node is queued");
+                        heap_rise(&mut heap, &nodes, |node| node.sum, 0, at);
+                        heap_sink(&mut heap, &nodes, |node| node.sum, at);
+                    } else {
+                        node.open = true;
+                        heap_push(&mut heap, &nodes, |node| node.sum, index);
+                    }
                 }
-                let next_cost = spent + if diagonal { 14 } else { 10 };
-                if cost.get(&next).is_none_or(|&known| next_cost < known) {
-                    cost.insert(next, next_cost);
-                    came_from.insert(next, cell);
-                    open.push(Reverse((next_cost + estimate(next), next_cost, next)));
+                Some(_) => {}
+                // A cell reached the first time is a new node; one past the limit ends the search with no path.
+                None => {
+                    if limit.is_some_and(|limit| nodes.len() >= limit) {
+                        return None;
+                    }
+                    known.insert(next, nodes.len());
+                    nodes.push(Node { cell: next, parent: Some(current), cost, sum: cost + estimate(next), open: true });
+                    heap_push(&mut heap, &nodes, |node| node.sum, nodes.len() - 1);
                 }
             }
         }
     }
     None
+}
+
+// The server's binary heap of indices into `items`, smallest `key` on top; its exact moves decide which of equal keys
+// comes out first.
+fn heap_push<T>(heap: &mut Vec<usize>, items: &[T], key: impl Fn(&T) -> i32, item: usize) {
+    heap.push(item);
+    let last = heap.len() - 1;
+    heap_rise(heap, items, key, 0, last);
+}
+
+/// Takes the top off: the last item goes on top and sinks to a leaf, then rises.
+fn heap_pop<T>(heap: &mut Vec<usize>, items: &[T], key: impl Fn(&T) -> i32) -> usize {
+    let top = heap.swap_remove(0);
+    if !heap.is_empty() {
+        heap_sink(heap, items, key, 0);
+    }
+    top
+}
+
+/// Moves the item at `at` up while its parent's key is larger, no higher than `top`.
+fn heap_rise<T>(heap: &mut [usize], items: &[T], key: impl Fn(&T) -> i32, top: usize, mut at: usize) {
+    while at > top {
+        let parent = (at - 1) / 2;
+        if key(&items[heap[parent]]) <= key(&items[heap[at]]) {
+            break;
+        }
+        heap.swap(parent, at);
+        at = parent;
+    }
+}
+
+/// Moves the item at `from` down to a leaf, always by the smaller child (the right one on a tie), then back up.
+fn heap_sink<T>(heap: &mut [usize], items: &[T], key: impl Fn(&T) -> i32, from: usize) {
+    let mut at = from;
+    while 2 * at + 1 < heap.len() {
+        let (left, right) = (2 * at + 1, 2 * at + 2);
+        let child = if right >= heap.len() || key(&items[heap[left]]) < key(&items[heap[right]]) { left } else { right };
+        heap.swap(at, child);
+        at = child;
+    }
+    heap_rise(heap, items, key, from, at);
 }
 
 /// Whether a player at `from` can hit `to` with `range` (rathena's `check_distance_client`: circular, and a cell longer on straight lines).
@@ -1350,6 +1545,70 @@ mod tests {
     }
 
     #[test]
+    fn monster_looking_npcs_step_onto_type_5() {
+        // Cell (x, y) is cells[y * W + x]; the listed cells are type 5, the rest 0.
+        let gat = |width: usize, height: usize, five: &[[usize; 2]]| {
+            let mut cells = vec![([0.0; 4], 0); width * height];
+            for [x, y] in five {
+                cells[y * width + x].1 = 5;
+            }
+            Gat { width, height, cells }
+        };
+        let across = gat(3, 1, &[[1, 0]]);
+        assert_eq!(find_unit_path(&across, [0, 0], [2, 0], 12), Some(vec![[1, 0], [2, 0]]));
+        assert_eq!(find_unit_path(&across, [0, 0], [2, 0], 6), None);
+        let goal = gat(3, 1, &[[2, 0]]);
+        assert_eq!(find_unit_path(&goal, [0, 0], [2, 0], 12), Some(vec![[1, 0], [2, 0]]));
+        assert_eq!(find_unit_path(&goal, [0, 0], [2, 0], 6), None);
+        // The diagonal past a type-5 side cell stays shut, so kind 12 goes through it and kind 6 round it.
+        let corner = gat(2, 2, &[[1, 0]]);
+        assert_eq!(find_unit_path(&corner, [0, 0], [1, 1], 12), Some(vec![[1, 0], [1, 1]]));
+        assert_eq!(find_unit_path(&corner, [0, 0], [1, 1], 6), Some(vec![[0, 1], [1, 1]]));
+        // Type 1 blocks everyone; clicks and the trail (no kind) treat 5 as blocked.
+        let mut wall = gat(3, 1, &[]);
+        wall.cells[1].1 = 1;
+        assert_eq!(find_unit_path(&wall, [0, 0], [2, 0], 12), None);
+        assert_eq!(find_path(&across, [0, 0], [2, 0]), None);
+    }
+
+    #[test]
+    fn walk_searches_stop_at_149_cells() {
+        let open = Gat { width: 120, height: 120, cells: vec![([0.0; 4], 0); 120 * 120] };
+        assert_eq!(find_path(&open, [60, 60], [107, 60]).map(|path| path.len()), Some(47));
+        assert_eq!(find_path(&open, [60, 60], [108, 60]), None);
+        assert_eq!(find_path(&open, [40, 40], [69, 69]).map(|path| path.len()), Some(29));
+        assert_eq!(find_path(&open, [40, 40], [70, 70]), None);
+        // The trail has no limit.
+        assert_eq!(find_trail(&open, [60, 60], [108, 60]).map(|path| path.len()), Some(48));
+        // A wall across rows: round it is too far for a walk, not for the trail.
+        let mut cells = vec![([0.0; 4], 0); 27 * 12];
+        for x in 3..=23 {
+            cells[5 * 27 + x].1 = 1;
+        }
+        let walled = Gat { width: 27, height: 12, cells };
+        assert_eq!(find_path(&walled, [13, 3], [13, 7]), None);
+        assert!(find_trail(&walled, [13, 3], [13, 7]).is_some_and(|path| path.last() == Some(&[13, 7])));
+        // No path from a cell to itself.
+        assert_eq!(find_path(&open, [5, 5], [5, 5]), None);
+        assert_eq!(find_trail(&open, [5, 5], [5, 5]), None);
+    }
+
+    #[test]
+    fn paths_are_the_servers() {
+        // The server's own search gives these (rows listed bottom first): on open ground the diagonal steps come
+        // first, and round a wall the ties fall as its heap leaves them.
+        let gat = |rows: &[&str]| Gat {
+            width: rows[0].len(),
+            height: rows.len(),
+            cells: rows.iter().flat_map(|row| row.bytes().map(|byte| ([0.0; 4], if byte == b'0' { 0 } else { 1 }))).collect(),
+        };
+        let open = gat(&["0000000000"; 8]);
+        assert_eq!(find_path(&open, [1, 1], [7, 5]).unwrap(), [[2, 2], [3, 3], [4, 4], [5, 5], [6, 5], [7, 5]]);
+        let walled = gat(&["0000000000", "0000000000", "0001110000", "0000010000", "0000010000", "0000000000", "0000000000", "0000000000"]);
+        assert_eq!(find_path(&walled, [1, 1], [8, 4]).unwrap(), [[2, 1], [3, 1], [4, 1], [5, 1], [6, 1], [7, 2], [8, 3], [8, 4]]);
+    }
+
+    #[test]
     fn sprites_tilt_their_depth_toward_the_camera() {
         let pitch = 45f32.to_radians();
         // The view depth a depth buffer value stands for, and a pixel's at `below` screen pixels down from feet as far
@@ -1414,5 +1673,129 @@ mod tests {
         assert_eq!(ground_hit(&gat, above, toward(above, [27.5, -10.0, 27.5])), Some([5, 5]));
         // Off the map's edge: none.
         assert_eq!(ground_hit(&gat, eye, toward(eye, [25.0, 0.0, -10.0])), None);
+    }
+
+    use rustnarok_client::map::{Cube, Surface};
+
+    fn paint(texel: impl Fn(usize, usize) -> [u8; 4]) -> Vec<u8> {
+        let mut bytes = vec![0; 8 * 8 * 4];
+        for row in 0..8 {
+            for column in 0..8 {
+                let [shadow, red, green, blue] = texel(column, row);
+                let index = row * 8 + column;
+                bytes[index] = shadow;
+                let color = 64 + index * 3;
+                bytes[color] = red;
+                bytes[color + 1] = green;
+                bytes[color + 2] = blue;
+            }
+        }
+        bytes
+    }
+
+    fn flat_light(shadow: u8, rgb: [u8; 3]) -> Vec<u8> {
+        paint(|_, _| [shadow, rgb[0], rgb[1], rgb[2]])
+    }
+
+    fn ground(width: usize, height: usize, heights: [f32; 4], top: i32, lightmap: Vec<u8>) -> Gnd {
+        Gnd {
+            width,
+            height,
+            zoom: 10.0,
+            textures: vec!["ground.bmp".into()],
+            lightmap_size: [8, 8],
+            lightmaps: vec![lightmap],
+            surfaces: vec![Surface { u: [0.0; 4], v: [0.0; 4], texture: 0, lightmap: 0, color: [255; 4] }],
+            cubes: vec![Cube { heights, top, north: -1, east: -1 }; width * height],
+        }
+    }
+
+    fn altitude(width: usize, height: usize, corners: [f32; 4]) -> Gat {
+        Gat { width, height, cells: vec![(corners, 0); width * height] }
+    }
+
+    fn near(light: [f32; 3], expected: [f32; 3]) {
+        assert!(light.iter().zip(expected).all(|(channel, want)| (channel - want).abs() < 1e-5), "{light:?} {expected:?}");
+    }
+
+    fn lit_cell(lights: &[[f32; 3]], width: usize, x: usize, y: usize) -> [f32; 3] {
+        lights[y * width + x]
+    }
+
+    #[test]
+    fn full_light_is_white() {
+        let gnd = ground(2, 2, [0.0; 4], 0, flat_light(255, [0, 0, 0]));
+        let gat = altitude(4, 4, [0.0; 4]);
+        let lights = cell_lights(&gnd, &gat);
+        near(lit_cell(&lights, 4, 1, 1), [1.0; 3]);
+    }
+
+    #[test]
+    fn half_shadow_is_half_the_shadow_byte() {
+        // A 128 and colour 0 is 128/255, the half shadow the light formula calls 0.50.
+        let gnd = ground(2, 2, [0.0; 4], 0, flat_light(128, [0, 0, 0]));
+        let gat = altitude(4, 4, [0.0; 4]);
+        let lights = cell_lights(&gnd, &gat);
+        near(lit_cell(&lights, 4, 1, 1), [128.0 / 255.0; 3]);
+    }
+
+    #[test]
+    fn a_coloured_lightmap_is_divided_by_its_largest_channel() {
+        // 200/128, 100/128 and 0, then divided by 200/128.
+        let gnd = ground(2, 2, [0.0; 4], 0, flat_light(0, [200, 100, 0]));
+        let gat = altitude(4, 4, [0.0; 4]);
+        let lights = cell_lights(&gnd, &gat);
+        near(lit_cell(&lights, 4, 1, 1), [1.0, 0.5, 0.0]);
+    }
+
+    #[test]
+    fn off_map_and_missing_tops_sample_full_bright() {
+        // One neighbour of an edge cell is off the map (shadow and colour 255); the rest of the tile is black.
+        let gnd = ground(2, 2, [0.0; 4], 0, flat_light(0, [0, 0, 0]));
+        let gat = altitude(4, 4, [0.0; 4]);
+        let lights = cell_lights(&gnd, &gat);
+        let mixed = 51.0 / 255.0 + 51.0 / 128.0;
+        near(lit_cell(&lights, 4, 0, 1), [mixed; 3]);
+        // A tile with no top ignores its lightmap.
+        let open = ground(2, 2, [0.0; 4], -1, flat_light(0, [0, 0, 0]));
+        let lights = cell_lights(&open, &gat);
+        near(lit_cell(&lights, 4, 1, 1), [1.0; 3]);
+    }
+
+    #[test]
+    fn reads_the_quarter_texel_of_the_8x8_lightmap() {
+        // Only west-south (1, 1) is dark. Cell (2, 2) is that quarter; its four neighbours read bright texels.
+        let gnd = ground(2, 2, [0.0; 4], 0, paint(|column, row| if (column, row) == (1, 1) { [0, 0, 0, 0] } else { [255, 0, 0, 0] }));
+        let gat = altitude(4, 4, [0.0; 4]);
+        let lights = cell_lights(&gnd, &gat);
+        near(lit_cell(&lights, 4, 2, 2), [204.0 / 255.0; 3]);
+    }
+
+    #[test]
+    fn a_cell_more_than_2_5_above_the_mesh_stays_bright() {
+        let dark = flat_light(0, [0, 0, 0]);
+        let level = ground(2, 2, [0.0; 4], 0, dark.clone());
+        // Exactly 2.5 above stays on the lightmap. More than that is a bridge or a model.
+        let on_it = cell_lights(&level, &altitude(4, 4, [-2.5; 4]));
+        near(lit_cell(&on_it, 4, 1, 1), [0.0; 3]);
+        let bridge = cell_lights(&level, &altitude(4, 4, [-3.0; 4]));
+        near(lit_cell(&bridge, 4, 1, 1), [1.0; 3]);
+        // The highest GND corner wins: file height -10 is world Y 10, so 2.5 above it is file height -12.5.
+        let raised = ground(2, 2, [0.0, 0.0, 0.0, -10.0], 0, dark);
+        near(lit_cell(&cell_lights(&raised, &altitude(4, 4, [-12.5; 4])), 4, 1, 1), [0.0; 3]);
+        near(lit_cell(&cell_lights(&raised, &altitude(4, 4, [-13.0; 4])), 4, 1, 1), [1.0; 3]);
+    }
+
+    #[test]
+    fn light_steps_at_the_cell_border() {
+        let table = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]];
+        assert_eq!(light_at(&table, 3, 1, [9.999, 8.0, 0.1]), [0.4, 0.5, 0.6]);
+        assert_eq!(light_at(&table, 3, 1, [10.0, 8.0, 0.1]), [0.7, 0.8, 0.9]);
+        let rows = [[0.2, 0.0, 0.0], [0.8, 0.0, 0.0]];
+        assert_eq!(light_at(&rows, 1, 2, [0.1, 0.0, 4.999]), [0.2, 0.0, 0.0]);
+        assert_eq!(light_at(&rows, 1, 2, [0.1, 0.0, 5.0]), [0.8, 0.0, 0.0]);
+        assert_eq!(light_at(&table, 3, 1, [-0.01, 0.0, 0.0]), [1.0; 3]);
+        assert_eq!(light_at(&table, 3, 1, [0.0, 0.0, -0.01]), [1.0; 3]);
+        assert_eq!(light_at(&table, 3, 1, [15.0, 0.0, 0.0]), [1.0; 3]);
     }
 }

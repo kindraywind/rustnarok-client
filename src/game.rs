@@ -466,7 +466,7 @@ impl Game {
             Panel::Guild => self.guild.is_some() && self.guild_window.frame.local(cursor, self.guild_window.height()).is_some(),
             Panel::Clan => self.clan.is_some() && self.clan_window.frame.local(cursor, self.clan_window.height()).is_some(),
             Panel::Cart => self.cart.cart.is_some() && self.cart.hit(cursor).is_some(),
-            Panel::Pet => self.pet.as_ref().is_some_and(|pet| self.pet_window.hit(cursor, pet).is_some()),
+            Panel::Pet => self.pet.is_some() && self.pet_window.hit(cursor).is_some(),
             Panel::Mercenary => self.mercenary.is_some() && self.mercenary_window.hit(cursor).is_some(),
             Panel::MercenarySkills => self.mercenary.is_some() && self.mercenary_skill_list.hit(cursor, &self.mercenary_skills).is_some(),
             Panel::Homunculus => self.homunculus.as_ref().is_some_and(|homunculus| self.homunculus_window.hit(cursor, homunculus).is_some()),
@@ -518,6 +518,9 @@ impl Game {
         if let Some(window) = &self.item_window {
             self.item_place = window.position;
         }
+        if let Some(window) = &self.card_window {
+            self.card_place = window.position;
+        }
         if control::driven() {
             return;
         }
@@ -534,12 +537,37 @@ impl Game {
         }
         places += &size_lines(self.inventory.size(), self.cart.size(), self.storage.rows(), self.shop_sizes);
         places += &format!("{VEND_SIZE} {} {} 0\n{SKILL_LIST_SIZE} 0 {} 0\n", self.vend_size.width, self.vend_size.rows, self.skill_window.list_rows());
-        places += &format!("{ITEM_PLACE} {} {} 0\n", self.item_place[0], self.item_place[1]);
+        places += &format!("{ITEM_PLACE} {} {} 0\n{CARD_PLACE} {} {} 0\n", self.item_place[0], self.item_place[1], self.card_place[0], self.card_place[1]);
+        let quest = self.quest_window.frame.position;
+        places += &format!("{QUEST_PLACE} {} {} 0\n", quest[0], quest[1]);
         if places != self.saved_places {
             if let Some(path) = settings_path("windows") {
                 let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, &places));
             }
             self.saved_places = places;
+        }
+    }
+
+    /// A card from a description's strip, in its own window where that was last (the description stays).
+    pub(crate) fn show_card(&mut self, card: u32, enchant: bool) {
+        if let Some(window) = &self.card_window {
+            self.card_place = window.position;
+        }
+        let mut window = iteminfo::ItemWindow::new(iteminfo::Shown::card(card, enchant));
+        window.position = self.card_place;
+        self.card_window = Some(window);
+    }
+
+    /// A card's picture button: its picture, or shut again when it's that card's already (another card's replaces it).
+    pub(crate) fn toggle_card_view(&mut self, card: u32, pictures: &iteminfo::CardPictures, items: &HashMap<u32, ItemInfo>) {
+        if self.card_view.as_ref().is_some_and(|view| view.card == card) {
+            self.card_view = None;
+            return;
+        }
+        if let Some(name) = pictures.name(card) {
+            let title = items.get(&card).map_or_else(String::new, |info| info.name.clone());
+            self.card_view = Some(iteminfo::CardView::new(iteminfo::cardbmp_path(name), card, title, screen()));
+            escape::touch(&mut self.esc_order, escape::WindowId::CardPicture);
         }
     }
 
@@ -589,6 +617,12 @@ impl Game {
         }
         if let Some(&(place, _)) = saved.get(ITEM_PLACE) {
             self.item_place = iteminfo::restored_place(place, screen());
+        }
+        if let Some(&(place, _)) = saved.get(QUEST_PLACE) {
+            self.quest_window.frame.position = quest::restored_place(place, screen());
+        }
+        if let Some(&(place, _)) = saved.get(CARD_PLACE) {
+            self.card_place = iteminfo::restored_card_place(place, screen());
         }
         if let (Some(&([width, goods], _)), Some(&([_, deal], _))) = (saved.get(SHOP_SIZE), saved.get(SHOP_DEAL_SIZE)) {
             self.shop_sizes = (shop::snap_width(width), [goods as usize, deal as usize]);
@@ -692,6 +726,48 @@ impl Game {
         }
     }
 
+    /// The reason box answered: OK sends the reason as typed (empty is fine), Cancel only closes.
+    /// OK in the create (or disband) window: the name's checks, then CZ_REQ_MAKE_GUILD (the window stays open) or,
+    /// for the guild's own name, CZ_REQ_DISORGANIZE_GUILD (the window closes).
+    pub(crate) fn guild_name_ok(&mut self, messages: &[String]) {
+        let Some(create) = &self.guild_companion.create else { return };
+        let checked = if create.disband {
+            guild_companion::check_disband(&create.name, self.guild.as_ref().map_or("", |guild| guild.name.as_str()))
+        } else {
+            guild_companion::check_create(&create.name, self.clan.is_some())
+        };
+        let disband = create.disband;
+        match checked {
+            guild_companion::Checked::Line(message, color) => self.chat_line(messages.get(message).cloned().unwrap_or_default(), color),
+            guild_companion::Checked::Box(message) => {
+                if disband {
+                    self.guild_companion.create = None;
+                }
+                self.question_box = Some(BoxQuestion::Notice(message));
+            }
+            guild_companion::Checked::Send(name) if disband => {
+                self.guild_companion.create = None;
+                let _ = self.session.disband_guild(&name);
+            }
+            guild_companion::Checked::Send(name) => {
+                let _ = self.session.make_guild(self.me.id, &name);
+            }
+        }
+    }
+
+    pub(crate) fn answer_reason(&mut self, ok: bool) {
+        let Some(asked) = self.reason_box.take() else { return };
+        let Some(guild) = &self.guild else { return };
+        if !ok {
+            return;
+        }
+        let _ = match asked.kind {
+            guild::Reasoned::Leave => self.session.leave_guild(guild.id, self.account_id, self.me.id, &asked.text),
+            guild::Reasoned::Expel(account, character) if guild.can_expel() => self.session.expel_from_guild(guild.id, account, character, &asked.text),
+            guild::Reasoned::Expel(..) => Ok(()),
+        };
+    }
+
     /// What a docked party window's click or Enter came to.
     pub(crate) fn party_dialog_action(&mut self, action: party::DialogAction, messages: &[String]) {
         let message = |id: usize| messages.get(id).cloned().unwrap_or_default();
@@ -747,6 +823,9 @@ impl Game {
             BoxQuestion::Disband => self.leave_party(),
             BoxQuestion::Expel(account, name) => {
                 let _ = self.session.expel_from_party(account, &name);
+            }
+            BoxQuestion::GuildLeader { account, character, .. } => {
+                let _ = self.session.move_members(&[(account, character, 0)]);
             }
             BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) => {}
         }
@@ -1117,8 +1196,14 @@ impl Game {
             return None;
         }
         // The guild's name is the key; rathena does nothing for a wrong one.
+        // ponytail: /breakguild takes the disband window's name check.
         if let Some(name) = text.strip_prefix("/breakguild ") {
-            let _ = self.session.disband_guild(name.trim().trim_matches('"'));
+            let name = name.trim().trim_matches('"');
+            match guild_companion::check_disband(name, self.guild.as_ref().map_or("", |guild| guild.name.as_str())) {
+                guild_companion::Checked::Send(name) => drop(self.session.disband_guild(&name)),
+                guild_companion::Checked::Box(message) => self.question_box = Some(BoxQuestion::Notice(message)),
+                guild_companion::Checked::Line(..) => {}
+            }
             return None;
         }
         // ponytail: /cl sends to the clan until the chat window has the send-to choice (messages 85, 86, 437, 2361).
@@ -1428,6 +1513,19 @@ impl Game {
                 Ok(())
             }
             // ponytail: plain on/off lines, as /noshift prints.
+            chat::Command::LoginOut | chat::Command::NoGuildTalk => {
+                let (name, on) = match command {
+                    chat::Command::LoginOut => ("loginout", &mut self.login_notices),
+                    _ => ("notalkmsg2", &mut self.no_guild_talk),
+                };
+                *on = !*on;
+                let on = *on;
+                if let Some(path) = settings_path(name) {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if on { "1" } else { "0" }));
+                }
+                self.chat_line(format!("{name}: {}", if on { "On" } else { "Off" }), CHAT_ITEM);
+                Ok(())
+            }
             chat::Command::Snap | chat::Command::ItemSnap | chat::Command::SkillSnap => {
                 let (name, on) = match command {
                     chat::Command::Snap => ("snap", &mut self.snaps.snap),
@@ -1466,6 +1564,12 @@ impl Game {
             chat::Command::Effect => {
                 graphics.effects_on = !graphics.effects_on;
                 self.chat_line(message(if graphics.effects_on { EFFECTS_ON } else { EFFECTS_OFF }), CHAT_ITEM);
+                Ok(())
+            }
+            // ponytail: /quake's chat lines use the message table's 2805 ("Screen shake ON") and 2806 ("Screen shake OFF").
+            chat::Command::Quake => {
+                graphics.quake = !graphics.quake;
+                self.chat_line(message(if graphics.quake { QUAKE_ON } else { QUAKE_OFF }), CHAT_ITEM);
                 Ok(())
             }
             // /aura: the max-level aura in full or simplified (its motes only); not while /aura2 has it off.
@@ -1531,7 +1635,11 @@ impl Game {
             || self.trade.as_ref().is_some_and(|trade| trade.typing)
             || self.booking.as_ref().is_some_and(|window| window.focus.is_some())
             || self.party_dialog.as_ref().is_some_and(|dialog| dialog.typing)
+            || self.reason_box.is_some()
+            || self.guild_companion.typing()
+            || self.guild_window.typing.is_some()
             || self.storage.typing
+            || self.pet_window.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
             || self.talks.typing()
             || self.away_prompt.is_some()
@@ -1596,6 +1704,7 @@ impl Game {
         self.graphics_window = None;
         self.shortcuts_window = None;
         self.item_window = None;
+        self.card_window = None;
         self.card_view = None;
         self.monster_window = None;
         self.ranking = None;
@@ -1621,6 +1730,12 @@ impl Game {
     /// Whether the pointer is over the interface (a window, the chat, a dialog) rather than the world.
     /// Whether the pointer is on a window, or something holds the clicks (a dialog, a menu, a question in the message
     /// box of this size).
+    /// The game settings or shortcut settings window under the pointer.
+    pub(crate) fn settings_at(&self, cursor: [f32; 2]) -> bool {
+        self.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+    }
+
     pub(crate) fn on_ui(&self, cursor: [f32; 2], message: [f32; 2]) -> bool {
         let asking = self.guild_invite.is_some()
             || self.guild_asked.is_some()
@@ -1646,6 +1761,7 @@ impl Game {
             || self.level_ups.hit(cursor).is_some()
             || (self.quest_icon && quest_notice::on_icon(cursor))
             || (self.minimap_shown() && minimap::covers(cursor))
+            || self.reason_box.as_ref().is_some_and(|reason| reason.hit(cursor, screen()).is_some())
             || self.minimap_window.covers(cursor)
             || (asking && contains(dialog_position_of(message), message, cursor))
             || self.on_npc_window(cursor)
@@ -1674,6 +1790,7 @@ impl Game {
             || self.away_prompt.as_ref().is_some_and(|prompt| prompt.hit(cursor).is_some())
             || self.chat.on_list(cursor)
             || self.party_member_at(cursor).is_some()
+            || self.guild_companion.hit(cursor).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
             || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
@@ -1682,6 +1799,7 @@ impl Game {
             || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some())
             || self.item_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.card_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
             || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
             || self.room.as_ref().is_some_and(|room| room.hit(cursor, &self.me.name).is_some())
@@ -1691,7 +1809,7 @@ impl Game {
             || self.buying_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.inventory.items).is_some())
             || self.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some())
             || self.mail.hit(cursor).is_some()
-            || self.quest_window.hit(cursor, &self.quests).is_some()
+            || self.quest_window.covers(cursor)
             || self.achievement_window.covers(cursor)
             || self.synthesis.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.upgrade.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -1722,10 +1840,7 @@ impl Game {
             | Asked::VendPrice(_)
             | Asked::BuyingPrice(..)
             | Asked::BuyingAmount(_)
-            | Asked::PetName
             | Asked::HomunculusName
-            | Asked::PositionTitle(_)
-            | Asked::PositionTax(_)
             | Asked::TalkieBox { .. } => None,
         };
         match amount {
@@ -1741,11 +1856,6 @@ impl Game {
         let name = amount.typed.trim();
         let _ = match amount.what {
             Asked::RoomPassword(id) => self.session.enter_chat_room(id, name),
-            // A name for the pet asks once more: it can be renamed only once.
-            Asked::PetName if !name.is_empty() => {
-                self.pet_asked = Some(PetAsked::Rename(name.to_owned()));
-                Ok(())
-            }
             // The message is in: the box goes where it was aimed (walking there first if need be).
             Asked::TalkieBox { level, cell } => {
                 self.talkie_text = Some(name.to_owned());
@@ -1758,17 +1868,7 @@ impl Game {
                 self.homunculus_rename = Some(name.to_owned());
                 Ok(())
             }
-            Asked::PetName | Asked::HomunculusName => Ok(()),
-            // A position's title or tax: the request carries its other values as they are.
-            Asked::PositionTitle(id) if !name.is_empty() => match &self.guild {
-                Some(guild) => self.session.change_position(&guild.position(id), name),
-                None => Ok(()),
-            },
-            Asked::PositionTax(id) if !name.is_empty() => match &self.guild {
-                Some(guild) => self.session.change_position(&net::GuildPosition { tax: amount.value(), ..guild.position(id) }, &guild.title(id)),
-                None => Ok(()),
-            },
-            Asked::PositionTitle(_) | Asked::PositionTax(_) => Ok(()),
+            Asked::HomunculusName => Ok(()),
             Asked::BuyingPrice(index, item_id) => {
                 if let Some(setup) = &mut self.buying_setup {
                     setup.set_price(index, item_id, amount.value());
@@ -1848,14 +1948,7 @@ impl Game {
                 have if amount > have => Ok(()),
                 _ => self.session.drop_item(index, amount as u16),
             },
-            Asked::RoomPassword(_)
-            | Asked::PetName
-            | Asked::HomunculusName
-            | Asked::PositionTitle(_)
-            | Asked::PositionTax(_)
-            | Asked::BuyingPrice(..)
-            | Asked::BuyingAmount(_)
-            | Asked::TalkieBox { .. } => Ok(()),
+            Asked::RoomPassword(_) | Asked::HomunculusName | Asked::BuyingPrice(..) | Asked::BuyingAmount(_) | Asked::TalkieBox { .. } => Ok(()),
             Asked::VendPrice(index) => {
                 if let Some(setup) = &mut self.vend_setup {
                     setup.prices.insert(index, amount);
@@ -2214,6 +2307,7 @@ impl Game {
         push(PickList, self.pick.is_some());
         push(CardPicture, self.card_view.is_some());
         push(ItemInfo, self.item_window.is_some());
+        push(CardInfo, self.card_window.is_some());
         push(ChatRoom, self.room.is_some());
         push(RoomMake, self.room_make.is_some());
         push(EmotionList, self.emotion_list.is_some());
@@ -2230,7 +2324,7 @@ impl Game {
         push(ShortcutSettings, self.shortcuts_window.is_some());
         push(WorldMap, self.world_map.is_some());
         push(Minimap, self.minimap_window.frame.open);
-        push(Quests, self.quest_window.frame.open);
+        push(Quests, self.quest_window.frame.open || self.quest_window.picked.is_some());
         push(Menu, self.menu.is_some());
         push(Capturing, self.capturing);
         push(Amount, self.amount.is_some());
@@ -2239,6 +2333,10 @@ impl Game {
         push(BindAsked, self.bind_asked.is_some());
         push(ExpansionAsked, self.expansion_asked.is_some());
         push(LeaderAsked, self.leader_asked.is_some());
+        push(GuildCompanion, self.guild_companion.frame.open);
+        push(GuildCreate, self.guild_companion.create.as_ref().is_some_and(|create| !create.disband));
+        push(GuildDisband, self.guild_companion.create.as_ref().is_some_and(|create| create.disband));
+        push(GuildTip, self.guild_companion.tip.is_some());
         push(PartyAsked, self.question_box.as_ref().is_some_and(|asked| !matches!(asked, BoxQuestion::Notice(_))));
         push(Notice, matches!(self.question_box, Some(BoxQuestion::Notice(_))));
         push(DismissAsked, self.dismiss_asked);
@@ -2279,8 +2377,8 @@ impl Game {
         if self.pick.as_ref().is_some_and(|(list, _)| list.merging) {
             names.push("ItemMerge".into());
         }
-        if matches!(self.guild_asked, Some(GuildAsked::Leave)) {
-            names.push("LeaveAsked".into());
+        if self.reason_box.is_some() {
+            names.push("GuildReason".into());
         }
         if matches!(self.queue_asked, Some(QueueAsked::Lobby(..))) {
             names.push("BattleLobby".into());
@@ -2442,7 +2540,7 @@ impl Game {
             return;
         }
         if self.pet_asked.is_some() {
-            self.answer_pet(false);
+            self.decline_pet();
             return;
         }
         if self.cashshop_buy_asked {
@@ -2452,10 +2550,11 @@ impl Game {
             }
             return;
         }
-        if let Some(asked) = self.guild_asked.take() {
-            if let crate::GuildAsked::Ally { id, .. } = asked {
-                let _ = self.session.answer_alliance(id, false);
-            }
+        if let Some(GuildAsked::Ally { id, .. }) = self.guild_asked.take() {
+            let _ = self.session.answer_alliance(id, false);
+            return;
+        }
+        if self.reason_box.take().is_some() {
             return;
         }
         if let Some((guild, _)) = self.guild_invite.take() {
@@ -2572,6 +2671,7 @@ impl Game {
                 self.card_view = None;
             }
             CardPicture => self.card_view = None,
+            CardInfo => self.card_window = None,
             ChatRoom => {
                 let _ = self.session.leave_chat_room();
             }
@@ -2617,7 +2717,7 @@ impl Game {
                     self.minimap_window.close();
                 }
             }
-            Quests => self.quest_window.frame.open = false,
+            Quests => self.quest_window.close(),
             Menu => self.menu = None,
             Capturing => self.capturing = false,
             Amount => self.answer_amount(false, &[]),
@@ -2632,9 +2732,12 @@ impl Game {
                 self.leader_asked = None;
             }
             PartyAsked | Notice => self.question_box = None,
+            GuildCompanion => self.guild_companion.close(),
+            GuildCreate | GuildDisband => self.guild_companion.create = None,
+            GuildTip => self.guild_companion.tip = None,
             DismissAsked => self.answer_dismiss(false, &[]),
             HomunculusRename => self.answer_homunculus_name(false),
-            PetAsked => self.answer_pet(false),
+            PetAsked => self.decline_pet(),
             CashShopBuy => self.cashshop_buy_asked = false,
             GuildAsked => {
                 self.guild_asked = None;
@@ -2786,10 +2889,13 @@ impl Game {
     }
 
     /// Closes the shop's windows; a market or barter tells the server, which keeps the player busy until it hears.
+    /// The shop's windows close without a deal: a market or barter says so, and so does an NPC shop.
     pub(crate) fn close_shop(&mut self) {
-        if let Some(kind) = self.shop.take().and_then(|shop| shop.market) {
-            let _ = self.session.close_market(kind);
-        }
+        let _ = match self.shop.take() {
+            Some(shop) if shop.plain() => self.session.quit_npc_trade(),
+            Some(shop) => shop.market.map_or(Ok(()), |kind| self.session.close_market(kind)),
+            None => Ok(()),
+        };
     }
 
     pub(crate) fn close_cashshop(&mut self) {
@@ -2820,7 +2926,10 @@ impl Game {
             (Picking::SkillSelect(why), skill) => self.session.select_skill(why, skill.map_or(0, |skill| skill.id as u16)),
             (Picking::Upgrade, item) => self.session.upgrade_weapon(item.map_or(0, |item| u32::from(item.index))),
             // An egg list left unanswered is let go (rathena drops it on the next skill).
-            (Picking::Hatch, Some(egg)) => self.session.hatch(egg.index),
+            (Picking::Hatch, Some(egg)) => {
+                self.pet_window.egg = Some(egg.id);
+                self.session.hatch(egg.index)
+            }
             (Picking::Hatch, None) => Ok(()),
             (Picking::Merge, _) => self.session.cancel_merge(),
         };
@@ -2848,13 +2957,6 @@ impl Game {
         self.roulette = None;
     }
 
-    /// Opens the pet window (or brings it up) with fresh news of the pet.
-    pub(crate) fn open_pet_window(&mut self) {
-        self.pet_window.frame.open = true;
-        self.raise(Panel::Pet);
-        let _ = self.session.pet_command(net::PET_INFO);
-    }
-
     /// A command to the pet; sent back to its egg, it's gone and its window closes.
     pub(crate) fn pet_command(&mut self, command: u8) {
         let _ = self.session.pet_command(command);
@@ -2864,13 +2966,69 @@ impl Game {
         }
     }
 
-    /// Answers the pet question: OK feeds it, or renames it.
-    pub(crate) fn answer_pet(&mut self, yes: bool) {
-        let _ = match self.pet_asked.take() {
-            Some(PetAsked::Feed) if yes => self.session.pet_command(net::PET_FEED),
-            Some(PetAsked::Rename(name)) if yes => self.session.rename_pet(&name),
-            _ => Ok(()),
-        };
+    /// Feeding, from the command list or the menu: not while a mail is written, else asked first.
+    pub(crate) fn ask_feed(&mut self, messages: &[String]) {
+        if self.mail.compose.is_some() {
+            self.chat_line(messages.get(pet::FEED_WHILE_MAIL).cloned().unwrap_or_default(), CHAT_ERROR);
+        } else {
+            self.pet_asked = Some(PetAsked::Feed);
+        }
+    }
+
+    /// The pet window's rename button, on what the name box holds: turned down, or asked.
+    pub(crate) fn ask_rename(&mut self) {
+        let Some(pet) = &self.pet else { return };
+        let name = self.pet_window.name(pet).to_owned();
+        self.pet_window.typing = false;
+        self.pet_asked = Some(match pet::rename_refusal(&name) {
+            Some(why) => PetAsked::Refused(why),
+            None => PetAsked::Rename(name),
+        });
+    }
+
+    /// Answers the pet question. Feeding: not while trading; without the pet's food in the bag it says so and sends
+    /// nothing. Renaming: sent, the window shows the new name at once.
+    pub(crate) fn answer_pet(&mut self, yes: bool, pets: &pet::Data, items: &HashMap<u32, ItemInfo>, messages: &[String]) {
+        if !yes {
+            return self.decline_pet();
+        }
+        match self.pet_asked.take() {
+            Some(PetAsked::Feed) => {
+                let food = self.pet.as_ref().and_then(|pet| pets.tables.food.get(&pet.monster)).copied();
+                // ponytail: a pet the food table leaves out is fed, and the server decides.
+                let has_food = food.is_none_or(|food| self.inventory.items.iter().any(|item| item.id == food));
+                match pet::feeding(self.trade.is_some(), has_food) {
+                    pet::Feeding::Trading => self.chat_line(messages.get(pet::FEED_WHILE_TRADING).cloned().unwrap_or_default(), CHAT_ERROR),
+                    pet::Feeding::NoFood => {
+                        let name = inventory::item_name(items, food.unwrap_or_default(), true, 0);
+                        self.chat_line(rustnarok_client::messages::fill(messages.get(PET_NO_FOOD).map_or("", String::as_str), &[&name]), PET_NO_FOOD_COLOR);
+                    }
+                    pet::Feeding::Send => drop(self.session.pet_command(net::PET_FEED)),
+                }
+            }
+            Some(PetAsked::Rename(name)) => {
+                let _ = self.session.rename_pet(&name);
+                if let Some(pet) = &mut self.pet {
+                    pet.name = name;
+                }
+                self.pet_window.name_text = None;
+            }
+            Some(PetAsked::Refused(_)) | None => {}
+        }
+    }
+
+    /// Our pet says a line for an act at a hunger, when it's fond enough of us to talk.
+    pub(crate) fn pet_talk(&mut self, act: u8, hunger: u16) {
+        if let Some(talk) = self.pet.as_ref().and_then(|pet| pet::talk(pet, act, hunger)) {
+            let _ = self.session.pet_act(&talk);
+        }
+    }
+
+    /// No to the pet question: a refused rename puts the old name back in the box.
+    pub(crate) fn decline_pet(&mut self) {
+        if let Some(PetAsked::Rename(_)) = self.pet_asked.take() {
+            self.pet_window.name_text = None;
+        }
     }
 
     /// The mercenary is gone (dismissed, its contract over, dead): its windows close. On a map change the server sends

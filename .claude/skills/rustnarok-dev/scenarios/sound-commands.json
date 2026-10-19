@@ -1,0 +1,93 @@
+{
+  "about": "Sound commands (issue #547): in Prontera /bgm stops the song with \"BGM Off\" and /bgm again starts Prontera's song with \"BGM On\"; with /bgm off a warp to another map stays silent, and /bgm on there starts that map's song.",
+  "account": "",
+  "slot": 0,
+  "env": {
+    "RUSTNAROK_CLIENT_SOUND": "1"
+  },
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "music": "BGM/08.mp3"
+        }
+      }
+    },
+    {
+      "type": "/bgm"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "BGM Off",
+        "state": {
+          "music": null
+        }
+      }
+    },
+    {
+      "type": "/bgm"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "BGM On",
+        "state": {
+          "music": "BGM/08.mp3"
+        }
+      }
+    },
+    {
+      "type": "/bgm"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "music": null
+        }
+      }
+    },
+    {
+      "type": "/bgm"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "chat": "BGM On"
+      }
+    }
+  ]
+}

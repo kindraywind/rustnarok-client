@@ -894,7 +894,6 @@ fn game_state(app: &App, game: &Game) -> Value {
     };
     // The message box's OK and Cancel while a question is up.
     let question = game.guild_asked.is_some()
-        || game.guild_invite.is_some()
         || game.cashshop_buy_asked
         || game.save_asked
         || game.trade_asked.is_some()
@@ -909,8 +908,16 @@ fn game_state(app: &App, game: &Game) -> Value {
             json!({"kind": "button", "name": name, "box": [x, y, button[0].size[0], button[0].size[1]]})
         })
     });
+    // The deal-type box's Buy, Sell and Cancel.
+    let deal_buttons = app.assets.as_ref().filter(|_| game.deal_choice.is_some()).into_iter().flat_map(|assets| {
+        let dialog = crate::deal_box_position();
+        ["deal_buy", "deal_sell", "deal_cancel"].into_iter().zip(crate::DEAL_BUTTONS).zip(assets.shop_buttons()).map(move |((name, place), images)| {
+            let [x, y] = crate::offset(dialog, place);
+            json!({"kind": "button", "name": name, "box": [x, y, images[0].size[0], images[0].size[1]]})
+        })
+    });
     // The party invitation's, at its own place.
-    let invitation_buttons = app.assets.as_ref().filter(|_| game.party_invite.is_some()).into_iter().flat_map(|assets| {
+    let invitation_buttons = app.assets.as_ref().filter(|_| game.party_invite.is_some() || game.guild_invite.is_some()).into_iter().flat_map(|assets| {
         let dialog = crate::party::invitation_at(crate::screen());
         [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)].map(|(name, place, button)| {
             let [x, y] = crate::offset(dialog, place);
@@ -1011,7 +1018,11 @@ fn game_state(app: &App, game: &Game) -> Value {
         .map(|(index, area)| json!({"kind": "inventory_item", "index": index, "id": item_of(index), "box": area}))
         .chain(game.inventory.check_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
-            game.item_window.iter().flat_map(|window| window.button_boxes(&app.items)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+            game.card_window
+                .iter()
+                .chain(&game.item_window)
+                .flat_map(|window| window.button_boxes(&app.items))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
         .chain(game.skill_window.skill_boxes(&sheet).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
@@ -1063,7 +1074,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.pick.iter().flat_map(|(list, _)| list.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.pick.iter().flat_map(|(list, _)| list.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
-        .chain(game.pet.iter().flat_map(|pet| game.pet_window.button_boxes(pet)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.pet.iter().flat_map(|_| game.pet_window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
             game.buying_setup
                 .iter()
@@ -1122,7 +1133,9 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.chat.settings.iter().flat_map(crate::chat::Settings::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.chat.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.room.iter().flat_map(|room| room.button_boxes(&game.me.name)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
-        .chain(game.quest_window.button_boxes(&game.quests).into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.quest_window.button_boxes(&game.quests, &app.quest_texts).into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1160,6 +1173,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(leader_question.into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(party_question.into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
+            game.reason_box
+                .iter()
+                .flat_map(|reason| reason.button_boxes(crate::screen()))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(
             game.mercenary.iter().flat_map(|_| game.mercenary_window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(
@@ -1171,8 +1190,15 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(
             game.guild.iter().flat_map(|guild| game.guild_window.button_boxes(guild)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
+        .chain(game.guild_companion.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.trade.iter().flat_map(|trade| trade.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.card_view.iter().map(|view| json!({"kind": "button", "name": "card_picture_close", "box": view.close_box()})))
         .chain(question_buttons)
+        .chain(game.slot.iter().map(|_| {
+            let [x, y] = crate::taming::place(crate::screen());
+            json!({"kind": "button", "name": "slot_machine", "box": [x, y, crate::taming::SIZE[0], crate::taming::SIZE[1]]})
+        }))
+        .chain(deal_buttons)
         .chain(invitation_buttons)
         .chain(
             ["plus", "minus", "mini", "viewon"]
@@ -1387,6 +1413,8 @@ fn game_state(app: &App, game: &Game) -> Value {
                 "antagonists": names(true),
                 "positions": positions,
                 "members": members,
+                "skill_points": guild.skill_points,
+                "skills": guild.skills.iter().map(|skill| (skill.id.to_string(), json!(skill.level))).collect::<serde_json::Map<String, Value>>(),
             })
         }),
         // The tags under the names of players in view (and the player's own), where known.
@@ -1476,6 +1504,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             "pitch": game.camera_goal.pitch.round(),
             "distance": (f64::from(game.camera_goal.distance()) * 10.0).round() / 10.0,
             "indoor": game.camera_goal.indoor,
+            "shaking": game.camera_goal.shaking,
         }),
         // What the mouse cursor shows.
         "cursor": format!("{:?}", app.cursor_look.kind()),
@@ -1602,6 +1631,15 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The inventory items with the new mark, by index.
     state["inventory_new"] = game.inventory.new_marked().into();
     state["item_window_box"] = json!(game.item_window.as_ref().map(|window| window.area()));
+    // The equipment window's View Costume box.
+    state["costumes_shown"] = game.equipment.costumes_shown.into();
+    // A card's own window and its picture: where they are and how big, and which card.
+    state["card_window_box"] = json!(game.card_window.as_ref().map(|window| window.area()));
+    state["card_view"] = json!(game.card_view.as_ref().map(|view| json!({"card": view.card, "box": view.area()})));
+    // The taming slot machine: the unit it's open for.
+    state["slot_machine"] = json!(game.slot.as_ref().map(|machine| machine.monster));
+    // The quest whose details show.
+    state["quest_picked"] = json!(game.quest_window.picked);
     state["opened_page"] = game.opened_page.clone().into();
     // Our milliseconds a cell.
     state["player"]["step_ms"] = game.player.step_ms.into();

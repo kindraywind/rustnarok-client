@@ -250,18 +250,6 @@ pub fn may_ground_drop(lock_drop: bool) -> bool {
     !lock_drop
 }
 
-/// Worn items that sit in a slot the hovered item can go in. Only an unworn piece of equipment is compared.
-pub fn compared_worn<'a>(hovered: &InventoryItem, items: &'a [InventoryItem]) -> Vec<&'a InventoryItem> {
-    if hovered.worn != 0 || hovered.location == 0 || !equipment(hovered.kind) {
-        return Vec::new();
-    }
-    items.iter().filter(|item| item.index != hovered.index && item.worn & hovered.location != 0).collect()
-}
-
-fn equipment(kind: u8) -> bool {
-    matches!(kind, net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR | net::ITEM_PET_ARMOR)
-}
-
 /// Where a click on the window landed.
 #[derive(Debug, PartialEq)]
 pub enum Hit {
@@ -1324,26 +1312,5 @@ mod tests {
         assert_eq!(Boxes::parse("1 0"), Boxes { lock_drop: true, compare: false });
         assert_eq!(Boxes::parse("0 1").text(), "0 1");
         assert_eq!(Boxes::parse("").text(), "0 0");
-    }
-
-    #[test]
-    fn matches_worn_items_in_the_hovered_slots() {
-        let sword = InventoryItem { index: 1, kind: net::ITEM_WEAPON, location: 2, ..Default::default() };
-        let worn = InventoryItem { index: 2, kind: net::ITEM_WEAPON, location: 2, worn: 2, ..Default::default() };
-        let shield = InventoryItem { index: 3, kind: net::ITEM_ARMOR, location: 32, worn: 32, ..Default::default() };
-        let potion = InventoryItem { index: 4, kind: net::ITEM_HEALING, ..Default::default() };
-        let items = [sword.clone(), worn.clone(), shield.clone(), potion.clone()];
-        assert_eq!(compared_worn(&sword, &items).iter().map(|item| item.index).collect::<Vec<_>>(), [2]);
-        // A two-hander covers the weapon and the shield.
-        let hands = InventoryItem { index: 5, kind: net::ITEM_WEAPON, location: 2 | 32, ..Default::default() };
-        assert_eq!(compared_worn(&hands, &items).iter().map(|item| item.index).collect::<Vec<_>>(), [2, 3]);
-        // Already worn, or not equipment: nothing beside it.
-        assert!(compared_worn(&worn, &items).is_empty());
-        assert!(compared_worn(&potion, &items).is_empty());
-        // Both accessory slots, when the hovered piece can go in either.
-        let left = InventoryItem { index: 6, kind: net::ITEM_ARMOR, location: 8, worn: 8, ..Default::default() };
-        let right = InventoryItem { index: 7, kind: net::ITEM_ARMOR, location: 128, worn: 128, ..Default::default() };
-        let ring = InventoryItem { index: 8, kind: net::ITEM_ARMOR, location: 8 | 128, ..Default::default() };
-        assert_eq!(compared_worn(&ring, &[left, right]).iter().map(|item| item.index).collect::<Vec<_>>(), [6, 7]);
     }
 }

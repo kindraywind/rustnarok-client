@@ -1,0 +1,9 @@
+{
+  "about": "Map light (issue #431): the player standing in prontera, where a building shadow darkens a unit one GAT cell at a time and open ground leaves it full bright. The light table itself is checked by unit tests.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"shot": "map-light-prontera", "crop": [360, 200, 300, 360]}
+  ]
+}

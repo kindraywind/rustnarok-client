@@ -335,6 +335,7 @@ impl App {
                     targeting: None,
                     capturing: false,
                     slot_sprite: SpriteSet::at(&self.grf, "data\\sprite\\slotmachine"),
+                    quest_npc: None,
                     slot: None,
                     casts: HashMap::new(),
                     progress: ProgressBar::default(),
@@ -365,14 +366,19 @@ impl App {
                     shortcuts_window: None,
                     world_map: None,
                     quests: Vec::new(),
-                    quest_window: quest::QuestWindow {
-                        tracker: settings_path("quest_tracker").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
-                        ..quest::QuestWindow::load()
+                    quest_window: {
+                        let mut window = quest::QuestWindow::load();
+                        window.tracker =
+                            settings_path("quest_tracker").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0");
+                        window
                     },
                     achievement_totals: net::AchievementTotals::default(),
                     achievements: HashMap::new(),
                     achievement_window: achievement::AchievementWindow::default(),
                     item_window: None,
+                    card_window: None,
+                    card_place: iteminfo::CARD_PLACE,
+                    card_lines: 0,
                     card_view: None,
                     item_lines: 0,
                     item_place: iteminfo::DEFAULT_PLACE,
@@ -448,6 +454,8 @@ impl App {
                     pet: None,
                     pet_window: pet::PetWindow::default(),
                     pet_asked: None,
+                    pet_hunger_before: 0,
+                    pet_idle: pet::Idle::default(),
                     mercenary: None,
                     refusing_party: None,
                     announcements: announce::Bar::default(),
@@ -475,6 +483,8 @@ impl App {
                     head_emblems: Vec::new(),
                     bars_drawn: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
+                    login_notices: settings_path("loginout").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
+                    no_guild_talk: settings_path("notalkmsg2").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     show_emblems: settings_path("emblem").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
                     unknown_names: HashSet::new(),
                     hover_block: None,
@@ -482,7 +492,6 @@ impl App {
                     right_moved: false,
                     companion_mark: None,
                     camera_snap: settings_path("camerasnap").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
-                    quake_flip: false,
                     no_ctrl: settings_path("noctrl").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
                     snaps: Snaps::load(),
                     cursor_at: [-1.0; 2],
@@ -548,6 +557,8 @@ impl App {
                     guild_window: guild::GuildWindow::default(),
                     guild_invite: None,
                     guild_asked: None,
+                    reason_box: None,
+                    guild_companion: guild_companion::Companion::default(),
                     guild_shown: false,
                     clan: None,
                     clan_window: clan::ClanWindow::default(),
@@ -859,7 +870,7 @@ impl App {
                 let now = control::now();
                 self.server_clock.heard(start_time, Instant::now());
                 let begin = self.server_clock.local(start_time).map_or(now, |at| at + actor::REMOTE_DELAY);
-                match world::find_path(&game.world.gat, from, to.map(i32::from)) {
+                match world::find_unit_path(&game.world.gat, from, to.map(i32::from), unit.kind) {
                     Some(path) => actor.walk_from(from, sub, path, begin, now, known),
                     None if !known => actor.walk_from(from, sub, Vec::new(), begin, now, false),
                     None => {}
@@ -959,6 +970,7 @@ impl App {
                     sprites: SpriteSet::player(grf, &look, look_tables),
                 });
             }
+            MapEvent::CostumesShown(shown) => game.equipment.costumes_shown = shown,
             MapEvent::ShowEquipment { shown, answer } => {
                 game.equipment.shown = shown;
                 if answer {
@@ -1215,11 +1227,11 @@ impl App {
                 let begin = self.server_clock.local(start_time).map_or(now, |at| at + actor::REMOTE_DELAY);
                 let (from, to) = (from.map(i32::from), to.map(i32::from));
                 let gat = &game.world.gat;
-                let walk = world::find_path(gat, from, to).map(|path| (from, sub, path)).or_else(|| {
+                let walk = world::find_unit_path(gat, from, to, PLAYER).map(|path| (from, sub, path)).or_else(|| {
                     let drawn = game.player.position(now);
                     let cell = drawn.map(|value| value.round() as i32);
                     let sub = [0, 1].map(|axis| ((drawn[axis] - cell[axis] as f32) * 16.0 + 8.0).round().clamp(0.0, 15.0) as u8);
-                    world::find_path(gat, cell, to).map(|path| (cell, sub, path))
+                    world::find_unit_path(gat, cell, to, PLAYER).map(|path| (cell, sub, path))
                 });
                 if let Some((from, sub, path)) = walk {
                     game.player.walk_from(from, sub, path, begin, now, true);
@@ -1243,7 +1255,10 @@ impl App {
                     if slide {
                         actor.slide_to(cell, now);
                     } else if actor.sliding_to() != Some(cell) {
-                        actor.stop_at(cell);
+                        // Where it's drawn, unless it's drawn on another cell with a path to the stop cell.
+                        let from = actor::drawn_cell(actor.position(now));
+                        let path = world::find_path(&game.world.gat, from, cell).is_some();
+                        actor.stop_drawn(cell, path, now);
                     }
                 }
                 if id == game.account_id
@@ -1511,6 +1526,9 @@ impl App {
                     for line in lines {
                         game.chat_line(line, CHAT_ERROR);
                     }
+                }
+                if let Some(egg) = items.iter().find(|item| inventory::hidden_egg(item)) {
+                    game.pet_window.egg = Some(egg.id);
                 }
                 game.inventory.extend(items.into_iter().filter(|item| !inventory::hidden_egg(item)).collect());
             }
@@ -2081,16 +2099,21 @@ impl App {
                 }
             }
             // The guild: what it is, its pages, its talk, and who comes and goes.
-            MapEvent::Guild { id, name, master, emblem } => {
+            MapEvent::Guild { id, name, master, emblem, mode } => {
                 let guild = game.guild.get_or_insert_with(guild::Guild::default);
                 guild.id = id;
                 guild.name = name;
                 guild.master = master;
                 guild.emblem = emblem;
+                guild.mode = mode;
                 game.want_emblem(id, emblem);
             }
             MapEvent::GuildInfo(info) => {
                 if let Some(guild) = &mut game.guild {
+                    // We lead it when its master's name is ours, too.
+                    if info.master == game.me.name {
+                        guild.master = true;
+                    }
                     guild.name.clone_from(&info.name);
                     guild.info = Some(info);
                 }
@@ -2168,38 +2191,50 @@ impl App {
                 }
                 game.name_tags.insert(id, tag);
             }
+            // The notice: "[ subject ]" and "[ text ]" while /loginout is on; kept either way.
             MapEvent::GuildNotice { subject, text } => {
-                if !subject.is_empty() {
-                    game.chat_line(format!("[{subject}] {text}"), GUILD_CHAT);
+                if game.login_notices {
+                    for line in guild::notice_lines(&subject, &text) {
+                        game.chat_line(line, guild::NOTICE_LINE);
+                    }
                 }
                 if let Some(guild) = &mut game.guild {
                     guild.notice = (subject, text);
                 }
             }
-            MapEvent::GuildChat(text) => game.chat_line(text, GUILD_CHAT),
-            MapEvent::GuildMemberOnline { account, character, online } => {
-                let member =
-                    game.guild.as_mut().and_then(|guild| guild.members.iter_mut().find(|member| member.account == account && member.character == character));
-                if let Some(member) = member {
-                    member.online = online;
-                    let name = member.name.clone();
-                    let text = rustnarok_client::messages::fill(self.messages.get(GUILD_ONLINE + usize::from(!online)).map_or("", String::as_str), &[&name]);
+            // Guild chat, unless /notalkmsg2 hides it.
+            MapEvent::GuildChat(text) => {
+                if !game.no_guild_talk {
                     game.chat_line(text, GUILD_CHAT);
                 }
             }
+            MapEvent::GuildMemberOnline { account, character, online } => {
+                let member =
+                    game.guild.as_mut().and_then(|guild| guild.members.iter_mut().find(|member| member.account == account && member.character == character));
+                // A member logging in or out: a guild line in cyan while /loginout is on, when their name is known.
+                if let Some(member) = member {
+                    member.online = online;
+                    let name = member.name.clone();
+                    if game.login_notices && !name.is_empty() {
+                        let template = self.messages.get(GUILD_ONLINE + usize::from(!online)).map_or("", String::as_str);
+                        game.chat_line_kind(rustnarok_client::messages::fill(template, &[&name]), guild::LINE_CYAN, chat::Kind::Guild);
+                    }
+                }
+            }
+            // Made: the companion and its windows close.
             MapEvent::GuildMade(result) => {
-                let (id, color) = match result {
-                    0 => (374, CHAT_ITEM),
-                    1 => (375, CHAT_ERROR),
-                    2 => (376, CHAT_ERROR),
-                    _ => (405, CHAT_ERROR),
-                };
-                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+                if let Some((id, color)) = guild_companion::make_result(result) {
+                    game.chat_line_kind(self.messages.get(id).cloned().unwrap_or_default(), color, chat::Kind::Guild);
+                }
+                if result == 0 {
+                    game.guild_companion.close();
+                }
             }
             MapEvent::GuildInvite { id, name } => {
                 // Dev switch: join.
                 if std::env::var("RUSTNAROK_CLIENT_GUILD").is_ok_and(|answer| answer.split(',').any(|part| part == "accept")) {
                     let _ = game.session.answer_guild(id, true);
+                    game.guild_companion.close();
                 } else {
                     game.guild_invite = Some((id, name));
                 }
@@ -2221,35 +2256,34 @@ impl App {
             }
             // Disbanded: the guild is gone, as if the player had left it.
             MapEvent::GuildDisbanded(result) => {
-                let (line, good) = guild::disband_result(result);
-                if good {
-                    game.guild = None;
-                    game.guild_window.frame.open = false;
+                if let Some((line, gone)) = guild_companion::disband_result(result) {
+                    if gone {
+                        game.guild = None;
+                        game.guild_window.frame.open = false;
+                    }
+                    game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), guild_companion::YELLOW);
                 }
-                game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), if good { CHAT_ITEM } else { CHAT_ERROR });
             }
             MapEvent::GuildInviteResult(result) => {
-                let id = 378 + usize::from(result.min(3));
-                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if result == 2 { CHAT_ITEM } else { CHAT_ERROR });
+                if let Some((id, color)) = guild::invite_result_line(result) {
+                    game.chat_line_kind(self.messages.get(id).cloned().unwrap_or_default(), color, chat::Kind::Guild);
+                }
             }
+            // Someone left or was expelled: us (the guild goes), or another (they leave the list).
             MapEvent::GuildLeft { character, reason, expelled } => {
-                if character == game.me.id {
+                let us = character == game.me.id;
+                let name =
+                    game.guild.as_ref().and_then(|guild| guild.members.iter().find(|member| member.character == character)).map(|member| member.name.clone());
+                if us {
                     game.guild = None;
                     game.guild_window.frame.open = false;
-                    if !expelled {
-                        game.chat_line(self.messages.get(LEFT_GUILD).cloned().unwrap_or_default(), GUILD_CHAT);
-                    }
                 } else if let Some(guild) = &mut game.guild {
-                    let name = guild.members.iter().find(|member| member.character == character).map(|member| member.name.clone());
                     guild.members.retain(|member| member.character != character);
-                    // ponytail: the leave lines' color (the guild chat's) is an estimate.
-                    if let Some(name) = name.filter(|_| !expelled) {
-                        let line = |id: usize, value: &str| messages::fill(self.messages.get(id).map_or("", String::as_str), &[&value]);
-                        game.chat_line(line(MEMBER_LEFT, &name), GUILD_CHAT);
-                        if !reason.is_empty() {
-                            game.chat_line(line(LEFT_BECAUSE, &reason), GUILD_CHAT);
-                        }
-                    }
+                }
+                let nameless = self.messages.get(581).cloned().unwrap_or_default();
+                for (id, value, color) in guild::leaving_lines(us, expelled, name.as_deref(), &reason, &nameless) {
+                    let text = messages::fill(self.messages.get(id).map_or("", String::as_str), &[&value]);
+                    game.chat_line_kind(text, color, chat::Kind::Guild);
                 }
             }
             // The clan: its info at login or on joining, how many are online, leaving, and its chat.
@@ -2711,17 +2745,19 @@ impl App {
                     game.pick = None;
                 }
             }
-            // ponytail: neglect is told when intimacy falls while the pet starves; when the real client tells it isn't known.
             MapEvent::PetState { kind: net::PET_INTIMACY, value, .. } => {
-                if game.pet.as_ref().is_some_and(|pet| pet.hunger == 0 && value < i32::from(pet.intimacy)) {
-                    game.chat_line(self.messages.get(PET_NEGLECTED).cloned().unwrap_or_default(), CHAT_ERROR);
+                let job = game.me.job;
+                if game.pet.as_ref().is_some_and(|pet| pet::neglected(job, value.clamp(0, 1000) as u16, pet.hunger)) {
+                    game.chat_line(self.messages.get(pet::NEGLECTED).cloned().unwrap_or_default(), pet::NEGLECTED_COLOR);
                 }
                 if let Some(pet) = &mut game.pet {
                     pet.intimacy = value as u16;
                 }
             }
+            // The hunger before this update is what a feeding's line is about.
             MapEvent::PetState { kind: net::PET_HUNGER, value, .. } => {
                 if let Some(pet) = &mut game.pet {
+                    game.pet_hunger_before = pet.hunger;
                     pet.hunger = value as u16;
                 }
             }
@@ -2746,12 +2782,13 @@ impl App {
                 {
                     actor.play(action, Instant::now(), duration, false);
                 }
-                if let Some(pet) = game.pet.as_ref().filter(|_| game.pet_id == Some(id)) {
+                if let Some(hunger) = game.pet.as_ref().filter(|_| game.pet_id == Some(id)).map(|pet| pet.hunger) {
                     let act = if value == 4 { pet::ACT_PERFORMED_SPECIAL } else { pet::ACT_PERFORMED + value.clamp(1, 3) as u8 - 1 };
-                    let _ = game.session.pet_act(&net::PetAct::Talk { monster: pet.monster, act, hunger: pet::hunger_band(pet.hunger) });
+                    game.pet_talk(act, hunger);
                 }
             }
             MapEvent::PetState { .. } => {}
+            MapEvent::PetAutoFeed(on) => game.pet_window.auto_feed = on,
             MapEvent::PetInfo(pet) => {
                 // Its picture, loaded when it's another monster's.
                 if game.pet_window.picture.as_ref().is_none_or(|(monster, _)| *monster != pet.monster) {
@@ -2763,22 +2800,25 @@ impl App {
             }
             MapEvent::PetFed { ok: false, food } => {
                 let name = inventory::item_name(&self.items, food, true, 0);
-                game.chat_line(messages::fill(self.messages.get(PET_NO_FOOD).map_or("", String::as_str), &[&name]), CHAT_ERROR);
+                game.chat_line(messages::fill(self.messages.get(PET_NO_FOOD).map_or("", String::as_str), &[&name]), PET_NO_FOOD_COLOR);
             }
-            // Fed (its hunger came just before): it says so.
-            MapEvent::PetFed { ok: true, .. } => {
-                if let Some(pet) = &game.pet {
-                    let _ = game.session.pet_act(&net::PetAct::Talk { monster: pet.monster, act: pet::ACT_FEEDING, hunger: pet::hunger_band(pet.hunger) });
-                }
+            // Fed (its hunger came just before): the food and how many are left, and the pet says so.
+            MapEvent::PetFed { ok: true, food } => {
+                let name = inventory::item_name(&self.items, food, true, 0);
+                let left: u32 = game.inventory.items.iter().filter(|item| item.id == food).map(|item| u32::from(item.amount)).sum();
+                game.chat_line(messages::fill(self.messages.get(PET_FED).map_or("", String::as_str), &[&name, &left]), PET_FED_COLOR);
+                game.pet_talk(pet::ACT_FEEDING, game.pet_hunger_before);
             }
             MapEvent::PetAct { id, act: net::PetAct::Emotion(kind) } => {
                 if let Some(action) = emotion::sprite_action(kind) {
                     game.emotions.insert(Some(id), (action, Instant::now()));
                 }
             }
+            // ponytail: the line goes to the chat where public talk goes.
             MapEvent::PetAct { id, act: net::PetAct::Talk { monster, act, hunger } } => {
                 if let Some(line) = pets.line(monster, act, hunger) {
-                    game.say(Some(id), line, CHAT_WHITE);
+                    game.say(Some(id), line.clone(), CHAT_WHITE);
+                    game.chat_line(line, PET_TALK_COLOR);
                 }
             }
             MapEvent::UnitName { id, name } => {
@@ -2791,15 +2831,11 @@ impl App {
                 game.targeting = None;
                 game.capturing = true;
             }
+            // The reel slows and stops on the result; nothing in the chat.
             MapEvent::CaptureResult(caught) => {
-                let action = if caught { SLOT_CAUGHT } else { SLOT_MISSED };
-                game.slot = Some((action, Instant::now()));
-                let sound = game.slot_sprite.as_ref().and_then(|sprite| sprite.body_frame(action, Timing::Span(0.0))?.1.map(str::to_owned));
-                if let (Some(audio), Some(sound)) = (&mut self.audio, sound) {
-                    audio.play(grf, &sound, 1.0);
+                if let Some(machine) = &mut game.slot {
+                    machine.answer(caught, Instant::now());
                 }
-                let (line, color) = if caught { (TAMED, CHAT_ITEM) } else { (NOT_TAMED, CHAT_ERROR) };
-                game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), color);
             }
             // Achievements: the whole list, or one changed; a newly done one says so.
             MapEvent::Achievements { totals, list } => {

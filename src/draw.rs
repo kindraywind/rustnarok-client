@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// A unit sprite's vertex RGB is its tint times the map light. Alpha stays the fade.
+fn lit_tint(tint: [f32; 4], light: [f32; 3]) -> [f32; 4] {
+    [tint[0] * light[0], tint[1] * light[1], tint[2] * light[2], tint[3]]
+}
+
 impl App {
     /// The loading screen: the picture over everything and an empty progress bar.
     pub(crate) fn draw_loading(&mut self, event_loop: &ActiveEventLoop) {
@@ -255,6 +260,10 @@ impl App {
         let font = &self.font;
         let now = control::now();
         let pointer = (self.cursor, self.mouse_down);
+        let pet_window = &mut game.pet_window;
+        pet_window.auto_label = font.width(messages.get(pet::AUTO_FEED_LABEL).map_or("", String::as_str));
+        // ponytail: the box only hides; rathena itself refuses feeding by itself to a pet it doesn't allow.
+        pet_window.auto_allowed = pet_window.egg.is_some_and(|egg| self.pets.auto_eggs.contains(&egg));
         let players_first = game.players_first(self.modifiers.shift_key());
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
 
@@ -280,6 +289,14 @@ impl App {
         }
         if let Some(id) = game.homunculus_id {
             game.follow_player(id, true, now);
+        }
+        // Our pet left standing may say so.
+        if let Some(actor) = game.pet_id.and_then(|id| game.units.get(&id))
+            && game.pet_idle.due(actor.moving(), now)
+            && crate::effects::pick(0, 3) == 0
+            && let Some(hunger) = game.pet.as_ref().map(|pet| pet.hunger)
+        {
+            game.pet_talk(pet::ACT_STAND, hunger);
         }
 
         // Where the windows were left is kept for next time.
@@ -357,15 +374,9 @@ impl App {
         let player_feet = game.world.cell_position(player_cell);
         game.camera_goal.drag_frame();
         game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame), player_feet, game.camera_snap);
-        // An earthquake shakes the view sideways and in and out, the other way each frame.
-        let quake = if self.graphics.effects_on { game.effects.quake(now) } else { 0.0 };
-        if quake > 0.0 {
-            game.quake_flip = !game.quake_flip;
-            let shake = if game.quake_flip { quake } else { -quake };
-            game.camera.target[0] += game.camera.yaw.cos() * shake;
-            game.camera.target[2] -= game.camera.yaw.sin() * shake;
-            game.camera.distance += shake;
-        }
+        // An earthquake shakes the view sideways, in and out and in tilt, the other way each frame, and snaps back when it ends.
+        let quake = game.effects.quake(now).filter(|_| self.graphics.quake);
+        game.camera_goal.shake(&mut game.camera, player_feet, quake);
         // The eye stays above the ground under it.
         let horizontal = game.camera.distance * game.camera.pitch.cos();
         let eye = [game.camera.target[0] - horizontal * game.camera.yaw.sin(), game.camera.target[2] - horizontal * game.camera.yaw.cos()];
@@ -762,6 +773,11 @@ impl App {
                 }
                 _ => [1.0; 4],
             };
+            // Layer colour and status tints are already in the sprite image. Shadows, items and skill units stay unlit.
+            let tint = match owner {
+                Owner::Player | Owner::Unit(_) => lit_tint(tint, game.world.sprite_light(*feet)),
+                _ => tint,
+            };
             let (player, flat) = stand_of(owner);
             placements.iter().enumerate().map(move |(index, (key, position, size, angle))| {
                 (sprites.texture(*key), *feet, *position, *size, tint, *angle, sprite_layer(index, player, flat))
@@ -774,8 +790,9 @@ impl App {
             let (player, flat) = stand_of(&owner);
             for ghost in &actor.ghosts {
                 let alpha = actor::ghost_alpha(now.saturating_duration_since(ghost.left));
+                let tint = lit_tint([1.0, 1.0, 1.0, alpha], game.world.sprite_light(ghost.feet));
                 billboards.extend(ghost.placed.iter().enumerate().filter_map(|(index, (key, position, size, angle))| {
-                    Some((sprites.texture_of(*key)?, ghost.feet, *position, *size, [1.0, 1.0, 1.0, alpha], *angle, sprite_layer(index, player, flat)))
+                    Some((sprites.texture_of(*key)?, ghost.feet, *position, *size, tint, *angle, sprite_layer(index, player, flat)))
                 }));
             }
         }
@@ -835,17 +852,29 @@ impl App {
             ),
             None => Vec::new(),
         };
-        let slot_frame = match (&mut game.slot_sprite, game.slot) {
-            (Some(sprite), Some((action, start))) => {
-                let length = sprite.index_ms(action).unwrap_or(1000.0).max(1.0);
-                let elapsed = now.saturating_duration_since(start).as_secs_f32() * 1000.0;
-                if elapsed > length + SLOT_HOLD_MS {
+        // The quest details: the description wrapped for its panel; the NPC picture's sprite, loaded once per name.
+        game.quest_window.lay_out(font, quest_texts);
+        let quest_npc = game.quest_window.npc_sprite(quest_texts, &game.quests);
+        if let Some((name, _)) = &quest_npc
+            && game.quest_npc.as_ref().is_none_or(|(loaded, _)| loaded != name)
+        {
+            game.quest_npc = Some((name.clone(), SpriteSet::at(grf, &format!("data\\sprite\\npc\\{name}"))));
+        }
+        let quest_npc_frame = match (quest_npc, game.quest_npc.as_mut()) {
+            (Some((_, feet)), Some((_, Some(sprite)))) => sprite.frame(gpu, 0, 0, 0, Timing::Span(0.0)).into_iter().map(|placed| (placed, feet)).collect(),
+            _ => Vec::new(),
+        };
+        let slot_frame = match (&mut game.slot_sprite, game.slot.as_ref()) {
+            (Some(sprite), Some(machine)) => match machine.frame(now, [0, 1].map(|action| sprite.frames(action))) {
+                Some((action, frame)) => {
+                    let count = sprite.frames(action).max(1);
+                    sprite.frame_at(gpu, action, 0, Timing::Span((frame as f32 + 0.5) / count as f32))
+                }
+                None => {
                     game.slot = None;
                     Vec::new()
-                } else {
-                    sprite.frame_at(gpu, action, 0, Timing::Span((elapsed / length).min(1.0)))
                 }
-            }
+            },
             _ => Vec::new(),
         };
         // Emotions play once over heads.
@@ -1268,7 +1297,7 @@ impl App {
         let navi_next = game.navigation.as_ref().and_then(|active| navigation::next_cell(&self.navi_tables, &here, &active.target, active.services));
         if let Some(active) = &mut game.navigation {
             let gat = &game.world.gat;
-            active.update_trail(&here, game.player.cell, navi_next, |from, to| world::find_path(gat, from, to));
+            active.update_trail(&here, game.player.cell, navi_next, |from, to| world::find_trail(gat, from, to));
         }
         if let Some(next) = navi_next {
             // A point a few cells toward it, so a far goal off the screen still turns the arrow.
@@ -1403,11 +1432,24 @@ impl App {
         pick_icons.extend(game.upgrade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.achievement_window.icons(achievement_info));
         pick_icons.extend(game.roulette.as_ref().map(|window| window.icons(items)).unwrap_or_default());
-        let compared = compared_windows(&game.inventory, items, messages, pointer.0);
+        // With compare on, the description's item next to what's worn in its slot.
+        let compared = game
+            .item_window
+            .as_ref()
+            .filter(|window| game.inventory.compare && !window.compare)
+            .and_then(|window| Some((window.position, iteminfo::compared(&window.shown, &game.inventory.items)?)))
+            .map(|(position, worn)| {
+                let mut window = iteminfo::ItemWindow::new(iteminfo::Shown::of(worn));
+                window.compare = true;
+                window.position = iteminfo::compare_place(position);
+                window
+            });
         let mut trade_icons = game.trade.as_ref().map(|trade| trade.icons(items)).unwrap_or_default();
         trade_icons.extend(game.item_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
+        trade_icons.extend(game.card_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         trade_icons.extend(compared.iter().flat_map(|window| window.images(items)));
         trade_icons.extend(game.card_view.iter().map(|view| view.path.clone()));
+        trade_icons.extend(game.quest_window.icons(&game.quests, quest_texts, items));
         if game.vend_setup.is_some() {
             trade_icons.extend(vend::icons(items, game.cart.items.iter().map(|item| (item.id, item.identified))));
         }
@@ -1468,6 +1510,10 @@ impl App {
             game.new_items = false;
         }
         game.inventory.note_open();
+        // What the equipment window's dismount and Cart Items buttons go by.
+        game.equipment.option = game.player.hide_option;
+        game.equipment.job = game.me.job;
+        game.equipment.cart = game.cart.cart.is_some();
         if game.quest_window.frame.open {
             game.quest_icon = false;
         }
@@ -1681,7 +1727,8 @@ impl App {
                 Panel::Cart => {}
                 Panel::Pet => {
                     if let Some(pet) = &game.pet {
-                        game.pet_window.draw(&mut layer, &assets.chrome, &assets.pet, font, messages, pet, pointer);
+                        let blink = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+                        game.pet_window.draw(&mut layer, &assets.chrome, &assets.pet, font, messages, pet, pointer, blink);
                     }
                 }
                 Panel::Mercenary => {
@@ -1723,9 +1770,8 @@ impl App {
                         let emblem = game.emblems.get(&guild.id).and_then(|(_, emblem)| emblem.as_ref());
                         game.guild_window.draw(
                             &mut layer,
-                            &mut tooltip,
                             &assets.chrome,
-                            (&assets.guild, &assets.skills),
+                            &assets.guild,
                             icons,
                             font,
                             messages,
@@ -1878,7 +1924,7 @@ impl App {
             shop.draw(shop_layer.window(), &assets.chrome, &assets.shop, icons, items, messages, font, pointer);
         }
         if game.deal_choice.is_some() {
-            let dialog = dialog_position(&assets.message);
+            let dialog = deal_box_position();
             shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             for (images, place) in assets.shop_buttons().into_iter().zip(DEAL_BUTTONS) {
                 shop_layer.sprites.push(button_sprite(pointer, offset(dialog, place), images));
@@ -1900,7 +1946,19 @@ impl App {
         if let Some(store) = &game.my_buying_store {
             store.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
         }
-        game.quest_window.draw(shop_layer.window(), &assets.chrome, &assets.quest, font, messages, &game.quests, quest_texts, pointer.0);
+        game.quest_window.draw(
+            shop_layer.window(),
+            &mut tooltip,
+            &assets.chrome,
+            &assets.quest,
+            icons,
+            items,
+            font,
+            messages,
+            &game.quests,
+            quest_texts,
+            pointer,
+        );
         game.achievement_window.draw(
             shop_layer.window(),
             &assets.chrome,
@@ -2026,11 +2084,11 @@ impl App {
         let guild_question = match (&game.guild_invite, &game.guild_asked) {
             (Some((_, name)), _) => Some(format!("({name}){}", message(GUILD_INVITED))),
             (_, Some(GuildAsked::Ally { guild, .. })) => Some(format!("({guild}){}", message(ALLY_ASKS))),
-            (_, Some(GuildAsked::Leave)) => Some(message(LEAVE_ASKS).to_owned()),
             _ => None,
         };
         if let Some(question) = guild_question {
-            let dialog = dialog_position(&assets.message);
+            // The invitation sits where the party's does.
+            let dialog = if game.guild_invite.is_some() { party::invitation_at(screen()) } else { dialog_position(&assets.message) };
             shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
@@ -2052,6 +2110,7 @@ impl App {
             }
             (None, Some(PetAsked::Feed)) => Some(message(PET_FEED_ASKS).to_owned()),
             (None, Some(PetAsked::Rename(name))) => Some(messages::fill(message(PET_RENAME_ASKS), &[name])),
+            (None, Some(PetAsked::Refused(why))) => Some(message(*why).to_owned()),
             (None, None) => None,
         };
         if let Some(question) = colored_question {
@@ -2132,6 +2191,16 @@ impl App {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }
+        // The Guild Companion and its windows.
+        {
+            let caret = (now.saturating_duration_since(game.entered).as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+            game.guild_companion.draw(shop_layer.window(), &assets.chrome, &assets.guild_companion, font, messages, caret, pointer);
+        }
+        // The guild's reason box.
+        if let Some(reason) = &game.reason_box {
+            let caret = (now.saturating_duration_since(game.entered).as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+            reason.draw(shop_layer.window(), &assets.chrome, &assets.guild, (&assets.ok, &assets.cancel), font, messages, screen(), pointer, caret);
+        }
         // The message box: its words, OK and Cancel (OK alone when it only tells).
         if let Some(asked) = &game.question_box {
             let dialog = dialog_position(&assets.message);
@@ -2139,7 +2208,7 @@ impl App {
             for (place, yes) in box_buttons(asked.asks()) {
                 shop_layer.sprites.push(button_sprite(pointer, offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }));
             }
-            for (row, line) in message_lines(font, message(asked.message()), MESSAGE_WIDTH).into_iter().enumerate() {
+            for (row, line) in message_lines(font, &asked.text(messages), MESSAGE_WIDTH).into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }
@@ -2165,15 +2234,22 @@ impl App {
             let names = (card_names, &messages[..], &game.char_names);
             window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, pointer.0);
         }
+        let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
+        if let Some(mut window) = compared {
+            let lines = window.lines(items, messages, unix_now);
+            window.fit(lines.len());
+            let names = (card_names, &messages[..], &game.char_names);
+            window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, pointer.0);
+        }
+        if let Some(window) = &mut game.card_window {
+            let lines = window.lines(items, messages, unix_now);
+            window.fit(lines.len());
+            game.card_lines = lines.len();
+            let names = (card_names, &messages[..], &game.char_names);
+            window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, pointer.0);
+        }
         if let Some(view) = &game.card_view {
             view.draw(shop_layer.window(), &assets.chrome, &assets.item_window, icons, pointer.0);
-        }
-        let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
-        for window in &compared {
-            let lines = window.lines(items, messages, unix_now);
-            let names = (card_names, &messages[..], &game.char_names);
-            let mut under = Layer::default();
-            window.draw(&mut tooltip, &mut under, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, pointer.0);
         }
         if game.apply_asked {
             let dialog = dialog_position(&assets.message);
@@ -2207,7 +2283,7 @@ impl App {
             }
         }
         if let Some(menu) = &game.escape {
-            menu.draw(shop_layer.window(), &assets.chrome, &assets.escape, messages, pointer, game.can_resurrect());
+            menu.draw(shop_layer.window(), &assets.chrome, &assets.escape, messages, game.me.id, pointer, game.can_resurrect());
         }
         // The party's docked window, half see-through while the party window is dragged.
         if let Some(dialog) = &game.party_dialog {
@@ -2321,6 +2397,10 @@ impl App {
                     sprites.extend(placed.iter().map(|(key, at, size, _)| (font.texture(*key), [anchor[0] + at[0], anchor[1] + at[1]], *size)));
                 }
             }
+        }
+        // ponytail: over everything, as the slot machine.
+        if let Some((_, Some(sprite))) = &game.quest_npc {
+            sprites.extend(quest_npc_frame.into_iter().map(|((key, at, size, _), feet)| (sprite.texture(key), [feet[0] + at[0], feet[1] + at[1]], size)));
         }
         if let Some(sprite) = &game.slot_sprite {
             let middle = [screen()[0] / 2.0, screen()[1] / 2.0];

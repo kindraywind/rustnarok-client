@@ -7,7 +7,6 @@ use std::io::Read;
 use image::RgbaImage;
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::SkillInfo;
-use rustnarok_client::messages;
 use rustnarok_client::net::{GuildInfo, GuildMember, GuildPosition, GuildRelation, Skill};
 use rustnarok_client::text::Font;
 
@@ -28,7 +27,7 @@ const ROWS: usize = 11;
 const POSITION: [f32; 2] = [180.0, 120.0];
 /// The tabs' labels: info, members, positions, skills, expel list, notice.
 const TABS: [usize; 6] = [340, 341, 342, 343, 344, 345];
-const MEMBERS: usize = 1;
+pub const MEMBERS: usize = 1;
 const POSITIONS: usize = 2;
 const SKILLS: usize = 3;
 const EXPELLED: usize = 4;
@@ -36,6 +35,9 @@ const EXPELLED: usize = 4;
 const LABELS: [usize; 8] = [328, 329, 330, 331, 332, 333, 335, 337];
 // ponytail: the emblem's frame top left of the info page, the labels right of it.
 const EMBLEM: [f32; 2] = [12.0, PAGE_TOP + 8.0];
+/// The master's Disband button on the info page.
+const DISBAND_AT: [f32; 2] = [321.0, 292.0];
+const DISBAND_SIZE: [f32; 2] = [64.0, 20.0];
 pub const EMBLEM_SIZE: [f32; 2] = [24.0, 24.0];
 /// The guardians' monster IDs: they carry their castle's guild emblem too.
 const GUARDIANS: [u16; 3] = [1285, 1286, 1287];
@@ -82,16 +84,30 @@ const NAMELESS: usize = 581;
 const DATE_FORMAT: usize = 3011;
 const ACCESS_DATE: usize = 3012;
 /// Position columns: rank, title, invite, expel, storage, tax %.
-const POSITION_COLUMNS: [(usize, f32); 6] = [(510, 10.0), (511, 50.0), (512, 190.0), (513, 240.0), (2499, 290.0), (514, 345.0)];
+/// The Position and Expel List tabs' cell grid: #C8C8C8 at (4, 45, 378, 229), white cells over it, 12 rows of 19 (the
+/// header and 11), the columns' widths; the headers' labels at y 49.
+const CELL_GRID: [f32; 4] = [4.0, 45.0, 378.0, 229.0];
+const CELL_ROW: f32 = 19.0;
+const LIST_ROWS: usize = 11;
+const POSITION_WIDTHS: [f32; 6] = [50.0, 100.0, 60.0, 60.0, 60.0, 60.0];
+const EXPEL_WIDTHS: [f32; 2] = [82.0, 292.0];
+const POSITION_COLUMNS: [(usize, f32); 6] = [(510, 8.0), (511, 59.0), (512, 160.0), (513, 221.0), (2499, 282.0), (514, 343.0)];
+/// The master's edits: the title box 96 × 16, the rights' 12 × 12 boxes, the tax box 26 × 16 (2 digits) and its "%".
+const TITLE_BOX: [f32; 2] = [96.0, 16.0];
+const TAX_BOX: [f32; 2] = [26.0, 16.0];
+const TITLE_MOST: usize = 30;
+const FIELD_FILL: [u8; 4] = [0xF2, 0xF2, 0xF2, 0xFF];
+/// The Announcement tab: "Title:" and "Contents", the subject box (60 characters), the text box (119), the count, Send.
+const NOTICE_SUBJECT: ([f32; 2], [f32; 2]) = ([50.0, 66.0], [340.0, 16.0]);
+const NOTICE_TEXT: ([f32; 2], [f32; 2]) = ([5.0, 104.0], [390.0, 156.0]);
+const NOTICE_SEND: [f32; 2] = [354.0, 293.0];
+const SUBJECT_MOST: usize = 60;
+const TEXT_MOST: usize = 119;
+pub const NOTICE: usize = 5;
 /// What the invite, expel and storage columns check.
 const PERMISSIONS: [u32; 3] = [GuildPosition::INVITE, GuildPosition::EXPEL, GuildPosition::STORAGE];
 /// Expel list columns: name, reason.
-const EXPEL_COLUMNS: [(usize, f32); 2] = [(407, 10.0), (462, 150.0)];
-/// Guild skills keep their place in a grid, by number (GD_APPROVAL is 10000), six to a row.
-const SKILL_BASE: u16 = 10000;
-const SKILL_COLUMNS: usize = 6;
-const SKILL_LEFT: f32 = (WIDTH - SKILL_COLUMNS as f32 * skills::CELL[0]) / 2.0;
-const SKILL_POINTS: usize = 284;
+const EXPEL_COLUMNS: [(usize, f32); 2] = [(407, 8.0), (462, 91.0)];
 const GREY: [u8; 3] = [0x88, 0x88, 0x88];
 const TAB_FILL: [u8; 4] = [0xE7, 0xEB, 0xF4, 0xFF];
 /// The info page's allies and antagonists, stacked on its right: each heading, its box under it, and three 16 px
@@ -134,6 +150,20 @@ pub struct Assets {
     online: Texture,
     sorted: Texture,
     arrows: [Texture; 2],
+    /// The drop-down button (normal, hover, pressed), OK, and the reason box's edit fill.
+    drop: [Texture; 3],
+    ok: [Texture; 3],
+    edit: Texture,
+    /// The skills page: the level up button, Use and Close, and the bands of a skill costing no SP and one not learned.
+    level_up: [Texture; 3],
+    use_button: [Texture; 3],
+    close_button: [Texture; 3],
+    no_sp: Texture,
+    unlearned: Texture,
+    /// The edit boxes' fill, and Send.
+    field: Texture,
+    send: [Texture; 3],
+    disband: [Texture; 3],
 }
 
 impl Assets {
@@ -155,6 +185,17 @@ impl Assets {
             online: gpu.solid(ONLINE_BAND),
             sorted: gpu.solid(SORTED_FILL),
             arrows: ["guild\\guild_arrow_up", "guild\\guild_arrow_down"].map(image),
+            drop: ["basic_interface\\txtbox_btn_a", "basic_interface\\txtbox_btn_b", "basic_interface\\txtbox_btn_c"].map(image),
+            ok: ["btn_ok", "btn_ok_a", "btn_ok_b"].map(image),
+            edit: gpu.solid(EDIT_FILL),
+            level_up: ["basic_interface\\skill_up_a", "basic_interface\\skill_up_b", "basic_interface\\skill_up_c"].map(image),
+            use_button: ["btn_use", "btn_use_a", "btn_use_b"].map(image),
+            close_button: ["btn_close", "btn_close_a", "btn_close_b"].map(image),
+            no_sp: gpu.solid([0x70, 0xD7, 0xED, 0xFF]),
+            unlearned: gpu.solid([0xB4, 0xB4, 0xB4, 0xFF]),
+            field: gpu.solid(FIELD_FILL),
+            send: ["btn_send", "btn_send_a", "btn_send_b"].map(image),
+            disband: ["btn_disband", "btn_disband_a", "btn_disband_b"].map(image),
         }
     }
 }
@@ -179,62 +220,149 @@ pub struct Guild {
     pub notice: (String, String),
     /// Allied guilds and antagonists.
     pub relations: Vec<GuildRelation>,
+    /// Our position's rights (ZC_UPDATE_GDID): invite 0x01, expel 0x10.
+    pub mode: u32,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Hit {
     Title(TitleHit),
     Tab(usize),
-    /// A guild skill's box, or its level up button.
+    /// A guild skill's row, or its level up button; the skills page's Use and Close.
     Skill(u16),
     LevelUp(u16),
+    SkillUse,
+    SkillClose,
     /// An ally or an antagonist on the info page (a click selects it, the master's right click ends it): its guild ID,
     /// and whether it's an antagonist.
     Relation(u32, bool),
+    /// The master's Disband on the info page.
+    Disband,
     /// On the positions page, the master's: a permission box (position, bit), a title, a tax.
     Permission(u32, u32),
     PositionTitle(u32),
     Tax(u32),
+    /// OK for the master's position edits; a row of the Position or Expel list; the Announcement tab's boxes and Send.
+    PositionsOk,
+    ListRow(usize),
+    NoticeSubject,
+    NoticeText,
+    NoticeSend,
     /// A row of the members page, by its place in `Guild::members`.
     Member(usize),
     /// The members page: a header cell (sorting by its column), the login status box, anywhere else on the page.
     SortBy(usize),
+    /// The master's drop-down on a member's row (by place in `members`), a position in its list, OK for the moves.
+    Drop(usize),
+    PickPosition(u32),
+    MovesOk,
     LoginStatus,
     MemberPage,
     Window,
 }
 
-/// What the right-click menu on a member's row offers.
+/// What the right-click menu on the selected member's row offers.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum MemberChoice {
-    /// The master moves the member to this position.
-    Move(u32),
-    /// A member who isn't the master leaves.
     Leave,
+    Expel,
+    /// The master hands the guild over.
+    Assign,
+    PartyInvite,
+    Whisper,
+    Mail,
 }
 
-/// Positions a member can be moved to from the menu: 1 to 19 (0, the master's, hands the guild over: not here).
-const MOVABLE: std::ops::RangeInclusive<u32> = 1..=19;
+impl MemberChoice {
+    pub fn message(self) -> usize {
+        match self {
+            Self::Leave => 508,
+            Self::Expel => 509,
+            Self::Assign => 2923,
+            Self::PartyInvite => 1330,
+            Self::Whisper => 2043,
+            Self::Mail => 2808,
+        }
+    }
+}
+
+/// Colours of the guild's lines: red, cyan, yellow, and the notice's light yellow.
+pub const LINE_RED: [u8; 3] = [0xFF, 0x00, 0x00];
+pub const LINE_CYAN: [u8; 3] = [0x00, 0xFF, 0xFF];
+pub const LINE_YELLOW: [u8; 3] = [0xFF, 0xFF, 0x00];
+pub const NOTICE_LINE: [u8; 3] = [0xFF, 0xFF, 0x80];
+
+/// The line for ZC_ACK_REQ_JOIN_GUILD's answer: 0 378, 1 379, 3 381, 4 2090 in red, 2 380 in cyan; others none.
+pub fn invite_result_line(result: u8) -> Option<(usize, [u8; 3])> {
+    Some(match result {
+        0 => (378, LINE_RED),
+        1 => (379, LINE_RED),
+        2 => (380, LINE_CYAN),
+        3 => (381, LINE_RED),
+        4 => (2090, LINE_RED),
+        _ => return None,
+    })
+}
+
+/// The notice's lines: "[ subject ]" and "[ text ]", each when it isn't empty.
+pub fn notice_lines(subject: &str, text: &str) -> Vec<String> {
+    [subject, text].into_iter().filter(|part| !part.is_empty()).map(|part| format!("[ {part} ]")).collect()
+}
+
+/// Someone left or was expelled (ZC_ACK_LEAVE_GUILD, ZC_ACK_BAN_GUILD): each line's message, what fills its %s, its
+/// colour; all guild lines. Us: "You left the guild." (489) or "You have been expelled
+/// from the Guild." (490) in red; another (`name`, "Nameless" (581) when not in the list): their line (364 or 370)
+/// and the reason's (365 or 371) in yellow.
+pub fn leaving_lines(us: bool, expelled: bool, name: Option<&str>, reason: &str, nameless: &str) -> Vec<(usize, String, [u8; 3])> {
+    if us {
+        return vec![(if expelled { 490 } else { 489 }, String::new(), LINE_RED)];
+    }
+    let name = name.unwrap_or(nameless).to_owned();
+    let (who, why) = if expelled { (370, 371) } else { (364, 365) };
+    vec![(who, name, LINE_YELLOW), (why, reason.to_owned(), LINE_YELLOW)]
+}
+
+/// Whether the player menu offers the guild invitation: we hold the invite right, and the player is in no guild.
+pub fn offers_invite(guild: Option<&Guild>, their_guild: u32) -> bool {
+    guild.is_some_and(Guild::can_invite) && their_guild == 0
+}
+
+const INVITE_RIGHT: u32 = 0x01;
+const EXPEL_RIGHT: u32 = 0x10;
 
 impl Guild {
-    /// The member menu on a row: the master on someone else's gets the other positions; a member on their own row
-    /// who isn't the master gets leaving; anyone else nothing.
-    pub fn member_menu(&self, me: u32, row: usize) -> Vec<MemberChoice> {
-        let Some(member) = self.members.get(row) else { return Vec::new() };
+    pub fn can_invite(&self) -> bool {
+        self.master || self.mode & INVITE_RIGHT != 0
+    }
+
+    pub fn can_expel(&self) -> bool {
+        self.master || self.mode & EXPEL_RIGHT != 0
+    }
+
+    /// The menu on a member (by its place in `members`): our own row, leaving (not for the master); another's,
+    /// expelling (the master, or the expel right on anyone but the master) and, for the master, handing the guild
+    /// over; while they're online, asking them into our party (`invite_party`: we lead one they aren't in) and 1:1
+    /// chat; last, a mail.
+    pub fn member_menu(&self, me: u32, index: usize, invite_party: bool) -> Vec<MemberChoice> {
+        let Some(member) = self.members.get(index) else { return Vec::new() };
         if member.character == me {
             return if self.master { Vec::new() } else { vec![MemberChoice::Leave] };
         }
-        if !self.master {
-            return Vec::new();
+        let mut choices = Vec::new();
+        if self.master || (self.can_expel() && member.position != 0) {
+            choices.push(MemberChoice::Expel);
         }
-        MOVABLE.filter(|&id| id != member.position).map(MemberChoice::Move).collect()
-    }
-
-    /// A position's values with one permission switched, as the master's request carries them.
-    pub fn switched(&self, id: u32, permission: u32) -> GuildPosition {
-        let mut position = self.position(id);
-        position.mode ^= permission;
-        position
+        if self.master {
+            choices.push(MemberChoice::Assign);
+        }
+        if member.online {
+            if invite_party {
+                choices.push(MemberChoice::PartyInvite);
+            }
+            choices.push(MemberChoice::Whisper);
+        }
+        choices.push(MemberChoice::Mail);
+        choices
     }
 
     /// A position's permissions and tax as known (none known: nothing set).
@@ -291,14 +419,149 @@ pub fn antagonist_result(result: u8) -> (usize, [u8; 3]) {
     }
 }
 
-/// Disbanding: its line, and whether it's good news.
-pub fn disband_result(result: u32) -> (usize, bool) {
-    match result {
-        0 => (400, true),
-        1 => (401, false),
-        2 => (402, false),
-        _ => (366, false),
+/// What a reason box asks for: leaving, or expelling a member (account, character).
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Reasoned {
+    Leave,
+    Expel(u32, u32),
+}
+
+/// The reason box (Leave Guild, Expel): 280 × 80, its label, an edit box of up to 39 characters, OK and Cancel.
+#[derive(Debug, PartialEq, Clone)]
+pub struct ReasonBox {
+    pub kind: Reasoned,
+    pub text: String,
+}
+
+const REASON_SIZE: [f32; 2] = [280.0, 80.0];
+const REASON_LABEL: [f32; 2] = [15.0, 6.0];
+const REASON_EDIT: ([f32; 2], [f32; 2]) = ([15.0, 22.0], [248.0, 16.0]);
+const REASON_OK: [f32; 2] = [179.0, 48.0];
+const REASON_CANCEL: [f32; 2] = [225.0, 48.0];
+const REASON_BUTTON: [f32; 2] = [42.0, 20.0];
+const REASON_MOST: usize = 39;
+const EDIT_FILL: [u8; 4] = [0xE8, 0xE8, 0xE8, 0xFF];
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum ReasonHit {
+    Ok,
+    Cancel,
+    Box,
+}
+
+impl ReasonBox {
+    pub fn new(kind: Reasoned) -> Self {
+        Self { kind, text: String::new() }
     }
+
+    /// Its corner: ((W − 640)/2 + 200, 120·H/480).
+    pub fn at(screen: [f32; 2]) -> [f32; 2] {
+        [(screen[0] - 640.0) / 2.0 + 200.0, 120.0 * screen[1] / 480.0]
+    }
+
+    pub fn hit(&self, cursor: [f32; 2], screen: [f32; 2]) -> Option<ReasonHit> {
+        let at = Self::at(screen);
+        if contains(offset(at, REASON_OK), REASON_BUTTON, cursor) {
+            Some(ReasonHit::Ok)
+        } else if contains(offset(at, REASON_CANCEL), REASON_BUTTON, cursor) {
+            Some(ReasonHit::Cancel)
+        } else {
+            contains(at, REASON_SIZE, cursor).then_some(ReasonHit::Box)
+        }
+    }
+
+    pub fn type_text(&mut self, text: &str) {
+        let room = REASON_MOST.saturating_sub(self.text.chars().count());
+        self.text.extend(text.chars().filter(|character| !character.is_control()).take(room));
+    }
+
+    /// "Please enter the reason of Withdrawal." or "... of Expulsion."
+    fn label(&self) -> usize {
+        if self.kind == Reasoned::Leave { 523 } else { 524 }
+    }
+
+    /// OK and Cancel, for the test driver.
+    pub fn button_boxes(&self, screen: [f32; 2]) -> Vec<(&'static str, [f32; 4])> {
+        let at = Self::at(screen);
+        [("ok", REASON_OK), ("cancel", REASON_CANCEL)]
+            .map(|(name, place)| {
+                let [x, y] = offset(at, place);
+                (name, [x, y, REASON_BUTTON[0], REASON_BUTTON[1]])
+            })
+            .to_vec()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        (ok, cancel): (&'a [Texture; 3], &'a [Texture; 3]),
+        font: &Font,
+        messages: &[String],
+        screen: [f32; 2],
+        pointer: ([f32; 2], bool),
+        caret: bool,
+    ) {
+        let at = Self::at(screen);
+        layer.sprites.push((&chrome.white, at, REASON_SIZE));
+        for (corner, size) in [
+            ([0.0, 0.0], [REASON_SIZE[0], 1.0]),
+            ([0.0, REASON_SIZE[1] - 1.0], [REASON_SIZE[0], 1.0]),
+            ([0.0, 0.0], [1.0, REASON_SIZE[1]]),
+            ([REASON_SIZE[0] - 1.0, 0.0], [1.0, REASON_SIZE[1]]),
+        ] {
+            layer.sprites.push((&chrome.border, offset(at, corner), size));
+        }
+        let label = messages.get(self.label()).map_or("", String::as_str).to_owned();
+        layer.texts.push((label, offset(at, REASON_LABEL), [0, 0, 0]));
+        let (edit, size) = REASON_EDIT;
+        layer.sprites.push((&assets.edit, offset(at, edit), size));
+        let shown = window::fit(font, &self.text, size[0] - 6.0);
+        let caret_x = font.width(&shown);
+        layer.texts.push((shown, offset(at, [edit[0] + 3.0, edit[1] + 1.0]), [0, 0, 0]));
+        if caret {
+            layer.sprites.push((&chrome.border, offset(at, [edit[0] + 3.0 + caret_x, edit[1] + 2.0]), [1.0, 12.0]));
+        }
+        let hit = self.hit(pointer.0, screen);
+        let look = |target: ReasonHit| usize::from(hit == Some(target)) + usize::from(hit == Some(target) && pointer.1);
+        layer.sprites.push((&ok[look(ReasonHit::Ok)], offset(at, REASON_OK), REASON_BUTTON));
+        layer.sprites.push((&cancel[look(ReasonHit::Cancel)], offset(at, REASON_CANCEL), REASON_BUTTON));
+    }
+}
+
+/// The master's position drop-downs on the member rows: the button (18 × 18 at (150, t + 12)), the list (150 wide,
+/// 16 a row, at most 80 tall, at (88, t + 34)), and OK (42 × 20 at (339, 294)) while moves are pending; OK rests
+/// 400 ms after it sends.
+const DROP_BUTTON: [f32; 2] = [18.0, 18.0];
+const DROP_LIST_WIDTH: f32 = 150.0;
+const DROP_ROW: f32 = 16.0;
+const DROP_ROWS: usize = 5;
+const MOVES_OK: ([f32; 2], [f32; 2]) = ([339.0, 294.0], [42.0, 20.0]);
+pub const MOVES_REST: std::time::Duration = std::time::Duration::from_millis(400);
+
+fn drop_button(row: usize) -> [f32; 2] {
+    [150.0, 67.0 + row as f32 * MEMBER_ROW + 12.0]
+}
+
+fn drop_list(row: usize) -> [f32; 2] {
+    [88.0, 67.0 + row as f32 * MEMBER_ROW + 34.0]
+}
+
+/// A position picked for a member: the last pick for them wins.
+pub fn pick_move(pending: &mut Vec<(u32, u32, u32)>, account: u32, character: u32, position: u32) {
+    pending.retain(|&(_, each, _)| each != character);
+    pending.push((account, character, position));
+}
+
+/// The guild window's text box with the caret.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum GuildTyping {
+    Title(u32),
+    Tax(u32),
+    NoticeSubject,
+    NoticeText,
 }
 
 pub struct GuildWindow {
@@ -313,11 +576,42 @@ pub struct GuildWindow {
     pub member: Option<u32>,
     pub sort: Option<(usize, bool)>,
     pub online_first: bool,
+    /// The master's pending moves (account, character, position), the drop-down open (its member, by place in
+    /// `members`, and rows scrolled), and when OK may send again.
+    pub pending: Vec<(u32, u32, u32)>,
+    pub drop: Option<(usize, usize)>,
+    pub moves_rest_until: Option<std::time::Instant>,
+    /// The skill selected on the skills page.
+    pub skill: Option<u16>,
+    /// The master's pending position edits (each position as edited, and its title), when OK may send them again,
+    /// the list row selected, the box being typed in, and the notice being written (subject, text).
+    pub position_edits: Vec<(GuildPosition, String)>,
+    pub positions_rest_until: Option<std::time::Instant>,
+    pub list_row: Option<usize>,
+    pub typing: Option<GuildTyping>,
+    pub notice_draft: (String, String),
 }
 
 impl Default for GuildWindow {
     fn default() -> Self {
-        Self { frame: Frame::new(POSITION, WIDTH), tab: 0, scroll: 0, selected: None, member: None, sort: None, online_first: false }
+        Self {
+            frame: Frame::new(POSITION, WIDTH),
+            tab: 0,
+            scroll: 0,
+            selected: None,
+            member: None,
+            sort: None,
+            online_first: false,
+            pending: Vec::new(),
+            drop: None,
+            moves_rest_until: None,
+            skill: None,
+            position_edits: Vec::new(),
+            positions_rest_until: None,
+            list_row: None,
+            typing: None,
+            notice_draft: (String::new(), String::new()),
+        }
     }
 }
 
@@ -344,6 +638,13 @@ pub fn member_order(members: &[GuildMember], sort: Option<(usize, bool)>, online
         order.sort_by_key(|&index| !members[index].online);
     }
     order
+}
+
+/// Every position's ID in order from 0, for the drop-down.
+fn position_ids(guild: &Guild) -> Vec<u32> {
+    let mut ids: Vec<u32> = guild.positions.keys().copied().collect();
+    ids.sort_unstable();
+    ids
 }
 
 /// The member grid's header cell under a window-local point.
@@ -391,11 +692,45 @@ pub fn head_key(member: &GuildMember) -> String {
     format!("guildhead:{}:{}:{}:{}", member.job, member.sex, member.hair, member.hair_color)
 }
 
-/// Where a guild skill's box sits.
-fn skill_corner(id: u16) -> [f32; 2] {
-    let place = usize::from(id.saturating_sub(SKILL_BASE));
-    let [column, row] = [place % SKILL_COLUMNS, place / SKILL_COLUMNS];
-    [SKILL_LEFT + column as f32 * skills::CELL[0] + (skills::CELL[0] - skills::BOX) / 2.0, PAGE_TOP + 6.0 + row as f32 * skills::CELL[1]]
+/// The skills page: one column of rows 34 apart (7 show), the selected row's band (104, 43 + y, 164 × 28), the icon at
+/// (44, 45 + y), the name at (112, 46 + y), "Lv : n" at (113, 58 + y) and the SP at (212, 58 + y); the master's level up
+/// button at (78, 45 + y); Use and Close at (46, 293) and (92, 293); "SkillPoint : n" at (300, 297).
+const SKILL_ROW: f32 = 34.0;
+const SKILL_ROWS: usize = 7;
+const SKILL_BAND: ([f32; 2], [f32; 2]) = ([104.0, 43.0], [164.0, 28.0]);
+const SKILL_ICON: [f32; 2] = [44.0, 45.0];
+const SKILL_NAME: [f32; 2] = [112.0, 46.0];
+const SKILL_LEVEL: [f32; 2] = [113.0, 58.0];
+const SKILL_SP: [f32; 2] = [212.0, 58.0];
+const SKILL_UP: [f32; 2] = [78.0, 45.0];
+const SKILL_USE: [f32; 2] = [46.0, 293.0];
+const SKILL_CLOSE: [f32; 2] = [92.0, 293.0];
+const SKILL_BUTTON: [f32; 2] = [42.0, 20.0];
+const SKILL_POINT_AT: [f32; 2] = [300.0, 297.0];
+const PASSIVE: usize = 286;
+const UNLEARNED_NAME: [u8; 3] = [0x78, 0x78, 0x78];
+/// The right click's one entry, "View Skill Info".
+pub const VIEW_SKILL_INFO: usize = 322;
+
+/// The selected row's band: an active skill's, one costing no SP, one not learned.
+pub fn skill_band(skill: &Skill) -> [u8; 4] {
+    if skill.level == 0 {
+        [0xB4, 0xB4, 0xB4, 0xFF]
+    } else if skill.sp == 0 {
+        [0x70, 0xD7, 0xED, 0xFF]
+    } else {
+        [0x70, 0x9F, 0xED, 0xFF]
+    }
+}
+
+/// The SP line once learned: "Sp : n", or "Passive" (286) for a skill that targets nothing.
+pub fn skill_sp_text(skill: &Skill, passive: &str) -> String {
+    if skill.kind == 0 { passive.to_owned() } else { format!("Sp : {}", skill.sp) }
+}
+
+/// The row a press picks on the skills page, before scrolling: rows on a 32-px pitch from y 41.
+fn skill_row_at(local: [f32; 2]) -> Option<usize> {
+    (local[1] >= 41.0).then(|| ((local[1] - 41.0) / 32.0) as usize).filter(|&row| row < SKILL_ROWS)
 }
 
 /// A guild emblem from the server: a zlib-compressed BMP, its magenta keyed out.
@@ -406,23 +741,34 @@ pub fn decode_emblem(data: &[u8]) -> Option<RgbaImage> {
     Some(crate::render::key_out(image.to_rgba8()))
 }
 
-/// The top of a list's row.
-fn row_top(row: usize) -> f32 {
-    PAGE_TOP + LINE + 6.0 + row as f32 * LINE
+/// A cell of the grid (column, row 0 the header): (5 + Σ(w + 1), 46 + 19·row, w, 18), kept inside the grid.
+fn cell(widths: &[f32], column: usize, row: usize) -> [f32; 4] {
+    let x = 5.0 + widths[..column].iter().map(|width| width + 1.0).sum::<f32>();
+    let right = CELL_GRID[0] + CELL_GRID[2] - 1.0;
+    [x, CELL_GRID[1] + 1.0 + CELL_ROW * row as f32, widths[column].min(right - x).max(0.0), CELL_ROW - 1.0]
 }
 
-/// A positions page row's clickable parts (the master's): the title, the three boxes, the tax; corners and sizes.
-// ponytail: each part takes its column's width over the whole row.
+/// A list row's text line: y = 68 + 19·k.
+fn list_text_y(row: usize) -> f32 {
+    68.0 + CELL_ROW * row as f32
+}
+
+/// The list row under a window-local point, before scrolling.
+fn list_row_at(local: [f32; 2]) -> Option<usize> {
+    let top = CELL_GRID[1] + 1.0 + CELL_ROW;
+    let inside = (5.0..381.0).contains(&local[0]) && (top..top + CELL_ROW * LIST_ROWS as f32).contains(&local[1]);
+    inside.then(|| ((local[1] - top) / CELL_ROW) as usize)
+}
+
+/// A position row's parts the master edits: the title box, the three rights' boxes, the tax box.
 fn position_parts(row: usize) -> [(PositionPart, [f32; 2], [f32; 2]); 5] {
-    let top = row_top(row) - 2.0;
-    let column = |index: usize| POSITION_COLUMNS[index].1 - 2.0;
-    let width = |index: usize| POSITION_COLUMNS.get(index + 1).map_or(WIDTH - 6.0, |next| next.1 - 2.0) - column(index);
+    let y = list_text_y(row);
     [
-        (PositionPart::Title, [column(1), top], [width(1), LINE]),
-        (PositionPart::Permission(PERMISSIONS[0]), [column(2), top], [width(2), LINE]),
-        (PositionPart::Permission(PERMISSIONS[1]), [column(3), top], [width(3), LINE]),
-        (PositionPart::Permission(PERMISSIONS[2]), [column(4), top], [width(4), LINE]),
-        (PositionPart::Tax, [column(5), top], [width(5), LINE]),
+        (PositionPart::Title, [58.0, y - 2.0], TITLE_BOX),
+        (PositionPart::Permission(PERMISSIONS[0]), [160.0, y], [12.0, 12.0]),
+        (PositionPart::Permission(PERMISSIONS[1]), [221.0, y], [12.0, 12.0]),
+        (PositionPart::Permission(PERMISSIONS[2]), [282.0, y], [12.0, 12.0]),
+        (PositionPart::Tax, [343.0, y - 2.0], TAX_BOX),
     ]
 }
 
@@ -459,9 +805,16 @@ impl GuildWindow {
         HEIGHT
     }
 
+    /// Whether a skill's row has the level up button: the master's, with points left, on an upgradable skill.
+    fn levels_up(&self, guild: &Guild, skill: &Skill) -> bool {
+        guild.master && guild.skill_points > 0 && skill.upgradable
+    }
+
     pub fn show_tab(&mut self, tab: usize) {
         self.tab = tab;
         self.scroll = 0;
+        self.typing = None;
+        self.list_row = None;
     }
 
     /// A click on the members page: a row selects its member, elsewhere clears; a header cell sorts by its column
@@ -477,8 +830,116 @@ impl GuildWindow {
             }
             Hit::LoginStatus => self.online_first = !self.online_first,
             Hit::MemberPage => self.member = None,
+            Hit::Drop(index) => self.drop = if self.drop.is_some_and(|(open, _)| open == index) { None } else { Some((index, 0)) },
+            Hit::PickPosition(position) => {
+                if let Some(member) = self.drop.take().and_then(|(index, _)| guild.members.get(index)) {
+                    pick_move(&mut self.pending, member.account, member.character, position);
+                }
+            }
             _ => {}
         }
+        if !matches!(hit, Hit::Drop(_) | Hit::PickPosition(_)) {
+            self.drop = None;
+        }
+    }
+
+    /// The cell grid: grey under it, white cells, 12 rows.
+    fn draw_grid<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, widths: &[f32]) {
+        let at = |local: [f32; 2]| self.frame.at(local);
+        layer.sprites.push((&assets.grid, at([CELL_GRID[0], CELL_GRID[1]]), [CELL_GRID[2], CELL_GRID[3]]));
+        for row in 0..=LIST_ROWS {
+            for column in 0..widths.len() {
+                let [x, y, w, h] = cell(widths, column, row);
+                layer.sprites.push((&assets.white, at([x, y]), [w, h]));
+            }
+        }
+    }
+
+    /// A position as edited so far: the pending edit, else as known.
+    pub fn shown_position(&self, guild: &Guild, id: u32) -> (GuildPosition, String) {
+        self.position_edits.iter().find(|(position, _)| position.id == id).cloned().unwrap_or_else(|| (guild.position(id), guild.title(id)))
+    }
+
+    /// The pending edit of a position, made from it as known the first time.
+    fn edit(&mut self, guild: &Guild, id: u32) -> &mut (GuildPosition, String) {
+        if !self.position_edits.iter().any(|(position, _)| position.id == id) {
+            self.position_edits.push((guild.position(id), guild.title(id)));
+        }
+        self.position_edits.iter_mut().find(|(position, _)| position.id == id).unwrap()
+    }
+
+    /// The master's click on a position's part: a right's box switches it, a box takes the caret.
+    pub fn click_position(&mut self, hit: Hit, guild: &Guild) {
+        match hit {
+            Hit::Permission(id, bit) => self.edit(guild, id).0.mode ^= bit,
+            Hit::PositionTitle(id) => {
+                self.edit(guild, id);
+                self.typing = Some(GuildTyping::Title(id));
+            }
+            Hit::Tax(id) => {
+                self.edit(guild, id);
+                self.typing = Some(GuildTyping::Tax(id));
+            }
+            Hit::ListRow(row) => self.list_row = Some(row),
+            _ => {}
+        }
+    }
+
+    /// Typing into the box with the caret: a title (30 characters), a tax (2 digits), the notice's subject (60) or
+    /// text (119).
+    pub fn type_text(&mut self, guild: &Guild, typed: &str) {
+        let typed = typed.chars().filter(|character| !character.is_control());
+        let push = |into: &mut String, most: usize, typed: &mut dyn Iterator<Item = char>| {
+            let room = most.saturating_sub(into.chars().count());
+            into.extend(typed.take(room));
+        };
+        match self.typing {
+            Some(GuildTyping::Title(id)) => push(&mut self.edit(guild, id).1, TITLE_MOST, &mut typed.into_iter()),
+            Some(GuildTyping::Tax(id)) => {
+                let entry = self.edit(guild, id);
+                let mut digits = entry.0.tax.to_string();
+                if digits == "0" {
+                    digits.clear();
+                }
+                push(&mut digits, 2, &mut typed.filter(char::is_ascii_digit));
+                entry.0.tax = digits.parse().unwrap_or(0);
+            }
+            Some(GuildTyping::NoticeSubject) => push(&mut self.notice_draft.0, SUBJECT_MOST, &mut typed.into_iter()),
+            Some(GuildTyping::NoticeText) => push(&mut self.notice_draft.1, TEXT_MOST, &mut typed.into_iter()),
+            None => {}
+        }
+    }
+
+    pub fn backspace(&mut self, guild: &Guild) {
+        match self.typing {
+            Some(GuildTyping::Title(id)) => drop(self.edit(guild, id).1.pop()),
+            Some(GuildTyping::Tax(id)) => {
+                let entry = self.edit(guild, id);
+                entry.0.tax /= 10;
+            }
+            Some(GuildTyping::NoticeSubject) => drop(self.notice_draft.0.pop()),
+            Some(GuildTyping::NoticeText) => drop(self.notice_draft.1.pop()),
+            None => {}
+        }
+    }
+
+    /// OK for the position edits: all of them to send, unless OK is resting.
+    pub fn take_position_edits(&mut self, now: std::time::Instant) -> Option<Vec<(GuildPosition, String)>> {
+        if self.position_edits.is_empty() || self.positions_rest_until.is_some_and(|until| now < until) {
+            return None;
+        }
+        self.positions_rest_until = Some(now + MOVES_REST);
+        self.typing = None;
+        Some(std::mem::take(&mut self.position_edits))
+    }
+
+    /// OK for the pending moves (or Enter): all of them to send, unless OK is resting.
+    pub fn take_moves(&mut self, now: std::time::Instant) -> Option<Vec<(u32, u32, u32)>> {
+        if self.pending.is_empty() || self.moves_rest_until.is_some_and(|until| now < until) {
+            return None;
+        }
+        self.moves_rest_until = Some(now + MOVES_REST);
+        Some(std::mem::take(&mut self.pending))
     }
 
     pub fn hit(&self, cursor: [f32; 2], guild: &Guild) -> Option<Hit> {
@@ -488,6 +949,9 @@ impl GuildWindow {
         }
         if let Some(tab) = (0..TABS.len()).find(|&tab| contains([tab as f32 * TAB[0], TITLE_HEIGHT], TAB, local)) {
             return Some(Hit::Tab(tab));
+        }
+        if self.tab == 0 && guild.master && contains(DISBAND_AT, DISBAND_SIZE, local) {
+            return Some(Hit::Disband);
         }
         if self.tab == 0 {
             for (column, relations) in columns(&guild.relations).into_iter().enumerate() {
@@ -500,20 +964,58 @@ impl GuildWindow {
             }
         }
         if self.tab == POSITIONS && guild.master {
-            for (row, position) in guild.position_info.iter().skip(self.scroll).take(ROWS).enumerate() {
+            for (row, position) in guild.position_info.iter().skip(self.scroll).take(LIST_ROWS).enumerate() {
                 if let Some((part, ..)) = position_parts(row).into_iter().find(|(_, corner, size)| contains(*corner, *size, local)) {
                     return Some(part.hit(position.id));
                 }
             }
+            if !self.position_edits.is_empty() && contains(MOVES_OK.0, MOVES_OK.1, local) {
+                return Some(Hit::PositionsOk);
+            }
+        }
+        if self.tab == POSITIONS || self.tab == EXPELLED {
+            let count = if self.tab == POSITIONS { guild.position_info.len() } else { guild.expelled.len() };
+            if let Some(row) = list_row_at(local).map(|row| row + self.scroll).filter(|&row| row < count) {
+                return Some(Hit::ListRow(row));
+            }
+        }
+        if self.tab == NOTICE && guild.master {
+            for (hit, (corner, size)) in [(Hit::NoticeSubject, NOTICE_SUBJECT), (Hit::NoticeText, NOTICE_TEXT), (Hit::NoticeSend, (NOTICE_SEND, MOVES_OK.1))] {
+                if contains(corner, size, local) {
+                    return Some(hit);
+                }
+            }
         }
         if self.tab == MEMBERS {
+            let order = member_order(&guild.members, self.sort, self.online_first);
+            if guild.master {
+                // The open list first: it covers the rows under it.
+                if let Some((index, scroll)) = self.drop
+                    && let Some(row) = order.iter().skip(self.scroll).take(MEMBER_ROWS).position(|&shown| shown == index)
+                {
+                    let ids = position_ids(guild);
+                    let shown = ids.len().saturating_sub(scroll).min(DROP_ROWS);
+                    let corner = drop_list(row);
+                    if contains(corner, [DROP_LIST_WIDTH, shown as f32 * DROP_ROW], local) {
+                        let picked = ((local[1] - corner[1]) / DROP_ROW) as usize + scroll;
+                        return ids.get(picked).map(|&id| Hit::PickPosition(id));
+                    }
+                }
+                for (row, &index) in order.iter().skip(self.scroll).take(MEMBER_ROWS).enumerate() {
+                    if contains(drop_button(row), DROP_BUTTON, local) {
+                        return Some(Hit::Drop(index));
+                    }
+                }
+                if !self.pending.is_empty() && contains(MOVES_OK.0, MOVES_OK.1, local) {
+                    return Some(Hit::MovesOk);
+                }
+            }
             if let Some(column) = header_cell(local) {
                 return Some(Hit::SortBy(column));
             }
             if contains(LOGIN_BOX.0, LOGIN_BOX.1, local) {
                 return Some(Hit::LoginStatus);
             }
-            let order = member_order(&guild.members, self.sort, self.online_first);
             if let Some(&index) = grid_row(local).and_then(|row| order.get(self.scroll + row)) {
                 return Some(Hit::Member(index));
             }
@@ -522,14 +1024,19 @@ impl GuildWindow {
             }
         }
         if self.tab == SKILLS {
-            for skill in &guild.skills {
-                let corner = skill_corner(skill.id);
-                if guild.skill_points > 0 && skill.upgradable && contains(offset(corner, skills::UP), [24.0, 24.0], local) {
+            for (row, skill) in guild.skills.iter().skip(self.scroll).take(SKILL_ROWS).enumerate() {
+                if self.levels_up(guild, skill) && contains(offset(SKILL_UP, [0.0, row as f32 * SKILL_ROW]), [24.0, 24.0], local) {
                     return Some(Hit::LevelUp(skill.id));
                 }
-                if contains(corner, [skills::BOX; 2], local) {
-                    return Some(Hit::Skill(skill.id));
-                }
+            }
+            if contains(SKILL_USE, SKILL_BUTTON, local) {
+                return Some(Hit::SkillUse);
+            }
+            if contains(SKILL_CLOSE, SKILL_BUTTON, local) {
+                return Some(Hit::SkillClose);
+            }
+            if let Some(skill) = skill_row_at(local).and_then(|row| guild.skills.get(row + self.scroll)) {
+                return Some(Hit::Skill(skill.id));
             }
         }
         Some(Hit::Window)
@@ -563,14 +1070,42 @@ impl GuildWindow {
             [x, y, size[0], size[1]]
         };
         match self.tab {
-            POSITIONS if guild.master => guild
-                .position_info
-                .iter()
-                .skip(self.scroll)
-                .take(ROWS)
-                .enumerate()
-                .flat_map(|(row, position)| position_parts(row).map(|(part, corner, size)| (part.name(position.id), place(corner, size))))
-                .collect(),
+            POSITIONS if guild.master => {
+                let mut boxes: Vec<(String, [f32; 4])> = guild
+                    .position_info
+                    .iter()
+                    .skip(self.scroll)
+                    .take(LIST_ROWS)
+                    .enumerate()
+                    .flat_map(|(row, position)| position_parts(row).map(|(part, corner, size)| (part.name(position.id), place(corner, size))))
+                    .collect();
+                if !self.position_edits.is_empty() {
+                    boxes.push(("positions_ok".to_owned(), place(MOVES_OK.0, MOVES_OK.1)));
+                }
+                boxes
+            }
+            // The Announcement tab: `notice_subject`, `notice_text`, `notice_send`.
+            NOTICE if guild.master => vec![
+                ("notice_subject".to_owned(), place(NOTICE_SUBJECT.0, NOTICE_SUBJECT.1)),
+                ("notice_text".to_owned(), place(NOTICE_TEXT.0, NOTICE_TEXT.1)),
+                ("notice_send".to_owned(), place(NOTICE_SEND, MOVES_OK.1)),
+            ],
+            // The info page: the master's `guild_disband`.
+            0 if guild.master => vec![("guild_disband".to_owned(), place(DISBAND_AT, DISBAND_SIZE))],
+            // The skills page: `skill:<id>` rows, `skill_up:<id>` buttons, `skill_use` and `skill_close`.
+            SKILLS => {
+                let mut boxes = Vec::new();
+                for (row, skill) in guild.skills.iter().skip(self.scroll).take(SKILL_ROWS).enumerate() {
+                    let y = row as f32 * SKILL_ROW;
+                    boxes.push((format!("skill:{}", skill.id), place(offset(SKILL_BAND.0, [0.0, y]), SKILL_BAND.1)));
+                    if self.levels_up(guild, skill) {
+                        boxes.push((format!("skill_up:{}", skill.id), place(offset(SKILL_UP, [0.0, y]), [24.0, 24.0])));
+                    }
+                }
+                boxes.push(("skill_use".to_owned(), place(SKILL_USE, SKILL_BUTTON)));
+                boxes.push(("skill_close".to_owned(), place(SKILL_CLOSE, SKILL_BUTTON)));
+                boxes
+            }
             MEMBERS => {
                 let mut boxes: Vec<(String, [f32; 4])> = member_order(&guild.members, self.sort, self.online_first)
                     .into_iter()
@@ -586,6 +1121,23 @@ impl GuildWindow {
                     boxes.push((format!("sort:{name}"), place([CELLS[column], 47.0], [CELLS[column + 1] - CELLS[column], GRID_HEADER - 47.0])));
                 }
                 boxes.push(("login_status".to_owned(), place(LOGIN_BOX.0, LOGIN_BOX.1)));
+                // The master's drop-downs (`drop:<name>`), the open list's positions (`position:<id>`), `moves_ok`.
+                if guild.master {
+                    let order = member_order(&guild.members, self.sort, self.online_first);
+                    for (row, &index) in order.iter().skip(self.scroll).take(MEMBER_ROWS).enumerate() {
+                        boxes.push((format!("drop:{}", guild.members[index].name), place(drop_button(row), DROP_BUTTON)));
+                        if self.drop.is_some_and(|(open, _)| open == index) {
+                            let scroll = self.drop.map_or(0, |(_, scroll)| scroll);
+                            for (line, id) in position_ids(guild).into_iter().skip(scroll).take(DROP_ROWS).enumerate() {
+                                let corner = offset(drop_list(row), [0.0, line as f32 * DROP_ROW]);
+                                boxes.push((format!("position:{id}"), place(corner, [DROP_LIST_WIDTH, DROP_ROW])));
+                            }
+                        }
+                    }
+                    if !self.pending.is_empty() {
+                        boxes.push(("moves_ok".to_owned(), place(MOVES_OK.0, MOVES_OK.1)));
+                    }
+                }
                 boxes
             }
             _ => Vec::new(),
@@ -594,18 +1146,27 @@ impl GuildWindow {
 
     /// The wheel scrolls the open list.
     pub fn scroll_by(&mut self, rows: i32, guild: &Guild) {
-        // The members page shows 5 rows.
+        // An open drop-down list scrolls first; the members page shows 5 rows.
+        if self.tab == MEMBERS
+            && let Some((index, scroll)) = self.drop
+        {
+            let most = position_ids(guild).len().saturating_sub(DROP_ROWS);
+            self.drop = Some((index, (scroll as i32 + rows).clamp(0, most as i32) as usize));
+            return;
+        }
         if self.tab == MEMBERS {
             self.scroll = (self.scroll as i32 + rows).clamp(0, guild.members.len().saturating_sub(MEMBER_ROWS) as i32) as usize;
             return;
         }
         let total = match self.tab {
             MEMBERS => guild.members.len(),
+            SKILLS => guild.skills.len().saturating_sub(SKILL_ROWS - ROWS.min(SKILL_ROWS)),
             POSITIONS => guild.position_info.len(),
             EXPELLED => guild.expelled.len(),
             _ => 0,
         };
-        self.scroll = (self.scroll as i32 + rows).clamp(0, total.saturating_sub(ROWS) as i32) as usize;
+        let shown = if matches!(self.tab, POSITIONS | EXPELLED) { LIST_ROWS } else { ROWS };
+        self.scroll = (self.scroll as i32 + rows).clamp(0, total.saturating_sub(shown) as i32) as usize;
     }
 
     /// The skill icons the open page shows, to load before drawing.
@@ -620,9 +1181,8 @@ impl GuildWindow {
     pub fn draw<'a>(
         &self,
         layer: &mut Layer<'a>,
-        tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
-        (assets, skill_assets): (&'a Assets, &'a skills::Assets),
+        assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         font: &Font,
         messages: &[String],
@@ -660,16 +1220,13 @@ impl GuildWindow {
         layer.sprites.push((&assets.footer, at([0.0, HEIGHT - FOOTER]), [WIDTH, FOOTER]));
 
         let text = |layer: &mut Layer<'a>, value: String, place: [f32; 2], color: [u8; 3]| layer.texts.push((value, at(place), color));
-        // A list's column labels over a rule, and the top of each row shown.
-        let header = |layer: &mut Layer<'a>, columns: &[(usize, f32)]| {
-            for &(label, x) in columns {
-                layer.texts.push((message(label).to_owned(), at([x, PAGE_TOP + 4.0]), [0, 0, 0]));
-            }
-            layer.sprites.push((&chrome.border, at([4.0, PAGE_TOP + LINE + 2.0]), [WIDTH - 8.0, 1.0]));
-        };
         match self.tab {
             // Info: the emblem, then the guild's name, level, master, members, levels, castles, exp and tax points.
             0 => {
+                if guild.master {
+                    let look = if hit == Some(Hit::Disband) { 1 + usize::from(pointer.1) } else { 0 };
+                    layer.sprites.push((&assets.disband[look], at(DISBAND_AT), DISBAND_SIZE));
+                }
                 layer.sprites.push((&assets.frame, at(EMBLEM), assets.frame.size));
                 if let Some(emblem) = emblem {
                     layer.sprites.push((emblem, at(offset(EMBLEM, [2.0, 2.0])), EMBLEM_SIZE));
@@ -736,7 +1293,10 @@ impl GuildWindow {
                     }
                     let name = if member.name.is_empty() { message(NAMELESS).to_owned() } else { member.name.clone() };
                     text(layer, window::fit(font, &name, 51.0), [43.0, top + 12.0], [0, 0, 0]);
-                    let position = guild.positions.get(&member.position).cloned().unwrap_or_default();
+                    // A pending move shows the position picked. ponytail: the picked name stands where the position is.
+                    let shown_position =
+                        self.pending.iter().find(|&&(_, character, _)| character == member.character).map_or(member.position, |&(.., position)| position);
+                    let position = guild.positions.get(&shown_position).cloned().unwrap_or_default();
                     text(layer, window::fit(font, &position, 49.0), [109.0, top + 16.0], [0, 0, 0]);
                     let job = job_names.get(&member.job).cloned().unwrap_or_else(|| member.job.to_string());
                     text(layer, window::fit(font, &job, 39.0), [175.0, top + 16.0], [0, 0, 0]);
@@ -763,65 +1323,155 @@ impl GuildWindow {
                 for column in GRID_COLUMNS {
                     layer.sprites.push((&assets.grid, at([column, y]), [1.0, h]));
                 }
+                // The master's drop-downs, the open list, and OK while moves are pending.
+                if guild.master {
+                    for (row, &index) in order.iter().skip(self.scroll).take(MEMBER_ROWS).enumerate() {
+                        let look = match hit {
+                            Some(Hit::Drop(over)) if over == index => 1 + usize::from(pointer.1),
+                            _ => 0,
+                        };
+                        layer.sprites.push((&assets.drop[look], at(drop_button(row)), DROP_BUTTON));
+                    }
+                    if let Some((index, scroll)) = self.drop
+                        && let Some(row) = order.iter().skip(self.scroll).take(MEMBER_ROWS).position(|&shown| shown == index)
+                    {
+                        let ids = position_ids(guild);
+                        let corner = drop_list(row);
+                        let shown = ids.len().saturating_sub(scroll).min(DROP_ROWS);
+                        layer.sprites.push((&chrome.border, at(corner), [DROP_LIST_WIDTH, shown as f32 * DROP_ROW]));
+                        layer.sprites.push((&assets.white, at(offset(corner, [1.0, 1.0])), [DROP_LIST_WIDTH - 2.0, shown as f32 * DROP_ROW - 2.0]));
+                        for (line, id) in ids.iter().skip(scroll).take(DROP_ROWS).enumerate() {
+                            let top = corner[1] + line as f32 * DROP_ROW;
+                            if hit == Some(Hit::PickPosition(*id)) {
+                                layer.sprites.push((&assets.hover, at([corner[0] + 1.0, top]), [DROP_LIST_WIDTH - 2.0, DROP_ROW]));
+                            }
+                            let name = guild.positions.get(id).cloned().unwrap_or_default();
+                            text(layer, window::fit(font, &name, DROP_LIST_WIDTH - 8.0), [corner[0] + 4.0, top + 1.0], [0, 0, 0]);
+                        }
+                    }
+                    if !self.pending.is_empty() {
+                        let look = if hit == Some(Hit::MovesOk) { 1 + usize::from(pointer.1) } else { 0 };
+                        layer.sprites.push((&assets.ok[look], at(MOVES_OK.0), MOVES_OK.1));
+                    }
+                }
                 let check = &assets.check[usize::from(self.online_first)];
                 layer.sprites.push((check, at(LOGIN_BOX.0), check.size));
                 text(layer, message(LOGIN_STATUS).to_owned(), [LOGIN_BOX.0[0] + 14.0, LOGIN_BOX.0[1] - 1.0], [0, 0, 0]);
             }
-            // Positions: rank, title, what its members may do, and the tax on their exp.
+            // Positions: the cell grid; rank, title, rights and tax; the master edits them in place, OK sends.
             POSITIONS => {
-                header(layer, &POSITION_COLUMNS);
-                for (row, position) in guild.position_info.iter().skip(self.scroll).take(ROWS).enumerate() {
-                    let top = row_top(row);
-                    // The part under the master's pointer can be clicked.
-                    if let Some((_, corner, size)) = position_parts(row).into_iter().find(|(part, ..)| hit == Some(part.hit(position.id))) {
-                        layer.sprites.push((&assets.hover, at(corner), size));
+                self.draw_grid(layer, assets, &POSITION_WIDTHS);
+                for &(label, x) in &POSITION_COLUMNS {
+                    text(layer, message(label).to_owned(), [x, 49.0], [0, 0, 0]);
+                }
+                for (row, known) in guild.position_info.iter().skip(self.scroll).take(LIST_ROWS).enumerate() {
+                    let y = list_text_y(row);
+                    if self.list_row == Some(row + self.scroll) {
+                        layer.sprites.push((&assets.hover, at([5.0, y - 3.0]), [376.0, 18.0]));
                     }
-                    let title = guild.positions.get(&position.id).map_or("", String::as_str);
-                    text(layer, (position.id + 1).to_string(), [POSITION_COLUMNS[0].1, top], [0, 0, 0]);
-                    text(layer, window::fit(font, title, POSITION_COLUMNS[2].1 - POSITION_COLUMNS[1].1 - 6.0), [POSITION_COLUMNS[1].1, top], [0, 0, 0]);
-                    for (permission, &(label, x)) in PERMISSIONS.iter().zip(&POSITION_COLUMNS[2..5]) {
-                        let check = &assets.check[usize::from(position.mode & permission != 0)];
-                        let x = x + ((font.width(message(label)) - check.size[0]) / 2.0).floor();
-                        layer.sprites.push((check, at([x, top + 1.0]), check.size));
+                    let (position, title) = self.shown_position(guild, known.id);
+                    text(layer, position.rank.to_string(), [8.0, y], [0, 0, 0]);
+                    if guild.master {
+                        let [(_, title_at, _), rights @ .., (_, tax_at, _)] = position_parts(row);
+                        layer.sprites.push((&assets.field, at(title_at), TITLE_BOX));
+                        text(layer, window::fit(font, &title, TITLE_BOX[0] - 4.0), [title_at[0] + 2.0, y - 2.0], [0, 0, 0]);
+                        for (part, corner, _) in rights {
+                            let PositionPart::Permission(bit) = part else { continue };
+                            layer.sprites.push((&assets.check[usize::from(position.mode & bit != 0)], at(corner), [12.0, 12.0]));
+                        }
+                        layer.sprites.push((&assets.field, at(tax_at), TAX_BOX));
+                        text(layer, position.tax.to_string(), [tax_at[0] + 2.0, y - 2.0], [0, 0, 0]);
+                        text(layer, "%".to_owned(), [373.0, y], [0, 0, 0]);
+                    } else {
+                        text(layer, window::fit(font, &title, 96.0), [59.0, y - 2.0], [0, 0, 0]);
+                        for (bit, x) in PERMISSIONS.iter().zip([160.0, 221.0, 282.0]) {
+                            layer.sprites.push((&assets.check[usize::from(position.mode & bit != 0)], at([x, y]), [10.0, 10.0]));
+                        }
+                        text(layer, format!("{} %", position.tax), [343.0, y - 2.0], [0, 0, 0]);
                     }
-                    text(layer, position.tax.to_string(), [POSITION_COLUMNS[5].1, top], [0, 0, 0]);
+                }
+                if guild.master && !self.position_edits.is_empty() {
+                    let look = if hit == Some(Hit::PositionsOk) { 1 + usize::from(pointer.1) } else { 0 };
+                    layer.sprites.push((&assets.ok[look], at(MOVES_OK.0), MOVES_OK.1));
                 }
             }
             // Skills where they sit, the master's level up buttons, and the points left on the footer.
             SKILLS => {
-                for skill in &guild.skills {
-                    let corner = skill_corner(skill.id);
+                let passive = message(PASSIVE);
+                for (row, skill) in guild.skills.iter().skip(self.scroll).take(SKILL_ROWS).enumerate() {
+                    let y = row as f32 * SKILL_ROW;
+                    let down = |place: [f32; 2]| offset(place, [0.0, y]);
                     let info = skill_info.get(&skill.id);
+                    if self.skill == Some(skill.id) {
+                        let band = match skill_band(skill) {
+                            [0x70, 0x9F, ..] => &assets.hover,
+                            [0x70, 0xD7, ..] => &assets.no_sp,
+                            _ => &assets.unlearned,
+                        };
+                        layer.sprites.push((band, at(down(SKILL_BAND.0)), SKILL_BAND.1));
+                    }
+                    if let Some(Some(icon)) = info.map(skills::icon_path).and_then(|path| icons.get(&path)) {
+                        layer.sprites.push((icon, at(down(SKILL_ICON)), [24.0, 24.0]));
+                    }
                     let name = info.map_or_else(|| skill.id.to_string(), |info| info.name.clone());
-                    skills::draw_box(layer, skill_assets, icons, font, at(corner), info, &name, skill.level);
-                    if guild.skill_points > 0 && skill.upgradable {
+                    let color = if skill.level == 0 { UNLEARNED_NAME } else { [0, 0, 0] };
+                    text(layer, window::fit(font, &name, WIDTH - SKILL_NAME[0] - 8.0), down(SKILL_NAME), color);
+                    if skill.level > 0 {
+                        text(layer, format!("Lv : {}", skill.level), down(SKILL_LEVEL), [0, 0, 0]);
+                        text(layer, skill_sp_text(skill, passive), down(SKILL_SP), [0, 0, 0]);
+                    }
+                    if self.levels_up(guild, skill) {
                         let state = if hit == Some(Hit::LevelUp(skill.id)) { 1 + usize::from(pointer.1) } else { 0 };
-                        let up = &skill_assets.up[state];
-                        layer.sprites.push((up, at(offset(corner, skills::UP)), up.size));
-                    }
-                    if hit == Some(Hit::Skill(skill.id)) {
-                        let max = info.map_or(0, |info| info.max_level);
-                        window::tooltip(tooltip, chrome, font, &format!("{name} Lv {}/{max}", skill.level), offset(pointer.0, [12.0, 12.0]), [255; 3]);
+                        layer.sprites.push((&assets.level_up[state], at(down(SKILL_UP)), [24.0, 24.0]));
                     }
                 }
-                let points = messages::fill(message(SKILL_POINTS), &[&guild.skill_points]);
-                text(layer, points, [12.0, HEIGHT - FOOTER + ((FOOTER - font.line_height()) / 2.0).floor()], [0, 0, 0]);
+                for (place, images, which) in [(SKILL_USE, &assets.use_button, Hit::SkillUse), (SKILL_CLOSE, &assets.close_button, Hit::SkillClose)] {
+                    let look = if hit == Some(which) { 1 + usize::from(pointer.1) } else { 0 };
+                    layer.sprites.push((&images[look], at(place), SKILL_BUTTON));
+                }
+                text(layer, format!("SkillPoint : {}", guild.skill_points), SKILL_POINT_AT, [0, 0, 0]);
             }
-            // The expel list: who, and why.
+            // The expel list: the cell grid, who and why.
             EXPELLED => {
-                header(layer, &EXPEL_COLUMNS);
-                for (row, (name, reason)) in guild.expelled.iter().skip(self.scroll).take(ROWS).enumerate() {
-                    let [(_, name_x), (_, reason_x)] = EXPEL_COLUMNS;
-                    text(layer, window::fit(font, name, reason_x - name_x - 6.0), [name_x, row_top(row)], [0, 0, 0]);
-                    text(layer, window::fit(font, reason, WIDTH - reason_x - 8.0), [reason_x, row_top(row)], [0, 0, 0]);
+                self.draw_grid(layer, assets, &EXPEL_WIDTHS);
+                for &(label, x) in &EXPEL_COLUMNS {
+                    text(layer, message(label).to_owned(), [x, 49.0], [0, 0, 0]);
+                }
+                for (row, (name, reason)) in guild.expelled.iter().skip(self.scroll).take(LIST_ROWS).enumerate() {
+                    let y = list_text_y(row);
+                    if self.list_row == Some(row + self.scroll) {
+                        layer.sprites.push((&assets.hover, at([5.0, y - 3.0]), [376.0, 18.0]));
+                    }
+                    text(layer, window::fit(font, name, EXPEL_WIDTHS[0] - 4.0), [8.0, y], [0, 0, 0]);
+                    text(layer, window::fit(font, reason, EXPEL_WIDTHS[1] - 4.0), [91.0, y], [0, 0, 0]);
                 }
             }
-            // The notice: its subject, then its text.
+            // The Announcement tab (the master's): the subject and text being written, the count, Send.
             _ => {
-                text(layer, format!("{} : {}", message(515), guild.notice.0), [12.0, PAGE_TOP + 8.0], [0, 0, 0]);
-                text(layer, message(516).to_owned(), [12.0, PAGE_TOP + 8.0 + LINE], [0, 0, 0]);
-                for (row, line) in window::wrap(font, &guild.notice.1, WIDTH - 30.0, 8).into_iter().enumerate() {
-                    text(layer, line, [20.0, PAGE_TOP + 8.0 + (row + 2) as f32 * LINE], [0, 0, 0]);
+                text(layer, format!("{}:", message(515).trim_end_matches(':').trim()), [5.0, 67.0], [0, 0, 0]);
+                text(layer, message(516).to_owned(), [5.0, 86.0], [0, 0, 0]);
+                let (subject, body) = &self.notice_draft;
+                let caret = |layer: &mut Layer<'a>, at_x: f32, at_y: f32| layer.sprites.push((&chrome.border, at([at_x, at_y]), [1.0, 12.0]));
+                layer.sprites.push((&assets.field, at(NOTICE_SUBJECT.0), NOTICE_SUBJECT.1));
+                text(layer, window::fit(font, subject, NOTICE_SUBJECT.1[0] - 6.0), offset(NOTICE_SUBJECT.0, [3.0, 1.0]), [0, 0, 0]);
+                if self.typing == Some(GuildTyping::NoticeSubject) {
+                    caret(layer, NOTICE_SUBJECT.0[0] + 3.0 + font.width(subject).min(NOTICE_SUBJECT.1[0] - 6.0), NOTICE_SUBJECT.0[1] + 2.0);
+                }
+                layer.sprites.push((&assets.field, at(NOTICE_TEXT.0), NOTICE_TEXT.1));
+                let lines = window::wrap(font, body, NOTICE_TEXT.1[0] - 8.0, 10);
+                for (line, words) in lines.iter().enumerate() {
+                    text(layer, words.clone(), offset(NOTICE_TEXT.0, [4.0, 3.0 + line as f32 * LINE]), [0, 0, 0]);
+                }
+                if self.typing == Some(GuildTyping::NoticeText) {
+                    let last = lines.len().saturating_sub(1);
+                    let width = lines.last().map_or(0.0, |line| font.width(line));
+                    caret(layer, NOTICE_TEXT.0[0] + 4.0 + width, NOTICE_TEXT.0[1] + 4.0 + last as f32 * LINE);
+                }
+                let count = format!("[{}/{TEXT_MOST}]", body.chars().count());
+                text(layer, count.clone(), [393.0 - font.width(&count), 266.0], [0, 0, 0]);
+                if guild.master {
+                    let look = if hit == Some(Hit::NoticeSend) { 1 + usize::from(pointer.1) } else { 0 };
+                    layer.sprites.push((&assets.send[look], at(NOTICE_SEND), MOVES_OK.1));
                 }
             }
         }
@@ -896,36 +1546,67 @@ mod tests {
             master: true,
             members: vec![member(1, "Boss", 0), member(2, "Newbie", 19)],
             positions: (0..20).map(|id| (id, format!("Position {}", id + 1))).collect(),
-            position_info: (0..20).map(|id| GuildPosition { id, mode: 0, tax: 0 }).collect(),
+            position_info: (0..20).map(|id| GuildPosition { id, mode: 0, rank: id, tax: 0 }).collect(),
             ..Default::default()
         }
     }
 
     #[test]
-    fn hits_the_masters_position_parts() {
+    fn edits_positions_in_the_cell_grid() {
+        // The cells: Position's widths 50, 100, 60…; Expel List's 82, 292; 19-px rows from y 46.
+        assert_eq!(cell(&POSITION_WIDTHS, 0, 0), [5.0, 46.0, 50.0, 18.0]);
+        assert_eq!(cell(&POSITION_WIDTHS, 1, 2), [56.0, 84.0, 100.0, 18.0]);
+        assert_eq!(cell(&POSITION_WIDTHS, 2, 1)[0], 157.0);
+        assert_eq!(cell(&POSITION_WIDTHS, 5, 0), [340.0, 46.0, 41.0, 18.0], "kept inside the grid");
+        assert_eq!(cell(&EXPEL_WIDTHS, 1, 11), [88.0, 255.0, 292.0, 18.0]);
+        assert_eq!((list_text_y(0), list_text_y(10)), (68.0, 258.0));
+        assert_eq!([64.0, 66.0, 83.0, 85.0, 273.0, 275.0].map(|y| list_row_at([100.0, y])), [None, Some(0), Some(0), Some(1), Some(10), None]);
         let mut window = GuildWindow::default();
         window.frame.open = true;
         window.show_tab(POSITIONS);
         let mut guild = crab();
-        let at = |local: [f32; 2]| window.frame.at(local);
-        // The second row is position 1.
-        let middle = row_top(1) + 5.0;
-        assert_eq!(window.hit(at([60.0, middle]), &guild), Some(Hit::PositionTitle(1)));
-        assert_eq!(window.hit(at([200.0, middle]), &guild), Some(Hit::Permission(1, GuildPosition::INVITE)));
-        assert_eq!(window.hit(at([250.0, middle]), &guild), Some(Hit::Permission(1, GuildPosition::EXPEL)));
-        assert_eq!(window.hit(at([300.0, middle]), &guild), Some(Hit::Permission(1, GuildPosition::STORAGE)));
-        assert_eq!(window.hit(at([350.0, middle]), &guild), Some(Hit::Tax(1)));
-        let names: Vec<String> = window.button_boxes(&guild).into_iter().map(|(name, _)| name).take(5).collect();
-        assert_eq!(names, ["title:0", "invite:0", "expel:0", "storage:0", "tax:0"]);
-        // A box click switches that one bit and keeps the rest.
         guild.position_info[1].mode = GuildPosition::STORAGE;
         guild.position_info[1].tax = 5;
-        assert_eq!(guild.switched(1, GuildPosition::INVITE), GuildPosition { id: 1, mode: 0x101, tax: 5 });
-        assert_eq!(guild.switched(1, GuildPosition::STORAGE), GuildPosition { id: 1, mode: 0, tax: 5 });
+        let corner = window.frame.position;
+        let at = move |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
+        // The second row is position 1; the master's parts are its boxes.
+        let y = list_text_y(1);
+        assert_eq!(window.hit(at([60.0, y]), &guild), Some(Hit::PositionTitle(1)));
+        assert_eq!(window.hit(at([165.0, y + 4.0]), &guild), Some(Hit::Permission(1, GuildPosition::INVITE)));
+        assert_eq!(window.hit(at([226.0, y + 4.0]), &guild), Some(Hit::Permission(1, GuildPosition::EXPEL)));
+        assert_eq!(window.hit(at([287.0, y + 4.0]), &guild), Some(Hit::Permission(1, GuildPosition::STORAGE)));
+        assert_eq!(window.hit(at([350.0, y]), &guild), Some(Hit::Tax(1)));
+        assert_eq!(window.hit(at([20.0, y]), &guild), Some(Hit::ListRow(1)));
+        let names: Vec<String> = window.button_boxes(&guild).into_iter().map(|(name, _)| name).take(5).collect();
+        assert_eq!(names, ["title:0", "invite:0", "expel:0", "storage:0", "tax:0"]);
+        // Edits wait: two rights, a title, a tax of 2 digits; OK sends them all and rests 400 ms.
+        window.click_position(Hit::Permission(1, GuildPosition::INVITE), &guild);
+        window.click_position(Hit::Permission(2, GuildPosition::INVITE), &guild);
+        window.click_position(Hit::PositionTitle(3), &guild);
+        for _ in 0..12 {
+            window.backspace(&guild);
+        }
+        window.type_text(&guild, &"Officer".repeat(6));
+        window.click_position(Hit::Tax(1), &guild);
+        window.type_text(&guild, "123");
+        assert_eq!(window.shown_position(&guild, 1), (GuildPosition { id: 1, mode: 0x101, rank: 1, tax: 51 }, "Position 2".to_owned()));
+        assert_eq!(window.shown_position(&guild, 3).1.chars().count(), 30);
+        assert_eq!(window.hit(at([350.0, 300.0]), &guild), Some(Hit::PositionsOk));
+        let now = std::time::Instant::now();
+        let sent = window.take_position_edits(now).unwrap();
+        assert_eq!(sent.iter().map(|(position, _)| position.id).collect::<Vec<_>>(), [1, 2, 3]);
+        window.click_position(Hit::Permission(4, GuildPosition::EXPEL), &guild);
+        assert!(window.take_position_edits(now + std::time::Duration::from_millis(300)).is_none());
         // Others see the page as it is.
         guild.master = false;
-        assert_eq!(window.hit(at([200.0, middle]), &guild), Some(Hit::Window));
+        assert_eq!(window.hit(at([165.0, y + 4.0]), &guild), Some(Hit::ListRow(1)));
         assert!(window.button_boxes(&guild).is_empty());
+        // The notice being written: 60 and 119 characters at most.
+        window.typing = Some(GuildTyping::NoticeSubject);
+        window.type_text(&guild, &"s".repeat(70));
+        window.typing = Some(GuildTyping::NoticeText);
+        window.type_text(&guild, &"t".repeat(130));
+        assert_eq!((window.notice_draft.0.len(), window.notice_draft.1.len()), (60, 119));
     }
 
     #[test]
@@ -938,24 +1619,87 @@ mod tests {
         let names: Vec<String> = window.button_boxes(&guild).into_iter().map(|(name, _)| name).collect();
         assert_eq!(names[..2], ["member:Boss", "member:Newbie"]);
         assert!(names.contains(&"sort:level".to_owned()) && names.contains(&"login_status".to_owned()));
-        // The master on another member: positions 1 to 19 but the one they hold.
-        let moves = guild.member_menu(1, 1);
-        assert_eq!(moves.len(), 18);
-        assert_eq!(moves.first(), Some(&MemberChoice::Move(1)));
-        assert!(!moves.contains(&MemberChoice::Move(19)) && !moves.contains(&MemberChoice::Move(0)));
-        assert!(guild.member_menu(1, 0).is_empty(), "the master doesn't leave");
-        // A member: leaving on their own row, nothing on others'.
+        use MemberChoice::*;
+        // The master on another member: expel, hand over, then (online) party and 1:1 chat, then mail.
+        guild.members[1].online = true;
+        assert_eq!(guild.member_menu(1, 1, true), [Expel, Assign, PartyInvite, Whisper, Mail]);
+        assert_eq!(guild.member_menu(1, 1, false), [Expel, Assign, Whisper, Mail]);
+        guild.members[1].online = false;
+        assert_eq!(guild.member_menu(1, 1, true), [Expel, Assign, Mail], "offline: no party or chat");
+        assert!(guild.member_menu(1, 0, true).is_empty(), "the master doesn't leave");
+        // A member: leaving on their own row; on others' only what anyone gets, expel with the right but not on
+        // the master.
         guild.master = false;
-        assert_eq!(guild.member_menu(2, 1), [MemberChoice::Leave]);
-        assert!(guild.member_menu(2, 0).is_empty());
+        assert_eq!(guild.member_menu(2, 1, false), [Leave]);
+        guild.members[0].online = true;
+        assert_eq!(guild.member_menu(2, 0, false), [Whisper, Mail]);
+        guild.mode = 0x10;
+        assert!(guild.can_expel() && !guild.can_invite());
+        assert_eq!(guild.member_menu(2, 0, false), [Whisper, Mail], "not the master's row");
+        guild.members.push(GuildMember { account: 1003, character: 3, position: 5, name: "Third".into(), ..Default::default() });
+        assert_eq!(guild.member_menu(2, 2, false), [Expel, Mail]);
+        assert_eq!([Leave, Expel, Assign, PartyInvite, Whisper, Mail].map(MemberChoice::message), [508, 509, 2923, 1330, 2043, 2808]);
+        // The invitation: with the invite right (not only the master), on a player in no guild.
+        assert!(!offers_invite(Some(&guild), 0) && !offers_invite(None, 0), "a member without the invite right");
+        guild.mode = 0x01;
+        assert!(offers_invite(Some(&guild), 0) && !offers_invite(Some(&guild), 9), "not on one in another guild");
+    }
+
+    #[test]
+    fn words_the_guild_lines() {
+        assert_eq!(
+            (0..=5).map(invite_result_line).collect::<Vec<_>>(),
+            [Some((378, LINE_RED)), Some((379, LINE_RED)), Some((380, LINE_CYAN)), Some((381, LINE_RED)), Some((2090, LINE_RED)), None,]
+        );
+        assert_eq!(notice_lines("Hi", "Welcome"), ["[ Hi ]", "[ Welcome ]"]);
+        assert_eq!(notice_lines("", "Welcome"), ["[ Welcome ]"]);
+        assert_eq!(notice_lines("Hi", ""), ["[ Hi ]"]);
+        assert!(notice_lines("", "").is_empty());
+        assert_eq!(leaving_lines(true, false, None, "bye", "Nameless"), [(489, String::new(), LINE_RED)]);
+        assert_eq!(leaving_lines(true, true, None, "", "Nameless"), [(490, String::new(), LINE_RED)]);
+        assert_eq!(leaving_lines(false, false, Some("Ann"), "bye", "Nameless"), [(364, "Ann".to_owned(), LINE_YELLOW), (365, "bye".to_owned(), LINE_YELLOW)]);
+        assert_eq!(leaving_lines(false, true, None, "", "Nameless"), [(370, "Nameless".to_owned(), LINE_YELLOW), (371, String::new(), LINE_YELLOW)]);
+    }
+
+    #[test]
+    fn keeps_pending_moves_and_reasons() {
+        let mut pending = Vec::new();
+        pick_move(&mut pending, 1002, 2, 5);
+        pick_move(&mut pending, 1003, 3, 7);
+        pick_move(&mut pending, 1002, 2, 9);
+        assert_eq!(pending, [(1003, 3, 7), (1002, 2, 9)], "the last pick wins");
+        let guild = crab();
+        let mut window = GuildWindow { tab: MEMBERS, ..GuildWindow::default() };
+        window.frame.open = true;
+        let corner = window.frame.position;
+        let at = move |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
+        // The master's drop-down on the second row, then a position from its list.
+        assert_eq!(window.hit(at([155.0, 67.0 + 44.0 + 15.0]), &guild), Some(Hit::Drop(1)));
+        window.click_members(Hit::Drop(1), &guild);
+        assert_eq!(window.hit(at([100.0, 67.0 + 44.0 + 34.0 + 16.0 * 2.0 + 4.0]), &guild), Some(Hit::PickPosition(2)));
+        window.click_members(Hit::PickPosition(2), &guild);
+        assert_eq!((window.pending.clone(), window.drop), (vec![(1002, 2, 2)], None));
+        assert_eq!(window.hit(at([350.0, 300.0]), &guild), Some(Hit::MovesOk));
+        let now = std::time::Instant::now();
+        assert_eq!(window.take_moves(now), Some(vec![(1002, 2, 2)]));
+        pick_move(&mut window.pending, 1001, 1, 3);
+        assert_eq!(window.take_moves(now + std::time::Duration::from_millis(300)), None, "OK rests 400 ms");
+        assert!(window.take_moves(now + MOVES_REST).is_some());
+        // The reason box: 39 characters at most; its place.
+        let mut reason = ReasonBox::new(Reasoned::Expel(1002, 2));
+        reason.type_text(&"y".repeat(50));
+        assert_eq!(reason.text.chars().count(), 39);
+        assert_eq!(ReasonBox::at([1024.0, 768.0]), [392.0, 192.0]);
+        assert_eq!(reason.hit([392.0 + 180.0, 192.0 + 50.0], [1024.0, 768.0]), Some(ReasonHit::Ok));
+        assert_eq!(reason.hit([392.0 + 226.0, 192.0 + 50.0], [1024.0, 768.0]), Some(ReasonHit::Cancel));
     }
 
     #[test]
     fn applies_position_changes_and_moves() {
         let mut guild = Guild { members: crab().members, ..Default::default() };
-        guild.change_position(GuildPosition { id: 1, mode: 1, tax: 10 }, "Officer".into());
-        assert_eq!((guild.title(1).as_str(), guild.position(1)), ("Officer", GuildPosition { id: 1, mode: 1, tax: 10 }));
-        guild.change_position(GuildPosition { id: 1, mode: 0, tax: 3 }, "Clerk".into());
+        guild.change_position(GuildPosition { id: 1, mode: 1, rank: 0, tax: 10 }, "Officer".into());
+        assert_eq!((guild.title(1).as_str(), guild.position(1)), ("Officer", GuildPosition { id: 1, mode: 1, rank: 0, tax: 10 }));
+        guild.change_position(GuildPosition { id: 1, mode: 0, rank: 0, tax: 3 }, "Clerk".into());
         assert_eq!(guild.position_info.len(), 1);
         assert_eq!((guild.title(1).as_str(), guild.position(1).tax), ("Clerk", 3));
         guild.move_member(2, 1);
@@ -1000,15 +1744,32 @@ mod tests {
         assert_eq!(ally, [(394, YELLOW), (395, YELLOW), (396, CYAN), (397, YELLOW), (398, YELLOW), (1717, YELLOW)]);
         let antagonist = (0..=3).map(antagonist_result).collect::<Vec<_>>();
         assert_eq!(antagonist, [(495, CYAN), (496, RED), (497, RED), (1718, RED)]);
-        assert_eq!([0, 1, 2, 9].map(disband_result), [(400, true), (401, false), (402, false), (366, false)]);
     }
 
     #[test]
-    fn places_guild_skills_by_number() {
-        assert_eq!(skill_corner(10000), [SKILL_LEFT + 17.0, PAGE_TOP + 6.0]);
-        assert_eq!(skill_corner(10007), [SKILL_LEFT + 62.0 + 17.0, PAGE_TOP + 6.0 + 58.0]);
-        // The last of the 20 still fits on the page.
-        assert!(skill_corner(10019)[1] + skills::CELL[1] <= HEIGHT - FOOTER);
+    fn lists_guild_skills_in_a_column() {
+        let skill = |id: u16, kind: u32, level: u16, sp: u16, upgradable: bool| Skill { id, kind, level, sp, range: 0, upgradable };
+        assert_eq!(skill_band(&skill(10000, 1, 1, 10, false)), [0x70, 0x9F, 0xED, 0xFF]);
+        assert_eq!(skill_band(&skill(10000, 1, 1, 0, false)), [0x70, 0xD7, 0xED, 0xFF]);
+        assert_eq!(skill_band(&skill(10000, 1, 0, 10, false)), [0xB4, 0xB4, 0xB4, 0xFF]);
+        assert_eq!(skill_sp_text(&skill(10000, 0, 1, 0, false), "Passive"), "Passive");
+        assert_eq!(skill_sp_text(&skill(10010, 4, 1, 40, false), "Passive"), "Sp : 40");
+        // Rows picked on a 32-px pitch from y 41 (drawn 34 apart from 43).
+        assert_eq!(
+            [30.0, 41.0, 72.0, 73.0, 41.0 + 32.0 * 6.0 + 5.0, 41.0 + 32.0 * 7.0].map(|y| skill_row_at([150.0, y])),
+            [None, Some(0), Some(0), Some(1), Some(6), None]
+        );
+        let mut guild = Guild { skill_points: 1, skills: vec![skill(10000, 0, 1, 0, true), skill(10001, 4, 0, 30, true)], ..Default::default() };
+        let mut window = GuildWindow { tab: SKILLS, ..GuildWindow::default() };
+        window.frame.open = true;
+        let corner = window.frame.position;
+        let at = move |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
+        // The level up button is the master's.
+        assert_eq!(window.hit(at([80.0, 45.0 + 34.0 + 5.0]), &guild), Some(Hit::Skill(10001)), "a member has none");
+        guild.master = true;
+        assert_eq!(window.hit(at([80.0, 45.0 + 34.0 + 5.0]), &guild), Some(Hit::LevelUp(10001)));
+        assert_eq!(window.hit(at([150.0, 50.0]), &guild), Some(Hit::Skill(10000)));
+        assert_eq!((window.hit(at([50.0, 300.0]), &guild), window.hit(at([100.0, 300.0]), &guild)), (Some(Hit::SkillUse), Some(Hit::SkillClose)));
     }
 
     #[test]

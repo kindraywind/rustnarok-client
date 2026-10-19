@@ -78,6 +78,7 @@ mod events;
 mod game;
 mod grade;
 mod guild;
+mod guild_companion;
 mod head_marks;
 mod homunculus;
 mod hotkeys;
@@ -130,6 +131,7 @@ mod status;
 mod status_tip;
 mod storage;
 mod stylist;
+mod taming;
 mod trade;
 mod vend;
 mod versus;
@@ -341,6 +343,10 @@ const AURA_EFFECT_ON: usize = 2994;
 const AURA_EFFECT_OFF: usize = 2995;
 const AURA_OFF_FIRST: usize = 2996;
 const EFFECTS_OFF: usize = 24;
+/// /quake: "Screen shake ON" / "Screen shake OFF".
+// ponytail: /quake's chat lines use the message table's 2805 and 2806.
+const QUAKE_ON: usize = 2805;
+const QUAKE_OFF: usize = 2806;
 /// Deals: "requests a deal", no one of that name, "can't overlap items", "no more than 10 kinds", how asking went
 /// (70 + the result), how it ended (75 done, 76 failed, 74 cancelled), too heavy.
 /// "Invalid Command", in yellow.
@@ -380,7 +386,8 @@ const WEDDING_EFFECT: u32 = 347;
 /// questions (feeding; the name, then renaming once), no food, and neglect.
 // ponytail: the menu's order is a guess; the strings sit together like one.
 const PET_EGGS: usize = 599;
-const PET_CHOICES: [(usize, u8); 5] = [(592, net::PET_FEED), (593, net::PET_PERFORM), (594, net::PET_RETURN), (595, net::PET_UNEQUIP), (596, net::PET_INFO)];
+/// Our pet's menu: Check Pet Status, Feed Pet, Performance, Unequip Accessory, Return to Egg; all five always.
+const PET_CHOICES: [(usize, u8); 5] = [(596, net::PET_INFO), (592, net::PET_FEED), (593, net::PET_PERFORM), (595, net::PET_UNEQUIP), (594, net::PET_RETURN)];
 /// A player's menu: "Open 1:1 Chat", "Send a mail", "Block Chat (Toggle)", "Kick %s".
 const WHISPER_CHOICE: usize = 360;
 const MAIL_CHOICE: usize = 2808;
@@ -391,10 +398,14 @@ const HOMUNCULUS_CHOICES: [(usize, Choice); 3] = [(1112, Choice::HomunculusStatu
 /// Ourselves with a stall open: "Close stall".
 const CLOSE_STALL_CHOICE: usize = 3493;
 const PET_FEED_ASKS: usize = 601;
-const PET_NAME_RULE: usize = 682;
-const PET_RENAME_ASKS: usize = 683;
+const PET_RENAME_ASKS: usize = 2931;
 const PET_NO_FOOD: usize = 591;
-const PET_NEGLECTED: usize = 1188;
+/// "Your pet has been fed. %s (%d) remaining", and the lines' colours.
+const PET_FED: usize = 2578;
+const PET_FED_COLOR: [u8; 3] = [0x64, 0xFF, 0xFF];
+const PET_NO_FOOD_COLOR: [u8; 3] = [0xF5, 0x1E, 0x1E];
+/// A pet's line in the chat.
+const PET_TALK_COLOR: [u8; 3] = [0xFA, 0xFA, 0xFA];
 const EQUIPMENT_SHOWN: usize = 1359;
 const EQUIPMENT_HIDDEN: usize = 1358;
 /// Vending: "%s %d sold.", "Items are sold out.", and "There are items priced 0..." (a shop refused for it).
@@ -412,20 +423,13 @@ const ALLY_CHOICE: usize = 399;
 const ANTAGONIST_CHOICE: usize = 403;
 /// "(guild) Guild is asking for an Alliance with them. Do you accept?", "Are you sure that you want to delete it?"
 const ALLY_ASKS: usize = 393;
-/// "Are you sure that you want to leave?", and the lines when someone leaves: "You left the guild.", "%s has left the
-/// guild.", "Withdrawal Reason: %s". The member menu's "Leave Guild".
-const LEAVE_ASKS: usize = 357;
-const LEFT_GUILD: usize = 489;
-const MEMBER_LEFT: usize = 364;
-const LEFT_BECAUSE: usize = 365;
-const LEAVE_CHOICE: usize = 508;
+/// "Are sure want to assign %s as guild leader? ..." with the member's name twice.
+const GUILD_LEADER_ASKS: usize = 2924;
 /// The master's menu on an ally or antagonist: "Delete".
 const RELATION_DELETE: usize = 351;
 /// A tracked quest's menu: "Quest information", "Delete".
 const QUEST_INFO_CHOICE: usize = 1622;
 const QUEST_DELETE_CHOICE: usize = 351;
-/// "Position Title", over the question for a new one.
-const POSITION_TITLE: usize = 511;
 const GUILD_INVITED: usize = 377;
 const GUILD_ONLINE: usize = 485;
 const GUILD_CHAT: [u8; 3] = [180, 255, 180];
@@ -669,7 +673,7 @@ fn scale_frame(placed: &mut [actor::Placed], scale: f32) {
 /// Offsets inside the 280x120 dialog bitmaps (win_login, win_service, win_msgbox).
 const LEFT_BUTTON: [f32; 2] = [189.0, 96.0];
 /// A shop's question: buy, sell or cancel, in a message box.
-const DEAL_BUTTONS: [[f32; 2]; 3] = [[143.0, 96.0], [189.0, 96.0], [235.0, 96.0]];
+const DEAL_BUTTONS: [[f32; 2]; 3] = [[144.0, 96.0], [189.0, 96.0], [234.0, 96.0]];
 const DEAL_MESSAGE: usize = 92;
 const RIGHT_BUTTON: [f32; 2] = [235.0, 96.0];
 const FIELD_PADDING: f32 = 3.0;
@@ -850,11 +854,6 @@ const TARGET_MESSAGE: usize = 234;
 /// frame stays, and the chat lines.
 // ponytail: the slot machine at the screen's middle and the lines in the chat; how and where the real client shows
 // the result isn't known.
-const SLOT_CAUGHT: usize = 2;
-const SLOT_MISSED: usize = 3;
-const SLOT_HOLD_MS: f32 = 1500.0;
-const TAMED: usize = 1574;
-const NOT_TAMED: usize = 1575;
 /// HP/SP bars under characters: border, background, HP, low HP (under a quarter), SP, hunger, a 4th job's third row;
 /// and monsters' HP bars.
 const BAR_COLORS: [[u8; 4]; 7] = [
@@ -1171,7 +1170,10 @@ struct Game {
     /// A taming item waiting for its monster; the slot machine, and the result it plays (action, since when).
     capturing: bool,
     slot_sprite: Option<SpriteSet>,
-    slot: Option<(usize, Instant)>,
+    /// The quest details' NPC picture: the sprite's name and the sprite.
+    quest_npc: Option<(String, Option<SpriteSet>)>,
+    /// The taming slot machine, open on a monster.
+    slot: Option<taming::Machine>,
     /// Units casting (None = the player): when it began and how long it takes.
     casts: HashMap<Option<u32>, (Instant, Duration)>,
     /// The last web page an NPC's link opened, under the control socket (which doesn't open it).
@@ -1224,6 +1226,10 @@ struct Game {
     achievement_window: achievement::AchievementWindow,
     /// The item description window, and how many lines its text wraps to.
     item_window: Option<iteminfo::ItemWindow>,
+    /// A card's own window, opened from a description's strip, where it opens, and its text's lines.
+    card_window: Option<iteminfo::ItemWindow>,
+    card_place: [f32; 2],
+    card_lines: usize,
     item_lines: usize,
     /// Where the item description window opens: where it was last (saved), else its first place.
     item_place: [f32; 2],
@@ -1312,6 +1318,10 @@ struct Game {
     guild_invite: Option<(u32, String)>,
     /// A guild question: another guild asks for an alliance, or the master is about to end a relation.
     guild_asked: Option<GuildAsked>,
+    /// The reason box for leaving the guild or expelling a member.
+    reason_box: Option<guild::ReasonBox>,
+    /// Without a guild: the Guild Companion, its tip and create window (the disband window too).
+    guild_companion: guild_companion::Companion,
     /// Dev switch RUSTNAROK_CLIENT_GUILD=window ran.
     guild_shown: bool,
     /// The clan we're in, and its window.
@@ -1342,6 +1352,9 @@ struct Game {
     pet: Option<net::Pet>,
     pet_window: pet::PetWindow,
     pet_asked: Option<PetAsked>,
+    /// The pet's hunger before its last hunger update, and how long it has stood still.
+    pet_hunger_before: u16,
+    pet_idle: pet::Idle,
     /// The player's mercenary, its skills, its window and skill list, how it's steered, and whether dismissing it is
     /// being asked.
     mercenary: Option<net::Mercenary>,
@@ -1381,6 +1394,10 @@ struct Game {
     bars_drawn: Vec<(String, [f32; 4], Vec<Option<f32>>)>,
     /// /noshift: a click on a player attacks without Shift (saved).
     no_shift: bool,
+    /// /loginout: the guild notice and members' log-in lines (on unless turned off; saved). /notalkmsg2: guild chat
+    /// hidden (saved).
+    login_notices: bool,
+    no_guild_talk: bool,
     /// /emblem: emblems next to hovered players' names (saved; on unless turned off).
     show_emblems: bool,
     /// Units under the unknown-name status (672), whose names hide on PvP and siege maps.
@@ -1393,9 +1410,8 @@ struct Game {
     snaps: Snaps,
     /// Where the cursor is drawn: the pointer, or the middle of what it snapped to.
     cursor_at: [f32; 2],
-    /// /camera: the camera sticks to the player (saved; off unless turned on); the earthquake's shake this frame.
+    /// /camera: the camera sticks to the player (saved; off unless turned on).
     camera_snap: bool,
-    quake_flip: bool,
     /// The last skill sent by aiming: ID, level and target.
     skill_sent: Option<(u16, u16, SkillTarget)>,
     /// The attack asked for with the mouse, and when the last attack packet went out; riding a mount that can't
@@ -1550,6 +1566,8 @@ struct CameraGoal {
     limits: Option<rustnarok_client::map::Viewpoint>,
     /// /zoom: outdoors the camera goes out to ZOOM_OUT_DISTANCE.
     zoom_out: bool,
+    /// A camera shake is running (when it stops, the look-at point, distance and pitch snap straight back).
+    shaking: bool,
 }
 
 impl CameraGoal {
@@ -1572,6 +1590,7 @@ impl CameraGoal {
             last_wheel: None,
             limits,
             zoom_out,
+            shaking: false,
         };
         match limits {
             Some(table) => {
@@ -1717,6 +1736,22 @@ impl CameraGoal {
         camera.yaw = (yaw + turn * step).to_radians();
         camera.pitch += (self.pitch.to_radians() - camera.pitch) * step;
         camera.distance += (self.distance() - camera.distance) * step;
+    }
+
+    /// Shakes the camera (`[sideways, distance, pitch_degrees]`), or snaps the look-at point, distance and pitch
+    /// straight back when the shake ends.
+    fn shake(&mut self, camera: &mut Camera, feet: world::Vector, quake: Option<[f32; 3]>) {
+        if let Some([side, distance, pitch]) = quake {
+            self.shaking = true;
+            camera.target[0] += camera.yaw.cos() * side;
+            camera.target[2] -= camera.yaw.sin() * side;
+            camera.distance += distance;
+            camera.pitch += pitch.to_radians();
+        } else if std::mem::replace(&mut self.shaking, false) {
+            camera.target = feet;
+            camera.distance = self.distance();
+            camera.pitch = self.pitch.to_radians();
+        }
     }
 }
 
@@ -2049,11 +2084,6 @@ enum Asked {
     Mail(u16),
     /// An inventory item, into the material window.
     Material(u16),
-    /// The pet's new name.
-    PetName,
-    /// A guild position's new title, and its tax (the master's).
-    PositionTitle(u32),
-    PositionTax(u32),
     /// The homunculus's new name.
     HomunculusName,
     /// A Talkie Box's message, before it's placed at the cell.
@@ -2110,14 +2140,16 @@ enum Choice {
     QuestAside(u32),
     /// Ask this party member (by account) to be adopted.
     Adopt(u32),
-    /// The guild master moves a member (by its place in the member list) to a position.
-    GuildMove(usize, u32),
-    /// Leave the guild (asks first).
-    GuildLeave,
+    /// The member menu on the guild's members page: an entry, for a member (by place in the member list).
+    GuildMember(guild::MemberChoice, usize),
+    /// A guild skill's description.
+    GuildSkillInfo(u16),
     /// The master ends the relation with this guild (antagonist or not), without asking.
     EndRelation(u32, bool),
     /// Whisper this player: their name in the chat's name box.
     Whisper(u32),
+    /// Take off the cart or the mount (CZ_UNINSTALLATION's kind).
+    Uninstall(u8),
     /// Write them a mail.
     Mail(u32),
     /// Block their whispers.
@@ -2210,6 +2242,9 @@ enum QueueAsked {
 enum PetAsked {
     Feed,
     Rename(String),
+    /// A new name turned down: the line why (either button closes it).
+    // ponytail: drawn as the question box; the game's has OK alone.
+    Refused(usize),
 }
 
 /// Another player's equipment window: the window, what they wear, and their figure for its preview.
@@ -2315,6 +2350,8 @@ enum BoxQuestion {
     LastRow,
     /// A plain notice of this message, OK only (the big minimap refused on this map).
     Notice(usize),
+    /// The master hands the guild to this member (2924, both %s their name).
+    GuildLeader { account: u32, character: u32, name: String },
 }
 
 impl BoxQuestion {
@@ -2326,6 +2363,16 @@ impl BoxQuestion {
             Self::OnlyLeader => party::ONLY_LEADER_INVITES,
             Self::LastRow => party::IN_THE_LAST_ROW,
             Self::Notice(message) => *message,
+            Self::GuildLeader { .. } => GUILD_LEADER_ASKS,
+        }
+    }
+
+    /// Its words: the message, with the member's name in the leader question.
+    fn text(&self, messages: &[String]) -> String {
+        let template = messages.get(self.message()).map_or("", String::as_str);
+        match self {
+            Self::GuildLeader { name, .. } => rustnarok_client::messages::fill(template, &[name, name]),
+            _ => template.to_owned(),
         }
     }
 
@@ -2338,8 +2385,6 @@ impl BoxQuestion {
 enum GuildAsked {
     /// Another guild (its name) asks for an alliance, through the player who asked (account ID).
     Ally { id: u32, guild: String },
-    /// Leave the guild.
-    Leave,
 }
 
 /// What a pick list's answer is for.
@@ -2596,6 +2641,7 @@ struct Assets {
     roulette: roulette::Assets,
     item_window: iteminfo::Assets,
     guild: guild::Assets,
+    guild_companion: guild_companion::Assets,
     clan: clan::Assets,
     vend: vend::Assets,
     /// The cast bar's fill, the speech bubble's box and border, the aimed skill's box, and status icons' clocks
@@ -2714,6 +2760,7 @@ impl Assets {
             roulette: roulette::Assets::load(gpu, grf),
             item_window: iteminfo::Assets::load(gpu, grf),
             guild: guild::Assets::load(gpu, grf),
+            guild_companion: guild_companion::Assets::load(gpu, grf),
             clan: clan::Assets::load(gpu, grf),
             vend: vend::Assets::load(gpu, grf),
             cast_fill: gpu.solid([0x16, 0xEA, 0x25, 0xFF]),
@@ -2899,6 +2946,8 @@ const PARTY_MODE: &str = "party_mode";
 const VEND_SIZE: &str = "vend_size";
 const SKILL_LIST_SIZE: &str = "skill_list_size";
 const ITEM_PLACE: &str = "item_info";
+const QUEST_PLACE: &str = "quest";
+const CARD_PLACE: &str = "card_info";
 
 /// The sizes' lines of the window places: the inventory's and the cart's columns and rows, the storage's rows, an NPC
 /// shop's goods width and rows, then its deal's rows.
@@ -3035,6 +3084,12 @@ fn remember_id(id: Option<&str>) {
 /// A message's last sentence (after its last ". "), or all of it.
 fn last_sentence(text: &str) -> &str {
     text.rsplit_once(". ").map_or(text, |(_, last)| last)
+}
+
+/// The deal-type box (Buy, Sell, Cancel): right of the middle, 300 of 480 down; (377, 480) at 1024×768.
+fn deal_box_position() -> [f32; 2] {
+    let [width, height] = screen();
+    [((width - 640.0) / 2.0 + 185.0).floor(), (300.0 * height / 480.0).floor()]
 }
 
 fn dialog_position(dialog: &Texture) -> [f32; 2] {
@@ -3250,27 +3305,9 @@ fn inventory_right(alt: bool, shift: bool, ctrl: bool) -> Option<InventoryRight>
     }
 }
 
-/// With compare on, the worn items that share a slot with the inventory item under the pointer.
-fn compared_windows(inventory: &Inventory, items: &HashMap<u32, ItemInfo>, messages: &[String], cursor: [f32; 2]) -> Vec<iteminfo::ItemWindow> {
-    if !inventory.compare || !inventory.frame.open {
-        return Vec::new();
-    }
-    let Some((index, area)) = inventory.item_boxes().into_iter().find(|(_, area)| contains([area[0], area[1]], [area[2], area[3]], cursor)) else {
-        return Vec::new();
-    };
-    let Some(hovered) = inventory.get(index) else { return Vec::new() };
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
-    inventory::compared_worn(hovered, &inventory.items)
-        .into_iter()
-        .enumerate()
-        .map(|(place, item)| {
-            let mut window = iteminfo::ItemWindow::new(iteminfo::Shown::of(item));
-            window.worn = true;
-            window.fit(window.lines(items, messages, now).len());
-            window.place_beside(area, place);
-            window
-        })
-        .collect()
+/// A window that a button opens and shuts: shut when it's open, else a new one.
+fn toggled<T>(window: Option<T>, open: impl FnOnce() -> T) -> Option<T> {
+    if window.is_some() { None } else { Some(open()) }
 }
 
 /// Where Alt + right click sends a stack: the first that's open of the storage, a trade, the cart.
@@ -3945,8 +3982,16 @@ impl App {
                     }
                 }
                 None if game.storage.typing => game.storage.type_text(text),
+                None if game.pet_window.typing => game.pet_window.name_text.get_or_insert_with(String::new).push_str(text),
                 None if game.booking.as_ref().is_some_and(|window| window.focus.is_some()) => game.booking.as_mut().unwrap().type_text(text),
+                None if game.guild_window.typing.is_some() => {
+                    if let Some(guild) = &game.guild {
+                        game.guild_window.type_text(guild, text);
+                    }
+                }
                 None if game.party_dialog.as_ref().is_some_and(|dialog| dialog.typing) => game.party_dialog.as_mut().unwrap().type_text(text),
+                None if game.reason_box.is_some() => game.reason_box.as_mut().unwrap().type_text(text),
+                None if game.guild_companion.typing() => game.guild_companion.create.as_mut().unwrap().type_text(text),
                 None if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
                     let window = game.navi_window.as_mut().unwrap();
                     window.text.push_str(text);
@@ -5622,6 +5667,14 @@ mod tests {
     }
 
     #[test]
+    fn settings_buttons_open_then_shut_their_window() {
+        let mut window = toggled(None, || 7);
+        assert_eq!(window, Some(7));
+        window = toggled(window, || 8);
+        assert_eq!(window, None);
+    }
+
+    #[test]
     fn asks_before_leaving_a_screen_before_the_map() {
         assert!(matches!(pre_map_escape(&Scene::Login), Some((QUIT_MESSAGE, Then::Quit))));
         assert!(matches!(pre_map_escape(&Scene::Connections { selected: 0 }), Some((QUIT_MESSAGE, Then::Quit))));
@@ -5691,6 +5744,30 @@ mod tests {
     }
 
     #[test]
+    fn camera_shakes_and_snaps_back_at_the_end() {
+        let mut goal = CameraGoal::new(false);
+        let feet = [100.0, -5.0, 200.0];
+        let mut camera = goal.camera(feet);
+        let before = (camera.target, camera.distance, camera.pitch);
+
+        let start = Instant::now();
+        let mut effects = effects::Effects::default();
+        effects.start_quake(start, effects::QUAKE_LONG);
+        for frame in 0..10 {
+            let now = start + Duration::from_millis(frame * 16);
+            goal.ease(&mut camera, Duration::from_millis(16), feet, false);
+            goal.shake(&mut camera, feet, effects.quake(now));
+            assert!(goal.shaking);
+            assert_ne!((camera.target, camera.distance, camera.pitch), before);
+        }
+        // When the shake ends, the look-at point, distance and pitch snap straight back.
+        goal.ease(&mut camera, Duration::from_millis(16), feet, false);
+        goal.shake(&mut camera, feet, effects.quake(start + effects::QUAKE_LONG));
+        assert!(!goal.shaking);
+        assert_eq!((camera.target, camera.distance, camera.pitch), before);
+    }
+
+    #[test]
     fn opens_the_menu_for_what_is_under_the_pointer() {
         let players = [7u32, 8];
         let is_player = |id: u32| players.contains(&id);
@@ -5720,8 +5797,8 @@ mod tests {
         assert!(player_choices(7, all).contains(&(458, Choice::RoomKick(2))));
         // While trading there's no deal to ask for.
         assert_eq!(labels(PlayerTies { trading: true, friend: true, ..PlayerTies::default() }), [360, 2808, 1360, 3820]);
-        // The pet's status comes last; the homunculus has three entries.
-        assert_eq!(PET_CHOICES.map(|(label, _)| label), [592, 593, 594, 595, 596]);
+        // The pet's status comes first, all five always; the homunculus has three entries.
+        assert_eq!(PET_CHOICES.map(|(label, _)| label), [596, 592, 593, 595, 594]);
         assert_eq!(HOMUNCULUS_CHOICES.map(|(label, _)| label), [1112, 1113, 1114]);
     }
 

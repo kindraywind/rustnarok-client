@@ -1,6 +1,6 @@
 //! The client's Lua data tables (compiled Lua 5.1 in data.grf), run in an embedded Lua 5.1.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 
 use mlua::Lua;
@@ -333,6 +333,8 @@ pub struct PetTables {
     pub illustrations: HashMap<u16, String>,
     /// The ACT an accessory moves its pet by, e.g. 10013 → "poring_책가방.act".
     pub accessory_acts: HashMap<u16, String>,
+    /// What it eats (`PetFoodTable`): an item ID, e.g. 1002 → 531.
+    pub food: HashMap<u16, u32>,
 }
 
 pub fn pet_tables(grf: &Grf) -> io::Result<PetTables> {
@@ -341,7 +343,43 @@ pub fn pet_tables(grf: &Grf) -> io::Result<PetTables> {
     lua.load("setmetatable(jobtbl, { __index = function() return -1 end })").exec().map_err(lua_error)?;
     exec(&lua, grf, &[PET_INFO])?;
     let table = |name: &str| names(&lua.globals().get::<mlua::Table>(name).map_err(lua_error)?);
-    Ok(PetTables { names: table("PetNameTable")?, illustrations: table("PetIllustNameTable")?, accessory_acts: table("PetAccActNameTable")? })
+    // A translation may leave the food table out.
+    let food = lua
+        .globals()
+        .get::<mlua::Table>("PetFoodTable")
+        .map(|table| {
+            table.pairs::<i64, i64>().flatten().filter_map(|(monster, item)| Some((u16::try_from(monster).ok()?, u32::try_from(item).ok()?))).collect()
+        })
+        .unwrap_or_default();
+    Ok(PetTables { names: table("PetNameTable")?, illustrations: table("PetIllustNameTable")?, accessory_acts: table("PetAccActNameTable")?, food })
+}
+
+/// The client's pet evolution list (it may be missing).
+const PET_EVOLUTION: &str = "system\\PetEvolutionCln_true.lub";
+
+/// The eggs whose pets may eat by themselves: the list's `InsertPetAutoFeeding(egg)` calls.
+pub fn pet_auto_feeding(grf: &Grf) -> io::Result<HashSet<u32>> {
+    auto_feeding(grf.read(PET_EVOLUTION)?)
+}
+
+/// Runs the pet evolution list with `InsertPetAutoFeeding` collecting its eggs (the list's other calls do nothing).
+pub fn auto_feeding(source: Vec<u8>) -> io::Result<HashSet<u32>> {
+    let lua = new_lua()?;
+    let eggs = std::rc::Rc::new(std::cell::RefCell::new(HashSet::new()));
+    let found = eggs.clone();
+    let insert = lua
+        .create_function(move |_, egg: i64| {
+            if let Ok(egg) = u32::try_from(egg) {
+                found.borrow_mut().insert(egg);
+            }
+            Ok(())
+        })
+        .map_err(lua_error)?;
+    lua.globals().set("InsertPetAutoFeeding", insert).map_err(lua_error)?;
+    lua.load("setmetatable(_G, { __index = function() return function() end end })").exec().map_err(lua_error)?;
+    exec_bytes(&lua, PET_EVOLUTION, source)?;
+    let eggs = eggs.borrow().clone();
+    Ok(eggs)
 }
 
 /// An achievement as the client's table (achievements.lub) describes it.
@@ -725,16 +763,27 @@ const QUEST_INFO: &str = "system\\OngoingQuestInfoList_True.lub";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuestInfo {
     pub title: String,
-    pub description: String,
+    /// `Description`, a line an entry.
+    pub description: Vec<String>,
     pub summary: String,
     /// ponytail: `NpcPosX`/`NpcPosY` on the quest itself. The real list can nest several NPCs, each with a sprite.
     pub npc: Option<[i32; 2]>,
     /// Only a cooldown timer (`CoolTimeQuest = 1`).
     pub cooldown: bool,
+    /// Its type icon (`IconName`, under renew_questui), when it names one.
+    pub icon: String,
+    /// Its NPC's sprite (`NpcSpr`, under npc\\) and the map to find it on (`NpcNavi`).
+    pub npc_sprite: String,
+    pub npc_map: String,
+    /// What it rewards: base and job exp as written (`RewardEXP`, `RewardJEXP`), and items with how many
+    /// (`RewardItemList`).
+    pub reward_exp: String,
+    pub reward_job_exp: String,
+    pub reward_items: Vec<(u32, u32)>,
 }
 
-/// A quest's words: title, description (its lines joined), summary, its NPC cell when listed, whether it's a cooldown
-/// timer.
+/// A quest's words: title, description lines, summary, its NPC (cell, sprite, map) when listed, whether it's a cooldown
+/// timer, its rewards.
 pub fn quest_info(grf: &Grf) -> io::Result<HashMap<u32, QuestInfo>> {
     quest_infos(&run(grf, &[QUEST_INFO])?)
 }
@@ -747,7 +796,25 @@ fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
         let text = |key: &str| entry.get::<mlua::String>(key).map(|text| decode(&text)).unwrap_or_default();
         let description = entry
             .get::<mlua::Table>("Description")
-            .map(|lines| lines.sequence_values::<mlua::String>().flatten().map(|line| decode(&line)).collect::<Vec<_>>().join(" "))
+            .map(|lines| lines.sequence_values::<mlua::String>().flatten().map(|line| decode(&line)).collect())
+            .unwrap_or_default();
+        // Numbers or strings alike.
+        let written = |key: &str| match entry.get::<mlua::Value>(key) {
+            Ok(mlua::Value::String(text)) => decode(&text),
+            Ok(mlua::Value::Integer(number)) => number.to_string(),
+            Ok(mlua::Value::Number(number)) => number.to_string(),
+            _ => String::new(),
+        };
+        let reward_items = entry
+            .get::<mlua::Table>("RewardItemList")
+            .map(|list| {
+                list.sequence_values::<mlua::Table>()
+                    .flatten()
+                    .filter_map(|item| {
+                        Some((u32::try_from(item.get::<i64>("ItemID").ok()?).ok()?, u32::try_from(item.get::<i64>("ItemNum").unwrap_or(1)).ok()?))
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
         let npc = match (entry.get::<i64>("NpcPosX"), entry.get::<i64>("NpcPosY")) {
             (Ok(x), Ok(y)) => Some([x as i32, y as i32]),
@@ -755,7 +822,22 @@ fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
         };
         if let Ok(id) = u32::try_from(id) {
             let cooldown = entry.get::<i64>("CoolTimeQuest").unwrap_or(0) == 1;
-            quests.insert(id, QuestInfo { title: text("Title"), description, summary: text("Summary"), npc, cooldown });
+            quests.insert(
+                id,
+                QuestInfo {
+                    title: text("Title"),
+                    description,
+                    summary: text("Summary"),
+                    npc,
+                    cooldown,
+                    icon: text("IconName"),
+                    npc_sprite: text("NpcSpr"),
+                    npc_map: text("NpcNavi"),
+                    reward_exp: written("RewardEXP"),
+                    reward_job_exp: written("RewardJEXP"),
+                    reward_items,
+                },
+            );
         }
     }
     Ok(quests)
@@ -1762,7 +1844,9 @@ mod tests {
         lua.load(
             r#"QuestInfoList = {
                 [7001] = { Title = "Hunting Porings", Description = { "Hunt", "ten Porings." }, Summary = "Poring x10" },
-                [7002] = { Title = "See Kafra", Description = { "Talk." }, Summary = "Kafra", NpcPosX = 150, NpcPosY = 180 },
+                [7002] = { Title = "See Kafra", Description = { "Talk." }, Summary = "Kafra", NpcPosX = 150, NpcPosY = 180,
+                    NpcSpr = "4_F_KAFRA1", NpcNavi = "prontera", RewardEXP = "1000", RewardJEXP = 500,
+                    RewardItemList = { { ItemID = 501, ItemNum = 3 }, { ItemID = 909, ItemNum = 1 } } },
                 [7003] = { Title = "Wait", CoolTimeQuest = 1 },
             }"#,
         )
@@ -1770,7 +1854,10 @@ mod tests {
         .unwrap();
         let quests = super::quest_infos(&lua).unwrap();
         assert_eq!(quests[&7001].title, "Hunting Porings");
-        assert_eq!(quests[&7001].description, "Hunt ten Porings.");
+        assert_eq!(quests[&7001].description, ["Hunt", "ten Porings."]);
+        let kafra = &quests[&7002];
+        assert_eq!((kafra.npc_sprite.as_str(), kafra.npc_map.as_str()), ("4_F_KAFRA1", "prontera"));
+        assert_eq!((kafra.reward_exp.as_str(), kafra.reward_job_exp.as_str(), kafra.reward_items.clone()), ("1000", "500", vec![(501, 3), (909, 1)]));
         assert_eq!(quests[&7001].npc, None);
         assert_eq!(quests[&7002].npc, Some([150, 180]));
         assert!(!quests[&7001].cooldown && quests[&7003].cooldown, "a cooldown timer");

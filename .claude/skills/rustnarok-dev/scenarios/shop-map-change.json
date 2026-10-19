@@ -31,10 +31,9 @@
       }
     },
     {
-      "click": [
-        536,
-        537
-      ]
+      "click_on": {
+        "button": "deal_buy"
+      }
     },
     {
       "wait": 1000
@@ -82,10 +81,24 @@
       "wait": 2000
     },
     {
-      "click": [
-        511,
-        355
-      ]
+      "click_on": {
+        "button": "save_point"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "save_asked": true
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
     },
     {
       "settle": 1500

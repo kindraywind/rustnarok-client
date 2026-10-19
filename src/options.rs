@@ -50,11 +50,12 @@ pub struct GraphicsSettings {
     /// The max-level aura in full (`/aura`), else simplified; and none at all (`/aura2`).
     pub aura: bool,
     pub aura_off: bool,
+    pub quake: bool,
 }
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
-        Self { effects_on: true, aura: true, aura_off: false }
+        Self { effects_on: true, aura: true, aura_off: false, quake: true }
     }
 }
 
@@ -67,9 +68,10 @@ impl GraphicsSettings {
         Self::path().map_or_else(Self::default, |path| Self::load_from(&path))
     }
 
-    /// Saved for next time; not by clients driven over the control socket (scenarios), which share the player's file.
+    /// Saved for next time; not by clients driven over the control socket (scenarios) unless given their own folder.
     pub fn save(&self) {
-        if let Some(path) = Self::path().filter(|_| !crate::control::driven()) {
+        let own_folder = std::env::var_os("RUSTNAROK_CLIENT_SETTINGS").is_some_and(|folder| !folder.is_empty());
+        if let Some(path) = Self::path().filter(|_| own_folder || !crate::control::driven()) {
             self.save_to(&path);
         }
     }
@@ -78,11 +80,11 @@ impl GraphicsSettings {
         let text = std::fs::read_to_string(path).unwrap_or_default();
         let mut words = text.split_whitespace();
         let mut next = |default: bool| words.next().map_or(default, |value| value != "0");
-        Self { effects_on: next(true), aura: next(true), aura_off: next(false) }
+        Self { effects_on: next(true), aura: next(true), aura_off: next(false), quake: next(true) }
     }
 
     pub fn save_to(&self, path: &Path) {
-        let text = [self.effects_on, self.aura, self.aura_off].map(|on| if on { "1" } else { "0" }).join(" ");
+        let text = [self.effects_on, self.aura, self.aura_off, self.quake].map(|on| if on { "1" } else { "0" }).join(" ");
         let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, text));
     }
 }
@@ -526,10 +528,10 @@ mod tests {
     fn graphics_settings_round_trip() {
         let path = temp_settings("graphics");
         let _ = std::fs::remove_file(&path);
-        let settings = GraphicsSettings { effects_on: false, aura: false, aura_off: true };
+        let settings = GraphicsSettings { effects_on: false, aura: false, aura_off: true, quake: false };
         settings.save_to(&path);
         assert_eq!(GraphicsSettings::load_from(&path), settings);
-        // An older file with only the effects switch keeps the aura's defaults.
+        // An older file with only the effects switch keeps the aura's and quake's defaults.
         std::fs::write(&path, "0").unwrap();
         assert_eq!(GraphicsSettings::load_from(&path), GraphicsSettings { effects_on: false, ..GraphicsSettings::default() });
         let _ = std::fs::remove_file(path);
@@ -592,7 +594,7 @@ mod tests {
         assert_eq!(window.hit(at([SLIDER_X + ARROW + 1.0, row(0)])), Some(Hit::Track(0, 0)), "the thumb's middle can't go past the track's end");
         assert_eq!(window.hit(at([SLIDER_X + ARROW + TRACK - 1.0, row(0)])), Some(Hit::Track(0, MAX_VOLUME)));
         window.click(Hit::More(0), &mut settings);
-        assert_eq!(settings, Settings { on: [true, false], volume: [108, 100] });
+        assert_eq!(settings, Settings { on: [true, false], volume: [108, 64] });
         assert!(window.press(Hit::Track(0, 20), at([0.0, 0.0]), &mut settings));
         let middle = window.frame.position[0] + SLIDER_X + ARROW + TRACK / 2.0;
         assert!(window.drag_to([middle, 0.0], &mut settings));

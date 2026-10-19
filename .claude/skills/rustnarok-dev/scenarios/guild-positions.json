@@ -1,5 +1,5 @@
 {
-  "about": "Guild positions (issue #103): the first makes guild PosTest and invites the second (RUSTNAROK_CLIENT_GUILD=accept). On the members page the master right-clicks the second and moves them to 'Position 2'; both windows follow and the title under the second's name follows (ZC_GUILD_POSITION). On the positions page the master switches position 1's invite box, renames it 'Officer' and sets its tax to 10; the second's window and the title follow. The second leaves from their own row on the members page (asked first); the first sees them go. @breakguild ends it. Both characters must start without a guild or clan. If a run stops between the invitation and leaving, the second stays in PosTest and the next run fails at the invitation: log in as the second, leave from the members page, then @breakguild as the first (the scenario reset can't take a member out of a guild).",
+  "about": "Guild positions (issue #103): the first makes guild PosTest and invites the second (RUSTNAROK_CLIENT_GUILD=accept). On the members page the master picks 'Position 2' from the second's drop-down and presses OK (issue #516); both windows follow and the title under the second's name follows (ZC_GUILD_POSITION). On the positions page (issue #519: the cell grid, edits in place, one OK) the master ticks Invite on positions 1 and 2, renames 1 'Officer' and sets its tax to 10, and OK sends them in one packet; the member sees the page read-only; the master writes the notice on the Announcement tab and Send gives the second '[ Hi ]' and '[ Welcome ]'; the second's window and the title follow. The second leaves from their own row on the members page (asked first); the first sees them go. @breakguild ends it. Both characters must start without a guild or clan. If a run stops between the invitation and leaving, the second stays in PosTest and the next run fails at the invitation: log in as the second, leave from the members page, then @breakguild as the first (the scenario reset can't take a member out of a guild).",
   "account": "",
   "slot": 0,
   "second": {
@@ -21,6 +21,9 @@
     },
     {
       "wait": 500
+    },
+    {
+      "wait": 1500
     },
     {
       "say": "@recall {second}"
@@ -108,19 +111,26 @@
     },
     {
       "click_on": {
-        "button": "member:{second}"
-      },
-      "button": "right"
+        "button": "drop:{second}"
+      }
     },
     {
-      "wait": 400
+      "wait": 300
     },
     {
-      "shot": "guild-member-menu"
+      "shot": "guild-member-dropdown"
     },
     {
       "click_on": {
-        "menu_item": "Position 2"
+        "button": "position:1"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "moves_ok"
       }
     },
     {
@@ -197,13 +207,9 @@
       }
     },
     {
-      "wait_for": {
-        "packet": "0x0174",
-        "ms": 5000
+      "click_on": {
+        "button": "invite:2"
       }
-    },
-    {
-      "wait": 300
     },
     {
       "click_on": {
@@ -211,7 +217,40 @@
       }
     },
     {
-      "wait": 300
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
     },
     {
       "type": "Officer"
@@ -220,21 +259,9 @@
       "key": "Enter"
     },
     {
-      "wait_for": {
-        "packet": "0x0174",
-        "ms": 5000
-      }
-    },
-    {
-      "wait": 300
-    },
-    {
       "click_on": {
         "button": "tax:1"
       }
-    },
-    {
-      "wait": 300
     },
     {
       "type": "10"
@@ -243,13 +270,34 @@
       "key": "Enter"
     },
     {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "guild-positions-pending"
+    },
+    {
+      "click_on": {
+        "button": "positions_ok"
+      }
+    },
+    {
       "wait_for": {
         "packet": "0x0174",
         "ms": 5000
       }
     },
     {
-      "wait": 500
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "guild.positions.2.mode": 1
+        }
+      }
     },
     {
       "expect": {
@@ -304,6 +352,132 @@
     {
       "as": "second",
       "click": [
+        340,
+        148
+      ]
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x0160",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "as": "second",
+      "shot": "guild-positions-member"
+    },
+    {
+      "as": "second",
+      "key": "Alt+G"
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "click": [
+        532,
+        148
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "notice_subject"
+      }
+    },
+    {
+      "type": "Hi"
+    },
+    {
+      "click_on": {
+        "button": "notice_text"
+      }
+    },
+    {
+      "type": "Welcome"
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "guild-notice-written"
+    },
+    {
+      "click_on": {
+        "button": "notice_send"
+      }
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x016f",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Guild"
+        ]
+      }
+    },
+    {
+      "as": "second",
+      "expect": {
+        "chat": "[ Welcome ]"
+      }
+    },
+    {
+      "key": "Alt+G"
+    },
+    {
+      "wait_for": {
+        "packet": "0x014c",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "key": "Alt+G"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x014c",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "click": [
         276,
         148
       ]
@@ -318,6 +492,16 @@
     {
       "as": "second",
       "wait": 300
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "member:{second}"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 200
     },
     {
       "as": "second",
@@ -344,9 +528,13 @@
       "as": "second",
       "expect": {
         "windows_open": [
-          "LeaveAsked"
+          "GuildReason"
         ]
       }
+    },
+    {
+      "as": "second",
+      "type": "bye"
     },
     {
       "as": "second",
@@ -357,7 +545,7 @@
     },
     {
       "as": "second",
-      "shot": "guild-leave-asked"
+      "shot": "guild-leave-reason"
     },
     {
       "as": "second",
