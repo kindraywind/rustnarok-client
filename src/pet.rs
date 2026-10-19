@@ -35,6 +35,45 @@ const ACTS: [&str; 10] = ["feeding", "hunting", "danger", "dead", "stand", "perf
 pub const ACT_FEEDING: u8 = 0;
 pub const ACT_PERFORMED_SPECIAL: u8 = 5;
 pub const ACT_PERFORMED: u8 = 7;
+pub const ACT_STAND: u8 = 4;
+/// Our pet talks only this fond of us.
+pub const TALKS_FROM: u16 = 900;
+/// Standing still this long, it may talk (a quarter of the time), once a stand.
+const IDLE_TALK: std::time::Duration = std::time::Duration::from_millis(3000);
+/// "Your pet is starving and neglected" (red): only Gangsi, Death Knight and Dark Collector get it, when a fall
+/// brings intimacy under 100 while hunger is under 30.
+pub const NEGLECTED: usize = 1188;
+pub const NEGLECTED_COLOR: [u8; 3] = [0xFF, 0x32, 0x32];
+
+/// What our pet says for an act at a hunger: a line of its talk table, when it's fond enough of us to talk.
+pub fn talk(pet: &Pet, act: u8, hunger: u16) -> Option<net::PetAct> {
+    (pet.intimacy >= TALKS_FROM).then(|| net::PetAct::Talk { monster: pet.monster, act, hunger: hunger_band(hunger) })
+}
+
+pub fn neglected(job: u16, intimacy: u16, hunger: u16) -> bool {
+    matches!(job, 4050..=4052) && intimacy < 100 && hunger < 30
+}
+
+/// Our pet standing still: since when, and whether this stand has had its roll.
+#[derive(Default)]
+pub struct Idle {
+    since: Option<std::time::Instant>,
+    rolled: bool,
+}
+
+impl Idle {
+    /// Whether to roll for a stand line now: once it has stood 3000 ms, then not again until it has moved.
+    pub fn due(&mut self, moving: bool, now: std::time::Instant) -> bool {
+        if moving {
+            *self = Self::default();
+            return false;
+        }
+        let since = *self.since.get_or_insert(now);
+        let due = !self.rolled && now.duration_since(since) >= IDLE_TALK;
+        self.rolled |= due;
+        due
+    }
+}
 
 /// 280 × 180, white, the close button alone on the title bar; from the window's corner, title bar included.
 const WIDTH: f32 = 280.0;
@@ -465,6 +504,27 @@ mod tests {
         assert_eq!([intimacy_bar(175), intimacy_bar(905)], [50, 5]);
         // The blue middle between ends 3 px wide each: 114 px at 100.
         assert_eq!([bar_middle(100, 6.0), bar_middle(50, 6.0), bar_middle(1, 6.0)], [114.0, 57.0, 1.0]);
+    }
+
+    #[test]
+    fn talks_when_fond_and_standing() {
+        let start = std::time::Instant::now();
+        let at = |ms: u64| start + std::time::Duration::from_millis(ms);
+        let mut idle = Idle::default();
+        assert!(!idle.due(false, at(0)));
+        assert!(!idle.due(false, at(2999)));
+        assert!(idle.due(false, at(3000)));
+        assert!(!idle.due(false, at(9000)), "once a stand");
+        assert!(!idle.due(true, at(9100)));
+        assert!(!idle.due(false, at(9200)));
+        assert!(idle.due(false, at(12_200)));
+        // Only from intimacy 900, about the hunger it's given (a feeding's: from before the meal).
+        let poring = |intimacy| Pet { intimacy, monster: 1002, ..Pet::default() };
+        assert_eq!(talk(&poring(899), ACT_FEEDING, 20), None);
+        assert_eq!(talk(&poring(900), ACT_FEEDING, 20).map(|act| act.value()), Some(1_002_010));
+        // The neglect line: three jobs, under 100 intimacy, under 30 hunger.
+        assert!(neglected(4050, 99, 29) && neglected(4052, 0, 0));
+        assert!(!neglected(1, 99, 0) && !neglected(4051, 100, 0) && !neglected(4051, 50, 30));
     }
 
     #[test]

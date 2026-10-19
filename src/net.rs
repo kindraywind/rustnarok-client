@@ -1708,8 +1708,9 @@ impl Homunculus {
     }
 }
 
-/// What a pet does (ZC_PET_ACT, CZ_PET_ACT): below 100 an emotion (ZC_EMOTION's numbers), else a line of its
-/// talk table, sent as (monster − 100) × 100 + act × 10 + hunger band.
+/// What a pet does (ZC_PET_ACT, CZ_PET_ACT; rathena passes the number on as it came, so every client around reads the
+/// same): an emotion (ZC_EMOTION's numbers) is emotion × 10 + 2; a line of its talk table is monster × 1000 + act × 100
+/// + hunger band × 10.
 #[derive(Debug, PartialEq)]
 pub enum PetAct {
     Emotion(u8),
@@ -1718,16 +1719,16 @@ pub enum PetAct {
 
 impl PetAct {
     pub fn decode(value: i32) -> Self {
-        if value < 100 {
-            return Self::Emotion(value.max(0) as u8);
+        if value % 10 == 2 {
+            return Self::Emotion((value / 10).clamp(0, 255) as u8);
         }
-        Self::Talk { monster: (value / 100 + 100) as u16, act: (value / 10 % 10) as u8, hunger: (value % 10) as u8 }
+        Self::Talk { monster: (value / 1000).max(0) as u16, act: (value / 100 % 10).max(0) as u8, hunger: (value / 10 % 10).max(0) as u8 }
     }
 
     pub fn value(&self) -> i32 {
         match *self {
-            Self::Emotion(kind) => i32::from(kind),
-            Self::Talk { monster, act, hunger } => (i32::from(monster) - 100) * 100 + i32::from(act) * 10 + i32::from(hunger),
+            Self::Emotion(kind) => i32::from(kind) * 10 + 2,
+            Self::Talk { monster, act, hunger } => i32::from(monster) * 1000 + i32::from(act) * 100 + i32::from(hunger) * 10,
         }
     }
 }

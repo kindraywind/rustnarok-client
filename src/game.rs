@@ -2988,6 +2988,13 @@ impl Game {
         }
     }
 
+    /// Our pet says a line for an act at a hunger, when it's fond enough of us to talk.
+    pub(crate) fn pet_talk(&mut self, act: u8, hunger: u16) {
+        if let Some(talk) = self.pet.as_ref().and_then(|pet| pet::talk(pet, act, hunger)) {
+            let _ = self.session.pet_act(&talk);
+        }
+    }
+
     /// No to the pet question: a refused rename puts the old name back in the box.
     pub(crate) fn decline_pet(&mut self) {
         if let Some(PetAsked::Rename(_)) = self.pet_asked.take() {

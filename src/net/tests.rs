@@ -1400,15 +1400,18 @@ fn decodes_pets() {
     assert_eq!(name, "Pori");
 
     // Below 100 an emotion; else the monster, the act and the hunger band.
-    let act = [&ZC_PET_ACT.to_le_bytes()[..], &7u32.to_le_bytes(), &90203i32.to_le_bytes()].concat();
+    let act = [&ZC_PET_ACT.to_le_bytes()[..], &7u32.to_le_bytes(), &1_002_440i32.to_le_bytes()].concat();
     let Some(MapEvent::PetAct { id: 7, act }) = decode_map_packet(&act) else { panic!() };
-    assert_eq!(act, PetAct::Talk { monster: 1002, act: 0, hunger: 3 });
-    assert_eq!(PetAct::decode(5), PetAct::Emotion(5));
-    assert_eq!(PetAct::Talk { monster: 1002, act: 9, hunger: 4 }.value(), 90294);
+    assert_eq!(act, PetAct::Talk { monster: 1002, act: 4, hunger: 4 });
+    // The last digit: 2 an emotion, 0 or 1 a talk.
+    assert_eq!(PetAct::decode(52), PetAct::Emotion(5));
+    assert_eq!(PetAct::decode(1_002_441), PetAct::Talk { monster: 1002, act: 4, hunger: 4 });
+    assert_eq!(PetAct::Talk { monster: 1002, act: 9, hunger: 4 }.value(), 1_002_940);
+    assert_eq!(PetAct::Emotion(5).value(), 52);
 
     assert_eq!(encode_hatch(3), [0xA7, 0x01, 3, 0]);
     assert_eq!(encode_pet_command(PET_RETURN), [0xA1, 0x01, 3]);
-    assert_eq!(encode_pet_act(&act), [0xA9, 0x01, 0x5B, 0x60, 0x01, 0]);
+    assert_eq!(encode_pet_act(&act), [0xA9, 0x01, 0xC8, 0x4B, 0x0F, 0]);
     let rename = encode_rename_pet("Pori");
     assert_eq!((&rename[..2], &rename[2..7]), (&[0xA5, 0x01][..], &b"Pori\0"[..]));
     // Never past 23 bytes, nor half a character.
