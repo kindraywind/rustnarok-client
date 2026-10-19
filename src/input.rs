@@ -3258,6 +3258,8 @@ impl App {
                 }
             }
             if id == Panel::Skills {
+                // A left press lets go of a chain pinned by a right click; the release adds the point.
+                game.skill_window.unpin();
                 let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
                 let sheet = skills::Sheet { trees: &self.skill_trees, jobs: &jobs, skills: &game.skills, info: &game.skill_info, points: game.skill_points() };
                 match game.skill_window.hit(cursor, &sheet) {
