@@ -1324,7 +1324,7 @@ impl Game {
     pub(crate) fn aimed_at_centre(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32) {
         let now = control::now();
         let Some(from) = self.feet(unit, now) else { return };
-        let to = [self.world.gat.width as f32 * world::CELL / 2.0, from[1], self.world.gat.height as f32 * world::CELL / 2.0];
+        let to = [self.world.gat.width as f32 * world::CELL / 2.0, 0.0, self.world.gat.height as f32 * world::CELL / 2.0];
         self.effects.aimed(gpu, grf, table, effect, ((unit != self.account_id).then_some(unit), 0, self.account_id), from, to, 0, Instant::now());
     }
 
