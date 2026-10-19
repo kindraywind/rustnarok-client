@@ -2556,6 +2556,14 @@ fn pre_map_escape(scene: &Scene) -> Option<(usize, Then)> {
     }
 }
 
+/// What a refused character's box closes onto: character select, not the make window.
+fn after_make_refused(scene: Scene) -> Scene {
+    match scene {
+        Scene::CharMake(_, select) => Scene::CharSelect(select),
+        scene => scene,
+    }
+}
+
 /// What a confirmed question or a prompt goes on to do.
 enum Then {
     BackToLogin,
@@ -5833,6 +5841,8 @@ mod tests {
         // Making a character, Esc asks to quit.
         let making = Scene::CharMake(Box::new(char_make::Make::blank(2)), Box::new(char_select::Select::new(Vec::new(), Vec::new(), 9)));
         assert!(matches!(pre_map_escape(&making), Some((QUIT_MESSAGE, Then::Quit))));
+        // A refused name's box closes onto character select.
+        assert!(matches!(after_make_refused(making), Scene::CharSelect(_)));
     }
 
     #[test]
