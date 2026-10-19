@@ -20,13 +20,14 @@ pub const URL_COLOR: [u8; 3] = [0x00, 0xA3, 0xE6];
 pub const NPC_COLOR: [u8; 3] = [0x4A, 0x93, 0xF4];
 
 /// What a link opens: an item's information, a navigation to a place (x and y 0: the map itself), a web page (the
-/// address as the script gave it), or nothing yet (`<QUEST>`, `<TIPBOX>`).
+/// address as the script gave it), a quest in the quest window, or nothing yet (`<TIPBOX>`, a `<QUEST>` without an id).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
     Item(ItemLink),
     Navi { map: String, cell: [u16; 2] },
     Url(String),
-    // ponytail: a quest or tip link does nothing when clicked until those windows exist.
+    Quest(u32),
+    // ponytail: a tip link does nothing when clicked until that window exists.
     Tip,
 }
 
@@ -37,7 +38,7 @@ impl Target {
             Target::Item(_) => COLOR,
             Target::Navi { .. } => NAVI_COLOR,
             Target::Url(_) => URL_COLOR,
-            Target::Tip => NPC_COLOR,
+            Target::Quest(_) | Target::Tip => NPC_COLOR,
         }
     }
 
@@ -58,6 +59,7 @@ impl Target {
             Target::Item(item) => format!("i {}", item.encode()),
             Target::Navi { map, cell } => format!("n {} {} {map}", cell[0], cell[1]),
             Target::Url(address) => format!("u {address}"),
+            Target::Quest(id) => format!("q {id}"),
             Target::Tip => "t -".into(),
         }
     }
@@ -71,6 +73,7 @@ impl Target {
                 Some(Target::Navi { map: fields.next()?.to_owned(), cell })
             }
             ("u", address) => Some(Target::Url(address.to_owned())),
+            ("q", id) => id.parse().ok().map(Target::Quest),
             ("t", _) => Some(Target::Tip),
             _ => None,
         }
@@ -205,8 +208,11 @@ pub fn mark(text: &str, name_of: &dyn Fn(&ItemLink) -> String) -> String {
                     }),
                     // words<INFO>address</INFO>
                     "URL" => info().map(|(words, address)| (words.to_owned(), Target::Url(address.to_owned()))),
-                    // words<INFO>…</INFO>, or the words alone
-                    "QUEST" | "TIPBOX" => Some((body.split("<INFO>").next().unwrap_or_default().to_owned(), Target::Tip)),
+                    // words<INFO>quest id</INFO>; words<INFO>…</INFO>, or the words alone
+                    "QUEST" | "TIPBOX" => match info().and_then(|(words, id)| Some((words, id.parse().ok()?))) {
+                        Some((words, id)) if tag == "QUEST" => Some((words.to_owned(), Target::Quest(id))),
+                        _ => Some((body.split("<INFO>").next().unwrap_or_default().to_owned(), Target::Tip)),
+                    },
                     // name<INFO>id</INFO>
                     _ => info().and_then(|(words, id)| Some((words.to_owned(), Target::Item(ItemLink { id: id.parse().ok()?, ..ItemLink::default() })))),
                 };
@@ -306,12 +312,12 @@ mod tests {
     #[test]
     fn reads_web_quest_and_tip_links() {
         let (shown, runs) = split(&mark(
-            "see <URL>our page<INFO>https://example.com/a,1024,768</INFO></URL> or <TIPBOX>[List]<INFO>9163</INFO></TIPBOX> and <QUEST>[Hunt]</QUEST>",
+            "see <URL>our page<INFO>https://example.com/a,1024,768</INFO></URL> or <TIPBOX>[List]<INFO>9163</INFO></TIPBOX> and <QUEST>[Hunt]</QUEST> <QUEST>Kill<INFO>4275</INFO></QUEST>",
             &named,
         ));
-        assert_eq!(shown, "see our page or [List] and [Hunt]");
+        assert_eq!(shown, "see our page or [List] and [Hunt] Kill");
         let targets: Vec<&Target> = runs.iter().map(|(_, target)| target).collect();
-        assert_eq!(targets, [&Target::Url("https://example.com/a,1024,768".into()), &Target::Tip, &Target::Tip]);
+        assert_eq!(targets, [&Target::Url("https://example.com/a,1024,768".into()), &Target::Tip, &Target::Tip, &Target::Quest(4275)]);
         // The address up to its first comma, web addresses only.
         assert_eq!(page("https://example.com/a,1024,768"), Some("https://example.com/a"));
         assert_eq!(page("http://example.com"), Some("http://example.com"));

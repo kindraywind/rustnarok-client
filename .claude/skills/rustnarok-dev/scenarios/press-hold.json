@@ -1,0 +1,31 @@
+{
+  "about": "Presses and holds on the world (issue #588) at prontera. With storage open (@storage), a press on the ground sends no CZ_REQUEST_MOVE (0x035f) and holding the button sends none either. In a chat room, a press on the ground turns to it (CZ_CHANGE_DIRECTION, 0x0361) and sends no 0x035f. A press on the south warp's pick box with the pointer on 157,22, a cell beside the portal (156, 22), walks to 157,22, not to the portal's cell. Main used to walk with storage open, walk in the chat room without turning, and send the portal's own cell.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 120"}, {"settle": 1500},
+    {"say": "@storage"}, {"wait": 1000},
+    {"expect": {"windows_open": ["Storage"]}},
+    {"click_on": {"cell": [150, 121]}},
+    {"wait_for": {"sent": "0x035f", "ms": 600}, "none": true},
+    {"mouse_down": {"cell": [150, 119]}},
+    {"wait_for": {"sent": "0x035f", "ms": 900}, "none": true},
+    {"mouse_up": {"cell": [150, 119]}},
+    {"expect": {"state": {"player.cell": [156, 120]}}},
+    {"key": "Escape"}, {"wait": 500},
+    {"expect": {"windows_closed": ["Storage"]}},
+    {"key": "Alt+C"}, {"wait": 400},
+    {"type": "QA room"}, {"key": "Enter"}, {"wait": 800},
+    {"expect": {"chat": "Room has been successfully created."}},
+    {"click_on": {"cell": [159, 120]}},
+    {"wait_for": {"sent": "0x0361", "ms": 1000}},
+    {"wait_for": {"sent": "0x035f", "ms": 400}, "none": true},
+    {"move": [1000, 750]},
+    {"shot": "press-hold-room", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"say": "@warp prontera 156 28"}, {"settle": 1500},
+    {"click_on": {"cell": [157, 22]}},
+    {"wait_for": {"sent": "0x035f", "ms": 1000}},
+    {"expect": {"state": {"player.walk_goal": [157, 22]}}},
+    {"wait": 2500}
+  ]
+}

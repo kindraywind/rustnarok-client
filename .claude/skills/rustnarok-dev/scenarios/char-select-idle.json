@@ -1,0 +1,15 @@
+{
+  "about": "Left at character select (issue #505): the client sends PING (0x0187) to the char server every 12 s, so after 70 s rathena (stall_time 60 s) still has the session and Game Start (Enter) enters the map.",
+  "account": "",
+  "slot": 0,
+  "start": "char_select",
+  "steps": [
+    {"wait": 1500},
+    {"expect": {"state": {"scene": "char_select"}}},
+    {"wait": 10000}, {"wait": 10000}, {"wait": 10000}, {"wait": 10000}, {"wait": 10000}, {"wait": 10000}, {"wait": 10000},
+    {"expect": {"state": {"scene": "char_select"}}},
+    {"key": "Enter"},
+    {"wait": 8000},
+    {"expect": {"state": {"scene": "game"}}}
+  ]
+}

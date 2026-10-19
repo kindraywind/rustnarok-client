@@ -5,19 +5,31 @@ use super::*;
 impl App {
     pub(crate) fn net_event(&mut self, event: NetEvent) {
         match event {
+            // An answer after Cancel or the time limit.
+            NetEvent::Login(_) if !matches!(self.scene, Scene::Waiting(Wait::Login, _)) => {}
             NetEvent::Login(Ok(accepted)) => {
                 // Dev runs (RUSTNAROK_CLIENT_LOGIN) leave the saved ID alone.
                 if std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none() {
                     remember_id(self.save_id.then_some(self.fields[0].as_str()));
                 }
                 self.scene = Scene::ServerSelect { accepted, selected: 0 };
+                self.server_list_opened = Instant::now();
                 if std::env::var_os("RUSTNAROK_CLIENT_AUTOSTART").is_some() {
                     self.enter_char_server();
                 }
             }
             NetEvent::Login(Err(error)) => {
-                let text = self.messages.get(login_error_message(&error)).cloned().unwrap_or_default();
-                self.message(text, Scene::Login);
+                let (text, back) = match &error {
+                    LoginError::Refused(code, date) => {
+                        (login_refusal_text(*code, date, &self.messages), if login_refusal_quits(*code) { Scene::Quit } else { Scene::Login })
+                    }
+                    LoginError::Notified(code) => (Some(self.message_text(ban_message(*code))), Scene::Login),
+                    LoginError::Io(_) => (Some(self.message_text(CONNECT_FAILED)), Scene::Login),
+                };
+                match text {
+                    Some(text) => self.message(text, back),
+                    None => self.scene = back,
+                }
             }
             // Events from a session already closed by going back to login.
             NetEvent::Char(CharEvent::Disconnected(_)) if self.char_session.is_none() => {}
@@ -29,9 +41,11 @@ impl App {
                 if let Scene::CharSelect(previous) = self.scene.base() {
                     select.selected = previous.selected;
                     select.pin_verified = previous.pin_verified;
-                } else if let Some(slot) = self.played_slot.take() {
-                    // Back from the game: the character just played.
-                    select.selected = slot;
+                } else if let Some(saved) =
+                    settings_path("char_slot").and_then(|path| std::fs::read_to_string(path).ok()).and_then(|text| text.trim().parse().ok())
+                {
+                    // The last card picked, kept between runs (the character just played, back from the game).
+                    select.selected = char_select::opening_slot(saved, select.pages());
                 }
                 let autostart = std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok().and_then(|slot| slot.parse::<usize>().ok());
                 // Only the first list: later ones (after a move or a rename) keep the player's selection.
@@ -55,16 +69,13 @@ impl App {
                 self.settle();
                 match (result, &mut self.scene) {
                     (1, Scene::CharSelect(select)) => select.set_deletion(id, Some(seconds)),
-                    // Already reserved, a database error, in a guild, in a party.
+                    // Already reserved, a database error, in a guild, in a party, and the rest; 2 says nothing.
                     (code, _) => {
-                        let text = self.message_text(match code {
-                            3 => 1817,
-                            4 => 1818,
-                            5 => 1819,
-                            _ => 1816,
-                        });
-                        let back = std::mem::replace(&mut self.scene, Scene::Login);
-                        self.message(text, back);
+                        if let Some(line) = char_select::reserve_answer(code) {
+                            let text = self.message_text(line);
+                            let back = std::mem::replace(&mut self.scene, Scene::Login);
+                            self.message(text, back);
+                        }
                     }
                 }
             }
@@ -116,13 +127,7 @@ impl App {
             NetEvent::Char(CharEvent::Deleted { result: 1, .. }) => {}
             NetEvent::Char(CharEvent::Deleted { result, .. }) => {
                 self.settle();
-                let text = self.message_text(match result {
-                    2 => 1820,
-                    3 => 1817,
-                    4 => 1821,
-                    5 => 1822,
-                    _ => 1816,
-                });
+                let text = self.message_text(char_select::delete_answer(result));
                 let back = std::mem::replace(&mut self.scene, Scene::Login);
                 self.message(text, back);
             }
@@ -144,7 +149,7 @@ impl App {
                     3 => 1355,
                     _ => 11,
                 });
-                let back = std::mem::replace(&mut self.scene, Scene::Login);
+                let back = after_make_refused(std::mem::replace(&mut self.scene, Scene::Login));
                 self.message(text, back);
             }
             NetEvent::Char(CharEvent::ZoneServer { map, ip, port, character_id }) => {
@@ -158,6 +163,11 @@ impl App {
                     Ok(session) => {
                         self.entering = Some((session, map));
                         self.early_events.clear();
+                        // From here the map server's limit counts.
+                        if let Scene::Waiting(wait, _) = &mut self.scene {
+                            *wait = Wait::Map;
+                        }
+                        self.wait_began = Instant::now();
                     }
                     Err(_) => self.message("맵 서버에 접속할 수 없습니다.", Scene::Login),
                 }
@@ -210,7 +220,19 @@ impl App {
             }
             NetEvent::Char(CharEvent::Refused(code)) => {
                 self.char_session = None;
-                self.message(format!("접속이 거부되었습니다. ({code})"), Scene::Login);
+                let (id, to_list) = char_refusal(code);
+                let back = match (&self.account, to_list) {
+                    (Some(accepted), true) => {
+                        self.server_list_opened = Instant::now();
+                        Scene::ServerSelect { accepted: accepted.clone(), selected: self.char_server }
+                    }
+                    _ => Scene::Login,
+                };
+                self.message(self.message_text(id), back);
+            }
+            NetEvent::Char(CharEvent::Banned(code)) => {
+                self.char_session = None;
+                self.message(self.message_text(ban_message(code)), Scene::Login);
             }
             NetEvent::Char(CharEvent::Disconnected(_)) => {
                 self.char_session = None;
@@ -235,6 +257,7 @@ impl App {
                 let sprites = SpriteSet::player(&self.grf, &look, &self.look_tables);
                 // The character list's speed until the map server sends one.
                 let mut player = Actor::new(me.name.clone(), sprites, position.map(i32::from), direction, if me.speed > 0 { me.speed } else { 150 });
+                player.set_map([world.gat.width, world.gat.height]);
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
                 player.sync_companions(me.option, &self.grf);
                 let indoor = self.indoor.contains(&map_key(&map));
@@ -338,6 +361,9 @@ impl App {
                     progress: ProgressBar::default(),
                     opened_page: None,
                     cast_squares: HashMap::new(),
+                    // ponytail: on at the start by the user's choice; the game starts it off.
+                    ground_cursor: true,
+                    ground_mark: None,
                     combos: HashMap::new(),
                     locks: Vec::new(),
                     speech: HashMap::new(),
@@ -365,6 +391,7 @@ impl App {
                     quests: Vec::new(),
                     quest_window: {
                         let mut window = quest::QuestWindow::load();
+                        window.filters = self.quest_filters.clone();
                         window.tracker =
                             settings_path("quest_tracker").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0");
                         window
@@ -494,6 +521,10 @@ impl App {
                     cursor_at: [-1.0; 2],
                     attack: None,
                     last_attack: None,
+                    attack_was: None,
+                    walk_cell: None,
+                    last_chase_walk: None,
+                    player_motion: (actor::IDLE, false),
                     riding: false,
                     chat_mode: battle_mode::Mode::load(),
                     map_type: None,
@@ -535,8 +566,8 @@ impl App {
                     homunculus_window: homunculus::Window::default(),
                     homunculus_skill_list: homunculus::SkillList::default(),
                     homunculus_steering: mercenary::Steering::default(),
-                    homunculus_rename: None,
-                    homunculus_hunger: None,
+                    homunculus_asked: None,
+                    homunculus_warned: None,
                     vend_setup: None,
                     vend_size: vend::GridSize::default(),
                     my_shop: None,
@@ -629,8 +660,9 @@ impl App {
                     walks: 0,
                     walk_held: false,
                     last_walk_try: None,
-                    walk_after_swing: None,
+                    stored_walk: StoredWalk::default(),
                     skill_info: self.skill_info.clone(),
+                    location_radii: self.location_radii.clone(),
                     press_mark: None,
                     auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
                         let (x, y) = cell.split_once(',')?;
@@ -678,6 +710,7 @@ impl App {
                     game.sync_esc();
                 }
                 game.guild_places.clear();
+                game.player.set_map([world.gat.width, world.gat.height]);
                 game.world = world;
                 game.map = map;
                 game.units.clear();
@@ -700,6 +733,7 @@ impl App {
                 }
                 game.effects.clear();
                 game.capturing = false;
+                game.stored_walk.goal = None;
                 // The server announces the pet again on load.
                 (game.pet_id, game.pet) = (None, None);
                 game.put_after_warp(position);
@@ -718,7 +752,9 @@ impl App {
             self.show_loading(LoadTarget::Enter { position, direction });
             return;
         }
-        if let MapEvent::ServerTime(tick, at) = event {
+        // Read on this frame's clock.
+        if let MapEvent::ServerTime(tick, _) = event {
+            let at = Instant::now();
             if std::mem::take(&mut self.map_loaded) {
                 self.server_clock.set(tick, at);
             } else {
@@ -750,6 +786,7 @@ impl App {
                 }
             }
         };
+        let map_size = [game.world.gat.width, game.world.gat.height];
         let new_actor = |unit: &net::Unit| {
             let sprites = match unit.kind {
                 _ if drawn_as_player(unit.kind, unit.job) => SpriteSet::player(grf, &unit_look(unit), look_tables),
@@ -760,6 +797,7 @@ impl App {
                 _ => job_names.get(&unit.job).and_then(|name| SpriteSet::single(grf, name, unit.kind)),
             };
             let mut actor = Actor::new(unit.name.clone(), sprites, unit.position.map(i32::from), unit.direction, unit.speed);
+            actor.set_map(map_size);
             actor.kind = unit.kind;
             actor.job = unit.job;
             actor.level = unit.level;
@@ -1238,7 +1276,7 @@ impl App {
             MapEvent::Knocked { id, position } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor {
-                    actor.place_at(position.map(i32::from), control::now());
+                    actor.place_at(position.map(i32::from));
                 }
             }
             // ZC_FASTMOVE slides the unit there; the stop that follows at the same cell leaves the slide running.
@@ -1714,19 +1752,24 @@ impl App {
                 }
             }
             MapEvent::HomunculusState { state: net::HOMUNCULUS_HUNGER, value, .. } => {
+                // Only the full status says "starving".
                 let hunger = value.min(u32::from(u16::MAX)) as u16;
-                if homunculus::starving_now(game.homunculus_hunger, hunger) {
-                    game.chat_line(self.messages.get(homunculus::STARVING).cloned().unwrap_or_default(), CHAT_ERROR);
-                }
-                game.homunculus_hunger = Some(hunger);
                 if let Some(homunculus) = &mut game.homunculus {
                     homunculus.hunger = hunger;
                 }
             }
             MapEvent::HomunculusState { .. } => {}
             MapEvent::HomunculusInfo(info) => {
-                game.homunculus_hunger = Some(info.hunger);
+                if homunculus::starving_now(game.homunculus_warned, info.hunger) {
+                    game.homunculus_warned = Some(info.hunger);
+                    game.chat_line(self.messages.get(homunculus::STARVING).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
                 game.homunculus = Some(info);
+            }
+            MapEvent::HomunculusAutoFeed(on) => {
+                game.homunculus_window.auto_feed = on;
+                let line = self.messages.get(if on { homunculus::AUTO_FEED_ON } else { homunculus::AUTO_FEED_OFF });
+                game.chat_line(line.cloned().unwrap_or_default(), homunculus::AUTO_FEED_COLOR);
             }
             MapEvent::HomunculusChanged { kind, value } => {
                 if let Some(homunculus) = &mut game.homunculus {
@@ -1743,12 +1786,17 @@ impl App {
                 }
                 None => game.homunculus_skills.push(update),
             },
-            // ponytail: the table has no homunculus line for this; the pet's "food not available" says it.
-            MapEvent::HomunculusFed { ok: false, food } => {
+            // Fed: the food and how many are left (rathena takes it before it answers); not fed: what it eats.
+            MapEvent::HomunculusFed { ok, food } => {
                 let name = inventory::item_name(&self.items, food, true, 0);
-                game.chat_line(messages::fill(self.messages.get(PET_NO_FOOD).map_or("", String::as_str), &[&name]), CHAT_ERROR);
+                let message = |id: usize| self.messages.get(id).map_or("", String::as_str);
+                if ok {
+                    let left: u32 = game.inventory.items.iter().filter(|item| item.id == food).map(|item| u32::from(item.amount)).sum();
+                    game.chat_line(messages::fill(message(homunculus::FED), &[&name, &left]), homunculus::FED_COLOR);
+                } else {
+                    game.chat_line(messages::fill(message(homunculus::NOT_FED), &[&name]), homunculus::NOT_FED_COLOR);
+                }
             }
-            MapEvent::HomunculusFed { ok: true, .. } => {}
             MapEvent::MercenaryInfo(hired) => game.mercenary = Some(hired),
             MapEvent::ElementalInfo { id, values } => game.elemental = Some((id, values)),
             MapEvent::ElementalChanged { kind, value } => {
@@ -1989,7 +2037,7 @@ impl App {
                 let Some(account) = self.account.clone() else { return };
                 let proxy = self.proxy.clone();
                 self.scene = Scene::Login;
-                self.played_slot = self.playing.take().map(|character| usize::from(character.slot));
+                self.playing = None;
                 self.returned = true;
                 self.play_music(None);
                 match CharSession::connect(&account.char_servers[self.char_server.min(account.char_servers.len() - 1)], &account, move |event| {
@@ -1997,7 +2045,7 @@ impl App {
                 }) {
                     Ok(session) => {
                         self.char_session = Some(session);
-                        self.wait();
+                        self.wait(Wait::CharServer);
                     }
                     Err(_) => self.message("서버에 접속할 수 없습니다.", Scene::Login),
                 }
@@ -3125,7 +3173,9 @@ impl App {
                 if cast_ms > 0
                     && let Some(gpu) = gpu
                 {
-                    game.play_effect(gpu, grf, table, CAST_AURAS.get(element as usize).copied().unwrap_or(CAST_AURAS[0]), source);
+                    let effect = CAST_AURAS.get(element as usize).copied().unwrap_or(CAST_AURAS[0]);
+                    game.play_effect(gpu, grf, table, effect, source);
+                    game.effects.play_aura(gpu, grf, (source != game.account_id).then_some(source), effect, cast_ms, Instant::now());
                 }
                 let me = game.account_id;
                 let goal = if target == me { Some(game.player.cell) } else { game.units.get(&target).map(|actor| actor.cell) };
@@ -3199,8 +3249,15 @@ impl App {
                         game.play_effect(gpu, grf, table, effect, act.source);
                     }
                     if let Some(struck) = table.struck(skill) {
+                        // Told the hit count, as the game tells them: a bolt drops an arrow a hit.
                         for &(who, effect) in struck {
-                            game.play_effect(gpu, grf, table, effect, if who == effects::Who::Caster { act.source } else { act.target });
+                            // Soul Strike's ghosts fly from the caster to the target.
+                            if effect == effects::SOUL_STRIKE {
+                                game.soul_strike(grf, act.source, act.target, act.hits);
+                                continue;
+                            }
+                            let unit = if who == effects::Who::Caster { act.source } else { act.target };
+                            game.play_effect_hits(gpu, grf, table, effect, unit, Instant::now(), act.hits);
                         }
                     }
                 }
@@ -3697,11 +3754,26 @@ impl App {
             }
             // Out of reach after all: chase it again, as asked (kept up unless it was only while held).
             // ponytail: the chase starts from the client's positions, not the server's in the packet.
-            MapEvent::TooFar { target, range, .. } => {
+            MapEvent::TooFar { target, target_cell, cell, range } => {
                 game.attack_range = i32::from(range);
-                let (continuous, held) = game.attack.map_or((true, false), |attack| (attack.continuous, attack.held));
-                game.attack = Some(Attack { held, ..Attack::new(target, continuous) });
-                game.attack_step(Instant::now());
+                // Both where the server has them: one standing goes to its cell's centre, one walking walks on.
+                // ponytail: a walking target keeps its own destination (a fast chase's aim) until its next move.
+                if let Some(unit) = game.units.get_mut(&target).filter(|unit| !unit.moving()) {
+                    unit.place_at(target_cell.map(i32::from));
+                }
+                if !game.player.moving() {
+                    game.player.place_at(cell.map(i32::from));
+                }
+                game.walk_cell = None;
+                // Chased again at once (`rearmed`); one on Ice Wall or a trap ends instead.
+                if too_far_ends(game.attack, game.attack_was, target) {
+                    game.attack = None;
+                } else if !game.player.sitting && game.player.option & 0x2 == 0 {
+                    let now = Instant::now();
+                    game.attack = Some(rearmed(game.attack, game.attack_was, target));
+                    game.last_chase_walk = Some(whole_ms(now).saturating_sub(ATTACK_GAP_MS));
+                    game.attack_step(now);
+                }
             }
             MapEvent::StyleChanged(false) => {
                 game.stylist = None;

@@ -45,8 +45,9 @@ pub struct LoginAccepted {
 
 #[derive(Debug)]
 pub enum LoginError {
-    /// AC_REFUSE_LOGIN error code (0 unregistered ID, 1 wrong password, 6 banned, ...).
-    Refused(u32),
+    /// AC_REFUSE_LOGIN error code (0 unregistered ID, 1 wrong password, 6 banned, ...) and its 20-byte date (when a
+    /// block ends).
+    Refused(u32, String),
     /// SC_NOTIFY_BAN result (1 server closed, 8 already online, ...).
     Notified(u8),
     Io(io::Error),
@@ -68,7 +69,8 @@ pub fn login(address: &str, version: u32, username: &str, password: &str) -> Res
 
 fn request_login(address: &str, version: u32, username: &str, password: &str) -> Result<LoginAccepted, LoginError> {
     let mut stream = TcpStream::connect(address)?;
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    // The client gives up after 15 s itself (`Wait::Login`).
+    stream.set_read_timeout(Some(Duration::from_secs(20)))?;
     stream.write_all(&encode_login(version, username, password))?;
 
     let mut header = [0u8; 2];
@@ -109,7 +111,7 @@ fn decode_reply(packet: &[u8]) -> Result<LoginAccepted, LoginError> {
     let u16_at = |offset: usize| u16::from_le_bytes([packet[offset], packet[offset + 1]]);
     let u32_at = |offset: usize| u32::from_le_bytes(packet[offset..offset + 4].try_into().unwrap());
     match u16_at(0) {
-        AC_REFUSE_LOGIN => Err(LoginError::Refused(u32_at(2))),
+        AC_REFUSE_LOGIN => Err(LoginError::Refused(u32_at(2), c_string(&packet[6..26]))),
         SC_NOTIFY_BAN => Err(LoginError::Notified(packet[2])),
         _ => Ok(LoginAccepted {
             login_id1: u32_at(4),
@@ -356,6 +358,9 @@ const CH_ENTER: u16 = 0x0065;
 const CH_SELECT_CHAR: u16 = 0x0066;
 const HC_ACCEPT_ENTER: u16 = 0x006B;
 const HC_REFUSE_ENTER: u16 = 0x006C;
+const PING: u16 = 0x0187;
+/// How often the char connection is kept alive: rathena drops one silent for `stall_time` (60 s).
+pub const CHAR_PING: Duration = Duration::from_millis(12_000);
 const HC_NOTIFY_ZONESVR: u16 = 0x0AC5;
 const CH_MAKE_CHAR: u16 = 0x0A39;
 const HC_ACCEPT_MAKECHAR: u16 = 0x0B6F;
@@ -427,8 +432,10 @@ pub enum CharEvent {
         slots: u8,
         characters: Vec<Character>,
     },
-    /// HC_REFUSE_ENTER or SC_NOTIFY_BAN code.
+    /// HC_REFUSE_ENTER code.
     Refused(u8),
+    /// SC_NOTIFY_BAN code.
+    Banned(u8),
     ZoneServer {
         character_id: u32,
         map: String,
@@ -478,6 +485,8 @@ pub enum CharEvent {
 pub struct CharSession {
     stream: TcpStream,
     account_id: u32,
+    /// When the last PING went out (or the connection was made).
+    pinged: Instant,
 }
 
 impl CharSession {
@@ -505,7 +514,16 @@ impl CharSession {
             .unwrap_err();
             on_event(CharEvent::Disconnected(error));
         });
-        Ok(Self { stream, account_id: login.account_id })
+        Ok(Self { stream, account_id: login.account_id, pinged: Instant::now() })
+    }
+
+    /// PING every `CHAR_PING` while the char server is all the client talks to.
+    pub fn keep_alive(&mut self, now: Instant) -> io::Result<()> {
+        if now.saturating_duration_since(self.pinged) < CHAR_PING {
+            return Ok(());
+        }
+        self.pinged = now;
+        self.stream.write_all(&encode_ping(self.account_id))
     }
 
     /// Asks to play the character in `slot`; the answer is a `ZoneServer` or `Refused` event.
@@ -580,6 +598,14 @@ impl CharSession {
         packet.extend_from_slice(rest);
         self.stream.write_all(&packet)
     }
+}
+
+/// PING: the account.
+fn encode_ping(account_id: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&PING.to_le_bytes());
+    packet[2..].copy_from_slice(&account_id.to_le_bytes());
+    packet
 }
 
 /// CH_REQ_CHANGE_CHARACTER_SLOT: from, to and the moves left (rathena ignores them).
@@ -716,7 +742,8 @@ fn decode_char_packet(packet: &[u8]) -> Option<CharEvent> {
             slots: packet[4],
             characters: packet[ACCEPT_ENTER_HEADER..].chunks_exact(CHARACTER_INFO_SIZE).map(decode_character).collect(),
         }),
-        HC_REFUSE_ENTER | SC_NOTIFY_BAN => Some(CharEvent::Refused(packet[2])),
+        HC_REFUSE_ENTER => Some(CharEvent::Refused(packet[2])),
+        SC_NOTIFY_BAN => Some(CharEvent::Banned(packet[2])),
         HC_NOTIFY_ZONESVR => Some(CharEvent::ZoneServer {
             character_id: u32::from_le_bytes(packet[2..6].try_into().unwrap()),
             map: c_string(&packet[6..22]),
@@ -1137,8 +1164,10 @@ const CZ_RENAME_MER: u16 = 0x0231;
 pub const HOMUNCULUS_OWNED: u8 = 0;
 pub const HOMUNCULUS_INTIMACY: u8 = 1;
 pub const HOMUNCULUS_HUNGER: u8 = 2;
-/// CZ_COMMAND_MER's feed.
+/// CZ_COMMAND_MER's commands: its status, feed it, delete it.
+pub const HOMUNCULUS_STATUS: u8 = 0;
 pub const HOMUNCULUS_FEED: u8 = 1;
+pub const HOMUNCULUS_DELETE: u8 = 2;
 /// ZC_HO_PAR_CHANGE2's kinds.
 pub const HOMUNCULUS_EXP: u16 = 1;
 pub const HOMUNCULUS_HP: u16 = 5;
@@ -1237,6 +1266,8 @@ const HIDE_COSTUMES: u32 = 0x3C00;
 const CZ_UNINSTALLATION: u16 = 0x0B35;
 /// CZ_CONFIG's setting for a pet eating by itself (rathena's CONFIG_PET_AUTOFEED).
 const CONFIG_PET_AUTOFEED: u32 = 2;
+/// The same for the homunculus (rathena's CONFIG_HOMUNCULUS_AUTOFEED).
+const CONFIG_HOMUNCULUS_AUTOFEED: u32 = 3;
 const CZ_REQ_OPEN_BANKING: u16 = 0x09B6;
 const ZC_ACK_OPEN_BANKING: u16 = 0x09B7;
 const CZ_REQ_BANKING_CHECK: u16 = 0x09AB;

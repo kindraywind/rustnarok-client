@@ -503,6 +503,7 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             let state = if matches!(command, Command::MouseDown { .. }) { ElementState::Pressed } else { ElementState::Released };
             point(app, [x, y]);
             press(app, event_loop, button, state);
+            app.read_button();
             Ok(Value::Null)
         }
         Command::CellPoint { x, y } => {
@@ -521,6 +522,8 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             hold(app, held, |app| {
                 for _ in 0..count.unwrap_or(1) {
                     press(app, event_loop, button, ElementState::Pressed);
+                    // Held over a frame, so the world reads the press (`ButtonRead`).
+                    app.read_button();
                     press(app, event_loop, button, ElementState::Released);
                 }
             });
@@ -531,6 +534,7 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             hold(app, held, |app| {
                 point(app, from);
                 press(app, event_loop, button, ElementState::Pressed);
+                app.read_button();
                 point(app, to);
                 if !keep_down {
                     press(app, event_loop, button, ElementState::Released);
@@ -783,7 +787,8 @@ fn scene_name(scene: &Scene) -> &'static str {
     match scene {
         Scene::Connections { .. } => "connections",
         Scene::Login => "login",
-        Scene::Waiting(_) => "waiting",
+        Scene::Waiting(..) => "waiting",
+        Scene::Quit => "quit",
         Scene::ServerSelect { .. } => "server_select",
         Scene::CharSelect(_) => "char_select",
         Scene::CharMake(..) => "char_make",
@@ -835,6 +840,7 @@ fn state(app: &mut App) -> Value {
                 .into_iter()
                 .map(|(slot, area)| json!({"kind": "char_slot", "slot": slot, "box": area}))
                 .chain(select.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
+                .chain(select.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
                 .collect();
         }
         Scene::Game(game) => state["game"] = game_state(app, game),
@@ -1105,6 +1111,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             crate::links::Target::Item(item) => json!({"kind": "item_link", "id": item.id, "box": area}),
             crate::links::Target::Navi { map, .. } => json!({"kind": "navi_link", "map": map, "box": area}),
             crate::links::Target::Url(address) => json!({"kind": "url_link", "address": address, "box": area}),
+            crate::links::Target::Quest(id) => json!({"kind": "quest_link", "id": id, "box": area}),
             crate::links::Target::Tip => json!({"kind": "tip_link", "box": area}),
         }))
         .chain(
@@ -1208,10 +1215,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})),
         )
         .chain(
-            game.homunculus
-                .iter()
-                .flat_map(|homunculus| game.homunculus_window.button_boxes(homunculus))
-                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+            game.homunculus.iter().flat_map(|_| game.homunculus_window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(
             game.homunculus
@@ -1284,6 +1288,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "cell": game.player.cell,
             // Where it's drawn, in cells: between two while walking.
             "position": game.player.position(self::now()),
+            // When that position was drawn: the last frame, in whole ms.
+            "drawn_ms": crate::whole_ms(game.last_frame),
             "direction": game.player.direction,
             // The head against the body: 0 straight, 1 and 2 turned to either side.
             "head_direction": game.player.head_direction,
@@ -1555,6 +1561,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         }).collect::<serde_json::Map<_, _>>(),
         "chat_height": game.chat.height(),
     });
+    // The ground cursor (Alt+Home): on or off, and the cell its square is on.
+    state["ground_cursor"] = json!({"on": game.ground_cursor, "cell": game.ground_mark});
     // The party window's size mode and size.
     // The guild window's members page: the names in the order shown, the column sorted by, online first.
     state["guild_window"] = json!({
@@ -1620,6 +1628,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["slot_machine"] = json!(game.slot.as_ref().map(|machine| machine.monster));
     // The quest whose details show.
     state["quest_picked"] = json!(game.quest_window.picked);
+    state["quest_list"] = json!({"tab": game.quest_window.tab, "ids": game.quest_window.listed(&game.quests, &app.quest_texts)});
     state["opened_page"] = game.opened_page.clone().into();
     // Our milliseconds a cell.
     state["player"]["step_ms"] = game.player.step_ms.into();

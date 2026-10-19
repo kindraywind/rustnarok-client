@@ -844,6 +844,8 @@ pub struct SkillInfo {
     pub resource: String,
     pub name: String,
     pub max_level: u16,
+    /// `MaxLv` as given: None when the entry has none (no limit on the range's learned level), apart from 0.
+    pub max_lv: Option<u16>,
     /// The level to use can be picked (`bSeperateLv`): the skill window's arrows, the wheel while aiming.
     pub separate_level: bool,
     /// Its range in cells by level (`AttackRange`), from level 1.
@@ -867,6 +869,8 @@ fn skill_levels(list: &mlua::Table) -> Vec<(u16, u16)> {
 
 /// The quests' titles, descriptions and summaries (`QuestInfoList`), from the translation's System folder.
 const QUEST_INFO: &str = "system\\OngoingQuestInfoList_True.lub";
+/// The same list as an English translation names it.
+const QUEST_INFO_TRANSLATED: &str = "system\\OngoingQuests.lub";
 
 /// A quest's words, and the NPC cell the big minimap marks when the table gives one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -894,7 +898,7 @@ pub struct QuestInfo {
 /// A quest's words: title, description lines, summary, its NPC (cell, sprite, map) when listed, whether it's a cooldown
 /// timer, its rewards.
 pub fn quest_info(grf: &Grf) -> io::Result<HashMap<u32, QuestInfo>> {
-    quest_infos(&run(grf, &[QUEST_INFO])?)
+    quest_infos(&run(grf, &[QUEST_INFO]).or_else(|_| run(grf, &[QUEST_INFO_TRANSLATED]))?)
 }
 
 fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
@@ -952,6 +956,28 @@ fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
     Ok(quests)
 }
 
+/// The quest window's filters (`QuestFilterTable`): each id's tooltip and quest icons.
+const QUEST_CLASSIFICATION: &str = "system\\QuestClassificationInfo.lub";
+
+pub fn quest_filters(grf: &Grf) -> io::Result<HashMap<i64, (String, Vec<String>)>> {
+    quest_filter_table(&run(grf, &[QUEST_CLASSIFICATION])?)
+}
+
+fn quest_filter_table(lua: &Lua) -> io::Result<HashMap<i64, (String, Vec<String>)>> {
+    let table: mlua::Table = lua.globals().get("QuestFilterTable").map_err(lua_error)?;
+    let mut filters = HashMap::new();
+    for pair in table.pairs::<i64, mlua::Table>() {
+        let Ok((id, entry)) = pair else { continue };
+        let tooltip = entry.get::<mlua::String>("Tooltip").map(|text| decode(&text)).unwrap_or_default();
+        let icons = entry
+            .get::<mlua::Table>("QuestIcons")
+            .map(|icons| icons.sequence_values::<mlua::String>().flatten().map(|icon| decode(&icon)).collect())
+            .unwrap_or_default();
+        filters.insert(id, (tooltip, icons));
+    }
+    Ok(filters)
+}
+
 /// Skills' descriptions by ID, line by line as the data has them.
 pub fn skill_descriptions(grf: &Grf) -> io::Result<HashMap<u16, Vec<String>>> {
     skill_descripts(&run(grf, &[SKILL_ID, SKILL_DESCRIPT])?)
@@ -980,6 +1006,7 @@ pub fn skill_info(grf: &Grf) -> io::Result<HashMap<u16, SkillInfo>> {
             resource: text(entry.get(1)),
             name: text(entry.get("SkillName")),
             max_level: entry.get("MaxLv").unwrap_or(0),
+            max_lv: entry.get::<Option<u16>>("MaxLv").ok().flatten(),
             separate_level: entry.get("bSeperateLv").unwrap_or(false),
             attack_range: entry.get::<mlua::Table>("AttackRange").map(|ranges| ranges.sequence_values::<u16>().flatten().collect()).unwrap_or_default(),
             needs: entry.get::<mlua::Table>("_NeedSkillList").map(|list| skill_levels(&list)).unwrap_or_default(),
@@ -1124,6 +1151,30 @@ pub fn monster_sizes(grf: &Grf) -> HashMap<u16, f32> {
 pub fn shadow_factors(grf: &Grf) -> io::Result<HashMap<u16, f32>> {
     let read = |path: &str| grf.read(path);
     shadow_tables(read(NPC_IDENTITY)?, read(JOB_IDENTITY)?, read(SHADOW_TABLE)?, read(NPC_LOCATION_RADIUS).ok())
+}
+
+/// The jobs that stand on a radius of r > 0 cells (`NpcLocationRadius`): a few big bosses.
+pub fn location_radii(grf: &Grf) -> io::Result<HashMap<u16, f32>> {
+    let read = |path: &str| grf.read(path);
+    radius_table(read(NPC_IDENTITY)?, read(JOB_IDENTITY)?, read(NPC_LOCATION_RADIUS)?)
+}
+
+fn radius_table(npc_identity: Vec<u8>, job_identity: Vec<u8>, radius: Vec<u8>) -> io::Result<HashMap<u16, f32>> {
+    let lua = new_lua()?;
+    exec_bytes(&lua, NPC_IDENTITY, npc_identity)?;
+    exec_bytes(&lua, JOB_IDENTITY, job_identity)?;
+    lua.load("for _, t in ipairs({jobtbl, JTtbl}) do setmetatable(t, { __index = function() return -1 end }) end").exec().map_err(lua_error)?;
+    exec_bytes(&lua, NPC_LOCATION_RADIUS, radius)?;
+    let mut radii = HashMap::new();
+    for pair in lua.globals().get::<mlua::Table>("NpcLocationRadius").map_err(lua_error)?.pairs::<mlua::Value, mlua::Value>() {
+        let (job, radius) = pair.map_err(lua_error)?;
+        if let (Some(job), Some(radius)) = (number(&job).and_then(|job| u16::try_from(job).ok()), lua_f32(radius))
+            && radius > 0.0
+        {
+            radii.insert(job, radius);
+        }
+    }
+    Ok(radii)
 }
 
 fn shadow_tables(npc_identity: Vec<u8>, job_identity: Vec<u8>, shadows: Vec<u8>, radius: Option<Vec<u8>>) -> io::Result<HashMap<u16, f32>> {
@@ -1914,7 +1965,10 @@ mod tests {
         // Unlisted jobs (the Novice) and names this data doesn't know aren't in the table.
         assert!(!factors.contains_key(&0));
         assert_eq!(factors.len(), 5);
-        assert_eq!(super::shadow_tables(npcs, jobs, shadows, None).unwrap()[&1900], 2.0);
+        assert_eq!(super::shadow_tables(npcs.clone(), jobs.clone(), shadows, None).unwrap()[&1900], 2.0);
+        // The radii alone, for big monsters' reach.
+        let radii = super::radius_table(npcs, jobs, b"NpcLocationRadius = { [jobtbl.JT_KADES] = 2, [jobtbl.JT_PORING] = 0 }".to_vec()).unwrap();
+        assert_eq!(radii, std::collections::HashMap::from([(1900, 2.0)]));
     }
 
     #[test]
@@ -1970,6 +2024,25 @@ mod tests {
         assert_eq!(quests[&7001].npc, None);
         assert_eq!(quests[&7002].npc, Some([150, 180]));
         assert!(!quests[&7001].cooldown && quests[&7003].cooldown, "a cooldown timer");
+    }
+
+    #[test]
+    fn reads_quest_filters() {
+        let lua = super::new_lua().unwrap();
+        lua.load(
+            r#"QUEST_FILTER = { ALL = 0, ETC = 1, NORMAL = 2 }
+            QuestFilterTable = {
+                [QUEST_FILTER.ALL] = { Tooltip = "All", QuestIcons = {} },
+                [QUEST_FILTER.NORMAL] = { Tooltip = "Normal", QuestIcons = { "ico_ep.bmp", "ico_gq.bmp" } },
+                [QUEST_FILTER.ETC] = { Tooltip = "Etc" },
+            }"#,
+        )
+        .exec()
+        .unwrap();
+        let filters = super::quest_filter_table(&lua).unwrap();
+        assert_eq!(filters[&0], ("All".to_owned(), vec![]));
+        assert_eq!(filters[&2], ("Normal".to_owned(), vec!["ico_ep.bmp".to_owned(), "ico_gq.bmp".to_owned()]));
+        assert_eq!(filters[&1].1, Vec::<String>::new());
     }
 
     #[test]

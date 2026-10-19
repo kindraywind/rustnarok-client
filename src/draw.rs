@@ -38,6 +38,12 @@ impl App {
 
 impl App {
     pub(crate) fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        // The map packets since the last frame first, before anything moves.
+        for event in std::mem::take(&mut self.frame_events) {
+            let event = NetEvent::Map(event);
+            control::observe(&event);
+            self.net_event(event);
+        }
         if self.loading.is_some() {
             return self.draw_loading(event_loop);
         }
@@ -55,6 +61,12 @@ impl App {
         // Character figures decode their textures first (mutably), then the frame borrows them.
         let poses = match self.scene.base_mut() {
             Scene::CharSelect(select) => {
+                // Each change of the selection is kept, for the next time character select opens.
+                if let Some(slot) = select.changed_selection()
+                    && let Some(path) = settings_path("char_slot")
+                {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, slot.to_string()));
+                }
                 for path in select.job_icons() {
                     self.icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(&self.grf, &path, false).ok());
                 }
@@ -71,7 +83,13 @@ impl App {
         let (at, size) = picture_place();
         base.sprites.push((&assets.background, at, size));
         let mut caret = None;
-        match self.scene.base() {
+        // The login window and the server list close while the wait box is up.
+        let boxed = matches!(&self.scene, Scene::Waiting(wait, _) if wait.message().is_some());
+        let shown = match self.scene.base() {
+            Scene::Login | Scene::ServerSelect { .. } if boxed => &Scene::Quit,
+            scene => scene,
+        };
+        match shown {
             Scene::Login => {
                 let login = login_position();
                 let message = |id: usize| self.messages.get(id).map_or("", String::as_str);
@@ -118,7 +136,7 @@ impl App {
                 }
             }
             Scene::Connections { selected } => {
-                let service = dialog_position(&assets.service);
+                let service = service_position(&assets.service);
                 let list = offset(service, SERVER_LIST);
                 base.sprites.push((&assets.service, service, assets.service.size));
                 base.sprites.push((&assets.selection, offset(list, [0.0, *selected as f32 * SERVER_ROW[1]]), SERVER_ROW));
@@ -129,7 +147,7 @@ impl App {
                 }
             }
             Scene::ServerSelect { accepted, selected } => {
-                let service = dialog_position(&assets.service);
+                let service = service_position(&assets.service);
                 let list = offset(service, SERVER_LIST);
                 base.sprites.push((&assets.service, service, assets.service.size));
                 base.sprites.push((&assets.selection, offset(list, [0.0, *selected as f32 * SERVER_ROW[1]]), SERVER_ROW));
@@ -150,7 +168,8 @@ impl App {
                 let caret = matches!(self.scene, Scene::CharMake(..)) && blink_phase.is_multiple_of(2);
                 make.draw(&mut base, &assets.char_make, font, &self.messages, base_pointer, &make_poses, caret)
             }
-            Scene::Game(_) | Scene::Waiting(_) | Scene::Message(..) | Scene::Confirm(..) | Scene::Prompt { .. } => unreachable!("handled elsewhere"),
+            Scene::Quit => {}
+            Scene::Game(_) | Scene::Waiting(..) | Scene::Message(..) | Scene::Confirm(..) | Scene::Prompt { .. } => unreachable!("handled elsewhere"),
         }
 
         let mut overlay = Layer::default();
@@ -170,6 +189,18 @@ impl App {
             let top = if matches!(self.scene, Scene::Prompt { .. }) { MESSAGE_TEXT[1] - 16.0 } else { MESSAGE_TEXT[1] };
             for (row, line) in lines.into_iter().enumerate() {
                 overlay.texts.push((line.trim_start().to_owned(), offset(dialog, [MESSAGE_TEXT[0], top + row as f32 * MESSAGE_LINE]), TEXT_COLOR));
+            }
+        }
+        // The wait box: its line, and Cancel.
+        if let Scene::Waiting(wait, _) = &self.scene
+            && let Some(id) = wait.message()
+        {
+            let at = login_position();
+            overlay.sprites.push((&assets.message, at, assets.message.size));
+            overlay.sprites.push(button_sprite(pointer, offset(at, WAIT_CANCEL), &assets.cancel));
+            let text = self.messages.get(id).map_or("", String::as_str);
+            for (row, line) in message_lines(font, text, WAIT_TEXT_WIDTH).into_iter().enumerate() {
+                overlay.texts.push((line.trim_start().to_owned(), offset(at, [WAIT_TEXT[0], WAIT_TEXT[1] + row as f32 * MESSAGE_LINE]), TEXT_COLOR));
             }
         }
         if let Scene::Prompt { input, .. } = &self.scene {
@@ -199,7 +230,7 @@ impl App {
         // With RUSTNAROK_CLIENT_AUTOSTART=<slot> the shot waits for the game; any other value stops at character select.
         let autostart = std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok();
         let playing_slot = autostart.as_deref().is_some_and(|value| value.parse::<usize>().is_ok());
-        let settled = !matches!(self.scene, Scene::Waiting(_))
+        let settled = !matches!(self.scene, Scene::Waiting(..))
             && match autostart {
                 None => true,
                 // Back from the game (the option menu's character select) counts too.
@@ -325,6 +356,7 @@ impl App {
 
         // Move everyone, follow the player, then decode the sprite frames (mutably) before borrowing them.
         let walking = game.player.moving();
+        game.player.casting = game.casts.contains_key(&None);
         let player_cell = game.player.update(now);
         // ponytail: footprints alternate 326 and 327, one on each cell just left, only while we are chase-walking.
         // Others don't see the walker, so they don't see our prints. A new chase starts again at 326.
@@ -446,6 +478,7 @@ impl App {
         // Talkie Boxes saying their words stand where their traps were.
         let mut feet_of = game.talkie_spots.clone();
         for (&id, actor) in &mut game.units {
+            actor.casting = game.casts.contains_key(&Some(id));
             let cell = actor.update(now);
             actor.step_companions(actor::world_xz(cell), now);
             // Hidden units aren't drawn, except as black silhouettes while we have Clairvoyance. GM hide stays hidden.
@@ -1721,7 +1754,8 @@ impl App {
                 }
                 Panel::Homunculus => {
                     if let Some(homunculus) = &game.homunculus {
-                        game.homunculus_window.draw(&mut layer, &assets.chrome, &assets.homunculus, font, messages, homunculus, pointer);
+                        let blink = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+                        game.homunculus_window.draw(&mut layer, &assets.chrome, &assets.homunculus, font, messages, homunculus, pointer, blink);
                     }
                 }
                 Panel::HomunculusSkills => {
@@ -2075,7 +2109,12 @@ impl App {
         // colors.
         let colored_question = match (game.expansion_asked, &game.pet_asked) {
             _ if game.dismiss_asked => Some(message(mercenary::DISMISS_QUESTION).to_owned()),
-            _ if game.homunculus_rename.is_some() => Some(messages::fill(message(homunculus::RENAME_QUESTION), &[game.homunculus_rename.as_ref().unwrap()])),
+            _ if game.homunculus_asked.is_some() => Some(match game.homunculus_asked.as_ref().unwrap() {
+                HomunculusAsked::Feed => message(homunculus::FEED_ASKS).to_owned(),
+                HomunculusAsked::Delete => message(homunculus::DELETE_ASKS).to_owned(),
+                HomunculusAsked::Rename(name) => messages::fill(message(homunculus::RENAME_ASKS), &[name]),
+                HomunculusAsked::Refused(why) => message(*why).to_owned(),
+            }),
             _ if game.leader_asked.is_some() => Some(message(LEADER_QUESTION).to_owned()),
             _ if game.bind_asked.is_some() => Some(message(BIND_ASKS).to_owned()),
             (Some(voucher), _) => {
@@ -2334,9 +2373,9 @@ impl App {
 
         // The cursor shows what a click would do.
         let on_window = game.on_ui(pointer.0, assets.message.size);
-        let ground = view.pick_ground([pointer.0[0] / screen()[0], pointer.0[1] / screen()[1]], &game.world.gat);
+        let ground = view.pick_ground([pointer.0[0].floor() / screen()[0], pointer.0[1].floor() / screen()[1]], &game.world.gat);
         let (shift, alt) = (self.modifiers.shift_key(), self.modifiers.alt_key());
-        cursor_look.set(if turning_cursor(game.camera_goal.dragging.is_some(), shift, alt) {
+        let look = if turning_cursor(game.camera_goal.dragging.is_some(), shift, alt) {
             cursor::Kind::Rotate
         } else if pointer.1 && game.attack.is_some_and(|attack| attack.held) {
             cursor::Kind::Attack
@@ -2365,7 +2404,17 @@ impl App {
                     _ => cursor::Kind::NoWalk,
                 },
             }
-        });
+        };
+        cursor_look.set(look);
+        // The ground cursor follows the pointer while a click would walk there: the walkable cell under it, nothing
+        // over one that can't be walked. Over a window or a unit, or with Ctrl held, it stays where it was.
+        if game.ground_cursor
+            && !on_window
+            && !self.modifiers.control_key()
+            && matches!(look, cursor::Kind::Default | cursor::Kind::NoWalk | cursor::Kind::Warp)
+        {
+            game.ground_mark = ground.filter(|&cell| game.world.gat.walkable(cell));
+        }
         for (font, frames) in [(&game.rank_font, &counter), (&game.time_font, &clock), (&game.time_attack, &banner)] {
             if let Some(Some(font)) = font {
                 for (placed, anchor) in frames {
@@ -2457,6 +2506,15 @@ impl App {
                     .collect();
                 effect_meshes.push((texture, vertices, true));
             }
+        }
+        // The ground cursor: its square over the cell, at the corner heights of the ground tile it's part of.
+        if let (Some(texture), Some(corners)) = (&assets.ground_grid, game.ground_mark.and_then(|cell| game.world.cell_quad(cell))) {
+            let vertex = |corner: usize, uv| {
+                let [x, y, z] = corners[corner];
+                world::MeshVertex { position: [x, y + CAST_SQUARE_LIFT, z], uv, tint: GROUND_CURSOR_TINT }
+            };
+            let [a, b, c, d] = [vertex(0, [0.0, 1.0]), vertex(1, [1.0, 1.0]), vertex(2, [0.0, 0.0]), vertex(3, [1.0, 0.0])];
+            effect_meshes.push((texture, vec![a, b, d, a, d, c], false));
         }
         let frame = WorldFrame {
             world: &game.world,

@@ -16,8 +16,9 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": 
     id), menu_item (part of a right-click menu choice's label), button (a window button's name, e.g. "feed"),
     hotkey (slot), skill (id), char_slot (a card at character select, by slot), unit (name, from `units`),
     ground_item (item id, from `ground_items`), item_link (an item link in the chat log or NPC window, item id),
-    navi_link (a navigation link there, by its map), url_link (a web link there, by its address),
-    cell (a map cell [x, y]: its middle on screen), or
+    navi_link (a navigation link there, by its map), url_link (a web link there, by its address), quest_link (a
+    quest link there, by quest id),
+    cell (a map cell [x, y]: its middle on screen; "offset" too, e.g. a pixel off the middle column), or
     {"point": [x, y]}; "offset": [dx, dy] shifts from the centre; a target not on screen fails the step)
   {"wheel": [x, y, rows]}  (the mouse wheel over a point: rows > 0 scrolls down)
   {"mouse_down": <target>} ... {"mouse_up": <target>}  (a button held down between steps; "button": "right")
@@ -178,8 +179,9 @@ def locate(target):
         return target["point"]
     if "cell" in target:
         x, y = target["cell"]
+        dx, dy = target.get("offset", [0, 0])
         reply = drive.send({"cmd": "cell_point", "x": x, "y": y})
-        return [round(value) for value in reply["point"]] if reply.get("ok") else None
+        return [round(reply["point"][0]) + dx, round(reply["point"][1]) + dy] if reply.get("ok") else None
     target = dict(target)
     dx, dy = target.pop("offset", [0, 0])
     below = target.pop("below", None)
@@ -202,7 +204,7 @@ def locate(target):
         if kind == "menu_item" and found.get("kind") == kind and value in found.get("label", ""):
             x, y, w, h = found["box"]
             return [round(x + w / 2) + dx, round(y + h / 2) + dy]
-        key = {"inventory_item": "id", "item_link": "id", "navi_link": "map", "url_link": "address", "pick_item": "id", "button": "name", "hotkey": "slot", "skill": "id", "char_slot": "slot"}.get(kind)
+        key = {"inventory_item": "id", "item_link": "id", "navi_link": "map", "url_link": "address", "quest_link": "id", "pick_item": "id", "button": "name", "hotkey": "slot", "skill": "id", "char_slot": "slot"}.get(kind)
         if found.get("kind") == kind and found.get(key) == value:
             x, y, w, h = found["box"]
             return [round(x + w / 2) + dx, round(y + h / 2) + dy]

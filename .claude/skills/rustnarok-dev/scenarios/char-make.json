@@ -1,0 +1,24 @@
+{
+  "about": "Character creation (issue #507): a double click on the first account's empty slot 2 opens the make window at ((W − 794)/2, (H − 422)/2 − 70), (115, 103) at 1024×768, with the game's places and no name-check button. Esc asks to quit (No stays); Return goes back to character select.",
+  "account": "",
+  "slot": 0,
+  "start": "char_select",
+  "steps": [
+    {"wait": 1500},
+    {"expect": {"state": {"scene": "char_select"}}},
+    {"click_on": {"char_slot": 2}, "count": 2},
+    {"wait": 800},
+    {"expect": {"state": {"scene": "char_make"}}},
+    {"move": [1010, 760]},
+    {"shot": "char-make", "threshold": 5},
+    {"key": "Escape"},
+    {"wait": 300},
+    {"expect": {"state": {"scene": "confirm"}}},
+    {"key": "Escape"},
+    {"wait": 300},
+    {"expect": {"state": {"scene": "char_make"}}},
+    {"click": [216, 495]},
+    {"wait": 500},
+    {"expect": {"state": {"scene": "char_select"}}}
+  ]
+}
