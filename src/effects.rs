@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, bolts, sage, stone};
+use crate::prims::{balls, bolts, burst, sage, stone};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -1287,6 +1287,9 @@ pub const FROST_DIVER_HIT: u32 = 28;
 /// EF_COLDHIT: Cold Bolt's, Frost Diver's and Storm Gust's hit, ice shards and smoke drawn on the screen (`prims`).
 pub const COLD_HIT: u32 = 51;
 
+/// EF_BASH: the burst on a damaging skill's caster (`prims::burst`); none at all under /mineffect.
+const BASH: u32 = 16;
+
 /// EF_SOULSTRIKE: ghosts from the caster to the target, a hit each (`prims`).
 const SOUL_STRIKE: u32 = 15;
 /// EF_FIREBALL, EF_YUFITEL (Jupitel Thunder) and EF_GRIMTOOTH (`prims`).
@@ -1321,6 +1324,9 @@ fn between(ends: [f32; 2], steps: f32, smooth: bool) -> f32 {
 impl Effects {
     /// Plays effect `id` from `now` on `target` at `at`; parts that don't follow units stay there.
     pub fn play(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
+        if id == BASH && self.min {
+            return;
+        }
         self.play_sounds(table, id, at, now);
         self.show(gpu, grf, table, id, target, at, now);
     }
@@ -1378,6 +1384,12 @@ impl Effects {
         if sage::LOOKS.iter().any(|&(look, _)| look == id) {
             self.load_sage(gpu, grf, id);
             self.prims.sage.look(id, at, now);
+        }
+        if let (BASH, Target::Unit(unit)) = (id, target) {
+            for path in [burst::DISC, burst::RAY] {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            self.prims.bursts.push(burst::Burst::new(unit, now, burst::LIFE, |n| pick(0, n.saturating_sub(1))));
         }
         // A bolt told no hit count (by the server): one arrow.
         if let (true, Target::Unit(unit)) = (BOLTS.contains(&id), target) {

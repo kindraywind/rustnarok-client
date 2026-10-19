@@ -1,10 +1,11 @@
 //! The game's hand-made effects: a builder per effect id that runs once a 16 ms tick and lets out primitives, each
 //! moved once a tick by its own rule, drawn as a sprite with trail copies, a shape in the world or flat on the screen.
 //! Soul Strike's ghosts, the cold hit and Frost Diver's ice spikes here; what flies to a target in `balls`, stone
-//! spikes in `stone`, the bolts' arrows in `bolts`.
+//! spikes in `stone`, the bolts' arrows in `bolts`, Bash's burst in `burst`.
 
 pub mod balls;
 pub mod bolts;
+pub mod burst;
 pub mod sage;
 pub mod stone;
 
@@ -76,6 +77,7 @@ pub struct Prims {
     pub stone: stone::Stone,
     pub volleys: Vec<bolts::Volley>,
     pub sage: sage::Sage,
+    pub bursts: Vec<burst::Burst>,
 }
 
 /// An ice spike (the game's prim kind 9): an open four-sided pyramid, its base `half` units out each way and its tip
@@ -364,7 +366,7 @@ impl Prims {
         })
     }
 
-    /// What the cold hits draw at `now`, in screen pixels from their units' feet.
+    /// What the cold hits and bursts draw at `now`, in screen pixels from their units' feet.
     pub fn screen_shapes(&self, now: Instant) -> Vec<ScreenShape> {
         let mut shapes = Vec::new();
         for hit in &self.cold_hits {
@@ -378,6 +380,7 @@ impl Prims {
                 shapes.push((SMOKE_TEXTURE, hit.unit, smoke.shape(tick - smoke.born)));
             }
         }
+        shapes.extend(self.bursts.iter().flat_map(|burst| burst.shapes(now)));
         shapes
     }
 
@@ -406,6 +409,7 @@ impl Prims {
         self.stone.advance(now);
         self.volleys.retain(|volley| volley.alive(now));
         self.sage.advance(now);
+        self.bursts.retain(|burst| burst.alive(now));
     }
 
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is
