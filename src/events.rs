@@ -338,7 +338,8 @@ impl App {
                     progress: ProgressBar::default(),
                     opened_page: None,
                     cast_squares: HashMap::new(),
-                    ground_cursor: false,
+                    // ponytail: on at the start by the user's choice; the game starts it off.
+                    ground_cursor: true,
                     ground_mark: None,
                     combos: HashMap::new(),
                     locks: Vec::new(),

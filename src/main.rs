@@ -1183,7 +1183,7 @@ struct Game {
     progress: ProgressBar,
     /// The magic squares under ground skills being cast, by caster (None = the player); each goes with its cast.
     cast_squares: HashMap<Option<u32>, cast_square::Square>,
-    /// The ground cursor (Alt+Home, off at the start): whether it's on, and the cell it shows.
+    /// The ground cursor (Alt+Home, on at the start): whether it's on, and the cell it shows.
     ground_cursor: bool,
     ground_mark: Option<[i32; 2]>,
     /// Units that may use their next combo skill (None = the player): when the window opened and how long it lasts.
