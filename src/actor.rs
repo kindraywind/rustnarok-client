@@ -1797,6 +1797,7 @@ impl ServerClock {
     pub fn set(&mut self, tick: u32, at: Instant) {
         self.at = Some((tick, at));
         self.late = 0;
+        crate::set_shown_clock(tick, at);
     }
 
     /// The server's tick at `at`, by our guess.
@@ -1858,6 +1859,8 @@ pub struct Actor {
     pub cell: [i32; 2],
     /// The cells ahead and when (whole ms) the unit reaches each.
     path: Vec<([i32; 2], u64)>,
+    /// The walk's nodes already reached, for a shown clock that steps back.
+    passed: Vec<([i32; 2], u64)>,
     /// Where it's drawn, in world units on a frame centred on its map (`half` the map's size in cells), and when it
     /// was last updated (whole ms). Each update moves it toward the end of the step under way.
     at: [f32; 2],
@@ -1965,9 +1968,10 @@ impl Actor {
             sprites,
             cell,
             path: Vec::new(),
+            passed: Vec::new(),
             at: world_point(cell.map(|value| value as f32), [0.0; 2]),
             half: [0.0; 2],
-            last: crate::whole_ms(crate::control::now()),
+            last: crate::shown_ms(crate::control::now()),
             walk_frames: 0,
             step_ms: f32::from(speed.max(1)),
             distance: 0.0,
@@ -2172,15 +2176,16 @@ impl Actor {
         self.start_walking(now);
         self.cell = from;
         let start = [0, 1].map(|axis| from[axis] as f32 + (f32::from(sub[axis]) - 8.0) / 16.0);
-        let now_ms = crate::whole_ms(now);
+        let now_ms = crate::shown_ms(now);
         if !known {
             (self.at, self.last) = (world_point(start, self.half), now_ms);
         }
-        let mut steps = arrivals(start, crate::whole_ms(begin), &path, self.step_ms);
+        let mut steps = arrivals(start, crate::shown_ms(begin), &path, self.step_ms);
         if steps.last().is_some_and(|&(_, arrives)| arrives <= now_ms) {
             steps = arrivals(start, now_ms, &path, (self.step_ms as u64 * 10 / 13) as f32);
         }
         self.path = steps;
+        self.passed.clear();
     }
 
     /// Put on `cell` at once (a knockback): no slide, and what it was doing goes on.
@@ -2214,6 +2219,7 @@ impl Actor {
             self.animation_started = Instant::now();
         }
         self.path.clear();
+        self.passed.clear();
     }
 
     /// ZC_STOPMOVE: `stop` becomes its cell and its walk ends. Drawn on the stop cell, or with no path from the drawn
@@ -2248,9 +2254,15 @@ impl Actor {
     /// the end of the step under way (past it on a frame late for the last node), facing the way it moved and adding
     /// it to the odometer; past the last node it stands on it. Returns where it's drawn, in cells.
     pub fn update(&mut self, now: Instant) -> [f32; 2] {
-        let now_ms = crate::whole_ms(now);
+        let now_ms = crate::shown_ms(now);
         self.stepped.clear();
         self.walk_frames = self.walk_frames.saturating_sub(1);
+        // The shown clock stepped back: nodes it hasn't reached again come back ahead, for the glide. The cell stays
+        // where the walk got to.
+        while let Some(&node) = self.passed.last().filter(|&&(_, arrives)| arrives > now_ms) {
+            self.passed.pop();
+            self.path.insert(0, node);
+        }
         let mut passed = None;
         while let Some(&(next, arrives)) = self.path.first().filter(|&&(_, arrives)| arrives <= now_ms) {
             if !self.sliding {
@@ -2258,6 +2270,7 @@ impl Actor {
             }
             self.cell = next;
             self.path.remove(0);
+            self.passed.push((next, arrives));
             passed = Some((next, arrives));
         }
         if let Some((to, end)) = self.path.first().copied().or(passed) {
@@ -2282,6 +2295,7 @@ impl Actor {
                 self.at = target;
                 self.animation_started = now;
                 self.sliding = false;
+                self.passed.clear();
             }
         }
         // A player in its swing, sitting, dead, casting or in a skill's motion keeps the old time, so its first walking
@@ -2314,7 +2328,8 @@ impl Actor {
             self.stop_at(cell);
             return;
         }
-        self.path = vec![(cell, crate::whole_ms(now) + SLIDE_MS)];
+        self.path = vec![(cell, crate::shown_ms(now) + SLIDE_MS)];
+        self.passed.clear();
         self.sliding = true;
     }
 
@@ -2838,6 +2853,57 @@ mod tests {
         // A player being hit (flinching) or picking up keeps a fresh time too.
         assert_close(first_walking_frame(0, 1208, |unit: &mut Actor| unit.play(6, ms(1000), 2000.0, false)), 16.0 / 238.0);
         assert_close(first_walking_frame(0, 1208, |unit: &mut Actor| unit.play(PICKUP, ms(1000), 2000.0, false)), 16.0 / 238.0);
+    }
+
+    /// A unit walking east from (10, 10) at 150 ms a cell from shown tick 0, updated every 16 ms through `until`; then
+    /// the shown clock moves by `step` and the next `frames` frames' x come back.
+    fn after_a_clock_change(kind: u8, until: u64, step: i64, frames: usize) -> (f32, Vec<f32>) {
+        crate::SHOWN_OFFSET.set(0);
+        let mut unit = Actor::new("a".into(), None, [10, 10], 0, 150);
+        unit.kind = kind;
+        unit.set_map([40, 40]);
+        let east: Vec<[i32; 2]> = (11..20).map(|x| [x, 10]).collect();
+        unit.walk_from([10, 10], [8, 8], east, ms(0), ms(0), false);
+        let mut at = 0;
+        let mut x = 0.0;
+        while at <= until {
+            x = unit.update(ms(at))[0];
+            at += 16;
+        }
+        crate::SHOWN_OFFSET.set(step);
+        let after = (0..frames).map(|frame| unit.update(ms(at + 16 * frame as u64))[0]).collect();
+        crate::SHOWN_OFFSET.set(0);
+        (x, after)
+    }
+
+    #[test]
+    fn walks_follow_the_server_clock_as_it_changes() {
+        let close = |got: &[f32], want: &[f32]| got.iter().zip(want).all(|(a, b)| (a - b).abs() < 2e-3) && got.len() == want.len();
+        // Stepped back 144 ms after shown 992: held a frame, back toward (16, 10) it passed at 900, then on.
+        let (x, after) = after_a_clock_change(5, 992, -144, 5);
+        assert_close(x, 16.613);
+        assert!(close(&after, &[16.613, 16.341, 16.068, 16.165, 16.262]), "{after:?}");
+        // The same after shown 1072: held at 944, six frames back toward (17, 10), then on.
+        let (x, after) = after_a_clock_change(5, 1072, -144, 8);
+        assert_close(x, 17.147);
+        assert!(close(&after, &[17.147, 17.125, 17.102, 17.080, 17.058, 17.036, 17.014, 17.112]), "{after:?}");
+        // A packet 100 ms ahead after shown 992: every walk is 100 ms further along at once.
+        let (_, after) = after_a_clock_change(5, 992, 100, 3);
+        assert!(close(&after, &[17.387, 17.493, 17.600]), "{after:?}");
+        // Our own walk the same.
+        let (_, after) = after_a_clock_change(0, 992, -144, 5);
+        assert!(close(&after, &[16.613, 16.341, 16.068, 16.165, 16.262]), "{after:?}");
+    }
+
+    #[test]
+    fn replays_a_walk_over_by_the_shown_clock() {
+        // The shown clock is 1000 behind the local one: a walk begun at shown 0, three cells east, heard at shown 500.
+        crate::SHOWN_OFFSET.set(-1000);
+        let mut unit = Actor::new("a".into(), None, [10, 10], 0, 150);
+        unit.set_map([40, 40]);
+        unit.walk_from([10, 10], [8, 8], vec![[11, 10], [12, 10], [13, 10]], ms(1000), ms(1500), false);
+        assert_eq!(unit.path.iter().map(|&(_, at)| at).collect::<Vec<_>>(), [615, 730, 845]);
+        crate::SHOWN_OFFSET.set(0);
     }
 
     #[test]

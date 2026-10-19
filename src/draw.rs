@@ -382,7 +382,11 @@ impl App {
         // Move everyone, follow the player, then decode the sprite frames (mutably) before borrowing them.
         let walking = game.player.moving();
         game.player.casting = game.casts.contains_key(&None);
-        let player_cell = game.player.update(now);
+        // The test driver's clock can run back on a resume after a step: walks never see a frame earlier than the last,
+        // so only a change of the server's clock moves them back.
+        let walk_now = now.max(game.walk_clock);
+        game.walk_clock = walk_now;
+        let player_cell = game.player.update(walk_now);
         // ponytail: footprints alternate 326 and 327, one on each cell just left, only while we are chase-walking.
         // Others don't see the walker, so they don't see our prints. A new chase starts again at 326.
         if game.player.hide_option & actor::OPTION_CHASEWALK != 0 {
@@ -504,7 +508,7 @@ impl App {
         let mut feet_of = game.talkie_spots.clone();
         for (&id, actor) in &mut game.units {
             actor.casting = game.casts.contains_key(&Some(id));
-            let cell = actor.update(now);
+            let cell = actor.update(walk_now);
             actor.step_companions(actor::world_xz(cell), now);
             // Hidden units aren't drawn, except as black silhouettes while we have Clairvoyance. GM hide stays hidden.
             let show = actor::seen(actor.hide_option, false, clairvoyance);

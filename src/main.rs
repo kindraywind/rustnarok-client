@@ -1118,6 +1118,8 @@ struct Game {
     /// Alt+End hides the player's HP and SP bars. Monsters keep theirs.
     show_bars: bool,
     last_frame: Instant,
+    /// The latest frame time walks were moved at (`redraw_game`).
+    walk_clock: Instant,
     chat: chat::Chat,
     entered: Instant,
     last_keepalive: Instant,
@@ -3657,9 +3659,28 @@ const DOUBLE_PRESS: Duration = Duration::from_millis(500);
 /// The start of the whole-ms clock (`whole_ms`), set as the client starts.
 static START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
 
-/// Whole milliseconds of a monotonic clock, as the walk timers and walks count them.
+/// Whole milliseconds of a monotonic clock, as the walk timers count them.
 fn whole_ms(at: Instant) -> u64 {
     at.saturating_duration_since(*START).as_millis() as u64
+}
+
+thread_local! {
+    /// What `shown_ms` adds to `whole_ms`: the server's tick less REMOTE_DELAY, by `ServerClock`'s guess; 0 until it
+    /// knows the server's clock.
+    static SHOWN_OFFSET: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
+}
+
+/// The shown clock at `at`, whole ms: the server's tick `ServerClock` guesses then, less 72 (`actor::REMOTE_DELAY`).
+/// Walks keep their node times on it, as server ticks, so a change of the guess moves every walk under way on the next
+/// frame.
+fn shown_ms(at: Instant) -> u64 {
+    (whole_ms(at) as i64 + SHOWN_OFFSET.get()).max(0) as u64
+}
+
+/// The server's `tick` is at `at`: `shown_ms` follows from it.
+fn set_shown_clock(tick: u32, at: Instant) {
+    let delay = actor::REMOTE_DELAY.as_millis() as i64;
+    SHOWN_OFFSET.set(i64::from(tick) - whole_ms(at) as i64 - delay);
 }
 
 /// Whether a walk may go out at `now` (whole ms): more than MOVE_GAP_MS after the last one.
