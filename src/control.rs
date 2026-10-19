@@ -1163,6 +1163,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .button_boxes(&app.achievement_info, &game.achievements)
                 .into_iter()
                 .chain(game.equipment.button_boxes())
+                .chain(game.settings_window.iter().flat_map(crate::game_settings::GameSettings::button_boxes))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(
@@ -1709,6 +1710,11 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["player"]["step_ms"] = game.player.step_ms.into();
     // The effect sounds played in the last five seconds (`no_sound` in a scenario checks these).
     state["sounds_recent"] = recent_sounds().into();
+    // The settings Game Settings changes, and its open tab.
+    state["settings"] = json!({
+        "music": app.sound.on[0], "music_volume": app.sound.volume[0], "effects_sound": app.sound.on[1], "effects": app.graphics.effects_on,
+        "aura_off": app.graphics.aura_off, "tab": game.settings_window.as_ref().map(|window| window.tab),
+    });
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
     state["storage_rows"] = game.storage.rows().into();
     // The guild storage log: null when shut, else its place, tab, page and how many it lists.

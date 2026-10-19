@@ -1,0 +1,31 @@
+{
+  "about": "Game Settings (issue #326): the Esc menu's settings button opens one 400×350 window, centred, with five tabs. Basic has the BGM and SFX rows (a slider 0–127 whose arrows step by one, and an Off box); Effect the effect switches (effects, aura, mini aura, screen shaking); Graphics the screen mode, set by Apply. Here the music is turned off and back on, its volume stepped up one, effects switched off and on again, and Close shuts it; shots of the three pages.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"key": "Escape"}, {"wait": 300},
+    {"click_on": {"button": "settings"}}, {"wait": 300},
+    {"expect": {"windows_open": ["GameSettings"], "state": {"settings.tab": 0}}},
+    {"click_on": {"button": "sound_off:0"}}, {"wait": 200},
+    {"expect": {"state": {"settings.music": false}}},
+    {"click_on": {"button": "sound_off:0"}}, {"wait": 200},
+    {"expect": {"state": {"settings.music": true}}},
+    {"move": [1000, 750]}, {"wait": 200},
+    {"shot": "settings-basic", "crop": [302, 199, 420, 370], "threshold": 5},
+    {"click_on": {"button": "settings_tab:1"}}, {"wait": 200},
+    {"expect": {"state": {"settings.tab": 1}}},
+    {"click_on": {"button": "switch:0"}}, {"wait": 200},
+    {"expect": {"state": {"settings.effects": false}}},
+    {"move": [1000, 750]}, {"wait": 200},
+    {"shot": "settings-effect", "crop": [302, 199, 420, 370], "threshold": 5},
+    {"click_on": {"button": "switch:0"}}, {"wait": 200},
+    {"expect": {"state": {"settings.effects": true}}},
+    {"click_on": {"button": "settings_tab:3"}}, {"wait": 200},
+    {"move": [1000, 750]}, {"wait": 200},
+    {"shot": "settings-graphics", "crop": [302, 199, 420, 370], "threshold": 5},
+    {"click_on": {"button": "settings_close"}}, {"wait": 300},
+    {"expect": {"windows_closed": ["GameSettings"]}},
+    {"key": "Escape"}, {"wait": 300}
+  ]
+}

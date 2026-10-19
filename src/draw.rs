@@ -2458,11 +2458,8 @@ impl App {
             };
             room.draw(shop_layer.window(), &assets.chrome, &assets.dressroom, font, messages, &game.dress_lists, figure, pointer);
         }
-        if let Some(window) = &game.audio_window {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.options, font, messages, sound, pointer.0);
-        }
-        if let Some(window) = &game.graphics_window {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.options, font, messages, &self.graphics, pointer.0);
+        if let Some(window) = &game.settings_window {
+            window.draw(shop_layer.window(), &assets.chrome, &assets.game_settings, &assets.options, font, messages, (sound, &self.graphics), pointer);
         }
         if let Some(window) = &game.shortcuts_window {
             window.draw(shop_layer.window(), &assets.chrome, font, messages, &self.shortcuts, pointer.0);

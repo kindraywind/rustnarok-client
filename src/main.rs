@@ -77,6 +77,7 @@ mod equipment;
 mod escape;
 mod events;
 mod game;
+mod game_settings;
 mod grade;
 mod guild;
 mod guild_companion;
@@ -1261,8 +1262,9 @@ struct Game {
     /// The option menu (Esc, or on dying).
     escape: Option<escape::Menu>,
     /// The option menu's audio settings, while open.
-    audio_window: Option<options::AudioWindow>,
-    graphics_window: Option<options::GraphicsWindow>,
+    settings_window: Option<game_settings::GameSettings>,
+    /// Game Settings' Reset was answered yes: the sound and the effect switches go back to their defaults.
+    reset_settings: bool,
     shortcuts_window: Option<options::ShortcutsWindow>,
     world_map: Option<worldmap::WorldMap>,
     /// The quest log and its window.
@@ -2471,6 +2473,8 @@ enum BoxQuestion {
     Said(String),
     /// Something in the vending setup is priced 0: open anyway? (604).
     FreeGoods,
+    /// Game Settings' Reset: "Set Basic Settings?" (3166).
+    ResetSettings,
 }
 
 impl BoxQuestion {
@@ -2485,6 +2489,7 @@ impl BoxQuestion {
             Self::GuildLeader { .. } => GUILD_LEADER_ASKS,
             Self::Said(_) => 0,
             Self::FreeGoods => vend::FREE_ASKS,
+            Self::ResetSettings => game_settings::RESET_ASKS,
         }
     }
 
@@ -2828,6 +2833,7 @@ struct Assets {
     aura: aura::Textures,
     escape: escape::Assets,
     options: options::Assets,
+    game_settings: game_settings::Assets,
     quest: quest::Assets,
     achievement: achievement::Assets,
     status: status::Assets,
@@ -2955,6 +2961,7 @@ impl Assets {
             aura: aura::Textures::load(gpu, grf),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
+            game_settings: game_settings::Assets::load(gpu, grf),
             quest: quest::Assets::load(gpu, grf),
             achievement: achievement::Assets::load(gpu, grf),
             status: status::Assets::load(gpu, grf),
@@ -4795,7 +4802,8 @@ impl ApplicationHandler<NetEvent> for App {
         let attributes = Window::default_attributes()
             .with_title("Ragnarok")
             .with_inner_size(size.unwrap_or(LogicalSize::new(1024.0, 768.0)))
-            .with_min_inner_size(LogicalSize::new(512.0, 384.0));
+            .with_min_inner_size(LogicalSize::new(512.0, 384.0))
+            .with_fullscreen(self.graphics.fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
         let gpu = Gpu::new(Arc::new(event_loop.create_window(attributes).expect("create window")));
         // The client draws its own cursor.
         gpu.window.set_cursor_visible(false);
