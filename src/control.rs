@@ -1170,6 +1170,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .into_iter()
                 .chain(game.equipment.button_boxes())
                 .chain(game.settings_window.iter().flat_map(crate::game_settings::GameSettings::button_boxes))
+                .chain(game.shortcuts_window.iter().flat_map(crate::shortcut_window::ShortcutWindow::button_boxes))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(
@@ -1717,6 +1718,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["player"]["step_ms"] = game.player.step_ms.into();
     // The effect sounds played in the last five seconds (`no_sound` in a scenario checks these).
     state["sounds_recent"] = recent_sounds().into();
+    state["battle_mode"] = game.chat_mode.enabled().into();
     // The settings Game Settings changes, and its open tab.
     state["settings"] = json!({
         "music": app.sound.on[0], "music_volume": app.sound.volume[0], "effects_sound": app.sound.on[1], "effects": app.graphics.effects_on,

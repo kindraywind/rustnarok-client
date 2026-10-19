@@ -2462,7 +2462,7 @@ impl App {
             window.draw(shop_layer.window(), &assets.chrome, &assets.game_settings, &assets.options, font, messages, (sound, &self.graphics), pointer);
         }
         if let Some(window) = &game.shortcuts_window {
-            window.draw(shop_layer.window(), &assets.chrome, font, messages, &self.shortcuts, pointer.0);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.shortcut_window, &assets.options.check, font, messages, game.chat_mode.enabled(), pointer);
         }
         let mut menu_layer = Layer::default();
         if let Some(menu) = &game.menu {

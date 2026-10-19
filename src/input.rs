@@ -238,7 +238,7 @@ impl App {
                         game.sync_esc();
                     }
                     Some(escape::Choice::Shortcuts) => {
-                        game.shortcuts_window = toggled(game.shortcuts_window.take(), options::ShortcutsWindow::new);
+                        game.shortcuts_window = toggled(game.shortcuts_window.take(), || shortcut_window::ShortcutWindow::new(&self.keybinds, screen()));
                         game.sync_esc();
                     }
                     None => {}
@@ -273,12 +273,21 @@ impl App {
                     None => {}
                 }
             }
+            // Shortcut Settings: OK makes the draft the shortcuts and writes UserKeys.lua; Reset goes back to the data's keys.
             Scene::Game(game) if game.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
                 let window = game.shortcuts_window.as_mut().unwrap();
                 let hit = window.hit(cursor).unwrap();
-                window.click(hit);
-                if !window.frame.open {
-                    game.shortcuts_window = None;
+                match window.click(hit, &self.keybinds) {
+                    Some(shortcut_window::Click::Save) => {
+                        self.keybinds = window.draft.clone();
+                        self.keybinds.save();
+                        game.shortcuts_window = None;
+                        game.chat_line(self.messages.get(shortcut_window::SAVED).cloned().unwrap_or_default(), [255, 255, 0]);
+                    }
+                    Some(shortcut_window::Click::Reset) => window.draft = shortcuts::Shortcuts::defaults(&self.grf),
+                    Some(shortcut_window::Click::BattleMode) => game.client_command(chat::Command::BattleMode, &self.messages, &mut self.graphics),
+                    Some(shortcut_window::Click::Close) => game.shortcuts_window = None,
+                    None => {}
                 }
             }
             // The quest window: tabs, quests, their locks, and the picked one's details.
@@ -1348,7 +1357,8 @@ impl App {
                                 game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: game.player.dead }) };
                             }
                             Some("keyboard") => {
-                                game.shortcuts_window = if game.shortcuts_window.is_some() { None } else { Some(options::ShortcutsWindow::new()) };
+                                game.shortcuts_window =
+                                    toggled(game.shortcuts_window.take(), || shortcut_window::ShortcutWindow::new(&self.keybinds, screen()));
                                 game.sync_esc();
                             }
                             Some("repute") => {
@@ -2638,7 +2648,7 @@ impl App {
                 if slid {
                     self.sound.save();
                 }
-                let option_windows = game.shortcuts_window.as_mut().is_some_and(options::ShortcutsWindow::drop_drag);
+                let option_windows = game.shortcuts_window.as_mut().is_some_and(shortcut_window::ShortcutWindow::drop_drag);
                 let outside = game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends).is_none();
                 let member_held = game.member_windows.release(outside, &party::Grid::new(screen()));
                 // Let go outside the used cells: it went back, and the box says why.
@@ -3624,24 +3634,31 @@ impl App {
             return;
         }
         let key = &event.logical_key;
+        // Shortcut Settings takes every key while it's open (not while the message box asks): a picked row takes the next.
+        // ponytail: with no row picked, Esc still closes the newest window; other keys do nothing.
         if let Scene::Game(game) = &mut self.scene
-            && game.shortcuts_window.as_ref().is_some_and(|window| window.listening.is_some())
+            && game.question_box.is_none()
+            && let Some(window) = &mut game.shortcuts_window
         {
-            if event.repeat {
+            let escape = *key == Key::Named(NamedKey::Escape);
+            if event.repeat || (window.picked.is_none() && !escape) {
                 return;
             }
-            if let Some(key) = shortcut_key(key) {
-                let slot = game.shortcuts_window.as_ref().unwrap().listening;
-                if game.shortcuts_window.as_mut().unwrap().bind_key(key, &mut self.shortcuts) {
-                    self.shortcuts.save();
-                    if let Some(slot) = slot {
-                        self.keybinds.set_hotbar(slot, shortcut_to_bind(key));
-                    }
+            if window.picked.is_some() {
+                let chord = shortcuts::chord_of(&shortcuts::KeyEvent {
+                    key,
+                    physical: Some(event.physical_key),
+                    alt: self.modifiers.alt_key(),
+                    shift: self.modifiers.shift_key(),
+                    ctrl: self.modifiers.control_key(),
+                    tab: self.tab_held && *key != Key::Named(NamedKey::Tab),
+                    repeat: false,
+                    text_focus: false,
+                    bar: 1,
+                });
+                if let Some(shortcut_window::Pressed::Asks(name)) = window.key(escape, chord, &self.messages) {
+                    game.question_box = Some(BoxQuestion::RebindKey(name));
                 }
-                return;
-            }
-            if *key == Key::Named(NamedKey::Escape) {
-                game.shortcuts_window.as_mut().unwrap().listening = None;
                 return;
             }
         }
