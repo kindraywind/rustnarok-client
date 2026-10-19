@@ -1,0 +1,25 @@
+{
+  "about": "A ground skill aimed at a wall cell out of range (issue #592): a Mage at prontera 136,120 aims Thunderstorm (range 9) at 136,103, inside a building 17 cells north. The walk goes to the chase cell 9 cells short (no path to the wall is needed) and the skill is cast from there. It used to be dropped, since no path reaches a wall cell. The scenario takes the hotkey off and goes back to Novice.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 136 120"}, {"settle": 1500},
+    {"say": "@job 2"}, {"wait": 500},
+    {"say": "@allskill"}, {"wait": 500},
+    {"say": "@heal"}, {"wait": 400},
+    {"key": "Alt+S"}, {"wait": 400},
+    {"drag_on": [{"skill": 21}, {"hotkey": 0}]}, {"wait": 300},
+    {"expect": {"hotkeys": {"0": 21}}},
+    {"key": "Alt+S"}, {"wait": 300},
+    {"key": "F1"}, {"wait": 200},
+    {"click_on": {"cell": [136, 103]}},
+    {"wait_for": {"sent": "0x035f", "ms": 2000}},
+    {"wait": 5000},
+    {"move": [1000, 750]},
+    {"shot": "skill-wall", "crop": [262, 134, 500, 450], "threshold": 5},
+    {"expect": {"state": {"player.aiming": null, "player.skill_sent.skill": 21, "player.skill_sent.cell": [136, 103]}}},
+    {"drag_on": [{"hotkey": 0}, {"point": [700, 500]}]}, {"wait": 300},
+    {"expect": {"hotkeys": {"0": null}}},
+    {"say": "@job 0"}, {"wait": 500}
+  ]
+}

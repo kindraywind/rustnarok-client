@@ -1428,12 +1428,6 @@ fn heap_sink<T>(heap: &mut [usize], items: &[T], key: impl Fn(&T) -> i32, from: 
     heap_rise(heap, items, key, from, at);
 }
 
-/// Whether a player at `from` can hit `to` with `range` (rathena's `check_distance_client`: circular, and a cell longer on straight lines).
-pub fn in_reach(from: [i32; 2], to: [i32; 2], range: i32) -> bool {
-    let (dx, dy) = ((from[0] - to[0]) as f32, (from[1] - to[1]) as f32);
-    ((dx * dx + dy * dy).sqrt() - 0.1) as i32 <= range
-}
-
 /// Where a click on `target` walks from `from` (the cell the player is drawn on): the target when it's `free` (in the
 /// map, walkable, not blocked by a unit) and `reachable` (the path search); otherwise the game's fallback line. Along
 /// the major axis (x on a tie) the major coordinate steps from the click's toward `from`'s, giving up on reaching it;
@@ -1646,15 +1640,6 @@ mod tests {
         let (offset, pixel) = sprite_corner([-5.0, -5.0], [10.0, 10.0], 90.0, [0.0, 0.0]);
         assert!(close(offset, [5.0, -5.0]), "{offset:?}");
         assert!(close(pixel, [1.5, 0.5]), "{pixel:?}");
-    }
-
-    #[test]
-    fn melee_reach_matches_the_server() {
-        assert!(in_reach([5, 5], [5, 5], 1));
-        assert!(in_reach([5, 5], [6, 6], 1));
-        assert!(in_reach([5, 5], [7, 5], 1));
-        assert!(!in_reach([5, 5], [7, 6], 1));
-        assert!(in_reach([0, 0], [10, 1], 9));
     }
 
     #[test]

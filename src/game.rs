@@ -244,7 +244,9 @@ impl Game {
         let (in_reach, range) = if attack.ground {
             ground_unit_reach(from, drawn, self.attack_range)
         } else {
-            (world::in_attack_reach(world::attack_distance(gat, from, drawn), self.attack_range), self.attack_range)
+            let job = self.units.get(&attack.target).map_or(0, |unit| unit.job);
+            let distance = reach_to(world::attack_distance(gat, from, drawn), job, self.location_radius(job));
+            (world::in_attack_reach(distance, self.attack_range), self.attack_range)
         };
         if arrived || in_reach {
             match attack_send(&attack, self.last_attack, whole_ms(now)) {
@@ -498,43 +500,48 @@ impl Game {
                     _ => {}
                 }
             }
-            // A skill: sent the moment it's in reach (walking or not), or once the walk there ended; out of reach, a walk
-            // toward a cell in range on the way to where the target is going, again whenever that changes. It waits
-            // while the player swings, casts or sits; a target out of sight ends it.
-            Some((Pending::Skill { id, level, target }, arrived)) => {
+            // A skill: sent the moment it's in reach (walking or not) or on arriving on the walk cell; out of reach, a
+            // walk to the chase cell toward where the target is drawn (a cell's centre on the ground) whenever it
+            // isn't the walk cell, with no path needed. Only while the player stands, walks or flinches; a target
+            // whose unit is gone ends it (a dying one is still there).
+            Some((Pending::Skill { id, level, target }, _)) => {
                 let clock = control::now();
-                if self.player.swinging(clock) || self.casts.contains_key(&None) || self.player.sitting {
+                if !matches!(self.player_motion(clock), PlayerMotion::Stand | PlayerMotion::Walk | PlayerMotion::Flinch) {
                     return;
                 }
+                let from = world::drawn_point(self.player.position(clock));
+                let range = self.skill_range(id, level);
+                let gat = &self.world.gat;
+                // Where it aims, the reach distance, and a big monster's job and radius (the sent cell shifts).
                 let toward = match target {
-                    SkillTarget::Unit(unit) if unit == self.account_id => Some((self.player.position(clock), self.player.cell)),
-                    SkillTarget::Unit(unit) => {
-                        self.units.get(&unit).filter(|actor| actor.remove_at.is_none()).map(|actor| (actor.position(clock), actor.destination()))
+                    SkillTarget::Unit(unit) if unit == self.account_id => Some((from, 0.0, None)),
+                    SkillTarget::Unit(unit) => self.units.get(&unit).map(|actor| {
+                        let drawn = world::drawn_point(actor.position(clock));
+                        let radius = self.location_radius(actor.job);
+                        (drawn, reach_to(world::attack_distance(gat, from, drawn), actor.job, radius), Some((actor.job, radius)))
+                    }),
+                    SkillTarget::Cell(cell) => {
+                        let centre = world::drawn_point(cell.map(|value| value as f32));
+                        Some((centre, (centre[0] - from[0]).hypot(centre[1] - from[1]), None))
                     }
-                    SkillTarget::Cell(cell) => Some((cell.map(|value| value as f32), cell)),
                 };
-                let Some((at, goal)) = toward else {
+                let Some((aim, distance, big)) = toward else {
                     self.pending = None;
                     return;
                 };
-                let range = self.skill_range(id, level);
-                let walked = arrived.is_some() && !self.player.moving();
-                if skill_in_reach(self.player.position(clock), at, range) || walked {
+                if skill_in_reach(distance, range) || self.walk_cell == Some(world::floor_cell(from)) {
                     self.pending = None;
                     self.pending_walk = None;
                     self.send_skill(id, level, target);
-                } else if self.pending_walk.is_none_or(|(toward, _)| toward != goal) && may_move(self.last_move, whole_ms(now)) {
-                    let reach = range.max(1.0) as i32;
-                    match world::find_path(&self.world.gat, self.player.cell, goal)
-                        .and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, reach)))
-                    {
-                        Some(stop) => {
-                            self.last_move = Some(whole_ms(Instant::now()));
-                            self.pending_walk = Some((goal, now));
-                            self.pending = Some((Pending::Skill { id, level, target }, None));
-                            let _ = self.session.walk(stop.map(|value| value as u16));
-                        }
-                        None => self.pending = None,
+                    return;
+                }
+                let cell = world::chase_cell(gat, from, aim, range as i32);
+                if self.walk_cell != Some(cell) {
+                    self.walk_cell = Some(cell);
+                    if may_move(self.last_move, whole_ms(now)) {
+                        let sent = big.map_or(cell, |(job, radius)| big_walk_cell(cell, job, radius, from, aim));
+                        self.last_move = Some(whole_ms(Instant::now()));
+                        let _ = self.session.walk(sent.map(|value| value as u16));
                     }
                 }
             }
@@ -1141,12 +1148,20 @@ impl Game {
         false
     }
 
-    /// The range in cells of skill `id` at `level`: its range for that level, plus what the skill list adds at the
-    /// learned level.
+    /// The range in cells of skill `id` at `level` (`skill_range`): 5 for skill 10000, 1 for one the player doesn't
+    /// have (not listed, not an item's).
     pub(crate) fn skill_range(&self, id: u16, level: u16) -> f32 {
-        let known = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id);
-        let per_level = self.skill_info.get(&id).map_or(&[][..], |info| &info.attack_range);
-        skill_range(per_level, level, known.map_or(level, |skill| skill.level), known.map_or(1, |skill| skill.range))
+        if id == 10000 {
+            return 5.0;
+        }
+        let Some(known) = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id) else { return 1.0 };
+        let info = self.skill_info.get(&id);
+        skill_range(info.map_or(&[][..], |info| &info.attack_range), info.and_then(|info| info.max_lv), level, known.level, known.range)
+    }
+
+    /// The radius a unit's job stands on (`lua::location_radii`), 0 for most.
+    pub(crate) fn location_radius(&self, job: u16) -> f32 {
+        self.location_radii.get(&job).copied().unwrap_or(0.0)
     }
 
     /// Sends a skill walked into range (refused while its cooldown runs).

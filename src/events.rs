@@ -631,6 +631,7 @@ impl App {
                     last_walk_try: None,
                     stored_walk: StoredWalk::default(),
                     skill_info: self.skill_info.clone(),
+                    location_radii: self.location_radii.clone(),
                     press_mark: None,
                     auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
                         let (x, y) = cell.split_once(',')?;

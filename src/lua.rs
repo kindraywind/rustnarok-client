@@ -735,6 +735,8 @@ pub struct SkillInfo {
     pub resource: String,
     pub name: String,
     pub max_level: u16,
+    /// `MaxLv` as given: None when the entry has none (no limit on the range's learned level), apart from 0.
+    pub max_lv: Option<u16>,
     /// The level to use can be picked (`bSeperateLv`): the skill window's arrows, the wheel while aiming.
     pub separate_level: bool,
     /// Its range in cells by level (`AttackRange`), from level 1.
@@ -871,6 +873,7 @@ pub fn skill_info(grf: &Grf) -> io::Result<HashMap<u16, SkillInfo>> {
             resource: text(entry.get(1)),
             name: text(entry.get("SkillName")),
             max_level: entry.get("MaxLv").unwrap_or(0),
+            max_lv: entry.get::<Option<u16>>("MaxLv").ok().flatten(),
             separate_level: entry.get("bSeperateLv").unwrap_or(false),
             attack_range: entry.get::<mlua::Table>("AttackRange").map(|ranges| ranges.sequence_values::<u16>().flatten().collect()).unwrap_or_default(),
             needs: entry.get::<mlua::Table>("_NeedSkillList").map(|list| skill_levels(&list)).unwrap_or_default(),
@@ -1015,6 +1018,30 @@ pub fn monster_sizes(grf: &Grf) -> HashMap<u16, f32> {
 pub fn shadow_factors(grf: &Grf) -> io::Result<HashMap<u16, f32>> {
     let read = |path: &str| grf.read(path);
     shadow_tables(read(NPC_IDENTITY)?, read(JOB_IDENTITY)?, read(SHADOW_TABLE)?, read(NPC_LOCATION_RADIUS).ok())
+}
+
+/// The jobs that stand on a radius of r > 0 cells (`NpcLocationRadius`): a few big bosses.
+pub fn location_radii(grf: &Grf) -> io::Result<HashMap<u16, f32>> {
+    let read = |path: &str| grf.read(path);
+    radius_table(read(NPC_IDENTITY)?, read(JOB_IDENTITY)?, read(NPC_LOCATION_RADIUS)?)
+}
+
+fn radius_table(npc_identity: Vec<u8>, job_identity: Vec<u8>, radius: Vec<u8>) -> io::Result<HashMap<u16, f32>> {
+    let lua = new_lua()?;
+    exec_bytes(&lua, NPC_IDENTITY, npc_identity)?;
+    exec_bytes(&lua, JOB_IDENTITY, job_identity)?;
+    lua.load("for _, t in ipairs({jobtbl, JTtbl}) do setmetatable(t, { __index = function() return -1 end }) end").exec().map_err(lua_error)?;
+    exec_bytes(&lua, NPC_LOCATION_RADIUS, radius)?;
+    let mut radii = HashMap::new();
+    for pair in lua.globals().get::<mlua::Table>("NpcLocationRadius").map_err(lua_error)?.pairs::<mlua::Value, mlua::Value>() {
+        let (job, radius) = pair.map_err(lua_error)?;
+        if let (Some(job), Some(radius)) = (number(&job).and_then(|job| u16::try_from(job).ok()), lua_f32(radius))
+            && radius > 0.0
+        {
+            radii.insert(job, radius);
+        }
+    }
+    Ok(radii)
 }
 
 fn shadow_tables(npc_identity: Vec<u8>, job_identity: Vec<u8>, shadows: Vec<u8>, radius: Option<Vec<u8>>) -> io::Result<HashMap<u16, f32>> {
@@ -1805,7 +1832,10 @@ mod tests {
         // Unlisted jobs (the Novice) and names this data doesn't know aren't in the table.
         assert!(!factors.contains_key(&0));
         assert_eq!(factors.len(), 5);
-        assert_eq!(super::shadow_tables(npcs, jobs, shadows, None).unwrap()[&1900], 2.0);
+        assert_eq!(super::shadow_tables(npcs.clone(), jobs.clone(), shadows, None).unwrap()[&1900], 2.0);
+        // The radii alone, for big monsters' reach.
+        let radii = super::radius_table(npcs, jobs, b"NpcLocationRadius = { [jobtbl.JT_KADES] = 2, [jobtbl.JT_PORING] = 0 }".to_vec()).unwrap();
+        assert_eq!(radii, std::collections::HashMap::from([(1900, 2.0)]));
     }
 
     #[test]
