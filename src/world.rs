@@ -387,15 +387,39 @@ struct GroundOutput {
     return vec4(apply_fog(color, in.fog), in.color.a);
 }
 
+// Blind replaces the scene tint with the ambient. The light is already in the vertex colour.
+fn scene_shade() -> vec3<f32> {
+    return select(globals.tint.rgb, globals.ambient.rgb, globals.tint.w > 0.5);
+}
+
 @fragment fn model_fs(in: GroundOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(image, image_sampler, in.uv);
-    if (texel.a < 0.5) { discard; }
-    // Faces are drawn from both sides, so light them from whichever side faces the light.
-    let weight = abs(dot(normalize(in.normal), globals.light_direction.xyz));
-    let light = clamp(globals.ambient.rgb + globals.diffuse.rgb * weight, vec3(0.0), vec3(1.0));
-    // Blind replaces the scene tint with the ambient.
-    let shade = select(globals.tint.rgb, globals.ambient.rgb, globals.tint.w > 0.5);
-    return vec4(apply_fog(texel.rgb * in.color.rgb * light * shade, in.fog), 1.0);
+    if (texel.a < 207.0 / 255.0) { discard; }
+    // The light is baked into the corners' colour at load. The scene tint multiplies that.
+    return vec4(apply_fog(texel.rgb * in.color.rgb * scene_shade(), in.fog), 1.0);
+}
+
+// Translucent model textures, blended: texels of 240 and up, those below, or any but none.
+fn model_blended(in: GroundOutput, texel: vec4<f32>) -> vec4<f32> {
+    return vec4(apply_fog(texel.rgb * in.color.rgb * scene_shade(), in.fog), texel.a);
+}
+
+@fragment fn model_solid_fs(in: GroundOutput) -> @location(0) vec4<f32> {
+    let texel = textureSample(image, image_sampler, in.uv);
+    if (texel.a < 240.0 / 255.0) { discard; }
+    return model_blended(in, texel);
+}
+
+@fragment fn model_soft_fs(in: GroundOutput) -> @location(0) vec4<f32> {
+    let texel = textureSample(image, image_sampler, in.uv);
+    if (texel.a >= 240.0 / 255.0 || texel.a < 1.0 / 255.0) { discard; }
+    return model_blended(in, texel);
+}
+
+@fragment fn model_any_fs(in: GroundOutput) -> @location(0) vec4<f32> {
+    let texel = textureSample(image, image_sampler, in.uv);
+    if (texel.a < 1.0 / 255.0) { discard; }
+    return model_blended(in, texel);
 }
 
 // Shadows and effects take their feet's `depth`, flat. Sprites work theirs out per pixel from their `plane` (the
@@ -698,6 +722,8 @@ pub struct World {
     pub rsm_2_models: usize,
     /// The map's ambient sound sources.
     pub ambient: crate::ambient::Ambient,
+    /// The map's own effects (torches, fireflies…) and their timers.
+    pub map_effects: crate::map_effects::MapEffects,
     textures: Vec<Texture>,
     lightmap: Texture,
     vertices: wgpu::Buffer,
@@ -705,7 +731,13 @@ pub struct World {
     draws: Vec<(usize, Range<u32>)>,
     model_textures: Vec<Texture>,
     model_vertices: Option<wgpu::Buffer>,
-    model_draws: Vec<(usize, Range<u32>)>,
+    model_draws: Vec<ModelDraw>,
+    /// Which model textures have their own alpha (blended after the sprites), and the static batches that use them.
+    model_translucent: Vec<bool>,
+    translucent_buffer: Option<wgpu::Buffer>,
+    translucent_batches: Vec<TranslucentBatch>,
+    /// The RSW's translucency byte is 1: translucent texels of 240 and up write depth.
+    translucency: bool,
     /// Waving water, one quad per tile that dips under it.
     water: Option<MapWater>,
     light: (Vector, [f32; 3], [f32; 3]),
@@ -717,7 +749,9 @@ pub struct World {
     globals: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     ground_pipeline: wgpu::RenderPipeline,
-    model_pipeline: wgpu::RenderPipeline,
+    model_pipelines: [wgpu::RenderPipeline; 2],
+    /// Translucent model passes (`BlendPass`), one-sided then two-sided.
+    model_blend_pipelines: [[wgpu::RenderPipeline; 2]; 4],
     /// Water blended over, then the same with depth write for the lava pass.
     water_pipelines: [wgpu::RenderPipeline; 2],
     sprite_pipeline: wgpu::RenderPipeline,
@@ -769,16 +803,19 @@ impl World {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let (model_vertices, model_draws, model_texture_names, rsm_2_models, mut animated) = model_mesh(grf, &rsw, &gnd);
+        // Each model texture decoded once: its image keyed, and whether it has an alpha channel of its own.
+        let mut images: HashMap<String, (RgbaImage, bool)> = HashMap::new();
+        let mut alpha_of = |name: &str| images.entry(name.to_owned()).or_insert_with(|| model_image(grf, name)).1;
+        let (model_vertices, model_draws, model_texture_names, rsm_2_models, mut animated, translucent) = model_mesh(grf, &rsw, &gnd, &mut alpha_of);
         // The moving models' buffer: each instance's triangles in their order, its draws by texture.
         let mut moving = 0u32;
         for instance in &mut animated {
             instance.draws = std::mem::take(&mut instance.runs)
                 .into_iter()
-                .map(|(texture, count)| {
+                .map(|(texture, two_sided, count)| {
                     let range = moving..moving + count;
                     moving += count;
-                    (texture, range)
+                    (texture, two_sided, range)
                 })
                 .collect();
         }
@@ -790,18 +827,32 @@ impl World {
                 mapped_at_creation: false,
             })
         });
+        let model_translucent: Vec<bool> = model_texture_names.iter().map(|name| images.get(name).is_some_and(|(_, alpha)| *alpha)).collect();
         let model_textures = model_texture_names
             .iter()
             .map(|name| {
-                let image = grf
-                    .read(&format!("data\\texture\\{name}"))
-                    .ok()
-                    .and_then(|bytes| image::load_from_memory(&bytes).ok())
-                    .map(|image| image.to_rgba8())
-                    .unwrap_or_else(|| RgbaImage::from_pixel(1, 1, Rgba([128, 128, 128, 255])));
-                gpu.texture_with_sampler(&key_out_magenta(image), &smooth)
+                let (image, _) = images.remove(name).unwrap_or_else(|| model_image(grf, name));
+                gpu.texture_with_sampler(&image, &smooth)
             })
             .collect();
+        // The translucent batches in one buffer, each with the place of its first vertex for sorting.
+        let mut translucent_vertices = Vec::new();
+        let translucent_batches: Vec<TranslucentBatch> = translucent
+            .into_iter()
+            .map(|(texture, two_sided, depth_flag, vertices)| {
+                let start = translucent_vertices.len() as u32;
+                let first = vertices.first().map_or([0.0; 3], |vertex| vertex.position);
+                translucent_vertices.extend(vertices);
+                TranslucentBatch { texture, two_sided, depth_flag, range: start..translucent_vertices.len() as u32, first }
+            })
+            .collect();
+        let translucent_buffer = (!translucent_vertices.is_empty()).then(|| {
+            gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("translucent models"),
+                contents: bytemuck::cast_slice(&translucent_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
+        });
         let model_vertices = (!model_vertices.is_empty()).then(|| {
             gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("models"),
@@ -837,12 +888,13 @@ impl World {
             bind_group_layouts: &[Some(&globals_layout), Some(&gpu.texture_layout), Some(&gpu.texture_layout)],
             immediate_size: 0,
         });
-        let pipeline_compared = |entry: &str,
-                                 fragment: &str,
-                                 buffer: wgpu::VertexBufferLayout,
-                                 blend: Option<wgpu::BlendState>,
-                                 depth_write: bool,
-                                 compare: wgpu::CompareFunction|
+        let pipeline_culled = |entry: &str,
+                               fragment: &str,
+                               buffer: wgpu::VertexBufferLayout,
+                               blend: Option<wgpu::BlendState>,
+                               depth_write: bool,
+                               compare: wgpu::CompareFunction,
+                               cull: Option<wgpu::Face>|
          -> wgpu::RenderPipeline {
             gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(entry),
@@ -853,7 +905,7 @@ impl World {
                     compilation_options: Default::default(),
                     buffers: &[buffer],
                 },
-                primitive: Default::default(),
+                primitive: wgpu::PrimitiveState { cull_mode: cull, front_face: wgpu::FrontFace::Ccw, ..Default::default() },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
                     depth_write_enabled: Some(depth_write),
@@ -872,6 +924,13 @@ impl World {
                 cache: None,
             })
         };
+        let pipeline_compared =
+            |entry: &str,
+             fragment: &str,
+             buffer: wgpu::VertexBufferLayout,
+             blend: Option<wgpu::BlendState>,
+             depth_write: bool,
+             compare: wgpu::CompareFunction| { pipeline_culled(entry, fragment, buffer, blend, depth_write, compare, None) };
         let pipeline = |entry: &str, fragment: &str, buffer: wgpu::VertexBufferLayout, blend: Option<wgpu::BlendState>, depth_write: bool| {
             pipeline_compared(entry, fragment, buffer, blend, depth_write, wgpu::CompareFunction::LessEqual)
         };
@@ -883,7 +942,15 @@ impl World {
             attributes: &GROUND_ATTRIBUTES,
         };
         let ground_pipeline = pipeline("ground", "ground_fs", ground_layout(), None, true);
-        let model_pipeline = pipeline("ground", "model_fs", ground_layout(), None, true);
+        // One-sided model faces show only their front (counter-clockwise on screen); two-sided ones both sides.
+        let model_pipelines = [Some(wgpu::Face::Back), None]
+            .map(|cull| pipeline_culled("ground", "model_fs", ground_layout(), None, true, wgpu::CompareFunction::LessEqual, cull));
+        let blend = Some(wgpu::BlendState::ALPHA_BLENDING);
+        let model_blend_pipelines = [BlendPass::Solid, BlendPass::Soft, BlendPass::Any, BlendPass::AnyDepth].map(|pass| {
+            let (fragment, depth_write) = pass.look();
+            [Some(wgpu::Face::Back), None]
+                .map(|cull| pipeline_culled("ground", fragment, ground_layout(), blend, depth_write, wgpu::CompareFunction::LessEqual, cull))
+        });
         let water_blend = Some(wgpu::BlendState::ALPHA_BLENDING);
         let water_pipelines =
             [pipeline("ground", "water_fs", ground_layout(), water_blend, false), pipeline("ground", "water_fs", ground_layout(), water_blend, true)];
@@ -924,6 +991,7 @@ impl World {
         // Sound sources sit, like models, relative to the map's center.
         let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
         let ambient = crate::ambient::Ambient::new(rsw.sounds.iter().map(|source| crate::ambient::Source::placed(source, half)).collect());
+        let map_effects = crate::map_effects::MapEffects::new(&rsw.effects, half, || crate::effects::pick(0, u32::MAX - 1));
         let cell_light = cell_lights(&gnd, &gat);
         let (clear_color, fog_color, fog_range) = atmosphere(grf, map);
         let tile_heights = (gnd.cubes.iter().map(|cube| cube.heights.map(|height| -height)).collect(), gnd.width);
@@ -932,6 +1000,7 @@ impl World {
             animated_buffer,
             rsm_2_models,
             ambient,
+            map_effects,
             gat,
             cell_light,
             tile_heights,
@@ -940,6 +1009,10 @@ impl World {
             vertices,
             draws,
             model_textures,
+            model_translucent,
+            translucent_buffer,
+            translucent_batches,
+            translucency: rsw.water_depth,
             model_vertices,
             model_draws,
             water,
@@ -950,7 +1023,8 @@ impl World {
             globals,
             globals_bind_group,
             ground_pipeline,
-            model_pipeline,
+            model_pipelines,
+            model_blend_pipelines,
             water_pipelines,
             sprite_pipeline,
             shadow_pipeline,
@@ -1551,18 +1625,12 @@ impl WorldPass for WorldFrame<'_> {
             pass.set_bind_group(1, world.textures[*texture].bind_group(), &[]);
             pass.draw(range.clone(), 0..1);
         }
-        if let Some(buffer) = &world.model_vertices {
-            pass.set_pipeline(&world.model_pipeline);
+        let moving = world.animated.iter().flat_map(|instance| &instance.draws);
+        for (buffer, draws) in [(&world.model_vertices, world.model_draws.iter().collect::<Vec<_>>()), (&world.animated_buffer, moving.collect())] {
+            let Some(buffer) = buffer else { continue };
             pass.set_vertex_buffer(0, buffer.slice(..));
-            for (texture, range) in &world.model_draws {
-                pass.set_bind_group(1, world.model_textures[*texture].bind_group(), &[]);
-                pass.draw(range.clone(), 0..1);
-            }
-        }
-        if let Some(buffer) = &world.animated_buffer {
-            pass.set_pipeline(&world.model_pipeline);
-            pass.set_vertex_buffer(0, buffer.slice(..));
-            for (texture, range) in world.animated.iter().flat_map(|instance| &instance.draws) {
+            for (texture, two_sided, range) in draws.into_iter().filter(|(texture, ..)| !world.model_translucent[*texture]) {
+                pass.set_pipeline(&world.model_pipelines[usize::from(*two_sided)]);
                 pass.set_bind_group(1, world.model_textures[*texture].bind_group(), &[]);
                 pass.draw(range.clone(), 0..1);
             }
@@ -1579,6 +1647,32 @@ impl WorldPass for WorldFrame<'_> {
             for pipeline in [&world.sprite_pipeline, &world.soft_pipeline] {
                 pass.set_pipeline(pipeline);
                 order.iter().for_each(|&index| draw(&mut pass, index));
+            }
+        }
+        // Translucent model textures after the sprites: the static batches back to front by their first vertex's depth,
+        // then the moving models' (as they come), each in its passes for the map's translucency byte.
+        if let Some(buffer) = &world.translucent_buffer {
+            let mut order: Vec<&TranslucentBatch> = world.translucent_batches.iter().collect();
+            back_to_front(&mut order, |batch| view.depth_of(batch.first));
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            for batch in order {
+                pass.set_bind_group(1, world.model_textures[batch.texture].bind_group(), &[]);
+                for &step in blend_passes(world.translucency, batch.depth_flag) {
+                    pass.set_pipeline(&world.model_blend_pipelines[step as usize][usize::from(batch.two_sided)]);
+                    pass.draw(batch.range.clone(), 0..1);
+                }
+            }
+        }
+        if let Some(buffer) = &world.animated_buffer {
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            for instance in &world.animated {
+                for (texture, two_sided, range) in instance.draws.iter().filter(|(texture, ..)| world.model_translucent[*texture]) {
+                    pass.set_bind_group(1, world.model_textures[*texture].bind_group(), &[]);
+                    for &step in blend_passes(world.translucency, instance.depth_flag) {
+                        pass.set_pipeline(&world.model_blend_pipelines[step as usize][usize::from(*two_sided)]);
+                        pass.draw(range.clone(), 0..1);
+                    }
+                }
             }
         }
         // After the sprites, so the surface covers the part of a wading unit under it, and before effects.
@@ -1642,7 +1736,7 @@ impl WorldPass for WorldFrame<'_> {
 fn key_out_magenta(mut image: RgbaImage) -> RgbaImage {
     for pixel in image.pixels_mut() {
         let [r, g, b, _] = pixel.0;
-        if r >= 0xFE && g <= 0x03 && b >= 0xFE {
+        if [r, g, b] == [0xFF, 0x00, 0xFF] {
             pixel.0 = [0; 4];
         }
     }
@@ -1817,46 +1911,134 @@ fn ground_mesh(
 type LoadedModel = (std::rc::Rc<Rsm>, Vec<model::Triangle>);
 
 /// Also how many RSM 2 instances were placed, and those that move, apart.
-type ModelMesh = (Vec<GroundVertex>, Vec<(usize, Range<u32>)>, Vec<String>, usize, Vec<Animated>);
+type ModelMesh = (Vec<GroundVertex>, Vec<ModelDraw>, Vec<String>, usize, Vec<Animated>, Vec<Translucent>);
+
+/// An instance's triangles with one translucent texture: the texture, two-sided, the instance's 2.6 flag, its vertices.
+type Translucent = (usize, bool, bool, Vec<GroundVertex>);
+
+/// A static translucent batch in the buffer: its texture, sidedness, 2.6 flag, range and first vertex's place.
+struct TranslucentBatch {
+    texture: usize,
+    two_sided: bool,
+    depth_flag: bool,
+    range: Range<u32>,
+    first: Vector,
+}
+
+/// A translucent model pass: texels of 240 and up writing depth, those below without, or any (alpha 1 and up)
+/// without or with depth.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum BlendPass {
+    Solid,
+    Soft,
+    Any,
+    AnyDepth,
+}
+
+impl BlendPass {
+    /// Its fragment shader and whether it writes depth.
+    fn look(self) -> (&'static str, bool) {
+        match self {
+            Self::Solid => ("model_solid_fs", true),
+            Self::Soft => ("model_soft_fs", false),
+            Self::Any => ("model_any_fs", false),
+            Self::AnyDepth => ("model_any_fs", true),
+        }
+    }
+}
+
+/// A translucent batch's passes, by the map's translucency byte and the model's 2.6 flag: byte 1 draws its texels of
+/// 240 and up with depth, then the rest without (with the flag, every visible texel with depth); byte 0 one pass
+/// without depth (with the flag, with).
+fn blend_passes(translucency: bool, depth_flag: bool) -> &'static [BlendPass] {
+    match (translucency, depth_flag) {
+        (true, false) => &[BlendPass::Solid, BlendPass::Soft],
+        (false, false) => &[BlendPass::Any],
+        (_, true) => &[BlendPass::AnyDepth],
+    }
+}
+
+/// Puts things back to front: the deepest first.
+fn back_to_front<T>(items: &mut [T], depth: impl Fn(&T) -> f32) {
+    items.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+}
+
+/// A model texture keyed (#FF00FF clear) and whether its file has an alpha channel of its own; grey when missing.
+fn model_image(grf: &Grf, name: &str) -> (RgbaImage, bool) {
+    let decoded = grf.read(&format!("data\\texture\\{name}")).ok().and_then(|bytes| image::load_from_memory(&bytes).ok());
+    match decoded {
+        Some(image) => {
+            let alpha = image.color().has_alpha();
+            (key_out_magenta(image.to_rgba8()), alpha)
+        }
+        None => (RgbaImage::from_pixel(1, 1, Rgba([128, 128, 128, 255])), false),
+    }
+}
+
+/// A run of model vertices with one texture: the texture, whether its faces are drawn from both sides, the range.
+type ModelDraw = (usize, bool, Range<u32>);
 
 /// An RSM 2 instance whose tracks play: its model, where it stands, its clock, and its triangles' order (by texture)
 /// and draws in the animated buffer.
 pub struct Animated {
     rsm: std::rc::Rc<Rsm>,
     placement: model::Matrix,
-    color: [f32; 4],
+    mirror: bool,
+    /// Its RSW 2.6 flag: its translucent texels all write depth.
+    depth_flag: bool,
     anim_type: i32,
     speed: f32,
     start: Option<std::time::Instant>,
+    /// RSM 1: its frame and the 16 ms tick it was last stepped at; its ordered triangles' corner colours, baked at
+    /// frame 0 (its light isn't redone while it moves).
+    frame: i32,
+    tick: Option<u64>,
+    colors: Vec<[[f32; 4]; 3]>,
     order: Vec<usize>,
-    /// The texture and vertex count of each run of its ordered triangles, then those runs' places in the buffer.
-    runs: Vec<(usize, u32)>,
-    draws: Vec<(usize, Range<u32>)>,
+    /// The texture, sidedness and vertex count of each run of its ordered triangles, then those runs' draws.
+    runs: Vec<(usize, bool, u32)>,
+    draws: Vec<ModelDraw>,
 }
 
 impl World {
     /// How many RSM 2 instances move on this map.
     pub fn rsm_2_moving(&self) -> usize {
-        self.animated.len()
+        self.animated.iter().filter(|instance| instance.rsm.version >= (2, 0)).count()
     }
 
-    /// Poses the moving RSM 2 models for `now`: each on its own clock (started the first time it's drawn), instances of
-    /// a model at the same frame posed once.
+    /// How many RSM 1 instances move on this map.
+    pub fn rsm_1_moving(&self) -> usize {
+        self.animated.len() - self.rsm_2_moving()
+    }
+
+    /// Poses the moving models for `now`, instances of a model at the same frame posed once. RSM 2 runs on its own
+    /// clock (started the first time it's drawn); RSM 1 steps its frame once per drawn frame in which a 16 ms tick
+    /// passed (`model::rsm1_step`) and keeps its frame-0 light.
     pub fn animate(&mut self, gpu: &Gpu, now: std::time::Instant) {
         let Some(buffer) = &self.animated_buffer else { return };
         let mut vertices = Vec::new();
         let mut posed: HashMap<(*const Rsm, u32), Vec<model::Triangle>> = HashMap::new();
+        let tick = crate::whole_ms(now) / 16;
         for instance in &mut self.animated {
-            let start = *instance.start.get_or_insert(now);
-            let elapsed = now.saturating_duration_since(start).as_millis() as u64;
-            let (frame, again) = model::clock(elapsed, instance.speed, instance.anim_type, instance.rsm.frames, instance.rsm.fps);
-            if again {
-                instance.start = Some(now);
-            }
+            let frame = if instance.rsm.version >= (2, 0) {
+                let start = *instance.start.get_or_insert(now);
+                let elapsed = now.saturating_duration_since(start).as_millis() as u64;
+                let (frame, again) = model::clock(elapsed, instance.speed, instance.anim_type, instance.rsm.frames, instance.rsm.fps);
+                if again {
+                    instance.start = Some(now);
+                }
+                frame
+            } else {
+                if instance.tick.is_some_and(|last| tick > last) {
+                    instance.frame = model::rsm1_step(instance.frame, instance.speed, instance.anim_type, instance.rsm.frames);
+                }
+                instance.tick = Some(tick);
+                instance.frame as f32
+            };
             let triangles = posed.entry((std::rc::Rc::as_ptr(&instance.rsm), frame.to_bits())).or_insert_with(|| instance.rsm.triangles_at(frame));
-            for &triangle in &instance.order {
-                if let Some(triangle) = triangles.get(triangle) {
-                    vertices.extend(placed_vertices(&instance.placement, instance.color, triangle));
+            for (place, &triangle) in instance.order.iter().enumerate() {
+                if let (Some(triangle), Some(&colors)) = (triangles.get(triangle), instance.colors.get(place)) {
+                    vertices.extend(placed_vertices(&instance.placement, colors, triangle, instance.mirror));
                 }
             }
         }
@@ -1879,29 +2061,71 @@ fn placement(instance: &rustnarok_client::map::Model, half: [f32; 2]) -> model::
     .fold(model::IDENTITY, |matrix, next| model::multiply(&matrix, next))
 }
 
-fn model_color([r, g, b]: [u8; 3]) -> [f32; 4] {
-    [f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0, 1.0]
+/// The sun in model space (y down): (sin lat · sin lon, cos lat, sin lat · cos lon), with the map's diffuse and
+/// ambient.
+#[derive(Clone, Copy)]
+struct ModelLight {
+    direction: Vector,
+    diffuse: [f32; 3],
+    ambient: [f32; 3],
 }
 
-/// A triangle's three vertices placed in the world (y up), with its face normal and the instance's colour.
-fn placed_vertices(placement: &model::Matrix, color: [f32; 4], triangle: &model::Triangle) -> [GroundVertex; 3] {
+impl ModelLight {
+    fn of(light: &rustnarok_client::map::Light) -> Self {
+        let (longitude, latitude) = ((light.longitude as f32).to_radians(), (light.latitude as f32).to_radians());
+        let direction = [latitude.sin() * longitude.sin(), latitude.cos(), latitude.sin() * longitude.cos()];
+        Self { direction, diffuse: light.diffuse, ambient: light.ambient }
+    }
+}
+
+/// A triangle's corner colours, baked once: shade 0 the tint; else d = max(0, n′ · L) with n′ the corner's normal under
+/// the instance (normalized), c = min(1, d · diffuse + ambient) and trunc(min(255, c · tint)) per channel. A corner
+/// turned away gets the ambient only.
+fn corner_colors(shade: i32, triangle: &model::Triangle, placement: &model::Matrix, light: ModelLight, tint: [u8; 3]) -> [[f32; 4]; 3] {
+    triangle.normals.map(|normal| {
+        let rgb: [f32; 3] = std::array::from_fn(|channel| {
+            let tint = f32::from(tint[channel]);
+            if shade == 0 {
+                return tint / 255.0;
+            }
+            let turned = normalize(model::direction(placement, normal));
+            let d = dot(turned, light.direction).max(0.0);
+            let c = (d * light.diffuse[channel] + light.ambient[channel]).min(1.0);
+            (c * tint).min(255.0).trunc() / 255.0
+        });
+        [rgb[0], rgb[1], rgb[2], 1.0]
+    })
+}
+
+/// Whether an instance is mirrored: an odd number of its scale's components is negative.
+fn mirrored(scale: [f32; 3]) -> bool {
+    scale.iter().filter(|&&value| value < 0.0).count() % 2 == 1
+}
+
+/// A triangle's three vertices placed in the world (y up), with its face normal and baked corner colours. A mirrored
+/// instance's corners go the other way round, so its one-sided faces still show their front.
+fn placed_vertices(placement: &model::Matrix, colors: [[f32; 4]; 3], triangle: &model::Triangle, mirror: bool) -> [GroundVertex; 3] {
     // Native space has Y down; the world has Y up.
     let positions = triangle.positions.map(|position| {
         let [x, y, z] = model::transform(placement, position);
         [x, -y, z]
     });
     let normal = normalize(cross(subtract(positions[1], positions[0]), subtract(positions[2], positions[0])));
-    std::array::from_fn(|corner| GroundVertex { position: positions[corner], normal, uv: triangle.uvs[corner], lightmap_uv: [0.0; 2], color })
+    let corners = if mirror { [0, 2, 1] } else { [0, 1, 2] };
+    corners.map(|corner| GroundVertex { position: positions[corner], normal, uv: triangle.uvs[corner], lightmap_uv: [0.0; 2], color: colors[corner] })
 }
 
-fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
+fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd, alpha_of: &mut impl FnMut(&str) -> bool) -> ModelMesh {
     let mut texture_index: HashMap<String, usize> = HashMap::new();
-    let mut per_texture: Vec<Vec<GroundVertex>> = Vec::new();
+    // Per texture, its one-sided and its two-sided faces' vertices.
+    let mut per_texture: Vec<[Vec<GroundVertex>; 2]> = Vec::new();
     let mut models: HashMap<&str, Option<LoadedModel>> = HashMap::new();
     // RSW positions are relative to the map's center.
     let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
+    let light = ModelLight::of(&rsw.light);
     let mut rsm_2 = 0;
     let mut animated = Vec::new();
+    let mut translucent: Vec<Translucent> = Vec::new();
 
     for instance in &rsw.models {
         let entry = models.entry(instance.file.as_str()).or_insert_with(|| {
@@ -1913,44 +2137,68 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
         rsm_2 += usize::from(rsm.version >= (2, 0));
 
         let placement = placement(instance, half);
-        let color = model_color(instance.tint);
+        let mirror = mirrored(instance.scale);
 
-        let mut texture_of = |name: &String, per_texture: &mut Vec<Vec<GroundVertex>>| {
+        let mut texture_of = |name: &String, per_texture: &mut Vec<[Vec<GroundVertex>; 2]>| {
             *texture_index.entry(name.clone()).or_insert_with(|| {
-                per_texture.push(Vec::new());
+                per_texture.push([Vec::new(), Vec::new()]);
                 per_texture.len() - 1
             })
         };
-        // RSM 2 that plays (a type and tracks that move) is posed again each frame, in a buffer of its own.
+        // A model that plays (a type and something that moves) is posed again each frame, in a buffer of its own; its
+        // light stays as at frame 0.
         if instance.anim_type != 0 && rsm.animated() {
             let textures: Vec<usize> = rsm.textures.iter().map(|name| texture_of(name, &mut per_texture)).collect();
+            let key = |triangle: &model::Triangle| (textures[triangle.texture], triangle.two_sided);
             let mut order: Vec<usize> = (0..triangles.len()).collect();
-            order.sort_by_key(|&triangle| textures[triangles[triangle].texture]);
-            let mut runs: Vec<(usize, u32)> = Vec::new();
+            order.sort_by_key(|&triangle| key(&triangles[triangle]));
+            let mut runs: Vec<(usize, bool, u32)> = Vec::new();
             for &triangle in &order {
-                let texture = textures[triangles[triangle].texture];
+                let (texture, two_sided) = key(&triangles[triangle]);
                 match runs.last_mut() {
-                    Some((last, count)) if *last == texture => *count += 3,
-                    _ => runs.push((texture, 3)),
+                    Some((last, sided, count)) if *last == texture && *sided == two_sided => *count += 3,
+                    _ => runs.push((texture, two_sided, 3)),
                 }
             }
+            let still = if rsm.version >= (2, 0) { rsm.triangles() } else { rsm.triangles_at(0.0) };
+            let colors = order
+                .iter()
+                .filter_map(|&triangle| still.get(triangle))
+                .map(|triangle| corner_colors(rsm.shade, triangle, &placement, light, instance.tint))
+                .collect();
             animated.push(Animated {
                 rsm: rsm.clone(),
                 placement,
-                color,
+                mirror,
+                depth_flag: instance.depth_flag,
                 anim_type: instance.anim_type,
                 speed: instance.anim_speed,
                 start: None,
+                frame: 0,
+                tick: None,
+                colors,
                 order,
                 runs,
                 draws: Vec::new(),
             });
             continue;
         }
+        // Triangles with a translucent texture go in this instance's own batch of that texture.
+        let mut own: HashMap<(usize, bool), Vec<GroundVertex>> = HashMap::new();
         for triangle in triangles.iter() {
-            let texture = texture_of(&rsm.textures[triangle.texture], &mut per_texture);
-            per_texture[texture].extend(placed_vertices(&placement, color, triangle));
+            let name = &rsm.textures[triangle.texture];
+            let texture = texture_of(name, &mut per_texture);
+            let colors = corner_colors(rsm.shade, triangle, &placement, light, instance.tint);
+            let placed = placed_vertices(&placement, colors, triangle, mirror);
+            if alpha_of(name) {
+                own.entry((texture, triangle.two_sided)).or_default().extend(placed);
+            } else {
+                per_texture[texture][usize::from(triangle.two_sided)].extend(placed);
+            }
         }
+        let mut own: Vec<_> = own.into_iter().collect();
+        own.sort_by_key(|(key, _)| *key);
+        translucent.extend(own.into_iter().map(|((texture, two_sided), vertices)| (texture, two_sided, instance.depth_flag, vertices)));
     }
 
     let mut names = vec![String::new(); texture_index.len()];
@@ -1959,12 +2207,17 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
     }
     let mut vertices = Vec::new();
     let mut draws = Vec::new();
-    for (texture, triangles) in per_texture.into_iter().enumerate() {
-        let start = vertices.len() as u32;
-        vertices.extend(triangles);
-        draws.push((texture, start..vertices.len() as u32));
+    for (texture, sides) in per_texture.into_iter().enumerate() {
+        for (two_sided, triangles) in [false, true].into_iter().zip(sides) {
+            if triangles.is_empty() {
+                continue;
+            }
+            let start = vertices.len() as u32;
+            vertices.extend(triangles);
+            draws.push((texture, two_sided, start..vertices.len() as u32));
+        }
     }
-    (vertices, draws, names, rsm_2, animated)
+    (vertices, draws, names, rsm_2, animated, translucent)
 }
 
 /// A walk's path: the search with the game's 149-node limit.
@@ -2259,16 +2512,60 @@ mod tests {
             anim_type: 0,
             anim_speed: 1.0,
             tint: [0x33, 0x66, 0x99],
+            depth_flag: false,
         };
         let matrix = placement(&instance, [100.0, 200.0]);
         let flipped = [2.0, 1.0, 0.0];
         let [x, y, z] = model::transform(&matrix, flipped);
         assert!((x - 110.0).abs() < 1e-3 && (y - 2.0).abs() < 1e-3 && (z - 216.0).abs() < 1e-3, "{x} {y} {z}");
         // In the world (y up) it stands 2 below the native y, as every model does, and takes the instance's tint.
-        let triangle = model::Triangle { texture: 0, positions: [flipped; 3], uvs: [[0.0; 2]; 3] };
-        let vertex = placed_vertices(&matrix, model_color(instance.tint), &triangle)[0];
+        let triangle = model::Triangle { texture: 0, positions: [flipped; 3], uvs: [[0.0; 2]; 3], normals: [[0.0, 1.0, 0.0]; 3], two_sided: false };
+        let light = ModelLight { direction: [0.0, 1.0, 0.0], diffuse: [1.0; 3], ambient: [0.3; 3] };
+        let vertex = placed_vertices(&matrix, corner_colors(0, &triangle, &matrix, light, instance.tint), &triangle, false)[0];
         assert_eq!(vertex.position[1], -y);
         assert_eq!(vertex.color, [0x33 as f32 / 255.0, 0x66 as f32 / 255.0, 0x99 as f32 / 255.0, 1.0]);
+    }
+
+    #[test]
+    fn bakes_model_corners_by_shade_and_light() {
+        let light = ModelLight { direction: [0.0, 1.0, 0.0], diffuse: [0.5; 3], ambient: [0.3; 3] };
+        let triangle = |normal: Vector| model::Triangle { texture: 0, positions: [[0.0; 3]; 3], uvs: [[0.0; 2]; 3], normals: [normal; 3], two_sided: false };
+        let byte = |colors: [[f32; 4]; 3]| (colors[0][0] * 255.0).round() as u8;
+        // Shade 0: the tint, no light.
+        assert_eq!(byte(corner_colors(0, &triangle([0.0, -1.0, 0.0]), &model::IDENTITY, light, [200; 3])), 200);
+        // Facing the light: min(1, 0.5 + 0.3) × 255 = 204; turned away: the ambient only, trunc(0.3 × 255) = 76.
+        assert_eq!(byte(corner_colors(1, &triangle([0.0, 2.0, 0.0]), &model::IDENTITY, light, [255; 3])), 204);
+        assert_eq!(byte(corner_colors(2, &triangle([0.0, -1.0, 0.0]), &model::IDENTITY, light, [255; 3])), 76);
+        // The tint scales it: trunc(0.8 × 100) = 80.
+        assert_eq!(byte(corner_colors(1, &triangle([0.0, 1.0, 0.0]), &model::IDENTITY, light, [100; 3])), 80);
+        // Mirrored by an odd count of negative scales; its corners go the other way round.
+        assert!(mirrored([-1.0, 1.0, 1.0]) && !mirrored([-1.0, -1.0, 1.0]) && !mirrored([1.0; 3]) && mirrored([-1.0; 3]));
+        let mut corners = triangle([0.0, 1.0, 0.0]);
+        corners.positions = [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let colors = [[0.0; 4]; 3];
+        let ([_, plain, _], [_, flipped, _]) =
+            (placed_vertices(&model::IDENTITY, colors, &corners, false), placed_vertices(&model::IDENTITY, colors, &corners, true));
+        assert_eq!((plain.position, flipped.position), ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0]));
+    }
+
+    #[test]
+    fn blends_textures_with_their_own_alpha_after_the_sprites() {
+        // Only exactly #FF00FF is keyed, whatever its alpha.
+        let keyed =
+            key_out_magenta(RgbaImage::from_fn(3, 1, |x, _| Rgba([[0xFF, 0x00, 0xFF, 0x80], [0xFE, 0x00, 0xFE, 0xFF], [0xFF, 0x03, 0xFF, 0xFF]][x as usize])));
+        assert_eq!(keyed.pixels().map(|pixel| pixel.0[3]).collect::<Vec<_>>(), [0, 0xFF, 0xFF]);
+        // Translucent when the image has an alpha channel of its own (a TGA), opaque otherwise (a BMP).
+        assert!(image::DynamicImage::new_rgba8(1, 1).color().has_alpha() && !image::DynamicImage::new_rgb8(1, 1).color().has_alpha());
+        // The passes by the translucency byte and the 2.6 flag.
+        assert_eq!(blend_passes(true, false), [BlendPass::Solid, BlendPass::Soft]);
+        assert_eq!(blend_passes(true, true), [BlendPass::AnyDepth]);
+        assert_eq!(blend_passes(false, false), [BlendPass::Any]);
+        assert_eq!(blend_passes(false, true), [BlendPass::AnyDepth]);
+        assert_eq!([BlendPass::Solid, BlendPass::Soft].map(|pass| pass.look().1), [true, false]);
+        // Back to front by depth.
+        let mut depths = vec![3.0, 9.0, 1.0, 5.0];
+        back_to_front(&mut depths, |depth| *depth);
+        assert_eq!(depths, [9.0, 5.0, 3.0, 1.0]);
     }
 
     #[test]

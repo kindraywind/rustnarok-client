@@ -1064,6 +1064,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.memorial.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.storage_log.iter().flat_map(crate::storage_log::Log::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::item_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.cashshop.iter().flat_map(crate::cashshop::CashShop::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
@@ -1092,7 +1093,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(
             app.assets
                 .as_ref()
-                .map(|assets| game.storage.button_boxes(&assets.storage, &app.items))
+                .map(|assets| game.storage.button_boxes(&assets.storage, &app.items, (&app.messages[..], &app.card_names, &game.char_names)))
                 .unwrap_or_default()
                 .into_iter()
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
@@ -1634,6 +1635,11 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The RSM 2 model instances standing on the map.
     state["rsm2_models"] = game.world.rsm_2_models.into();
     state["rsm2_moving"] = game.world.rsm_2_moving().into();
+    state["rsm1_moving"] = game.world.rsm_1_moving().into();
+    // The map's effect objects on timers, and how many times they've fired.
+    state["map_effect_timers"] = game.world.map_effects.timers.len().into();
+    state["map_effects_fired"] = game.world.map_effects.fired.into();
+    state["map_effect_fired_ms_ago"] = game.world.map_effects.last_fired.map(|at| crate::whole_ms(self::now()).saturating_sub(at)).into();
     // The way the character faced on entering the map server (it faces so again after a warp).
     state["entered_facing"] = game.entered_facing.into();
     // The skill units on the ground standing as models (their UNT_ numbers).
@@ -1661,6 +1667,21 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["sounds_recent"] = recent_sounds().into();
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
     state["storage_rows"] = game.storage.rows().into();
+    // The guild storage log: null when shut, else its place, tab, page and how many it lists.
+    state["storage_log"] = game
+        .storage_log
+        .as_ref()
+        .map_or(Value::Null, |log| json!({"position": log.position, "tab": format!("{:?}", log.tab), "page": log.page_text(), "listed": log.listed().len()}));
+    // The category windows that are on (a bit each, Use first) and those open now.
+    state["storage_mask"] = game.storage.mask.into();
+    // The main window's list in its order, and the Search window's, by item id; what's typed in the box.
+    let names = (&app.messages[..], &app.card_names, &game.char_names);
+    state["storage_list"] = game.storage.shown(&app.items, names).into();
+    let found = game.storage.search_window.frame.open.then(|| game.storage.list(crate::storage::List::Search, &app.items, names));
+    state["storage_found"] = found.unwrap_or_default().iter().map(|item| item.id).collect::<Vec<_>>().into();
+    state["storage_box_text"] = game.storage.search.clone().into();
+    state["storage_categories_open"] =
+        game.storage.categories.iter().enumerate().filter(|(_, category)| category.frame.open).map(|(tab, _)| tab).collect::<Vec<_>>().into();
     state["storage_title"] = game.storage.name.clone().into();
     state["skill_list_rows"] = game.skill_window.list_rows().into();
     state["vend_size"] = json!({"width": game.vend_size.width, "rows": game.vend_size.rows});

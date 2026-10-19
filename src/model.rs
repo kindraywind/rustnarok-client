@@ -3,6 +3,7 @@
 //! Layouts and node transforms follow the public format documentation.
 //! Coordinates stay in the files' native space here (Y down); the world flips Y.
 
+use std::collections::HashMap;
 use std::io;
 
 /// Column-major 4x4 matrix.
@@ -111,8 +112,11 @@ impl<'a> Reader<'a> {
 pub struct Face {
     pub vertices: [u16; 3],
     pub uvs: [u16; 3],
-    /// Index into the node's texture list.
+    /// Index into the node's texture list (wrapped by its length).
     pub texture: u16,
+    /// Drawn from both sides; and the smoothing group its corners' normals are shared in (RSM 1.2+, else 0).
+    pub two_sided: bool,
+    pub smoothing: i32,
 }
 
 pub struct Node {
@@ -129,9 +133,10 @@ pub struct Node {
     pub vertices: Vec<Vector>,
     pub uvs: Vec<[f32; 2]>,
     pub faces: Vec<Face>,
-    /// First rotation keyframe, which replaces the static rotation (RSM 1 isn't played yet).
+    /// First rotation keyframe, which replaces the static rotation when the model is drawn still.
     pub keyframe_rotation: Option<[f32; 4]>,
-    /// RSM 2's tracks, by frame: scale, rotation, position, and the texture coordinate tracks.
+    /// The tracks, by frame: scale, rotation, position, and the texture coordinate tracks (RSM 2); RSM 1 has its
+    /// rotation keys only.
     pub tracks: Tracks,
 }
 
@@ -209,6 +214,85 @@ fn moved_uv([u, v]: [f32; 2], kind: i32, value: f32) -> [f32; 2] {
     }
 }
 
+/// A face's normal from its corners (y down): normalize((v1 − v2) × (v0 − v2)), which points down (+y) on a face
+/// that looks up.
+fn face_normal([v0, v1, v2]: [Vector; 3]) -> Vector {
+    let (a, b) = (std::array::from_fn(|axis| v1[axis] - v2[axis]), std::array::from_fn(|axis| v0[axis] - v2[axis]));
+    normalized(cross(a, b))
+}
+
+/// Each face's corner normals in the node's own space (after its offset matrix and offset translation): shade 1 the
+/// face's normal on all three; otherwise (2, and any other) the sum of the normals of the node's faces sharing that
+/// vertex and smoothing group, normalized. Shade 0 isn't lit, so its normals don't matter.
+fn corner_normals(node: &Node, own: &Matrix, shade: i32) -> Vec<[Vector; 3]> {
+    let points: Vec<Vector> = node.vertices.iter().map(|&point| transform(own, point)).collect();
+    let corners = |face: &Face| face.vertices.map(|vertex| points.get(usize::from(vertex)).copied().unwrap_or_default());
+    let faces: Vec<Vector> = node.faces.iter().map(|face| face_normal(corners(face))).collect();
+    if shade == 1 {
+        return faces.iter().map(|&normal| [normal; 3]).collect();
+    }
+    let mut shared: HashMap<(u16, i32), Vector> = HashMap::new();
+    for (face, normal) in node.faces.iter().zip(&faces) {
+        for vertex in face.vertices {
+            let sum = shared.entry((vertex, face.smoothing)).or_default();
+            *sum = std::array::from_fn(|axis| sum[axis] + normal[axis]);
+        }
+    }
+    node.faces.iter().map(|face| face.vertices.map(|vertex| normalized(shared[&(vertex, face.smoothing)]))).collect()
+}
+
+fn cross(a: Vector, b: Vector) -> Vector {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+fn normalized(vector: Vector) -> Vector {
+    let length = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+    if length > 0.0 { vector.map(|value| value / length) } else { vector }
+}
+
+/// A direction under a matrix's 3 × 3 part (scale included, no inverse transpose).
+pub fn direction(matrix: &Matrix, vector: Vector) -> Vector {
+    [0, 1, 2].map(|row| matrix[0][row] * vector[0] + matrix[1][row] * vector[1] + matrix[2][row] * vector[2])
+}
+
+/// The shift that puts triangles' bounding box centre (x, z) and bottom (max y, as y points down) on the origin.
+fn bottom_centre(triangles: &[Triangle]) -> Vector {
+    let mut minimum = [f32::MAX; 3];
+    let mut maximum = [f32::MIN; 3];
+    for position in triangles.iter().flat_map(|triangle| triangle.positions) {
+        for axis in 0..3 {
+            minimum[axis] = minimum[axis].min(position[axis]);
+            maximum[axis] = maximum[axis].max(position[axis]);
+        }
+    }
+    [-(minimum[0] + maximum[0]) / 2.0, -maximum[1], -(minimum[2] + maximum[2]) / 2.0]
+}
+
+/// An RSM 1 node's rotation at `frame`: its one key; else between the first key i ≥ 1 later than the frame and the one
+/// before it (shortest arc; before key 0 that's keys 0 and 1 with a negative fraction); past the last key, none.
+pub fn rsm1_rotation(keys: &[(i32, [f32; 4])], frame: f32) -> [f32; 4] {
+    if let [(_, only)] = keys {
+        return *only;
+    }
+    let Some(next) = keys.iter().skip(1).position(|&(at, _)| at as f32 > frame).map(|index| index + 1) else { return [0.0, 0.0, 0.0, 1.0] };
+    let (from, to) = (keys[next - 1], keys[next]);
+    let span = (to.0 - from.0) as f32;
+    slerp(from.1, to.1, if span == 0.0 { 0.0 } else { (frame - from.0 as f32) / span })
+}
+
+/// An RSM 1 instance's next frame, stepped once per rendered frame in which a 16 ms tick passed: trunc(frame +
+/// speed / 3 × 100), +33 at speed 1. Type 2 starts again from 0 at the length, type 1 holds at length − 1, any other
+/// stays at 0.
+pub fn rsm1_step(frame: i32, speed: f32, anim_type: i32, length: i32) -> i32 {
+    let next = (frame as f32 + speed / 3.0 * 100.0).trunc() as i32;
+    match anim_type {
+        2 if next >= length => 0,
+        2 => next,
+        1 => next.min((length - 1).max(0)),
+        _ => 0,
+    }
+}
+
 /// The frame an RSM 2 instance shows `elapsed_ms` after its clock started, and whether its loop starts over now:
 /// t = elapsed × speed (whole), a length of frames × 1 000 / fps ms; type 2 starts again from 0 at the length, type 1
 /// holds at length − 1, any other stays at 0. Tracks are read at t × fps / 1 000.
@@ -230,16 +314,23 @@ pub struct Rsm {
     pub textures: Vec<String>,
     pub root: String,
     pub nodes: Vec<Node>,
-    /// RSM 2's animation: its length in frames, and frames a second.
+    /// The animation's length in frames (RSM 1's header, RSM 2's), and RSM 2's frames a second.
     pub frames: i32,
     pub fps: f32,
+    /// How its light is baked: 0 none (the tint), 1 flat (a face's normal), 2 smooth (normals shared by group).
+    pub shade: i32,
+    /// RSM 1: the shift that puts its frame-0 pose's bottom centre on the origin, kept while it moves.
+    centre: std::cell::OnceCell<Vector>,
 }
 
-/// A model triangle in model space (Y down, bottom center at the origin), with its texture name index.
+/// A model triangle in model space (Y down, bottom center at the origin), with its texture name index, its corners'
+/// normals (by the shade type, turned by its node, not yet normalized) and whether it's drawn from both sides.
 pub struct Triangle {
     pub texture: usize,
     pub positions: [Vector; 3],
     pub uvs: [[f32; 2]; 3],
+    pub normals: [Vector; 3],
+    pub two_sided: bool,
 }
 
 impl Rsm {
@@ -252,8 +343,8 @@ impl Rsm {
         if version >= (2, 0) {
             return Self::parse_2(&mut reader, version);
         }
-        reader.i32()?; // animation length
-        reader.i32()?; // shade type
+        let length = reader.i32()?;
+        let shade = reader.i32()?;
         if version >= (1, 4) {
             reader.take(1)?; // alpha
         }
@@ -293,22 +384,20 @@ impl Rsm {
                 let uvs = [reader.u16()?, reader.u16()?, reader.u16()?];
                 let texture = reader.u16()?;
                 reader.u16()?; // padding
-                reader.i32()?; // two-sided
-                if version >= (1, 2) {
-                    reader.i32()?; // smoothing group
-                }
-                faces.push(Face { vertices, uvs, texture });
+                let two_sided = reader.i32()? != 0;
+                let smoothing = if version >= (1, 2) { reader.i32()? } else { 0 };
+                faces.push(Face { vertices, uvs, texture, two_sided, smoothing });
             }
             if version >= (1, 6) {
                 let count = reader.count()?;
                 reader.take(count * 20)?; // scale keyframes
             }
-            let mut keyframe_rotation = None;
+            let mut rotations = Vec::new();
             for _ in 0..reader.count()? {
-                reader.i32()?; // frame
-                let rotation = [reader.f32()?, reader.f32()?, reader.f32()?, reader.f32()?];
-                keyframe_rotation.get_or_insert(rotation);
+                let frame = reader.i32()?;
+                rotations.push((frame, [reader.f32()?, reader.f32()?, reader.f32()?, reader.f32()?]));
             }
+            let keyframe_rotation = rotations.first().map(|&(_, rotation)| rotation);
             nodes.push(Node {
                 name,
                 parent,
@@ -323,10 +412,10 @@ impl Rsm {
                 uvs,
                 faces,
                 keyframe_rotation,
-                tracks: Tracks::default(),
+                tracks: Tracks { rotation: rotations, ..Tracks::default() },
             });
         }
-        Ok(Self { version, textures, root, nodes, frames: 0, fps: 0.0 })
+        Ok(Self { version, textures, root, nodes, frames: length, fps: 0.0, shade, centre: Default::default() })
     }
 
     /// RSM 2.2 and 2.3 (`.rsm2`). Strings carry their length; 2.2 lists the textures once and nodes point into the
@@ -340,7 +429,7 @@ impl Rsm {
             return Err(io::Error::new(io::ErrorKind::Unsupported, format!("RSM {}.{} isn't supported yet", version.0, version.1)));
         }
         let frames = reader.i32()?;
-        reader.i32()?; // shade type
+        let shade = reader.i32()?;
         reader.take(1)?; // alpha
         let fps = reader.f32()?;
         let mut textures: Vec<String> = Vec::new();
@@ -389,8 +478,9 @@ impl Rsm {
                 let uvs = [reader.u16()?, reader.u16()?, reader.u16()?];
                 let texture = reader.u16()?;
                 // Padding, two-sided, the smoothing groups.
+                // ponytail: RSM 2 faces draw from both sides and smooth as one group, as before.
                 reader.take(length.saturating_sub(14))?;
-                faces.push(Face { vertices, uvs, texture });
+                faces.push(Face { vertices, uvs, texture, two_sided: true, smoothing: 0 });
             }
             // Keys: a frame, then the scale or the position and a word, or the rotation as a quaternion.
             let mut tracks = Tracks::default();
@@ -440,7 +530,7 @@ impl Rsm {
             });
         }
         let root = roots.into_iter().next().unwrap_or_default();
-        Ok(Self { version, textures, root, nodes, frames, fps })
+        Ok(Self { version, textures, root, nodes, frames, fps, shade, centre: Default::default() })
     }
 
     /// All triangles in model space (y down), with the model's bottom center at the origin for RSM 1; RSM 2 keeps the
@@ -449,19 +539,24 @@ impl Rsm {
         self.posed(None)
     }
 
-    /// RSM 2: whether anything in it moves.
+    /// Whether anything in it moves: RSM 2's tracks, or RSM 1 with a length and a node with more than one rotation key.
     pub fn animated(&self) -> bool {
-        self.version >= (2, 0) && self.nodes.iter().any(|node| node.tracks.moves())
+        match self.version >= (2, 0) {
+            true => self.nodes.iter().any(|node| node.tracks.moves()),
+            false => self.frames > 0 && self.nodes.iter().any(|node| node.tracks.rotation.len() > 1),
+        }
     }
 
-    /// RSM 2's triangles at a (fractional) frame of its tracks.
+    /// The triangles at a (fractional) frame of its tracks (RSM 1: of its rotation keys, centred as at frame 0).
     pub fn triangles_at(&self, frame: f32) -> Vec<Triangle> {
         self.posed(Some(frame))
     }
 
     fn posed(&self, frame: Option<f32>) -> Vec<Triangle> {
         let mut triangles = Vec::new();
-        let Some(root) = self.nodes.iter().position(|node| node.name == self.root).or((!self.nodes.is_empty()).then_some(0)) else {
+        // RSM 1's root is the first node in the list, whatever the header names.
+        let named = if self.version >= (2, 0) { self.nodes.iter().position(|node| node.name == self.root) } else { None };
+        let Some(root) = named.or((!self.nodes.is_empty()).then_some(0)) else {
             return triangles;
         };
         let mut visited = vec![false; self.nodes.len()];
@@ -473,16 +568,16 @@ impl Rsm {
             return triangles;
         }
 
-        // RSM 1: center X/Z on the bounding box and put its bottom (max Y, since Y points down) at 0.
-        let mut minimum = [f32::MAX; 3];
-        let mut maximum = [f32::MIN; 3];
-        for position in triangles.iter().flat_map(|triangle| triangle.positions) {
-            for axis in 0..3 {
-                minimum[axis] = minimum[axis].min(position[axis]);
-                maximum[axis] = maximum[axis].max(position[axis]);
-            }
-        }
-        let shift = [-(minimum[0] + maximum[0]) / 2.0, -maximum[1], -(minimum[2] + maximum[2]) / 2.0];
+        // RSM 1: center X/Z on the bounding box and put its bottom (max Y, since Y points down) at 0; a moving one keeps
+        // its frame-0 pose's centring.
+        let shift = match frame {
+            Some(_) => *self.centre.get_or_init(|| {
+                let mut still = Vec::new();
+                self.collect(root, &IDENTITY, Some(0.0), &mut vec![false; self.nodes.len()], &mut still);
+                bottom_centre(&still)
+            }),
+            None => bottom_centre(&triangles),
+        };
         for position in triangles.iter_mut().flat_map(|triangle| triangle.positions.iter_mut()) {
             *position = [position[0] + shift[0], position[1] + shift[1], position[2] + shift[2]];
         }
@@ -500,18 +595,22 @@ impl Rsm {
             (scale, rotation, position)
         });
         let keyframe_rotation = tracks.and_then(|(_, rotation, _)| rotation).or(node.keyframe_rotation);
-        let rotation_matrix = match keyframe_rotation {
-            Some(rotation) => quaternion(rotation),
-            None => rotation(node.rotation_axis, node.rotation_angle),
+        let rotation_matrix = match (self.version >= (2, 0), frame, keyframe_rotation) {
+            // RSM 1 playing: its keys at the frame (identity past the last); a node without keys turns by its axis.
+            (false, Some(frame), Some(_)) => quaternion(rsm1_rotation(&node.tracks.rotation, frame)),
+            (_, _, Some(rotation)) => quaternion(rotation),
+            (_, _, None) => rotation(node.rotation_axis, node.rotation_angle),
         };
         let node_scale = tracks.and_then(|(scale, ..)| scale).unwrap_or(node.scale);
         let node_place = tracks.and_then(|(.., position)| position).unwrap_or(node.translation2);
         // Children inherit translation2 · rotation · scale; translation1 · offset only moves this node's vertices.
         let inherited = multiply(parent, &multiply(&translation(node_place), &multiply(&rotation_matrix, &scaling(node_scale))));
-        let local = multiply(&inherited, &multiply(&translation(node.translation1), &node.offset));
+        let own = multiply(&translation(node.translation1), &node.offset);
+        let local = multiply(&inherited, &own);
+        let normals = corner_normals(node, &own, self.shade);
 
-        for face in &node.faces {
-            let Some(texture) = node.textures.get(usize::from(face.texture)).copied() else { continue };
+        for (number, face) in node.faces.iter().enumerate() {
+            let Some(texture) = node.textures.get(usize::from(face.texture) % node.textures.len().max(1)).copied() else { continue };
             let positions = face.vertices.map(|vertex| node.vertices.get(usize::from(vertex)).map(|&point| transform(&local, point)));
             let mut uvs = face.uvs.map(|uv| node.uvs.get(usize::from(uv)).copied().unwrap_or_default());
             if let Some(frame) = frame {
@@ -524,7 +623,8 @@ impl Rsm {
                 }
             }
             if let [Some(a), Some(b), Some(c)] = positions {
-                triangles.push(Triangle { texture, positions: [a, b, c], uvs });
+                let normals = normals[number].map(|normal| direction(&inherited, normal));
+                triangles.push(Triangle { texture, positions: [a, b, c], uvs, normals, two_sided: face.two_sided });
             }
         }
         for child in 0..self.nodes.len() {
@@ -538,6 +638,93 @@ impl Rsm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A node of two faces sharing vertex 0: one flat on y (its normal +y), one on x (+x), in smoothing groups `groups`.
+    fn two_faces(name: &str, parent: &str, groups: [i32; 2], textures: Vec<usize>, texture: u16) -> Node {
+        let face = |vertices, smoothing| Face { vertices, uvs: [0; 3], texture, two_sided: false, smoothing };
+        Node {
+            name: name.into(),
+            parent: parent.into(),
+            textures,
+            offset: IDENTITY,
+            translation1: [0.0; 3],
+            translation2: [0.0; 3],
+            rotation_angle: 0.0,
+            rotation_axis: [0.0, 1.0, 0.0],
+            scale: [1.0; 3],
+            vertices: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]],
+            uvs: vec![[0.0; 2]],
+            faces: vec![face([0, 1, 2], groups[0]), face([0, 2, 3], groups[1])],
+            keyframe_rotation: None,
+            tracks: Tracks::default(),
+        }
+    }
+
+    #[test]
+    fn shades_corners_flat_or_smooth_by_group() {
+        let node = two_faces("a", "", [1, 1], vec![0], 0);
+        // Flat: each face's own normal on its three corners.
+        let flat = corner_normals(&node, &IDENTITY, 1);
+        assert_eq!((flat[0], flat[1]), ([[0.0, 1.0, 0.0]; 3], [[1.0, 0.0, 0.0]; 3]));
+        // Smooth, one group: the shared corner takes both faces' normals; the others their own.
+        let smooth = corner_normals(&node, &IDENTITY, 2);
+        let both = [std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2, 0.0];
+        assert!(smooth[0][0].iter().zip(both).all(|(a, b)| (a - b).abs() < 1e-6) && smooth[0][1] == [0.0, 1.0, 0.0]);
+        // Two groups: nothing shared.
+        let apart = corner_normals(&two_faces("a", "", [1, 2], vec![0], 0), &IDENTITY, 2);
+        assert_eq!((apart[0][0], apart[1][0]), ([0.0, 1.0, 0.0], [1.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn roots_rsm_1_at_its_first_node_and_wraps_textures() {
+        // The header names the second node, a child of the first: the first is the root all the same, so both draw.
+        // A face's texture 3 of a list of two is the second.
+        let nodes = vec![two_faces("first", "", [0, 0], vec![0, 1], 3), two_faces("second", "first", [0, 0], vec![0], 0)];
+        let rsm = Rsm {
+            version: (1, 5),
+            textures: vec!["a".into(), "b".into()],
+            root: "second".into(),
+            nodes,
+            frames: 0,
+            fps: 0.0,
+            shade: 1,
+            centre: Default::default(),
+        };
+        let triangles = rsm.triangles();
+        assert_eq!(triangles.len(), 4);
+        assert_eq!(triangles.iter().filter(|triangle| triangle.texture == 1).count(), 2);
+    }
+
+    #[test]
+    fn steps_an_rsm_1_frame_by_its_type() {
+        use crate::map::anim_speed_of;
+        // +33 at speed 1; speeds 0 and 150 read as 1.
+        assert_eq!([0.0, 150.0, 2.5].map(anim_speed_of), [1.0, 1.0, 2.5]);
+        assert_eq!(rsm1_step(0, 1.0, 2, 1000), 33);
+        assert_eq!(rsm1_step(33, 2.0, 2, 1000), 99);
+        // Type 2 back to 0 at the length, type 1 holding at length − 1, type 0 (or any other) still.
+        assert_eq!(rsm1_step(980, 1.0, 2, 1000), 0);
+        assert_eq!(rsm1_step(980, 1.0, 1, 1000), 999);
+        assert_eq!((rsm1_step(500, 1.0, 0, 1000), rsm1_step(500, 1.0, 7, 1000)), (0, 0));
+    }
+
+    #[test]
+    fn turns_an_rsm_1_node_by_its_keys() {
+        let half_turn = [0.0, 1.0, 0.0, 0.0];
+        let still = [0.0, 0.0, 0.0, 1.0];
+        let close = |a: [f32; 4], b: [f32; 4]| a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-4);
+        // One key: that key, at any frame.
+        assert_eq!(rsm1_rotation(&[(500, half_turn)], 9_999.0), half_turn);
+        let keys = [(100, still), (300, half_turn)];
+        // Half-way: a quarter turn about y.
+        let quarter = [0.0, std::f32::consts::FRAC_1_SQRT_2, 0.0, std::f32::consts::FRAC_1_SQRT_2];
+        assert!(close(rsm1_rotation(&keys, 200.0), quarter), "{:?}", rsm1_rotation(&keys, 200.0));
+        // Before key 0: keys 0 and 1 with a negative fraction (−0.5 here), so a quarter turn the other way.
+        let before = rsm1_rotation(&keys, 0.0);
+        assert!(close(before, [0.0, -std::f32::consts::FRAC_1_SQRT_2, 0.0, std::f32::consts::FRAC_1_SQRT_2]), "{before:?}");
+        // At or past the last key: no rotation at all.
+        assert_eq!((rsm1_rotation(&keys, 300.0), rsm1_rotation(&keys, 115_100.0)), (still, still));
+    }
     use crate::grf::Grf;
     use crate::map::Rsw;
 

@@ -317,6 +317,11 @@ impl App {
         // The map's moving RSM 2 models, posed for now.
         game.world.animate(gpu, now);
         game.poll_booking();
+        // The map's own effects: those started at its load, then each on its timer while the player is near.
+        let near = actor::world_xz(game.player.position(now));
+        for (effect, at) in game.world.map_effects.due(crate::whole_ms(now), near) {
+            game.effects.play(gpu, grf, &self.effect_table, effect, effects::Target::Ground, at, now);
+        }
         // The map's ambient sounds, each on its cycle.
         if let Some(audio) = audio.as_mut() {
             let at = actor::world_xz(game.player.position(now));
@@ -1875,6 +1880,12 @@ impl App {
                     let names = (&messages[..], card_names, &game.char_names);
                     game.storage.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.storage, icons, items, names, font, pointer, caret);
                 }
+                Panel::StorageCategory(_) | Panel::StorageSearch => {
+                    let names = (&messages[..], card_names, &game.char_names);
+                    if let Some(which) = storage_list(id) {
+                        game.storage.draw_category(which, &mut layer, &mut tooltip, &assets.chrome, &assets.storage, icons, items, names, font, pointer.0);
+                    }
+                }
                 Panel::Equipment => game.equipment.draw(
                     &mut layer,
                     &mut tooltip,
@@ -2214,6 +2225,10 @@ impl App {
         }
         if game.memorial.frame.open {
             game.memorial.draw(shop_layer.window(), &assets.chrome, font, messages, pointer.0, memorial::unix_now());
+        }
+        if let Some(log) = &game.storage_log {
+            let names = (&messages[..], card_names, &game.char_names);
+            log.draw(shop_layer.window(), &assets.chrome, &assets.storage_log, items, names, font, pointer);
         }
         // The battleground queue, and its question: applying, leaving, or entering with the time left.
         if game.queue_window.frame.open {

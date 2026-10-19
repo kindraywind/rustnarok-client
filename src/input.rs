@@ -1616,11 +1616,19 @@ impl App {
                         _ => {}
                     },
                     Panel::Storage => {
-                        let hit = game.storage.hit(cursor, &assets.storage, &self.items);
-                        if hit.is_some_and(|hit| game.storage.click(hit)) {
+                        let names = (&self.messages[..], &self.card_names, &game.char_names);
+                        let hit = game.storage.hit(cursor, &assets.storage, &self.items, names);
+                        if hit.is_some_and(|hit| game.storage.click(hit, &self.items, names)) {
                             let _ = game.session.close_storage();
                         }
+                        // The search button with text: the Search window comes up with it, in front.
+                        if hit == Some(storage::Hit::Find) && game.storage.search() {
+                            game.raise(Panel::StorageSearch);
+                        }
+                        game.sync_esc();
                     }
+                    // Their presses act on the press.
+                    Panel::StorageCategory(_) | Panel::StorageSearch => {}
                     Panel::Skills => {
                         let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
                         let points = game.skill_points();
@@ -1761,6 +1769,11 @@ impl App {
             game.inventory.resize_to(self.cursor);
             game.cart.resize_to(self.cursor);
             game.storage.resize_to(self.cursor);
+            for category in &mut game.storage.categories {
+                category.resize_to(self.cursor);
+                let height = category.height();
+                category.frame.drag_to(self.cursor, height);
+            }
             game.skill_window.resize_to(self.cursor);
             if let Some(setup) = &mut game.vend_setup
                 && setup.resize_to(self.cursor)
@@ -1858,6 +1871,9 @@ impl App {
             }
             let memorial_height = game.memorial.height();
             game.memorial.frame.drag_to(self.cursor, memorial_height);
+            if let Some(log) = &mut game.storage_log {
+                log.drag_to(self.cursor);
+            }
             if let Some(window) = &mut game.stylist {
                 window.frame.drag_to(self.cursor, stylist::HEIGHT);
             }
@@ -2117,12 +2133,19 @@ impl App {
                 return;
             }
             // Alt + right click takes a whole stack out of the open storage.
+            let names = (&self.messages[..], &self.card_names, &game.char_names);
             let moved = match game.window_at(self.cursor) {
                 _ if state != ElementState::Pressed || !self.modifiers.alt_key() || !game.storage.frame.open => None,
-                Some(Panel::Storage) => match assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items)) {
+                Some(Panel::Storage) => match assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items, names)) {
                     Some(storage::Hit::Item(index)) => game.storage.get(index).map(|item| (Asked::Take(index), item.amount)),
                     _ => None,
                 },
+                Some(panel @ (Panel::StorageCategory(_) | Panel::StorageSearch)) => {
+                    match storage_list(panel).and_then(|which| game.storage.category_hit(which, self.cursor, &self.items, names)) {
+                        Some(storage::Hit::Item(index)) => game.storage.get(index).map(|item| (Asked::Take(index), item.amount)),
+                        _ => None,
+                    }
+                }
                 _ => None,
             };
             // A right click (not a drag) opens the menu for what's under the pointer, by the usual ranks: another
@@ -2192,6 +2215,7 @@ impl App {
                 Some(equipment::Hit::Slot(index) | equipment::Hit::Name(index)) => viewed.items.iter().find(|item| item.index == index).cloned(),
                 _ => None,
             });
+            let names = (&self.messages[..], &self.card_names, &game.char_names);
             let described = viewed.or_else(|| match game.window_at(self.cursor) {
                 _ if state != ElementState::Pressed || self.modifiers.alt_key() || card.is_some() => None,
                 _ if shop_row.is_some() => shop_row.map(|offer| net::InventoryItem {
@@ -2206,10 +2230,16 @@ impl App {
                     Some(inventory::Hit::Item(index)) => game.inventory.get(index).cloned(),
                     _ => None,
                 },
-                Some(Panel::Storage) => match assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items)) {
+                Some(Panel::Storage) => match assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items, names)) {
                     Some(storage::Hit::Item(index)) => game.storage.get(index).cloned(),
                     _ => None,
                 },
+                Some(panel @ (Panel::StorageCategory(_) | Panel::StorageSearch)) => {
+                    match storage_list(panel).and_then(|which| game.storage.category_hit(which, self.cursor, &self.items, names)) {
+                        Some(storage::Hit::Item(index)) => game.storage.get(index).cloned(),
+                        _ => None,
+                    }
+                }
                 Some(Panel::Cart) => match game.cart.hit(self.cursor) {
                     Some(inventory::Hit::Item(index)) => game.cart.get(index).cloned(),
                     _ => None,
@@ -2326,9 +2356,10 @@ impl App {
                         game.guild_window.scroll_by(rows, guild);
                     }
                 }
-                Some(Panel::Storage) => {
-                    if let Some(assets) = &self.assets {
-                        game.storage.scroll_by(rows, &assets.storage, &self.items);
+                Some(Panel::Storage) => game.storage.scroll_by(rows, &self.items, (&self.messages[..], &self.card_names, &game.char_names)),
+                Some(panel @ (Panel::StorageCategory(_) | Panel::StorageSearch)) => {
+                    if let Some(which) = storage_list(panel) {
+                        game.storage.category_scroll_by(which, rows, &self.items, (&self.messages[..], &self.card_names, &game.char_names));
                     }
                 }
                 Some(Panel::Party) => {
@@ -2478,9 +2509,11 @@ impl App {
                         }
                     }
                     // While trading, nothing goes into the storage, the cart, the equipment window or an NPC's list.
-                    (Some((Dragged::Item(_) | Dragged::Worn(_), _, true)), Some(Panel::Storage | Panel::Cart | Panel::Equipment))
-                        if trade::refusal(game.trade.is_some(), trade::ItemAction::DropOn).is_some() => {}
-                    (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
+                    (
+                        Some((Dragged::Item(_) | Dragged::Worn(_), _, true)),
+                        Some(Panel::Storage | Panel::StorageCategory(_) | Panel::Cart | Panel::Equipment),
+                    ) if trade::refusal(game.trade.is_some(), trade::ItemAction::DropOn).is_some() => {}
+                    (Some((Dragged::Item(index), _, true)), Some(Panel::Storage | Panel::StorageCategory(_))) => game.move_item(Asked::Store(index)),
                     // Let go over the world: dropped at the player's feet, asking how many of a stack. The drop lock holds it.
                     (Some((Dragged::Item(index), _, true)), None)
                         if inventory::may_ground_drop(game.inventory.lock_drop) && !game.on_ui(self.cursor, message_size) && !game.store_open() =>
@@ -2530,7 +2563,8 @@ impl App {
                     | game.enchant.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.stylist.as_mut().is_some_and(|window| window.frame.drop_drag())
-                    | game.memorial.frame.drop_drag();
+                    | game.memorial.frame.drop_drag()
+                    | game.storage_log.as_mut().is_some_and(storage_log::Log::drop_drag);
                 // A slider let go keeps its volume for next time.
                 let slid = game.audio_window.as_mut().is_some_and(options::AudioWindow::drop_drag);
                 if slid {
@@ -2559,6 +2593,7 @@ impl App {
                     | game.homunculus_window.frame.drop_drag()
                     | game.homunculus_skill_list.frame.drop_drag()
                     | game.storage.frame.drop_drag()
+                    | game.storage.categories.iter_mut().fold(false, |any, category| category.frame.drop_drag() | category.stop_resize() | any)
                     | game.inventory.frame.drop_drag()
                     | game.inventory.stop_resize()
                     | game.cart.stop_resize()
@@ -2796,6 +2831,16 @@ impl App {
             } else if !on_menu {
                 game.press_esc(cursor);
             }
+        }
+        // The guild storage log: its tabs and arrows on the press, Close too, and anywhere else drags it.
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(log) = &mut game.storage_log
+            && let Some(hit) = log.hit(cursor)
+        {
+            if log.press(hit, cursor) {
+                game.storage_log = None;
+            }
+            return;
         }
         if let Scene::Game(game) = &mut self.scene
             && game.memorial.hit(cursor).is_some()
@@ -3064,10 +3109,29 @@ impl App {
             if id == Panel::Storage
                 && let Some(assets) = &self.assets
             {
-                match game.storage.hit(cursor, &assets.storage, &self.items) {
+                match game.storage.hit(cursor, &assets.storage, &self.items, (&self.messages[..], &self.card_names, &game.char_names)) {
                     Some(storage::Hit::Item(index)) => game.dragging = Some((Dragged::Stored(index), cursor, false)),
                     Some(storage::Hit::Title(TitleHit::Title)) => game.storage.frame.start_drag(cursor),
                     Some(storage::Hit::Resize) => game.storage.start_resize(cursor),
+                    // A category's box toggles on the press; one turned on comes to the front.
+                    Some(storage::Hit::Box(tab)) => {
+                        game.storage.toggle_category(tab);
+                        game.raise(Panel::StorageCategory(tab));
+                        game.sync_esc();
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(which) = storage_list(id) {
+                match game.storage.category_hit(which, cursor, &self.items, (&self.messages[..], &self.card_names, &game.char_names)) {
+                    Some(storage::Hit::Item(index)) => game.dragging = Some((Dragged::Stored(index), cursor, false)),
+                    // The Search window's close button shuts it.
+                    Some(storage::Hit::Title(TitleHit::Close)) => {
+                        game.storage.search_window.frame.open = false;
+                        game.sync_esc();
+                    }
+                    Some(storage::Hit::Title(_)) => game.storage.list_window_mut(which).frame.start_drag(cursor),
+                    Some(storage::Hit::Resize) => game.storage.list_window_mut(which).start_resize(cursor),
                     _ => {}
                 }
             }

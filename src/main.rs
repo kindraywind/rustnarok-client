@@ -91,6 +91,7 @@ mod line_edit;
 mod links;
 mod macros;
 mod mail;
+mod map_effects;
 mod material;
 mod memorial;
 mod menu;
@@ -131,6 +132,7 @@ mod sound;
 mod status;
 mod status_tip;
 mod storage;
+mod storage_log;
 mod stylist;
 mod taming;
 mod trade;
@@ -1466,6 +1468,9 @@ struct Game {
     /// The memorial dungeon, and whether Destroy is asking yes or no.
     memorial: memorial::Window,
     memorial_asked: bool,
+    /// The guild storage's log window, and the log's entries heard before its last page.
+    storage_log: Option<storage_log::Log>,
+    storage_log_heard: Vec<net::GuildStorageEntry>,
     queued: Option<(String, Option<u32>)>,
     queue_asked: Option<QueueAsked>,
     /// The battleground's camps, score, teammates' dots and battle chat; forgotten on a map change.
@@ -2054,6 +2059,15 @@ fn map_key(map: &str) -> String {
     map.trim_end_matches(".gat").trim_end_matches(".rsw").to_lowercase()
 }
 
+/// The storage list a list window shows: a category window's tab, or the Search window's.
+fn storage_list(panel: Panel) -> Option<storage::List> {
+    match panel {
+        Panel::StorageCategory(tab) => Some(storage::List::Tab(tab)),
+        Panel::StorageSearch => Some(storage::List::Search),
+        _ => None,
+    }
+}
+
 /// A panel Esc closes. The hotbar and the basic info window stay up.
 fn esc_panel(id: Panel) -> Option<escape::WindowId> {
     use escape::WindowId::*;
@@ -2063,6 +2077,8 @@ fn esc_panel(id: Panel) -> Option<escape::WindowId> {
         Panel::Equipment => Equipment,
         Panel::Skills => Skills,
         Panel::Storage => Storage,
+        Panel::StorageCategory(tab) => StorageCategory(tab),
+        Panel::StorageSearch => StorageSearch,
         Panel::Party => Party,
         Panel::Status => Status,
         Panel::Guild => Guild,
@@ -2085,6 +2101,9 @@ enum Panel {
     Equipment,
     Skills,
     Storage,
+    /// A storage tab's category window, and the storage's Search window (`storage::Category`).
+    StorageCategory(usize),
+    StorageSearch,
     Party,
     Status,
     Guild,
@@ -2720,6 +2739,7 @@ struct Assets {
     shop: shop::Assets,
     pick_list: pick_list::Assets,
     storage: storage::Assets,
+    storage_log: storage_log::Assets,
     trade: trade::Assets,
     refine: refine::Assets,
     grade: grade::Assets,
@@ -2847,6 +2867,7 @@ impl Assets {
             shop: shop::Assets::load(gpu, grf),
             pick_list: pick_list::Assets::load(gpu, grf),
             storage: storage::Assets::load(gpu, grf),
+            storage_log: storage_log::Assets::load(gpu, grf),
             trade: trade::Assets::load(gpu, grf),
             refine: refine::Assets::load(gpu, grf),
             grade: grade::Assets::load(gpu, grf),
@@ -3068,6 +3089,8 @@ fn web_address(login: &str) -> String {
 const INVENTORY_SIZE: &str = "inventory_size";
 const CART_SIZE: &str = "cart_size";
 const STORAGE_SIZE: &str = "storage_size";
+/// The storage's category windows that are on, a bit each (Use first): they open with it.
+const STORAGE_CATEGORIES: &str = "storage_categories";
 const SHOP_SIZE: &str = "shop_size";
 const SHOP_DEAL_SIZE: &str = "shop_deal_size";
 /// The party window's size mode, kept with the places.
