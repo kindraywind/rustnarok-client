@@ -305,6 +305,7 @@ fn knows_packet_lengths() {
 
 #[test]
 fn decodes_guild_pages() {
+    let Some(MapEvent::GuildMenu(0xd7)) = decode_map_packet(&[0x4E, 0x01, 0xD7, 0, 0, 0]) else { panic!() };
     // A raise's answer: the new value when taken, nothing when refused.
     let Some(MapEvent::RaiseAnswer(Some((13, 5)))) = decode_map_packet(&[0xBC, 0x00, 13, 0, 1, 5]) else { panic!() };
     let Some(MapEvent::RaiseAnswer(None)) = decode_map_packet(&[0xBC, 0x00, 13, 0, 0, 4]) else { panic!() };

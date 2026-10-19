@@ -1332,13 +1332,7 @@ impl App {
                             }
                             // Without a guild, the Guild Companion.
                             Some("guild") if game.guild.is_none() => game.guild_companion.toggle(screen()),
-                            Some("guild") => {
-                                game.guild_window.frame.toggle();
-                                game.raise(Panel::Guild);
-                                if game.guild_window.frame.open {
-                                    game.ask_guild_pages();
-                                }
-                            }
+                            Some("guild") => game.toggle_guild_window(),
                             // The bank opens when the server says so: it answers in its own words where banking is off.
                             Some("bank") => {
                                 let _ = game.session.open_bank(game.account_id);
@@ -3485,13 +3479,7 @@ impl App {
                 game.raise(Panel::Inventory);
             }
             shortcuts::Action::Guild if game.guild.is_none() => game.guild_companion.toggle(screen()),
-            shortcuts::Action::Guild => {
-                game.guild_window.frame.toggle();
-                game.raise(Panel::Guild);
-                if game.guild_window.frame.open {
-                    game.ask_guild_pages();
-                }
-            }
+            shortcuts::Action::Guild => game.toggle_guild_window(),
             shortcuts::Action::Emotions => game.toggle_emotion_list(),
             shortcuts::Action::Sit => game.toggle_sit(),
             shortcuts::Action::Macros => game.toggle_macro_window(),

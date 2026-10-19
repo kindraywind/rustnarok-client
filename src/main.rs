@@ -5006,7 +5006,7 @@ impl ApplicationHandler<NetEvent> for App {
                         && std::env::var("RUSTNAROK_CLIENT_GUILD").is_ok_and(|order| order.split(',').any(|part| part == "window"))
                         && !std::mem::replace(&mut game.guild_shown, true)
                     {
-                        game.guild_window.frame.open = true;
+                        game.guild_window.open(screen());
                         game.raise(Panel::Guild);
                         game.ask_guild_pages();
                     }

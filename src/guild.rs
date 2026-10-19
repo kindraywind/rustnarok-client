@@ -15,26 +15,52 @@ use crate::skills;
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, offset};
 
-// ponytail: 400x317 with six tabs over a 247px page and a 29px footer; calibrate against the real client.
+/// 400 × 317 for every tab: the title bar, the tab strip (0, 17, 400, 24), the page from y 41, the footer from y 288.
 const WIDTH: f32 = 400.0;
 const HEIGHT: f32 = 317.0;
+const STRIP: [f32; 4] = [0.0, TITLE_HEIGHT, WIDTH, 24.0];
+/// Six tab cells 64 × 23 every 66 px from (1, 18); labels in 62 × 15 boxes from (3, 22).
 const TAB: [f32; 2] = [64.0, 23.0];
-const PAGE_TOP: f32 = TITLE_HEIGHT + TAB[1] + 1.0;
+const TAB_STEP: f32 = 66.0;
+const TAB_LABEL: [f32; 2] = [3.0, 22.0];
+const TAB_LABEL_WIDTH: f32 = 62.0;
+const STRIP_COLOR: [u8; 4] = [0xB4, 0xB4, 0xB4, 0xFF];
+const EDGE: [u8; 4] = [0xC8, 0xC8, 0xC8, 0xFF];
+const PAGE_TOP: f32 = 41.0;
 const FOOTER: f32 = 29.0;
 const LINE: f32 = 20.0;
 /// Rows a list (members, positions, the expelled) shows at once; the wheel scrolls it.
 const ROWS: usize = 11;
-const POSITION: [f32; 2] = [180.0, 120.0];
+/// Where it first opens, on Guild Info, and again when its last place isn't all on the screen.
+const POSITION: [f32; 2] = [0.0, 34.0];
+/// The close button's name.
+const CLOSE_TIP: &str = "Alt+G";
+/// The tabs a guild's menu flag must have (ZC_ACK_GUILD_MENUINTERFACE): Guild Info and Guild Skill always open.
+const TAB_RIGHTS: [u32; 6] = [0, 0x01, 0x02, 0, 0x10, 0x80];
+/// The menu flag until the server says it: every tab.
+pub const MENU_UNKNOWN: i32 = -1;
 /// The tabs' labels: info, members, positions, skills, expel list, notice.
 const TABS: [usize; 6] = [340, 341, 342, 343, 344, 345];
 pub const MEMBERS: usize = 1;
 const POSITIONS: usize = 2;
 const SKILLS: usize = 3;
 const EXPELLED: usize = 4;
-/// Info labels: name, level, master, members, average level, castles, exp, tax points.
-const LABELS: [usize; 8] = [328, 329, 330, 331, 332, 333, 335, 337];
-// ponytail: the emblem's frame top left of the info page, the labels right of it.
-const EMBLEM: [f32; 2] = [12.0, PAGE_TOP + 8.0];
+/// Info lines down the left from (8, 49), 16 px apart: name, level, master, members, average level, castles.
+const LABELS: [usize; 6] = [328, 329, 330, 331, 332, 333];
+const INFO: [f32; 2] = [8.0, 49.0];
+const INFO_LINE: f32 = 16.0;
+const MEMBERS_LINE: usize = 3;
+/// The online count after the members line: the icon 16 past the line's width, 2 px higher.
+const ONLINE_GAP: f32 = 16.0;
+/// On the right: the exp (red from guild level 50), "Emblem", the emblem 1:1 in a #709FED box.
+const EXP: [f32; 2] = [200.0, 49.0];
+const EXP_LABEL: usize = 335;
+const RED_EXP_LEVEL: u32 = 50;
+const EMBLEM_LABEL: [f32; 2] = [200.0, 73.0];
+const EMBLEM_LABEL_MESSAGE: usize = 336;
+const EMBLEM_BOX: [f32; 4] = [299.0, 64.0, 26.0, 26.0];
+const EMBLEM_BOX_COLOR: [u8; 4] = [0x70, 0x9F, 0xED, 0xFF];
+const EMBLEM: [f32; 2] = [300.0, 65.0];
 /// The master's Disband button on the info page.
 const DISBAND_AT: [f32; 2] = [321.0, 292.0];
 const DISBAND_SIZE: [f32; 2] = [64.0, 20.0];
@@ -61,7 +87,6 @@ pub fn perspective(screen_per_sprite: f32, height: f32) -> f32 {
     screen_per_sprite * 768.0 / (1.34 * height)
 }
 
-const INFO_LEFT: f32 = 52.0;
 /// Member columns: name, position, job, level.
 /// The member grid: 1-px #C8C8C8 lines, the outline, the header's rule, five rows 44 apart, the column lines; the
 /// header's labels (Name, Position, Job, Level, Tax, Contribution) at y 51 and their cells (left edges, 6 to 381).
@@ -108,8 +133,6 @@ pub const NOTICE: usize = 5;
 const PERMISSIONS: [u32; 3] = [GuildPosition::INVITE, GuildPosition::EXPEL, GuildPosition::STORAGE];
 /// Expel list columns: name, reason.
 const EXPEL_COLUMNS: [(usize, f32); 2] = [(407, 8.0), (462, 91.0)];
-const GREY: [u8; 3] = [0x88, 0x88, 0x88];
-const TAB_FILL: [u8; 4] = [0xE7, 0xEB, 0xF4, 0xFF];
 /// The info page's allies and antagonists, stacked on its right: each heading, its box under it, and three 16 px
 /// rows in it (rathena's default max_guild_alliance).
 const RELATION_HEADINGS: [usize; 2] = [338, 339];
@@ -138,9 +161,13 @@ const RED: [u8; 3] = [0xFF, 0x00, 0x00];
 const EMBLEM_BYTES: u64 = 64 * 1024;
 
 pub struct Assets {
-    footer: Texture,
-    tab_fill: Texture,
-    /// The emblem's frame, and the position page's checkboxes (off, on).
+    footer: [Texture; 3],
+    strip: Texture,
+    edge: Texture,
+    emblem_box: Texture,
+    /// The Info tab's online icon.
+    online_icon: Texture,
+    /// The emblem's frame (over heads), and the position page's checkboxes (off, on).
     frame: Texture,
     check: [Texture; 2],
     hover: Texture,
@@ -175,8 +202,11 @@ impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let image = |name: &str| gpu.load_texture(grf, &format!("{UI}{name}.bmp"), false);
         Self {
-            footer: image("basic_interface\\btnbar_mid2"),
-            tab_fill: gpu.solid(TAB_FILL),
+            footer: ["left", "mid", "right"].map(|part| image(&format!("basic_interface\\btnbar_{part}2"))),
+            strip: gpu.solid(STRIP_COLOR),
+            edge: gpu.solid(EDGE),
+            emblem_box: gpu.solid(EMBLEM_BOX_COLOR),
+            online_icon: image("basic_interface\\grp_online"),
             frame: image("emblem_frame"),
             check: ["checkbox_0", "checkbox_1"].map(image),
             hover: gpu.solid(HOVER),
@@ -590,6 +620,8 @@ pub struct GuildWindow {
     pub list_row: Option<usize>,
     pub typing: Option<GuildTyping>,
     pub notice_draft: (String, String),
+    /// Which tabs open, by the guild's menu flag (MENU_UNKNOWN until the server says).
+    pub menu: i32,
 }
 
 impl Default for GuildWindow {
@@ -611,6 +643,7 @@ impl Default for GuildWindow {
             list_row: None,
             typing: None,
             notice_draft: (String::new(), String::new()),
+            menu: MENU_UNKNOWN,
         }
     }
 }
@@ -733,6 +766,37 @@ fn skill_row_at(local: [f32; 2]) -> Option<usize> {
     (local[1] >= 41.0).then(|| ((local[1] - 41.0) / 32.0) as usize).filter(|&row| row < SKILL_ROWS)
 }
 
+/// Whether the menu flag opens a tab.
+fn tab_allowed(tab: usize, menu: i32) -> bool {
+    TAB_RIGHTS.get(tab).is_some_and(|&bit| bit == 0 || menu as u32 & bit != 0)
+}
+
+/// The tab a press picks: x / 66 on the strip (17 ≤ y ≤ 41), not the open one.
+fn tab_at(local: [f32; 2], open: usize) -> Option<usize> {
+    let tab = (local[0] / TAB_STEP).floor();
+    ((TITLE_HEIGHT..=PAGE_TOP).contains(&local[1]) && (0.0..TABS.len() as f32).contains(&tab) && tab as usize != open).then_some(tab as usize)
+}
+
+/// Whether a window `size` big at `place` is all on the screen.
+fn on_screen(place: [f32; 2], size: [f32; 2], screen: [f32; 2]) -> bool {
+    place[0] >= 0.0 && place[1] >= 0.0 && place[0] + size[0] <= screen[0] && place[1] + size[1] <= screen[1]
+}
+
+/// The members line: the members listed of the most.
+fn members_line(label: &str, listed: usize, most: u32) -> String {
+    format!("{label} : {listed} / {most}")
+}
+
+/// Where the online icon goes after the members line, by that line's width.
+fn online_icon_x(line_width: f32) -> f32 {
+    line_width + ONLINE_GAP
+}
+
+/// The exp line's colour: red from guild level 50.
+fn exp_color(level: u32) -> [u8; 3] {
+    if level >= RED_EXP_LEVEL { RED } else { [0, 0, 0] }
+}
+
 /// A guild emblem from the server: a zlib-compressed BMP, its magenta keyed out.
 pub fn decode_emblem(data: &[u8]) -> Option<RgbaImage> {
     let mut bmp = Vec::new();
@@ -808,6 +872,16 @@ impl GuildWindow {
     /// Whether a skill's row has the level up button: the master's, with points left, on an upgradable skill.
     fn levels_up(&self, guild: &Guild, skill: &Skill) -> bool {
         guild.master && guild.skill_points > 0 && skill.upgradable
+    }
+
+    /// Alt+G or the menu's guild button: open on the last tab at the last place, unless that place isn't all on the
+    /// screen: then at (0, 34) on Guild Info.
+    pub fn open(&mut self, screen: [f32; 2]) {
+        self.frame.open = true;
+        if !on_screen(self.frame.position, [WIDTH, HEIGHT], screen) {
+            self.frame.position = POSITION;
+            self.show_tab(0);
+        }
     }
 
     pub fn show_tab(&mut self, tab: usize) {
@@ -944,10 +1018,13 @@ impl GuildWindow {
 
     pub fn hit(&self, cursor: [f32; 2], guild: &Guild) -> Option<Hit> {
         let local = self.frame.local(cursor, HEIGHT)?;
-        if let Some(hit) = self.frame.title_hit(local) {
-            return Some(Hit::Title(hit));
+        // The title bar has the close button only.
+        match self.frame.title_hit(local) {
+            Some(TitleHit::Minimize) => return Some(Hit::Title(TitleHit::Title)),
+            Some(hit) => return Some(Hit::Title(hit)),
+            None => {}
         }
-        if let Some(tab) = (0..TABS.len()).find(|&tab| contains([tab as f32 * TAB[0], TITLE_HEIGHT], TAB, local)) {
+        if let Some(tab) = tab_at(local, self.tab).filter(|&tab| tab_allowed(tab, self.menu)) {
             return Some(Hit::Tab(tab));
         }
         if self.tab == 0 && guild.master && contains(DISBAND_AT, DISBAND_SIZE, local) {
@@ -1181,6 +1258,7 @@ impl GuildWindow {
     pub fn draw<'a>(
         &self,
         layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
@@ -1196,64 +1274,73 @@ impl GuildWindow {
         }
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
         let at = |local: [f32; 2]| self.frame.at(local);
-        self.frame.draw_title(layer, chrome, &guild.name, pointer.0);
-        if self.frame.minimized {
-            return;
+        // The title bar with no title, the close button alone, named "Alt+G".
+        self.frame.draw_bar(layer, chrome);
+        self.frame.draw_bare_title(layer, chrome, "", pointer.0);
+        if contains(at(self.frame.close_button()), window::BUTTON_SIZE, pointer.0) {
+            window::tooltip(tooltip, chrome, font, CLOSE_TIP, offset(pointer.0, [12.0, 12.0]), [255; 3]);
         }
         let hit = self.hit(pointer.0, guild);
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, HEIGHT - TITLE_HEIGHT - FOOTER]));
-        for x in [0.0, WIDTH - 1.0] {
-            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, HEIGHT - TITLE_HEIGHT - FOOTER]));
-        }
-        // Tabs: the open one joins the page, the others sit back.
+        // The tab strip: grey, its cells white for the open tab, light grey for the others; the labels left in them.
+        // ponytail: each label left-aligned in its box.
+        let [x, y, w, h] = STRIP;
+        layer.sprites.push((&assets.strip, at([x, y]), [w, h]));
         for (tab, &label) in TABS.iter().enumerate() {
-            let corner = at([tab as f32 * TAB[0], TITLE_HEIGHT]);
-            if tab != self.tab {
-                layer.sprites.push((&assets.tab_fill, corner, TAB));
-            }
-            layer.sprites.push((&chrome.border, [corner[0] + TAB[0] - 1.0, corner[1]], [1.0, TAB[1]]));
-            let text = window::fit(font, message(label), TAB[0] - 6.0);
-            let x = corner[0] + ((TAB[0] - font.width(&text)) / 2.0).floor();
-            layer.texts.push((text, [x, corner[1] + ((TAB[1] - font.line_height()) / 2.0).floor()], if tab == self.tab { [0, 0, 0] } else { GREY }));
+            let left = tab as f32 * TAB_STEP;
+            let cell = if tab == self.tab { &assets.white } else { &assets.edge };
+            layer.sprites.push((cell, at([left + 1.0, TITLE_HEIGHT + 1.0]), TAB));
+            let text = window::fit(font, message(label), TAB_LABEL_WIDTH);
+            layer.texts.push((text, at([left + TAB_LABEL[0], TAB_LABEL[1]]), [0, 0, 0]));
         }
-        layer.sprites.push((&chrome.border, at([0.0, TITLE_HEIGHT + TAB[1]]), [WIDTH, 1.0]));
-        layer.sprites.push((&assets.footer, at([0.0, HEIGHT - FOOTER]), [WIDTH, FOOTER]));
+        // The page: white with a grey edge left and right; the footer along the bottom.
+        layer.sprites.push((&assets.edge, at([0.0, PAGE_TOP]), [WIDTH, HEIGHT - PAGE_TOP]));
+        layer.sprites.push((&assets.white, at([1.0, PAGE_TOP]), [WIDTH - 2.0, HEIGHT - PAGE_TOP]));
+        let [left, middle, right] = &assets.footer;
+        let footer_top = HEIGHT - FOOTER;
+        layer.sprites.push((left, at([0.0, footer_top]), left.size));
+        layer.sprites.push((middle, at([left.size[0], footer_top]), [WIDTH - left.size[0] - right.size[0], FOOTER]));
+        layer.sprites.push((right, at([WIDTH - right.size[0], footer_top]), right.size));
 
         let text = |layer: &mut Layer<'a>, value: String, place: [f32; 2], color: [u8; 3]| layer.texts.push((value, at(place), color));
         match self.tab {
-            // Info: the emblem, then the guild's name, level, master, members, levels, castles, exp and tax points.
+            // Info: the guild's name, level, master, members (with the online count), levels and castles down the left;
+            // its exp and emblem on the right.
             0 => {
                 if guild.master {
                     let look = if hit == Some(Hit::Disband) { 1 + usize::from(pointer.1) } else { 0 };
                     layer.sprites.push((&assets.disband[look], at(DISBAND_AT), DISBAND_SIZE));
                 }
-                layer.sprites.push((&assets.frame, at(EMBLEM), assets.frame.size));
-                if let Some(emblem) = emblem {
-                    layer.sprites.push((emblem, at(offset(EMBLEM, [2.0, 2.0])), EMBLEM_SIZE));
-                }
                 let info = guild.info.clone().unwrap_or_default();
-                let values = [
-                    guild.name.clone(),
-                    info.level.to_string(),
-                    info.master,
-                    format!("{} / {}", info.members, info.max_members),
-                    info.average_level.to_string(),
-                    info.territory,
-                    format!("{} / {}", info.exp, info.next_exp),
-                    info.tax_points.to_string(),
-                ];
+                let values =
+                    [guild.name.clone(), info.level.to_string(), info.master.clone(), String::new(), info.average_level.to_string(), info.territory.clone()];
                 for (row, (label, value)) in LABELS.iter().zip(values).enumerate() {
-                    let line = window::fit(font, &format!("{} : {value}", message(*label)), INFO_RIGHT - INFO_LEFT);
-                    text(layer, line, [INFO_LEFT, PAGE_TOP + 8.0 + row as f32 * LINE], [0, 0, 0]);
+                    let top = INFO[1] + row as f32 * INFO_LINE;
+                    let line = if row == MEMBERS_LINE {
+                        members_line(message(*label), guild.members.len(), info.max_members)
+                    } else {
+                        format!("{} : {value}", message(*label))
+                    };
+                    let line = window::fit(font, &line, INFO_RIGHT - INFO[0]);
+                    if row == MEMBERS_LINE {
+                        let icon = online_icon_x(font.width(&line));
+                        layer.sprites.push((&assets.online_icon, at([icon, top - 2.0]), assets.online_icon.size));
+                        text(layer, format!(" {}", info.members), [icon + assets.online_icon.size[0], top], [0, 0, 0]);
+                    }
+                    text(layer, line, [INFO[0], top], [0, 0, 0]);
                 }
-                // Allies, then antagonists: each heading over a white box with its rows; the selected one marked.
-                // ponytail: the boxes' look (the window's border colour around white) is a choice.
+                text(layer, format!("{} : {}", message(EXP_LABEL), info.exp), EXP, exp_color(info.level));
+                text(layer, message(EMBLEM_LABEL_MESSAGE).to_owned(), EMBLEM_LABEL, [0, 0, 0]);
+                let [x, y, w, h] = EMBLEM_BOX;
+                layer.sprites.push((&assets.emblem_box, at([x, y]), [w, h]));
+                if let Some(emblem) = emblem {
+                    layer.sprites.push((emblem, at(EMBLEM), EMBLEM_SIZE));
+                }
+                // Allies, then antagonists: each heading over a grey box with its rows; the selected one marked.
                 for (column, relations) in columns(&guild.relations).into_iter().enumerate() {
                     text(layer, message(RELATION_HEADINGS[column]).to_owned(), [RELATION_LEFT, RELATION_HEADING_TOP[column]], [0, 0, 0]);
-                    let [w, h] = RELATION_SIZE;
                     let (left, top) = (RELATION_LEFT, RELATION_BOX_TOP[column]);
-                    layer.sprites.push((&chrome.border, at([left, top]), RELATION_SIZE));
-                    layer.sprites.push((&assets.white, at([left + 1.0, top + 1.0]), [w - 2.0, h - 2.0]));
+                    let w = RELATION_SIZE[0];
+                    layer.sprites.push((&assets.edge, at([left, top]), RELATION_SIZE));
                     for (row, relation) in relations.into_iter().enumerate() {
                         let top = RELATION_ROW_TOP[column] + row as f32 * RELATION_ROW;
                         if self.selected == Some((relation.id, relation.antagonist)) {
@@ -1530,13 +1617,51 @@ mod tests {
 
     #[test]
     fn picks_tabs_across_the_top() {
+        // x / 66 from y 17 to 41, the open tab left alone, nothing past the sixth.
+        assert_eq!(tab_at([70.0, 17.0], 0), Some(1));
+        assert_eq!(tab_at([395.0, 41.0], 0), Some(5));
+        assert_eq!(tab_at([10.0, 30.0], 0), None);
+        assert_eq!(tab_at([397.0, 30.0], 0), None);
+        assert_eq!(tab_at([70.0, 42.0], 0), None);
         let mut window = GuildWindow::default();
         window.frame.open = true;
         let guild = Guild::default();
         let at = |local: [f32; 2]| window.frame.at(local);
-        assert_eq!(window.hit(at([TAB[0] * 1.5, TITLE_HEIGHT + 5.0]), &guild), Some(Hit::Tab(1)));
-        assert_eq!(window.hit(at([TAB[0] * 5.5, TITLE_HEIGHT + 5.0]), &guild), Some(Hit::Tab(5)));
+        assert_eq!(window.hit(at([66.0 * 1.5, TITLE_HEIGHT + 5.0]), &guild), Some(Hit::Tab(1)));
         assert_eq!(window.hit(at([200.0, 200.0]), &guild), Some(Hit::Window));
+        // The title bar: no minimize button, the close button at (386, 3).
+        assert_eq!(window.hit(at([373.0, 5.0]), &guild), Some(Hit::Title(TitleHit::Title)));
+        assert_eq!(window.hit(at([388.0, 5.0]), &guild), Some(Hit::Title(TitleHit::Close)));
+        // A member (0x57) can't open Announcement; the master (0xd7) can; unknown opens all.
+        window.menu = 0x57;
+        assert_eq!(window.hit(at([66.0 * 5.5, 30.0]), &guild), Some(Hit::Window));
+        let rights = |menu| (0..6).map(|tab| tab_allowed(tab, menu)).collect::<Vec<_>>();
+        assert_eq!(rights(0x57), [true, true, true, true, true, false]);
+        assert_eq!(rights(0xd7), [true; 6]);
+        assert_eq!(rights(MENU_UNKNOWN), [true; 6]);
+        assert_eq!(rights(0), [true, false, false, true, false, false]);
+    }
+
+    #[test]
+    fn opens_where_it_was_unless_that_is_off_the_screen() {
+        let mut window = GuildWindow::default();
+        assert_eq!(window.frame.position, [0.0, 34.0]);
+        window.frame.position = [500.0, 300.0];
+        window.show_tab(POSITIONS);
+        window.open([1024.0, 768.0]);
+        assert_eq!((window.frame.position, window.tab), ([500.0, 300.0], POSITIONS));
+        window.frame.open = false;
+        // At 800 × 600 it would stick out: back to (0, 34) on Guild Info.
+        window.open([800.0, 600.0]);
+        assert_eq!((window.frame.position, window.tab), ([0.0, 34.0], 0));
+        assert!(!on_screen([-1.0, 34.0], [WIDTH, HEIGHT], [1024.0, 768.0]));
+    }
+
+    #[test]
+    fn writes_the_members_and_exp_lines() {
+        assert_eq!(members_line("Members", 3, 16), "Members : 3 / 16");
+        assert_eq!(online_icon_x(100.0), 116.0);
+        assert_eq!([49, 50, 51].map(exp_color), [[0, 0, 0], RED, RED]);
     }
 
     fn crab() -> Guild {

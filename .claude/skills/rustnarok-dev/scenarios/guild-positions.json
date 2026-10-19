@@ -26,11 +26,15 @@
       "wait": 1500
     },
     {
+      "as": "second",
+      "settle": 2000
+    },
+    {
       "say": "@recall {second}"
     },
     {
       "as": "second",
-      "settle": 2000
+      "settle": 1500
     },
     {
       "say": "@guild PosTest"
@@ -58,7 +62,7 @@
     },
     {
       "click_on": {
-        "menu_item": "Guild invitation"
+        "menu_item": "Guild Invitation"
       }
     },
     {
@@ -72,7 +76,7 @@
     },
     {
       "expect": {
-        "chat": "Offer Accepted"
+        "chat": "accepted the guild invitation"
       }
     },
     {
@@ -89,8 +93,8 @@
     },
     {
       "click": [
-        276,
-        148
+        99,
+        62
       ]
     },
     {
@@ -188,8 +192,8 @@
     },
     {
       "click": [
-        340,
-        148
+        165,
+        62
       ]
     },
     {
@@ -352,8 +356,8 @@
     {
       "as": "second",
       "click": [
-        340,
-        148
+        165,
+        62
       ]
     },
     {
@@ -388,8 +392,8 @@
     },
     {
       "click": [
-        532,
-        148
+        363,
+        62
       ]
     },
     {
@@ -478,8 +482,8 @@
     {
       "as": "second",
       "click": [
-        276,
-        148
+        99,
+        62
       ]
     },
     {
@@ -584,7 +588,7 @@
     },
     {
       "expect": {
-        "chat": "has withdrawn from the guild.",
+        "chat": "has left the guild.",
         "state": {
           "guild.members.{second}": null
         }

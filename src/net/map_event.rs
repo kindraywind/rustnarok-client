@@ -986,6 +986,8 @@ pub enum MapEvent {
         mode: u32,
     },
     GuildInfo(GuildInfo),
+    /// The guild window tabs the player may open: rathena's menu flag (0x57 members, 0xd7 the master).
+    GuildMenu(i32),
     /// A stat or trait raise answered (ZC_STATUS_CHANGE_ACK): its new value when it went up, none when refused.
     // ponytail: 0x0B25 would answer a trait too, but it isn't in this server's version.
     RaiseAnswer(Option<(u16, i64)>),
