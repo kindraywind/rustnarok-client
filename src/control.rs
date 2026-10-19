@@ -17,8 +17,8 @@
 //!   buttons, through the same code as the mouse.
 //! - `key` `{key, repeat?, hold?}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End",
 //!   "PageUp", "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12", "PrintScreen", "ScrollLock" or one
-//!   character, after modifiers like "Alt+" or "Ctrl+". `repeat` is an auto-repeat; shortcuts ignore it. `hold` is
-//!   milliseconds to keep the key down, auto-repeating after the first press.
+//!   character, after modifiers like "Alt+" or "Ctrl+". `repeat` is an auto-repeat; a shortcut fires again only
+//!   for the key pressed last. `hold` is milliseconds to keep the key down, auto-repeating after the first press.
 //! - `type` `{text}`: into the focused field; non-ASCII runs (Hangul) come in as the input method's commit.
 //! - `say` `{text}`: a chat line or a GM command.
 //! - `state`: the scene and the login server; at character select the characters, selected slot and `pin` ("ask",
@@ -110,7 +110,7 @@ pub enum Command {
     },
     Key {
         key: String,
-        /// An auto-repeat of a held key. Shortcuts ignore it; typing still takes it.
+        /// An auto-repeat of a held key. The shortcut fires again only for the key pressed last.
         #[serde(default)]
         repeat: bool,
         /// Hold the key this many milliseconds, sending auto-repeats. One command, so a following `wait` still sees what the first press caused.
@@ -214,7 +214,7 @@ pub struct KeyPress {
     pub logical_key: Key,
     pub physical_key: PhysicalKey,
     pub text: Option<String>,
-    /// An auto-repeated key-down. Shortcuts and Esc ignore it; typing still takes it.
+    /// An auto-repeated key-down. A shortcut fires again only for the key pressed last; Esc still ignores it.
     pub repeat: bool,
 }
 
@@ -562,7 +562,7 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
                     app.key(&release);
                     return;
                 };
-                // Auto-repeats while the key stays down. Shortcuts fire on the first press only.
+                // Auto-repeats while the key stays down. The key pressed last fires its shortcut on each one.
                 key.repeat = true;
                 let end = Instant::now() + Duration::from_millis(ms);
                 while Instant::now() < end {

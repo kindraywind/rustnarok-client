@@ -1,5 +1,5 @@
 {
-  "about": "Shortcuts: holding F1 uses a hotkey once, and F11 closes the open windows (issue #177).",
+  "about": "Shortcuts: F1 uses a hotkey, a repeat of that held key uses it again, and F11 closes the open windows.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -99,8 +99,7 @@
       "wait": 300
     },
     {
-      "key": "F1",
-      "hold": 1000
+      "key": "F1"
     },
     {
       "wait_for": {
@@ -114,6 +113,26 @@
           {
             "id": 501,
             "amount": 4
+          }
+        ]
+      }
+    },
+    {
+      "key": "F1",
+      "repeat": true
+    },
+    {
+      "wait_for": {
+        "event": "ItemUsed",
+        "ms": 5000
+      }
+    },
+    {
+      "expect": {
+        "inventory_has": [
+          {
+            "id": 501,
+            "amount": 3
           }
         ]
       }
