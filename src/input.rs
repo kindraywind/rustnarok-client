@@ -1617,10 +1617,13 @@ impl App {
                     },
                     Panel::Storage => {
                         let hit = game.storage.hit(cursor, &assets.storage, &self.items);
-                        if hit.is_some_and(|hit| game.storage.click(hit)) {
+                        if hit.is_some_and(|hit| game.storage.click(hit, &self.items)) {
                             let _ = game.session.close_storage();
                         }
+                        game.sync_esc();
                     }
+                    // Its presses act on the press.
+                    Panel::StorageCategory(_) => {}
                     Panel::Skills => {
                         let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
                         let points = game.skill_points();
@@ -1761,6 +1764,11 @@ impl App {
             game.inventory.resize_to(self.cursor);
             game.cart.resize_to(self.cursor);
             game.storage.resize_to(self.cursor);
+            for category in &mut game.storage.categories {
+                category.resize_to(self.cursor);
+                let height = category.height();
+                category.frame.drag_to(self.cursor, height);
+            }
             game.skill_window.resize_to(self.cursor);
             if let Some(setup) = &mut game.vend_setup
                 && setup.resize_to(self.cursor)
@@ -2123,6 +2131,10 @@ impl App {
                     Some(storage::Hit::Item(index)) => game.storage.get(index).map(|item| (Asked::Take(index), item.amount)),
                     _ => None,
                 },
+                Some(Panel::StorageCategory(tab)) => match game.storage.category_hit(tab, self.cursor, &self.items) {
+                    Some(storage::Hit::Item(index)) => game.storage.get(index).map(|item| (Asked::Take(index), item.amount)),
+                    _ => None,
+                },
                 _ => None,
             };
             // A right click (not a drag) opens the menu for what's under the pointer, by the usual ranks: another
@@ -2207,6 +2219,10 @@ impl App {
                     _ => None,
                 },
                 Some(Panel::Storage) => match assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items)) {
+                    Some(storage::Hit::Item(index)) => game.storage.get(index).cloned(),
+                    _ => None,
+                },
+                Some(Panel::StorageCategory(tab)) => match game.storage.category_hit(tab, self.cursor, &self.items) {
                     Some(storage::Hit::Item(index)) => game.storage.get(index).cloned(),
                     _ => None,
                 },
@@ -2331,6 +2347,7 @@ impl App {
                         game.storage.scroll_by(rows, &assets.storage, &self.items);
                     }
                 }
+                Some(Panel::StorageCategory(tab)) => game.storage.category_scroll_by(tab, rows, &self.items),
                 Some(Panel::Party) => {
                     let count = if game.party_window.friends { game.friends.len() } else { game.party.as_ref().map_or(0, |party| party.members.len()) };
                     game.party_window.scroll_by(rows, count);
@@ -2478,9 +2495,11 @@ impl App {
                         }
                     }
                     // While trading, nothing goes into the storage, the cart, the equipment window or an NPC's list.
-                    (Some((Dragged::Item(_) | Dragged::Worn(_), _, true)), Some(Panel::Storage | Panel::Cart | Panel::Equipment))
-                        if trade::refusal(game.trade.is_some(), trade::ItemAction::DropOn).is_some() => {}
-                    (Some((Dragged::Item(index), _, true)), Some(Panel::Storage)) => game.move_item(Asked::Store(index)),
+                    (
+                        Some((Dragged::Item(_) | Dragged::Worn(_), _, true)),
+                        Some(Panel::Storage | Panel::StorageCategory(_) | Panel::Cart | Panel::Equipment),
+                    ) if trade::refusal(game.trade.is_some(), trade::ItemAction::DropOn).is_some() => {}
+                    (Some((Dragged::Item(index), _, true)), Some(Panel::Storage | Panel::StorageCategory(_))) => game.move_item(Asked::Store(index)),
                     // Let go over the world: dropped at the player's feet, asking how many of a stack. The drop lock holds it.
                     (Some((Dragged::Item(index), _, true)), None)
                         if inventory::may_ground_drop(game.inventory.lock_drop) && !game.on_ui(self.cursor, message_size) && !game.store_open() =>
@@ -2559,6 +2578,7 @@ impl App {
                     | game.homunculus_window.frame.drop_drag()
                     | game.homunculus_skill_list.frame.drop_drag()
                     | game.storage.frame.drop_drag()
+                    | game.storage.categories.iter_mut().fold(false, |any, category| category.frame.drop_drag() | category.stop_resize() | any)
                     | game.inventory.frame.drop_drag()
                     | game.inventory.stop_resize()
                     | game.cart.stop_resize()
@@ -3068,6 +3088,20 @@ impl App {
                     Some(storage::Hit::Item(index)) => game.dragging = Some((Dragged::Stored(index), cursor, false)),
                     Some(storage::Hit::Title(TitleHit::Title)) => game.storage.frame.start_drag(cursor),
                     Some(storage::Hit::Resize) => game.storage.start_resize(cursor),
+                    // A category's box toggles on the press; one turned on comes to the front.
+                    Some(storage::Hit::Box(tab)) => {
+                        game.storage.toggle_category(tab);
+                        game.raise(Panel::StorageCategory(tab));
+                        game.sync_esc();
+                    }
+                    _ => {}
+                }
+            }
+            if let Panel::StorageCategory(tab) = id {
+                match game.storage.category_hit(tab, cursor, &self.items) {
+                    Some(storage::Hit::Item(index)) => game.dragging = Some((Dragged::Stored(index), cursor, false)),
+                    Some(storage::Hit::Title(_)) => game.storage.categories[tab].frame.start_drag(cursor),
+                    Some(storage::Hit::Resize) => game.storage.categories[tab].start_resize(cursor),
                     _ => {}
                 }
             }

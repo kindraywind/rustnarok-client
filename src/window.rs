@@ -250,6 +250,13 @@ impl Frame {
         layer.sprites.push((right, self.at([self.width - right.size[0], 0.0]), right.size));
     }
 
+    /// The bar and the title, with no buttons.
+    pub fn draw_title_only<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, title: &str) {
+        self.draw_bar(layer, chrome);
+        layer.texts.push((title.to_owned(), self.at(offset(TITLE_TEXT, [1.0, 1.0])), [255, 255, 255]));
+        layer.texts.push((title.to_owned(), self.at(TITLE_TEXT), [0, 0, 0]));
+    }
+
     /// The title over a background that brings its own bar: the close button and the title only.
     pub fn draw_bare_title<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, title: &str, cursor: [f32; 2]) {
         let place = self.close_button();

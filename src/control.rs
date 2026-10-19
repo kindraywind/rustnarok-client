@@ -1656,6 +1656,10 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["sounds_recent"] = recent_sounds().into();
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
     state["storage_rows"] = game.storage.rows().into();
+    // The category windows that are on (a bit each, Use first) and those open now.
+    state["storage_mask"] = game.storage.mask.into();
+    state["storage_categories_open"] =
+        game.storage.categories.iter().enumerate().filter(|(_, category)| category.frame.open).map(|(tab, _)| tab).collect::<Vec<_>>().into();
     state["storage_title"] = game.storage.name.clone().into();
     state["skill_list_rows"] = game.skill_window.list_rows().into();
     state["vend_size"] = json!({"width": game.vend_size.width, "rows": game.vend_size.rows});

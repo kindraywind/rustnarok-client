@@ -630,7 +630,10 @@ impl App {
                         Panel::Homunculus,
                         Panel::HomunculusSkills,
                         Panel::Cutin,
-                    ],
+                    ]
+                    .into_iter()
+                    .chain((0..storage::TABS).map(Panel::StorageCategory))
+                    .collect(),
                     damages: Vec::new(),
                     status,
                     unit_hp: HashMap::new(),

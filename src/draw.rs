@@ -1853,6 +1853,10 @@ impl App {
                     let names = (&messages[..], card_names, &game.char_names);
                     game.storage.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.storage, icons, items, names, font, pointer, caret);
                 }
+                Panel::StorageCategory(tab) => {
+                    let names = (&messages[..], card_names, &game.char_names);
+                    game.storage.draw_category(tab, &mut layer, &mut tooltip, &assets.chrome, &assets.storage, icons, items, names, font, pointer.0);
+                }
                 Panel::Equipment => game.equipment.draw(
                     &mut layer,
                     &mut tooltip,

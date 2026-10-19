@@ -771,6 +771,8 @@ pub struct ItemInfo {
     /// What the item info window says about it (lines with ^RRGGBB colors), known and unknown.
     pub description: Vec<String>,
     pub unidentified_description: Vec<String>,
+    /// A costume (iteminfo's `costume`): the storage lists it on its Costumes tab only.
+    pub costume: bool,
 }
 
 impl ItemInfo {
@@ -830,6 +832,7 @@ fn items_in(lua: &Lua) -> io::Result<HashMap<u32, ItemInfo>> {
                     class_num: entry.get::<u32>("ClassNum").unwrap_or(0),
                     description: lines(&entry, "identifiedDescriptionName"),
                     unidentified_description: lines(&entry, "unidentifiedDescriptionName"),
+                    costume: entry.get::<bool>("costume").unwrap_or(false),
                 },
             );
         }

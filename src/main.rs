@@ -2057,6 +2057,7 @@ fn esc_panel(id: Panel) -> Option<escape::WindowId> {
         Panel::Equipment => Equipment,
         Panel::Skills => Skills,
         Panel::Storage => Storage,
+        Panel::StorageCategory(tab) => StorageCategory(tab),
         Panel::Party => Party,
         Panel::Status => Status,
         Panel::Guild => Guild,
@@ -2079,6 +2080,8 @@ enum Panel {
     Equipment,
     Skills,
     Storage,
+    /// A storage tab's category window (`storage::Category`).
+    StorageCategory(usize),
     Party,
     Status,
     Guild,
@@ -3056,6 +3059,8 @@ fn web_address(login: &str) -> String {
 const INVENTORY_SIZE: &str = "inventory_size";
 const CART_SIZE: &str = "cart_size";
 const STORAGE_SIZE: &str = "storage_size";
+/// The storage's category windows that are on, a bit each (Use first): they open with it.
+const STORAGE_CATEGORIES: &str = "storage_categories";
 const SHOP_SIZE: &str = "shop_size";
 const SHOP_DEAL_SIZE: &str = "shop_deal_size";
 /// The party window's size mode, kept with the places.
