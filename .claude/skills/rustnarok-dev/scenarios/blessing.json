@@ -1,0 +1,24 @@
+{
+  "about": "Blessing (issue #478): a Blessing on the player shows four angels trailing 3 ticks apart about 5 cells above its feet, a cyan glow under it that shows over everything, and sparkles round it; shot at 0.3 s and 1.2 s (the clock paused for each), all gone by 2.4 s.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"},
+    {"settle": 1500},
+    {"say": "@allskill"},
+    {"say": "@blvl 50"},
+    {"wait": 500},
+    {"move": [700, 600]},
+    {"say": "@useskill 34 1 {first}"},
+    {"wait_for": {"packet": "0x09cb", "pause": true, "ms": 6000}},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 300}},
+    {"shot": "blessing-early", "crop": [312, 84, 400, 400], "threshold": 30},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 900}},
+    {"shot": "blessing-late", "crop": [312, 84, 400, 400], "threshold": 30},
+    {"cmd": {"cmd": "clock", "action": "resume"}},
+    {"wait": 2000},
+    {"say": "@skillreset"},
+    {"say": "@blvl -50"},
+    {"wait": 500}
+  ]
+}

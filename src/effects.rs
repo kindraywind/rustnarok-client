@@ -1061,6 +1061,67 @@ impl Banded {
     }
 }
 
+/// Blessing (effect 42), made in code: four angels trailing one another 25 units above the feet, a flat cyan glow under
+/// them over everything, and sparkles; 150 ticks, following the unit.
+struct Blessing {
+    start: Instant,
+    anchor: Anchor,
+    /// Each sparkle's heading across the ground (a unit vector), one every 4 ticks.
+    sparkles: Vec<[f32; 2]>,
+    /// The angels' images now (one list per angel) and the sparkle's, from `advance`.
+    angels: [Vec<Placed>; 4],
+    sparkle: Vec<Placed>,
+}
+
+const BLESSING_TICKS: u32 = 150;
+const ANGEL_SPRITE: &str = "data\\sprite\\이팩트\\축복";
+const BLESSING_SPARKLE: &str = "data\\sprite\\이팩트\\particle6";
+const BLESSING_GLOW: &str = "data\\texture\\effect\\alpha_down.tga";
+/// The angels: launched 3 ticks apart at these alphas, 25 units above the feet.
+const ANGEL_STARTS: [u32; 4] = [0, 3, 6, 9];
+const ANGEL_ALPHAS: [f32; 4] = [200.0, 182.0, 164.0, 146.0];
+const ANGEL_RISE: f32 = 25.0;
+/// ponytail: the angel's frames 30 ms each; the angels fade out over the last 20 ticks.
+const ANGEL_FRAME_MS: f32 = 30.0;
+const ANGEL_FADE: u32 = 20;
+/// The glow: #20B0E8, 10 units each way from the feet (ponytail: 10 taken as the half width).
+const GLOW_COLOR: [u8; 3] = [0x20, 0xB0, 0xE8];
+const GLOW_HALF: f32 = 10.0;
+/// A sparkle every 4 ticks, living 80.
+const SPARKLE_EVERY: u32 = 4;
+const SPARKLE_LIFE: u32 = 80;
+
+/// An angel's alpha (0 to 255) at a tick, from its launch: its own alpha, fading over the effect's last ticks.
+fn angel_alpha(angel: usize, tick: u32) -> Option<f32> {
+    if tick < ANGEL_STARTS[angel] || tick >= BLESSING_TICKS {
+        return None;
+    }
+    let left = (BLESSING_TICKS - tick).min(ANGEL_FADE) as f32 / ANGEL_FADE as f32;
+    Some(ANGEL_ALPHAS[angel] * left)
+}
+
+/// The glow's alpha (0 to 255) at a tick: up 3.3 a tick to 100, held, down to nothing over the last 30.
+fn glow_alpha(tick: u32) -> f32 {
+    let rising = (3.3 * tick as f32).min(100.0);
+    let left = BLESSING_TICKS.saturating_sub(tick).min(30) as f32 / 30.0;
+    rising * left
+}
+
+/// The ticks the sparkles start at.
+fn sparkle_starts() -> impl Iterator<Item = u32> {
+    (0..BLESSING_TICKS).step_by(SPARKLE_EVERY as usize)
+}
+
+/// A sparkle's place from the feet and its alpha (0 to 1), `since` ticks after it starts, while it lives.
+// ponytail: it drifts out 0.2 a tick and rises 0.1 from 5 up, its alpha pulsing once each 20 ticks.
+fn sparkle_place(heading: [f32; 2], since: u32) -> Option<(Vector, f32)> {
+    (since < SPARKLE_LIFE).then(|| {
+        let out = 0.2 * since as f32;
+        let pulse = (since as f32 * std::f32::consts::PI / 20.0).sin().abs();
+        ([heading[0] * out, 5.0 + 0.1 * since as f32, heading[1] * out], pulse)
+    })
+}
+
 #[derive(Default)]
 pub struct Effects {
     loaded: HashMap<String, Option<Rc<Loaded>>>,
@@ -1099,6 +1160,7 @@ pub struct Effects {
     /// Bows' arrows, and the arrow sprite's layers by direction.
     arrows: crate::arrows::Arrows,
     arrow: Vec<Vec<Placed>>,
+    blessings: Vec<Blessing>,
 }
 
 /// The effects drawn even with /effect off (the data's ForceRenderEffect list): warp portals, Safety Wall, the
@@ -1458,6 +1520,20 @@ impl Effects {
             self.textures.entry(stone::STONE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, stone::STONE, true).ok());
             if id == EARTH_SPIKE { self.prims.stone.earth_spike(at, now) } else { self.prims.stone.heavens_drive(at, now) }
         }
+        // Blessing, made in code.
+        if id == 42 {
+            for path in [ANGEL_SPRITE, BLESSING_SPARKLE] {
+                self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
+            }
+            self.textures.entry(BLESSING_GLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, BLESSING_GLOW, true).ok());
+            let sparkles = sparkle_starts()
+                .map(|_| {
+                    let (sin, cos) = random(0.0, 360.0).to_radians().sin_cos();
+                    [sin, cos]
+                })
+                .collect();
+            self.blessings.push(Blessing { start: now, anchor: anchor(true), sparkles, angels: Default::default(), sparkle: Vec::new() });
+        }
         // Heal, the teleport, the arrival and the logout: bands made in code (a cast's aura comes by `play_aura`).
         if is_banded(id) && !is_cast_aura(id) {
             for path in [format!("data\\texture\\effect\\{}.tga", aura_look(id).0), SPARKLE_TEXTURE.to_owned()] {
@@ -1765,6 +1841,24 @@ impl Effects {
             true
         });
         self.auras.retain(|aura| (now.saturating_duration_since(aura.start).as_secs_f32() * 1000.0 / HIT_TICK_MS) < aura.ticks as f32);
+        // The angels play action 0 from their launches; the sparkles show particle6's first frame.
+        self.blessings.retain_mut(|blessing| {
+            let elapsed = now.saturating_duration_since(blessing.start).as_secs_f32() * 1000.0;
+            if elapsed / HIT_TICK_MS >= BLESSING_TICKS as f32 {
+                return false;
+            }
+            if let Some(Some(sprite)) = sprites.get_mut(ANGEL_SPRITE) {
+                let frames = sprite.frames(0).max(1) as f32;
+                for (angel, placed) in blessing.angels.iter_mut().enumerate() {
+                    let since = (elapsed - ANGEL_STARTS[angel] as f32 * HIT_TICK_MS).max(0.0);
+                    *placed = sprite.frame_at(gpu, 0, 0, Timing::Span(since / ANGEL_FRAME_MS % frames / frames));
+                }
+            }
+            if let Some(Some(sprite)) = sprites.get_mut(BLESSING_SPARKLE) {
+                blessing.sparkle = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
+            }
+            true
+        });
         // ponytail: the sparks show particle1's first action, frame 0.
         self.hits.retain_mut(|hit| {
             if hit.tick(now) >= HIT_TICKS {
@@ -1823,6 +1917,7 @@ impl Effects {
     pub fn forget(&mut self, unit: u32) {
         self.prims.sage.forget(unit);
         self.hits.retain(|hit| !hit.anchor.on(unit));
+        self.blessings.retain(|blessing| !blessing.anchor.on(unit));
         self.auras.retain(|aura| !aura.anchor.on(unit));
         self.playing.retain(|playing| !playing.anchor.on(unit));
         self.floating.retain(|floating| !floating.anchor.on(unit));
@@ -1834,6 +1929,28 @@ impl Effects {
     /// Whether effect `effect`'s parts draw: all of them, or with /effect off the force-drawn ones.
     fn shows(&self, effect: u32) -> bool {
         !self.only_forced || force_drawn(effect)
+    }
+
+    /// Shapes drawn over everything, with no depth test: Blessing's glow lying flat under the feet.
+    pub fn top_meshes(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<EffectMesh<'_>> {
+        let Some(Some(texture)) = self.textures.get(BLESSING_GLOW).filter(|_| self.shows(42)) else { return Vec::new() };
+        self.blessings
+            .iter()
+            .filter(|blessing| blessing.start <= now)
+            .filter_map(|blessing| {
+                let at = blessing.anchor.place(&position_of)?;
+                let alpha = glow_alpha(str_frame(now.duration_since(blessing.start))) / 255.0;
+                let tint = [f32::from(GLOW_COLOR[0]) / 255.0, f32::from(GLOW_COLOR[1]) / 255.0, f32::from(GLOW_COLOR[2]) / 255.0, alpha];
+                let corner = |x: f32, z: f32, uv: [f32; 2]| MeshVertex { position: [at[0] + x, at[1] + 0.2, at[2] + z], uv, tint };
+                let [a, b, c, d] = [
+                    corner(-GLOW_HALF, -GLOW_HALF, [0.0, 0.0]),
+                    corner(GLOW_HALF, -GLOW_HALF, [1.0, 0.0]),
+                    corner(GLOW_HALF, GLOW_HALF, [1.0, 1.0]),
+                    corner(-GLOW_HALF, GLOW_HALF, [0.0, 1.0]),
+                ];
+                Some((texture, vec![a, b, c, a, c, d], false))
+            })
+            .collect()
     }
 
     /// The effect shapes showing now: cylinders and models.
@@ -1981,6 +2098,30 @@ impl Effects {
                         true,
                         false,
                     ));
+                }
+            }
+        }
+        // Blessing's angels (25 units up, sized like a unit's sprite) and its sparkles.
+        for blessing in self.blessings.iter().filter(|blessing| blessing.start <= now && self.shows(42)) {
+            let Some(at) = blessing.anchor.place(&position_of) else { continue };
+            let tick = str_frame(now.duration_since(blessing.start));
+            let place = |offset: Vector| std::array::from_fn(|axis| at[axis] + offset[axis]);
+            if let Some(Some(sprite)) = self.sprites.get(ANGEL_SPRITE) {
+                for (angel, placed) in blessing.angels.iter().enumerate() {
+                    let Some(alpha) = angel_alpha(angel, tick) else { continue };
+                    for &(key, position, size, layer_angle) in placed {
+                        let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0);
+                        quads.push((sprite.texture(key), place([0.0, ANGEL_RISE, 0.0]), corners, [1.0, 1.0, 1.0, alpha / 255.0], false, false));
+                    }
+                }
+            }
+            if let Some(Some(sprite)) = self.sprites.get(BLESSING_SPARKLE) {
+                for (start, &heading) in sparkle_starts().zip(&blessing.sparkles) {
+                    let Some((offset, alpha)) = tick.checked_sub(start).and_then(|since| sparkle_place(heading, since)) else { continue };
+                    for &(key, position, size, layer_angle) in &blessing.sparkle {
+                        let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0);
+                        quads.push((sprite.texture(key), place(offset), corners, [1.0, 1.0, 1.0, alpha], false, false));
+                    }
                 }
             }
         }
@@ -2284,6 +2425,23 @@ mod tests {
         let ice = &table.sounds[&26][0];
         assert_eq!((ice.file.as_str(), ice.delay_ms, ice.random), ("effect\\ef_icearrow%d", 0, Some((1, 3))));
         assert!((0..100).map(|_| pick(1, 3)).all(|picked| (1..=3).contains(&picked)));
+    }
+
+    #[test]
+    fn blesses_with_angels_a_glow_and_sparkles() {
+        // Four angels launched at ticks 0, 3, 6, 9 at alphas 200, 182, 164, 146, 25 units up, until tick 150.
+        assert_eq!([0, 1, 2, 3].map(|angel| angel_alpha(angel, ANGEL_STARTS[angel])), [Some(200.0), Some(182.0), Some(164.0), Some(146.0)]);
+        assert_eq!((angel_alpha(1, 2), angel_alpha(3, 8)), (None, None));
+        assert_eq!((angel_alpha(0, 140), angel_alpha(0, 149), angel_alpha(0, 150)), (Some(100.0), Some(10.0), None));
+        assert_eq!(ANGEL_RISE, 25.0);
+        // The glow: 0, up 3.3 a tick to 100, held, gone at 150.
+        assert_eq!([0, 30, 120, 150].map(glow_alpha).map(f32::round), [0.0, 99.0, 100.0, 0.0]);
+        assert_eq!(glow_alpha(135), 50.0);
+        // A sparkle every 4 ticks while it lasts, each living 80.
+        let starts: Vec<u32> = sparkle_starts().collect();
+        assert_eq!((starts.len(), starts[..3].to_vec(), *starts.last().unwrap()), (38, vec![0, 4, 8], 148));
+        assert!(sparkle_place([1.0, 0.0], 79).is_some() && sparkle_place([1.0, 0.0], 80).is_none());
+        assert_eq!(BLESSING_TICKS, 150);
     }
 
     #[test]
@@ -2632,13 +2790,14 @@ mod tests {
     #[test]
     fn reads_sprites_quakes_and_ground_units() {
         let table = Table::load();
-        // Blessing's angel: action 0 at 30 ms a frame for 1.5 s, above the head.
-        let blessing = &table.sprites[&42][0];
-        assert_eq!((blessing.file.as_str(), blessing.attached), ("축복", true));
+        // Blessing is made in code; Aqua Benedicta's sprite plays above the head, the fire ring's again and again.
+        assert!(!table.sprites.contains_key(&42));
         let now = Instant::now();
-        let animation = Animation::new(blessing, 42, now, Anchor::Unit(None), false);
-        assert_eq!((animation.action, animation.frame_ms, animation.repeat, animation.offset), (Some(0), Some(30.0), true, [0.0, -120.0]));
-        assert_eq!(animation.end, Some(now + Duration::from_millis(1500)));
+        let water = Animation::new(&table.sprites[&39][0], 39, now, Anchor::Unit(None), false);
+        assert_eq!((water.repeat, water.offset), (false, [0.0, -100.0]));
+        let ring = &table.sprites[&634][0];
+        assert_eq!((ring.file.as_str(), ring.attached), ("화염진", true));
+        assert!(Animation::new(ring, 634, now, Anchor::Unit(None), false).repeat);
         // Earth Spike shakes the camera; Fire Bolt's arrows fall before each hit.
         assert_eq!(table.quakes[&79], [(Duration::ZERO, QUAKE_SHORT)]);
         assert_eq!(table.skill(19, "beforeHitEffectId"), [31]);

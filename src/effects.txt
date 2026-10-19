@@ -1288,9 +1288,6 @@ part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;duplicate=10;fadeOut=tru
 part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;file=effect/agi_up.bmp;poszEnd=3;poszStart=0.4;sizeEnd=100;sizeSmooth=true;sizeStart=100;sizeY=45;wav=effect/ef_incagility;overlay=true;zIndex=10
 part	38	3D	alphaMax=1;attachedEntity=true;duration=1000;duplicate=20;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=1;poszStartRand=1;poszStartRandMiddle=6;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
 part	38	3D	alphaMax=1;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;file=effect/slow.bmp;poszEnd=0.4;poszStart=2.8;sizeEnd=100;sizeSmooth=true;sizeStart=100;sizeY=45;wav=effect/ef_decagility;zIndex=10
-part	42	3D	alphaMax=1;attachedEntity=true;duration=1200;delayOffset=300;duplicate=6;fadeIn=true;fadeOut=true;posxRand=1.2;posyRand=1;poszEndRand=0.5;poszEndRandMiddle=1;poszStartRand=2;poszStartRandMiddle=5.5;size=50;sparkling=true;sparkNumber=2;spriteName=particle6;timeBetweenDupli=0;zIndex=1
-part	42	3D	alphaMax=1;attachedEntity=true;duration=1200;delayOffset=400;duplicate=6;fadeIn=true;fadeOut=true;posxRand=1.4;posyRand=1.1;poszEndRand=0.5;poszEndRandMiddle=1;poszStartRand=2;poszStartRandMiddle=5.5;size=50;spriteName=particle6;timeBetweenDupli=0;zIndex=1
-part	42	3D	alphaMax=0.3;attachedEntity=false;blendMode=2;blue=1;duration=2500;fadeIn=true;fadeOut=true;file=effect/pok2.tga;green=0.75;posx=0;posy=0;posz=0;red=0.1;size=140;wav=effect/ef_blessing;zIndex=10
 part	43	3D	alphaMax=1;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;file=effect/dex_agi_up.bmp;poszEnd=3;poszStart=0.4;sizeEnd=100;sizeSmooth=true;sizeStart=100;sizeY=45;wav=effect/ef_incagidex;zIndex=10
 part	47	3D	absoluteSpriteName=data/sprite/이팩트/torch_01;attachedEntity=true;playSprite=true;duration=600;posz=0.8;posx=0.1;size=100;angle=270;rotateToTarget=true;repeat=true
 part	50	2D	overlay=true;duration=500;file=effect/firering.tga;sizeStart=10;sizeEnd=300;angle=0;toAngle=-360;rotate=true;fadeOut=true;posz=1;attachedEntity=true
@@ -1628,7 +1625,6 @@ ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.3;
 ring	885	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=200;duplicate=5;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;red=0.3;green=0.5;blue=1.0;attachedEntity=true
 ring	885	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=5;delayStart=200;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;red=0.3;green=0.5;blue=1.0;attachedEntity=true
 spr	39	성수뜨기	1	head=true
-spr	42	축복	1	head=true;frame=0;delayFrame=30;repeat=true;duration=1500;yOffset=-120
 spr	53	poisonhit	0	-
 spr	165	크리스마스	1	duration=1000
 spr	212	darkbreath	1	head=true
