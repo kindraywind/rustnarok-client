@@ -822,6 +822,8 @@ const COOLDOWN_GRACE: Duration = Duration::from_millis(100);
 /// The Talkie Box (a Hunter's trap holding a message), and the box asking for its message.
 // ponytail: 436 "Please type a message for the Talkie Box"; 435 may be the official one.
 const TALKIE_BOX: u16 = 125;
+/// A held item's or skill's icon is drawn this much larger than in its slot.
+const DRAG_ICON_SCALE: f32 = 1.5;
 /// The aim balloons' text.
 const AIM_TEXT: [u8; 3] = [50, 255, 50];
 /// The one skill that takes a homunculus as its target.

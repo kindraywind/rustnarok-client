@@ -2031,7 +2031,8 @@ impl App {
             _ => None,
         };
         if let Some(Some(icon)) = dragged_icon.and_then(|path| icons.get(&path)) {
-            tooltip.sprites.push((icon, [pointer.0[0] - icon.size[0] / 2.0, pointer.0[1] - icon.size[1] / 2.0], icon.size));
+            let size = [icon.size[0] * DRAG_ICON_SCALE, icon.size[1] * DRAG_ICON_SCALE];
+            tooltip.sprites.push((icon, [pointer.0[0] - size[0] / 2.0, pointer.0[1] - size[1] / 2.0], size));
         }
 
         // An aimed skill: its name in a balloon at the top, "select a target" in one at the bottom, centred. Taming has
