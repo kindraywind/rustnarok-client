@@ -2,12 +2,23 @@
 //! the player play the same client. The real mouse and keyboard work, the window is drawn and kept like a player's,
 //! settings are saved, and the chat has an MCP tab that lists what the agent does.
 
-use crate::Scene;
+use std::collections::VecDeque;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use serde_json::{Value, json};
+
 use crate::chat::Kind;
 use crate::control::{Button, Command};
+use crate::{Game, Scene};
 
-/// The colour of the MCP tab's lines.
+/// The colours of the MCP tab's lines: what the agent does, what it answers, what the player typed.
 const MCP_LINE: [u8; 3] = [200, 170, 255];
+const REPLY_LINE: [u8; 3] = [255, 255, 255];
+const TYPED_LINE: [u8; 3] = [150, 255, 255];
+
+/// What the player typed in the MCP tab and the agent hasn't read yet.
+static INBOX: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 
 /// Whether `RUSTNAROK_CLIENT_CONTROL_SHARED` is set.
 pub fn shared() -> bool {
@@ -40,9 +51,14 @@ fn describe(command: &Command) -> Option<String> {
         Command::MouseUp { x, y, .. } => format!("mouse up {}", at(x, y)),
         Command::Release { .. } => "release".to_owned(),
         Command::Quit => "quit".to_owned(),
-        Command::Screenshot { .. } | Command::CellPoint { .. } | Command::State | Command::Wait { .. } | Command::Clock { .. } | Command::Trace { .. } => {
-            return None;
-        }
+        Command::Screenshot { .. }
+        | Command::CellPoint { .. }
+        | Command::State
+        | Command::Wait { .. }
+        | Command::Clock { .. }
+        | Command::Trace { .. }
+        | Command::Inbox { .. }
+        | Command::Reply { .. } => return None,
     })
 }
 
@@ -53,6 +69,36 @@ pub fn note(scene: &mut Scene, command: &Command) {
     {
         game.chat_line_kind(line, MCP_LINE, Kind::Mcp);
     }
+}
+
+/// Whether a line typed in the MCP tab is for the agent: all but the game's own / commands.
+pub fn for_agent(text: &str) -> bool {
+    !text.starts_with('/')
+}
+
+/// A line the player typed in the MCP tab: shown there, kept for the agent's `inbox`, and not sent to the server.
+pub fn typed(game: &mut Game, text: &str) {
+    game.chat_line_kind(format!("> {text}"), TYPED_LINE, Kind::Mcp);
+    INBOX.lock().unwrap().push_back(text.to_owned());
+}
+
+/// The agent's `inbox`: what was typed since the last one, waiting up to `wait` for the first line.
+pub fn inbox(wait: Duration) -> Value {
+    let end = Instant::now() + wait;
+    loop {
+        let lines: Vec<String> = INBOX.lock().unwrap().drain(..).collect();
+        if !lines.is_empty() || Instant::now() >= end {
+            return json!({"ok": true, "messages": lines});
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// The agent's `reply`: a line in the MCP tab.
+pub fn reply(scene: &mut Scene, text: String) -> Result<Value, String> {
+    let Scene::Game(game) = scene else { return Err("not in the game".into()) };
+    game.chat_line_kind(text, REPLY_LINE, Kind::Mcp);
+    Ok(Value::Null)
 }
 
 #[cfg(test)]
@@ -74,5 +120,32 @@ mod tests {
         for looking in [r#"{"cmd":"state"}"#, r#"{"cmd":"screenshot"}"#, r#"{"cmd":"clock","action":"pause"}"#, r#"{"cmd":"cell_point","x":1,"y":2}"#] {
             assert_eq!(describe(looking), None, "{looking}");
         }
+    }
+
+    #[test]
+    fn leaves_slash_commands_to_the_game() {
+        assert!(for_agent("go to prontera") && for_agent(" ") && for_agent("ไปพรอน"));
+        assert!(!for_agent("/navi") && !for_agent("/sit"));
+    }
+
+    #[test]
+    fn hands_the_agent_what_the_player_typed() {
+        // Not through `typed`, which needs a game: the queue it feeds.
+        INBOX.lock().unwrap().extend(["hello".to_owned(), "go north".to_owned()]);
+        assert_eq!(inbox(Duration::ZERO), json!({"ok": true, "messages": ["hello", "go north"]}));
+        assert_eq!(inbox(Duration::ZERO), json!({"ok": true, "messages": []}));
+        // It waits for a line that comes in time.
+        let late = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(150));
+            INBOX.lock().unwrap().push_back("late".to_owned());
+        });
+        assert_eq!(inbox(Duration::from_secs(5)), json!({"ok": true, "messages": ["late"]}));
+        late.join().unwrap();
+        let parse = |line: &str| serde_json::from_str::<Command>(line).unwrap();
+        assert_eq!(parse(r#"{"cmd":"inbox","ms":500}"#), Command::Inbox { ms: Some(500) });
+        assert_eq!(parse(r#"{"cmd":"reply","text":"hi"}"#), Command::Reply { text: "hi".into() });
+        // Neither shows in the tab as something the agent did.
+        assert_eq!(describe(&Command::Inbox { ms: None }), None);
+        assert_eq!(describe(&Command::Reply { text: "hi".into() }), None);
     }
 }

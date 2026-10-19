@@ -47,6 +47,8 @@
 //! - `clock` `{action: "pause"|"resume"|"step", ms?}`: the animation clock; a step freezes it `ms` (16) further on.
 //! - `trace` `{last?, events?}`: the last packets received (20), as `RUSTNAROK_CLIENT_TRACE` prints them; with `events`, the
 //!   events they made in between (`==` lines, with what they say: a disconnection's reason, say).
+//! - `inbox` `{ms?}` and `reply` `{text}`: the chat's MCP tab, in a client shared with the player (see mcp.rs): what the player
+//!   typed there since the last `inbox` (waiting up to `ms` for some), and an answer shown there.
 //! - `quit`.
 
 use std::collections::{HashMap, VecDeque};
@@ -130,6 +132,14 @@ pub enum Command {
         text: String,
     },
     Say {
+        text: String,
+    },
+    /// What the player typed in the chat's MCP tab since the last call; waits up to `ms` for some (see mcp.rs).
+    Inbox {
+        ms: Option<u64>,
+    },
+    /// An answer in the chat's MCP tab.
+    Reply {
         text: String,
     },
     /// A button goes down at a point and stays down until `mouse_up`.
@@ -331,6 +341,7 @@ fn serve(stream: Stream, proxy: &EventLoopProxy<NetEvent>, token: Option<&str>) 
         let reply = match serde_json::from_str::<Command>(&line) {
             Ok(Command::Wait { ms, packet, event, sent, fresh, pause, first }) => wait(proxy, ms, (packet, event, sent), fresh, pause, first),
             Ok(Command::Trace { last, events }) => trace(last.unwrap_or(20), events),
+            Ok(Command::Inbox { ms }) => mcp::inbox(Duration::from_millis(ms.unwrap_or(0))),
             Ok(command) => {
                 MARK.store(LOG.lock().unwrap().next, Ordering::Relaxed);
                 forward(proxy, command)
@@ -602,6 +613,7 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             game.session.chat(&game.me.name, &text).map_err(|error| error.to_string())?;
             Ok(Value::Null)
         }
+        Command::Reply { text } => mcp::reply(&mut app.scene, text),
         Command::State => Ok(state(app)),
         Command::Clock { action, ms } => {
             let mut frozen = FROZEN.lock().unwrap();
@@ -616,7 +628,7 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             event_loop.exit();
             Ok(Value::Null)
         }
-        Command::Wait { .. } | Command::Trace { .. } => Err("wait and trace can't be run by wait".into()),
+        Command::Wait { .. } | Command::Trace { .. } | Command::Inbox { .. } => Err("wait, trace and inbox can't be run by wait".into()),
     }
 }
 
@@ -1599,12 +1611,13 @@ fn game_state(app: &App, game: &Game) -> Value {
             "owner": room.members.iter().find(|(_, owner)| *owner).map(|(name, _)| name.clone()),
             "members": room.members.len(),
         })),
-        // The navigation under way: where to, and how long the trail on this map is.
+        // The navigation under way: where to, how long the trail on this map is, and its cells from the player's on.
         "navigation": game.navigation.as_ref().map(|active| json!({
             "map": active.target.map,
             "cell": active.target.cell,
             "monster": active.target.monster,
             "trail": active.trail.len(),
+            "trail_cells": active.trail,
         })),
         // Reputation points by reputation type.
         "reputation": game.reputation.iter().map(|(kind, points)| (kind.to_string(), json!(points))).collect::<serde_json::Map<_, _>>(),

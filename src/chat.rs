@@ -483,6 +483,11 @@ impl Default for Chat {
 }
 
 impl Chat {
+    /// Whether the MCP tab is the one shown: what is typed then goes to the agent.
+    pub fn on_mcp_tab(&self) -> bool {
+        self.tab == MCP_TAB && self.tabs.len() > MCP_TAB
+    }
+
     /// The third tab, for what an agent on the control socket does (`Kind::Mcp` lines).
     pub fn add_mcp_tab(&mut self) {
         if self.tabs.len() == MCP_TAB {

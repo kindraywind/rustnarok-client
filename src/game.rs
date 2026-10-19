@@ -1403,6 +1403,11 @@ impl Game {
         self.chat.sent(&typed);
         // A line of only spaces is text, and goes as it is.
         let text = if typed.trim().is_empty() { typed.as_str() } else { typed.trim() };
+        // In the MCP tab a line is for the agent, except a / command, which is the game's as everywhere.
+        if self.chat.on_mcp_tab() && crate::mcp::for_agent(text) {
+            crate::mcp::typed(self, text);
+            return None;
+        }
         let to = self.chat.whisper.trim().to_owned();
         if let Some(command) = chat::command(text) {
             self.client_command(command, messages, graphics);
