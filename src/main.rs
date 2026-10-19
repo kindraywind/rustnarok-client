@@ -3577,10 +3577,12 @@ const MOVE_GAP_MS: u64 = 300;
 /// Two presses this close, the pointer not moved at all between them, make a double press.
 const DOUBLE_PRESS: Duration = Duration::from_millis(500);
 
-/// Whole milliseconds of a monotonic clock, as the walk timers count them.
+/// The start of the whole-ms clock (`whole_ms`), set as the client starts.
+static START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+
+/// Whole milliseconds of a monotonic clock, as the walk timers and walks count them.
 fn whole_ms(at: Instant) -> u64 {
-    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-    at.saturating_duration_since(*START.get_or_init(Instant::now)).as_millis() as u64
+    at.saturating_duration_since(*START).as_millis() as u64
 }
 
 /// Whether a walk may go out at `now` (whole ms): more than MOVE_GAP_MS after the last one.
@@ -4092,6 +4094,8 @@ struct App {
     /// achievements, at login), handled once the game is on.
     entering: Option<(MapSession, String)>,
     early_events: Vec<MapEvent>,
+    /// Map packets heard since the last frame, applied at the start of the next.
+    frame_events: Vec<MapEvent>,
     /// Our guess of the server's tick, to place walks in time; and whether a map has loaded since the last
     /// ZC_NOTIFY_TIME (the first one after a load sets the clock outright).
     server_clock: actor::ServerClock,
@@ -4606,6 +4610,9 @@ impl ApplicationHandler<NetEvent> for App {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NetEvent) {
         match event {
             NetEvent::Control(request) => control::run(self, event_loop, request),
+            // ponytail: in the game every map packet waits for the next frame, so none overtakes a move queued before
+            // it; only the moves, the stops and the clock need to. They wait as long as frames do.
+            NetEvent::Map(event) if matches!(self.scene, Scene::Game(_)) => self.frame_events.push(event),
             event => {
                 control::observe(&event);
                 self.net_event(event);
@@ -4908,6 +4915,7 @@ impl ApplicationHandler<NetEvent> for App {
 }
 
 fn main() {
+    std::sync::LazyLock::force(&START);
     // Every panic, also a caught one (a packet skipped), goes to crash.log in the settings folder with its backtrace:
     // a bundled app's stderr goes nowhere.
     // ponytail: the file only grows; cap it if a server ever sends a stream of unreadable packets.
@@ -5133,6 +5141,7 @@ fn main() {
         playing: None,
         entering: None,
         early_events: Vec::new(),
+        frame_events: Vec::new(),
         server_clock: actor::ServerClock::default(),
         map_loaded: false,
         fields: [saved_id().unwrap_or_default(), String::new()],

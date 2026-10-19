@@ -257,6 +257,7 @@ impl App {
                 let sprites = SpriteSet::player(&self.grf, &look, &self.look_tables);
                 // The character list's speed until the map server sends one.
                 let mut player = Actor::new(me.name.clone(), sprites, position.map(i32::from), direction, if me.speed > 0 { me.speed } else { 150 });
+                player.set_map([world.gat.width, world.gat.height]);
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
                 player.sync_companions(me.option, &self.grf);
                 let indoor = self.indoor.contains(&map_key(&map));
@@ -708,6 +709,7 @@ impl App {
                     game.sync_esc();
                 }
                 game.guild_places.clear();
+                game.player.set_map([world.gat.width, world.gat.height]);
                 game.world = world;
                 game.map = map;
                 game.units.clear();
@@ -749,7 +751,9 @@ impl App {
             self.show_loading(LoadTarget::Enter { position, direction });
             return;
         }
-        if let MapEvent::ServerTime(tick, at) = event {
+        // Read on this frame's clock.
+        if let MapEvent::ServerTime(tick, _) = event {
+            let at = Instant::now();
             if std::mem::take(&mut self.map_loaded) {
                 self.server_clock.set(tick, at);
             } else {
@@ -781,6 +785,7 @@ impl App {
                 }
             }
         };
+        let map_size = [game.world.gat.width, game.world.gat.height];
         let new_actor = |unit: &net::Unit| {
             let sprites = match unit.kind {
                 _ if drawn_as_player(unit.kind, unit.job) => SpriteSet::player(grf, &unit_look(unit), look_tables),
@@ -791,6 +796,7 @@ impl App {
                 _ => job_names.get(&unit.job).and_then(|name| SpriteSet::single(grf, name, unit.kind)),
             };
             let mut actor = Actor::new(unit.name.clone(), sprites, unit.position.map(i32::from), unit.direction, unit.speed);
+            actor.set_map(map_size);
             actor.kind = unit.kind;
             actor.job = unit.job;
             actor.level = unit.level;
@@ -1269,7 +1275,7 @@ impl App {
             MapEvent::Knocked { id, position } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor {
-                    actor.place_at(position.map(i32::from), control::now());
+                    actor.place_at(position.map(i32::from));
                 }
             }
             // ZC_FASTMOVE slides the unit there; the stop that follows at the same cell leaves the slide running.
@@ -3736,12 +3742,11 @@ impl App {
                 game.attack_range = i32::from(range);
                 // Both where the server has them: one standing goes to its cell's centre, one walking walks on.
                 // ponytail: a walking target keeps its own destination (a fast chase's aim) until its next move.
-                let clock = control::now();
                 if let Some(unit) = game.units.get_mut(&target).filter(|unit| !unit.moving()) {
-                    unit.place_at(target_cell.map(i32::from), clock);
+                    unit.place_at(target_cell.map(i32::from));
                 }
                 if !game.player.moving() {
-                    game.player.place_at(cell.map(i32::from), clock);
+                    game.player.place_at(cell.map(i32::from));
                 }
                 game.walk_cell = None;
                 // Chased again at once (`rearmed`); one on Ice Wall or a trap ends instead.

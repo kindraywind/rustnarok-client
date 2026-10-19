@@ -1290,6 +1290,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "cell": game.player.cell,
             // Where it's drawn, in cells: between two while walking.
             "position": game.player.position(self::now()),
+            // When that position was drawn: the last frame, in whole ms.
+            "drawn_ms": crate::whole_ms(game.last_frame),
             "direction": game.player.direction,
             // The head against the body: 0 straight, 1 and 2 turned to either side.
             "head_direction": game.player.head_direction,
