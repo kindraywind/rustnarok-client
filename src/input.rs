@@ -2399,8 +2399,8 @@ impl App {
                 _ if game.targeting.is_some() => {
                     let (id, level) = game.targeting.unwrap();
                     let separate = self.skill_info.get(&id).is_some_and(|info| info.separate_level);
-                    let learned = game.skills.iter().find(|skill| skill.id == id).map_or(level, |skill| skill.level);
-                    game.targeting = Some((id, aim_level(level, learned, rows, separate)));
+                    let (kind, learned) = game.skills.iter().find(|skill| skill.id == id).map_or((0, level), |skill| (skill.kind, skill.level));
+                    game.targeting = Some((id, aim_level(level, learned, rows, skills::level_pickable(kind, learned, separate))));
                 }
                 _ if game.chat.settings.as_ref().is_some_and(|settings| settings.hit(self.cursor).is_some()) => {
                     game.chat.settings.as_mut().unwrap().scroll(rows)
