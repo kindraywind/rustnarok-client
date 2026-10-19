@@ -1,0 +1,16 @@
+{
+  "about": "RSM 1 map models turn (issue #436): every rotation key kept, a frame per instance stepped +33 a drawn frame at speed 1, type 2 looping and type 1 holding. Payon, Yuno and Amatsu count their moving RSM 1 instances (157, 437 and 944 with this data; the issue counts 156, 437 and 944), and a shot by Yuno's gate two seconds after arriving shows its trees, lamps and gate turned.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp payon 162 233"}, {"settle": 1500},
+    {"expect": {"map": "payon.gat", "state_at_least": {"rsm1_moving": 150}}},
+    {"say": "@warp yuno 157 50"}, {"settle": 1500},
+    {"expect": {"map": "yuno.gat", "state": {"rsm1_moving": 437}}},
+    {"wait": 2000},
+    {"move": [1000, 750]},
+    {"shot": "rsm1-yuno", "threshold": 3},
+    {"say": "@warp amatsu 197 86"}, {"settle": 1500},
+    {"expect": {"map": "amatsu.gat", "state": {"rsm1_moving": 944}}}
+  ]
+}

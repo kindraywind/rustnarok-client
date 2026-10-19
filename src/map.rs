@@ -179,13 +179,14 @@ impl Rsw {
         for _ in 0..reader.i32()?.max(0) {
             match reader.i32()? {
                 1 => {
+                    // Before 1.3 a model doesn't move; a speed outside (0, 100] is 1.
                     let (name, anim_type, anim_speed) = if version >= (1, 3) {
                         let name = reader.string(40)?;
                         let (anim_type, anim_speed) = (reader.i32()?, reader.f32()?);
                         reader.i32()?; // block type
-                        (name, anim_type, anim_speed)
+                        (name, anim_type, anim_speed_of(anim_speed))
                     } else {
-                        (String::new(), 0, 0.0)
+                        (String::new(), 0, 1.0)
                     };
                     if version >= (2, 6) && build >= 186 {
                         reader.u8()?;
@@ -398,6 +399,11 @@ pub struct Gat {
     pub height: usize,
     /// Per cell: corner heights (south-west, south-east, north-west, north-east; negative is up) and type.
     pub cells: Vec<([f32; 4], u8)>,
+}
+
+/// A model's anim speed as the RSW gives it: outside (0, 100] it's 1.
+pub fn anim_speed_of(speed: f32) -> f32 {
+    if speed > 0.0 && speed <= 100.0 { speed } else { 1.0 }
 }
 
 impl Gat {
