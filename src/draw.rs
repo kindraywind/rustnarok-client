@@ -1723,12 +1723,7 @@ impl App {
             let icon = icons.get(&popup.icon).and_then(Option::as_ref);
             popup.draw(&mut announce_layer, &assets.chrome, &assets.pickup, icon, font);
         }
-        // Weather over the map, under the names and windows.
-        let mut weather_layer = Layer::default();
-        if self.graphics.effects_on {
-            game.weather.draw(&mut weather_layer, &assets.weather, now);
-        }
-        let mut layers = vec![weather_layer, base, announce_layer, chat_layer];
+        let mut layers = vec![base, announce_layer, chat_layer];
         let mut preview = Some(preview);
         let cooling = skills::Cooling { cooldowns: &game.cooldowns, fan: &assets.fan, now: control::now() };
         // An inventory item being dragged: where it could be worn, for the equipment window's ovals.
@@ -2550,6 +2545,24 @@ impl App {
             effect_quads.extend(game.weather.spark_quads(&assets.weather, now));
         }
         let screen_shapes = if effects_on { game.effects.screen_shapes(now, feet_of_unit) } else { Vec::new() };
+        // The sky's puffs and cloud fields run on; with /effect on they draw as meshes, one per picture and blending.
+        // ponytail: alpha-blended puffs go through the mesh pass, which fogs them; the game doesn't fog them.
+        let player_at = game.world.cell_position(game.player.position(now));
+        game.sky.advance(crate::whole_ms(now), player_at, &sky::ground_of(&game.world.gat));
+        if effects_on {
+            let mut sky_meshes: Vec<(sky::Look, usize, bool, Vec<world::MeshVertex>)> = Vec::new();
+            for (look, picture, vertices, additive) in game.sky.quads(view.right, view.up, player_at) {
+                match sky_meshes.iter_mut().find(|(l, p, a, _)| *l == look && *p == picture && *a == additive) {
+                    Some((.., group)) => group.extend(vertices),
+                    None => sky_meshes.push((look, picture, additive, vertices.to_vec())),
+                }
+            }
+            for (look, picture, additive, vertices) in sky_meshes {
+                if let Some(texture) = assets.sky.picture(look, picture) {
+                    effect_meshes.push((texture, vertices, additive));
+                }
+            }
+        }
         // Max-level auras under the feet of those in sight, with the effects (unless /aura2 has them off).
         if effects_on && !self.graphics.aura_off {
             let seconds = now.duration_since(game.entered).as_secs_f32();

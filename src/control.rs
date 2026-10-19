@@ -1640,6 +1640,9 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["map_effect_timers"] = game.world.map_effects.timers.len().into();
     state["map_effects_fired"] = game.world.map_effects.fired.into();
     state["map_effect_fired_ms_ago"] = game.world.map_effects.last_fired.map(|at| crate::whole_ms(self::now()).saturating_sub(at)).into();
+    // The sky's puffs and clouds, and how many show now.
+    state["sky_puffs"] = game.sky.puffs.len().into();
+    state["sky_shown"] = game.sky.puffs.iter().filter(|puff| puff.alpha > 0.0).count().into();
     // The way the character faced on entering the map server (it faces so again after a warp).
     state["entered_facing"] = game.entered_facing.into();
     // The skill units on the ground standing as models (their UNT_ numbers).

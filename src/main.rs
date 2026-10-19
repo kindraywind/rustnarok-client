@@ -128,6 +128,7 @@ mod shortcuts;
 mod skill_descript;
 mod skill_motions;
 mod skills;
+mod sky;
 mod sound;
 mod status;
 mod status_tip;
@@ -1555,6 +1556,8 @@ struct Game {
     deep_blind: bool,
     /// L and the dusk fade. Ground and models take its tint.
     scene: world::SceneLight,
+    /// The sky in the world: MapSkyData's puffs and cloud fields, and the cloud and fog weather's.
+    sky: sky::Sky,
     /// The right-click menu, and where a right press began (and on whom).
     menu: Option<menu::Menu<Choice>>,
     right_press: Option<([f32; 2], Option<MenuFor>)>,
@@ -2751,6 +2754,7 @@ struct Assets {
     cashshop: cashshop::Assets,
     context_menu: menu::Assets,
     weather: weather::Assets,
+    sky: sky::Assets,
     dressroom: dressroom::Assets,
     catalog: catalog::Assets,
     skill_descript: skill_descript::Assets,
@@ -2879,6 +2883,7 @@ impl Assets {
             cashshop: cashshop::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
             weather: weather::Assets::load(gpu, grf),
+            sky: sky::Assets::load(gpu, grf),
             dressroom: dressroom::Assets::load(gpu, grf),
             catalog: catalog::Assets::load(gpu, grf),
             skill_descript: skill_descript::Assets::load(gpu),
