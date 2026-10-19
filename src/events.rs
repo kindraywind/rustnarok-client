@@ -5,19 +5,31 @@ use super::*;
 impl App {
     pub(crate) fn net_event(&mut self, event: NetEvent) {
         match event {
+            // An answer after Cancel or the time limit.
+            NetEvent::Login(_) if !matches!(self.scene, Scene::Waiting(Wait::Login, _)) => {}
             NetEvent::Login(Ok(accepted)) => {
                 // Dev runs (RUSTNAROK_CLIENT_LOGIN) leave the saved ID alone.
                 if std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none() {
                     remember_id(self.save_id.then_some(self.fields[0].as_str()));
                 }
                 self.scene = Scene::ServerSelect { accepted, selected: 0 };
+                self.server_list_opened = Instant::now();
                 if std::env::var_os("RUSTNAROK_CLIENT_AUTOSTART").is_some() {
                     self.enter_char_server();
                 }
             }
             NetEvent::Login(Err(error)) => {
-                let text = self.messages.get(login_error_message(&error)).cloned().unwrap_or_default();
-                self.message(text, Scene::Login);
+                let (text, back) = match &error {
+                    LoginError::Refused(code, date) => {
+                        (login_refusal_text(*code, date, &self.messages), if login_refusal_quits(*code) { Scene::Quit } else { Scene::Login })
+                    }
+                    LoginError::Notified(code) => (Some(self.message_text(ban_message(*code))), Scene::Login),
+                    LoginError::Io(_) => (Some(self.message_text(CONNECT_FAILED)), Scene::Login),
+                };
+                match text {
+                    Some(text) => self.message(text, back),
+                    None => self.scene = back,
+                }
             }
             // Events from a session already closed by going back to login.
             NetEvent::Char(CharEvent::Disconnected(_)) if self.char_session.is_none() => {}
@@ -151,6 +163,11 @@ impl App {
                     Ok(session) => {
                         self.entering = Some((session, map));
                         self.early_events.clear();
+                        // From here the map server's limit counts.
+                        if let Scene::Waiting(wait, _) = &mut self.scene {
+                            *wait = Wait::Map;
+                        }
+                        self.wait_began = Instant::now();
                     }
                     Err(_) => self.message("맵 서버에 접속할 수 없습니다.", Scene::Login),
                 }
@@ -203,7 +220,19 @@ impl App {
             }
             NetEvent::Char(CharEvent::Refused(code)) => {
                 self.char_session = None;
-                self.message(format!("접속이 거부되었습니다. ({code})"), Scene::Login);
+                let (id, to_list) = char_refusal(code);
+                let back = match (&self.account, to_list) {
+                    (Some(accepted), true) => {
+                        self.server_list_opened = Instant::now();
+                        Scene::ServerSelect { accepted: accepted.clone(), selected: self.char_server }
+                    }
+                    _ => Scene::Login,
+                };
+                self.message(self.message_text(id), back);
+            }
+            NetEvent::Char(CharEvent::Banned(code)) => {
+                self.char_session = None;
+                self.message(self.message_text(ban_message(code)), Scene::Login);
             }
             NetEvent::Char(CharEvent::Disconnected(_)) => {
                 self.char_session = None;
@@ -1999,7 +2028,7 @@ impl App {
                 }) {
                     Ok(session) => {
                         self.char_session = Some(session);
-                        self.wait();
+                        self.wait(Wait::CharServer);
                     }
                     Err(_) => self.message("서버에 접속할 수 없습니다.", Scene::Login),
                 }

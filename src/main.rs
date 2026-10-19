@@ -1054,6 +1054,15 @@ fn pitch_range(indoor: bool, ctrl: bool) -> [f32; 2] {
 }
 /// "Disconnected from the server."
 const DISCONNECTED_MESSAGE: usize = 3;
+/// "Failed to Connect to Server."
+const CONNECT_FAILED: usize = 1;
+/// The wait box's lines: "Please wait...", and the one for making and deleting characters.
+const WAIT_MESSAGE: usize = 122;
+const MAKING_MESSAGE: usize = 123;
+/// In the wait box (at the login window's place): the text's area, and Cancel.
+const WAIT_TEXT: [f32; 2] = [10.0, 22.0];
+const WAIT_TEXT_WIDTH: f32 = 260.0;
+const WAIT_CANCEL: [f32; 2] = [119.0, 95.0];
 /// The loading screen's progress bar.
 const LOADING_BAR: [f32; 2] = [240.0, 15.0];
 
@@ -2522,8 +2531,9 @@ enum Scene {
         selected: usize,
     },
     Login,
-    /// A request is in flight; the inner scene stays on screen without reacting.
-    Waiting(Box<Scene>),
+    /// A request is in flight (`Wait` says which: its box and time limit); the inner scene stays on screen without
+    /// reacting.
+    Waiting(Wait, Box<Scene>),
     ServerSelect {
         accepted: LoginAccepted,
         selected: usize,
@@ -2543,6 +2553,60 @@ enum Scene {
         then: Then,
         back: Box<Scene>,
     },
+    /// The client closes (a box's OK led here).
+    Quit,
+}
+
+/// What a request waits for: the box over it and how long before the client gives up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Wait {
+    /// The login's answer.
+    Login,
+    /// The char server, after picking a server (or back from a map).
+    CharServer,
+    /// Game Start, until the char server names the map server.
+    Start,
+    /// The map server, from connecting to entering the map.
+    Map,
+    /// Making or deleting a character.
+    Making,
+    /// Another char server request (a deletion's reserve or cancel, a slot move, a rename): no box.
+    Quiet,
+    /// A pick on the server list (a scene of its own, timed from when it opened).
+    ServerList,
+}
+
+/// How a wait goes on after so long.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum WaitEnd {
+    Keep,
+    /// "Failed to Connect to Server." and the login window, as Cancel does.
+    GiveUp,
+    /// "Failed to Connect to Server.", then the client closes.
+    Quit,
+}
+
+impl Wait {
+    /// The box's line: "Please wait..." (122), or 123 for making and deleting; none for the quiet ones.
+    fn message(self) -> Option<usize> {
+        match self {
+            Wait::Login | Wait::CharServer | Wait::Start | Wait::Map => Some(WAIT_MESSAGE),
+            Wait::Making => Some(MAKING_MESSAGE),
+            Wait::Quiet | Wait::ServerList => None,
+        }
+    }
+
+    /// The limits: 15 s for the login's answer and the map server, 80 s for the char server, and 15 s to pick a server
+    /// before the client closes.
+    fn end(self, elapsed: Duration) -> WaitEnd {
+        let ms = elapsed.as_millis();
+        match self {
+            Wait::Login | Wait::Map if ms >= 15_000 => WaitEnd::GiveUp,
+            Wait::CharServer if ms >= 80_000 => WaitEnd::GiveUp,
+            Wait::ServerList if ms >= 15_000 => WaitEnd::Quit,
+            _ => WaitEnd::Keep,
+        }
+    }
 }
 
 /// Esc on a screen before a map: the login window, the service list and the server list ask to quit; character
@@ -2587,14 +2651,14 @@ impl Scene {
     /// The scene drawn as the base layer, under any message box or wait.
     fn base(&self) -> &Scene {
         match self {
-            Scene::Waiting(inner) | Scene::Message(_, inner) | Scene::Confirm(_, _, inner) | Scene::Prompt { back: inner, .. } => inner.base(),
+            Scene::Waiting(_, inner) | Scene::Message(_, inner) | Scene::Confirm(_, _, inner) | Scene::Prompt { back: inner, .. } => inner.base(),
             scene => scene,
         }
     }
 
     fn base_mut(&mut self) -> &mut Scene {
         match self {
-            Scene::Waiting(inner) | Scene::Message(_, inner) | Scene::Confirm(_, _, inner) | Scene::Prompt { back: inner, .. } => inner.base_mut(),
+            Scene::Waiting(_, inner) | Scene::Message(_, inner) | Scene::Confirm(_, _, inner) | Scene::Prompt { back: inner, .. } => inner.base_mut(),
             scene => scene,
         }
     }
@@ -3096,12 +3160,19 @@ fn deal_box_position() -> [f32; 2] {
     [((width - 640.0) / 2.0 + 185.0).floor(), (300.0 * height / 480.0).floor()]
 }
 
-fn dialog_position(dialog: &Texture) -> [f32; 2] {
-    dialog_position_of(dialog.size)
+fn dialog_position(_dialog: &Texture) -> [f32; 2] {
+    dialog_position_of(screen())
 }
 
-fn dialog_position_of(size: [f32; 2]) -> [f32; 2] {
-    [((screen()[0] - size[0]) / 2.0).floor(), ((screen()[1] - size[1]) / 1.5).floor()]
+/// Message boxes (280×120), before a map and on one: (W − 640) / 2 + 185 across, (H − 480) / 2 + 180 down; (377, 324)
+/// at 1024×768.
+fn dialog_position_of(screen: [f32; 2]) -> [f32; 2] {
+    [((screen[0] - 640.0) / 2.0 + 185.0).floor(), ((screen[1] - 480.0) / 2.0 + 180.0).floor()]
+}
+
+/// The service and server lists: centred across, two thirds of the free height down.
+fn service_position(window: &Texture) -> [f32; 2] {
+    [((screen()[0] - window.size[0]) / 2.0).floor(), ((screen()[1] - window.size[1]) / 1.5).floor()]
 }
 
 /// An attack asked for with the mouse.
@@ -3749,60 +3820,105 @@ fn wrap_plain(font: &text::Font, text: &str, width: f32, used: f32, color: &mut 
     lines
 }
 
-// ponytail: placeholder wording; the client's own messages live in msgstringtable.csv, map them once observed.
-/// The client message for a login refusal (AC_REFUSE_LOGIN) or a ban notice (SC_NOTIFY_BAN).
-fn login_error_message(error: &LoginError) -> usize {
-    match *error {
-        LoginError::Refused(code) => match code {
-            0 => 6,
-            1 => 267,
-            2 => 8,
-            3 => 3,
-            4 => 266,
-            5 => 310,
-            6 => 449,
-            7 => 439,
-            8 => 681,
-            9..=15 => 703 + code as usize - 9,
-            17 => 1380,
-            18 => 1381,
-            19 => 1751,
-            20 => 1752,
-            21 => 1786,
-            22..=27 | 30 => 3440,
-            28 => 2731,
-            29 => 2732,
-            33 => 2682,
-            36 => 3453,
-            99 => 368,
-            100 => 809,
-            101 => 810,
-            102 => 811,
-            103 => 859,
-            104 => 860,
-            105 => 1372,
-            106 => 1293,
-            108 => 1393,
-            109 => 1394,
-            110 => 2345,
-            112 => 2410,
-            242 => 3439,
-            243 => 3687,
-            244 => 4190,
-            _ => 9,
-        },
-        LoginError::Notified(code) => match code {
-            1 => 4,
-            2 => 5,
-            3 => 241,
-            4 => 264,
-            5 => 305,
-            6 => 764,
-            8 => 440,
-            _ => 3,
-        },
-        // "Failed to connect to the server."
-        LoginError::Io(_) => 1,
+/// A login refusal's (AC_REFUSE_LOGIN) line by code; none for 3 and codes the game's table doesn't know.
+fn login_refusal_message(code: u32) -> Option<usize> {
+    Some(match code {
+        0 => 6,
+        1 => 267,
+        2 => 8,
+        4 => 266,
+        5 => 310,
+        6 => 449,
+        7 => 439,
+        8 => 681,
+        9..=15 => 703 + code as usize - 9,
+        17 => 1380,
+        18 => 1381,
+        19 => 1751,
+        20 => 1752,
+        21 => 1786,
+        22..=27 | 30 => 3440,
+        28 => 2731,
+        29 => 2732,
+        33 => 2682,
+        36 => 3453,
+        99 => 368,
+        100 => 809,
+        101 => 810,
+        102 => 811,
+        103 => 859,
+        104 => 860,
+        105 => 1372,
+        106 => 1293,
+        108 => 1393,
+        109 => 1394,
+        110 => 2345,
+        112 => 2410,
+        242 => 3439,
+        243 => 3687,
+        244 => 4190,
+        _ => return None,
+    })
+}
+
+/// A login refusal's box: none for 16 (straight back to the login window); 6, 17 and 100 with the block's date in it;
+/// 3 and unknown codes "Rejected from Server." with the code after it.
+fn login_refusal_text(code: u32, date: &str, messages: &[String]) -> Option<String> {
+    let message = |id: usize| messages.get(id).map_or("", String::as_str);
+    match (code, login_refusal_message(code)) {
+        (16, _) => None,
+        (6 | 17 | 100, Some(id)) => Some(rustnarok_client::messages::fill(message(id), &[&date])),
+        (_, Some(id)) => Some(message(id).to_owned()),
+        (_, None) => Some(format!("{}({code})", message(9))),
+    }
+}
+
+/// An old client (5) or a deleted account (99): the client closes after the box.
+fn login_refusal_quits(code: u32) -> bool {
+    matches!(code, 5 | 99)
+}
+
+/// A ban notice's (SC_NOTIFY_BAN) line before a map.
+fn ban_message(code: u8) -> usize {
+    match code {
+        0 => 3,
+        1 => 4,
+        2 => 5,
+        3 => 241,
+        4 => 264,
+        5 => 305,
+        6 => 438,
+        7 => 439,
+        8 => 440,
+        9 => 529,
+        10 => 530,
+        11..=14 => 575 + usize::from(code) - 11,
+        16 => 606,
+        17 => 607,
+        18 => 678,
+        100 => 1123,
+        101 => 1178,
+        102 => 1179,
+        103..=105 => 1309 + usize::from(code) - 103,
+        108 => 1582,
+        109 => 1583,
+        110 => 1589,
+        113 => 2021,
+        114 => 2344,
+        116 => 3635,
+        _ => 3,
+    }
+}
+
+/// The char server refusing the account (HC_REFUSE_ENTER): the line, and whether it goes back to the server list
+/// (118, 119) rather than the login window.
+fn char_refusal(code: u8) -> (usize, bool) {
+    match code {
+        1 => (208, false),
+        111 => (1865, false),
+        118 => (3818, true),
+        119 => (2929, true),
+        _ => (9, false),
     }
 }
 
@@ -3925,6 +4041,9 @@ struct App {
     assets: Option<Assets>,
     scene: Scene,
     char_session: Option<CharSession>,
+    /// When the wait up now began, and when the server list opened (their time limits).
+    wait_began: Instant,
+    server_list_opened: Instant,
     /// The login servers the data folder's clientinfo.xml lists, and the one picked.
     connections: Vec<rustnarok_client::clientinfo::Connection>,
     connection: usize,
@@ -3986,9 +4105,17 @@ impl App {
         self.started.elapsed().as_millis() as u32
     }
 
-    fn wait(&mut self) {
+    fn wait(&mut self, wait: Wait) {
         let scene = std::mem::replace(&mut self.scene, Scene::Login);
-        self.scene = Scene::Waiting(Box::new(scene));
+        self.wait_began = Instant::now();
+        self.scene = Scene::Waiting(wait, Box::new(scene));
+    }
+
+    /// Cancel on the wait box, or a wait past its limit: disconnected, "Failed to Connect to Server.", the login window.
+    fn give_up(&mut self) {
+        self.char_session = None;
+        self.entering = None;
+        self.message(self.message_text(CONNECT_FAILED), Scene::Login);
     }
 
     fn message(&mut self, text: impl Into<String>, back: Scene) {
@@ -4011,7 +4138,7 @@ impl App {
 
     /// Sends the login (the dev switch's too, which skips the button's checks).
     fn send_login(&mut self) {
-        self.wait();
+        self.wait(Wait::Login);
         let proxy = self.proxy.clone();
         let [id, password] = self.fields.clone();
         let (server, version) = self.login_server();
@@ -4053,7 +4180,7 @@ impl App {
         }) {
             Ok(session) => {
                 self.char_session = Some(session);
-                self.wait();
+                self.wait(Wait::CharServer);
             }
             Err(_) => self.message("서버에 접속할 수 없습니다.", Scene::Login),
         }
@@ -4068,7 +4195,7 @@ impl App {
         match self.char_session.as_mut().map(|session| session.select(character.slot)) {
             Some(Ok(())) => {
                 self.playing = Some(character);
-                self.wait();
+                self.wait(Wait::Start);
             }
             _ => self.message(self.messages.get(DISCONNECTED_MESSAGE).cloned().unwrap_or_default(), Scene::Login),
         }
@@ -4120,7 +4247,7 @@ impl App {
             }
         };
         match sent {
-            Some(Ok(())) => self.wait(),
+            Some(Ok(())) => self.wait(Wait::Quiet),
             _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
         }
     }
@@ -4249,7 +4376,7 @@ impl App {
                 birthdate => {
                     let sent = self.char_session.as_mut().map(|session| session.delete(id, birthdate.trim_start_matches('-')));
                     if let Some(Ok(())) = sent {
-                        self.wait();
+                        self.wait(Wait::Making);
                     }
                 }
             }
@@ -4263,7 +4390,7 @@ impl App {
                 let Scene::CharMake(make, _) = &self.scene else { return };
                 let (name, slot, color, hair, job, sex) = (make.name.trim().to_owned(), make.slot, make.color, make.hair, u32::from(make.job()), make.sex());
                 match self.char_session.as_mut().map(|session| session.make(&name, slot, color, hair, job, sex)) {
-                    Some(Ok(())) => self.wait(),
+                    Some(Ok(())) => self.wait(Wait::Making),
                     _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
                 }
             }
@@ -4311,7 +4438,7 @@ impl App {
                 self.scene = Scene::Prompt { text, input: String::new(), then: Then::Delete(id), back: Box::new(back) };
             }
             Then::Delete(id) => match self.char_session.as_mut().map(|session| session.delete(id, &input)) {
-                Some(Ok(())) => self.wait(),
+                Some(Ok(())) => self.wait(Wait::Making),
                 _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
             },
             Then::Move(from, to, moves) => {
@@ -4319,7 +4446,7 @@ impl App {
                     select.moved_to = Some(usize::from(to));
                 }
                 match self.char_session.as_mut().map(|session| session.move_slot(u16::from(from), u16::from(to), moves)) {
-                    Some(Ok(())) => self.wait(),
+                    Some(Ok(())) => self.wait(Wait::Quiet),
                     _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
                 }
             }
@@ -4333,7 +4460,7 @@ impl App {
                 self.scene = Scene::Confirm(text, Then::Rename(id, name), Box::new(back));
             }
             Then::Rename(id, name) => match self.char_session.as_mut().map(|session| session.rename(id, &name)) {
-                Some(Ok(())) => self.wait(),
+                Some(Ok(())) => self.wait(Wait::Quiet),
                 _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
             },
         }
@@ -4349,7 +4476,7 @@ impl App {
     /// Back to the scene under a finished request.
     fn settle(&mut self) {
         self.scene = match std::mem::replace(&mut self.scene, Scene::Login) {
-            Scene::Waiting(inner) => *inner,
+            Scene::Waiting(_, inner) => *inner,
             scene => scene,
         };
     }
@@ -4538,6 +4665,23 @@ impl ApplicationHandler<NetEvent> for App {
         }
         self.auto_input(event_loop);
         self.read_button();
+        // The char server hears from the client every 12 s at character select and creation.
+        if let Some(session) = &mut self.char_session
+            && matches!(self.scene.base(), Scene::CharSelect(_) | Scene::CharMake(..))
+        {
+            let _ = session.keep_alive(Instant::now());
+        }
+        // Waits past their limits.
+        let end = match &self.scene {
+            Scene::Waiting(wait, _) if self.loading.is_none() => wait.end(self.wait_began.elapsed()),
+            Scene::ServerSelect { .. } => Wait::ServerList.end(self.server_list_opened.elapsed()),
+            _ => WaitEnd::Keep,
+        };
+        match end {
+            WaitEnd::Keep => {}
+            WaitEnd::GiveUp => self.give_up(),
+            WaitEnd::Quit => self.message(self.message_text(CONNECT_FAILED), Scene::Quit),
+        }
         let tick = self.client_tick();
         match &mut self.scene {
             Scene::Game(game) => {
@@ -4939,6 +5083,8 @@ fn main() {
         connections,
         connection: 0,
         char_session: None,
+        wait_began: Instant::now(),
+        server_list_opened: Instant::now(),
         char_server: 0,
         quitting: false,
         tab_held: false,
@@ -6068,10 +6214,45 @@ mod tests {
     }
 
     #[test]
+    fn gives_up_waiting_at_the_games_limits() {
+        let end = |wait: Wait, ms: u64| wait.end(Duration::from_millis(ms));
+        assert_eq!([end(Wait::Login, 14_999), end(Wait::Login, 15_000)], [WaitEnd::Keep, WaitEnd::GiveUp]);
+        assert_eq!([end(Wait::CharServer, 79_999), end(Wait::CharServer, 80_000)], [WaitEnd::Keep, WaitEnd::GiveUp]);
+        assert_eq!([end(Wait::Map, 14_999), end(Wait::Map, 15_000)], [WaitEnd::Keep, WaitEnd::GiveUp]);
+        assert_eq!([end(Wait::ServerList, 14_999), end(Wait::ServerList, 15_000)], [WaitEnd::Keep, WaitEnd::Quit]);
+        // Game Start before the map server, making and deleting, and the quiet requests wait as long as it takes.
+        assert!([Wait::Start, Wait::Making, Wait::Quiet].iter().all(|&wait| end(wait, 600_000) == WaitEnd::Keep));
+        // The box reads "Please wait..." but for making and deleting; the quiet ones show none.
+        assert_eq!([Wait::Login, Wait::Start, Wait::Making, Wait::Quiet].map(Wait::message), [Some(122), Some(122), Some(123), None]);
+    }
+
+    #[test]
+    fn places_message_boxes_as_the_game() {
+        assert_eq!(dialog_position_of([800.0, 600.0]), [265.0, 240.0]);
+        assert_eq!(dialog_position_of([1024.0, 768.0]), [377.0, 324.0]);
+    }
+
+    #[test]
+    fn words_login_refusals_bans_and_char_refusals() {
+        let mut messages: Vec<String> = (0..1400).map(|id| format!("m{id}")).collect();
+        messages[9] = "Rejected from Server.".into();
+        messages[449] = "You are prohibited to log in until %s.".into();
+        let text = |code: u32, date: &str| login_refusal_text(code, date, &messages);
+        assert_eq!(text(1, "").as_deref(), Some("m267"));
+        assert_eq!(text(3, "").as_deref(), Some("Rejected from Server.(3)"));
+        assert_eq!(text(31, "").as_deref(), Some("Rejected from Server.(31)"));
+        assert_eq!(text(6, "2026-10-19 12:00:00").as_deref(), Some("You are prohibited to log in until 2026-10-19 12:00:00."));
+        assert_eq!(text(16, ""), None);
+        assert!(login_refusal_quits(5) && login_refusal_quits(99) && !login_refusal_quits(1));
+        assert_eq!([0, 6, 7, 9, 12, 16, 104, 116, 15].map(ban_message), [3, 438, 439, 529, 576, 606, 1310, 3635, 3]);
+        assert_eq!([1, 111, 118, 119, 2].map(char_refusal), [(208, false), (1865, false), (3818, true), (2929, true), (9, false)]);
+    }
+
+    #[test]
     fn asks_before_leaving_a_screen_before_the_map() {
         assert!(matches!(pre_map_escape(&Scene::Login), Some((QUIT_MESSAGE, Then::Quit))));
         assert!(matches!(pre_map_escape(&Scene::Connections { selected: 0 }), Some((QUIT_MESSAGE, Then::Quit))));
-        let waiting = Scene::Waiting(Box::new(Scene::Login));
+        let waiting = Scene::Waiting(Wait::Quiet, Box::new(Scene::Login));
         assert!(pre_map_escape(&waiting).is_none(), "a box over the screen takes Esc itself");
         // Making a character, Esc asks to quit.
         let making = Scene::CharMake(Box::new(char_make::Make::blank(2)), Box::new(char_select::Select::new(Vec::new(), Vec::new(), 9)));

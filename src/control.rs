@@ -787,7 +787,8 @@ fn scene_name(scene: &Scene) -> &'static str {
     match scene {
         Scene::Connections { .. } => "connections",
         Scene::Login => "login",
-        Scene::Waiting(_) => "waiting",
+        Scene::Waiting(..) => "waiting",
+        Scene::Quit => "quit",
         Scene::ServerSelect { .. } => "server_select",
         Scene::CharSelect(_) => "char_select",
         Scene::CharMake(..) => "char_make",

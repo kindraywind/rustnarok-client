@@ -77,7 +77,13 @@ impl App {
         let (at, size) = picture_place();
         base.sprites.push((&assets.background, at, size));
         let mut caret = None;
-        match self.scene.base() {
+        // The login window and the server list close while the wait box is up.
+        let boxed = matches!(&self.scene, Scene::Waiting(wait, _) if wait.message().is_some());
+        let shown = match self.scene.base() {
+            Scene::Login | Scene::ServerSelect { .. } if boxed => &Scene::Quit,
+            scene => scene,
+        };
+        match shown {
             Scene::Login => {
                 let login = login_position();
                 let message = |id: usize| self.messages.get(id).map_or("", String::as_str);
@@ -124,7 +130,7 @@ impl App {
                 }
             }
             Scene::Connections { selected } => {
-                let service = dialog_position(&assets.service);
+                let service = service_position(&assets.service);
                 let list = offset(service, SERVER_LIST);
                 base.sprites.push((&assets.service, service, assets.service.size));
                 base.sprites.push((&assets.selection, offset(list, [0.0, *selected as f32 * SERVER_ROW[1]]), SERVER_ROW));
@@ -135,7 +141,7 @@ impl App {
                 }
             }
             Scene::ServerSelect { accepted, selected } => {
-                let service = dialog_position(&assets.service);
+                let service = service_position(&assets.service);
                 let list = offset(service, SERVER_LIST);
                 base.sprites.push((&assets.service, service, assets.service.size));
                 base.sprites.push((&assets.selection, offset(list, [0.0, *selected as f32 * SERVER_ROW[1]]), SERVER_ROW));
@@ -156,7 +162,8 @@ impl App {
                 let caret = matches!(self.scene, Scene::CharMake(..)) && blink_phase.is_multiple_of(2);
                 make.draw(&mut base, &assets.char_make, font, &self.messages, base_pointer, &make_poses, caret)
             }
-            Scene::Game(_) | Scene::Waiting(_) | Scene::Message(..) | Scene::Confirm(..) | Scene::Prompt { .. } => unreachable!("handled elsewhere"),
+            Scene::Quit => {}
+            Scene::Game(_) | Scene::Waiting(..) | Scene::Message(..) | Scene::Confirm(..) | Scene::Prompt { .. } => unreachable!("handled elsewhere"),
         }
 
         let mut overlay = Layer::default();
@@ -176,6 +183,18 @@ impl App {
             let top = if matches!(self.scene, Scene::Prompt { .. }) { MESSAGE_TEXT[1] - 16.0 } else { MESSAGE_TEXT[1] };
             for (row, line) in lines.into_iter().enumerate() {
                 overlay.texts.push((line.trim_start().to_owned(), offset(dialog, [MESSAGE_TEXT[0], top + row as f32 * MESSAGE_LINE]), TEXT_COLOR));
+            }
+        }
+        // The wait box: its line, and Cancel.
+        if let Scene::Waiting(wait, _) = &self.scene
+            && let Some(id) = wait.message()
+        {
+            let at = login_position();
+            overlay.sprites.push((&assets.message, at, assets.message.size));
+            overlay.sprites.push(button_sprite(pointer, offset(at, WAIT_CANCEL), &assets.cancel));
+            let text = self.messages.get(id).map_or("", String::as_str);
+            for (row, line) in message_lines(font, text, WAIT_TEXT_WIDTH).into_iter().enumerate() {
+                overlay.texts.push((line.trim_start().to_owned(), offset(at, [WAIT_TEXT[0], WAIT_TEXT[1] + row as f32 * MESSAGE_LINE]), TEXT_COLOR));
             }
         }
         if let Scene::Prompt { input, .. } = &self.scene {
@@ -205,7 +224,7 @@ impl App {
         // With RUSTNAROK_CLIENT_AUTOSTART=<slot> the shot waits for the game; any other value stops at character select.
         let autostart = std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok();
         let playing_slot = autostart.as_deref().is_some_and(|value| value.parse::<usize>().is_ok());
-        let settled = !matches!(self.scene, Scene::Waiting(_))
+        let settled = !matches!(self.scene, Scene::Waiting(..))
             && match autostart {
                 None => true,
                 // Back from the game (the option menu's character select) counts too.
