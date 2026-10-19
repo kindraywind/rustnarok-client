@@ -1860,8 +1860,11 @@ pub struct Actor {
     leg: ([f32; 2], Instant),
     /// Milliseconds per straight step (the server's speed).
     pub step_ms: f32,
-    /// World units walked in finished steps since the unit appeared.
+    /// The walk's odometer: world units it has been drawn moving while walking, since it appeared. Each update adds
+    /// the way it moved, so a changed walk never winds the legs back.
     distance: f32,
+    /// Where it was drawn at the last update, in cells.
+    drawn: [f32; 2],
     /// Cells a finished step just left (not a slide). Cleared at the start of the next update.
     stepped: Vec<[i32; 2]>,
     /// Chase-walk footprints left so far, so 326 and 327 alternate.
@@ -1966,6 +1969,7 @@ impl Actor {
             walk_frames: 0,
             step_ms: f32::from(speed.max(1)),
             distance: 0.0,
+            drawn: cell.map(|value| value as f32),
             stepped: Vec::new(),
             footprints: 0,
             direction,
@@ -2120,13 +2124,6 @@ impl Actor {
         self.shot = Some(Shot { action, started: start, pace: Pace::Act(scale.max(0.01)), hold });
     }
 
-    /// World units walked since the unit appeared, the step under way included.
-    fn walked(&self, now: Instant) -> f32 {
-        let Some(&(next, _)) = self.path.first() else { return self.distance };
-        let from = self.leg.0;
-        self.distance + self.progress(now) * f32::hypot(next[0] as f32 - from[0], next[1] as f32 - from[1]) * world::CELL
-    }
-
     /// How far through the step under way the unit is, 0 to 1.
     fn progress(&self, now: Instant) -> f32 {
         let Some(&(_, arrives)) = self.path.first() else { return 1.0 };
@@ -2255,6 +2252,7 @@ impl Actor {
     pub fn update(&mut self, now: Instant) -> [f32; 2] {
         self.stepped.clear();
         self.walk_frames = self.walk_frames.saturating_sub(1);
+        let walking = !self.path.is_empty() && !self.sliding;
         while let Some(&(next, arrives)) = self.path.first() {
             // A unit that doesn't move this step keeps its facing (knocked onto the next cell of its path).
             if !self.sliding && next != self.cell {
@@ -2266,8 +2264,6 @@ impl Actor {
             if now < arrives {
                 break;
             }
-            let from = self.leg.0;
-            self.distance += f32::hypot(next[0] as f32 - from[0], next[1] as f32 - from[1]) * world::CELL;
             if !self.sliding {
                 self.stepped.push(self.cell);
             }
@@ -2291,7 +2287,12 @@ impl Actor {
                 blend.last = now;
             }
         }
-        self.position(now)
+        let at = self.position(now);
+        if walking {
+            self.distance += f32::hypot(at[0] - self.drawn[0], at[1] - self.drawn[1]) * world::CELL;
+        }
+        self.drawn = at;
+        at
     }
 
     /// Slides straight to `cell` from where it is drawn, over 200 ms, facing as it was. A long way jumps.
@@ -2344,7 +2345,7 @@ impl Actor {
             IDLE
         };
         if action == WALK {
-            return (action, Timing::Walk(self.walked(now)));
+            return (action, Timing::Walk(self.distance));
         }
         (action, Timing::Loop(now.saturating_duration_since(self.animation_started).as_secs_f32() * 1000.0))
     }
@@ -2787,6 +2788,27 @@ mod tests {
         assert_eq!(actor.direction, 5);
         assert_eq!(actor.update(at(400)), [12.0, 11.0]);
         assert!(!actor.moving());
+    }
+
+    #[test]
+    fn the_legs_never_wind_back_on_a_new_walk() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut actor = Actor::new("a".into(), None, [10, 10], 0, 100);
+        actor.walk_from([10, 10], [8, 8], vec![[11, 10], [12, 10], [13, 10]], start, start, false);
+        actor.update(at(150));
+        let before = actor.distance;
+        assert!((before - 7.5).abs() < 0.01, "{before}");
+        // A held button asks again: the server's new walk starts later from the cell it's on.
+        actor.walk_from([11, 10], [8, 8], vec![[12, 10], [13, 10]], at(222), at(150), true);
+        let mut last = before;
+        for ms in (160..=500).step_by(10) {
+            actor.update(at(ms));
+            assert!(actor.distance >= last, "{} < {last} at {ms} ms", actor.distance);
+            last = actor.distance;
+        }
+        // Three cells walked, as drawn: 15 units.
+        assert!((last - 15.0).abs() < 0.01, "{last}");
     }
 
     #[test]
