@@ -2635,6 +2635,11 @@ enum DamageKind {
     Combo,
 }
 
+/// Heal numbers take the depth test. Hits, criticals, MISS, Lucky and totals draw over walls and the ground.
+pub(crate) fn number_depth_tested(kind: DamageKind) -> bool {
+    matches!(kind, DamageKind::Heal { .. })
+}
+
 impl DamageKind {
     fn duration(self, _amount: i32) -> f32 {
         let ticks = match self {
@@ -5910,6 +5915,18 @@ mod tests {
         // Our Shift-click's link reads back as a link to the item.
         let (shown, runs) = links::split(&links::mark(&item_link(512, "Apple"), &|_| String::new()));
         assert_eq!((shown.as_str(), runs[0].1.item().map(|item| item.id)), ("Apple", Some(512)));
+    }
+
+    #[test]
+    fn heal_numbers_keep_the_depth_test() {
+        assert!(number_depth_tested(DamageKind::Heal { sp: false }) && number_depth_tested(DamageKind::Heal { sp: true }));
+        assert!(!number_depth_tested(DamageKind::Hit { taken: false, sp: false }));
+        assert!(!number_depth_tested(DamageKind::Hit { taken: true, sp: false }));
+        assert!(!number_depth_tested(DamageKind::Hit { taken: false, sp: true }));
+        assert!(!number_depth_tested(DamageKind::Critical));
+        assert!(!number_depth_tested(DamageKind::Miss { red: true }));
+        assert!(!number_depth_tested(DamageKind::Lucky));
+        assert!(!number_depth_tested(DamageKind::Combo));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 {
-  "about": "Damage numbers (issue #203): a Poring summoned indoors, attacked once. The clock stops when the attack comes back, then steps on: the number pops up big a little over the Poring's feet, shrinks as it arcs up to its top at about 0.7 s, and falls away fading, drifting diagonally away from where the Poring faces (which way depends on how it stood, so the shots differ from run to run there).",
+  "about": "Damage numbers: a Poring summoned indoors, attacked once. The clock stops when the attack comes back, then steps on: the number pops up big a little over the Poring's feet, shrinks as it arcs up to its top at about 0.7 s, and falls away fading, drifting diagonally away from where the Poring faces (which way depends on how it stood, so the shots differ from run to run there). Then the same hit at geffen 118 40, on the low side of the raised ground, so the number shows over that wall.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -93,6 +93,59 @@
         0,
         600,
         500
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@warp geffen 118 40"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@monster 1002 1"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "click_unit": {
+        "kind": "monster"
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "wait",
+        "packet": "0x08c8",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 560
+      }
+    },
+    {
+      "shot": "damage-behind-wall",
+      "crop": [
+        312,
+        184,
+        400,
+        400
       ]
     },
     {

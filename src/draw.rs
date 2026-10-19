@@ -1072,7 +1072,8 @@ impl App {
 
         // Numbers over units: hits arc and drift away from where the target faces, shrinking and fading; MISS rises
         // over the attacker; heals rise slowly; a multi-hit's total pops up high (the newest only); a critical's burst
-        // follows its number; Lucky plays once over the dodger.
+        // follows its number; Lucky plays once over the dodger. Heals take the depth test; the rest draw over walls.
+        let mut over_numbers: Vec<Billboard> = Vec::new();
         if let Some(digits) = &game.digits {
             let mut newest_combo: HashMap<Option<u32>, Instant> = HashMap::new();
             for damage in game.damages.iter().filter(|damage| damage.start <= now && damage.kind == DamageKind::Combo) {
@@ -1080,6 +1081,9 @@ impl App {
                 *newest = (*newest).max(damage.start);
             }
             let message_sprite = game.message_sprite.as_ref();
+            fn put<'a>(kind: DamageKind, parts: Vec<Billboard<'a>>, heals: &mut Vec<Billboard<'a>>, over: &mut Vec<Billboard<'a>>) {
+                if crate::number_depth_tested(kind) { heals.extend(parts) } else { over.extend(parts) }
+            }
             for (index, damage) in game.damages.iter().enumerate().filter(|(_, damage)| damage.start <= now) {
                 let Some(feet) = damage.target.map_or(Some(player_feet), |id| feet_of.get(&id).copied()) else { continue };
                 let elapsed = now.duration_since(damage.start).as_secs_f32();
@@ -1111,14 +1115,15 @@ impl App {
                         } else {
                             [1.0; 3]
                         };
-                        billboards.extend(number(actor::hit_number(ticks, false), color));
+                        put(damage.kind, number(actor::hit_number(ticks, false), color).collect(), &mut billboards, &mut over_numbers);
                     }
                     DamageKind::Critical => {
+                        let mut parts = Vec::new();
                         if let Some(sprite) = message_sprite {
                             let motion = actor::burst(ticks);
                             let tint = [0xAA as f32 / 255.0, 0xAA as f32 / 255.0, 0xAA as f32 / 255.0, motion.alpha];
                             let anchor = at(&motion);
-                            billboards.extend(posed.iter().map(|&(key, position, size, angle)| {
+                            parts.extend(posed.iter().map(|&(key, position, size, angle)| {
                                 (
                                     sprite.texture(key),
                                     anchor,
@@ -1130,28 +1135,43 @@ impl App {
                                 )
                             }));
                         }
-                        billboards.extend(number(actor::hit_number(ticks, true), [1.0, 1.0, 0.0]));
+                        parts.extend(number(actor::hit_number(ticks, true), [1.0, 1.0, 0.0]));
+                        put(damage.kind, parts, &mut billboards, &mut over_numbers);
                     }
                     DamageKind::Miss { red } => {
                         let motion = actor::miss_number(ticks);
                         let size = digits.miss.size.map(|value| value * motion.scale);
                         let color = if red { [1.0, 0.0, 0.0, motion.alpha] } else { [1.0, 1.0, 1.0, motion.alpha] };
-                        billboards.push((&digits.miss, at(&motion), [-size[0] / 2.0, -size[1] / 2.0], size, color, 0.0, DepthLayer::default()));
+                        put(
+                            damage.kind,
+                            vec![(&digits.miss, at(&motion), [-size[0] / 2.0, -size[1] / 2.0], size, color, 0.0, DepthLayer::default())],
+                            &mut billboards,
+                            &mut over_numbers,
+                        );
                     }
                     DamageKind::Lucky => {
                         if let Some(sprite) = message_sprite {
                             let anchor = [feet[0], feet[1] + actor::LUCKY_HEIGHT, feet[2]];
-                            billboards.extend(
+                            put(
+                                damage.kind,
                                 posed
                                     .iter()
-                                    .map(|&(key, position, size, angle)| (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer::default())),
+                                    .map(|&(key, position, size, angle)| (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer::default()))
+                                    .collect(),
+                                &mut billboards,
+                                &mut over_numbers,
                             );
                         }
                     }
-                    DamageKind::Heal { sp } => billboards.extend(number(actor::heal_number(ticks), if sp { [0.0, 0.0, 1.0] } else { [0.0, 1.0, 0.0] })),
+                    DamageKind::Heal { sp } => put(
+                        damage.kind,
+                        number(actor::heal_number(ticks), if sp { [0.0, 0.0, 1.0] } else { [0.0, 1.0, 0.0] }).collect(),
+                        &mut billboards,
+                        &mut over_numbers,
+                    ),
                     DamageKind::Combo => {
                         if newest_combo.get(&damage.target) == Some(&damage.start) {
-                            billboards.extend(number(actor::total_number(ticks), [1.0, 1.0, 0.0]));
+                            put(damage.kind, number(actor::total_number(ticks), [1.0, 1.0, 0.0]).collect(), &mut billboards, &mut over_numbers);
                         }
                     }
                 }
@@ -2680,6 +2700,7 @@ impl App {
             view: &view,
             billboards: &billboards,
             shadows,
+            numbers: &over_numbers,
             effects: &effect_quads,
             glows: &glows,
             meshes: &effect_meshes,
