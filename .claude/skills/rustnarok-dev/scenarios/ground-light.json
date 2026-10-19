@@ -1,0 +1,9 @@
+{
+  "about": "Baked ground light (issue #434): izlude's slopes and walls are lit from longitude 70 rather than its mirror. The vector, the tile fold, the corner colours and the normals are checked by unit tests.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp izlude 128 128"}, {"settle": 1500},
+    {"shot": "ground-light-izlude", "crop": [0, 200, 1024, 700]}
+  ]
+}

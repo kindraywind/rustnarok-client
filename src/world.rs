@@ -9,7 +9,7 @@ use std::ops::Range;
 
 use image::{Rgba, RgbaImage};
 use rustnarok_client::grf::Grf;
-use rustnarok_client::map::{Gat, Gnd, Rsw, WaterZone, corner_wave, rsw_zone, step_water, tile_under_water, water_uv, zone_index};
+use rustnarok_client::map::{Cube, Gat, Gnd, Rsw, WaterZone, corner_wave, rsw_zone, step_water, tile_under_water, water_uv, zone_index};
 use rustnarok_client::model::{self, Rsm};
 use wgpu::util::DeviceExt;
 
@@ -370,11 +370,10 @@ struct GroundOutput {
 @fragment fn ground_fs(in: GroundOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(image, image_sampler, in.uv);
     let light_map = textureSample(lightmap, lightmap_sampler, in.lightmap_uv);
-    if (texel.a < 0.5) { discard; }
-    let weight = max(dot(normalize(in.normal), globals.light_direction.xyz), 0.0);
-    let light = clamp(globals.ambient.rgb + globals.diffuse.rgb * weight, vec3(0.0), vec3(1.0));
-    let lit = texel.rgb * in.color.rgb * light * light_map.a + light_map.rgb;
-    return vec4(apply_fog(lit, in.fog), 1.0);
+    if (texel.a < 207.0 / 255.0) { discard; }
+    // The sun is already in the vertex colour. The lightmap adds its colour and shades the texture.
+    let lit = light_map.rgb + light_map.a * texel.rgb * in.color.rgb;
+    return vec4(apply_fog(saturate(lit), in.fog), 1.0);
 }
 
 @fragment fn water_fs(in: GroundOutput) -> @location(0) vec4<f32> {
@@ -644,7 +643,9 @@ impl World {
         let (atlas, columns) = lightmap_atlas(&gnd);
         let lightmap = gpu.texture_with_sampler(&atlas, &smooth);
 
-        let (vertices, draws) = ground_mesh(&gnd, columns, [atlas.width() as f32, atlas.height() as f32]);
+        // Toward the light: x east, y up, z north. Latitude is measured from the zenith. Models use this same vector.
+        let direction = light_direction(rsw.light.longitude as f32, rsw.light.latitude as f32);
+        let (vertices, draws) = ground_mesh(&gnd, columns, [atlas.width() as f32, atlas.height() as f32], direction, rsw.light.ambient, rsw.light.diffuse);
         let vertices = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("ground"),
             contents: bytemuck::cast_slice(&vertices),
@@ -691,10 +692,6 @@ impl World {
                 usage: wgpu::BufferUsages::VERTEX,
             })
         });
-
-        // RSW light angles: longitude around the vertical axis, latitude from the zenith.
-        let (longitude, latitude) = ((rsw.light.longitude as f32).to_radians(), (rsw.light.latitude as f32).to_radians());
-        let direction = normalize([-longitude.cos() * latitude.sin(), latitude.cos(), -longitude.sin() * latitude.sin()]);
 
         let globals = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("world globals"),
@@ -1489,14 +1486,86 @@ fn lightmap_atlas(gnd: &Gnd) -> (RgbaImage, usize) {
     (atlas, columns)
 }
 
+/// Toward the light. Longitude turns around the vertical axis, latitude is measured from the zenith, both in degrees.
+fn light_direction(longitude: f32, latitude: f32) -> Vector {
+    let (longitude, latitude) = (longitude.to_radians(), latitude.to_radians());
+    normalize([-latitude.sin() * longitude.sin(), latitude.cos(), -latitude.sin() * longitude.cos()])
+}
+
+/// The sun baked into a corner: `trunc(colour · min(1, ambient + diffuse · max(0, n · light)))` per channel, as 0..1.
+fn baked_color(color: [u8; 3], normal: Vector, light: Vector, ambient: [f32; 3], diffuse: [f32; 3]) -> [f32; 4] {
+    let weight = dot(normal, light).max(0.0);
+    let rgb = [0, 1, 2].map(|index| {
+        let lit = (ambient[index] + diffuse[index] * weight).min(1.0);
+        (f32::from(color[index]) * lit).trunc() / 255.0
+    });
+    [rgb[0], rgb[1], rgb[2], 1.0]
+}
+
+fn cube_at(gnd: &Gnd, x: i32, y: i32) -> Option<&Cube> {
+    (x >= 0 && y >= 0 && (x as usize) < gnd.width && (y as usize) < gnd.height).then(|| &gnd.cubes[y as usize * gnd.width + x as usize])
+}
+
+/// RGB of the top surface of the tile that starts at (x, y). No top, or off the map, is white.
+fn top_color(gnd: &Gnd, x: i32, y: i32) -> [u8; 3] {
+    let Some(cube) = cube_at(gnd, x, y) else { return [255; 3] };
+    let Some(surface) = usize::try_from(cube.top).ok().and_then(|index| gnd.surfaces.get(index)) else { return [255; 3] };
+    let [b, g, r, _] = surface.color;
+    [r, g, b]
+}
+
+/// World positions of a tile's four corners: south-west, south-east, north-west, north-east.
+fn tile_corners(gnd: &Gnd, x: i32, y: i32) -> Option<[Vector; 4]> {
+    let cube = cube_at(gnd, x, y)?;
+    let (x0, z0) = (x as f32 * gnd.zoom, y as f32 * gnd.zoom);
+    let (x1, z1) = (x0 + gnd.zoom, z0 + gnd.zoom);
+    let [sw, se, nw, ne] = cube.heights.map(|height| -height);
+    Some([[x0, sw, z0], [x1, se, z0], [x0, nw, z1], [x1, ne, z1]])
+}
+
+/// Face normal of triangle (a, b, c), pointing up for a flat tile.
+fn face_normal(a: Vector, b: Vector, c: Vector) -> Vector {
+    let normal = cross(subtract(c, a), subtract(b, a));
+    if dot(normal, normal) < 1e-12 { [0.0, 1.0, 0.0] } else { normalize(normal) }
+}
+
+/// The one triangle a corner contributes. South-west, south-east and north-west sit on (v0, v1, v2); north-east only on the other.
+fn corner_face(corners: [Vector; 4], corner: usize) -> Vector {
+    // ponytail: a corner on both triangles contributes (v0, v1, v2). North-east is only on (v2, v1, v3).
+    if corner == 3 { face_normal(corners[2], corners[1], corners[3]) } else { face_normal(corners[0], corners[1], corners[2]) }
+}
+
+/// Normal at world corner (x, z): the tiles that meet there at exactly `height` (file height, positive down).
+fn corner_normal(gnd: &Gnd, x: i32, z: i32, height: f32) -> Vector {
+    let mut sum = [0.0; 3];
+    // This corner is south-west of (x, z), south-east of (x-1, z), north-west of (x, z-1), north-east of (x-1, z-1).
+    for (tile_x, tile_z, local) in [(x, z, 0usize), (x - 1, z, 1), (x, z - 1, 2), (x - 1, z - 1, 3)] {
+        let Some(cube) = cube_at(gnd, tile_x, tile_z) else { continue };
+        if cube.top < 0 || cube.heights[local] != height {
+            continue;
+        }
+        let Some(corners) = tile_corners(gnd, tile_x, tile_z) else { continue };
+        let normal = corner_face(corners, local);
+        sum = [sum[0] + normal[0], sum[1] + normal[1], sum[2] + normal[2]];
+    }
+    if dot(sum, sum) < 1e-12 { [0.0, 1.0, 0.0] } else { normalize(sum) }
+}
+
 /// Ground triangles grouped by texture: cube tops, plus north and east walls down to the neighbor.
-fn ground_mesh(gnd: &Gnd, columns: usize, atlas_size: [f32; 2]) -> (Vec<GroundVertex>, Vec<(usize, Range<u32>)>) {
+fn ground_mesh(
+    gnd: &Gnd,
+    columns: usize,
+    atlas_size: [f32; 2],
+    light: Vector,
+    ambient: [f32; 3],
+    diffuse: [f32; 3],
+) -> (Vec<GroundVertex>, Vec<(usize, Range<u32>)>) {
     let [lightmap_width, lightmap_height] = gnd.lightmap_size.map(|size| size as f32);
     let mut per_texture: Vec<Vec<GroundVertex>> = vec![Vec::new(); gnd.textures.len()];
     let zoom = gnd.zoom;
 
     // Corners in surface order (u[0..4]/v[0..4]): the lightmap's inner 6x6 pixels map onto the quad.
-    let mut push_quad = |surface_index: i32, corners: [Vector; 4]| {
+    let mut push_quad = |surface_index: i32, corners: [Vector; 4], colors: [[u8; 3]; 4], normals: [Vector; 4]| {
         let Some(surface) = usize::try_from(surface_index).ok().and_then(|index| gnd.surfaces.get(index)) else { return };
         let Some(texture) = usize::try_from(surface.texture).ok().filter(|&texture| texture < per_texture.len()) else { return };
         let lightmap = usize::from(surface.lightmap);
@@ -1504,18 +1573,16 @@ fn ground_mesh(gnd: &Gnd, columns: usize, atlas_size: [f32; 2]) -> (Vec<GroundVe
         let lightmap_uv = |corner: [f32; 2]| {
             [(left + 1.0 + corner[0] * (lightmap_width - 2.0)) / atlas_size[0], (top + 1.0 + corner[1] * (lightmap_height - 2.0)) / atlas_size[1]]
         };
-        let normal = normalize(cross(subtract(corners[2], corners[0]), subtract(corners[1], corners[0])));
-        let [b, g, r, a] = surface.color;
-        let color = [r, g, b, a].map(|channel| f32::from(channel) / 255.0);
         let vertex = |corner: usize, lightmap_corner: [f32; 2]| GroundVertex {
             position: corners[corner],
-            normal,
+            normal: normals[corner],
             uv: [surface.u[corner], surface.v[corner]],
             lightmap_uv: lightmap_uv(lightmap_corner),
-            color: [color[0], color[1], color[2], 1.0],
+            color: baked_color(colors[corner], normals[corner], light, ambient, diffuse),
         };
         let quad = [vertex(0, [0.0, 0.0]), vertex(1, [1.0, 0.0]), vertex(2, [0.0, 1.0]), vertex(3, [1.0, 1.0])];
-        per_texture[texture].extend([quad[0], quad[1], quad[3], quad[0], quad[3], quad[2]]);
+        // (v0, v1, v2) and (v2, v1, v3): the top folds along (i+1, j)–(i, j+1).
+        per_texture[texture].extend([quad[0], quad[1], quad[2], quad[2], quad[1], quad[3]]);
     };
 
     for y in 0..gnd.height {
@@ -1523,14 +1590,28 @@ fn ground_mesh(gnd: &Gnd, columns: usize, atlas_size: [f32; 2]) -> (Vec<GroundVe
             let cube = &gnd.cubes[y * gnd.width + x];
             let [south_west, south_east, north_west, north_east] = cube.heights.map(|height| -height);
             let (x0, x1, z0, z1) = (x as f32 * zoom, (x + 1) as f32 * zoom, y as f32 * zoom, (y + 1) as f32 * zoom);
-            push_quad(cube.top, [[x0, south_west, z0], [x1, south_east, z0], [x0, north_west, z1], [x1, north_east, z1]]);
-            if let Some(north) = gnd.cubes.get((y + 1) * gnd.width + x).filter(|_| y + 1 < gnd.height) {
+            let (ix, iy) = (x as i32, y as i32);
+            let top_colors = [top_color(gnd, ix, iy), top_color(gnd, ix + 1, iy), top_color(gnd, ix, iy + 1), top_color(gnd, ix + 1, iy + 1)];
+            let top_normals = [
+                corner_normal(gnd, ix, iy, cube.heights[0]),
+                corner_normal(gnd, ix + 1, iy, cube.heights[1]),
+                corner_normal(gnd, ix, iy + 1, cube.heights[2]),
+                corner_normal(gnd, ix + 1, iy + 1, cube.heights[3]),
+            ];
+            push_quad(cube.top, [[x0, south_west, z0], [x1, south_east, z0], [x0, north_west, z1], [x1, north_east, z1]], top_colors, top_normals);
+            if let Some(north) = cube_at(gnd, ix, iy + 1) {
                 let [next_south_west, next_south_east, ..] = north.heights.map(|height| -height);
-                push_quad(cube.north, [[x0, north_west, z1], [x1, north_east, z1], [x0, next_south_west, z1], [x1, next_south_east, z1]]);
+                // A larger file height is lower. The wall faces that side: north when the neighbor's south-west is lower than our north-west.
+                let facing = if north.heights[0] > cube.heights[2] { [0.0, 0.0, 1.0] } else { [0.0, 0.0, -1.0] };
+                let colors = [top_color(gnd, ix, iy + 1), top_color(gnd, ix + 1, iy + 1), top_color(gnd, ix, iy + 1), top_color(gnd, ix + 1, iy + 1)];
+                push_quad(cube.north, [[x0, north_west, z1], [x1, north_east, z1], [x0, next_south_west, z1], [x1, next_south_east, z1]], colors, [facing; 4]);
             }
-            if let Some(east) = gnd.cubes.get(y * gnd.width + x + 1).filter(|_| x + 1 < gnd.width) {
+            if let Some(east) = cube_at(gnd, ix + 1, iy) {
                 let [next_south_west, _, next_north_west, _] = east.heights.map(|height| -height);
-                push_quad(cube.east, [[x1, north_east, z1], [x1, south_east, z0], [x1, next_north_west, z1], [x1, next_south_west, z0]]);
+                // Compared with this tile's north-west (h2), not its south-east.
+                let facing = if east.heights[0] > cube.heights[2] { [1.0, 0.0, 0.0] } else { [-1.0, 0.0, 0.0] };
+                let colors = [top_color(gnd, ix + 1, iy + 1), top_color(gnd, ix + 1, iy), top_color(gnd, ix + 1, iy + 1), top_color(gnd, ix + 1, iy)];
+                push_quad(cube.east, [[x1, north_east, z1], [x1, south_east, z0], [x1, next_north_west, z1], [x1, next_south_west, z0]], colors, [facing; 4]);
             }
         }
     }
@@ -2450,5 +2531,110 @@ mod tests {
         assert_eq!(fogged(ground, white, 0.0), ground);
         assert_eq!(fogged(ground, white, 1.0), white);
         assert_eq!(fogged(ground, white, 0.5), [0.5, 0.75, 1.0]);
+    }
+
+    fn bgra(r: u8, g: u8, b: u8) -> [u8; 4] {
+        [b, g, r, 255]
+    }
+
+    fn flat_surface(color: [u8; 4]) -> Surface {
+        Surface { u: [0.0; 4], v: [0.0; 4], texture: 0, lightmap: 0, color }
+    }
+
+    fn plot(width: usize, height: usize, cubes: Vec<Cube>, surfaces: Vec<Surface>) -> Gnd {
+        Gnd {
+            width,
+            height,
+            zoom: 10.0,
+            textures: vec!["ground.bmp".into()],
+            lightmap_size: [8, 8],
+            lightmaps: vec![vec![255; 256]],
+            surfaces,
+            cubes,
+            water: None,
+        }
+    }
+
+    fn baked_mesh(gnd: &Gnd, light: Vector, ambient: [f32; 3], diffuse: [f32; 3]) -> Vec<GroundVertex> {
+        ground_mesh(gnd, 1, [8.0, 8.0], light, ambient, diffuse).0
+    }
+
+    #[test]
+    fn light_comes_from_the_south_west_at_45_and_not_the_mirror_at_70() {
+        near(light_direction(45.0, 45.0), [-0.5, 2.0_f32.sqrt() / 2.0, -0.5]);
+        // izlude is longitude 70, latitude 20. The old vector swapped sin and cos of the longitude.
+        near(light_direction(70.0, 20.0), [-0.3213938, 0.9396926, -0.1169778]);
+    }
+
+    #[test]
+    fn a_top_folds_along_the_south_east_to_north_west_diagonal() {
+        let gnd = plot(1, 1, vec![Cube { heights: [0.0; 4], top: 0, north: -1, east: -1 }], vec![flat_surface([255; 4])]);
+        let positions: Vec<_> = baked_mesh(&gnd, [0.0, 1.0, 0.0], [1.0; 3], [0.0; 3]).into_iter().map(|vertex| vertex.position).collect::<Vec<_>>();
+        assert_eq!(positions.as_slice(), [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 0.0, 10.0], [0.0, 0.0, 10.0], [10.0, 0.0, 0.0], [10.0, 0.0, 10.0]]);
+    }
+
+    #[test]
+    fn a_corner_takes_the_top_colour_of_the_tile_that_starts_there() {
+        let surfaces = vec![flat_surface(bgra(255, 0, 0)), flat_surface(bgra(0, 255, 0)), flat_surface(bgra(0, 0, 255)), flat_surface(bgra(255, 255, 0))];
+        let tile = |top, north, east| Cube { heights: [0.0; 4], top, north, east };
+        // (0,0) red, with yellow wall surfaces that must not colour the walls. (1,0) green, (0,1) blue, (1,1) no top.
+        let cubes = vec![tile(0, 3, 3), tile(1, -1, -1), tile(2, -1, -1), tile(-1, -1, -1)];
+        let vertices = baked_mesh(&plot(2, 2, cubes, surfaces), [0.0, 1.0, 0.0], [1.0; 3], [0.0; 3]);
+        let rgb = |index: usize| vertices[index].color.map(|channel| (channel * 255.0).round() as u8);
+        assert_eq!((rgb(0), rgb(1), rgb(2), rgb(5)), ([255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 255, 255]));
+        // North wall: the tile to the north, and the one past its east corner (white, it has no top).
+        assert_eq!((rgb(6), rgb(7), rgb(8)), ([0, 0, 255, 255], [255, 255, 255, 255], [0, 0, 255, 255]));
+        // East wall: white from the missing top, green from the east tile.
+        assert_eq!((rgb(12), rgb(13)), ([255, 255, 255, 255], [0, 255, 0, 255]));
+    }
+
+    #[test]
+    fn equal_heights_share_a_normal_and_a_cliff_does_not() {
+        let flat = Cube { heights: [0.0; 4], top: 0, north: -1, east: -1 };
+        let slope = Cube { heights: [0.0, 0.0, -4.0, -4.0], top: 0, north: -1, east: -1 };
+        let vertices = baked_mesh(&plot(2, 1, vec![flat, slope], vec![flat_surface([255; 4])]), [0.0, 1.0, 0.0], [1.0; 3], [0.0; 3]);
+        near(vertices[0].normal, [0.0, 1.0, 0.0]);
+        assert!(vertices[1].normal[2] < -0.05, "{:?}", vertices[1].normal);
+        let cliff = Cube { heights: [5.0; 4], top: 0, north: -1, east: -1 };
+        let vertices = baked_mesh(
+            &plot(2, 1, vec![Cube { heights: [0.0; 4], top: 0, north: -1, east: -1 }, cliff], vec![flat_surface([255; 4])]),
+            [0.0, 1.0, 0.0],
+            [1.0; 3],
+            [0.0; 3],
+        );
+        near(vertices[1].normal, [0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn a_wall_faces_the_lower_side() {
+        let facing = |north_height: f32| {
+            let cubes = vec![Cube { heights: [0.0; 4], top: 0, north: 0, east: -1 }, Cube { heights: [north_height; 4], top: 0, north: -1, east: -1 }];
+            baked_mesh(&plot(1, 2, cubes, vec![flat_surface([255; 4])]), [0.0, 1.0, 0.0], [1.0; 3], [0.0; 3])[6].normal
+        };
+        // File height 5 is lower than 0, so the wall faces north. A higher neighbor faces it south.
+        assert_eq!(facing(5.0), [0.0, 0.0, 1.0]);
+        assert_eq!(facing(-3.0), [0.0, 0.0, -1.0]);
+        // The east wall compares the neighbor's south-west with this tile's north-west, not its south-east (50).
+        let cubes =
+            vec![Cube { heights: [0.0, 50.0, 0.0, 0.0], top: 0, north: -1, east: 0 }, Cube { heights: [4.0, 0.0, 0.0, 0.0], top: 0, north: -1, east: -1 }];
+        let normal = baked_mesh(&plot(2, 1, cubes, vec![flat_surface([255; 4])]), [0.0, 1.0, 0.0], [1.0; 3], [0.0; 3])[6].normal;
+        assert_eq!(normal, [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn the_sun_is_baked_into_the_vertex_colour() {
+        let gnd = plot(1, 1, vec![Cube { heights: [0.0; 4], top: 0, north: -1, east: -1 }], vec![flat_surface(bgra(200, 200, 200))]);
+        let vertices = baked_mesh(&gnd, [0.0, 1.0, 0.0], [0.25; 3], [0.25; 3]);
+        near([vertices[0].color[0], vertices[0].color[1], vertices[0].color[2]], [100.0 / 255.0; 3]);
+        // At 45/45 a north or east wall gets the ambient, and a south or west wall ambient plus half the diffuse.
+        let sun = light_direction(45.0, 45.0);
+        let baked = |normal: Vector| {
+            let color = baked_color([200, 200, 200], normal, sun, [0.25; 3], [0.5; 3]);
+            [color[0], color[1], color[2]]
+        };
+        near(baked([0.0, 0.0, 1.0]), [50.0 / 255.0; 3]);
+        near(baked([1.0, 0.0, 0.0]), [50.0 / 255.0; 3]);
+        near(baked([0.0, 0.0, -1.0]), [100.0 / 255.0; 3]);
+        near(baked([-1.0, 0.0, 0.0]), [100.0 / 255.0; 3]);
     }
 }
