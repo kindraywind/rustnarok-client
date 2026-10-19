@@ -1631,6 +1631,10 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["rsm2_models"] = game.world.rsm_2_models.into();
     state["rsm2_moving"] = game.world.rsm_2_moving().into();
     state["rsm1_moving"] = game.world.rsm_1_moving().into();
+    // The map's effect objects on timers, and how many times they've fired.
+    state["map_effect_timers"] = game.world.map_effects.timers.len().into();
+    state["map_effects_fired"] = game.world.map_effects.fired.into();
+    state["map_effect_fired_ms_ago"] = game.world.map_effects.last_fired.map(|at| crate::whole_ms(self::now()).saturating_sub(at)).into();
     // The way the character faced on entering the map server (it faces so again after a warp).
     state["entered_facing"] = game.entered_facing.into();
     // The skill units on the ground standing as models (their UNT_ numbers).

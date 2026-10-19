@@ -91,6 +91,7 @@ mod line_edit;
 mod links;
 mod macros;
 mod mail;
+mod map_effects;
 mod material;
 mod memorial;
 mod menu;
