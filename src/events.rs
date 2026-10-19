@@ -3207,8 +3207,10 @@ impl App {
                         game.play_effect(gpu, grf, table, effect, act.source);
                     }
                     if let Some(struck) = table.struck(skill) {
+                        // Told the hit count, as the game tells them: a bolt drops an arrow a hit.
                         for &(who, effect) in struck {
-                            game.play_effect(gpu, grf, table, effect, if who == effects::Who::Caster { act.source } else { act.target });
+                            let unit = if who == effects::Who::Caster { act.source } else { act.target };
+                            game.play_effect_hits(gpu, grf, table, effect, unit, Instant::now(), act.hits);
                         }
                     }
                 }

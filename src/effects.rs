@@ -697,6 +697,18 @@ impl Floating {
     }
 }
 
+/// Cold Bolt's and Fire Bolt's falling arrows (EF_ICEARROW, EF_FIREARROW).
+const BOLTS: [u32; 2] = [26, 31];
+
+/// When a bolt with `hits` hits drops its arrows, from the moment it's played: one an hit (at most 50), the first
+/// 12 ticks of 16 ms in and one every 10 ticks after. Empty for an effect that isn't a bolt.
+pub fn bolt_drops(id: u32, hits: u16) -> Vec<Duration> {
+    if !BOLTS.contains(&id) {
+        return Vec::new();
+    }
+    (0..u64::from(hits.clamp(1, 50))).map(|drop| Duration::from_millis(16 * (12 + 10 * drop))).collect()
+}
+
 /// From `ends[0]` to `ends[1]` at `steps` (0 to 100): straight, or easing out (a log curve).
 fn between(ends: [f32; 2], steps: f32, smooth: bool) -> f32 {
     let share = if smooth { (steps * 0.09 + 1.0).log10() } else { steps / 100.0 };
@@ -706,6 +718,26 @@ fn between(ends: [f32; 2], steps: f32, smooth: bool) -> f32 {
 impl Effects {
     /// Plays effect `id` from `now` on `target` at `at`; parts that don't follow units stay there.
     pub fn play(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
+        self.play_sounds(table, id, at, now);
+        self.show(gpu, grf, table, id, target, at, now);
+    }
+
+    /// Plays effect `id` told how many hits it has (`hits`): a bolt drops that many arrows (`bolt_drops`), anything
+    /// else plays once.
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_hits(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant, hits: u16) {
+        let drops = bolt_drops(id, hits);
+        if drops.is_empty() {
+            return self.play(gpu, grf, table, id, target, at, now);
+        }
+        // One sound, as the first arrow falls.
+        self.play_sounds(table, id, at, now + drops[0]);
+        for drop in drops {
+            self.show(gpu, grf, table, id, target, at, now + drop);
+        }
+    }
+
+    fn play_sounds(&mut self, table: &Table, id: u32, at: Vector, now: Instant) {
         for sound in table.sounds.get(&id).into_iter().flatten() {
             let file = match sound.random {
                 Some((from, to)) => sound.file.replace("%d", &pick(from, to).to_string()),
@@ -713,6 +745,11 @@ impl Effects {
             };
             self.sounds.push((now + Duration::from_millis(sound.delay_ms), format!("{file}.wav"), at));
         }
+    }
+
+    /// What effect `id` draws, from `now` on.
+    #[allow(clippy::too_many_arguments)]
+    fn show(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
         let anchor = |attached: bool| match target {
             Target::Unit(unit) if attached => Anchor::Unit(unit),
             Target::Lasting(unit) | Target::Kept(unit) => Anchor::Lasting(unit, at),
@@ -1075,6 +1112,17 @@ mod tests {
                 "effect\\flametrap\\fla_trap.rsm2"
             ]
         );
+    }
+
+    #[test]
+    fn bolts_drop_an_arrow_a_hit() {
+        let ms = |drops: Vec<Duration>| drops.into_iter().map(|drop| drop.as_millis()).collect::<Vec<_>>();
+        // Fire Bolt level 5: five arrows, 192 ms in and 160 ms apart; Cold Bolt alike; other effects play once.
+        assert_eq!(ms(bolt_drops(31, 5)), [192, 352, 512, 672, 832]);
+        assert_eq!(ms(bolt_drops(26, 1)), [192]);
+        assert_eq!(bolt_drops(26, 0).len(), 1);
+        assert_eq!(bolt_drops(26, 99).len(), 50);
+        assert!(bolt_drops(29, 10).is_empty() && bolt_drops(24, 5).is_empty());
     }
 
     #[test]
