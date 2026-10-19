@@ -90,10 +90,17 @@ pub struct Prims {
 /// COLDHIT's shard and smoke textures.
 pub const ICE_TEXTURE: &str = "data\\texture\\effect\\ice.tga";
 pub const SMOKE_TEXTURE: &str = "data\\texture\\effect\\smoke.tga";
-/// How long COLDHIT's shards and puffs live, in ticks; when the second puff comes.
+/// How long COLDHIT's shards and puffs live, in ticks; the age (in frames) the second puff comes at; and how many frames
+/// the effect runs (ages 0–49, its parts last drawn at 48).
 const SHARD_LIFE: u32 = 15;
 const SMOKE_LIFE: u32 = 25;
 const SECOND_SMOKE: u32 = 7;
+const COLD_FRAMES: u32 = 50;
+
+/// A negative whole angle looked up one degree up (−15 is −14), as the game's tables do.
+fn lookup(angle: f32) -> f32 {
+    if angle < 0.0 { angle + 1.0 } else { angle }
+}
 
 /// One of COLDHIT's ice shards (the game's prim kind 2): a thin four-point quad on the screen, flying out from just over
 /// the target's feet the way its head points and slowing to a third.
@@ -118,24 +125,103 @@ pub struct Smoke {
     born: u32,
 }
 
-/// COLDHIT (51) on a unit: nine shards and a puff at once, a second puff 7 ticks later.
+/// A shard's or puff's fade over what its effect has left: from its own tick `from` its alpha (0–255) drops `step` a tick.
+#[derive(Clone, Copy)]
+struct Fade {
+    from: u32,
+    alpha: f32,
+    step: f32,
+}
+
+/// COLDHIT (51) on a unit: nine shards and a puff at once, a second puff when its age reaches 7. Its age E counts frames:
+/// each by the ticks due in it, or by 1 when none is; its shards and puffs move on ticks only.
 struct ColdHit {
     start: Instant,
     unit: Option<u32>,
     shards: [Shard; 9],
     smokes: [Smoke; 2],
+    /// Its age E (None before its first frame), the ticks run by the last frame, and the tick the second puff came on.
+    age: Option<u32>,
+    ticks: u32,
+    second: Option<u32>,
+    /// The nine shards' fades, then the two puffs'.
+    fades: [Option<Fade>; 11],
 }
 
 /// A shape drawn in screen pixels from a unit's feet: its texture, then each corner's place (y down), texture
 /// coordinate and color.
 pub type ScreenShape = (&'static str, Option<u32>, Vec<([f32; 2], [f32; 2], [f32; 4])>);
 
+impl ColdHit {
+    fn tick_at(&self, now: Instant) -> u32 {
+        (now.saturating_duration_since(self.start).as_millis() / TICK.as_millis()) as u32
+    }
+
+    /// The tick a shard (0–8) or puff (9, 10) came on, once it has.
+    fn born(&self, index: usize) -> Option<u32> {
+        if index == 10 { self.second } else { Some(0) }
+    }
+
+    /// Its life in ticks and its alpha (0–255) at its own tick `own`, fade or not.
+    fn life(index: usize) -> u32 {
+        if index < 9 { SHARD_LIFE } else { SMOKE_LIFE }
+    }
+
+    fn alpha(&self, index: usize, own: u32) -> f32 {
+        let plain = if index < 9 { Shard::alpha(own) } else { Smoke::alpha(own) } * 255.0;
+        self.fades[index].map_or(plain, |fade| (fade.alpha - fade.step * own.saturating_sub(fade.from) as f32).max(0.0))
+    }
+
+    /// Runs a frame at `now`: its age goes up by the ticks due, or by 1; the second puff comes at age 7; a part that would
+    /// outlive the effect starts to fade, on the first of its ticks where its life left is over 51 − E, over the 50 − E
+    /// frames the effect has left.
+    fn advance(&mut self, now: Instant) {
+        let ticks = self.tick_at(now);
+        let first = self.age.is_none();
+        let age = self.age.map_or(0, |age| age + ticks.saturating_sub(self.ticks).max(1));
+        self.age = Some(age);
+        if self.second.is_none() && age >= SECOND_SMOKE {
+            self.second = Some(ticks);
+        }
+        for tick in (if first { 0 } else { self.ticks + 1 })..=ticks {
+            for index in 0..11 {
+                let Some(own) = self.born(index).and_then(|born| tick.checked_sub(born)) else { continue };
+                let life = Self::life(index);
+                if own < life && self.fades[index].is_none() && age < COLD_FRAMES && i64::from(life - own) > 51 - i64::from(age) {
+                    let alpha = self.alpha(index, own);
+                    self.fades[index] = Some(Fade { from: own, alpha, step: alpha / (COLD_FRAMES - age) as f32 });
+                }
+            }
+        }
+        self.ticks = ticks;
+    }
+
+    /// Its shards and puffs at `now`, in the effect's last frame gone with it.
+    fn shapes(&self, now: Instant) -> Vec<ScreenShape> {
+        let tick = self.tick_at(now);
+        let mut shapes = Vec::new();
+        if self.age.is_some_and(|age| age >= COLD_FRAMES - 1) {
+            return shapes;
+        }
+        if tick < SHARD_LIFE {
+            for (index, shard) in self.shards.iter().enumerate() {
+                shapes.push((ICE_TEXTURE, self.unit, shard.shape(tick, self.alpha(index, tick) / 255.0)));
+            }
+        }
+        for (smoke, index) in self.smokes.iter().zip([9, 10]) {
+            let Some(own) = self.born(index).and_then(|born| tick.checked_sub(born)).filter(|&own| own < SMOKE_LIFE) else { continue };
+            shapes.push((SMOKE_TEXTURE, self.unit, smoke.shape(own, self.alpha(index, own) / 255.0)));
+        }
+        shapes
+    }
+}
+
 /// COLDHIT's nine shards, from `rand(n)` (0 to n − 1): every 40° from up the screen, turned −15…+44°; the 0°, 120°
 /// and 240° ones long, the rest short; each starting up to 4 px from 20 px over the feet.
 pub fn shards(mut rand: impl FnMut(u32) -> u32) -> [Shard; 9] {
     std::array::from_fn(|index| {
         let slot = index as f32 * 40.0;
-        let yaw = rand(60) as f32 + slot - 15.0;
+        let yaw = lookup(rand(60) as f32 + slot - 15.0);
         let long = index % 3 == 0;
         let (length, width) = if long { (rand(10) as f32 + 100.0, 10.0) } else { (rand(5) as f32 + 45.0, 4.0) };
         let speed = (rand(45) / 10) as f32 + if long { 12.8 } else { 4.8 };
@@ -158,13 +244,14 @@ impl Shard {
         (200.0 - 20.0 * tick.saturating_sub(4) as f32).max(0.0) / 255.0
     }
 
-    /// Its two triangles at a tick: head, sides and tail turned by its heading; the tail always opaque white.
-    fn shape(&self, tick: u32) -> Vec<([f32; 2], [f32; 2], [f32; 4])> {
+    /// Its two triangles at a tick, `alpha` (0 to 1) opaque: head, sides and tail turned by its heading; the tail always
+    /// opaque white.
+    fn shape(&self, tick: u32, alpha: f32) -> Vec<([f32; 2], [f32; 2], [f32; 4])> {
         let middle = self.place(tick);
         let (sin, cos) = self.yaw.to_radians().sin_cos();
         let [half, side] = [self.length / 2.0, self.width / 2.0];
         let point = |[x, y]: [f32; 2]| [middle[0] + x * cos - y * sin, middle[1] + x * sin + y * cos];
-        let color = [1.0, 1.0, 1.0, Self::alpha(tick)];
+        let color = [1.0, 1.0, 1.0, alpha];
         let (head, tail) = ((point([0.0, -half]), [0.5, 0.0], color), (point([0.0, half]), [0.5, 1.0], [1.0; 4]));
         let (left, right) = ((point([-side, -half / 6.0]), [0.0, 0.5], color), (point([side, half / 6.0]), [1.0, 0.5], color));
         vec![left, tail, head, right, tail, head]
@@ -182,12 +269,12 @@ impl Smoke {
         (254.0 - 31.75 * tick.saturating_sub(16) as f32).max(0.0) / 255.0
     }
 
-    fn shape(&self, tick: u32) -> Vec<([f32; 2], [f32; 2], [f32; 4])> {
+    fn shape(&self, tick: u32, alpha: f32) -> Vec<([f32; 2], [f32; 2], [f32; 4])> {
         let (sin, cos) = self.yaw.to_radians().sin_cos();
         let drift = 0.85 * (tick + 1) as f32;
         let middle = [sin * drift - 0.5, -cos * drift - 0.5];
         let half = Self::half(tick);
-        let color = [1.0, 1.0, 1.0, Self::alpha(tick)];
+        let color = [1.0, 1.0, 1.0, alpha];
         let corner = |x: f32, y: f32, uv: [f32; 2]| ([middle[0] + x, middle[1] + y], uv, color);
         let [bottom_left, top_left, bottom_right, top_right] =
             [corner(-half, half, [0.0, 1.0]), corner(-half, -half, [0.0, 0.0]), corner(half, half, [1.0, 1.0]), corner(half, -half, [1.0, 0.0])];
@@ -267,8 +354,8 @@ impl Prims {
     /// COLDHIT (EF_COLDHIT) on a unit (None = the player) from `now`, its random choices from `rand(n)`.
     pub fn cold_hit(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
         let shards = shards(&mut rand);
-        let smokes = [0, SECOND_SMOKE].map(|born| Smoke { yaw: rand(40) as f32 - 20.0, born });
-        self.cold_hits.push(ColdHit { start: now, unit, shards, smokes });
+        let smokes = [0, SECOND_SMOKE].map(|born| Smoke { yaw: lookup(rand(40) as f32 - 20.0), born });
+        self.cold_hits.push(ColdHit { start: now, unit, shards, smokes, age: None, ticks: 0, second: None, fades: [None; 11] });
     }
 
     /// Napalm Beat (EF_NAPALMBEAT 32) on a unit (None = the player) from `now`, its random choices from `rand(n)`.
@@ -300,16 +387,8 @@ impl Prims {
     /// What the cold hits and bursts draw at `now`, in screen pixels from their units' feet.
     pub fn screen_shapes(&self, now: Instant) -> Vec<ScreenShape> {
         let mut shapes = Vec::new();
-        for hit in &self.cold_hits {
-            let Some(tick) = now.checked_duration_since(hit.start).map(|age| (age.as_millis() / TICK.as_millis()) as u32) else { continue };
-            if tick < SHARD_LIFE {
-                for shard in &hit.shards {
-                    shapes.push((ICE_TEXTURE, hit.unit, shard.shape(tick)));
-                }
-            }
-            for smoke in hit.smokes.iter().filter(|smoke| tick >= smoke.born && tick - smoke.born < SMOKE_LIFE) {
-                shapes.push((SMOKE_TEXTURE, hit.unit, smoke.shape(tick - smoke.born)));
-            }
+        for hit in self.cold_hits.iter().filter(|hit| now >= hit.start) {
+            shapes.extend(hit.shapes(now));
         }
         shapes.extend(self.bursts.iter().flat_map(|burst| burst.shapes(now)));
         shapes.extend(self.napalms.iter().flat_map(|napalm| napalm.shapes(now)));
@@ -335,7 +414,10 @@ impl Prims {
             }
         }
         self.ghosts.retain(|ghost| due(ghost.start) < GHOST_LIFE);
-        self.cold_hits.retain(|hit| due(hit.start) < SECOND_SMOKE + SMOKE_LIFE);
+        for hit in &mut self.cold_hits {
+            hit.advance(now);
+        }
+        self.cold_hits.retain(|hit| due(hit.start) < SECOND_SMOKE + SMOKE_LIFE && hit.age.is_none_or(|age| age < COLD_FRAMES));
         self.balls.advance(now);
         self.stone.advance(now);
         self.volleys.retain(|volley| volley.alive(now));
@@ -372,7 +454,7 @@ mod tests {
         // With every random draw 0: shards at −15°, 25°, … ; the 0°, 120°, 240° ones long (100 × 10 px, 12.8 px a
         // tick at first), the rest short (45 × 4, 4.8); all from 20 px over the feet.
         let shards = shards(|_| 0);
-        assert_eq!((shards[0].yaw, shards[1].yaw, shards[3].yaw), (-15.0, 25.0, 105.0));
+        assert_eq!((shards[0].yaw, shards[1].yaw, shards[3].yaw), (-14.0, 25.0, 105.0), "the first looked up a degree up");
         assert_eq!((shards[0].length, shards[0].width, shards[0].speed), (100.0, 10.0, 12.8));
         assert_eq!((shards[1].length, shards[1].width, shards[1].speed), (45.0, 4.0, 4.8));
         assert_eq!(shards[4].start, [0.0, -20.0]);
@@ -385,15 +467,72 @@ mod tests {
         assert_eq!([0, 4, 5, 14].map(Shard::alpha), [200.0 / 255.0, 200.0 / 255.0, 180.0 / 255.0, 0.0]);
         assert_eq!([16, 24].map(Smoke::alpha), [254.0 / 255.0, 0.0]);
         assert_eq!([0, 9, 24].map(Smoke::half), [7.0, 61.0, 68.5]);
-        // Nine shards and a puff at first, the second puff from tick 7, nothing after tick 31.
+        // Nine shards and a puff at first, the second puff from tick 7, nothing after tick 31 (a frame a tick).
         let start = Instant::now();
         let mut prims = Prims::default();
         prims.cold_hit(None, start, |_| 0);
-        assert_eq!(prims.screen_shapes(start).len(), 10);
-        assert_eq!(prims.screen_shapes(start + TICK * 7).len(), 11);
-        assert_eq!(prims.screen_shapes(start + TICK * 20).len(), 2);
+        let counts: Vec<usize> = (0..=20)
+            .map(|tick| {
+                prims.advance(start + TICK * tick);
+                prims.screen_shapes(start + TICK * tick).len()
+            })
+            .collect();
+        assert_eq!((counts[0], counts[6], counts[7], counts[20]), (10, 10, 11, 2));
         prims.advance(start + TICK * 40);
         assert!(prims.cold_hits.is_empty());
+    }
+
+    #[test]
+    fn cold_hit_ages_by_frames_above_62_frames_a_second() {
+        let start = Instant::now();
+        let at = |frame: u32, rate: f64| start + std::time::Duration::from_secs_f64(f64::from(frame) / rate);
+        // At 144 frames a second: the second puff 7 frames in (tick 3), drawn up to frame 48, gone from 49.
+        let mut prims = Prims::default();
+        prims.cold_hit(None, start, |_| 0);
+        for frame in 0..=7 {
+            prims.advance(at(frame, 144.0));
+        }
+        assert_eq!((prims.cold_hits[0].age, prims.cold_hits[0].second), (Some(7), Some(3)));
+        for frame in 8..=48 {
+            prims.advance(at(frame, 144.0));
+        }
+        assert!(!prims.screen_shapes(at(48, 144.0)).is_empty());
+        prims.advance(at(49, 144.0));
+        assert!(prims.screen_shapes(at(49, 144.0)).is_empty());
+        prims.advance(at(50, 144.0));
+        assert!(prims.cold_hits.is_empty(), "the effect ran its 50 frames");
+        // At 60 frames a second the age is the tick, as before: the second puff on tick 7.
+        let mut prims = Prims::default();
+        prims.cold_hit(None, start, |_| 0);
+        for frame in 0..=30 {
+            prims.advance(at(frame, 60.0));
+            let tick = (u128::from(frame) * 1000 / 60 / 16) as u32;
+            assert_eq!(prims.cold_hits[0].age, Some(tick), "frame {frame}");
+        }
+        assert_eq!(prims.cold_hits[0].second, Some(7));
+        // A part that would outlive the effect fades over what it has left: at 144 frames a second the first puff (25 ticks)
+        // outlives the effect's 21 ticks, so near its end it takes a fade over the frames left; not at 60.
+        let mut prims = Prims::default();
+        prims.cold_hit(None, start, |_| 0);
+        for frame in 0..=48 {
+            prims.advance(at(frame, 144.0));
+        }
+        let fade = prims.cold_hits[0].fades[9].expect("the puff fades");
+        let age = fade.from + 3;
+        assert!(fade.from >= 18 && fade.alpha > 0.0 && fade.step > 0.0 && age > 0);
+        let mut steady = Prims::default();
+        steady.cold_hit(None, start, |_| 0);
+        for frame in 0..=30 {
+            steady.advance(at(frame, 60.0));
+        }
+        assert!(steady.cold_hits[0].fades.iter().all(Option::is_none));
+        // A shard heading −15 moves along −14°.
+        let shard = shards(|_| 0)[0];
+        assert_eq!(shard.yaw, -14.0);
+        let (sin, cos) = (-14.0_f32).to_radians().sin_cos();
+        let moved = shard.place(0);
+        let step = shard.speed - shard.speed / 22.5;
+        assert!((moved[0] - shard.start[0] - sin * step).abs() < 1e-4 && (moved[1] - shard.start[1] + cos * step).abs() < 1e-4);
     }
 
     #[test]
