@@ -19,6 +19,10 @@ pub const STREAK: &str = "data\\texture\\effect\\ac_center2.tga";
 pub const STAR: &str = "data\\sprite\\이팩트\\particle1";
 pub const GOLD_STAR: &str = "data\\sprite\\이팩트\\particle7";
 pub const CYAN_STAR: &str = "data\\sprite\\이팩트\\particle2";
+pub const PIKAPIKA: &str = "data\\texture\\effect\\pikapika2.bmp";
+pub const THUNDER_CENTER: &str = "data\\texture\\effect\\thunder_center.bmp";
+pub const POK1: &str = "data\\texture\\effect\\pok1.tga";
+pub const POK3: &str = "data\\texture\\effect\\pok3.tga";
 pub const DEX_AGI_TEXT: &str = "data\\texture\\effect\\dex_agi_up.bmp";
 /// Holy Water's bottle (a sprite of 42 frames, a frame every 2 ticks).
 pub const HOLY_WATER_SPRITE: &str = "data\\sprite\\이팩트\\성수뜨기";
@@ -32,9 +36,27 @@ pub const DETOXIFY: u32 = 21;
 pub const DECREASE_AGI: u32 = 38;
 pub const HOLY_WATER: u32 = 39;
 pub const DEX_AGI_UP: u32 = 43;
+pub const CART_REVOLUTION: u32 = 170;
+pub const FIRST_AID: u32 = 309;
+pub const SPRINKLE_SAND: u32 = 310;
+pub const HEAL_UNDEAD: u32 = 320;
 
 pub fn makes(effect: u32) -> bool {
-    matches!(effect, SMALL_HEAL | ENDURE_FX | MAGNUM_BREAK | STEAL | DETOXIFY | DECREASE_AGI | HOLY_WATER | DEX_AGI_UP)
+    matches!(
+        effect,
+        SMALL_HEAL
+            | ENDURE_FX
+            | MAGNUM_BREAK
+            | STEAL
+            | DETOXIFY
+            | DECREASE_AGI
+            | HOLY_WATER
+            | DEX_AGI_UP
+            | CART_REVOLUTION
+            | FIRST_AID
+            | SPRINKLE_SAND
+            | HEAL_UNDEAD
+    )
 }
 
 /// The effects' lengths N in ticks.
@@ -43,6 +65,10 @@ fn length(effect: u32) -> u32 {
         SMALL_HEAL | DETOXIFY | DECREASE_AGI | HOLY_WATER | DEX_AGI_UP => 100,
         ENDURE_FX => 80,
         MAGNUM_BREAK => 30,
+        CART_REVOLUTION => 50,
+        FIRST_AID => 299,
+        SPRINKLE_SAND => 300,
+        HEAL_UNDEAD => 100,
         _ => 50,
     }
 }
@@ -52,6 +78,30 @@ pub type ScreenCorner = ([f32; 2], [f32; 2], [f32; 4]);
 pub type ScreenShape = (&'static str, Option<u32>, Vec<ScreenCorner>);
 /// A world mesh: its texture and triangles.
 pub type Mesh = (&'static str, Vec<MeshVertex>);
+
+/// A camera-facing square: its texture, centre, half-diagonal (world units), spin (degrees), alpha (0 to 255), whether its
+/// texture is mirrored, and the colour it's multiplied by; all of them are added on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Square {
+    pub texture: &'static str,
+    pub at: Vector,
+    pub radius: f32,
+    pub spin: f32,
+    pub alpha: f32,
+    pub mirrored: bool,
+    pub tint: [u8; 3],
+}
+
+/// A sparkle's alpha at its age `a` (from 1): 0 at 1, +15 at ages 2…10, then −3 a tick.
+pub fn sparkle_alpha(a: u32) -> f32 {
+    if a <= 1 {
+        0.0
+    } else if a <= 10 {
+        15.0 * (a - 1) as f32
+    } else {
+        (135.0 - 3.0 * (a - 10) as f32).max(0.0)
+    }
+}
 
 /// A sprite particle: which sprite, where, how big (a multiplier of its pixels), how opaque (0 to 255) and turned.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -71,6 +121,8 @@ struct Seed {
     y: f32,
     /// What else it drew: its distance, half-width, half-height and the like (per effect).
     r: [f32; 4],
+    /// Two more numbers (a speck's second ground coordinate, a sparkle's index).
+    more: [f32; 2],
 }
 
 /// One of Steal's sparks, run tick by tick over the ground.
@@ -118,7 +170,8 @@ impl First {
     /// `min` is /mineffect; every random choice from `rand(n)` (0 to n − 1), in the order the parts are made.
     pub fn play(&mut self, id: u32, unit: Option<u32>, at: Vector, now: Instant, min: bool, mut rand: impl FnMut(u32) -> u32) {
         let mut seeds = Vec::new();
-        let mut seed = |born: u32, y: f32, r: [f32; 4]| seeds.push(Seed { born, y, r });
+        let mut seeds_more: Vec<Seed> = Vec::new();
+        let mut seed = |born: u32, y: f32, r: [f32; 4]| seeds.push(Seed { born, y, r, more: [0.0; 2] });
         match id {
             SMALL_HEAL if !min => {
                 // A sparkle every 9 ticks (the one made at 99 is never drawn): one draw thrown away, then its yaw.
@@ -168,6 +221,52 @@ impl First {
                     seed(born, y, [d, speed, half, 0.0]);
                 }
             }
+            CART_REVOLUTION => {
+                // A ring and a sphere at ticks 7 and 20.
+                seed(7, 0.0, [0.0; 4]);
+                seed(20, 0.0, [0.0; 4]);
+            }
+            FIRST_AID => {
+                // One glow: its spin, then where in its wobble it starts.
+                let spin = rand(360) as f32;
+                let wobble = rand(360) as f32;
+                seed(0, spin, [wobble, 0.0, 0.0, 0.0]);
+            }
+            SPRINKLE_SAND => {
+                // 80 specks: delay, half-diagonal, place round the feet, speed, rise; each then a direction at its first step
+                // (in tick order, then the order made).
+                let mut specks = Vec::new();
+                for _ in 0..80 {
+                    let delay = rand(10) as i32 - 10;
+                    let radius = 0.1 + 0.03 * rand(16) as f32;
+                    let x = at[0] + rand(9) as f32 - 4.0;
+                    let z = at[2] + rand(9) as f32 - 4.0;
+                    let speed = 0.01 * rand(10) as f32;
+                    let rise = 0.2 + 0.01 * rand(40) as f32;
+                    specks.push(((-delay) as u32, radius, x, z, speed, rise));
+                }
+                let mut order: Vec<usize> = (0..specks.len()).collect();
+                order.sort_by_key(|&index| (specks[index].0, index));
+                let mut directions = vec![0.0; specks.len()];
+                for index in order {
+                    directions[index] = rand(360) as f32;
+                }
+                for (index, (born, radius, x, z, speed, rise)) in specks.into_iter().enumerate() {
+                    seeds_more.push(Seed { born, y: directions[index], r: [radius, x, speed, rise], more: [z, 0.0] });
+                }
+            }
+            HEAL_UNDEAD => {
+                // Four sets of four sparkles at ticks 6, 12, 18, 24: half-diagonal, place round the feet, rise.
+                for born in [6, 12, 18, 24] {
+                    for k in 0..4 {
+                        let radius = 2.0 + 0.1 * rand(10) as f32;
+                        let x = rand(13) as f32 - 6.0;
+                        let z = rand(13) as f32 - 6.0;
+                        let rise = 0.4 + 0.01 * rand(40) as f32;
+                        seeds_more.push(Seed { born, y: 0.0, r: [radius, x, z, rise], more: [k as f32, 0.0] });
+                    }
+                }
+            }
             DECREASE_AGI => {
                 // A streak every second tick to 50: yaw, distance, half-length.
                 for born in (0..=50).step_by(2) {
@@ -179,6 +278,7 @@ impl First {
             }
             _ => {}
         }
+        seeds.extend(seeds_more);
         let sparks = if id == STEAL {
             seeds
                 .iter()
@@ -194,7 +294,15 @@ impl First {
         } else {
             Vec::new()
         };
-        self.list.push(Effect { id, start: now, unit, follows: !matches!(id, MAGNUM_BREAK | STEAL | DETOXIFY), at, seeds, sparks });
+        self.list.push(Effect {
+            id,
+            start: now,
+            unit,
+            follows: !matches!(id, MAGNUM_BREAK | STEAL | DETOXIFY | CART_REVOLUTION | FIRST_AID | SPRINKLE_SAND | HEAL_UNDEAD),
+            at,
+            seeds,
+            sparks,
+        });
     }
 
     /// Runs Steal's sparks up to `now`, a tick at a time over the ground (`ground_at(x, z)`: its height in the world), and
@@ -318,7 +426,14 @@ impl First {
                 }
                 MAGNUM_BREAK => {
                     if let Some(a) = Self::age(effect, now, 0, 30) {
-                        meshes.push((DOME, dome(at, a, magnum_alpha(a))));
+                        meshes.push((DOME, dome(at, a, magnum_alpha(a), 1.15, 0.009_583_3)));
+                    }
+                }
+                CART_REVOLUTION => {
+                    for seed in &effect.seeds {
+                        if let Some(a) = Self::age(effect, now, seed.born, 20) {
+                            meshes.push((DOME, dome(effect.at, a, cart_dome_alpha(a), 1.35, 0.016_875)));
+                        }
                     }
                 }
                 DECREASE_AGI => {
@@ -342,9 +457,16 @@ impl First {
     /// Magnum Break's two rings, flat on the ground and drawn with the depth test off, over everything: the same ring twice.
     pub fn top_meshes(&self, now: Instant) -> Vec<Mesh> {
         let mut meshes = Vec::new();
+        for effect in self.list.iter().filter(|effect| effect.id == CART_REVOLUTION) {
+            for seed in &effect.seeds {
+                if let Some(a) = Self::age(effect, now, seed.born, 20) {
+                    meshes.push((RING_YELLOW, ring(effect.at, a, cart_ring_alpha(a), 0.021_875, 5.0)));
+                }
+            }
+        }
         for effect in self.list.iter().filter(|effect| effect.id == MAGNUM_BREAK) {
             if let Some(a) = Self::age(effect, now, 0, 30) {
-                let ring = ring(effect.at, a, magnum_alpha(a));
+                let ring = ring(effect.at, a, magnum_alpha(a), 0.014_583_3, 12.0);
                 meshes.push((RING_YELLOW, ring.clone()));
                 meshes.push((RING_YELLOW, ring));
             }
@@ -364,6 +486,74 @@ impl First {
                 Some(([at[0], at[1] + 20.0, at[2]], (a / 2 + 1) as usize))
             })
             .collect()
+    }
+
+    /// The camera-facing squares: First Aid's glow, Sprinkle Sand's specks, the undead heal's sparkles.
+    pub fn squares(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<Square> {
+        let mut squares = Vec::new();
+        let _ = &position_of;
+        for effect in &self.list {
+            match effect.id {
+                FIRST_AID => {
+                    for seed in &effect.seeds {
+                        let Some(a) = Self::age(effect, now, seed.born, 299) else { continue };
+                        let n = (a + 1) as f32;
+                        let wobble = (seed.r[0] + 3.0 * n).rem_euclid(360.0);
+                        let alpha = if n <= 20.0 {
+                            4.0 * n
+                        } else if n <= 100.0 {
+                            80.0
+                        } else {
+                            (80.0 - (n - 100.0)).max(0.0)
+                        };
+                        let radius = 10.0 + 10.0 * trig(wobble.floor()).0 * 0.05;
+                        let at = [effect.at[0], effect.at[1] + 12.0, effect.at[2]];
+                        squares.push(Square { texture: PIKAPIKA, at, radius, spin: seed.y, alpha, mirrored: false, tint: [0x96, 0x96, 0xFA] });
+                    }
+                }
+                SPRINKLE_SAND => {
+                    for seed in &effect.seeds {
+                        let Some(tick) = Self::tick(effect, now) else { continue };
+                        let Some(a) = tick.checked_sub(seed.born).map(|since| since + 1).filter(|a| (2..=54).contains(a)) else { continue };
+                        let [radius, x, speed, rise] = seed.r;
+                        let (sin, cos) = trig(seed.y);
+                        let steps = a as f32;
+                        let at = [x + speed * cos * steps, effect.at[1] + rise * steps, seed.more[0] + speed * sin * steps];
+                        squares.push(Square {
+                            texture: THUNDER_CENTER,
+                            at,
+                            radius,
+                            spin: (-5.0 * steps).rem_euclid(360.0),
+                            alpha: sparkle_alpha(a),
+                            mirrored: true,
+                            tint: [0xFA, 0xFA, 0x96],
+                        });
+                    }
+                }
+                HEAL_UNDEAD => {
+                    for seed in &effect.seeds {
+                        let Some(tick) = Self::tick(effect, now) else { continue };
+                        let Some(a) = tick.checked_sub(seed.born).map(|since| since + 1).filter(|a| (2..=54).contains(a)) else { continue };
+                        let [radius, x, z, rise] = seed.r;
+                        let k = seed.more[0] as u32;
+                        // Element k shows the round glow at ages 35 − 7k and 36 − 7k.
+                        let twinkle = a == 35 - 7 * k || a == 36 - 7 * k;
+                        let at = [effect.at[0] + x, effect.at[1] + rise * a as f32, effect.at[2] + z];
+                        squares.push(Square {
+                            texture: if twinkle { POK3 } else { POK1 },
+                            at,
+                            radius,
+                            spin: (-5.0 * a as f32).rem_euclid(360.0),
+                            alpha: sparkle_alpha(a),
+                            mirrored: true,
+                            tint: [0xDC, 0xFA, 0xDC],
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        squares
     }
 
     /// The sprite particles: the heal's sparkles, Steal's sparks, Detoxify's sparkles.
@@ -429,6 +619,16 @@ pub fn heal_sparkle_alpha(born: u32, a: u32) -> f32 {
     alpha
 }
 
+/// Cart Revolution's ring alpha at age `a`: 12 a tick to 60, then 4 less a tick.
+pub fn cart_ring_alpha(a: u32) -> f32 {
+    if a <= 4 { 12.0 * (a + 1) as f32 } else { (60.0 - 4.0 * (a - 4) as f32).max(0.0) }
+}
+
+/// Cart Revolution's sphere alpha at age `a`: 240/7 a tick to 171, fading over the rest from age 5.
+pub fn cart_dome_alpha(a: u32) -> f32 {
+    super::burst::alpha(a, 0.0, 240.0 / 7.0, 171.0, 5, 20)
+}
+
 /// Magnum Break's alpha at age `a`: up to 254 over 15 ticks, then down by the same.
 pub fn magnum_alpha(a: u32) -> f32 {
     if a <= 14 { (16.93 * (a + 1) as f32).min(254.0) } else { (254.0 - 16.93 * (a - 14) as f32).max(0.0) }
@@ -477,10 +677,10 @@ fn column(at: Vector, alpha: f32) -> Vec<MeshVertex> {
 }
 
 /// Magnum Break's ring at age `a`: flat on the ground, outer radius 1.75 n − 0.0145833 n (n + 1), 12 wide at most.
-fn ring(at: Vector, a: u32, alpha: f32) -> Vec<MeshVertex> {
+fn ring(at: Vector, a: u32, alpha: f32, swell: f32, widest: f32) -> Vec<MeshVertex> {
     let n = (a + 1) as f32;
-    let outer = 1.75 * n - 0.014_583_3 * n * (n + 1.0);
-    let inner = outer - outer.min(12.0);
+    let outer = 1.75 * n - swell * n * (n + 1.0);
+    let inner = outer - outer.min(widest);
     let tint = [1.0, 1.0, 1.0, alpha.trunc().clamp(0.0, 255.0) / 255.0];
     (0..10)
         .flat_map(|segment| {
@@ -502,9 +702,9 @@ fn ring(at: Vector, a: u32, alpha: f32) -> Vec<MeshVertex> {
 
 /// Magnum Break's dome at age `a`: a sphere of radius 1.15 n − 0.0095833 n (n + 1) centred on the feet, turning 3° a tick, 5
 /// rows of 10 cells; a negative angle is used as that angle + 1 (so the bottom pole is a 1° hole).
-fn dome(at: Vector, a: u32, alpha: f32) -> Vec<MeshVertex> {
+fn dome(at: Vector, a: u32, alpha: f32, grow: f32, slow: f32) -> Vec<MeshVertex> {
     let n = (a + 1) as f32;
-    let radius = 1.15 * n - 0.009_583_3 * n * (n + 1.0);
+    let radius = grow * n - slow * n * (n + 1.0);
     let yaw = 3.0 * n;
     let tint = [1.0, 1.0, 1.0, alpha.trunc().clamp(0.0, 255.0) / 255.0];
     let point = |theta: f32, phi: f32, u: f32, v: f32| {
@@ -666,19 +866,21 @@ mod tests {
         assert!(first.top_meshes(tick(start, 28)).len() == 2 && first.top_meshes(tick(start, 29)).is_empty());
         // The ring: R 1.721 at a = 0, 11.4 at 6, 25.29 at 16, 38.06 at 28; a disc to 6, 12 wide from 7.
         let outer = |a: u32| {
-            let mesh = ring([0.0; 3], a, 255.0);
+            let mesh = ring([0.0; 3], a, 255.0, 0.014_583_3, 12.0);
             f32::hypot(mesh[1].position[0], mesh[1].position[2])
         };
         assert!(near(outer(0), 1.721) && near(outer(6), 11.433) && near(outer(16), 25.29) && near(outer(28), 38.06));
-        let inner = |a: u32| f32::hypot(ring([0.0; 3], a, 255.0)[0].position[0], ring([0.0; 3], a, 255.0)[0].position[2]);
+        let inner = |a: u32| f32::hypot(ring([0.0; 3], a, 255.0, 0.014_583_3, 12.0)[0].position[0], ring([0.0; 3], a, 255.0, 0.014_583_3, 12.0)[0].position[2]);
         assert!(inner(6) < 0.01 && near(inner(7), outer(7) - 12.0));
         // The ring twice, depth test off (top meshes); the dome depth-tested: radius 1.131 at a = 0, 25.01 at 28; 5 × 10 cells of 6 vertices.
-        let mesh = dome([0.0; 3], 0, 255.0);
+        let mesh = dome([0.0; 3], 0, 255.0, 1.15, 0.009_583_3);
         assert_eq!(mesh.len(), 5 * 10 * 6);
-        let radius = |a: u32| dome([0.0; 3], a, 255.0).iter().map(|vertex| (vertex.position.iter().map(|v| v * v).sum::<f32>()).sqrt()).fold(0.0, f32::max);
+        let radius = |a: u32| {
+            dome([0.0; 3], a, 255.0, 1.15, 0.009_583_3).iter().map(|vertex| (vertex.position.iter().map(|v| v * v).sum::<f32>()).sqrt()).fold(0.0, f32::max)
+        };
         assert!(near(radius(0), 1.131) && near(radius(28), 25.01), "{} {}", radius(0), radius(28));
         // The bottom pole is a 1° hole: the lowest point is at −89.
-        let lowest = dome([0.0; 3], 28, 255.0).iter().map(|vertex| vertex.position[1]).fold(f32::MAX, f32::min);
+        let lowest = dome([0.0; 3], 28, 255.0, 1.15, 0.009_583_3).iter().map(|vertex| vertex.position[1]).fold(f32::MAX, f32::min);
         assert!(near(lowest, -25.01 * 89.0_f32.to_radians().sin()));
         // It stays where the caster stood: placed from `at`, not following.
         assert!(!first.list[0].follows);
@@ -757,7 +959,7 @@ mod tests {
         assert_eq!([0, 1, 2, 14, 15, 84, 85, 86, 98].map(alpha), [13.0, 26.0, 40.0, 199.0, 200.0, 200.0, 186.0, 173.0, 13.0]);
         // Streaks at e = 0, 2 … 50 (26), none at 52; alpha 10 a tick to 200 at 19, held to 29, then 190 … 0 at 49; it rises by its speed.
         assert_eq!(first.list[0].seeds.len(), 26);
-        let seed = Seed { born: 0, y: 0.0, r: [2.0, 0.5, 3.0, 0.0] };
+        let seed = Seed { born: 0, y: 0.0, r: [2.0, 0.5, 3.0, 0.0], more: [0.0; 2] };
         let streak_alpha = |a: u32| rising_blades([0.0; 3], &seed, a)[0].tint[3] * 255.0;
         assert!(near(streak_alpha(19), 200.0) && near(streak_alpha(29), 200.0) && near(streak_alpha(30), 190.0) && near(streak_alpha(49), 0.0));
         let middle = |a: u32| rising_blades([0.0; 3], &seed, a).iter().map(|vertex| vertex.position[1]).sum::<f32>() / 12.0;
@@ -779,6 +981,90 @@ mod tests {
     }
 
     #[test]
+    fn cart_revolution_swells_a_fireball_under_a_ring_twice() {
+        let (first, start) = effect_at(CART_REVOLUTION, |_| 0, false);
+        // The parts come at ticks 7 and 20 (20 draws each), the ring at the depth test off, the sphere depth-tested.
+        assert_eq!(first.list[0].seeds.iter().map(|seed| seed.born).collect::<Vec<_>>(), [7, 20]);
+        assert!(first.top_meshes(tick(start, 6)).is_empty() && first.top_meshes(tick(start, 7)).len() == 1);
+        assert_eq!(first.top_meshes(tick(start, 20)).len(), 2);
+        assert_eq!(first.meshes(tick(start, 7), |_| None).len(), 1);
+        assert!(first.top_meshes(tick(start, 27)).len() == 1 && first.top_meshes(tick(start, 40)).is_empty());
+        // The ring: R 1.71, 3.37 … 25.81 at a = 19; a disc to a = 2 and 5 wide after; alpha 12 to 60 at 4, 56, 8 at 17, 0 at 19.
+        let outer = |a: u32| {
+            let mesh = ring([0.0; 3], a, 255.0, 0.021_875, 5.0);
+            f32::hypot(mesh[1].position[0], mesh[1].position[2])
+        };
+        assert!(near(outer(0), 1.706) && near(outer(1), 3.369) && near(outer(19), 25.8125), "{} {} {}", outer(0), outer(1), outer(19));
+        let inner = |a: u32| f32::hypot(ring([0.0; 3], a, 255.0, 0.021_875, 5.0)[0].position[0], ring([0.0; 3], a, 255.0, 0.021_875, 5.0)[0].position[2]);
+        assert!(inner(2) < 0.01 && near(inner(3), outer(3) - 5.0));
+        assert_eq!([0, 4, 5, 8, 17, 19].map(cart_ring_alpha), [12.0, 60.0, 56.0, 44.0, 8.0, 0.0]);
+        // The sphere: alpha 34, 68, 102, 137, 171, 159, 125 at a = 8, 0 at 19.
+        assert_eq!([0, 1, 2, 3, 4].map(|a| cart_dome_alpha(a).floor()), [34.0, 68.0, 102.0, 137.0, 171.0]);
+        assert_eq!(cart_dome_alpha(5).floor(), 159.0);
+        assert_eq!(cart_dome_alpha(8).floor(), 125.0);
+        assert!(near(cart_dome_alpha(19), 0.0));
+        let radius = |a: u32| {
+            dome([0.0; 3], a, 255.0, 1.35, 0.016_875).iter().map(|vertex| (vertex.position.iter().map(|v| v * v).sum::<f32>()).sqrt()).fold(0.0, f32::max)
+        };
+        assert!(near(radius(0), 1.316) && (radius(19) - 19.91).abs() < 0.05, "{} {}", radius(0), radius(19));
+    }
+
+    #[test]
+    fn first_aid_glows_for_179_ticks() {
+        let (first, start) = effect_at(FIRST_AID, |_| 0, false);
+        assert_eq!(first.list[0].seeds.len(), 1);
+        let square = |e: u32| first.squares(tick(start, e), |_| Some([100.0, 0.0, 0.0]));
+        // r = 10 ± 0.5, 12 up, not following; alpha 4 a tick to 80 at n = 20, held to 100, 0 at n = 180.
+        let first_square = square(0)[0];
+        assert!(near(first_square.radius, 10.0 + 10.0 * 3.0_f32.to_radians().sin() * 0.05) && first_square.at == [0.0, 12.0, 0.0]);
+        assert_eq!(first_square.tint, [0x96, 0x96, 0xFA]);
+        let alpha = |n: u32| square(n - 1)[0].alpha;
+        assert_eq!([1, 20, 100, 101, 179].map(alpha), [4.0, 80.0, 80.0, 79.0, 1.0]);
+        assert_eq!(alpha(180), 0.0);
+        assert_eq!((0..299).filter(|&e| square(e).first().is_some_and(|square| square.alpha > 0.0)).count(), 179);
+    }
+
+    #[test]
+    fn sprinkle_sand_scatters_80_specks() {
+        let (first, start) = effect_at(SPRINKLE_SAND, |_| 0, false);
+        assert_eq!(first.list[0].seeds.len(), 80);
+        // Every draw 0: delay −10, so a first step on tick 10; half-diagonal 0.1; 4 round the feet; speed 0; rise 0.2.
+        assert!(first.list[0].seeds.iter().all(|seed| seed.born == 10));
+        let at = |e: u32| first.squares(tick(start, e), |_| None);
+        assert!(at(10).is_empty(), "age 1: alpha 0, not drawn");
+        // Ages 2 … 54: alpha 15, then up to 135 at age 10, down 3 a tick to 3 at 54; gone at 55.
+        assert_eq!((at(11)[0].alpha, at(19)[0].alpha, at(20)[0].alpha, at(63)[0].alpha), (15.0, 135.0, 132.0, 3.0));
+        assert!(at(64).is_empty());
+        // Height 0.2 · age; spin −5 a tick; nobody moves sideways at speed 0.
+        assert!(near(at(19)[0].at[1], 0.2 * 10.0) && near(at(19)[0].spin, 310.0));
+        assert_eq!(at(11).len(), 80);
+        assert!(at(11)[0].mirrored && at(11)[0].tint == [0xFA, 0xFA, 0x96]);
+        // Delays vary: with the draw 9 the first step is on tick 1.
+        let mut draws = [9, 0, 0, 0, 0, 0].into_iter().cycle();
+        let (late, _) = effect_at(SPRINKLE_SAND, |_| draws.next().unwrap(), false);
+        assert!(late.list[0].seeds.iter().all(|seed| seed.born == 1));
+    }
+
+    #[test]
+    fn the_undead_heals_sparkles_twinkle() {
+        let (first, start) = effect_at(HEAL_UNDEAD, |_| 0, false);
+        // Four sets of four at ticks 6, 12, 18, 24: 16 squares.
+        assert_eq!(first.list[0].seeds.len(), 16);
+        assert_eq!(first.list[0].seeds.iter().map(|seed| seed.born).collect::<Vec<_>>().iter().filter(|&&born| born == 6).count(), 4);
+        let at = |e: u32| first.squares(tick(start, e), |_| None);
+        // From age 2 at tick born + 1: alpha 15 … 135 at age 10, drawn to 54.
+        assert!(at(6).is_empty() && at(7).len() == 4 && at(7)[0].alpha == 15.0);
+        // Element k shows pok3 at ages 35 − 7k and 36 − 7k (tick = born + age − 1): k = 0 at 35 and 36, 1 at 28 and 29, 3 at 14 and 15.
+        let texture = |k: usize, age: u32| {
+            first.squares(tick(start, 6 + age - 1), |_| None).iter().filter(|square| square.tint == [0xDC, 0xFA, 0xDC]).nth(k).map(|square| square.texture)
+        };
+        assert_eq!(
+            [texture(0, 35), texture(0, 36), texture(0, 34), texture(1, 28), texture(1, 29), texture(3, 14), texture(3, 15), texture(3, 16)],
+            [Some(POK3), Some(POK3), Some(POK1), Some(POK3), Some(POK3), Some(POK3), Some(POK3), Some(POK1)]
+        );
+    }
+
+    #[test]
     fn decrease_agi_lowers_a_sign_and_drops_streaks() {
         let (first, start) = effect_at(DECREASE_AGI, |_| 0, false);
         assert_eq!(first.list[0].seeds.len(), 26);
@@ -791,7 +1077,7 @@ mod tests {
         assert!(near(sign(0).unwrap().1, 13.0) && near(sign(14).unwrap().1, 200.0) && near(sign(84).unwrap().1, 200.0) && near(sign(98).unwrap().1, 13.0));
         assert!(sign(99).is_none());
         // A streak falls 0.0075 n (n + 1) · 0.99985 after n ticks: 19.1 at n = 50.
-        let seed = Seed { born: 0, y: 0.0, r: [2.0, 3.0, 0.0, 0.0] };
+        let seed = Seed { born: 0, y: 0.0, r: [2.0, 3.0, 0.0, 0.0], more: [0.0; 2] };
         let top = |a: u32| blades([0.0; 3], &seed, a).iter().map(|vertex| vertex.position[1]).fold(f32::MIN, f32::max);
         assert!(near(top(49), 20.0 + 3.0 * 0.99985 - 0.0075 * 50.0 * 51.0 * 0.99985), "{}", top(49));
         // The blades are the same whatever y is (only the start moves).

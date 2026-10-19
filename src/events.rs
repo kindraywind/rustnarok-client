@@ -1314,6 +1314,10 @@ impl App {
                 if let Some(actor) = actor {
                     if slide {
                         actor.slide_to(cell, now);
+                        // Snap and the jumps blur a player for 100 ticks.
+                        if actor.look.is_some() {
+                            actor.snap();
+                        }
                     } else if actor.sliding_to() != Some(cell) {
                         // Where it's drawn, unless it's drawn on another cell with a path to the stop cell.
                         let from = actor::drawn_cell(actor.position(now));
