@@ -1288,7 +1288,6 @@ part	93	3D	fileList=effect/thunder_ball_a.bmp,effect/thunder_ball_b.bmp,effect/t
 part	94	3D	file=effect/thunder_pang.bmp;duration=100;sizeStart=0;sizeEnd=25;blendMode=2;rotateToTarget=true;fadeOut=true;overlay=true;attachedEntity=true
 part	94	3D	fileList=effect/thunder_plazma_blast_a.bmp,effect/thunder_plazma_blast_b.bmp,effect/thunder_ball_d.bmp,effect/thunder_ball_e.bmp,effect/thunder_ball_f.bmp;frameDelay=10;duration=300;size=75;blendMode=2;overlay=true;attachedEntity=true
 part	116	3D	duration=500;fileList=effect/water_out_a.bmp,effect/water_out_b.bmp,effect/water_out_c.bmp;fadeOut=true;posxRand=1.5;poszRand=1.5;posyStart=0;posyEnd=3;posySmooth=true;size=30.5;rotateWithCamera=true;blendMode=2;attachedEntity=true;wav=effect/wizard_waterball_chulung
-part	117	3D	duration=500;duplicate=20;timeBetweenDupli=50;absoluteSpriteName=data/sprite/이팩트/waterball;playSprite=true;fromSrc=true;rotateToTarget=true;fadeOut=true;size=50.0;zOffsetStart=5;zOffsetEnd=0;arc=7.5;retreat=5.0;wav=effect/wizard_waterball_chulung
 part	171	3D	spriteName=particle3;alphaMax=1;attachedEntity=true;duration=100;size=80;poszStart=0;poszEnd=0.5;repeat=true
 part	203	3D	fadeOut=true;duration=2000;delayLate=0;file=effect/super1.bmp;attachedEntity=true
 part	203	3D	fadeOut=true;duration=2000;delayLate=400;file=effect/super2.bmp;attachedEntity=true
@@ -1826,6 +1825,8 @@ wav	115	effect\hunter_blitzbeat	480
 wav	116	effect\wizard_waterball_chulung	0
 wav	117	effect\wizard_waterball_chulung	0
 wav	119	effect\hunter_detecting	0
+wav	125	effect\assasin_enchantpoison	0
+wav	125	effect\EF_PoisonAttack	0
 wav	120	effect\assasin_cloaking	0
 wav	121	effect\ef_stonecurse	0
 wav	123	effect\ef_frostdiver	0
@@ -1833,6 +1834,7 @@ wav	124	effect\assasin_poisonreact	0
 wav	126	effect\assasin_poisonreact	0
 wav	127	effect\assasin_poisonreact	0
 wav	128	effect\black_overthrust	0
+wav	128	effect\EF_StoneCurse	0
 wav	129	effect\assasin_venomsplasher	0
 wav	130	effect\knight_twohandquicken	0
 wav	131	effect\knight_autocounter	0
@@ -2257,7 +2259,7 @@ hit	172	0	-1
 hit	173	0	-1
 hit	174	0	-1
 hit	175	0	-1
-hit	176	0	-1
+hit	176	0	125
 hit	177	0	-1
 hit	178	0	-1
 hit	179	0	-1

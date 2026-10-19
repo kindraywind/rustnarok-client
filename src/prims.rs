@@ -17,6 +17,7 @@ pub mod sparkle;
 pub mod stone;
 pub mod tanji;
 pub mod throw;
+pub mod waterball;
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -101,6 +102,7 @@ pub struct Prims {
     pub throws: throw::Throws,
     pub first: first::First,
     pub sights: sight::Sights,
+    pub waterballs: waterball::Waterballs,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -454,6 +456,7 @@ impl Prims {
         }
         self.cold_hits.retain(|hit| due(hit.start) < SECOND_SMOKE + SMOKE_LIFE && hit.age.is_none_or(|age| age < COLD_FRAMES));
         self.balls.advance(now);
+        self.waterballs.advance(now);
         self.stone.advance(now);
         self.volleys.retain(|volley| volley.alive(now));
         self.sage.advance(now);

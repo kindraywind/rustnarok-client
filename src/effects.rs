@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, sage, sight, stone, tanji, throw};
+use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, sage, sight, stone, tanji, throw, waterball};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -1335,6 +1335,8 @@ pub struct Effects {
     stars: HashMap<&'static str, Vec<Placed>>,
     /// Holy Water's bottle sprite's frames (1 to 41), plain white, by frame.
     holy_frames: HashMap<usize, Vec<Placed>>,
+    /// Water Ball's three pictures' layers.
+    water_frames: HashMap<u32, Vec<Placed>>,
     /// Sight Rasher's sprites' frames, plain white, by sprite and frame.
     sight_frames: HashMap<(&'static str, usize), Vec<Placed>>,
     /// Dark Strike's red ghost sprite's layers.
@@ -1621,10 +1623,15 @@ const BERSERK_PITCHER: u32 = 541;
 const SPORE_EXPLOSION: u32 = 914;
 /// EF_SHIELDBOOMERANG: Shield Boomerang's shield, out to the target, round and back past the caster (`prims::boomerang`).
 const SHIELD_BOOMERANG: u32 = 249;
+/// EF_WATERBALL2: Water Ball's ball, one a damage packet (`prims::waterball`).
+const WATER_BALL: u32 = 117;
+/// EF_OVERTHRUST: the ring of Sonic Blow's, on the unit (`prims::burst`).
+const OVER_THRUST: u32 = 128;
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 13] = [
+pub const AIMED: [u32; 14] = [
+    WATER_BALL,
     SOUL_STRIKE,
     FIRE_BALL,
     FROST_DIVER,
@@ -1766,7 +1773,7 @@ impl Effects {
         // (Flasher's and Remove Trap's play at a trap's cell.)
         let first_unit = match target {
             Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
-            _ if matches!(id, first::FLASHER_FX | first::REMOVE_TRAP) => Some(None),
+            _ if matches!(id, first::FLASHER_FX | first::REMOVE_TRAP | first::DETECTING) => Some(None),
             _ => None,
         };
         if let (true, Some(unit)) = (first::makes(id), first_unit) {
@@ -1782,10 +1789,11 @@ impl Effects {
                 first::THUNDER_CENTER,
                 first::POK1,
                 first::POK3,
+                first::FASHASHA,
             ] {
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
             }
-            for path in [first::STAR, first::GOLD_STAR, first::CYAN_STAR, first::HOLY_WATER_SPRITE] {
+            for path in [first::STAR, first::GOLD_STAR, first::CYAN_STAR, first::POISON_STAR, first::HOLY_WATER_SPRITE] {
                 self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
             }
             self.prims.first.play(id, unit, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
@@ -1824,7 +1832,7 @@ impl Effects {
             }
             self.prims.bursts.push(burst::Burst::signum(unit, now + crate::prims::TICK * 30, 122, |n| pick(0, n.saturating_sub(1))));
         }
-        if let (BASH | TURN_UNDEAD | SONIC_BLOW, Target::Unit(unit)) = (id, target) {
+        if let (BASH | TURN_UNDEAD | SONIC_BLOW | OVER_THRUST, Target::Unit(unit)) = (id, target) {
             for path in [burst::DISC, burst::RAY, burst::RING] {
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
             }
@@ -1832,6 +1840,11 @@ impl Effects {
             let burst = match id {
                 BASH => burst::Burst::bash(unit, now, burst::LIFE, rand),
                 SONIC_BLOW => burst::Burst::sonic_blow(unit, now),
+                // A recast within its 40 ticks takes the place of the ring.
+                OVER_THRUST => {
+                    self.prims.bursts.retain(|burst| !(burst.over_thrust && burst.unit == unit));
+                    burst::Burst::over_thrust(unit, now)
+                }
                 _ => burst::Burst::turn_undead(unit, now, rand),
             };
             self.prims.bursts.push(burst);
@@ -2221,6 +2234,11 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.balls.thunder(from, to, now);
             }
+            WATER_BALL => {
+                self.sprites.entry(waterball::SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, waterball::SPRITE));
+                self.play_sounds(table, id, from, now);
+                self.prims.waterballs.throw(from, to, now);
+            }
             GRIMTOOTH => {
                 self.textures.entry(stone::STONE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, stone::STONE, true).ok());
                 self.play_sounds(table, id, from, now);
@@ -2274,7 +2292,7 @@ impl Effects {
         if let Some(Some(sprite)) = self.sprites.get_mut(crate::prims::GHOST_SPRITE) {
             self.ghost = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
         }
-        for path in [first::STAR, first::GOLD_STAR, first::CYAN_STAR] {
+        for path in [first::STAR, first::GOLD_STAR, first::CYAN_STAR, first::POISON_STAR] {
             if let (Some(Some(sprite)), false) = (self.sprites.get_mut(path), self.stars.contains_key(path)) {
                 let layers = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
                 self.stars.insert(path, layers);
@@ -2286,6 +2304,12 @@ impl Effects {
                 let frames = sprite.frames(0).max(1);
                 let layers = sprite.frame_plain(gpu, 0, Timing::Span((drawn.frame as f32 + 0.5) / frames as f32));
                 self.sight_frames.insert((drawn.sprite, drawn.frame), layers);
+            }
+        }
+        if let Some(Some(sprite)) = self.sprites.get_mut(waterball::SPRITE) {
+            let frames = sprite.frames(0).max(1);
+            for drawn in self.prims.waterballs.drawn(now) {
+                self.water_frames.entry(drawn.image).or_insert_with(|| sprite.frame_plain(gpu, 0, Timing::Span((drawn.image as f32 + 0.5) / frames as f32)));
             }
         }
         if let Some(Some(sprite)) = self.sprites.get_mut(first::HOLY_WATER_SPRITE) {
@@ -2846,6 +2870,15 @@ impl Effects {
                 for &(key, position, size, layer_angle) in self.sight_frames.get(&(drawn.sprite, drawn.frame)).into_iter().flatten() {
                     let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * drawn.scale));
                     quads.push((sprite.texture(key), drawn.at, corners, [1.0, 1.0, 1.0, drawn.alpha.trunc().clamp(0.0, 255.0) / 255.0], false, false));
+                }
+            }
+            // Water Ball's balls and their tails, white with their alpha.
+            if let Some(Some(sprite)) = self.sprites.get(waterball::SPRITE) {
+                for drawn in self.prims.waterballs.drawn(now) {
+                    for &(key, position, size, layer_angle) in self.water_frames.get(&drawn.image).into_iter().flatten() {
+                        let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * drawn.scale));
+                        quads.push((sprite.texture(key), drawn.at, corners, [1.0, 1.0, 1.0, drawn.alpha.trunc().clamp(0.0, 255.0) / 255.0], false, false));
+                    }
                 }
             }
             // Holy Water's bottle: every layer plain white at alpha 254.
@@ -3848,5 +3881,24 @@ mod tests {
             assert_eq!(table.trap(kind), Some(effect), "{kind}");
         }
         assert_eq!(table.trap(0x8c), None);
+    }
+
+    #[test]
+    fn water_ball_detecting_enchant_poison_and_over_thrust_play_in_code() {
+        let table = Table::load();
+        // Water Ball: one 117 on the caster for each damage packet, flown in code; its sound stays.
+        assert!(AIMED.contains(&WATER_BALL) && !aimed_at_centre(WATER_BALL));
+        assert_eq!(table.struck(86), Some(&[(Who::Caster, 117)][..]));
+        assert!(!table.floaters.contains_key(&117) && table.sounds.contains_key(&117));
+        // Enchant Poison and Venom Splasher on their targets, a monster's poison at its first hit; two sounds at tick 0.
+        assert_eq!(table.used(138), Some(&[(Who::Target, 125)][..]));
+        assert_eq!(table.used(141), Some(&[(Who::Target, 125)][..]));
+        assert_eq!(table.hit(176), Some([Some(0), Some(125)]));
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        assert_eq!(sounds(125), [("effect\\assasin_enchantpoison", 0), ("effect\\EF_PoisonAttack", 0)]);
+        // Over Thrust: both sounds at tick 0, on the source.
+        assert_eq!(sounds(128), [("effect\\black_overthrust", 0), ("effect\\EF_StoneCurse", 0)]);
+        assert_eq!(table.used(113), Some(&[(Who::Caster, 128)][..]));
+        assert!(first::makes(119) && first::makes(125) && sounds(119) == [("effect\\hunter_detecting", 0)]);
     }
 }
