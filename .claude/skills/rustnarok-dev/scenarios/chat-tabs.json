@@ -1,5 +1,5 @@
 {
-  "about": "Chat tabs (issue #312): two players form a party (as in party.json); the second's party line and the first's public line land in Public, and the party line in Battle too (Battle shows battle messages, whispers, party and guild). The first's tab settings for Public untick Party Chat, and the party line leaves Public (ticked again after). The window drags by its tab strip, the lock and the stick button work, and typing 300 letters stops at 234 (that line is sent, so the box is empty for the leaving). Both leave the party at the end.",
+  "about": "Chat tabs (issue #312): two players form a party (as in party.json); the second's party line and the first's public line land in Public, and Battle (the damage lines) has neither. The first's tab settings for Public untick Party Chat, and the party line leaves Public (ticked again after). The window drags by its tab strip, the lock and the stick button work, and typing 300 letters stops at 234 (that line is sent, so the box is empty for the leaving). Both leave the party at the end.",
   "account": "",
   "slot": 0,
   "second": {

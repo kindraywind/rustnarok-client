@@ -220,6 +220,13 @@ const CHAT_ERROR: [u8; 3] = [0xFF, 0x00, 0x00];
 const CHAT_BROADCAST: [u8; 3] = [0xFF, 0xFF, 0x00];
 /// Messages that come with a skill's name, "[Name] message" (rathena's notes give 0xCDCDFF).
 const CHAT_SKILL_MESSAGE: [u8; 3] = [0xCD, 0xCD, 0xFF];
+/// The battle messages (msgstringtable): "Someone", and the four damage lines: on you, a party member attacked by someone, a
+/// receiver of damage, a party member attacking.
+const BATTLE_SOMEONE: usize = 1604;
+const BATTLE_ON_YOU: usize = 1605;
+const BATTLE_ATTACKED_BY: usize = 1606;
+const BATTLE_RECEIVES: usize = 1607;
+const BATTLE_ATTACKS: usize = 1608;
 /// Out of ammunition, too heavy, ammunition equipped (ZC_ACTION_FAILURE).
 const ACTION_FAILURES: [usize; 4] = [242, 243, 244, 245];
 /// Saving a memo point: saved, Warp Portal's level too low, not learned.

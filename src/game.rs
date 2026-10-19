@@ -3578,6 +3578,32 @@ impl Game {
         self.show_hit(&act, hit_ms, MULTI_HIT_DELAY, HitFrom::Attack);
     }
 
+    /// A unit's name for a battle message: ours, the one the map server told, else "Someone".
+    fn battle_name(&self, id: u32, messages: &[String]) -> String {
+        let name = if id == self.account_id { self.me.name.as_str() } else { self.units.get(&id).map_or("", |actor| actor.name.as_str()) };
+        // Names come as "name#party": only the name shows.
+        let name = name.split('#').next().unwrap_or_default();
+        if name.is_empty() { messages.get(BATTLE_SOMEONE).map_or("Someone", String::as_str).trim_end_matches('#').to_owned() } else { name.to_owned() }
+    }
+
+    /// The battle messages of a hit (categories 16 and 17): see `chat::battle_line`.
+    pub(crate) fn battle_lines(&mut self, act: &net::Act, messages: &[String]) {
+        let me = self.account_id;
+        let role = |id: u32| {
+            if id == me {
+                chat::Role::Me
+            } else if self.party.as_ref().is_some_and(|party| party.members.iter().any(|member| member.info.account == id)) {
+                chat::Role::Party
+            } else {
+                chat::Role::Other
+            }
+        };
+        let (source, target) = ((role(act.source), self.battle_name(act.source, messages)), (role(act.target), self.battle_name(act.target, messages)));
+        if let Some((text, color, kind)) = chat::battle_line(messages, (source.0, &source.1), (target.0, &target.1), act.damage + act.left_damage) {
+            self.chat_line_kind(text, color, kind);
+        }
+    }
+
     /// The numbers of a hit as it lands: split over a multi-hit's hits (with the running total over monsters),
     /// yellow for a critical, "Lucky" for a lucky dodge.
     /// The numbers (and the flinch) of a hit, landing `hit_ms` after now (the attacker's "atk" frame), or after its
