@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, stone};
+use crate::prims::{balls, bolts, stone};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -1038,6 +1038,8 @@ pub struct Effects {
     ghost: Vec<Placed>,
     fire_ball: Vec<Vec<Placed>>,
     yaw: f32,
+    /// Fire Bolt's spark sprite's layers, frame by frame.
+    spark_frames: Vec<Vec<Placed>>,
 }
 
 /// A whole number in `from..=to`.
@@ -1201,8 +1203,9 @@ pub const AIMED: [u32; 5] = [SOUL_STRIKE, FIRE_BALL, FROST_DIVER, JUPITEL, GRIMT
 const EARTH_SPIKE: u32 = 79;
 const HEAVENS_DRIVE: u32 = 142;
 
-/// Cold Bolt's and Fire Bolt's falling arrows (EF_ICEARROW, EF_FIREARROW).
-const BOLTS: [u32; 2] = [26, 31];
+/// Cold Bolt's and Fire Bolt's falling arrows (EF_ICEARROW, EF_FIREARROW), drawn in code (`prims::bolts`).
+const BOLTS: [u32; 2] = [26, FIRE_BOLT];
+const FIRE_BOLT: u32 = 31;
 
 /// When a bolt with `hits` hits drops its arrows, from the moment it's played: one an hit (at most 50), the first
 /// 12 ticks of 16 ms in and one every 10 ticks after. Empty for an effect that isn't a bolt.
@@ -1236,9 +1239,23 @@ impl Effects {
         }
         // One sound, as the first arrow falls.
         self.play_sounds(table, id, at, now + drops[0]);
-        for drop in drops {
-            self.show(gpu, grf, table, id, target, at, now + drop);
+        if let Target::Unit(unit) = target {
+            self.bolt(gpu, grf, id, unit, hits, now);
         }
+    }
+
+    /// A bolt (26 or 31) with `hits` arrows on a unit: what it needs loaded, then its volley.
+    fn bolt(&mut self, gpu: &Gpu, grf: &Grf, id: u32, unit: Option<u32>, hits: u16, now: Instant) {
+        let fire = id == FIRE_BOLT;
+        let textures: Vec<&str> =
+            if fire { bolts::FIRE_TEXTURES.iter().copied().chain([bolts::RING_YELLOW]).collect() } else { vec![bolts::ICE_ARROW, bolts::RING_BLUE] };
+        for path in textures {
+            self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+        }
+        if fire {
+            self.sprites.entry(bolts::SPARK_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, bolts::SPARK_SPRITE));
+        }
+        self.prims.volleys.push(bolts::Volley::new(unit, fire, hits, now, |n| pick(0, n.saturating_sub(1))));
     }
 
     fn play_sounds(&mut self, table: &Table, id: u32, at: Vector, now: Instant) {
@@ -1254,6 +1271,10 @@ impl Effects {
     /// What effect `id` draws, from `now` on.
     #[allow(clippy::too_many_arguments)]
     fn show(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
+        // A bolt told no hit count (by the server): one arrow.
+        if let (true, Target::Unit(unit)) = (BOLTS.contains(&id), target) {
+            self.bolt(gpu, grf, id, unit, 1, now);
+        }
         // Frost Diver's second hit effect: ice spikes round the target.
         if id == FROST_DIVER_HIT {
             self.textures.entry(crate::prims::ICE_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crate::prims::ICE_TEXTURE, true).ok());
@@ -1498,6 +1519,12 @@ impl Effects {
             self.fire_ball = (0..frames).map(|frame| sprite.frame_at(gpu, 0, 0, Timing::Span((frame as f32 + 0.5) / frames as f32))).collect();
         }
         self.yaw = yaw.to_degrees();
+        if self.spark_frames.is_empty()
+            && let Some(Some(sprite)) = self.sprites.get_mut(bolts::SPARK_SPRITE)
+        {
+            let count = sprite.frames(0).max(1);
+            self.spark_frames = (0..count).map(|frame| sprite.frame_at(gpu, 0, 0, Timing::Span(frame as f32 / count as f32))).collect();
+        }
         for floating in self.floating.iter_mut().filter(|floating| floating.again && floating.end <= now) {
             let period = floating.end.duration_since(floating.start);
             while floating.end <= now {
@@ -1648,6 +1675,24 @@ impl Effects {
                 (texture, triangles, additive)
             })
         });
+        // The bolts' arrows and their impact rings, blended over.
+        let volleys = self.prims.volleys.iter().filter_map(|volley| Some((volley, position_of(volley.unit)?)));
+        let bolt_meshes: Vec<EffectMesh<'_>> = volleys
+            .flat_map(|(volley, feet)| {
+                let texture = |path: &str| self.textures.get(path).and_then(Option::as_ref);
+                let ring = texture(if volley.fire { bolts::RING_YELLOW } else { bolts::RING_BLUE });
+                let arrows = volley.arrows(now, feet).into_iter().filter_map(move |(quads, frame, alpha)| {
+                    let texture = texture(if volley.fire { bolts::FIRE_TEXTURES[frame] } else { bolts::ICE_ARROW })?;
+                    let tint = [1.0, 1.0, 1.0, alpha];
+                    Some((texture, quads.iter().flatten().map(|&(position, uv)| MeshVertex { position, uv, tint }).collect(), false))
+                });
+                let rings = volley.rings(now, feet).into_iter().filter_map(move |(triangles, alpha)| {
+                    let tint = [1.0, 1.0, 1.0, alpha];
+                    Some((ring?, triangles.into_iter().map(|(position, uv)| MeshVertex { position, uv, tint }).collect(), false))
+                });
+                arrows.chain(rings).collect::<Vec<_>>()
+            })
+            .collect();
         // Frost Diver's ice spikes, blended over.
         let ice = self.textures.get(crate::prims::ICE_TEXTURE).and_then(Option::as_ref);
         let spikes = self.prims.spikes(now).filter_map(|(spike, tick)| {
@@ -1655,7 +1700,7 @@ impl Effects {
             Some((ice?, vertices, false))
         });
         let stone = self.textures.get(stone::STONE).and_then(Option::as_ref).map(|texture| (texture, self.prims.stone.mesh(), false));
-        rings.chain(models).chain(hits).chain(auras).chain(spikes).chain(stone).collect()
+        rings.chain(models).chain(hits).chain(auras).chain(spikes).chain(stone).chain(bolt_meshes).collect()
     }
 
     /// What's drawn flat on the screen over units now (COLDHIT's shards and smoke): texture, the unit's feet, and the
@@ -1768,6 +1813,19 @@ impl Effects {
                 // In sprite pixels, y down, turned by the key's angle; drawn over everything, `STR_RISE` up.
                 let corner = |index: usize| str_corner(state.position, [state.corners[index], state.corners[4 + index]], state.angle);
                 quads.push((texture, at, [corner(0), corner(1), corner(2), corner(3)], state.color, state.additive, true));
+            }
+        }
+        // Fire Bolt's sparks.
+        if let Some(Some(sprite)) = self.sprites.get(bolts::SPARK_SPRITE).filter(|_| !self.spark_frames.is_empty()) {
+            for volley in &self.prims.volleys {
+                let Some(feet) = position_of(volley.unit) else { continue };
+                for (at, frame, scale, alpha) in volley.sparks(now) {
+                    let anchor = std::array::from_fn(|axis| feet[axis] + at[axis]);
+                    for &(key, position, size, layer_angle) in &self.spark_frames[frame as usize % self.spark_frames.len()] {
+                        let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * scale));
+                        quads.push((sprite.texture(key), anchor, corners, [1.0, 1.0, 1.0, alpha], false, false));
+                    }
+                }
             }
         }
         // Soul Strike's ghosts, each copy of a trail a little fainter.
