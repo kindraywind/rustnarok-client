@@ -79,33 +79,123 @@ pub struct Camera {
     pub ground: f32,
 }
 
-/// The cell where a ray from `eye` first meets the ground (each cell's corner heights blended), up to the far plane.
-/// None past the map's edge.
-// ponytail: steps of a quarter cell, then halving; exact per-cell tests if cliffs ever pick wrong.
+/// No hit yet, and the reach of every box: the game's "far".
+const PICK_FAR: f32 = 999_999.0;
+
+/// The cell a ray from `eye` meets, as the game picks it: in map-centred GAT space (X = x − W·5, Z = z − H·5 with W, H
+/// half the GAT's size, Y = −y so heights are the GAT's own), two flat triangles per GAT cell and no step faces, the
+/// cells listed by a five-level quadtree (`pick_leaves`), the lowest t winning (the first tested on a tie). Only
+/// in-map cells; None when nothing is hit.
 fn ground_hit(gat: &Gat, eye: Vector, direction: Vector) -> Option<[i32; 2]> {
     let direction = normalize(direction);
-    let at = |t: f32| [0, 1, 2].map(|axis| eye[axis] + direction[axis] * t);
-    let under = |point: Vector| point[1] < -gat.height_at([point[0] / CELL, point[2] / CELL]);
-    let step = CELL / 4.0;
-    let mut t = 0.0;
-    while t < FAR {
-        if under(at(t + step)) {
-            let (mut above, mut below) = (t, t + step);
-            for _ in 0..12 {
-                let middle = (above + below) / 2.0;
-                if under(at(middle)) {
-                    below = middle;
-                } else {
-                    above = middle;
+    let [half_w, half_h] = [gat.width as i32 / 2, gat.height as i32 / 2];
+    let origin = [eye[0] - (half_w * 5) as f32, -eye[1], eye[2] - (half_h * 5) as f32];
+    let direction = [direction[0], -direction[1], direction[2]];
+    let mut leaves = Vec::new();
+    let [lo_x, lo_z] = [half_w, half_h].map(|half| -((half / 2) * 10) as f32);
+    let [hi_x, hi_z] = [half_w, half_h].map(|half| ((half - half / 2) * 10 - 1) as f32);
+    pick_leaves([lo_x, -PICK_FAR, lo_z], [hi_x, PICK_FAR, hi_z], 0, origin, direction, &mut leaves);
+    let column = |x: f32| (x / 5.0).floor() as i32 + 2 * (gat.width as i32 / 4);
+    let row = |z: f32| (z / 5.0).floor() as i32 + 2 * (gat.height as i32 / 4);
+    let (mut best, mut picked) = (PICK_FAR, None);
+    for (lo, hi) in leaves {
+        for cy in row(lo[2])..=row(hi[2]) {
+            for cx in column(lo[0])..=column(hi[0]) {
+                if cx < 0 || cy < 0 || cx as usize >= gat.width || cy as usize >= gat.height {
+                    continue;
+                }
+                let t = cell_t(gat, [half_w, half_h], [cx, cy], origin, direction);
+                if best > t {
+                    (best, picked) = (t, Some([cx, cy]));
                 }
             }
-            let hit = at(below);
-            let cell = [(hit[0] / CELL).floor() as i32, (hit[2] / CELL).floor() as i32];
-            return (cell[0] >= 0 && cell[1] >= 0 && (cell[0] as usize) < gat.width && (cell[1] as usize) < gat.height).then_some(cell);
         }
-        t += step;
     }
-    None
+    picked.filter(|_| best < PICK_FAR)
+}
+
+/// The quadtree's leaves a ray passes, in order: each node's four children (west-south, east-south, west-north,
+/// east-north), five levels down from the root, which itself isn't tested.
+fn pick_leaves(lo: Vector, hi: Vector, depth: u32, origin: Vector, direction: Vector, leaves: &mut Vec<(Vector, Vector)>) {
+    let mid = [(lo[0] + hi[0]) * 0.5, 0.0, (lo[2] + hi[2]) * 0.5];
+    let children = [
+        ([lo[0], lo[1], lo[2]], [mid[0], hi[1], mid[2]]),
+        ([mid[0], lo[1], lo[2]], [hi[0], hi[1], mid[2]]),
+        ([lo[0], lo[1], mid[2]], [mid[0], hi[1], hi[2]]),
+        ([mid[0], lo[1], mid[2]], [hi[0], hi[1], hi[2]]),
+    ];
+    for (lo, hi) in children {
+        if !ray_meets_box(lo, hi, origin, direction) {
+            continue;
+        }
+        if depth + 1 == 5 {
+            leaves.push((lo, hi));
+        } else {
+            pick_leaves(lo, hi, depth + 1, origin, direction, leaves);
+        }
+    }
+}
+
+/// The game's slab test of a ray against a box. An axis the ray is parallel to (|d| ≤ 1e-5) passes only through the
+/// middle 70 % of the box.
+fn ray_meets_box(lo: Vector, hi: Vector, origin: Vector, direction: Vector) -> bool {
+    let (mut near, mut far) = (-PICK_FAR, PICK_FAR);
+    for axis in 0..3 {
+        let centre = (hi[axis] + lo[axis]) * 0.5;
+        let half = hi[axis] - centre;
+        let relative = centre - origin[axis];
+        if direction[axis].abs() > 1e-5 {
+            let inverse = 1.0 / direction[axis];
+            let (t1, t2) = ((relative + half) * inverse, (relative - half) * inverse);
+            near = near.max(t1.min(t2));
+            far = far.min(t1.max(t2));
+            if near > far || far < 0.0 {
+                return false;
+            }
+        } else if relative.abs() > 0.7 * half {
+            return false;
+        }
+    }
+    if near > 0.0 { near <= PICK_FAR } else { far <= PICK_FAR }
+}
+
+/// Where a ray meets a GAT cell's two triangles, (SW, SE, NW) then (SE, NE, NW): the lower t, PICK_FAR for none.
+fn cell_t(gat: &Gat, [half_w, half_h]: [i32; 2], [cx, cy]: [i32; 2], origin: Vector, direction: Vector) -> f32 {
+    let [south_west, south_east, north_west, north_east] = gat.cells[cy as usize * gat.width + cx as usize].0;
+    let [x0, x1] = [(cx - half_w) * 5, (cx + 1 - half_w) * 5].map(|value| value as f32);
+    let [z0, z1] = [(cy - half_h) * 5, (cy + 1 - half_h) * 5].map(|value| value as f32);
+    let [sw, se, nw, ne] = [[x0, south_west, z0], [x1, south_east, z0], [x0, north_west, z1], [x1, north_east, z1]];
+    let mut t = PICK_FAR;
+    if let Some(hit) = triangle_t(origin, direction, sw, se, nw) {
+        t = hit.min(PICK_FAR);
+    }
+    if let Some(hit) = triangle_t(origin, direction, se, ne, nw) {
+        t = hit.min(t);
+    }
+    t
+}
+
+/// The game's ray–triangle test, in its order of operations; no t ≥ 0 test and no far limit.
+fn triangle_t(origin: Vector, direction: Vector, v0: Vector, v1: Vector, v2: Vector) -> Option<f32> {
+    let gat_dot = |a: Vector, b: Vector| (a[1] * b[1] + a[0] * b[0]) + a[2] * b[2];
+    let (edge1, edge2) = (subtract(v1, v0), subtract(v2, v0));
+    let p = cross(direction, edge2);
+    let determinant = gat_dot(p, edge1);
+    if -1e-5 < determinant && determinant < 1e-5 {
+        return None;
+    }
+    let inverse = 1.0 / determinant;
+    let s = subtract(origin, v0);
+    let u = gat_dot(s, p) * inverse;
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let q = cross(s, edge1);
+    let v = gat_dot(q, direction) * inverse;
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+    Some(gat_dot(q, edge2) * inverse)
 }
 
 /// A frame's camera: view-projection plus the basis billboards and picking need.
@@ -1773,36 +1863,76 @@ mod tests {
         // East is to the right, north is up the screen.
         assert!(view.project([110.0, 0.0, 100.0]).unwrap()[0] > 0.5);
         assert!(view.project([100.0, 0.0, 110.0]).unwrap()[1] < 0.5);
-        // The middle of the screen picks the target's cell on flat ground.
+        // A pixel right of the middle picks the target's cell on flat ground. The middle column itself is a ray parallel
+        // to x at turn 0, and like the game's it picks nothing there for this cell.
         let flat = Gat { width: 40, height: 40, cells: vec![([0.0; 4], 0); 1600] };
-        assert_eq!(view.pick_ground([0.5, 0.5], &flat), Some([20, 20]));
+        assert_eq!(view.pick_ground([0.5 + 1.0 / 1024.0, 0.5], &flat), Some([20, 20]));
+        assert_eq!(view.pick_ground([0.5, 0.5], &flat), None);
     }
 
     #[test]
     fn picks_the_ground_drawn_under_the_pointer() {
-        // Ten by ten cells of flat ground; a pit at (5, 5), ten deep (negative heights are up); a block at (5, 6),
-        // twenty high.
-        let ground = |block: bool| {
-            let mut gat = Gat { width: 10, height: 10, cells: vec![([0.0; 4], 0); 100] };
-            gat.cells[5 * 10 + 5].0 = [10.0; 4];
-            if block {
-                gat.cells[6 * 10 + 5].0 = [-20.0; 4];
-            }
-            gat
+        let flat = |width: usize, height: usize| Gat { width, height, cells: vec![([0.0; 4], 0); width * height] };
+        // 20 × 20, cell (10, 10) raised 10: a ray that reaches its rising face passes under it.
+        let mut raised = flat(20, 20);
+        raised.cells[10 * 20 + 10].0 = [-10.0; 4];
+        let slant = [0.05, -1.0, 1.0];
+        assert_eq!(ground_hit(&raised, [51.0, 33.0, 20.0], slant), None);
+        assert_eq!(ground_hit(&raised, [51.0, 37.0, 20.0], slant), Some([10, 11]));
+        assert_eq!(ground_hit(&flat(20, 20), [51.0, 33.0, 20.0], slant), Some([10, 10]));
+        assert_eq!(ground_hit(&flat(20, 20), [51.0, 37.0, 20.0], slant), Some([10, 11]));
+        // From outside the map: the row y = 0 raised 40, hit from beyond the south edge.
+        let mut wall = flat(20, 20);
+        for x in 0..20 {
+            wall.cells[x].0 = [-40.0; 4];
+        }
+        assert_eq!(ground_hit(&wall, [52.5, 60.0, -30.0], slant), Some([11, 6]));
+        // A ray parallel to x: only the middle 70 % of each quadtree box passes.
+        let picked: Vec<i32> = (0..20).filter(|&x| ground_hit(&flat(20, 20), [x as f32 * 5.0 + 2.5, 30.0, 22.0], [0.0, -1.0, 1.0]) == Some([x, 10])).collect();
+        assert_eq!(picked, [1, 3, 6, 11, 16]);
+        assert!((0..20).all(|x| ground_hit(&flat(20, 20), [x as f32 * 5.0 + 2.5, 30.0, 22.0], [0.01, -1.0, 1.0]) == Some([x, 10])));
+        // An odd half width lists one cell west of the box.
+        assert_eq!(ground_hit(&flat(42, 40), [1.25, 30.0, 22.0], [0.3, -1.0, 1.0]), None);
+        assert_eq!(ground_hit(&flat(40, 40), [1.25, 30.0, 22.0], [0.3, -1.0, 1.0]), Some([2, 10]));
+    }
+
+    #[test]
+    fn the_quadtree_picks_as_testing_every_cell() {
+        let gat = Gat { width: 40, height: 40, cells: vec![([0.0; 4], 0); 1600] };
+        let half = [20, 20];
+        let mut seed = 12345u32;
+        let mut random = || {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            (seed >> 8) as f32 / (1u32 << 24) as f32
         };
-        let (flat, gat) = (ground(false), ground(true));
-        let toward = |from: Vector, to: Vector| subtract(to, from);
-        let eye = [25.0, 50.0, -20.0];
-        // Flat ground: where the ray meets y = 0.
-        assert_eq!(ground_hit(&flat, eye, toward(eye, [37.0, 0.0, 41.0])), Some([7, 8]));
-        // The block stops a ray bound for the cell behind it, at its near side.
-        assert_eq!(ground_hit(&flat, eye, toward(eye, [25.0, 0.0, 35.0])), Some([5, 7]));
-        assert_eq!(ground_hit(&gat, eye, toward(eye, [25.0, 0.0, 35.0])), Some([5, 6]));
-        // A steep ray over the pit reaches its floor.
-        let above = [27.5, 100.0, 20.0];
-        assert_eq!(ground_hit(&gat, above, toward(above, [27.5, -10.0, 27.5])), Some([5, 5]));
-        // Off the map's edge: none.
-        assert_eq!(ground_hit(&gat, eye, toward(eye, [25.0, 0.0, -10.0])), None);
+        for _ in 0..500 {
+            let eye = [random() * 200.0, 20.0 + random() * 60.0, random() * 200.0];
+            let direction = normalize([random() - 0.5, -0.3 - random(), random() - 0.5]);
+            let origin = [eye[0] - 100.0, -eye[1], eye[2] - 100.0];
+            let flipped = [direction[0], -direction[1], direction[2]];
+            let (mut best, mut every) = (PICK_FAR, None);
+            for cy in 0..40 {
+                for cx in 0..40 {
+                    let t = cell_t(&gat, half, [cx, cy], origin, flipped);
+                    if best > t {
+                        (best, every) = (t, Some([cx, cy]));
+                    }
+                }
+            }
+            assert_eq!(ground_hit(&gat, eye, direction), every.filter(|_| best < PICK_FAR), "{eye:?} {direction:?}");
+        }
+    }
+
+    #[test]
+    fn a_cell_is_two_flat_triangles() {
+        // Corners (SW, SE, NW, NE) = (0, 0, 0, −10): flat in the first triangle, 5 up at three quarters across both ways.
+        let gat = Gat { width: 2, height: 2, cells: vec![([0.0, 0.0, 0.0, -10.0], 0); 4] };
+        let height_at = |fx: f32, fz: f32| {
+            let origin = [(fx - 1.0) * 5.0, -100.0, (fz - 1.0) * 5.0];
+            100.0 - cell_t(&gat, [1, 1], [0, 0], origin, [0.0, 1.0, 0.0])
+        };
+        assert!(height_at(0.25, 0.25).abs() < 1e-4);
+        assert!((height_at(0.75, 0.75) - 5.0).abs() < 1e-4);
     }
 
     use rustnarok_client::map::{Cube, Surface};

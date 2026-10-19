@@ -1,12 +1,12 @@
 {
-  "about": "A click into a wall on the player's own column goes on along the game's fallback line: from 140,107 a click on 140,103 (not walkable) walks to 141,107, the first free cell on the line's last row. It used to stop where the line met the player's column and do nothing.",
+  "about": "A click into a wall on the player's own column goes on along the game's fallback line: from 140,107 a click on 140,103 (not walkable) walks to 141,107, the first free cell on the line's last row. It used to stop where the line met the player's column and do nothing. The click is a pixel right of the cell's middle: on the screen's middle column at turn 0 the game's pick ray is parallel to x and picks nothing there.",
   "account": "",
   "slot": 0,
   "steps": [
     {"say": "@warp prontera 140 107"},
     {"settle": 1500},
     {"expect": {"state": {"player.cell": [140, 107]}}},
-    {"click_on": {"cell": [140, 103]}},
+    {"click_on": {"cell": [140, 103], "offset": [1, 0]}},
     {"wait": 1500},
     {"move": [1000, 750]},
     {"shot": "walk-fallback-end", "crop": [312, 184, 400, 400], "threshold": 5},

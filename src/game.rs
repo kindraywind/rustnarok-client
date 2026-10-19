@@ -282,10 +282,11 @@ impl Game {
         self.attack = Some(attack).filter(|attack| !(attack.sent && !attack.continuous && !attack.held));
     }
 
-    /// The cell under a point on screen, on the plane at the player's height.
+    /// The GAT cell the game picks under a point on screen (`world::ground_hit`), if any.
     pub(crate) fn ground_cell(&self, cursor: [f32; 2]) -> Option<[i32; 2]> {
         let view = self.camera.view(screen()[0] / screen()[1]);
-        view.pick_ground([cursor[0] / screen()[0], cursor[1] / screen()[1]], &self.world.gat)
+        // Through the pointer's whole canvas pixel (its corner), as the game picks.
+        view.pick_ground([cursor[0].floor() / screen()[0], cursor[1].floor() / screen()[1]], &self.world.gat)
     }
 
     /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`), judged from the cell the player is

@@ -18,7 +18,7 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select", "env": 
     ground_item (item id, from `ground_items`), item_link (an item link in the chat log or NPC window, item id),
     navi_link (a navigation link there, by its map), url_link (a web link there, by its address), quest_link (a
     quest link there, by quest id),
-    cell (a map cell [x, y]: its middle on screen), or
+    cell (a map cell [x, y]: its middle on screen; "offset" too, e.g. a pixel off the middle column), or
     {"point": [x, y]}; "offset": [dx, dy] shifts from the centre; a target not on screen fails the step)
   {"wheel": [x, y, rows]}  (the mouse wheel over a point: rows > 0 scrolls down)
   {"mouse_down": <target>} ... {"mouse_up": <target>}  (a button held down between steps; "button": "right")
@@ -179,8 +179,9 @@ def locate(target):
         return target["point"]
     if "cell" in target:
         x, y = target["cell"]
+        dx, dy = target.get("offset", [0, 0])
         reply = drive.send({"cmd": "cell_point", "x": x, "y": y})
-        return [round(value) for value in reply["point"]] if reply.get("ok") else None
+        return [round(reply["point"][0]) + dx, round(reply["point"][1]) + dy] if reply.get("ok") else None
     target = dict(target)
     dx, dy = target.pop("offset", [0, 0])
     below = target.pop("below", None)

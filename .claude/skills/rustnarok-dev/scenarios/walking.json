@@ -4,7 +4,7 @@
   "slot": 0,
   "steps": [
     {"say": "@warp izlude 135 108"}, {"settle": 1500},
-    {"mouse_down": {"point": [512, 300]}}, {"wait": 450},
+    {"mouse_down": {"point": [513, 300]}}, {"wait": 450},
     {"move": [650, 384]}, {"wait": 450},
     {"move": [400, 450]}, {"wait": 450},
     {"mouse_up": {"point": [400, 450]}},
