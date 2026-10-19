@@ -4,4 +4,4 @@ Please report a vulnerability privately, through this repository's **Security** 
 public issue.
 
 This is an alpha game client with no hosted service; the parts that matter are the network packet decoding and the GRF
-and model readers, which parse data from a server or a file. You can expect a first reply within a week.
+and model readers, which parse data from a server or a file.
