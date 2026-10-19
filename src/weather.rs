@@ -1,15 +1,15 @@
 //! Weather a map has on (rathena's snow, sakura, leaves, clouds, clouds2, fog and fireworks flags). The server sends
-//! each as an effect ID on the player when the map has loaded; it's a state of the map, drawn as a layer over it until
-//! the next map change.
+//! each as an effect ID on the player when the map has loaded. Every send starts another copy, and they all go at the
+//! next map change. Snow, sakura and leaves fall in the world around the player; clouds and fog drift over the screen.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use rustnarok_client::grf::Grf;
-use rustnarok_client::sprite::Spr;
+use rustnarok_client::sprite::{Act, Spr};
 
 use crate::render::{Gpu, Texture};
-use crate::world::{EffectQuad, Vector};
+use crate::world::{Billboard, DepthLayer, EffectQuad, Vector};
 use crate::{Layer, screen};
 
 pub const SNOW: u32 = 162;
@@ -45,16 +45,50 @@ const RISE_TICKS: u32 = 154;
 const RISE_STEP: f32 = 0.25;
 const SPARK_ALPHA: i32 = 250;
 const WEST: f32 = 15.0;
+/// Snow flakes spawned each tick, and how many ticks one lives (640 at once once a copy is that old).
+const SNOW_PER_TICK: u32 = 2;
+const SNOW_LIFE: u32 = 320;
+/// Sakura: one petal on each even tick from 0 through this one (150). Each action has this many frames.
+const SAKURA_LAST: u32 = 298;
+const SAKURA_FRAMES: u32 = 10;
+const SAKURA_ACTIONS: u32 = 3;
+/// Leaves: one on each even tick from 0 through this one (100), action 0.
+const LEAVES_LAST: u32 = 198;
+const LEAVES_FRAMES: u32 = 20;
+const PETAL_ALPHA: f32 = 200.0 / 255.0;
+const ABOVE: f32 = 200.0;
+/// A stalled frame simulates at most this many ticks (10 s). The rest continue on later frames.
+const CATCHUP: u32 = 625;
 
 pub fn is_weather(effect: u32) -> bool {
     [SNOW, SAKURA, CLOUDS, FIREWORKS, FIREWORKS_THROW, FIREWORKS_SOUND, LEAVES, FOG, CLOUDS2].contains(&effect)
 }
 
+fn is_falling(effect: u32) -> bool {
+    matches!(effect, SNOW | SAKURA | LEAVES)
+}
+
+/// One sprite's pictures. `actions` is each ACT action's frame image, when the file loaded.
+struct Pictures {
+    images: Vec<Texture>,
+    actions: Vec<Vec<usize>>,
+}
+
+impl Pictures {
+    fn image(&self, action: usize, frame: usize, span: usize) -> Option<&Texture> {
+        if let Some(frames) = self.actions.get(action).filter(|frames| !frames.is_empty()) {
+            return self.images.get(frames[frame % frames.len()]);
+        }
+        // ponytail: no ACT, so action `n` is the next `span` pictures in the sprite (10 sakura, 20 leaves).
+        self.images.get(action.saturating_mul(span).saturating_add(frame))
+    }
+}
+
 /// The pictures weather is made of; a file missing from the data leaves its weather unseen.
 pub struct Assets {
-    flakes: Vec<Texture>,
-    petals: Vec<Texture>,
-    leaves: Vec<Texture>,
+    flakes: Pictures,
+    petals: Pictures,
+    leaves: Pictures,
     clouds: Vec<Texture>,
     fogs: Vec<Texture>,
     /// `pok1.tga`, the fireworks spark. Missing data leaves the sparks unseen.
@@ -66,15 +100,43 @@ pub struct Assets {
 impl Assets {
     // ponytail: which file is which weather's is from the file names alone; replace with the real client's.
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
-        // Every picture of a sprite under data\sprite\이팩트\, palette ones then RGBA ones.
+        // Pictures of a sprite under data\sprite\이팩트\, palette ones then RGBA ones, and its ACT frames.
         let sprite = |name: &str| {
-            let mut textures = Vec::new();
-            if let Some(spr) = grf.read(&format!("data\\sprite\\이팩트\\{name}.spr")).ok().and_then(|bytes| Spr::parse(&bytes).ok()) {
-                for kind in 0..2 {
-                    textures.extend((0..).map_while(|index| spr.image(kind, index, None)).map(|image| gpu.texture(&image, true)));
+            let mut images = Vec::new();
+            let mut indexed = 0usize;
+            let Some(spr) = grf.read(&format!("data\\sprite\\이팩트\\{name}.spr")).ok().and_then(|bytes| Spr::parse(&bytes).ok()) else {
+                return Pictures { images, actions: Vec::new() };
+            };
+            for kind in 0..2 {
+                for index in 0.. {
+                    let Some(image) = spr.image(kind, index, None) else { break };
+                    if kind == 0 {
+                        indexed += 1;
+                    }
+                    images.push(gpu.texture(&image, true));
                 }
             }
-            textures
+            let actions = grf
+                .read(&format!("data\\sprite\\이팩트\\{name}.act"))
+                .ok()
+                .and_then(|bytes| Act::parse(&bytes).ok())
+                .map(|act| {
+                    act.actions
+                        .iter()
+                        .map(|frames| {
+                            frames
+                                .iter()
+                                .filter_map(|frame| {
+                                    let layer = frame.layers.iter().find(|layer| layer.image >= 0)?;
+                                    let image = usize::try_from(layer.image).ok()?;
+                                    Some(if layer.kind == 0 { image } else { indexed + image })
+                                })
+                                .collect()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Pictures { images, actions }
         };
         let textures =
             |names: &[String]| names.iter().filter_map(|name| gpu.try_load_texture(grf, &format!("data\\texture\\effect\\{name}"), true).ok()).collect();
@@ -96,10 +158,25 @@ impl Assets {
     }
 }
 
-/// The weather showing: each effect ID and when it began, plus the fireworks sparks and bangs it launched.
+/// One flake or petal. Snow falls straight; petals and leaves drift and start again below the player.
+enum Flake {
+    Snow { at: Vector, age: u32, scale: f32 },
+    Drift { at: Vector, age: u32, scale: f32, fall: f32, action: u32, frames: u32, sway: [f32; 2], angle: [i32; 2], target: [i32; 2] },
+}
+
+/// One copy of a weather effect. Another packet of the same id is another copy.
+struct Running {
+    effect: u32,
+    start: Instant,
+    /// Ticks already simulated. Snow, sakura and leaves only.
+    simulated: u32,
+    flakes: Vec<Flake>,
+}
+
+/// The weather showing: one entry per copy, plus the fireworks sparks and bangs it launched.
 #[derive(Default)]
 pub struct Weather {
-    showing: BTreeMap<u32, Instant>,
+    running: Vec<Running>,
     sparks: Vec<SparkLaunch>,
     bangs: Vec<Bang>,
     seed: u64,
@@ -108,22 +185,26 @@ pub struct Weather {
 }
 
 impl Weather {
-    /// A weather effect from the server; one already showing stays as it is (the server sends all the flags still on
-    /// whenever one changes). `at` is the player's feet, where fireworks begin.
+    /// A weather effect from the server. Each one starts another copy, even of an effect already showing (the server
+    /// sends every flag still on whenever one changes). `at` is the player's feet, where fireworks begin.
     pub fn start(&mut self, effect: u32, now: Instant, at: Vector) {
-        if self.showing.contains_key(&effect) {
-            return;
-        }
-        self.showing.insert(effect, now);
+        self.running.push(Running { effect, start: now, simulated: 0, flakes: Vec::new() });
         self.add(effect, 1, now, at);
     }
 
-    /// A map load's etcinfo line: `count` copies, even of an effect the load already started.
+    /// A map load's etcinfo line. Fireworks add `count` launches and show the id once (Comodo lists 297 once). Snow,
+    /// sakura and leaves add `count` copies.
     pub fn launch(&mut self, effect: u32, count: u32, now: Instant, at: Vector) {
         if count == 0 {
             return;
         }
-        self.showing.entry(effect).or_insert(now);
+        if is_falling(effect) {
+            for _ in 0..count {
+                self.running.push(Running { effect, start: now, simulated: 0, flakes: Vec::new() });
+            }
+        } else if !self.running.iter().any(|running| running.effect == effect) {
+            self.running.push(Running { effect, start: now, simulated: 0, flakes: Vec::new() });
+        }
         self.add(effect, count, now, at);
     }
 
@@ -146,9 +227,9 @@ impl Weather {
         }
     }
 
-    /// A new map (or the same one again): its weather comes after it has loaded.
+    /// A new map (or the same one again): every copy goes, and its weather comes after it has loaded.
     pub fn clear(&mut self) {
-        self.showing.clear();
+        self.running.clear();
         self.sparks.clear();
         self.bangs.clear();
         self.map_launch = true;
@@ -166,8 +247,11 @@ impl Weather {
         due
     }
 
+    /// One id per copy, sorted so the control state stays stable.
     pub fn ids(&self) -> Vec<u32> {
-        self.showing.keys().copied().collect()
+        let mut ids: Vec<u32> = self.running.iter().map(|running| running.effect).collect();
+        ids.sort_unstable();
+        ids
     }
 
     /// How many sparks are running (four per 297).
@@ -176,8 +260,9 @@ impl Weather {
         self.sparks.len() * SPARKS_PER_LAUNCH as usize
     }
 
-    /// Move each launch onto the player's current feet when its 32 s cycle starts again.
-    pub fn step(&mut self, now: Instant, at: Vector) {
+    /// Move each launch onto the player's current feet when its 32 s cycle starts again, and advance falling weather.
+    /// `ground_gat` is the ground's GAT height under the player (larger is lower). Flakes keep running with /effect off.
+    pub fn step(&mut self, now: Instant, at: Vector, ground_gat: f32) {
         for launch in &mut self.sparks {
             let cycle = ticks_since(launch.start, now) / SPARK_CYCLE;
             if cycle != launch.cycle {
@@ -185,6 +270,33 @@ impl Weather {
                 launch.origin = west_of(at);
             }
         }
+        let mut seed = self.seed;
+        for running in &mut self.running {
+            if !is_falling(running.effect) {
+                continue;
+            }
+            let due = ticks_since(running.start, now);
+            // ponytail: a stalled frame catches up at most 10 s, so a pause doesn't spin; the rest follows next frame.
+            let steps = due.saturating_sub(running.simulated).min(CATCHUP);
+            for _ in 0..steps {
+                seed = tick_running(running, at, ground_gat, seed);
+            }
+        }
+        self.seed = seed;
+    }
+
+    /// Simulate `ticks` more 16 ms ticks at `at`. Tests use this so a count doesn't depend on the clock.
+    #[cfg(test)]
+    fn advance(&mut self, ticks: u32, at: Vector, ground_gat: f32) {
+        let mut seed = self.seed;
+        for _ in 0..ticks {
+            for running in &mut self.running {
+                if is_falling(running.effect) {
+                    seed = tick_running(running, at, ground_gat, seed);
+                }
+            }
+        }
+        self.seed = seed;
     }
 
     /// Bangs whose tick has arrived since last time. They are marked heard either way.
@@ -216,51 +328,51 @@ impl Weather {
         quads
     }
 
-    // ponytail: no data file says how weather moves (how many flakes, how fast, how clouds drift); all of it here is an
-    // estimate, drawn over the screen rather than the map, to replace with the real client's.
+    /// Snow, sakura and leaves, facing the camera. Empty until their sprites have loaded. Draw only while /effect is on.
+    pub fn world_sprites<'a>(&self, assets: &'a Assets) -> Vec<Billboard<'a>> {
+        let mut sprites = Vec::new();
+        for running in &self.running {
+            match running.effect {
+                SNOW => {
+                    let Some(texture) = assets.flakes.images.first() else { continue };
+                    for flake in &running.flakes {
+                        let Flake::Snow { at, age, scale } = flake else { continue };
+                        sprites.push(centered(texture, *at, *scale, snow_alpha(*age) as f32 / 255.0));
+                    }
+                }
+                SAKURA | LEAVES => {
+                    let pictures = if running.effect == SAKURA { &assets.petals } else { &assets.leaves };
+                    for flake in &running.flakes {
+                        let Flake::Drift { at, age, scale, action, frames, .. } = flake else { continue };
+                        let Some(texture) = pictures.image(*action as usize, frame_index(*age, *frames) as usize, *frames as usize) else { continue };
+                        sprites.push(centered(texture, *at, *scale, PETAL_ALPHA));
+                    }
+                }
+                _ => {}
+            }
+        }
+        sprites
+    }
+
+    // ponytail: clouds and fog still drift over the screen (no count or speed for them); snow, sakura and leaves are
+    // the world sprites above.
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, now: Instant) {
-        for (&effect, &since) in &self.showing {
-            let seconds = now.saturating_duration_since(since).as_secs_f32();
-            match effect {
-                SNOW => falling(layer, &assets.flakes, effect, seconds, &Fall { count: 140, speed: [50.0, 110.0], scale: [0.4, 0.9], sway: 15.0, turn: 0.0 }),
-                SAKURA => falling(layer, &assets.petals, effect, seconds, &Fall { count: 45, speed: [35.0, 60.0], scale: [0.5, 0.9], sway: 40.0, turn: 4.0 }),
-                LEAVES => falling(layer, &assets.leaves, effect, seconds, &Fall { count: 35, speed: [40.0, 70.0], scale: [0.6, 1.0], sway: 50.0, turn: 5.0 }),
-                CLOUDS => drifting(layer, &assets.clouds, effect, seconds, &Drift { count: 14, speed: [12.0, 24.0], rise: 0.0, scale: 3.0 }),
-                CLOUDS2 => drifting(layer, &assets.clouds, effect, seconds, &Drift { count: 10, speed: [-90.0, -60.0], rise: -12.0, scale: 2.5 }),
-                FOG => drifting(layer, &assets.fogs, effect, seconds, &Drift { count: 8, speed: [6.0, 12.0], rise: 0.0, scale: 4.0 }),
+        for running in &self.running {
+            let seconds = now.saturating_duration_since(running.start).as_secs_f32();
+            match running.effect {
+                CLOUDS => drifting(layer, &assets.clouds, running.effect, seconds, &Drift { count: 14, speed: [12.0, 24.0], rise: 0.0, scale: 3.0 }),
+                CLOUDS2 => drifting(layer, &assets.clouds, running.effect, seconds, &Drift { count: 10, speed: [-90.0, -60.0], rise: -12.0, scale: 2.5 }),
+                FOG => drifting(layer, &assets.fogs, running.effect, seconds, &Drift { count: 8, speed: [6.0, 12.0], rise: 0.0, scale: 4.0 }),
                 _ => {}
             }
         }
     }
 }
 
-/// Pictures falling down the screen, swaying.
-struct Fall {
-    count: u64,
-    /// Pixels a second, the slowest and the fastest.
-    speed: [f32; 2],
-    /// Of the picture's size.
-    scale: [f32; 2],
-    /// Pixels to each side.
-    sway: f32,
-    /// Pictures a second, for those that turn as they fall (the sprite's pictures in order).
-    turn: f32,
-}
-
-fn falling<'a>(layer: &mut Layer<'a>, images: &'a [Texture], effect: u32, seconds: f32, fall: &Fall) {
-    if images.is_empty() {
-        return;
-    }
-    for n in 0..fall.count {
-        let [a, b, c, d] = randoms(effect, n);
-        let image = &images[((n as f32 + seconds * fall.turn * (0.5 + b)) as usize) % images.len()];
-        let scale = between(fall.scale, c);
-        let size = [image.size[0] * scale, image.size[1] * scale];
-        let room = screen()[1] + size[1];
-        let y = (a * room + seconds * between(fall.speed, b)).rem_euclid(room) - size[1];
-        let x = d * screen()[0] + fall.sway * (seconds * (0.5 + c) + d * 6.3).sin();
-        layer.sprites.push((image, [x.round(), y.round()], size));
-    }
+/// A camera-facing sprite centered on `at`. `scale` is a fraction of the picture's size; alpha is 0–1.
+fn centered<'a>(texture: &'a Texture, at: Vector, scale: f32, alpha: f32) -> Billboard<'a> {
+    let size = [texture.size[0] * scale, texture.size[1] * scale];
+    (texture, at, [-size[0] / 2.0, -size[1] / 2.0], size, [1.0, 1.0, 1.0, alpha], 0.0, DepthLayer::default())
 }
 
 /// Large pictures drifting across the screen.
@@ -341,6 +453,149 @@ fn west_of(at: Vector) -> Vector {
 
 fn ticks_since(start: Instant, now: Instant) -> u32 {
     (now.saturating_duration_since(start).as_millis() / TICK.as_millis()) as u32
+}
+
+fn next_rand(seed: &mut u64) -> u32 {
+    *seed = seed.wrapping_add(1);
+    mix(*seed) as u32
+}
+
+/// One tick of a falling copy. `player` is the player's feet; `ground_gat` is the ground under them.
+fn tick_running(running: &mut Running, player: Vector, ground_gat: f32, mut seed: u64) -> u64 {
+    let tick = running.simulated;
+    match running.effect {
+        SNOW => {
+            for flake in &mut running.flakes {
+                let Flake::Snow { at, age, .. } = flake else { continue };
+                *age += 1;
+                at[1] -= 0.5;
+            }
+            running.flakes.retain(|flake| matches!(flake, Flake::Snow { age, .. } if *age < SNOW_LIFE));
+            let y = snow_world_y(-player[1], ground_gat);
+            for _ in 0..SNOW_PER_TICK {
+                let theta = next_rand(&mut seed) % 360;
+                let radius = 1.0 + (next_rand(&mut seed) % 300) as f32;
+                let scale = snow_scale(next_rand(&mut seed));
+                let [x, z] = snow_xz([player[0], player[2]], theta, radius);
+                running.flakes.push(Flake::Snow { at: [x, y, z], age: 0, scale });
+            }
+        }
+        SAKURA | LEAVES => {
+            let leaves = running.effect == LEAVES;
+            for flake in &mut running.flakes {
+                let Flake::Drift { at, age, fall, sway, angle, target, .. } = flake else { continue };
+                at[0] += sway[0] * (angle[0] as f32).to_radians().sin();
+                at[2] += sway[1] * (angle[1] as f32).to_radians().sin();
+                *age += 1;
+                for axis in 0..2 {
+                    angle[axis] = chase(angle[axis], target[axis]);
+                    if angle[axis] == target[axis] {
+                        target[axis] = (next_rand(&mut seed) % 360) as i32;
+                    }
+                }
+                // A restart jumps back up to 200 above the player; a tick that only falls goes down.
+                let before = at[1];
+                at[1] = petal_y(at[1], *fall, player[1]);
+                if at[1] > before {
+                    at[0] = beside(player[0], next_rand(&mut seed));
+                    at[2] = beside(player[2], next_rand(&mut seed));
+                }
+            }
+            let last = if leaves { LEAVES_LAST } else { SAKURA_LAST };
+            if tick <= last && tick.is_multiple_of(2) {
+                let scale = hundredths(if leaves { 35 } else { 22 }, next_rand(&mut seed));
+                let fall = if leaves { leaf_fall(next_rand(&mut seed)) } else { cherry_fall(next_rand(&mut seed)) };
+                let action = if leaves { 0 } else { next_rand(&mut seed) % SAKURA_ACTIONS };
+                let frames = if leaves { LEAVES_FRAMES } else { SAKURA_FRAMES };
+                let sway = if leaves { [0.12, 0.15] } else { [0.24, 0.30] };
+                // ponytail: the spec doesn't give the angle a petal starts at, only the target it chases. It starts at 0.
+                let target = [0, 1].map(|_| (next_rand(&mut seed) % 360) as i32);
+                running.flakes.push(Flake::Drift {
+                    at: [beside(player[0], next_rand(&mut seed)), player[1] + ABOVE, beside(player[2], next_rand(&mut seed))],
+                    age: 0,
+                    scale,
+                    fall,
+                    action,
+                    frames,
+                    sway,
+                    angle: [0, 0],
+                    target,
+                });
+            }
+        }
+        _ => {}
+    }
+    running.simulated += 1;
+    seed
+}
+
+/// Snow's alpha at `age` ticks: 0, then +25.4 a tick through 10, held through 256, then down to 0 at 320.
+fn snow_alpha(age: u32) -> u32 {
+    if age >= SNOW_LIFE {
+        0
+    } else if age <= 10 {
+        age * 254 / 10
+    } else if age <= 256 {
+        254
+    } else {
+        254 * (SNOW_LIFE - age) / 64
+    }
+}
+
+/// World Y (up) where a snow flake starts. `player_gat` and `ground_gat` are GAT heights, larger lower.
+fn snow_world_y(player_gat: f32, ground_gat: f32) -> f32 {
+    -(player_gat + ground_gat - 100.0)
+}
+
+/// A point on the snow disc: `theta` degrees, `radius` world units, x from sin and z from cos.
+fn snow_xz([x, z]: [f32; 2], theta: u32, radius: f32) -> [f32; 2] {
+    let theta = ((theta % 360) as f32).to_radians();
+    [x + radius * theta.sin(), z + radius * theta.cos()]
+}
+
+/// (25 + rand % 15) / 50, so 0.50–0.78 of the flake picture.
+fn snow_scale(roll: u32) -> f32 {
+    (25 + roll % 15) as f32 / 50.0
+}
+
+/// An angle chasing `target`: +3° while below it, −2° while above, stopping on it.
+fn chase(angle: i32, target: i32) -> i32 {
+    if angle < target {
+        (angle + 3).min(target)
+    } else if angle > target {
+        (angle - 2).max(target)
+    } else {
+        angle
+    }
+}
+
+/// The picture a petal shows: a new frame every 4 ticks, looping over `frames`.
+fn frame_index(age: u32, frames: u32) -> u32 {
+    if frames == 0 { 0 } else { (age / 4) % frames }
+}
+
+/// Where a petal's height goes this tick. Below the player's feet, it starts again 200 above them.
+fn petal_y(y: f32, fall: f32, player_y: f32) -> f32 {
+    let next = y - fall;
+    if next < player_y { player_y + ABOVE } else { next }
+}
+
+// ponytail: the spec gives 0.22–0.27 and 0.35–0.40, not the steps inside. Six hundredths from the low end.
+fn hundredths(base: u32, roll: u32) -> f32 {
+    (base + roll % 6) as f32 / 100.0
+}
+
+fn cherry_fall(roll: u32) -> f32 {
+    if roll.is_multiple_of(2) { 0.2 } else { 0.3 }
+}
+
+fn leaf_fall(roll: u32) -> f32 {
+    [0.06, 0.09, 0.12, 0.15][(roll % 4) as usize]
+}
+
+/// Player − 150 … + 149.
+fn beside(player: f32, roll: u32) -> f32 {
+    player + (roll % 300) as f32 - 150.0
 }
 
 /// One spark of a 297 launch. Its numbers are fixed when it starts.
@@ -459,27 +714,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keeps_one_of_each_until_the_map_changes() {
+    fn copies_add_up_and_clear_on_a_map_load() {
         let mut weather = Weather::default();
         let now = Instant::now();
         let at = [100.0, 0.0, 40.0];
         assert!(is_weather(SNOW) && is_weather(FIREWORKS_SOUND) && !is_weather(FIREWORK));
         weather.start(SNOW, now, at);
         weather.start(FOG, now, at);
-        // The server sends every flag still on again when one changes.
+        // The server sends every flag still on again when one changes, and each send is another copy.
         weather.start(SNOW, now + Duration::from_secs(3), at);
-        assert_eq!(weather.ids(), [SNOW, FOG]);
-        assert_eq!(weather.showing[&SNOW], now, "the snow already falling goes on");
+        weather.start(SAKURA, now, at);
+        assert_eq!(weather.ids(), [SNOW, SNOW, SAKURA, FOG]);
+        assert_eq!(weather.running[0].start, now, "the first snow keeps the time it started");
         weather.start(FIREWORKS, now, at);
         weather.start(FIREWORKS_THROW, now, at);
         weather.start(FIREWORKS_SOUND, now, at);
-        assert_eq!(weather.spark_count(), SPARKS_PER_LAUNCH as usize);
-        assert_eq!(weather.ids(), [SNOW, FIREWORKS, FIREWORKS_THROW, FIREWORKS_SOUND, FOG]);
-        // A resent flag does not add another launch.
         weather.start(FIREWORKS, now, at);
-        assert_eq!(weather.spark_count(), SPARKS_PER_LAUNCH as usize);
+        assert_eq!(weather.spark_count(), SPARKS_PER_LAUNCH as usize * 2, "a resent 297 launches again");
+        weather.advance(SNOW_LIFE, at, 0.0);
+        assert_eq!(snow_of(&weather).len(), 640 * 2, "each snow copy has its own flakes");
         weather.clear();
-        assert!(weather.ids().is_empty() && weather.spark_count() == 0 && weather.take_bangs(now + Duration::from_secs(9)) == 0);
+        assert!(weather.ids().is_empty() && weather.spark_count() == 0 && snow_of(&weather).is_empty());
+        assert_eq!(weather.take_bangs(now + Duration::from_secs(9)), 0);
     }
 
     #[test]
@@ -554,8 +810,9 @@ weather#other.rsw#rain#
         assert_eq!(weather.bangs.len(), 1);
         assert!(weather.sparks.iter().all(|launch| launch.origin == [85.0, 2.0, 30.0]));
         let later = start + Duration::from_millis(16 * u64::from(SPARK_CYCLE));
-        weather.step(later, [140.0, 6.0, 10.0]);
+        weather.step(later, [140.0, 6.0, 10.0], 0.0);
         assert!(weather.sparks.iter().all(|launch| launch.origin == [125.0, 6.0, 10.0]));
+        assert_eq!(weather.ids(), [FIREWORKS, FIREWORKS_SOUND], "160 launches are still one fireworks id");
     }
 
     #[test]
@@ -563,5 +820,130 @@ weather#other.rsw#rain#
         assert_eq!(randoms(SNOW, 4), randoms(SNOW, 4));
         assert_ne!(randoms(SNOW, 4), randoms(SNOW, 5));
         assert!(randoms(FOG, 9).iter().all(|value| (0.0..1.0).contains(value)));
+    }
+
+    fn fallen(effect: u32, ticks: u32) -> Weather {
+        let mut weather = Weather::default();
+        weather.start(effect, Instant::now(), [0.0, 0.0, 0.0]);
+        weather.advance(ticks, [0.0, 0.0, 0.0], 0.0);
+        weather
+    }
+
+    fn snow_of(weather: &Weather) -> Vec<&Flake> {
+        weather.running.iter().filter(|running| running.effect == SNOW).flat_map(|running| running.flakes.iter()).collect()
+    }
+
+    fn drifts_of(weather: &Weather, effect: u32) -> Vec<&Flake> {
+        weather.running.iter().filter(|running| running.effect == effect).flat_map(|running| running.flakes.iter()).collect()
+    }
+
+    #[test]
+    fn snow_sakura_and_leaves_start_on_their_ticks() {
+        assert_eq!(snow_of(&fallen(SNOW, 0)).len(), 0);
+        assert_eq!(snow_of(&fallen(SNOW, 1)).len(), 2);
+        assert_eq!(snow_of(&fallen(SNOW, SNOW_LIFE)).len(), 640, "320 ticks of 2 flakes");
+        assert_eq!(snow_of(&fallen(SNOW, SNOW_LIFE + 80)).len(), 640, "the oldest have died and two more began");
+        assert_eq!(drifts_of(&fallen(SAKURA, 1), SAKURA).len(), 1);
+        assert_eq!(drifts_of(&fallen(SAKURA, 2), SAKURA).len(), 1, "tick 1 is odd");
+        assert_eq!(drifts_of(&fallen(SAKURA, 298), SAKURA).len(), 149);
+        assert_eq!(drifts_of(&fallen(SAKURA, 299), SAKURA).len(), 150);
+        assert_eq!(drifts_of(&fallen(SAKURA, 400), SAKURA).len(), 150);
+        assert_eq!(drifts_of(&fallen(LEAVES, 1), LEAVES).len(), 1);
+        assert_eq!(drifts_of(&fallen(LEAVES, 199), LEAVES).len(), 100);
+        assert_eq!(drifts_of(&fallen(LEAVES, 400), LEAVES).len(), 100);
+    }
+
+    #[test]
+    fn snow_fades_in_holds_and_fades_out() {
+        for (age, alpha) in [(0, 0), (5, 127), (10, 254), (256, 254), (288, 127), (320, 0)] {
+            assert_eq!(snow_alpha(age), alpha, "age {age}");
+        }
+        let weather = fallen(SNOW, 6);
+        let oldest = snow_of(&weather).into_iter().map(|flake| match flake {
+            Flake::Snow { age, .. } => *age,
+            Flake::Drift { .. } => 0,
+        });
+        assert_eq!(oldest.max(), Some(5));
+        assert!(snow_of(&fallen(SNOW, SNOW_LIFE + 1)).iter().all(|flake| match flake {
+            Flake::Snow { age, .. } => *age < SNOW_LIFE,
+            Flake::Drift { .. } => false,
+        }));
+    }
+
+    #[test]
+    fn snow_starts_on_a_disc_above_flat_ground() {
+        assert_eq!(snow_world_y(0.0, 0.0), 100.0, "flat ground at height 0");
+        assert_eq!(snow_world_y(10.0, 10.0), 80.0);
+        let [x, z] = snow_xz([5.0, 7.0], 0, 1.0);
+        assert_eq!((x, z), (5.0, 8.0));
+        let [x, z] = snow_xz([0.0, 0.0], 90, 100.0);
+        assert!((x - 100.0).abs() < 1e-3 && z.abs() < 1e-3);
+        assert_eq!(snow_scale(0), 0.50);
+        assert_eq!(snow_scale(14), 0.78);
+        let weather = fallen(SNOW, 4);
+        for flake in snow_of(&weather) {
+            let Flake::Snow { at, scale, .. } = flake else { panic!("snow") };
+            let radius = f32::hypot(at[0], at[2]);
+            assert!((1.0..=300.0).contains(&radius), "radius {radius}");
+            assert!((0.50..=0.78).contains(scale), "scale {scale}");
+            assert!((at[1] - 100.0).abs() < 2.0, "still near the start height");
+        }
+        let mut sloped = Weather::default();
+        sloped.start(SNOW, Instant::now(), [0.0, -4.0, 0.0]);
+        sloped.advance(1, [0.0, -4.0, 0.0], 4.0);
+        let Flake::Snow { at, .. } = snow_of(&sloped)[0] else { panic!("snow") };
+        assert!((at[1] - snow_world_y(4.0, 4.0)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn petals_restart_below_the_player_and_step_their_angles_and_frames() {
+        assert!((petal_y(200.0, 0.2, 0.0) - 199.8).abs() < 1e-4);
+        assert!((petal_y(0.2, 0.2, 0.0) - 0.0).abs() < 1e-4, "level with the player is not below");
+        assert!((petal_y(0.2, 0.3, 0.0) - 200.0).abs() < 1e-4, "below the player starts again 200 up");
+        assert_eq!(chase(0, 10), 3);
+        assert_eq!(chase(8, 10), 10);
+        assert_eq!(chase(10, 0), 8);
+        assert_eq!(chase(1, 0), 0);
+        assert_eq!(chase(4, 4), 4);
+        assert_eq!(frame_index(0, 10), 0);
+        assert_eq!(frame_index(3, 10), 0);
+        assert_eq!(frame_index(4, 10), 1);
+        assert_eq!(frame_index(40, 10), 0);
+        assert_eq!(frame_index(4, 20), 1);
+        assert_eq!(frame_index(80, 20), 0);
+        assert_eq!(hundredths(22, 0), 0.22);
+        assert_eq!(hundredths(22, 5), 0.27);
+        assert_eq!(hundredths(35, 5), 0.40);
+        assert_eq!(cherry_fall(0), 0.2);
+        assert_eq!(cherry_fall(1), 0.3);
+        assert_eq!(leaf_fall(3), 0.15);
+        assert_eq!(beside(10.0, 0), -140.0);
+        assert_eq!(beside(10.0, 299), 159.0);
+        let sakura = fallen(SAKURA, 5);
+        let oldest = drifts_of(&sakura, SAKURA)
+            .into_iter()
+            .filter_map(|flake| match flake {
+                Flake::Drift { age, frames, at, angle, target, scale, fall, .. } => Some((*age, *frames, *at, *angle, *target, *scale, *fall)),
+                Flake::Snow { .. } => None,
+            })
+            .max_by_key(|flake| flake.0)
+            .unwrap();
+        assert_eq!(oldest.0, 4, "spawned on tick 0, stepped four times");
+        assert_eq!(frame_index(oldest.0, oldest.1), 1);
+        assert!((0.22..=0.27).contains(&oldest.5));
+        assert!(oldest.6 == 0.2 || oldest.6 == 0.3);
+        assert!(oldest.3.iter().all(|angle| (0..=359).contains(angle)));
+        assert!(oldest.4.iter().all(|angle| (0..=359).contains(angle)));
+        // 0.2 a tick needs 1001 steps to go below 0; 0.3 needs fewer. 1200 covers either, and none stay below.
+        let sakura = fallen(SAKURA, 1200);
+        let leaves = fallen(LEAVES, 4000);
+        for flake in drifts_of(&sakura, SAKURA).into_iter().chain(drifts_of(&leaves, LEAVES)) {
+            let Flake::Drift { at, scale, fall, .. } = flake else { panic!("drift") };
+            assert!(at[1] >= 0.0, "restarted once it was below the player");
+            let (low, high) = if *fall <= 0.15 { (0.35, 0.40) } else { (0.22, 0.27) };
+            assert!((low..=high).contains(scale));
+        }
+        assert_eq!(drifts_of(&sakura, SAKURA).len(), 150);
+        assert_eq!(drifts_of(&leaves, LEAVES).len(), 100);
     }
 }

@@ -31,7 +31,7 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select"|"server_
               "windows_open": ["Inventory"], "windows_closed": ["Skills"], "units_at_least": {"monster": 10},
               "ground_items_at_least": 1, "hotkeys": {"0": 501, "3": null},
               "identified": [1201], "unidentified": [1202], "inventory_has": [{"id": 1201, "cards": [4035, 0, 0, 0]}],
-              "characters": {"1": "Name"} (at character select), "weather": [162] ([] for none),
+              "characters": {"1": "Name"} (at character select), "weather": [162, 162] (one id per copy; [] for none),
               "state": {"pet.intimacy": 950, "pet": null, "scene": "char_select", "pin": "ask"},
               "achievements": {"200005": "completed"}, "title": 1000, "state_at_least": {"cooldowns.8": 9000},
               "no_sound": "se_prtchbell_03.wav"}}
@@ -285,11 +285,10 @@ def expect(wanted, state):
         elif key == "spirits" and game.get("player", {}).get("spirits") != value:
             failures.append(f"spirits {game.get('player', {}).get('spirits')} != {value}")
         elif key == "weather":
-            # Weather effect IDs showing: each listed one, or none at all for [].
-            showing = game.get("weather", [])
-            if value == [] and showing:
-                failures.append(f"weather {showing} showing, wanted none")
-            failures += [f"weather {effect} not showing (showing {showing})" for effect in value if effect not in showing]
+            # One effect id per copy, in any order. [] is none. Two snows are [162, 162], not one.
+            showing = sorted(game.get("weather", []))
+            if showing != sorted(value):
+                failures.append(f"weather {showing} != {sorted(value)}")
         elif key == "characters":
             # {"<slot>": "<name>"} at character select (null for an empty slot).
             names = {str(character.get("slot")): character.get("name") for character in state.get("characters", [])}

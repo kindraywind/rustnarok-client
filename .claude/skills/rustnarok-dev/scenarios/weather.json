@@ -1,5 +1,5 @@
 {
-  "about": "Weather from rathena's map flags (issue #56): each GM weather command on Prontera shows its layer and its effect ID in the control state, and turning it off then @refresh clears it. Fireworks again on a dark map, where their additive bursts show. Flags last until the map server restarts, so every one is turned off again.",
+  "about": "Weather from rathena's map flags (issues #56 and #525): each GM weather command on Prontera shows its effect ID in the control state, one per copy. Snow, sakura and leaves fall in the world. With snow on, sakura resends snow, so two snow copies show. Turning a flag off then @refresh clears it. Fireworks again on a dark map. Flags last until the map server restarts, so every one is turned off again.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -36,7 +36,7 @@
       }
     },
     {
-      "wait": 2000
+      "wait": 5200
     },
     {
       "expect": {
@@ -51,7 +51,33 @@
       "threshold": 100
     },
     {
-      "say": "@snow"
+      "say": "@sakura"
+    },
+    {
+      "wait_for": {
+        "packet": "0x01f3",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "expect": {
+        "chat": "Cherry tree leaves have begun to fall.",
+        "weather": [
+          162,
+          162,
+          163
+        ]
+      }
+    },
+    {
+      "shot": "weather-snow-sakura",
+      "threshold": 100
+    },
+    {
+      "say": "@clearweather"
     },
     {
       "wait": 500
@@ -77,7 +103,7 @@
       }
     },
     {
-      "wait": 2000
+      "wait": 5200
     },
     {
       "expect": {
@@ -118,7 +144,7 @@
       }
     },
     {
-      "wait": 2000
+      "wait": 5200
     },
     {
       "expect": {
@@ -288,7 +314,9 @@
       "expect": {
         "chat": "Fireworks are launched.",
         "weather": [
-          297
+          297,
+          299,
+          301
         ]
       }
     },

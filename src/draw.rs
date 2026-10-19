@@ -424,8 +424,10 @@ impl App {
                 game.weather.launch(effect, count, now, player_feet);
             }
         }
-        // Sparks and the bang keep time with /effect off. Sparks draw only while it's on; the bang is heard either way.
-        game.weather.step(now, player_feet);
+        // Sparks, bangs and falling flakes keep time with /effect off. Sparks and flakes draw only while it's on; the
+        // bang is heard either way.
+        let ground_gat = -game.world.ground_under(player_feet)[1];
+        game.weather.step(now, player_feet, ground_gat);
         let bangs = game.weather.take_bangs(now);
         game.camera_goal.drag_frame();
         game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame), player_feet, game.camera_snap);
@@ -2578,6 +2580,10 @@ impl App {
             };
             let [a, b, c, d] = [vertex(0, [0.0, 1.0]), vertex(1, [1.0, 1.0]), vertex(2, [0.0, 0.0]), vertex(3, [1.0, 0.0])];
             effect_meshes.push((texture, vec![a, b, d, a, d, c], false));
+        }
+        // Snow, sakura and leaves sort and fog with the other sprites. /effect off leaves them running, undrawn.
+        if effects_on {
+            billboards.extend(game.weather.world_sprites(&assets.weather));
         }
         // The overlay follows the player and stays up with /effect off. 334 is not an effect that switch hides.
         let cover = blind_cover(&assets.blind_textures, player_feet, game.blind.alpha(now), game.blind.showing());
