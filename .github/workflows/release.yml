@@ -1,6 +1,6 @@
-# Builds the Linux and Windows clients when a version tag is pushed, and attaches them to that tag's GitHub release. The
-# macOS app is built by hand (tools/bundle.sh). Run it by hand (Actions > Release > Run workflow) to attach to a tag that
-# already has a release. No game data: the archives hold the client, the licenses and the README.
+# Builds the macOS (Apple Silicon), Linux and Windows clients when a version tag is pushed, and attaches them to that tag's
+# GitHub release. Run it by hand (Actions > Release > Run workflow) to attach to a tag that already has a release. No game
+# data: the archives hold the client (the macOS one as Ragnarok.app, from tools/bundle.sh), the licenses and the README.
 name: Release
 on:
   push:
@@ -20,6 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { os: macos-latest, name: macos-arm64 }
           - { os: ubuntu-latest, name: linux-x86_64 }
           - { os: windows-latest, name: windows-x86_64 }
     runs-on: ${{ matrix.os }}
@@ -36,11 +37,19 @@ jobs:
       # The nightly rust-toolchain.toml pins.
       - run: rustup toolchain install --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release
+      # tools/bundle.sh builds the macOS app itself.
+      - if: runner.os != 'macOS'
+        run: cargo build --release
       - name: Package
         shell: bash
         run: |
           dir="rustnarok-client-${TAG#v}-${{ matrix.name }}"
+          if [ "$RUNNER_OS" = macOS ]; then
+            tools/bundle.sh "$PWD"
+            ditto -c -k --keepParent Ragnarok.app "Ragnarok-${TAG#v}-${{ matrix.name }}.zip"
+            echo "FILE=Ragnarok-${TAG#v}-${{ matrix.name }}.zip" >> "$GITHUB_ENV"
+            exit 0
+          fi
           mkdir "$dir"
           cp LICENSE-MIT LICENSE-APACHE README.md THIRD_PARTY_NOTICES.md "$dir"
           if [ "$RUNNER_OS" = Windows ]; then
