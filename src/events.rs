@@ -3126,7 +3126,9 @@ impl App {
                 if cast_ms > 0
                     && let Some(gpu) = gpu
                 {
-                    game.play_effect(gpu, grf, table, CAST_AURAS.get(element as usize).copied().unwrap_or(CAST_AURAS[0]), source);
+                    let effect = CAST_AURAS.get(element as usize).copied().unwrap_or(CAST_AURAS[0]);
+                    game.play_effect(gpu, grf, table, effect, source);
+                    game.effects.play_aura(gpu, grf, (source != game.account_id).then_some(source), effect, cast_ms, Instant::now());
                 }
                 let me = game.account_id;
                 let goal = if target == me { Some(game.player.cell) } else { game.units.get(&target).map(|actor| actor.cell) };
