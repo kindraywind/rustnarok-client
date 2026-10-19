@@ -1122,7 +1122,7 @@ pub struct SkillTrees {
 }
 
 impl SkillTrees {
-    /// A job and the jobs it came from, novice first: the skill window's tabs.
+    /// A job and the jobs it came from, the first first (Novice, or Summoner for a Doram): the skill window's tabs.
     pub fn lineage(&self, job: u16) -> Vec<u16> {
         let mut jobs = vec![job];
         while let Some(&parent) = self.parents.get(jobs.last().unwrap()) {
@@ -1131,16 +1131,16 @@ impl SkillTrees {
             }
             jobs.push(parent);
         }
-        if jobs.last() != Some(&0) {
-            jobs.push(0);
-        }
         jobs.reverse();
         jobs
     }
 }
 
 pub fn skill_trees(grf: &Grf) -> io::Result<SkillTrees> {
-    let lua = run(grf, &[JOB_INHERIT, SKILL_ID, SKILL_INFO_F, SKILL_TREE])?;
+    skill_trees_from(&run(grf, &[JOB_INHERIT, SKILL_ID, SKILL_INFO_F, SKILL_TREE])?)
+}
+
+fn skill_trees_from(lua: &Lua) -> io::Result<SkillTrees> {
     let globals = lua.globals();
     let mut trees = SkillTrees::default();
     let views: mlua::Table = globals.get("SKILL_TREEVIEW_FOR_JOB").map_err(lua_error)?;
@@ -1151,9 +1151,19 @@ pub fn skill_trees(grf: &Grf) -> io::Result<SkillTrees> {
         tree.sort_unstable();
         trees.trees.insert(job as u16, tree);
     }
-    for list in ["JOB_INHERIT_LIST", "JOB_INHERIT_LIST2"] {
-        if let Ok(table) = globals.get::<mlua::Table>(list) {
-            trees.parents.extend(table.pairs::<i64, i64>().flatten().filter_map(|(job, parent)| Some((u16::try_from(job).ok()?, u16::try_from(parent).ok()?))));
+    // The inherit lists are their own metatables, so a `__newindex` key sits among the jobs; typed pairs would stop there.
+    let jobs = |list: &str| -> Vec<(u16, u16)> {
+        let Ok(table) = globals.get::<mlua::Table>(list) else { return Vec::new() };
+        let job = |value: &mlua::Value| number(value).and_then(|job| u16::try_from(job).ok());
+        table.pairs::<mlua::Value, mlua::Value>().flatten().filter_map(|(key, parent)| Some((job(&key)?, job(&parent)?))).collect()
+    };
+    // The line runs through `JOB_INHERIT_LIST` alone, a transcendent third job through its transcendent second job.
+    trees.parents = jobs("JOB_INHERIT_LIST").into_iter().collect();
+    // `JOB_INHERIT_LIST2` names the third job a transcendent one counts as (the data's prerequisite lookups use it):
+    // its skills, where it has no tree of its own.
+    for (job, same) in jobs("JOB_INHERIT_LIST2") {
+        if let Some(tree) = trees.trees.get(&same).filter(|_| !trees.trees.contains_key(&job)).cloned() {
+            trees.trees.insert(job, tree);
         }
     }
     Ok(trees)
@@ -2447,6 +2457,34 @@ mod tests {
     }
 
     #[test]
+    fn reads_every_job_of_the_inherit_lists() {
+        let lua = super::new_lua().unwrap();
+        // As in jobinheritlist: each list is its own metatable, so `__newindex` is one of its keys.
+        lua.load(
+            r#"JOB_INHERIT_LIST = { [1] = 0, [2] = 0, [3] = 0, [4] = 0, [5] = 0, [6] = 0, [7] = 1, [8] = 4, [4001] = 0,
+                [4002] = 1, [4008] = 7, [4009] = 8, [4054] = 7, [4060] = 4008, [4252] = 4060, [4220] = 4218, [4308] = 4218 }
+            JOB_INHERIT_LIST2 = { [4060] = 4054, [4061] = 4055 }
+            for _, list in ipairs({ JOB_INHERIT_LIST, JOB_INHERIT_LIST2 }) do
+                list.__newindex = function() error("unknown state") end
+                setmetatable(list, list)
+            end
+            SKILL_TREEVIEW_FOR_JOB = { [0] = { [0] = 1 }, [1] = { [1] = 5 }, [7] = { [0] = 55 }, [4008] = { [4] = 355 },
+                [4054] = { [1] = 2001 }, [4218] = { [0] = 5018 } }"#,
+        )
+        .exec()
+        .unwrap();
+        let trees = super::skill_trees_from(&lua).unwrap();
+        // A Lord Knight's line runs through Swordman and Knight; a transcendent Rune Knight's through Lord Knight.
+        assert_eq!(trees.lineage(4008), [0, 1, 7, 4008]);
+        assert_eq!(trees.lineage(4252), [0, 1, 7, 4008, 4060, 4252]);
+        // A Doram has no Novice before it.
+        assert_eq!(trees.lineage(4308), [4218, 4308]);
+        // The transcendent Rune Knight shows the Rune Knight's skills.
+        assert_eq!(trees.trees[&4060], [(1, 2001)]);
+        assert!(!trees.trees.contains_key(&4061), "no third job tree to show");
+    }
+
+    #[test]
     fn reads_skill_tables() {
         let Some(grf) = Grf::for_tests() else { return };
         let skills = super::skill_info(&grf).unwrap();
@@ -2458,6 +2496,8 @@ mod tests {
         assert!(trees.trees[&4].contains(&(2, 28)));
         // Priest (8) comes from Acolyte (4).
         assert_eq!(trees.lineage(8), [0, 4, 8]);
+        assert_eq!(trees.lineage(4060), [0, 1, 7, 4008, 4060]);
+        assert_eq!(trees.trees[&4060], trees.trees[&4054]);
         assert_eq!(trees.lineage(0), [0]);
         let icons = super::status_icons(&grf).unwrap();
         assert_eq!(icons[&75].1, "DONTFORGETME.tga");

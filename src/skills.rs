@@ -240,7 +240,7 @@ pub fn extra_skills(skills: &[Skill], trees: &SkillTrees, jobs: &[u16]) -> Vec<u
     extra
 }
 
-/// The job's line, Novice first, then `ETC` when the player has skills none of it holds.
+/// The job's line, the first job first, then `ETC` when the player has skills none of it holds.
 pub fn tabs(trees: &SkillTrees, job: u16, skills: &[Skill]) -> Vec<u16> {
     let mut jobs = trees.lineage(job);
     if !extra_skills(skills, trees, &jobs).is_empty() {
@@ -1086,6 +1086,30 @@ mod tests {
         assert_eq!(tiers(&[0, 1, 7, 4008, 4060, 4252, ETC]), [vec![0, 1], vec![7, 4008], vec![4060], vec![4252], vec![ETC]]);
         assert_eq!(tiers(&[0, 1, 7, 4054]), [vec![0, 1], vec![7], vec![4054]]);
         assert_eq!(tiers(&[0]), [vec![0]]);
+        // A Doram's Summoner tab has no Novice in it.
+        assert_eq!(tiers(&[4218, 4308]), [vec![4218], vec![4308]]);
+    }
+
+    #[test]
+    fn shows_each_job_of_the_line_in_its_tab() {
+        // A Lord Knight: Basic Skill (1) and Bash (5) in the first tab, Pierce (55) with Berserk (355) in the second.
+        let trees = SkillTrees {
+            trees: HashMap::from([(0, vec![(0, 1)]), (1, vec![(1, 5)]), (7, vec![(10, 55)]), (4008, vec![(4, 355)])]),
+            parents: HashMap::from([(1, 0), (7, 1), (4008, 7)]),
+        };
+        let skill = |id| Skill { id, kind: Skill::SELF, level: 1, sp: 0, range: 0, upgradable: false };
+        let skills = [skill(355), skill(5), skill(55), skill(1)];
+        let jobs = tabs(&trees, 4008, &skills);
+        assert_eq!(jobs, [0, 1, 7, 4008], "every skill sits in a tree of the line: no Etc");
+        let skill_info = HashMap::new();
+        let sheet = Sheet { trees: &trees, jobs: &jobs, skills: &skills, info: &skill_info, points: 0 };
+        let mut window = SkillWindow::default();
+        window.frame.open = true;
+        let ids = |window: &SkillWindow| window.skill_boxes(&sheet).into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+        // It opens on the highest tab, by place.
+        assert_eq!(ids(&window), [355, 55]);
+        window.click(Hit::Tab(0));
+        assert_eq!(ids(&window), [1, 5]);
     }
 
     #[test]
