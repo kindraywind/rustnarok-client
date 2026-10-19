@@ -94,6 +94,8 @@ pub struct Model {
     pub anim_speed: f32,
     /// RSW 2.7 colour (R, G, B); white on older maps.
     pub tint: [u8; 3],
+    /// RSW 2.6's flag byte: its translucent texels all write depth.
+    pub depth_flag: bool,
 }
 
 /// An ambient sound source (an RSW type-3 object): a wav played every `cycle` seconds from a box `width` × `height`
@@ -113,7 +115,8 @@ pub struct Rsw {
     pub ground_file: String,
     pub altitude_file: String,
     pub water: Option<Water>,
-    /// RSW 2.2+ flag after the header. When set, opaque water writes depth before the rest.
+    /// RSW 2.2+ byte after the header (the translucency byte): when 1, opaque water writes depth before the rest, and
+    /// translucent model texels with alpha 240 and up write depth.
     pub water_depth: bool,
     pub light: Light,
     pub models: Vec<Model>,
@@ -188,9 +191,7 @@ impl Rsw {
                     } else {
                         (String::new(), 0, 1.0)
                     };
-                    if version >= (2, 6) && build >= 186 {
-                        reader.u8()?;
-                    }
+                    let depth_flag = version >= (2, 6) && build >= 186 && reader.u8()? != 0;
                     let tint = if version >= (2, 7) {
                         let [b, g, r, _] = reader.u32()?.to_le_bytes();
                         [r, g, b]
@@ -200,7 +201,7 @@ impl Rsw {
                     let file = reader.string(80)?;
                     reader.string(80)?; // node name
                     let (position, rotation, scale) = (reader.vector()?, reader.vector()?, reader.vector()?);
-                    models.push(Model { name, file, position, rotation, scale, anim_type, anim_speed, tint });
+                    models.push(Model { name, file, position, rotation, scale, anim_type, anim_speed, tint, depth_flag });
                 }
                 // Light sources and effects aren't drawn yet; their sizes are fixed.
                 2 => drop(reader.take(80 + 12 + 12 + 4)?),
