@@ -106,9 +106,14 @@ pub(crate) fn right_text(font: &Font, frame: &Frame, text: String, right: f32, t
     (text, frame.at([x, BACKGROUND_TOP + top]), TEXT)
 }
 
-/// Atk, Matk, Hit, Critical, Def, Mdef, Flee and Aspd beside the background's labels (ASPD as the status window shows it).
-pub(crate) fn draw_values(layer: &mut Layer, frame: &Frame, font: &Font, values: [u16; 7], aspd: u16) {
-    let aspd = 200 - i32::from(aspd) / 10;
+/// The ASPD shown for an attack motion (ms).
+pub(crate) fn aspd(amotion: u16) -> i32 {
+    (2000 - i32::from(amotion)) / 10
+}
+
+/// Atk, Matk, Hit, Critical, Def, Mdef, Flee and Aspd beside the background's labels.
+pub(crate) fn draw_values(layer: &mut Layer, frame: &Frame, font: &Font, values: [u16; 7], amotion: u16) {
+    let aspd = aspd(amotion);
     let values = values.map(|value| value.to_string()).into_iter().chain([aspd.to_string()]);
     for (row, value) in values.enumerate() {
         layer.texts.push(right_text(font, frame, value, VALUE_RIGHT, FIRST_ROW + row as f32 * ROW));
@@ -401,6 +406,7 @@ mod tests {
 
     #[test]
     fn titles_by_job() {
+        assert_eq!([aspd(500), aspd(505)], [150, 149]);
         assert_eq!([6017, 6026, 6027, 6036, 6037, 6046, 6047, 1002].map(title), [1181, 1181, 1183, 1183, 1182, 1182, 1367, 1367]);
         assert_eq!(time_left(1_000, 1_000 - 125), "2:05");
         assert_eq!(time_left(1_000, 2_000), "0:00");

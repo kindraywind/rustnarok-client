@@ -1504,8 +1504,9 @@ struct Game {
     homunculus_window: homunculus::Window,
     homunculus_skill_list: homunculus::SkillList,
     homunculus_steering: mercenary::Steering,
-    homunculus_rename: Option<String>,
-    homunculus_hunger: Option<u16>,
+    homunculus_asked: Option<HomunculusAsked>,
+    /// The hunger the starving line was last said at.
+    homunculus_warned: Option<u16>,
     /// The player's elemental: its unit, HP, max HP, SP and max SP.
     elemental: Option<(u32, [u32; 4])>,
     /// Chat rooms over their owners' heads (by owner), and where their signs were last drawn (room ID, password).
@@ -2105,8 +2106,6 @@ enum Asked {
     Mail(u16),
     /// An inventory item, into the material window.
     Material(u16),
-    /// The homunculus's new name.
-    HomunculusName,
     /// A Talkie Box's message, before it's placed at the cell.
     TalkieBox {
         level: u16,
@@ -2257,6 +2256,15 @@ enum QueueAsked {
     Apply(u16, String),
     Cancel(String),
     Lobby(String, Instant),
+}
+
+/// A homunculus question waiting for OK: feed it, delete it, rename it (to this), or why a name was turned down.
+enum HomunculusAsked {
+    Feed,
+    Delete,
+    Rename(String),
+    // ponytail: drawn as the question box; the game's has OK alone.
+    Refused(usize),
 }
 
 /// A pet question waiting for OK: feed it, or rename it (to this).
@@ -4341,6 +4349,7 @@ impl App {
                 }
                 None if game.storage.typing => game.storage.type_text(text),
                 None if game.pet_window.typing => game.pet_window.name_text.get_or_insert_with(String::new).push_str(text),
+                None if game.homunculus_window.typing => game.homunculus_window.name_text.get_or_insert_with(String::new).push_str(text),
                 None if game.booking.as_ref().is_some_and(|window| window.focus.is_some()) => game.booking.as_mut().unwrap().type_text(text),
                 None if game.guild_window.typing.is_some() => {
                     if let Some(guild) = &game.guild {

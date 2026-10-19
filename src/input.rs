@@ -12,6 +12,7 @@ impl App {
         if let Scene::Game(game) = &mut self.scene {
             game.storage.typing = false;
             game.pet_window.typing = false;
+            game.homunculus_window.typing = false;
             if let Some(trade) = &mut game.trade {
                 trade.typing = false;
             }
@@ -405,13 +406,12 @@ impl App {
                     }
                 }
                 Some(Choice::HomunculusStatus) => {
+                    let _ = game.session.homunculus_command(net::HOMUNCULUS_STATUS);
                     game.homunculus_window.frame.toggle();
                     game.raise(Panel::Homunculus);
                     game.sync_esc();
                 }
-                Some(Choice::HomunculusFeed) => {
-                    let _ = game.session.homunculus_command(net::HOMUNCULUS_FEED);
-                }
+                Some(Choice::HomunculusFeed) => game.homunculus_asked = Some(HomunculusAsked::Feed),
                 Some(Choice::HomunculusStandBy) => game.homunculus_steering.following = !game.homunculus_steering.following,
                 Some(Choice::CloseStall) => {
                     let _ = game.session.close_shop();
@@ -855,12 +855,12 @@ impl App {
                     }
                 }
             }
-            // Naming the homunculus: OK sends the name.
-            Scene::Game(game) if game.homunculus_rename.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            // A homunculus question: OK feeds, deletes or renames it.
+            Scene::Game(game) if game.homunculus_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
-                        game.answer_homunculus_name(yes);
+                        game.answer_homunculus(yes, &self.messages);
                     }
                 }
             }
@@ -1487,17 +1487,23 @@ impl App {
                         Some(mercenary::SkillHit::Skill(id)) => game.use_mercenary_skill(id, u16::MAX),
                         _ => {}
                     },
-                    Panel::Homunculus => match game.homunculus.as_ref().and_then(|homunculus| game.homunculus_window.hit(cursor, homunculus)) {
-                        Some(homunculus::Hit::Title(title)) => game.homunculus_window.frame.click_title(title),
-                        Some(homunculus::Hit::Feed) => {
-                            let _ = game.session.homunculus_command(net::HOMUNCULUS_FEED);
-                        }
+                    Panel::Homunculus => match game.homunculus.as_ref().and_then(|_| game.homunculus_window.hit(cursor)) {
+                        Some(homunculus::Hit::Close) => game.homunculus_window.frame.open = false,
+                        Some(homunculus::Hit::Feed) => game.homunculus_asked = Some(HomunculusAsked::Feed),
+                        Some(homunculus::Hit::Delete) => game.homunculus_asked = Some(HomunculusAsked::Delete),
                         Some(homunculus::Hit::Skills) => {
                             game.homunculus_skill_list.frame.toggle();
                             game.raise(Panel::HomunculusSkills);
                         }
-                        Some(homunculus::Hit::Rename) => game.amount = Some(window::Amount::name(Asked::HomunculusName, homunculus::RENAME_PROMPT)),
-                        _ => {}
+                        Some(homunculus::Hit::Rename) => game.ask_homunculus_rename(),
+                        Some(homunculus::Hit::NameBox) => {
+                            let name = game.homunculus.as_ref().map(|homunculus| game.homunculus_window.name(homunculus).to_owned()).unwrap_or_default();
+                            game.homunculus_window.name_text = Some(name);
+                            game.homunculus_window.typing = true;
+                        }
+                        // The box follows the server's answer.
+                        Some(homunculus::Hit::AutoFeed) => drop(game.session.homunculus_auto_feed(!game.homunculus_window.auto_feed)),
+                        Some(homunculus::Hit::Window) | None => {}
                     },
                     Panel::HomunculusSkills => {
                         let points = game.homunculus.as_ref().map_or(0, |homunculus| homunculus.skill_points);
@@ -3091,10 +3097,7 @@ impl App {
                 Panel::Inventory if game.inventory.hit(cursor) == Some(inventory::Hit::Resize) => game.inventory.start_resize(cursor),
                 Panel::Cart if game.cart.hit(cursor) == Some(inventory::Hit::Resize) => game.cart.start_resize(cursor),
                 Panel::Pet if game.pet.is_some() && game.pet_window.hit(cursor) == Some(pet::Hit::Window) => game.pet_window.frame.start_drag(cursor),
-                Panel::Homunculus
-                    if game.homunculus.as_ref().and_then(|homunculus| game.homunculus_window.hit(cursor, homunculus))
-                        == Some(homunculus::Hit::Title(TitleHit::Title)) =>
-                {
+                Panel::Homunculus if game.homunculus.is_some() && game.homunculus_window.hit(cursor) == Some(homunculus::Hit::Window) => {
                     game.homunculus_window.frame.start_drag(cursor)
                 }
                 Panel::HomunculusSkills
@@ -3698,8 +3701,8 @@ impl App {
             Scene::Game(game) if game.dismiss_asked && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_dismiss(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
-            Scene::Game(game) if game.homunculus_rename.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
-                game.answer_homunculus_name(*key == Key::Named(NamedKey::Enter));
+            Scene::Game(game) if game.homunculus_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.answer_homunculus(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
             Scene::Game(game) if game.pet_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_pet(*key == Key::Named(NamedKey::Enter), &self.pets, &self.items, &self.messages);
@@ -3858,6 +3861,21 @@ impl App {
                 _ => {
                     let typed: String = event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()).collect();
                     game.pet_window.name_text.get_or_insert_with(String::new).push_str(&typed);
+                }
+            },
+            // The homunculus's name box, the same.
+            Scene::Game(game) if game.homunculus_window.typing => match key {
+                Key::Named(NamedKey::Enter) => game.homunculus_window.typing = false,
+                Key::Named(NamedKey::Escape) => {
+                    game.homunculus_window.name_text = None;
+                    game.homunculus_window.typing = false;
+                }
+                Key::Named(NamedKey::Backspace) => {
+                    game.homunculus_window.name_text.get_or_insert_with(String::new).pop();
+                }
+                _ => {
+                    let typed: String = event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()).collect();
+                    game.homunculus_window.name_text.get_or_insert_with(String::new).push_str(&typed);
                 }
             },
             Scene::Game(game) if game.storage.typing => match key {

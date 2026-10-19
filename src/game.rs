@@ -571,7 +571,7 @@ impl Game {
             Panel::Pet => self.pet.is_some() && self.pet_window.hit(cursor).is_some(),
             Panel::Mercenary => self.mercenary.is_some() && self.mercenary_window.hit(cursor).is_some(),
             Panel::MercenarySkills => self.mercenary.is_some() && self.mercenary_skill_list.hit(cursor, &self.mercenary_skills).is_some(),
-            Panel::Homunculus => self.homunculus.as_ref().is_some_and(|homunculus| self.homunculus_window.hit(cursor, homunculus).is_some()),
+            Panel::Homunculus => self.homunculus.is_some() && self.homunculus_window.hit(cursor).is_some(),
             Panel::HomunculusSkills => self
                 .homunculus
                 .as_ref()
@@ -1763,6 +1763,7 @@ impl Game {
             || self.guild_window.typing.is_some()
             || self.storage.typing
             || self.pet_window.typing
+            || self.homunculus_window.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
             || self.talks.typing()
             || self.away_prompt.is_some()
@@ -1867,7 +1868,7 @@ impl Game {
             || self.leader_asked.is_some()
             || self.question_box.is_some()
             || self.dismiss_asked
-            || self.homunculus_rename.is_some()
+            || self.homunculus_asked.is_some()
             || self.pet_asked.is_some()
             || self.friend_asked.is_some()
             || self.party_invite.is_some()
@@ -1963,7 +1964,6 @@ impl Game {
             | Asked::VendPrice(_)
             | Asked::BuyingPrice(..)
             | Asked::BuyingAmount(_)
-            | Asked::HomunculusName
             | Asked::TalkieBox { .. } => None,
         };
         match amount {
@@ -1986,12 +1986,6 @@ impl Game {
                 self.aim_skill(SkillTarget::Cell(cell));
                 Ok(())
             }
-            // The same once-only question for the homunculus.
-            Asked::HomunculusName if !name.is_empty() => {
-                self.homunculus_rename = Some(name.to_owned());
-                Ok(())
-            }
-            Asked::HomunculusName => Ok(()),
             Asked::BuyingPrice(index, item_id) => {
                 if let Some(setup) = &mut self.buying_setup {
                     setup.set_price(index, item_id, amount.value());
@@ -2071,7 +2065,7 @@ impl Game {
                 have if amount > have => Ok(()),
                 _ => self.session.drop_item(index, amount as u16),
             },
-            Asked::RoomPassword(_) | Asked::HomunculusName | Asked::BuyingPrice(..) | Asked::BuyingAmount(_) | Asked::TalkieBox { .. } => Ok(()),
+            Asked::RoomPassword(_) | Asked::BuyingPrice(..) | Asked::BuyingAmount(_) | Asked::TalkieBox { .. } => Ok(()),
             Asked::VendPrice(index) => {
                 if let Some(setup) = &mut self.vend_setup {
                     setup.prices.insert(index, amount);
@@ -2463,7 +2457,7 @@ impl Game {
         push(PartyAsked, self.question_box.as_ref().is_some_and(|asked| !matches!(asked, BoxQuestion::Notice(_))));
         push(Notice, matches!(self.question_box, Some(BoxQuestion::Notice(_))));
         push(DismissAsked, self.dismiss_asked);
-        push(HomunculusRename, self.homunculus_rename.is_some());
+        push(HomunculusAsked, self.homunculus_asked.is_some());
         push(PetAsked, self.pet_asked.is_some());
         push(CashShopBuy, self.cashshop_buy_asked);
         push(GuildAsked, self.guild_asked.is_some());
@@ -2592,7 +2586,7 @@ impl Game {
             || self.leader_asked.is_some()
             || self.question_box.is_some()
             || self.dismiss_asked
-            || self.homunculus_rename.is_some()
+            || self.homunculus_asked.is_some()
             || self.pet_asked.is_some()
             || self.cashshop_buy_asked
             || self.guild_asked.is_some()
@@ -2658,8 +2652,8 @@ impl Game {
             self.answer_dismiss(false, messages);
             return;
         }
-        if self.homunculus_rename.is_some() {
-            self.answer_homunculus_name(false);
+        if self.homunculus_asked.is_some() {
+            self.decline_homunculus();
             return;
         }
         if self.pet_asked.is_some() {
@@ -2859,7 +2853,7 @@ impl Game {
             GuildCreate | GuildDisband => self.guild_companion.create = None,
             GuildTip => self.guild_companion.tip = None,
             DismissAsked => self.answer_dismiss(false, &[]),
-            HomunculusRename => self.answer_homunculus_name(false),
+            HomunculusAsked => self.decline_homunculus(),
             PetAsked => self.decline_pet(),
             CashShopBuy => self.cashshop_buy_asked = false,
             GuildAsked => {
@@ -3103,7 +3097,7 @@ impl Game {
         let Some(pet) = &self.pet else { return };
         let name = self.pet_window.name(pet).to_owned();
         self.pet_window.typing = false;
-        self.pet_asked = Some(match pet::rename_refusal(&name) {
+        self.pet_asked = Some(match pet::rename_refusal(&name, pet::NAME_TOO_LONG) {
             Some(why) => PetAsked::Refused(why),
             None => PetAsked::Rename(name),
         });
@@ -3257,18 +3251,54 @@ impl Game {
         self.homunculus_id = None;
         self.homunculus_skills.clear();
         self.homunculus_steering = mercenary::Steering::default();
-        self.homunculus_rename = None;
-        self.homunculus_hunger = None;
+        self.homunculus_asked = None;
+        self.homunculus_warned = None;
+        self.homunculus_window.name_text = None;
+        self.homunculus_window.typing = false;
         if close {
             self.homunculus_window.frame.open = false;
             self.homunculus_skill_list.frame.open = false;
         }
     }
 
-    /// Answers the rename question: OK names the homunculus.
-    pub(crate) fn answer_homunculus_name(&mut self, yes: bool) {
-        if let Some(name) = self.homunculus_rename.take().filter(|_| yes) {
-            let _ = self.session.rename_homunculus(&name);
+    /// The homunculus window's rename button, on what the name box holds: turned down, or asked.
+    pub(crate) fn ask_homunculus_rename(&mut self) {
+        let Some(homunculus) = &self.homunculus else { return };
+        let name = self.homunculus_window.name(homunculus).to_owned();
+        self.homunculus_window.typing = false;
+        self.homunculus_asked = Some(match pet::rename_refusal(&name, homunculus::NAME_TOO_LONG) {
+            Some(why) => HomunculusAsked::Refused(why),
+            None => HomunculusAsked::Rename(name),
+        });
+    }
+
+    /// Answers the homunculus question. Feeding: not while trading. Deleting: it's gone. Renaming: sent (rathena turns
+    /// down a second one).
+    pub(crate) fn answer_homunculus(&mut self, yes: bool, messages: &[String]) {
+        if !yes {
+            return self.decline_homunculus();
+        }
+        match self.homunculus_asked.take() {
+            Some(HomunculusAsked::Feed) if self.trade.is_some() => {
+                self.chat_line(messages.get(homunculus::FEED_WHILE_TRADING).cloned().unwrap_or_default(), CHAT_ERROR);
+            }
+            Some(HomunculusAsked::Feed) => drop(self.session.homunculus_command(net::HOMUNCULUS_FEED)),
+            Some(HomunculusAsked::Delete) => {
+                let _ = self.session.homunculus_command(net::HOMUNCULUS_DELETE);
+                self.forget_homunculus(true);
+            }
+            Some(HomunculusAsked::Rename(name)) => {
+                let _ = self.session.rename_homunculus(&name);
+                self.homunculus_window.name_text = None;
+            }
+            Some(HomunculusAsked::Refused(_)) | None => {}
+        }
+    }
+
+    /// No to the homunculus question: a refused rename puts the old name back in the box.
+    pub(crate) fn decline_homunculus(&mut self) {
+        if let Some(HomunculusAsked::Rename(_)) = self.homunculus_asked.take() {
+            self.homunculus_window.name_text = None;
         }
     }
 
