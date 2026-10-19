@@ -27,3 +27,9 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 
 Its `des` module is a copy of parts of the RustCrypto `des` crate (https://github.com/RustCrypto/block-ciphers),
 used under the Apache License, Version 2.0 (full text in [licenses/APACHE-2.0.txt](licenses/APACHE-2.0.txt)).
+
+## Thanks: roBrowser Legacy
+
+Thank you to the people behind roBrowser and its continuation, roBrowser Legacy (https://github.com/MrAntares/roBrowserLegacy):
+an open-source Ragnarok Online client that is a valuable reference for how the game's files and client behave. It is
+licensed under the GPL-3.0, and no code from it is in this repository.
