@@ -514,16 +514,26 @@ impl App {
         // The equipment window shows the character standing, facing front.
         let preview_feet = game.equipment.preview_feet();
         let viewed_feet = game.viewing.as_ref().and_then(|viewed| viewed.window.preview_feet());
-        let viewed_placements = match (viewed_feet, game.viewing.as_mut().and_then(|viewed| viewed.sprites.as_mut())) {
+        // Dressed from the open tab's headgear and garment, with no weapon or shield.
+        let own_views: Vec<(u32, u16)> = game
+            .inventory
+            .items
+            .iter()
+            .filter(|item| item.worn != 0)
+            .map(|item| (item.worn, items.get(&item.id).map_or(0, |info| info.class_num as u16)))
+            .collect();
+        let own_look = preview_feet.and(game.player.look.as_ref()).map(|look| game.equipment.preview_look(look, &own_views));
+        dress_preview(&mut game.preview_figure, own_look, grf, &self.look_tables);
+        if let Some(viewed) = &mut game.viewing {
+            let look = viewed_feet.map(|_| viewed.window.preview_look(&viewed.look, &viewed.views));
+            dress_preview(&mut viewed.figure, look, grf, &self.look_tables);
+        }
+        let viewed_placements = match (viewed_feet, game.viewing.as_mut().and_then(|viewed| viewed.figure.as_mut()).and_then(|(_, sprites)| sprites.as_mut())) {
             (Some(_), Some(sprites)) => sprites.flat_frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
             _ => Vec::new(),
         };
-        let preview_placements = match (preview_feet, &mut game.player.sprites) {
-            (Some(_), Some(sprites)) => {
-                // The equipment figure keeps the sprite's own colours.
-                sprites.set_tint(None);
-                sprites.flat_frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0))
-            }
+        let preview_placements = match (preview_feet, game.preview_figure.as_mut().and_then(|(_, sprites)| sprites.as_mut())) {
+            (Some(_), Some(sprites)) => sprites.flat_frame(gpu, actor::IDLE, 0, 0, Timing::Loop(0.0)),
             _ => Vec::new(),
         };
         let stylist_placements = game.stylist.as_mut().map(|window| window.pose(gpu)).unwrap_or_default();
@@ -1122,13 +1132,14 @@ impl App {
             }
         }
 
-        let viewed_preview: Vec<Sprite> = match (viewed_feet, game.viewing.as_ref().and_then(|viewed| viewed.sprites.as_ref())) {
-            (Some(feet), Some(sprites)) => {
-                viewed_placements.iter().map(|(key, position, size, _)| (sprites.texture(*key), offset(feet, *position), *size)).collect()
-            }
-            _ => Vec::new(),
-        };
-        let preview: Vec<Sprite> = match (preview_feet, &game.player.sprites) {
+        let viewed_preview: Vec<Sprite> =
+            match (viewed_feet, game.viewing.as_ref().and_then(|viewed| viewed.figure.as_ref()).and_then(|(_, sprites)| sprites.as_ref())) {
+                (Some(feet), Some(sprites)) => {
+                    viewed_placements.iter().map(|(key, position, size, _)| (sprites.texture(*key), offset(feet, *position), *size)).collect()
+                }
+                _ => Vec::new(),
+            };
+        let preview: Vec<Sprite> = match (preview_feet, game.preview_figure.as_ref().and_then(|(_, sprites)| sprites.as_ref())) {
             (Some(feet), Some(sprites)) => {
                 preview_placements.iter().map(|(key, position, size, _)| (sprites.texture(*key), offset(feet, *position), *size)).collect()
             }
