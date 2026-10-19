@@ -25,6 +25,9 @@ const BAR_SIZE: [f32; 2] = [135.0, 9.0];
 const BAR_FULL: f32 = 127.0;
 const EXP_SIZE: [f32; 2] = [112.0, 6.0];
 const EXP_INNER: f32 = 110.0;
+/// The minimised lines' left margin (and the right one), and the least a centred short line keeps either side.
+const MINI_MARGIN: f32 = 9.0;
+const MINI_MIN_MARGIN: f32 = 6.0;
 /// Margins for the weight and zeny line, and the gap between them.
 const WEIGHT_MARGIN: f32 = 3.0;
 const ZENY_MARGIN: f32 = 5.0;
@@ -173,6 +176,29 @@ pub fn mini_lines(base: i64, job: &str, job_level: i64, exp: i64, next: i64) -> 
     [format!("Lv.{base:2} / {job} / Lv.{job_level:2} / Exp. {percent:.1} %"), format!("Lv{base:2} / {job} / Lv{job_level:2} / Exp{percent:.1}%")]
 }
 
+/// The minimised window's second line: HP and SP (and a 4th job's AP), each red under a quarter.
+fn mini_parts(hp: (i64, i64), sp: (i64, i64), ap: Option<(i64, i64)>) -> Vec<(String, bool)> {
+    let mut parts = vec![(format!("HP {} / {}", hp.0, hp.1), hp.0 * 4 < hp.1), (" | ".to_owned(), false), (format!("SP {} / {}", sp.0, sp.1), sp.0 * 4 < sp.1)];
+    if let Some(ap) = ap {
+        parts.extend([(" | ".to_owned(), false), (format!("AP {} / {}", ap.0, ap.1), false)]);
+    }
+    parts
+}
+
+/// A bar's numbers that fit its 135 px: the game's padded "now  /  most", else without the padding, else in k and M.
+pub fn bar_text_fitting(now: i64, most: i64, font: &Font) -> String {
+    let room = BAR_SIZE[0] - 6.0;
+    let units = |value: i64| match value {
+        1_000_000.. => format!("{:.1}M", value as f64 / 1e6),
+        10_000.. => format!("{}k", value / 1000),
+        _ => value.to_string(),
+    };
+    [bar_text(now, most), format!("{now}/{most}"), format!("{}/{}", units(now), units(most))]
+        .into_iter()
+        .find(|text| font.width(text) <= room)
+        .unwrap_or_else(|| format!("{}/{}", units(now), units(most)))
+}
+
 /// The menu's buttons in the game's order (menu_icon\bt_<name>.bmp).
 pub const ORDER: [&str; 24] = [
     "status",
@@ -313,10 +339,32 @@ pub struct Info<'a> {
 }
 
 impl BasicInfo {
-    pub fn update_width(&mut self, font: &Font, weight: i64, limit: i64, zeny: i64) {
-        let width = window_width(weight, limit, zeny, font);
+    /// Sizes the window to what it shows: the weight and zeny line, or minimised the levels line and the HP and SP
+    /// line, with margins. Whether it grew.
+    pub fn update_width(&mut self, font: &Font, status: &HashMap<u16, i64>, job: &str) -> bool {
+        let value = |id: u16| status.get(&id).copied().unwrap_or(0);
+        let width = if self.frame.minimized {
+            let layout = layout(self.fourth);
+            let ap = layout.ap.map(|_| (value(STATUS_AP), value(STATUS_MAX_AP)));
+            let line: f32 = mini_parts((value(net::STATUS_HP), value(net::STATUS_MAX_HP)), (value(net::STATUS_SP), value(net::STATUS_MAX_SP)), ap)
+                .iter()
+                .map(|(part, _)| font.width(part))
+                .sum();
+            let [_, short] =
+                mini_lines(value(net::STATUS_BASE_LEVEL), job, value(net::STATUS_JOB_LEVEL), value(net::STATUS_BASE_EXP), value(net::STATUS_NEXT_BASE_EXP));
+            (MINI_MARGIN * 2.0 + line).max(font.width(&short) + MINI_MIN_MARGIN).ceil().max(WIDTH)
+        } else {
+            window_width(value(net::STATUS_WEIGHT), value(net::STATUS_MAX_WEIGHT), value(net::STATUS_ZENY), font)
+        };
+        let grew = width > self.width;
         self.width = width;
         self.frame.set_width(width);
+        grew
+    }
+
+    /// Where the window, its menu strip and its open menu are: x, y, width, height.
+    pub fn bounds(&self) -> [f32; 4] {
+        [self.frame.position[0], self.frame.position[1], self.width, self.height()]
     }
 
     /// The minimize button's corner inside the window (14 px from the right edge).
@@ -487,19 +535,16 @@ impl BasicInfo {
                 value(net::STATUS_BASE_EXP),
                 value(net::STATUS_NEXT_BASE_EXP),
             );
-            if font.width(&long) <= self.width - 18.0 {
+            if font.width(&long) <= self.width - MINI_MARGIN * 2.0 {
                 text(layer, long, [9.0, 20.0], BLACK);
             } else {
                 let x = mini_line_x(self.width, font.width(&short));
                 text(layer, short, [x, 20.0], BLACK);
             }
-            let mut x = 9.0;
-            let mut parts = vec![(format!("HP {hp} / {max_hp}"), hp * 4 < max_hp), (" | ".to_owned(), false), (format!("SP {sp} / {max_sp}"), sp * 4 < max_sp)];
+            let mut x = MINI_MARGIN;
             // ponytail: a 4th job's AP after SP on the same line.
-            if layout.ap.is_some() {
-                parts.extend([(" | ".to_owned(), false), (format!("AP {} / {}", value(STATUS_AP), value(STATUS_MAX_AP)), false)]);
-            }
-            for (part, low) in parts {
+            let ap = layout.ap.map(|_| (value(STATUS_AP), value(STATUS_MAX_AP)));
+            for (part, low) in mini_parts((hp, max_hp), (sp, max_sp), ap) {
                 let width = font.width(&part);
                 text(layer, part, [x, 36.0], if low { RED } else { BLACK });
                 x += width;
@@ -530,7 +575,7 @@ impl BasicInfo {
                     layer.sprites.push((middle, at(offset(corner, [left.size[0], 0.0])), [width, middle.size[1]]));
                     layer.sprites.push((right, at(offset(corner, [left.size[0] + width, 0.0])), right.size));
                 }
-                let numbers = bar_text(now, most);
+                let numbers = bar_text_fitting(now, most, font);
                 text(layer, numbers.clone(), [corner[0] + ((BAR_SIZE[0] - font.width(&numbers)) / 2.0).floor(), corner[1] - 2.0], BLACK);
             }
             let percent = percent_text(now, most);
@@ -754,5 +799,30 @@ mod tests {
             assert!(weight_x >= WEIGHT_MARGIN, "weight_x {weight_x} should be >= {WEIGHT_MARGIN}");
             assert_eq!(zeny_x + font.width(&zeny_text), w - ZENY_MARGIN);
         }
+    }
+    #[test]
+    fn minimised_window_grows_for_its_lines_and_bars_shrink_their_numbers() {
+        let font = Font::load();
+        let mut window = BasicInfo::default();
+        window.frame.minimized = true;
+        let status = |hp: i64| -> HashMap<u16, i64> {
+            HashMap::from([
+                (net::STATUS_HP, hp),
+                (net::STATUS_MAX_HP, hp),
+                (net::STATUS_SP, hp / 3),
+                (net::STATUS_MAX_SP, hp / 3),
+                (net::STATUS_BASE_LEVEL, 99),
+            ])
+        };
+        // Small numbers fit the usual width; six-digit HP and a long job name need more, and each line then fits.
+        assert!(!window.update_width(&font, &status(535), "Novice") && window.width == WIDTH);
+        assert!(window.update_width(&font, &status(123_456), "Imperial Guard"));
+        let line = mini_parts((123_456, 123_456), (41_152, 41_152), None).iter().map(|(part, _)| font.width(part)).sum::<f32>();
+        assert!(window.width >= 2.0 * MINI_MARGIN + line, "{} for a line of {line}", window.width);
+        // A bar's numbers keep to its 135 px, down to k and M.
+        for most in [535, 123_456, 123_456_789, 2_147_483_647] {
+            assert!(font.width(&bar_text_fitting(most, most, &font)) <= BAR_SIZE[0], "{most}");
+        }
+        assert_eq!(bar_text_fitting(7, 40, &font), "  7  /   40");
     }
 }

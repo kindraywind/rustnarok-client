@@ -1605,8 +1605,11 @@ impl App {
         let caret = open && (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
         let name_of = |item: &links::ItemLink| inventory::item_name(items, item.id, true, item.refine);
         // The basic info and chat windows are kept as they're left.
-        let status_val = |id: u16| game.status.get(&id).copied().unwrap_or(0);
-        game.basic_info.update_width(font, status_val(net::STATUS_WEIGHT), status_val(net::STATUS_MAX_WEIGHT), status_val(net::STATUS_ZENY));
+        let job = pc_job_names.get(&game.me.job).map_or("", String::as_str);
+        // A window that grew (more zeny, a longer HP line) takes the hotbar's place: the bar moves out of its way.
+        if game.basic_info.update_width(font, &game.status, job) {
+            game.hotkeys.clear_of(game.basic_info.bounds(), screen()[0]);
+        }
         game.basic_info.save_if_changed();
         game.chat.save_if_changed();
         game.chat.layout(&|text| font.width(text));

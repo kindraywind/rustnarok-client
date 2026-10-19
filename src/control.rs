@@ -1448,6 +1448,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         // Each bar's row rotation (hotbar 1, hotbar 2), and whether the quick item row shows.
         "hotkey_rotations": game.hotkeys.rotations(),
         "hotkey_quick": game.hotkeys.quick,
+        "hotkey_position": game.hotkeys.frame.position,
         // Bound shortcuts: action name to the chord ("Alt+V", "F1"). Unbound rows are left out.
         "shortcuts": app.keybinds.labels(),
         "dialog": dialog,
@@ -1604,7 +1605,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         // Battle mode's icon: null out of battle mode, else whether the line is open.
         "chat_mode_icon": game.chat_mode.icon(),
         // The basic info window: where it is, and whether it's minimised.
-        "basic_info": json!({"position": game.basic_info.frame.position, "minimized": game.basic_info.frame.minimized}),
+        "basic_info": json!({"position": game.basic_info.frame.position, "width": game.basic_info.width, "minimized": game.basic_info.frame.minimized}),
         // The chat room the player is in: its title and who owns it.
         "room": game.room.as_ref().map(|room| json!({
             "title": room.sign.title,
