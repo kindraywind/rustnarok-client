@@ -1,0 +1,13 @@
+{
+  "about": "Map fog and sky (issue #432): prontera hazes toward white, yuno clears to #99CCFF, izlude stays black with no fog. The table, the depth ramp and the sky blend are checked by unit tests.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"shot": "map-fog-prontera", "crop": [0, 0, 1024, 400]},
+    {"say": "@warp yuno 150 180"}, {"settle": 1500},
+    {"shot": "map-fog-yuno", "crop": [0, 0, 1024, 400]},
+    {"say": "@warp izlude 128 128"}, {"settle": 1500},
+    {"shot": "map-fog-izlude", "crop": [0, 0, 1024, 400]}
+  ]
+}
