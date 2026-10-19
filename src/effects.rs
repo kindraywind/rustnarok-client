@@ -1552,6 +1552,8 @@ pub const NAPALM_BEAT: u32 = 32;
 /// EF_HALLUTIME: white glints round a copy (`prims::sparkle`).
 pub const HALLUTIME: u32 = crate::prims::sparkle::EF_HALLUTIME;
 
+/// EF_STORMGUST: its STR (`stormgust`, or `storm_min` for the ground skills under /mineffect, effect 708) and the ice crystals.
+const STORM_GUST: u32 = 89;
 /// EF_SIGHTRASHER: its 64 sprites and ring, made in code (`prims::sight`); it ends the caster's Sight (22).
 const SIGHT_RASHER: u32 = 62;
 const SIGHT: u32 = 22;
@@ -1583,6 +1585,11 @@ pub fn thrown_item(skill: u16) -> Option<u32> {
         2481 => Some(SPORE_EXPLOSION),
         _ => None,
     }
+}
+
+/// Storm Gust's ground skills (WZ_STORMGUST and NPC_STORMGUST2) play the light effect 708 under /mineffect.
+pub fn storm_gust_effect(skill: u16, effect: u32, min: bool) -> u32 {
+    if effect == STORM_GUST && min && matches!(skill, 89 | 723) { 708 } else { effect }
 }
 
 /// The hit count of an effect the packet gave one (`prims::tanji::hit_count`): the game's rule for Finger Offensive's
@@ -1762,6 +1769,11 @@ impl Effects {
                 self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
             }
             self.prims.first.play(id, unit, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+        }
+        // Storm Gust's ice crystals, not under /mineffect.
+        if id == STORM_GUST && !self.min {
+            self.textures.entry(crate::prims::ICE_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crate::prims::ICE_TEXTURE, true).ok());
+            self.prims.stone.storm_gust(at, now, |n| pick(0, n.saturating_sub(1)));
         }
         // Sight Rasher: four waves of sprites with shadows and a ring at the caster's feet; the caster's Sight stops.
         if let (SIGHT_RASHER, Target::Unit(unit)) = (id, target) {
@@ -3537,6 +3549,23 @@ mod tests {
         assert_eq!(sounds.len(), 11);
         assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
         assert!(!table.sounds.contains_key(&149));
+        // The priests' sounds at their own ticks, Aspersio's sparkles in code, Melody of Sink's Lex Divina once, Storm Gust's
+        // light STR under /mineffect.
+        let delays = |id: u32| table.sounds[&id].iter().map(|sound| sound.delay_ms).collect::<Vec<_>>();
+        assert_eq!([delays(84), delays(85), delays(86)], [[960], [240], [1120]]);
+        assert_eq!(delays(87), [0, 320, 560, 960, 1120]);
+        assert!(first::makes(86) && table.parts[&87][0].once);
+        assert_eq!(table.skill(763, "effectIdOnCaster"), [89]);
+        assert_eq!(
+            [
+                storm_gust_effect(89, 89, true),
+                storm_gust_effect(723, 89, true),
+                storm_gust_effect(89, 89, false),
+                storm_gust_effect(664, 89, true),
+                storm_gust_effect(89, 74, true)
+            ],
+            [708, 708, 89, 89, 74]
+        );
         // Sight Rasher is built in code (no generic parts, its sound stays) and ends the caster's Sight.
         assert!(!table.floaters.contains_key(&62) && table.sounds.contains_key(&62) && table.used(81) == Some(&[(Who::Caster, 62)][..]));
         // Cart Revolution's sounds, First Aid, Sprinkle Sand and the undead Heal are built in code or in bands.

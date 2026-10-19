@@ -43,7 +43,7 @@ str	83	sanctuary	-	1
 str	84	impositio	-	1
 str	85	lexaeterna	-	1
 str	86	aspersio	-	1
-str	87	lexdivina	-	1
+str	87	lexdivina	-	1	once
 str	88	suffragium	-	1
 str	89	stormgust	-	1
 str	90	lord	-	1
@@ -658,6 +658,7 @@ skill	656	hitEffectId	52
 skill	659	effectId	668
 skill	661	effectIdOnCaster	409
 skill	664	effectIdOnCaster	89
+skill	763	effectIdOnCaster	89
 skill	665	effectIdOnCaster	669
 skill	670	groundEffectId	674
 skill	673	hitEffectId	677
@@ -1773,10 +1774,14 @@ wav	80	effect\ef_fireball	192
 wav	81	effect\ef_bash	0
 wav	82	effect\ef_bash	592
 wav	83	effect\priest_sanctuary	0
-wav	84	effect\priest_impositio	0
-wav	85	effect\priest_lexaeterna	0
-wav	86	effect\priest_aspersio	0
+wav	84	effect\priest_impositio	960
+wav	85	effect\priest_lexaeterna	240
+wav	86	effect\priest_aspersio	1120
 wav	87	effect\priest_lexdivina	0
+wav	87	effect\priest_lexdivina	320
+wav	87	effect\priest_lexdivina	560
+wav	87	effect\priest_lexdivina	960
+wav	87	effect\priest_lexdivina	1120
 wav	88	effect\priest_suffragium	0
 wav	89	effect\wizard_stormgust	0
 wav	90	effect\wizard_meteo	0
