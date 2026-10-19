@@ -99,8 +99,10 @@ const VIEW_COSTUME_MESSAGE: usize = 4103;
 // ponytail: older message tables end before 4103; the box keeps a label.
 const VIEW_COSTUME_FALLBACK: &str = "View Costume";
 /// What Unequip All takes off: General's gear, or Costume's costume and shadow pieces.
-const GENERAL_PIECES: u32 = 0x3FF;
-const COSTUME_PIECES: u32 = 0x3C00 | 0x3F_0000;
+/// rathena's equip_pos bits. General is head, garment, accessories, armor, both hands and shoes. Costume is the
+/// four costume slots and the six shadow slots. Ammunition stays on.
+pub(crate) const GENERAL_PIECES: u32 = 0x3FF;
+pub(crate) const COSTUME_PIECES: u32 = 0x3C00 | 0x3F_0000;
 /// The middle column on General: the dismount (or cart off) button and Cart Items, with their names.
 const DISMOUNT: [f32; 2] = [122.0, 127.0];
 const DISMOUNT_SIZE: [f32; 2] = [36.0, 36.0];
@@ -278,7 +280,7 @@ pub struct Equipment {
 #[derive(Debug, PartialEq)]
 pub enum UnequipAll {
     General,
-    // ponytail: CZ_REQ_TAKEOFF_EQUIP_ALL with a location isn't in this server's version; each piece goes alone.
+    /// Costume (and shadow) pieces, one CZ_REQ_TAKEOFF_EQUIP each. PACKETVER 20230906 sends COSTUME_PIECES instead.
     Pieces(Vec<u16>),
 }
 

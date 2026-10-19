@@ -2473,6 +2473,80 @@ fn decodes_enchant() {
     assert_eq!(ids.map(packet_length), [Some(11), Some(12), Some(16), Some(14), Some(12), Some(10), Some(2)]);
 }
 
+#[test]
+fn decodes_packetver_20250402() {
+    let old = lengths_for(PACKETVER_20220406);
+    let new = lengths_for(PACKETVER_20250402);
+    let mut added: Vec<_> = new.keys().filter(|id| !old.contains_key(id)).copied().collect();
+    let mut removed: Vec<_> = old.keys().filter(|id| !new.contains_key(id)).copied().collect();
+    added.sort();
+    removed.sort();
+    assert_eq!(added, vec![0x0972, 0x0973, 0x0B8C, 0x0BA2, 0x0BA3, 0x0BB5, 0x0BBA, 0x0BBE, 0x0BF5]);
+    assert_eq!(removed, vec![0x07FE, 0x0BAD]);
+    for (&id, &length) in old {
+        if let Some(&other) = new.get(&id) {
+            assert_eq!(length, other, "{id:#06x}");
+        }
+    }
+    let ids = [0x0972, 0x0973, 0x0B8C, 0x0BA2, 0x0BA3, 0x0BB5, 0x0BBA, 0x0BBE, 0x0BF5];
+    assert_eq!(ids.map(|id| new.get(&id).copied()), [Some(-1), Some(7), Some(-1), Some(10), Some(10), Some(10), Some(-1), Some(6), Some(6)]);
+
+    // ZC_SAY_DIALOG2: npc, a type byte, then the message. ZC_WAIT_DIALOG2 is the Next button.
+    let mut say = ZC_SAY_DIALOG2.to_le_bytes().to_vec();
+    say.extend_from_slice(&[0, 0]);
+    say.extend_from_slice(&110_012_460u32.to_le_bytes());
+    say.push(1);
+    say.extend_from_slice(b"[Guide]\0");
+    let length = say.len() as u16;
+    say[2..4].copy_from_slice(&length.to_le_bytes());
+    assert!(matches!(decode_map_packet(&say), Some(MapEvent::NpcSay { npc: 110_012_460, text }) if text == "[Guide]"));
+    let mut next = ZC_WAIT_DIALOG2.to_le_bytes().to_vec();
+    next.extend_from_slice(&110_012_460u32.to_le_bytes());
+    next.push(0);
+    assert!(matches!(decode_map_packet(&next), Some(MapEvent::NpcNext { npc: 110_012_460 })));
+    assert_eq!(new.get(&ZC_WAIT_DIALOG2).copied(), Some(7));
+
+    // Height, then width. Position in pixels, and as a percent of the screen.
+    let size = [ZC_DIALOG_WINDOW_SIZE.to_le_bytes().as_slice(), &240i32.to_le_bytes(), &400i32.to_le_bytes()].concat();
+    assert!(matches!(decode_map_packet(&size), Some(MapEvent::NpcWindowSize { width: 400, height: 240 })));
+    let pos = [ZC_DIALOG_WINDOW_POS.to_le_bytes().as_slice(), &12i32.to_le_bytes(), &34i32.to_le_bytes()].concat();
+    assert!(matches!(decode_map_packet(&pos), Some(MapEvent::NpcWindowPos { x: 12, y: 34, percent: false })));
+    let percent = [ZC_DIALOG_WINDOW_POS2.to_le_bytes().as_slice(), &50i32.to_le_bytes(), &0i32.to_le_bytes()].concat();
+    assert!(matches!(decode_map_packet(&percent), Some(MapEvent::NpcWindowPos { x: 50, y: 0, percent: true })));
+
+    // Variable BGM: play type, then the name. A special popup is its id.
+    let mut music = ZC_PLAY_NPC_BGM2.to_le_bytes().to_vec();
+    music.extend_from_slice(&[0, 0, 0]);
+    music.extend_from_slice(b"99\0");
+    let length = music.len() as u16;
+    music[2..4].copy_from_slice(&length.to_le_bytes());
+    assert!(matches!(decode_map_packet(&music), Some(MapEvent::NpcMusic(name)) if name == "99"));
+    let popup = [ZC_SPECIALPOPUP.to_le_bytes().as_slice(), &7i32.to_le_bytes()].concat();
+    assert!(matches!(decode_map_packet(&popup), Some(MapEvent::SpecialPopup(7))));
+
+    // Equip-all names the location. The box-item announcement under 0x0BBA reads like 0x07FD.
+    assert_eq!(encode_takeoff_all(0x3FF), [0xF5, 0x0B, 0xFF, 0x03, 0, 0]);
+    let mut boxed = ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN_ITEM.to_le_bytes().to_vec();
+    boxed.extend_from_slice(&[0, 0, 0]);
+    boxed.extend_from_slice(&4407u32.to_le_bytes());
+    boxed.push(24);
+    let mut name = b"Pori**".to_vec();
+    name.resize(24, 0);
+    boxed.extend_from_slice(&name);
+    boxed.push(4);
+    boxed.extend_from_slice(&22829u32.to_le_bytes());
+    boxed.push(4);
+    boxed.extend_from_slice(&0u32.to_le_bytes());
+    assert!(matches!(decode_map_packet(&boxed), Some(MapEvent::ItemObtained { item: 4407, box_item: Some(22829), monster: None, .. })));
+
+    // 20250402 puts a refine level between the cost count and the costs.
+    let words = |values: &[(u32, usize)]| values.iter().flat_map(|&(value, size)| value.to_le_bytes()[..size].to_vec()).collect::<Vec<u8>>();
+    let mut expanded = words(&[(984, 4), (3, 2), (UNLIMITED, 4), (10, 4), (1, 4), (0, 4), (0, 2), (0, 4), (1, 4), (7, 4)]);
+    expanded.extend(words(&[(756, 4), (0, 2), (5, 4), (3, 2)]));
+    let goods = decode_expanded_barter_at(&expanded, true);
+    assert_eq!((goods[0].item, goods[0].costs.clone(), goods[0].index), (984, vec![(756, 5)], 1));
+}
+
 /// Against a running rathena: `RUSTNAROK_CLIENT_TEST_ACCOUNT=user:password cargo test -- --ignored`.
 #[test]
 #[ignore]

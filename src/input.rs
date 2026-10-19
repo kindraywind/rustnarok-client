@@ -1403,7 +1403,11 @@ impl App {
                         }
                         if hit == equipment::Hit::TakeOffAll {
                             match game.equipment.unequip_all(&game.inventory.items) {
-                                Some(equipment::UnequipAll::General) => drop(game.session.take_off_all()),
+                                Some(equipment::UnequipAll::General) => drop(game.session.take_off_all(equipment::GENERAL_PIECES)),
+                                // PACKETVER 20230906 takes the costume tab off in one packet too.
+                                Some(equipment::UnequipAll::Pieces(_)) if net::packetver() >= net::PACKETVER_TAKEOFF_LOCATION => {
+                                    drop(game.session.take_off_all(equipment::COSTUME_PIECES));
+                                }
                                 Some(equipment::UnequipAll::Pieces(pieces)) => {
                                     for index in pieces {
                                         let _ = game.session.take_off(index);
@@ -1774,6 +1778,10 @@ impl App {
                     game.slot = Some(taming::Machine::new(id, Instant::now()));
                 }
             }
+            // The special popup sits over the map, under the windows: a click on it (and not on a window) dismisses it.
+            Scene::Game(game) if game.special_popup.is_some() && special_popup::covers(cursor) => {
+                game.special_popup = None;
+            }
             Scene::Game(game) => {
                 if game.store_open() || game.trade_or_storage() {
                     return;
@@ -1899,7 +1907,7 @@ impl App {
             game.quest_window.frame.drag_to(self.cursor, 466.0);
             game.quest_window.detail.drag_to(self.cursor, quest::DETAIL_HEIGHT);
             game.minimap_window.frame.drag_to(self.cursor, minimap_window::HEIGHT);
-            game.say.frame.drag_to(self.cursor, npc_say::SIZE[1]);
+            game.say.frame.drag_to(self.cursor, game.say.size()[1]);
             if let Some(cutin) = &mut game.cutin {
                 let height = cutin.height();
                 cutin.frame.drag_to(self.cursor, height);
@@ -3343,6 +3351,10 @@ impl App {
     /// One Esc in the game: the battle-mode line, a focused text box, a question's No, the newest window, or the menu.
     pub(crate) fn game_escape(&mut self) {
         let Scene::Game(game) = &mut self.scene else { return };
+        // The special popup is a notice: Esc dismisses it before any window.
+        if game.special_popup.take().is_some() {
+            return;
+        }
         game.sync_esc();
         let view = escape::EscView {
             // The always-on line is not this. An open battle-mode line is the first Esc.

@@ -332,6 +332,7 @@ impl App {
                     message_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\msg"),
                     dialog: None,
                     say: npc_say::SayWindow::default(),
+                    special_popup: None,
                     npc_menu: npc_menu::frame(),
                     hit_boxes: Vec::new(),
                     skill_units: HashMap::new(),
@@ -1336,7 +1337,8 @@ impl App {
                 self.map_loaded = true;
                 game.pickups_asked.clear();
                 // A map change or teleport leaves the NPC behind: its windows and picture go, and nothing is sent.
-                game.dialog = None;
+                game.dismiss_dialog();
+                game.special_popup = None;
                 game.cutin = None;
                 // The new map's weather comes once it has loaded, and the mercenary's news, its type and the PvP count.
                 game.weather.clear();
@@ -1423,6 +1425,9 @@ impl App {
                 dialog.lines.extend(text.split('\n').map(|line| line.replace('\r', "")));
             }
             MapEvent::NpcNext { npc } => game.dialog_for(npc).button = DialogButton::Next,
+            MapEvent::NpcWindowSize { width, height } => game.say.resize(width, height),
+            MapEvent::NpcWindowPos { x, y, percent } => game.say.move_to(x, y, percent),
+            MapEvent::SpecialPopup(id) => game.special_popup = Some(id),
             // A script may end in `close` without having said anything (rathena's item scripts do): no box for
             // that, but answer it so the script doesn't keep the player.
             MapEvent::NpcClose { npc } if game.dialog.as_ref().is_none_or(|dialog| dialog.npc != npc) => {
@@ -3764,7 +3769,7 @@ impl App {
                 }
             }
             MapEvent::DealChoice { npc } => {
-                game.dialog = None;
+                game.dismiss_dialog();
                 game.deal_choice = Some(npc);
                 // Dev switch: answer at once.
                 if let Ok(deal) = std::env::var("RUSTNAROK_CLIENT_DEAL") {

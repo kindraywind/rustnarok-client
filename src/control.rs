@@ -1289,6 +1289,10 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .flat_map(|menu| menu.button_boxes(game.can_resurrect()))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
+        .chain(game.special_popup.iter().map(|_| {
+            let at = crate::special_popup::place();
+            json!({"kind": "button", "name": "special_popup", "box": [at[0], at[1], crate::special_popup::SIZE[0], crate::special_popup::SIZE[1]]})
+        }))
         .collect();
     // Newest first: the order Esc closes them in.
     // The windows open: those Esc closes, in its order, then the ones it leaves up.
@@ -1313,6 +1317,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             "menu": dialog.menu.as_ref().map(|menu| json!({"items": menu.items, "selected": menu.selected, "first": menu.first, "position": game.npc_menu.position})),
             "input": dialog.input.as_ref().map(|input| json!({"text": input.text, "typed": input.typed})),
             "position": game.say.frame.position,
+            "size": game.say.size(),
             "scroll": game.say.scroll,
         })
     });
@@ -1606,6 +1611,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         }).collect::<serde_json::Map<_, _>>(),
         "chat_height": game.chat.height(),
     });
+    // The special popup's id, or null.
+    state["special_popup"] = json!(game.special_popup);
     // The blind overlay's age in 16 ms ticks (0 while off). The fade holds at 255.
     state["blind"] = json!(game.blind.ticks(crate::control::now()));
     // The scene tint in thousandths, and whether dusk is on.

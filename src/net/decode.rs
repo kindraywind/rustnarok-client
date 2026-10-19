@@ -10,6 +10,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         return None;
     }
     let u32_at = |offset: usize| u32::from_le_bytes(packet[offset..offset + 4].try_into().unwrap());
+    let i32_at = |offset: usize| i32::from_le_bytes(packet[offset..offset + 4].try_into().unwrap());
     let u16_at = |offset: usize| u16::from_le_bytes([packet[offset], packet[offset + 1]]);
     Some(match u16_at(0) {
         ZC_ACCEPT_ENTER => {
@@ -41,7 +42,14 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_NPC_CHAT => MapEvent::Chat { id: Some(u32_at(4)), message: c_string(&packet[12..]), color: Some([packet[8], packet[9], packet[10]]) },
         ZC_NPCACK_MAPMOVE => MapEvent::MapChange { map: c_string(&packet[2..18]), position: [u16_at(18), u16_at(20)] },
         ZC_SAY_DIALOG => MapEvent::NpcSay { npc: u32_at(4), text: c_string(&packet[8..]) },
+        // The type byte (offset 8) isn't used: rathena defines it and never sends this packet yet.
+        ZC_SAY_DIALOG2 => MapEvent::NpcSay { npc: u32_at(4), text: c_string(&packet[9..]) },
         ZC_WAIT_DIALOG => MapEvent::NpcNext { npc: u32_at(2) },
+        ZC_WAIT_DIALOG2 => MapEvent::NpcNext { npc: u32_at(2) },
+        // The struct lists height, then width.
+        ZC_DIALOG_WINDOW_SIZE => MapEvent::NpcWindowSize { width: i32_at(6), height: i32_at(2) },
+        ZC_DIALOG_WINDOW_POS => MapEvent::NpcWindowPos { x: i32_at(2), y: i32_at(6), percent: false },
+        ZC_DIALOG_WINDOW_POS2 => MapEvent::NpcWindowPos { x: i32_at(2), y: i32_at(6), percent: true },
         ZC_CLOSE_DIALOG => MapEvent::NpcClose { npc: u32_at(2) },
         ZC_CLEAR_DIALOG => MapEvent::NpcClear { npc: u32_at(2) },
         ZC_PROGRESS => MapEvent::Progress { seconds: u32_at(6) },
@@ -375,7 +383,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         // The player's name and what it came from each come after their length: a box's item ID (4), a monster's
         // name (24), nothing for an NPC.
-        ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN => {
+        ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN | ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN_ITEM => {
             let name_end = (10 + usize::from(packet[9])).min(packet.len());
             let source_length = packet.get(name_end).map_or(0, |&length| usize::from(length));
             let source = packet.get(name_end + 1..(name_end + 1 + source_length).min(packet.len())).unwrap_or_default();
@@ -700,6 +708,9 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_ACK_REMEMBER_WARPPOINT => MapEvent::MemoResult(packet[2]),
         ZC_SOUND => MapEvent::Sound { file: c_string(&packet[2..26]), act: packet[26], unit: u32_at(31) },
         ZC_PLAY_NPC_BGM => MapEvent::NpcMusic(c_string(&packet[2..26])),
+        // playType (offset 4) is 0, which loops; the player already loops whatever a script starts.
+        ZC_PLAY_NPC_BGM2 => MapEvent::NpcMusic(c_string(&packet[5..])),
+        ZC_SPECIALPOPUP => MapEvent::SpecialPopup(i32_at(2)),
         ZC_WARPLIST => MapEvent::WarpList { skill: u16_at(4), maps: packet[6..].chunks_exact(16).map(c_string).filter(|map| !map.is_empty()).collect() },
         ZC_NOTIFY_MAPINFO => MapEvent::MapForbids(u16_at(2)),
         // Each quest: ID, state (1 active), start and end times, hunts. Each hunt is 44 bytes as clif_quest_send_list

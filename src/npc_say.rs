@@ -1,5 +1,6 @@
 //! An NPC's say window (ZC_SAY_DIALOG): 280×180 in the sys box frame with no title bar, its text on a grey panel
 //! wrapped character by character at 215 px and scrolled only by the player, and the Next or Close button.
+//! ZC_DIALOG_WINDOW_SIZE grows it (never under that size) and ZC_DIALOG_WINDOW_POS moves it.
 
 use std::time::{Duration, Instant};
 
@@ -37,9 +38,9 @@ pub fn unescape(text: &str) -> String {
     text.replace("\\r", "\r").replace("\\n", "\n").replace("\\\"", "\"")
 }
 
-/// How far text this tall can scroll: past the panel's height.
-pub fn scroll_range(text_height: f32) -> f32 {
-    (text_height - PANEL[3]).max(0.0)
+/// How far text this tall can scroll: past a panel this tall.
+fn scroll_range(text_height: f32, panel_height: f32) -> f32 {
+    (text_height - panel_height).max(0.0)
 }
 
 /// The panel's fill and the scrollbar's track and thumb (the frame is the system box's, `pickup::Assets`).
@@ -77,28 +78,58 @@ pub struct SayWindow {
     pub scroll: f32,
     pub text_height: f32,
     pub throttle: Throttle,
+    size: [f32; 2],
 }
 
 impl Default for SayWindow {
     fn default() -> Self {
         let mut frame = Frame::new(DEFAULT_POSITION, SIZE[0]);
         frame.open = true;
-        Self { frame, scroll: 0.0, text_height: 0.0, throttle: Throttle::default() }
+        Self { frame, scroll: 0.0, text_height: 0.0, throttle: Throttle::default(), size: SIZE }
     }
 }
 
 impl SayWindow {
+    pub fn size(&self) -> [f32; 2] {
+        self.size
+    }
+
+    fn panel_height(&self) -> f32 {
+        (self.size[1] - (SIZE[1] - PANEL[3])).max(40.0)
+    }
+
+    fn panel_width(&self) -> f32 {
+        self.size[0] - (SIZE[0] - PANEL[2])
+    }
+
+    /// Where a line of text breaks: the default 215, wider as the window grows.
+    pub fn wrap_width(&self) -> f32 {
+        (self.size[0] - (SIZE[0] - WRAP_WIDTH)).max(40.0)
+    }
+
+    fn button_at(&self) -> [f32; 2] {
+        [self.size[0] - (SIZE[0] - BUTTON_AT[0]), self.size[1] - (SIZE[1] - BUTTON_AT[1])]
+    }
+
+    fn scrollbar_rect(&self) -> [f32; 4] {
+        [self.size[0] - (SIZE[0] - SCROLLBAR[0]), SCROLLBAR[1], SCROLLBAR[2], self.panel_height()]
+    }
+
+    fn range(&self) -> f32 {
+        scroll_range(self.text_height, self.panel_height())
+    }
+
     fn at(&self, local: [f32; 2]) -> [f32; 2] {
         self.frame.at(local)
     }
 
     pub fn contains(&self, cursor: [f32; 2]) -> bool {
-        contains(self.frame.position, SIZE, cursor)
+        contains(self.frame.position, self.size, cursor)
     }
 
     /// The button's box on screen.
     pub fn button_box(&self) -> [f32; 4] {
-        let [x, y] = self.at(BUTTON_AT);
+        let [x, y] = self.at(self.button_at());
         [x, y, BUTTON[0], BUTTON[1]]
     }
 
@@ -109,19 +140,21 @@ impl SayWindow {
 
     /// The scrollbar's box on screen, while there's more text than the panel shows.
     pub fn scrollbar_box(&self) -> Option<[f32; 4]> {
-        let [x, y] = self.at([SCROLLBAR[0], SCROLLBAR[1]]);
-        (scroll_range(self.text_height) > 0.0).then_some([x, y, SCROLLBAR[2], SCROLLBAR[3]])
+        let [x, y, width, height] = self.scrollbar_rect();
+        let [x, y] = self.at([x, y]);
+        (self.range() > 0.0).then_some([x, y, width, height])
     }
 
     /// Scrolls the text by `pixels` (down when positive), within its range.
     pub fn scroll_by(&mut self, pixels: f32) {
-        self.scroll = (self.scroll + pixels).clamp(0.0, scroll_range(self.text_height));
+        self.scroll = (self.scroll + pixels).clamp(0.0, self.range());
     }
 
     /// A press on the scrollbar scrolls to that point of it.
     pub fn press_scrollbar(&mut self, cursor: [f32; 2]) {
-        let top = self.at([SCROLLBAR[0], SCROLLBAR[1]])[1];
-        self.scroll = scroll_range(self.text_height) * ((cursor[1] - top) / SCROLLBAR[3]).clamp(0.0, 1.0);
+        let track = self.scrollbar_rect();
+        let top = self.at([track[0], track[1]])[1];
+        self.scroll = self.range() * ((cursor[1] - top) / track[3]).clamp(0.0, 1.0);
     }
 
     /// Where text line `row` goes on screen, lines `pitch` apart and `line_height` tall: only lines wholly inside
@@ -129,24 +162,53 @@ impl SayWindow {
     // ponytail: whole lines only, as the renderer has no clipping; a line half out of the panel is hidden.
     pub fn line_at(&self, row: usize, pitch: f32, line_height: f32) -> Option<[f32; 2]> {
         let top = TEXT_AT[1] + row as f32 * pitch - self.scroll;
-        (top >= PANEL[1] && top + line_height <= PANEL[1] + PANEL[3]).then(|| self.at([TEXT_AT[0], top]))
+        (top >= PANEL[1] && top + line_height <= PANEL[1] + self.panel_height()).then(|| self.at([TEXT_AT[0], top]))
     }
 
     /// The frame, the panel and the scrollbar; the text and the button are the caller's.
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, frame: &'a pickup::Assets, assets: &'a Assets) {
         let [x, y] = self.frame.position;
-        pickup::draw_sysbox(layer, chrome, frame, [x, y, SIZE[0], SIZE[1]]);
-        layer.sprites.push((&assets.panel, self.at([PANEL[0], PANEL[1]]), [PANEL[2], PANEL[3]]));
+        pickup::draw_sysbox(layer, chrome, frame, [x, y, self.size[0], self.size[1]]);
+        layer.sprites.push((&assets.panel, self.at([PANEL[0], PANEL[1]]), [self.panel_width(), self.panel_height()]));
         if let Some([x, y, width, height]) = self.scrollbar_box() {
             layer.sprites.push((&assets.track, [x, y], [width, height]));
             let thumb = (height * height / self.text_height).max(THUMB_MIN);
-            let top = (height - thumb) * self.scroll / scroll_range(self.text_height);
+            let top = (height - thumb) * self.scroll / self.range();
             layer.sprites.push((&assets.thumb, [x, y + top], [width, thumb]));
         }
     }
 
     /// New text replacing the old: back to the top.
     pub fn restart(&mut self) {
+        self.scroll = 0.0;
+    }
+
+    /// ZC_DIALOG_WINDOW_SIZE. A non-positive axis is the default, and the window never shrinks under 280×180.
+    pub fn resize(&mut self, width: i32, height: i32) {
+        let width = if width > 0 { width as f32 } else { SIZE[0] };
+        let height = if height > 0 { height as f32 } else { SIZE[1] };
+        self.size = [width.max(SIZE[0]), height.max(SIZE[1])];
+        self.frame.set_width(self.size[0]);
+        self.scroll_by(0.0);
+    }
+
+    /// ZC_DIALOG_WINDOW_POS, or the percent form. Kept on the screen.
+    pub fn move_to(&mut self, x: i32, y: i32, percent: bool) {
+        let screen = crate::screen();
+        let [w, h] = self.size;
+        let (x, y) = if percent {
+            let share = |value: i32, span: f32, length: f32| (span - length).max(0.0) * (value.clamp(0, 100) as f32) / 100.0;
+            (share(x, screen[0], w), share(y, screen[1], h))
+        } else {
+            (x as f32, y as f32)
+        };
+        self.frame.position = [x.clamp(0.0, (screen[0] - w).max(0.0)), y.clamp(0.0, (screen[1] - h).max(0.0))];
+    }
+
+    /// The talk ended: back to 280×180. Where the player left it stays.
+    pub fn end_talk(&mut self) {
+        self.size = SIZE;
+        self.frame.set_width(SIZE[0]);
         self.scroll = 0.0;
     }
 }
@@ -193,6 +255,26 @@ mod tests {
         assert!(!throttle.pass(start + Duration::from_millis(299)));
         assert!(throttle.pass(start + Duration::from_millis(300)));
         assert!(!throttle.pass(start + Duration::from_millis(400)));
+    }
+
+    #[test]
+    fn grows_from_the_default_and_moves() {
+        let mut window = SayWindow::default();
+        window.resize(400, 240);
+        assert_eq!(window.size(), [400.0, 240.0]);
+        assert!(window.wrap_width() > WRAP_WIDTH);
+        // The button stays 4 px in from the right and the bottom.
+        assert_eq!(window.button_box(), [window.frame.position[0] + 400.0 - 46.0, window.frame.position[1] + 240.0 - 24.0, 42.0, 20.0]);
+        // A 0 axis is the default, and nothing shrinks under 280×180.
+        window.resize(0, 10);
+        assert_eq!(window.size(), SIZE);
+        window.move_to(12, 34, false);
+        assert_eq!(window.frame.position, [12.0, 34.0]);
+        window.move_to(100, 0, true);
+        let screen = crate::screen();
+        assert_eq!(window.frame.position, [screen[0] - SIZE[0], 0.0]);
+        window.end_talk();
+        assert_eq!((window.size(), window.frame.position), (SIZE, [screen[0] - SIZE[0], 0.0]));
     }
 
     #[test]

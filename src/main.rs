@@ -38,7 +38,8 @@
 //! that slot's deletion; `-` is an empty birthdate),
 //! `RUSTNAROK_CLIENT_DATA=<folder>` (where the loose `data` and `System` folders that go before data.grf are; `.` by default,
 //! `none` for the archive alone),
-//! `RUSTNAROK_CLIENT_SCREENSHOT=out.png` (save a settled frame and quit; in the game after `RUSTNAROK_CLIENT_SHOT_DELAY` seconds, 2 by default).
+//! `RUSTNAROK_CLIENT_SCREENSHOT=out.png` (save a settled frame and quit; in the game after `RUSTNAROK_CLIENT_SHOT_DELAY` seconds, 2 by default),
+//! `RUSTNAROK_CLIENT_PACKETVER=20250402` (speak a newer rathena; 20220406 by default).
 
 // The control socket's game state is one json! literal deeper than the macro's default limit.
 #![recursion_limit = "256"]
@@ -133,6 +134,7 @@ mod skill_motions;
 mod skills;
 mod sky;
 mod sound;
+mod special_popup;
 mod status;
 mod status_tip;
 mod storage;
@@ -1179,6 +1181,8 @@ struct Game {
     dialog: Option<Dialog>,
     /// The NPC say window's place, scroll and button throttle.
     say: npc_say::SayWindow,
+    /// A special popup (ZC_SPECIALPOPUP) by id, until it is clicked or Esc closes it.
+    special_popup: Option<i32>,
     /// Where the NPC menu is.
     npc_menu: window::Frame,
     /// Last frame's clickable units and items.

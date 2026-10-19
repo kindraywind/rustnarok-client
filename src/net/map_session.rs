@@ -578,9 +578,14 @@ impl MapSession {
         self.stream.write_all(&CZ_REQ_EQUIPSWITCH.to_le_bytes())
     }
 
-    /// Takes off the general equipment (costumes, shadow gear and ammunition stay on).
-    pub fn take_off_all(&mut self) -> io::Result<()> {
-        self.stream.write_all(&CZ_REQ_TAKEOFF_EQUIP_ALL.to_le_bytes())
+    /// Takes off equipment in `location`. Before PACKETVER 20230906 the server has no location field and takes off
+    /// general gear only (costumes, shadow gear and ammunition stay on).
+    pub fn take_off_all(&mut self, location: u32) -> io::Result<()> {
+        if packetver() >= PACKETVER_TAKEOFF_LOCATION {
+            self.stream.write_all(&encode_takeoff_all(location))
+        } else {
+            self.stream.write_all(&CZ_REQ_TAKEOFF_EQUIP_ALL.to_le_bytes())
+        }
     }
 
     /// Asks what a card can go into; ZC_ITEMCOMPOSITION_LIST answers (nothing when nothing can).

@@ -1,4 +1,6 @@
-//! Login, char and map server protocol, as rathena speaks it for PACKETVER 20220406 (see rathena src/common/packets.hpp).
+//! Login, char and map server protocol, as rathena speaks it (see rathena src/common/packets.hpp).
+//! PACKETVER 20220406 by default; `RUSTNAROK_CLIENT_PACKETVER=20250402` selects the newer length table and the
+//! packets that differ (NPC dialog, NPC BGM, special popup, equip-all).
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -15,6 +17,20 @@ pub use map_event::MapEvent;
 
 /// rathena's NAME_LENGTH: 23 characters plus the terminating NUL.
 pub const NAME_LENGTH: usize = 24;
+
+/// The PACKETVER this client was written against, and the newer one whose length table is checked in.
+pub const PACKETVER_20220406: u32 = 20220406;
+pub const PACKETVER_20250402: u32 = 20250402;
+/// CZ_REQ_TAKEOFF_EQUIP_ALL gains a location and a new id (`0x0BF5`) at this PACKETVER.
+pub const PACKETVER_TAKEOFF_LOCATION: u32 = 20230906;
+
+/// The server's PACKETVER. `RUSTNAROK_CLIENT_PACKETVER` overrides the default 20220406. One value for the whole
+/// client; choosing it per server is a separate change.
+pub fn packetver() -> u32 {
+    static VERSION: LazyLock<u32> =
+        LazyLock::new(|| std::env::var("RUSTNAROK_CLIENT_PACKETVER").ok().and_then(|text| text.parse().ok()).unwrap_or(PACKETVER_20220406));
+    *VERSION
+}
 
 const CA_LOGIN: u16 = 0x0064;
 const AC_ACCEPT_LOGIN: u16 = 0x0AC4;
@@ -684,19 +700,27 @@ fn encode_pin_change(account_id: u32, seed: u32, old_pin: &str, new_pin: &str) -
     packet
 }
 
-/// Packet lengths for PACKETVER 20220406, generated from rathena (see tools/packet-lengths); -1 is variable.
+fn load_lengths(table: &str) -> HashMap<u16, i32> {
+    table
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| {
+            let (id, length) = line.split_once(' ')?;
+            Some((u16::from_str_radix(id.trim_start_matches("0x"), 16).ok()?, length.parse().ok()?))
+        })
+        .collect()
+}
+
+/// Packet lengths for one PACKETVER, generated from rathena (see tools/packet-lengths); -1 is variable.
+/// 20250402 and newer use the second table.
+fn lengths_for(version: u32) -> &'static HashMap<u16, i32> {
+    static OLD: LazyLock<HashMap<u16, i32>> = LazyLock::new(|| load_lengths(include_str!("packet_lengths.txt")));
+    static NEW: LazyLock<HashMap<u16, i32>> = LazyLock::new(|| load_lengths(include_str!("packet_lengths_20250402.txt")));
+    if version >= PACKETVER_20250402 { &NEW } else { &OLD }
+}
+
 fn packet_length(id: u16) -> Option<i32> {
-    static TABLE: LazyLock<HashMap<u16, i32>> = LazyLock::new(|| {
-        include_str!("packet_lengths.txt")
-            .lines()
-            .filter(|line| !line.starts_with('#'))
-            .filter_map(|line| {
-                let (id, length) = line.split_once(' ')?;
-                Some((u16::from_str_radix(id.trim_start_matches("0x"), 16).ok()?, length.parse().ok()?))
-            })
-            .collect()
-    });
-    TABLE.get(&id).copied()
+    lengths_for(packetver()).get(&id).copied()
 }
 
 /// Dev hook (the client's control socket): sees every packet read from the char and map servers.
@@ -856,6 +880,13 @@ const CZ_INPUT_EDITDLGSTR: u16 = 0x01D5;
 const CZ_REQUEST_ACT: u16 = 0x0437;
 const ZC_SAY_DIALOG: u16 = 0x00B4;
 const ZC_WAIT_DIALOG: u16 = 0x00B5;
+/// PACKETVER 20220504: the say window's text, with a type byte, and its Next button.
+const ZC_SAY_DIALOG2: u16 = 0x0972;
+const ZC_WAIT_DIALOG2: u16 = 0x0973;
+/// The say window's size (height, then width) and its place, in pixels or as a percent of the screen.
+const ZC_DIALOG_WINDOW_SIZE: u16 = 0x0BA2;
+const ZC_DIALOG_WINDOW_POS: u16 = 0x0BA3;
+const ZC_DIALOG_WINDOW_POS2: u16 = 0x0BB5;
 const ZC_CLOSE_DIALOG: u16 = 0x00B6;
 const ZC_MENU_LIST: u16 = 0x00B7;
 const ZC_OPEN_EDITDLG: u16 = 0x0142;
@@ -1075,6 +1106,8 @@ const ZC_ACK_REMEMBER_WARPPOINT: u16 = 0x011E;
 const ZC_WARPLIST: u16 = 0x0ABE;
 const ZC_SOUND: u16 = 0x01D3;
 const ZC_PLAY_NPC_BGM: u16 = 0x07FE;
+/// PACKETVER 20220504: the same music, variable length, with a play type before the name.
+const ZC_PLAY_NPC_BGM2: u16 = 0x0B8C;
 const CZ_SELECT_WARPPOINT: u16 = 0x011B;
 const CZ_REMEMBER_WARPPOINT: u16 = 0x011D;
 const ZC_NOTIFY_MAPINFO: u16 = 0x0189;
@@ -1094,6 +1127,8 @@ const ZC_SE_PC_BUY_CASHITEM_RESULT: u16 = 0x0849;
 const CZ_CASHSHOP_CLOSE: u16 = 0x084A;
 const ZC_NOTIFY_BIND_ON_EQUIP: u16 = 0x02D3;
 const CZ_REQ_TAKEOFF_EQUIP_ALL: u16 = 0x0BAD;
+/// PACKETVER 20230906: the same request with the location of what comes off.
+const CZ_REQ_TAKEOFF_EQUIP_ALL_LOC: u16 = 0x0BF5;
 const ZC_ACK_TAKEOFF_EQUIP_ALL: u16 = 0x0BAE;
 const ZC_MERGE_ITEM_OPEN: u16 = 0x096D;
 const CZ_REQ_MERGE_ITEM: u16 = 0x096E;
@@ -1298,6 +1333,10 @@ const ZC_MVP_GETTING_SPECIAL_EXP: u16 = 0x010B;
 const ZC_MVP: u16 = 0x010C;
 const ZC_THROW_MVPITEM: u16 = 0x010D;
 const ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN: u16 = 0x07FD;
+/// PACKETVER 20220518: the box-item announcement under a new id. rathena still sends `0x07FD`; the header is this.
+const ZC_BROADCASTING_SPECIAL_ITEM_OBTAIN_ITEM: u16 = 0x0BBA;
+/// PACKETVER 20221005: open the special popup this id names (System/spopup.lub).
+const ZC_SPECIALPOPUP: u16 = 0x0BBE;
 const ZC_BROADCAST_ITEMREFINING_RESULT: u16 = 0x0ADA;
 const CZ_OPEN_MAILBOX2: u16 = 0x0AC0;
 const CZ_REQ_REFRESH_MAIL_LIST2: u16 = 0x0AC1;
@@ -2411,6 +2450,14 @@ fn encode_uninstall(kind: u8) -> [u8; 3] {
     [low, high, kind]
 }
 
+/// CZ_REQ_TAKEOFF_EQUIP_ALL at PACKETVER 20230906: the location bits of what comes off.
+fn encode_takeoff_all(location: u32) -> [u8; 6] {
+    let mut packet = [0u8; 6];
+    packet[..2].copy_from_slice(&CZ_REQ_TAKEOFF_EQUIP_ALL_LOC.to_le_bytes());
+    packet[2..6].copy_from_slice(&location.to_le_bytes());
+    packet
+}
+
 /// A market's entry: item, type, price, stock, weight, where it's worn.
 fn decode_market_goods(entry: &[u8]) -> Bartered {
     let stock = u32_at(entry, 9);
@@ -2430,13 +2477,19 @@ fn decode_barter_goods(entry: &[u8]) -> Bartered {
     }
 }
 
-/// An expanded barter's entries: each 32 bytes (item, type, stock, weight, the shop's index, zeny, look, where
-/// worn, how many costs), then its costs, 12 bytes each (item, refine, amount, type).
-fn decode_expanded_barter(mut rest: &[u8]) -> Vec<Bartered> {
+/// An expanded barter's entries. Through 20250401 each is 32 bytes (item, type, stock, weight, the shop's index,
+/// zeny, look, where worn, how many costs). At 20250402 a refine level follows the cost count, so the head is 36.
+/// Costs are 12 bytes each (item, refine, amount, type).
+fn decode_expanded_barter(rest: &[u8]) -> Vec<Bartered> {
+    decode_expanded_barter_at(rest, packetver() >= PACKETVER_20250402)
+}
+
+fn decode_expanded_barter_at(mut rest: &[u8], refine: bool) -> Vec<Bartered> {
+    let head = if refine { 36 } else { 32 };
     let mut goods = Vec::new();
-    while rest.len() >= 32 {
+    while rest.len() >= head {
         let count = u32_at(rest, 28) as usize;
-        let Some(costs) = rest.get(32..32 + count * 12) else { break };
+        let Some(costs) = rest.get(head..head + count * 12) else { break };
         let stock = u32_at(rest, 6);
         goods.push(Bartered {
             item: u32_at(rest, 0),
@@ -2446,7 +2499,7 @@ fn decode_expanded_barter(mut rest: &[u8]) -> Vec<Bartered> {
             stock: (stock != UNLIMITED).then_some(stock),
             index: u32_at(rest, 14),
         });
-        rest = &rest[32 + count * 12..];
+        rest = &rest[head + count * 12..];
     }
     goods
 }
