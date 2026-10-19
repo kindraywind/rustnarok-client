@@ -1,5 +1,5 @@
 {
-  "about": "Skills: the level arrows show for every used skill with more than one level (Fire Ball here, not only the data's separate-level ones); the level picked is the one aimed, and the wheel moves it. The aim balloon names the level (Fire Ball Lv 8/10).",
+  "about": "Skills: a Mage picks Fire Bolt's level in the skill window (7), aims it at that level, turns the wheel to 8, and the aim balloon names the level (Fire Bolt Lv 8/10).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -36,7 +36,7 @@
     },
     {
       "click_on": {
-        "button": "skill_less:17"
+        "button": "skill_less:19"
       }
     },
     {
@@ -44,7 +44,7 @@
     },
     {
       "click_on": {
-        "button": "skill_less:17"
+        "button": "skill_less:19"
       }
     },
     {
@@ -52,14 +52,14 @@
     },
     {
       "click_on": {
-        "button": "skill_less:17"
+        "button": "skill_less:19"
       }
     },
     {
       "wait": 150
     },
     {
-      "shot": "fire-ball-arrows",
+      "shot": "fire-bolt-arrows",
       "crop": [
         230,
         70,
@@ -69,7 +69,7 @@
     },
     {
       "click_on": {
-        "skill": 17
+        "skill": 19
       },
       "count": 2
     },
@@ -79,7 +79,7 @@
     {
       "expect": {
         "state": {
-          "aimed_skill.id": 17,
+          "aimed_skill.id": 19,
           "aimed_skill.level": 7
         }
       }
@@ -102,7 +102,7 @@
       }
     },
     {
-      "shot": "fire-ball-aim-level",
+      "shot": "fire-bolt-aim-level",
       "crop": [
         300,
         30,
