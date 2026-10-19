@@ -422,6 +422,8 @@ const EQUIPMENT_HIDDEN: usize = 1358;
 /// Vending: "%s %d sold.", "Items are sold out.", and "There are items priced 0..." (a shop refused for it).
 const VEND_SOLD: usize = 231;
 const VEND_SOLD_OUT: usize = 311;
+/// "%s %d sold." in light cyan.
+const VEND_SOLD_COLOR: [u8; 3] = [100, 255, 255];
 const VEND_FAILED: usize = 2720;
 /// The cart window's title ("Cart Items") and where it first opens.
 const CART_TITLE: usize = 222;
@@ -1238,6 +1240,10 @@ struct Game {
     /// An NPC shop asking whether to buy or sell, and the open shop.
     deal_choice: Option<u32>,
     shop: Option<shop::Shop>,
+    /// A vendor's deal, waiting in "Confirm Deal".
+    deal_confirm: Option<shop::Confirm>,
+    /// When a shop sign was last clicked through.
+    shop_asked: Option<Instant>,
     storage: storage::Storage,
     /// An NPC's illustration and where it goes.
     cutin: Option<cutin::Cutin>,
@@ -2463,6 +2469,8 @@ enum BoxQuestion {
     GuildLeader { account: u32, character: u32, name: String },
     /// A plain notice in these words, OK only (a quest link to a quest no list has).
     Said(String),
+    /// Something in the vending setup is priced 0: open anyway? (604).
+    FreeGoods,
 }
 
 impl BoxQuestion {
@@ -2476,6 +2484,7 @@ impl BoxQuestion {
             Self::Notice(message) => *message,
             Self::GuildLeader { .. } => GUILD_LEADER_ASKS,
             Self::Said(_) => 0,
+            Self::FreeGoods => vend::FREE_ASKS,
         }
     }
 

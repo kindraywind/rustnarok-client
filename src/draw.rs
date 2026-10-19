@@ -2045,6 +2045,9 @@ impl App {
         if let Some(shop) = &game.shop {
             shop.draw(shop_layer.window(), &assets.chrome, &assets.shop, icons, items, messages, font, pointer);
         }
+        if let Some(confirm) = &game.deal_confirm {
+            confirm.draw(shop_layer.window(), &assets.chrome, &assets.shop, messages, pointer);
+        }
         if game.deal_choice.is_some() {
             let dialog = deal_box_position();
             shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));

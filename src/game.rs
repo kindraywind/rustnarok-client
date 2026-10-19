@@ -959,7 +959,15 @@ impl Game {
             BoxQuestion::GuildLeader { account, character, .. } => {
                 let _ = self.session.move_members(&[(account, character, 0)]);
             }
+            BoxQuestion::FreeGoods => self.open_vending(),
             BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) | BoxQuestion::Said(_) => {}
+        }
+    }
+
+    /// The vending setup's OK went through: CZ_REQ_OPENSTORE2 with its name and goods.
+    pub(crate) fn open_vending(&mut self) {
+        if let Some(setup) = &self.vend_setup {
+            let _ = self.session.open_shop(&setup.name, true, &setup.goods(&self.cart.items));
         }
     }
 
@@ -1955,6 +1963,7 @@ impl Game {
             || self.expansion_asked.is_some()
             || self.leader_asked.is_some()
             || self.question_box.is_some()
+            || self.deal_confirm.as_ref().is_some_and(|confirm| confirm.hit(cursor).is_some())
             || self.dismiss_asked
             || self.homunculus_asked.is_some()
             || self.pet_asked.is_some()
@@ -2113,6 +2122,11 @@ impl Game {
                 }
                 Ok(())
             }
+            // A vending price may be 0.
+            what @ Asked::VendPrice(_) => {
+                self.give(what, amount.value());
+                Ok(())
+            }
             // None or less into storage or the cart is one.
             what @ (Asked::Store(_) | Asked::ToCart(_)) => {
                 self.give(what, amount.value().max(1));
@@ -2155,9 +2169,10 @@ impl Game {
                 _ => self.session.drop_item(index, amount as u16),
             },
             Asked::RoomPassword(_) | Asked::BuyingPrice(..) | Asked::BuyingAmount(_) | Asked::TalkieBox { .. } => Ok(()),
+            // ponytail: past the most, a notice; the game asks yes or no, and either way holds it there.
             Asked::VendPrice(index) => {
-                if let Some(setup) = &mut self.vend_setup {
-                    setup.prices.insert(index, amount);
+                if self.vend_setup.as_mut().is_some_and(|setup| setup.set_price(index, amount)) {
+                    self.question_box = Some(BoxQuestion::Notice(vend::PRICE_HELD));
                 }
                 Ok(())
             }
@@ -2593,6 +2608,9 @@ impl Game {
         if self.reason_box.is_some() {
             names.push("GuildReason".into());
         }
+        if self.deal_confirm.is_some() {
+            names.push("ConfirmDeal".into());
+        }
         if matches!(self.queue_asked, Some(QueueAsked::Lobby(..))) {
             names.push("BattleLobby".into());
         }
@@ -2681,6 +2699,7 @@ impl Game {
             || self.expansion_asked.is_some()
             || self.leader_asked.is_some()
             || self.question_box.is_some()
+            || self.deal_confirm.is_some()
             || self.dismiss_asked
             || self.homunculus_asked.is_some()
             || self.pet_asked.is_some()
@@ -2741,7 +2760,7 @@ impl Game {
         if self.leader_asked.take().is_some() {
             return;
         }
-        if self.question_box.take().is_some() {
+        if self.question_box.take().is_some() || self.deal_confirm.take().is_some() {
             return;
         }
         if self.dismiss_asked {
