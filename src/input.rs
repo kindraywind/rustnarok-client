@@ -2187,7 +2187,12 @@ impl App {
                 Some(shop::Hit::Row(window, row)) => game.shop.as_ref().and_then(|shop| shop.offer_at(window, row)),
                 _ => None,
             };
-            let described = match game.window_at(self.cursor) {
+            // Another player's equipment window, over the others: what they wear too.
+            let viewed = game.viewing.as_ref().and_then(|viewed| match viewed.window.hit(self.cursor, &viewed.items) {
+                Some(equipment::Hit::Slot(index) | equipment::Hit::Name(index)) => viewed.items.iter().find(|item| item.index == index).cloned(),
+                _ => None,
+            });
+            let described = viewed.or_else(|| match game.window_at(self.cursor) {
                 _ if state != ElementState::Pressed || self.modifiers.alt_key() || card.is_some() => None,
                 _ if shop_row.is_some() => shop_row.map(|offer| net::InventoryItem {
                     id: offer.item,
@@ -2210,11 +2215,12 @@ impl App {
                     _ => None,
                 },
                 Some(Panel::Equipment) => match game.equipment.hit(self.cursor, &game.inventory.items) {
-                    Some(equipment::Hit::Slot(index)) => game.inventory.get(index).cloned(),
+                    Some(equipment::Hit::Slot(index) | equipment::Hit::Name(index)) => game.inventory.get(index).cloned(),
                     _ => None,
                 },
+
                 _ => None,
-            };
+            });
             if let Some(item) = described {
                 let shown = iteminfo::Shown::of(&item);
                 // The same item again closes its description; another one takes its place.

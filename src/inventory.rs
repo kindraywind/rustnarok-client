@@ -129,9 +129,9 @@ pub fn name_color(item: &InventoryItem, items: &HashMap<u32, ItemInfo>) -> [u8; 
 }
 
 /// An item's enchants: the cards past its slots that are known items. Pet eggs and accessories, forged and brewed
-/// pieces have none.
+/// pieces (and anything whose first card marks a pet) have none.
 pub fn enchants(item: &InventoryItem, items: &HashMap<u32, ItemInfo>) -> usize {
-    if matches!(item.kind, net::ITEM_PET_EGG | net::ITEM_PET_ARMOR) || maker(&item.cards).is_some() {
+    if matches!(item.kind, net::ITEM_PET_EGG | net::ITEM_PET_ARMOR) || maker(&item.cards).is_some() || item.cards[0] == PET_CARD {
         return 0;
     }
     let slots = items.get(&item.id).map_or(0, |info| usize::from(info.slots));
@@ -378,6 +378,8 @@ const CARDS_AFTER: &str = "data\\cardpostfixnametable.txt";
 /// card0 of a forged weapon and of a brewed item; the maker's character ID is in cards 2 and 3.
 const FORGED: u32 = 0x00FF;
 const BREWED: u32 = 0x00FE;
+/// A pet egg's first card.
+const PET_CARD: u32 = 0x0100;
 /// "Very Strong ", "Very Very Strong ", "Very Very Very Strong ": a forged weapon's Star Crumbs.
 const VERY_STRONG: usize = 459;
 /// "'s ", then "'s Fire ", "'s Ice ", "'s Wind ", "'s Earth ": after the maker's name.
