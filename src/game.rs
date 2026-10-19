@@ -1232,6 +1232,7 @@ impl Game {
     /// copies left behind it (the quickens' afterimage) and Cursed Circle's dark body.
     pub(crate) fn status_loop(&mut self, gpu: Option<&Gpu>, grf: &Grf, table: &effects::Table, unit: u32, status: u16, on: bool) {
         let key = (unit != self.account_id).then_some(unit);
+        self.scene.note(key.is_none(), status, on);
         // Deep Blind is the player's overlay. A repeat while it shows does not start the fade again.
         if key.is_none() && status == effects::DEEP_BLIND {
             self.deep_blind = on;

@@ -1583,6 +1583,9 @@ fn game_state(app: &App, game: &Game) -> Value {
     });
     // The blind overlay's age in 16 ms ticks (0 while off). The fade holds at 255.
     state["blind"] = json!(game.blind.ticks(crate::control::now()));
+    // The scene tint in thousandths, and whether dusk is on.
+    state["tint"] = json!(crate::world::tint_milli(game.scene.tint()));
+    state["dusk"] = json!(u8::from(game.scene.dusk()));
     // The ground cursor (Alt+Home): on or off, and the cell its square is on.
     state["ground_cursor"] = json!({"on": game.ground_cursor, "cell": game.ground_mark});
     // The party window's size mode and size.

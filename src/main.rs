@@ -1548,6 +1548,8 @@ struct Game {
     blind: effects::BlindView,
     /// Status 1205 (Deep Blind) is on the player.
     deep_blind: bool,
+    /// L and the dusk fade. Ground and models take its tint.
+    scene: world::SceneLight,
     /// The right-click menu, and where a right press began (and on whom).
     menu: Option<menu::Menu<Choice>>,
     right_press: Option<([f32; 2], Option<MenuFor>)>,

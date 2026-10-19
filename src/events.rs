@@ -282,6 +282,8 @@ impl App {
                     (net::STATUS_ZENY, i64::from(me.zeny)),
                 ]);
                 let minimap_map = map_key(&map);
+                let (ambient, diffuse) = world.light_rgb();
+                let scene = world::SceneLight::load(ambient, diffuse);
                 self.scene = Scene::Game(Box::new(Game {
                     saved_places: String::new(),
                     session,
@@ -456,6 +458,7 @@ impl App {
                     weather: weather::Weather::default(),
                     blind: effects::BlindView::default(),
                     deep_blind: false,
+                    scene,
                     right_press: None,
                     party: None,
                     status_window: {
@@ -722,6 +725,8 @@ impl App {
                 game.guild_places.clear();
                 game.player.set_map([world.gat.width, world.gat.height]);
                 game.world = world;
+                let (ambient, diffuse) = game.world.light_rgb();
+                game.scene.reload(ambient, diffuse);
                 game.map = map;
                 game.units.clear();
                 game.skill_units.clear();

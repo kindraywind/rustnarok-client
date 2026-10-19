@@ -436,6 +436,7 @@ impl App {
         let horizontal = game.camera.distance * game.camera.pitch.cos();
         let eye = [game.camera.target[0] - horizontal * game.camera.yaw.sin(), game.camera.target[2] - horizontal * game.camera.yaw.cos()];
         game.camera.ground = -game.world.gat.height(eye.map(|axis| (axis / world::CELL).floor() as i32));
+        game.scene.advance(now.saturating_duration_since(game.last_frame));
         game.last_frame = now;
         let view = game.camera.view(screen()[0] / screen()[1]);
         let yaw = game.camera.yaw;
@@ -2591,6 +2592,7 @@ impl App {
             cover: &cover,
             time: now.duration_since(game.entered).as_secs_f32(),
             blind: game.blind.showing(),
+            tint: game.scene.tint(),
         };
         if let Some(path) = self.print_screen.take() {
             let _ = path.parent().map(std::fs::create_dir_all);

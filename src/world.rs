@@ -6,6 +6,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io;
 use std::ops::Range;
+use std::time::Duration;
 
 use image::{Rgba, RgbaImage};
 use rustnarok_client::grf::Grf;
@@ -316,6 +317,8 @@ struct Globals {
     fog_color: [f32; 4],
     /// x: depth where fog starts, y: depth where it is solid.
     fog_range: [f32; 4],
+    /// rgb: the scene tint. w is 1 while the player is blind, and models then use the ambient instead.
+    tint: [f32; 4],
 }
 
 const SHADER: &str = r"
@@ -329,6 +332,7 @@ struct Globals {
     pixel: vec4<f32>,
     fog_color: vec4<f32>,
     fog_range: vec4<f32>,
+    tint: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var image: texture_2d<f32>;
@@ -371,8 +375,8 @@ struct GroundOutput {
     let texel = textureSample(image, image_sampler, in.uv);
     let light_map = textureSample(lightmap, lightmap_sampler, in.lightmap_uv);
     if (texel.a < 207.0 / 255.0) { discard; }
-    // The sun is already in the vertex colour. The lightmap adds its colour and shades the texture.
-    let lit = light_map.rgb + light_map.a * texel.rgb * in.color.rgb;
+    // The sun is already in the vertex colour. The scene tint multiplies that, then the lightmap adds its colour.
+    let lit = light_map.rgb + light_map.a * texel.rgb * in.color.rgb * globals.tint.rgb;
     return vec4(apply_fog(saturate(lit), in.fog), 1.0);
 }
 
@@ -389,7 +393,9 @@ struct GroundOutput {
     // Faces are drawn from both sides, so light them from whichever side faces the light.
     let weight = abs(dot(normalize(in.normal), globals.light_direction.xyz));
     let light = clamp(globals.ambient.rgb + globals.diffuse.rgb * weight, vec3(0.0), vec3(1.0));
-    return vec4(apply_fog(texel.rgb * in.color.rgb * light, in.fog), 1.0);
+    // Blind replaces the scene tint with the ambient.
+    let shade = select(globals.tint.rgb, globals.ambient.rgb, globals.tint.w > 0.5);
+    return vec4(apply_fog(texel.rgb * in.color.rgb * light * shade, in.fog), 1.0);
 }
 
 // Shadows and effects take their feet's `depth`, flat. Sprites work theirs out per pixel from their `plane` (the
@@ -577,6 +583,106 @@ pub struct MeshVertex {
     pub position: [f32; 3],
     pub uv: [f32; 2],
     pub tint: [f32; 4],
+}
+
+/// tint_c = 1 − (1 − L_c)(1 − ambient_c). Sprites, water, effects, the background and the fog do not use it.
+pub fn scene_tint(l: [f32; 3], ambient: [f32; 3]) -> [f32; 3] {
+    std::array::from_fn(|channel| 1.0 - (1.0 - l[channel]) * (1.0 - ambient[channel]))
+}
+
+/// Soul Link, rathena's night, and the soul statuses that fade L toward dusk.
+pub fn is_dusk_status(status: u16) -> bool {
+    matches!(status, 149 | 160 | 1056..=1059)
+}
+
+/// What models are multiplied by: the tint, or the ambient while the player is blind. The model shader does this.
+#[cfg(test)]
+pub fn model_shade(tint: [f32; 3], ambient: [f32; 3], blind: bool) -> [f32; 3] {
+    if blind { ambient } else { tint }
+}
+
+/// The tint as thousandths, for the control state.
+pub fn tint_milli(tint: [f32; 3]) -> [i32; 3] {
+    tint.map(|channel| (channel * 1000.0).round() as i32)
+}
+
+/// L, the map's diffuse and ambient, and whether dusk is fading it. A map load sets L back to the diffuse.
+#[derive(Clone, Debug)]
+pub struct SceneLight {
+    color: [f32; 3],
+    target: [f32; 3],
+    ambient: [f32; 3],
+    /// Statuses 149, 160 and 1056–1059 currently on the player.
+    statuses: Vec<u16>,
+    carried: Duration,
+}
+
+impl SceneLight {
+    pub fn load(ambient: [f32; 3], diffuse: [f32; 3]) -> Self {
+        Self { color: diffuse, target: diffuse, ambient, statuses: Vec::new(), carried: Duration::ZERO }
+    }
+
+    /// A map load: L and its target become the new diffuse. A dusk status that is still on fades it down again.
+    pub fn reload(&mut self, ambient: [f32; 3], diffuse: [f32; 3]) {
+        self.color = diffuse;
+        self.target = diffuse;
+        self.ambient = ambient;
+        self.carried = Duration::ZERO;
+    }
+
+    /// The player's dusk statuses. Another unit's status changes nothing.
+    pub fn note(&mut self, own: bool, status: u16, on: bool) {
+        if !own || !is_dusk_status(status) {
+            return;
+        }
+        if on {
+            if !self.statuses.contains(&status) {
+                self.statuses.push(status);
+            }
+        } else {
+            self.statuses.retain(|each| *each != status);
+        }
+    }
+
+    pub fn dusk(&self) -> bool {
+        !self.statuses.is_empty()
+    }
+
+    #[cfg(test)]
+    pub fn color(&self) -> [f32; 3] {
+        self.color
+    }
+
+    pub fn tint(&self) -> [f32; 3] {
+        scene_tint(self.color, self.ambient)
+    }
+
+    /// One dusk step: on, R and G fall 0.005 while above 0.5 and B stays; off, each channel rises 0.005 while below 1 and its target.
+    pub fn step(&mut self) {
+        for channel in 0..3 {
+            if self.dusk() {
+                if channel < 2 && self.color[channel] > 0.5 {
+                    self.color[channel] = (self.color[channel] - 0.005).max(0.5);
+                }
+            } else {
+                let cap = self.target[channel].min(1.0);
+                if self.color[channel] < cap {
+                    self.color[channel] = (self.color[channel] + 0.005).min(cap);
+                }
+            }
+        }
+    }
+
+    /// Steps of 1/60 s that fit in `dt`.
+    pub fn advance(&mut self, dt: Duration) {
+        // ponytail: a stalled frame fades at most two seconds, so a long pause doesn't spin this loop.
+        self.carried += dt.min(Duration::from_secs(2));
+        let step = Duration::from_secs(1) / 60;
+        while self.carried >= step {
+            self.carried -= step;
+            self.step();
+        }
+    }
 }
 
 pub struct World {
@@ -872,6 +978,11 @@ impl World {
     /// draws it): corners south-west, south-east, north-west, north-east.
     pub fn cell_quad(&self, cell: [i32; 2]) -> Option<[Vector; 4]> {
         cell_quad(&self.tile_heights.0, self.tile_heights.1, cell)
+    }
+
+    /// The RSW light's ambient and diffuse.
+    pub fn light_rgb(&self) -> ([f32; 3], [f32; 3]) {
+        (self.light.1, self.light.2)
     }
 
     /// The map light on a unit drawn at `feet`: that GAT cell's triple, or full bright off the map.
@@ -1272,8 +1383,10 @@ pub struct WorldFrame<'a> {
     pub cover: &'a [CoverQuad<'a>],
     /// Seconds since the map was entered, for animated textures.
     pub time: f32,
-    /// The player is blind (health bit 0x10 or status 1205): lava draws as ordinary water.
+    /// The player is blind (health bit 0x10 or status 1205): lava draws as ordinary water, and models use the ambient.
     pub blind: bool,
+    /// The scene tint for the ground and models this frame.
+    pub tint: [f32; 3],
 }
 
 impl WorldPass for WorldFrame<'_> {
@@ -1290,6 +1403,7 @@ impl WorldPass for WorldFrame<'_> {
             pixel: [2.0 / (SCREEN_HEIGHT * self.view.aspect), 2.0 / SCREEN_HEIGHT, DEPTH_SCALE, NEAR],
             fog_color: [world.fog_color[0], world.fog_color[1], world.fog_color[2], 0.0],
             fog_range: [world.fog_range[0], world.fog_range[1], 0.0, 0.0],
+            tint: [self.tint[0], self.tint[1], self.tint[2], f32::from(u8::from(self.blind))],
         };
         gpu.queue.write_buffer(&world.globals, 0, bytemuck::bytes_of(&globals));
 
@@ -2705,5 +2819,93 @@ mod tests {
         near(baked([1.0, 0.0, 0.0]), [50.0 / 255.0; 3]);
         near(baked([0.0, 0.0, -1.0]), [100.0 / 255.0; 3]);
         near(baked([-1.0, 0.0, 0.0]), [100.0 / 255.0; 3]);
+    }
+
+    fn close(have: [f32; 3], want: [f32; 3]) {
+        for channel in 0..3 {
+            assert!((have[channel] - want[channel]).abs() < 1e-4, "{have:?} != {want:?}");
+        }
+    }
+
+    #[test]
+    fn scene_tint_follows_the_diffuse_and_the_ambient() {
+        // prontera: white diffuse, tint 1 whatever the ambient.
+        close(scene_tint([1.0, 1.0, 1.0], [0.55, 0.5, 0.5]), [1.0, 1.0, 1.0]);
+        // izlude and mag_dun01's diffuses. With no ambient the tint is the diffuse.
+        close(scene_tint([0.993, 0.979, 1.0], [0.0; 3]), [0.993, 0.979, 1.0]);
+        close(scene_tint([0.79, 0.60, 0.52], [0.0; 3]), [0.79, 0.60, 0.52]);
+        // Dusk ends: L's R and G at 0.5, B still the diffuse. prontera's ambient, then ambient 0.3.
+        close(scene_tint([0.5, 0.5, 1.0], [0.55, 0.5, 0.5]), [0.775, 0.75, 1.0]);
+        close(scene_tint([0.5, 0.5, 1.0], [0.3; 3]), [0.65, 0.65, 1.0]);
+        assert_eq!(tint_milli(scene_tint([0.5, 0.5, 1.0], [0.55, 0.5, 0.5])), [775, 750, 1000]);
+        assert_eq!(tint_milli(scene_tint([0.5, 0.5, 1.0], [0.3; 3])), [650, 650, 1000]);
+    }
+
+    #[test]
+    fn dusk_steps_toward_half_and_back_to_the_target() {
+        let mut light = SceneLight::load([0.55, 0.5, 0.5], [1.0, 1.0, 1.0]);
+        light.note(true, 160, true);
+        light.step();
+        close(light.color(), [0.995, 0.995, 1.0]);
+        for _ in 0..99 {
+            light.step();
+        }
+        close(light.color(), [0.5, 0.5, 1.0]);
+        light.step();
+        close(light.color(), [0.5, 0.5, 1.0]);
+        light.note(true, 160, false);
+        light.step();
+        close(light.color(), [0.505, 0.505, 1.0]);
+        for _ in 0..200 {
+            light.step();
+        }
+        close(light.color(), [1.0, 1.0, 1.0]);
+        // A dimmer diffuse is the cap: nothing rises past it.
+        let mut dim = SceneLight::load([0.0; 3], [0.79, 0.60, 0.52]);
+        dim.note(true, 149, true);
+        for _ in 0..80 {
+            dim.step();
+        }
+        close(dim.color(), [0.5, 0.5, 0.52]);
+        dim.note(true, 149, false);
+        for _ in 0..200 {
+            dim.step();
+        }
+        close(dim.color(), [0.79, 0.60, 0.52]);
+    }
+
+    #[test]
+    fn dusk_statuses_are_the_players_and_a_map_load_starts_again() {
+        for status in [149, 160, 1056, 1057, 1058, 1059] {
+            assert!(is_dusk_status(status), "{status}");
+        }
+        assert!(!is_dusk_status(148) && !is_dusk_status(161) && !is_dusk_status(1055) && !is_dusk_status(1060));
+        let mut light = SceneLight::load([0.55, 0.5, 0.5], [1.0, 1.0, 1.0]);
+        light.note(false, 149, true);
+        assert!(!light.dusk());
+        light.note(true, 149, true);
+        light.note(true, 1056, true);
+        light.note(true, 149, false);
+        assert!(light.dusk());
+        light.note(true, 1056, false);
+        assert!(!light.dusk());
+        light.note(true, 160, true);
+        for _ in 0..40 {
+            light.step();
+        }
+        assert!(light.color()[0] < 1.0);
+        light.reload([0.3, 0.3, 0.3], [0.8, 0.9, 0.7]);
+        close(light.color(), [0.8, 0.9, 0.7]);
+        assert!(light.dusk());
+        light.step();
+        assert!(light.color()[0] < 0.8 && light.color()[1] < 0.9 && light.color()[2] == 0.7);
+    }
+
+    #[test]
+    fn a_blind_player_shades_models_with_the_ambient() {
+        let tint = scene_tint([0.5, 0.5, 1.0], [0.55, 0.5, 0.5]);
+        let ambient = [0.55, 0.5, 0.5];
+        close(model_shade(tint, ambient, false), tint);
+        close(model_shade(tint, ambient, true), ambient);
     }
 }
