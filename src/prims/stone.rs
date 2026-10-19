@@ -1,6 +1,6 @@
 //! Spikes the game makes in code (its prim kind 9): open four-sided pyramids that rise out of the ground along their
 //! own axis. Earth Spike's (EF_EARTHSPIKE 79), Heaven's Drive's field (EF_HEAVENSDRIVE 142), Grimtooth's train
-//! (EF_GRIMTOOTH 123), and Frost Diver's ice (EF_FROSTDIVER 27, EF_FROSTDIVER2 28).
+//! (EF_GRIMTOOTH 123), Frost Diver's ice (EF_FROSTDIVER 27, EF_FROSTDIVER2 28) and Ice Wall's cells (EF_ICEWALL 74).
 
 use std::time::Instant;
 
@@ -30,6 +30,10 @@ const FROST_REACH: f32 = 2.5;
 const FROST_TICKS: u32 = 150;
 const FROST_LIFE: u32 = 40;
 const FROST_DEPTH: f32 = 30.0;
+/// Ice Wall's cell: three spikes a cell, 200 alpha, standing for the effect's whole 9999 ticks (or until their unit goes).
+const ICE_WALL_TICKS: u32 = 9999;
+const ICE_WALL_ALPHA: f32 = 200.0;
+const ICE_WALL_HALF: f32 = 2.5;
 
 /// A spike: an open pyramid `half` wide each way from its middle at the base and `height` from the base to the apex
 /// along its axis (world units), moving along that axis.
@@ -59,6 +63,8 @@ struct Spike {
     alpha: f32,
     alpha_step: f32,
     fade: u32,
+    /// The skill unit on the ground it stands for: it goes with it.
+    unit: Option<u32>,
 }
 
 /// The axes of a spike turned `yaw` about the vertical, then pitched `pitch` from lying along it (90: upright), in
@@ -100,6 +106,7 @@ impl Spike {
             alpha: 254.0,
             alpha_step,
             fade: life - 10,
+            unit: None,
         }
     }
 
@@ -259,6 +266,52 @@ impl Stone {
         }
     }
 
+    /// Ice Wall's cell (EF_ICEWALL) for ground unit `unit` at `at` from `now`: three ice spikes at i = −2, 0 and 2, each
+    /// −i·cos r along z from the cell's centre, 30 units under it, rising 28.35 in 20 ticks and standing with the unit.
+    /// The draws, per spike: r (360, a different one for each), one unused (40), height (100), yaw (360), pitch (6).
+    pub fn ice_wall(&mut self, unit: u32, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        // ponytail: the packet's own 74 at the wall's centre cell draws nothing; the units' cells show the wall.
+        let mut turns = Vec::new();
+        for i in [-2.0_f32, 0.0, 2.0] {
+            let mut turn = rand(360);
+            // The game's three differ; how it keeps them apart isn't known: draw again.
+            for _ in 0..16 {
+                if !turns.contains(&turn) {
+                    break;
+                }
+                turn = rand(360);
+            }
+            turns.push(turn);
+            let _unused = rand(40);
+            let [height, yaw, pitch] = [rand(100), rand(360), rand(6)];
+            let spot = [at[0], at[1], at[2] - i * (turn as f32).to_radians().cos()];
+            let spike = Spike::new(
+                now,
+                spot,
+                FROST_DEPTH,
+                [yaw as f32, (pitch + 87) as f32],
+                [ICE_WALL_HALF, (height + 300) as f32 / 10.0],
+                ICE_WALL_TICKS,
+                ICE_WALL_TICKS - 1,
+            );
+            self.spikes.push(Spike {
+                texture: ICE_TEXTURE,
+                speed: 3.0,
+                change: -0.15,
+                stop: 20,
+                alpha: ICE_WALL_ALPHA,
+                fade: u32::MAX,
+                unit: Some(unit),
+                ..spike
+            });
+        }
+    }
+
+    /// Takes down what ground unit `unit` stood with.
+    pub fn forget(&mut self, unit: u32) {
+        self.spikes.retain(|spike| spike.unit != Some(unit));
+    }
+
     /// Runs the trains and the spikes up to `now`, a tick at a time.
     pub fn advance(&mut self, now: Instant) {
         for train in &mut self.trains {
@@ -384,6 +437,40 @@ mod tests {
         assert_eq!(spikes.spikes[27].alpha, 200.0);
         spikes.advance(start + TICK * 100);
         assert!(spikes.spikes.is_empty());
+    }
+
+    #[test]
+    fn ice_wall_raises_three_spikes_a_cell() {
+        let start = Instant::now();
+        let mut spikes = Stone::default();
+        // r 0, 90 and 180 degrees (cos 1, 0, −1), the unused draw 39, heights 300 + 0, 50 and 99, pitches 87 to 92.
+        let mut draws = [0, 39, 0, 10, 0, 90, 39, 50, 20, 3, 180, 39, 99, 30, 5].into_iter();
+        spikes.ice_wall(7, [10.0, 0.0, 20.0], start, |_| draws.next().unwrap());
+        assert_eq!(spikes.spikes.len(), 3);
+        // Offsets −i·cos r along z from the cell's centre: i = −2 gives +2·1, 0 gives 0, 2 gives −2·−1 = +2.
+        let spots: Vec<[f32; 2]> = spikes.spikes.iter().map(|spike| [spike.base[0], spike.base[2]]).collect();
+        assert!(spots[0] == [10.0, 22.0] && (spots[1][1] - 20.0).abs() < 1e-3 && (spots[2][1] - 22.0).abs() < 1e-3, "{spots:?}");
+        // The half-base is 2.5 whatever the unused draw gives; height (R + 300) / 10; 30 under the cell, 200 alpha.
+        for (spike, height) in spikes.spikes.iter().zip([30.0, 35.0, 39.9]) {
+            assert_eq!((spike.half, spike.base[1], spike.alpha, spike.texture), (2.5, -FROST_DEPTH, 200.0, ICE_TEXTURE));
+            assert!((spike.height - height).abs() < 1e-3);
+        }
+        // Rising 2.85 the first tick, 28.5 at tick 19, 28.35 from tick 20, standing on.
+        spikes.advance(start);
+        assert!((spikes.spikes[0].rise - 2.85).abs() < 1e-4);
+        spikes.advance(start + TICK * 19);
+        assert!((spikes.spikes[0].rise - 28.5).abs() < 1e-3, "{}", spikes.spikes[0].rise);
+        spikes.advance(start + TICK * 20);
+        assert!((spikes.spikes[0].rise - 28.35).abs() < 1e-3);
+        spikes.advance(start + TICK * 2000);
+        assert!((spikes.spikes[0].rise - 28.35).abs() < 1e-3 && spikes.spikes[0].alpha == 200.0);
+        assert_eq!(spikes.mesh(ICE_TEXTURE).len(), 3 * 12);
+        // They go with their unit, and no other.
+        spikes.ice_wall(8, [0.0; 3], start, |n| n / 3);
+        assert_eq!(spikes.spikes.len(), 6);
+        spikes.forget(7);
+        assert_eq!(spikes.spikes.len(), 3);
+        assert!(spikes.spikes.iter().all(|spike| spike.unit == Some(8)));
     }
 
     #[test]
