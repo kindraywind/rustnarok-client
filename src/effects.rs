@@ -1478,6 +1478,8 @@ pub const COLD_HIT: u32 = 51;
 const BASH: u32 = 16;
 /// EF_TURNUNDEAD: its burst round the priest and the ring on the ground (`prims::burst`).
 const TURN_UNDEAD: u32 = 82;
+/// EF_SONICBLOW: Sonic Blow's ring, flat on the screen round the caster (`prims::burst`).
+const SONIC_BLOW: u32 = 121;
 
 /// EF_SOULSTRIKE: ghosts from the caster to the target, a hit each (`prims`).
 const SOUL_STRIKE: u32 = 15;
@@ -1574,12 +1576,16 @@ impl Effects {
             self.load_sage(gpu, grf, id);
             self.prims.sage.look(id, at, now);
         }
-        if let (BASH | TURN_UNDEAD, Target::Unit(unit)) = (id, target) {
+        if let (BASH | TURN_UNDEAD | SONIC_BLOW, Target::Unit(unit)) = (id, target) {
             for path in [burst::DISC, burst::RAY, burst::RING] {
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
             }
             let rand = |n: u32| pick(0, n.saturating_sub(1));
-            let burst = if id == BASH { burst::Burst::bash(unit, now, burst::LIFE, rand) } else { burst::Burst::turn_undead(unit, now, rand) };
+            let burst = match id {
+                BASH => burst::Burst::bash(unit, now, burst::LIFE, rand),
+                SONIC_BLOW => burst::Burst::sonic_blow(unit, now),
+                _ => burst::Burst::turn_undead(unit, now, rand),
+            };
             self.prims.bursts.push(burst);
         }
         // A bolt told no hit count (by the server): one arrow.
@@ -2980,8 +2986,9 @@ mod tests {
         assert_eq!(sounds.len(), 11);
         assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
         assert!(!table.sounds.contains_key(&149));
-        // Sonic Blow: its flash and SonicBlow.str on the caster.
+        // Sonic Blow: its ring (drawn in code, so no parts) and SonicBlow.str on the caster.
         assert_eq!(table.struck(136), Some(&[(Who::Caster, 121), (Who::Caster, 143)][..]));
+        assert!(!table.floaters.contains_key(&121) && !table.parts.contains_key(&121) && !table.sprites.contains_key(&121));
         // A skill's fallback effect never repeats one of its hit effects (Holy Light's 152 plays once, at the hit).
         for (&skill, hit) in &table.hits {
             let repeated = table.skill(skill, "effectId").into_iter().any(|effect| hit.contains(&Some(effect)));
