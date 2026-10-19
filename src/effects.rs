@@ -740,24 +740,81 @@ fn band_mesh(at: Vector, band: &Band, height: impl Fn(usize) -> f32, color: [f32
         .collect()
 }
 
-/// A cast's aura (EF_BEGINSPELL 12 and the elements' 54–59), made in code: bands round the caster's feet, blooming or
-/// turning for the whole cast, moved to the feet every 16 ms tick.
-struct CastAura {
+/// An effect of bands round the feet, made in code: a cast's aura (EF_BEGINSPELL 12 and the elements' 54–59), Heal
+/// (312, 313, 325), the teleport (304), the arrival (344) and the logout (314). Moved to its anchor every 16 ms tick.
+struct Banded {
     effect: u32,
-    unit: Option<u32>,
+    anchor: Anchor,
     start: Instant,
     /// How long it lasts, in ticks.
     ticks: u32,
+    /// Heal's two bands' start turns, picked at random.
+    turns: [f32; 2],
+    /// Heal's sparkles: the tick each starts and where on the ground, from the feet.
+    sparkles: Vec<(u32, [f32; 2])>,
 }
+
+/// A cast's aura: one a caster has at a time.
+fn is_cast_aura(effect: u32) -> bool {
+    matches!(effect, 12 | 54..=59)
+}
+
+/// The effects made of bands.
+pub fn is_banded(effect: u32) -> bool {
+    matches!(effect, 12 | 54..=59 | 304 | 312 | 313 | 314 | 325 | 344)
+}
+
+/// How long a band effect lasts, in ticks: Heal and the arrival 100, the teleport and logout 200.
+fn banded_ticks(effect: u32) -> u32 {
+    match effect {
+        304 | 314 => 200,
+        _ => 100,
+    }
+}
+
+/// The fade of Heal's, the arrival's and the logout's bands: +5 alpha a tick from age 1 to 15 (75), held until 60, then
+/// −2 a tick to nothing (about age 97).
+fn band_fade(age: u32) -> f32 {
+    match age {
+        0..=15 => 5.0 * age as f32,
+        16..=60 => 75.0,
+        _ => (75.0 - 2.0 * (age - 60) as f32).max(0.0),
+    }
+}
+
+/// Heal's sparkle bursts: 4 every 6 ticks until age 50, each −6…+6 units on both ground axes.
+fn heal_sparkles(mut random: impl FnMut(f32, f32) -> f32) -> Vec<(u32, [f32; 2])> {
+    (0..50).step_by(6).flat_map(|age| (0..4).map(|_| (age, [random(-6.0, 6.0), random(-6.0, 6.0)])).collect::<Vec<_>>()).collect()
+}
+
+/// A sparkle's place above its spot and its alpha, `since` ticks after it starts, while it shows.
+// ponytail: it rises 0.3 a tick from 2 up and fades out over 24 ticks, 10 sprite pixels across.
+fn sparkle_at(since: u32) -> Option<(f32, f32)> {
+    (since < SPARKLE_TICKS).then(|| (2.0 + 0.3 * since as f32, 1.0 - since as f32 / SPARKLE_TICKS as f32))
+}
+
+const SPARKLE_TICKS: u32 = 24;
+const SPARKLE_SIZE: f32 = 10.0;
+const SPARKLE_TEXTURE: &str = "data\\texture\\effect\\pok1.tga";
+
+/// The teleport's (304) four closed columns: radius, height, lean, start turn and alpha.
+const TELEPORT_BANDS: [[f32; 5]; 4] =
+    [[1.5, 100.0, 90.0, 180.0, 100.0], [3.0, 70.0, 89.0, 270.0, 80.0], [4.0, 40.0, 88.0, 0.0, 60.0], [5.0, 15.0, 87.0, 90.0, 40.0]];
+/// The arrival's (344): two upright walls and two near-flat rings, as radius, height and lean.
+const ARRIVAL_BANDS: [[f32; 3]; 4] = [[3.7, 30.0, 90.0], [3.4, 30.0, 90.0], [3.6, 4.0, 10.0], [3.7, 4.0, 5.0]];
 
 /// How long a cast's aura lasts: the cast time in 16 ms ticks, at least 56 for 12 and 58 and 70 for the rest.
 fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
     (cast_ms / 16).max(if matches!(effect, 12 | 58) { 56 } else { 70 })
 }
 
-/// An aura's texture, colour and whether it adds on.
+/// A band effect's texture, colour and whether it adds on.
 fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
     match effect {
+        312 | 313 | 325 => ("alpha_down", [0x8C, 0xD2, 0x8C], true),
+        304 => ("Magic_Violet", [0x64, 0x64, 0xFF], true),
+        314 => ("ring_purple", [0x64, 0x64, 0xFF], true),
+        344 => ("ring_blue", [0x64, 0x64, 0xFF], true),
         58 => ("ring_white", [0xFF, 0xFF, 0xFF], true),
         54 => ("ring_blue", [0xC3, 0xC3, 0xFF], false),
         55 => ("ring_yellow", [0xFF, 0xAF, 0xAF], true),
@@ -844,10 +901,48 @@ fn turning_height(band: usize, height: f32, age: u32, s: usize) -> f32 {
     height * (9.0 * s as f32).to_radians().sin() * (age.min(90) as f32).to_radians().sin()
 }
 
-impl CastAura {
+/// A band rising over the first 90 ticks: height × sin(age°).
+// ponytail: its rim doesn't wave.
+fn rising_height(_band: usize, height: f32, age: u32, _s: usize) -> f32 {
+    height * (age.min(90) as f32).to_radians().sin()
+}
+
+/// A band its full height all along.
+fn full_height(_band: usize, height: f32, _age: u32, _s: usize) -> f32 {
+    height
+}
+
+/// The teleport's columns at a tick.
+// ponytail: they stand still and fade out over the last 40 ticks.
+fn teleport_bands(ticks: u32, age: u32) -> [Band; 4] {
+    let left = ticks.saturating_sub(age).min(40) as f32 / 40.0;
+    TELEPORT_BANDS.map(|[radius, height, lean, turn, alpha]| Band { arc: 360.0, turn, radius, lean, height, alpha: alpha * left })
+}
+
+/// The arrival's bands at a tick.
+fn arrival_bands(age: u32) -> [Band; 4] {
+    ARRIVAL_BANDS.map(|[radius, height, lean]| Band { arc: 360.0, turn: 0.0, radius, lean, height, alpha: band_fade(age) })
+}
+
+impl Banded {
     /// Its bands at a tick, each with its height along it.
     fn bands(&self, age: u32) -> Vec<(Band, Vec<f32>)> {
         let heights = |band: usize, height: f32, wave: fn(usize, f32, u32, usize) -> f32| (0..=BAND_QUADS).map(|s| wave(band, height, age, s)).collect();
+        let shaped = |bands: &[Band], wave: fn(usize, f32, u32, usize) -> f32| {
+            bands.iter().enumerate().map(|(index, band)| (*band, heights(index, band.height, wave))).collect()
+        };
+        match self.effect {
+            // Two pale green upright walls; 313 and 325 add their own ring from the table.
+            312 | 313 | 325 => {
+                let wall = |radius: f32, turn: f32| Band { arc: 360.0, turn, radius, lean: 90.0, height: 40.0, alpha: band_fade(age) };
+                return shaped(&[wall(4.6, self.turns[0]), wall(4.8, self.turns[1])], rising_height);
+            }
+            304 => return shaped(&teleport_bands(self.ticks, age), full_height),
+            // ponytail: the logout stands as the teleport's columns, with the fade.
+            314 => return shaped(&teleport_bands(self.ticks, age).map(|band| Band { alpha: band_fade(age), ..band }), rising_height),
+            344 => return shaped(&arrival_bands(age), rising_height),
+            _ => {}
+        }
         if matches!(self.effect, 12 | 58) {
             (0..2)
                 .flat_map(|set| (0..4).filter_map(move |band| bloom(set, band, self.ticks, age).map(|shape| (band, shape))))
@@ -882,7 +977,7 @@ pub struct Effects {
     /// The skill unit type of each ground unit shown, for what it shows when it changes (a trap going off).
     unit_kinds: HashMap<u32, u32>,
     hits: Vec<HitSpark>,
-    auras: Vec<CastAura>,
+    auras: Vec<Banded>,
     /// The game's hand-made effects (Soul Strike's ghosts), and the ghost sprite's layers.
     prims: crate::prims::Prims,
     ghost: Vec<Placed>,
@@ -1109,6 +1204,21 @@ impl Effects {
             self.animations.push(animation);
         }
         self.play_quakes(table, id, now);
+        // Heal, the teleport, the arrival and the logout: bands made in code (a cast's aura comes by `play_aura`).
+        if is_banded(id) && !is_cast_aura(id) {
+            for path in [format!("data\\texture\\effect\\{}.tga", aura_look(id).0), SPARKLE_TEXTURE.to_owned()] {
+                self.textures.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, true).ok());
+            }
+            let healing = matches!(id, 312 | 313 | 325);
+            self.auras.push(Banded {
+                effect: id,
+                anchor: anchor(true),
+                start: now,
+                ticks: banded_ticks(id),
+                turns: [random(0.0, 360.0), random(0.0, 360.0)],
+                sparkles: if healing { heal_sparkles(random) } else { Vec::new() },
+            });
+        }
         for part in table.parts.get(&id).into_iter().flatten() {
             let file = match part.random {
                 Some((from, to)) => part.file.replace("%d", &pick(from, to).to_string()),
@@ -1134,8 +1244,9 @@ impl Effects {
     pub fn play_aura(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, effect: u32, cast_ms: u32, start: Instant) {
         let texture = aura_texture(effect);
         self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
-        self.auras.retain(|aura| aura.unit != unit);
-        self.auras.push(CastAura { effect, unit, start, ticks: aura_ticks(effect, cast_ms) });
+        let anchor = Anchor::Unit(unit);
+        self.auras.retain(|aura| !(is_cast_aura(aura.effect) && matches!(aura.anchor, Anchor::Unit(each) if each == unit)));
+        self.auras.push(Banded { effect, anchor, start, ticks: aura_ticks(effect, cast_ms), turns: [0.0; 2], sparkles: Vec::new() });
     }
 
     /// Queues a camera shake starting at `start` for `length` (`QUAKE_SHORT` or `QUAKE_LONG`).
@@ -1329,7 +1440,7 @@ impl Effects {
 
     pub fn forget(&mut self, unit: u32) {
         self.hits.retain(|hit| !hit.anchor.on(unit));
-        self.auras.retain(|aura| aura.unit != Some(unit));
+        self.auras.retain(|aura| !aura.anchor.on(unit));
         self.playing.retain(|playing| !playing.anchor.on(unit));
         self.floating.retain(|floating| !floating.anchor.on(unit));
         self.rings.retain(|ring| !ring.anchor.on(unit));
@@ -1361,7 +1472,7 @@ impl Effects {
             let (_, color, additive) = aura_look(aura.effect);
             let color = color.map(|value| f32::from(value) / 255.0);
             let texture = self.textures.get(&aura_texture(aura.effect)).and_then(Option::as_ref);
-            let at = position_of(aura.unit);
+            let at = aura.anchor.place(&position_of);
             texture.zip(at).map(|(texture, at)| {
                 let triangles = aura.bands(age).iter().flat_map(|(band, heights)| band_mesh(at, band, |s| heights[s], color)).collect();
                 (texture, triangles, additive)
@@ -1412,6 +1523,24 @@ impl Effects {
             let top = if floating.ray { -height } else { -height / 2.0 };
             let corners = [[-width / 2.0, top], [width / 2.0, top], [width / 2.0, top + height], [-width / 2.0, top + height]].map(corner);
             quads.push((texture, anchor, corners, color, floating.additive));
+        }
+        // Heal's sparkles rising and fading.
+        if let Some(Some(texture)) = self.textures.get(SPARKLE_TEXTURE) {
+            for aura in self.auras.iter().filter(|aura| aura.start <= now && !aura.sparkles.is_empty()) {
+                let Some(at) = aura.anchor.place(&position_of) else { continue };
+                let age = (now.duration_since(aura.start).as_secs_f32() * 1000.0 / HIT_TICK_MS) as u32;
+                for &(start, [x, z]) in &aura.sparkles {
+                    let Some((up, alpha)) = age.checked_sub(start).and_then(sparkle_at) else { continue };
+                    let half = SPARKLE_SIZE / 2.0;
+                    quads.push((
+                        texture,
+                        [at[0] + x, at[1] + up, at[2] + z],
+                        [[-half, -half], [half, -half], [half, half], [-half, half]],
+                        [1.0, 1.0, 1.0, alpha],
+                        true,
+                    ));
+                }
+            }
         }
         // The hits' sparks, each with its trail, sized like a unit's sprite.
         if let Some(Some(sprite)) = self.sprites.get(SPARK_SPRITE) {
@@ -1574,6 +1703,38 @@ mod tests {
     }
 
     #[test]
+    fn heals_teleports_and_arrives_in_bands() {
+        // Up 5 a tick to 75 by age 15, held to 60, down 2 a tick to nothing about 97.
+        assert_eq!([0, 1, 15, 60, 61, 97, 98, 120].map(band_fade), [0.0, 5.0, 75.0, 75.0, 73.0, 1.0, 0.0, 0.0]);
+        // Heal: 4 sparkles every 6 ticks until 50, each within ±6 units of the feet.
+        let sparkles = heal_sparkles(random);
+        assert_eq!(sparkles.len(), 36);
+        assert_eq!(
+            sparkles.iter().map(|(age, _)| *age).collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>(),
+            [0, 6, 12, 18, 24, 30, 36, 42, 48]
+        );
+        assert!(sparkles.iter().all(|(_, [x, z])| x.abs() <= 6.0 && z.abs() <= 6.0));
+        assert!(sparkle_at(0).is_some() && sparkle_at(SPARKLE_TICKS).is_none());
+        let heal = Banded { effect: 312, anchor: Anchor::Unit(None), start: Instant::now(), ticks: 100, turns: [10.0, 200.0], sparkles };
+        let walls = heal.bands(15);
+        assert_eq!(
+            walls.iter().map(|(band, _)| (band.radius, band.lean, band.height, band.turn, band.alpha)).collect::<Vec<_>>(),
+            [(4.6, 90.0, 40.0, 10.0, 75.0), (4.8, 90.0, 40.0, 200.0, 75.0)]
+        );
+        // The teleport's four columns, and the arrival's two walls and two near-flat rings.
+        let columns = teleport_bands(200, 0).map(|band| [band.radius, band.height, band.lean, band.turn, band.alpha]);
+        assert_eq!(columns, TELEPORT_BANDS);
+        assert_eq!(teleport_bands(200, 199)[0].alpha, 100.0 / 40.0);
+        let arrival = arrival_bands(15).map(|band| [band.radius, band.height, band.lean, band.alpha]);
+        assert_eq!(arrival, [[3.7, 30.0, 90.0, 75.0], [3.4, 30.0, 90.0, 75.0], [3.6, 4.0, 10.0, 75.0], [3.7, 4.0, 5.0, 75.0]]);
+        // Their textures, colours and blends; how long they last.
+        assert_eq!(aura_look(312), ("alpha_down", [0x8C, 0xD2, 0x8C], true));
+        assert!([304, 314, 344].iter().all(|&effect| aura_look(effect).1 == [0x64, 0x64, 0xFF] && aura_look(effect).2));
+        assert_eq!([banded_ticks(312), banded_ticks(344), banded_ticks(304), banded_ticks(314)], [100, 100, 200, 200]);
+        assert!(is_banded(325) && is_banded(12) && !is_banded(316));
+    }
+
+    #[test]
     fn lays_bands_round_the_feet() {
         // Radius 4 leaning 60°, 10 high: the top 5 further out and 8.66 up; s = 10 halfway round, s = 20 back.
         let band = Band { arc: 360.0, turn: 0.0, radius: 4.0, lean: 60.0, height: 10.0, alpha: 255.0 };
@@ -1680,10 +1841,14 @@ mod tests {
         assert_eq!(angel, 371);
         // A super novice's job level up (type 8): EF_JOBLVUP50.
         assert_eq!(table.misc(8), Some(337));
-        // The teleport's violet rings and the logout's four purple ones.
-        let textures = |effect: u32| table.rings[&effect].iter().map(|ring| ring["textureName"].as_str()).collect::<Vec<_>>();
-        assert_eq!(textures(304), ["Magic_Violet"; 4]);
-        assert_eq!(textures(314), ["ring_purple"; 4]);
+        // The teleport's, the logout's, the arrival's and Heal's bands are made in code; the warp portals' rings are
+        // ×#6464FF (open) and untinted (waiting), adding on.
+        assert!([304, 312, 314, 344].iter().all(|effect| !table.rings.contains_key(effect)));
+        assert_eq!(table.rings[&313].len(), 1);
+        for ring in &table.rings[&317] {
+            assert_eq!([&ring["red"], &ring["green"], &ring["blue"], &ring["blendMode"]], ["0.392", "0.392", "1", "2"]);
+        }
+        assert_eq!([&table.rings[&316][0]["red"], &table.rings[&316][0]["green"]], ["1", "1"]);
         let part = &table.parts[&angel][0];
         assert_eq!((part.file.as_str(), part.attached), ("angel", true));
         assert_eq!(table.item(501), Some(204));
