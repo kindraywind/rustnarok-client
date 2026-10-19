@@ -2550,6 +2550,8 @@ fn pre_map_escape(scene: &Scene) -> Option<(usize, Then)> {
     match scene {
         Scene::Login | Scene::Connections { .. } | Scene::ServerSelect { .. } => Some((QUIT_MESSAGE, Then::Quit)),
         Scene::CharSelect(_) => Some((RETURN_TO_LOGIN_MESSAGE, Then::BackToLogin)),
+        // Making a character, Esc asks to quit (Return and the X go back).
+        Scene::CharMake(..) => Some((QUIT_MESSAGE, Then::Quit)),
         _ => None,
     }
 }
@@ -4135,8 +4137,8 @@ impl App {
                     _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
                 }
             }
-            char_make::Action::ShortName => {
-                let text = self.message_text(char_make::SHORT_NAME_MESSAGE);
+            char_make::Action::Refused(line) => {
+                let text = self.message_text(line);
                 let back = std::mem::replace(&mut self.scene, Scene::Login);
                 self.message(text, back);
             }
@@ -5828,6 +5830,9 @@ mod tests {
         assert!(matches!(pre_map_escape(&Scene::Connections { selected: 0 }), Some((QUIT_MESSAGE, Then::Quit))));
         let waiting = Scene::Waiting(Box::new(Scene::Login));
         assert!(pre_map_escape(&waiting).is_none(), "a box over the screen takes Esc itself");
+        // Making a character, Esc asks to quit.
+        let making = Scene::CharMake(Box::new(char_make::Make::blank(2)), Box::new(char_select::Select::new(Vec::new(), Vec::new(), 9)));
+        assert!(matches!(pre_map_escape(&making), Some((QUIT_MESSAGE, Then::Quit))));
     }
 
     #[test]

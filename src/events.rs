@@ -137,7 +137,11 @@ impl App {
                     3 => 1355,
                     _ => 11,
                 });
-                let back = std::mem::replace(&mut self.scene, Scene::Login);
+                // The box closes onto character select, not the make window.
+                let back = match std::mem::replace(&mut self.scene, Scene::Login) {
+                    Scene::CharMake(_, select) => Scene::CharSelect(select),
+                    scene => scene,
+                };
                 self.message(text, back);
             }
             NetEvent::Char(CharEvent::ZoneServer { map, ip, port, character_id }) => {
