@@ -559,6 +559,11 @@ fn sprite_depth(feet: f32, below: f32, [slope, bias, nudge]: [f32; 3]) -> f32 {
 /// it's an STR's: `STR_RISE` screen pixels up, drawn last over everything with no depth test.
 pub type EffectQuad<'a> = (&'a Texture, Vector, [[f32; 2]; 4], [f32; 4], bool, bool);
 
+/// A shape drawn flat on the screen over a point in the world (the game's screen prims, COLDHIT's shards): texture, the
+/// point, and its triangles' corners in screen pixels from the point's projection (y down), texture coordinates and
+/// colors. Drawn over everything, blended.
+pub type ScreenShape<'a> = (&'a Texture, Vector, Vec<([f32; 2], [f32; 2], [f32; 4])>);
+
 /// An effect shape in the world: texture, triangles (position, texture coordinates, color) and whether it adds on.
 pub type EffectMesh<'a> = (&'a Texture, Vec<MeshVertex>, bool);
 
@@ -1252,6 +1257,7 @@ pub struct WorldFrame<'a> {
     pub shadows: usize,
     pub effects: &'a [EffectQuad<'a>],
     pub meshes: &'a [EffectMesh<'a>],
+    pub screen: &'a [ScreenShape<'a>],
     /// Seconds since the map was entered, for animated textures.
     pub time: f32,
     /// The player is blind: lava draws as ordinary water.
@@ -1334,6 +1340,21 @@ impl WorldPass for WorldFrame<'_> {
             gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("effects"),
                 contents: bytemuck::cast_slice(&effect_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
+        });
+        // Screen shapes: every corner on its point, moved by its screen pixels after projecting.
+        let screen_vertices: Vec<SpriteVertex> = self
+            .screen
+            .iter()
+            .flat_map(|(_, feet, corners)| {
+                corners.iter().map(move |&(pixel, uv, tint)| SpriteVertex { feet: *feet, offset: [0.0; 2], uv, tint, pixel, plane: [0.0; 3] })
+            })
+            .collect();
+        let screen_buffer = (!screen_vertices.is_empty()).then(|| {
+            gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("screen shapes"),
+                contents: bytemuck::cast_slice(&screen_vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             })
         });
@@ -1450,6 +1471,17 @@ impl WorldPass for WorldFrame<'_> {
                     pass.set_bind_group(1, texture.bind_group(), &[]);
                     pass.draw(first..first + 6, 0..1);
                 }
+            }
+        }
+        if let Some(buffer) = &screen_buffer {
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            pass.set_pipeline(&world.str_pipelines[0]);
+            let mut first = 0u32;
+            for (texture, _, corners) in self.screen {
+                let count = corners.len() as u32;
+                pass.set_bind_group(1, texture.bind_group(), &[]);
+                pass.draw(first..first + count, 0..1);
+                first += count;
             }
         }
     }

@@ -1177,6 +1177,9 @@ pub fn unit_hit_effect(skill: u16) -> Option<u32> {
     }
 }
 
+/// EF_COLDHIT: Cold Bolt's, Frost Diver's and Storm Gust's hit, ice shards and smoke drawn on the screen (`prims`).
+pub const COLD_HIT: u32 = 51;
+
 /// EF_SOULSTRIKE: ghosts from the caster to the target, a hit each (`prims`).
 pub const SOUL_STRIKE: u32 = 15;
 
@@ -1233,6 +1236,13 @@ impl Effects {
     /// What effect `id` draws, from `now` on.
     #[allow(clippy::too_many_arguments)]
     fn show(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
+        // COLDHIT is drawn in code, flat on the screen over its unit.
+        if let (COLD_HIT, Target::Unit(unit)) = (id, target) {
+            for path in [crate::prims::ICE_TEXTURE, crate::prims::SMOKE_TEXTURE] {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            self.prims.cold_hit(unit, now, |n| pick(0, n.saturating_sub(1)));
+        }
         let anchor = |attached: bool| match target {
             Target::Unit(unit) if attached => Anchor::Unit(unit),
             Target::Lasting(unit) | Target::Kept(unit) => Anchor::Lasting(unit, at),
@@ -1572,6 +1582,16 @@ impl Effects {
             })
         });
         rings.chain(models).chain(hits).chain(auras).collect()
+    }
+
+    /// What's drawn flat on the screen over units now (COLDHIT's shards and smoke): texture, the unit's feet, and the
+    /// triangles' corners in screen pixels from there.
+    pub fn screen_shapes(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<world::ScreenShape<'_>> {
+        self.prims
+            .screen_shapes(now)
+            .into_iter()
+            .filter_map(|(path, unit, corners)| Some((self.textures.get(path)?.as_ref()?, position_of(unit)?, corners)))
+            .collect()
     }
 
     /// Every effect quad showing now; `position_of` gives a unit's feet (None = the player).
