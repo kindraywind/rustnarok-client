@@ -1798,8 +1798,7 @@ impl App {
                 Panel::Mercenary => {
                     if let Some(hired) = &game.mercenary {
                         let job = game.units.get(&hired.id).map_or(0, |actor| actor.job);
-                        let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs());
-                        game.mercenary_window.draw(&mut layer, &assets.chrome, &assets.mercenary, font, messages, hired, job, unix, pointer);
+                        game.mercenary_window.draw(&mut layer, &assets.chrome, &assets.mercenary, font, messages, hired, job, pointer);
                     }
                 }
                 Panel::MercenarySkills => {

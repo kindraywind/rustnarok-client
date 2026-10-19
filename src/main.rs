@@ -404,6 +404,8 @@ const BLOCK_CHOICE: usize = 3820;
 const KICK_CHOICE: usize = 458;
 /// Our homunculus's menu: "View Status", "Feed", "Stand By".
 const HOMUNCULUS_CHOICES: [(usize, Choice); 3] = [(1112, Choice::HomunculusStatus), (1113, Choice::HomunculusFeed), (1114, Choice::HomunculusStandBy)];
+/// Our mercenary's menu: View Status, Stand By.
+const MERCENARY_CHOICES: [(usize, Choice); 2] = [(1112, Choice::MercenaryStatus), (1114, Choice::MercenaryStandBy)];
 /// Ourselves with a stall open: "Close stall".
 const CLOSE_STALL_CHOICE: usize = 3493;
 const PET_FEED_ASKS: usize = 601;
@@ -2229,6 +2231,9 @@ enum Choice {
     HomunculusStatus,
     HomunculusFeed,
     HomunculusStandBy,
+    /// Our mercenary: its window, or it staying put.
+    MercenaryStatus,
+    MercenaryStandBy,
     /// Close our stall.
     CloseStall,
 }
@@ -2239,16 +2244,25 @@ enum MenuFor {
     Player(u32),
     Pet(u32),
     Homunculus(u32),
+    Mercenary(u32),
     /// Ourselves, while our stall is open.
     Stall,
 }
 
 /// The menu a still right-click opens for what's under the pointer (`picked`, by the usual ranks with Shift's aside):
-/// another player, our pet or homunculus, or ourselves while our stall is open; nothing for anything else.
-fn menu_for(picked: Option<Owner>, is_player: impl Fn(u32) -> bool, pet: Option<u32>, homunculus: Option<u32>, stall: bool) -> Option<MenuFor> {
+/// another player, our pet, homunculus or mercenary, or ourselves while our stall is open; nothing for anything else.
+fn menu_for(
+    picked: Option<Owner>,
+    is_player: impl Fn(u32) -> bool,
+    pet: Option<u32>,
+    homunculus: Option<u32>,
+    mercenary: Option<u32>,
+    stall: bool,
+) -> Option<MenuFor> {
     match picked? {
         Owner::Unit(id) if pet == Some(id) => Some(MenuFor::Pet(id)),
         Owner::Unit(id) if homunculus == Some(id) => Some(MenuFor::Homunculus(id)),
+        Owner::Unit(id) if mercenary == Some(id) => Some(MenuFor::Mercenary(id)),
         Owner::Unit(id) if is_player(id) => Some(MenuFor::Player(id)),
         Owner::Player if stall => Some(MenuFor::Stall),
         _ => None,
@@ -6616,14 +6630,16 @@ mod tests {
     fn opens_the_menu_for_what_is_under_the_pointer() {
         let players = [7u32, 8];
         let is_player = |id: u32| players.contains(&id);
-        let menu = |picked| menu_for(picked, is_player, Some(20), Some(30), false);
+        let menu = |picked| menu_for(picked, is_player, Some(20), Some(30), Some(40), false);
         // A player alone: their menu. A monster or an item over them is what's picked: no menu.
         assert_eq!(menu(Some(Owner::Unit(7))), Some(MenuFor::Player(7)));
         assert_eq!((menu(Some(Owner::Unit(99))), menu(Some(Owner::Item(5))), menu(None)), (None, None, None));
         // Our pet and our homunculus have their own; we have one only with our stall open.
         assert_eq!((menu(Some(Owner::Unit(20))), menu(Some(Owner::Unit(30)))), (Some(MenuFor::Pet(20)), Some(MenuFor::Homunculus(30))));
+        assert_eq!(menu(Some(Owner::Unit(40))), Some(MenuFor::Mercenary(40)));
+        assert_eq!(MERCENARY_CHOICES.map(|(label, _)| label), [1112, 1114]);
         assert_eq!(menu(Some(Owner::Player)), None);
-        assert_eq!(menu_for(Some(Owner::Player), is_player, None, None, true), Some(MenuFor::Stall));
+        assert_eq!(menu_for(Some(Owner::Player), is_player, None, None, None, true), Some(MenuFor::Stall));
         // The pick itself goes by the usual ranks: a monster's area over a player's wins.
         let target = |owner, kind| picking::Target { owner, kind, sprite: [0.0; 4], area: [100.0, 100.0, 200.0, 200.0], depth: 1.0 };
         let boxes = [target(Owner::Unit(7), picking::Kind::Player), target(Owner::Unit(99), picking::Kind::Monster)];

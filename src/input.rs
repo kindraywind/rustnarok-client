@@ -443,6 +443,13 @@ impl App {
                 }
                 Some(Choice::HomunculusFeed) => game.homunculus_asked = Some(HomunculusAsked::Feed),
                 Some(Choice::HomunculusStandBy) => game.homunculus_steering.following = !game.homunculus_steering.following,
+                Some(Choice::MercenaryStatus) => {
+                    game.mercenary_window.frame.toggle();
+                    game.raise(Panel::Mercenary);
+                    game.sync_esc();
+                }
+                // As Ctrl+T.
+                Some(Choice::MercenaryStandBy) => game.steering.following = !game.steering.following,
                 Some(Choice::CloseStall) => {
                     let _ = game.session.close_shop();
                     game.my_shop = None;
@@ -1494,7 +1501,7 @@ impl App {
                         }
                     }
                     Panel::Mercenary => match game.mercenary_window.hit(cursor) {
-                        Some(mercenary::Hit::Title(title)) => game.mercenary_window.frame.click_title(title),
+                        Some(mercenary::Hit::Close) => game.mercenary_window.frame.open = false,
                         Some(mercenary::Hit::Skills) => {
                             game.mercenary_skill_list.frame.toggle();
                             game.raise(Panel::MercenarySkills);
@@ -2154,7 +2161,8 @@ impl App {
                 || picking::pick(game.hit_boxes.iter().copied().filter(|target| target.owner == Owner::Player), self.cursor, false, screen_middle());
             let picked = hovered(&game.hit_boxes, self.cursor, false).or_else(|| game.my_shop.as_ref().and_then(|_| ourselves()));
             let is_player = |id: u32| game.units.get(&id).is_some_and(|actor| actor.kind == PLAYER);
-            let on_unit = match menu_for(picked, is_player, game.pet_id, game.homunculus_id, game.my_shop.is_some()) {
+            let mercenary = game.mercenary.as_ref().map(|hired| hired.id);
+            let on_unit = match menu_for(picked, is_player, game.pet_id, game.homunculus_id, mercenary, game.my_shop.is_some()) {
                 _ if game.window_at(self.cursor).is_some() || game.chat.blocks(self.cursor) => None,
                 target => target,
             };
@@ -2166,7 +2174,9 @@ impl App {
                 && menu_opens(game.right_moved, self.modifiers.shift_key(), self.mouse_down, false)
             {
                 let name = match target {
-                    MenuFor::Player(id) | MenuFor::Pet(id) | MenuFor::Homunculus(id) => game.units.get(&id).map(|actor| actor.name.clone()).unwrap_or_default(),
+                    MenuFor::Player(id) | MenuFor::Pet(id) | MenuFor::Homunculus(id) | MenuFor::Mercenary(id) => {
+                        game.units.get(&id).map(|actor| actor.name.clone()).unwrap_or_default()
+                    }
                     MenuFor::Stall => game.me.name.clone(),
                 };
                 let fill = |id: usize| rustnarok_client::messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]);
@@ -2174,6 +2184,7 @@ impl App {
                     // Our pet: its five commands.
                     MenuFor::Pet(_) => PET_CHOICES.into_iter().map(|(label, command)| (label, Choice::Pet(command))).collect(),
                     MenuFor::Homunculus(_) => HOMUNCULUS_CHOICES.to_vec(),
+                    MenuFor::Mercenary(_) => MERCENARY_CHOICES.to_vec(),
                     MenuFor::Stall => vec![(CLOSE_STALL_CHOICE, Choice::CloseStall)],
                     MenuFor::Player(id) => {
                         let guild = game.guild.as_ref().filter(|guild| guild.master);
@@ -3206,9 +3217,7 @@ impl App {
                 {
                     game.homunculus_skill_list.frame.start_drag(cursor)
                 }
-                Panel::Mercenary if game.mercenary_window.hit(cursor) == Some(mercenary::Hit::Title(TitleHit::Title)) => {
-                    game.mercenary_window.frame.start_drag(cursor)
-                }
+                Panel::Mercenary if game.mercenary_window.hit(cursor) == Some(mercenary::Hit::Window) => game.mercenary_window.frame.start_drag(cursor),
                 Panel::MercenarySkills
                     if game.mercenary_skill_list.hit(cursor, &game.mercenary_skills) == Some(mercenary::SkillHit::Title(TitleHit::Title)) =>
                 {

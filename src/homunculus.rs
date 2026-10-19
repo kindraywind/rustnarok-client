@@ -157,13 +157,13 @@ pub enum Gauge {
     Filled(f32, bool),
 }
 
-pub fn gauge(value: u32, most: u32) -> Gauge {
+pub fn gauge(value: u32, most: u32, width: f32) -> Gauge {
     if value > most {
         Gauge::Hidden
     } else if value == 0 || most == 0 {
         Gauge::Empty
     } else {
-        let middle = ((BAR[0] - 2.0 * FILL_END) * value as f32 / most as f32).trunc();
+        let middle = ((width - 2.0 * FILL_END) * value as f32 / most as f32).trunc();
         Gauge::Filled(middle, u64::from(value) * 4 < u64::from(most))
     }
 }
@@ -312,7 +312,7 @@ impl Window {
         }
         // HP and SP.
         for (place, (value, most)) in [(HP_BAR, (h.hp, h.max_hp)), (SP_BAR, (h.sp, h.max_sp))] {
-            let gauge = gauge(value, most);
+            let gauge = gauge(value, most, BAR[0]);
             if gauge == Gauge::Hidden {
                 continue;
             }
@@ -561,11 +561,11 @@ mod tests {
     #[test]
     fn fills_the_bars() {
         // HP and SP: the middle over 149 px, red under a quarter, nothing past the maximum, no fill at 0.
-        assert_eq!(gauge(100, 100), Gauge::Filled(149.0, false));
-        assert_eq!(gauge(25, 100), Gauge::Filled(37.0, false));
-        assert_eq!(gauge(24, 100), Gauge::Filled(35.0, true));
-        assert_eq!(gauge(101, 100), Gauge::Hidden);
-        assert_eq!([gauge(0, 100), gauge(0, 0)], [Gauge::Empty, Gauge::Empty]);
+        assert_eq!(gauge(100, 100, BAR[0]), Gauge::Filled(149.0, false));
+        assert_eq!(gauge(25, 100, BAR[0]), Gauge::Filled(37.0, false));
+        assert_eq!(gauge(24, 100, BAR[0]), Gauge::Filled(35.0, true));
+        assert_eq!(gauge(101, 100, BAR[0]), Gauge::Hidden);
+        assert_eq!([gauge(0, 100, BAR[0]), gauge(0, 0, BAR[0])], [Gauge::Empty, Gauge::Empty]);
         assert_eq!(gauge_text(20, 150), " 20  /  150");
         // Exp: none past the next level's or without one.
         assert_eq!(exp_fill(50, 100), Some(50.0));

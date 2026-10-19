@@ -215,6 +215,18 @@ fn run(grf: &Grf, files: &[&str]) -> io::Result<Lua> {
     Ok(lua)
 }
 
+/// `time` (Unix seconds) as a local date and time by a strftime pattern, as Lua's `os.date` writes it ("!" first: UTC);
+/// at most 127 bytes.
+pub fn local_date(pattern: &str, time: i64) -> String {
+    let Ok(lua) = Lua::new_with(mlua::StdLib::OS, mlua::LuaOptions::default()) else { return String::new() };
+    let date = lua.globals().get::<mlua::Table>("os").and_then(|os| os.get::<mlua::Function>("date")).and_then(|date| date.call::<String>((pattern, time)));
+    let mut date = date.unwrap_or_default();
+    while date.len() > 127 {
+        date.pop();
+    }
+    date
+}
+
 fn new_lua() -> io::Result<Lua> {
     // Data tables only need these; no file or OS access for files that may come from a translation pack.
     Lua::new_with(mlua::StdLib::TABLE | mlua::StdLib::STRING | mlua::StdLib::MATH, mlua::LuaOptions::default()).map_err(lua_error)
@@ -2013,6 +2025,13 @@ mod tests {
         let fields = read("1@exds.rsw").fields;
         assert_eq!((fields.len(), fields[0].num, fields[0].color, fields[0].alpha_dec_time_extra, fields[0].cull_dist), (1, 500, [255, 250, 240], 200, 200.0));
         assert_eq!(read("prontera.rsw"), super::SkyEffects::default());
+    }
+
+    #[test]
+    fn writes_a_date_by_its_pattern() {
+        // 2026-10-20 18:30 UTC.
+        assert_eq!(super::local_date("!%m/%d %H:%M", 1_792_521_000), "10/20 18:30");
+        assert_eq!(super::local_date(&"!%Y".repeat(40), 0).len(), 127);
     }
 
     #[test]
