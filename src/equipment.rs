@@ -10,6 +10,7 @@ use rustnarok_client::lua::ItemInfo;
 use rustnarok_client::net::InventoryItem;
 use rustnarok_client::text::Font;
 
+use crate::actor::Look;
 use crate::inventory;
 use crate::render::{self, Gpu, Sprite, Texture};
 use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};
@@ -64,7 +65,9 @@ const STACK_MESSAGE: usize = 183;
 /// A name's lines, this far apart.
 const NAME_LINE: f32 = 12.0;
 /// Where the character stands: the shadow baked into equipwin_bg.bmp.
-const PREVIEW_FEET: [f32; 2] = [140.0, PANEL_TOP + 114.0];
+const PREVIEW_FEET: [f32; 2] = [141.0, 149.0];
+/// The slots the preview dresses from, by tab (top, mid and lower headgear, garment): General, then Costume.
+const PREVIEW_SLOTS: [[u32; 4]; 2] = [[0x100, 0x200, 0x001, 0x004], [0x400, 0x800, 0x1000, 0x2000]];
 /// Where it first opens.
 const DEFAULT_POSITION: [f32; 2] = [185.0, 300.0];
 /// General, Costume (costumes and shadow gear) and Title (the player's own window only), and their tooltips.
@@ -616,7 +619,12 @@ impl Equipment {
 
     /// Where the character preview stands on screen, while it shows.
     pub fn preview_feet(&self) -> Option<[f32; 2]> {
-        (self.frame.open && !self.frame.minimized && self.tab == 0).then(|| self.frame.at(PREVIEW_FEET))
+        (self.frame.open && !self.frame.minimized && self.tab != TITLES_TAB).then(|| self.frame.at(PREVIEW_FEET))
+    }
+
+    /// The preview's look on this tab (`preview_look`).
+    pub fn preview_look(&self, base: &Look, worn: &[(u32, u16)]) -> Look {
+        preview_look(base, self.tab == 1, worn)
     }
 
     /// Draws the window into `layer` (with the character's `preview` sprites) and the hovered slot into `tooltip`.
@@ -827,6 +835,24 @@ impl Equipment {
     }
 }
 
+/// The equipment window's figure: `base` (job, sex, hair and colours) dressed from the tab's headgear and garment, each
+/// by its item's view in `worn` (where it's worn, view), with no weapon, shield or mount. A headgear filling several
+/// slots shows once, in its highest; an empty costume slot shows nothing.
+pub fn preview_look(base: &Look, costume: bool, worn: &[(u32, u16)]) -> Look {
+    let [top, mid, low, robe] = PREVIEW_SLOTS[usize::from(costume)];
+    let view = |slot: u32, above: u32| worn.iter().find(|&&(at, _)| at & slot != 0 && at & above == 0).map_or(0, |&(_, view)| view);
+    Look {
+        weapon: 0,
+        shield: 0,
+        option: 0,
+        head_top: view(top, 0),
+        head_mid: view(mid, top),
+        head_bottom: view(low, top | mid),
+        robe: view(robe, 0),
+        ..base.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1027,5 +1053,28 @@ mod tests {
         // Back to what's worn.
         window.click(Hit::Swap);
         assert_eq!(window.slots(&items).map(|(.., item)| item.index).collect::<Vec<_>>(), [3]);
+    }
+
+    #[test]
+    fn dresses_the_preview_from_the_tabs_own_gear() {
+        let base = Look { job: 1, sex: 1, hair: 5, weapon: 1101, shield: 2101, head_top: 9, robe: 3, option: 0x10, ..Look::default() };
+        // A Hat (view 16) on top, a two-slot mid and lower headgear (view 20), a cape (view 1), a costume circlet (view 77).
+        let worn = [(0x100, 16), (0x201, 20), (0x004, 1), (0x400, 77), (0x002, 1101), (0x020, 2101)];
+        let general = preview_look(&base, false, &worn);
+        assert_eq!((general.head_top, general.head_mid, general.head_bottom, general.robe), (16, 20, 0, 1), "the two-slot one once");
+        assert_eq!((general.weapon, general.shield, general.option), (0, 0, 0));
+        assert_eq!((general.job, general.sex, general.hair), (1, 1, 5));
+        let costume = preview_look(&base, true, &worn);
+        assert_eq!((costume.head_top, costume.head_mid, costume.head_bottom, costume.robe), (77, 0, 0, 0), "empty costume slots stay empty");
+        // A top-mid-lower helm shows once, on top.
+        assert_eq!(preview_look(&base, false, &[(0x301, 30)]).head_mid, 0);
+        // The feet, on General and Costume but not Title.
+        let mut window = Equipment::default();
+        window.frame.open = true;
+        assert_eq!(window.preview_feet(), Some(window.frame.at([141.0, 149.0])));
+        window.tab = 1;
+        assert!(window.preview_feet().is_some());
+        window.tab = TITLES_TAB;
+        assert_eq!(window.preview_feet(), None);
     }
 }

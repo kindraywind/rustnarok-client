@@ -1429,6 +1429,8 @@ struct Game {
     dress_lists: dressroom::Lists,
     dressroom: Option<dressroom::Room>,
     dress_figure: Option<SpriteSet>,
+    /// The equipment window's figure and the look it was made from.
+    preview_figure: Option<(Look, Option<SpriteSet>)>,
     /// The emblems drawn over heads this frame: whose, their guild, the box (for the test driver).
     head_emblems: Vec<(String, u32, [f32; 4])>,
     /// The bars drawn under units this frame: whose ("player", a summon's kind, else the unit ID), the box, each row's
@@ -2345,7 +2347,20 @@ enum PetAsked {
 struct Viewed {
     window: equipment::Equipment,
     items: Vec<net::InventoryItem>,
-    sprites: Option<SpriteSet>,
+    /// Their job, sex, hair and colours, and what they wear (where, view), for the figure.
+    look: Look,
+    views: Vec<(u32, u16)>,
+    figure: Option<(Look, Option<SpriteSet>)>,
+}
+
+/// Makes the equipment window's figure again when the look it should wear changes.
+fn dress_preview(figure: &mut Option<(Look, Option<SpriteSet>)>, look: Option<Look>, grf: &Grf, tables: &LookTables) {
+    if figure.as_ref().map(|(had, _)| had) != look.as_ref() {
+        *figure = look.map(|look| {
+            let sprites = SpriteSet::player(grf, &look, tables);
+            (look, sprites)
+        });
+    }
 }
 
 /// A map about to load behind the loading screen.

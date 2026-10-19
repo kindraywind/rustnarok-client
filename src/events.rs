@@ -517,6 +517,7 @@ impl App {
                     char_names: HashMap::new(),
                     names_asked: HashSet::new(),
                     dress_figure: None,
+                    preview_figure: None,
                     head_emblems: Vec::new(),
                     bars_drawn: Vec::new(),
                     no_shift: settings_path("noshift").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
@@ -1006,28 +1007,19 @@ impl App {
             }
             // Another player's equipment: their window with their figure, its weapon and shield from what they wear.
             MapEvent::OtherEquipment(equipped) => {
-                let held = |location: u32| equipped.items.iter().find(|(item, _)| item.worn & location != 0).map_or(0, |(_, look)| u32::from(*look));
                 let look = Look {
                     job: equipped.job,
                     sex: equipped.sex,
                     hair: equipped.hair,
                     hair_color: equipped.hair_color,
                     clothes_color: equipped.clothes_color,
-                    weapon: held(2),
-                    shield: held(32),
-                    head_top: equipped.head_top,
-                    head_mid: equipped.head_mid,
-                    head_bottom: equipped.head_bottom,
                     robe: equipped.robe,
-                    option: 0,
+                    ..Look::default()
                 };
                 let mut window = equipment::Equipment::of(equipped.name, screen());
                 window.set_tab_labels(&self.messages, &self.font);
-                game.viewing = Some(Viewed {
-                    window,
-                    items: equipped.items.into_iter().map(|(item, _)| item).collect(),
-                    sprites: SpriteSet::player(grf, &look, look_tables),
-                });
+                let views = equipped.items.iter().filter(|(item, _)| item.worn != 0).map(|&(ref item, view)| (item.worn, view)).collect();
+                game.viewing = Some(Viewed { window, items: equipped.items.into_iter().map(|(item, _)| item).collect(), look, views, figure: None });
             }
             MapEvent::CostumesShown(shown) => game.equipment.costumes_shown = shown,
             MapEvent::ShowEquipment { shown, answer } => {
