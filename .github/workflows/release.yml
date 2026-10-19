@@ -1,0 +1,65 @@
+# Builds the macOS (Apple Silicon), Linux and Windows clients when a version tag is pushed, and attaches them to that tag's
+# GitHub release. Run it by hand (Actions > Release > Run workflow) to attach to a tag that already has a release. No game
+# data: the archives hold the client (the macOS one as Ragnarok.app, from tools/bundle.sh), the licenses and the README.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release's tag, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, name: macos-arm64 }
+          - { os: ubuntu-latest, name: linux-x86_64 }
+          - { os: windows-latest, name: windows-x86_64 }
+    runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      # ALSA for the sound (cpal), as in ci.yml.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      # The nightly rust-toolchain.toml pins.
+      - run: rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      # tools/bundle.sh builds the macOS app itself.
+      - if: runner.os != 'macOS'
+        run: cargo build --release
+      - name: Package
+        shell: bash
+        run: |
+          dir="rustnarok-client-${TAG#v}-${{ matrix.name }}"
+          if [ "$RUNNER_OS" = macOS ]; then
+            tools/bundle.sh "$PWD"
+            ditto -c -k --keepParent Ragnarok.app "Ragnarok-${TAG#v}-${{ matrix.name }}.zip"
+            echo "FILE=Ragnarok-${TAG#v}-${{ matrix.name }}.zip" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          mkdir "$dir"
+          cp LICENSE-MIT LICENSE-APACHE README.md THIRD_PARTY_NOTICES.md "$dir"
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp target/release/rustnarok-client.exe "$dir"
+            7z a "$dir.zip" "$dir"
+            echo "FILE=$dir.zip" >> "$GITHUB_ENV"
+          else
+            cp target/release/rustnarok-client "$dir"
+            tar czf "$dir.tar.gz" "$dir"
+            echo "FILE=$dir.tar.gz" >> "$GITHUB_ENV"
+          fi
+      - run: gh release upload "$TAG" "$FILE" --clobber
+        shell: bash
