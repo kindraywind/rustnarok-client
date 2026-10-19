@@ -142,8 +142,10 @@ pub struct Assets {
 
 impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
-        let image = |name: &str| gpu.load_texture(grf, &format!("{UI}renew_questui\\{name}.bmp"), false);
-        let basic = |name: &str| gpu.load_texture(grf, &format!("{UI}basic_interface\\{name}.bmp"), false);
+        // Data without these images still starts: a missing one is left blank.
+        let load = |path: String| gpu.try_load_texture(grf, &path, false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
+        let image = |name: &str| load(format!("{UI}renew_questui\\{name}.bmp"));
+        let basic = |name: &str| load(format!("{UI}basic_interface\\{name}.bmp"));
         Self {
             background: image("bg_quest"),
             search: image("bg_search"),
