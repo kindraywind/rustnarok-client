@@ -3359,7 +3359,6 @@ impl App {
         let view = escape::EscView {
             // The always-on line is not this. An open battle-mode line is the first Esc.
             battle_line: game.chat_mode.battle_line_open(),
-            whisper_list: game.chat.whisper_list_open(),
             focused: game.focused_text(),
             conversation: game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()),
             question: game.question_open(),
@@ -3369,7 +3368,6 @@ impl App {
         let act = escape::decide(false, view);
         let Scene::Game(game) = &mut self.scene else { return };
         match act {
-            Some(escape::EscAct::CloseWhisperList) => game.chat.close_whisper_list(),
             Some(escape::EscAct::CloseBattleChat) => {
                 game.chat.close_battle_line();
                 game.chat_mode.close_line();
