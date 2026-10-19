@@ -1,14 +1,14 @@
 //! Spikes the game makes in code (its prim kind 9): open four-sided pyramids that rise out of the ground along their
-//! own axis. Earth Spike's (EF_EARTHSPIKE 79), Heaven's Drive's field (EF_HEAVENSDRIVE 142) and Grimtooth's train
-//! (EF_GRIMTOOTH 123).
+//! own axis. Earth Spike's (EF_EARTHSPIKE 79), Heaven's Drive's field (EF_HEAVENSDRIVE 142), Grimtooth's train
+//! (EF_GRIMTOOTH 123), and Frost Diver's ice (EF_FROSTDIVER 27, EF_FROSTDIVER2 28).
 
 use std::time::Instant;
 
-use super::{TICK, passes};
+use super::{ICE_TEXTURE, TICK, passes};
 use crate::effects::pick;
 use crate::world::{MeshVertex, Vector};
 
-/// What the spikes are made of.
+/// What the stone spikes are made of (Frost Diver's are `ICE_TEXTURE`).
 pub const STONE: &str = "data\\texture\\effect\\stone.bmp";
 
 /// Earth Spike's and Heaven's Drive's lengths in ticks (Heaven's Drive raises its 250 by 50 as it starts).
@@ -21,10 +21,20 @@ const TRAIN_EVERY: u32 = 3;
 /// after its first spike (world units).
 const TRAIN_STEP: f32 = 2.0;
 const TRAIN_STOP: f32 = 2.5;
+/// Frost Diver's line: a spike a tick from 5 units out toward the target, 2 units further each tick, the last within
+/// 2.5 of the target (or on the effect's 150th tick if it never gets there). Its spikes stand 30 units under the
+/// ground and live 40 ticks.
+const FROST_FIRST: f32 = 5.0;
+const FROST_STEP: f32 = 2.0;
+const FROST_REACH: f32 = 2.5;
+const FROST_TICKS: u32 = 150;
+const FROST_LIFE: u32 = 40;
+const FROST_DEPTH: f32 = 30.0;
 
 /// A spike: an open pyramid `half` wide each way from its middle at the base and `height` from the base to the apex
 /// along its axis (world units), moving along that axis.
 struct Spike {
+    texture: &'static str,
     born: Instant,
     /// Ticks run, ticks it lives, and ticks it's drawn: its effect ends sooner for one made late (a train's last).
     age: u32,
@@ -66,12 +76,13 @@ fn below(n: u32) -> f32 {
 }
 
 impl Spike {
-    /// A spike born at `born`, its base `down` units under `at`, turned `[yaw, pitch]`, `[half, height]` big, living
-    /// `life` ticks in an effect that lets it be drawn `left` more; standing still and opaque until told otherwise.
+    /// A stone spike born at `born`, its base `down` units under `at`, turned `[yaw, pitch]`, `[half, height]` big,
+    /// living `life` ticks in an effect that lets it be drawn `left` more; standing still and opaque until told otherwise.
     fn new(born: Instant, at: Vector, down: f32, [yaw, pitch]: [f32; 2], [half, height]: [f32; 2], life: u32, left: u32) -> Self {
         // One that would outlive its effect fades out over what the effect has left, from the start.
         let alpha_step = if life > left + 1 { -254.0 / left.max(1) as f32 } else { 0.0 };
         Self {
+            texture: STONE,
             born,
             age: 0,
             life,
@@ -121,6 +132,15 @@ impl Spike {
             }
         }
         self.age += 1;
+    }
+
+    /// A Frost Diver ice spike born at `born`, its base `around` units off `at` the way `turn` points: it rises 3 units
+    /// the first tick, slowing by 0.15 a tick, and stops after age 20 (28.35 up); it fades over its last 10 ticks.
+    #[allow(clippy::too_many_arguments)]
+    fn ice(born: Instant, at: Vector, around: f32, turn: f32, size: [f32; 2], angles: [f32; 2], left: u32, alpha: f32) -> Self {
+        let (sin, cos) = turn.to_radians().sin_cos();
+        let spike = Spike::new(born, [at[0] + around * sin, at[1], at[2] - around * cos], FROST_DEPTH, angles, size, FROST_LIFE, left);
+        Spike { texture: ICE_TEXTURE, speed: 3.0, change: -0.15, stop: 20, alpha, ..spike }
     }
 
     /// Its four faces: base corner, apex, base corner, with the texture across them a fifth at a time.
@@ -209,6 +229,36 @@ impl Stone {
         self.trains.push(Train { start: now, ticks: 0, from, way, short: distance <= TRAIN_STOP });
     }
 
+    /// Frost Diver (EF_FROSTDIVER) from `from` at `to` from `now`: one ice spike a tick in a line toward the target,
+    /// its random choices from `rand(n)` (0 to n − 1).
+    pub fn frost_diver(&mut self, from: Vector, to: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let [dx, dz] = [to[0] - from[0], to[2] - from[2]];
+        let distance = f32::hypot(dx, dz);
+        let way = if distance > 0.0 { [dx / distance, dz / distance] } else { [0.0, 1.0] };
+        for tick in 0..FROST_TICKS {
+            let out = FROST_FIRST + FROST_STEP * tick as f32;
+            let at = [from[0] + way[0] * out, from[1], from[2] + way[1] * out];
+            let [turn, around, half, height, yaw, pitch] = [rand(360), rand(10), rand(40), rand(30), rand(360), rand(30)];
+            let (around, half, height) = ((around + 5) as f32 / 10.0, (half + 60) as f32 / 100.0, (height + 150) as f32 / 10.0);
+            let angles = [yaw as f32, (pitch + 75) as f32];
+            self.spikes.push(Spike::ice(now + TICK * tick, at, around, turn as f32, [half, height], angles, FROST_TICKS - tick - 1, 254.0));
+            if f32::hypot(to[0] - at[0], to[2] - at[2]) <= FROST_REACH {
+                break;
+            }
+        }
+    }
+
+    /// Frost Diver's second hit effect (EF_FROSTDIVER2) at `at` from `now`: eight bigger ice spikes round the target at
+    /// once, 200 alpha.
+    pub fn frost_hit(&mut self, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        for _ in 0..8 {
+            let [turn, around, half, height, yaw, pitch] = [rand(360), rand(4), rand(250), rand(100), rand(360), rand(20)];
+            let (around, half, height) = ((around + 1) as f32 / 10.0, (half + 100) as f32 / 100.0, (height + 200) as f32 / 10.0);
+            let angles = [yaw as f32, (pitch + 80) as f32];
+            self.spikes.push(Spike::ice(now, at, around, turn as f32, [half, height], angles, FROST_LIFE, 200.0));
+        }
+    }
+
     /// Runs the trains and the spikes up to `now`, a tick at a time.
     pub fn advance(&mut self, now: Instant) {
         for train in &mut self.trains {
@@ -235,9 +285,9 @@ impl Stone {
         self.spikes.retain(|spike| passes(spike.born, now) <= spike.ends);
     }
 
-    /// The triangles of every spike showing, in stone.
-    pub fn mesh(&self) -> Vec<MeshVertex> {
-        self.spikes.iter().filter(|spike| spike.age > 0).flat_map(Spike::faces).collect()
+    /// The triangles of every spike showing in `texture`.
+    pub fn mesh(&self, texture: &str) -> Vec<MeshVertex> {
+        self.spikes.iter().filter(|spike| spike.age > 0 && spike.texture == texture).flat_map(Spike::faces).collect()
     }
 }
 
@@ -252,7 +302,7 @@ mod tests {
         spikes.earth_spike([0.0; 3], start);
         spikes.advance(start);
         assert_eq!(spikes.spikes.len(), 7);
-        assert_eq!(spikes.mesh().len(), 7 * 12);
+        assert_eq!(spikes.mesh(STONE).len(), 7 * 12);
         // The centre rises 12 ticks (1.01 to 1.12 a tick), settles 1.2 a tick for 4 and stands, never fading.
         spikes.advance(start + TICK * 30);
         let centre = &spikes.spikes[0];
@@ -297,6 +347,42 @@ mod tests {
         spikes.advance(start + TICK * 298);
         assert!(spikes.spikes.iter().all(|spike| spike.life >= 299));
         spikes.advance(start + TICK * 299);
+        assert!(spikes.spikes.is_empty());
+    }
+
+    #[test]
+    fn frost_diver_lays_spikes_to_the_target() {
+        // A target 45 units off: spikes 5, 7, … 43 units out, 20 of them, one a tick.
+        let start = Instant::now();
+        let mut spikes = Stone::default();
+        spikes.frost_diver([0.0; 3], [0.0, 0.0, 45.0], start, |_| 0);
+        assert_eq!(spikes.spikes.len(), 20);
+        // (each a little off its point: half a unit the way its random turn points)
+        assert_eq!((spikes.spikes[1].born - start, spikes.spikes[19].base[2]), (TICK, 42.5));
+        // A spike rises 2.85 the first tick and settles 28.35 up after tick 20, 30 under where it stands at first.
+        spikes.advance(start);
+        assert!((spikes.spikes[0].rise - 2.85).abs() < 1e-4, "{}", spikes.spikes[0].rise);
+        assert_eq!(spikes.spikes[0].base[1], -FROST_DEPTH);
+        spikes.advance(start + TICK * 5);
+        assert_eq!((spikes.mesh(ICE_TEXTURE).len(), spikes.mesh(STONE).len()), (6 * 12, 0));
+        spikes.advance(start + TICK * 20);
+        let settled = spikes.spikes[0].rise;
+        assert!((settled - 28.35).abs() < 1e-4, "{settled}");
+        // Straight up at pitch 90; four faces of three corners; fading over its last 10 ticks, from tick 30.
+        let up = axes(0.0, 90.0)[2];
+        assert!((up[1] - 1.0).abs() < 1e-6 && up[0].abs() < 1e-6 && up[2].abs() < 1e-6);
+        assert_eq!(spikes.spikes[0].faces().len(), 12);
+        spikes.advance(start + TICK * 29);
+        assert_eq!(spikes.spikes[0].alpha, 254.0);
+        spikes.advance(start + TICK * 35);
+        assert!((spikes.spikes[0].alpha - 254.0 * 4.0 / 10.0).abs() < 1e-3, "{}", spikes.spikes[0].alpha);
+        spikes.advance(start + TICK * 39);
+        assert_eq!(spikes.spikes[0].rise, settled);
+        // Its hit: eight spikes at once, 200 alpha.
+        spikes.frost_hit([0.0; 3], start, |_| 0);
+        assert_eq!(spikes.spikes.len(), 28);
+        assert_eq!(spikes.spikes[27].alpha, 200.0);
+        spikes.advance(start + TICK * 100);
         assert!(spikes.spikes.is_empty());
     }
 
