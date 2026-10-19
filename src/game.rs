@@ -1881,7 +1881,7 @@ impl Game {
             || (self.minimap_shown() && minimap::covers(cursor))
             || self.reason_box.as_ref().is_some_and(|reason| reason.hit(cursor, screen()).is_some())
             || self.minimap_window.covers(cursor)
-            || (asking && contains(dialog_position_of(message), message, cursor))
+            || (asking && contains(dialog_position_of(screen()), message, cursor))
             || self.on_npc_window(cursor)
             || self.talk_blocks()
             || self.amount.is_some()

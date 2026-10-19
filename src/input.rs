@@ -50,7 +50,7 @@ impl App {
             }
             // The server list: pick one, OK goes on to the login window, Cancel leaves the game.
             Scene::Connections { selected } => {
-                let service = dialog_position(&assets.service);
+                let service = service_position(&assets.service);
                 let list = offset(service, SERVER_LIST);
                 if let Some(row) = (0..self.connections.len()).find(|&row| contains(offset(list, [0.0, row as f32 * SERVER_ROW[1]]), SERVER_ROW, cursor)) {
                     *selected = row;
@@ -62,7 +62,7 @@ impl App {
                 }
             }
             Scene::ServerSelect { accepted, selected } => {
-                let service = dialog_position(&assets.service);
+                let service = service_position(&assets.service);
                 let list = offset(service, SERVER_LIST);
                 if let Some(row) = (0..accepted.char_servers.len()).find(|&row| contains(offset(list, [0.0, row as f32 * SERVER_ROW[1]]), SERVER_ROW, cursor)) {
                     *selected = row;
@@ -1706,7 +1706,13 @@ impl App {
                     self.dismiss();
                 }
             }
-            Scene::Waiting(_) => {}
+            // The wait box's Cancel.
+            Scene::Waiting(wait, _) => {
+                if wait.message().is_some() && hit(offset(login_position(), WAIT_CANCEL), &assets.cancel) {
+                    self.give_up();
+                }
+            }
+            Scene::Quit => {}
         }
     }
 
@@ -3123,6 +3129,7 @@ impl App {
 
     pub(crate) fn close_message(&mut self) {
         if let Scene::Message(_, back) = std::mem::replace(&mut self.scene, Scene::Login) {
+            self.quitting |= matches!(*back, Scene::Quit);
             self.scene = *back;
         }
     }
@@ -4009,7 +4016,7 @@ impl App {
                 Key::Named(NamedKey::Escape) => self.dismiss(),
                 _ => {}
             },
-            Scene::Waiting(_) => {}
+            Scene::Waiting(..) | Scene::Quit => {}
         }
     }
 }
