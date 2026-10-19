@@ -35,6 +35,9 @@ const EXPELLED: usize = 4;
 const LABELS: [usize; 8] = [328, 329, 330, 331, 332, 333, 335, 337];
 // ponytail: the emblem's frame top left of the info page, the labels right of it.
 const EMBLEM: [f32; 2] = [12.0, PAGE_TOP + 8.0];
+/// The master's Disband button on the info page.
+const DISBAND_AT: [f32; 2] = [321.0, 292.0];
+const DISBAND_SIZE: [f32; 2] = [64.0, 20.0];
 pub const EMBLEM_SIZE: [f32; 2] = [24.0, 24.0];
 /// The guardians' monster IDs: they carry their castle's guild emblem too.
 const GUARDIANS: [u16; 3] = [1285, 1286, 1287];
@@ -160,6 +163,7 @@ pub struct Assets {
     /// The edit boxes' fill, and Send.
     field: Texture,
     send: [Texture; 3],
+    disband: [Texture; 3],
 }
 
 impl Assets {
@@ -191,6 +195,7 @@ impl Assets {
             unlearned: gpu.solid([0xB4, 0xB4, 0xB4, 0xFF]),
             field: gpu.solid(FIELD_FILL),
             send: ["btn_send", "btn_send_a", "btn_send_b"].map(image),
+            disband: ["btn_disband", "btn_disband_a", "btn_disband_b"].map(image),
         }
     }
 }
@@ -231,6 +236,8 @@ pub enum Hit {
     /// An ally or an antagonist on the info page (a click selects it, the master's right click ends it): its guild ID,
     /// and whether it's an antagonist.
     Relation(u32, bool),
+    /// The master's Disband on the info page.
+    Disband,
     /// On the positions page, the master's: a permission box (position, bit), a title, a tax.
     Permission(u32, u32),
     PositionTitle(u32),
@@ -409,16 +416,6 @@ pub fn antagonist_result(result: u8) -> (usize, [u8; 3]) {
         0 => (495, CYAN),
         1 | 2 => (495 + usize::from(result), RED),
         _ => (1718, RED),
-    }
-}
-
-/// Disbanding: its line, and whether it's good news.
-pub fn disband_result(result: u32) -> (usize, bool) {
-    match result {
-        0 => (400, true),
-        1 => (401, false),
-        2 => (402, false),
-        _ => (366, false),
     }
 }
 
@@ -953,6 +950,9 @@ impl GuildWindow {
         if let Some(tab) = (0..TABS.len()).find(|&tab| contains([tab as f32 * TAB[0], TITLE_HEIGHT], TAB, local)) {
             return Some(Hit::Tab(tab));
         }
+        if self.tab == 0 && guild.master && contains(DISBAND_AT, DISBAND_SIZE, local) {
+            return Some(Hit::Disband);
+        }
         if self.tab == 0 {
             for (column, relations) in columns(&guild.relations).into_iter().enumerate() {
                 for (row, relation) in relations.into_iter().enumerate() {
@@ -1090,6 +1090,8 @@ impl GuildWindow {
                 ("notice_text".to_owned(), place(NOTICE_TEXT.0, NOTICE_TEXT.1)),
                 ("notice_send".to_owned(), place(NOTICE_SEND, MOVES_OK.1)),
             ],
+            // The info page: the master's `guild_disband`.
+            0 if guild.master => vec![("guild_disband".to_owned(), place(DISBAND_AT, DISBAND_SIZE))],
             // The skills page: `skill:<id>` rows, `skill_up:<id>` buttons, `skill_use` and `skill_close`.
             SKILLS => {
                 let mut boxes = Vec::new();
@@ -1221,6 +1223,10 @@ impl GuildWindow {
         match self.tab {
             // Info: the emblem, then the guild's name, level, master, members, levels, castles, exp and tax points.
             0 => {
+                if guild.master {
+                    let look = if hit == Some(Hit::Disband) { 1 + usize::from(pointer.1) } else { 0 };
+                    layer.sprites.push((&assets.disband[look], at(DISBAND_AT), DISBAND_SIZE));
+                }
                 layer.sprites.push((&assets.frame, at(EMBLEM), assets.frame.size));
                 if let Some(emblem) = emblem {
                     layer.sprites.push((emblem, at(offset(EMBLEM, [2.0, 2.0])), EMBLEM_SIZE));
@@ -1738,7 +1744,6 @@ mod tests {
         assert_eq!(ally, [(394, YELLOW), (395, YELLOW), (396, CYAN), (397, YELLOW), (398, YELLOW), (1717, YELLOW)]);
         let antagonist = (0..=3).map(antagonist_result).collect::<Vec<_>>();
         assert_eq!(antagonist, [(495, CYAN), (496, RED), (497, RED), (1718, RED)]);
-        assert_eq!([0, 1, 2, 9].map(disband_result), [(400, true), (401, false), (402, false), (366, false)]);
     }
 
     #[test]

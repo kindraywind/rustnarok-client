@@ -569,12 +569,16 @@ impl App {
                 };
             }
             // A guild invites us: OK or cancel.
-            Scene::Game(game) if game.guild_invite.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
-                let dialog = dialog_position(&assets.message);
+            // At the party invitation's place; accepting closes the Guild Companion.
+            Scene::Game(game) if game.guild_invite.is_some() && contains(party::invitation_at(screen()), assets.message.size, cursor) => {
+                let dialog = party::invitation_at(screen());
                 for (place, accept) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
                         let (guild, _) = game.guild_invite.take().unwrap();
                         let _ = game.session.answer_guild(guild, accept);
+                        if accept {
+                            game.guild_companion.close();
+                        }
                     }
                 }
             }
@@ -808,6 +812,12 @@ impl App {
                     }
                 }
             }
+            // The Guild Companion and its windows; the create (or disband) window's OK checks the name.
+            Scene::Game(game) if game.guild_companion.hit(cursor).is_some() => match game.guild_companion.hit(cursor) {
+                Some(guild_companion::Hit::CreateOk) => game.guild_name_ok(&self.messages),
+                Some(hit) => game.guild_companion.click(hit),
+                None => {}
+            },
             // The guild's reason box: OK sends, Cancel closes.
             Scene::Game(game) if game.reason_box.as_ref().is_some_and(|reason| reason.hit(cursor, screen()).is_some()) => {
                 match game.reason_box.as_ref().and_then(|reason| reason.hit(cursor, screen())) {
@@ -1251,6 +1261,8 @@ impl App {
                                 game.status_window.frame.toggle();
                                 game.raise(Panel::Status);
                             }
+                            // Without a guild, the Guild Companion.
+                            Some("guild") if game.guild.is_none() => game.guild_companion.toggle(screen()),
                             Some("guild") => {
                                 game.guild_window.frame.toggle();
                                 game.raise(Panel::Guild);
@@ -1390,6 +1402,11 @@ impl App {
                             if tab <= 4 {
                                 let _ = game.session.guild_page(tab as u32);
                             }
+                        }
+                        // Disband: the warning box, and the disband window asking the guild's name.
+                        Some(guild::Hit::Disband) => {
+                            game.question_box = Some(BoxQuestion::Notice(guild_companion::DISBAND_WARNING));
+                            game.guild_companion.open_disband(screen());
                         }
                         Some(guild::Hit::LevelUp(skill)) => {
                             let _ = game.session.skill_up(skill);
@@ -3265,6 +3282,7 @@ impl App {
                 game.inventory.frame.toggle();
                 game.raise(Panel::Inventory);
             }
+            shortcuts::Action::Guild if game.guild.is_none() => game.guild_companion.toggle(screen()),
             shortcuts::Action::Guild => {
                 game.guild_window.frame.toggle();
                 game.raise(Panel::Guild);
@@ -3601,6 +3619,13 @@ impl App {
                         game.guild_window.type_text(guild, event.text.as_deref().unwrap_or_default());
                     }
                 }
+            },
+            // The create (or disband) window's box: Enter is OK, Esc closes the window.
+            Scene::Game(game) if game.guild_companion.typing() => match key {
+                Key::Named(NamedKey::Enter) => game.guild_name_ok(&self.messages),
+                Key::Named(NamedKey::Escape) => game.guild_companion.create = None,
+                Key::Named(NamedKey::Backspace) => drop(game.guild_companion.create.as_mut().unwrap().name.pop()),
+                _ => game.guild_companion.create.as_mut().unwrap().type_text(event.text.as_deref().unwrap_or_default()),
             },
             // The guild's reason box: Enter is OK, Esc cancels.
             Scene::Game(game) if game.reason_box.is_some() => match key {
