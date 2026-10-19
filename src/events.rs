@@ -867,7 +867,7 @@ impl App {
                 let now = control::now();
                 self.server_clock.heard(start_time, Instant::now());
                 let begin = self.server_clock.local(start_time).map_or(now, |at| at + actor::REMOTE_DELAY);
-                match world::find_path(&game.world.gat, from, to.map(i32::from)) {
+                match world::find_unit_path(&game.world.gat, from, to.map(i32::from), unit.kind) {
                     Some(path) => actor.walk_from(from, sub, path, begin, now, known),
                     None if !known => actor.walk_from(from, sub, Vec::new(), begin, now, false),
                     None => {}
@@ -1224,11 +1224,11 @@ impl App {
                 let begin = self.server_clock.local(start_time).map_or(now, |at| at + actor::REMOTE_DELAY);
                 let (from, to) = (from.map(i32::from), to.map(i32::from));
                 let gat = &game.world.gat;
-                let walk = world::find_path(gat, from, to).map(|path| (from, sub, path)).or_else(|| {
+                let walk = world::find_unit_path(gat, from, to, PLAYER).map(|path| (from, sub, path)).or_else(|| {
                     let drawn = game.player.position(now);
                     let cell = drawn.map(|value| value.round() as i32);
                     let sub = [0, 1].map(|axis| ((drawn[axis] - cell[axis] as f32) * 16.0 + 8.0).round().clamp(0.0, 15.0) as u8);
-                    world::find_path(gat, cell, to).map(|path| (cell, sub, path))
+                    world::find_unit_path(gat, cell, to, PLAYER).map(|path| (cell, sub, path))
                 });
                 if let Some((from, sub, path)) = walk {
                     game.player.walk_from(from, sub, path, begin, now, true);
