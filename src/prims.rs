@@ -12,6 +12,7 @@ pub mod first;
 pub mod huujin;
 pub mod napalm;
 pub mod sage;
+pub mod shards;
 pub mod sight;
 pub mod sparkle;
 pub mod stone;
@@ -105,6 +106,7 @@ pub struct Prims {
     pub sights: sight::Sights,
     pub waterballs: waterball::Waterballs,
     pub walls: walls::Walls,
+    pub shards: shards::Shards,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -460,6 +462,7 @@ impl Prims {
         self.cold_hits.retain(|hit| due(hit.start) < SECOND_SMOKE + SMOKE_LIFE && hit.age.is_none_or(|age| age < COLD_FRAMES));
         self.balls.advance(now);
         self.waterballs.advance(now);
+        self.shards.advance(now);
         self.walls.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
         self.stone.advance(now);
         self.volleys.retain(|volley| volley.alive(now));

@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, sage, sight, stone, tanji, throw, walls, waterball};
+use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, sage, shards, sight, stone, tanji, throw, walls, waterball};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -103,6 +103,8 @@ struct Sound {
     file: String,
     delay_ms: u64,
     random: Option<(u32, u32)>,
+    /// Made at the listener's own place, heard at full volume wherever the effect plays.
+    listener: bool,
 }
 
 impl Table {
@@ -186,7 +188,8 @@ impl Table {
                 }
                 ["wav", _, file, ..] => {
                     let Some(id) = number(1) else { continue };
-                    let sound = Sound { file: file.to_owned(), delay_ms: number(3).map_or(0, u64::from), random: number(4).zip(number(5)) };
+                    let listener = fields.last() == Some(&"listener");
+                    let sound = Sound { file: file.to_owned(), delay_ms: number(3).map_or(0, u64::from), random: number(4).zip(number(5)), listener };
                     table.sounds.entry(id).or_default().push(sound);
                 }
                 ["part", _, _, text] => {
@@ -1639,6 +1642,8 @@ const WATER_BALL: u32 = 117;
 const OVER_THRUST: u32 = 128;
 /// EF_FIREPILLARON's funnels and EF_VENOMDUST2's puffs stand with their skill units; EF_GUMGANG is the monk's four glints;
 /// Berserk Pitcher's tint, cylinder and streaks, Defender's walls and Grand Cross's cross of light (`prims::walls`).
+/// EF_INTIMIDATE: its shards stay in the world where they burst (`prims::shards`).
+const INTIMIDATE: u32 = 227;
 const FIRE_PILLAR: u32 = 138;
 const VENOM_DUST: u32 = 171;
 const GUMGANG: u32 = 203;
@@ -1780,14 +1785,12 @@ impl Effects {
     }
 
     fn play_sounds(&mut self, table: &Table, id: u32, at: Vector, now: Instant) {
-        // Berserk Pitcher's sound is heard at full volume from the listener's own place.
-        let at = if id == BERSERK { LISTENER } else { at };
         for sound in table.sounds.get(&id).into_iter().flatten() {
             let file = match sound.random {
                 Some((from, to)) => sound.file.replace("%d", &pick(from, to).to_string()),
                 None => sound.file.clone(),
             };
-            self.sounds.push((now + Duration::from_millis(sound.delay_ms), format!("{file}.wav"), at));
+            self.sounds.push((now + Duration::from_millis(sound.delay_ms), format!("{file}.wav"), if sound.listener { LISTENER } else { at }));
         }
     }
 
@@ -1878,6 +1881,11 @@ impl Effects {
                 _ => burst::Burst::turn_undead(unit, now, rand),
             };
             self.prims.bursts.push(burst);
+        }
+        // Intimidate's shards burst round the spot, for good.
+        if id == INTIMIDATE {
+            self.textures.entry(shards::TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, shards::TEXTURE, true).ok());
+            self.prims.shards.burst(at, now, |n| pick(0, n.saturating_sub(1)));
         }
         // Berserk Pitcher's tint, cylinder and streaks, Defender's walls and Grand Cross's cross, made in code.
         let wall_textures: &[&str] = match id {
@@ -2728,6 +2736,7 @@ impl Effects {
             .chain(sage)
             .chain(burst_rings)
             .chain(other_walls)
+            .chain(self.textures.get(shards::TEXTURE).and_then(Option::as_ref).map(|texture| (texture, self.prims.shards.mesh(now), true)))
             .filter(|_| !self.only_forced);
         rings.chain(models).chain(hits).chain(auras).chain(forced_walls).chain(prims).collect()
     }
@@ -4001,5 +4010,19 @@ mod tests {
         // Body colours multiply.
         assert_eq!(mix_tints(Some([250, 120, 120]), Some([128, 255, 0])), Some([125, 120, 0]));
         assert_eq!((mix_tints(None, Some([1, 2, 3])), mix_tints(Some([4, 5, 6]), None), mix_tints(None, None)), (Some([1, 2, 3]), Some([4, 5, 6]), None));
+    }
+
+    #[test]
+    fn intimidate_bursts_shards_and_holy_cross_sounds_at_the_listener() {
+        let table = Table::load();
+        // One burst for each of Intimidate's damage packets on its caster, Expulsion's on its target.
+        assert_eq!((table.struck(219), table.struck(674)), (Some(&[(Who::Caster, 227)][..]), Some(&[(Who::Target, 227)][..])));
+        assert!(table.skill(219, "effectId").is_empty());
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        assert_eq!(sounds(227), [("effect\\EF_Bash", 0, true), ("effect\\rog_intimidate", 560, false)]);
+        assert_eq!(sounds(245), [("effect\\cru_holy cross", 0, true)]);
+        assert_eq!(sounds(220), [("effect\\ac_concentration", 288, true)]);
+        // Other sounds keep their place.
+        assert!(table.sounds.values().flatten().filter(|sound| sound.listener).count() == 3);
     }
 }
