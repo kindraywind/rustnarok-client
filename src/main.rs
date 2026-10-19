@@ -3708,7 +3708,6 @@ struct App {
     /// The game went back to character select at least once.
     returned: bool,
     /// The slot of the character last played, selected again back at character select.
-    played_slot: Option<usize>,
     /// The login that's in progress: what the char and map servers need to see.
     account: Option<LoginAccepted>,
     /// The character chosen to play, until its map is entered.
@@ -3869,6 +3868,11 @@ impl App {
                 if let Scene::CharSelect(select) = std::mem::replace(&mut self.scene, Scene::Login) {
                     self.scene = Scene::CharMake(Box::new(char_make::Make::new(&self.grf, &self.look_tables, slot, male)), select);
                 }
+                return;
+            }
+            Action::Notice => {
+                let back = std::mem::replace(&mut self.scene, Scene::Login);
+                self.message(self.message_text(char_select::NOTICE_MESSAGE), back);
                 return;
             }
             Action::Reserve(id) => self.char_session.as_mut().map(|session| session.reserve_delete(id)),
@@ -4745,7 +4749,6 @@ fn main() {
         started: Instant::now(),
         screenshot: std::env::var("RUSTNAROK_CLIENT_SCREENSHOT").ok(),
         scripted: false,
-        played_slot: None,
     };
     if !picking && !app.connections.is_empty() {
         app.choose_connection(0);
