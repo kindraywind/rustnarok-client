@@ -203,6 +203,14 @@ impl App {
                         game.answer_box(yes, &self.messages);
                     }
                 }
+                if std::mem::take(&mut game.reset_settings) {
+                    game_settings::reset(&mut self.sound, &mut self.graphics);
+                    if let Some(audio) = &mut self.audio {
+                        audio.set(&self.sound);
+                    }
+                    self.sound.save();
+                    self.graphics.save();
+                }
             }
             // The option menu keeps the pointer until it's closed, but for the settings windows it opened over it and the
             // menu buttons' "option", which shuts it.
@@ -225,7 +233,8 @@ impl App {
                     }
                     // Game settings and shortcut settings open or shut their window; the menu stays up.
                     Some(escape::Choice::GameSettings) => {
-                        game.graphics_window = toggled(game.graphics_window.take(), options::GraphicsWindow::new);
+                        let fullscreen = self.gpu.as_ref().is_some_and(|gpu| gpu.window.fullscreen().is_some());
+                        game.settings_window = toggled(game.settings_window.take(), || game_settings::GameSettings::new(screen(), fullscreen));
                         game.sync_esc();
                     }
                     Some(escape::Choice::Shortcuts) => {
@@ -238,28 +247,30 @@ impl App {
             Scene::Game(game) if game.whisper_at(cursor) => {
                 game.whisper_click(cursor);
             }
-            // The audio settings: checkboxes and arrows (the sliders go on press).
-            Scene::Game(game) if game.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
-                let window = game.audio_window.as_mut().unwrap();
+            // Game Settings: the sound and the effect switches change at once, the screen mode on Apply (the sliders go on
+            // press).
+            // ponytail: Apply sets the screen mode at once; the game asks first (3168) and restarts.
+            Scene::Game(game) if game.settings_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+                let window = game.settings_window.as_mut().unwrap();
                 let hit = window.hit(cursor).unwrap();
-                if window.click(hit, &mut self.sound) {
-                    if let Some(audio) = &mut self.audio {
-                        audio.set(&self.sound);
+                match window.click(hit, &mut self.sound, &mut self.graphics) {
+                    Some(game_settings::Action::Sound) => {
+                        if let Some(audio) = &mut self.audio {
+                            audio.set(&self.sound);
+                        }
+                        self.sound.save();
                     }
-                    self.sound.save();
-                }
-                if !window.frame.open {
-                    game.audio_window = None;
-                }
-            }
-            Scene::Game(game) if game.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
-                let window = game.graphics_window.as_mut().unwrap();
-                let hit = window.hit(cursor).unwrap();
-                if window.click(hit, &mut self.graphics) {
-                    self.graphics.save();
-                }
-                if !window.frame.open {
-                    game.graphics_window = None;
+                    Some(game_settings::Action::Graphics) => self.graphics.save(),
+                    Some(game_settings::Action::AskReset) => game.question_box = Some(BoxQuestion::ResetSettings),
+                    Some(game_settings::Action::Screen(fullscreen)) => {
+                        self.graphics.fullscreen = fullscreen;
+                        self.graphics.save();
+                        if let Some(gpu) = &self.gpu {
+                            gpu.window.set_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
+                        }
+                    }
+                    Some(game_settings::Action::Close) => game.settings_window = None,
+                    None => {}
                 }
             }
             Scene::Game(game) if game.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
@@ -1921,14 +1932,11 @@ impl App {
             if let Some(window) = &mut game.stylist {
                 window.frame.drag_to(self.cursor, stylist::HEIGHT);
             }
-            if let Some(window) = &mut game.audio_window
+            if let Some(window) = &mut game.settings_window
                 && window.drag_to(self.cursor, &mut self.sound)
                 && let Some(audio) = &mut self.audio
             {
                 audio.set(&self.sound);
-            }
-            if let Some(window) = &mut game.graphics_window {
-                window.drag_to(self.cursor);
             }
             if let Some(window) = &mut game.shortcuts_window {
                 window.drag_to(self.cursor);
@@ -2616,12 +2624,11 @@ impl App {
                     | game.memorial.frame.drop_drag()
                     | game.storage_log.as_mut().is_some_and(storage_log::Log::drop_drag);
                 // A slider let go keeps its volume for next time.
-                let slid = game.audio_window.as_mut().is_some_and(options::AudioWindow::drop_drag);
+                let slid = game.settings_window.as_mut().is_some_and(game_settings::GameSettings::drop_drag);
                 if slid {
                     self.sound.save();
                 }
-                let option_windows = game.graphics_window.as_mut().is_some_and(options::GraphicsWindow::drop_drag)
-                    | game.shortcuts_window.as_mut().is_some_and(options::ShortcutsWindow::drop_drag);
+                let option_windows = game.shortcuts_window.as_mut().is_some_and(options::ShortcutsWindow::drop_drag);
                 let outside = game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends).is_none();
                 let member_held = game.member_windows.release(outside, &party::Grid::new(screen()));
                 // Let go outside the used cells: it went back, and the box says why.
@@ -3102,7 +3109,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
-            && let Some(window) = &mut game.audio_window
+            && let Some(window) = &mut game.settings_window
             && let Some(hit) = window.hit(cursor)
         {
             if window.press(hit, cursor, &mut self.sound)
@@ -3110,13 +3117,6 @@ impl App {
             {
                 audio.set(&self.sound);
             }
-            return;
-        }
-        if let Scene::Game(game) = &mut self.scene
-            && let Some(window) = &mut game.graphics_window
-            && let Some(hit) = window.hit(cursor)
-        {
-            window.press(hit, cursor);
             return;
         }
         if let Scene::Game(game) = &mut self.scene
@@ -3795,6 +3795,14 @@ impl App {
             }
             Scene::Game(game) if game.question_box.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_box(*key == Key::Named(NamedKey::Enter), &self.messages);
+                if std::mem::take(&mut game.reset_settings) {
+                    game_settings::reset(&mut self.sound, &mut self.graphics);
+                    if let Some(audio) = &mut self.audio {
+                        audio.set(&self.sound);
+                    }
+                    self.sound.save();
+                    self.graphics.save();
+                }
             }
             // The guild window's text boxes: Enter or Esc leaves the box.
             Scene::Game(game) if game.guild_window.typing.is_some() && game.reason_box.is_none() => match key {

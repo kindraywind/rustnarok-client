@@ -960,6 +960,7 @@ impl Game {
                 let _ = self.session.move_members(&[(account, character, 0)]);
             }
             BoxQuestion::FreeGoods => self.open_vending(),
+            BoxQuestion::ResetSettings => self.reset_settings = true,
             BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) | BoxQuestion::Said(_) => {}
         }
     }
@@ -1920,8 +1921,7 @@ impl Game {
         self.emotion_list = None;
         self.world_map = None;
         self.minimap_window.close();
-        self.audio_window = None;
-        self.graphics_window = None;
+        self.settings_window = None;
         self.shortcuts_window = None;
         self.item_window = None;
         self.card_window = None;
@@ -1952,7 +1952,7 @@ impl Game {
     /// box of this size).
     /// The game settings or shortcut settings window under the pointer.
     pub(crate) fn settings_at(&self, cursor: [f32; 2]) -> bool {
-        self.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+        self.settings_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
     }
 
@@ -2014,10 +2014,9 @@ impl Game {
             || self.party_member_at(cursor).is_some()
             || self.guild_companion.hit(cursor).is_some()
             || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
-            || self.audio_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+            || self.settings_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
             || self.cashshop_buy_asked
-            || self.graphics_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some())
             || self.item_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -2547,8 +2546,7 @@ impl Game {
         push(Mailbox, self.mail.list.frame.open);
         push(MailRead, self.mail.letter.is_some());
         push(MailWrite, self.mail.compose.is_some());
-        push(AudioSettings, self.audio_window.is_some());
-        push(GraphicsSettings, self.graphics_window.is_some());
+        push(GameSettings, self.settings_window.is_some());
         push(ShortcutSettings, self.shortcuts_window.is_some());
         push(WorldMap, self.world_map.is_some());
         push(Minimap, self.minimap_window.frame.open);
@@ -2940,8 +2938,7 @@ impl Game {
             }
             MailRead => self.mail.letter = None,
             MailWrite => self.mail.compose = None,
-            AudioSettings => self.audio_window = None,
-            GraphicsSettings => self.graphics_window = None,
+            GameSettings => self.settings_window = None,
             ShortcutSettings => self.shortcuts_window = None,
             WorldMap => self.world_map = None,
             Minimap => {
