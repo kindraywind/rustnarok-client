@@ -1465,6 +1465,48 @@ pub fn walk_goal(target: [i32; 2], from: [i32; 2], free: impl Fn([i32; 2]) -> bo
 }
 
 /// RO's direction index (0 south, then clockwise: south-west, west, ... south-east) for a step.
+/// A drawn position (a fractional cell from `Actor::position`, cell centres on whole numbers) as a point on the
+/// ground plane in world units: (p + 0.5) × 5 on each axis.
+// ponytail: measured from the map's corner; the game measures from its centre, which gives the same cells on even-sized
+// maps (all of them) and can differ only by f32 rounding exactly on a cell edge.
+pub fn drawn_point(position: [f32; 2]) -> [f32; 2] {
+    position.map(|value| (value + 0.5) * CELL)
+}
+
+/// The cell a ground point is over.
+pub fn floor_cell(point: [f32; 2]) -> [i32; 2] {
+    point.map(|value| (value / CELL).floor() as i32)
+}
+
+/// How far an attack reaches across between two ground points: the flat distance, then with the difference of the
+/// ground heights under them.
+pub fn attack_distance(gat: &Gat, from: [f32; 2], to: [f32; 2]) -> f32 {
+    let [dx, dz] = [to[0] - from[0], to[1] - from[1]];
+    let flat = (dx * dx + dz * dz).sqrt();
+    let dy = gat.height_at(to.map(|value| value / CELL)) - gat.height_at(from.map(|value| value / CELL));
+    (flat * flat + dy * dy).sqrt()
+}
+
+/// In reach to attack at `range` cells: range × 5 + 5.5 world units or less (a NaN is out).
+pub fn in_attack_reach(distance: f32, range: i32) -> bool {
+    (range * 5) as f32 + 5.5 >= distance
+}
+
+/// Where a chase walks: range × 5 world units short of the aim point, on the line from the player's point; off the
+/// map or not walkable, the first walkable neighbour (the `pickup_spot` order) of that cell, else the last one tried.
+pub fn chase_cell(gat: &Gat, from: [f32; 2], aim: [f32; 2], range: i32) -> [i32; 2] {
+    const NEXT: [[i32; 2]; 8] = [[1, 0], [1, 1], [1, -1], [-1, 0], [-1, 1], [-1, -1], [0, 1], [0, -1]];
+    let away = [from[0] - aim[0], from[1] - aim[1]];
+    let inverse = 1.0 / (away[1] * away[1] + away[0] * away[0]).sqrt();
+    let reach = (range * 5) as f32;
+    let cell = floor_cell([aim[0] + away[0] * inverse * reach, aim[1] + away[1] * inverse * reach]);
+    if gat.walkable(cell) {
+        return cell;
+    }
+    let tried = NEXT.map(|[x, y]| [cell[0] + x, cell[1] + y]);
+    tried.into_iter().find(|&next| gat.walkable(next)).unwrap_or(tried[7])
+}
+
 pub fn direction(step: [i32; 2]) -> u8 {
     match (step[0].signum(), step[1].signum()) {
         (0, -1) => 0,
@@ -1481,6 +1523,41 @@ pub fn direction(step: [i32; 2]) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chases_to_range_short_of_the_target() {
+        let flat = |wall: Option<[i32; 2]>| Gat {
+            width: 64,
+            height: 64,
+            cells: (0..64 * 64).map(|index| ([0.0; 4], u8::from(Some([index % 64, index / 64]) == wall))).collect(),
+        };
+        let open = flat(None);
+        let chase = |gat: &Gat, from: [f32; 2], aim: [f32; 2], range| chase_cell(gat, drawn_point(from), drawn_point(aim), range);
+        let target = [40.0, 32.0];
+        assert_eq!(chase(&open, [34.0, 32.0], target, 1), [39, 32]);
+        assert_eq!(chase(&open, [35.0, 27.0], target, 1), [39, 31]);
+        assert_eq!(chase(&open, [34.0, 30.0], target, 3), [37, 31]);
+        assert_eq!(chase(&open, [29.0, 25.0], target, 9), [32, 27]);
+        // The cell is a wall: its first neighbour, the target's own cell.
+        assert_eq!(chase(&flat(Some([39, 32])), [34.0, 32.0], target, 1), [40, 32]);
+        // A slow target drawn halfway to (41, 33).
+        assert_eq!(chase(&open, [34.0, 32.0], [40.5, 32.5], 1), [40, 32]);
+    }
+
+    #[test]
+    fn reaches_across_the_drawn_distance_with_height() {
+        let gat = |rise: f32| Gat { width: 16, height: 16, cells: (0..256).map(|index| ([if index % 16 >= 3 { rise } else { 0.0 }; 4], 0)).collect() };
+        let reach =
+            |gat: &Gat, to: [f32; 2], range| in_attack_reach(attack_distance(gat, drawn_point([1.0, 1.0]), drawn_point([1.0 + to[0], 1.0 + to[1]])), range);
+        let flat = gat(0.0);
+        assert!(reach(&flat, [2.0, 0.0], 1));
+        assert!(!reach(&flat, [2.0, 1.0], 1));
+        // Two cells straight with the target's ground higher: 3.2 units in, 3.3 out.
+        assert!(reach(&gat(-3.2), [2.0, 0.0], 1));
+        assert!(!reach(&gat(-3.3), [2.0, 0.0], 1));
+        assert!(reach(&flat, [10.0, 0.0], 9) && reach(&flat, [7.0, 7.0], 9) && !reach(&flat, [7.0, 8.0], 9));
+        assert!(!in_attack_reach(f32::NAN, 9));
+    }
 
     #[test]
     fn places_an_rsm_2_vertex_without_centring() {

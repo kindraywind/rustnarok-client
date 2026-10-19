@@ -2622,7 +2622,7 @@ impl App {
                 match attack_refused(weight(net::STATUS_WEIGHT), weight(net::STATUS_MAX_WEIGHT), game.riding) {
                     Some(line) => game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR),
                     None => {
-                        game.attack = Some(Attack::new(id, ctrl || game.no_ctrl || homunculus));
+                        game.attack = Some(Attack { fast: game.fast_target(id), ..Attack::new(id, ctrl || game.no_ctrl || homunculus) });
                         game.attack_step(now);
                     }
                 }
