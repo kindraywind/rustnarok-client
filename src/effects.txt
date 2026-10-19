@@ -1649,7 +1649,7 @@ func	90	quake	1600	650
 func	90	quake	2400	650
 func	90	quake	3200	650
 func	92	quake	640	650
-func	102	quake	350	650
+func	102	quake	560	650
 func	142	quake	0	650
 func	183	quake	0	200
 func	220	quake	200	200
@@ -1807,14 +1807,19 @@ wav	99	effect\hunter_flasher	0
 wav	100	effect\hunter_removetrap	0
 wav	101	effect\black_weapon_repair_a	320
 wav	101	effect\black_weapon_repair_a	880
-wav	102	effect\black_hammerfall	0
+wav	102	effect\wizard_fire_pillar_b	480
 wav	103	effect\black_weapon_perfection	0
+wav	104	effect\black_maximize_power_circle	0
+wav	104	effect\black_maximize_power_sword	640
+wav	104	effect\black_maximize_power_sword	752
+wav	104	effect\black_maximize_power_sword_bic	1040
 wav	105	effect\hun_anklesnare	0
-wav	106	effect\hunter_blastmine	0
+wav	106	effect\hunter_blastmine	320
 wav	107	effect\hunter_claymoretrap	0
 wav	108	effect\hunter_freezingtrap	0
 wav	111	effect\hunter_springtrap	0
-wav	112	effect\priest_kyrie_eleison_a	0
+wav	112	effect\priest_kyrie_eleison_b	0
+wav	112	effect\priest_kyrie_eleison_a	240
 wav	113	effect\priest_magnus	0
 wav	115	effect\hunter_blitzbeat_1st	80
 wav	115	effect\hunter_blitzbeat	480
@@ -4771,6 +4776,10 @@ trap	268	1602
 trap	191	99
 trap	194	99
 trap	264	99
+trap	190	107
+trap	193	108
+trap	228	106
+trap	230	106
 unit	126	315
 unit	127	25
 unit	237	25
