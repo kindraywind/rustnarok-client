@@ -3,6 +3,21 @@
 
 use super::*;
 
+/// Whether a unit blocks a click on the cell it's drawn on: not while walking, not while hiding (option 0x2), never a
+/// warp or an NPC of job 111 or 139 (job 104 does). A dead one blocks until its fade ends: it stays in the units till then.
+// ponytail: derived from each unit's state at the click rather than kept as a table updated on each stand, swing,
+// flinch, sit and cast; the cells come out the same, except a swing or flinch while walking.
+pub(crate) fn unit_blocks(job: u16, walking: bool, hide_option: u32) -> bool {
+    !walking && hide_option & 0x2 == 0 && !matches!(job, 45 | 111 | 139)
+}
+
+/// The cells units block for a click: each blocking unit's drawn cell, and ground skill units' cells.
+// ponytail: the ground skill units are the least certain rule (one line, easy to take out).
+pub(crate) fn blocked_cells(units: &HashMap<u32, Actor>, skill_units: &HashMap<u32, (u32, [u16; 2])>, now: Instant) -> std::collections::HashSet<[i32; 2]> {
+    let standing = units.values().filter(|actor| unit_blocks(actor.job, actor.moving(), actor.hide_option)).map(|actor| actor::drawn_cell(actor.position(now)));
+    standing.chain(skill_units.values().map(|(_, cell)| cell.map(i32::from))).collect()
+}
+
 impl Game {
     pub(crate) fn dialog_for(&mut self, npc: u32) -> &mut Dialog {
         if self.dialog.as_ref().is_none_or(|dialog| dialog.npc != npc) {
@@ -205,8 +220,8 @@ impl Game {
         view.pick_ground([cursor[0] / screen()[0], cursor[1] / screen()[1]], &self.world.gat)
     }
 
-    /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`: not blocked, nobody standing there, a
-    /// path to it); nothing when the last walk went out less than MOVE_GAP ago. Whether a walk was sent.
+    /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`), judged from the cell the player is
+    /// drawn on; nothing when the last walk went out less than MOVE_GAP ago. Whether a walk was sent.
     pub(crate) fn walk_toward(&mut self, cell: [i32; 2], now: Instant) -> bool {
         if self.player.swinging(control::now()) {
             self.walk_after_swing = Some(cell);
@@ -215,11 +230,13 @@ impl Game {
         if !may_move(self.last_move, now) {
             return false;
         }
-        let from = self.player.cell;
-        let taken: std::collections::HashSet<[i32; 2]> = self.units.values().filter(|actor| !actor.hidden).map(|actor| actor.cell).collect();
+        let clock = control::now();
+        let from = actor::drawn_cell(self.player.position(clock));
+        let taken = blocked_cells(&self.units, &self.skill_units, clock);
         let gat = &self.world.gat;
-        let open = |cell: [i32; 2]| gat.walkable(cell) && !taken.contains(&cell) && world::find_path(gat, from, cell).is_some();
-        let Some(goal) = world::walk_goal(cell, from, open) else { return false };
+        let free = |cell: [i32; 2]| gat.walkable(cell) && !taken.contains(&cell);
+        let reachable = |cell: [i32; 2]| world::find_path(gat, from, cell).is_some();
+        let Some(goal) = world::walk_goal(cell, from, free, reachable) else { return false };
         self.pending = None;
         self.last_move = Some(now);
         self.walk_goal = Some(goal);
@@ -3281,5 +3298,58 @@ impl Game {
                 self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: DamageKind::Combo, flinch: None, drift, source: None });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustnarok_client::map::Gat;
+
+    #[test]
+    fn units_block_where_they_stand() {
+        let gat = Gat { width: 30, height: 30, cells: vec![([0.0; 4], 0); 900] };
+        let now = Instant::now();
+        let mut units = HashMap::new();
+        let mut monster = Actor::new("Poring".into(), None, [10, 10], 0, 150);
+        monster.job = 1002;
+        units.insert(1, monster);
+        let skill_units = HashMap::new();
+        let goal = |units: &HashMap<u32, Actor>, from: [i32; 2], click: [i32; 2]| {
+            let taken = blocked_cells(units, &skill_units, now);
+            world::walk_goal(click, from, |cell| gat.walkable(cell) && !taken.contains(&cell), |cell| world::find_path(&gat, from, cell).is_some())
+        };
+        // A standing monster on (10, 10): a click there from (15, 12) goes to (11, 10).
+        assert_eq!(goal(&units, [15, 12], [10, 10]), Some([11, 10]));
+        // Walking, it blocks nothing.
+        units.get_mut(&1).unwrap().walk_from([10, 10], [8, 8], vec![[10, 11], [10, 12]], now, now, true);
+        assert_eq!(goal(&units, [15, 12], [10, 10]), Some([10, 10]));
+        // Stopped on (12, 10), it blocks that cell.
+        units.get_mut(&1).unwrap().stop_at([12, 10]);
+        assert!(blocked_cells(&units, &skill_units, now).contains(&[12, 10]));
+        // A dead one still blocks while it fades.
+        units.get_mut(&1).unwrap().remove_at = Some(now + std::time::Duration::from_secs(1));
+        assert!(blocked_cells(&units, &skill_units, now).contains(&[12, 10]));
+        // A hiding player doesn't; a job-104 NPC does; a warp doesn't.
+        assert!(!unit_blocks(4001, false, 0x2) && unit_blocks(4001, false, 0x4));
+        assert!(unit_blocks(104, false, 0) && !unit_blocks(45, false, 0) && !unit_blocks(111, false, 0) && !unit_blocks(139, false, 0));
+    }
+
+    #[test]
+    fn judges_clicks_from_the_drawn_cell() {
+        // Walking (10, 10) → (11, 10) → (12, 11) at 150 ms a cell: at 100 ms it's on (11, 10), at 300 ms on (12, 11).
+        let start = Instant::now();
+        let mut player = Actor::new("Me".into(), None, [10, 10], 0, 150);
+        player.step_ms = 150.0;
+        player.walk_from([10, 10], [8, 8], vec![[11, 10], [12, 11]], start, start, false);
+        let at = |ms: u64| start + std::time::Duration::from_millis(ms);
+        player.update(at(100));
+        assert_eq!(actor::drawn_cell(player.position(at(100))), [11, 10]);
+        player.update(at(300));
+        assert_eq!(actor::drawn_cell(player.position(at(300))), [12, 11]);
+        // A click on the cell it's drawn on sends nothing: no path to itself.
+        let gat = Gat { width: 30, height: 30, cells: vec![([0.0; 4], 0); 900] };
+        let from = [11, 10];
+        assert_eq!(world::walk_goal(from, from, |cell| gat.walkable(cell), |cell| world::find_path(&gat, from, cell).is_some()), None);
     }
 }
