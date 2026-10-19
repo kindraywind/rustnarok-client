@@ -1057,6 +1057,8 @@ pub const MAP_PVP: u32 = 1;
 pub const MAP_GVG: u32 = 1 << 1;
 /// Guild emblems over players' heads (a GvG map).
 pub const MAP_SIEGE: u32 = 1 << 2;
+/// Lighter effects (/mineffect) forced on: siege maps and those marked `forceminieffect`.
+pub const MAP_SIMPLE_EFFECT: u32 = 1 << 3;
 pub const MAP_NO_LOCK_ON: u32 = 1 << 4;
 /// Show the PvP rank counter.
 pub const MAP_COUNT_PK: u32 = 1 << 5;

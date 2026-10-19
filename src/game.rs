@@ -1740,6 +1740,11 @@ impl Game {
                 self.chat_line(message(if graphics.quake { QUAKE_ON } else { QUAKE_OFF }), CHAT_ITEM);
                 Ok(())
             }
+            chat::Command::MinEffect => {
+                graphics.min_effect = !graphics.min_effect;
+                self.chat_line(message(if graphics.min_effect { MIN_EFFECT_ON } else { MIN_EFFECT_OFF }), CHAT_ITEM);
+                Ok(())
+            }
             // /aura: the max-level aura in full or simplified (its motes only); not while /aura2 has it off.
             chat::Command::Aura => {
                 graphics.aura = !graphics.aura;

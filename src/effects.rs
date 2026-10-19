@@ -409,10 +409,11 @@ struct Animation {
     offset: [f32; 2],
     /// Its images now, from `advance`.
     placed: Vec<Placed>,
+    effect: u32,
 }
 
 impl Animation {
-    fn new(part: &SpritePart, start: Instant, anchor: Anchor, lasting: bool) -> Self {
+    fn new(part: &SpritePart, effect: u32, start: Instant, anchor: Anchor, lasting: bool) -> Self {
         let number = |name: &str| part.parameters.get(name).and_then(|value| value.parse::<f32>().ok());
         let flag = |name: &str| part.parameters.get(name).is_some_and(|value| value == "true");
         let rise = if flag("head") { -100.0 } else { 0.0 };
@@ -428,6 +429,7 @@ impl Animation {
             hold: flag("stopAtEnd"),
             offset: [number("xOffset").unwrap_or(0.0), number("yOffset").unwrap_or(rise)],
             placed: Vec::new(),
+            effect,
         }
     }
 }
@@ -473,6 +475,7 @@ struct Floating {
     /// A ray: drawn outward from the center along its angle.
     ray: bool,
     additive: bool,
+    effect: u32,
 }
 
 /// A textured cylinder growing, turning and fading (CYLINDER effect), in cells.
@@ -499,10 +502,11 @@ struct Ring {
     additive: bool,
     /// Plays again and again while its unit is there (warp portals).
     again: bool,
+    effect: u32,
 }
 
 impl Ring {
-    fn new(parameters: &HashMap<String, String>, start: Instant, anchor: Anchor) -> Option<Self> {
+    fn new(parameters: &HashMap<String, String>, effect: u32, start: Instant, anchor: Anchor) -> Option<Self> {
         let number = |name: &str| parameters.get(name).and_then(|value| value.parse::<f32>().ok());
         let flag = |name: &str| parameters.get(name).is_some_and(|value| value == "true");
         let sides = number("totalCircleSides").unwrap_or(20.0).max(3.0) as usize;
@@ -532,6 +536,7 @@ impl Ring {
             spin: flag("rotate"),
             additive: number("blendMode") == Some(2.0),
             again: flag("repeat"),
+            effect,
         })
     }
 
@@ -1087,6 +1092,46 @@ pub struct Effects {
     yaw: f32,
     /// Fire Bolt's spark sprite's layers, frame by frame.
     spark_frames: Vec<Vec<Placed>>,
+    /// /effect off: only the force-drawn effects show (`force_drawn`), the rest play on unseen.
+    pub only_forced: bool,
+    /// /mineffect: the lighter effects (`min_file`, the hit spark's ring only).
+    pub min: bool,
+}
+
+/// The effects drawn even with /effect off (the data's ForceRenderEffect list): warp portals, Safety Wall, the
+/// level-up angels, the refine results…
+pub fn force_drawn(effect: u32) -> bool {
+    matches!(
+        effect,
+        35 | 36 | 60 | 114 | 137 | 138 | 154 | 155 | 159 | 160 | 164 | 166 | 203 | 228 | 261 | 295 | 296 | 315 | 316 | 317 | 321 | 332 | 334 | 338
+            | 357 | 371 | 419 | 424 | 426 | 445 | 446 | 449 | 475..=484 | 542 | 544 | 548 | 549 | 582 | 629 | 655 | 656 | 718 | 735..=738
+            | 758..=767 | 788 | 833 | 837 | 1072 | 1110 | 1135 | 1186..=1191 | 1214..=1217 | 1225 | 1262..=1265 | 1607..=1609 | 1617..=1619
+            | 1869..=1871 | 2371 | 2372 | 2379..=2381 | 2383..=2389 | 2395..=2399 | 2401 | 2402
+    )
+}
+
+/// The STR an effect plays instead under /mineffect (under data\texture\effect\, without .str).
+pub fn min_file(effect: u32) -> Option<&'static str> {
+    Some(match effect {
+        10 => "memor_min",
+        41 | 717 => "jong_mini",
+        66 => "cure_min",
+        75 => "gloria_min",
+        76 => "magnificat_min",
+        77 => "resurrection_min",
+        85 => "lexaeterna_min",
+        88 => "suffragium_min",
+        103 => "WeaponPerfection_min",
+        104 => "maximize_min",
+        112 => "kyrie_min",
+        _ => return None,
+    })
+}
+
+/// Whether /mineffect is on: the player's own choice, or forced by the map (ZC_MAPPROPERTY_R2's simple-effect flag:
+/// siege maps and those marked so), each map property starting again from the player's choice.
+pub fn min_effect(choice: bool, map_flags: Option<u32>) -> bool {
+    choice || map_flags.is_some_and(|flags| flags & rustnarok_client::net::MAP_SIMPLE_EFFECT != 0)
 }
 
 /// A whole number in `from..=to`.
@@ -1106,7 +1151,7 @@ static RANDOM_SALT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32:
 
 impl Floating {
     /// Makes the random choices of `parameters` for the duplicate numbered `copy`, starting at `start`.
-    fn new(parameters: &HashMap<String, String>, copy: u32, start: Instant, anchor: Anchor) -> Option<Self> {
+    fn new(parameters: &HashMap<String, String>, effect: u32, copy: u32, start: Instant, anchor: Anchor) -> Option<Self> {
         let number = |name: &str| parameters.get(name).and_then(|value| value.parse::<f32>().ok());
         let flag = |name: &str| parameters.get(name).is_some_and(|value| value == "true");
         let range = |name: &str| -> Option<(f32, f32)> {
@@ -1207,6 +1252,7 @@ impl Floating {
             angle: [first_angle, last_angle],
             ray: flag("circlePattern"),
             additive: number("blendMode") == Some(2.0),
+            effect,
         })
     }
 }
@@ -1361,7 +1407,7 @@ impl Effects {
             let gap = parameters.get("timeBetweenDupli").and_then(|value| value.parse::<f32>().ok()).unwrap_or(200.0).max(0.0);
             for copy in 0..copies {
                 let start = now + Duration::from_secs_f32(gap * copy as f32 / 1000.0);
-                let Some(mut floating) = Floating::new(parameters, copy, start, anchor(attached(parameters))) else { continue };
+                let Some(mut floating) = Floating::new(parameters, id, copy, start, anchor(attached(parameters))) else { continue };
                 floating.again |= again(parameters);
                 for path in &floating.textures {
                     self.textures.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
@@ -1377,14 +1423,14 @@ impl Effects {
             let gap = parameters.get("timeBetweenDupli").and_then(|value| value.parse::<f32>().ok()).unwrap_or(200.0).max(0.0);
             for copy in 0..copies {
                 let start = now + Duration::from_secs_f32(gap * copy as f32 / 1000.0);
-                let Some(mut ring) = Ring::new(parameters, start, anchor(attached(parameters))) else { continue };
+                let Some(mut ring) = Ring::new(parameters, id, start, anchor(attached(parameters))) else { continue };
                 ring.again |= again(parameters);
                 self.textures.entry(ring.texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &ring.texture, true).ok());
                 self.rings.push(ring);
             }
         }
         for part in table.sprites.get(&id).into_iter().flatten() {
-            let animation = Animation::new(part, now, anchor(part.attached), lasting);
+            let animation = Animation::new(part, id, now, anchor(part.attached), lasting);
             self.sprites.entry(animation.sprite.clone()).or_insert_with(|| SpriteSet::at(grf, &animation.sprite));
             self.animations.push(animation);
         }
@@ -1410,9 +1456,10 @@ impl Effects {
         }
         for part in table.parts.get(&id).into_iter().flatten() {
             // Every file a `%d` names is loaded, so each restart can pick again.
-            let files: Vec<String> = match part.random {
-                Some((from, to)) => (from..=to).map(|number| part.file.replace("%d", &number.to_string())).collect(),
-                None => vec![part.file.clone()],
+            let files: Vec<String> = match (min_file(id).filter(|_| self.min), part.random) {
+                (Some(file), _) => vec![file.to_owned()],
+                (None, Some((from, to))) => (from..=to).map(|number| part.file.replace("%d", &number.to_string())).collect(),
+                (None, None) => vec![part.file.clone()],
             };
             let variants: Vec<Rc<Loaded>> = files
                 .iter()
@@ -1751,13 +1798,19 @@ impl Effects {
         self.standing.retain(|(_, id, _)| *id != unit);
     }
 
+    /// Whether effect `effect`'s parts draw: all of them, or with /effect off the force-drawn ones.
+    fn shows(&self, effect: u32) -> bool {
+        !self.only_forced || force_drawn(effect)
+    }
+
     /// The effect shapes showing now: cylinders and models.
     pub fn meshes(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<EffectMesh<'_>> {
-        let rings = self.rings.iter().filter(|ring| ring.start <= now).filter_map(|ring| {
+        let rings = self.rings.iter().filter(|ring| ring.start <= now && self.shows(ring.effect)).filter_map(|ring| {
             let at = ring.anchor.place(&position_of)?;
             let Some(Some(texture)) = self.textures.get(&ring.texture) else { return None };
             Some((texture, ring.mesh(now, at), ring.additive))
         });
+        // ponytail: traps' models stand with /effect off too, as the skill units they are.
         let models = self.standing.iter().flat_map(|(model, _, at)| {
             model.0.iter().filter_map(|(path, triangles)| {
                 let Some(Some(texture)) = self.textures.get(path) else { return None };
@@ -1765,12 +1818,12 @@ impl Effects {
                 Some((texture, triangles.iter().map(|&(position, uv)| MeshVertex { position: place(position), uv, tint: [1.0; 4] }).collect(), false))
             })
         });
-        let hits = self.hits.iter().filter(|hit| hit.paths.is_some() && hit.tick(now) < RING_TICKS).filter_map(|hit| {
+        let hits = self.hits.iter().filter(|hit| hit.paths.is_some() && hit.tick(now) < RING_TICKS && self.shows(0)).filter_map(|hit| {
             let at = hit.anchor.place(&position_of)?;
             let Some(Some(texture)) = self.textures.get(RING_TEXTURE) else { return None };
             Some((texture, hit.ring(hit.tick(now), at), false))
         });
-        let auras = self.auras.iter().filter(|aura| aura.start <= now).flat_map(|aura| {
+        let auras = self.auras.iter().filter(|aura| aura.start <= now && self.shows(aura.effect)).flat_map(|aura| {
             let age = (now.duration_since(aura.start).as_secs_f32() * 1000.0 / HIT_TICK_MS) as u32;
             let (_, color, additive) = aura_look(aura.effect);
             let color = color.map(|value| f32::from(value) / 255.0);
@@ -1811,12 +1864,17 @@ impl Effects {
             let texture = self.textures.get(path)?.as_ref()?;
             Some((texture, corners.into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] }).collect(), additive))
         });
-        rings.chain(models).chain(hits).chain(auras).chain(spikes).chain(stone).chain(bolt_meshes).chain(sage).collect()
+        // The effects made in code are none of them force-drawn.
+        let prims = spikes.chain(stone).chain(bolt_meshes).chain(sage).filter(|_| !self.only_forced);
+        rings.chain(models).chain(hits).chain(auras).chain(prims).collect()
     }
 
     /// What's drawn flat on the screen over units now (COLDHIT's shards and smoke): texture, the unit's feet, and the
     /// triangles' corners in screen pixels from there.
     pub fn screen_shapes(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<world::ScreenShape<'_>> {
+        if self.only_forced {
+            return Vec::new();
+        }
         self.prims
             .screen_shapes(now)
             .into_iter()
@@ -1827,7 +1885,7 @@ impl Effects {
     /// Every effect quad showing now; `position_of` gives a unit's feet (None = the player).
     pub fn quads(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<EffectQuad<'_>> {
         let mut quads = Vec::new();
-        for floating in self.floating.iter().filter(|floating| floating.start <= now) {
+        for floating in self.floating.iter().filter(|floating| floating.start <= now && self.shows(floating.effect)) {
             let Some(at) = floating.anchor.place(&position_of) else { continue };
             let length = floating.end.duration_since(floating.start).as_secs_f32();
             let elapsed = now.duration_since(floating.start).as_secs_f32();
@@ -1869,7 +1927,7 @@ impl Effects {
         }
         // Heal's sparkles rising and fading.
         if let Some(Some(texture)) = self.textures.get(SPARKLE_TEXTURE) {
-            for aura in self.auras.iter().filter(|aura| aura.start <= now && !aura.sparkles.is_empty()) {
+            for aura in self.auras.iter().filter(|aura| aura.start <= now && !aura.sparkles.is_empty() && self.shows(aura.effect)) {
                 let Some(at) = aura.anchor.place(&position_of) else { continue };
                 let age = (now.duration_since(aura.start).as_secs_f32() * 1000.0 / HIT_TICK_MS) as u32;
                 for &(start, [x, z]) in &aura.sparkles {
@@ -1886,8 +1944,8 @@ impl Effects {
                 }
             }
         }
-        // The hits' sparks, each with its trail, sized like a unit's sprite.
-        if let Some(Some(sprite)) = self.sprites.get(SPARK_SPRITE) {
+        // The hits' sparks, each with its trail, sized like a unit's sprite; /mineffect leaves the ring alone.
+        if let Some(Some(sprite)) = self.sprites.get(SPARK_SPRITE).filter(|_| self.shows(0) && !self.min) {
             for hit in &self.hits {
                 let (Some(paths), Some(at)) = (&hit.paths, hit.anchor.place(&position_of)) else { continue };
                 for (spark, path) in hit.sparks.iter().zip(paths) {
@@ -1901,7 +1959,7 @@ impl Effects {
                 }
             }
         }
-        for animation in &self.animations {
+        for animation in self.animations.iter().filter(|animation| self.shows(animation.effect)) {
             let Some(at) = animation.anchor.place(&position_of) else { continue };
             let Some(Some(sprite)) = self.sprites.get(&animation.sprite) else { continue };
             let [x, y] = animation.offset;
@@ -1913,7 +1971,7 @@ impl Effects {
                 quads.push((sprite.texture(key), at, corners, [1.0; 4], false, false));
             }
         }
-        for playing in self.playing.iter().filter(|playing| playing.start <= now) {
+        for playing in self.playing.iter().filter(|playing| playing.start <= now && self.shows(playing.effect)) {
             let Some(at) = playing.anchor.place(&position_of) else { continue };
             let animation = &playing.loaded.animation;
             // Whole ticks: the state changes once each 16 ms, with nothing in between.
@@ -1925,6 +1983,10 @@ impl Effects {
                 let corner = |index: usize| str_corner(state.position, [state.corners[index], state.corners[4 + index]], state.angle);
                 quads.push((texture, at, [corner(0), corner(1), corner(2), corner(3)], state.color, state.additive, true));
             }
+        }
+        // The effects made in code are none of them force-drawn.
+        if self.only_forced {
+            return quads;
         }
         // Fire Bolt's sparks.
         if let Some(Some(sprite)) = self.sprites.get(bolts::SPARK_SPRITE).filter(|_| !self.spark_frames.is_empty()) {
@@ -2449,13 +2511,60 @@ mod tests {
     }
 
     #[test]
+    fn effect_switches() {
+        // /effect off: the force list's ranges, in and out at each edge.
+        let ranges = [
+            (475, 484),
+            (735, 738),
+            (758, 767),
+            (1186, 1191),
+            (1214, 1217),
+            (1262, 1265),
+            (1607, 1609),
+            (1617, 1619),
+            (1869, 1871),
+            (2379, 2381),
+            (2383, 2389),
+            (2395, 2399),
+        ];
+        for (from, to) in ranges {
+            assert!(force_drawn(from) && force_drawn(to) && !force_drawn(from - 1) && !force_drawn(to + 1), "{from}–{to}");
+        }
+        assert!([35, 316, 317, 321, 315, 338, 371, 582, 154, 155, 166, 2402].into_iter().all(force_drawn));
+        // A Fire Bolt, Heal, the cast aura and the hit spark don't show.
+        assert!(![31, 312, 12, 0, 2382, 2400].into_iter().any(force_drawn));
+        // /mineffect's lighter STRs.
+        let min = [10, 41, 717, 66, 75, 76, 77, 85, 88, 103, 104, 112].map(min_file);
+        let files = [
+            "memor_min",
+            "jong_mini",
+            "jong_mini",
+            "cure_min",
+            "gloria_min",
+            "magnificat_min",
+            "resurrection_min",
+            "lexaeterna_min",
+            "suffragium_min",
+            "WeaponPerfection_min",
+            "maximize_min",
+            "kyrie_min",
+        ];
+        assert_eq!(min, files.map(Some));
+        assert_eq!(min_file(31), None);
+        // The map forces it on with its simple-effect flag (bit 3); without, the player's choice stands.
+        assert!(min_effect(false, Some(0b1000)) && min_effect(true, Some(0b1000)));
+        assert!(!min_effect(false, Some(0b0111)) && min_effect(true, Some(0)));
+        assert!(!min_effect(false, None) && min_effect(true, None));
+    }
+
+    #[test]
     fn reads_sprites_quakes_and_ground_units() {
         let table = Table::load();
         // Blessing's angel: action 0 at 30 ms a frame for 1.5 s, above the head.
         let blessing = &table.sprites[&42][0];
         assert_eq!((blessing.file.as_str(), blessing.attached), ("축복", true));
         let now = Instant::now();
-        let animation = Animation::new(blessing, now, Anchor::Unit(None), false);
+        let animation = Animation::new(blessing, 42, now, Anchor::Unit(None), false);
         assert_eq!((animation.action, animation.frame_ms, animation.repeat, animation.offset), (Some(0), Some(30.0), true, [0.0, -120.0]));
         assert_eq!(animation.end, Some(now + Duration::from_millis(1500)));
         // Earth Spike shakes the camera; Fire Bolt's arrows fall before each hit.
