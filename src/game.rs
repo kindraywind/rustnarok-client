@@ -1838,6 +1838,12 @@ impl Game {
                 self.chat_line(message(if graphics.min_effect { MIN_EFFECT_ON } else { MIN_EFFECT_OFF }), CHAT_ITEM);
                 Ok(())
             }
+            // ponytail: the game's /fog prints no line we know of; ours reads like /snap's.
+            chat::Command::Fog => {
+                graphics.fog = !graphics.fog;
+                self.chat_line(format!("fog: {}", if graphics.fog { "On" } else { "Off" }), CHAT_ITEM);
+                Ok(())
+            }
             // /aura: the max-level aura in full or simplified (its motes only); not while /aura2 has it off.
             chat::Command::Aura => {
                 graphics.aura = !graphics.aura;

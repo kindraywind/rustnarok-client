@@ -746,8 +746,9 @@ pub struct World {
     /// Waving water, one quad per tile that dips under it.
     water: Option<MapWater>,
     light: (Vector, [f32; 3], [f32; 3]),
-    /// The colour cleared behind the world.
+    /// The colour cleared behind the world, and the same without the fog mixed in (/fog off).
     clear_color: [f32; 3],
+    clear_color_bare: [f32; 3],
     /// Fog colour, and the view depths where it starts and becomes solid. End at or before the start means no fog.
     fog_color: [f32; 3],
     fog_range: [f32; 2],
@@ -1017,7 +1018,7 @@ impl World {
         let ambient = crate::ambient::Ambient::new(rsw.sounds.iter().map(|source| crate::ambient::Source::placed(source, half)).collect());
         let map_effects = crate::map_effects::MapEffects::new(&rsw.effects, half, || crate::effects::pick(0, u32::MAX - 1));
         let cell_light = cell_lights(&gnd, &gat);
-        let (clear_color, fog_color, fog_range) = atmosphere(grf, map);
+        let (clear_color, clear_color_bare, fog_color, fog_range) = atmosphere(grf, map);
         let tile_heights = (gnd.cubes.iter().map(|cube| cube.heights.map(|height| -height)).collect(), gnd.width);
         Ok(Self {
             animated,
@@ -1042,6 +1043,7 @@ impl World {
             water,
             light: (direction, rsw.light.ambient, rsw.light.diffuse),
             clear_color,
+            clear_color_bare,
             fog_color,
             fog_range,
             globals,
@@ -1219,14 +1221,15 @@ impl Fog {
 }
 
 /// Clear colour, fog colour and the depths where fog starts and is solid.
-fn atmosphere(grf: &Grf, map: &str) -> ([f32; 3], [f32; 3], [f32; 2]) {
+fn atmosphere(grf: &Grf, map: &str) -> ([f32; 3], [f32; 3], [f32; 3], [f32; 2]) {
     let looked_up = instance_map(map);
     let fog = fog_for(&parse_fog_table(&grf_text(grf, "data\\fogParameterTable.txt")), &looked_up);
     let sky = crate::lua::sky_for(grf, &looked_up);
     let clear = crate::lua::clear_color(sky, fog.map(Fog::channels));
+    let bare = crate::lua::clear_color(sky, None);
     match fog {
-        Some(fog) => (clear, fog.rgb(), fog.range()),
-        None => (clear, [0.0; 3], [1.0, 0.0]),
+        Some(fog) => (clear, bare, fog.rgb(), fog.range()),
+        None => (clear, bare, [0.0; 3], [1.0, 0.0]),
     }
 }
 
@@ -1492,6 +1495,8 @@ pub struct WorldFrame<'a> {
     pub blind: bool,
     /// The scene tint for the ground and models this frame.
     pub tint: [f32; 3],
+    /// The map's depth fog shows (/fog).
+    pub fog: bool,
 }
 
 impl WorldPass for WorldFrame<'_> {
@@ -1507,7 +1512,8 @@ impl WorldPass for WorldFrame<'_> {
             camera_up: [self.view.up[0], self.view.up[1], self.view.up[2], SPRITE_SCALE],
             pixel: [2.0 / (SCREEN_HEIGHT * self.view.aspect), 2.0 / SCREEN_HEIGHT, DEPTH_SCALE, NEAR],
             fog_color: [world.fog_color[0], world.fog_color[1], world.fog_color[2], 0.0],
-            fog_range: [world.fog_range[0], world.fog_range[1], 0.0, 0.0],
+            // An end at or before the start is no fog.
+            fog_range: if self.fog { [world.fog_range[0], world.fog_range[1], 0.0, 0.0] } else { [1.0, 0.0, 0.0, 0.0] },
             tint: [self.tint[0], self.tint[1], self.tint[2], f32::from(u8::from(self.blind))],
         };
         gpu.queue.write_buffer(&world.globals, 0, bytemuck::bytes_of(&globals));
@@ -1676,6 +1682,7 @@ impl WorldPass for WorldFrame<'_> {
         });
         let water_batches = world.water.as_ref().map(|water| water.batches(gpu, self.time, self.view.eye[1], self.blind));
 
+        let clear = if self.fog { world.clear_color } else { world.clear_color_bare };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("world"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1683,12 +1690,7 @@ impl WorldPass for WorldFrame<'_> {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: world.clear_color[0] as f64,
-                        g: world.clear_color[1] as f64,
-                        b: world.clear_color[2] as f64,
-                        a: 1.0,
-                    }),
+                    load: wgpu::LoadOp::Clear(wgpu::Color { r: clear[0] as f64, g: clear[1] as f64, b: clear[2] as f64, a: 1.0 }),
                     store: wgpu::StoreOp::Store,
                 },
             })],

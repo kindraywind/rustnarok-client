@@ -2712,6 +2712,7 @@ impl App {
             time: now.duration_since(game.entered).as_secs_f32(),
             blind: game.blind.showing(),
             tint: game.scene.tint(),
+            fog: self.graphics.fog,
         };
         if let Some(path) = self.print_screen.take() {
             let _ = path.parent().map(std::fs::create_dir_all);

@@ -21,11 +21,13 @@ pub struct GraphicsSettings {
     pub min_effect: bool,
     /// Full screen (the Graphics page's screen mode).
     pub fullscreen: bool,
+    /// /fog: the map's depth fog.
+    pub fog: bool,
 }
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
-        Self { effects_on: true, aura: true, aura_off: false, quake: true, min_effect: false, fullscreen: false }
+        Self { effects_on: true, aura: true, aura_off: false, quake: true, min_effect: false, fullscreen: false, fog: true }
     }
 }
 
@@ -50,11 +52,20 @@ impl GraphicsSettings {
         let text = std::fs::read_to_string(path).unwrap_or_default();
         let mut words = text.split_whitespace();
         let mut next = |default: bool| words.next().map_or(default, |value| value != "0");
-        Self { effects_on: next(true), aura: next(true), aura_off: next(false), quake: next(true), min_effect: next(false), fullscreen: next(false) }
+        Self {
+            effects_on: next(true),
+            aura: next(true),
+            aura_off: next(false),
+            quake: next(true),
+            min_effect: next(false),
+            fullscreen: next(false),
+            fog: next(true),
+        }
     }
 
     pub fn save_to(&self, path: &Path) {
-        let text = [self.effects_on, self.aura, self.aura_off, self.quake, self.min_effect, self.fullscreen].map(|on| if on { "1" } else { "0" }).join(" ");
+        let text =
+            [self.effects_on, self.aura, self.aura_off, self.quake, self.min_effect, self.fullscreen, self.fog].map(|on| if on { "1" } else { "0" }).join(" ");
         let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, text));
     }
 }
@@ -94,7 +105,7 @@ mod tests {
     fn graphics_settings_round_trip() {
         let path = temp_settings("graphics");
         let _ = std::fs::remove_file(&path);
-        let settings = GraphicsSettings { effects_on: false, aura: false, aura_off: true, quake: false, min_effect: true, fullscreen: true };
+        let settings = GraphicsSettings { effects_on: false, aura: false, aura_off: true, quake: false, min_effect: true, fullscreen: true, fog: false };
         settings.save_to(&path);
         assert_eq!(GraphicsSettings::load_from(&path), settings);
         // An older file with only the effects switch keeps the aura's and quake's defaults.
