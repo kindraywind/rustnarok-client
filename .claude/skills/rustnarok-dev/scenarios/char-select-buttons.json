@@ -1,5 +1,5 @@
 {
-  "about": "Character select's buttons (issue #506): on a character with no deletion date the two buttons under the stats read Delete Character and Notice; Notice shows its box. An empty card's Game Start opens character creation for it, and Esc comes back.",
+  "about": "Character select's buttons (issue #506): on a character with no deletion date the two buttons under the stats read Delete Character and Notice; Notice shows its box. An empty card's Game Start opens character creation for it, and its Back button comes back (Esc there asks to quit).",
   "account": "",
   "slot": 0,
   "start": "char_select",
@@ -21,7 +21,7 @@
     {"click_on": {"button": "char_start"}},
     {"wait": 500},
     {"expect": {"state": {"scene": "char_make"}}},
-    {"key": "Escape"},
+    {"click_on": {"button": "make_back"}},
     {"wait": 500},
     {"expect": {"state": {"scene": "char_select", "selected": 2}}}
   ]
