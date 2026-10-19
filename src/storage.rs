@@ -87,6 +87,50 @@ const CATEGORY_FOOTER: f32 = 21.0;
 const CATEGORY_CELL_X: f32 = 10.0;
 const CATEGORY_NAME_X: f32 = 50.0;
 const CATEGORY_POINTER: [f32; 2] = [20.0, 52.0];
+/// The Search window: the list windows' look, titled "Search", a close button, first at (510, 360).
+const SEARCH_TITLE: usize = 1095;
+const SEARCH_PLACE: [f32; 2] = [510.0, 360.0];
+/// The sort box: 62 × 18 at (214, h − 52), `bg_setting.bmp` with `combo_btn_a.bmp` at its right; its lines say Base,
+/// ascending and descending.
+const SORT_AT: [f32; 2] = [214.0, 52.0];
+const SORT_SIZE: [f32; 2] = [62.0, 18.0];
+const SORT_LINES: [usize; 3] = [3276, 3274, 3275];
+
+/// Where a row's full name comes from: the messages, the cards' names and the makers' names.
+pub type Names<'a> = (&'a [String], &'a CardNames, &'a HashMap<u32, Option<String>>);
+
+/// A list of stored stacks: a tab's (the main window's, a category window's), or the Search window's.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum List {
+    Tab(usize),
+    Search,
+}
+
+/// The order every list shows: as the items came, or by full name, compared byte by byte, up or (the same, reversed)
+/// down. Each start of the game begins on Base; the choice outlives the window but isn't saved.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub enum Order {
+    #[default]
+    Base,
+    Up,
+    Down,
+}
+
+/// Puts named stacks in `order`: a stable sort on the names for Up, and that whole list reversed for Down.
+fn ordered<T>(mut named: Vec<(T, String)>, order: Order) -> Vec<T> {
+    if order != Order::Base {
+        named.sort_by(|(_, a), (_, b)| a.as_bytes().cmp(b.as_bytes()));
+    }
+    if order == Order::Down {
+        named.reverse();
+    }
+    named.into_iter().map(|(item, _)| item).collect()
+}
+
+/// Whether a full name matches a search: a plain, case-sensitive substring.
+fn matches_search(name: &str, text: &str) -> bool {
+    name.contains(text)
+}
 
 pub struct Assets {
     footer: [Texture; 3],
@@ -103,6 +147,8 @@ pub struct Assets {
     close: [Texture; 3],
     resize: Texture,
     grades: [Texture; 4],
+    /// The sort box's background and its arrow.
+    sort: [Texture; 2],
 }
 
 impl Assets {
@@ -123,6 +169,7 @@ impl Assets {
             close: ["", "_a", "_b"].map(|look| image(format!("{basic}btn_close{look}.bmp"))),
             resize: image(format!("{UI}btn_resize.bmp")),
             grades: std::array::from_fn(|grade| image(format!("{UI}grade_enchant\\grade_icon{}.bmp", grade + 1))),
+            sort: ["bg_setting", "combo_btn_a"].map(|name| image(format!("{basic}{name}.bmp"))),
         }
     }
 }
@@ -168,7 +215,11 @@ pub struct Category {
 
 impl Category {
     fn new(tab: usize) -> Self {
-        Self { frame: Frame::new(CATEGORY_PLACES[tab], CATEGORY_SIZE[0]), size: CATEGORY_SIZE, scroll: 0, grip: window::Grip::default() }
+        Self::at(CATEGORY_PLACES[tab])
+    }
+
+    fn at(place: [f32; 2]) -> Self {
+        Self { frame: Frame::new(place, CATEGORY_SIZE[0]), size: CATEGORY_SIZE, scroll: 0, grip: window::Grip::default() }
     }
 
     /// Opens at 140 × 145 where it was last, at the top.
@@ -278,6 +329,9 @@ pub enum Hit {
     Close,
     /// A category's box in the footer.
     Box(usize),
+    /// The sort box, and a line of its list while it's down.
+    Sort,
+    SortLine(Order),
     /// The corner grip.
     Resize,
     Window,
@@ -304,6 +358,12 @@ pub struct Storage {
     /// Each tab's category window, and which are on (a bit each, Use first): those open with the storage.
     pub categories: [Category; TABS],
     pub mask: u8,
+    /// The Search window and what it looks for.
+    pub search_window: Category,
+    search_text: String,
+    /// The lists' order, and whether the sort box's list is down.
+    order: Order,
+    sorting: bool,
 }
 
 impl Default for Storage {
@@ -322,6 +382,10 @@ impl Default for Storage {
             resized: false,
             categories: std::array::from_fn(Category::new),
             mask: 0,
+            search_window: Category::at(SEARCH_PLACE),
+            search_text: String::new(),
+            order: Order::Base,
+            sorting: false,
         }
     }
 }
@@ -332,7 +396,18 @@ impl Storage {
     pub fn open(&mut self, name: String) {
         let frame = std::mem::replace(&mut self.frame, Frame::new(DEFAULT_POSITION, WIDTH));
         let categories = std::mem::replace(&mut self.categories, std::array::from_fn(Category::new));
-        *self = Self { frame, categories, mask: self.mask, rows: self.rows, name, resized: self.rows != LEAST_ROWS, ..Self::default() };
+        let search_window = std::mem::replace(&mut self.search_window, Category::at(SEARCH_PLACE));
+        *self = Self {
+            frame,
+            categories,
+            search_window,
+            mask: self.mask,
+            order: self.order,
+            rows: self.rows,
+            name,
+            resized: self.rows != LEAST_ROWS,
+            ..Self::default()
+        };
         self.frame.open = true;
         self.frame.minimized = false;
         for (tab, category) in self.categories.iter_mut().enumerate() {
@@ -348,6 +423,34 @@ impl Storage {
         self.typing = false;
         for category in &mut self.categories {
             category.frame.open = false;
+        }
+        self.search_window.frame.open = false;
+        self.sorting = false;
+    }
+
+    /// The search button: with text in the box, the Search window opens (one, reused) looking for it, and the box
+    /// empties; with none, nothing. Whether it opened.
+    pub fn search(&mut self) -> bool {
+        if self.search.is_empty() {
+            return false;
+        }
+        self.search_text = std::mem::take(&mut self.search);
+        self.search_window.open();
+        true
+    }
+
+    /// A list window by its list.
+    pub fn list_window(&self, which: List) -> &Category {
+        match which {
+            List::Tab(tab) => &self.categories[tab],
+            List::Search => &self.search_window,
+        }
+    }
+
+    pub fn list_window_mut(&mut self, which: List) -> &mut Category {
+        match which {
+            List::Tab(tab) => &mut self.categories[tab],
+            List::Search => &mut self.search_window,
         }
     }
 
@@ -394,20 +497,28 @@ impl Storage {
         self.items.iter().find(|item| item.index == index)
     }
 
-    /// The open tab's items, or every match while searching.
-    fn listed<'s>(&'s self, info: &'s HashMap<u32, ItemInfo>) -> impl Iterator<Item = &'s InventoryItem> {
-        let search = self.search.to_lowercase();
-        self.items.iter().filter(move |item| {
-            if !search.is_empty() {
-                return inventory::item_name(info, item.id, item.identified, item.refine).to_lowercase().contains(&search);
+    /// A list's stacks in the order chosen: a tab's, or every stack whose full name (as the rows show it) holds the
+    /// Search window's text.
+    pub fn list<'s>(&'s self, which: List, info: &HashMap<u32, ItemInfo>, (messages, cards, makers): Names) -> Vec<&'s InventoryItem> {
+        let name = |item: &InventoryItem| inventory::full_name_maker(info, cards, messages, makers, item, false).0;
+        let named = self.items.iter().filter_map(|item| match which {
+            List::Tab(tab) => (tab_of(item, info) == Some(tab)).then(|| (item, if self.order == Order::Base { String::new() } else { name(item) })),
+            List::Search => {
+                let full = name(item);
+                matches_search(&full, &self.search_text).then_some((item, full))
             }
-            tab_of(item, info) == Some(self.tab)
-        })
+        });
+        ordered(named.collect(), self.order)
     }
 
-    /// A tab's items, in the list's order (a category window's).
-    fn in_tab<'s>(&'s self, tab: usize, info: &'s HashMap<u32, ItemInfo>) -> impl Iterator<Item = &'s InventoryItem> {
-        self.items.iter().filter(move |item| tab_of(item, info) == Some(tab))
+    /// The open tab's list, as the main window shows it (for the test driver).
+    pub fn shown(&self, info: &HashMap<u32, ItemInfo>, names: Names) -> Vec<u32> {
+        self.listed(info, names).iter().map(|item| item.id).collect()
+    }
+
+    /// The main window's list: the open tab's, whatever is typed in the box.
+    fn listed<'s>(&'s self, info: &HashMap<u32, ItemInfo>, names: Names) -> Vec<&'s InventoryItem> {
+        self.list(List::Tab(self.tab), info, names)
     }
 
     pub fn height(&self) -> f32 {
@@ -430,7 +541,7 @@ impl Storage {
     }
 
     /// The tabs and the listed items' icon cells on screen (for the test driver): `storage_tab:<n>`, `storage_item:<id>`.
-    pub fn button_boxes(&self, assets: &Assets, info: &HashMap<u32, ItemInfo>) -> Vec<(String, [f32; 4])> {
+    pub fn button_boxes(&self, assets: &Assets, info: &HashMap<u32, ItemInfo>, names: Names) -> Vec<(String, [f32; 4])> {
         if !self.frame.open {
             return Vec::new();
         }
@@ -443,19 +554,45 @@ impl Storage {
         let mut boxes: Vec<_> = tabs.collect();
         boxes.extend((0..TABS).map(|tab| (format!("storage_box:{tab}"), place(self.box_at(tab), [BOX_SIZE, BOX_SIZE]))));
         boxes.push(("storage_close".into(), place(self.footer_at(CLOSE), CLOSE_SIZE)));
-        let rows = self.listed(info).skip(self.scroll).take(self.rows).enumerate();
+        boxes.push(("storage_search".into(), place(self.search_at(), SEARCH_SIZE)));
+        boxes.push(("storage_find".into(), place(self.footer_at(FIND), assets.search[0].size)));
+        boxes.push(("storage_sort".into(), place(self.footer_at(SORT_AT), SORT_SIZE)));
+        if self.sorting {
+            for line in 0..3 {
+                boxes.push((format!("storage_sort:{line}"), place(self.sort_line_at(line), SORT_SIZE)));
+            }
+        }
+        let rows = self.listed(info, names).into_iter().skip(self.scroll).take(self.rows).enumerate();
         boxes.extend(rows.map(|(row, item)| (format!("storage_item:{}", item.id), place([CELL_X, ROWS_TOP + row as f32 * CELL], [CELL, CELL]))));
-        // Each open category window's rows: `storage_cat<tab>_item:<id>`, and its grip `storage_cat<tab>_resize`.
-        for (tab, category) in self.categories.iter().enumerate().filter(|(_, category)| category.frame.open) {
-            let rows = self.in_tab(tab, info).skip(category.scroll).take(category.rows()).enumerate();
+        // Each open list window's rows: `storage_cat<tab>_item:<id>` (`storage_found_item:<id>` for the Search
+        // window), and its grip `storage_cat<tab>_resize` (`storage_found_resize`).
+        let windows = (0..TABS).map(List::Tab).chain([List::Search]);
+        for which in windows.filter(|&which| self.list_window(which).frame.open) {
+            let name = match which {
+                List::Tab(tab) => format!("storage_cat{tab}"),
+                List::Search => "storage_found".to_owned(),
+            };
+            let window = self.list_window(which);
+            let rows = self.list(which, info, names).into_iter().skip(window.scroll).take(window.rows()).enumerate();
             boxes.extend(rows.map(|(row, item)| {
-                let [x, y] = category.frame.at([CATEGORY_POINTER[0], ROWS_TOP + row as f32 * CELL]);
-                (format!("storage_cat{tab}_item:{}", item.id), [x, y, CATEGORY_POINTER[1] - CATEGORY_POINTER[0], CELL])
+                let [x, y] = window.frame.at([CATEGORY_POINTER[0], ROWS_TOP + row as f32 * CELL]);
+                (format!("{name}_item:{}", item.id), [x, y, CATEGORY_POINTER[1] - CATEGORY_POINTER[0], CELL])
             }));
-            let [x, y] = category.frame.at([category.size[0] - window::GRIP, category.size[1] - window::GRIP]);
-            boxes.push((format!("storage_cat{tab}_resize"), [x, y, window::GRIP, window::GRIP]));
+            let [x, y] = window.frame.at([window.size[0] - window::GRIP, window.size[1] - window::GRIP]);
+            boxes.push((format!("{name}_resize"), [x, y, window::GRIP, window::GRIP]));
+            if which == List::Search {
+                let [x, y] = window.frame.at(window.frame.close_button());
+                boxes.push(("storage_found_close".into(), [x, y, 11.0, 11.0]));
+            }
         }
         boxes
+    }
+
+    /// A line of the sort box's list, in the window.
+    // ponytail: the list opens upward from the box, in the box's own size, so it stays within the window.
+    fn sort_line_at(&self, line: usize) -> [f32; 2] {
+        let [x, y] = self.footer_at(SORT_AT);
+        [x, y - (3 - line) as f32 * SORT_SIZE[1]]
     }
 
     /// A category's box in the footer, in the window.
@@ -503,8 +640,14 @@ impl Storage {
         self.grip.stop()
     }
 
-    pub fn hit(&self, cursor: [f32; 2], assets: &Assets, info: &HashMap<u32, ItemInfo>) -> Option<Hit> {
+    pub fn hit(&self, cursor: [f32; 2], assets: &Assets, info: &HashMap<u32, ItemInfo>, names: Names) -> Option<Hit> {
         let local = self.frame.local(cursor, self.height())?;
+        // The sort box's list, while down, is over everything under it.
+        if self.sorting
+            && let Some(line) = (0..3).find(|&line| contains(self.sort_line_at(line), SORT_SIZE, local))
+        {
+            return Some(Hit::SortLine([Order::Base, Order::Up, Order::Down][line]));
+        }
         // The title bar has the close button only.
         match self.frame.title_hit(local) {
             Some(TitleHit::Minimize) => return Some(Hit::Title(TitleHit::Title)),
@@ -516,6 +659,9 @@ impl Storage {
         }
         if let Some(tab) = (0..TABS).find(|&tab| contains(self.box_at(tab), [BOX_SIZE; 2], local)) {
             return Some(Hit::Box(tab));
+        }
+        if contains(self.footer_at(SORT_AT), SORT_SIZE, local) {
+            return Some(Hit::Sort);
         }
         if contains(self.footer_at(CLOSE), CLOSE_SIZE, local) {
             return Some(Hit::Close);
@@ -529,67 +675,69 @@ impl Storage {
         if window::on_grip([WIDTH, self.height()], local) {
             return Some(Hit::Resize);
         }
-        let _ = assets;
-        let item = self.row_at(local).and_then(|row| self.listed(info).nth(self.scroll + row));
+        let item = self.row_at(local).and_then(|row| self.listed(info, names).get(self.scroll + row).copied());
         Some(item.map_or(Hit::Window, |item| Hit::Item(item.index)))
     }
 
     /// A click: true when it asks to close the storage. A tab keeps the scroll row as far as the new tab's list goes,
-    /// and the search.
-    pub fn click(&mut self, hit: Hit, info: &HashMap<u32, ItemInfo>) -> bool {
+    /// and the search box's text. The sort box drops its list; a line of it sets the order.
+    pub fn click(&mut self, hit: Hit, info: &HashMap<u32, ItemInfo>, names: Names) -> bool {
         self.typing = hit == Hit::Search;
+        let was_sorting = std::mem::take(&mut self.sorting);
         match hit {
             Hit::Title(TitleHit::Close) | Hit::Close => return true,
             Hit::Title(title) => self.frame.click_title(title),
             Hit::Tab(tab) => {
                 self.tab = tab;
-                let total = self.listed(info).count();
+                let total = self.listed(info, names).len();
                 self.scroll = self.scroll.min(total.saturating_sub(self.rows));
             }
-            // A box acts on the press (`toggle_category`).
+            Hit::Sort => self.sorting = !was_sorting,
+            Hit::SortLine(order) => self.order = order,
+            // A box acts on the press (`toggle_category`); the search button is `search`.
             Hit::Box(_) | Hit::Item(_) | Hit::Search | Hit::Find | Hit::Resize | Hit::Window => {}
         }
         false
     }
 
     /// The wheel: 3 rows a notch (fewer when fewer show), as far as the list goes.
-    pub fn scroll_by(&mut self, notches: i32, assets: &Assets, info: &HashMap<u32, ItemInfo>) {
-        let _ = assets;
+    pub fn scroll_by(&mut self, notches: i32, info: &HashMap<u32, ItemInfo>, names: Names) {
         let step = WHEEL_ROWS.min(self.rows - 1) as i32;
-        let total = self.listed(info).count();
+        let total = self.listed(info, names).len();
         self.scroll = (self.scroll as i32 + notches * step).clamp(0, total.saturating_sub(self.rows) as i32) as usize;
     }
 
-    /// What's under the pointer in a category window: its title (no buttons), a row's item, the grip, or the window.
-    pub fn category_hit(&self, tab: usize, cursor: [f32; 2], info: &HashMap<u32, ItemInfo>) -> Option<Hit> {
-        let category = &self.categories[tab];
-        if !category.frame.open {
+    /// What's under the pointer in a list window: its title (a category window's has no buttons, the Search window's
+    /// a close button), a row's item, the grip, or the window.
+    pub fn category_hit(&self, which: List, cursor: [f32; 2], info: &HashMap<u32, ItemInfo>, names: Names) -> Option<Hit> {
+        let window = self.list_window(which);
+        if !window.frame.open {
             return None;
         }
-        let local = category.frame.local(cursor, category.height())?;
+        let local = window.frame.local(cursor, window.height())?;
         if local[1] < TITLE_HEIGHT {
-            return Some(Hit::Title(TitleHit::Title));
+            let close = which == List::Search && window.frame.title_hit(local) == Some(TitleHit::Close);
+            return Some(Hit::Title(if close { TitleHit::Close } else { TitleHit::Title }));
         }
-        if window::on_grip(category.size, local) {
+        if window::on_grip(window.size, local) {
             return Some(Hit::Resize);
         }
-        let item = category.row_at(local).and_then(|row| self.in_tab(tab, info).nth(category.scroll + row));
+        let item = window.row_at(local).and_then(|row| self.list(which, info, names).get(window.scroll + row).copied());
         Some(item.map_or(Hit::Window, |item| Hit::Item(item.index)))
     }
 
-    /// The wheel over a category window: as the main window's.
-    pub fn category_scroll_by(&mut self, tab: usize, notches: i32, info: &HashMap<u32, ItemInfo>) {
-        let total = self.in_tab(tab, info).count();
-        let category = &mut self.categories[tab];
-        let rows = category.rows();
+    /// The wheel over a list window: as the main window's.
+    pub fn category_scroll_by(&mut self, which: List, notches: i32, info: &HashMap<u32, ItemInfo>, names: Names) {
+        let total = self.list(which, info, names).len();
+        let window = self.list_window_mut(which);
+        let rows = window.rows();
         let step = WHEEL_ROWS.min(rows.saturating_sub(1)).max(1) as i32;
-        category.scroll = (category.scroll as i32 + notches * step).clamp(0, total.saturating_sub(rows) as i32) as usize;
+        window.scroll = (window.scroll as i32 + notches * step).clamp(0, total.saturating_sub(rows) as i32) as usize;
     }
 
-    /// Typing while the search field has the caret.
+    /// Typing while the search field has the caret: the list doesn't filter (the search button does).
     pub fn type_text(&mut self, text: &str) {
         self.search.extend(text.chars().filter(|character| !character.is_control()));
-        self.scroll = 0;
     }
 
     pub fn icons(&self, info: &HashMap<u32, ItemInfo>) -> Vec<String> {
@@ -619,7 +767,8 @@ impl Storage {
         let at = |local: [f32; 2]| self.frame.at(local);
         self.frame.draw_bar(layer, chrome);
         self.frame.draw_bare_title(layer, chrome, title(&self.name, messages), pointer.0);
-        let hit = self.hit(pointer.0, assets, items);
+        let names = (messages, cards, makers);
+        let hit = self.hit(pointer.0, assets, items, names);
         let look = |target: Hit| {
             let hovered = hit == Some(target);
             usize::from(hovered) + usize::from(hovered && pointer.1)
@@ -643,7 +792,7 @@ impl Storage {
             layer.sprites.push((&chrome.white, at([ROW_WHITE[0], top]), [ROW_WHITE[1] - ROW_WHITE[0], CELL]));
         }
         // Each row's item: the icon, its amount outlined, the name in its enchants' colour, the grade.
-        for (row, item) in self.listed(items).skip(self.scroll).take(self.rows).enumerate() {
+        for (row, item) in self.listed(items, names).into_iter().skip(self.scroll).take(self.rows).enumerate() {
             let top = ROWS_TOP + row as f32 * CELL;
             let place = at([CELL_X, top]);
             let info = items.get(&item.id);
@@ -701,16 +850,31 @@ impl Storage {
         layer.sprites.push((find, at(self.footer_at(FIND)), find.size));
         layer.sprites.push((&assets.close[look(Hit::Close)], at(self.footer_at(CLOSE)), CLOSE_SIZE));
         layer.sprites.push((&assets.resize, at([WIDTH - window::GRIP, h - window::GRIP]), assets.resize.size));
+        // The sort box showing the chosen line, and its list while down.
+        let [back, arrow] = &assets.sort;
+        let line = |order: Order| messages.get(SORT_LINES[order as usize]).map_or("", String::as_str);
+        let sort_at = self.footer_at(SORT_AT);
+        layer.sprites.push((back, at(sort_at), back.size));
+        layer.sprites.push((arrow, at([sort_at[0] + SORT_SIZE[0] - arrow.size[0], sort_at[1]]), arrow.size));
+        layer.texts.push((window::fit(font, line(self.order), back.size[0] - 4.0), at(offset(sort_at, [3.0, 3.0])), [0, 0, 0]));
+        if self.sorting {
+            for (number, order) in [Order::Base, Order::Up, Order::Down].into_iter().enumerate() {
+                let place = self.sort_line_at(number);
+                let lit = hit == Some(Hit::SortLine(order));
+                layer.sprites.push((&chrome.white, at(place), SORT_SIZE));
+                layer.texts.push((line(order).to_owned(), at(offset(place, [3.0, 3.0])), if lit { [0, 0, 0xFF] } else { [0, 0, 0] }));
+            }
+        }
     }
 }
 
 impl Storage {
-    /// A category window: the title bar (no buttons), a white body, a cell and the item for each row, the footer and
-    /// the grip.
+    /// A list window: the title bar (a category window's with no buttons, the Search window's with a close button), a
+    /// white body, a cell and the item for each row, the footer and the grip.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_category<'a>(
         &self,
-        tab: usize,
+        which: List,
         layer: &mut Layer<'a>,
         tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
@@ -721,18 +885,25 @@ impl Storage {
         font: &Font,
         pointer: [f32; 2],
     ) {
-        let category = &self.categories[tab];
+        let category = self.list_window(which);
         if !category.frame.open {
             return;
         }
         let at = |local: [f32; 2]| category.frame.at(local);
         let [w, h] = category.size;
-        category.frame.draw_title_only(layer, chrome, messages.get(CATEGORY_TITLES[tab]).map_or("", String::as_str));
+        let message = |id: usize| messages.get(id).map_or("", String::as_str);
+        match which {
+            List::Tab(tab) => category.frame.draw_title_only(layer, chrome, message(CATEGORY_TITLES[tab])),
+            List::Search => {
+                category.frame.draw_bar(layer, chrome);
+                category.frame.draw_bare_title(layer, chrome, message(SEARCH_TITLE), pointer);
+            }
+        }
         layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [w, h - 38.0]));
         for row in 0..category.rows() {
             layer.sprites.push((&assets.cell, at([CATEGORY_CELL_X, ROWS_TOP + row as f32 * CELL]), assets.cell.size));
         }
-        for (row, item) in self.in_tab(tab, items).skip(category.scroll).take(category.rows()).enumerate() {
+        for (row, item) in self.list(which, items, (messages, cards, makers)).into_iter().skip(category.scroll).take(category.rows()).enumerate() {
             let top = ROWS_TOP + row as f32 * CELL;
             let place = at([CATEGORY_CELL_X, top]);
             let info = items.get(&item.id);
@@ -842,14 +1013,16 @@ mod tests {
         let none = HashMap::new();
         // 30 usable and 20 etc items: row 4 of Use, over to Etc and back, is still row 4.
         storage.extend((0..30).map(|index| item(index, 0, 0)).chain((30..50).map(|index| item(index, 3, 0))).collect());
+        let (cards, makers) = (CardNames::default(), HashMap::new());
+        let names: Names = (&[], &cards, &makers);
         storage.scroll = 4;
-        storage.click(Hit::Tab(7), &none);
+        storage.click(Hit::Tab(7), &none, names);
         assert_eq!(storage.scroll, 4);
-        storage.click(Hit::Tab(0), &none);
+        storage.click(Hit::Tab(0), &none, names);
         assert_eq!(storage.scroll, 4);
-        // A tab with fewer rows keeps the last there is; the search stays.
+        // A tab with fewer rows keeps the last there is; the search box's text stays.
         storage.search = "x".into();
-        storage.click(Hit::Tab(6), &none);
+        storage.click(Hit::Tab(6), &none, names);
         assert_eq!((storage.scroll, storage.search.as_str()), (0, "x"));
     }
 
@@ -861,6 +1034,79 @@ mod tests {
         let category = Category::new(0);
         assert_eq!([20.0, 51.0, 10.0, 52.0].map(|x| category.row_at([x, 20.0])), [Some(0), Some(0), None, None]);
         assert_eq!((category.rows(), category.row_at([30.0, 17.0 + 96.0])), (3, None));
+    }
+
+    /// Items named by id: 501 "Red Potion", 502 "Orange Potion", 512 "Apple", 513 "Banana", 514 "apple", 909 "Jellopy".
+    fn named() -> HashMap<u32, ItemInfo> {
+        [(501, "Red Potion"), (502, "Orange Potion"), (512, "Apple"), (513, "Banana"), (514, "apple"), (909, "Jellopy")]
+            .into_iter()
+            .map(|(id, name)| (id, ItemInfo { name: name.into(), ..Default::default() }))
+            .collect()
+    }
+
+    fn stored(index: u16, id: u32, kind: u8) -> InventoryItem {
+        InventoryItem { index, id, kind, amount: 1, identified: true, ..Default::default() }
+    }
+
+    #[test]
+    fn searches_into_its_own_window() {
+        let info = named();
+        let (cards, makers) = (CardNames::default(), HashMap::new());
+        let names: Names = (&[], &cards, &makers);
+        let mut storage = Storage::default();
+        storage.open(String::new());
+        storage.extend(vec![stored(1, 501, 0), stored(2, 909, 3), stored(3, 502, 0)]);
+        // Typing doesn't filter; an empty box does nothing.
+        storage.type_text("Potion");
+        assert_eq!(storage.listed(&info, names).len(), 2);
+        assert!(!Storage::default().search());
+        // The button opens the Search window with the text and empties the box; any tab, case-sensitive.
+        assert!(storage.search());
+        assert!(storage.search.is_empty() && storage.search_window.frame.open);
+        assert_eq!(storage.search_window.frame.position, [510.0, 360.0]);
+        let found = |storage: &Storage| storage.list(List::Search, &info, names).iter().map(|item| item.id).collect::<Vec<_>>();
+        assert_eq!(found(&storage), [501, 502]);
+        storage.type_text("potion");
+        storage.search();
+        assert!(found(&storage).is_empty());
+        // It filters again as the storage changes; Close shuts it.
+        storage.type_text("Jell");
+        storage.search();
+        storage.add(stored(4, 909, 3));
+        assert_eq!(found(&storage), [909, 909]);
+        storage.close();
+        assert!(!storage.search_window.frame.open);
+        // Its sizes and pointer box are the category windows'.
+        assert_eq!(storage.list_window(List::Search).size, [140.0, 145.0]);
+        assert_eq!(storage.search_window.row_at([20.0, 20.0]), Some(0));
+    }
+
+    #[test]
+    fn orders_every_list() {
+        let info = named();
+        let (cards, makers) = (CardNames::default(), HashMap::new());
+        let names: Names = (&[], &cards, &makers);
+        let mut storage = Storage::default();
+        storage.open(String::new());
+        // Banana, apple, Apple (twice: two stacks), all usable.
+        storage.extend(vec![stored(1, 513, 0), stored(2, 514, 0), stored(3, 512, 0), stored(4, 512, 0)]);
+        let indices = |storage: &Storage| storage.listed(&info, names).iter().map(|item| item.index).collect::<Vec<_>>();
+        assert_eq!(indices(&storage), [1, 2, 3, 4], "Base: as they came");
+        storage.click(Hit::SortLine(Order::Up), &info, names);
+        assert_eq!(indices(&storage), [3, 4, 1, 2], "Apple, Apple, Banana, apple: byte by byte, stable");
+        storage.click(Hit::SortLine(Order::Down), &info, names);
+        assert_eq!(indices(&storage), [2, 1, 4, 3], "the same reversed: the two Apples swap");
+        // The order holds through closing and opening again; the category windows take it too.
+        storage.close();
+        storage.open(String::new());
+        storage.extend(vec![stored(1, 513, 0), stored(3, 512, 0)]);
+        assert_eq!(storage.list(List::Tab(0), &info, names).iter().map(|item| item.index).collect::<Vec<_>>(), [1, 3]);
+        assert_eq!(Storage::default().order, Order::Base);
+        // The sort box drops its list and a press elsewhere puts it away.
+        storage.click(Hit::Sort, &info, names);
+        assert!(storage.sorting);
+        storage.click(Hit::Window, &info, names);
+        assert!(!storage.sorting);
     }
 
     #[test]

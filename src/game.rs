@@ -564,9 +564,9 @@ impl Game {
             Panel::Equipment => self.equipment.hit(cursor, &self.inventory.items).is_some(),
             Panel::Skills => self.skill_window.frame.local(cursor, self.skill_window.height()).is_some(),
             Panel::Storage => self.storage.frame.open && self.storage.frame.local(cursor, self.storage.height()).is_some(),
-            Panel::StorageCategory(tab) => {
-                let category = &self.storage.categories[tab];
-                category.frame.open && category.frame.local(cursor, category.height()).is_some()
+            Panel::StorageCategory(_) | Panel::StorageSearch => {
+                let window = storage_list(id).map(|which| self.storage.list_window(which));
+                window.is_some_and(|window| window.frame.open && window.frame.local(cursor, window.height()).is_some())
             }
             Panel::Party => self.party_window.frame.open && self.party_window.hit(cursor, self.party.as_ref(), &self.friends).is_some(),
             Panel::Status => self.status_window.frame.open && self.status_window.frame.local(cursor, self.status_height).is_some(),
@@ -595,7 +595,7 @@ impl Game {
     }
 
     /// Every window's frame, by name, for saving where each was left. `minimap` is the game's MINIMAPWNDINFO.
-    pub(crate) fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 27] {
+    pub(crate) fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 28] {
         let [used, cash, armors, weapons, costumes, ammo, card, etc] = &mut self.storage.categories;
         [
             ("hotkeys", &mut self.hotkeys.frame),
@@ -612,6 +612,7 @@ impl Game {
             ("storage_ammo", &mut ammo.frame),
             ("storage_card", &mut card.frame),
             ("storage_etc", &mut etc.frame),
+            ("storage_search", &mut self.storage.search_window.frame),
             ("party", &mut self.party_window.frame),
             ("status", &mut self.status_window.frame),
             ("guild", &mut self.guild_window.frame),
@@ -759,6 +760,7 @@ impl Game {
             Panel::Skills => &self.skill_window.frame,
             Panel::Storage => &self.storage.frame,
             Panel::StorageCategory(tab) => &self.storage.categories[tab].frame,
+            Panel::StorageSearch => &self.storage.search_window.frame,
             Panel::Party => &self.party_window.frame,
             Panel::Status => &self.status_window.frame,
             Panel::Guild => &self.guild_window.frame,
@@ -1060,7 +1062,7 @@ impl Game {
         (top == Some(Panel::Inventory) && self.inventory.hit(cursor) == Some(inventory::Hit::Resize))
             || (top == Some(Panel::Cart) && self.cart.hit(cursor) == Some(inventory::Hit::Resize))
             || (top == Some(Panel::Storage) && self.storage.on_grip(cursor))
-            || matches!(top, Some(Panel::StorageCategory(tab)) if self.storage.categories[tab].on_grip(cursor))
+            || top.and_then(storage_list).is_some_and(|which| self.storage.list_window(which).on_grip(cursor))
             || (top == Some(Panel::Skills) && self.skill_window.grip_box().is_some_and(|[x, y, w, h]| contains([x, y], [w, h], cursor)))
             || matches!(self.shop.as_ref().and_then(|shop| shop.hit(cursor)), Some(shop::Hit::Resize(_)))
             || self.vend_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.cart.items) == Some(vend::Hit::Resize))
@@ -2374,6 +2376,7 @@ impl Game {
             Panel::Skills => self.skill_window.frame.open,
             Panel::Storage => self.storage.frame.open,
             Panel::StorageCategory(tab) => self.storage.categories[tab].frame.open,
+            Panel::StorageSearch => self.storage.search_window.frame.open,
             Panel::Party => self.party_window.frame.open,
             Panel::Status => self.status_window.frame.open,
             Panel::Guild => self.guild.is_some() && self.guild_window.frame.open,
@@ -2425,6 +2428,7 @@ impl Game {
         for (tab, category) in self.storage.categories.iter().enumerate() {
             push(StorageCategory(tab), category.frame.open);
         }
+        push(StorageSearch, self.storage.search_window.frame.open);
         // An NPC's window and the warp list aren't Esc's to close: they end with their own buttons.
         // An NPC shop isn't Esc's to close.
         push(Shop, self.shop.as_ref().is_some_and(|shop| !shop.plain()));
@@ -2747,6 +2751,7 @@ impl Game {
                 let _ = self.session.close_storage();
             }
             StorageCategory(tab) => self.storage.close_category(tab),
+            StorageSearch => self.storage.search_window.frame.open = false,
             Party => self.party_window.frame.open = false,
             Status => self.status_window.frame.open = false,
             Guild => self.guild_window.frame.open = false,

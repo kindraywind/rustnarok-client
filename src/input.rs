@@ -1616,14 +1616,19 @@ impl App {
                         _ => {}
                     },
                     Panel::Storage => {
-                        let hit = game.storage.hit(cursor, &assets.storage, &self.items);
-                        if hit.is_some_and(|hit| game.storage.click(hit, &self.items)) {
+                        let names = (&self.messages[..], &self.card_names, &game.char_names);
+                        let hit = game.storage.hit(cursor, &assets.storage, &self.items, names);
+                        if hit.is_some_and(|hit| game.storage.click(hit, &self.items, names)) {
                             let _ = game.session.close_storage();
+                        }
+                        // The search button with text: the Search window comes up with it, in front.
+                        if hit == Some(storage::Hit::Find) && game.storage.search() {
+                            game.raise(Panel::StorageSearch);
                         }
                         game.sync_esc();
                     }
-                    // Its presses act on the press.
-                    Panel::StorageCategory(_) => {}
+                    // Their presses act on the press.
+                    Panel::StorageCategory(_) | Panel::StorageSearch => {}
                     Panel::Skills => {
                         let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
                         let points = game.skill_points();
@@ -2125,16 +2130,19 @@ impl App {
                 return;
             }
             // Alt + right click takes a whole stack out of the open storage.
+            let names = (&self.messages[..], &self.card_names, &game.char_names);
             let moved = match game.window_at(self.cursor) {
                 _ if state != ElementState::Pressed || !self.modifiers.alt_key() || !game.storage.frame.open => None,
-                Some(Panel::Storage) => match assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items)) {
+                Some(Panel::Storage) => match assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items, names)) {
                     Some(storage::Hit::Item(index)) => game.storage.get(index).map(|item| (Asked::Take(index), item.amount)),
                     _ => None,
                 },
-                Some(Panel::StorageCategory(tab)) => match game.storage.category_hit(tab, self.cursor, &self.items) {
-                    Some(storage::Hit::Item(index)) => game.storage.get(index).map(|item| (Asked::Take(index), item.amount)),
-                    _ => None,
-                },
+                Some(panel @ (Panel::StorageCategory(_) | Panel::StorageSearch)) => {
+                    match storage_list(panel).and_then(|which| game.storage.category_hit(which, self.cursor, &self.items, names)) {
+                        Some(storage::Hit::Item(index)) => game.storage.get(index).map(|item| (Asked::Take(index), item.amount)),
+                        _ => None,
+                    }
+                }
                 _ => None,
             };
             // A right click (not a drag) opens the menu for what's under the pointer, by the usual ranks: another
@@ -2204,6 +2212,7 @@ impl App {
                 Some(equipment::Hit::Slot(index) | equipment::Hit::Name(index)) => viewed.items.iter().find(|item| item.index == index).cloned(),
                 _ => None,
             });
+            let names = (&self.messages[..], &self.card_names, &game.char_names);
             let described = viewed.or_else(|| match game.window_at(self.cursor) {
                 _ if state != ElementState::Pressed || self.modifiers.alt_key() || card.is_some() => None,
                 _ if shop_row.is_some() => shop_row.map(|offer| net::InventoryItem {
@@ -2218,14 +2227,16 @@ impl App {
                     Some(inventory::Hit::Item(index)) => game.inventory.get(index).cloned(),
                     _ => None,
                 },
-                Some(Panel::Storage) => match assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items)) {
+                Some(Panel::Storage) => match assets.and_then(|assets| game.storage.hit(self.cursor, &assets.storage, &self.items, names)) {
                     Some(storage::Hit::Item(index)) => game.storage.get(index).cloned(),
                     _ => None,
                 },
-                Some(Panel::StorageCategory(tab)) => match game.storage.category_hit(tab, self.cursor, &self.items) {
-                    Some(storage::Hit::Item(index)) => game.storage.get(index).cloned(),
-                    _ => None,
-                },
+                Some(panel @ (Panel::StorageCategory(_) | Panel::StorageSearch)) => {
+                    match storage_list(panel).and_then(|which| game.storage.category_hit(which, self.cursor, &self.items, names)) {
+                        Some(storage::Hit::Item(index)) => game.storage.get(index).cloned(),
+                        _ => None,
+                    }
+                }
                 Some(Panel::Cart) => match game.cart.hit(self.cursor) {
                     Some(inventory::Hit::Item(index)) => game.cart.get(index).cloned(),
                     _ => None,
@@ -2342,12 +2353,12 @@ impl App {
                         game.guild_window.scroll_by(rows, guild);
                     }
                 }
-                Some(Panel::Storage) => {
-                    if let Some(assets) = &self.assets {
-                        game.storage.scroll_by(rows, &assets.storage, &self.items);
+                Some(Panel::Storage) => game.storage.scroll_by(rows, &self.items, (&self.messages[..], &self.card_names, &game.char_names)),
+                Some(panel @ (Panel::StorageCategory(_) | Panel::StorageSearch)) => {
+                    if let Some(which) = storage_list(panel) {
+                        game.storage.category_scroll_by(which, rows, &self.items, (&self.messages[..], &self.card_names, &game.char_names));
                     }
                 }
-                Some(Panel::StorageCategory(tab)) => game.storage.category_scroll_by(tab, rows, &self.items),
                 Some(Panel::Party) => {
                     let count = if game.party_window.friends { game.friends.len() } else { game.party.as_ref().map_or(0, |party| party.members.len()) };
                     game.party_window.scroll_by(rows, count);
@@ -3084,7 +3095,7 @@ impl App {
             if id == Panel::Storage
                 && let Some(assets) = &self.assets
             {
-                match game.storage.hit(cursor, &assets.storage, &self.items) {
+                match game.storage.hit(cursor, &assets.storage, &self.items, (&self.messages[..], &self.card_names, &game.char_names)) {
                     Some(storage::Hit::Item(index)) => game.dragging = Some((Dragged::Stored(index), cursor, false)),
                     Some(storage::Hit::Title(TitleHit::Title)) => game.storage.frame.start_drag(cursor),
                     Some(storage::Hit::Resize) => game.storage.start_resize(cursor),
@@ -3097,11 +3108,16 @@ impl App {
                     _ => {}
                 }
             }
-            if let Panel::StorageCategory(tab) = id {
-                match game.storage.category_hit(tab, cursor, &self.items) {
+            if let Some(which) = storage_list(id) {
+                match game.storage.category_hit(which, cursor, &self.items, (&self.messages[..], &self.card_names, &game.char_names)) {
                     Some(storage::Hit::Item(index)) => game.dragging = Some((Dragged::Stored(index), cursor, false)),
-                    Some(storage::Hit::Title(_)) => game.storage.categories[tab].frame.start_drag(cursor),
-                    Some(storage::Hit::Resize) => game.storage.categories[tab].start_resize(cursor),
+                    // The Search window's close button shuts it.
+                    Some(storage::Hit::Title(TitleHit::Close)) => {
+                        game.storage.search_window.frame.open = false;
+                        game.sync_esc();
+                    }
+                    Some(storage::Hit::Title(_)) => game.storage.list_window_mut(which).frame.start_drag(cursor),
+                    Some(storage::Hit::Resize) => game.storage.list_window_mut(which).start_resize(cursor),
                     _ => {}
                 }
             }

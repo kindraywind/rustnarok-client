@@ -2048,6 +2048,15 @@ fn map_key(map: &str) -> String {
     map.trim_end_matches(".gat").trim_end_matches(".rsw").to_lowercase()
 }
 
+/// The storage list a list window shows: a category window's tab, or the Search window's.
+fn storage_list(panel: Panel) -> Option<storage::List> {
+    match panel {
+        Panel::StorageCategory(tab) => Some(storage::List::Tab(tab)),
+        Panel::StorageSearch => Some(storage::List::Search),
+        _ => None,
+    }
+}
+
 /// A panel Esc closes. The hotbar and the basic info window stay up.
 fn esc_panel(id: Panel) -> Option<escape::WindowId> {
     use escape::WindowId::*;
@@ -2058,6 +2067,7 @@ fn esc_panel(id: Panel) -> Option<escape::WindowId> {
         Panel::Skills => Skills,
         Panel::Storage => Storage,
         Panel::StorageCategory(tab) => StorageCategory(tab),
+        Panel::StorageSearch => StorageSearch,
         Panel::Party => Party,
         Panel::Status => Status,
         Panel::Guild => Guild,
@@ -2080,8 +2090,9 @@ enum Panel {
     Equipment,
     Skills,
     Storage,
-    /// A storage tab's category window (`storage::Category`).
+    /// A storage tab's category window, and the storage's Search window (`storage::Category`).
     StorageCategory(usize),
+    StorageSearch,
     Party,
     Status,
     Guild,

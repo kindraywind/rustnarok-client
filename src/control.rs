@@ -1092,7 +1092,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(
             app.assets
                 .as_ref()
-                .map(|assets| game.storage.button_boxes(&assets.storage, &app.items))
+                .map(|assets| game.storage.button_boxes(&assets.storage, &app.items, (&app.messages[..], &app.card_names, &game.char_names)))
                 .unwrap_or_default()
                 .into_iter()
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
@@ -1658,6 +1658,12 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["storage_rows"] = game.storage.rows().into();
     // The category windows that are on (a bit each, Use first) and those open now.
     state["storage_mask"] = game.storage.mask.into();
+    // The main window's list in its order, and the Search window's, by item id; what's typed in the box.
+    let names = (&app.messages[..], &app.card_names, &game.char_names);
+    state["storage_list"] = game.storage.shown(&app.items, names).into();
+    let found = game.storage.search_window.frame.open.then(|| game.storage.list(crate::storage::List::Search, &app.items, names));
+    state["storage_found"] = found.unwrap_or_default().iter().map(|item| item.id).collect::<Vec<_>>().into();
+    state["storage_box_text"] = game.storage.search.clone().into();
     state["storage_categories_open"] =
         game.storage.categories.iter().enumerate().filter(|(_, category)| category.frame.open).map(|(tab, _)| tab).collect::<Vec<_>>().into();
     state["storage_title"] = game.storage.name.clone().into();
