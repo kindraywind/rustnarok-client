@@ -2371,7 +2371,7 @@ impl App {
 
         // The cursor shows what a click would do.
         let on_window = game.on_ui(pointer.0, assets.message.size);
-        let ground = view.pick_ground([pointer.0[0] / screen()[0], pointer.0[1] / screen()[1]], &game.world.gat);
+        let ground = view.pick_ground([pointer.0[0].floor() / screen()[0], pointer.0[1].floor() / screen()[1]], &game.world.gat);
         let (shift, alt) = (self.modifiers.shift_key(), self.modifiers.alt_key());
         let look = if turning_cursor(game.camera_goal.dragging.is_some(), shift, alt) {
             cursor::Kind::Rotate
