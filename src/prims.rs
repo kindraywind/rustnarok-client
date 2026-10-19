@@ -12,6 +12,7 @@ pub mod first;
 pub mod huujin;
 pub mod napalm;
 pub mod sage;
+pub mod sight;
 pub mod sparkle;
 pub mod stone;
 pub mod tanji;
@@ -99,6 +100,7 @@ pub struct Prims {
     pub huujin: huujin::Huujin,
     pub throws: throw::Throws,
     pub first: first::First,
+    pub sights: sight::Sights,
 }
 
 /// COLDHIT's shard and smoke textures.
