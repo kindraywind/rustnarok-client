@@ -1,6 +1,7 @@
 //! Bursts flat on the screen 40 px over the caster's feet, as the game draws them a 16 ms tick at a time, over
 //! everything in the world: Bash's (EF_BASH 16), a soft white disc and 20 rays turning out counter-clockwise; Turn
-//! Undead's (EF_TURNUNDEAD 82), a disc collapsing and five rays shrinking in, then a ring opening on the ground.
+//! Undead's (EF_TURNUNDEAD 82), a disc collapsing and five rays shrinking in, then a ring opening on the ground; Sonic
+//! Blow's (EF_SONICBLOW 121), a thin white ring opening round the caster.
 
 use std::time::Instant;
 
@@ -15,6 +16,11 @@ pub const LIFE: u32 = 40;
 const TURN_UNDEAD_LENGTH: u32 = 250;
 /// Where the parts sit: screen pixels over the feet.
 const RISE: f32 = -40.0;
+/// Sonic Blow's ring: its centre over the feet, how far it opens a tick and the slowing of that, and its band's width.
+const BAND_RISE: f32 = -20.0;
+const BAND_OPEN: f32 = 7.0;
+const BAND_SLOW: f32 = 0.0875;
+const BAND_WIDTH: f32 = 10.0;
 /// Turn Undead's ground ring: the tick it starts, its life, and how far over the feet it lies.
 const RING_START: u32 = 50;
 const RING_LIFE: u32 = 30;
@@ -37,6 +43,8 @@ struct Look {
     ray_alpha: (f32, f32, u32),
     /// The ground ring at tick 50.
     ring: bool,
+    /// Sonic Blow's flat ring instead of a disc and rays.
+    band: bool,
 }
 
 const BASH: Look = Look {
@@ -50,6 +58,7 @@ const BASH: Look = Look {
     drag: 60.0,
     ray_alpha: (20.0, 200.0, 27),
     ring: false,
+    band: false,
 };
 const TURN_UNDEAD: Look = Look {
     life: 20,
@@ -62,6 +71,20 @@ const TURN_UNDEAD: Look = Look {
     drag: 30.0,
     ray_alpha: (15.0, 150.0, 14),
     ring: true,
+    band: false,
+};
+const SONIC_BLOW: Look = Look {
+    life: LIFE,
+    radius: 0.0,
+    shrink: 0.0,
+    disc_alpha: (0.0, 0.0, 0),
+    rays: 0,
+    length: (0, 0.0),
+    growth: (0, 0.0, 0.0),
+    drag: 1.0,
+    ray_alpha: (0.0, 0.0, 0),
+    ring: false,
+    band: true,
 };
 
 /// A part's alpha (0 to 255, whole) at drawn tick `n`: from `start`, up `step` a tick to `max`, then from tick `fade`
@@ -97,6 +120,14 @@ fn ring(n: u32) -> (f32, f32) {
         half += rate;
     }
     (half, alpha(n, 150.0, 0.0, 150.0, 20, RING_LIFE))
+}
+
+/// Sonic Blow's ring at drawn tick `n`: its outer radius, its inner radius (a filled disc on the first tick) and its alpha
+/// (0 to 255, whole). It opens 7 a tick slowing by 0.175 a tick, the step taken before each draw.
+fn band(n: u32) -> (f32, f32, f32) {
+    let steps = (n + 1) as f32;
+    let outer = BAND_OPEN * steps - BAND_SLOW * steps * (steps + 1.0);
+    (outer, outer - outer.min(BAND_WIDTH), (254.0 - 6.35 * steps).trunc())
 }
 
 /// One ray: a thin triangle from the centre, clear at both ends.
@@ -146,6 +177,11 @@ impl Burst {
         Self::new(&BASH, unit, now, length, rand)
     }
 
+    /// Sonic Blow's ring, on the caster.
+    pub fn sonic_blow(unit: Option<u32>, now: Instant) -> Self {
+        Self::new(&SONIC_BLOW, unit, now, LIFE, |_| 0)
+    }
+
     /// Turn Undead's, on the caster.
     pub fn turn_undead(unit: Option<u32>, now: Instant, rand: impl FnMut(u32) -> u32) -> Self {
         Self::new(&TURN_UNDEAD, unit, now, TURN_UNDEAD_LENGTH, rand)
@@ -173,10 +209,39 @@ impl Burst {
         Some((half, alpha / 255.0))
     }
 
+    /// Sonic Blow's ring at drawn tick `n`: 36 segments of 10° between the inner and outer edge, the texture repeating
+    /// every four, v 1 on the inner edge and 0 on the outer; white, over the caster's feet.
+    // ponytail: the screen shapes draw after the STRs, so SonicBlow.str lies under the ring; the game draws it over.
+    fn band(&self, n: u32) -> Vec<ScreenShape> {
+        let (outer, inner, alpha) = band(n);
+        let tint = [1.0, 1.0, 1.0, alpha / 255.0];
+        let center = [0.0, BAND_RISE];
+        let corners = (0..36)
+            .flat_map(|segment| {
+                let u = (segment % 4) as f32 * 0.25;
+                let [a0, a1] = [segment, segment + 1].map(|side| side as f32 * 10.0);
+                let (inner0, inner1) = (point(center, inner, a0), point(center, inner, a1));
+                let (outer0, outer1) = (point(center, outer, a0), point(center, outer, a1));
+                [
+                    (inner0, [u, 1.0], tint),
+                    (outer1, [u + 0.25, 0.0], tint),
+                    (outer0, [u, 0.0], tint),
+                    (inner0, [u, 1.0], tint),
+                    (inner1, [u + 0.25, 1.0], tint),
+                    (outer1, [u + 0.25, 0.0], tint),
+                ]
+            })
+            .collect();
+        vec![(RAY, self.unit, corners)]
+    }
+
     /// The disc, then the rays, at `now`.
     pub fn shapes(&self, now: Instant) -> Vec<ScreenShape> {
         let Some(n) = self.tick(now).filter(|n| *n < self.drawn) else { return Vec::new() };
         let look = self.look;
+        if look.band {
+            return self.band(n);
+        }
         let center = [0.0, RISE];
         let tint = |alpha: f32| [1.0, 1.0, 1.0, alpha / 255.0];
         // Ten 36° segments from the centre, the texture repeating every four; v 1 at the centre, 0 at the rim.
@@ -236,6 +301,31 @@ mod tests {
         // A negative whole degree is looked up a degree up.
         assert_eq!(point([0.0; 2], 1.0, -0.5), point([0.0; 2], 1.0, 0.0));
         assert_eq!(point([0.0; 2], 1.0, -1.5), point([0.0; 2], 1.0, 0.0));
+    }
+
+    #[test]
+    fn sonic_blow_ring() {
+        let near = |got: f32, want: f32| (got - want).abs() < 1e-3;
+        // Outer radius, inner radius and alpha: a disc on tick 0, then a 10 px band; 6 left at tick 38.
+        let (outer, inner, alpha) = band(0);
+        assert!(near(outer, 6.825) && inner == 0.0 && alpha == 247.0);
+        let (outer, inner, _) = band(1);
+        assert!(near(outer, 13.475) && near(inner, 3.475));
+        let (outer, inner, alpha) = band(38);
+        assert!(near(outer, 136.5) && near(inner, 126.5) && alpha == 6.0);
+        // 36 segments of two triangles, centred 20 px over the feet, the texture repeating every four segments.
+        let start = Instant::now();
+        let ring = Burst::sonic_blow(Some(3), start);
+        let shapes = ring.shapes(start + TICK * 38);
+        assert_eq!((shapes.len(), shapes[0].0, shapes[0].1), (1, RAY, Some(3)));
+        let corners = &shapes[0].2;
+        assert_eq!(corners.len(), 72 * 3);
+        let us: Vec<f32> = (0..36).map(|segment| corners[segment * 6].1[0]).collect();
+        assert_eq!(us[..5], [0.0, 0.25, 0.5, 0.75, 0.0]);
+        assert!(near(corners[2].0[0], 136.5) && near(corners[2].0[1], BAND_RISE) && corners[0].1[1] == 1.0 && corners[2].1[1] == 0.0);
+        assert!(shapes[0].2.iter().all(|corner| corner.2[..3] == [1.0; 3]));
+        // Gone from tick 39; the effect is 40 ticks.
+        assert!(ring.shapes(start + TICK * 39).is_empty() && LIFE == 40);
     }
 
     #[test]
