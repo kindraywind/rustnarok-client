@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, sage, sight, stone, tanji, throw, waterball};
+use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, sage, sight, stone, tanji, throw, walls, waterball};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -396,6 +396,10 @@ fn str_ticks(str: &Str, length: Option<u32>) -> u32 {
 
 /// How often a ground unit's effect starts again, in ticks: 8 before its length ends (Quagmire's 20).
 fn restart_ticks(effect: u32, length: u32) -> u32 {
+    // Shockwave's waves start again every 75 ticks.
+    if effect == 145 {
+        return 75;
+    }
     length.saturating_sub(if effect == 95 { 20 } else { 8 }).max(1)
 }
 
@@ -1187,6 +1191,7 @@ fn sparkle_place(heading: [f32; 2], since: u32) -> Option<(Vector, f32)> {
 /// glints (254), on its unit while the status is on.
 struct StatusPrim {
     kind: PrimKind,
+    effect: u32,
     start: Instant,
     anchor: Anchor,
     /// Picks every "random" choice (yaws, places, textures) from its own numbers.
@@ -1288,6 +1293,11 @@ const GLINT_CIRCLE: f32 = 4.0;
 const GLINT_COLOR: [u8; 3] = [0x64, 0x64, 0xFF];
 /// Sprite pixels to a world unit.
 const PIXELS_PER_UNIT: f32 = 7.0;
+
+/// How many sets of four glints an effect has: Explosion Spirits one, Steel Body four.
+fn glint_sets(effect: u32) -> u32 {
+    if effect == GUMGANG { 1 } else { 4 }
+}
 
 /// A glint `age` ticks in: its alpha (0–255), and which round it's on (each round a new place, height and texture).
 /// It starts at its set's alpha with a counter of 10; each tick the counter goes up, and the alpha +25 while it's under
@@ -1627,6 +1637,24 @@ const SHIELD_BOOMERANG: u32 = 249;
 const WATER_BALL: u32 = 117;
 /// EF_OVERTHRUST: the ring of Sonic Blow's, on the unit (`prims::burst`).
 const OVER_THRUST: u32 = 128;
+/// EF_FIREPILLARON's funnels and EF_VENOMDUST2's puffs stand with their skill units; EF_GUMGANG is the monk's four glints;
+/// Berserk Pitcher's tint, cylinder and streaks, Defender's walls and Grand Cross's cross of light (`prims::walls`).
+const FIRE_PILLAR: u32 = 138;
+const VENOM_DUST: u32 = 171;
+const GUMGANG: u32 = 203;
+const BERSERK: u32 = 220;
+const DEFENDER: u32 = 222;
+const GRAND_CROSS: u32 = 226;
+/// Two body colours multiplied.
+pub fn mix_tints(a: Option<[u8; 3]>, b: Option<[u8; 3]>) -> Option<[u8; 3]> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(std::array::from_fn(|k| (u16::from(a[k]) * u16::from(b[k]) / 255) as u8)),
+        (tint, other) => tint.or(other),
+    }
+}
+
+/// Where a sound that is heard at full volume wherever it plays is made.
+pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
@@ -1752,6 +1780,8 @@ impl Effects {
     }
 
     fn play_sounds(&mut self, table: &Table, id: u32, at: Vector, now: Instant) {
+        // Berserk Pitcher's sound is heard at full volume from the listener's own place.
+        let at = if id == BERSERK { LISTENER } else { at };
         for sound in table.sounds.get(&id).into_iter().flatten() {
             let file = match sound.random {
                 Some((from, to)) => sound.file.replace("%d", &pick(from, to).to_string()),
@@ -1849,6 +1879,22 @@ impl Effects {
             };
             self.prims.bursts.push(burst);
         }
+        // Berserk Pitcher's tint, cylinder and streaks, Defender's walls and Grand Cross's cross, made in code.
+        let wall_textures: &[&str] = match id {
+            BERSERK => &[walls::ALPHA_DOWN, walls::STREAK],
+            DEFENDER => &[walls::RING_BLACK],
+            GRAND_CROSS => &[walls::RING_WHITE, walls::RING_YELLOW],
+            _ => &[],
+        };
+        for path in wall_textures {
+            self.textures.entry((*path).to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+        }
+        match (id, target) {
+            (BERSERK, Target::Unit(unit)) => self.prims.walls.berserk(unit, now, |n| pick(0, n.saturating_sub(1))),
+            (DEFENDER, Target::Unit(unit)) => self.prims.walls.defender(unit, now),
+            (GRAND_CROSS, _) => self.prims.walls.grand_cross(at, now),
+            _ => {}
+        }
         // A bolt told no hit count (by the server): one arrow.
         if let (true, Target::Unit(unit)) = (BOLTS.contains(&id), target) {
             self.bolt(gpu, grf, id, unit, 1, now);
@@ -1937,13 +1983,18 @@ impl Effects {
         }
         // Blessing, made in code.
         // A song's puffs and Steel Body's glints, made in code.
-        let kind = song_variant(id).map(PrimKind::Puffs).or((id == 254).then_some(PrimKind::Glints));
+        let kind = song_variant(id).map(PrimKind::Puffs).or((id == 254 || id == GUMGANG).then_some(PrimKind::Glints));
         if let Some(kind) = kind {
             let paths: &[&str] = if kind == PrimKind::Glints { &GLINT_TEXTURES } else { &[PUFF_TEXTURE] };
             for path in paths {
                 self.textures.entry((*path).to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, kind == PrimKind::Glints).ok());
             }
-            self.status_prims.push(StatusPrim { kind, start: now, anchor: anchor(true), seed: random(0.0, 1.0e9) as u32 });
+            // Explosion Spirits' glints start again from a new packet: the old copy goes first.
+            if let (GUMGANG, Target::Unit(unit) | Target::Status(unit, _)) = (id, target) {
+                self.status_prims
+                    .retain(|prim| !(prim.effect == GUMGANG && matches!(prim.anchor, Anchor::Unit(each) | Anchor::Status(each, _) if each == unit)));
+            }
+            self.status_prims.push(StatusPrim { kind, effect: id, start: now, anchor: anchor(true), seed: random(0.0, 1.0e9) as u32 });
         }
         if id == 42 {
             for path in [ANGEL_SPRITE, BLESSING_SPARKLE] {
@@ -2086,7 +2137,12 @@ impl Effects {
         self.unit_kinds.insert(id, kind);
         if let Some(&effect) = table.units.get(&kind) {
             // Volcano's, Deluge's, Violent Gale's and Land Protector's cells keep their loops, drawn in code.
-            if sage::LOOPS.iter().any(|&(kept, _)| kept == effect) {
+            if matches!(effect, FIRE_PILLAR | VENOM_DUST) {
+                // The Fire Pillar's funnels and Venom Dust's puffs stand with their unit, drawn in code.
+                self.textures.entry(walls::MAGIC_RED.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::MAGIC_RED, true).ok());
+                self.sprites.entry(first::POISON_STAR.to_owned()).or_insert_with(|| SpriteSet::at(grf, first::POISON_STAR));
+                self.prims.walls.keep(effect, id, at, now);
+            } else if sage::LOOPS.iter().any(|&(kept, _)| kept == effect) {
                 self.load_sage(gpu, grf, effect);
                 self.prims.sage.keep(effect, id, at, now, |n| pick(0, n.saturating_sub(1)));
             } else {
@@ -2490,6 +2546,11 @@ impl Effects {
         self.standing.retain(|(_, id, _)| *id != unit);
     }
 
+    /// The colour an effect gives `unit`'s body at `now` (Berserk Pitcher's red).
+    pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
+        self.prims.walls.body_tint(unit, now)
+    }
+
     /// Whether effect `effect`'s parts draw: all of them, or with /effect off the force-drawn ones.
     fn shows(&self, effect: u32) -> bool {
         !self.only_forced || force_drawn(effect)
@@ -2634,6 +2695,11 @@ impl Effects {
             .into_iter()
             .filter_map(|(path, triangles)| Some((self.textures.get(path)?.as_ref()?, triangles, false)))
             .collect();
+        // The Fire Pillar's funnels draw even with /effect off; the other walls don't.
+        let (forced_walls, other_walls): (Vec<_>, Vec<_>) = self.prims.walls.meshes(now, &position_of).into_iter().partition(|wall| wall.forced);
+        let wall_mesh = |wall: walls::Wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive));
+        let forced_walls: Vec<EffectMesh<'_>> = forced_walls.into_iter().filter_map(wall_mesh).collect();
+        let other_walls: Vec<EffectMesh<'_>> = other_walls.into_iter().filter_map(wall_mesh).collect();
         let spikes = [crate::prims::ICE_TEXTURE, stone::STONE]
             .into_iter()
             .filter_map(|path| Some((self.textures.get(path)?.as_ref()?, self.prims.stone.mesh(path), false)));
@@ -2661,8 +2727,9 @@ impl Effects {
             .chain(sight_rings)
             .chain(sage)
             .chain(burst_rings)
+            .chain(other_walls)
             .filter(|_| !self.only_forced);
-        rings.chain(models).chain(hits).chain(auras).chain(prims).collect()
+        rings.chain(models).chain(hits).chain(auras).chain(forced_walls).chain(prims).collect()
     }
 
     /// What's drawn flat on the screen over units now (COLDHIT's shards and smoke): texture, the unit's feet, and the
@@ -2741,12 +2808,12 @@ impl Effects {
                 }
             }
         }
-        // Steel Body's glints: camera-facing squares round the feet, added on in #6464FF.
-        for prim in self.status_prims.iter().filter(|prim| prim.kind == PrimKind::Glints && prim.start <= now && !self.only_forced) {
+        // Steel Body's glints (four sets) and Explosion Spirits' (one): camera-facing squares round the feet, added on in #6464FF.
+        for prim in self.status_prims.iter().filter(|prim| prim.kind == PrimKind::Glints && prim.start <= now && self.shows(prim.effect)) {
             let Some(at) = prim.anchor.place(&position_of) else { continue };
             let age = str_frame(now.duration_since(prim.start));
             let half = GLINT_RADIUS * std::f32::consts::FRAC_1_SQRT_2 * PIXELS_PER_UNIT;
-            for glint in 0..16u32 {
+            for glint in 0..4 * glint_sets(prim.effect) {
                 let (alpha, round) = glint_at(GLINT_ALPHAS[(glint % 4) as usize], age);
                 let pick = |what: u32| noise(prim.seed, glint * 1_000 + round, what);
                 let Some(Some(texture)) = self.textures.get(GLINT_TEXTURES[(pick(0) % 5) as usize]) else { continue };
@@ -2905,7 +2972,7 @@ impl Effects {
                 quads.push((texture, square.at, corners, [red, green, blue, alpha.trunc().clamp(0.0, 255.0) / 255.0], true, false));
             }
             // The first jobs' sparkles and sparks.
-            for particle in self.prims.first.particles(now, &position_of) {
+            for particle in self.prims.first.particles(now, &position_of).into_iter().chain(self.prims.walls.particles(now)) {
                 let Some(Some(sprite)) = self.sprites.get(particle.sprite) else { continue };
                 for &(key, position, size, layer_angle) in self.stars.get(particle.sprite).into_iter().flatten() {
                     let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle + particle.spin, uv).0.map(|value| value * particle.scale));
@@ -3900,5 +3967,39 @@ mod tests {
         assert_eq!(sounds(128), [("effect\\black_overthrust", 0), ("effect\\EF_StoneCurse", 0)]);
         assert_eq!(table.used(113), Some(&[(Who::Caster, 128)][..]));
         assert!(first::makes(119) && first::makes(125) && sounds(119) == [("effect\\hunter_detecting", 0)]);
+    }
+
+    #[test]
+    fn walls_and_puffs_are_built_in_code() {
+        let table = Table::load();
+        // Fire Pillar, Defender and Grand Cross no longer play from rings, Venom Dust and Explosion Spirits from parts.
+        for id in [138, 222, 226] {
+            assert!(!table.rings.contains_key(&id), "{id}");
+        }
+        assert!(!table.floaters.contains_key(&171) && !table.floaters.contains_key(&203));
+        assert_eq!((table.units[&135], table.units[&197], table.units[&146]), (138, 138, 171));
+        assert!(table.units_once.contains(&135) && table.units_once.contains(&146));
+        // Shockwave's waves loop on the trap and the shocker every 75 ticks, with no sound.
+        assert_eq!((table.units[&148], table.units[&216]), (145, 145));
+        assert!(!table.units_once.contains(&148) && !table.units_once.contains(&216) && !table.sounds.contains_key(&145));
+        assert!(table.parts.contains_key(&145));
+        assert_eq!((restart_ticks(145, 80), restart_ticks(145, 200), restart_ticks(25, 40)), (75, 75, 32));
+        // Explosion Spirits' glints: one set of four against Steel Body's sixteen; both forced or not as the list says.
+        assert_eq!((4 * glint_sets(203), 4 * glint_sets(254)), (4, 16));
+        assert!(force_drawn(203) && force_drawn(138) && !force_drawn(254));
+        assert_eq!(table.status(86), &[203, 166]);
+        assert_eq!(table.used(270), Some(&[(Who::Caster, 203)][..]));
+        // Berserk Pitcher's sound and quake at tick 18 (288 ms), heard at full volume from the listener's own place.
+        assert_eq!(table.sounds[&220].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\ac_concentration", 288)]);
+        assert_eq!(table.quakes[&220], [(Duration::from_millis(288), QUAKE_SHORT)]);
+        assert!(LISTENER[0].is_nan());
+        assert_eq!((table.used(446), table.used(578)), (Some(&[(Who::Target, 220)][..]), Some(&[(Who::Caster, 220)][..])));
+        // Defender plays on both packets; Grand Cross on each damage packet, its sound with each.
+        assert_eq!((table.used(257), table.used(8219)), (Some(&[(Who::Caster, 222)][..]), Some(&[(Who::Caster, 222)][..])));
+        assert_eq!(table.struck(254), Some(&[(Who::Caster, 226)][..]));
+        assert_eq!(table.sounds[&226].len(), 1);
+        // Body colours multiply.
+        assert_eq!(mix_tints(Some([250, 120, 120]), Some([128, 255, 0])), Some([125, 120, 0]));
+        assert_eq!((mix_tints(None, Some([1, 2, 3])), mix_tints(Some([4, 5, 6]), None), mix_tints(None, None)), (Some([1, 2, 3]), Some([4, 5, 6]), None));
     }
 }

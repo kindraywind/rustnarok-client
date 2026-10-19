@@ -78,6 +78,7 @@ str	139	sandman	-	0
 str	141	pneuma%d	-	0	1	3
 str	143	sonicblow	-	1
 str	144	brandish2	-	1
+str	145	shockwave	-	0
 str	146	shockwavehit	-	1
 str	147	earthhit	-	1
 str	148	pierce	-	1
@@ -1288,12 +1289,6 @@ part	93	3D	fileList=effect/thunder_ball_a.bmp,effect/thunder_ball_b.bmp,effect/t
 part	94	3D	file=effect/thunder_pang.bmp;duration=100;sizeStart=0;sizeEnd=25;blendMode=2;rotateToTarget=true;fadeOut=true;overlay=true;attachedEntity=true
 part	94	3D	fileList=effect/thunder_plazma_blast_a.bmp,effect/thunder_plazma_blast_b.bmp,effect/thunder_ball_d.bmp,effect/thunder_ball_e.bmp,effect/thunder_ball_f.bmp;frameDelay=10;duration=300;size=75;blendMode=2;overlay=true;attachedEntity=true
 part	116	3D	duration=500;fileList=effect/water_out_a.bmp,effect/water_out_b.bmp,effect/water_out_c.bmp;fadeOut=true;posxRand=1.5;poszRand=1.5;posyStart=0;posyEnd=3;posySmooth=true;size=30.5;rotateWithCamera=true;blendMode=2;attachedEntity=true;wav=effect/wizard_waterball_chulung
-part	171	3D	spriteName=particle3;alphaMax=1;attachedEntity=true;duration=100;size=80;poszStart=0;poszEnd=0.5;repeat=true
-part	203	3D	fadeOut=true;duration=2000;delayLate=0;file=effect/super1.bmp;attachedEntity=true
-part	203	3D	fadeOut=true;duration=2000;delayLate=400;file=effect/super2.bmp;attachedEntity=true
-part	203	3D	fadeOut=true;duration=2000;delayLate=800;file=effect/super3.bmp;attachedEntity=true
-part	203	3D	fadeOut=true;duration=2000;delayLate=1200;file=effect/super4.bmp;attachedEntity=true
-part	203	3D	fadeOut=true;duration=2000;delayLate=1600;file=effect/super5.bmp;attachedEntity=true
 part	216	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;toSrc=true;rotateToTarget=true;red=1.0;green=0.4;blue=0.4;sizeStart=150.0;sizeEnd=180.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
 part	217	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;toSrc=true;rotateToTarget=true;red=0.4;green=0.4;blue=1.0;sizeStart=150.0;sizeEnd=180.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
 part	232	3D	alphaMax=0.5;angle=180;attachedEntity=true;blendMode=2;red=0.1;green=0.1;blue=0.9;duration=100;fadeIn=true;fadeOut=true;file=effect/alpha_center.tga;fromSrc=true;rotateToTarget=true;rotateWithCamera=true;sizeX=5;sizeY=50;zOffset=1;zIndex=1
@@ -1491,35 +1486,6 @@ ring	34	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=8;bottomSize=0.8;
 ring	35	alphaMax=0.6;animation=0;attachedEntity=true;blue=1;bottomSize=0.6;duration=25000;fade=true;green=0.7;height=15;red=0.7;rotate=true;textureName=alpha_down;topSize=0.6;wav=effect/ef_readyportal
 ring	61	alphaMax=0.3;animation=3;attachedEntity=true;blendMode=2;blue=1;bottomSize=2;duration=2800;fade=true;green=0.5;height=1.1;red=0.5;rotate=true;textureName=ring_blue;topSize=3.3
 ring	61	alphaMax=0.3;animation=3;attachedEntity=true;blendMode=2;blue=1;bottomSize=1.9;duration=2800;fade=true;green=0.5;height=1.1;red=0.5;rotate=true;textureName=ring_blue;topSize=3.2
-ring	138	attachedEntity=false;topSize=2.0;bottomSize=1.0;textureName=magic_red;height=3;duration=5000;delayOffset=1000;rotate=true
-ring	138	attachedEntity=false;topSize=1.5;bottomSize=0.7;textureName=magic_red;height=5;duration=5000;delayOffset=1000;rotate=true
-ring	138	attachedEntity=false;topSize=1.0;bottomSize=0.5;textureName=magic_red;height=7;duration=5000;delayOffset=1000;rotate=true
-ring	222	alphaMax=0.6;animation=1;blendMode=8;bottomSize=1.5;topSize=1.5;duration=3000;fade=true;height=10;rotate=true;textureName=ring_black;attachedEntity=true
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-1
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-2
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-3
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-4
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=1
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=2
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=3
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=4
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=1
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=2
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=3
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=4
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=-1
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=-2
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=-3
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posY=-4
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=1;posY=1
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=1;posY=-1
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-1;posY=-1
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=4;circleSides=4;topSize=0.7;bottomSize=0.7;duration=1000;fade=true;height=5;rotate=false;angleY=45;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-1;posY=1
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=20;circleSides=5;topSize=3;bottomSize=3;duration=1000;fade=true;height=5;rotate=false;angleY=-180;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=3.5;posY=3.5
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=20;circleSides=5;topSize=3;bottomSize=3;duration=1000;fade=true;height=5;rotate=false;angleY=90;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=3.5;posY=-3.5
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=20;circleSides=5;topSize=3;bottomSize=3;duration=1000;fade=true;height=5;rotate=false;angleY=0;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-3.5;posY=-3.5
-ring	226	alphaMax=0.1;animation=1;attachedEntity=false;blendMode=2;totalCircleSides=20;circleSides=5;topSize=3;bottomSize=3;duration=1000;fade=true;height=5;rotate=false;angleY=-90;textureName=ring_red;duplicate=3;timeBetweenDupli=500;posX=-3.5;posY=3.5
 ring	252	alphaMax=0.6;animation=1;blendMode=8;bottomSize=1.5;topSize=1.5;duration=3000;fade=true;height=10;rotate=true;textureName=ring_yellow;attachedEntity=true
 ring	253	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;red=0.3;green=0.3;blue=1;bottomSize=1.1;duration=1500;fade=true;height=15;rotate=true;textureName=ring_blue;topSize=1.1;wav=effect/흡기
 ring	253	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;red=0.3;green=0.3;blue=1;bottomSize=1;duration=1500;fade=true;height=13;rotate=true;textureName=ring_blue;topSize=1
@@ -1651,7 +1617,7 @@ func	92	quake	640	650
 func	102	quake	560	650
 func	142	quake	0	650
 func	183	quake	0	200
-func	220	quake	200	200
+func	220	quake	288	200
 func	303	quake	132	650
 func	365	quake	500	650
 func	380	quake	300	650
@@ -1843,7 +1809,6 @@ wav	139	effect\hunter_sandman	0
 wav	140	effect\priest_resurrection	0
 wav	142	effect\wizard_earthspike	0
 wav	144	effect\knight_brandish_spear	0
-wav	145	effect\hunter_shockwavetrap	0
 wav	150	_enemy_hit_normal1	0
 wav	151	effect\knight_spear_boomerang	0
 wav	153	effect\ac_concentration	0
@@ -1857,7 +1822,7 @@ wav	210	_heal_effect	0
 wav	211	effect\흡기	0
 wav	218	effect\ac_concentration	0
 wav	219	effect\ac_concentration	0
-wav	220	effect\ac_concentration	0
+wav	220	effect\ac_concentration	288
 wav	226	effect\cru_grand cross	0
 wav	227	effect\rog_intimidate	0
 wav	234	effect\sage_spell breake	0
@@ -4798,6 +4763,8 @@ unit	195	74	once
 unit	196	74	once
 unit	142	95
 unit	146	171	once
+unit	148	145
+unit	216	145
 unit	154	239	once
 unit	155	240	once
 unit	156	241	once
