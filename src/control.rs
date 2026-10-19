@@ -503,6 +503,7 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             let state = if matches!(command, Command::MouseDown { .. }) { ElementState::Pressed } else { ElementState::Released };
             point(app, [x, y]);
             press(app, event_loop, button, state);
+            app.read_button();
             Ok(Value::Null)
         }
         Command::CellPoint { x, y } => {
@@ -521,6 +522,8 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             hold(app, held, |app| {
                 for _ in 0..count.unwrap_or(1) {
                     press(app, event_loop, button, ElementState::Pressed);
+                    // Held over a frame, so the world reads the press (`ButtonRead`).
+                    app.read_button();
                     press(app, event_loop, button, ElementState::Released);
                 }
             });
@@ -531,6 +534,7 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             hold(app, held, |app| {
                 point(app, from);
                 press(app, event_loop, button, ElementState::Pressed);
+                app.read_button();
                 point(app, to);
                 if !keep_down {
                     press(app, event_loop, button, ElementState::Released);

@@ -1,0 +1,30 @@
+{
+  "about": "A ground click 4 cells west with the Laphine synthesis window open sends no CZ_REQUEST_MOVE (0x035f): rathena refuses walks then, so the client only counts it (the 300 ms timer restarts) and the player stays put.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_in 63 66"},
+    {"settle": 1500},
+    {"say": "@itemreset"},
+    {"wait": 800},
+    {"say": "@item 100000"},
+    {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"},
+    {"wait": 400},
+    {"click_on": {"inventory_item": 100000}, "count": 2},
+    {"wait_for": {"packet": "0x0a4e", "ms": 5000}},
+    {"expect": {"windows_open": ["LaphineSynthesis"]}},
+    {"key": "Alt+E"},
+    {"wait": 300},
+    {"click_on": {"cell": [59, 66]}},
+    {"wait_for": {"sent": "0x035f", "ms": 800}, "none": true},
+    {"wait": 500},
+    {"move": [1000, 750]},
+    {"shot": "walk-laphine", "threshold": 5},
+    {"expect": {"state": {"player.cell": [63, 66]}, "windows_open": ["LaphineSynthesis"]}},
+    {"click_on": {"button": "close"}},
+    {"wait": 400},
+    {"say": "@itemreset"},
+    {"wait": 500}
+  ]
+}

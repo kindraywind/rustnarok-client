@@ -632,7 +632,7 @@ impl App {
                     walks: 0,
                     walk_held: false,
                     last_walk_try: None,
-                    walk_after_swing: None,
+                    stored_walk: StoredWalk::default(),
                     skill_info: self.skill_info.clone(),
                     press_mark: None,
                     auto_walk: std::env::var("RUSTNAROK_CLIENT_WALK").ok().and_then(|cell| {
@@ -703,6 +703,7 @@ impl App {
                 }
                 game.effects.clear();
                 game.capturing = false;
+                game.stored_walk.goal = None;
                 // The server announces the pet again on load.
                 (game.pet_id, game.pet) = (None, None);
                 game.put_after_warp(position);

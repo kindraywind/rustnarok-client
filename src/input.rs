@@ -2563,11 +2563,94 @@ impl App {
             self.pointer_moved();
             let button = |app: &mut Self, state| if right { app.right_button(state) } else { app.left_button(event_loop, state) };
             button(self, ElementState::Pressed);
+            // Held over a frame, so the world reads the press.
+            self.read_button();
             if let Some(to) = to {
                 self.cursor = to;
                 self.pointer_moved();
             }
             button(self, ElementState::Released);
+        }
+    }
+
+    /// Whether a left press at the pointer is the world's: not over a window, nor while dragging, aiming or capturing,
+    /// nor with a store open.
+    fn world_takes_press(&self) -> bool {
+        let (Scene::Game(game), Some(assets)) = (&self.scene, &self.assets) else { return false };
+        game.dragging.is_none() && !game.on_ui(self.cursor, assets.message.size) && !game.store_open() && game.targeting.is_none() && !game.capturing
+    }
+
+    /// The left button read once a frame (`ButtonRead`): a press since the last read, still down, acts in the world
+    /// at the pointer now.
+    pub(crate) fn read_button(&mut self) {
+        if self.button.read(self.mouse_down) && self.world_takes_press() {
+            self.world_press();
+        }
+    }
+
+    /// A press on the ground walks there (in the frame that reads it), and holding the button keeps following the pointer. Shift turns
+    /// to face it, Ctrl does nothing, and sitting only turns. A second press within DOUBLE_PRESS with the pointer
+    /// still is ignored. Units and items are the click's (on release).
+    fn world_press(&mut self) {
+        let cursor = self.cursor;
+        let Scene::Game(game) = &mut self.scene else { return };
+        let now = Instant::now();
+        let (double, mark) = press_pair(game.press_mark, now, cursor);
+        game.press_mark = mark;
+        let (shift, ctrl) = (self.modifiers.shift_key(), self.modifiers.control_key());
+        // Alt + left press orders the mercenary (when it's out).
+        if !double && self.modifiers.alt_key() && game.companion_press(false, cursor, shift) {
+            return;
+        }
+        // A new press ends the attack under way.
+        game.attack = None;
+        match game.world_click(cursor, shift) {
+            // A double press does nothing, but held on the ground the button goes on following the pointer.
+            WorldClick::Ground if double => {
+                if double_holds(ctrl, shift, game.player.sitting) {
+                    game.walk_held = true;
+                }
+            }
+            _ if double => {}
+            // A monster with Shift (without /noshift): nothing.
+            WorldClick::Attack(id) if shift && !game.no_shift && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER) => {}
+            // An attack: kept up with Ctrl or /noctrl (on someone else's homunculus always), otherwise while the
+            // button is held.
+            WorldClick::Attack(id) => {
+                let homunculus = game.units.get(&id).is_some_and(|actor| actor.kind == HOMUNCULUS);
+                let weight = |id: u16| game.status.get(&id).copied().unwrap_or(0);
+                match attack_refused(weight(net::STATUS_WEIGHT), weight(net::STATUS_MAX_WEIGHT), game.riding) {
+                    Some(line) => game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR),
+                    None => {
+                        game.attack = Some(Attack::new(id, ctrl || game.no_ctrl || homunculus));
+                        game.attack_step(now);
+                    }
+                }
+            }
+            WorldClick::Talk(id) => game.talk_to(id, &self.messages),
+            // Held, the button follows the pointer again once the item is picked up.
+            WorldClick::PickUp(id) if !game.player.sitting => {
+                game.pick_up(id, now);
+                game.walk_held = true;
+                game.last_walk_try = Some(whole_ms(now));
+            }
+            WorldClick::Warp(cell) if !ctrl => {
+                game.walk_toward(cell, now);
+                game.walk_held = true;
+                game.last_walk_try = Some(whole_ms(now));
+            }
+            WorldClick::Ground if !ctrl => {
+                if let Some(cell) = game.ground_cell(cursor) {
+                    if shift || game.player.sitting {
+                        game.turn_to(cell);
+                    } else {
+                        game.walk_toward(cell, now);
+                        game.walk_held = true;
+                        game.last_walk_try = Some(whole_ms(now));
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2627,74 +2710,9 @@ impl App {
                 return;
             }
         }
-        // A press on the ground walks there at once, and holding the button keeps following the pointer. Shift turns
-        // to face it, Ctrl does nothing, and sitting only turns. A second press within DOUBLE_PRESS with the pointer
-        // still is ignored. Units and items are the click's (on release).
-        if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
-            && game.dragging.is_none()
-            && !game.on_ui(cursor, assets.message.size)
-            && !game.store_open()
-            && game.targeting.is_none()
-            && !game.capturing
-        {
-            let now = Instant::now();
-            let (double, mark) = press_pair(game.press_mark, now, cursor);
-            game.press_mark = mark;
-            let (shift, ctrl) = (self.modifiers.shift_key(), self.modifiers.control_key());
-            // Alt + left press orders the mercenary (when it's out).
-            if !double && self.modifiers.alt_key() && game.companion_press(false, cursor, shift) {
-                return;
-            }
-            // A new press ends the attack under way.
-            game.attack = None;
-            match game.world_click(cursor, shift) {
-                // A double press does nothing, but held on the ground the button goes on following the pointer.
-                WorldClick::Ground if double => {
-                    if double_holds(ctrl, shift, game.player.sitting) {
-                        game.walk_held = true;
-                    }
-                }
-                _ if double => {}
-                // A monster with Shift (without /noshift): nothing.
-                WorldClick::Attack(id) if shift && !game.no_shift && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER) => {}
-                // An attack: kept up with Ctrl or /noctrl (on someone else's homunculus always), otherwise while the
-                // button is held.
-                WorldClick::Attack(id) => {
-                    let homunculus = game.units.get(&id).is_some_and(|actor| actor.kind == HOMUNCULUS);
-                    let weight = |id: u16| game.status.get(&id).copied().unwrap_or(0);
-                    match attack_refused(weight(net::STATUS_WEIGHT), weight(net::STATUS_MAX_WEIGHT), game.riding) {
-                        Some(line) => game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR),
-                        None => {
-                            game.attack = Some(Attack::new(id, ctrl || game.no_ctrl || homunculus));
-                            game.attack_step(now);
-                        }
-                    }
-                }
-                WorldClick::Talk(id) => game.talk_to(id, &self.messages),
-                // Held, the button follows the pointer again once the item is picked up.
-                WorldClick::PickUp(id) if !game.player.sitting => {
-                    game.pick_up(id, now);
-                    game.walk_held = true;
-                    game.last_walk_try = Some(now);
-                }
-                WorldClick::Warp(cell) if !ctrl => {
-                    game.walk_toward(cell, now);
-                    game.walk_held = true;
-                    game.last_walk_try = Some(now);
-                }
-                WorldClick::Ground if !ctrl => {
-                    if let Some(cell) = game.ground_cell(cursor) {
-                        if shift || game.player.sitting {
-                            game.turn_to(cell);
-                        } else {
-                            game.walk_toward(cell, now);
-                            game.walk_held = true;
-                            game.last_walk_try = Some(now);
-                        }
-                    }
-                }
-                _ => {}
-            }
+        // A press the world takes is read with the frame (`ButtonRead`); the windows under it don't get it.
+        if self.world_takes_press() {
+            self.button.due = true;
             return;
         }
         // The big minimap is above the other windows, under the world map.
