@@ -307,6 +307,7 @@ impl App {
                     party_colors: Vec::new(),
                     show_bars: true,
                     last_frame: now,
+                    walk_clock: now,
                     chat: chat::Chat::default(),
                     entered: now,
                     last_keepalive: now,
