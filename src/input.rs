@@ -2691,6 +2691,13 @@ impl App {
         {
             return;
         }
+        // So is a press on the message box: nothing under it starts a drag, so its release still clicks OK.
+        if let (Scene::Game(game), Some(assets)) = (&self.scene, &self.assets)
+            && game.question_box.is_some()
+            && contains(dialog_position(&assets.message), assets.message.size, cursor)
+        {
+            return;
+        }
         // Aiming a skill: the press on its target uses it; any other press lets go of the aim. On the world that's
         // all it does (no walk); on a window the window gets the press too.
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
