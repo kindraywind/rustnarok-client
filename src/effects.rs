@@ -3818,4 +3818,35 @@ mod tests {
         assert_eq!(table.status(DEEP_BLIND), &[334, 164]);
         assert!(!table.sounds.contains_key(&334));
     }
+
+    #[test]
+    fn hammer_fall_maximize_power_blast_mine_and_kyrie_sound_at_the_games_ticks() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        assert_eq!(sounds(102), [("effect\\wizard_fire_pillar_b", 480)]);
+        assert_eq!(table.quakes[&102], [(Duration::from_millis(560), QUAKE_LONG)]);
+        assert_eq!(
+            sounds(104),
+            [
+                ("effect\\black_maximize_power_circle", 0),
+                ("effect\\black_maximize_power_sword", 640),
+                ("effect\\black_maximize_power_sword", 752),
+                ("effect\\black_maximize_power_sword_bic", 1040)
+            ]
+        );
+        assert_eq!(sounds(106), [("effect\\hunter_blastmine", 320)]);
+        assert_eq!(sounds(112), [("effect\\priest_kyrie_eleison_b", 0), ("effect\\priest_kyrie_eleison_a", 240)]);
+        for (id, file) in [(103, "black_weapon_perfection"), (107, "hunter_claymoretrap"), (108, "hunter_freezingtrap"), (111, "hunter_springtrap")] {
+            assert_eq!(sounds(id), [(format!("effect\\{file}").as_str(), 0)], "{id}");
+        }
+        // Every use packet plays Maximize Power's effect on its source, the one that ends it too.
+        assert_eq!(table.used(114), Some(&[(Who::Caster, 104)][..]));
+        // The traps' triggers by unit kind; a fired trap (0x8c) has none.
+        let traps = [(143, 106), (149, 139), (150, 99), (151, 108), (152, 107), (214, 107), (215, 108), (216, 107), (217, 107)];
+        let new = [(190, 107), (193, 108), (228, 106), (230, 106), (191, 99), (194, 99), (264, 99)];
+        for (kind, effect) in traps.into_iter().chain(new) {
+            assert_eq!(table.trap(kind), Some(effect), "{kind}");
+        }
+        assert_eq!(table.trap(0x8c), None);
+    }
 }
