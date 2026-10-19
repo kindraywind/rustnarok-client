@@ -202,9 +202,9 @@ impl Game {
             let path = world::find_path(&self.world.gat, from, goal);
             let stop = path.and_then(|path| path.into_iter().find(|&cell| in_attack_reach(cell, goal, self.attack_range)));
             if let Some(stop) = stop.filter(|&stop| attack.chase_cell != Some(stop))
-                && may_move(self.last_move, now)
+                && may_move(self.last_move, whole_ms(now))
             {
-                self.last_move = Some(now);
+                self.last_move = Some(whole_ms(Instant::now()));
                 attack.chase_cell = Some(stop);
                 attack.chased = true;
                 let _ = self.session.walk(stop.map(|value| value as u16));
@@ -221,15 +221,9 @@ impl Game {
     }
 
     /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`), judged from the cell the player is
-    /// drawn on; nothing when the last walk went out less than MOVE_GAP ago. Whether a walk was sent.
+    /// drawn on. A goal ends the pending pickup or skill; while the player is busy (`Actor::busy`) it's stored and
+    /// goes out when that ends, otherwise it's sent by `send_walk`. Whether a walk was sent.
     pub(crate) fn walk_toward(&mut self, cell: [i32; 2], now: Instant) -> bool {
-        if self.player.swinging(control::now()) {
-            self.walk_after_swing = Some(cell);
-            return false;
-        }
-        if !may_move(self.last_move, now) {
-            return false;
-        }
         let clock = control::now();
         let from = actor::drawn_cell(self.player.position(clock));
         let taken = blocked_cells(&self.units, &self.skill_units, clock);
@@ -237,8 +231,21 @@ impl Game {
         let free = |cell: [i32; 2]| gat.walkable(cell) && !taken.contains(&cell);
         let reachable = |cell: [i32; 2]| world::find_path(gat, from, cell).is_some();
         let Some(goal) = world::walk_goal(cell, from, free, reachable) else { return false };
-        self.pending = None;
-        self.last_move = Some(now);
+        let busy = self.player.busy(clock);
+        self.stored_walk.click(goal, busy, &mut self.pending).is_some_and(|goal| self.send_walk(goal, now))
+    }
+
+    /// Sends CZ_REQUEST_MOVE to `goal` when more than MOVE_GAP_MS whole milliseconds passed since the last one; sooner
+    /// it's dropped. With a Laphine or reform window open it counts as sent but nothing goes out (rathena refuses it
+    /// then). Whether it counted.
+    pub(crate) fn send_walk(&mut self, goal: [i32; 2], now: Instant) -> bool {
+        if !may_move(self.last_move, whole_ms(now)) {
+            return false;
+        }
+        self.last_move = Some(whole_ms(Instant::now()));
+        if self.synthesis.is_some() || self.upgrade.is_some() || self.reform.is_some() {
+            return true;
+        }
         self.walk_goal = Some(goal);
         self.walks += 1;
         let _ = self.session.walk(goal.map(|value| value as u16));
@@ -414,9 +421,9 @@ impl Game {
                         let _ = self.session.pick_up(id);
                     }
                     // The walk goes to the cell next to the item on the player's side (`pending_walk` notes the item).
-                    PickStep::Walk if may_move(self.last_move, now) => {
+                    PickStep::Walk if may_move(self.last_move, whole_ms(now)) => {
                         let spot = pickup_spot(self.player.cell, at, |cell| self.world.gat.walkable(cell));
-                        self.last_move = Some(now);
+                        self.last_move = Some(whole_ms(Instant::now()));
                         self.pending_walk = Some((at, now));
                         let _ = self.session.walk(spot.map(|value| value as u16));
                     }
@@ -450,13 +457,13 @@ impl Game {
                     self.pending = None;
                     self.pending_walk = None;
                     self.send_skill(id, level, target);
-                } else if self.pending_walk.is_none_or(|(toward, _)| toward != goal) && may_move(self.last_move, now) {
+                } else if self.pending_walk.is_none_or(|(toward, _)| toward != goal) && may_move(self.last_move, whole_ms(now)) {
                     let reach = range.max(1.0) as i32;
                     match world::find_path(&self.world.gat, self.player.cell, goal)
                         .and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, reach)))
                     {
                         Some(stop) => {
-                            self.last_move = Some(now);
+                            self.last_move = Some(whole_ms(Instant::now()));
                             self.pending_walk = Some((goal, now));
                             self.pending = Some((Pending::Skill { id, level, target }, None));
                             let _ = self.session.walk(stop.map(|value| value as u16));

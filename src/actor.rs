@@ -2100,6 +2100,15 @@ impl Actor {
         self.animation(now).0 == combat_actions(self.kind).0
     }
 
+    /// In a motion a walk waits for: sitting, or a one-shot action playing (its attack swing, the pickup, a skill's
+    /// motion), but not a flinch, death or a held cast.
+    pub fn busy(&self, now: Instant) -> bool {
+        let (_, flinch, death) = combat_actions(self.kind);
+        let (action, timing) = self.animation(now);
+        let held_cast = self.shot.as_ref().is_some_and(|shot| matches!(shot.pace, Pace::Hold(_)));
+        self.sitting || (matches!(timing, Timing::Once(..) | Timing::Span(_)) && action != flinch && action != death && !held_cast)
+    }
+
     /// Stops walking once the step under way is done (a slide goes on).
     pub fn stop_after_step(&mut self) {
         if !self.sliding {

@@ -1104,13 +1104,12 @@ struct Game {
     auto_walk: Option<[u16; 2]>,
     /// Walking by the mouse: when the last walk was sent and where, how many were sent, whether the held button
     /// keeps walking (and when it last tried), and the last press (when, and whether the pointer moved since).
-    last_move: Option<Instant>,
+    last_move: Option<u64>,
     walk_goal: Option<[i32; 2]>,
     walks: u32,
     walk_held: bool,
-    last_walk_try: Option<Instant>,
-    /// A walk asked for during the player's own swing, sent when the swing ends.
-    walk_after_swing: Option<[i32; 2]>,
+    last_walk_try: Option<u64>,
+    stored_walk: StoredWalk,
     /// The client's skill table: names, levels to pick, ranges by level.
     skill_info: HashMap<u16, SkillInfo>,
     press_mark: Option<(Instant, [f32; 2], bool)>,
@@ -3330,20 +3329,69 @@ enum WorldClick {
     Ground,
 }
 
-/// CZ_REQUEST_MOVE goes no sooner than this after the last one; a walk asked for sooner is dropped. The held button
-/// tries again this often.
-const MOVE_GAP: Duration = Duration::from_millis(300);
+/// CZ_REQUEST_MOVE goes only more than this many whole milliseconds after the last one; a walk asked for sooner is
+/// dropped. The held button tries again as often.
+const MOVE_GAP_MS: u64 = 300;
 /// Two presses this close, the pointer not moved at all between them, make a double press.
 const DOUBLE_PRESS: Duration = Duration::from_millis(500);
 
-fn may_move(last: Option<Instant>, now: Instant) -> bool {
-    last.is_none_or(|last| now.saturating_duration_since(last) >= MOVE_GAP)
+/// Whole milliseconds of a monotonic clock, as the walk timers count them.
+fn whole_ms(at: Instant) -> u64 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    at.saturating_duration_since(*START.get_or_init(Instant::now)).as_millis() as u64
 }
 
-/// Whether the held button walks toward the pointer now: held, nothing pending (an item being picked up), and
-/// MOVE_GAP since the last try.
-fn follows_pointer(held: bool, pending: bool, last_try: Option<Instant>, now: Instant) -> bool {
-    held && !pending && last_try.is_none_or(|last| now.saturating_duration_since(last) > MOVE_GAP)
+/// Whether a walk may go out at `now` (whole ms): more than MOVE_GAP_MS after the last one.
+fn may_move(last: Option<u64>, now: u64) -> bool {
+    last.is_none_or(|last| now > last + MOVE_GAP_MS)
+}
+
+/// Whether the held button walks toward the pointer now: held, nothing pending (an item being picked up), and more
+/// than MOVE_GAP_MS whole milliseconds since the last try.
+fn follows_pointer(held: bool, pending: bool, last_try: Option<u64>, now: u64) -> bool {
+    held && !pending && last_try.is_none_or(|last| now > last + MOVE_GAP_MS)
+}
+
+/// A walk goal clicked while the player is busy (`Actor::busy`: a swing, the pickup, a skill's motion, sitting), kept
+/// until that ends and then sent as it is, through the MOVE_GAP_MS rule. A map change clears it.
+#[derive(Default)]
+struct StoredWalk {
+    goal: Option<[i32; 2]>,
+    was_busy: bool,
+}
+
+impl StoredWalk {
+    /// A click found `goal`: it ends the pending pickup or skill, then is kept while busy (a later one replaces it).
+    /// The goal to send now, if not busy.
+    fn click<T>(&mut self, goal: [i32; 2], busy: bool, pending: &mut Option<T>) -> Option<[i32; 2]> {
+        *pending = None;
+        self.goal = busy.then_some(goal);
+        (!busy).then_some(goal)
+    }
+
+    /// Once a frame: the kept goal when the player has just stopped being busy, unless it died.
+    fn frame(&mut self, busy: bool, dead: bool) -> Option<[i32; 2]> {
+        let ended = std::mem::replace(&mut self.was_busy, busy) && !busy;
+        if ended && !dead { self.goal.take() } else { None }
+    }
+}
+
+/// The left button as the world reads it: once a frame, as the game polls it. A press is the button down now and up
+/// at the last read; `due` is a press since then that no window took. A press and release between two reads does
+/// nothing in the world.
+#[derive(Default)]
+struct ButtonRead {
+    was_down: bool,
+    due: bool,
+}
+
+impl ButtonRead {
+    /// This frame's read: whether the world takes a press now.
+    fn read(&mut self, down: bool) -> bool {
+        let pressed = down && !self.was_down && self.due;
+        (self.was_down, self.due) = (down, false);
+        pressed
+    }
 }
 
 /// A press now, after the last one counted (when, where, and whether the pointer moved off since): whether it's a
@@ -3739,6 +3787,7 @@ struct App {
     focus: usize,
     cursor: [f32; 2],
     mouse_down: bool,
+    button: ButtonRead,
     /// Dev switch RUSTNAROK_CLIENT_CLICKS: when (after entering the map), where, and where to drag to, last first.
     auto_input: Vec<ScriptedInput>,
     blink_start: Instant,
@@ -4312,6 +4361,7 @@ impl ApplicationHandler<NetEvent> for App {
             }
         }
         self.auto_input(event_loop);
+        self.read_button();
         let tick = self.client_tick();
         match &mut self.scene {
             Scene::Game(game) => {
@@ -4322,21 +4372,21 @@ impl ApplicationHandler<NetEvent> for App {
                 }
                 // The view the player leaves is kept for the next map of its kind.
                 self.saved_view.follow(&game.camera_goal, Instant::now(), self.save_view);
-                // The held button follows the pointer: another walk each time MOVE_GAP has passed since the last
-                // try, not over a window, nor while an attack or a pickup is on its way.
+                // The held button follows the pointer: another walk each time more than MOVE_GAP_MS has passed since
+                // the last try, not over a window, nor while an attack or a pickup is on its way.
                 let now = Instant::now();
                 game.attack_step(now);
                 game.pending_step(now);
-                if let Some(cell) = game.walk_after_swing.filter(|_| !game.player.swinging(control::now())) {
-                    game.walk_after_swing = None;
-                    game.walk_toward(cell, now);
+                // The goal kept while busy goes out as it is when the player stops being busy (not on dying).
+                if let Some(goal) = game.stored_walk.frame(game.player.busy(control::now()), game.player.dead) {
+                    game.send_walk(goal, now);
                 }
-                if follows_pointer(game.walk_held, game.pending.is_some(), game.last_walk_try, now)
+                if follows_pointer(game.walk_held, game.pending.is_some(), game.last_walk_try, whole_ms(now))
                     && let Some(assets) = &self.assets
                     && !game.on_ui(self.cursor, assets.message.size)
                     && let Some(cell) = game.ground_cell(self.cursor)
                 {
-                    game.last_walk_try = Some(now);
+                    game.last_walk_try = Some(whole_ms(now));
                     game.walk_toward(cell, now);
                 }
                 if game.entered.elapsed() > Duration::from_secs(1) {
@@ -4725,6 +4775,7 @@ fn main() {
             })
             .unwrap_or([-1.0; 2]),
         mouse_down: false,
+        button: ButtonRead::default(),
         auto_input: {
             let start = std::env::var("RUSTNAROK_CLIENT_CLICKS_AT").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(4);
             let point = |text: &str| -> Option<[f32; 2]> {
@@ -5496,32 +5547,75 @@ mod tests {
         assert_eq!(pickup_step([13, 11], [14, 10], Some([14, 10])), PickStep::PickUp);
         assert_eq!(pickup_step([14, 10], [14, 10], None), PickStep::PickUp);
         // A walk the move limit held back is asked for again on a later frame, once.
-        let start = Instant::now();
-        let (mut walked, mut last) = (None, Some(start));
+        let (mut walked, mut last) = (None, Some(0));
         let mut walks = Vec::new();
-        for ms in [100, 200, 299, 300, 350, 700] {
-            let now = start + Duration::from_millis(ms);
-            if pickup_step([10, 10], [14, 10], walked) == PickStep::Walk && may_move(last, now) {
-                (walked, last) = (Some([14, 10]), Some(now));
+        for ms in [100, 200, 299, 300, 301, 350, 700] {
+            if pickup_step([10, 10], [14, 10], walked) == PickStep::Walk && may_move(last, ms) {
+                (walked, last) = (Some([14, 10]), Some(ms));
                 walks.push(ms);
             }
         }
-        assert_eq!(walks, [300]);
-        // The held button follows the pointer only once nothing is pending, MOVE_GAP after its last try.
-        assert!(!follows_pointer(true, true, None, start));
-        assert!(follows_pointer(true, false, None, start));
-        assert!(!follows_pointer(true, false, Some(start), start + Duration::from_millis(300)));
-        assert!(follows_pointer(true, false, Some(start), start + Duration::from_millis(301)));
-        assert!(!follows_pointer(false, false, None, start));
+        assert_eq!(walks, [301]);
+        // The held button follows the pointer only once nothing is pending, more than MOVE_GAP_MS after its last try.
+        assert!(!follows_pointer(true, true, None, 0));
+        assert!(follows_pointer(true, false, None, 0));
+        assert!(!follows_pointer(true, false, Some(1000), 1300));
+        assert!(follows_pointer(true, false, Some(1000), 1301));
+        assert!(!follows_pointer(false, false, None, 0));
+    }
+
+    #[test]
+    fn keeps_a_goal_clicked_while_busy() {
+        let mut stored = StoredWalk::default();
+        let mut pending = Some("pickup");
+        // Not busy: the goal goes now, and the pickup is over.
+        assert_eq!(stored.click([5, 5], false, &mut pending), Some([5, 5]));
+        assert_eq!(pending, None);
+        // During the pickup motion: nothing goes, the goal is kept; a second click replaces it.
+        pending = Some("pickup");
+        assert_eq!(stored.frame(true, false), None);
+        assert_eq!(stored.click([7, 7], true, &mut pending), None);
+        assert_eq!(pending, None, "a goal ends the pending pickup even when it isn't sent");
+        assert_eq!(stored.click([8, 9], true, &mut pending), None);
+        assert_eq!(stored.frame(true, false), None);
+        // It goes out as it is when the motion ends (not worked out again), once.
+        assert_eq!(stored.frame(false, false), Some([8, 9]));
+        assert_eq!(stored.frame(false, false), None);
+        // Still through the 300 ms rule: a motion ending 200 ms after the last send drops it.
+        assert!(!may_move(Some(1000), 1200));
+        // Dying isn't the end of a motion that sends it.
+        stored.frame(true, false);
+        stored.click([3, 3], true, &mut pending);
+        assert_eq!(stored.frame(false, true), None);
+    }
+
+    #[test]
+    fn reads_the_button_once_a_frame() {
+        // Pressed and let go between two frames: nothing in the world.
+        let mut button = ButtonRead { due: true, ..ButtonRead::default() };
+        assert!(!button.read(false));
+        // Pressed before a frame: that frame's read takes it, once while held.
+        button.due = true;
+        assert!(button.read(true));
+        assert!(!button.read(true));
+        // A press a window took isn't the world's.
+        assert!(!button.read(false));
+        assert!(!button.read(true));
     }
 
     #[test]
     fn walks_no_more_than_every_300_ms() {
         let start = Instant::now();
         let at = |ms: u64| start + Duration::from_millis(ms);
-        assert!(may_move(None, start));
-        assert!(!may_move(Some(start), at(299)));
-        assert!(may_move(Some(start), at(300)));
+        // More than 300 whole milliseconds: after a send at 1000, 1300 is too soon and 1301 goes.
+        assert!(may_move(None, 0));
+        assert!(!may_move(Some(1000), 1300));
+        assert!(may_move(Some(1000), 1301));
+        // Held at 60 fps from a try at 0: the 18th frame (300.0 ms) makes no try, the 19th (316.7 ms) does.
+        let frame = |index: u32| (f64::from(index) * 1000.0 / 60.0) as u64;
+        assert!(!follows_pointer(true, false, Some(0), frame(18)));
+        assert!(follows_pointer(true, false, Some(0), frame(19)));
+        assert_eq!(whole_ms(at(5)) - whole_ms(at(3)), 2);
         // A second press: double only when soon and the pointer stayed still.
         assert!(double_press(Some((start, [0.0; 2], false)), at(400)));
         assert!(!double_press(Some((start, [0.0; 2], true)), at(400)));
