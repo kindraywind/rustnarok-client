@@ -1555,6 +1555,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         }).collect::<serde_json::Map<_, _>>(),
         "chat_height": game.chat.height(),
     });
+    // The ground cursor (Alt+Home): on or off, and the cell its square is on.
+    state["ground_cursor"] = json!({"on": game.ground_cursor, "cell": game.ground_mark});
     // The party window's size mode and size.
     // The guild window's members page: the names in the order shown, the column sorted by, online first.
     state["guild_window"] = json!({

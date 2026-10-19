@@ -3387,12 +3387,14 @@ impl App {
                     game.show_memorial();
                 }
             }
-            // ponytail: no window yet (commands, ground cursor, tip, hunting, flags). The key is eaten.
-            shortcuts::Action::Commands
-            | shortcuts::Action::GroundCursor
-            | shortcuts::Action::Tip
-            | shortcuts::Action::Hunting
-            | shortcuts::Action::Flag(_) => {}
+            // Off clears the square too.
+            // ponytail: the game leaves it where it was; nobody wants a square stuck on the ground.
+            shortcuts::Action::GroundCursor => {
+                game.ground_cursor = !game.ground_cursor;
+                game.ground_mark = game.ground_mark.filter(|_| game.ground_cursor);
+            }
+            // ponytail: no window yet (commands, tip, hunting, flags). The key is eaten.
+            shortcuts::Action::Commands | shortcuts::Action::Tip | shortcuts::Action::Hunting | shortcuts::Action::Flag(_) => {}
             shortcuts::Action::Macro(_)
             | shortcuts::Action::Screenshot
             | shortcuts::Action::Minimap
