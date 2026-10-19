@@ -2591,6 +2591,7 @@ impl App {
                 }
             }
         }
+        let top_meshes = game.effects.top_meshes(now, feet_of_unit);
         // Max-level auras under the feet of those in sight, with the effects (unless /aura2 has them off).
         if effects_on && !self.graphics.aura_off {
             let seconds = now.duration_since(game.entered).as_secs_f32();
@@ -2652,6 +2653,7 @@ impl App {
             meshes: &effect_meshes,
             screen: &screen_shapes,
             cover: &cover,
+            top_meshes: &top_meshes,
             time: now.duration_since(game.entered).as_secs_f32(),
             blind: game.blind.showing(),
             tint: game.scene.tint(),

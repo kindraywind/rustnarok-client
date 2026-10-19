@@ -766,6 +766,7 @@ pub struct World {
     /// The blind overlay: blended, unfogged, no depth test, drawn last.
     cover_pipeline: wgpu::RenderPipeline,
     mesh_pipelines: [wgpu::RenderPipeline; 2],
+    top_mesh_pipelines: [wgpu::RenderPipeline; 2],
     depth: RefCell<Option<([u32; 2], wgpu::TextureView)>>,
 }
 
@@ -985,6 +986,10 @@ impl World {
             pipeline("mesh", "mesh_fs", mesh_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false),
             pipeline("mesh_add", "mesh_fs", mesh_buffer_layout(), Some(additive), false),
         ];
+        let top_mesh_pipelines = [
+            pipeline_compared("mesh", "mesh_fs", mesh_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false, wgpu::CompareFunction::Always),
+            pipeline_compared("mesh", "mesh_fs", mesh_buffer_layout(), Some(additive), false, wgpu::CompareFunction::Always),
+        ];
 
         let water = MapWater::load(gpu, grf, &gnd, &rsw);
 
@@ -1033,6 +1038,7 @@ impl World {
             str_pipelines,
             cover_pipeline,
             mesh_pipelines,
+            top_mesh_pipelines,
             depth: RefCell::new(None),
         })
     }
@@ -1455,6 +1461,8 @@ pub struct WorldFrame<'a> {
     pub screen: &'a [ScreenShape<'a>],
     /// The blind overlay, drawn last with no depth test.
     pub cover: &'a [CoverQuad<'a>],
+    /// Shapes over everything, with no depth test, after the STRs.
+    pub top_meshes: &'a [EffectMesh<'a>],
     /// Seconds since the map was entered, for animated textures.
     pub time: f32,
     /// The player is blind (health bit 0x10 or status 1205): lava draws as ordinary water, and models use the ambient.
@@ -1573,7 +1581,7 @@ impl WorldPass for WorldFrame<'_> {
                 usage: wgpu::BufferUsages::VERTEX,
             })
         });
-        let mesh_vertices: Vec<MeshVertex> = self.meshes.iter().flat_map(|(_, vertices, _)| vertices.iter().copied()).collect();
+        let mesh_vertices: Vec<MeshVertex> = self.meshes.iter().chain(self.top_meshes).flat_map(|(_, vertices, _)| vertices.iter().copied()).collect();
         let mesh_buffer = (!mesh_vertices.is_empty()).then(|| {
             gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("effect shapes"),
@@ -1714,6 +1722,19 @@ impl WorldPass for WorldFrame<'_> {
             let mut first = 0u32;
             for (texture, _, corners) in self.screen {
                 let count = corners.len() as u32;
+                pass.set_bind_group(1, texture.bind_group(), &[]);
+                pass.draw(first..first + count, 0..1);
+                first += count;
+            }
+        }
+
+        // Then the shapes over everything, after the other shapes in the same buffer.
+        if let Some(buffer) = &mesh_buffer {
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            let mut first = self.meshes.iter().map(|(_, vertices, _)| vertices.len() as u32).sum::<u32>();
+            for (texture, vertices, additive) in self.top_meshes {
+                let count = vertices.len() as u32;
+                pass.set_pipeline(&world.top_mesh_pipelines[usize::from(*additive)]);
                 pass.set_bind_group(1, texture.bind_group(), &[]);
                 pass.draw(first..first + count, 0..1);
                 first += count;
