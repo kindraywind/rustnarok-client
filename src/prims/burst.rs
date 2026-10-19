@@ -1,5 +1,6 @@
-//! Bash's burst (EF_BASH 16), as the game draws it a 16 ms tick at a time: flat on the screen 40 px over the caster's
-//! feet, a soft white disc and 20 rays turning counter-clockwise, over everything in the world.
+//! Bursts flat on the screen 40 px over the caster's feet, as the game draws them a 16 ms tick at a time, over
+//! everything in the world: Bash's (EF_BASH 16), a soft white disc and 20 rays turning out counter-clockwise; Turn
+//! Undead's (EF_TURNUNDEAD 82), a disc collapsing and five rays shrinking in, then a ring opening on the ground.
 
 use std::time::Instant;
 
@@ -7,17 +8,66 @@ use super::{ScreenShape, TICK};
 
 pub const DISC: &str = "data\\texture\\effect\\alpha_down.tga";
 pub const RAY: &str = "data\\texture\\effect\\alpha_center.tga";
-/// The parts' life in ticks, the effect's length.
+pub const RING: &str = "data\\texture\\effect\\ring_liner.tga";
+/// Bash's effect length in ticks, its parts' life.
 pub const LIFE: u32 = 40;
+/// Turn Undead's effect length.
+const TURN_UNDEAD_LENGTH: u32 = 250;
 /// Where the parts sit: screen pixels over the feet.
 const RISE: f32 = -40.0;
-const DISC_RADIUS: f32 = 100.0;
-const RAYS: usize = 20;
+/// Turn Undead's ground ring: the tick it starts, its life, and how far over the feet it lies.
+const RING_START: u32 = 50;
+const RING_LIFE: u32 = 30;
+pub const RING_RISE: f32 = 7.0;
 
-/// A part's alpha (0 to 255, whole) at drawn tick `n`: up `step` a tick to `max`, then from tick `fade` down evenly to
-/// nothing at `life`. Stepped tick by tick in f32, as the game does.
-fn alpha(n: u32, step: f32, max: f32, fade: u32, life: u32) -> f32 {
-    let (mut alpha, mut step) = (0.0_f32, step);
+/// What a burst draws.
+struct Look {
+    /// The parts' life in ticks.
+    life: u32,
+    /// The disc's radius and its change a tick (pixels); its alpha's rise a tick, top and the tick it starts fading.
+    radius: f32,
+    shrink: f32,
+    disc_alpha: (f32, f32, u32),
+    rays: usize,
+    /// A ray's length R(n) + base, its growth a tick ±(R(n) + base)/10, its turn slowing by turn / `drag` a tick, and
+    /// its alpha.
+    length: (u32, f32),
+    growth: (u32, f32, f32),
+    drag: f32,
+    ray_alpha: (f32, f32, u32),
+    /// The ground ring at tick 50.
+    ring: bool,
+}
+
+const BASH: Look = Look {
+    life: LIFE,
+    radius: 100.0,
+    shrink: 0.0,
+    disc_alpha: (170.0 / 6.0, 170.0, 30),
+    rays: 20,
+    length: (40, 20.0),
+    growth: (30, 20.0, 1.0),
+    drag: 60.0,
+    ray_alpha: (20.0, 200.0, 27),
+    ring: false,
+};
+const TURN_UNDEAD: Look = Look {
+    life: 20,
+    radius: 370.0,
+    shrink: -18.5,
+    disc_alpha: (130.0 / 6.0, 130.0, 10),
+    rays: 5,
+    length: (30, 350.0),
+    growth: (30, 150.0, -1.0),
+    drag: 30.0,
+    ray_alpha: (15.0, 150.0, 14),
+    ring: true,
+};
+
+/// A part's alpha (0 to 255, whole) at drawn tick `n`: from `start`, up `step` a tick to `max`, then from tick `fade`
+/// down evenly to nothing at `life`. Stepped tick by tick in f32, as the game does.
+fn alpha(n: u32, start: f32, step: f32, max: f32, fade: u32, life: u32) -> f32 {
+    let (mut alpha, mut step) = (start, step);
     for age in 0..=n {
         if age == fade {
             step = -alpha / (life - age) as f32;
@@ -35,10 +85,24 @@ fn point(center: [f32; 2], radius: f32, degrees: f32) -> [f32; 2] {
     [center[0] + radius * cos, center[1] - radius * sin]
 }
 
+/// Turn Undead's ground ring at drawn tick `n` of its own: its half-size (world units) and alpha. It opens by a rate
+/// from 1.5 rising 0.15 a tick, from tick 15 one from 0.5 falling a 30th.
+fn ring(n: u32) -> (f32, f32) {
+    let (mut half, mut rate, mut change) = (0.0_f32, 1.5_f32, 0.15_f32);
+    for age in 0..=n {
+        if age == 15 {
+            (rate, change) = (0.5, -1.0 / 30.0);
+        }
+        rate += change;
+        half += rate;
+    }
+    (half, alpha(n, 150.0, 0.0, 150.0, 20, RING_LIFE))
+}
+
 /// One ray: a thin triangle from the centre, clear at both ends.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Ray {
-    /// Degrees, and the turn a tick at first (slowing by a 60th of it each tick).
+    /// Degrees, and the turn a tick at first (slowing by a fixed share of it each tick).
     angle: f32,
     turn: f32,
     /// Half its width in degrees, its length and growth a tick in pixels.
@@ -48,20 +112,21 @@ struct Ray {
 }
 
 impl Ray {
-    fn new(mut rand: impl FnMut(u32) -> u32) -> Self {
+    fn new(look: &Look, mut rand: impl FnMut(u32) -> u32) -> Self {
         let mut draw = |n: u32| rand(n) as f32;
         let angle = draw(360);
         let turn = (draw(60) + 10.0) / 10.0;
         let half = (draw(25) + 5.0) / 10.0;
-        let length = draw(40) + 20.0;
-        let growth = (draw(30) + 20.0) / 10.0;
+        let length = draw(look.length.0) + look.length.1;
+        let (spread, base, sign) = look.growth;
+        let growth = sign * (draw(spread) + base) / 10.0;
         Self { angle, turn, half, length, growth }
     }
 
-    /// Its angle and length at drawn tick `n`, after `n + 1` steps.
-    fn at(&self, n: u32) -> (f32, f32) {
+    /// Its angle and length at drawn tick `n`, after `n + 1` steps, its turn slowing by turn / `drag` before each.
+    fn at(&self, n: u32, drag: f32) -> (f32, f32) {
         let steps = (n + 1) as f32;
-        (self.angle + self.turn * steps - self.turn / 60.0 * steps * (steps + 1.0) / 2.0, self.length + self.growth * steps)
+        (self.angle + self.turn * steps - self.turn / drag * steps * (steps + 1.0) / 2.0, self.length + self.growth * steps)
     }
 }
 
@@ -69,45 +134,66 @@ impl Ray {
 pub struct Burst {
     start: Instant,
     pub unit: Option<u32>,
-    rays: [Ray; RAYS],
-    /// The ticks it's drawn: its parts' life, unless the effect ends first.
+    look: &'static Look,
+    rays: Vec<Ray>,
+    /// The ticks its disc and rays are drawn: their life, unless the effect ends first.
     drawn: u32,
 }
 
 impl Burst {
-    /// A burst from `now` in an effect `length` ticks long, its choices from `rand(n)` (0 to n − 1). Parts outliving a
-    /// shorter effect never show (a quick cast's aura).
-    pub fn new(unit: Option<u32>, now: Instant, length: u32, mut rand: impl FnMut(u32) -> u32) -> Self {
-        let drawn = if length < LIFE { 0 } else { LIFE.min(length - 1) };
-        Self { start: now, unit, rays: std::array::from_fn(|_| Ray::new(&mut rand)), drawn }
+    /// Bash's burst from `now` in an effect `length` ticks long, its choices from `rand(n)` (0 to n − 1).
+    pub fn bash(unit: Option<u32>, now: Instant, length: u32, rand: impl FnMut(u32) -> u32) -> Self {
+        Self::new(&BASH, unit, now, length, rand)
+    }
+
+    /// Turn Undead's, on the caster.
+    pub fn turn_undead(unit: Option<u32>, now: Instant, rand: impl FnMut(u32) -> u32) -> Self {
+        Self::new(&TURN_UNDEAD, unit, now, TURN_UNDEAD_LENGTH, rand)
+    }
+
+    /// Parts outliving a shorter effect never show (a quick cast's aura).
+    fn new(look: &'static Look, unit: Option<u32>, now: Instant, length: u32, mut rand: impl FnMut(u32) -> u32) -> Self {
+        let drawn = if length < look.life { 0 } else { look.life.min(length - 1) };
+        Self { start: now, unit, look, rays: (0..look.rays).map(|_| Ray::new(look, &mut rand)).collect(), drawn }
     }
 
     fn tick(&self, now: Instant) -> Option<u32> {
-        let tick = (now.checked_duration_since(self.start)?.as_millis() / TICK.as_millis()) as u32;
-        (tick < self.drawn).then_some(tick)
+        Some((now.checked_duration_since(self.start)?.as_millis() / TICK.as_millis()) as u32)
     }
 
     pub fn alive(&self, now: Instant) -> bool {
-        now < self.start || self.tick(now).is_some()
+        let end = if self.look.ring { RING_START + RING_LIFE } else { self.drawn };
+        self.tick(now).is_none_or(|tick| tick < end)
+    }
+
+    /// The ground ring's half-size (world units) and alpha (0 to 1) at `now`, while it shows.
+    pub fn ring(&self, now: Instant) -> Option<(f32, f32)> {
+        let n = self.tick(now)?.checked_sub(RING_START).filter(|n| self.look.ring && *n < RING_LIFE)?;
+        let (half, alpha) = ring(n);
+        Some((half, alpha / 255.0))
     }
 
     /// The disc, then the rays, at `now`.
     pub fn shapes(&self, now: Instant) -> Vec<ScreenShape> {
-        let Some(n) = self.tick(now) else { return Vec::new() };
+        let Some(n) = self.tick(now).filter(|n| *n < self.drawn) else { return Vec::new() };
+        let look = self.look;
         let center = [0.0, RISE];
         let tint = |alpha: f32| [1.0, 1.0, 1.0, alpha / 255.0];
         // Ten 36° segments from the centre, the texture repeating every four; v 1 at the centre, 0 at the rim.
-        let disc_tint = tint(alpha(n, 170.0 / 6.0, 170.0, 30, LIFE));
+        let (step, max, fade) = look.disc_alpha;
+        let disc_tint = tint(alpha(n, 0.0, step, max, fade, look.life));
+        let radius = look.radius + look.shrink * (n + 1) as f32;
         let disc = (0..10)
             .flat_map(|segment| {
                 let u = (segment % 4) as f32 * 0.25;
-                let [from, to] = [segment, segment + 1].map(|side| point(center, DISC_RADIUS, side as f32 * 36.0));
+                let [from, to] = [segment, segment + 1].map(|side| point(center, radius, side as f32 * 36.0));
                 [(center, [u, 1.0], disc_tint), (to, [u + 0.25, 0.0], disc_tint), (from, [u, 0.0], disc_tint)]
             })
             .collect();
-        let ray_tint = tint(alpha(n, 20.0, 200.0, 27, LIFE));
+        let (step, max, fade) = look.ray_alpha;
+        let ray_tint = tint(alpha(n, 0.0, step, max, fade, look.life));
         let rays = self.rays.iter().map(|ray| {
-            let (angle, length) = ray.at(n);
+            let (angle, length) = ray.at(n, look.drag);
             let corners = [(center, [0.5, 0.0]), (point(center, length, angle - ray.half), [1.0, 1.0]), (point(center, length, angle + ray.half), [0.0, 1.0])];
             (RAY, self.unit, corners.map(|(at, uv)| (at, uv, ray_tint)).to_vec())
         });
@@ -122,33 +208,66 @@ mod tests {
     #[test]
     fn bash_burst() {
         // The disc's and a ray's alpha at every drawn tick.
-        let disc: Vec<f32> = (0..39).map(|n| alpha(n, 170.0 / 6.0, 170.0, 30, LIFE)).collect();
+        let disc: Vec<f32> = (0..39).map(|n| alpha(n, 0.0, 170.0 / 6.0, 170.0, 30, LIFE)).collect();
         let mut want = vec![28.0, 56.0, 85.0, 113.0, 141.0];
         want.extend([170.0; 25]);
         want.extend([153.0, 136.0, 119.0, 102.0, 85.0, 68.0, 51.0, 34.0, 17.0]);
         assert_eq!(disc, want);
-        let ray: Vec<f32> = (0..39).map(|n| alpha(n, 20.0, 200.0, 27, LIFE)).collect();
+        let ray: Vec<f32> = (0..39).map(|n| alpha(n, 0.0, 20.0, 200.0, 27, LIFE)).collect();
         let mut want: Vec<f32> = (1..=10).map(|step| 20.0 * step as f32).collect();
         want.extend([200.0; 17]);
         want.extend([184.0, 169.0, 153.0, 138.0, 123.0, 107.0, 92.0, 76.0, 61.0, 46.0, 30.0, 15.0]);
         assert_eq!(ray, want);
         // A ray from fixed draws: angle 100, turn 3.0, half-width 1.0, length 30, growth 3.0.
         let mut draws = [100, 20, 5, 10, 10].into_iter();
-        let ray = Ray::new(|_| draws.next().unwrap());
+        let ray = Ray::new(&BASH, |_| draws.next().unwrap());
         assert_eq!(ray, Ray { angle: 100.0, turn: 3.0, half: 1.0, length: 30.0, growth: 3.0 });
-        let (angle, length) = ray.at(9);
+        let (angle, length) = ray.at(9, BASH.drag);
         assert!((angle - (100.0 + 3.0 * 10.0 * (1.0 - 11.0 / 120.0))).abs() < 1e-3 && length == 60.0);
         // Drawn ticks 0 to 38: the disc and 20 rays; nothing at tick 39.
         let start = Instant::now();
-        let burst = Burst::new(None, start, LIFE, |n| n / 2);
+        let burst = Burst::bash(None, start, LIFE, |n| n / 2);
         let shapes = burst.shapes(start + TICK * 38);
         assert_eq!((shapes.len(), shapes[0].0, shapes[0].2.len(), shapes[1].0), (21, DISC, 30, RAY));
         assert_eq!(shapes[0].2[0].0, [0.0, RISE]);
         assert!(burst.shapes(start + TICK * 39).is_empty() && !burst.alive(start + TICK * 39));
         // As a 500 ms cast's aura (31 ticks) it never shows.
-        assert!(Burst::new(None, start, 31, |n| n / 2).shapes(start).is_empty());
+        assert!(Burst::bash(None, start, 31, |n| n / 2).shapes(start).is_empty());
         // A negative whole degree is looked up a degree up.
         assert_eq!(point([0.0; 2], 1.0, -0.5), point([0.0; 2], 1.0, 0.0));
         assert_eq!(point([0.0; 2], 1.0, -1.5), point([0.0; 2], 1.0, 0.0));
+    }
+
+    #[test]
+    fn turn_undead_burst() {
+        // The disc collapses from 351.5 to 0 in 20 ticks; its alpha and the rays'.
+        let disc: Vec<f32> = (0..20).map(|n| alpha(n, 0.0, 130.0 / 6.0, 130.0, 10, 20)).collect();
+        let mut want = vec![21.0, 43.0, 65.0, 86.0, 108.0];
+        want.extend([130.0; 5]);
+        want.extend([117.0, 104.0, 91.0, 78.0, 65.0, 52.0, 39.0, 26.0, 13.0, 0.0]);
+        assert_eq!(disc, want);
+        let ray: Vec<f32> = (0..20).map(|n| alpha(n, 0.0, 15.0, 150.0, 14, 20)).collect();
+        let mut want: Vec<f32> = (1..=10).map(|step| 15.0 * step as f32).collect();
+        want.extend([150.0; 4]);
+        want.extend([125.0, 100.0, 75.0, 50.0, 25.0, 0.0]);
+        assert_eq!(ray, want);
+        // A ray 350 + 10 long, shrinking (150 + 10)/10 a tick: 344 at tick 0, 40 at tick 19.
+        let mut draws = [0, 0, 0, 10, 10].into_iter();
+        let ray = Ray::new(&TURN_UNDEAD, |_| draws.next().unwrap());
+        assert_eq!((ray.length, ray.growth), (360.0, -16.0));
+        assert_eq!((ray.at(0, TURN_UNDEAD.drag).1, ray.at(19, TURN_UNDEAD.drag).1), (344.0, 40.0));
+        let start = Instant::now();
+        let burst = Burst::turn_undead(Some(7), start, |n| n / 2);
+        let shapes = burst.shapes(start);
+        assert_eq!(shapes.len(), 6);
+        assert!((shapes[0].2[2].0[0] - 351.5).abs() < 1e-3);
+        assert!(burst.shapes(start + TICK * 20).is_empty() && burst.ring(start + TICK * 49).is_none());
+        // The ground ring: ticks 50 to 79, opening fast for 15 ticks, then creeping to 44.
+        let near = |n: u32, want: f32| (burst.ring(start + TICK * (RING_START + n)).unwrap().0 - want).abs() < 0.01;
+        assert!(near(0, 1.65) && near(14, 40.5) && near(15, 40.97) && near(29, 44.0));
+        assert_eq!(burst.ring(start + TICK * 69).unwrap().1, 150.0 / 255.0);
+        assert_eq!(burst.ring(start + TICK * 70).unwrap().1, 135.0 / 255.0);
+        assert_eq!(burst.ring(start + TICK * 79).unwrap().1, 0.0);
+        assert!(burst.alive(start + TICK * 79) && !burst.alive(start + TICK * 80) && burst.ring(start + TICK * 80).is_none());
     }
 }
