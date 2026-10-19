@@ -235,6 +235,21 @@
       "threshold": 20
     },
     {
+      "click_on": {
+        "button": "skill"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "HomunculusSkills"
+        ]
+      }
+    },
+    {
       "key": "Alt+R"
     },
     {
