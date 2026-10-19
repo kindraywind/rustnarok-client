@@ -1201,6 +1201,15 @@ impl Game {
         }
     }
 
+    /// Frost Diver's line of ice spikes from `caster` to `target`.
+    pub(crate) fn frost_diver(&mut self, gpu: &Gpu, grf: &Grf, caster: u32, target: u32) {
+        let cell = |unit: u32| if unit == self.account_id { Some(self.player.cell) } else { self.units.get(&unit).map(|actor| actor.cell) };
+        if let (Some(from), Some(to)) = (cell(caster), cell(target)) {
+            let [from, to] = [from, to].map(|cell| self.world.cell_position(cell.map(|value| value as f32)));
+            self.effects.frost_diver(gpu, grf, from, to, Instant::now());
+        }
+    }
+
     /// Plays an effect on a unit told the skill's hit count (a bolt drops an arrow a hit).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn play_effect_hits(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, start: Instant, hits: u16) {

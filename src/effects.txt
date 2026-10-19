@@ -21,7 +21,6 @@ str	10	maemor	-	1
 str	13	safetywall	-	0
 str	23	stonecurse	-	1
 str	25	firewall%d	-	0	1	2
-str	28	freeze	-	1
 str	29	lightning	-	1
 str	30	thunderstorm	-	0
 str	40	cross	-	1
