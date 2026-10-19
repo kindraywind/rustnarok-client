@@ -1,0 +1,11 @@
+{
+  "about": "Map water (issue #433): prontera's water waves along the diagonal, one texture across four tiles, drawn over a wading unit. mag_dun01's lava is opaque and dark red. The wave, the zones and the clock are checked by unit tests.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"shot": "map-water-prontera", "crop": [0, 200, 1024, 700]},
+    {"say": "@warp mag_dun01 126 113"}, {"settle": 1500},
+    {"shot": "map-water-lava", "crop": [0, 200, 1024, 700]}
+  ]
+}

@@ -113,6 +113,8 @@ pub struct Rsw {
     pub ground_file: String,
     pub altitude_file: String,
     pub water: Option<Water>,
+    /// RSW 2.2+ flag after the header. When set, opaque water writes depth before the rest.
+    pub water_depth: bool,
     pub light: Light,
     pub models: Vec<Model>,
     pub sounds: Vec<SoundSource>,
@@ -123,9 +125,7 @@ impl Rsw {
         let mut reader = Reader { bytes, position: 0 };
         let version = reader.header(b"GRSW")?;
         let build = if version >= (2, 5) { reader.i32()? } else { 0 };
-        if version >= (2, 2) {
-            reader.u8()?;
-        }
+        let water_depth = version >= (2, 2) && reader.u8()? == 1;
         reader.string(40)?; // ini file
         let ground_file = reader.string(40)?;
         let altitude_file = reader.string(40)?;
@@ -143,6 +143,12 @@ impl Rsw {
                 water.wave_height = reader.f32()?;
                 water.wave_speed = reader.f32()?;
                 water.wave_pitch = reader.f32()?;
+            } else {
+                // Older than 1.8: a flat default wave. The file has none of these.
+                water.kind = 0;
+                water.wave_height = 1.0;
+                water.wave_speed = 2.0;
+                water.wave_pitch = 50.0;
             }
             water.animation_speed = if version >= (1, 9) { reader.i32()? as u32 } else { 3 };
             Some(water)
@@ -212,7 +218,7 @@ impl Rsw {
                 other => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("unknown RSW object type {other}"))),
             }
         }
-        Ok(Self { ground_file, altitude_file, water, light, models, sounds })
+        Ok(Self { ground_file, altitude_file, water, water_depth, light, models, sounds })
     }
 }
 
@@ -237,6 +243,25 @@ pub struct Cube {
     pub east: i32,
 }
 
+/// One water zone. Heights are file heights: positive is down.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WaterZone {
+    pub level: f32,
+    pub kind: i32,
+    pub wave_height: f32,
+    pub wave_speed: f32,
+    pub wave_pitch: f32,
+    pub animation_speed: i32,
+}
+
+/// GND 1.8+ water: a default block, how the map is split, and one zone per cell of that split.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GndWater {
+    pub split: [i32; 2],
+    pub default: WaterZone,
+    pub zones: Vec<WaterZone>,
+}
+
 pub struct Gnd {
     pub width: usize,
     pub height: usize,
@@ -248,6 +273,8 @@ pub struct Gnd {
     pub lightmaps: Vec<Vec<u8>>,
     pub surfaces: Vec<Surface>,
     pub cubes: Vec<Cube>,
+    /// Present from GND 1.8. Older maps take one zone from the RSW instead.
+    pub water: Option<GndWater>,
 }
 
 impl Gnd {
@@ -281,8 +308,89 @@ impl Gnd {
             let mut index = || -> io::Result<i32> { if version >= (1, 7) { reader.i32() } else { reader.i16().map(i32::from) } };
             cubes.push(Cube { heights, top: index()?, north: index()?, east: index()? });
         }
-        Ok(Self { width, height, zoom, textures, lightmap_size, lightmaps, surfaces, cubes })
+        let water = (version >= (1, 8)).then(|| read_gnd_water(&mut reader, version)).transpose()?;
+        Ok(Self { width, height, zoom, textures, lightmap_size, lightmaps, surfaces, cubes, water })
     }
+}
+
+fn read_zone(reader: &mut Reader) -> io::Result<WaterZone> {
+    Ok(WaterZone {
+        level: reader.f32()?,
+        kind: reader.i32()?,
+        wave_height: reader.f32()?,
+        wave_speed: reader.f32()?,
+        wave_pitch: reader.f32()?,
+        animation_speed: reader.i32()?,
+    })
+}
+
+fn read_gnd_water(reader: &mut Reader, version: (u8, u8)) -> io::Result<GndWater> {
+    let default = read_zone(reader)?;
+    let split = [reader.i32()?, reader.i32()?];
+    let count = (split[0].max(0) as usize).saturating_mul(split[1].max(0) as usize);
+    let zones = if version >= (1, 9) {
+        (0..count).map(|_| read_zone(reader)).collect::<io::Result<_>>()?
+    } else {
+        (0..count)
+            .map(|_| {
+                let mut zone = default;
+                zone.level = reader.f32()?;
+                Ok(zone)
+            })
+            .collect::<io::Result<_>>()?
+    };
+    Ok(GndWater { split, default, zones })
+}
+
+/// The one zone an older GND takes from its RSW. Speed is truncated into 0..360; pitch is truncated.
+pub fn rsw_zone(water: &Water) -> WaterZone {
+    WaterZone {
+        level: water.level,
+        kind: water.kind,
+        wave_height: water.wave_height,
+        wave_speed: water.wave_speed.trunc().rem_euclid(360.0),
+        wave_pitch: water.wave_pitch.trunc(),
+        animation_speed: water.animation_speed as i32,
+    }
+}
+
+/// Tile (i, j)'s zone, clamped into the split. A zero span is treated as one tile.
+pub fn zone_index(i: usize, j: usize, [width, height]: [usize; 2], [split_w, split_h]: [usize; 2]) -> usize {
+    let axis = |index: usize, tiles: usize, parts: usize| {
+        let parts = parts.max(1);
+        let span = (tiles / parts).max(1);
+        (index / span).min(parts - 1)
+    };
+    let (zx, zy) = (axis(i, width, split_w), axis(j, height, split_h));
+    zy * split_w.max(1) + zx
+}
+
+/// File height of corner (gx, gz). Positive is down. Wave height 0 stays at `level`.
+pub fn corner_wave(zone: &WaterZone, phase: f32, gx: i32, gz: i32) -> f32 {
+    let degrees = ((gx as f32 + gz as f32 - 1.0) * zone.wave_pitch + phase).trunc();
+    zone.level + zone.wave_height * degrees.to_radians().sin()
+}
+
+/// A tile is under water when any top corner is lower (further down) than the water at (i + 1, j).
+pub fn tile_under_water(heights: [f32; 4], water: f32) -> bool {
+    heights.into_iter().any(|height| height > water)
+}
+
+/// One texture covers 4×4 tiles. Returns the south-west UV and the opposite corner.
+pub fn water_uv(i: usize, j: usize) -> ([f32; 2], [f32; 2]) {
+    let start = [(i % 4) as f32 / 4.0, (j % 4) as f32 / 4.0];
+    (start, [start[0] + 0.25, start[1] + 0.25])
+}
+
+/// One 16 ms tick: counter, phase (360 comes off once it passes 180) and the texture frame.
+pub fn step_water(counter: u32, phase: f32, animation_speed: i32, wave_speed: f32) -> (u32, f32, u32) {
+    // ponytail: an animation speed of 0 would stick the frame; it advances like speed 1.
+    let anim = animation_speed.max(1) as u32;
+    let counter = if counter + 1 >= anim * 32 { 0 } else { counter + 1 };
+    let frame = (counter / anim) % 32;
+    let phase = phase + wave_speed;
+    let phase = if phase > 180.0 { phase - 360.0 } else { phase };
+    (counter, phase, frame)
 }
 
 pub struct Gat {
@@ -584,5 +692,122 @@ mod tests {
 
         let names = map_names(&grf).unwrap();
         assert_eq!(names.get("prontera").map(String::as_str), Some("룬미드가츠 왕국 수도 프론테라"));
+    }
+
+    fn zone_bytes(level: f32, kind: i32, height: f32, speed: f32, pitch: f32, anim: i32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend(level.to_le_bytes());
+        bytes.extend(kind.to_le_bytes());
+        bytes.extend(height.to_le_bytes());
+        bytes.extend(speed.to_le_bytes());
+        bytes.extend(pitch.to_le_bytes());
+        bytes.extend(anim.to_le_bytes());
+        bytes
+    }
+
+    /// A 1×1 GND of `version` with `water` after the cube.
+    fn gnd_with_water(version: (u8, u8), water: &[u8]) -> Vec<u8> {
+        let mut bytes = b"GRGN".to_vec();
+        bytes.extend([version.0, version.1]);
+        bytes.extend(1i32.to_le_bytes());
+        bytes.extend(1i32.to_le_bytes());
+        bytes.extend(10f32.to_le_bytes());
+        bytes.extend(0i32.to_le_bytes());
+        bytes.extend(0i32.to_le_bytes());
+        bytes.extend(0i32.to_le_bytes());
+        bytes.extend(8i32.to_le_bytes());
+        bytes.extend(8i32.to_le_bytes());
+        bytes.extend(1i32.to_le_bytes());
+        bytes.extend(0i32.to_le_bytes());
+        for _ in 0..4 {
+            bytes.extend(0f32.to_le_bytes());
+        }
+        for _ in 0..3 {
+            bytes.extend((-1i32).to_le_bytes());
+        }
+        bytes.extend(water);
+        bytes
+    }
+
+    #[test]
+    fn reads_gnd_1_8_and_1_9_water_zones() {
+        let mut water = zone_bytes(5.0, 1, 2.0, 3.0, 4.0, 6);
+        water.extend(2i32.to_le_bytes());
+        water.extend(1i32.to_le_bytes());
+        water.extend(9f32.to_le_bytes());
+        water.extend(11f32.to_le_bytes());
+        let gnd = Gnd::parse(&gnd_with_water((1, 8), &water)).unwrap();
+        let zones = &gnd.water.unwrap().zones;
+        assert_eq!(zones[0].level, 9.0);
+        assert_eq!((zones[0].kind, zones[0].wave_speed, zones[1].level), (1, 3.0, 11.0));
+
+        let mut full = zone_bytes(5.0, 1, 2.0, 3.0, 4.0, 6);
+        full.extend(1i32.to_le_bytes());
+        full.extend(1i32.to_le_bytes());
+        full.extend(zone_bytes(8.0, 4, 0.0, 7.5, 9.0, 2));
+        let gnd = Gnd::parse(&gnd_with_water((1, 9), &full)).unwrap();
+        let zone = gnd.water.unwrap().zones[0];
+        assert_eq!((zone.level, zone.kind, zone.wave_speed, zone.animation_speed), (8.0, 4, 7.5, 2));
+    }
+
+    #[test]
+    fn truncates_an_old_rsw_wave_and_fills_its_defaults() {
+        let mut bytes = b"GRSW".to_vec();
+        bytes.extend([1, 7]);
+        bytes.extend(vec![0; 160]);
+        bytes.extend(3.5f32.to_le_bytes());
+        bytes.extend(45i32.to_le_bytes());
+        bytes.extend(30i32.to_le_bytes());
+        for value in [1.0f32, 1.0, 1.0, 0.3, 0.3, 0.3, 1.0] {
+            bytes.extend(value.to_le_bytes());
+        }
+        bytes.extend([0; 16]);
+        bytes.extend(0i32.to_le_bytes());
+        let old = Rsw::parse(&bytes).unwrap().water.unwrap();
+        assert_eq!((old.level, old.kind, old.wave_height, old.wave_speed, old.wave_pitch, old.animation_speed), (3.5, 0, 1.0, 2.0, 50.0, 3));
+
+        let mut newer = b"GRSW".to_vec();
+        newer.extend([1, 9]);
+        newer.extend(vec![0; 160]);
+        newer.extend(zone_bytes(1.0, 0, 1.0, 362.7, -3.2, 3));
+        newer.extend(45i32.to_le_bytes());
+        newer.extend(45i32.to_le_bytes());
+        for value in [1.0f32, 1.0, 1.0, 0.3, 0.3, 0.3, 0.5] {
+            newer.extend(value.to_le_bytes());
+        }
+        newer.extend([0; 16]);
+        newer.extend(0i32.to_le_bytes());
+        let zone = rsw_zone(&Rsw::parse(&newer).unwrap().water.unwrap());
+        assert_eq!((zone.wave_speed, zone.wave_pitch), (2.0, -3.0));
+    }
+
+    #[test]
+    fn waves_a_corner_and_picks_tiles_zones_and_frames() {
+        let zone = WaterZone { level: 10.0, kind: 0, wave_height: 1.0, wave_speed: 2.0, wave_pitch: 50.0, animation_speed: 3 };
+        let crest = corner_wave(&zone, 0.0, 1, 1);
+        let expected = 10.0 + 50.0_f32.to_radians().sin();
+        assert!((crest - expected).abs() < 1e-5, "{crest}");
+        assert_eq!(corner_wave(&zone, 0.0, 0, 1), 10.0);
+        let flat = WaterZone { wave_height: 0.0, ..zone };
+        assert_eq!(corner_wave(&flat, 40.0, 3, 4), 10.0);
+        // (i + 1, j) water is the same formula as (i, j + 1).
+        assert_eq!(corner_wave(&zone, 12.0, 4, 2), corner_wave(&zone, 12.0, 3, 3));
+
+        assert!(tile_under_water([0.0, 0.0, 0.0, 2.0], 1.0));
+        assert!(!tile_under_water([0.0; 4], 1.0));
+        assert_eq!(water_uv(5, 6), ([0.25, 0.5], [0.5, 0.75]));
+        assert_eq!(water_uv(0, 0).0, water_uv(4, 8).0);
+        assert_eq!(zone_index(9, 0, [10, 10], [3, 1]), 2);
+        assert_eq!(zone_index(3, 0, [10, 10], [3, 1]), 1);
+        assert_eq!(zone_index(0, 4, [10, 8], [1, 2]), 1);
+
+        let (counter, phase, frame) = step_water(0, 0.0, 3, 2.0);
+        assert_eq!((counter, phase, frame), (1, 2.0, 0));
+        let (counter, phase, frame) = (0..3).fold((0, 0.0, 0), |(counter, phase, _), _| step_water(counter, phase, 3, 2.0));
+        assert_eq!((counter, frame), (3, 1));
+        assert!((phase - 6.0).abs() < 1e-5);
+        assert_eq!(step_water(0, 180.0, 3, 2.0).1, -178.0);
+        let (counter, _, frame) = (0..96).fold((0, 0.0, 0), |(counter, phase, _), _| step_water(counter, phase, 3, 2.0));
+        assert_eq!((counter, frame), (0, 0));
     }
 }

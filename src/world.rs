@@ -1,15 +1,15 @@
-//! The 3D world: GND ground (textures, lightmaps, map light), RSM models, sprite billboards and the camera.
+//! The 3D world: GND ground (textures, lightmaps, map light), RSM models, waving water, sprite billboards and the camera.
 //!
 //! World space: X east, Y up, Z north; one GND cube is `gnd.zoom` (10) units, one GAT cell half of that.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io;
 use std::ops::Range;
 
 use image::{Rgba, RgbaImage};
 use rustnarok_client::grf::Grf;
-use rustnarok_client::map::{Gat, Gnd, Rsw};
+use rustnarok_client::map::{Gat, Gnd, Rsw, WaterZone, corner_wave, rsw_zone, step_water, tile_under_water, water_uv, zone_index};
 use rustnarok_client::model::{self, Rsm};
 use wgpu::util::DeviceExt;
 
@@ -378,8 +378,10 @@ struct GroundOutput {
 }
 
 @fragment fn water_fs(in: GroundOutput) -> @location(0) vec4<f32> {
-    let texel = textureSample(image, image_sampler, in.uv);
-    return vec4(apply_fog(texel.rgb, in.fog), 0.6);
+    let tinted = textureSample(image, image_sampler, in.uv).rgb * in.color.rgb;
+    // Opaque lava is the vertex colour itself. Water keeps its texture.
+    let color = select(tinted, in.color.rgb, in.color.a >= 240.0 / 255.0);
+    return vec4(apply_fog(color, in.fog), in.color.a);
 }
 
 @fragment fn model_fs(in: GroundOutput) -> @location(0) vec4<f32> {
@@ -590,8 +592,8 @@ pub struct World {
     model_textures: Vec<Texture>,
     model_vertices: Option<wgpu::Buffer>,
     model_draws: Vec<(usize, Range<u32>)>,
-    /// Water plane and its animation frames, with frames per texture change (at 60 per second).
-    water: Option<(wgpu::Buffer, Vec<Texture>, u32)>,
+    /// Waving water, one quad per tile that dips under it.
+    water: Option<MapWater>,
     light: (Vector, [f32; 3], [f32; 3]),
     /// The colour cleared behind the world.
     clear_color: [f32; 3],
@@ -602,7 +604,8 @@ pub struct World {
     globals_bind_group: wgpu::BindGroup,
     ground_pipeline: wgpu::RenderPipeline,
     model_pipeline: wgpu::RenderPipeline,
-    water_pipeline: wgpu::RenderPipeline,
+    /// Water blended over, then the same with depth write for the lava pass.
+    water_pipelines: [wgpu::RenderPipeline; 2],
     sprite_pipeline: wgpu::RenderPipeline,
     /// Shadows: drawn like sprites, but without writing depth.
     shadow_pipeline: wgpu::RenderPipeline,
@@ -767,7 +770,9 @@ impl World {
         };
         let ground_pipeline = pipeline("ground", "ground_fs", ground_layout(), None, true);
         let model_pipeline = pipeline("ground", "model_fs", ground_layout(), None, true);
-        let water_pipeline = pipeline("ground", "water_fs", ground_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false);
+        let water_blend = Some(wgpu::BlendState::ALPHA_BLENDING);
+        let water_pipelines =
+            [pipeline("ground", "water_fs", ground_layout(), water_blend, false), pipeline("ground", "water_fs", ground_layout(), water_blend, true)];
         let sprite_buffer_layout = || wgpu::VertexBufferLayout {
             array_stride: size_of::<SpriteVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -797,39 +802,7 @@ impl World {
             pipeline("mesh_add", "mesh_fs", mesh_buffer_layout(), Some(additive), false),
         ];
 
-        // ponytail: flat water; the client also waves it (wave height/speed/pitch from the RSW).
-        let water = rsw.water.as_ref().map(|water| {
-            let repeat = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
-                address_mode_u: wgpu::AddressMode::Repeat,
-                address_mode_v: wgpu::AddressMode::Repeat,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            });
-            let frames = (0..32)
-                .filter_map(|frame| {
-                    let bytes = grf.read(&format!("data\\texture\\워터\\water{}{frame:02}.jpg", water.kind)).ok()?;
-                    Some(gpu.texture_with_sampler(&image::load_from_memory(&bytes).ok()?.to_rgba8(), &repeat))
-                })
-                .collect();
-            let (width, depth) = (gnd.width as f32 * gnd.zoom, gnd.height as f32 * gnd.zoom);
-            // One texture repeat per two cubes.
-            let tile = gnd.zoom * 2.0;
-            let corner = |x: f32, z: f32| GroundVertex {
-                position: [x, -water.level, z],
-                normal: [0.0, 1.0, 0.0],
-                uv: [x / tile, z / tile],
-                lightmap_uv: [0.0; 2],
-                color: [1.0; 4],
-            };
-            let quad = [corner(0.0, 0.0), corner(width, 0.0), corner(width, depth), corner(0.0, 0.0), corner(width, depth), corner(0.0, depth)];
-            let buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("water"),
-                contents: bytemuck::cast_slice(&quad),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            (buffer, frames, water.animation_speed.max(1))
-        });
+        let water = MapWater::load(gpu, grf, &gnd, &rsw);
 
         // Sound sources sit, like models, relative to the map's center.
         let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
@@ -861,7 +834,7 @@ impl World {
             globals_bind_group,
             ground_pipeline,
             model_pipeline,
-            water_pipeline,
+            water_pipelines,
             sprite_pipeline,
             shadow_pipeline,
             soft_pipeline,
@@ -1106,6 +1079,173 @@ fn fogged(color: [f32; 3], fog: [f32; 3], amount: f32) -> [f32; 3] {
     [0, 1, 2].map(|index| color[index] * (1.0 - amount) + fog[index] * amount)
 }
 
+/// One water zone's clock. `counter` and `phase` advance one tick per 16 ms.
+struct RunningZone {
+    zone: WaterZone,
+    counter: u32,
+    phase: f32,
+}
+
+/// A GND tile the water may cover: its four top corner file heights, and whether it has a top.
+struct WaterTile {
+    heights: [f32; 4],
+    top: bool,
+}
+
+/// One texture's water triangles for this frame.
+struct WaterBatch {
+    texture: Texture,
+    /// Opaque lava writes depth when the RSW flag asks for it.
+    depth_write: bool,
+    buffer: wgpu::Buffer,
+    count: u32,
+}
+
+/// Waving water: one quad per tile that dips under its zone, animated from the water textures.
+struct MapWater {
+    zones: RefCell<Vec<RunningZone>>,
+    /// The last elapsed tick (`time / 0.016`) the clocks were stepped to.
+    tick: Cell<u64>,
+    split: [usize; 2],
+    size: [usize; 2],
+    zoom: f32,
+    tiles: Vec<WaterTile>,
+    /// Up to 32 frames per water type, indexed by the frame number in the file name.
+    frames: HashMap<i32, Vec<Option<Texture>>>,
+    /// The default zone is type 4: lava, coloured by the map ambient unless the player is blind.
+    lava: bool,
+    ambient: [f32; 3],
+    /// RSW 2.2 flag: opaque water writes depth.
+    depth_pass: bool,
+}
+
+impl MapWater {
+    /// GND 1.8+ zones when the ground has them, otherwise the one zone from the RSW.
+    fn load(gpu: &Gpu, grf: &Grf, gnd: &Gnd, rsw: &Rsw) -> Option<Self> {
+        let (default, zones, split) = if let Some(water) = gnd.water.as_ref().filter(|water| !water.zones.is_empty()) {
+            (water.default, water.zones.clone(), [water.split[0].max(1) as usize, water.split[1].max(1) as usize])
+        } else {
+            let zone = rsw_zone(rsw.water.as_ref()?);
+            (zone, vec![zone], [1, 1])
+        };
+        let repeat = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let mut kinds: Vec<i32> = zones.iter().map(|zone| zone.kind).collect();
+        kinds.sort_unstable();
+        kinds.dedup();
+        let mut frames = HashMap::new();
+        for kind in kinds {
+            let loaded: Vec<Option<Texture>> = (0..32)
+                .map(|frame| {
+                    let bytes = grf.read(&format!("data\\texture\\워터\\water{kind}{frame:02}.jpg")).ok()?;
+                    Some(gpu.texture_with_sampler(&image::load_from_memory(&bytes).ok()?.to_rgba8(), &repeat))
+                })
+                .collect();
+            if loaded.iter().any(Option::is_some) {
+                frames.insert(kind, loaded);
+            }
+        }
+        let tiles = gnd.cubes.iter().map(|cube| WaterTile { heights: cube.heights, top: cube.top >= 0 }).collect();
+        let zones = zones.into_iter().map(|zone| RunningZone { zone, counter: 0, phase: 0.0 }).collect();
+        Some(Self {
+            zones: RefCell::new(zones),
+            tick: Cell::new(0),
+            split,
+            size: [gnd.width, gnd.height],
+            zoom: gnd.zoom,
+            tiles,
+            frames,
+            lava: default.kind == 4,
+            ambient: rsw.light.ambient,
+            depth_pass: rsw.water_depth,
+        })
+    }
+
+    /// Steps each zone once per 16 ms since the previous frame.
+    fn advance(&self, time: f32) {
+        let tick = (time.max(0.0) / 0.016) as u64;
+        let due = tick.saturating_sub(self.tick.get());
+        // ponytail: a long hitch steps at most 4096 ticks; the rest catch up on later frames.
+        let steps = due.min(4096);
+        if steps == 0 {
+            return;
+        }
+        let mut zones = self.zones.borrow_mut();
+        for _ in 0..steps {
+            for running in zones.iter_mut() {
+                let (counter, phase, _) = step_water(running.counter, running.phase, running.zone.animation_speed, running.zone.wave_speed);
+                running.counter = counter;
+                running.phase = phase;
+            }
+        }
+        self.tick.set(self.tick.get() + steps);
+    }
+
+    /// The water triangles for this frame, grouped by type and texture frame.
+    fn batches(&self, gpu: &Gpu, time: f32, eye_y: f32, blind: bool) -> Vec<WaterBatch> {
+        self.advance(time);
+        let zones = self.zones.borrow();
+        // ponytail: a blind player sees lava as ordinary water. The client drops the lava colour while blind.
+        let lava = self.lava && !blind;
+        let color = if lava { [self.ambient[0], self.ambient[1], self.ambient[2], 1.0] } else { [1.0, 1.0, 1.0, 144.0 / 255.0] };
+        // ponytail: lava is the map's default type, so every tile is opaque or none of them are. One pass, not two.
+        let depth_write = self.depth_pass && color[3] >= 240.0 / 255.0;
+        let [width, height] = self.size;
+        let mut grouped: HashMap<(i32, u32), Vec<GroundVertex>> = HashMap::new();
+        for j in 0..height {
+            for i in 0..width {
+                let Some(tile) = self.tiles.get(j * width + i) else { continue };
+                if !tile.top {
+                    continue;
+                }
+                let Some(running) = zones.get(zone_index(i, j, self.size, self.split)) else { continue };
+                let surface = corner_wave(&running.zone, running.phase, i as i32 + 1, j as i32);
+                if !tile_under_water(tile.heights, surface) {
+                    continue;
+                }
+                // The eye under this corner's water is looking up through the surface.
+                if eye_y < -surface {
+                    continue;
+                }
+                let zone = &running.zone;
+                let frame = (running.counter / zone.animation_speed.max(1) as u32) % 32;
+                let (uv0, uv1) = water_uv(i, j);
+                let uvs = [[uv0[0], uv0[1]], [uv1[0], uv0[1]], [uv0[0], uv1[1]], [uv1[0], uv1[1]]];
+                // ponytail: a corner shared by two zones takes this tile's zone, so a seam can step where they disagree.
+                let quad = [0, 1, 2, 3].map(|corner| {
+                    let (gx, gz) = (i as i32 + corner as i32 % 2, j as i32 + corner as i32 / 2);
+                    GroundVertex {
+                        position: [gx as f32 * self.zoom, -corner_wave(zone, running.phase, gx, gz), gz as f32 * self.zoom],
+                        normal: [0.0, 1.0, 0.0],
+                        uv: uvs[corner],
+                        lightmap_uv: [0.0; 2],
+                        color,
+                    }
+                });
+                grouped.entry((zone.kind, frame)).or_default().extend([quad[0], quad[1], quad[3], quad[0], quad[3], quad[2]]);
+            }
+        }
+        grouped
+            .into_iter()
+            .filter_map(|((kind, frame), vertices)| {
+                let texture = self.frames.get(&kind)?.get(frame as usize)?.as_ref()?;
+                let count = vertices.len() as u32;
+                let buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("water"),
+                    contents: bytemuck::cast_slice(&vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+                Some(WaterBatch { texture: texture.clone(), depth_write, buffer, count })
+            })
+            .collect()
+    }
+}
+
 /// Everything one frame of the world needs.
 pub struct WorldFrame<'a> {
     pub world: &'a World,
@@ -1117,6 +1257,8 @@ pub struct WorldFrame<'a> {
     pub meshes: &'a [EffectMesh<'a>],
     /// Seconds since the map was entered, for animated textures.
     pub time: f32,
+    /// The player is blind: lava draws as ordinary water.
+    pub blind: bool,
 }
 
 impl WorldPass for WorldFrame<'_> {
@@ -1213,6 +1355,7 @@ impl WorldPass for WorldFrame<'_> {
                 usage: wgpu::BufferUsages::VERTEX,
             })
         });
+        let water_batches = world.water.as_ref().map(|water| water.batches(gpu, self.time, self.view.eye[1], self.blind));
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("world"),
@@ -1265,15 +1408,6 @@ impl WorldPass for WorldFrame<'_> {
                 pass.draw(range.clone(), 0..1);
             }
         }
-        if let Some((buffer, frames, frames_per_change)) = &world.water
-            && !frames.is_empty()
-        {
-            let frame = (self.time * 60.0 / *frames_per_change as f32) as usize % frames.len();
-            pass.set_pipeline(&world.water_pipeline);
-            pass.set_vertex_buffer(0, buffer.slice(..));
-            pass.set_bind_group(1, frames[frame].bind_group(), &[]);
-            pass.draw(0..6, 0..1);
-        }
         if let Some(buffer) = &sprite_buffer {
             pass.set_vertex_buffer(0, buffer.slice(..));
             let draw = |pass: &mut wgpu::RenderPass, index: usize| {
@@ -1286,6 +1420,15 @@ impl WorldPass for WorldFrame<'_> {
             for pipeline in [&world.sprite_pipeline, &world.soft_pipeline] {
                 pass.set_pipeline(pipeline);
                 order.iter().for_each(|&index| draw(&mut pass, index));
+            }
+        }
+        // After the sprites, so the surface covers the part of a wading unit under it, and before effects.
+        if let Some(batches) = &water_batches {
+            for batch in batches {
+                pass.set_pipeline(&world.water_pipelines[usize::from(batch.depth_write)]);
+                pass.set_vertex_buffer(0, batch.buffer.slice(..));
+                pass.set_bind_group(1, batch.texture.bind_group(), &[]);
+                pass.draw(0..batch.count, 0..1);
             }
         }
         if let Some(buffer) = &mesh_buffer {
@@ -2163,6 +2306,7 @@ mod tests {
             lightmaps: vec![lightmap],
             surfaces: vec![Surface { u: [0.0; 4], v: [0.0; 4], texture: 0, lightmap: 0, color: [255; 4] }],
             cubes: vec![Cube { heights, top, north: -1, east: -1 }; width * height],
+            water: None,
         }
     }
 
