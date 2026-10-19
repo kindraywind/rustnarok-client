@@ -3431,7 +3431,19 @@ impl Game {
                 let attacker = if act.source == me { Some(&self.player) } else { self.units.get(&act.source) };
                 let red = attacker.is_none_or(|actor| !(actor::is_monster_job(actor.job) || actor::is_npc_job(actor.job)));
                 let over = (act.source != me).then_some(act.source);
-                self.damages.push(Damage { target: over, amount, start: lands, kind: DamageKind::Miss { red }, flinch: None, drift, source: None });
+                // A skill's multi-hit misses each of its hits.
+                let misses = if from == HitFrom::Skill && matches!(act.kind, 8 | 9 | 13) { u32::from(act.hits.max(1)) } else { 1 };
+                for miss in 0..misses {
+                    self.damages.push(Damage {
+                        target: over,
+                        amount,
+                        start: lands + gap * miss,
+                        kind: DamageKind::Miss { red },
+                        flinch: None,
+                        drift,
+                        source: None,
+                    });
+                }
                 return;
             }
             _ => DamageKind::Hit { taken: on_player, sp: act.sp },
@@ -3450,10 +3462,12 @@ impl Game {
 /// Whether a hit doesn't flinch its target: misses aside, an endured hit or a lucky dodge. A skill's endured multi-hit
 /// does flinch (each hit comes with a running total, which no longer counts as endured), and so does every hit from a
 /// skill's ground unit.
+/// A splash's other target doesn't flinch when it endures (type 14).
 fn endured(kind: u8, from: HitFrom) -> bool {
     match from {
         HitFrom::Attack => matches!(kind, 4 | 9 | 11),
         HitFrom::Skill => matches!(kind, 4 | 11),
+        HitFrom::Splash => kind == 14,
         HitFrom::Unit => false,
     }
 }
@@ -3473,6 +3487,8 @@ mod tests {
         // An endured hit: an attack's double and a skill's single don't flinch; a skill's multi-hit and a ground unit's do.
         assert!(endured(9, HitFrom::Attack) && endured(4, HitFrom::Skill));
         assert!(!endured(9, HitFrom::Skill) && !endured(4, HitFrom::Unit) && !endured(9, HitFrom::Unit));
+        // A splash's other target: endured (14) it doesn't flinch, else (5) it does; on Napalm Beat's whole path, 14 does.
+        assert!(endured(14, HitFrom::Splash) && !endured(5, HitFrom::Splash) && !endured(14, HitFrom::Skill));
         // A ground unit's single hit shows the total; a skill's single hit doesn't.
         assert!(shows_total(1, HitFrom::Unit) && !shows_total(1, HitFrom::Skill) && shows_total(2, HitFrom::Skill));
     }

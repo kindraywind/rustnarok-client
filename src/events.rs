@@ -3254,7 +3254,7 @@ impl App {
                 };
                 if act.damage != 0 && !(act.source == act.target && act.kind == 6) {
                     let hits = net::Act { hits: if splash { 1 } else { act.hits }, ..act };
-                    game.show_hit(&hits, Some(hit_ms), gap, HitFrom::Skill);
+                    game.show_hit(&hits, Some(hit_ms), gap, if splash { HitFrom::Splash } else { HitFrom::Skill });
                     // Hit by hit, as each lands: the skill's hit effects on the target; the second only with the first
                     // hit. A skill the table lacks: what comes at the target first (a bolt's arrows), then what shows
                     // as it lands.

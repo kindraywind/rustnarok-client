@@ -527,11 +527,13 @@ const BOW: u32 = 11;
 /// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
 const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
 
-/// Where a hit's damage came from: an attack, a skill used by a unit, or a skill's unit on the ground.
+/// Where a hit's damage came from: an attack, a skill used by a unit (or reaching one of its splash's other targets),
+/// or a skill's unit on the ground.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum HitFrom {
     Attack,
     Skill,
+    Splash,
     Unit,
 }
 

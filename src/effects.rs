@@ -1158,8 +1158,10 @@ impl Floating {
     }
 }
 
-/// Skills whose splash's other targets still get the whole hit (hit effects, the caster's pose): Napalm Beat.
-pub const SPLASH_FULL: [u16; 1] = [11];
+/// Skills whose splash's other targets still get the whole hit (hit effects, the caster's pose): Napalm Beat, Arrow
+/// Shower, Asura Strike's combo finish, a Taekwon kick, and one newer one.
+// ponytail: the game's list (0xcca5b0) has a few more of the newer jobs'.
+pub const SPLASH_FULL: [u16; 5] = [11, 47, 273, 413, 732];
 
 /// The hit effect on each hit of damage from a skill's ground unit: Fire Wall's FIREHIT, Magnus Exorcismus's,
 /// Lord of Vermilion's WINDHIT, Storm Gust's and its monster version's COLDHIT, else EF_HIT1 below skill 493.
@@ -1751,8 +1753,9 @@ mod tests {
     #[test]
     fn says_what_skills_show() {
         let table = Table::load();
-        // Hit effects: Bash 0, Magnum Break 49 on each target, Pierce none (not in the table, so the skill lines).
-        assert_eq!((table.hit(5), table.hit(7)), (Some([Some(0), None]), Some([Some(49), None])));
+        // Hit effects: Bash 0 and EF_HIT2 with its first hit, Magnum Break 49 on each target, Pierce none (not in the
+        // table, so the skill lines).
+        assert_eq!((table.hit(5), table.hit(7)), (Some([Some(0), Some(1)]), Some([Some(49), None])));
         assert_eq!(table.hit(56), None);
         // On the caster: Bash and the default 16, Brandish Spear 144, the bolts none, the newest jobs' none.
         assert_eq!((table.caster(5), table.caster(57), table.caster(19), table.caster(5450)), (Some(16), Some(144), None, None));
