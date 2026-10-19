@@ -2305,7 +2305,7 @@ impl Game {
         push(ShortcutSettings, self.shortcuts_window.is_some());
         push(WorldMap, self.world_map.is_some());
         push(Minimap, self.minimap_window.frame.open);
-        push(Quests, self.quest_window.frame.open);
+        push(Quests, self.quest_window.frame.open || self.quest_window.picked.is_some());
         push(Menu, self.menu.is_some());
         push(Capturing, self.capturing);
         push(Amount, self.amount.is_some());

@@ -1170,6 +1170,8 @@ struct Game {
     /// A taming item waiting for its monster; the slot machine, and the result it plays (action, since when).
     capturing: bool,
     slot_sprite: Option<SpriteSet>,
+    /// The quest details' NPC picture: the sprite's name and the sprite.
+    quest_npc: Option<(String, Option<SpriteSet>)>,
     /// The taming slot machine, open on a monster.
     slot: Option<taming::Machine>,
     /// Units casting (None = the player): when it began and how long it takes.

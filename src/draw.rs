@@ -816,6 +816,18 @@ impl App {
             ),
             None => Vec::new(),
         };
+        // The quest details: the description wrapped for its panel; the NPC picture's sprite, loaded once per name.
+        game.quest_window.lay_out(font, quest_texts);
+        let quest_npc = game.quest_window.npc_sprite(quest_texts, &game.quests);
+        if let Some((name, _)) = &quest_npc
+            && game.quest_npc.as_ref().is_none_or(|(loaded, _)| loaded != name)
+        {
+            game.quest_npc = Some((name.clone(), SpriteSet::at(grf, &format!("data\\sprite\\npc\\{name}"))));
+        }
+        let quest_npc_frame = match (quest_npc, game.quest_npc.as_mut()) {
+            (Some((_, feet)), Some((_, Some(sprite)))) => sprite.frame(gpu, 0, 0, 0, Timing::Span(0.0)).into_iter().map(|placed| (placed, feet)).collect(),
+            _ => Vec::new(),
+        };
         let slot_frame = match (&mut game.slot_sprite, game.slot.as_ref()) {
             (Some(sprite), Some(machine)) => match machine.frame(now, [0, 1].map(|action| sprite.frames(action))) {
                 Some((action, frame)) => {
@@ -1401,7 +1413,7 @@ impl App {
         trade_icons.extend(game.card_window.as_ref().map(|window| window.images(items)).unwrap_or_default());
         trade_icons.extend(compared.iter().flat_map(|window| window.images(items)));
         trade_icons.extend(game.card_view.iter().map(|view| view.path.clone()));
-        trade_icons.extend(game.quest_window.icons(&game.quests, quest_texts));
+        trade_icons.extend(game.quest_window.icons(&game.quests, quest_texts, items));
         if game.vend_setup.is_some() {
             trade_icons.extend(vend::icons(items, game.cart.items.iter().map(|item| (item.id, item.identified))));
         }
@@ -1898,7 +1910,19 @@ impl App {
         if let Some(store) = &game.my_buying_store {
             store.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
         }
-        game.quest_window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.quest, icons, font, messages, &game.quests, quest_texts, pointer);
+        game.quest_window.draw(
+            shop_layer.window(),
+            &mut tooltip,
+            &assets.chrome,
+            &assets.quest,
+            icons,
+            items,
+            font,
+            messages,
+            &game.quests,
+            quest_texts,
+            pointer,
+        );
         game.achievement_window.draw(
             shop_layer.window(),
             &assets.chrome,
@@ -2331,6 +2355,10 @@ impl App {
                     sprites.extend(placed.iter().map(|(key, at, size, _)| (font.texture(*key), [anchor[0] + at[0], anchor[1] + at[1]], *size)));
                 }
             }
+        }
+        // ponytail: over everything, as the slot machine.
+        if let Some((_, Some(sprite))) = &game.quest_npc {
+            sprites.extend(quest_npc_frame.into_iter().map(|((key, at, size, _), feet)| (sprite.texture(key), [feet[0] + at[0], feet[1] + at[1]], size)));
         }
         if let Some(sprite) = &game.slot_sprite {
             let middle = [screen()[0] / 2.0, screen()[1] / 2.0];

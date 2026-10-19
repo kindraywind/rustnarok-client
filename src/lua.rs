@@ -763,7 +763,8 @@ const QUEST_INFO: &str = "system\\OngoingQuestInfoList_True.lub";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuestInfo {
     pub title: String,
-    pub description: String,
+    /// `Description`, a line an entry.
+    pub description: Vec<String>,
     pub summary: String,
     /// ponytail: `NpcPosX`/`NpcPosY` on the quest itself. The real list can nest several NPCs, each with a sprite.
     pub npc: Option<[i32; 2]>,
@@ -771,10 +772,18 @@ pub struct QuestInfo {
     pub cooldown: bool,
     /// Its type icon (`IconName`, under renew_questui), when it names one.
     pub icon: String,
+    /// Its NPC's sprite (`NpcSpr`, under npc\\) and the map to find it on (`NpcNavi`).
+    pub npc_sprite: String,
+    pub npc_map: String,
+    /// What it rewards: base and job exp as written (`RewardEXP`, `RewardJEXP`), and items with how many
+    /// (`RewardItemList`).
+    pub reward_exp: String,
+    pub reward_job_exp: String,
+    pub reward_items: Vec<(u32, u32)>,
 }
 
-/// A quest's words: title, description (its lines joined), summary, its NPC cell when listed, whether it's a cooldown
-/// timer.
+/// A quest's words: title, description lines, summary, its NPC (cell, sprite, map) when listed, whether it's a cooldown
+/// timer, its rewards.
 pub fn quest_info(grf: &Grf) -> io::Result<HashMap<u32, QuestInfo>> {
     quest_infos(&run(grf, &[QUEST_INFO])?)
 }
@@ -787,7 +796,25 @@ fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
         let text = |key: &str| entry.get::<mlua::String>(key).map(|text| decode(&text)).unwrap_or_default();
         let description = entry
             .get::<mlua::Table>("Description")
-            .map(|lines| lines.sequence_values::<mlua::String>().flatten().map(|line| decode(&line)).collect::<Vec<_>>().join(" "))
+            .map(|lines| lines.sequence_values::<mlua::String>().flatten().map(|line| decode(&line)).collect())
+            .unwrap_or_default();
+        // Numbers or strings alike.
+        let written = |key: &str| match entry.get::<mlua::Value>(key) {
+            Ok(mlua::Value::String(text)) => decode(&text),
+            Ok(mlua::Value::Integer(number)) => number.to_string(),
+            Ok(mlua::Value::Number(number)) => number.to_string(),
+            _ => String::new(),
+        };
+        let reward_items = entry
+            .get::<mlua::Table>("RewardItemList")
+            .map(|list| {
+                list.sequence_values::<mlua::Table>()
+                    .flatten()
+                    .filter_map(|item| {
+                        Some((u32::try_from(item.get::<i64>("ItemID").ok()?).ok()?, u32::try_from(item.get::<i64>("ItemNum").unwrap_or(1)).ok()?))
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
         let npc = match (entry.get::<i64>("NpcPosX"), entry.get::<i64>("NpcPosY")) {
             (Ok(x), Ok(y)) => Some([x as i32, y as i32]),
@@ -795,7 +822,22 @@ fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
         };
         if let Ok(id) = u32::try_from(id) {
             let cooldown = entry.get::<i64>("CoolTimeQuest").unwrap_or(0) == 1;
-            quests.insert(id, QuestInfo { title: text("Title"), description, summary: text("Summary"), npc, cooldown, icon: text("IconName") });
+            quests.insert(
+                id,
+                QuestInfo {
+                    title: text("Title"),
+                    description,
+                    summary: text("Summary"),
+                    npc,
+                    cooldown,
+                    icon: text("IconName"),
+                    npc_sprite: text("NpcSpr"),
+                    npc_map: text("NpcNavi"),
+                    reward_exp: written("RewardEXP"),
+                    reward_job_exp: written("RewardJEXP"),
+                    reward_items,
+                },
+            );
         }
     }
     Ok(quests)
@@ -1802,7 +1844,9 @@ mod tests {
         lua.load(
             r#"QuestInfoList = {
                 [7001] = { Title = "Hunting Porings", Description = { "Hunt", "ten Porings." }, Summary = "Poring x10" },
-                [7002] = { Title = "See Kafra", Description = { "Talk." }, Summary = "Kafra", NpcPosX = 150, NpcPosY = 180 },
+                [7002] = { Title = "See Kafra", Description = { "Talk." }, Summary = "Kafra", NpcPosX = 150, NpcPosY = 180,
+                    NpcSpr = "4_F_KAFRA1", NpcNavi = "prontera", RewardEXP = "1000", RewardJEXP = 500,
+                    RewardItemList = { { ItemID = 501, ItemNum = 3 }, { ItemID = 909, ItemNum = 1 } } },
                 [7003] = { Title = "Wait", CoolTimeQuest = 1 },
             }"#,
         )
@@ -1810,7 +1854,10 @@ mod tests {
         .unwrap();
         let quests = super::quest_infos(&lua).unwrap();
         assert_eq!(quests[&7001].title, "Hunting Porings");
-        assert_eq!(quests[&7001].description, "Hunt ten Porings.");
+        assert_eq!(quests[&7001].description, ["Hunt", "ten Porings."]);
+        let kafra = &quests[&7002];
+        assert_eq!((kafra.npc_sprite.as_str(), kafra.npc_map.as_str()), ("4_F_KAFRA1", "prontera"));
+        assert_eq!((kafra.reward_exp.as_str(), kafra.reward_job_exp.as_str(), kafra.reward_items.clone()), ("1000", "500", vec![(501, 3), (909, 1)]));
         assert_eq!(quests[&7001].npc, None);
         assert_eq!(quests[&7002].npc, Some([150, 180]));
         assert!(!quests[&7001].cooldown && quests[&7003].cooldown, "a cooldown timer");

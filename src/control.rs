@@ -1618,6 +1618,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["card_view"] = json!(game.card_view.as_ref().map(|view| json!({"card": view.card, "box": view.area()})));
     // The taming slot machine: the unit it's open for.
     state["slot_machine"] = json!(game.slot.as_ref().map(|machine| machine.monster));
+    // The quest whose details show.
+    state["quest_picked"] = json!(game.quest_window.picked);
     state["opened_page"] = game.opened_page.clone().into();
     // Our milliseconds a cell.
     state["player"]["step_ms"] = game.player.step_ms.into();

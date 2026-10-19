@@ -1,5 +1,5 @@
 {
-  "about": "Quest tracker (issue #219): a test NPC (quests.txt) gives two quests, a hunt for ten Drops (4275) and one without hunts (1001); the tracker under the minimap lists both, the hunt with '( 0 / 10 )'. Killing a Drops (the character raised for it) updates the line to '( 1 / 10 )'. The NPC erases the quests, the character is put back and the NPC unloaded. Then (issue #320) four quests more make six: the tracker lists the first five; switching 1002 off in the quest window (Alt+U) brings 4275 on, and switching it back restores the five; the four are taken out again.",
+  "about": "Quest tracker (issue #219): a test NPC (quests.txt) gives two quests, a hunt for ten Drops (4275) and one without hunts (1001); the tracker under the minimap lists both, the hunt with '( 0 / 10 )'. Killing a Drops (the character raised for it) updates the line to '( 1 / 10 )'. The NPC erases the quests, the character is put back and the NPC unloaded. Then (issue #320) four quests more make six: the tracker lists the first five; switching 1002 off in the quest window (Alt+U) brings 4275 on, and switching it back restores the five; the four are taken out again. Picking the Drops quest opens its details right of the list (issue #534): its title, the Description, Monster and Reward panels and the Deadline; their Close shuts them.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -202,6 +202,52 @@
           "quest_tracker.2.id": 1003,
           "quest_tracker.3.id": 1004,
           "quest_tracker.4.id": 1005
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "quest_row_4275"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "move": [
+        600,
+        700
+      ]
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_picked": 4275
+        }
+      }
+    },
+    {
+      "shot": "quest-details",
+      "crop": [
+        703,
+        151,
+        321,
+        412
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "quest_detail_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_picked": null
         }
       }
     },
