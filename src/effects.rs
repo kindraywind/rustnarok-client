@@ -1289,6 +1289,8 @@ pub const COLD_HIT: u32 = 51;
 
 /// EF_BASH: the burst on a damaging skill's caster (`prims::burst`); none at all under /mineffect.
 const BASH: u32 = 16;
+/// EF_TURNUNDEAD: its burst round the priest and the ring on the ground (`prims::burst`).
+const TURN_UNDEAD: u32 = 82;
 
 /// EF_SOULSTRIKE: ghosts from the caster to the target, a hit each (`prims`).
 const SOUL_STRIKE: u32 = 15;
@@ -1385,11 +1387,13 @@ impl Effects {
             self.load_sage(gpu, grf, id);
             self.prims.sage.look(id, at, now);
         }
-        if let (BASH, Target::Unit(unit)) = (id, target) {
-            for path in [burst::DISC, burst::RAY] {
+        if let (BASH | TURN_UNDEAD, Target::Unit(unit)) = (id, target) {
+            for path in [burst::DISC, burst::RAY, burst::RING] {
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
             }
-            self.prims.bursts.push(burst::Burst::new(unit, now, burst::LIFE, |n| pick(0, n.saturating_sub(1))));
+            let rand = |n: u32| pick(0, n.saturating_sub(1));
+            let burst = if id == BASH { burst::Burst::bash(unit, now, burst::LIFE, rand) } else { burst::Burst::turn_undead(unit, now, rand) };
+            self.prims.bursts.push(burst);
         }
         // A bolt told no hit count (by the server): one arrow.
         if let (true, Target::Unit(unit)) = (BOLTS.contains(&id), target) {
@@ -1888,13 +1892,23 @@ impl Effects {
             Some((ice?, vertices, false))
         });
         let stone = self.textures.get(stone::STONE).and_then(Option::as_ref).map(|texture| (texture, self.prims.stone.mesh(), false));
+        // Turn Undead's ring, flat over the caster's feet.
+        let ring = self.textures.get(burst::RING).and_then(Option::as_ref);
+        let burst_rings = self.prims.bursts.iter().filter_map(|burst| {
+            let (half, alpha) = burst.ring(now)?;
+            let [x, y, z] = position_of(burst.unit)?;
+            let tint = [1.0, 1.0, 1.0, alpha];
+            let corner = |across: f32, along: f32, uv| MeshVertex { position: [x + across * half, y + burst::RING_RISE, z + along * half], uv, tint };
+            let [a, b, c, d] = [corner(1.0, 1.0, [0.0, 0.0]), corner(1.0, -1.0, [1.0, 0.0]), corner(-1.0, 1.0, [0.0, 1.0]), corner(-1.0, -1.0, [1.0, 1.0])];
+            Some((ring?, vec![a, b, c, d, c, b], false))
+        });
         // The Sage's ground looks and loops (Land Protector's square adds on).
         let sage = self.prims.sage.shapes(now).into_iter().filter_map(|(path, additive, corners)| {
             let texture = self.textures.get(path)?.as_ref()?;
             Some((texture, corners.into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] }).collect(), additive))
         });
         // The effects made in code are none of them force-drawn.
-        let prims = spikes.chain(stone).chain(bolt_meshes).chain(sage).filter(|_| !self.only_forced);
+        let prims = spikes.chain(stone).chain(bolt_meshes).chain(sage).chain(burst_rings).filter(|_| !self.only_forced);
         rings.chain(models).chain(hits).chain(auras).chain(prims).collect()
     }
 
