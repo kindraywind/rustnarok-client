@@ -101,9 +101,7 @@
       "threshold": 20
     },
     {
-      "click_on": {
-        "button": "skill"
-      }
+      "key": "Escape"
     },
     {
       "wait": 200
@@ -328,6 +326,9 @@
     },
     {
       "key": "Alt+E"
+    },
+    {
+      "say": "@killmonster2"
     },
     {
       "wait": 1500
