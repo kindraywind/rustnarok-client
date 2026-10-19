@@ -2122,6 +2122,13 @@ pub struct Actor {
     pub size_percent: Option<i32>,
     /// The statuses on that leave copies of the unit behind it (the quickens and the like), and the copies.
     blurs: Vec<u16>,
+    /// Make Blur: the colour now multiplying the unit (white: none), the time its ticks are counted to, the ticks it has
+    /// run, whether a copy is due, and the ticks left of Snap's blur.
+    blur_colour: [u8; 3],
+    blur_clock: Option<Instant>,
+    blur_age: u32,
+    blur_due: bool,
+    snap_left: u32,
     /// What statuses do to how its own parts are drawn: by status, the body flags and colour (`status_body`).
     glows: Vec<(u16, u32, Option<[u8; 3]>)>,
     pub ghosts: Vec<Ghost>,
@@ -2200,23 +2207,42 @@ pub fn glow_copies(flags: u32, tint: Option<[u8; 3]>, group: PartGroup, breath: 
 /// Cursed Circle's statuses, which darken the body to this.
 pub const CURSED_CIRCLE: [u16; 2] = [416, 417];
 pub const CURSED_TINT: [u8; 3] = [64, 64, 64];
-/// A copy is left every 5 ticks, and fades by 16 of 255 a tick until under 16.
-const GHOST_EVERY: f32 = 5.0;
-const GHOST_FADE: f32 = 16.0;
+/// A copy is left on every 5th tick of the blur, and fades from 180 by 8 a tick: drawn 172, 164 … 4.
+const GHOST_EVERY: u32 = 5;
+const GHOST_FADE: f32 = 8.0;
+const GHOST_FIRST: f32 = 180.0;
+/// Snap's blur lasts this many ticks (ZC_FASTMOVE).
+const SNAP_TICKS: u32 = 100;
+/// The colour drifts back toward white by this much a channel a tick when the blur ends.
+const BLUR_DRIFT: u8 = 8;
 
-/// A copy of the unit left behind while it blurs: when, where its feet were, and the frame it showed.
+/// A copy of the unit left behind while it blurs: when, where its feet were, the frame it showed, and its colour.
 pub struct Ghost {
     pub left: Instant,
     pub feet: [f32; 3],
     pub placed: Vec<Placed>,
+    pub tint: [u8; 3],
 }
 
-/// How see-through a copy left `age` ago is drawn: 255 less 16 a tick, out of 255; gone (0) once under 16.
-// ponytail: the copies keep the unit's own colours; how the game tints them isn't pinned down.
+/// How see-through a copy left `age` ago is drawn: 180 less 8 a tick, drawn from 172 and gone once it reaches 0; out of 255.
 pub fn ghost_alpha(age: Duration) -> f32 {
-    let alpha = 255.0 - GHOST_FADE * (age.as_secs_f32() / TICK).floor();
-    if alpha < GHOST_FADE { 0.0 } else { alpha / 255.0 }
+    let ticks = (age.as_millis() / 16) as f32;
+    (GHOST_FIRST - GHOST_FADE * (ticks + 1.0)).max(0.0) / 255.0
 }
+
+/// The colour Make Blur multiplies a unit by while `status` is on: the quickens yellow, Overthrust pink, Energy Coat blue, else
+/// (Snap's) near white. Explosion Spirits' flickers (`step_blur`).
+pub fn blur_colour(status: u16) -> [u8; 3] {
+    match status {
+        2 | 161 | 68 => [200, 200, 0],
+        25 | 188 => [250, 150, 150],
+        31 => [180, 180, 250],
+        _ => [250, 250, 250],
+    }
+}
+
+/// Explosion Spirits' status: it flickers instead of leaving copies.
+const EXPLOSION_SPIRITS: u16 = 86;
 
 impl Actor {
     pub fn new(name: String, sprites: Option<SpriteSet>, cell: [i32; 2], direction: u8, speed: u16) -> Self {
@@ -2270,6 +2296,11 @@ impl Actor {
             held: None,
             size_percent: None,
             blurs: Vec::new(),
+            blur_colour: [255; 3],
+            blur_clock: None,
+            blur_age: 0,
+            blur_due: false,
+            snap_left: 0,
             glows: Vec::new(),
             ghosts: Vec::new(),
             cursed: false,
@@ -2278,7 +2309,15 @@ impl Actor {
 
     /// The colour the body is drawn in: Cursed Circle's dark, else the body and health states' (see `status_tint`).
     pub fn body_tint(&self) -> Option<[u8; 3]> {
-        if self.cursed { Some(CURSED_TINT) } else { status_tint(self.body_state, self.health_state) }
+        if self.cursed {
+            return Some(CURSED_TINT);
+        }
+        // Make Blur multiplies whatever colour the unit has by its own.
+        let blur = (self.blur_colour != [255; 3]).then_some(self.blur_colour);
+        match (status_tint(self.body_state, self.health_state), blur) {
+            (Some(tint), Some(blur)) => Some(std::array::from_fn(|k| (u16::from(tint[k]) * u16::from(blur[k]) / 255) as u8)),
+            (tint, blur) => tint.or(blur),
+        }
     }
 
     /// A status comes on or goes off: what its looping effects do to how the parts are drawn.
@@ -2302,12 +2341,54 @@ impl Actor {
         }
     }
 
-    /// Leaves a copy of the frame drawn at `feet` every 5 ticks while a blurring status is on; old copies go.
+    /// Snap, Fallen Angel or All in the Sky slides the unit: it blurs for 100 ticks.
+    pub fn snap(&mut self) {
+        self.snap_left = SNAP_TICKS;
+    }
+
+    /// Whether a blurring unit leaves no copy: it stands, sits or waits ready.
+    // ponytail: sleeping and Auto Counter, which the game also leaves no copies in, aren't known here.
+    fn still(&self, now: Instant) -> bool {
+        self.sitting || matches!(self.animation(now).0, IDLE | SIT | READY)
+    }
+
+    /// Runs Make Blur's whole ticks up to `now`: while a status (or Snap) blurs the unit it takes the blur's colour (Explosion
+    /// Spirits' flickers, 250 on one tick in 14 else 200 on two channels, `flicker` telling) and, on every 5th tick of the blur,
+    /// is due a copy unless it stands still; after it, the colour drifts back toward white by 8 a channel a tick.
+    pub fn step_blur(&mut self, now: Instant, mut flicker: impl FnMut() -> bool) {
+        let clock = self.blur_clock.get_or_insert(now);
+        let whole = (now.saturating_duration_since(*clock).as_millis() / 16).min(200) as u32;
+        *clock += Duration::from_millis(u64::from(whole) * 16);
+        for _ in 0..whole {
+            if self.blurs.is_empty() && self.snap_left == 0 {
+                self.blur_age = 0;
+                self.blur_colour = self.blur_colour.map(|channel| channel.saturating_add(BLUR_DRIFT));
+                continue;
+            }
+            let status = self.blurs.last().copied().filter(|_| self.snap_left == 0);
+            let explosion = status == Some(EXPLOSION_SPIRITS);
+            self.blur_colour = match status {
+                Some(EXPLOSION_SPIRITS) => {
+                    let x = if flicker() { 250 } else { 200 };
+                    [250, x, x]
+                }
+                Some(status) => blur_colour(status),
+                None => blur_colour(0),
+            };
+            if self.blur_age.is_multiple_of(GHOST_EVERY) && !explosion && !self.still(now) {
+                self.blur_due = true;
+            }
+            self.blur_age += 1;
+            self.snap_left = self.snap_left.saturating_sub(1);
+        }
+    }
+
+    /// Leaves a copy of the frame drawn at `feet` when one is due (`step_blur`), tinted the blur's colour; old copies go.
     pub fn leave_ghost(&mut self, now: Instant, feet: [f32; 3], placed: &[Placed]) {
         self.ghosts.retain(|ghost| ghost_alpha(now.saturating_duration_since(ghost.left)) > 0.0);
-        let due = self.ghosts.last().is_none_or(|ghost| now.saturating_duration_since(ghost.left).as_secs_f32() >= GHOST_EVERY * TICK);
-        if !self.blurs.is_empty() && due && !placed.is_empty() {
-            self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec() });
+        if self.blur_due && !placed.is_empty() {
+            self.blur_due = false;
+            self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec(), tint: self.blur_colour });
         }
     }
 
@@ -3994,31 +4075,66 @@ mod tests {
     }
 
     #[test]
-    fn leaves_fading_copies_while_a_status_blurs() {
+    fn blurs_tint_the_unit_and_copy_it_while_it_moves() {
         let start = Instant::now();
-        let at = |ticks: f32| start + Duration::from_secs_f32(ticks * TICK);
-        // 255 less 16 a tick: gone once under 16, after the 15th tick.
-        assert_eq!(ghost_alpha(Duration::ZERO), 1.0);
-        assert_eq!(ghost_alpha(Duration::from_secs_f32(1.5 * TICK)), 239.0 / 255.0);
-        assert_eq!(ghost_alpha(Duration::from_secs_f32(14.5 * TICK)), 31.0 / 255.0);
-        assert_eq!(ghost_alpha(Duration::from_secs_f32(15.5 * TICK)), 0.0);
+        let tick = |ticks: u64| start + Duration::from_millis(16 * ticks);
+        // A copy is drawn 172, 164 … 4 (22 draws) and gone on the 23rd.
+        let alpha = |ticks: u64| ghost_alpha(Duration::from_millis(16 * ticks + 8)) * 255.0;
+        assert_eq!([alpha(0), alpha(1), alpha(21), alpha(22)], [172.0, 164.0, 4.0, 0.0]);
+        // The colours by status.
+        assert_eq!(
+            [2, 161, 68, 25, 188, 31, 7].map(blur_colour),
+            [[200, 200, 0], [200, 200, 0], [200, 200, 0], [250, 150, 150], [250, 150, 150], [180, 180, 250], [250, 250, 250]]
+        );
         let mut actor = Actor::new("Knight".into(), None, [0, 0], 0, 150);
         let placed: Vec<Placed> = vec![((0, 0, 0, [255; 4], 0), [0.0; 2], [1.0; 2], 0.0)];
-        // No blurring status: no copies.
-        actor.leave_ghost(at(0.0), [0.0; 3], &placed);
-        assert!(actor.ghosts.is_empty());
-        // Two-Hand Quicken on: a copy now, none two ticks on, another after five.
+        // No status: white, no copies.
+        actor.step_blur(tick(0), || false);
+        actor.step_blur(tick(10), || false);
+        actor.leave_ghost(tick(10), [0.0; 3], &placed);
+        assert!(actor.ghosts.is_empty() && actor.body_tint().is_none());
+        // Two-Hand Quicken on and walking: yellow, a copy on its first tick (age 0), none to the 5th, then another.
         actor.blur(2, true);
-        actor.leave_ghost(at(0.0), [0.0; 3], &placed);
-        actor.leave_ghost(at(2.0), [1.0; 3], &placed);
-        actor.leave_ghost(at(5.0), [2.0; 3], &placed);
-        assert_eq!(actor.ghosts.iter().map(|ghost| ghost.feet[0]).collect::<Vec<_>>(), [0.0, 2.0]);
-        // Off: no more copies, and the old ones fade away.
-        actor.blur(2, false);
-        actor.leave_ghost(at(10.0), [3.0; 3], &placed);
+        actor.walk_frames = 200;
+        actor.step_blur(tick(11), || false);
+        assert_eq!(actor.body_tint(), Some([200, 200, 0]));
+        actor.leave_ghost(tick(11), [1.0; 3], &placed);
+        actor.step_blur(tick(15), || false);
+        actor.leave_ghost(tick(15), [2.0; 3], &placed);
+        actor.step_blur(tick(16), || false);
+        actor.leave_ghost(tick(16), [3.0; 3], &placed);
+        assert_eq!(actor.ghosts.iter().map(|ghost| ghost.feet[0]).collect::<Vec<_>>(), [1.0, 3.0]);
+        assert_eq!(actor.ghosts[0].tint, [200, 200, 0]);
+        // Standing: the tick that is due leaves nothing.
+        actor.walk_frames = 0;
+        actor.step_blur(tick(21), || false);
+        actor.leave_ghost(tick(21), [4.0; 3], &placed);
         assert_eq!(actor.ghosts.len(), 2);
-        actor.leave_ghost(at(21.0), [3.0; 3], &placed);
-        assert!(actor.ghosts.is_empty());
+        // Off: the colour drifts back 8 a channel a tick (the blue needs 32).
+        actor.blur(2, false);
+        actor.step_blur(tick(22), || false);
+        assert_eq!(actor.body_tint(), Some([208, 208, 8]));
+        actor.step_blur(tick(22 + 31), || false);
+        assert_eq!(actor.body_tint(), None);
+        // Explosion Spirits flickers 250 / 200 and leaves no copies; Snap blurs for 100 ticks.
+        actor.blur(86, true);
+        actor.walk_frames = 200;
+        actor.step_blur(tick(54), || true);
+        assert_eq!(actor.body_tint(), Some([250, 250, 250]));
+        actor.blur_due = false;
+        actor.step_blur(tick(55), || false);
+        assert_eq!((actor.body_tint(), actor.blur_due), (Some([250, 200, 200]), false), "no copies");
+        let mut quiet = Actor::new("Priest".into(), None, [0, 0], 0, 150);
+        quiet.walk_frames = 200;
+        quiet.step_blur(tick(0), || false);
+        quiet.snap();
+        quiet.step_blur(tick(1), || false);
+        assert_eq!(quiet.blur_colour, [250, 250, 250]);
+        assert!(quiet.blur_due);
+        quiet.step_blur(tick(101), || false);
+        assert_eq!(quiet.snap_left, 0);
+        quiet.step_blur(tick(102), || false);
+        assert_eq!(quiet.blur_colour, [255, 255, 255]);
         // Cursed Circle darkens the body over any other state.
         actor.cursed = true;
         assert_eq!(actor.body_tint(), Some(CURSED_TINT));

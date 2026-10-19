@@ -875,8 +875,10 @@ struct Banded {
     start: Instant,
     /// How long it lasts, in ticks.
     ticks: u32,
-    /// Heal's two bands' start turns, picked at random.
-    turns: [f32; 2],
+    /// The bands' start turns, picked at random (Heal's two, Safety Wall's three).
+    turns: [f32; 3],
+    /// The undead heal's walls' height and first radius, picked at random.
+    extra: [f32; 2],
     /// Heal's sparkles: the tick each starts and where on the ground, from the feet.
     sparkles: Vec<(u32, [f32; 2])>,
 }
@@ -888,7 +890,7 @@ pub fn is_cast_aura(effect: u32) -> bool {
 
 /// The effects made of bands.
 pub fn is_banded(effect: u32) -> bool {
-    matches!(effect, 12 | 54..=59 | 304 | 312 | 313 | 314 | 325 | 344 | 367)
+    matches!(effect, 12 | 54..=59 | 304 | 312 | 313 | 314 | 315 | 320 | 325 | 344 | 367)
 }
 
 /// How long a band effect lasts, in ticks: Heal and the arrival 100, the teleport and logout 200, Aura Blade's bloom 60.
@@ -896,6 +898,8 @@ fn banded_ticks(effect: u32) -> u32 {
     match effect {
         304 | 314 => 200,
         367 => 60,
+        // Safety Wall stands until its skill unit goes.
+        315 => u32::MAX / 4,
         _ => 100,
     }
 }
@@ -942,6 +946,8 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         // ponytail: Aura Blade's two bloom sets both in ring_white (the game's second is ring_yellow).
         367 => ("ring_white", [0xA4, 0xCD, 0xFE], true),
         312 | 313 | 325 => ("alpha_down", [0x8C, 0xD2, 0x8C], true),
+        315 => ("alpha_down", [0xFF, 0x59, 0xB6], true),
+        320 => ("alpha_down", [0xFF, 0xFF, 0xFF], true),
         304 => ("Magic_Violet", [0x64, 0x64, 0xFF], true),
         314 => ("ring_purple", [0x64, 0x64, 0xFF], true),
         344 => ("ring_blue", [0x64, 0x64, 0xFF], true),
@@ -1037,6 +1043,20 @@ fn rising_height(_band: usize, height: f32, age: u32, _s: usize) -> f32 {
     height * (age.min(90) as f32).to_radians().sin()
 }
 
+/// A wall's alpha at its age `b` (from 1): 5 a tick to 75 at 15, held, then 2 less a tick once `b` is past `held`.
+fn wall_alpha(b: u32, held: u32) -> f32 {
+    if b <= 15 { 5.0 * b as f32 } else { (75.0 - 2.0 * b.saturating_sub(held) as f32).max(0.0) }
+}
+
+/// A wall's top at its age `age` (b = age + 1), point `s` of the band `k`: h·(0.75 + 0.25·sin θ) with θ = 34 s + (4 − k) b
+/// degrees, times sin b while b is up to 90: the tops roll in waves and rise over the first 1.5 s.
+fn rim_height(k: usize, height: f32, age: u32, s: usize) -> f32 {
+    let b = age + 1;
+    let theta = (34 * s as u32 + (4 - k as u32) * b) % 360;
+    let rise = if b <= 90 { (b as f32).to_radians().sin() } else { 1.0 };
+    (height * (0.75 + 0.25 * (theta as f32).to_radians().sin()) * rise).max(0.0)
+}
+
 /// A band its full height all along.
 fn full_height(_band: usize, height: f32, _age: u32, _s: usize) -> f32 {
     height
@@ -1066,6 +1086,23 @@ impl Banded {
             312 | 313 | 325 => {
                 let wall = |radius: f32, turn: f32| Band { arc: 360.0, turn, radius, lean: 90.0, height: 40.0, alpha: band_fade(age) };
                 return shaped(&[wall(4.6, self.turns[0]), wall(4.8, self.turns[1])], rising_height);
+            }
+            // Safety Wall: three nested pink walls; the undead heal: two white ones; both roll their tops in waves.
+            315 => {
+                let b = age + 1;
+                let walls = [(34.0, 3.6, 5500), (37.0, 3.3, 3080), (40.0, 3.0, 3080)];
+                let bands: Vec<Band> = walls
+                    .iter()
+                    .enumerate()
+                    .map(|(k, &(height, radius, fade))| Band { arc: 360.0, turn: self.turns[k], radius, lean: 90.0, height, alpha: wall_alpha(b, fade - 1) })
+                    .collect();
+                return shaped(&bands, rim_height);
+            }
+            320 => {
+                let b = age + 1;
+                let [height, radius] = self.extra;
+                let wall = |turn: f32, radius: f32| Band { arc: 360.0, turn, radius, lean: 90.0, height, alpha: wall_alpha(b, 29) };
+                return shaped(&[wall(self.turns[0], radius), wall(self.turns[1], radius + 0.2)], rim_height);
             }
             304 => return shaped(&teleport_bands(self.ticks, age), full_height),
             // ponytail: the logout stands as the teleport's columns, with the fade.
@@ -1701,7 +1738,19 @@ impl Effects {
         }
         // The first jobs' small heal, Endure, Magnum Break, Steal, Detoxify and Decrease AGI, built in code (a status plays it once).
         if let (true, Target::Unit(unit) | Target::Status(unit, _)) = (first::makes(id), target) {
-            for path in [first::ALPHA_DOWN, first::ENDURE, first::RING_YELLOW, first::DOME, first::SLOW, first::STREAK, first::DEX_AGI_TEXT] {
+            for path in [
+                first::ALPHA_DOWN,
+                first::ENDURE,
+                first::RING_YELLOW,
+                first::DOME,
+                first::SLOW,
+                first::STREAK,
+                first::DEX_AGI_TEXT,
+                first::PIKAPIKA,
+                first::THUNDER_CENTER,
+                first::POK1,
+                first::POK3,
+            ] {
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
             }
             for path in [first::STAR, first::GOLD_STAR, first::CYAN_STAR, first::HOLY_WATER_SPRITE] {
@@ -1844,12 +1893,25 @@ impl Effects {
                 self.textures.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, true).ok());
             }
             let healing = matches!(id, 312 | 313 | 325);
+            let whole = |n: u32| pick(0, n - 1) as f32;
+            // Safety Wall's three walls take a turn each; the undead heal's two take a turn, a height, a radius and a turn.
+            let (turns, extra) = match id {
+                315 => ([whole(360), whole(360), whole(360)], [0.0; 2]),
+                320 => {
+                    let first = whole(360);
+                    let height = 40.0 + whole(20);
+                    let radius = 4.5 + 0.005 * whole(100);
+                    ([first, whole(360), 0.0], [height, radius])
+                }
+                _ => ([random(0.0, 360.0), random(0.0, 360.0), 0.0], [0.0; 2]),
+            };
             self.auras.push(Banded {
                 effect: id,
                 anchor: anchor(true),
                 start: now,
                 ticks: banded_ticks(id),
-                turns: [random(0.0, 360.0), random(0.0, 360.0)],
+                turns,
+                extra,
                 sparkles: if healing { heal_sparkles(random) } else { Vec::new() },
             });
         }
@@ -1915,14 +1977,22 @@ impl Effects {
         self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
         let anchor = Anchor::Unit(unit);
         self.auras.retain(|aura| !(is_cast_aura(aura.effect) && matches!(aura.anchor, Anchor::Unit(each) if each == unit)));
-        self.auras.push(Banded { effect, anchor, start, ticks: aura_ticks(effect, cast_ms), turns: [0.0; 2], sparkles: Vec::new() });
+        self.auras.push(Banded { effect, anchor, start, ticks: aura_ticks(effect, cast_ms), turns: [0.0; 3], extra: [0.0; 2], sparkles: Vec::new() });
     }
 
     /// A cast aura launched again with a skill's damage: it blooms for its own length, beside any cast's aura.
     pub fn bloom_aura(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, effect: u32, start: Instant) {
         let texture = aura_texture(effect);
         self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
-        self.auras.push(Banded { effect, anchor: Anchor::Unit(unit), start, ticks: aura_ticks(effect, 0), turns: [0.0; 2], sparkles: Vec::new() });
+        self.auras.push(Banded {
+            effect,
+            anchor: Anchor::Unit(unit),
+            start,
+            ticks: aura_ticks(effect, 0),
+            turns: [0.0; 3],
+            extra: [0.0; 2],
+            sparkles: Vec::new(),
+        });
     }
 
     /// Queues a camera shake starting at `start` for `length` (`QUAKE_SHORT` or `QUAKE_LONG`).
@@ -2694,6 +2764,20 @@ impl Effects {
                     }
                 }
             }
+            // First Aid's glow, Sprinkle Sand's specks and the undead heal's sparkles: camera-facing squares, added on.
+            for square in self.prims.first.squares(now, &position_of) {
+                let Some(Some(texture)) = self.textures.get(square.texture) else { continue };
+                let pixels = square.radius * 35.0 / world::CELL;
+                let corner = |j: u32| {
+                    let (sin, cos) = (square.spin + 90.0 * j as f32).to_radians().sin_cos();
+                    [pixels * cos, pixels * sin]
+                };
+                // Plain: corners 0 to 3 at texture (0, 1), (1, 1), (1, 0), (0, 0); mirrored: (1, 1), (0, 1), (0, 0), (1, 0).
+                let corners = if square.mirrored { [corner(2), corner(3), corner(0), corner(1)] } else { [corner(3), corner(2), corner(1), corner(0)] };
+                let alpha = if self.dim { square.alpha.min(100.0) } else { square.alpha };
+                let [red, green, blue] = square.tint.map(|channel| f32::from(channel) / 255.0);
+                quads.push((texture, square.at, corners, [red, green, blue, alpha.trunc().clamp(0.0, 255.0) / 255.0], true, false));
+            }
             // The first jobs' sparkles and sparks.
             for particle in self.prims.first.particles(now, &position_of) {
                 let Some(Some(sprite)) = self.sprites.get(particle.sprite) else { continue };
@@ -2862,6 +2946,47 @@ mod tests {
         assert_eq!(bolt_drops(26, 0).len(), 1);
         assert_eq!(bolt_drops(26, 99).len(), 50);
         assert!(bolt_drops(29, 10).is_empty() && bolt_drops(24, 5).is_empty());
+    }
+
+    #[test]
+    fn rolls_safety_walls_and_the_undead_heals_walls() {
+        let banded = |effect: u32, turns: [f32; 3], extra: [f32; 2]| Banded {
+            effect,
+            anchor: Anchor::At([0.0; 3]),
+            start: Instant::now(),
+            ticks: 100,
+            turns,
+            extra,
+            sparkles: Vec::new(),
+        };
+        // Safety Wall: three nested walls (34, 37, 40 tall; radii 3.6, 3.3, 3.0), lean 90, closed.
+        let safety = banded(315, [10.0, 20.0, 30.0], [0.0; 2]);
+        let walls = safety.bands(0);
+        assert_eq!(
+            walls.iter().map(|(band, _)| (band.height, band.radius, band.lean, band.arc, band.turn)).collect::<Vec<_>>(),
+            [(34.0, 3.6, 90.0, 360.0, 10.0), (37.0, 3.3, 90.0, 360.0, 20.0), (40.0, 3.0, 90.0, 360.0, 30.0)]
+        );
+        // Alpha 5 b to 75 at b = 15; band 1 fades from b = 3080 (73, 0 at 3117), band 0 only from 5500.
+        let alpha = |age: u32, band: usize| safety.bands(age)[band].0.alpha;
+        assert_eq!(
+            [alpha(0, 0), alpha(14, 0), alpha(3079, 1), alpha(3115, 1), alpha(3116, 1), alpha(3116, 0), alpha(5499, 0)],
+            [5.0, 75.0, 73.0, 1.0, 0.0, 75.0, 73.0]
+        );
+        // The rim: h (0.75 + 0.25 sin θ) with θ = 34 s + (4 − k) b, times sin b up to b = 90.
+        let rim = |age: u32, band: usize, s: usize| safety.bands(age)[band].1[s];
+        assert!((rim(89, 0, 0) - 34.0 * 0.75).abs() < 0.01, "b = 90: θ = 360 → 0.75 h");
+        assert!((rim(90, 0, 0) - 34.0 * (0.75 + 0.25 * 4.0_f32.to_radians().sin())).abs() < 0.01, "b = 91: full height factor");
+        assert!((rim(44, 1, 10) - 37.0 * (0.75 + 0.25 * ((340 + 135) as f32 % 360.0).to_radians().sin()) * 45.0_f32.to_radians().sin()).abs() < 0.01);
+        // The undead heal: two walls of equal height, radii 0.2 apart; alpha 75 at b = 15 and 29, 73 at 30, 0 at 67.
+        let heal = banded(320, [10.0, 20.0, 0.0], [45.0, 4.6]);
+        let [(first, _), (second, _)] = [heal.bands(14)[0].clone(), heal.bands(14)[1].clone()];
+        assert_eq!((first.height, second.height, first.radius, first.alpha), (45.0, 45.0, 4.6, 75.0));
+        assert!((second.radius - 4.8).abs() < 1e-5);
+        let heal_alpha = |age: u32| heal.bands(age)[0].0.alpha;
+        assert_eq!([heal_alpha(28), heal_alpha(29), heal_alpha(65), heal_alpha(66)], [75.0, 73.0, 1.0, 0.0]);
+        // Safety Wall stands until its unit goes; both show under /effect off (force-drawn 315).
+        assert!(is_banded(315) && is_banded(320) && force_drawn(315));
+        assert!(banded_ticks(315) > 1_000_000);
     }
 
     #[test]
@@ -3048,7 +3173,7 @@ mod tests {
         );
         assert!(sparkles.iter().all(|(_, [x, z])| x.abs() <= 6.0 && z.abs() <= 6.0));
         assert!(sparkle_at(0).is_some() && sparkle_at(SPARKLE_TICKS).is_none());
-        let heal = Banded { effect: 312, anchor: Anchor::Unit(None), start: Instant::now(), ticks: 100, turns: [10.0, 200.0], sparkles };
+        let heal = Banded { effect: 312, anchor: Anchor::Unit(None), start: Instant::now(), ticks: 100, turns: [10.0, 200.0, 0.0], extra: [0.0; 2], sparkles };
         let walls = heal.bands(15);
         assert_eq!(
             walls.iter().map(|(band, _)| (band.radius, band.lean, band.height, band.turn, band.alpha)).collect::<Vec<_>>(),
@@ -3329,6 +3454,12 @@ mod tests {
         assert_eq!(sounds.len(), 11);
         assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
         assert!(!table.sounds.contains_key(&149));
+        // Cart Revolution's sounds, First Aid, Sprinkle Sand and the undead Heal are built in code or in bands.
+        assert_eq!(table.sounds[&170].iter().map(|sound| sound.delay_ms).collect::<Vec<_>>(), [112, 320]);
+        for id in [309, 310, 320, 315, 170] {
+            assert!(!table.rings.contains_key(&id) && !table.floaters.contains_key(&id), "{id}");
+        }
+        assert!(first::makes(170) && first::makes(309) && first::makes(310) && first::makes(320));
         // Holy Water's bottle, Signum Crucis' burst, DEX AGI UP's text and streaks and Provoke's two sounds.
         assert!(first::makes(39) && first::makes(43) && !table.sprites.contains_key(&39) && !table.floaters.contains_key(&43));
         assert_eq!(table.used(31), Some(&[(Who::Caster, 39)][..]));

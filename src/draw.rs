@@ -475,6 +475,7 @@ impl App {
             let (feet, placed) = cart_frame(cart);
             carts.push((Owner::Player, feet, placed));
         }
+        game.player.step_blur(now, || crate::effects::pick(0, 13) == 0);
         let player_tint = game.player.body_tint();
         let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
         // Our own character in Hiding shows its shadow alone (a frame with no sprite); cloaked, chase-walking or
@@ -571,6 +572,7 @@ impl App {
                 carts.push((Owner::Unit(id), feet, placed));
             }
             // A silhouette multiplies the sprite's RGB by 0 and keeps its alpha. It casts no shadow.
+            actor.step_blur(now, || crate::effects::pick(0, 13) == 0);
             let tint = if silhouette { Some([0, 0, 0]) } else { actor.body_tint() };
             let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent);
             if let Some(sprites) = &mut actor.sprites {
@@ -890,7 +892,8 @@ impl App {
             let (player, flat) = stand_of(&owner);
             for ghost in &actor.ghosts {
                 let alpha = actor::ghost_alpha(now.saturating_duration_since(ghost.left));
-                let tint = lit_tint([1.0, 1.0, 1.0, alpha], game.world.sprite_light(ghost.feet));
+                let [red, green, blue] = ghost.tint.map(|channel| f32::from(channel) / 255.0);
+                let tint = lit_tint([red, green, blue, alpha], game.world.sprite_light(ghost.feet));
                 billboards.extend(ghost.placed.iter().enumerate().filter_map(|(index, (key, position, size, angle))| {
                     Some((sprites.texture_of(*key)?, ghost.feet, *position, *size, tint, *angle, sprite_layer(index, player, flat)))
                 }));
