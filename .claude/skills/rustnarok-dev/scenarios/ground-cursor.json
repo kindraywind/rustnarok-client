@@ -1,0 +1,20 @@
+{
+  "about": "The ground cursor (Alt+Home): off at the start, so pointing at the ground shows nothing; on, the walkable cell under the pointer gets a 40% green-blue grid.tga square that follows the pointer; off again, it's gone.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"move": {"cell": [172, 361]}}, {"wait": 300},
+    {"shot": "ground-cursor-off", "crop": [362, 234, 300, 300], "threshold": 5},
+    {"expect": {"state": {"ground_cursor.on": false, "ground_cursor.cell": null}}},
+    {"key": "Alt+Home"}, {"move": {"cell": [172, 361]}}, {"wait": 300},
+    {"shot": "ground-cursor-on", "crop": [362, 234, 300, 300], "threshold": 5},
+    {"expect": {"state": {"ground_cursor.on": true, "ground_cursor.cell": [172, 361]}}},
+    {"move": {"cell": [168, 358]}}, {"wait": 300},
+    {"shot": "ground-cursor-moved", "crop": [362, 234, 300, 300], "threshold": 5},
+    {"expect": {"state": {"ground_cursor.cell": [168, 358]}}},
+    {"key": "Alt+Home"}, {"wait": 300},
+    {"expect": {"state": {"ground_cursor.on": false, "ground_cursor.cell": null}}}
+  ]
+}

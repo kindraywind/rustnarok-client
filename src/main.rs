@@ -733,6 +733,8 @@ const TALK_REFUSED: usize = 4027;
 const SKILL_ACTION: usize = 12;
 /// How far over the ground the magic square under a ground cast floats, so the ground doesn't cover it.
 const CAST_SQUARE_LIFT: f32 = 0.2;
+/// The ground cursor's tint (0x6600ffaa): green-blue, 40% opaque.
+const GROUND_CURSOR_TINT: [f32; 4] = [0.0, 1.0, 170.0 / 255.0, 102.0 / 255.0];
 /// The navigation arrow sits this far over the head; routes the player starts may use every service.
 // ponytail: the client's arrow height and its services for a route picked by hand are estimates.
 const NAVI_ARROW_RISE: f32 = 12.0;
@@ -1181,6 +1183,9 @@ struct Game {
     progress: ProgressBar,
     /// The magic squares under ground skills being cast, by caster (None = the player); each goes with its cast.
     cast_squares: HashMap<Option<u32>, cast_square::Square>,
+    /// The ground cursor (Alt+Home, off at the start): whether it's on, and the cell it shows.
+    ground_cursor: bool,
+    ground_mark: Option<[i32; 2]>,
     /// Units that may use their next combo skill (None = the player): when the window opened and how long it lasts.
     combos: HashMap<Option<u32>, (Instant, Duration)>,
     /// Units locked together by Blade Stop or Cursed Circle: source and target.
@@ -2628,6 +2633,8 @@ struct Assets {
     link_line: Texture,
     /// The magic square under a ground cast.
     magic_target: Option<Texture>,
+    /// The ground cursor's square.
+    ground_grid: Option<Texture>,
     aura: aura::Textures,
     escape: escape::Assets,
     options: options::Assets,
@@ -2744,6 +2751,7 @@ impl Assets {
             url_line: gpu.solid([links::URL_COLOR[0], links::URL_COLOR[1], links::URL_COLOR[2], 0xFF]),
             link_line: gpu.solid([links::NPC_COLOR[0], links::NPC_COLOR[1], links::NPC_COLOR[2], 0xFF]),
             magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
+            ground_grid: gpu.try_load_texture(grf, "data\\texture\\grid.tga", false).ok(),
             aura: aura::Textures::load(gpu, grf),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),

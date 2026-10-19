@@ -436,6 +436,8 @@ pub struct World {
     pub gat: Gat,
     /// One RGB light per GAT cell, from the ground lightmaps.
     cell_light: Vec<[f32; 3]>,
+    /// The ground tiles' corner heights (south-west, south-east, north-west, north-east; up is +), and tiles a row.
+    tile_heights: (Vec<[f32; 4]>, usize),
     /// RSM 2 instances whose tracks play, and the buffer they're posed into each frame.
     animated: Vec<Animated>,
     animated_buffer: Option<wgpu::Buffer>,
@@ -677,6 +679,7 @@ impl World {
         let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
         let ambient = crate::ambient::Ambient::new(rsw.sounds.iter().map(|source| crate::ambient::Source::placed(source, half)).collect());
         let cell_light = cell_lights(&gnd, &gat);
+        let tile_heights = (gnd.cubes.iter().map(|cube| cube.heights.map(|height| -height)).collect(), gnd.width);
         Ok(Self {
             animated,
             animated_buffer,
@@ -684,6 +687,7 @@ impl World {
             ambient,
             gat,
             cell_light,
+            tile_heights,
             textures,
             lightmap,
             vertices,
@@ -718,10 +722,24 @@ impl World {
         [(cell[0] + 0.5) * CELL, -height, (cell[1] + 0.5) * CELL]
     }
 
+    /// A quad over a GAT cell at the corner heights of the whole ground tile it's a quarter of (as the ground cursor
+    /// draws it): corners south-west, south-east, north-west, north-east.
+    pub fn cell_quad(&self, cell: [i32; 2]) -> Option<[Vector; 4]> {
+        cell_quad(&self.tile_heights.0, self.tile_heights.1, cell)
+    }
+
     /// The map light on a unit drawn at `feet`: that GAT cell's triple, or full bright off the map.
     pub fn sprite_light(&self, feet: Vector) -> [f32; 3] {
         light_at(&self.cell_light, self.gat.width, self.gat.height, feet)
     }
+}
+
+/// A GAT cell's quad at the corner heights of its ground tile (`tiles`, `wide` a row), or None off the map.
+fn cell_quad(tiles: &[[f32; 4]], wide: usize, [x, y]: [i32; 2]) -> Option<[Vector; 4]> {
+    let tile = usize::try_from(y / 2).ok()? * wide + usize::try_from(x / 2).ok().filter(|&column| column < wide)?;
+    let [south_west, south_east, north_west, north_east] = *tiles.get(tile)?;
+    let (x0, x1, z0, z1) = (x as f32 * CELL, (x + 1) as f32 * CELL, y as f32 * CELL, (y + 1) as f32 * CELL);
+    (x >= 0 && y >= 0).then_some([[x0, south_west, z0], [x1, south_east, z0], [x0, north_west, z1], [x1, north_east, z1]])
 }
 
 /// The cell and its four edge neighbours. Light changes in a step at the cell border, with no blend.
@@ -1591,6 +1609,15 @@ mod tests {
         // No path from a cell to itself.
         assert_eq!(find_path(&open, [5, 5], [5, 5]), None);
         assert_eq!(find_trail(&open, [5, 5], [5, 5]), None);
+    }
+
+    #[test]
+    fn the_ground_cursor_takes_its_tiles_heights() {
+        // Two tiles a row: cell (3, 1) is the north-east quarter of tile (1, 0) but keeps that tile's whole slope.
+        let tiles = [[0.0; 4], [1.0, 2.0, 3.0, 4.0], [0.0; 4], [0.0; 4]];
+        let quad = cell_quad(&tiles, 2, [3, 1]).unwrap();
+        assert_eq!(quad, [[15.0, 1.0, 5.0], [20.0, 2.0, 5.0], [15.0, 3.0, 10.0], [20.0, 4.0, 10.0]]);
+        assert!(cell_quad(&tiles, 2, [4, 0]).is_none() && cell_quad(&tiles, 2, [0, 4]).is_none() && cell_quad(&tiles, 2, [-1, 0]).is_none());
     }
 
     #[test]

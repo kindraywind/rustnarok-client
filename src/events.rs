@@ -338,6 +338,8 @@ impl App {
                     progress: ProgressBar::default(),
                     opened_page: None,
                     cast_squares: HashMap::new(),
+                    ground_cursor: false,
+                    ground_mark: None,
                     combos: HashMap::new(),
                     locks: Vec::new(),
                     speech: HashMap::new(),

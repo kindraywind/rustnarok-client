@@ -2336,7 +2336,7 @@ impl App {
         let on_window = game.on_ui(pointer.0, assets.message.size);
         let ground = view.pick_ground([pointer.0[0] / screen()[0], pointer.0[1] / screen()[1]], &game.world.gat);
         let (shift, alt) = (self.modifiers.shift_key(), self.modifiers.alt_key());
-        cursor_look.set(if turning_cursor(game.camera_goal.dragging.is_some(), shift, alt) {
+        let look = if turning_cursor(game.camera_goal.dragging.is_some(), shift, alt) {
             cursor::Kind::Rotate
         } else if pointer.1 && game.attack.is_some_and(|attack| attack.held) {
             cursor::Kind::Attack
@@ -2365,7 +2365,17 @@ impl App {
                     _ => cursor::Kind::NoWalk,
                 },
             }
-        });
+        };
+        cursor_look.set(look);
+        // The ground cursor follows the pointer while a click would walk there: the walkable cell under it, nothing
+        // over one that can't be walked. Over a window or a unit, or with Ctrl held, it stays where it was.
+        if game.ground_cursor
+            && !on_window
+            && !self.modifiers.control_key()
+            && matches!(look, cursor::Kind::Default | cursor::Kind::NoWalk | cursor::Kind::Warp)
+        {
+            game.ground_mark = ground.filter(|&cell| game.world.gat.walkable(cell));
+        }
         for (font, frames) in [(&game.rank_font, &counter), (&game.time_font, &clock), (&game.time_attack, &banner)] {
             if let Some(Some(font)) = font {
                 for (placed, anchor) in frames {
@@ -2457,6 +2467,15 @@ impl App {
                     .collect();
                 effect_meshes.push((texture, vertices, true));
             }
+        }
+        // The ground cursor: its square over the cell, at the corner heights of the ground tile it's part of.
+        if let (Some(texture), Some(corners)) = (&assets.ground_grid, game.ground_mark.and_then(|cell| game.world.cell_quad(cell))) {
+            let vertex = |corner: usize, uv| {
+                let [x, y, z] = corners[corner];
+                world::MeshVertex { position: [x, y + CAST_SQUARE_LIFT, z], uv, tint: GROUND_CURSOR_TINT }
+            };
+            let [a, b, c, d] = [vertex(0, [0.0, 1.0]), vertex(1, [1.0, 1.0]), vertex(2, [0.0, 0.0]), vertex(3, [1.0, 0.0])];
+            effect_meshes.push((texture, vec![a, b, d, a, d, c], false));
         }
         let frame = WorldFrame {
             world: &game.world,
