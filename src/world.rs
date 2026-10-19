@@ -1156,12 +1156,21 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
 
 /// A walk's path: the search with the game's 149-node limit.
 pub fn find_path(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]>> {
-    search(gat, from, to, Some(WALK_NODES))
+    search(gat, from, to, Some(WALK_NODES), None)
 }
+
+/// A unit's walk heard from the server, by its object type: an NPC with a monster's look (12) may step onto type-5
+/// cells.
+pub fn find_unit_path(gat: &Gat, from: [i32; 2], to: [i32; 2], kind: u8) -> Option<Vec<[i32; 2]>> {
+    search(gat, from, to, Some(WALK_NODES), Some(kind))
+}
+
+/// rathena's object type for an NPC whose look is a monster class (`clif_bl_type`).
+const MONSTER_LOOK: u8 = 12;
 
 /// The navigation trail's path: the same search with no limit.
 pub fn find_trail(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]>> {
-    search(gat, from, to, None)
+    search(gat, from, to, None, None)
 }
 
 /// The most cells a walk's search reaches: the start is the first, and the 150th ends it with no path.
@@ -1171,8 +1180,9 @@ const WALK_NODES: usize = 149;
 /// search, step for step, so both walk the same cells: A* at 10 a straight step and 14 a diagonal, with 10 times the
 /// Manhattan distance left as the estimate, neighbours tried from south-east round anticlockwise, and a binary heap on
 /// that sum alone, ties falling where the heap leaves them. A walk across open ground takes its diagonal steps first.
-/// At most `limit` cells are reached; there's no path from a cell to itself.
-fn search(gat: &Gat, from: [i32; 2], to: [i32; 2], limit: Option<usize>) -> Option<Vec<[i32; 2]>> {
+/// At most `limit` cells are reached; there's no path from a cell to itself. The walker's object type (`kind`) lets an
+/// NPC with a monster's look step onto type-5 cells; a diagonal's side cells still block on 1 and 5.
+fn search(gat: &Gat, from: [i32; 2], to: [i32; 2], limit: Option<usize>, kind: Option<u8>) -> Option<Vec<[i32; 2]>> {
     use std::collections::HashMap;
 
     struct Node {
@@ -1185,7 +1195,8 @@ fn search(gat: &Gat, from: [i32; 2], to: [i32; 2], limit: Option<usize>) -> Opti
     if from == to {
         return None;
     }
-    if !gat.walkable(to) {
+    let monster_look = kind == Some(MONSTER_LOOK);
+    if !gat.walkable_by(to, monster_look) {
         return None;
     }
     let estimate = |cell: [i32; 2]| 10 * ((cell[0] - to[0]).abs() + (cell[1] - to[1]).abs());
@@ -1206,23 +1217,25 @@ fn search(gat: &Gat, from: [i32; 2], to: [i32; 2], limit: Option<usize>) -> Opti
             path.reverse();
             return Some(path);
         }
+        // A diagonal's side cells block on 1 and 5; the cell stepped onto takes the walker's own test.
         let open = |dx: i32, dy: i32| gat.walkable([cell[0] + dx, cell[1] + dy]);
+        let onto = |dx: i32, dy: i32| gat.walkable_by([cell[0] + dx, cell[1] + dy], monster_look);
         let (north, south, east, west) = (open(0, 1), open(0, -1), open(1, 0), open(-1, 0));
         let ways = [
             (1, -1, south && east),
-            (1, 0, east),
+            (1, 0, true),
             (1, 1, north && east),
-            (0, 1, north),
+            (0, 1, true),
             (-1, 1, north && west),
-            (-1, 0, west),
+            (-1, 0, true),
             (-1, -1, south && west),
-            (0, -1, south),
+            (0, -1, true),
         ];
-        for (dx, dy, allowed) in ways {
-            let diagonal = dx != 0 && dy != 0;
-            if !allowed || (diagonal && !open(dx, dy)) {
+        for (dx, dy, sides) in ways {
+            if !sides || !onto(dx, dy) {
                 continue;
             }
+            let diagonal = dx != 0 && dy != 0;
             let next = [cell[0] + dx, cell[1] + dy];
             let cost = spent + if diagonal { 14 } else { 10 };
             match known.get(&next) {
@@ -1427,6 +1440,33 @@ mod tests {
         assert!(find_path(&gat, [0, 0], [1, 1]).is_none());
         assert_eq!(direction([0, 1]), 4);
         assert_eq!(direction([1, -1]), 7);
+    }
+
+    #[test]
+    fn monster_looking_npcs_step_onto_type_5() {
+        // Cell (x, y) is cells[y * W + x]; the listed cells are type 5, the rest 0.
+        let gat = |width: usize, height: usize, five: &[[usize; 2]]| {
+            let mut cells = vec![([0.0; 4], 0); width * height];
+            for [x, y] in five {
+                cells[y * width + x].1 = 5;
+            }
+            Gat { width, height, cells }
+        };
+        let across = gat(3, 1, &[[1, 0]]);
+        assert_eq!(find_unit_path(&across, [0, 0], [2, 0], 12), Some(vec![[1, 0], [2, 0]]));
+        assert_eq!(find_unit_path(&across, [0, 0], [2, 0], 6), None);
+        let goal = gat(3, 1, &[[2, 0]]);
+        assert_eq!(find_unit_path(&goal, [0, 0], [2, 0], 12), Some(vec![[1, 0], [2, 0]]));
+        assert_eq!(find_unit_path(&goal, [0, 0], [2, 0], 6), None);
+        // The diagonal past a type-5 side cell stays shut, so kind 12 goes through it and kind 6 round it.
+        let corner = gat(2, 2, &[[1, 0]]);
+        assert_eq!(find_unit_path(&corner, [0, 0], [1, 1], 12), Some(vec![[1, 0], [1, 1]]));
+        assert_eq!(find_unit_path(&corner, [0, 0], [1, 1], 6), Some(vec![[0, 1], [1, 1]]));
+        // Type 1 blocks everyone; clicks and the trail (no kind) treat 5 as blocked.
+        let mut wall = gat(3, 1, &[]);
+        wall.cells[1].1 = 1;
+        assert_eq!(find_unit_path(&wall, [0, 0], [2, 0], 12), None);
+        assert_eq!(find_path(&across, [0, 0], [2, 0]), None);
     }
 
     #[test]

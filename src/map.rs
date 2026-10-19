@@ -304,8 +304,21 @@ impl Gat {
     }
 
     /// Every type but 1 (a wall) and 5 (a gap that can be shot across) can be walked on, as rathena has it.
-    pub fn walkable(&self, [x, y]: [i32; 2]) -> bool {
-        x >= 0 && y >= 0 && (x as usize) < self.width && (y as usize) < self.height && !matches!(self.cells[y as usize * self.width + x as usize].1, 1 | 5)
+    pub fn walkable(&self, cell: [i32; 2]) -> bool {
+        self.walkable_by(cell, false)
+    }
+
+    /// Whether a walker can step onto a cell: types 1 and 5 block, except type 5 for an NPC with a monster's look.
+    pub fn walkable_by(&self, [x, y]: [i32; 2], monster_look: bool) -> bool {
+        x >= 0
+            && y >= 0
+            && (x as usize) < self.width
+            && (y as usize) < self.height
+            && match self.cells[y as usize * self.width + x as usize].1 {
+                1 => false,
+                5 => monster_look,
+                _ => true,
+            }
     }
 
     /// Average height of a cell (negative is up).
