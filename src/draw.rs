@@ -2034,8 +2034,16 @@ impl App {
         // An aimed skill: its name in a balloon at the top, "select a target" in one at the bottom, centred. Taming has
         // no skill: the bottom one only.
         let mut aim_lines = Vec::new();
-        if let Some((id, _)) = game.targeting {
-            aim_lines.push((skill_info.get(&id).map_or_else(|| id.to_string(), |info| info.name.clone()), screen()[1] * 46.0 / 480.0));
+        if let Some((id, level)) = game.targeting {
+            let mut name = skill_info.get(&id).map_or_else(|| id.to_string(), |info| info.name.clone());
+            // A skill whose level can be picked (the wheel) shows the one it goes off at.
+            let separate = skill_info.get(&id).is_some_and(|info| info.separate_level);
+            if let Some(skill) = game.skills.iter().find(|skill| skill.id == id)
+                && skills::level_pickable(skill.kind, skill.level, separate)
+            {
+                name = format!("{name} Lv {level}/{}", skill.level);
+            }
+            aim_lines.push((name, screen()[1] * 46.0 / 480.0));
         }
         if game.targeting.is_some() || game.capturing {
             aim_lines.push((message(TARGET_MESSAGE).to_owned(), screen()[1] * 400.0 / 480.0));
