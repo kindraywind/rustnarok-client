@@ -1111,6 +1111,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             crate::links::Target::Item(item) => json!({"kind": "item_link", "id": item.id, "box": area}),
             crate::links::Target::Navi { map, .. } => json!({"kind": "navi_link", "map": map, "box": area}),
             crate::links::Target::Url(address) => json!({"kind": "url_link", "address": address, "box": area}),
+            crate::links::Target::Quest(id) => json!({"kind": "quest_link", "id": id, "box": area}),
             crate::links::Target::Tip => json!({"kind": "tip_link", "box": area}),
         }))
         .chain(
@@ -1627,6 +1628,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["slot_machine"] = json!(game.slot.as_ref().map(|machine| machine.monster));
     // The quest whose details show.
     state["quest_picked"] = json!(game.quest_window.picked);
+    state["quest_list"] = json!({"tab": game.quest_window.tab, "ids": game.quest_window.listed(&game.quests, &app.quest_texts)});
     state["opened_page"] = game.opened_page.clone().into();
     // Our milliseconds a cell.
     state["player"]["step_ms"] = game.player.step_ms.into();

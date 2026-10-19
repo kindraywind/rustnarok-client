@@ -2382,6 +2382,8 @@ enum BoxQuestion {
     Notice(usize),
     /// The master hands the guild to this member (2924, both %s their name).
     GuildLeader { account: u32, character: u32, name: String },
+    /// A plain notice in these words, OK only (a quest link to a quest no list has).
+    Said(String),
 }
 
 impl BoxQuestion {
@@ -2394,6 +2396,7 @@ impl BoxQuestion {
             Self::LastRow => party::IN_THE_LAST_ROW,
             Self::Notice(message) => *message,
             Self::GuildLeader { .. } => GUILD_LEADER_ASKS,
+            Self::Said(_) => 0,
         }
     }
 
@@ -2402,13 +2405,14 @@ impl BoxQuestion {
         let template = messages.get(self.message()).map_or("", String::as_str);
         match self {
             Self::GuildLeader { name, .. } => rustnarok_client::messages::fill(template, &[name, name]),
+            Self::Said(words) => words.clone(),
             _ => template.to_owned(),
         }
     }
 
     /// Whether it asks (OK and Cancel), else it tells (OK alone).
     fn asks(&self) -> bool {
-        !matches!(self, Self::OnlyLeader | Self::LastRow | Self::Notice(_))
+        !matches!(self, Self::OnlyLeader | Self::LastRow | Self::Notice(_) | Self::Said(_))
     }
 }
 
@@ -4058,6 +4062,7 @@ struct App {
     effect_table: effects::Table,
     /// Quests' titles, descriptions and summaries.
     quest_texts: HashMap<u32, quest::QuestText>,
+    quest_filters: quest::Filters,
     /// Sound out, the player's sound settings, and the music each map plays.
     audio: Option<sound::Audio>,
     sound: sound::Settings,
@@ -4351,6 +4356,7 @@ impl App {
                 None if game.storage.typing => game.storage.type_text(text),
                 None if game.pet_window.typing => game.pet_window.name_text.get_or_insert_with(String::new).push_str(text),
                 None if game.homunculus_window.typing => game.homunculus_window.name_text.get_or_insert_with(String::new).push_str(text),
+                None if game.quest_window.typing => game.quest_window.type_text(text),
                 None if game.booking.as_ref().is_some_and(|window| window.focus.is_some()) => game.booking.as_mut().unwrap().type_text(text),
                 None if game.guild_window.typing.is_some() => {
                     if let Some(guild) = &game.guild {
@@ -5067,6 +5073,7 @@ fn main() {
     // Several servers: the list comes first, as in the official client (dev logins take the first).
     let picking = connections.len() > 1 && std::env::var_os("RUSTNAROK_CLIENT_SERVER").is_none() && std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none();
     let quest_texts = quest::texts(&grf);
+    let quest_filters = quest::Filters::load(&grf);
     let sound = sound::Settings::load();
     let graphics = options::GraphicsSettings::load();
     let shortcuts = options::ShortcutSettings::load();
@@ -5110,6 +5117,7 @@ fn main() {
         map_names,
         worlds,
         quest_texts,
+        quest_filters,
         skill_info,
         skill_descriptions,
         skill_trees,

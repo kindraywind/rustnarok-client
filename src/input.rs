@@ -13,6 +13,7 @@ impl App {
             game.storage.typing = false;
             game.pet_window.typing = false;
             game.homunculus_window.typing = false;
+            game.quest_window.typing = false;
             if let Some(trade) = &mut game.trade {
                 trade.typing = false;
             }
@@ -110,6 +111,12 @@ impl App {
                         open_page(game, page);
                     }
                 }
+                // The quest window at that quest, or a notice that no list has it.
+                links::Target::Quest(id) => {
+                    if !game.quest_window.show_quest(id, &game.quests, &self.quest_texts) {
+                        game.question_box = Some(BoxQuestion::Said(format!("Not found Quest Info = {id}")));
+                    }
+                }
                 links::Target::Tip => {}
             },
             Scene::Game(game) if game.deal_choice.is_some() => {
@@ -162,6 +169,16 @@ impl App {
                             game.escape = None;
                             let _ = game.session.restart(false);
                         }
+                    }
+                }
+            }
+            // The message box, over every window: OK (alone when it only tells) or Cancel.
+            Scene::Game(game) if game.question_box.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                let asks = game.question_box.as_ref().is_some_and(BoxQuestion::asks);
+                for (place, yes) in box_buttons(asks) {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.answer_box(yes, &self.messages);
                     }
                 }
             }
@@ -824,16 +841,6 @@ impl App {
                     Some(guild::ReasonHit::Ok) => game.answer_reason(true),
                     Some(guild::ReasonHit::Cancel) => game.answer_reason(false),
                     _ => {}
-                }
-            }
-            // The message box: OK (alone when it only tells) or Cancel.
-            Scene::Game(game) if game.question_box.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
-                let dialog = dialog_position(&assets.message);
-                let asks = game.question_box.as_ref().is_some_and(BoxQuestion::asks);
-                for (place, yes) in box_buttons(asks) {
-                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
-                        game.answer_box(yes, &self.messages);
-                    }
                 }
             }
             // The party's docked windows (setup, create, invite): choices, the edit box, OK and Cancel.
@@ -2684,6 +2691,13 @@ impl App {
         {
             return;
         }
+        // So is a press on the message box: nothing under it starts a drag, so its release still clicks OK.
+        if let (Scene::Game(game), Some(assets)) = (&self.scene, &self.assets)
+            && game.question_box.is_some()
+            && contains(dialog_position(&assets.message), assets.message.size, cursor)
+        {
+            return;
+        }
         // Aiming a skill: the press on its target uses it; any other press lets go of the aim. On the world that's
         // all it does (no walk); on a window the window gets the press too.
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
@@ -3848,6 +3862,13 @@ impl App {
                 }
                 window.search(&self.navi_tables);
             }
+            // The quest search box: Enter applies it, Esc leaves it.
+            Scene::Game(game) if game.quest_window.typing => match key {
+                Key::Named(NamedKey::Enter) => game.quest_window.apply_search(),
+                Key::Named(NamedKey::Escape) => game.quest_window.typing = false,
+                Key::Named(NamedKey::Backspace) => game.quest_window.backspace(),
+                _ => game.quest_window.type_text(event.text.as_deref().unwrap_or_default()),
+            },
             // The pet's name box: Enter keeps what's typed, Esc puts the name back.
             Scene::Game(game) if game.pet_window.typing => match key {
                 Key::Named(NamedKey::Enter) => game.pet_window.typing = false,

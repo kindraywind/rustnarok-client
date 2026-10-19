@@ -760,6 +760,8 @@ fn skill_levels(list: &mlua::Table) -> Vec<(u16, u16)> {
 
 /// The quests' titles, descriptions and summaries (`QuestInfoList`), from the translation's System folder.
 const QUEST_INFO: &str = "system\\OngoingQuestInfoList_True.lub";
+/// The same list as an English translation names it.
+const QUEST_INFO_TRANSLATED: &str = "system\\OngoingQuests.lub";
 
 /// A quest's words, and the NPC cell the big minimap marks when the table gives one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -787,7 +789,7 @@ pub struct QuestInfo {
 /// A quest's words: title, description lines, summary, its NPC (cell, sprite, map) when listed, whether it's a cooldown
 /// timer, its rewards.
 pub fn quest_info(grf: &Grf) -> io::Result<HashMap<u32, QuestInfo>> {
-    quest_infos(&run(grf, &[QUEST_INFO])?)
+    quest_infos(&run(grf, &[QUEST_INFO]).or_else(|_| run(grf, &[QUEST_INFO_TRANSLATED]))?)
 }
 
 fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
@@ -843,6 +845,28 @@ fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
         }
     }
     Ok(quests)
+}
+
+/// The quest window's filters (`QuestFilterTable`): each id's tooltip and quest icons.
+const QUEST_CLASSIFICATION: &str = "system\\QuestClassificationInfo.lub";
+
+pub fn quest_filters(grf: &Grf) -> io::Result<HashMap<i64, (String, Vec<String>)>> {
+    quest_filter_table(&run(grf, &[QUEST_CLASSIFICATION])?)
+}
+
+fn quest_filter_table(lua: &Lua) -> io::Result<HashMap<i64, (String, Vec<String>)>> {
+    let table: mlua::Table = lua.globals().get("QuestFilterTable").map_err(lua_error)?;
+    let mut filters = HashMap::new();
+    for pair in table.pairs::<i64, mlua::Table>() {
+        let Ok((id, entry)) = pair else { continue };
+        let tooltip = entry.get::<mlua::String>("Tooltip").map(|text| decode(&text)).unwrap_or_default();
+        let icons = entry
+            .get::<mlua::Table>("QuestIcons")
+            .map(|icons| icons.sequence_values::<mlua::String>().flatten().map(|icon| decode(&icon)).collect())
+            .unwrap_or_default();
+        filters.insert(id, (tooltip, icons));
+    }
+    Ok(filters)
 }
 
 /// Skills' descriptions by ID, line by line as the data has them.
@@ -1891,6 +1915,25 @@ mod tests {
         assert_eq!(quests[&7001].npc, None);
         assert_eq!(quests[&7002].npc, Some([150, 180]));
         assert!(!quests[&7001].cooldown && quests[&7003].cooldown, "a cooldown timer");
+    }
+
+    #[test]
+    fn reads_quest_filters() {
+        let lua = super::new_lua().unwrap();
+        lua.load(
+            r#"QUEST_FILTER = { ALL = 0, ETC = 1, NORMAL = 2 }
+            QuestFilterTable = {
+                [QUEST_FILTER.ALL] = { Tooltip = "All", QuestIcons = {} },
+                [QUEST_FILTER.NORMAL] = { Tooltip = "Normal", QuestIcons = { "ico_ep.bmp", "ico_gq.bmp" } },
+                [QUEST_FILTER.ETC] = { Tooltip = "Etc" },
+            }"#,
+        )
+        .exec()
+        .unwrap();
+        let filters = super::quest_filter_table(&lua).unwrap();
+        assert_eq!(filters[&0], ("All".to_owned(), vec![]));
+        assert_eq!(filters[&2], ("Normal".to_owned(), vec!["ico_ep.bmp".to_owned(), "ico_gq.bmp".to_owned()]));
+        assert_eq!(filters[&1].1, Vec::<String>::new());
     }
 
     #[test]
