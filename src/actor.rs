@@ -1554,8 +1554,6 @@ const WARG_START: f32 = world::CELL * 3.0;
 const FALCON_ARRIVED: f32 = 25.0;
 const FALCON_FAR: f32 = 12.0;
 const FALCON_NEAR: f32 = 3.0;
-/// The frame the falcon shows while it's arriving.
-const FALCON_ARRIVING_FRAME: usize = 8;
 /// The warg waits until its owner is farther than 15, then runs 0.7 a tick; within 15.7 it's put at 14.9.
 const WARG_WAIT: f32 = 15.0;
 const WARG_RUN: f32 = 0.7;
@@ -1570,9 +1568,11 @@ const WARG_DEAD: usize = 4;
 /// A player's flinch and dead actions.
 const PLAYER_FLINCH: usize = 6;
 const PLAYER_DEAD: usize = 8;
-/// Baby Hunters and Rangers, whose falcon is the baby one; Baby Rangers' warg too; and the Windhawks.
-const BABY_FALCON_JOBS: [u16; 3] = [4034, 4098, 4111];
+/// Baby Hunters, whose falcon is the baby one; Baby Rangers' and the other baby wolf-keepers' warg; and the Windhawks.
+const BABY_FALCON_JOBS: [u16; 1] = [4034];
 const BABY_WARG_JOBS: [u16; 2] = [4098, 4111];
+/// Rangers (grown-up, trans, baby), whose falcon is the owl.
+const OWL_JOBS: [u16; 3] = [4056, 4062, 4098];
 const WINDHAWK_JOBS: [u16; 2] = [4257, 4278];
 
 /// The MVP tomb, which casts no shadow.
@@ -1669,7 +1669,6 @@ fn facing(from: [f32; 2], owner: [f32; 2], rot: f32) -> f32 {
     if f32::hypot(dx, dz) < 1e-3 { rot } else { dx.atan2(-dz).to_degrees().rem_euclid(360.0) }
 }
 
-// ponytail: the data's other falcons (매2, OWL, demon_pungus, explosion, lude) aren't picked by anything known.
 /// The falcon's or warg's sprite for an owner of `job`, as (sprite path, ACT path) to try in order, and its shadow.
 fn companion_sprites(warg: bool, job: u16) -> (Vec<(String, String)>, f32) {
     let pair = |path: &str, act: &str| (format!("data\\sprite\\{path}"), format!("data\\sprite\\{act}.act"));
@@ -1681,6 +1680,11 @@ fn companion_sprites(warg: bool, job: u16) -> (Vec<(String, String)>, f32) {
         (false, job) if WINDHAWK_JOBS.contains(&job) => tries.push(same("이팩트\\windhawk_hawk")),
         (true, job) if WINDHAWK_JOBS.contains(&job) => tries.push(same("이팩트\\windhawk_wolf")),
         (false, job) if BABY_FALCON_JOBS.contains(&job) => tries.push(pair("이팩트\\매", "이팩트\\베이비매")),
+        (false, job) if OWL_JOBS.contains(&job) => tries.push(same("이팩트\\owl")),
+        (false, 4012) => tries.push(same("이팩트\\매2")),
+        (false, 4050) => tries.push(same("몬스터\\demon_pungus")),
+        (false, 4051) => tries.push(same("몬스터\\explosion")),
+        (false, 4052) => tries.push(same("몬스터\\lude")),
         (true, job) if BABY_WARG_JOBS.contains(&job) => {
             tries.push(pair("몬스터\\워그", "몬스터\\베이비워그"));
             shadow = BABY_WARG_SHADOW;
@@ -1778,16 +1782,14 @@ impl Companion {
         }
     }
 
-    /// The falcon flaps (its walk), holding one frame while it arrives. The warg runs, stands, flinches once or lies
-    /// dead.
+    /// The falcon flaps (its idle action) once it has arrived, and until then shows its walk (the birds' one gliding frame).
+    /// The warg runs, stands, flinches once or lies dead.
     pub fn frame(&mut self, gpu: &Gpu, direction: u8, now: Instant) -> Vec<Placed> {
         let Some(sprites) = &mut self.sprites else { return Vec::new() };
         let (action, since) = self.action;
         let action = if action < sprites.actions() / 8 { action } else { IDLE };
         let ms = now.saturating_duration_since(since).as_secs_f32() * 1000.0;
-        let count = sprites.frames(action * 8 + usize::from(direction % 8));
         let timing = match action {
-            _ if self.arriving && count > FALCON_ARRIVING_FRAME => Timing::Span((FALCON_ARRIVING_FRAME as f32 + 0.5) / count as f32),
             WARG_HURT | WARG_DEAD => Timing::Once(ms, 1.0),
             _ => Timing::Loop(ms),
         };
@@ -2622,6 +2624,7 @@ impl Actor {
             let (at, arriving) = falcon_step(falcon.at, leader, falcon.arriving, ticks);
             falcon.moving = f32::hypot(at[0] - falcon.at[0], at[1] - falcon.at[1]) > 1e-3;
             (falcon.at, falcon.arriving, falcon.stepped) = (at, arriving, now);
+            falcon.play(if arriving { WALK } else { IDLE }, now);
             falcon.rot = facing(at, leader, falcon.rot);
         }
         if let Some(warg) = &mut self.warg {
@@ -3551,6 +3554,14 @@ mod tests {
         assert_eq!(first(false, 11), "data\\sprite\\이팩트\\매.act");
         assert_eq!(first(false, 4034), "data\\sprite\\이팩트\\베이비매.act");
         assert_eq!(companion_sprites(false, 4034).0[0].0, "data\\sprite\\이팩트\\매", "the grown-up falcon's picture");
+        assert_eq!(first(false, 4056), "data\\sprite\\이팩트\\owl.act");
+        assert_eq!(first(false, 4098), "data\\sprite\\이팩트\\owl.act", "a Baby Ranger's falcon is the owl too");
+        assert_eq!(first(false, 4012), "data\\sprite\\이팩트\\매2.act");
+        assert_eq!(first(false, 4062), "data\\sprite\\이팩트\\owl.act");
+        assert_eq!(first(false, 4050), "data\\sprite\\몬스터\\demon_pungus.act");
+        assert_eq!([first(false, 4051), first(false, 4052)], ["data\\sprite\\몬스터\\explosion.act", "data\\sprite\\몬스터\\lude.act"]);
+        assert_eq!(first(false, 7), "data\\sprite\\이팩트\\매.act");
+        assert_eq!(first(false, 4111), "data\\sprite\\이팩트\\매.act", "a Baby Windhawk keeps the plain falcon, not the baby one");
         assert_eq!(first(false, 4257), "data\\sprite\\이팩트\\windhawk_hawk.act");
         assert_eq!(first(true, 4068), "data\\sprite\\이팩트\\워그.act");
         assert_eq!(first(true, 4098), "data\\sprite\\몬스터\\베이비워그.act");
@@ -3558,6 +3569,7 @@ mod tests {
         // A baby's falls back to the grown-up's; shadows: the warg's 2, a baby's 1, the falcon none.
         assert!(companion_sprites(true, 4098).0.iter().any(|(path, _)| path == "data\\sprite\\몬스터\\워그"));
         assert_eq!([companion_sprites(true, 4068).1, companion_sprites(true, 4111).1, companion_sprites(false, 11).1], [2.0, 1.0, 0.0]);
+        assert!([4056, 4012, 4050, 4051, 4052].iter().all(|&job| companion_sprites(false, job).1 == 0.0), "the new birds cast no shadow");
     }
 
     #[test]
