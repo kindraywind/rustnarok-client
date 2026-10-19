@@ -892,12 +892,12 @@ struct Banded {
 
 /// A cast's aura: one a caster has at a time.
 pub fn is_cast_aura(effect: u32) -> bool {
-    matches!(effect, 12 | 54..=59)
+    matches!(effect, 12 | 54..=59 | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
 }
 
 /// The effects made of bands.
 pub fn is_banded(effect: u32) -> bool {
-    matches!(effect, 12 | 54..=59 | 304 | 312 | 313 | 314 | 315 | 320 | 325 | 344 | 367)
+    matches!(effect, 12 | 54..=59 | 304 | 312 | 313 | 314 | 315 | 320 | 325 | 344 | 367 | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
 }
 
 /// How long a band effect lasts, in ticks: Heal and the arrival 100, the teleport and logout 200, Aura Blade's bloom 60.
@@ -944,7 +944,7 @@ const ARRIVAL_BANDS: [[f32; 3]; 4] = [[3.7, 30.0, 90.0], [3.4, 30.0, 90.0], [3.6
 
 /// How long a cast's aura lasts: the cast time in 16 ms ticks, at least 56 for 12 and 58 and 70 for the rest.
 fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
-    (cast_ms / 16).max(if matches!(effect, 12 | 58) { 56 } else { 70 })
+    (cast_ms / 16).max(if matches!(effect, 12 | 58 | 1872 | 1876 | 1902 | 1910 | 1918 | 1923) { 56 } else { 70 })
 }
 
 /// A band effect's texture, colour and whether it adds on.
@@ -964,6 +964,12 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         57 => ("ring_yellow", [0xFF, 0xFF, 0xFF], false),
         56 => ("Magic_Green", [0xFF, 0xFF, 0xFF], false),
         59 => ("Magic_Violet", [0xFF, 0xFF, 0xFF], false),
+        1872 => ("ring_white", [0x2B, 0x28, 0x2E], false),
+        1876 => ("ring_white", [0x7D, 0xB6, 0xA0], false),
+        1923 => ("ring_red", [0xB4, 0x37, 0x1E], false),
+        1902 => ("new_abr_mother\\abr_mother_ring", [0xFF, 0xFF, 0xFF], true),
+        1910 => ("new_abr_infinity\\ring_infinity", [0xFF, 0xFF, 0xFF], true),
+        1918 => ("new_d_cannon\\abr_dual_cannon_ring", [0xFF, 0xFF, 0xFF], true),
         _ => ("ring_yellow", [0xFF, 0xFF, 0xAA], true),
     }
 }
@@ -1117,7 +1123,7 @@ impl Banded {
             344 => return shaped(&arrival_bands(age), rising_height),
             _ => {}
         }
-        if matches!(self.effect, 12 | 58 | 367) {
+        if matches!(self.effect, 12 | 58 | 367 | 1872 | 1876 | 1902 | 1910 | 1918 | 1923) {
             (0..2)
                 .flat_map(|set| (0..4).filter_map(move |band| bloom(set, band, self.ticks, age).map(|shape| (band, shape))))
                 .map(|(band, shape)| (shape, heights(band, shape.height, bloom_height)))
@@ -4024,5 +4030,91 @@ mod tests {
         assert_eq!(sounds(220), [("effect\\ac_concentration", 288, true)]);
         // Other sounds keep their place.
         assert!(table.sounds.values().flatten().filter(|sound| sound.listener).count() == 3);
+    }
+
+    #[test]
+    fn six_cast_auras_bloom_cones_and_play_sound() {
+        let auras = [1872, 1876, 1902, 1910, 1918, 1923];
+        // is_cast_aura and is_banded are true for all six.
+        for &id in &auras {
+            assert!(is_cast_aura(id) && is_banded(id));
+            // aura_ticks is 56 for casts of 0 and 500 ms and 125 for 2000 ms.
+            assert_eq!([aura_ticks(id, 0), aura_ticks(id, 500), aura_ticks(id, 2000)], [56, 56, 125]);
+        }
+        // aura_look gives the texture, colour and blend of the table (1872, 1876, 1923 not additive; the other three additive).
+        assert_eq!(aura_look(1872), ("ring_white", [0x2B, 0x28, 0x2E], false));
+        assert_eq!(aura_look(1876), ("ring_white", [0x7D, 0xB6, 0xA0], false));
+        assert_eq!(aura_look(1923), ("ring_red", [0xB4, 0x37, 0x1E], false));
+        assert_eq!(aura_look(1902), ("new_abr_mother\\abr_mother_ring", [0xFF, 0xFF, 0xFF], true));
+        assert_eq!(aura_look(1910), ("new_abr_infinity\\ring_infinity", [0xFF, 0xFF, 0xFF], true));
+        assert_eq!(aura_look(1918), ("new_d_cannon\\abr_dual_cannon_ring", [0xFF, 0xFF, 0xFF], true));
+
+        // each makes 8 bands (two sets of 4) with heights 20, 19, 18, 17 in each set.
+        let now = Instant::now();
+        for &id in &auras {
+            let banded = Banded { effect: id, anchor: Anchor::Unit(None), start: now, ticks: 100, turns: [0.0; 3], extra: [0.0; 2], sparkles: Vec::new() };
+            let bands = banded.bands(0);
+            assert_eq!(bands.len(), 8);
+            let heights: Vec<f32> = bands.iter().map(|(shape, _)| shape.height).collect();
+            assert_eq!(heights, vec![20.0, 19.0, 18.0, 17.0, 20.0, 19.0, 18.0, 17.0]);
+        }
+
+        // a second cast aura on the same caster replaces the first.
+        let mut effects = Effects::default();
+        effects.auras.push(Banded {
+            effect: 1872,
+            anchor: Anchor::Unit(Some(42)),
+            start: now,
+            ticks: 56,
+            turns: [0.0; 3],
+            extra: [0.0; 2],
+            sparkles: Vec::new(),
+        });
+        effects.auras.retain(|aura| !(is_cast_aura(aura.effect) && matches!(aura.anchor, Anchor::Unit(each) if each == Some(42))));
+        effects.auras.push(Banded {
+            effect: 1902,
+            anchor: Anchor::Unit(Some(42)),
+            start: now,
+            ticks: 56,
+            turns: [0.0; 3],
+            extra: [0.0; 2],
+            sparkles: Vec::new(),
+        });
+        assert_eq!(effects.auras.len(), 1);
+        assert_eq!(effects.auras[0].effect, 1902);
+
+        // wav rows for the six.
+        let table = Table::load();
+        for &id in &auras {
+            let sounds = &table.sounds[&id];
+            assert_eq!(sounds.len(), 1);
+            assert_eq!(sounds[0].file, "effect\\ef_beginspell");
+            assert_eq!(sounds[0].delay_ms, 0);
+        }
+
+        // the cast rows of #680 name them.
+        assert_eq!(table.cast_aura(5331, 12), Some(1872));
+        assert_eq!(table.cast_aura(5333, 12), Some(1876));
+        assert_eq!(table.cast_aura(5304, 12), Some(1902));
+        assert_eq!(table.cast_aura(5305, 12), Some(1910));
+        assert_eq!(table.cast_aura(5303, 12), Some(1918));
+        assert_eq!(table.cast_aura(5335, 12), Some(1923));
+    }
+
+    #[test]
+    fn blind_showing_for_health_bit_and_deep_blind() {
+        let start = Instant::now();
+        let mut view = BlindView::default();
+        // bit 0x10 alone turns blind showing on
+        view.update(true, (BLIND_BIT & BLIND_BIT) != 0, start);
+        assert!(view.showing());
+        view.update(true, false, start);
+        assert!(!view.showing());
+        // status 1205 (DEEP_BLIND) alone turns blind showing on
+        let status = DEEP_BLIND;
+        view.update(true, status == DEEP_BLIND, start);
+        assert!(view.showing());
+        view.update(true, false, start);
+        assert!(!view.showing());
     }
 }

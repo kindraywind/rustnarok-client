@@ -1749,8 +1749,12 @@ impl App {
             }
             let scale = (STATUS_ICON / icon.size[0].max(icon.size[1])).min(1.0);
             let size = icon.size.map(|value| value * scale);
-            chat_layer.sprites.push((icon, offset(corner, [(STATUS_ICON - size[0]) / 2.0, (STATUS_ICON - size[1]) / 2.0]), size));
-            if let Some(end) = end {
+            let (draw_icon, draw_clock) = status_tip::icon_sprites(*end, game.blind.showing());
+            if draw_icon {
+                chat_layer.sprites.push((icon, offset(corner, [(STATUS_ICON - size[0]) / 2.0, (STATUS_ICON - size[1]) / 2.0]), size));
+            }
+            if draw_clock {
+                let end = end.unwrap();
                 let left = end.saturating_duration_since(now).as_secs_f32();
                 let (color, share) = if left < 60.0 {
                     (1, 1.0 - left / 60.0)

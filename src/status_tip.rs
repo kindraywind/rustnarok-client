@@ -55,6 +55,11 @@ pub fn placed<T: Copy>(icons: &[(u16, T)], priority: impl Fn(u16) -> Option<u8>)
     order
 }
 
+/// What sprites a status icon draws: always its icon sprite; its timer clock only when timed and not blind.
+pub fn icon_sprites(end: Option<std::time::Instant>, blind: bool) -> (bool, bool) {
+    (true, end.is_some() && !blind)
+}
+
 /// The `order`th icon's box corner (columns right to left, rows top down).
 pub fn icon_corner(order: usize, [width, height]: [f32; 2]) -> [f32; 2] {
     let per = rows(height);
@@ -186,5 +191,20 @@ mod tests {
         // Near the bottom it's pulled up.
         let (corner, size) = place([956.0, 740.0], 100.0, 3, 12.0);
         assert_eq!(corner[1] + size[1], screen()[1]);
+    }
+
+    #[test]
+    fn hides_clock_sprites_while_blind() {
+        use crate::effects::{BLIND_BIT, DEEP_BLIND};
+        let now = std::time::Instant::now();
+        let end = Some(now + std::time::Duration::from_secs(60));
+        let is_blind = |health_state: u16, status: u16| health_state & BLIND_BIT != 0 || status == DEEP_BLIND;
+        // While blind (bit 0x10 and status 1205, each alone) clock sprites are left out; icon sprites are drawn in both cases.
+        assert_eq!(icon_sprites(end, is_blind(BLIND_BIT, 0)), (true, false));
+        assert_eq!(icon_sprites(end, is_blind(0, DEEP_BLIND)), (true, false));
+        assert_eq!(icon_sprites(end, is_blind(BLIND_BIT, DEEP_BLIND)), (true, false));
+        assert_eq!(icon_sprites(end, is_blind(0, 0)), (true, true));
+        // Without an end time, no clock sprite is drawn even when not blind.
+        assert_eq!(icon_sprites(None, is_blind(0, 0)), (true, false));
     }
 }

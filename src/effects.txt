@@ -2061,6 +2061,12 @@ wav	1190	effect\drop_purple	0
 wav	1869	effect\drop_blue	0
 wav	1870	effect\drop_green	0
 wav	1871	effect\drop_red	0
+wav	1872	effect\ef_beginspell	0
+wav	1876	effect\ef_beginspell	0
+wav	1902	effect\ef_beginspell	0
+wav	1910	effect\ef_beginspell	0
+wav	1918	effect\ef_beginspell	0
+wav	1923	effect\ef_beginspell	0
 wav	914	effect\G스포어익스플로젼	0
 hit	1	0	-1
 hit	2	0	-1
