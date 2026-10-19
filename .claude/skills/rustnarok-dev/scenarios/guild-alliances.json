@@ -1,5 +1,5 @@
 {
-  "about": "Guild alliances, antagonists and disbanding (issue #102): two characters each make a guild (RelTestA, RelTestB; the second's through #guild). The first asks the second's guild for an alliance from the right-click menu, the second accepts, and both list the other as an ally; the info page shows it in the Alliances box, a click selects it, and the master's right click on it gives Delete, which ends the alliance at once (no question). Set as an antagonist, the master deletes that from the info page the same way (issue #331). /breakguild with a wrong name does nothing, with the guild's name it disbands it. Both end without a guild, as they started; a run that stops halfway is cleaned up by the first steps of the next.",
+  "about": "Guild alliances, antagonists and disbanding (issue #102): two characters each make a guild (RelTestA, RelTestB; the second's through #guild). The first asks the second's guild for an alliance from the right-click menu, the second accepts, and both list the other as an ally; the info page shows it in the Alliances box, a click selects it, and the master's right click on it gives Delete, which ends the alliance at once (no question). Set as an antagonist, the master deletes that from the info page the same way (issue #331). /breakguild with a wrong name says so in the message box, with the guild's name it disbands it. Both end without a guild, as they started; a run that stops halfway is cleaned up by the first steps of the next.",
   "account": "",
   "slot": 0,
   "second": {"account": "2", "slot": 0},
@@ -39,7 +39,7 @@
     {"click_on": {"menu_item": "Delete"}}, {"wait_for": {"packet": "0x0184", "ms": 5000}}, {"wait": 300},
     {"expect": {"state": {"guild.antagonists": []}, "windows_closed": ["GuildAsked"]}},
     {"type": "/breakguild WrongName"}, {"key": "Enter"}, {"wait": 1000},
-    {"expect": {"state": {"guild.name": "RelTestA"}}},
+    {"expect": {"state": {"guild.name": "RelTestA"}}}, {"expect": {"windows_open": ["Notice"]}}, {"click_on": {"button": "ok"}}, {"wait": 300},
     {"type": "/breakguild RelTestA"}, {"key": "Enter"}, {"wait_for": {"packet": "0x015e", "ms": 5000}}, {"wait": 300},
     {"expect": {"chat": "Guild was successfully disbanded.", "state": {"guild": null}, "windows_closed": ["Guild"]}},
     {"say": "#breakguild \"{second}\""},
