@@ -1962,7 +1962,7 @@ struct CompanionDraw {
 
 /// A falcon or warg to draw: its direction rounds the camera's angle, as a standing player's does.
 fn push_companion(companion: &mut actor::Companion, warg: bool, owner: Owner, gpu: &Gpu, world: &World, yaw: f32, now: Instant, out: &mut Vec<CompanionDraw>) {
-    let lift = if warg { 0.0 } else { actor::FALCON_HEIGHT };
+    let lift = if warg { 0.0 } else { companion.lift };
     let placed = companion.frame(gpu, seen_direction(companion.rot, yaw, true), now);
     if placed.is_empty() {
         return;

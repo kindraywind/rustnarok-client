@@ -4,6 +4,7 @@
 //! stone ones) in `stone`, the bolts' arrows in `bolts`, Bash's burst in `burst`.
 
 pub mod balls;
+pub mod blitz;
 pub mod bolts;
 pub mod boomerang;
 pub mod burst;
@@ -83,6 +84,7 @@ pub struct Prims {
     pub boomerangs: boomerang::Boomerangs,
     pub napalms: Vec<napalm::Napalm>,
     pub sparkles: Vec<sparkle::Hallutime>,
+    pub blitzes: blitz::Blitzes,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -341,6 +343,7 @@ impl Prims {
         self.bursts.retain(|burst| burst.alive(now));
         self.napalms.retain(|napalm| napalm.alive(now));
         self.sparkles.retain(|sparkle| sparkle.alive(now));
+        self.blitzes.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
     }
 
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is
