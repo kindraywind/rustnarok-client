@@ -1235,10 +1235,10 @@ impl Game {
         if let Some(cell) = cell {
             let at = self.world.cell_position(cell.map(|value| value as f32));
             self.effects.play_hits(gpu, grf, table, effect, effects::Target::Unit(key), at, start, hits);
-            // EF_HIT1 is made in code, turned by the way the target faces.
+            // EF_HIT1 is made in code, flying the exact way the target faces.
             if effect == EF_HIT1 {
-                let facing = key.map_or(Some(self.player.direction), |id| self.units.get(&id).map(|actor| actor.direction));
-                self.effects.play_hit(gpu, grf, key, facing.unwrap_or(0), start);
+                let rot = key.map_or(Some(self.player.rot), |id| self.units.get(&id).map(|actor| actor.rot));
+                self.effects.play_hit(gpu, grf, key, rot.unwrap_or(0.0), start);
             }
         }
     }

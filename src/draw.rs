@@ -2539,6 +2539,8 @@ impl App {
             None => Some(player_feet),
             Some(id) => feet_of.get(&id).copied(),
         };
+        let ground = &game.world.gat;
+        game.effects.settle_hits(now, feet_of_unit, |x, z| -ground.height_at([x / world::CELL, z / world::CELL]));
         let (mut effect_quads, mut effect_meshes) =
             if effects_on { (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit)) } else { (Vec::new(), Vec::new()) };
         if effects_on {

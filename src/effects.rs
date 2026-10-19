@@ -606,14 +606,18 @@ impl Ring {
     }
 }
 
-/// EF_HIT1, made in code: a blue ring drifting off the target and four sparks flying out with short trails. Everything
-/// moves once a tick (16 ms); it lasts 50 ticks and follows its unit.
+/// EF_HIT1, made in code: a blue ring flying off the target the way it faces and four sparks flying out with short
+/// trails. Everything moves once a tick (16 ms), changing its speed first and then moving, so it has made its first move
+/// when it's first drawn; it lasts 50 ticks and stays where it was made.
 struct HitSpark {
     start: Instant,
+    /// The target until the hit lands, then where its feet were then.
     anchor: Anchor,
-    /// The way the ring drifts across the ground (x east, z north), a unit vector.
+    /// The way the ring flies across the ground (x east, z north), a unit vector.
     way: [f32; 2],
     sparks: [Spark; 4],
+    /// Each spark's place from the feet on each drawn tick, worked out as the hit lands (`settle_hits`).
+    paths: Option<[Vec<Vector>; 4]>,
     /// The spark sprite's images, from `advance`.
     placed: Vec<Placed>,
 }
@@ -621,12 +625,14 @@ struct HitSpark {
 /// One of a hit's sparks, its random choices made.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Spark {
-    /// Its heading, a unit vector (y up).
-    heading: Vector,
+    /// Its yaw from the north–south line (toward the east) and its pitch, in radians.
+    yaw: f32,
+    pitch: f32,
     /// How far out along its heading it starts, and how fast it goes a tick at first (falling evenly to half).
     out: f32,
     speed: f32,
-    /// How fast it rises a tick at first: the back pair only.
+    /// The back pair: it flies level and hops, rising this much a tick at first.
+    back: bool,
     rise: f32,
     scale: f32,
     /// Ticks it lives.
@@ -638,48 +644,47 @@ const HIT_TICKS: u32 = 50;
 const RING_TICKS: u32 = 10;
 const RING_TEXTURE: &str = "data\\texture\\effect\\ring_blue.tga";
 const SPARK_SPRITE: &str = "data\\sprite\\이팩트\\particle1";
-/// The ring's middle and the sparks' start, above the feet; the ring's inner and outer radius.
+/// The ring's middle and the sparks' start, above the feet; the ring's inner and outer radius, and how much further
+/// along its way the outer edge is (a shallow funnel opening the way it flies).
 const HIT_HEIGHT: f32 = 10.0;
 const RING_RADII: [f32; 2] = [5.0, 10.0];
-const RING_SIDES: usize = 24;
-/// Each spark is drawn this many times, where it was that many ticks ago.
+const RING_FUNNEL: f32 = 3.5;
+/// 10 sides of 36°; the texture's u goes up a quarter a side and starts again at 0 after four.
+const RING_SIDES: usize = 10;
+/// Each spark is drawn this many times, where it was that many ticks ago, smaller and fainter.
 const TRAIL: u32 = 3;
 const NEAR_OPAQUE: f32 = 254.0 / 255.0;
+/// A back-pair spark falling onto higher ground bounces: its vertical speed divided by this.
+const SPARK_BOUNCE: f32 = -1.5;
 
-/// The way a hit's ring drifts for a target facing `facing` (0 south, turning west): straight away from its face.
-// ponytail: the game turns the ring by 180° − the facing; which way that points in these axes is a choice.
-fn drift(facing: u8) -> [f32; 2] {
-    let (sin, cos) = (f32::from(facing % 8) * 45.0).to_radians().sin_cos();
-    [sin, cos]
+/// The way a hit's ring flies for a target facing `rot` degrees (0 south, 90 east, as `Actor::rot`): the way it faces.
+fn drift(rot: f32) -> [f32; 2] {
+    let (sin, cos) = rot.to_radians().sin_cos();
+    [sin, -cos]
 }
 
-/// The ring's alpha at a tick: 254 until tick 5, then straight down to 0 at tick 10.
+/// The ring's alpha on a drawn tick: 254 to tick 4, then 51 less a tick, 0 on tick 9.
 fn ring_alpha(tick: u32) -> f32 {
-    NEAR_OPAQUE * ((RING_TICKS as f32 - tick as f32) / 5.0).clamp(0.0, 1.0)
+    (254.0 - 51.0 * tick.saturating_sub(4) as f32).max(0.0) / 255.0
 }
 
-/// The ring's speed at a tick: 0.7 units, slowing evenly to 0.35 by its end.
-fn ring_speed(tick: u32) -> f32 {
-    0.7 - 0.35 * tick as f32 / RING_TICKS as f32
-}
-
-/// How far the ring has drifted by a tick.
+/// How far the ring has flown on a drawn tick: moves of 0.665 falling by 0.035 a tick, one made before it's drawn.
 fn ring_travel(tick: u32) -> f32 {
-    (0..tick.min(RING_TICKS)).map(ring_speed).sum()
+    (1..=tick.min(RING_TICKS - 1) + 1).map(|step| 0.7 - 0.035 * step as f32).sum()
 }
 
-/// A hit's four sparks for a ring drifting `way`: two within ±40° of it and two the other way (140°…219° off), each
+/// A hit's four sparks for a ring flying `way`: two within −40°…+39° of it and two behind (140°…219° off), each
 /// pitched −50°…49°; `random(from, to)` picks every range.
 fn sparks(way: [f32; 2], mut random: impl FnMut(f32, f32) -> f32) -> [Spark; 4] {
     let toward = way[0].atan2(way[1]);
     std::array::from_fn(|index| {
         let back = index >= 2;
-        let turn = toward + if back { random(140.0, 220.0) } else { random(-40.0, 40.0) }.to_radians();
-        let (sin, cos) = random(-50.0, 50.0).to_radians().sin_cos();
         Spark {
-            heading: [turn.sin() * cos, sin, turn.cos() * cos],
+            yaw: toward + if back { random(140.0, 220.0) } else { random(-40.0, 40.0) }.to_radians(),
+            pitch: random(-50.0, 50.0).to_radians(),
             out: random(4.0, 7.0),
             speed: random(0.6, 1.5),
+            back,
             rise: if back { random(0.3, 1.2) } else { 0.0 },
             scale: random(0.6, 1.6),
             life: random(6.0, 30.0) as u32,
@@ -688,36 +693,74 @@ fn sparks(way: [f32; 2], mut random: impl FnMut(f32, f32) -> f32) -> [Spark; 4] 
 }
 
 impl Spark {
-    fn speed_at(&self, tick: u32) -> f32 {
-        self.speed * (1.0 - 0.5 * tick as f32 / self.life as f32)
+    /// Its heading, a unit vector (x east, y up, z north): the pitch turns it about the east–west axis.
+    fn heading(&self) -> Vector {
+        let ((sin, cos), (pitch_sin, pitch_cos)) = (self.yaw.sin_cos(), self.pitch.sin_cos());
+        [sin, cos * pitch_sin, cos * pitch_cos]
     }
 
-    // ponytail: the rise falls by 2 × its start / life a tick, taken at each tick's middle so the back pair lands
-    // exactly back at its start height.
-    fn rise_at(&self, tick: u32) -> f32 {
-        self.rise - 2.0 * self.rise / self.life as f32 * (tick as f32 + 0.5)
+    /// Where it starts from the feet: `out` along its heading, 10 up.
+    fn origin(&self) -> Vector {
+        let heading = self.heading();
+        [heading[0] * self.out, heading[1] * self.out + HIT_HEIGHT, heading[2] * self.out]
     }
 
-    /// Where it is at a tick, from the feet.
-    fn place(&self, tick: u32) -> Vector {
-        let ticks = 0..tick.min(self.life);
-        let out = self.out + ticks.clone().map(|tick| self.speed_at(tick)).sum::<f32>();
-        let up = HIT_HEIGHT + ticks.map(|tick| self.rise_at(tick)).sum::<f32>();
-        [self.heading[0] * out, self.heading[1] * out + up, self.heading[2] * out]
+    /// How far it has gone after `moves` moves: v0·(n − n(n+1)/(4L)).
+    fn travel(&self, moves: u32) -> f32 {
+        let n = moves as f32;
+        self.speed * (n - n * (n + 1.0) / (4.0 * self.life as f32))
     }
 
-    /// Its alpha at a tick: 254 straight down to 0 over its life.
+    /// The back pair's height above its start after `moves` moves over flat ground: r·n·(1 − (n+1)/L).
+    #[cfg(test)]
+    fn hop(&self, moves: u32) -> f32 {
+        let n = moves as f32;
+        self.rise * n * (1.0 - (n + 1.0) / self.life as f32)
+    }
+
+    /// Its place from the feet on each drawn tick of its life (tick a after a + 1 moves). The front pair flies along its
+    /// heading; the back pair flies level along its yaw and hops, bouncing where it falls onto higher ground
+    /// (`ground(x, z)`: the ground's height there, from the feet).
+    // ponytail: the bounce flips the vertical speed after the move that takes it under the ground; it isn't put back up.
+    fn path(&self, ground: impl Fn(f32, f32) -> f32) -> Vec<Vector> {
+        let origin = self.origin();
+        if !self.back {
+            let heading = self.heading();
+            return (0..self.life).map(|tick| std::array::from_fn(|axis| origin[axis] + heading[axis] * self.travel(tick + 1))).collect();
+        }
+        let (sin, cos) = self.yaw.sin_cos();
+        let (mut place, mut up) = (origin, self.rise);
+        (1..=self.life)
+            .map(|step| {
+                let speed = self.speed * (1.0 - 0.5 * step as f32 / self.life as f32);
+                up -= 2.0 * self.rise / self.life as f32;
+                place = [place[0] + sin * speed, place[1] + up, place[2] + cos * speed];
+                if up < 0.0 && place[1] < ground(place[0], place[2]) {
+                    up /= SPARK_BOUNCE;
+                }
+                place
+            })
+            .collect()
+    }
+
+    /// Its alpha on a drawn tick: 254·(1 − (a + 1)/L), 0 on its last.
     fn alpha(&self, tick: u32) -> f32 {
-        NEAR_OPAQUE * (1.0 - tick as f32 / self.life as f32).max(0.0)
+        NEAR_OPAQUE * (1.0 - (tick + 1) as f32 / self.life as f32).max(0.0)
     }
 
-    /// Its trail at a tick: each copy's place from the feet and alpha, older ones fainter.
-    // ponytail: copy i is where it was i ticks ago at alpha × (3 − i) / 3.
-    fn trail(&self, tick: u32) -> Vec<(Vector, f32)> {
+    /// Its trail on a drawn tick: each copy's place from the feet, alpha and scale. Copy i is where it was i ticks ago
+    /// (at the feet, on the ground, before its first tick), at 1, 5/6 and 2/3 of its scale and 1, 2/3 and 1/3 of its alpha.
+    fn trail(&self, tick: u32, path: &[Vector]) -> Vec<(Vector, f32, f32)> {
         if tick >= self.life {
             return Vec::new();
         }
-        (0..TRAIL.min(tick + 1)).map(|copy| (self.place(tick - copy), self.alpha(tick) * (TRAIL - copy) as f32 / TRAIL as f32)).collect()
+        (0..TRAIL)
+            .map(|copy| {
+                let place = tick.checked_sub(copy).and_then(|then| path.get(then as usize)).copied().unwrap_or([0.0; 3]);
+                let share = (TRAIL - copy) as f32 / TRAIL as f32;
+                (place, self.alpha(tick) * share, self.scale * (6 - copy) as f32 / 6.0)
+            })
+            .collect()
     }
 }
 
@@ -727,25 +770,29 @@ impl HitSpark {
         (now.saturating_duration_since(self.start).as_secs_f32() * 1000.0 / HIT_TICK_MS) as u32
     }
 
-    /// The ring's triangles at a tick, the feet `at`: a flat ring standing upright across its way.
+    /// The ring's triangles on a drawn tick, the feet `at`: upright across its way, its outer edge 3.5 further along.
     fn ring(&self, tick: u32, at: Vector) -> Vec<MeshVertex> {
         let travel = ring_travel(tick);
         let middle = [at[0] + self.way[0] * travel, at[1] + HIT_HEIGHT, at[2] + self.way[1] * travel];
         let tint = [1.0, 1.0, 1.0, ring_alpha(tick)];
         // Around in the upright plane across the way; the texture's v runs from the inner edge (1) to the outer (0).
-        let point = |side: usize, edge: usize| {
-            let share = side as f32 / RING_SIDES as f32;
-            let (sin, cos) = (share * std::f32::consts::TAU).sin_cos();
-            let radius = RING_RADII[edge];
+        let point = |side: usize, edge: usize, u: f32| {
+            let (sin, cos) = (side as f32 / RING_SIDES as f32 * std::f32::consts::TAU).sin_cos();
+            let (radius, along) = (RING_RADII[edge], edge as f32 * RING_FUNNEL);
             MeshVertex {
-                position: [middle[0] + self.way[1] * radius * cos, middle[1] + radius * sin, middle[2] - self.way[0] * radius * cos],
-                uv: [share, 1.0 - edge as f32],
+                position: [
+                    middle[0] + self.way[1] * radius * cos + self.way[0] * along,
+                    middle[1] + radius * sin,
+                    middle[2] - self.way[0] * radius * cos + self.way[1] * along,
+                ],
+                uv: [u, 1.0 - edge as f32],
                 tint,
             }
         };
         (0..RING_SIDES)
             .flat_map(|side| {
-                let [inner, outer, next_inner, next_outer] = [point(side, 0), point(side, 1), point(side + 1, 0), point(side + 1, 1)];
+                let u = (side % 4) as f32 * 0.25;
+                let [inner, outer, next_inner, next_outer] = [point(side, 0, u), point(side, 1, u), point(side + 1, 0, u + 0.25), point(side + 1, 1, u + 0.25)];
                 [inner, outer, next_inner, outer, next_inner, next_outer]
             })
             .collect()
@@ -1385,12 +1432,34 @@ impl Effects {
         }
     }
 
-    /// EF_HIT1 on a unit (None = the player) facing `facing`, from `start`.
-    pub fn play_hit(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, facing: u8, start: Instant) {
+    /// EF_HIT1 on a unit (None = the player) facing `rot` degrees (as `Actor::rot`), from `start`.
+    pub fn play_hit(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, rot: f32, start: Instant) {
         self.textures.entry(RING_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, RING_TEXTURE, true).ok());
         self.sprites.entry(SPARK_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, SPARK_SPRITE));
-        let way = drift(facing);
-        self.hits.push(HitSpark { start, anchor: Anchor::Unit(unit), way, sparks: sparks(way, random), placed: Vec::new() });
+        let way = drift(rot);
+        self.hits.push(HitSpark { start, anchor: Anchor::Unit(unit), way, sparks: sparks(way, random), paths: None, placed: Vec::new() });
+    }
+
+    /// The hit sparks (for the test driver): the way each ring flies (x east, z north), the milliseconds until it lands,
+    /// its drawn tick, and where it stays once landed.
+    pub fn hit_sparks(&self, now: Instant) -> Vec<([f32; 2], u64, u32, Option<Vector>)> {
+        self.hits
+            .iter()
+            .map(|hit| {
+                let landing = hit.start.saturating_duration_since(now).as_millis() as u64;
+                (hit.way, landing, hit.tick(now), hit.paths.as_ref().and_then(|_| hit.anchor.place(&|_| None)))
+            })
+            .collect()
+    }
+
+    /// Hits landing by `now` stay where their targets' feet are (`position_of`), and their sparks' paths are worked out
+    /// over the ground there (`ground_at(x, z)`: the ground's height in the world).
+    pub fn settle_hits(&mut self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>, ground_at: impl Fn(f32, f32) -> f32) {
+        for hit in self.hits.iter_mut().filter(|hit| hit.paths.is_none() && hit.start <= now) {
+            let Some(at) = hit.anchor.place(&position_of) else { continue };
+            hit.anchor = Anchor::At(at);
+            hit.paths = Some(hit.sparks.map(|spark| spark.path(|x, z| ground_at(at[0] + x, at[2] + z) - at[1])));
+        }
     }
 
     /// A cast's aura (12 or 54–59) on a unit (None = the player) for a cast of `cast_ms`, replacing its last one.
@@ -1696,7 +1765,7 @@ impl Effects {
                 Some((texture, triangles.iter().map(|&(position, uv)| MeshVertex { position: place(position), uv, tint: [1.0; 4] }).collect(), false))
             })
         });
-        let hits = self.hits.iter().filter(|hit| hit.start <= now && hit.tick(now) < RING_TICKS).filter_map(|hit| {
+        let hits = self.hits.iter().filter(|hit| hit.paths.is_some() && hit.tick(now) < RING_TICKS).filter_map(|hit| {
             let at = hit.anchor.place(&position_of)?;
             let Some(Some(texture)) = self.textures.get(RING_TEXTURE) else { return None };
             Some((texture, hit.ring(hit.tick(now), at), false))
@@ -1819,13 +1888,13 @@ impl Effects {
         }
         // The hits' sparks, each with its trail, sized like a unit's sprite.
         if let Some(Some(sprite)) = self.sprites.get(SPARK_SPRITE) {
-            for hit in self.hits.iter().filter(|hit| hit.start <= now) {
-                let Some(at) = hit.anchor.place(&position_of) else { continue };
-                for spark in &hit.sparks {
-                    for (place, alpha) in spark.trail(hit.tick(now)) {
+            for hit in &self.hits {
+                let (Some(paths), Some(at)) = (&hit.paths, hit.anchor.place(&position_of)) else { continue };
+                for (spark, path) in hit.sparks.iter().zip(paths) {
+                    for (place, alpha, scale) in spark.trail(hit.tick(now), path) {
                         let anchor = std::array::from_fn(|axis| at[axis] + place[axis]);
                         for &(key, position, size, layer_angle) in &hit.placed {
-                            let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * spark.scale));
+                            let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * scale));
                             quads.push((sprite.texture(key), anchor, corners, [1.0, 1.0, 1.0, alpha], false, false));
                         }
                     }
@@ -2219,61 +2288,142 @@ mod tests {
     }
 
     #[test]
-    fn fades_and_slows_the_hit_ring() {
-        // 254 until tick 5, about half at 7–8, gone at 10; 0.7 a tick slowing evenly to 0.35.
-        assert!((0..=5).all(|tick| ring_alpha(tick) == NEAR_OPAQUE));
-        assert!([7, 8].iter().all(|&tick| (100.0..=155.0).contains(&(ring_alpha(tick) * 255.0))));
-        assert_eq!(ring_alpha(10), 0.0);
-        assert!((ring_speed(0) - 0.7).abs() < 1e-6 && (ring_speed(10) - 0.35).abs() < 1e-6);
-        assert!((ring_travel(2) - (0.7 + 0.665)).abs() < 1e-5 && ring_travel(10) == ring_travel(40));
-        // A target facing south (0) sends it north; facing west (2), east.
-        let [x, z] = drift(0);
-        assert!(x.abs() < 1e-6 && (z - 1.0).abs() < 1e-6);
-        let [x, z] = drift(2);
-        assert!((x - 1.0).abs() < 1e-6 && z.abs() < 1e-6);
+    fn flies_the_hit_ring_the_way_the_target_faces() {
+        // Each of the 8 facings (0 south, turning west) and 30° (south-east of south): the way it faces.
+        let near = |[x, z]: [f32; 2], [want_x, want_z]: [f32; 2]| (x - want_x).abs() < 1e-5 && (z - want_z).abs() < 1e-5;
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        let ways = [[0.0, -1.0], [-half, -half], [-1.0, 0.0], [-half, half], [0.0, 1.0], [half, half], [1.0, 0.0], [half, -half]];
+        for (direction, way) in (0..8).zip(ways) {
+            assert!(near(drift(crate::actor::rot_of(direction)), way), "{direction}");
+        }
+        assert!(near(drift(30.0), [0.5, -(3.0f32.sqrt()) / 2.0]));
+        // Distance and alpha on drawn ticks 0–9: it has already made its first move.
+        let travel = [0.665, 1.295, 1.890, 2.450, 2.975, 3.465, 3.920, 4.340, 4.725, 5.075];
+        assert!((0..10).all(|tick| (ring_travel(tick) - travel[tick as usize]).abs() < 1e-4));
+        assert_eq!((0..10).map(|tick| (ring_alpha(tick) * 255.0).round() as u32).collect::<Vec<_>>(), [254, 254, 254, 254, 254, 203, 152, 101, 50, 0]);
         let time = Instant::now();
-        let hit = HitSpark { start: time, anchor: Anchor::Unit(None), way: [0.0, 1.0], sparks: sparks([0.0, 1.0], |from, _| from), placed: Vec::new() };
+        let hit =
+            HitSpark { start: time, anchor: Anchor::Unit(None), way: [0.0, 1.0], sparks: sparks([0.0, 1.0], |from, _| from), paths: None, placed: Vec::new() };
         assert_eq!((hit.tick(time + Duration::from_millis(799)), hit.tick(time + Duration::from_millis(800))), (49, HIT_TICKS));
-        // The ring stands upright across its way, 5 to 10 from its middle, 10 above the feet.
+        // A funnel of 10 sides: the inner edge 5 from its middle, the outer 10 out and 3.5 further along its way (north).
         let ring = hit.ring(0, [0.0; 3]);
         assert_eq!(ring.len(), RING_SIDES * 6);
-        assert!(ring.iter().all(|vertex| vertex.position[2].abs() < 1e-5));
         let reach = |vertex: &MeshVertex| f32::hypot(vertex.position[0], vertex.position[1] - HIT_HEIGHT);
-        assert!(ring.iter().all(|vertex| (reach(vertex) - 5.0).abs() < 1e-4 || (reach(vertex) - 10.0).abs() < 1e-4));
+        let along = |vertex: &MeshVertex| vertex.position[2] - ring_travel(0);
+        assert!(ring.iter().all(|vertex| {
+            ((reach(vertex) - 5.0).abs() < 1e-4 && along(vertex).abs() < 1e-4) || ((reach(vertex) - 10.0).abs() < 1e-4 && (along(vertex) - 3.5).abs() < 1e-4)
+        }));
+        // u goes up 0.25 a side and starts again after four: seams after sides 4 and 8.
+        let starts: Vec<f32> = ring.chunks(6).map(|side| side[0].uv[0]).collect();
+        assert_eq!(starts, [0.0, 0.25, 0.5, 0.75, 0.0, 0.25, 0.5, 0.75, 0.0, 0.25]);
+        assert!(ring.chunks(6).all(|side| (side[5].uv[0] - side[0].uv[0] - 0.25).abs() < 1e-6));
     }
 
     #[test]
     fn throws_the_hit_sparks_within_their_ranges() {
-        let way = drift(0);
+        let way = drift(0.0);
+        let toward = way[0].atan2(way[1]).to_degrees();
         for random in [(|from: f32, _: f32| from) as fn(f32, f32) -> f32, |_, to| to - 1e-4, |from, to| (from + to) / 2.0] {
             for (index, spark) in sparks(way, random).iter().enumerate() {
-                let off = spark.heading[0].atan2(spark.heading[2]).to_degrees().rem_euclid(360.0);
-                let pitch = spark.heading[1].asin().to_degrees();
+                let off = (spark.yaw.to_degrees() - toward).rem_euclid(360.0);
                 if index < 2 {
                     assert!(!(40.01..319.99).contains(&off), "{off}");
-                    assert_eq!(spark.rise, 0.0);
+                    assert!(!spark.back && spark.rise == 0.0);
                 } else {
                     assert!((139.99..=220.0).contains(&off), "{off}");
-                    assert!((0.3..1.2).contains(&spark.rise));
+                    assert!(spark.back && (0.3..1.2).contains(&spark.rise));
                 }
-                assert!((-50.01..50.0).contains(&pitch));
+                assert!((-50.01..50.0).contains(&spark.pitch.to_degrees()));
                 assert!((4.0..7.0).contains(&spark.out) && (0.6..1.5).contains(&spark.speed) && (0.6..1.6).contains(&spark.scale));
                 assert!((6..=29).contains(&spark.life));
             }
         }
-        // 4 out and 10 up at first; speed falls evenly to half; the back pair comes down to where it started.
-        let spark = Spark { heading: [0.0, 0.0, 1.0], out: 4.0, speed: 1.0, rise: 1.0, scale: 1.0, life: 10 };
-        assert_eq!(spark.place(0), [0.0, HIT_HEIGHT, 4.0]);
-        assert!((spark.speed_at(10) - 0.5).abs() < 1e-6);
-        assert!((spark.place(10)[1] - HIT_HEIGHT).abs() < 1e-4 && spark.place(5)[1] > HIT_HEIGHT);
-        assert!((spark.alpha(0) - NEAR_OPAQUE).abs() < 1e-6 && spark.alpha(10) == 0.0);
-        // Three copies where it was 0, 1 and 2 ticks ago, each fainter; none past its life.
-        let trail = spark.trail(4);
-        assert_eq!(trail.iter().map(|(place, _)| *place).collect::<Vec<_>>(), [spark.place(4), spark.place(3), spark.place(2)]);
+    }
+
+    #[test]
+    fn turns_a_sparks_pitch_about_the_east_west_axis() {
+        let spark = |yaw: f32, pitch: f32| Spark {
+            yaw: yaw.to_radians(),
+            pitch: pitch.to_radians(),
+            out: 4.0,
+            speed: 1.0,
+            back: false,
+            rise: 0.0,
+            scale: 1.0,
+            life: 10,
+        };
+        // Heading east (yaw 90°): level whatever its pitch; north (0°): up sin p.
+        let east = spark(90.0, 49.0).heading();
+        assert!((east[0] - 1.0).abs() < 1e-5 && east[1].abs() < 1e-5);
+        let north = spark(0.0, 30.0).heading();
+        assert!((north[1] - 0.5).abs() < 1e-5 && (north[2] - 3.0f32.sqrt() / 2.0).abs() < 1e-5);
+        // (sin y, cos y·sin p, cos y·cos p) at yaw 60°, pitch −40°.
+        let [x, up, z] = spark(60.0, -40.0).heading();
+        let (yaw, pitch) = (60.0f32.to_radians(), (-40.0f32).to_radians());
+        assert!((x - yaw.sin()).abs() < 1e-5 && (up - yaw.cos() * pitch.sin()).abs() < 1e-5 && (z - yaw.cos() * pitch.cos()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn moves_a_spark_before_it_is_drawn() {
+        // v0 1.2, life 12, north and level: on drawn tick a it has made a + 1 moves, v0·(n − n(n+1)/(4L)) from its start.
+        let front = Spark { yaw: 0.0, pitch: 0.0, out: 5.0, speed: 1.2, back: false, rise: 0.0, scale: 1.0, life: 12 };
+        let path = front.path(|_, _| 0.0);
+        assert_eq!(path.len(), 12);
+        for (tick, place) in path.iter().enumerate() {
+            let n = tick as f32 + 1.0;
+            assert!((place[2] - (5.0 + 1.2 * (n - n * (n + 1.0) / 48.0))).abs() < 1e-4 && (place[1] - HIT_HEIGHT).abs() < 1e-5);
+        }
+        assert!((path[0][2] - 5.0 - 1.15).abs() < 1e-5);
+        // Alpha 254·(1 − (a + 1)/L): already below 254 on its first tick, 0 on its last.
+        assert!((front.alpha(0) * 255.0 - 254.0 * 11.0 / 12.0).abs() < 1e-3 && front.alpha(11) == 0.0);
+        // The back pair (r 0.9) flies level along its yaw (its pitch only places its start) at its full speed and hops
+        // r·n·(1 − (n + 1)/L): back at its start height on tick L − 2, r below it on its last.
+        let back = Spark { yaw: std::f32::consts::PI, pitch: 0.6, back: true, rise: 0.9, ..front };
+        let start = back.origin();
+        let path = back.path(|_, _| -100.0);
+        for (tick, place) in path.iter().enumerate() {
+            let moves = tick as u32 + 1;
+            assert!((place[1] - start[1] - back.hop(moves)).abs() < 1e-4, "{tick}");
+            assert!((start[2] - place[2] - back.travel(moves)).abs() < 1e-4 && (place[0] - start[0]).abs() < 1e-4);
+        }
+        assert!((path[10][1] - start[1]).abs() < 1e-4 && (path[11][1] - start[1] + 0.9).abs() < 1e-4);
+        // On flat ground it never falls to the ground; where the ground rises under it, it bounces.
+        assert_eq!(back.path(|_, _| 0.0), path);
+        let bounced = back.path(|_, z| if z < start[2] - 6.0 { start[1] + 0.5 } else { 0.0 });
+        assert_ne!(bounced, path);
+    }
+
+    #[test]
+    fn trails_a_spark_from_the_feet_smaller_and_fainter() {
+        let spark = Spark { yaw: 0.0, pitch: 0.0, out: 4.0, speed: 1.0, back: false, rise: 0.0, scale: 1.2, life: 10 };
+        let path = spark.path(|_, _| 0.0);
+        let places = |tick: u32| spark.trail(tick, &path).iter().map(|(place, _, _)| *place).collect::<Vec<_>>();
+        // Drawn tick 0: copies 1 and 2 still at the feet, on the ground; tick 1: copy 2; then where it was.
+        assert_eq!(places(0), [path[0], [0.0; 3], [0.0; 3]]);
+        assert_eq!(places(1), [path[1], path[0], [0.0; 3]]);
+        assert_eq!(places(4), [path[4], path[3], path[2]]);
         let alpha = spark.alpha(4);
-        assert_eq!(trail.iter().map(|(_, faded)| *faded).collect::<Vec<_>>(), [alpha, alpha * 2.0 / 3.0, alpha / 3.0]);
-        assert_eq!(spark.trail(0).len(), 1);
-        assert!(spark.trail(10).is_empty());
+        let trail = spark.trail(4, &path);
+        assert_eq!(trail.iter().map(|(_, faded, _)| *faded).collect::<Vec<_>>(), [alpha, alpha * 2.0 / 3.0, alpha / 3.0]);
+        assert_eq!(trail.iter().map(|(_, _, scale)| *scale).collect::<Vec<_>>(), [1.2, 1.2 * 5.0 / 6.0, 1.2 * 4.0 / 6.0]);
+        assert!(spark.trail(10, &path).is_empty());
+    }
+
+    #[test]
+    fn leaves_a_hit_where_it_was_made() {
+        let mut effects = Effects::default();
+        let time = Instant::now();
+        let way = drift(0.0);
+        effects.hits.push(HitSpark { start: time, anchor: Anchor::Unit(Some(7)), way, sparks: sparks(way, |from, _| from), paths: None, placed: Vec::new() });
+        // Not landed yet: it still follows the unit.
+        effects.settle_hits(time - Duration::from_millis(1), |_| Some([1.0, 0.0, 1.0]), |_, _| 0.0);
+        assert!(effects.hits[0].paths.is_none());
+        effects.settle_hits(time, |_| Some([50.0, 2.0, 60.0]), |_, _| 0.0);
+        let at = |effects: &Effects| effects.hits[0].anchor.place(&|_| Some([90.0, 0.0, 90.0]));
+        assert_eq!(at(&effects), Some([50.0, 2.0, 60.0]));
+        // The unit walks on; the hit stays.
+        effects.settle_hits(time + Duration::from_millis(100), |_| Some([80.0, 2.0, 60.0]), |_, _| 0.0);
+        assert_eq!(at(&effects), Some([50.0, 2.0, 60.0]));
     }
 
     #[test]
