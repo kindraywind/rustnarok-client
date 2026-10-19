@@ -5,6 +5,7 @@
 
 pub mod balls;
 pub mod bolts;
+pub mod sage;
 pub mod stone;
 
 use std::collections::VecDeque;
@@ -74,6 +75,7 @@ pub struct Prims {
     pub balls: balls::Balls,
     pub stone: stone::Stone,
     pub volleys: Vec<bolts::Volley>,
+    pub sage: sage::Sage,
 }
 
 /// An ice spike (the game's prim kind 9): an open four-sided pyramid, its base `half` units out each way and its tip
@@ -403,18 +405,20 @@ impl Prims {
         self.balls.advance(now);
         self.stone.advance(now);
         self.volleys.retain(|volley| volley.alive(now));
+        self.sage.advance(now);
     }
 
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is
     /// 1 − i/n as opaque and 1 − i/2n as big.
-    pub fn ghosts(&self) -> Vec<(Vector, f32, f32)> {
+    /// Each copy is also turned by its ghost's fan angle (degrees, clockwise on the screen).
+    pub fn ghosts(&self) -> Vec<(Vector, f32, f32, f32)> {
         let copies = GHOST_TRAIL as f32;
         self.ghosts
             .iter()
             .flat_map(|ghost| {
                 ghost.trail.iter().enumerate().map(move |(age, &at)| {
                     let share = age as f32 / copies;
-                    (at, 254.0 / 255.0 * (1.0 - share), GHOST_SCALE * (1.0 - share / 2.0))
+                    (at, 254.0 / 255.0 * (1.0 - share), GHOST_SCALE * (1.0 - share / 2.0), ghost.turn)
                 })
             })
             .collect()
@@ -503,7 +507,7 @@ mod tests {
         assert_eq!(ghost.trail.len(), GHOST_TRAIL);
         // The oldest copy is a twelfth as opaque and 13/24 as big.
         let mut flying = Prims { ghosts: vec![ghost], ..Prims::default() };
-        let (_, alpha, scale) = flying.ghosts()[GHOST_TRAIL - 1];
+        let (_, alpha, scale, _) = flying.ghosts()[GHOST_TRAIL - 1];
         assert!((alpha - 254.0 / 255.0 / 12.0).abs() < 1e-4 && (scale - GHOST_SCALE * 13.0 / 24.0).abs() < 1e-4);
         flying.ghosts.clear();
         prims.advance(start + TICK * 200);

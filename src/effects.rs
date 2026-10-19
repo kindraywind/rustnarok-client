@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, bolts, stone};
+use crate::prims::{balls, bolts, sage, stone};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -1244,6 +1244,13 @@ impl Effects {
         }
     }
 
+    /// The texture of a Sage ground look or loop.
+    fn load_sage(&mut self, gpu: &Gpu, grf: &Grf, id: u32) {
+        if let Some(&(_, path)) = sage::LOOKS.iter().chain(&sage::LOOPS).find(|(each, _)| *each == id) {
+            self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+        }
+    }
+
     /// A bolt (26 or 31) with `hits` arrows on a unit: what it needs loaded, then its volley.
     fn bolt(&mut self, gpu: &Gpu, grf: &Grf, id: u32, unit: Option<u32>, hits: u16, now: Instant) {
         let fire = id == FIRE_BOLT;
@@ -1271,6 +1278,11 @@ impl Effects {
     /// What effect `id` draws, from `now` on.
     #[allow(clippy::too_many_arguments)]
     fn show(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
+        // The Sage's ground looks, drawn in code at the cell.
+        if sage::LOOKS.iter().any(|&(look, _)| look == id) {
+            self.load_sage(gpu, grf, id);
+            self.prims.sage.look(id, at, now);
+        }
         // A bolt told no hit count (by the server): one arrow.
         if let (true, Target::Unit(unit)) = (BOLTS.contains(&id), target) {
             self.bolt(gpu, grf, id, unit, 1, now);
@@ -1416,8 +1428,14 @@ impl Effects {
         self.forget(id);
         self.unit_kinds.insert(id, kind);
         if let Some(&effect) = table.units.get(&kind) {
-            let target = if table.units_once.contains(&kind) { Target::Kept(id) } else { Target::Lasting(id) };
-            self.play(gpu, grf, table, effect, target, at, now);
+            // Volcano's, Deluge's, Violent Gale's and Land Protector's cells keep their loops, drawn in code.
+            if sage::LOOPS.iter().any(|&(kept, _)| kept == effect) {
+                self.load_sage(gpu, grf, effect);
+                self.prims.sage.keep(effect, id, at, now, |n| pick(0, n.saturating_sub(1)));
+            } else {
+                let target = if table.units_once.contains(&kind) { Target::Kept(id) } else { Target::Lasting(id) };
+                self.play(gpu, grf, table, effect, target, at, now);
+            }
         }
         let Some(file) = table.models.get(&kind) else { return };
         let model = self.models.entry(file.clone()).or_insert_with(|| load_model(grf, file).map(Rc::new)).clone();
@@ -1654,6 +1672,7 @@ impl Effects {
     }
 
     pub fn forget(&mut self, unit: u32) {
+        self.prims.sage.forget(unit);
         self.hits.retain(|hit| !hit.anchor.on(unit));
         self.auras.retain(|aura| !aura.anchor.on(unit));
         self.playing.retain(|playing| !playing.anchor.on(unit));
@@ -1718,7 +1737,12 @@ impl Effects {
             Some((ice?, vertices, false))
         });
         let stone = self.textures.get(stone::STONE).and_then(Option::as_ref).map(|texture| (texture, self.prims.stone.mesh(), false));
-        rings.chain(models).chain(hits).chain(auras).chain(spikes).chain(stone).chain(bolt_meshes).collect()
+        // The Sage's ground looks and loops (Land Protector's square adds on).
+        let sage = self.prims.sage.shapes(now).into_iter().filter_map(|(path, additive, corners)| {
+            let texture = self.textures.get(path)?.as_ref()?;
+            Some((texture, corners.into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] }).collect(), additive))
+        });
+        rings.chain(models).chain(hits).chain(auras).chain(spikes).chain(stone).chain(bolt_meshes).chain(sage).collect()
     }
 
     /// What's drawn flat on the screen over units now (COLDHIT's shards and smoke): texture, the unit's feet, and the
@@ -1848,9 +1872,9 @@ impl Effects {
         }
         // Soul Strike's ghosts, each copy of a trail a little fainter.
         if let Some(Some(sprite)) = self.sprites.get(crate::prims::GHOST_SPRITE) {
-            for (at, alpha, scale) in self.prims.ghosts() {
+            for (at, alpha, scale, turn) in self.prims.ghosts() {
                 for &(key, position, size, layer_angle) in &self.ghost {
-                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * scale));
+                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle + turn, uv).0.map(|value| value * scale));
                     quads.push((sprite.texture(key), at, corners, [1.0, 1.0, 1.0, alpha], false, false));
                 }
             }
