@@ -19,6 +19,11 @@ use crate::{Layer, UI, contains, offset};
 const MODES: [([f32; 2], f32, [f32; 2]); 2] = [([273.0, 326.0], 34.0, [5.0, 5.0]), ([243.0, 179.0], 27.0, [4.0, 1.0])];
 /// The rows start under the title; they fit in h − 58, the white body ends 38 above the bottom.
 const LIST_UNDER: f32 = 58.0;
+/// The corner grip sets the height to 58 + 23·k: k rows of 23 px, 2 to 12.
+// ponytail: the grip's rows are the friends' 23 px whatever the mode, from 2 (one member row in either mode) to 12; a
+// mode keeps its own height until its grip is used.
+const GRIP_ROW: f32 = 23.0;
+const GRIP_ROWS: std::ops::RangeInclusive<usize> = 2..=12;
 const BODY_UNDER: f32 = 38.0;
 /// The button bar 40 above the bottom, 20 tall; the footer 16 above it, 12 tall.
 const BAR_ABOVE: f32 = 40.0;
@@ -385,6 +390,8 @@ pub enum Hit {
     Friend(usize),
     /// The footer's tabs: friends or party.
     Tab(bool),
+    /// The corner grip.
+    Resize,
     Window,
 }
 
@@ -411,6 +418,8 @@ pub struct Assets {
     /// The docked windows' edit box.
     edit: Texture,
     picked: Texture,
+    /// The corner grip.
+    resize: Texture,
 }
 
 impl Assets {
@@ -449,6 +458,7 @@ impl Assets {
             crown_grey: crate::render::load_image(grf, &format!("{UI}{PARTY_ART}ico_partycrown.bmp"))
                 .map_or_else(|_| gpu.solid([0, 0, 0, 0]), |crown| gpu.texture(&greyed(crown), false)),
             picked: gpu.solid([0x73, 0x9C, 0xEF, 0xFF]),
+            resize: image(format!("{UI}btn_resize.bmp")),
         }
     }
 
@@ -787,13 +797,25 @@ pub struct PartyWindow {
     /// The size mode (0: 273×326, 1: 243×179), and rows scrolled past.
     pub mode: usize,
     scroll: usize,
+    /// Each mode's grip rows once its corner grip has been used, and the grip while held.
+    grip_rows: [Option<usize>; 2],
+    grip: window::Grip,
     /// The lock: only it and the agency take a press while it's on.
     pub locked: bool,
 }
 
 impl Default for PartyWindow {
     fn default() -> Self {
-        Self { frame: Frame::new(POSITION, MODES[0].0[0]), friends: false, picked: None, mode: 0, scroll: 0, locked: false }
+        Self {
+            frame: Frame::new(POSITION, MODES[0].0[0]),
+            friends: false,
+            picked: None,
+            mode: 0,
+            scroll: 0,
+            grip_rows: [None; 2],
+            grip: window::Grip::default(),
+            locked: false,
+        }
     }
 }
 
@@ -821,12 +843,64 @@ fn row_places(width: f32, height: f32, [mx, my]: [f32; 2], top: f32) -> RowPlace
 }
 
 impl PartyWindow {
+    /// The mode's width, and its height: the mode's own, or 58 + 23·k once its grip has been used.
     pub fn size(&self) -> [f32; 2] {
-        MODES[self.mode].0
+        let [width, height] = MODES[self.mode].0;
+        [width, self.grip_rows[self.mode].map_or(height, |rows| LIST_UNDER + rows as f32 * GRIP_ROW)]
+    }
+
+    /// Each mode's grip rows, 0 where its grip hasn't been used (kept with the window places).
+    pub fn grip_rows(&self) -> [usize; 2] {
+        self.grip_rows.map(|rows| rows.unwrap_or(0))
+    }
+
+    /// Takes saved grip rows (0: the mode's own height), clamped to 2–12.
+    pub fn set_grip_rows(&mut self, rows: [usize; 2]) {
+        self.grip_rows = rows.map(|rows| (rows > 0).then(|| rows.clamp(*GRIP_ROWS.start(), *GRIP_ROWS.end())));
+    }
+
+    /// The corner grip on screen while the window is open (for the test driver).
+    pub fn grip_box(&self) -> Option<[f32; 4]> {
+        let [width, height] = self.size();
+        let [x, y] = self.frame.at([width - window::GRIP, height - window::GRIP]);
+        (self.frame.open && !self.frame.minimized).then_some([x, y, window::GRIP, window::GRIP])
+    }
+
+    /// Whether `cursor` is on the corner grip.
+    pub fn on_grip(&self, cursor: [f32; 2]) -> bool {
+        let size = self.size();
+        self.frame.open && !self.frame.minimized && self.frame.local(cursor, size[1]).is_some_and(|local| window::on_grip(size, local))
+    }
+
+    /// Held by the corner grip at `cursor`.
+    pub fn start_resize(&mut self, cursor: [f32; 2]) {
+        self.grip.start(cursor, self.size());
+    }
+
+    /// While held, the bottom follows the pointer from the press, a 23 px row at a time (rounding toward the least);
+    /// returns whether it's held.
+    pub fn resize_to(&mut self, cursor: [f32; 2]) -> bool {
+        let Some([_, asked]) = self.grip.asked(cursor) else { return false };
+        let least = *GRIP_ROWS.start();
+        let rows = least + window::steps(asked, LIST_UNDER + least as f32 * GRIP_ROW, GRIP_ROW, GRIP_ROWS.end() - least);
+        if self.grip_rows[self.mode] != Some(rows) {
+            self.grip_rows[self.mode] = Some(rows);
+            self.scroll = 0;
+        }
+        true
+    }
+
+    pub fn stop_resize(&mut self) -> bool {
+        self.grip.stop()
     }
 
     fn row_height(&self) -> f32 {
         if self.friends { FRIEND_ROW } else { MODES[self.mode].1 }
+    }
+
+    /// Rows that fit, for the test driver.
+    pub fn shown_rows(&self) -> usize {
+        self.visible_rows()
     }
 
     /// Rows that fit: (h − 58) / H.
@@ -925,6 +999,9 @@ impl PartyWindow {
         let local = self.frame.local(cursor, height)?;
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
+        }
+        if window::on_grip([width, height], local) {
+            return Some(Hit::Resize);
         }
         for (place, button) in self.buttons(party).into_iter().enumerate() {
             if contains(self.button_at(place), BUTTON, local) {
@@ -1104,6 +1181,7 @@ impl PartyWindow {
             layer.sprites.push((&assets.member_count, at([width - 58.0, footer - 2.0]), assets.member_count.size));
             layer.texts.push((format!("{}/{MOST_IN_PARTY}", members.len()), at([width - 51.0, footer]), [255; 3]));
         }
+        layer.sprites.push((&assets.resize, at([width - window::GRIP, height - window::GRIP]), assets.resize.size));
     }
 }
 
@@ -1635,6 +1713,35 @@ mod tests {
         assert_eq!(window.scroll, 4);
         window.scroll_by(-9, 15);
         assert_eq!(window.scroll, 0);
+    }
+
+    #[test]
+    fn resizes_by_the_corner_grip_in_23_px_rows() {
+        let mut window = PartyWindow::default();
+        window.frame.open = true;
+        let corner = window.frame.at([273.0 - 5.0, 326.0 - 5.0]);
+        assert!(window.on_grip(corner));
+        assert_eq!(window.hit(corner, None, &[]), Some(Hit::Resize));
+        // 326 asks 11.6 rows: 11 (311); 23 px down, 12 (334), no further; far up, 2 (104).
+        window.start_resize(corner);
+        assert!(window.resize_to(corner));
+        assert_eq!((window.size(), window.grip_rows()), ([273.0, 311.0], [11, 0]));
+        window.resize_to([corner[0], corner[1] + 40.0]);
+        assert_eq!(window.size()[1], 334.0);
+        window.resize_to([corner[0], corner[1] + 500.0]);
+        assert_eq!(window.size()[1], 334.0);
+        window.resize_to([corner[0] + 90.0, corner[1] - 500.0]);
+        assert_eq!((window.size(), window.visible_rows()), ([273.0, 104.0], 1));
+        assert!(window.stop_resize() && !window.resize_to(corner));
+        // Mode 1 keeps its own height until its grip is used; the rows come back as saved, clamped.
+        window.set_mode(1);
+        assert_eq!(window.size(), [243.0, 179.0]);
+        window.set_grip_rows([40, 0]);
+        assert_eq!(window.grip_rows(), [12, 0]);
+        window.set_grip_rows([0, 5]);
+        assert_eq!((window.size(), window.visible_rows()), ([243.0, 173.0], 4));
+        window.set_mode(0);
+        assert_eq!(window.size(), [273.0, 326.0]);
     }
 
     #[test]
