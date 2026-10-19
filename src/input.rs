@@ -134,15 +134,19 @@ impl App {
             },
             Scene::Game(game) if game.deal_choice.is_some() => {
                 let npc = game.deal_choice.unwrap();
-                let dialog = deal_box_position();
-                let pressed = DEAL_BUTTONS.iter().position(|&place| hit(offset(dialog, place), assets.shop_buttons()[0]));
-                match pressed {
-                    Some(choice @ 0..=1) => {
-                        game.deal_choice = None;
-                        let _ = game.session.choose_deal(npc, choice == 1);
+                match shop::deal_hit(game.deal_frame.position, cursor) {
+                    Some(shop::DealHit::Buy) => {
+                        game.close_deal_choice();
+                        let _ = game.session.choose_deal(npc, false);
                     }
-                    Some(_) => game.deal_choice = None,
-                    None => {}
+                    Some(shop::DealHit::Sell) => {
+                        game.close_deal_choice();
+                        let _ = game.session.choose_deal(npc, true);
+                    }
+                    Some(shop::DealHit::Cancel) => {
+                        game.close_deal_choice();
+                    }
+                    _ => {}
                 }
             }
             // The world map covers the screen; its close button closes it.
@@ -1237,7 +1241,7 @@ impl App {
             }
             // The box asking how many keeps the pointer until it's answered.
             Scene::Game(game) if game.amount.is_some() => {
-                if let Some(Some(ok)) = window::Amount::<Asked>::hit(cursor, assets.message.size, assets.ok[0].size) {
+                if let Some(Some(ok)) = game.amount.as_ref().unwrap().hit(cursor, assets.message.size, assets.ok[0].size) {
                     game.answer_amount(ok, &self.messages);
                 }
             }
@@ -1283,7 +1287,16 @@ impl App {
                         }
                     }
                     Some(shop::Action::Close) => game.close_shop(),
-                    Some(shop::Action::Ask(row, _)) => game.amount = Some(window::Amount::new(Asked::Shop(row), None)),
+                    Some(shop::Action::Ask(row, _)) => {
+                        game.amount = if shop.plain()
+                            && let Some(offer) = shop.offers.get(row)
+                        {
+                            let name = inventory::item_name(&self.items, offer.item, offer.identified, offer.refine);
+                            Some(window::Amount::shop(Asked::Shop(row), name, None))
+                        } else {
+                            Some(window::Amount::new(Asked::Shop(row), None))
+                        };
+                    }
                     Some(shop::Action::AskOut(..) | shop::Action::Say(..)) | None => {}
                 }
             }
@@ -1866,6 +1879,9 @@ impl App {
             }
             if let Some(shop) = &mut game.shop {
                 shop.drag_to(self.cursor);
+            }
+            if game.deal_choice.is_some() {
+                game.deal_frame.drag_to(self.cursor, shop::DEAL_SIZE[1]);
             }
             let party_height = game.party_window.height();
             game.party_window.frame.drag_to(self.cursor, party_height);
@@ -2520,8 +2536,29 @@ impl App {
                         _ => None,
                     };
                     match action {
-                        Some(shop::Action::Ask(row, fill)) => game.amount = Some(window::Amount::new(Asked::Shop(row), (fill > 0).then_some(fill))),
-                        Some(shop::Action::AskOut(row, fill)) => game.amount = Some(window::Amount::new(Asked::ShopOut(row), Some(fill))),
+                        Some(shop::Action::Ask(row, fill)) => {
+                            let amount = (fill > 0).then_some(fill);
+                            game.amount = if shop.plain()
+                                && let Some(offer) = shop.offers.get(row)
+                            {
+                                let name = inventory::item_name(&self.items, offer.item, offer.identified, offer.refine);
+                                Some(window::Amount::shop(Asked::Shop(row), name, amount))
+                            } else {
+                                Some(window::Amount::new(Asked::Shop(row), amount))
+                            };
+                        }
+                        Some(shop::Action::AskOut(row, fill)) => {
+                            let amount = Some(fill);
+                            game.amount = if shop.plain()
+                                && let Some(&(offer_idx, _)) = shop.deal.get(row)
+                                && let Some(offer) = shop.offers.get(offer_idx)
+                            {
+                                let name = inventory::item_name(&self.items, offer.item, offer.identified, offer.refine);
+                                Some(window::Amount::shop(Asked::ShopOut(row), name, amount))
+                            } else {
+                                Some(window::Amount::new(Asked::ShopOut(row), amount))
+                            };
+                        }
                         Some(shop::Action::Say(message, arg)) => {
                             let text = self.messages.get(message).map_or("", String::as_str);
                             let line = arg.map_or_else(|| text.to_owned(), |arg| rustnarok_client::messages::fill(text, &[&arg]));
@@ -2693,7 +2730,8 @@ impl App {
                     | game.minimap_window.frame.drop_drag()
                     | game.say.frame.drop_drag()
                     | game.cutin.as_mut().is_some_and(|cutin| cutin.frame.drop_drag())
-                    | game.npc_menu.drop_drag();
+                    | game.npc_menu.drop_drag()
+                    | (game.deal_choice.is_some() && game.deal_frame.drop_drag());
                 windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
             }
             _ => false,
@@ -3015,6 +3053,16 @@ impl App {
             // Any part that isn't a control moves it.
             if hit == trade::Hit::Window {
                 trade.frame.start_drag(cursor);
+            }
+            return;
+        }
+        // The deal-type box (Buy / Sell / Cancel) is dragged by its body.
+        if let Scene::Game(game) = &mut self.scene
+            && game.deal_choice.is_some()
+            && let Some(hit) = shop::deal_hit(game.deal_frame.position, cursor)
+        {
+            if hit == shop::DealHit::Body {
+                game.deal_frame.start_drag(cursor);
             }
             return;
         }
@@ -4111,10 +4159,11 @@ impl App {
                 Key::Named(NamedKey::Backspace) => game.minimap_window.backspace(),
                 _ => game.minimap_window.type_text(event.text.as_deref().unwrap_or_default()),
             },
-            Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Escape)) => game.deal_choice = None,
+            Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Escape)) => game.close_deal_choice(),
             // Enter is the deal-type box's default button: Buy.
             Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Enter)) => {
-                let npc = game.deal_choice.take().unwrap();
+                let npc = game.deal_choice.unwrap();
+                game.close_deal_choice();
                 let _ = game.session.choose_deal(npc, false);
             }
             // Earlier arms are windows that want the key. Esc is game_escape, which closes an open battle-mode

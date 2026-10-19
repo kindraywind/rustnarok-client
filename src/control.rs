@@ -919,10 +919,19 @@ fn game_state(app: &App, game: &Game) -> Value {
     });
     // The deal-type box's Buy, Sell and Cancel.
     let deal_buttons = app.assets.as_ref().filter(|_| game.deal_choice.is_some()).into_iter().flat_map(|assets| {
-        let dialog = crate::deal_box_position();
+        let dialog = game.deal_frame.position;
         ["deal_buy", "deal_sell", "deal_cancel"].into_iter().zip(crate::DEAL_BUTTONS).zip(assets.shop_buttons()).map(move |((name, place), images)| {
             let [x, y] = crate::offset(dialog, place);
             json!({"kind": "button", "name": name, "box": [x, y, images[0].size[0], images[0].size[1]]})
+        })
+    });
+    // The amount box's buttons (OK and Cancel, or OK alone).
+    let amount_buttons = app.assets.as_ref().and_then(|assets| game.amount.as_ref().map(|amount| (assets, amount))).into_iter().flat_map(|(assets, amount)| {
+        let dialog = crate::dialog_position(&assets.message);
+        amount.buttons().into_iter().map(move |(place, ok)| {
+            let (name, button) = if ok { ("ok", &assets.ok) } else { ("cancel", &assets.cancel) };
+            let [x, y] = crate::offset(dialog, place);
+            json!({"kind": "button", "name": name, "box": [x, y, button[0].size[0], button[0].size[1]]})
         })
     });
     // The party invitation's, at its own place.
@@ -1220,6 +1229,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.trade.iter().flat_map(|trade| trade.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.card_view.iter().map(|view| json!({"kind": "button", "name": "card_picture_close", "box": view.close_box()})))
         .chain(question_buttons)
+        .chain(amount_buttons)
         .chain(game.slot.iter().map(|_| {
             let [x, y] = crate::taming::place(crate::screen());
             json!({"kind": "button", "name": "slot_machine", "box": [x, y, crate::taming::SIZE[0], crate::taming::SIZE[1]]})
