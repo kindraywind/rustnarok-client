@@ -2160,13 +2160,6 @@ impl Actor {
         self.head_direction = self.kept_head;
     }
 
-    /// Shows `action`'s last frame from `start` for `ms` (Meteor Storm's caster), then stands; walking ends it.
-    pub fn freeze_last(&mut self, action: usize, start: Instant, ms: f32) {
-        let length = self.sprites.as_ref().and_then(|sprites| sprites.index_ms(action * 8 + usize::from(self.direction % 8))).unwrap_or(0.0);
-        let started = start.checked_sub(Duration::from_secs_f32(length / 1000.0)).unwrap_or(start);
-        self.shot = Some(Shot { action, started, pace: Pace::Hold((length + ms) / length.max(1.0)), hold: false });
-    }
-
     /// Its attack action: a player's swing for its weapon.
     pub fn attack_motion(&self, tables: &LookTables) -> usize {
         self.look.as_ref().map_or(combat_actions(self.kind).0, |look| attack_action(look.job, look.sex, tables.weapon_type(look.weapon)))
@@ -3523,19 +3516,15 @@ mod tests {
     }
 
     #[test]
-    fn freezes_the_last_frame_till_its_time_or_a_walk() {
+    fn knows_the_action_it_plays() {
         let start = Instant::now();
-        let at = |ms: u64| start + Duration::from_millis(ms);
         let mut actor = Actor::new("Me".into(), None, [10, 10], 0, 150);
         actor.sprites = Some(test_player(false, None));
-        // Meteor Storm: the third attack's last frame (of 2, 96 ms each) at once, for a second, then standing.
-        actor.freeze_last(11, start, 1000.0);
-        let last = |ms| matches!(actor.animation(at(ms)), (11, Timing::Once(elapsed, _)) if once_frame(elapsed, 4.0, 2) == 1);
-        assert!(last(0) && last(999));
-        assert!(actor.playing(11, at(500)) && !actor.playing(11, at(1001)));
-        // A walk ends it.
+        // A swing (2 frames of 96 ms) plays till 192 ms; a walk ends it.
+        actor.play_at_pace(5, start, 1.0, false);
+        assert!(actor.playing(5, start + Duration::from_millis(100)) && !actor.playing(5, start + Duration::from_millis(200)));
         actor.walk_from([10, 10], [8, 8], vec![[11, 10]], start, start, true);
-        assert!(!actor.playing(11, start));
+        assert!(!actor.playing(5, start));
     }
 
     #[test]

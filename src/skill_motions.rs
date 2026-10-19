@@ -72,17 +72,14 @@ pub fn cast_moves(cast_ms: u32) -> bool {
     cast_ms > 0
 }
 
-/// Whether a player's skill packet turns it to the target: the swing (motion `Attack`) only as it starts one, never
-/// mid-swing (Bowling Bash's later packets) or with a bow (Double Strafe, Arrow Shower); other motions always.
-pub fn turns(motion: Motion, bow: bool, mid_swing: bool) -> bool {
-    motion != Motion::Attack || !(bow || mid_swing)
+/// Whether a player's skill packet turns it to the target: the swing (motion `Attack`) only as it starts one, not
+/// mid-swing (Bowling Bash's later packets, Arrow Shower's after its ground swing); other motions always.
+pub fn turns(motion: Motion, mid_swing: bool) -> bool {
+    motion != Motion::Attack || !mid_swing
 }
 
-/// Meteor Storm: each meteor's ground packet holds its caster on the third attack's last frame, with no turn, until the
-/// next meteor's a second later.
-// ponytail: how long the official client holds that frame is unknown; a meteor's gap keeps it through the storm.
+/// Meteor Storm: each meteor's ground packet leaves its caster as it is, unturned (casting or standing).
 pub const METEOR_STORM: u16 = 83;
-pub const METEOR_GAP_MS: f32 = 1000.0;
 
 /// Time between the hits of damage from a skill's ground unit (Storm Gust's, say), from the packet on.
 pub const UNIT_HIT_GAP_MS: u64 = 200;
@@ -117,9 +114,9 @@ mod tests {
     fn casts_and_turns_as_the_game() {
         // Bash and Double Strafe come with cast time 0: no motion from the cast; Holy Light's second does.
         assert!(!cast_moves(0) && cast_moves(1000));
-        // Bash turns as its swing starts, not mid-swing (Bowling Bash's later packets); Double Strafe never (a bow).
-        assert!(turns(motion(5), false, false) && !turns(motion(62), false, true) && !turns(motion(46), true, false));
+        // Bash and Double Strafe turn as their swing starts, not mid-swing (Bowling Bash's later packets).
+        assert!(turns(motion(5), false) && turns(motion(46), false) && !turns(motion(62), true));
         // The skill pose always turns (Holy Light), mid-motion or not.
-        assert!(turns(motion(156), false, true) && turns(motion(156), true, false));
+        assert!(turns(motion(156), true));
     }
 }

@@ -2361,17 +2361,18 @@ impl Game {
         }
         let (job, kind) = (actor.job, actor.kind);
         let mut hit_ms = None;
-        if actor.kind == PLAYER && (packet != overhead::Shout::Cast || skill_motions::cast_moves(pace as u32)) {
+        // A cast without cast time, and Meteor Storm's meteors, leave the caster as it is.
+        let still = match packet {
+            overhead::Shout::Cast => !skill_motions::cast_moves(pace as u32),
+            overhead::Shout::Ground => skill == skill_motions::METEOR_STORM,
+            _ => false,
+        };
+        if actor.kind == PLAYER && !still {
             let now = Instant::now();
             let action = match (packet, skill_motions::motion(skill)) {
                 (overhead::Shout::Cast, _) if skill_motions::cast_standing(skill) => None,
                 (overhead::Shout::Cast, _) => {
                     actor.hold_for(SKILL_ACTION, now, pace);
-                    None
-                }
-                // Meteor Storm's meteors: the third attack's last frame, held till the next meteor.
-                (overhead::Shout::Ground, _) if skill == skill_motions::METEOR_STORM => {
-                    actor.freeze_last(11, now, skill_motions::METEOR_GAP_MS);
                     None
                 }
                 (_, skill_motions::Motion::Keep) => None,

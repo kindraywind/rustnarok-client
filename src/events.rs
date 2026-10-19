@@ -3261,7 +3261,7 @@ impl App {
                     if let Some(source) = source {
                         // The caster turns to its target (a player's swing not always: `skill_motions::turns`).
                         let mid_swing = source.playing(source.attack_motion(look_tables), Instant::now());
-                        let turns = source.kind != PLAYER || skill_motions::turns(skill_motions::motion(skill), bow, mid_swing);
+                        let turns = source.kind != PLAYER || skill_motions::turns(skill_motions::motion(skill), mid_swing);
                         if let Some(cell) = target_cell.filter(|_| act.source != act.target && turns) {
                             source.face(cell);
                         }
