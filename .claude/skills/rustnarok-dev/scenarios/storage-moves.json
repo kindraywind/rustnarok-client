@@ -29,6 +29,7 @@
     {"expect": {"inventory_has": [{"id": 1201}]}},
     {"key": "Escape"}, {"wait": 300},
     {"expect": {"windows_open": ["Storage", "Cart"], "windows_closed": ["Inventory"]}},
+    {"click_on": {"button": "cart_tab:etc"}}, {"wait": 300},
     {"drag_on": [{"button": "cart_item:909"}, {"point": [560, 300]}]}, {"wait": 300},
     {"expect": {"windows_open": ["Amount"]}},
     {"type": "5"}, {"key": "Enter"},

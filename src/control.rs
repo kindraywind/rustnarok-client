@@ -1180,6 +1180,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.inventory.tab_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.cart.tab_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": format!("cart_{name}"), "box": area})))
         .chain(game.catalog.iter().flat_map(|catalog| catalog.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.catalog.iter().flat_map(|catalog| catalog.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.ranking.iter().flat_map(|board| board.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
