@@ -14,7 +14,9 @@ use crate::{Layer, UI, contains};
 const SIZE: [f32; 2] = [400.0, 350.0];
 const TITLE: usize = 2374;
 /// The tabs, 72×18 at y 17 and overlapping by a pixel: Basic, Effect, Control, Graphics, Other.
-const TABS: [(f32, usize); 5] = [(0.0, 4142), (71.0, 4143), (142.0, 4144), (213.0, 4145), (284.0, 4222)];
+// The English message table lacks the newer lines; these words stand in for an empty one.
+const TABS: [(f32, usize, &str); 5] =
+    [(0.0, 4142, "Basic"), (71.0, 4143, "Effect"), (142.0, 4144, "Control"), (213.0, 4145, "Graphics"), (284.0, 4222, "Other")];
 const TAB: [f32; 2] = [72.0, 18.0];
 const TAB_TOP: f32 = 17.0;
 pub const BASIC: usize = 0;
@@ -43,7 +45,7 @@ const ARROW: f32 = 13.0;
 const THUMB: f32 = 24.0;
 const OFF_BOX: f32 = 334.0;
 const OFF_X: f32 = 348.0;
-const OFF: usize = 4148;
+const OFF: (usize, &str) = (4148, "Off");
 /// The Effect page's rows, 387×26 from page y 1: the switch at (8, 5), the title at (47, 6), the description 252
 /// wide at (138, 6).
 const ROW: f32 = 26.0;
@@ -54,12 +56,13 @@ const ROW_TEXT_WIDTH: f32 = 252.0;
 // ponytail: the game's rows come from GameSettings.lub, which this data lacks; these are the switches this client
 // has, titled and described by their messages, with checkboxes for the game's toggle images.
 /// Effects (/effect), the aura shown (/aura2), the mini aura (/aura), the screen shaking (/quake).
-const SWITCHES: [(usize, usize); 4] = [(3172, 37), (4160, 3162), (4163, 710), (2805, 3161)];
+const SWITCHES: [((usize, &str), usize); 4] =
+    [((3172, "Effects"), 37), ((4160, "Show aura"), 3162), ((4163, "Mini aura"), 710), ((2805, "Screen shake"), 3161)];
 /// The screen mode group, Graphics page y 160: "Screen mode", the Full screen and Window radios at (150, 12) and
 /// (270, 12), their labels 17 px right.
 const SCREEN_TOP: f32 = 160.0;
-const SCREEN_TITLE: usize = 4183;
-const SCREEN_RADIOS: [(f32, usize); 2] = [(150.0, 4184), (270.0, 4185)];
+const SCREEN_TITLE: (usize, &str) = (4183, "Screen mode");
+const SCREEN_RADIOS: [(f32, (usize, &str)); 2] = [(150.0, (4184, "Full screen")), (270.0, (4185, "Window"))];
 /// Reset asks first.
 pub const RESET_ASKS: usize = 3166;
 
@@ -145,7 +148,7 @@ impl GameSettings {
         }
         if (TAB_TOP..PAGE_TOP).contains(&local[1]) {
             // The later tab is on top where they overlap.
-            return Some(TABS.iter().rposition(|&(x, _)| (x..x + TAB[0]).contains(&local[0])).map_or(Hit::Window, Hit::Tab));
+            return Some(TABS.iter().rposition(|&(x, ..)| (x..x + TAB[0]).contains(&local[0])).map_or(Hit::Window, Hit::Tab));
         }
         for (button, hit) in BUTTONS.into_iter().zip([Hit::Reset, Hit::Apply, Hit::CloseButton]) {
             if contains([button, BUTTON_TOP], BUTTON, local) {
@@ -250,7 +253,7 @@ impl GameSettings {
             [x, y, width, height]
         };
         let mut boxes: Vec<_> =
-            TABS.iter().enumerate().map(|(tab, &(x, _))| (format!("settings_tab:{tab}"), place([x + 1.0, TAB_TOP], [TAB[0] - 2.0, TAB[1]]))).collect();
+            TABS.iter().enumerate().map(|(tab, &(x, ..))| (format!("settings_tab:{tab}"), place([x + 1.0, TAB_TOP], [TAB[0] - 2.0, TAB[1]]))).collect();
         boxes.extend(
             ["settings_reset", "settings_apply", "settings_close"].into_iter().zip(BUTTONS).map(|(name, x)| (name.to_owned(), place([x, BUTTON_TOP], BUTTON))),
         );
@@ -283,6 +286,7 @@ impl GameSettings {
     ) {
         let at = |local: [f32; 2]| self.frame.at(local);
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
+        let worded = |(id, words): (usize, &'static str)| Some(message(id)).filter(|text| !text.trim().is_empty()).unwrap_or(words).to_owned();
         let black = [0, 0, 0];
         self.frame.draw_bar(layer, chrome);
         self.frame.draw_bare_title(layer, chrome, message(TITLE), pointer.0);
@@ -290,13 +294,13 @@ impl GameSettings {
         layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [width, height - TITLE_HEIGHT]));
         // The tabs: white with a #CECECE edge, the open one joined to its page.
         let outline = &options.outline;
-        for (tab, &(x, label)) in TABS.iter().enumerate() {
+        for (tab, &(x, label, words)) in TABS.iter().enumerate() {
             let open = tab == self.tab;
             layer.sprites.push((outline, at([x, TAB_TOP]), [TAB[0], 1.0]));
             layer.sprites.push((outline, at([x, TAB_TOP]), [1.0, TAB[1]]));
             layer.sprites.push((outline, at([x + TAB[0] - 1.0, TAB_TOP]), [1.0, TAB[1]]));
             layer.sprites.push((&chrome.white, at([x + 1.0, TAB_TOP + 1.0]), [TAB[0] - 2.0, TAB[1] - 1.0 + f32::from(u8::from(open))]));
-            let text = window::fit(font, message(label), TAB[0] - 6.0);
+            let text = window::fit(font, &worded((label, words)), TAB[0] - 6.0);
             let color = if open { black } else { [0x70, 0x70, 0x70] };
             layer.texts.push((text.clone(), at([x + ((TAB[0] - font.width(&text)) / 2.0).floor(), TAB_TOP + 3.0]), color));
         }
@@ -329,7 +333,7 @@ impl GameSettings {
                     layer.texts.push((volume.clone(), group([left + ((THUMB - font.width(&volume)) / 2.0).floor(), y]), black));
                     let check = &options.check[usize::from(!sound.on[row])];
                     layer.sprites.push((check, group([OFF_BOX, y + 1.0]), check.size));
-                    layer.texts.push((message(OFF).to_owned(), group([OFF_X, y]), black));
+                    layer.texts.push((worded(OFF), group([OFF_X, y]), black));
                 }
             }
             EFFECT => {
@@ -337,18 +341,18 @@ impl GameSettings {
                     let top = 1.0 + row as f32 * ROW;
                     let check = &options.check[usize::from(switch_on(graphics, row))];
                     layer.sprites.push((check, page([SWITCH[0], top + SWITCH[1] + 2.0]), check.size));
-                    let title = message(title).trim_end_matches(" ON").to_owned();
+                    let title = worded(title).trim_end_matches(" ON").to_owned();
                     layer.texts.push((window::fit(font, &title, ROW_TEXT - ROW_TITLE - 4.0), page([ROW_TITLE, top + 6.0]), black));
                     layer.texts.push((window::fit(font, message(text), ROW_TEXT_WIDTH), page([ROW_TEXT, top + 6.0]), black));
                 }
             }
             GRAPHICS => {
                 let group = |local: [f32; 2]| page([local[0], SCREEN_TOP + local[1]]);
-                layer.texts.push((message(SCREEN_TITLE).to_owned(), group(HEADING), black));
+                layer.texts.push((worded(SCREEN_TITLE), group(HEADING), black));
                 for (radio, &(x, label)) in SCREEN_RADIOS.iter().enumerate() {
                     let image = &assets.radio[usize::from(self.fullscreen == (radio == 0))];
                     layer.sprites.push((image, group([x, 12.0]), image.size));
-                    layer.texts.push((message(label).to_owned(), group([x + 17.0, 12.0]), black));
+                    layer.texts.push((worded(label), group([x + 17.0, 12.0]), black));
                 }
             }
             _ => {}
