@@ -1261,7 +1261,7 @@ impl App {
         let navi_next = game.navigation.as_ref().and_then(|active| navigation::next_cell(&self.navi_tables, &here, &active.target, active.services));
         if let Some(active) = &mut game.navigation {
             let gat = &game.world.gat;
-            active.update_trail(&here, game.player.cell, navi_next, |from, to| world::find_path(gat, from, to));
+            active.update_trail(&here, game.player.cell, navi_next, |from, to| world::find_trail(gat, from, to));
         }
         if let Some(next) = navi_next {
             // A point a few cells toward it, so a far goal off the screen still turns the arrow.
