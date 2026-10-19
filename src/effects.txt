@@ -1279,7 +1279,6 @@ part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;delayLate=500;duplicate=
 part	37	3D	alphaMax=0.75;attachedEntity=true;duration=1000;delayOffset=400;duplicate=3;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=6;poszStartRand=1;poszStartRandMiddle=1;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
 part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;duplicate=10;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=6;poszStartRand=1;poszStartRandMiddle=1;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
 part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;file=effect/agi_up.bmp;poszEnd=3;poszStart=0.4;sizeEnd=100;sizeSmooth=true;sizeStart=100;sizeY=45;wav=effect/ef_incagility;overlay=true;zIndex=10
-part	43	3D	alphaMax=1;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;file=effect/dex_agi_up.bmp;poszEnd=3;poszStart=0.4;sizeEnd=100;sizeSmooth=true;sizeStart=100;sizeY=45;wav=effect/ef_incagidex;zIndex=10
 part	47	3D	absoluteSpriteName=data/sprite/이팩트/torch_01;attachedEntity=true;playSprite=true;duration=600;posz=0.8;posx=0.1;size=100;angle=270;rotateToTarget=true;repeat=true
 part	50	2D	overlay=true;duration=500;file=effect/firering.tga;sizeStart=10;sizeEnd=300;angle=0;toAngle=-360;rotate=true;fadeOut=true;posz=1;attachedEntity=true
 part	61	3D	alphaMax=1;attachedEntity=true;blue=1;duration=1000;duplicate=3;fadeIn=true;fadeOut=true;file=effect/pok1.tga;green=1;posxStartRand=3;posxStartRandMiddle=0;posyStartRand=3;posyStartRandMiddle=0;poszEndRand=2;poszEndRandMiddle=2;poszStart=0;red=1;size=100;sizeRand=17;zIndex=1
@@ -1608,7 +1607,6 @@ ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.3;
 ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.3;topSize=2.3;height=3.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=53.2;duration=20000;attachedEntity=true
 ring	885	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=200;duplicate=5;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;red=0.3;green=0.5;blue=1.0;attachedEntity=true
 ring	885	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=5;delayStart=200;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;red=0.3;green=0.5;blue=1.0;attachedEntity=true
-spr	39	성수뜨기	1	head=true
 spr	53	poisonhit	0	-
 spr	165	크리스마스	1	duration=1000
 spr	212	darkbreath	1	head=true
@@ -1765,7 +1763,8 @@ wav	35	effect\ef_readyportal	0
 wav	37	effect\ef_incagility	0
 wav	38	effect\ef_decagility	0
 wav	39	effect\ef_aqua	0
-wav	40	effect\ef_signum	0
+wav	40	effect\ef_signum	480
+wav	40	effect\ef_bash	480
 wav	41	effect\ef_angelus	0
 wav	42	effect\ef_blessing	0
 wav	43	effect\ef_incagidex	0
@@ -1780,7 +1779,8 @@ wav	59	effect\ef_beginspell	0
 wav	62	effect\wizard_sightrasher	0
 wav	65	effect\thief_invenom	0
 wav	66	effect\acolyte_cure	0
-wav	67	effect\swordman_provoke	0
+wav	67	effect\swordman_provoke	80
+wav	67	effect\swordman_provoke	480
 wav	68	effect\st_mvp	0
 wav	69	effect\hunter_skidtrap	0
 wav	70	effect\knight_brandish_spear	0
@@ -4232,6 +4232,7 @@ struck	520	caster	645
 struck	528	target	632
 struck	530	target	630
 struck	534	target	618
+hit	534	-1	49
 struck	537	target	619
 struck	540	caster	621
 struck	542	caster	624
@@ -4362,6 +4363,8 @@ struck	8434	caster	943
 struck	8435	target	466
 struck	8437	caster	935
 struck	8442	target	944
+struck	2259	target	787
+struck	2259	target	49
 used	6	target	67
 used	7	caster	17
 used	8202	caster	17
@@ -4721,6 +4724,7 @@ used	8039	caster	962
 used	8051	caster	2338
 used	8603	target	313
 used	8604	target	253
+used	2556	caster	153
 ground	21	ground	30
 ground	69	ground	91
 ground	694	ground	91
