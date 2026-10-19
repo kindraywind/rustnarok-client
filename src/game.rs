@@ -321,16 +321,17 @@ impl Game {
         true
     }
 
-    /// Turns to face a cell, the head straight. rathena counts directions the other way along y from the sprites.
-    /// Only standing, sitting or flinching; see `turn_toward`.
+    /// Turns toward a cell's centre from where the player is drawn, telling the server even when nothing turns. Only
+    /// standing, sitting or flinching; see `turned`, counted from the body's exact facing.
     pub(crate) fn turn_to(&mut self, cell: [i32; 2]) {
-        let step = [cell[0] - self.player.cell[0], cell[1] - self.player.cell[1]];
-        if step == [0, 0] || self.player.moving() || self.player.swinging(control::now()) {
+        let now = control::now();
+        if self.player.moving() || self.player.swinging(now) {
             return;
         }
+        let target = direction_toward(self.player.position(now), cell);
         // The sprites count directions the other way round from rathena: body = (4 - ours) mod 8 and back.
         let body = (12 - self.player.direction % 8) % 8;
-        let (body, head) = turn_toward(body, self.player.head_direction as u8, world::direction([step[0], -step[1]]));
+        let (body, head) = turned(sectors_from(self.player.rot, target), body, self.player.head_direction as u8, target);
         let _ = self.session.change_direction(body, head);
         self.player.set_direction((12 - body) % 8);
         self.player.head_direction = u16::from(head);
@@ -422,13 +423,14 @@ impl Game {
         after_warp(&mut self.player, position, self.entered_facing);
     }
 
-    /// Talks to an NPC, turned to face it; only standing still or sitting (walking or attacking, nothing). rathena
-    /// answers when it's too far. While a say window is open another talk is refused with a chat line.
+    /// Talks to an NPC, turned toward the cell where it's drawn; only standing or sitting (`may_talk`), else nothing at
+    /// all. rathena answers when it's too far. While a say window is open another talk is refused with a chat line.
     pub(crate) fn talk_to(&mut self, id: u32, messages: &[String]) {
-        if !may_talk(self.player.moving(), self.attack.is_some(), self.player.sitting) {
+        let now = control::now();
+        if !may_talk(self.player_motion(now), self.player.sitting) {
             return;
         }
-        if let Some(cell) = self.units.get(&id).map(|actor| actor.cell) {
+        if let Some(cell) = self.units.get(&id).map(|actor| actor.position(now).map(|value| (value + 0.5).floor() as i32)) {
             self.turn_to(cell);
         }
         if self.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()) {
@@ -464,46 +466,44 @@ impl Game {
         }
     }
 
-    /// Picks up an item, facing it: at once from the next cell, else walking there with the pickup pending.
-    pub(crate) fn pick_up(&mut self, id: u32, now: Instant) {
-        if self.store_open() {
+    /// A click on an item: the pickup is pending; nothing turns and nothing goes out yet (`pending_step` works on it
+    /// once the player stands, after a walk under way).
+    pub(crate) fn pick_up(&mut self, id: u32) {
+        if self.store_open() || self.player.sitting || self.player.hidden || !self.ground.contains_key(&id) {
             return;
         }
-        let Some(at) = self.ground.get(&id).map(|item| item.at) else { return };
-        self.player.face(at);
-        // Another press on the item while walking to it keeps that walk.
-        if !(self.player.moving() && self.pending.is_some_and(|(pending, _)| pending == Pending::PickUp(id))) {
-            self.pending_walk = None;
-        }
         self.pending = Some((Pending::PickUp(id), None));
-        self.pending_step(now);
     }
 
     /// A pickup or skill waiting on a walk, each frame. A pickup goes out as soon as the player's cell is next to the
     /// item, still walking; a walk the move limit held back is asked for again.
     pub(crate) fn pending_step(&mut self, now: Instant) {
         match self.pending {
-            Some((Pending::PickUp(id), arrived)) => {
+            Some((Pending::PickUp(id), _)) => {
                 let Some(at) = self.ground.get(&id).map(|item| item.at) else {
                     self.pending = None;
                     return;
                 };
-                match pickup_step(self.player.cell, at, self.pending_walk.map(|(cell, _)| cell)) {
+                let spot = pickup_spot(self.player.cell, at, |cell| self.world.gat.walkable(cell));
+                let motion = self.player_motion(control::now());
+                match pickup_step(motion, self.player.cell, at, self.pickups_asked.contains(&id), self.walk_cell, spot) {
+                    PickStep::Wait => {}
+                    // Turned toward it first; one request per item, until an answer or the next map.
                     PickStep::PickUp => {
                         self.pending = None;
-                        self.player.face(at);
+                        self.pickups_asked.insert(id);
+                        self.turn_to(at);
                         let _ = self.session.pick_up(id);
                     }
-                    // The walk goes to the cell next to the item on the player's side (`pending_walk` notes the item).
-                    PickStep::Walk if may_move(self.last_move, whole_ms(now)) => {
-                        let spot = pickup_spot(self.player.cell, at, |cell| self.world.gat.walkable(cell));
-                        self.last_move = Some(whole_ms(Instant::now()));
-                        self.pending_walk = Some((at, now));
-                        let _ = self.session.walk(spot.map(|value| value as u16));
+                    PickStep::Drop => self.pending = None,
+                    // The walk cell is set even when the move limit holds the packet back.
+                    PickStep::Walk => {
+                        self.walk_cell = Some(spot);
+                        if may_move(self.last_move, whole_ms(now)) {
+                            self.last_move = Some(whole_ms(Instant::now()));
+                            let _ = self.session.walk(spot.map(|value| value as u16));
+                        }
                     }
-                    // Stopped out of reach after walking there: it can't be reached.
-                    PickStep::Wait if arrived.zip(self.pending_walk).is_some_and(|(stopped, (_, sent))| stopped > sent) => self.pending = None,
-                    _ => {}
                 }
             }
             // A skill: sent the moment it's in reach (walking or not) or on arriving on the walk cell; out of reach, a

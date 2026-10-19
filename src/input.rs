@@ -2681,7 +2681,7 @@ impl App {
             }
             WorldClick::Talk(id) => game.talk_to(id, &self.messages),
             // Held, the button follows the pointer again once the item is picked up.
-            WorldClick::PickUp(id) if !game.player.sitting => game.pick_up(id, now),
+            WorldClick::PickUp(id) if !game.player.sitting => game.pick_up(id),
             // A warp is ground: the cell under the pointer, not the portal's own.
             WorldClick::Warp | WorldClick::Ground => {
                 let cell = game.ground_cell(cursor);

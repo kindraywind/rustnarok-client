@@ -1579,6 +1579,8 @@ struct Game {
     /// What to do once the walk toward it ends (and when it ended), and where its walk went and when (None: none yet).
     pending: Option<(Pending, Option<Instant>)>,
     pending_walk: Option<([i32; 2], Instant)>,
+    /// Items already asked to pick up: once each, until an answer or the next map.
+    pickups_asked: HashSet<u32>,
 }
 
 /// Where the camera eases toward, steered with the right mouse button and the wheel.
@@ -3511,9 +3513,29 @@ fn aim_level(level: u16, learned: u16, rows: i32, separate: bool) -> u16 {
     (i32::from(level) - rows).clamp(1, i32::from(learned.max(1))) as u16
 }
 
-/// Talking needs the player standing still (or sitting): not walking, not attacking.
-fn may_talk(moving: bool, attacking: bool, sitting: bool) -> bool {
-    sitting || !(moving || attacking)
+/// Talking needs the player standing (not walking, nor in a swing, a flinch, a cast, a skill's motion or the pickup)
+/// or sitting. A pending attack doesn't matter.
+fn may_talk(motion: PlayerMotion, sitting: bool) -> bool {
+    sitting || motion == PlayerMotion::Stand
+}
+
+/// π as the game takes it.
+#[allow(clippy::approx_constant)]
+const GAME_PI: f64 = 3.141592;
+
+/// The rathena direction (0 north, counting counter-clockwise) toward a cell's centre from where the player is drawn,
+/// x east and y north: the angle a = atan2(dx, −dy) in degrees, T = ((trunc(a + 22.5) + 180) / 45) mod 8. The player's
+/// own cell is north (a = 180°).
+fn direction_toward(from: [f32; 2], to: [i32; 2]) -> u8 {
+    let a = f64::atan2(f64::from(to[0]) - f64::from(from[0]), -(f64::from(to[1]) - f64::from(from[1]))) * 180.0 / GAME_PI;
+    (((a + 22.5).trunc() as i32 + 180) / 45).rem_euclid(8) as u8
+}
+
+/// How many sectors from rathena direction `target` the body faces, counted from its exact facing `rot` (degrees, 0
+/// south, 90 east): r = floor((rot − θT) / 45) mod 8, θT = ((T + 4) × 45) mod 360.
+fn sectors_from(rot: f32, target: u8) -> u8 {
+    let theta = ((u32::from(target) + 4) * 45 % 360) as f32;
+    (((rot - theta) / 45.0).floor() as i32).rem_euclid(8) as u8
 }
 
 /// An item can be picked up from the next cell, diagonals too.
@@ -3536,17 +3558,25 @@ fn pickup_spot(player: [i32; 2], item: [i32; 2], walkable: impl Fn([i32; 2]) -> 
 /// What a pending pickup does this frame.
 #[derive(Debug, PartialEq)]
 enum PickStep {
-    PickUp,
-    Walk,
+    /// Not standing (a walk under way finishes first), or already walking beside the item.
     Wait,
+    /// Within a cell: turn toward it (CZ_CHANGE_DIRECTION), then CZ_ITEM_PICKUP.
+    PickUp,
+    /// Within a cell but already asked for: dropped, nothing sent.
+    Drop,
+    /// Farther: a walk beside it (`spot`), unless the walk cell is already there.
+    Walk,
 }
 
-/// A pending pickup: picked up once the player's cell is next to the item, walking or not; out of reach, a walk
-/// there unless the last one already went there.
-fn pickup_step(player: [i32; 2], item: [i32; 2], walked_to: Option<[i32; 2]>) -> PickStep {
-    if within_pickup(player, item) {
-        PickStep::PickUp
-    } else if walked_to != Some(item) {
+/// A pending pickup, worked on only while the player stands: within a cell, asked for once per item; farther, a walk
+/// to `spot` beside it when the walk cell isn't already there (standing clears the walk cell, so each stop short of
+/// the item asks again; nothing cancels the pickup).
+fn pickup_step(motion: PlayerMotion, player: [i32; 2], item: [i32; 2], asked: bool, walk_cell: Option<[i32; 2]>, spot: [i32; 2]) -> PickStep {
+    if motion != PlayerMotion::Stand {
+        PickStep::Wait
+    } else if within_pickup(player, item) {
+        if asked { PickStep::Drop } else { PickStep::PickUp }
+    } else if walk_cell != Some(spot) {
         PickStep::Walk
     } else {
         PickStep::Wait
@@ -4922,7 +4952,7 @@ impl ApplicationHandler<NetEvent> for App {
                         && let Some((&id, _)) = game.ground.iter().min_by_key(|(_, item)| distance(item.at))
                     {
                         game.auto_pick_up = false;
-                        game.pick_up(id, now);
+                        game.pick_up(id);
                     }
                     if game.entered.elapsed() >= Duration::from_secs(3)
                         && !game.skills.is_empty()
@@ -5310,8 +5340,14 @@ fn deal_result(sold: bool, result: u8) -> Option<(usize, [u8; 3])> {
 /// Turning on the spot toward rathena direction `target` (0 north, counting counter-clockwise): the body and the head
 /// (0 straight, 1 right, 2 left) after. Ahead or behind, the body turns. 45° aside, the head turns, or the body when the
 /// head already looks that way. 90° to 135° aside, the body turns one sector short and the head looks the rest.
+#[cfg(test)]
 fn turn_toward(body: u8, head: u8, target: u8) -> (u8, u8) {
-    match (body + 8 - target) % 8 {
+    turned((body + 8 - target) % 8, body, head, target)
+}
+
+/// The turn for a body `r` sectors from `target` (the table above).
+fn turned(r: u8, body: u8, head: u8, target: u8) -> (u8, u8) {
+    match r {
         1 if head == 1 => (target, 0),
         1 => (body, 1),
         2 | 3 => ((target + 1) % 8, 1),
@@ -5992,9 +6028,21 @@ mod tests {
     }
 
     #[test]
+    fn turns_toward_a_cells_centre() {
+        let toward = |dx: i32, dy: i32| direction_toward([10.0, 10.0], [10 + dx, 10 + dy]);
+        // x east, y north: 3 east 1 north is east, 1 east 3 north north, 2 east 1 north north-east; its own cell north.
+        assert_eq!([toward(3, 1), toward(1, 3), toward(2, 1), toward(-3, 1), toward(0, 0)], [6, 0, 7, 2, 0]);
+        // Counted from the exact facing: east (90°) to east is ahead; from 89° a sector off, so only the head turns.
+        assert_eq!([sectors_from(90.0, 6), sectors_from(89.0, 6)], [0, 7]);
+        assert_eq!(turned(7, 6, 0, 6), (6, 2));
+    }
+
+    #[test]
     fn talks_and_picks_up_from_close() {
-        assert!(may_talk(false, false, false) && may_talk(true, false, true));
-        assert!(!may_talk(true, false, false) && !may_talk(false, true, false));
+        // Talking: standing or sitting; walking, a swing, the pickup (Other), a flinch, a cast or a skill's motion, nothing.
+        assert!(may_talk(PlayerMotion::Stand, false) && may_talk(PlayerMotion::Other, true));
+        let busy = [PlayerMotion::Walk, PlayerMotion::Other, PlayerMotion::Flinch, PlayerMotion::Cast, PlayerMotion::Skill];
+        assert!(busy.iter().all(|&motion| !may_talk(motion, false)));
         assert!(within_pickup([5, 5], [6, 6]) && within_pickup([5, 5], [5, 5]));
         assert!(!within_pickup([5, 5], [7, 5]) && !within_pickup([5, 5], [6, 7]));
         assert_eq!([npc_cursor(WARP_JOB), npc_cursor(86)], [cursor::Kind::Warp, cursor::Kind::Talk]);
@@ -6167,22 +6215,19 @@ mod tests {
 
     #[test]
     fn picks_up_on_the_way() {
-        // Four cells away and walking there: nothing until the player's cell is next to the item.
-        assert_eq!(pickup_step([10, 10], [14, 10], None), PickStep::Walk);
-        assert_eq!(pickup_step([11, 10], [14, 10], Some([14, 10])), PickStep::Wait);
-        assert_eq!(pickup_step([12, 11], [14, 10], Some([14, 10])), PickStep::Wait);
-        assert_eq!(pickup_step([13, 11], [14, 10], Some([14, 10])), PickStep::PickUp);
-        assert_eq!(pickup_step([14, 10], [14, 10], None), PickStep::PickUp);
-        // A walk the move limit held back is asked for again on a later frame, once.
-        let (mut walked, mut last) = (None, Some(0));
-        let mut walks = Vec::new();
-        for ms in [100, 200, 299, 300, 301, 350, 700] {
-            if pickup_step([10, 10], [14, 10], walked) == PickStep::Walk && may_move(last, ms) {
-                (walked, last) = (Some([14, 10]), Some(ms));
-                walks.push(ms);
-            }
+        // Nothing while walking (the walk goes on), in a swing, the pickup motion, a flinch or a cast.
+        let step = |motion, player, asked, walk_cell| pickup_step(motion, player, [14, 10], asked, walk_cell, [13, 10]);
+        for motion in [PlayerMotion::Walk, PlayerMotion::Other, PlayerMotion::Flinch, PlayerMotion::Cast] {
+            assert_eq!(step(motion, [13, 10], false, None), PickStep::Wait);
         }
-        assert_eq!(walks, [301]);
+        // Standing within a cell: turn and pick up, once per item.
+        assert_eq!(step(PlayerMotion::Stand, [13, 11], false, None), PickStep::PickUp);
+        assert_eq!(step(PlayerMotion::Stand, [14, 10], true, None), PickStep::Drop);
+        // Standing farther: a walk beside it; not again while the walk cell is there, so still pending after a stop short
+        // (standing clears the walk cell, and the next frame asks again).
+        assert_eq!(step(PlayerMotion::Stand, [10, 10], false, None), PickStep::Walk);
+        assert_eq!(step(PlayerMotion::Stand, [10, 10], false, Some([13, 10])), PickStep::Wait);
+        assert_eq!(step(PlayerMotion::Stand, [11, 10], false, None), PickStep::Walk);
         // The held button follows the pointer only once nothing is pending, more than MOVE_GAP_MS after its last try.
         assert!(!follows_pointer(true, true, None, 0));
         assert!(follows_pointer(true, false, None, 0));
