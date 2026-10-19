@@ -301,6 +301,11 @@ impl App {
         // The map's moving RSM 2 models, posed for now.
         game.world.animate(gpu, now);
         game.poll_booking();
+        // The map's own effects: those started at its load, then each on its timer while the player is near.
+        let near = actor::world_xz(game.player.position(now));
+        for (effect, at) in game.world.map_effects.due(crate::whole_ms(now), near) {
+            game.effects.play(gpu, grf, &self.effect_table, effect, effects::Target::Ground, at, now);
+        }
         // The map's ambient sounds, each on its cycle.
         if let Some(audio) = audio.as_mut() {
             let at = actor::world_xz(game.player.position(now));

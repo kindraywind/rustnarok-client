@@ -121,6 +121,19 @@ pub struct Rsw {
     pub light: Light,
     pub models: Vec<Model>,
     pub sounds: Vec<SoundSource>,
+    pub effects: Vec<EffectSource>,
+}
+
+/// An effect placed on the map (an RSW type-4 object): played where it stands, on its own timer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffectSource {
+    pub name: String,
+    /// From the map's centre, y up negative, as a model's.
+    pub position: [f32; 3],
+    pub id: i32,
+    /// How often it plays, in 16 ms ticks.
+    pub speed: f32,
+    pub params: [f32; 4],
 }
 
 impl Rsw {
@@ -179,6 +192,7 @@ impl Rsw {
 
         let mut models = Vec::new();
         let mut sounds = Vec::new();
+        let mut effects = Vec::new();
         for _ in 0..reader.i32()?.max(0) {
             match reader.i32()? {
                 1 => {
@@ -216,11 +230,18 @@ impl Rsw {
                     let cycle = if version >= (2, 0) { reader.f32()? } else { 4.0 };
                     sounds.push(SoundSource { file, position, volume, width, height, range, cycle });
                 }
-                4 => drop(reader.take(80 + 12 + 4 + 4 + 16)?),
+                // An effect: its name, where, the effect id, its emit speed and four parameters.
+                4 => {
+                    let name = reader.string(80)?;
+                    let position = reader.vector()?;
+                    let (id, speed) = (reader.i32()?, reader.f32()?);
+                    let params = [reader.f32()?, reader.f32()?, reader.f32()?, reader.f32()?];
+                    effects.push(EffectSource { name, position, id, speed, params });
+                }
                 other => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("unknown RSW object type {other}"))),
             }
         }
-        Ok(Self { ground_file, altitude_file, water, water_depth, light, models, sounds })
+        Ok(Self { ground_file, altitude_file, water, water_depth, light, models, sounds, effects })
     }
 }
 
@@ -575,6 +596,29 @@ mod tests {
         // Before 2.0 there's no cycle: 4 seconds.
         let old = Rsw::parse(&rsw_with_a_sound((1, 9))).unwrap();
         assert_eq!(old.sounds[0].cycle, 4.0);
+    }
+
+    #[test]
+    fn reads_effect_objects() {
+        // The sound map with a second object: a torch (47) at (5, −10, 20), emit speed 125, four parameters.
+        let mut bytes = rsw_with_a_sound((2, 1));
+        let count = 4 + 2 + 4 * 40 + 4 + 4 + 12 + 4 + 8 + 28 + 16;
+        assert_eq!(bytes[count..count + 4], 1i32.to_le_bytes());
+        bytes[count..count + 4].copy_from_slice(&2i32.to_le_bytes());
+        bytes.extend(4i32.to_le_bytes());
+        let mut name = b"torch".to_vec();
+        name.resize(80, 0);
+        bytes.extend(name);
+        for value in [5.0f32, -10.0, 20.0] {
+            bytes.extend(value.to_le_bytes());
+        }
+        bytes.extend(47i32.to_le_bytes());
+        for value in [125.0f32, 1.0, 2.0, 3.0, 4.0] {
+            bytes.extend(value.to_le_bytes());
+        }
+        let rsw = Rsw::parse(&bytes).unwrap();
+        assert_eq!(rsw.effects, [EffectSource { name: "torch".into(), position: [5.0, -10.0, 20.0], id: 47, speed: 125.0, params: [1.0, 2.0, 3.0, 4.0] }]);
+        assert_eq!(rsw.sounds.len(), 1);
     }
 
     #[test]

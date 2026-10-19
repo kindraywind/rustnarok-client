@@ -609,6 +609,8 @@ pub struct World {
     pub rsm_2_models: usize,
     /// The map's ambient sound sources.
     pub ambient: crate::ambient::Ambient,
+    /// The map's own effects (torches, fireflies…) and their timers.
+    pub map_effects: crate::map_effects::MapEffects,
     textures: Vec<Texture>,
     lightmap: Texture,
     vertices: wgpu::Buffer,
@@ -871,6 +873,7 @@ impl World {
         // Sound sources sit, like models, relative to the map's center.
         let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
         let ambient = crate::ambient::Ambient::new(rsw.sounds.iter().map(|source| crate::ambient::Source::placed(source, half)).collect());
+        let map_effects = crate::map_effects::MapEffects::new(&rsw.effects, half, || crate::effects::pick(0, u32::MAX - 1));
         let cell_light = cell_lights(&gnd, &gat);
         let (clear_color, fog_color, fog_range) = atmosphere(grf, map);
         let tile_heights = (gnd.cubes.iter().map(|cube| cube.heights.map(|height| -height)).collect(), gnd.width);
@@ -879,6 +882,7 @@ impl World {
             animated_buffer,
             rsm_2_models,
             ambient,
+            map_effects,
             gat,
             cell_light,
             tile_heights,
