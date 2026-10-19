@@ -116,11 +116,7 @@ impl Ghost {
         let [fx, fz] = self.forward;
         let right = [fz, -fx];
         let out = -self.bulge;
-        let at = [
-            self.base[0] + fx * self.along + right[0] * out * sin,
-            self.base[1] + out * cos,
-            self.base[2] + fz * self.along + right[1] * out * sin,
-        ];
+        let at = [self.base[0] + fx * self.along + right[0] * out * sin, self.base[1] + out * cos, self.base[2] + fz * self.along + right[1] * out * sin];
         self.trail.push_front(at);
         self.trail.truncate(GHOST_TRAIL);
     }
