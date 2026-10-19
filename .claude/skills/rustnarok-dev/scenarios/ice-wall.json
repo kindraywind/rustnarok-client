@@ -10,10 +10,10 @@
     {"key": "Alt+S"}, {"wait": 500},
     {"click_on": {"skill": 87}, "count": 2}, {"wait": 300},
     {"key": "Alt+S"}, {"wait": 300},
-    {"click_on": {"cell": [61, 232]}}, {"wait_for": {"event": "SkillUnit", "ms": 5000}}, {"wait": 500},
-    {"move": {"cell": [61, 232]}}, {"wait": 300},
+    {"click_on": {"cell": [61, 232], "offset": [1, 0]}}, {"wait_for": {"event": "SkillUnit", "ms": 5000}}, {"wait": 500},
+    {"move": {"cell": [61, 232], "offset": [1, 0]}}, {"wait": 300},
     {"expect": {"state": {"cursor": "Attack"}}},
-    {"click_on": {"cell": [61, 232]}}, {"wait_for": {"sent": "0x0437", "ms": 3000}}, {"wait": 300},
+    {"click_on": {"cell": [61, 232], "offset": [1, 0]}}, {"wait_for": {"sent": "0x0437", "ms": 3000}}, {"wait": 300},
     {"shot": "ice-wall-attack", "crop": [262, 134, 500, 450], "threshold": 10},
     {"say": "@job 0"}, {"wait": 500}
   ]
