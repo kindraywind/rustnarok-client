@@ -35,7 +35,7 @@
 //!   name.
 //!   `homunculus` is `{id, name, level, hunger, intimacy, hp, skill_points, vaporized, following}` or null; the skill
 //!   list's level up buttons are targets named `raise:<skill id>`. `player.look` is the real look (hair, hair color,
-//!   clothes color, head top, mid and bottom). The stylist's buttons are targets (`hair_style_<row>`, `hair_color_<row>`,
+//!   clothes color, head top, mid and bottom, and `body` for the 2nd outfit). The stylist's buttons are targets (`hair_style_<row>`, `hair_color_<row>`,
 //!   `clothes_color_<row>`, `tab_hair`, `tab_accessory`, `buy`, `refresh`, `rotate_left`, `rotate_right`, `close`).
 //! - `wait` `{ms?, packet?, event?, fresh?, pause?, do?}`: sleeps `ms`; with a `packet` id ("0x08c8") or an `event`
 //!   (a `MapEvent`/`CharEvent` variant like "Act", "LoginAccepted"/"LoginRefused", or "Sound <file>" for an effect
@@ -1892,6 +1892,7 @@ fn player_look(look: &Look) -> Value {
         "head_top": look.head_top,
         "head_mid": look.head_mid,
         "head_bottom": look.head_bottom,
+        "body": look.body,
     })
 }
 
@@ -2016,6 +2017,6 @@ mod tests {
     #[test]
     fn reports_the_players_look() {
         let look = Look { hair: 1, hair_color: 3, clothes_color: 2, head_top: 16, head_mid: 0, head_bottom: 4, ..Look::default() };
-        assert_eq!(player_look(&look), json!({"hair": 1, "hair_color": 3, "clothes_color": 2, "head_top": 16, "head_mid": 0, "head_bottom": 4}));
+        assert_eq!(player_look(&look), json!({"hair": 1, "hair_color": 3, "clothes_color": 2, "head_top": 16, "head_mid": 0, "head_bottom": 4, "body": 0}));
     }
 }

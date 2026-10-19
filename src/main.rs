@@ -1991,6 +1991,7 @@ fn character_look(character: &Character) -> Look {
         head_bottom: character.head_bottom,
         robe: character.robe,
         option: character.option & actor::BODY_OPTIONS,
+        body: character.body,
     }
 }
 
@@ -2008,6 +2009,7 @@ fn unit_look(unit: &net::Unit) -> Look {
         head_bottom: unit.head_bottom,
         robe: unit.robe,
         option: unit.option & actor::BODY_OPTIONS,
+        body: unit.body,
     }
 }
 
@@ -2071,6 +2073,7 @@ fn change_look(look: &mut Look, kind: u8, value: u32, extra: u32) -> bool {
         net::LOOK_CLOTHES_COLOR => look.clothes_color = short,
         net::LOOK_SHIELD => look.shield = value,
         net::LOOK_ROBE => look.robe = short,
+        net::LOOK_BODY => look.body = short,
         _ => {}
     }
     *look != before
