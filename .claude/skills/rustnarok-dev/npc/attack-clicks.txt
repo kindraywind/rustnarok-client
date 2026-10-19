@@ -1,0 +1,12 @@
+// Attack clicks (issue #593): a training dummy 10 cells east of prt_fild06 180,180 and an NPC beside the way there.
+// Loaded and unloaded by scenarios/attack-clicks.json.
+prt_fild06,1,1,0	script	AttackClicks	-1,{
+OnInit:
+	monster "prt_fild06", 190, 180, "--ja--", 2408, 1;
+	end;
+}
+prt_fild06,184,183,4	script	Chase Sign	86,{
+	mes "[Chase Sign]";
+	mes "Hello.";
+	close;
+}

@@ -2602,9 +2602,17 @@ impl App {
         if !double && self.modifiers.alt_key() && game.companion_press(false, cursor, shift) {
             return;
         }
-        // A new press ends the attack under way.
-        game.attack = None;
-        match game.world_click(cursor, shift) {
+        // One pending action at a time (`press_ends`).
+        let click = game.world_click(cursor, shift);
+        let (ends_attack, drops_pending) = press_ends(&click, double);
+        if ends_attack {
+            game.attack = None;
+        }
+        if drops_pending {
+            game.pending = None;
+            game.pending_walk = None;
+        }
+        match click {
             // A double press does nothing, but held on the ground the button goes on following the pointer.
             WorldClick::Ground if double => {
                 if double_holds(ctrl, shift, game.player.sitting) {
@@ -2612,6 +2620,8 @@ impl App {
                 }
             }
             _ if double => {}
+            // Sitting or hidden (option 0x2): an attack click does nothing.
+            WorldClick::Attack(_) if game.player.sitting || game.player.option & 0x2 != 0 => {}
             // A monster with Shift (without /noshift): nothing.
             WorldClick::Attack(id) if shift && !game.no_shift && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER) => {}
             // An attack: kept up with Ctrl or /noctrl (on someone else's homunculus always), otherwise while the
@@ -2622,7 +2632,7 @@ impl App {
                 match attack_refused(weight(net::STATUS_WEIGHT), weight(net::STATUS_MAX_WEIGHT), game.riding) {
                     Some(line) => game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR),
                     None => {
-                        game.attack = Some(Attack { fast: game.fast_target(id), ..Attack::new(id, ctrl || game.no_ctrl || homunculus) });
+                        game.attack = Some(game.new_attack(id, ctrl || game.no_ctrl || homunculus));
                         game.attack_step(now);
                     }
                 }

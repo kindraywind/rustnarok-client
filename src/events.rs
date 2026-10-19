@@ -3712,8 +3712,10 @@ impl App {
                     game.player.place_at(cell.map(i32::from), clock);
                 }
                 game.walk_cell = None;
-                // Chased again at once (`rearmed`).
-                if !game.player.sitting && game.player.option & 0x2 == 0 {
+                // Chased again at once (`rearmed`); one on Ice Wall or a trap ends instead.
+                if too_far_ends(game.attack, game.attack_was, target) {
+                    game.attack = None;
+                } else if !game.player.sitting && game.player.option & 0x2 == 0 {
                     let now = Instant::now();
                     game.attack = Some(rearmed(game.attack, game.attack_was, target));
                     game.last_chase_walk = Some(whole_ms(now).saturating_sub(ATTACK_GAP_MS));
