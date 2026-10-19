@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, sage, stone, tanji, throw};
+use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, sage, sight, stone, tanji, throw};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -1335,6 +1335,8 @@ pub struct Effects {
     stars: HashMap<&'static str, Vec<Placed>>,
     /// Holy Water's bottle sprite's frames (1 to 41), plain white, by frame.
     holy_frames: HashMap<usize, Vec<Placed>>,
+    /// Sight Rasher's sprites' frames, plain white, by sprite and frame.
+    sight_frames: HashMap<(&'static str, usize), Vec<Placed>>,
     /// Dark Strike's red ghost sprite's layers.
     red_ghost: Vec<Placed>,
     fire_ball: Vec<Vec<Placed>>,
@@ -1550,6 +1552,9 @@ pub const NAPALM_BEAT: u32 = 32;
 /// EF_HALLUTIME: white glints round a copy (`prims::sparkle`).
 pub const HALLUTIME: u32 = crate::prims::sparkle::EF_HALLUTIME;
 
+/// EF_SIGHTRASHER: its 64 sprites and ring, made in code (`prims::sight`); it ends the caster's Sight (22).
+const SIGHT_RASHER: u32 = 62;
+const SIGHT: u32 = 22;
 /// EF_SIGNUMCRUCIS: its STR, and a burst half a second in (`prims::burst`).
 const SIGNUM_CRUCIS: u32 = 40;
 /// EF_BASH: the burst on a damaging skill's caster (`prims::burst`); none at all under /mineffect.
@@ -1757,6 +1762,15 @@ impl Effects {
                 self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
             }
             self.prims.first.play(id, unit, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+        }
+        // Sight Rasher: four waves of sprites with shadows and a ring at the caster's feet; the caster's Sight stops.
+        if let (SIGHT_RASHER, Target::Unit(unit)) = (id, target) {
+            for path in [sight::SIGHT, sight::SHADOW] {
+                self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
+            }
+            self.textures.entry(sight::RING.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sight::RING, true).ok());
+            self.prims.sights.play(at, now, |n| pick(0, n.saturating_sub(1)));
+            self.stop_effect(SIGHT, unit);
         }
         // Signum Crucis' burst, half a second into its STR; it ignores /mineffect.
         // ponytail: the screen shapes draw after the STRs, so the cross lies under the burst; the game draws it over.
@@ -2222,6 +2236,14 @@ impl Effects {
                 self.stars.insert(path, layers);
             }
         }
+        self.prims.sights.advance(now);
+        for drawn in self.prims.sights.sprites(now) {
+            if let (Some(Some(sprite)), false) = (self.sprites.get_mut(drawn.sprite), self.sight_frames.contains_key(&(drawn.sprite, drawn.frame))) {
+                let frames = sprite.frames(0).max(1);
+                let layers = sprite.frame_plain(gpu, 0, Timing::Span((drawn.frame as f32 + 0.5) / frames as f32));
+                self.sight_frames.insert((drawn.sprite, drawn.frame), layers);
+            }
+        }
         if let Some(Some(sprite)) = self.sprites.get_mut(first::HOLY_WATER_SPRITE) {
             for (_, frame) in self.prims.first.holy_waters(now, |_| Some([0.0; 3])) {
                 self.holy_frames.entry(frame).or_insert_with(|| sprite.frame_plain(gpu, 0, Timing::Span((frame as f32 + 0.5) / 42.0)));
@@ -2348,6 +2370,13 @@ impl Effects {
             models: std::mem::take(&mut self.models),
             ..Self::default()
         };
+    }
+
+    /// Stops what effect `effect` plays on `unit` (None = the player): its STR and its parts.
+    fn stop_effect(&mut self, effect: u32, unit: Option<u32>) {
+        let on = |anchor: Anchor| matches!(anchor, Anchor::Unit(each) if each == unit);
+        self.playing.retain(|playing| !(playing.effect == effect && on(playing.anchor)));
+        self.floating.retain(|floating| !(floating.effect == effect && on(floating.anchor)));
     }
 
     /// Drops the effects playing on a unit that went away.
@@ -2526,6 +2555,10 @@ impl Effects {
             .chain(self.prims.throws.meshes(|path| self.textures.get(path).and_then(Option::as_ref), self.pitch))
             .collect();
         // The spikes, in ice and in stone, blended over.
+        let sight_rings: Vec<EffectMesh<'_>> = match self.textures.get(sight::RING).and_then(Option::as_ref) {
+            Some(texture) => self.prims.sights.ring(now).into_iter().map(|triangles| (texture, triangles, false)).collect(),
+            None => Vec::new(),
+        };
         let first_meshes: Vec<EffectMesh<'_>> = self
             .prims
             .first
@@ -2552,8 +2585,15 @@ impl Effects {
             Some((texture, corners.into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] }).collect(), additive))
         });
         // The effects made in code are none of them force-drawn.
-        let prims =
-            spikes.chain(bolt_meshes).chain(blitz_meshes).chain(sphere_meshes).chain(first_meshes).chain(sage).chain(burst_rings).filter(|_| !self.only_forced);
+        let prims = spikes
+            .chain(bolt_meshes)
+            .chain(blitz_meshes)
+            .chain(sphere_meshes)
+            .chain(first_meshes)
+            .chain(sight_rings)
+            .chain(sage)
+            .chain(burst_rings)
+            .filter(|_| !self.only_forced);
         rings.chain(models).chain(hits).chain(auras).chain(prims).collect()
     }
 
@@ -2755,6 +2795,14 @@ impl Effects {
         quads.extend(self.prims.boomerangs.quads(self.textures.get(boomerang::SHIELD).and_then(Option::as_ref)));
         if !self.only_forced {
             quads.extend(self.prims.spheres.quads(self.textures.get(tanji::SPHERE).and_then(Option::as_ref)));
+            // Sight Rasher's sprites and their shadows, white with their alpha.
+            for drawn in self.prims.sights.sprites(now) {
+                let Some(Some(sprite)) = self.sprites.get(drawn.sprite) else { continue };
+                for &(key, position, size, layer_angle) in self.sight_frames.get(&(drawn.sprite, drawn.frame)).into_iter().flatten() {
+                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * drawn.scale));
+                    quads.push((sprite.texture(key), drawn.at, corners, [1.0, 1.0, 1.0, drawn.alpha.trunc().clamp(0.0, 255.0) / 255.0], false, false));
+                }
+            }
             // Holy Water's bottle: every layer plain white at alpha 254.
             if let Some(Some(sprite)) = self.sprites.get(first::HOLY_WATER_SPRITE) {
                 for (at, frame) in self.prims.first.holy_waters(now, &position_of) {
@@ -2946,6 +2994,41 @@ mod tests {
         assert_eq!(bolt_drops(26, 0).len(), 1);
         assert_eq!(bolt_drops(26, 99).len(), 50);
         assert!(bolt_drops(29, 10).is_empty() && bolt_drops(24, 5).is_empty());
+    }
+
+    #[test]
+    fn sight_rasher_stops_the_casters_sight() {
+        let now = Instant::now();
+        let floating = |effect: u32, unit: Option<u32>| Floating {
+            textures: Vec::new(),
+            frame_ms: 0.0,
+            sprite: None,
+            play_sprite: false,
+            placed: Vec::new(),
+            again: false,
+            start: now,
+            end: now,
+            anchor: Anchor::Unit(unit),
+            position: [[0.0; 2]; 3],
+            smooth: [false; 3],
+            size: [[0.0; 2]; 2],
+            size_smooth: false,
+            alpha: 1.0,
+            fade_in: false,
+            fade_out: false,
+            color: [1.0; 3],
+            angle: [0.0; 2],
+            ray: false,
+            additive: false,
+            effect,
+        };
+        // Our Sight, someone else's, and our Heal.
+        let mut effects = Effects { floating: vec![floating(SIGHT, None), floating(SIGHT, Some(7)), floating(7, None)], ..Effects::default() };
+        effects.stop_effect(SIGHT, None);
+        assert_eq!(
+            effects.floating.iter().map(|floating| (floating.effect, matches!(floating.anchor, Anchor::Unit(None)))).collect::<Vec<_>>(),
+            [(SIGHT, false), (7, true)]
+        );
     }
 
     #[test]
@@ -3454,6 +3537,8 @@ mod tests {
         assert_eq!(sounds.len(), 11);
         assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
         assert!(!table.sounds.contains_key(&149));
+        // Sight Rasher is built in code (no generic parts, its sound stays) and ends the caster's Sight.
+        assert!(!table.floaters.contains_key(&62) && table.sounds.contains_key(&62) && table.used(81) == Some(&[(Who::Caster, 62)][..]));
         // Cart Revolution's sounds, First Aid, Sprinkle Sand and the undead Heal are built in code or in bands.
         assert_eq!(table.sounds[&170].iter().map(|sound| sound.delay_ms).collect::<Vec<_>>(), [112, 320]);
         for id in [309, 310, 320, 315, 170] {
