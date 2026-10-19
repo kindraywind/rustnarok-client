@@ -1296,6 +1296,8 @@ pub struct Effects {
     ghost: Vec<Placed>,
     /// The first jobs' star sprites' layers (one frame each), by path.
     stars: HashMap<&'static str, Vec<Placed>>,
+    /// Holy Water's bottle sprite's frames (1 to 41), plain white, by frame.
+    holy_frames: HashMap<usize, Vec<Placed>>,
     /// Dark Strike's red ghost sprite's layers.
     red_ghost: Vec<Placed>,
     fire_ball: Vec<Vec<Placed>>,
@@ -1511,6 +1513,8 @@ pub const NAPALM_BEAT: u32 = 32;
 /// EF_HALLUTIME: white glints round a copy (`prims::sparkle`).
 pub const HALLUTIME: u32 = crate::prims::sparkle::EF_HALLUTIME;
 
+/// EF_SIGNUMCRUCIS: its STR, and a burst half a second in (`prims::burst`).
+const SIGNUM_CRUCIS: u32 = 40;
 /// EF_BASH: the burst on a damaging skill's caster (`prims::burst`); none at all under /mineffect.
 const BASH: u32 = 16;
 /// EF_TURNUNDEAD: its burst round the priest and the ring on the ground (`prims::burst`).
@@ -1697,13 +1701,21 @@ impl Effects {
         }
         // The first jobs' small heal, Endure, Magnum Break, Steal, Detoxify and Decrease AGI, built in code (a status plays it once).
         if let (true, Target::Unit(unit) | Target::Status(unit, _)) = (first::makes(id), target) {
-            for path in [first::ALPHA_DOWN, first::ENDURE, first::RING_YELLOW, first::DOME, first::SLOW, first::STREAK] {
+            for path in [first::ALPHA_DOWN, first::ENDURE, first::RING_YELLOW, first::DOME, first::SLOW, first::STREAK, first::DEX_AGI_TEXT] {
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
             }
-            for path in [first::STAR, first::GOLD_STAR, first::CYAN_STAR] {
+            for path in [first::STAR, first::GOLD_STAR, first::CYAN_STAR, first::HOLY_WATER_SPRITE] {
                 self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
             }
             self.prims.first.play(id, unit, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+        }
+        // Signum Crucis' burst, half a second into its STR; it ignores /mineffect.
+        // ponytail: the screen shapes draw after the STRs, so the cross lies under the burst; the game draws it over.
+        if let (SIGNUM_CRUCIS, Target::Unit(unit)) = (id, target) {
+            for path in [burst::DISC, burst::RAY, burst::RING] {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            self.prims.bursts.push(burst::Burst::signum(unit, now + crate::prims::TICK * 30, 122, |n| pick(0, n.saturating_sub(1))));
         }
         if let (BASH | TURN_UNDEAD | SONIC_BLOW, Target::Unit(unit)) = (id, target) {
             for path in [burst::DISC, burst::RAY, burst::RING] {
@@ -2138,6 +2150,11 @@ impl Effects {
             if let (Some(Some(sprite)), false) = (self.sprites.get_mut(path), self.stars.contains_key(path)) {
                 let layers = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
                 self.stars.insert(path, layers);
+            }
+        }
+        if let Some(Some(sprite)) = self.sprites.get_mut(first::HOLY_WATER_SPRITE) {
+            for (_, frame) in self.prims.first.holy_waters(now, |_| Some([0.0; 3])) {
+                self.holy_frames.entry(frame).or_insert_with(|| sprite.frame_plain(gpu, 0, Timing::Span((frame as f32 + 0.5) / 42.0)));
             }
         }
         if let Some(Some(sprite)) = self.sprites.get_mut(crate::prims::RED_GHOST_SPRITE) {
@@ -2668,6 +2685,15 @@ impl Effects {
         quads.extend(self.prims.boomerangs.quads(self.textures.get(boomerang::SHIELD).and_then(Option::as_ref)));
         if !self.only_forced {
             quads.extend(self.prims.spheres.quads(self.textures.get(tanji::SPHERE).and_then(Option::as_ref)));
+            // Holy Water's bottle: every layer plain white at alpha 254.
+            if let Some(Some(sprite)) = self.sprites.get(first::HOLY_WATER_SPRITE) {
+                for (at, frame) in self.prims.first.holy_waters(now, &position_of) {
+                    for &(key, position, size, layer_angle) in self.holy_frames.get(&frame).into_iter().flatten() {
+                        let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0);
+                        quads.push((sprite.texture(key), at, corners, [1.0; 4], false, false));
+                    }
+                }
+            }
             // The first jobs' sparkles and sparks.
             for particle in self.prims.first.particles(now, &position_of) {
                 let Some(Some(sprite)) = self.sprites.get(particle.sprite) else { continue };
@@ -3303,6 +3329,17 @@ mod tests {
         assert_eq!(sounds.len(), 11);
         assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
         assert!(!table.sounds.contains_key(&149));
+        // Holy Water's bottle, Signum Crucis' burst, DEX AGI UP's text and streaks and Provoke's two sounds.
+        assert!(first::makes(39) && first::makes(43) && !table.sprites.contains_key(&39) && !table.floaters.contains_key(&43));
+        assert_eq!(table.used(31), Some(&[(Who::Caster, 39)][..]));
+        assert_eq!(table.used(32), Some(&[(Who::Caster, 40)][..]));
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        assert_eq!(sounds(40), [("effect\\ef_signum", 480), ("effect\\ef_bash", 480)]);
+        assert_eq!(sounds(67), [("effect\\swordman_provoke", 80), ("effect\\swordman_provoke", 480)]);
+        // Kouenka's first hit and Flame Launcher's every packet show Fire Hit (49); Flicker shows 153 on its source.
+        assert_eq!(table.hit(534), Some([None, Some(49)]));
+        assert_eq!(table.struck(2259), Some(&[(Who::Target, 787), (Who::Target, 49)][..]));
+        assert_eq!(table.used(2556), Some(&[(Who::Caster, 153)][..]));
         // Heal (small), Endure, Magnum Break, Steal, Detoxify and Decrease AGI are built in code: no generic parts or rings,
         // their sounds stay.
         for id in [7, 11, 17, 18, 21, 38] {
@@ -3348,11 +3385,9 @@ mod tests {
     #[test]
     fn reads_sprites_quakes_and_ground_units() {
         let table = Table::load();
-        // Blessing is made in code; Aqua Benedicta's sprite plays above the head, the fire ring's again and again.
+        // Blessing is made in code; the fire ring plays again and again.
         assert!(!table.sprites.contains_key(&42));
         let now = Instant::now();
-        let water = Animation::new(&table.sprites[&39][0], 39, now, Anchor::Unit(None), false);
-        assert_eq!((water.repeat, water.offset), (false, [0.0, -100.0]));
         let ring = &table.sprites[&634][0];
         assert_eq!((ring.file.as_str(), ring.attached), ("화염진", true));
         assert!(Animation::new(ring, 634, now, Anchor::Unit(None), false).repeat);

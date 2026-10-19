@@ -1002,6 +1002,17 @@ impl SpriteSet {
         placed
     }
 
+    /// Like `frame_at`, every layer plain white at alpha 254 whatever the ACT says (Holy Water's bottle and glows).
+    pub fn frame_plain(&mut self, gpu: &Gpu, index: usize, timing: Timing) -> Vec<Placed> {
+        let mut placed = self.place(index, 0, timing);
+        for (key, ..) in &mut placed {
+            key.3 = [255, 255, 255, 254];
+            self.decode(gpu, *key);
+        }
+        placed.retain(|(key, ..)| self.textures.contains_key(key));
+        placed
+    }
+
     /// A frame for a flat preview (character select, the equipment window): as `frame`, but turned layers come as
     /// pictures turned ahead of time and placed upright by their bounding box, as 2D sprites don't turn.
     pub fn flat_frame(&mut self, gpu: &Gpu, action: usize, direction: u8, head_direction: u16, timing: Timing) -> Vec<Placed> {

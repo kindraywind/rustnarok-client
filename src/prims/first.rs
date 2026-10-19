@@ -19,6 +19,9 @@ pub const STREAK: &str = "data\\texture\\effect\\ac_center2.tga";
 pub const STAR: &str = "data\\sprite\\이팩트\\particle1";
 pub const GOLD_STAR: &str = "data\\sprite\\이팩트\\particle7";
 pub const CYAN_STAR: &str = "data\\sprite\\이팩트\\particle2";
+pub const DEX_AGI_TEXT: &str = "data\\texture\\effect\\dex_agi_up.bmp";
+/// Holy Water's bottle (a sprite of 42 frames, a frame every 2 ticks).
+pub const HOLY_WATER_SPRITE: &str = "data\\sprite\\이팩트\\성수뜨기";
 
 /// The effects this makes.
 pub const SMALL_HEAL: u32 = 7;
@@ -27,15 +30,17 @@ pub const MAGNUM_BREAK: u32 = 17;
 pub const STEAL: u32 = 18;
 pub const DETOXIFY: u32 = 21;
 pub const DECREASE_AGI: u32 = 38;
+pub const HOLY_WATER: u32 = 39;
+pub const DEX_AGI_UP: u32 = 43;
 
 pub fn makes(effect: u32) -> bool {
-    matches!(effect, SMALL_HEAL | ENDURE_FX | MAGNUM_BREAK | STEAL | DETOXIFY | DECREASE_AGI)
+    matches!(effect, SMALL_HEAL | ENDURE_FX | MAGNUM_BREAK | STEAL | DETOXIFY | DECREASE_AGI | HOLY_WATER | DEX_AGI_UP)
 }
 
 /// The effects' lengths N in ticks.
 fn length(effect: u32) -> u32 {
     match effect {
-        SMALL_HEAL | DETOXIFY | DECREASE_AGI => 100,
+        SMALL_HEAL | DETOXIFY | DECREASE_AGI | HOLY_WATER | DEX_AGI_UP => 100,
         ENDURE_FX => 80,
         MAGNUM_BREAK => 30,
         _ => 50,
@@ -153,6 +158,16 @@ impl First {
                     seed(born, y, [d, v0, s, 0.0]);
                 }
             }
+            DEX_AGI_UP => {
+                // A streak every second tick to 50: yaw, distance, speed, half-length.
+                for born in (0..=50).step_by(2) {
+                    let y = rand(360) as f32;
+                    let d = (2 + rand(7)) as f32;
+                    let speed = (rand(50) + 20) as f32 / 100.0;
+                    let half = (rand(60) + 30) as f32 / 10.0;
+                    seed(born, y, [d, speed, half, 0.0]);
+                }
+            }
             DECREASE_AGI => {
                 // A streak every second tick to 50: yaw, distance, half-length.
                 for born in (0..=50).step_by(2) {
@@ -256,6 +271,14 @@ impl First {
                         shapes.push((ALPHA_DOWN, effect.unit, turned(centre, [width, height], seed.y, alpha)));
                     }
                 }
+                DEX_AGI_UP => {
+                    if let Some(a) = Self::age(effect, now, 0, 100) {
+                        let k = (a + 1) as f32;
+                        let rise = 1.5 * k - 0.009 * k * (k + 1.0);
+                        let alpha = super::burst::alpha(a, 0.0, 200.0 / 15.0, 200.0, 85, 100);
+                        shapes.push((DEX_AGI_TEXT, effect.unit, square([0.0, -rise], [40.0, 20.0], alpha)));
+                    }
+                }
                 DECREASE_AGI => {
                     if let Some(a) = Self::age(effect, now, 0, 100) {
                         let n = (a + 1) as f32;
@@ -304,6 +327,12 @@ impl First {
                         meshes.push((STREAK, blades(at, seed, a)));
                     }
                 }
+                DEX_AGI_UP => {
+                    for seed in &effect.seeds {
+                        let Some(a) = Self::age(effect, now, seed.born, 50) else { continue };
+                        meshes.push((STREAK, rising_blades(at, seed, a)));
+                    }
+                }
                 _ => {}
             }
         }
@@ -321,6 +350,20 @@ impl First {
             }
         }
         meshes
+    }
+
+    /// Holy Water's bottle sprites playing at `now`: where (20 over the unit's feet) and which frame (1 to 41): a frame every
+    /// two ticks, frame 0 never shown, the sprite over at age 82.
+    pub fn holy_waters(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<(Vector, usize)> {
+        self.list
+            .iter()
+            .filter(|effect| effect.id == HOLY_WATER)
+            .filter_map(|effect| {
+                let a = Self::age(effect, now, 0, 82)?;
+                let at = Self::place(effect, &position_of)?;
+                Some(([at[0], at[1] + 20.0, at[2]], (a / 2 + 1) as usize))
+            })
+            .collect()
     }
 
     /// The sprite particles: the heal's sparkles, Steal's sparks, Detoxify's sparkles.
@@ -486,6 +529,35 @@ fn dome(at: Vector, a: u32, alpha: f32) -> Vec<MeshVertex> {
         }
     }
     vertices
+}
+
+/// DEX AGI UP's streak made at `seed.born`, at age `a`: two crossed vertical blades standing on the ground and rising by their
+/// speed a tick, centred on the streak's centre.
+fn rising_blades(at: Vector, seed: &Seed, a: u32) -> Vec<MeshVertex> {
+    let n = (a + 1) as f32;
+    let [d, speed, half, _] = seed.r;
+    let (sin, cos) = trig(seed.y);
+    let alpha = if a < 20 {
+        10.0 * n
+    } else if a <= 29 {
+        200.0
+    } else {
+        (200.0 - 10.0 * (a - 29) as f32).max(0.0)
+    };
+    let tint = [1.0, 1.0, 1.0, alpha.trunc().clamp(0.0, 200.0) / 255.0];
+    let centre = [at[0] + d * sin, at[1] + speed * n, at[2] + d * cos];
+    let w = 0.18;
+    let point = |across: [f32; 3], side: f32, top: bool| {
+        let uv = [if top { 0.0 } else { 1.0 }, if side < 0.0 { 1.0 } else { 0.0 }];
+        MeshVertex { position: [centre[0] + across[0] * side * w, centre[1] + if top { half } else { -half }, centre[2] + across[2] * side * w], uv, tint }
+    };
+    [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+        .into_iter()
+        .flat_map(|across| {
+            let [a, b, c, d] = [point(across, -1.0, true), point(across, 1.0, true), point(across, 1.0, false), point(across, -1.0, false)];
+            [a, b, c, a, c, d]
+        })
+        .collect()
 }
 
 /// Decrease AGI's streak made at `seed.born`, at age `a`: two crossed vertical blades, falling.
@@ -655,6 +727,55 @@ mod tests {
         assert!(near(particle(9).alpha, 254.0) && near(particle(31).alpha, 254.0) && near(particle(32).alpha, 222.25) && near(particle(39).alpha, 0.0));
         assert!(near(particle(0).alpha, 25.4) && near(particle(2).spin, 9.0));
         assert!(first.particles(tick(start, 40), |_| None).iter().all(|particle| particle.at[1] > 0.0));
+    }
+
+    #[test]
+    fn dex_agi_up_raises_its_text_and_streaks() {
+        let (first, start) = effect_at(DEX_AGI_UP, |_| 0, false);
+        assert_eq!(first.list[0].seeds.iter().map(|seed| seed.born).collect::<Vec<_>>(), (0..=50).step_by(2).collect::<Vec<_>>());
+        // The text: y −1.48 at a = 0, −14.01 at 9, −52.05 at 49, −61.75 at 82, −59.4 at 98; half-size 40 × 20; 99 draws.
+        let text = |e: u32| {
+            first
+                .shapes(tick(start, e))
+                .into_iter()
+                .next()
+                .map(|(_, _, corners)| ((corners[0].0[1] + corners[2].0[1]) / 2.0, corners[0].2[3] * 255.0, corners[2].0[0]))
+        };
+        let y = |e: u32| text(e).unwrap().0;
+        assert!(
+            near(y(0), -1.482) && near(y(9), -14.01) && near(y(49), -52.05) && near(y(82), -61.75) && near(y(98), -59.4),
+            "{} {} {} {} {}",
+            y(0),
+            y(9),
+            y(49),
+            y(82),
+            y(98)
+        );
+        assert!(near(text(0).unwrap().2, 40.0) && text(99).is_none());
+        // The alpha: 13, 26, 40 … 199 at a = 14, 200 at 15 to 84, 186, 173 … 13 at 98.
+        let alpha = |e: u32| text(e).unwrap().1.floor();
+        assert_eq!([0, 1, 2, 14, 15, 84, 85, 86, 98].map(alpha), [13.0, 26.0, 40.0, 199.0, 200.0, 200.0, 186.0, 173.0, 13.0]);
+        // Streaks at e = 0, 2 … 50 (26), none at 52; alpha 10 a tick to 200 at 19, held to 29, then 190 … 0 at 49; it rises by its speed.
+        assert_eq!(first.list[0].seeds.len(), 26);
+        let seed = Seed { born: 0, y: 0.0, r: [2.0, 0.5, 3.0, 0.0] };
+        let streak_alpha = |a: u32| rising_blades([0.0; 3], &seed, a)[0].tint[3] * 255.0;
+        assert!(near(streak_alpha(19), 200.0) && near(streak_alpha(29), 200.0) && near(streak_alpha(30), 190.0) && near(streak_alpha(49), 0.0));
+        let middle = |a: u32| rising_blades([0.0; 3], &seed, a).iter().map(|vertex| vertex.position[1]).sum::<f32>() / 12.0;
+        assert!(near(middle(49), 0.5 * 50.0));
+        // The blades are the same whatever y is.
+        let turned = Seed { y: 120.0, ..seed };
+        assert!(rising_blades([0.0; 3], &seed, 5).iter().zip(rising_blades([0.0; 3], &turned, 5)).all(|(p, q)| near(p.position[1], q.position[1])));
+    }
+
+    #[test]
+    fn holy_water_shows_frames_1_to_41_for_82_ticks() {
+        let (first, start) = effect_at(HOLY_WATER, |_| 0, false);
+        let at = |e: u32| first.holy_waters(tick(start, e), |_| Some([1.0, 2.0, 3.0]));
+        // Frame 1 at ages 0 and 1, frame 41 at 80 and 81, over at 82; 20 over the feet.
+        assert_eq!([0, 1, 2, 80, 81].map(|e| at(e)[0].1), [1, 1, 2, 41, 41]);
+        assert!(at(82).is_empty() && at(99).is_empty());
+        assert_eq!(at(0)[0].0, [1.0, 22.0, 3.0]);
+        assert_eq!((0..100).filter(|&e| !at(e).is_empty()).count(), 82);
     }
 
     #[test]

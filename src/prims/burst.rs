@@ -43,6 +43,10 @@ struct Look {
     ray_alpha: (f32, f32, u32),
     /// The ground ring at tick 50.
     ring: bool,
+    /// Where the parts sit over the feet (screen pixels), the rays' life, and the base of a ray's half-width (÷ 10 degrees).
+    rise: f32,
+    ray_life: u32,
+    half_base: f32,
     /// Sonic Blow's flat ring instead of a disc and rays.
     band: bool,
 }
@@ -58,6 +62,9 @@ const BASH: Look = Look {
     drag: 60.0,
     ray_alpha: (20.0, 200.0, 27),
     ring: false,
+    rise: RISE,
+    ray_life: LIFE,
+    half_base: 5.0,
     band: false,
 };
 const TURN_UNDEAD: Look = Look {
@@ -71,6 +78,26 @@ const TURN_UNDEAD: Look = Look {
     drag: 30.0,
     ray_alpha: (15.0, 150.0, 14),
     ring: true,
+    rise: RISE,
+    ray_life: 20,
+    half_base: 5.0,
+    band: false,
+};
+/// Signum Crucis' burst (half a second into its STR): Bash's with its own numbers, centred 120 px over the feet.
+const SIGNUM: Look = Look {
+    life: LIFE,
+    radius: 100.0,
+    shrink: 0.0,
+    disc_alpha: (170.0 / 6.0, 170.0, 27),
+    rays: 20,
+    length: (60, 30.0),
+    growth: (35, 95.0, 1.0),
+    drag: 52.5,
+    ray_alpha: (20.0, 200.0, 99),
+    ring: false,
+    rise: -120.0,
+    ray_life: 35,
+    half_base: 15.0,
     band: false,
 };
 const SONIC_BLOW: Look = Look {
@@ -84,12 +111,15 @@ const SONIC_BLOW: Look = Look {
     drag: 1.0,
     ray_alpha: (0.0, 0.0, 0),
     ring: false,
+    rise: RISE,
+    ray_life: 0,
+    half_base: 0.0,
     band: true,
 };
 
 /// A part's alpha (0 to 255, whole) at drawn tick `n`: from `start`, up `step` a tick to `max`, then from tick `fade`
 /// down evenly to nothing at `life`. Stepped tick by tick in f32, as the game does.
-fn alpha(n: u32, start: f32, step: f32, max: f32, fade: u32, life: u32) -> f32 {
+pub fn alpha(n: u32, start: f32, step: f32, max: f32, fade: u32, life: u32) -> f32 {
     let (mut alpha, mut step) = (start, step);
     for age in 0..=n {
         if age == fade {
@@ -147,7 +177,7 @@ impl Ray {
         let mut draw = |n: u32| rand(n) as f32;
         let angle = draw(360);
         let turn = (draw(60) + 10.0) / 10.0;
-        let half = (draw(25) + 5.0) / 10.0;
+        let half = (draw(25) + look.half_base) / 10.0;
         let length = draw(look.length.0) + look.length.1;
         let (spread, base, sign) = look.growth;
         let growth = sign * (draw(spread) + base) / 10.0;
@@ -180,6 +210,11 @@ impl Burst {
     /// Sonic Blow's ring, on the caster.
     pub fn sonic_blow(unit: Option<u32>, now: Instant) -> Self {
         Self::new(&SONIC_BLOW, unit, now, LIFE, |_| 0)
+    }
+
+    /// Signum Crucis' burst on a unit, from `start` (480 ms into the effect, whose length is `length` ticks).
+    pub fn signum(unit: Option<u32>, start: Instant, length: u32, rand: impl FnMut(u32) -> u32) -> Self {
+        Self::new(&SIGNUM, unit, start, length, rand)
     }
 
     /// Turn Undead's, on the caster.
@@ -242,7 +277,7 @@ impl Burst {
         if look.band {
             return self.band(n);
         }
-        let center = [0.0, RISE];
+        let center = [0.0, look.rise];
         let tint = |alpha: f32| [1.0, 1.0, 1.0, alpha / 255.0];
         // Ten 36° segments from the centre, the texture repeating every four; v 1 at the centre, 0 at the rim.
         let (step, max, fade) = look.disc_alpha;
@@ -257,7 +292,7 @@ impl Burst {
             .collect();
         let (step, max, fade) = look.ray_alpha;
         let ray_tint = tint(alpha(n, 0.0, step, max, fade, look.life));
-        let rays = self.rays.iter().map(|ray| {
+        let rays = self.rays.iter().filter(|_| n < look.ray_life).map(|ray| {
             let (angle, length) = ray.at(n, look.drag);
             let corners = [(center, [0.5, 0.0]), (point(center, length, angle - ray.half), [1.0, 1.0]), (point(center, length, angle + ray.half), [0.0, 1.0])];
             (RAY, self.unit, corners.map(|(at, uv)| (at, uv, ray_tint)).to_vec())
@@ -326,6 +361,31 @@ mod tests {
         assert!(shapes[0].2.iter().all(|corner| corner.2[..3] == [1.0; 3]));
         // Gone from tick 39; the effect is 40 ticks.
         assert!(ring.shapes(start + TICK * 39).is_empty() && LIFE == 40);
+    }
+
+    #[test]
+    fn signum_crucis_burst() {
+        // The disc's alpha over its 40 drawn ticks: 28 … 170 (ages 5–26), then down to 0 at age 39; rays 20 … 200 at age 9, held to age 34.
+        let disc: Vec<f32> = (0..40).map(|n| alpha(n, 0.0, 170.0 / 6.0, 170.0, 27, LIFE)).collect();
+        assert_eq!(disc[..6], [28.0, 56.0, 85.0, 113.0, 141.0, 170.0]);
+        assert_eq!((disc[26], disc[27], disc[28], disc[38], disc[39]), (170.0, 156.0, 143.0, 13.0, 0.0));
+        let ray: Vec<f32> = (0..35).map(|n| alpha(n, 0.0, 20.0, 200.0, 99, LIFE)).collect();
+        assert_eq!((ray[0], ray[9], ray[10], ray[34]), (20.0, 200.0, 200.0, 200.0));
+        // A ray from fixed draws: angle 100, turn 3.0, half-width (R(25) = 0 → 1.5), length 30, growth 9.5; the turn slows by turn / 52.5.
+        let mut draws = [100, 20, 0, 0, 0].into_iter();
+        let ray = Ray::new(&SIGNUM, |_| draws.next().unwrap());
+        assert_eq!(ray, Ray { angle: 100.0, turn: 3.0, half: 1.5, length: 30.0, growth: 9.5 });
+        let (angle, length) = ray.at(9, SIGNUM.drag);
+        assert!((angle - (100.0 + 3.0 * 10.0 * (1.0 - 11.0 / 105.0))).abs() < 1e-3 && (length - (30.0 + 95.0)).abs() < 1e-3);
+        // Nothing before its start; 21 shapes from it (the disc and 20 rays) for 35 ticks, the disc alone to 39, the centre 120 px up.
+        let start = Instant::now();
+        let burst = Burst::signum(None, start + TICK * 30, 122, |n| n / 2);
+        assert!(burst.shapes(start + TICK * 29).is_empty());
+        let shapes = burst.shapes(start + TICK * 30);
+        assert_eq!((shapes.len(), shapes[0].0, shapes[0].2[0].0), (21, DISC, [0.0, -120.0]));
+        assert_eq!(burst.shapes(start + TICK * (30 + 34)).len(), 21);
+        assert_eq!(burst.shapes(start + TICK * (30 + 35)).len(), 1);
+        assert!(burst.shapes(start + TICK * (30 + 40)).is_empty());
     }
 
     #[test]
