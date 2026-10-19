@@ -34,6 +34,8 @@ pub enum WindowId {
     Equipment,
     Skills,
     Storage,
+    /// A storage category window (it has no close button: Esc turns its box off).
+    StorageCategory(usize),
     Party,
     Status,
     Guild,
@@ -152,6 +154,7 @@ impl WindowId {
             Self::Equipment => "Equipment",
             Self::Skills => "Skills",
             Self::Storage => "Storage",
+            Self::StorageCategory(_) => "StorageCategory",
             Self::Party => "Party",
             Self::Status => "Status",
             Self::Guild => "Guild",

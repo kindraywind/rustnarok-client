@@ -564,6 +564,10 @@ impl Game {
             Panel::Equipment => self.equipment.hit(cursor, &self.inventory.items).is_some(),
             Panel::Skills => self.skill_window.frame.local(cursor, self.skill_window.height()).is_some(),
             Panel::Storage => self.storage.frame.open && self.storage.frame.local(cursor, self.storage.height()).is_some(),
+            Panel::StorageCategory(tab) => {
+                let category = &self.storage.categories[tab];
+                category.frame.open && category.frame.local(cursor, category.height()).is_some()
+            }
             Panel::Party => self.party_window.frame.open && self.party_window.hit(cursor, self.party.as_ref(), &self.friends).is_some(),
             Panel::Status => self.status_window.frame.open && self.status_window.frame.local(cursor, self.status_height).is_some(),
             Panel::Guild => self.guild.is_some() && self.guild_window.frame.local(cursor, self.guild_window.height()).is_some(),
@@ -591,7 +595,8 @@ impl Game {
     }
 
     /// Every window's frame, by name, for saving where each was left. `minimap` is the game's MINIMAPWNDINFO.
-    pub(crate) fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 19] {
+    pub(crate) fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 27] {
+        let [used, cash, armors, weapons, costumes, ammo, card, etc] = &mut self.storage.categories;
         [
             ("hotkeys", &mut self.hotkeys.frame),
             ("basic_info", &mut self.basic_info.frame),
@@ -599,6 +604,14 @@ impl Game {
             ("equipment", &mut self.equipment.frame),
             ("skills", &mut self.skill_window.frame),
             ("storage", &mut self.storage.frame),
+            ("storage_use", &mut used.frame),
+            ("storage_cash", &mut cash.frame),
+            ("storage_armors", &mut armors.frame),
+            ("storage_weapons", &mut weapons.frame),
+            ("storage_costumes", &mut costumes.frame),
+            ("storage_ammo", &mut ammo.frame),
+            ("storage_card", &mut card.frame),
+            ("storage_etc", &mut etc.frame),
             ("party", &mut self.party_window.frame),
             ("status", &mut self.status_window.frame),
             ("guild", &mut self.guild_window.frame),
@@ -639,6 +652,7 @@ impl Game {
             self.shop_sizes = sizes;
         }
         places += &size_lines(self.inventory.size(), self.cart.size(), self.storage.rows(), self.shop_sizes);
+        places += &format!("{STORAGE_CATEGORIES} 0 {} 0\n", self.storage.mask);
         places += &format!("{VEND_SIZE} {} {} 0\n{SKILL_LIST_SIZE} 0 {} 0\n", self.vend_size.width, self.vend_size.rows, self.skill_window.list_rows());
         places += &format!("{ITEM_PLACE} {} {} 0\n{CARD_PLACE} {} {} 0\n", self.item_place[0], self.item_place[1], self.card_place[0], self.card_place[1]);
         let quest = self.quest_window.frame.position;
@@ -712,6 +726,9 @@ impl Game {
         if let Some(&([_, rows], _)) = saved.get(STORAGE_SIZE) {
             self.storage.set_rows(rows as usize);
         }
+        if let Some(&([_, mask], _)) = saved.get(STORAGE_CATEGORIES) {
+            self.storage.mask = mask as u8;
+        }
         if let Some(&([_, rows], _)) = saved.get(SKILL_LIST_SIZE) {
             self.skill_window.set_list_rows(rows as usize);
         }
@@ -741,6 +758,7 @@ impl Game {
             Panel::Equipment => &self.equipment.frame,
             Panel::Skills => &self.skill_window.frame,
             Panel::Storage => &self.storage.frame,
+            Panel::StorageCategory(tab) => &self.storage.categories[tab].frame,
             Panel::Party => &self.party_window.frame,
             Panel::Status => &self.status_window.frame,
             Panel::Guild => &self.guild_window.frame,
@@ -1042,6 +1060,7 @@ impl Game {
         (top == Some(Panel::Inventory) && self.inventory.hit(cursor) == Some(inventory::Hit::Resize))
             || (top == Some(Panel::Cart) && self.cart.hit(cursor) == Some(inventory::Hit::Resize))
             || (top == Some(Panel::Storage) && self.storage.on_grip(cursor))
+            || matches!(top, Some(Panel::StorageCategory(tab)) if self.storage.categories[tab].on_grip(cursor))
             || (top == Some(Panel::Skills) && self.skill_window.grip_box().is_some_and(|[x, y, w, h]| contains([x, y], [w, h], cursor)))
             || matches!(self.shop.as_ref().and_then(|shop| shop.hit(cursor)), Some(shop::Hit::Resize(_)))
             || self.vend_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.cart.items) == Some(vend::Hit::Resize))
@@ -2354,6 +2373,7 @@ impl Game {
             Panel::Equipment => self.equipment.frame.open,
             Panel::Skills => self.skill_window.frame.open,
             Panel::Storage => self.storage.frame.open,
+            Panel::StorageCategory(tab) => self.storage.categories[tab].frame.open,
             Panel::Party => self.party_window.frame.open,
             Panel::Status => self.status_window.frame.open,
             Panel::Guild => self.guild.is_some() && self.guild_window.frame.open,
@@ -2401,6 +2421,9 @@ impl Game {
             if let Some(id) = esc_panel(panel) {
                 push(id, self.panel_open(panel));
             }
+        }
+        for (tab, category) in self.storage.categories.iter().enumerate() {
+            push(StorageCategory(tab), category.frame.open);
         }
         // An NPC's window and the warp list aren't Esc's to close: they end with their own buttons.
         // An NPC shop isn't Esc's to close.
@@ -2723,6 +2746,7 @@ impl Game {
                 self.storage.close();
                 let _ = self.session.close_storage();
             }
+            StorageCategory(tab) => self.storage.close_category(tab),
             Party => self.party_window.frame.open = false,
             Status => self.status_window.frame.open = false,
             Guild => self.guild_window.frame.open = false,

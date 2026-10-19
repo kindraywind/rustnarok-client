@@ -1,11 +1,12 @@
-//! Kafra storage: one stored stack a row with its icon, amount and name, the 2018+ client's tabs down the left, its
-//! count and a search field. Items move in and out by dragging them between it and the inventory.
+//! Kafra storage: one stored stack a row with its icon, amount and name, the client's eight tabs down the left, its
+//! count and a search field, and boxes that open a small window for each tab's category. Items move in and out by
+//! dragging them between it (or a category window) and the inventory.
 
 use std::collections::HashMap;
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::ItemInfo;
-use rustnarok_client::net::{self, InventoryItem};
+use rustnarok_client::net::InventoryItem;
 use rustnarok_client::text::Font;
 
 use crate::inventory::{self, CardNames};
@@ -21,9 +22,13 @@ pub const LEAST_ROWS: usize = 12;
 const LEAST_HEIGHT: f32 = 458.0;
 const CHROME_HEIGHT: f32 = 74.0;
 const FOOTER_HEIGHT: f32 = 57.0;
-/// The side pieces down both edges (every 8 px from y 17), the tab strip over the left one, white beside it.
+/// The side pieces down both edges (every 8 px from y 17), the tab strip over the left one, white beside it. The strip
+/// is `tab_item_0n.bmp` (n the picked tab + 1): eight tabs of 29 px.
 const SIDE: f32 = 20.0;
 const TABS_AT: [f32; 2] = [0.0, 18.0];
+const TABS_SIZE: [f32; 2] = [20.0, 235.0];
+const TAB_HEIGHT: f32 = 29.0;
+pub const TABS: usize = 8;
 const STRIP_WHITE: f32 = 28.0;
 /// Row r: the cell at (40, 17 + 32r) with white beside it to x 264, the icon 4 in, the name at (80, 29 + 32r), 180
 /// wide, or on two lines at 23 + 32r and 36 + 32r; the name box 16 px above the cell.
@@ -65,18 +70,32 @@ fn height(rows: usize) -> f32 {
 }
 const DEFAULT_POSITION: [f32; 2] = [360.0, 200.0];
 const TITLE_MESSAGE: usize = 169;
-/// Where the tab strips' tabs end: the client's eight (usable, cash, armor, weapon, costume, ammo, card, etc.) and
-/// the translated data's seven, which have no costume tab. Measured from the bitmaps.
-const EDGES_EIGHT: [f32; 8] = [23.0, 51.0, 88.0, 114.0, 140.0, 178.0, 204.0, 235.0];
-const EDGES_SEVEN: [f32; 7] = [25.0, 53.0, 77.0, 115.0, 151.0, 178.0, 209.0];
-/// Where costumes go on the headgear and garment.
-const COSTUME: u32 = 0x400 | 0x800 | 0x1000 | 0x2000;
+/// The footer's category boxes, Use to Etc: 23 × 23 at (5 + 26i, h − 52), `<name>-1.bmp` on and `<name>-2.bmp` off.
+const BOX_AT: [f32; 2] = [5.0, 52.0];
+const BOX_STEP: f32 = 26.0;
+const BOX_SIZE: f32 = 23.0;
+const BOX_IMAGES: [&str; TABS] = ["소비", "캐시", "방어구", "무기", "의상", "투사체", "카드", "기타"];
+/// A category window: its title, where it first opens, and its size at every opening (as far as 320 × 336 by its
+/// grip). The title bar, a white body w × (h − 38) from y 17 and a 21 px footer; row r's cell at (10, 17 + 32r), the
+/// icon 4 in, the name at (50, 29 + 32r) cut to w − 76, the grade at (14, 33 + 32r); the pointer takes x 20 to 52.
+const CATEGORY_TITLES: [usize; TABS] = [1465, 1466, 1467, 1468, 3151, 1469, 1470, 1471];
+const CATEGORY_PLACES: [[f32; 2]; TABS] =
+    [[210.0, 50.0], [60.0, 50.0], [210.0, 205.0], [60.0, 205.0], [210.0, 360.0], [60.0, 360.0], [210.0, 515.0], [60.0, 515.0]];
+const CATEGORY_SIZE: [f32; 2] = [140.0, 145.0];
+const CATEGORY_MOST: [f32; 2] = [320.0, 336.0];
+const CATEGORY_FOOTER: f32 = 21.0;
+const CATEGORY_CELL_X: f32 = 10.0;
+const CATEGORY_NAME_X: f32 = 50.0;
+const CATEGORY_POINTER: [f32; 2] = [20.0, 52.0];
 
 pub struct Assets {
     footer: [Texture; 3],
+    /// A category window's footer.
+    bar: [Texture; 3],
     side: [Texture; 2],
-    /// The tab strip with each tab picked.
+    /// The tab strip with each tab picked, and each category's box on and off.
     tabs: Vec<Texture>,
+    boxes: Vec<[Option<Texture>; 2]>,
     cell: Texture,
     count: Texture,
     search_box: Texture,
@@ -90,13 +109,13 @@ impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let basic = format!("{UI}basic_interface\\");
         let image = |path: String| gpu.load_texture(grf, &path, false);
-        let mut tabs: Vec<_> = (1..=8).filter_map(|tab| gpu.try_load_texture(grf, &format!("{basic}tab_itm_ex_0{tab}.bmp"), false).ok()).collect();
-        // The strip's height tells which it is (translated data can leave the original's eighth image behind).
-        tabs.truncate(Self::edges_for(tabs.first().map_or(0.0, |strip| strip.size[1])).len());
+        let maybe = |path: String| gpu.try_load_texture(grf, &path, false).ok();
         Self {
             footer: ["left", "mid", "right"].map(|part| image(format!("{basic}btnbar_{part}3.bmp"))),
+            bar: ["left", "mid", "right"].map(|part| image(format!("{basic}btnbar_{part}.bmp"))),
             side: ["left", "right"].map(|part| image(format!("{basic}itemwin_{part}.bmp"))),
-            tabs,
+            tabs: (1..=TABS).filter_map(|tab| maybe(format!("{basic}tab_item_0{tab}.bmp"))).collect(),
+            boxes: BOX_IMAGES.iter().map(|name| [1, 2].map(|look| maybe(format!("{basic}{name}-{look}.bmp")))).collect(),
             cell: image(format!("{basic}itemwin_mid.bmp")),
             count: image(format!("{UI}inventory\\icon_num.bmp")),
             search_box: image(format!("{UI}bg_search.bmp")),
@@ -106,27 +125,95 @@ impl Assets {
             grades: std::array::from_fn(|grade| image(format!("{UI}grade_enchant\\grade_icon{}.bmp", grade + 1))),
         }
     }
+}
 
-    fn edges_for(height: f32) -> &'static [f32] {
-        if height >= EDGES_EIGHT[7] { &EDGES_EIGHT } else { &EDGES_SEVEN }
+/// The tab an item is listed under, of the eight (Use, Cash, Armors, Weapons, Costumes, Ammo, Card, Etc): by the type
+/// byte as the server sends it, and a costume (iteminfo's `costume`) on Costumes only, whatever its type. Other types
+/// are listed nowhere.
+fn tab_of(item: &InventoryItem, info: &HashMap<u32, ItemInfo>) -> Option<usize> {
+    if info.get(&item.id).is_some_and(|info| info.costume) {
+        return Some(4);
     }
-
-    fn edges(&self) -> &'static [f32] {
-        Self::edges_for(self.tabs.first().map_or(0.0, |strip| strip.size[1]))
+    match item.kind {
+        0..=2 => Some(0),
+        18 => Some(1),
+        4 | 11..=14 => Some(2),
+        5 | 8 | 9 | 15 => Some(3),
+        10 | 16 | 17 | 19 => Some(5),
+        6 => Some(6),
+        3 | 7 => Some(7),
+        _ => None,
     }
 }
 
-/// The tab an item is listed under, of the client's eight.
-fn tab_of(item: &InventoryItem) -> usize {
-    match item.kind {
-        net::ITEM_HEALING | net::ITEM_USABLE | net::ITEM_DELAY_CONSUME => 0,
-        net::ITEM_CASH => 1,
-        net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR if item.location & COSTUME != 0 => 4,
-        net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR | net::ITEM_PET_EGG | net::ITEM_PET_ARMOR => 2,
-        net::ITEM_WEAPON => 3,
-        net::ITEM_AMMO => 5,
-        net::ITEM_CARD => 6,
-        _ => 7,
+/// The tab under a point in the window: eight bands of 29 px down the strip.
+fn tab_at(local: [f32; 2]) -> Option<usize> {
+    contains(TABS_AT, TABS_SIZE, local).then(|| (((local[1] - TABS_AT[1]) / TAB_HEIGHT) as usize).min(TABS - 1))
+}
+
+/// A category window's size for the size its grip asks: 140 to 300 wide in 32 px steps, 145 to 305 tall in steps of
+/// 32 from 160.
+fn category_size([width, height]: [f32; 2]) -> [f32; 2] {
+    let [width, height] = [width.clamp(CATEGORY_SIZE[0], CATEGORY_MOST[0]), height.clamp(CATEGORY_SIZE[1], CATEGORY_MOST[1])];
+    [CATEGORY_SIZE[0] + CELL * ((width - CATEGORY_SIZE[0]) / CELL).floor(), CATEGORY_SIZE[1] + CELL * ((height - 160.0) / CELL).trunc()]
+}
+
+/// A small window listing one tab's stored items, opened by its box in the storage's footer.
+pub struct Category {
+    pub frame: Frame,
+    size: [f32; 2],
+    scroll: usize,
+    grip: window::Grip,
+}
+
+impl Category {
+    fn new(tab: usize) -> Self {
+        Self { frame: Frame::new(CATEGORY_PLACES[tab], CATEGORY_SIZE[0]), size: CATEGORY_SIZE, scroll: 0, grip: window::Grip::default() }
+    }
+
+    /// Opens at 140 × 145 where it was last, at the top.
+    fn open(&mut self) {
+        self.size = CATEGORY_SIZE;
+        self.frame.set_width(CATEGORY_SIZE[0]);
+        self.scroll = 0;
+        self.frame.open = true;
+        self.frame.minimized = false;
+    }
+
+    pub fn height(&self) -> f32 {
+        self.size[1]
+    }
+
+    fn rows(&self) -> usize {
+        ((self.size[1] - 38.0) / CELL).floor() as usize
+    }
+
+    /// The row under a point in the window: x 20 to 52, 10 px right of the drawn cell.
+    fn row_at(&self, local: [f32; 2]) -> Option<usize> {
+        let row = ((local[1] - ROWS_TOP) / CELL).floor();
+        let across = [CATEGORY_POINTER[0], ROWS_TOP];
+        (contains(across, [CATEGORY_POINTER[1] - CATEGORY_POINTER[0], self.rows() as f32 * CELL], local) && row >= 0.0).then_some(row as usize)
+    }
+
+    pub fn on_grip(&self, cursor: [f32; 2]) -> bool {
+        self.frame.open && self.frame.local(cursor, self.height()).is_some_and(|local| window::on_grip(self.size, local))
+    }
+
+    pub fn start_resize(&mut self, cursor: [f32; 2]) {
+        self.grip.start(cursor, self.size);
+    }
+
+    /// While held, both ways in the game's steps, back at the top; whether it's held.
+    pub fn resize_to(&mut self, cursor: [f32; 2]) -> bool {
+        let Some(asked) = self.grip.asked(cursor) else { return false };
+        self.size = category_size(asked);
+        self.frame.set_width(self.size[0]);
+        self.scroll = 0;
+        true
+    }
+
+    pub fn stop_resize(&mut self) -> bool {
+        self.grip.stop()
     }
 }
 
@@ -189,6 +276,8 @@ pub enum Hit {
     Search,
     Find,
     Close,
+    /// A category's box in the footer.
+    Box(usize),
     /// The corner grip.
     Resize,
     Window,
@@ -212,6 +301,9 @@ pub struct Storage {
     grip: window::Grip,
     /// The height has changed since it opened (or opened taller): the search box sits further right.
     resized: bool,
+    /// Each tab's category window, and which are on (a bit each, Use first): those open with the storage.
+    pub categories: [Category; TABS],
+    pub mask: u8,
 }
 
 impl Default for Storage {
@@ -228,22 +320,51 @@ impl Default for Storage {
             rows: LEAST_ROWS,
             grip: window::Grip::default(),
             resized: false,
+            categories: std::array::from_fn(Category::new),
+            mask: 0,
         }
     }
 }
 
 impl Storage {
-    /// The server starts listing it: the window opens on its first tab, under the name it gave.
+    /// The server starts listing it: the window opens on its first tab, under the name it gave, with the category
+    /// windows that were on.
     pub fn open(&mut self, name: String) {
         let frame = std::mem::replace(&mut self.frame, Frame::new(DEFAULT_POSITION, WIDTH));
-        *self = Self { frame, rows: self.rows, name, resized: self.rows != LEAST_ROWS, ..Self::default() };
+        let categories = std::mem::replace(&mut self.categories, std::array::from_fn(Category::new));
+        *self = Self { frame, categories, mask: self.mask, rows: self.rows, name, resized: self.rows != LEAST_ROWS, ..Self::default() };
         self.frame.open = true;
         self.frame.minimized = false;
+        for (tab, category) in self.categories.iter_mut().enumerate() {
+            if self.mask & 1 << tab != 0 {
+                category.open();
+            }
+        }
     }
 
+    /// Close (or its title's close): every category window shuts with it, and they open again with it.
     pub fn close(&mut self) {
         self.frame.open = false;
         self.typing = false;
+        for category in &mut self.categories {
+            category.frame.open = false;
+        }
+    }
+
+    /// A category's box pressed: on opens its window at 140 × 145, off shuts it.
+    pub fn toggle_category(&mut self, tab: usize) {
+        self.mask ^= 1 << tab;
+        if self.mask & 1 << tab != 0 {
+            self.categories[tab].open();
+        } else {
+            self.categories[tab].frame.open = false;
+        }
+    }
+
+    /// Esc on a category window: it shuts and its box goes off.
+    pub fn close_category(&mut self, tab: usize) {
+        self.mask &= !(1 << tab);
+        self.categories[tab].frame.open = false;
     }
 
     /// The opening lists, in the order they come.
@@ -274,24 +395,19 @@ impl Storage {
     }
 
     /// The open tab's items, or every match while searching.
-    fn listed<'s>(&'s self, assets: &Assets, info: &'s HashMap<u32, ItemInfo>) -> impl Iterator<Item = &'s InventoryItem> {
+    fn listed<'s>(&'s self, info: &'s HashMap<u32, ItemInfo>) -> impl Iterator<Item = &'s InventoryItem> {
         let search = self.search.to_lowercase();
-        let seven = assets.edges().len() < 8;
         self.items.iter().filter(move |item| {
             if !search.is_empty() {
                 return inventory::item_name(info, item.id, item.identified, item.refine).to_lowercase().contains(&search);
             }
-            let tab = tab_of(item);
-            // Seven tabs: costumes are armor, and the rest move up one.
-            let tab = if seven && tab == 4 {
-                2
-            } else if seven && tab > 4 {
-                tab - 1
-            } else {
-                tab
-            };
-            tab == self.tab
+            tab_of(item, info) == Some(self.tab)
         })
+    }
+
+    /// A tab's items, in the list's order (a category window's).
+    fn in_tab<'s>(&'s self, tab: usize, info: &'s HashMap<u32, ItemInfo>) -> impl Iterator<Item = &'s InventoryItem> {
+        self.items.iter().filter(move |item| tab_of(item, info) == Some(tab))
     }
 
     pub fn height(&self) -> f32 {
@@ -322,20 +438,29 @@ impl Storage {
             let [x, y] = self.frame.at(local);
             [x, y, size[0], size[1]]
         };
-        let mut top = 0.0;
-        let mut boxes: Vec<_> = assets
-            .edges()
-            .iter()
-            .enumerate()
-            .map(|(tab, &edge)| {
-                let area = place([TABS_AT[0], TABS_AT[1] + top], [SIDE, edge - top]);
-                top = edge;
-                (format!("storage_tab:{tab}"), area)
-            })
-            .collect();
-        let rows = self.listed(assets, info).skip(self.scroll).take(self.rows).enumerate();
+        let _ = assets;
+        let tabs = (0..TABS).map(|tab| (format!("storage_tab:{tab}"), place([TABS_AT[0], TABS_AT[1] + tab as f32 * TAB_HEIGHT], [SIDE, TAB_HEIGHT])));
+        let mut boxes: Vec<_> = tabs.collect();
+        boxes.extend((0..TABS).map(|tab| (format!("storage_box:{tab}"), place(self.box_at(tab), [BOX_SIZE, BOX_SIZE]))));
+        boxes.push(("storage_close".into(), place(self.footer_at(CLOSE), CLOSE_SIZE)));
+        let rows = self.listed(info).skip(self.scroll).take(self.rows).enumerate();
         boxes.extend(rows.map(|(row, item)| (format!("storage_item:{}", item.id), place([CELL_X, ROWS_TOP + row as f32 * CELL], [CELL, CELL]))));
+        // Each open category window's rows: `storage_cat<tab>_item:<id>`, and its grip `storage_cat<tab>_resize`.
+        for (tab, category) in self.categories.iter().enumerate().filter(|(_, category)| category.frame.open) {
+            let rows = self.in_tab(tab, info).skip(category.scroll).take(category.rows()).enumerate();
+            boxes.extend(rows.map(|(row, item)| {
+                let [x, y] = category.frame.at([CATEGORY_POINTER[0], ROWS_TOP + row as f32 * CELL]);
+                (format!("storage_cat{tab}_item:{}", item.id), [x, y, CATEGORY_POINTER[1] - CATEGORY_POINTER[0], CELL])
+            }));
+            let [x, y] = category.frame.at([category.size[0] - window::GRIP, category.size[1] - window::GRIP]);
+            boxes.push((format!("storage_cat{tab}_resize"), [x, y, window::GRIP, window::GRIP]));
+        }
         boxes
+    }
+
+    /// A category's box in the footer, in the window.
+    fn box_at(&self, tab: usize) -> [f32; 2] {
+        self.footer_at([BOX_AT[0] + tab as f32 * BOX_STEP, BOX_AT[1]])
     }
 
     /// Its rows.
@@ -386,10 +511,11 @@ impl Storage {
             Some(hit) => return Some(Hit::Title(hit)),
             None => {}
         }
-        let edges = assets.edges();
-        if contains(TABS_AT, [SIDE, edges[edges.len() - 1]], local) {
-            let y = local[1] - TABS_AT[1];
-            return Some(Hit::Tab(edges.iter().position(|&edge| y < edge).unwrap_or(0)));
+        if let Some(tab) = tab_at(local) {
+            return Some(Hit::Tab(tab));
+        }
+        if let Some(tab) = (0..TABS).find(|&tab| contains(self.box_at(tab), [BOX_SIZE; 2], local)) {
+            return Some(Hit::Box(tab));
         }
         if contains(self.footer_at(CLOSE), CLOSE_SIZE, local) {
             return Some(Hit::Close);
@@ -403,31 +529,61 @@ impl Storage {
         if window::on_grip([WIDTH, self.height()], local) {
             return Some(Hit::Resize);
         }
-        let item = self.row_at(local).and_then(|row| self.listed(assets, info).nth(self.scroll + row));
+        let _ = assets;
+        let item = self.row_at(local).and_then(|row| self.listed(info).nth(self.scroll + row));
         Some(item.map_or(Hit::Window, |item| Hit::Item(item.index)))
     }
 
-    /// A click: true when it asks to close the storage.
-    pub fn click(&mut self, hit: Hit) -> bool {
+    /// A click: true when it asks to close the storage. A tab keeps the scroll row as far as the new tab's list goes,
+    /// and the search.
+    pub fn click(&mut self, hit: Hit, info: &HashMap<u32, ItemInfo>) -> bool {
         self.typing = hit == Hit::Search;
         match hit {
             Hit::Title(TitleHit::Close) | Hit::Close => return true,
             Hit::Title(title) => self.frame.click_title(title),
             Hit::Tab(tab) => {
                 self.tab = tab;
-                self.scroll = 0;
-                self.search.clear();
+                let total = self.listed(info).count();
+                self.scroll = self.scroll.min(total.saturating_sub(self.rows));
             }
-            Hit::Item(_) | Hit::Search | Hit::Find | Hit::Resize | Hit::Window => {}
+            // A box acts on the press (`toggle_category`).
+            Hit::Box(_) | Hit::Item(_) | Hit::Search | Hit::Find | Hit::Resize | Hit::Window => {}
         }
         false
     }
 
     /// The wheel: 3 rows a notch (fewer when fewer show), as far as the list goes.
     pub fn scroll_by(&mut self, notches: i32, assets: &Assets, info: &HashMap<u32, ItemInfo>) {
+        let _ = assets;
         let step = WHEEL_ROWS.min(self.rows - 1) as i32;
-        let total = self.listed(assets, info).count();
+        let total = self.listed(info).count();
         self.scroll = (self.scroll as i32 + notches * step).clamp(0, total.saturating_sub(self.rows) as i32) as usize;
+    }
+
+    /// What's under the pointer in a category window: its title (no buttons), a row's item, the grip, or the window.
+    pub fn category_hit(&self, tab: usize, cursor: [f32; 2], info: &HashMap<u32, ItemInfo>) -> Option<Hit> {
+        let category = &self.categories[tab];
+        if !category.frame.open {
+            return None;
+        }
+        let local = category.frame.local(cursor, category.height())?;
+        if local[1] < TITLE_HEIGHT {
+            return Some(Hit::Title(TitleHit::Title));
+        }
+        if window::on_grip(category.size, local) {
+            return Some(Hit::Resize);
+        }
+        let item = category.row_at(local).and_then(|row| self.in_tab(tab, info).nth(category.scroll + row));
+        Some(item.map_or(Hit::Window, |item| Hit::Item(item.index)))
+    }
+
+    /// The wheel over a category window: as the main window's.
+    pub fn category_scroll_by(&mut self, tab: usize, notches: i32, info: &HashMap<u32, ItemInfo>) {
+        let total = self.in_tab(tab, info).count();
+        let category = &mut self.categories[tab];
+        let rows = category.rows();
+        let step = WHEEL_ROWS.min(rows.saturating_sub(1)).max(1) as i32;
+        category.scroll = (category.scroll as i32 + notches * step).clamp(0, total.saturating_sub(rows) as i32) as usize;
     }
 
     /// Typing while the search field has the caret.
@@ -487,7 +643,7 @@ impl Storage {
             layer.sprites.push((&chrome.white, at([ROW_WHITE[0], top]), [ROW_WHITE[1] - ROW_WHITE[0], CELL]));
         }
         // Each row's item: the icon, its amount outlined, the name in its enchants' colour, the grade.
-        for (row, item) in self.listed(assets, items).skip(self.scroll).take(self.rows).enumerate() {
+        for (row, item) in self.listed(items).skip(self.scroll).take(self.rows).enumerate() {
             let top = ROWS_TOP + row as f32 * CELL;
             let place = at([CELL_X, top]);
             let info = items.get(&item.id);
@@ -527,6 +683,12 @@ impl Storage {
         layer.sprites.push((left, at([0.0, footer_top]), left.size));
         layer.sprites.push((middle, at([left.size[0], footer_top]), [WIDTH - left.size[0] - right.size[0], FOOTER_HEIGHT]));
         layer.sprites.push((right, at([WIDTH - right.size[0], footer_top]), right.size));
+        // The category boxes along the footer's top row, on or off.
+        for (tab, images) in assets.boxes.iter().enumerate() {
+            if let Some(image) = &images[usize::from(self.mask & 1 << tab == 0)] {
+                layer.sprites.push((image, at(self.box_at(tab)), [BOX_SIZE, BOX_SIZE]));
+            }
+        }
         layer.sprites.push((&assets.count, at(self.footer_at(COUNT_ICON)), assets.count.size));
         let count = self.count[0].to_string();
         let [x, y] = self.footer_at(COUNT);
@@ -539,6 +701,70 @@ impl Storage {
         layer.sprites.push((find, at(self.footer_at(FIND)), find.size));
         layer.sprites.push((&assets.close[look(Hit::Close)], at(self.footer_at(CLOSE)), CLOSE_SIZE));
         layer.sprites.push((&assets.resize, at([WIDTH - window::GRIP, h - window::GRIP]), assets.resize.size));
+    }
+}
+
+impl Storage {
+    /// A category window: the title bar (no buttons), a white body, a cell and the item for each row, the footer and
+    /// the grip.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_category<'a>(
+        &self,
+        tab: usize,
+        layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        icons: &'a HashMap<String, Option<Texture>>,
+        items: &HashMap<u32, ItemInfo>,
+        (messages, cards, makers): (&[String], &CardNames, &HashMap<u32, Option<String>>),
+        font: &Font,
+        pointer: [f32; 2],
+    ) {
+        let category = &self.categories[tab];
+        if !category.frame.open {
+            return;
+        }
+        let at = |local: [f32; 2]| category.frame.at(local);
+        let [w, h] = category.size;
+        category.frame.draw_title_only(layer, chrome, messages.get(CATEGORY_TITLES[tab]).map_or("", String::as_str));
+        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [w, h - 38.0]));
+        for row in 0..category.rows() {
+            layer.sprites.push((&assets.cell, at([CATEGORY_CELL_X, ROWS_TOP + row as f32 * CELL]), assets.cell.size));
+        }
+        for (row, item) in self.in_tab(tab, items).skip(category.scroll).take(category.rows()).enumerate() {
+            let top = ROWS_TOP + row as f32 * CELL;
+            let place = at([CATEGORY_CELL_X, top]);
+            let info = items.get(&item.id);
+            if let Some(Some(icon)) = info.and_then(|info| icons.get(&inventory::icon_path(info, item.identified))) {
+                layer.sprites.push((icon, offset(place, [ICON_OFFSET, ICON_OFFSET]), icon.size));
+            }
+            let amount = item.amount.to_string();
+            let corner = offset(place, inventory::amount_at(item.amount));
+            for step in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+                layer.texts.push((amount.clone(), offset(corner, step), [255; 3]));
+            }
+            layer.texts.push((amount, corner, [0, 0, 0]));
+            let (name, _) = inventory::full_name_maker(items, cards, messages, makers, item, false);
+            let name = window::fit(font, &name, w - 76.0);
+            layer.texts.push((name.clone(), at([CATEGORY_NAME_X + 1.0, top + NAME_TOP + 1.0]), NAME_SHADOW));
+            layer.texts.push((name, at([CATEGORY_NAME_X, top + NAME_TOP]), name_color(inventory::enchants(item, items))));
+            if let Some(grade) = assets.grades.get(usize::from(item.grade).wrapping_sub(1)) {
+                layer.sprites.push((grade, offset(place, [4.0, 16.0]), grade.size));
+            }
+            // The name box comes up over the pointer's cell, 10 px right of the drawn one.
+            let pointer_cell = at([CATEGORY_POINTER[0], top]);
+            if contains(pointer_cell, [CATEGORY_POINTER[1] - CATEGORY_POINTER[0], CELL], pointer) {
+                let name = inventory::full_name(items, cards, messages, makers, item, true);
+                window::tooltip(tooltip, chrome, font, &name, offset(at([NAME_X - CELL_X, top]), [0.0, -NAME_BOX_ABOVE]), inventory::name_color(item, items));
+            }
+        }
+        let [left, middle, right] = &assets.bar;
+        let footer_top = h - CATEGORY_FOOTER;
+        layer.sprites.push((left, at([0.0, footer_top]), left.size));
+        layer.sprites.push((middle, at([left.size[0], footer_top]), [w - left.size[0] - right.size[0], CATEGORY_FOOTER]));
+        layer.sprites.push((right, at([w - right.size[0], footer_top]), right.size));
+        layer.sprites.push((&assets.resize, at([w - window::GRIP, h - window::GRIP]), assets.resize.size));
     }
 }
 
@@ -579,18 +805,86 @@ mod tests {
         assert_eq!(storage.rows(), most_rows(crate::screen()[1]));
     }
 
+    use rustnarok_client::net;
+
     fn item(index: u16, kind: u8, location: u32) -> InventoryItem {
         InventoryItem { index, id: 2220, kind, amount: 1, location, identified: true, ..Default::default() }
     }
 
     #[test]
     fn sorts_into_the_clients_tabs() {
-        assert_eq!(tab_of(&item(1, net::ITEM_HEALING, 0)), 0);
-        assert_eq!(tab_of(&item(1, net::ITEM_ARMOR, 0x100)), 2);
-        assert_eq!(tab_of(&item(1, net::ITEM_ARMOR, 0x400)), 4);
-        assert_eq!(tab_of(&item(1, net::ITEM_CARD, 0)), 6);
-        assert_eq!(tab_of(&item(1, 3, 0)), 7);
-        assert_eq!(EDGES_EIGHT.len(), 8);
+        let none = HashMap::new();
+        let tab = |kind: u8| tab_of(&item(1, kind, 0), &none);
+        // Use, Cash, Armors, Weapons, (Costumes), Ammo, Card, Etc by the type byte; others nowhere.
+        assert_eq!([0, 1, 2].map(tab), [Some(0); 3]);
+        assert_eq!(tab(18), Some(1));
+        assert_eq!([4, 11, 12, 13, 14].map(tab), [Some(2); 5], "Fly Wing (11) is on Armors");
+        assert_eq!([5, 8, 9, 15].map(tab), [Some(3); 4]);
+        assert_eq!([10, 16, 17, 19].map(tab), [Some(5); 4]);
+        assert_eq!((tab(6), tab(3), tab(7)), (Some(6), Some(7), Some(7)));
+        assert_eq!([20, 99].map(tab), [None; 2]);
+        // A costume by iteminfo, whatever its type (not by where it's worn).
+        let costume = HashMap::from([(2220, ItemInfo { costume: true, ..Default::default() })]);
+        assert_eq!(tab_of(&item(1, 4, 0x400), &costume), Some(4));
+        assert_eq!(tab_of(&item(1, 4, 0x400), &none), Some(2));
+    }
+
+    #[test]
+    fn picks_tabs_in_29_px_bands() {
+        assert_eq!([18.0, 46.0, 47.0, 252.0].map(|y| tab_at([10.0, y])), [Some(0), Some(0), Some(1), Some(7)]);
+        assert_eq!((tab_at([20.0, 30.0]), tab_at([5.0, 253.0])), (None, None));
+    }
+
+    #[test]
+    fn keeps_the_scroll_row_across_tabs() {
+        let mut storage = Storage::default();
+        storage.open(String::new());
+        let none = HashMap::new();
+        // 30 usable and 20 etc items: row 4 of Use, over to Etc and back, is still row 4.
+        storage.extend((0..30).map(|index| item(index, 0, 0)).chain((30..50).map(|index| item(index, 3, 0))).collect());
+        storage.scroll = 4;
+        storage.click(Hit::Tab(7), &none);
+        assert_eq!(storage.scroll, 4);
+        storage.click(Hit::Tab(0), &none);
+        assert_eq!(storage.scroll, 4);
+        // A tab with fewer rows keeps the last there is; the search stays.
+        storage.search = "x".into();
+        storage.click(Hit::Tab(6), &none);
+        assert_eq!((storage.scroll, storage.search.as_str()), (0, "x"));
+    }
+
+    #[test]
+    fn sizes_a_category_window_by_its_grip() {
+        assert_eq!([139.0, 171.0, 172.0, 400.0].map(|w| category_size([w, 145.0])[0]), [140.0, 140.0, 172.0, 300.0]);
+        assert_eq!([150.0, 191.0, 192.0, 400.0].map(|h| category_size([140.0, h])[1]), [145.0, 145.0, 177.0, 305.0]);
+        // The pointer box is 10 px right of the drawn cell: x 20 and 51 hit, 10 and 52 don't.
+        let category = Category::new(0);
+        assert_eq!([20.0, 51.0, 10.0, 52.0].map(|x| category.row_at([x, 20.0])), [Some(0), Some(0), None, None]);
+        assert_eq!((category.rows(), category.row_at([30.0, 17.0 + 96.0])), (3, None));
+    }
+
+    #[test]
+    fn reopens_the_categories_that_were_on() {
+        let mut storage = Storage::default();
+        storage.open(String::new());
+        storage.toggle_category(0);
+        storage.toggle_category(3);
+        assert_eq!(storage.mask, 0b1001);
+        assert!(storage.categories[0].frame.open && storage.categories[3].frame.open);
+        assert_eq!((storage.categories[0].frame.position, storage.categories[0].size), ([210.0, 50.0], [140.0, 145.0]));
+        // Close shuts them all and keeps the mask; the next opening brings them back at 140 × 145.
+        storage.categories[0].size = [300.0, 305.0];
+        storage.close();
+        assert!(storage.categories.iter().all(|category| !category.frame.open) && storage.mask == 0b1001);
+        storage.open(String::new());
+        assert!(storage.categories[0].frame.open && storage.categories[3].frame.open && !storage.categories[1].frame.open);
+        assert_eq!(storage.categories[0].size, [140.0, 145.0]);
+        // Esc shuts one and turns its box off: it doesn't come back.
+        storage.close_category(0);
+        storage.close();
+        storage.open(String::new());
+        assert_eq!(storage.mask, 0b1000);
+        assert!(!storage.categories[0].frame.open && storage.categories[3].frame.open);
     }
 
     #[test]

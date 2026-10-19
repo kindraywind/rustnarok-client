@@ -19,7 +19,7 @@
     {"click_on": {"button": "storage_tab:2"}}, {"wait": 300},
     {"move": {"button": "storage_item:2301"}}, {"wait": 300},
     {"shot": "storage-armor", "crop": [350, 170, 300, 498]},
-    {"click_on": {"button": "storage_tab:6"}}, {"wait": 300},
+    {"click_on": {"button": "storage_tab:7"}}, {"wait": 300},
     {"move": [520, 230]}, {"wait": 300},
     {"shot": "storage-etc", "crop": [350, 190, 300, 478]},
     {"click_on": {"button": "storage_tab:3"}}, {"wait": 300},
