@@ -51,11 +51,13 @@ pub struct GraphicsSettings {
     pub aura: bool,
     pub aura_off: bool,
     pub quake: bool,
+    /// /mineffect: lighter effects.
+    pub min_effect: bool,
 }
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
-        Self { effects_on: true, aura: true, aura_off: false, quake: true }
+        Self { effects_on: true, aura: true, aura_off: false, quake: true, min_effect: false }
     }
 }
 
@@ -80,11 +82,11 @@ impl GraphicsSettings {
         let text = std::fs::read_to_string(path).unwrap_or_default();
         let mut words = text.split_whitespace();
         let mut next = |default: bool| words.next().map_or(default, |value| value != "0");
-        Self { effects_on: next(true), aura: next(true), aura_off: next(false), quake: next(true) }
+        Self { effects_on: next(true), aura: next(true), aura_off: next(false), quake: next(true), min_effect: next(false) }
     }
 
     pub fn save_to(&self, path: &Path) {
-        let text = [self.effects_on, self.aura, self.aura_off, self.quake].map(|on| if on { "1" } else { "0" }).join(" ");
+        let text = [self.effects_on, self.aura, self.aura_off, self.quake, self.min_effect].map(|on| if on { "1" } else { "0" }).join(" ");
         let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, text));
     }
 }
@@ -528,7 +530,7 @@ mod tests {
     fn graphics_settings_round_trip() {
         let path = temp_settings("graphics");
         let _ = std::fs::remove_file(&path);
-        let settings = GraphicsSettings { effects_on: false, aura: false, aura_off: true, quake: false };
+        let settings = GraphicsSettings { effects_on: false, aura: false, aura_off: true, quake: false, min_effect: true };
         settings.save_to(&path);
         assert_eq!(GraphicsSettings::load_from(&path), settings);
         // An older file with only the effects switch keeps the aura's and quake's defaults.

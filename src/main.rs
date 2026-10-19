@@ -351,6 +351,10 @@ const EFFECTS_OFF: usize = 24;
 // ponytail: /quake's chat lines use the message table's 2805 and 2806.
 const QUAKE_ON: usize = 2805;
 const QUAKE_OFF: usize = 2806;
+/// /mineffect: lighter effects on, off.
+// ponytail: another build's /mineffect lines (687, 688), their order taken as /effect's.
+const MIN_EFFECT_ON: usize = 687;
+const MIN_EFFECT_OFF: usize = 688;
 /// Deals: "requests a deal", no one of that name, "can't overlap items", "no more than 10 kinds", how asking went
 /// (70 + the result), how it ended (75 done, 76 failed, 74 cancelled), too heavy.
 /// "Invalid Command", in yellow.

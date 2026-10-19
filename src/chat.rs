@@ -1273,6 +1273,8 @@ pub enum Command {
     Effect,
     /// /quake: camera shakes on or off.
     Quake,
+    /// /mineffect: lighter effects on or off.
+    MinEffect,
     /// /aura: the max-level aura in full or simplified; /aura2: none at all.
     Aura,
     AuraOff,
@@ -1335,6 +1337,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/inall" => Command::AllWhispers { allow: true },
         "/effect" => Command::Effect,
         "/quake" => Command::Quake,
+        "/mineffect" => Command::MinEffect,
         "/aura" => Command::Aura,
         "/aura2" => Command::AuraOff,
         "/emo" | "/emotion" => Command::EmotionList,
@@ -1797,6 +1800,7 @@ mod tests {
         assert_eq!(command("/inall"), Some(Command::AllWhispers { allow: true }));
         assert_eq!(command("/effect"), Some(Command::Effect));
         assert_eq!(command("/quake"), Some(Command::Quake));
+        assert_eq!(command("/mineffect"), Some(Command::MinEffect));
         assert_eq!(command("/emo"), Some(Command::EmotionList));
         assert_eq!(command("/achievement"), Some(Command::Achievements));
         assert_eq!(command("/emotion"), Some(Command::EmotionList));

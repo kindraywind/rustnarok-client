@@ -2524,9 +2524,11 @@ impl App {
         cursor_look.press(pointer.1);
         sprites.extend(cursor_look.draw(gpu, game.cursor_at));
 
-        game.effects.advance(gpu, now, yaw);
-        // With /effect off, effects still play on, unseen, and their sounds are still heard.
+        // With /effect off, effects still play on, unseen but for the force-drawn ones, and their sounds are still heard.
         let effects_on = self.graphics.effects_on;
+        game.effects.only_forced = !effects_on;
+        game.effects.min = effects::min_effect(self.graphics.min_effect, game.map_property.map(|(_, flags)| flags));
+        game.effects.advance(gpu, now, yaw);
         if let Some(audio) = audio {
             for (file, at) in game.effects.due_sounds(now) {
                 audio.play(grf, &file, heard(f32::hypot(at[0] - player_feet[0], at[2] - player_feet[2]) / world::CELL));
@@ -2541,12 +2543,11 @@ impl App {
         };
         let ground = &game.world.gat;
         game.effects.settle_hits(now, feet_of_unit, |x, z| -ground.height_at([x / world::CELL, z / world::CELL]));
-        let (mut effect_quads, mut effect_meshes) =
-            if effects_on { (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit)) } else { (Vec::new(), Vec::new()) };
+        let (mut effect_quads, mut effect_meshes) = (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit));
         if effects_on {
             effect_quads.extend(game.weather.spark_quads(&assets.weather, now));
         }
-        let screen_shapes = if effects_on { game.effects.screen_shapes(now, feet_of_unit) } else { Vec::new() };
+        let screen_shapes = game.effects.screen_shapes(now, feet_of_unit);
         // The sky's puffs and cloud fields run on; with /effect on they draw as meshes, one per picture and blending.
         // ponytail: alpha-blended puffs go through the mesh pass, which fogs them; the game doesn't fog them.
         let player_at = game.world.cell_position(game.player.position(now));
