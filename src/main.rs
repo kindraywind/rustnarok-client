@@ -5891,7 +5891,6 @@ mod tests {
         assert_eq!(esc_panel(Panel::Storage), None);
         let typing = escape::EscView {
             battle_line: false,
-            whisper_list: false,
             focused: Some(escape::WindowId::Storage),
             conversation: false,
             question: false,
