@@ -659,6 +659,7 @@ impl App {
                     attack_range: 1,
                     pending: None,
                     pending_walk: None,
+                    pickups_asked: HashSet::new(),
                     auto_say: std::env::var("RUSTNAROK_CLIENT_SAY").ok(),
                     last_move: None,
                     walk_goal: None,
@@ -1317,6 +1318,7 @@ impl App {
             }
             MapEvent::MapChange { map, position } => {
                 self.map_loaded = true;
+                game.pickups_asked.clear();
                 // A map change or teleport leaves the NPC behind: its windows and picture go, and nothing is sent.
                 game.dialog = None;
                 game.cutin = None;
@@ -1509,11 +1511,13 @@ impl App {
             }
             MapEvent::ItemGone { id } => {
                 game.ground.remove(&id);
+                game.pickups_asked.remove(&id);
                 if game.pending.is_some_and(|(pending, _)| pending == Pending::PickUp(id)) {
                     game.pending = None;
                 }
             }
             MapEvent::PickedUp { result, item } => {
+                game.pickups_asked.clear();
                 let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
                 let held = game.inventory.get(item.index).map_or(0, |held| held.amount);
                 // A forged or brewed item names its maker: asked for once.

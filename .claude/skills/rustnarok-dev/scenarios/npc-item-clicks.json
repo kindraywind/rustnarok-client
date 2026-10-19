@@ -1,5 +1,5 @@
 {
-  "about": "Clicking NPCs and items (issue #170): our merge NPC (npc/merge.txt, loaded with @loadnpc) answers a talk with a chat line, since there's nothing to merge. Clicked while walking it doesn't talk; standing still, a left click and a right click each talk. An Apple dropped with @dropall and left about four cells behind is walked to and picked up from the next cell while still walking (issue #294). The NPC lives only in the map server's memory, and the scenario unloads it at both ends.",
+  "about": "Clicking NPCs and items (issue #170): our merge NPC (npc/merge.txt, loaded with @loadnpc) answers a talk with a chat line, since there's nothing to merge. Clicked while walking it doesn't talk; standing still, a left click and a right click each talk. An Apple dropped with @dropall and left about four cells behind is walked to; the pickup (CZ_ITEM_PICKUP, 0x0362, after the turn's 0x0361) goes out once the player has stopped beside it (issue #591). The NPC lives only in the map server's memory, and the scenario unloads it at both ends.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -19,7 +19,7 @@
     {"expect": {"ground_items_at_least": 1}},
     {"say": "@warp prontera 157 177"}, {"settle": 1500},
     {"click_on": {"ground_item": 512}}, {"wait_for": {"sent": "0x0362", "ms": 6000, "pause": true}},
-    {"expect": {"state": {"player.moving": true}}}, {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 1000},
+    {"expect": {"state": {"player.moving": false}}}, {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 1000},
     {"expect": {"inventory_has": [{"id": 512}]}},
     {"say": "@itemreset"}, {"wait": 800},
     {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/merge.txt"}, {"wait": 500}
