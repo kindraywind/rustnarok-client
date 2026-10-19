@@ -328,9 +328,6 @@
       "key": "Alt+E"
     },
     {
-      "say": "@killmonster2"
-    },
-    {
       "wait": 1500
     },
     {
@@ -339,8 +336,7 @@
           "mercenary": 1
         },
         "state": {
-          "units.0.kind": "mercenary",
-          "units.0.job": 6027
+          "mercenary.job": 6027
         }
       }
     },
