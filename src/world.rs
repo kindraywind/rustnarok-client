@@ -1677,6 +1677,11 @@ pub struct Animated {
     anim_type: i32,
     speed: f32,
     start: Option<std::time::Instant>,
+    /// RSM 1: its frame, the 16 ms tick it was last stepped at, and its triangles' normals at frame 0 (its light
+    /// isn't redone while it moves).
+    frame: i32,
+    tick: Option<u64>,
+    normals: Vec<Vector>,
     order: Vec<usize>,
     /// The texture and vertex count of each run of its ordered triangles, then those runs' places in the buffer.
     runs: Vec<(usize, u32)>,
@@ -1686,26 +1691,46 @@ pub struct Animated {
 impl World {
     /// How many RSM 2 instances move on this map.
     pub fn rsm_2_moving(&self) -> usize {
-        self.animated.len()
+        self.animated.iter().filter(|instance| instance.rsm.version >= (2, 0)).count()
     }
 
-    /// Poses the moving RSM 2 models for `now`: each on its own clock (started the first time it's drawn), instances of
-    /// a model at the same frame posed once.
+    /// How many RSM 1 instances move on this map.
+    pub fn rsm_1_moving(&self) -> usize {
+        self.animated.len() - self.rsm_2_moving()
+    }
+
+    /// Poses the moving models for `now`, instances of a model at the same frame posed once. RSM 2 runs on its own
+    /// clock (started the first time it's drawn); RSM 1 steps its frame once per drawn frame in which a 16 ms tick
+    /// passed (`model::rsm1_step`) and keeps its frame-0 light.
     pub fn animate(&mut self, gpu: &Gpu, now: std::time::Instant) {
         let Some(buffer) = &self.animated_buffer else { return };
         let mut vertices = Vec::new();
         let mut posed: HashMap<(*const Rsm, u32), Vec<model::Triangle>> = HashMap::new();
+        let tick = crate::whole_ms(now) / 16;
         for instance in &mut self.animated {
-            let start = *instance.start.get_or_insert(now);
-            let elapsed = now.saturating_duration_since(start).as_millis() as u64;
-            let (frame, again) = model::clock(elapsed, instance.speed, instance.anim_type, instance.rsm.frames, instance.rsm.fps);
-            if again {
-                instance.start = Some(now);
-            }
+            let frame = if instance.rsm.version >= (2, 0) {
+                let start = *instance.start.get_or_insert(now);
+                let elapsed = now.saturating_duration_since(start).as_millis() as u64;
+                let (frame, again) = model::clock(elapsed, instance.speed, instance.anim_type, instance.rsm.frames, instance.rsm.fps);
+                if again {
+                    instance.start = Some(now);
+                }
+                frame
+            } else {
+                if instance.tick.is_some_and(|last| tick > last) {
+                    instance.frame = model::rsm1_step(instance.frame, instance.speed, instance.anim_type, instance.rsm.frames);
+                }
+                instance.tick = Some(tick);
+                instance.frame as f32
+            };
             let triangles = posed.entry((std::rc::Rc::as_ptr(&instance.rsm), frame.to_bits())).or_insert_with(|| instance.rsm.triangles_at(frame));
-            for &triangle in &instance.order {
+            for (place, &triangle) in instance.order.iter().enumerate() {
                 if let Some(triangle) = triangles.get(triangle) {
-                    vertices.extend(placed_vertices(&instance.placement, instance.color, triangle));
+                    let mut placed = placed_vertices(&instance.placement, instance.color, triangle);
+                    if let Some(&normal) = instance.normals.get(place) {
+                        placed.iter_mut().for_each(|vertex| vertex.normal = normal);
+                    }
+                    vertices.extend(placed);
                 }
             }
         }
@@ -1770,7 +1795,7 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
                 per_texture.len() - 1
             })
         };
-        // RSM 2 that plays (a type and tracks that move) is posed again each frame, in a buffer of its own.
+        // A model that plays (a type and something that moves) is posed again each frame, in a buffer of its own.
         if instance.anim_type != 0 && rsm.animated() {
             let textures: Vec<usize> = rsm.textures.iter().map(|name| texture_of(name, &mut per_texture)).collect();
             let mut order: Vec<usize> = (0..triangles.len()).collect();
@@ -1783,6 +1808,14 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
                     _ => runs.push((texture, 3)),
                 }
             }
+            // RSM 1 keeps the light of its frame-0 pose.
+            let normals = match rsm.version >= (2, 0) {
+                true => Vec::new(),
+                false => {
+                    let still = rsm.triangles_at(0.0);
+                    order.iter().filter_map(|&triangle| still.get(triangle)).map(|triangle| placed_vertices(&placement, color, triangle)[0].normal).collect()
+                }
+            };
             animated.push(Animated {
                 rsm: rsm.clone(),
                 placement,
@@ -1790,6 +1823,9 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
                 anim_type: instance.anim_type,
                 speed: instance.anim_speed,
                 start: None,
+                frame: 0,
+                tick: None,
+                normals,
                 order,
                 runs,
                 draws: Vec::new(),

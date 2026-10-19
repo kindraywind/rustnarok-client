@@ -1630,6 +1630,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The RSM 2 model instances standing on the map.
     state["rsm2_models"] = game.world.rsm_2_models.into();
     state["rsm2_moving"] = game.world.rsm_2_moving().into();
+    state["rsm1_moving"] = game.world.rsm_1_moving().into();
     // The way the character faced on entering the map server (it faces so again after a warp).
     state["entered_facing"] = game.entered_facing.into();
     // The skill units on the ground standing as models (their UNT_ numbers).
