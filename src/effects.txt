@@ -457,7 +457,6 @@ skill	218	successEffectId	272
 skill	219	effectId	227
 skill	229	groundEffectId	302
 skill	230	beforeHitEffectId	298
-skill	231	effectId	299
 skill	234	effectId	300
 skill	235	effectId	300
 skill	236	effectId	300
@@ -2117,6 +2116,7 @@ wav	1190	effect\drop_purple	0
 wav	1869	effect\drop_blue	0
 wav	1870	effect\drop_green	0
 wav	1871	effect\drop_red	0
+wav	914	effect\G스포어익스플로젼	0
 hit	1	0	-1
 hit	2	0	-1
 hit	3	0	-1

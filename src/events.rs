@@ -3435,6 +3435,10 @@ impl App {
                 if !ok {
                     return;
                 }
+                // The pitchers throw their item at the target (Potion Pitcher, Berserk Pitcher, Spore Explosion).
+                if let (Some(effect), Some(gpu)) = (effects::thrown_item(skill), gpu) {
+                    game.aimed(gpu, grf, table, effect, source, target, 1);
+                }
                 // Heals show their amount, green, and an effect by it; SP Recovery its amount, blue.
                 let heal = HEAL_SKILLS.contains(&skill);
                 if heal || skill == SP_RECOVERY {

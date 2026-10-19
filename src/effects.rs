@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, blitz, bolts, boomerang, burst, huujin, sage, stone, tanji};
+use crate::prims::{balls, blitz, bolts, boomerang, burst, huujin, sage, stone, tanji, throw};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -1308,6 +1308,8 @@ pub struct Effects {
     pub min: bool,
     /// On ecl_fild01, where Shield Boomerang's alpha is cut to 100.
     pub dim: bool,
+    /// The camera's pitch in degrees, which tips the thrown items' pictures.
+    pub pitch: f32,
     /// Bows' arrows, and the arrow sprite's layers by direction.
     arrows: crate::arrows::Arrows,
     arrow: Vec<Vec<Placed>>,
@@ -1521,7 +1523,18 @@ const FIRE_BALL: u32 = 24;
 /// Whether the server sends this effect (ZC_NOTIFY_EFFECT2) with no target, so it flies from its unit at the map's
 /// centre: Fire Ball's and Frost Diver's.
 pub fn aimed_at_centre(effect: u32) -> bool {
-    matches!(effect, FIRE_BALL | FROST_DIVER | SPHERE | STRAIGHT_SPHERE)
+    matches!(effect, FIRE_BALL | FROST_DIVER | SPHERE | STRAIGHT_SPHERE | POTION_PITCHER | BERSERK_PITCHER | SPORE_EXPLOSION)
+}
+
+/// The effect that throws the item of a skill used (ZC_USE_SKILL): Potion Pitcher's, Berserk Pitcher's, Spore
+/// Explosion's.
+pub fn thrown_item(skill: u16) -> Option<u32> {
+    match skill {
+        231 => Some(POTION_PITCHER),
+        446 => Some(BERSERK_PITCHER),
+        2481 => Some(SPORE_EXPLOSION),
+        _ => None,
+    }
 }
 
 /// The hit count of an effect the packet gave one (`prims::tanji::hit_count`): the game's rule for Finger Offensive's
@@ -1540,12 +1553,30 @@ const SPHERE: u32 = 265;
 const STRAIGHT_SPHERE: u32 = 412;
 const DARK_STRIKE: u32 = 451;
 const HUUJIN: u32 = 621;
+/// EF_POTIONPITCHER, EF_BERSERKPITCHER and EF_SPOREEXPLOSION: the item thrown at the target (`prims::throw`).
+const POTION_PITCHER: u32 = 299;
+const BERSERK_PITCHER: u32 = 541;
+const SPORE_EXPLOSION: u32 = 914;
 /// EF_SHIELDBOOMERANG: Shield Boomerang's shield, out to the target, round and back past the caster (`prims::boomerang`).
 const SHIELD_BOOMERANG: u32 = 249;
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 10] = [SOUL_STRIKE, FIRE_BALL, FROST_DIVER, JUPITEL, GRIMTOOTH, SPEAR_BOOMERANG, SHIELD_BOOMERANG, SPHERE, DARK_STRIKE, HUUJIN];
+pub const AIMED: [u32; 13] = [
+    SOUL_STRIKE,
+    FIRE_BALL,
+    FROST_DIVER,
+    JUPITEL,
+    GRIMTOOTH,
+    SPEAR_BOOMERANG,
+    SHIELD_BOOMERANG,
+    SPHERE,
+    DARK_STRIKE,
+    HUUJIN,
+    POTION_PITCHER,
+    BERSERK_PITCHER,
+    SPORE_EXPLOSION,
+];
 /// EF_EARTHSPIKE and EF_HEAVENSDRIVE: stone spikes where they play (`prims`).
 const EARTH_SPIKE: u32 = 79;
 const HEAVENS_DRIVE: u32 = 142;
@@ -1995,6 +2026,16 @@ impl Effects {
                 }
                 self.prims.spheres.throw(tanji::Sphere::new(id == STRAIGHT_SPHERE, from, to, hits, now, self.dim));
             }
+            POTION_PITCHER | BERSERK_PITCHER | SPORE_EXPLOSION => {
+                if let Some(path) = throw::icon_of(id) {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
+                }
+                // Only Spore Explosion has a sound, made at the thrower's first update.
+                let sound = table.sounds.get(&id).and_then(|sounds| sounds.first()).map(|sound| format!("{}.wav", sound.file));
+                if let Some(throw) = throw::Throw::new(id, caster, from, to, now, sound) {
+                    self.prims.throws.throw(throw);
+                }
+            }
             HUUJIN => {
                 self.textures.entry(huujin::WIND.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, huujin::WIND, true).ok());
                 self.play_sounds(table, id, from, now);
@@ -2057,6 +2098,9 @@ impl Effects {
         self.prims.boomerangs.advance(now, &position_of);
         self.prims.spheres.advance(now, position_of(None), |n| pick(0, n.saturating_sub(1)));
         self.prims.huujin.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
+        for (file, at) in self.prims.throws.advance(now, &position_of) {
+            self.sounds.push((now, file, at));
+        }
     }
 
     /// Arrows leaving now take their aim at where their units are (`position_of`).
@@ -2368,6 +2412,7 @@ impl Effects {
             .rings(self.textures.get(tanji::RING).and_then(Option::as_ref), now)
             .into_iter()
             .chain(self.prims.huujin.meshes(self.textures.get(huujin::WIND).and_then(Option::as_ref)))
+            .chain(self.prims.throws.meshes(|path| self.textures.get(path).and_then(Option::as_ref), self.pitch))
             .collect();
         // The spikes, in ice and in stone, blended over.
         let spikes = [crate::prims::ICE_TEXTURE, stone::STONE]
@@ -3218,6 +3263,14 @@ mod tests {
         assert_eq!(sounds.len(), 11);
         assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
         assert!(!table.sounds.contains_key(&149));
+        // The pitchers throw their item at the packet (ok = 1 only), through the aimed effects; no generic part and no
+        // `effectId` fallback for Potion Pitcher.
+        assert_eq!([thrown_item(231), thrown_item(446), thrown_item(2481), thrown_item(28)], [Some(299), Some(541), Some(914), None]);
+        assert!(
+            [299, 541, 914].iter().all(|id| AIMED.contains(id) && aimed_at_centre(*id) && !table.floaters.contains_key(id) && !table.parts.contains_key(id))
+        );
+        assert!(table.skill(231, "effectId").is_empty());
+        assert_eq!(table.sounds[&914].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\G스포어익스플로젼", 0)]);
         // Finger Offensive's sphere (265), Dark Strike's balls (451) and Huujin's blades (621): by the game's hit count, in the
         // aimed effects, with no generic part; Finger Offensive's first hit shows EF_HIT2 too, Dark Strike's `struck` is its own.
         assert_eq!([hit_count(265, 0, 8), hit_count(451, 37, 8), hit_count(621, 36, 9), hit_count(265, 5, 4), hit_count(24, 7, 8)], [1, 1, 36, 1, 7]);

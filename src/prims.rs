@@ -14,6 +14,7 @@ pub mod sage;
 pub mod sparkle;
 pub mod stone;
 pub mod tanji;
+pub mod throw;
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -95,6 +96,7 @@ pub struct Prims {
     pub blitzes: blitz::Blitzes,
     pub spheres: tanji::Spheres,
     pub huujin: huujin::Huujin,
+    pub throws: throw::Throws,
 }
 
 /// COLDHIT's shard and smoke textures.

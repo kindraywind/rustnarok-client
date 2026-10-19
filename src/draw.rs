@@ -2620,6 +2620,7 @@ impl App {
         };
         game.effects.aim_arrows(now, feet_of_unit);
         game.effects.dim = game.map.trim_end_matches(".gat") == "ecl_fild01";
+        game.effects.pitch = game.camera.pitch.to_degrees();
         game.effects.follow_boomerangs(now, feet_of_unit);
         let ground = &game.world.gat;
         game.effects.settle_hits(now, feet_of_unit, |x, z| -ground.height_at([x / world::CELL, z / world::CELL]));
