@@ -939,6 +939,12 @@ impl Game {
     /// The message box answered (OK: `yes`).
     pub(crate) fn answer_box(&mut self, yes: bool, messages: &[String]) {
         let Some(asked) = self.question_box.take() else { return };
+        if let BoxQuestion::RebindKey(_) = asked {
+            if let Some(window) = &mut self.shortcuts_window {
+                window.confirm(yes);
+            }
+            return;
+        }
         if !yes {
             return;
         }
@@ -961,7 +967,7 @@ impl Game {
             }
             BoxQuestion::FreeGoods => self.open_vending(),
             BoxQuestion::ResetSettings => self.reset_settings = true,
-            BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) | BoxQuestion::Said(_) => {}
+            BoxQuestion::RebindKey(_) | BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) | BoxQuestion::Said(_) => {}
         }
     }
 

@@ -2336,17 +2336,6 @@ impl App {
             let caret = (now.saturating_duration_since(game.entered).as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
             reason.draw(shop_layer.window(), &assets.chrome, &assets.guild, (&assets.ok, &assets.cancel), font, messages, screen(), pointer, caret);
         }
-        // The message box: its words, OK and Cancel (OK alone when it only tells).
-        if let Some(asked) = &game.question_box {
-            let dialog = dialog_position(&assets.message);
-            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
-            for (place, yes) in box_buttons(asked.asks()) {
-                shop_layer.sprites.push(button_sprite(pointer, offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }));
-            }
-            for (row, line) in message_lines(font, &asked.text(messages), MESSAGE_WIDTH).into_iter().enumerate() {
-                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
-            }
-        }
         // A party invites us: its name and the question, OK or cancel.
         if let Some((_, name)) = &game.party_invite {
             let dialog = party::invitation_at(screen());
@@ -2462,7 +2451,18 @@ impl App {
             window.draw(shop_layer.window(), &assets.chrome, &assets.game_settings, &assets.options, font, messages, (sound, &self.graphics), pointer);
         }
         if let Some(window) = &game.shortcuts_window {
-            window.draw(shop_layer.window(), &assets.chrome, font, messages, &self.shortcuts, pointer.0);
+            window.draw(shop_layer.window(), &assets.chrome, &assets.shortcut_window, &assets.options.check, font, messages, game.chat_mode.enabled(), pointer);
+        }
+        // The message box over every window: its words, OK and Cancel (OK alone when it only tells).
+        if let Some(asked) = &game.question_box {
+            let dialog = dialog_position(&assets.message);
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
+            for (place, yes) in box_buttons(asked.asks()) {
+                shop_layer.sprites.push(button_sprite(pointer, offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }));
+            }
+            for (row, line) in message_lines(font, &asked.text(messages), MESSAGE_WIDTH).into_iter().enumerate() {
+                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
         }
         let mut menu_layer = Layer::default();
         if let Some(menu) = &game.menu {

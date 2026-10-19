@@ -126,6 +126,7 @@ mod roulette;
 mod screenshot;
 mod servers;
 mod shop;
+mod shortcut_window;
 mod shortcuts;
 mod skill_descript;
 mod skill_motions;
@@ -1265,7 +1266,7 @@ struct Game {
     settings_window: Option<game_settings::GameSettings>,
     /// Game Settings' Reset was answered yes: the sound and the effect switches go back to their defaults.
     reset_settings: bool,
-    shortcuts_window: Option<options::ShortcutsWindow>,
+    shortcuts_window: Option<shortcut_window::ShortcutWindow>,
     world_map: Option<worldmap::WorldMap>,
     /// The quest log and its window.
     quests: Vec<net::Quest>,
@@ -2483,6 +2484,8 @@ enum BoxQuestion {
     FreeGoods,
     /// Game Settings' Reset: "Set Basic Settings?" (3166).
     ResetSettings,
+    /// Shortcut Settings: the key is this row's already; bind it here instead? (1489).
+    RebindKey(String),
 }
 
 impl BoxQuestion {
@@ -2498,6 +2501,7 @@ impl BoxQuestion {
             Self::Said(_) => 0,
             Self::FreeGoods => vend::FREE_ASKS,
             Self::ResetSettings => game_settings::RESET_ASKS,
+            Self::RebindKey(_) => shortcut_window::ASKS_REBIND,
         }
     }
 
@@ -2507,6 +2511,7 @@ impl BoxQuestion {
         match self {
             Self::GuildLeader { name, .. } => rustnarok_client::messages::fill(template, &[name, name]),
             Self::Said(words) => words.clone(),
+            Self::RebindKey(name) => rustnarok_client::messages::fill(template, &[name]),
             _ => template.to_owned(),
         }
     }
@@ -2841,6 +2846,7 @@ struct Assets {
     aura: aura::Textures,
     escape: escape::Assets,
     options: options::Assets,
+    shortcut_window: shortcut_window::Assets,
     game_settings: game_settings::Assets,
     quest: quest::Assets,
     achievement: achievement::Assets,
@@ -2969,6 +2975,7 @@ impl Assets {
             aura: aura::Textures::load(gpu, grf),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
+            shortcut_window: shortcut_window::Assets::load(gpu, grf),
             game_settings: game_settings::Assets::load(gpu, grf),
             quest: quest::Assets::load(gpu, grf),
             achievement: achievement::Assets::load(gpu, grf),
@@ -3078,13 +3085,6 @@ fn login_refusal(id: &str, password: &str) -> Option<(usize, usize)> {
     }
 }
 
-fn shortcut_to_bind(key: options::ShortcutKey) -> Option<shortcuts::ShortcutKey> {
-    match key {
-        options::ShortcutKey::NamedF(number) => shortcuts::function_key(number),
-        options::ShortcutKey::Char(character) => Some(shortcuts::ShortcutKey::Char(character.to_ascii_lowercase())),
-    }
-}
-
 /// The system clipboard's text up to its first line break, for a one-line box.
 fn clipboard_line() -> String {
     let text = arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()).unwrap_or_default();
@@ -3111,32 +3111,6 @@ fn battle_key(key: &Key) -> battle_mode::KeyKind {
         }
         _ => battle_mode::KeyKind::Other,
     }
-}
-
-fn shortcut_key(key: &Key) -> Option<options::ShortcutKey> {
-    let number = match key {
-        Key::Named(NamedKey::F1) => 1,
-        Key::Named(NamedKey::F2) => 2,
-        Key::Named(NamedKey::F3) => 3,
-        Key::Named(NamedKey::F4) => 4,
-        Key::Named(NamedKey::F5) => 5,
-        Key::Named(NamedKey::F6) => 6,
-        Key::Named(NamedKey::F7) => 7,
-        Key::Named(NamedKey::F8) => 8,
-        Key::Named(NamedKey::F9) => 9,
-        Key::Named(NamedKey::F10) => 10,
-        Key::Named(NamedKey::F11) => 11,
-        Key::Named(NamedKey::F12) => 12,
-        Key::Character(text) => {
-            let mut characters = text.chars();
-            return characters
-                .next()
-                .filter(|character| !character.is_control() && characters.next().is_none())
-                .map(|character| options::ShortcutKey::Char(character.to_ascii_lowercase()));
-        }
-        _ => return None,
-    };
-    Some(options::ShortcutKey::NamedF(number))
 }
 
 /// A party booking request and what the web server said to it.
@@ -4285,7 +4259,6 @@ struct App {
     music: HashMap<String, String>,
     /// /effect: effects are drawn and heard; off, they still play, unseen and silent.
     graphics: options::GraphicsSettings,
-    shortcuts: options::ShortcutSettings,
     /// Keys to actions, from the game's hotkey tables and the player's UserKeys file.
     keybinds: shortcuts::Shortcuts,
     /// Print Screen writes the next frame here and keeps running.
@@ -5308,16 +5281,7 @@ fn main() {
     let quest_filters = quest::Filters::load(&grf);
     let sound = sound::Settings::load();
     let graphics = options::GraphicsSettings::load();
-    let shortcuts = options::ShortcutSettings::load();
-    let mut keybinds = shortcuts::Shortcuts::load(&grf);
-    // ponytail: the shortcut-settings window writes its own file, not UserKeys, so a saved bar overlays hotbar 1.
-    if shortcuts != options::ShortcutSettings::default_bindings() {
-        let mut keys = [None; 36];
-        for (slot, key) in shortcuts.slots.into_iter().enumerate() {
-            keys[slot] = key.and_then(shortcut_to_bind);
-        }
-        keybinds.apply_bar_keys(keys);
-    }
+    let keybinds = shortcuts::Shortcuts::load(&grf);
     let mut app = App {
         grf,
         job_names,
@@ -5366,7 +5330,6 @@ fn main() {
         sound,
         music,
         graphics,
-        shortcuts,
         keybinds,
         print_screen: None,
         shot_saved: None,

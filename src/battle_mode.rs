@@ -20,8 +20,8 @@ pub struct Mode {
 }
 
 impl Mode {
-    #[cfg(test)]
-    fn enabled(self) -> bool {
+    /// Battle mode is on (Shortcut Settings' box).
+    pub fn enabled(self) -> bool {
         self.on
     }
 

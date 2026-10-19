@@ -151,16 +151,57 @@ impl Shortcuts {
     /// the ones this client knows (older data lays them out otherwise: no window opens the inventory),
     /// then `UserKeys.lua` from the save folder (`RUSTNAROK_CLIENT_USERKEYS` names another file).
     pub fn load(grf: &Grf) -> Self {
-        let mut shortcuts = lua::hotkey_defaults(grf)
-            .ok()
-            .filter(|rows| !rows.is_empty())
-            .map(|rows| Self::from_rows(&rows))
-            .filter(Self::knows_the_tables)
-            .unwrap_or_else(Self::builtin);
+        let mut shortcuts = Self::defaults(grf);
         if let Some(path) = userkeys_path() {
             let _ = shortcuts.apply_user_file(&path);
         }
         shortcuts
+    }
+
+    /// The data's own keys, without the player's: what Shortcut Settings' Reset goes back to.
+    pub fn defaults(grf: &Grf) -> Self {
+        lua::hotkey_defaults(grf)
+            .ok()
+            .filter(|rows| !rows.is_empty())
+            .map(|rows| Self::from_rows(&rows))
+            .filter(Self::knows_the_tables)
+            .unwrap_or_else(Self::builtin)
+    }
+
+    /// Writes every row to UserKeys.lua in the save folder, which `load` reads back over the defaults.
+    pub fn save(&self) {
+        if let Some(path) = userkeys_path() {
+            let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, self.user_lua()));
+        }
+    }
+
+    /// The rows as `USERKEY_<table>` tables: each row's EXE, its key's virtual-key code (0 unbound) and its modifier's.
+    pub fn user_lua(&self) -> String {
+        let mut text = String::new();
+        for table in 1..=4 {
+            text += &format!("USERKEY_{table} = {{\n");
+            for binding in self.bindings.iter().filter(|binding| binding.table == table) {
+                let key = binding.key.and_then(key_to_vk).unwrap_or(0);
+                text += &format!("\t[{}] = {{ EXE = \"{}\", KEY1 = {key}, KEY2 = {} }},\n", binding.index, binding.exe, modifier_vk(binding.modifier));
+            }
+            text += "}\n";
+        }
+        text
+    }
+
+    /// The row (by place in `bindings`) that has the chord row `pos` would take; the two hotbars share keys.
+    pub fn holder(&self, pos: usize, key: ShortcutKey, modifier: Modifier) -> Option<usize> {
+        (0..self.bindings.len()).find(|&index| self.clashes(pos, index) && self.bindings[index].key == Some(key) && self.bindings[index].modifier == modifier)
+    }
+
+    /// Row `pos` takes the chord (or none), and any other row that has it loses it.
+    pub fn bind(&mut self, pos: usize, key: Option<ShortcutKey>, modifier: Modifier) {
+        let Some(binding) = self.bindings.get_mut(pos) else { return };
+        binding.key = key;
+        binding.modifier = if key.is_some() { modifier } else { Modifier::None };
+        if let Some(key) = key {
+            self.clear_chord(pos, key, modifier);
+        }
     }
 
     /// Whether the data's tables are laid out as this client reads them: something opens the inventory.
@@ -218,45 +259,22 @@ impl Shortcuts {
         Ok(())
     }
 
-    /// One hotbar-1 slot, as the shortcut-settings window rebinds it.
-    pub fn set_hotbar(&mut self, slot: usize, key: Option<ShortcutKey>) {
-        let Some(pos) = self.bindings.iter().position(|binding| matches!(binding.action, Action::Hotbar { bar: 1, slot: bound } if usize::from(bound) == slot))
-        else {
-            return;
-        };
-        self.bindings[pos].key = key;
-        self.bindings[pos].modifier = Modifier::None;
-        if let Some(key) = key {
-            self.clear_chord(pos, key, Modifier::None);
-        }
-    }
-
-    /// Hotbar 1's keys from the shortcut-settings window, which writes its own file until it writes UserKeys.
-    pub fn apply_bar_keys(&mut self, keys: [Option<ShortcutKey>; 36]) {
-        for (slot, key) in keys.into_iter().enumerate() {
-            let Some(pos) = self.bindings.iter().position(|binding| matches!(binding.action, Action::Hotbar { bar: 1, slot: bound } if bound as usize == slot))
-            else {
-                continue;
-            };
-            self.bindings[pos].key = key;
-            self.bindings[pos].modifier = Modifier::None;
-            if let Some(key) = key {
-                self.clear_chord(pos, key, Modifier::None);
-            }
-        }
-    }
-
-    fn clear_chord(&mut self, skip: usize, key: ShortcutKey, modifier: Modifier) {
+    /// Whether row `index` can't share a chord with row `pos`: any other row, but the other hotbar's.
+    fn clashes(&self, pos: usize, index: usize) -> bool {
         // The two hotbars share keys: only the one showing fires.
         let bar_of = |action: Action| match action {
             Action::Hotbar { bar, .. } => Some(bar),
             _ => None,
         };
-        let kept = bar_of(self.bindings[skip].action);
-        for (index, binding) in self.bindings.iter_mut().enumerate() {
-            let other_bar = kept.is_some_and(|kept| bar_of(binding.action).is_some_and(|bar| bar != kept));
-            if index != skip && !other_bar && binding.key == Some(key) && binding.modifier == modifier {
-                binding.key = None;
+        let kept = bar_of(self.bindings[pos].action);
+        let other_bar = kept.is_some_and(|kept| bar_of(self.bindings[index].action).is_some_and(|bar| bar != kept));
+        index != pos && !other_bar
+    }
+
+    fn clear_chord(&mut self, skip: usize, key: ShortcutKey, modifier: Modifier) {
+        for index in 0..self.bindings.len() {
+            if self.clashes(skip, index) && self.bindings[index].key == Some(key) && self.bindings[index].modifier == modifier {
+                self.bindings[index].key = None;
             }
         }
     }
@@ -295,25 +313,6 @@ impl Binding {
 
 fn userkeys_path() -> Option<std::path::PathBuf> {
     std::env::var_os("RUSTNAROK_CLIENT_USERKEYS").map(std::path::PathBuf::from).or_else(|| crate::settings_path("UserKeys.lua"))
-}
-
-/// F1 is 1. None past F12.
-pub fn function_key(number: u8) -> Option<ShortcutKey> {
-    const KEYS: [NamedKey; 12] = [
-        NamedKey::F1,
-        NamedKey::F2,
-        NamedKey::F3,
-        NamedKey::F4,
-        NamedKey::F5,
-        NamedKey::F6,
-        NamedKey::F7,
-        NamedKey::F8,
-        NamedKey::F9,
-        NamedKey::F10,
-        NamedKey::F11,
-        NamedKey::F12,
-    ];
-    KEYS.get(usize::from(number.checked_sub(1)?)).copied().map(ShortcutKey::Named)
 }
 
 /// Windows virtual-key code to a key. KEYNAME in the hotkey file names these (112 is F1, 18 is Alt).
@@ -368,6 +367,35 @@ pub fn vk_to_key(vk: u16) -> Option<ShortcutKey> {
         // ponytail: the numpad and the mouse buttons aren't mapped; the defaults use the top row and F-keys.
         _ => return None,
     })
+}
+
+/// A key's Windows virtual-key code (`vk_to_key` backwards).
+fn key_to_vk(key: ShortcutKey) -> Option<u16> {
+    (1..=255).find(|&vk| vk_to_key(vk) == Some(key))
+}
+
+fn modifier_vk(modifier: Modifier) -> u16 {
+    match modifier {
+        Modifier::Alt => 18,
+        Modifier::Shift => 16,
+        Modifier::Ctrl => 17,
+        Modifier::Tab => 9,
+        Modifier::None | Modifier::Other => 0,
+    }
+}
+
+/// The chord a press makes for Shortcut Settings: the key where it is on the keyboard (Shift+1 is 1) and the one
+/// modifier that counts. None for a modifier alone, which can't be bound.
+pub fn chord_of(event: &KeyEvent<'_>) -> Option<(ShortcutKey, Modifier)> {
+    if matches!(event.key, Key::Named(NamedKey::Alt | NamedKey::Shift | NamedKey::Control | NamedKey::Tab | NamedKey::Super)) {
+        return None;
+    }
+    let physical = match event.physical {
+        Some(PhysicalKey::Code(code)) => code_key(code),
+        _ => None,
+    };
+    let key = physical.or_else(|| event_keys(event).first().copied())?;
+    Some((key, counted_modifier(event)))
 }
 
 fn modifier_of(vk: u16) -> Modifier {
@@ -755,7 +783,7 @@ pub fn action_name(action: Action) -> String {
     .into()
 }
 
-fn chord(key: ShortcutKey, modifier: Modifier) -> String {
+pub fn chord(key: ShortcutKey, modifier: Modifier) -> String {
     let name = match key {
         ShortcutKey::Named(named) => match named {
             NamedKey::Tab => "Tab".into(),
@@ -904,6 +932,28 @@ HOTKEY_4 = {
 mod tests {
     use super::*;
     use winit::keyboard::SmolStr;
+
+    #[test]
+    fn binds_a_row_and_writes_it_to_userkeys() {
+        let mut shortcuts = sample();
+        let inventory = shortcuts.bindings().iter().position(|binding| binding.action == Action::Inventory).unwrap();
+        let q = ShortcutKey::Char('q');
+        // Shift+Q is the equipment window's: binding it to the inventory asks about that row.
+        let equipment = shortcuts.bindings().iter().position(|binding| binding.action == Action::Equipment).unwrap();
+        assert_eq!(shortcuts.holder(inventory, q, Modifier::Shift), Some(equipment));
+        assert_eq!(shortcuts.holder(inventory, q, Modifier::Alt), None);
+        shortcuts.bind(inventory, Some(q), Modifier::Shift);
+        assert_eq!(shortcuts.bindings()[equipment].key, None, "the other row lost it");
+        // Written and read back over the defaults, it's the same.
+        let mut read = sample();
+        let rows: Vec<_> = lua::hotkey_rows(&shortcuts.user_lua()).unwrap().into_iter().filter(|row| row.user).collect();
+        read.apply_user(&rows);
+        assert_eq!(read, shortcuts);
+        assert!(shortcuts.user_lua().contains("EXE = \"MSI_HK_ITEMWND_ONOFF\", KEY1 = 81, KEY2 = 16"));
+        // Unbound.
+        shortcuts.bind(inventory, None, Modifier::Shift);
+        assert_eq!((shortcuts.bindings()[inventory].key, shortcuts.bindings()[inventory].modifier), (None, Modifier::None));
+    }
 
     fn sample() -> Shortcuts {
         Shortcuts::from_lua(
