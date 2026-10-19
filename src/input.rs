@@ -1382,6 +1382,11 @@ impl App {
                                     _ => None,
                                 };
                             }
+                            Some("shop") => {
+                                let _ = game.session.open_cashshop(0);
+                            }
+                            // ponytail: rec, tip, attendance, adventurerAgency, adventureguide and probability have no window in the client yet.
+                            Some("rec" | "tip" | "attendance" | "adventurerAgency" | "adventureguide" | "probability") => {}
                             _ => {}
                         }
                     }

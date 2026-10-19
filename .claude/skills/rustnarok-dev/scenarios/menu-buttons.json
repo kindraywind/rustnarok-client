@@ -1,5 +1,5 @@
 {
-  "about": "Menu buttons (issue #211): the menu under the basic info shows the game's buttons five to a row on its 42 x 43 grid (plus battle and shop, which this client opens from there); quest opens the quest window, option the game menu Esc opens (issue #546), keyboard the shortcut settings, each closing again on a second click. Minimised (issue #313), the menu stays under the 55-tall window: its toggle opens the same fourteen buttons and quest still opens the quest window.",
+  "about": "Menu buttons (issue #211, #708): the menu under the basic info shows the game's buttons five to a row on its 42 x 43 grid (22 buttons, all but battle and booking; shop opens the cash shop); quest opens the quest window, option the game menu Esc opens (issue #546), keyboard the shortcut settings, each closing again on a second click. Minimised (issue #313), the menu stays under the 55-tall window: its toggle opens the 22 buttons and quest still opens the quest window.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -29,9 +29,9 @@
         0,
         0,
         230,
-        320
+        380
       ],
-      "threshold": 5
+      "threshold": 15
     },
     {
       "click_on": {

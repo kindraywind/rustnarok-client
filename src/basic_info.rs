@@ -193,13 +193,11 @@ pub const ORDER: [&str; 24] = [
     "probability",
 ];
 
-/// The buttons the game shows.
-const SHOWN: [&str; 14] = ["status", "equip", "item", "skill", "party", "guild", "quest", "map", "navigation", "option", "bank", "mail", "keyboard", "repute"];
-
-/// The buttons that show, in the game's order: the fourteen (rows of 5, 5 and 4). The cash shop and the battleground
-/// queue, which the game opens elsewhere, open with /cashshop and /battleground here.
+/// The buttons that show, in the game's order: all of its list but battle and booking (rows of 5, 5, 5, 5 and 2). The
+/// shop button opens the cash shop, as /cashshop does; the battleground queue stays on /battleground, the party board
+/// on its shortcut.
 pub fn visible() -> Vec<&'static str> {
-    ORDER.into_iter().filter(|name| SHOWN.contains(name)).collect()
+    ORDER.into_iter().filter(|&name| name != "battle" && name != "booking").collect()
 }
 
 /// Doram have their own status button.
@@ -607,23 +605,50 @@ mod tests {
 
     #[test]
     fn shows_the_games_buttons_on_its_grid() {
-        // The game's fourteen, nothing else.
+        // The 22 names in order (all but battle and booking).
         assert_eq!(
             visible(),
-            ["status", "equip", "item", "skill", "party", "guild", "quest", "map", "navigation", "option", "bank", "mail", "keyboard", "repute"]
+            [
+                "status",
+                "equip",
+                "item",
+                "skill",
+                "party",
+                "guild",
+                "quest",
+                "map",
+                "navigation",
+                "option",
+                "bank",
+                "rec",
+                "mail",
+                "achievement",
+                "tip",
+                "shop",
+                "keyboard",
+                "attendance",
+                "adventurerAgency",
+                "repute",
+                "adventureguide",
+                "probability",
+            ]
         );
         // Five a row, 42 and 43 apart, from (9, 23) under the window.
         let mut window = BasicInfo::default();
+        let first = window.button_corner(0);
         assert_eq!(
-            (window.button_corner(0), window.button_corner(4), window.button_corner(5), window.button_corner(13)),
+            (first, window.button_corner(4), window.button_corner(5), window.button_corner(13)),
             ([9.0, 157.0], [177.0, 157.0], [9.0, 200.0], [135.0, 243.0])
         );
+        // The last two in the fifth row at x 9 and 51, 172 below the first.
+        assert_eq!(window.button_corner(20), [9.0, first[1] + 172.0]);
+        assert_eq!(window.button_corner(21), [51.0, first[1] + 172.0]);
         window.frame.open = true;
         window.menu_open = true;
         let corner = window.button_corner(6);
         assert_eq!(window.hit(window.frame.at([corner[0] + 5.0, corner[1] + 5.0])), Some(Hit::Menu("quest")));
-        assert_eq!(window.menu_boxes().len(), 14);
-        assert_eq!(window.height(), 134.0 + 23.0 + 3.0 * 43.0);
+        assert_eq!(window.menu_boxes().len(), 22);
+        assert_eq!(window.height(), 134.0 + 23.0 + 5.0 * 43.0);
         window.fourth = true;
         assert_eq!(window.button_corner(0), [9.0, 172.0]);
     }
@@ -636,7 +661,7 @@ mod tests {
         assert_eq!(window.toggle_box(), Some([0.0, 59.0, WIDTH, TOGGLE_HEIGHT]));
         assert_eq!(window.hit(window.frame.at([100.0, 62.0])), Some(Hit::MenuToggle));
         window.menu_open = true;
-        assert_eq!((window.button_corner(0), window.menu_boxes().len()), ([9.0, 78.0], 14));
+        assert_eq!((window.button_corner(0), window.menu_boxes().len()), ([9.0, 78.0], 22));
         let corner = window.button_corner(6);
         assert_eq!(window.hit(window.frame.at([corner[0] + 5.0, corner[1] + 5.0])), Some(Hit::Menu("quest")));
         window.fourth = true;
