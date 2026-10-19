@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, blitz, bolts, boomerang, burst, sage, stone};
+use crate::prims::{balls, blitz, bolts, boomerang, burst, huujin, sage, stone, tanji};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -1294,6 +1294,8 @@ pub struct Effects {
     /// fire ball's frame by frame, and the camera's turn in degrees (fire balls turn with it).
     prims: crate::prims::Prims,
     ghost: Vec<Placed>,
+    /// Dark Strike's red ghost sprite's layers.
+    red_ghost: Vec<Placed>,
     fire_ball: Vec<Vec<Placed>>,
     /// Spear Boomerang's spear, its first frame's layers.
     spear: Vec<Placed>,
@@ -1519,19 +1521,31 @@ const FIRE_BALL: u32 = 24;
 /// Whether the server sends this effect (ZC_NOTIFY_EFFECT2) with no target, so it flies from its unit at the map's
 /// centre: Fire Ball's and Frost Diver's.
 pub fn aimed_at_centre(effect: u32) -> bool {
-    matches!(effect, FIRE_BALL | FROST_DIVER)
+    matches!(effect, FIRE_BALL | FROST_DIVER | SPHERE | STRAIGHT_SPHERE)
+}
+
+/// The hit count of an effect the packet gave one (`prims::tanji::hit_count`): the game's rule for Finger Offensive's
+/// sphere, Dark Strike's balls and Huujin's blades.
+pub fn hit_count(effect: u32, count: u16, kind: u8) -> u16 {
+    if matches!(effect, SPHERE | DARK_STRIKE | HUUJIN) { crate::prims::tanji::hit_count(count, kind) } else { count }
 }
 
 /// EF_SPEARBMR: Spear Boomerang's four spears from the caster to the target (`prims::balls`).
 const SPEAR_BOOMERANG: u32 = 80;
 /// EF_BLITZBEAT: the streaks and the ring on Blitz Beat's target, made in code (`prims::blitz`).
 pub const BLITZ_BEAT: u32 = 115;
+/// EF_TANJI (265, from Finger Offensive and Duple Light), EF_DARKSTRIKE (451, Dark Strike's red balls) and EF_HUUJIN
+/// (621, Huujin's wind blades), made in code; 412 is the straight sphere that only the server sends.
+const SPHERE: u32 = 265;
+const STRAIGHT_SPHERE: u32 = 412;
+const DARK_STRIKE: u32 = 451;
+const HUUJIN: u32 = 621;
 /// EF_SHIELDBOOMERANG: Shield Boomerang's shield, out to the target, round and back past the caster (`prims::boomerang`).
 const SHIELD_BOOMERANG: u32 = 249;
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 7] = [SOUL_STRIKE, FIRE_BALL, FROST_DIVER, JUPITEL, GRIMTOOTH, SPEAR_BOOMERANG, SHIELD_BOOMERANG];
+pub const AIMED: [u32; 10] = [SOUL_STRIKE, FIRE_BALL, FROST_DIVER, JUPITEL, GRIMTOOTH, SPEAR_BOOMERANG, SHIELD_BOOMERANG, SPHERE, DARK_STRIKE, HUUJIN];
 /// EF_EARTHSPIKE and EF_HEAVENSDRIVE: stone spikes where they play (`prims`).
 const EARTH_SPIKE: u32 = 79;
 const HEAVENS_DRIVE: u32 = 142;
@@ -1956,9 +1970,36 @@ impl Effects {
 
     /// An effect launched on the caster at `from`, aimed at `to` (one of `AIMED`), told the skill's hit count.
     #[allow(clippy::too_many_arguments)]
-    pub fn aimed(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, caster: Option<u32>, from: Vector, to: Vector, hits: u16, now: Instant) {
+    pub fn aimed(
+        &mut self,
+        gpu: &Gpu,
+        grf: &Grf,
+        table: &Table,
+        id: u32,
+        (caster, target, own): (Option<u32>, u32, u32),
+        from: Vector,
+        to: Vector,
+        hits: u16,
+        now: Instant,
+    ) {
         match id {
-            SOUL_STRIKE => self.soul_strike(grf, from, to, hits, now),
+            SOUL_STRIKE => self.soul_strike(grf, from, to, hits, now, false),
+            DARK_STRIKE => self.soul_strike(grf, from, to, hits, now, true),
+            SPHERE | STRAIGHT_SPHERE => {
+                for path in [tanji::SPHERE, tanji::RING] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                // 412 has no sound.
+                if id == SPHERE {
+                    self.play_sounds(table, id, from, now);
+                }
+                self.prims.spheres.throw(tanji::Sphere::new(id == STRAIGHT_SPHERE, from, to, hits, now, self.dim));
+            }
+            HUUJIN => {
+                self.textures.entry(huujin::WIND.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, huujin::WIND, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.huujin.throw(from, hits, target, own, now, |n| pick(0, n.saturating_sub(1)));
+            }
             FROST_DIVER => self.frost_diver(gpu, grf, from, to, now),
             FIRE_BALL => {
                 self.sprites.entry(balls::FIRE_BALL_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, balls::FIRE_BALL_SPRITE));
@@ -1996,12 +2037,13 @@ impl Effects {
     }
 
     /// Soul Strike from `from` at `to` with `hits` hits: a ghost a hit, each with its sound as it leaves.
-    fn soul_strike(&mut self, grf: &Grf, from: Vector, to: Vector, hits: u16, now: Instant) {
-        self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
+    fn soul_strike(&mut self, grf: &Grf, from: Vector, to: Vector, hits: u16, now: Instant, red: bool) {
+        let sprite = if red { crate::prims::RED_GHOST_SPRITE } else { crate::prims::GHOST_SPRITE };
+        self.sprites.entry(sprite.to_owned()).or_insert_with(|| SpriteSet::at(grf, sprite));
         for at in crate::prims::ghost_times(hits) {
             self.sounds.push((now + at, "effect\\EF_SoulStrike.wav".to_owned(), from));
         }
-        self.prims.soul_strike(from, to, hits, now);
+        self.prims.soul_strike(from, to, hits, now, red);
     }
 
     /// A bow's arrow from over the archer's `feet`, leaving `wait` after `now` (`arrows`).
@@ -2012,7 +2054,9 @@ impl Effects {
 
     /// Shields in flight turn back to where their casters are (`position_of`).
     pub fn follow_boomerangs(&mut self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) {
-        self.prims.boomerangs.advance(now, position_of);
+        self.prims.boomerangs.advance(now, &position_of);
+        self.prims.spheres.advance(now, position_of(None), |n| pick(0, n.saturating_sub(1)));
+        self.prims.huujin.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
     }
 
     /// Arrows leaving now take their aim at where their units are (`position_of`).
@@ -2032,6 +2076,9 @@ impl Effects {
         self.prims.advance(now);
         if let Some(Some(sprite)) = self.sprites.get_mut(crate::prims::GHOST_SPRITE) {
             self.ghost = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
+        }
+        if let Some(Some(sprite)) = self.sprites.get_mut(crate::prims::RED_GHOST_SPRITE) {
+            self.red_ghost = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
         }
         if let Some(Some(sprite)) = self.sprites.get_mut(balls::FIRE_BALL_SPRITE).filter(|_| self.fire_ball.is_empty()) {
             let frames = sprite.frames(0).max(1);
@@ -2314,6 +2361,14 @@ impl Effects {
                 streaks.chain(rings).collect::<Vec<_>>()
             })
             .collect();
+        // The spirit spheres' rings and Huujin's blades, added on.
+        let sphere_meshes: Vec<EffectMesh<'_>> = self
+            .prims
+            .spheres
+            .rings(self.textures.get(tanji::RING).and_then(Option::as_ref), now)
+            .into_iter()
+            .chain(self.prims.huujin.meshes(self.textures.get(huujin::WIND).and_then(Option::as_ref)))
+            .collect();
         // The spikes, in ice and in stone, blended over.
         let spikes = [crate::prims::ICE_TEXTURE, stone::STONE]
             .into_iter()
@@ -2334,7 +2389,7 @@ impl Effects {
             Some((texture, corners.into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] }).collect(), additive))
         });
         // The effects made in code are none of them force-drawn.
-        let prims = spikes.chain(bolt_meshes).chain(blitz_meshes).chain(sage).chain(burst_rings).filter(|_| !self.only_forced);
+        let prims = spikes.chain(bolt_meshes).chain(blitz_meshes).chain(sphere_meshes).chain(sage).chain(burst_rings).filter(|_| !self.only_forced);
         rings.chain(models).chain(hits).chain(auras).chain(prims).collect()
     }
 
@@ -2522,9 +2577,10 @@ impl Effects {
             }
         }
         // Soul Strike's ghosts, each copy of a trail a little fainter.
-        if let Some(Some(sprite)) = self.sprites.get(crate::prims::GHOST_SPRITE) {
-            for (at, alpha, scale, turn) in self.prims.ghosts() {
-                for &(key, position, size, layer_angle) in &self.ghost {
+        for (path, layers, red) in [(crate::prims::GHOST_SPRITE, &self.ghost, false), (crate::prims::RED_GHOST_SPRITE, &self.red_ghost, true)] {
+            let Some(Some(sprite)) = self.sprites.get(path) else { continue };
+            for (at, alpha, scale, turn, _) in self.prims.ghosts().into_iter().filter(|ghost| ghost.4 == red) {
+                for &(key, position, size, layer_angle) in layers {
                     let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle + turn, uv).0.map(|value| value * scale));
                     quads.push((sprite.texture(key), at, corners, [1.0, 1.0, 1.0, alpha], false, false));
                 }
@@ -2533,6 +2589,9 @@ impl Effects {
         let fire_ball = self.sprites.get(balls::FIRE_BALL_SPRITE).and_then(Option::as_ref);
         let spear = (self.sprites.get(balls::SPEAR_SPRITE).and_then(Option::as_ref), self.spear.as_slice());
         quads.extend(self.prims.boomerangs.quads(self.textures.get(boomerang::SHIELD).and_then(Option::as_ref)));
+        if !self.only_forced {
+            quads.extend(self.prims.spheres.quads(self.textures.get(tanji::SPHERE).and_then(Option::as_ref)));
+        }
         quads.extend(self.prims.balls.quads(fire_ball, &self.fire_ball, spear, &self.textures, self.yaw));
         quads.extend(self.prims.sparkle_quads(now, self.dim, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         quads
@@ -3159,6 +3218,13 @@ mod tests {
         assert_eq!(sounds.len(), 11);
         assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
         assert!(!table.sounds.contains_key(&149));
+        // Finger Offensive's sphere (265), Dark Strike's balls (451) and Huujin's blades (621): by the game's hit count, in the
+        // aimed effects, with no generic part; Finger Offensive's first hit shows EF_HIT2 too, Dark Strike's `struck` is its own.
+        assert_eq!([hit_count(265, 0, 8), hit_count(451, 37, 8), hit_count(621, 36, 9), hit_count(265, 5, 4), hit_count(24, 7, 8)], [1, 1, 36, 1, 7]);
+        assert!([265, 451, 621].iter().all(|id| AIMED.contains(id) && !table.floaters.contains_key(id) && !table.parts.contains_key(id)));
+        assert_eq!(table.hit(267), Some([Some(0), Some(1)]));
+        assert_eq!(table.struck(340), Some(&[(Who::Caster, 451)][..]));
+        assert!(aimed_at_centre(265) && aimed_at_centre(412) && !aimed_at_centre(451));
         // Fire Ball (24) and Frost Diver (27) from the server fly from their unit at the map's centre; 24 has no floater.
         assert!(aimed_at_centre(24) && aimed_at_centre(27) && !aimed_at_centre(26));
         assert!(!table.floaters.contains_key(&24) && !table.parts.contains_key(&24) && !table.sprites.contains_key(&24));

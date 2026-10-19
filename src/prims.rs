@@ -8,10 +8,12 @@ pub mod blitz;
 pub mod bolts;
 pub mod boomerang;
 pub mod burst;
+pub mod huujin;
 pub mod napalm;
 pub mod sage;
 pub mod sparkle;
 pub mod stone;
+pub mod tanji;
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -28,6 +30,8 @@ fn passes(start: Instant, now: Instant) -> u32 {
 
 /// Soul Strike's ghost sprite (under data\sprite\이팩트\).
 pub const GHOST_SPRITE: &str = "data\\sprite\\이팩트\\particle1";
+/// Dark Strike's ghost: the same one-frame glow, red.
+pub const RED_GHOST_SPRITE: &str = "data\\sprite\\이팩트\\particle5";
 /// How big a ghost is drawn, and how many copies trail it.
 pub const GHOST_SCALE: f32 = 2.75;
 const GHOST_TRAIL: usize = 12;
@@ -45,6 +49,8 @@ struct Builder {
     to: Vector,
     /// The skill's hit count (the game passes it with the effect).
     count: u32,
+    /// Dark Strike's red glow instead of Soul Strike's pale yellow.
+    red: bool,
 }
 
 /// Soul Strike's ghost (the game's prim kind 8): it flies from over the caster to the target in a straight line on
@@ -67,6 +73,8 @@ struct Ghost {
     along: f32,
     /// Where it was drawn on the last ticks, newest first.
     trail: VecDeque<Vector>,
+    /// Dark Strike's red glow.
+    red: bool,
 }
 
 /// The ghosts in flight and the Soul Strikes letting them out; the cold hits bursting; Fire Ball's and Jupitel
@@ -85,6 +93,8 @@ pub struct Prims {
     pub napalms: Vec<napalm::Napalm>,
     pub sparkles: Vec<sparkle::Hallutime>,
     pub blitzes: blitz::Blitzes,
+    pub spheres: tanji::Spheres,
+    pub huujin: huujin::Huujin,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -298,16 +308,21 @@ fn ghost_turn(index: u32, count: u32) -> f32 {
         7 => (25, -90),
         _ => (1, 0),
     };
-    ((index + 1) as i32 * step + first) as f32
+    // A negative fan angle is looked up a degree up (−45 is −44).
+    lookup(((index + 1) as i32 * step + first) as f32)
 }
 
 /// When a Soul Strike with `hits` hits lets its ghosts out, from its start.
 pub fn ghost_times(hits: u16) -> Vec<Duration> {
-    (0..u32::from(hits.clamp(1, 7))).map(|index| TICK * ghost_tick(index)).collect()
+    // 1 to 7 balls; 8 and more (up to 36) give none.
+    if hits > 7 {
+        return Vec::new();
+    }
+    (0..u32::from(hits.max(1))).map(|index| TICK * ghost_tick(index)).collect()
 }
 
 impl Ghost {
-    fn new(start: Instant, from: Vector, to: Vector, turn: f32) -> Self {
+    fn new(start: Instant, from: Vector, to: Vector, turn: f32, red: bool) -> Self {
         let [dx, dz] = [to[0] - from[0], to[2] - from[2]];
         let distance = f32::hypot(dx, dz);
         let forward = if distance > 0.0 { [dx / distance, dz / distance] } else { [0.0, 1.0] };
@@ -323,6 +338,7 @@ impl Ghost {
             turn,
             along: 0.0,
             trail: VecDeque::new(),
+            red,
         }
     }
 
@@ -347,8 +363,11 @@ impl Ghost {
 
 impl Prims {
     /// Soul Strike (EF_SOULSTRIKE) from `from` at `to` with `count` hits: a ghost a hit, 6 ticks in and every 11 after.
-    pub fn soul_strike(&mut self, from: Vector, to: Vector, count: u16, now: Instant) {
-        self.builders.push(Builder { start: now, ticks: 0, from, to, count: u32::from(count.clamp(1, 7)) });
+    pub fn soul_strike(&mut self, from: Vector, to: Vector, count: u16, now: Instant, red: bool) {
+        if count > 7 {
+            return;
+        }
+        self.builders.push(Builder { start: now, ticks: 0, from, to, count: u32::from(count.max(1)), red });
     }
 
     /// COLDHIT (EF_COLDHIT) on a unit (None = the player) from `now`, its random choices from `rand(n)`.
@@ -403,7 +422,7 @@ impl Prims {
                 builder.ticks += 1;
                 for index in (0..builder.count).filter(|&index| ghost_tick(index) == builder.ticks) {
                     let born = builder.start + TICK * builder.ticks;
-                    self.ghosts.push(Ghost::new(born, builder.from, builder.to, ghost_turn(index, builder.count)));
+                    self.ghosts.push(Ghost::new(born, builder.from, builder.to, ghost_turn(index, builder.count), builder.red));
                 }
             }
         }
@@ -431,14 +450,14 @@ impl Prims {
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is
     /// 1 − i/n as opaque and 1 − i/2n as big.
     /// Each copy is also turned by its ghost's fan angle (degrees, clockwise on the screen).
-    pub fn ghosts(&self) -> Vec<(Vector, f32, f32, f32)> {
+    pub fn ghosts(&self) -> Vec<(Vector, f32, f32, f32, bool)> {
         let copies = GHOST_TRAIL as f32;
         self.ghosts
             .iter()
             .flat_map(|ghost| {
                 ghost.trail.iter().enumerate().map(move |(age, &at)| {
                     let share = age as f32 / copies;
-                    (at, 254.0 / 255.0 * (1.0 - share), GHOST_SCALE * (1.0 - share / 2.0), ghost.turn)
+                    (at, 254.0 / 255.0 * (1.0 - share), GHOST_SCALE * (1.0 - share / 2.0), ghost.turn, ghost.red)
                 })
             })
             .collect()
@@ -539,14 +558,14 @@ mod tests {
     fn soul_strike_lets_a_ghost_out_a_hit() {
         // Five hits: ghosts at ticks 6, 17, 28, 39 and 50, fanned −45° to 135°.
         assert_eq!((0..5).map(ghost_tick).collect::<Vec<_>>(), [6, 17, 28, 39, 50]);
-        assert_eq!((0..5).map(|index| ghost_turn(index, 5)).collect::<Vec<_>>(), [-45.0, 0.0, 45.0, 90.0, 135.0]);
+        assert_eq!((0..5).map(|index| ghost_turn(index, 5)).collect::<Vec<_>>(), [-44.0, 0.0, 45.0, 90.0, 135.0]);
         let start = Instant::now();
         let mut prims = Prims::default();
-        prims.soul_strike([0.0; 3], [0.0, 0.0, 40.0], 5, start);
+        prims.soul_strike([0.0; 3], [0.0, 0.0, 40.0], 5, start, false);
         prims.advance(start + TICK * 18);
         assert_eq!(prims.ghosts.len(), 2);
         // The first ghost flies 40 ticks: half way out it bulges about 21 units, and it ends on the target.
-        let mut ghost = Ghost::new(start, [0.0; 3], [0.0, 0.0, 40.0], 0.0);
+        let mut ghost = Ghost::new(start, [0.0; 3], [0.0, 0.0, 40.0], 0.0, false);
         for _ in 0..20 {
             ghost.step();
         }
@@ -558,11 +577,36 @@ mod tests {
         assert_eq!(ghost.trail.len(), GHOST_TRAIL);
         // The oldest copy is a twelfth as opaque and 13/24 as big.
         let mut flying = Prims { ghosts: vec![ghost], ..Prims::default() };
-        let (_, alpha, scale, _) = flying.ghosts()[GHOST_TRAIL - 1];
+        let (_, alpha, scale, _, _) = flying.ghosts()[GHOST_TRAIL - 1];
         assert!((alpha - 254.0 / 255.0 / 12.0).abs() < 1e-4 && (scale - GHOST_SCALE * 13.0 / 24.0).abs() < 1e-4);
         flying.ghosts.clear();
         prims.advance(start + TICK * 200);
         assert!(prims.ghosts.is_empty() && prims.builders.is_empty());
+    }
+
+    #[test]
+    fn dark_strike_throws_red_balls_one_a_hit() {
+        // Balls 1 to 7 at ticks 6, 17, 28 …; 8 to 36 none; 0 is one.
+        let times = |hits: u16| ghost_times(hits).iter().map(|at| (at.as_millis() / TICK.as_millis()) as u32).collect::<Vec<_>>();
+        assert_eq!(times(5), [6, 17, 28, 39, 50]);
+        assert_eq!([times(7).len(), times(8).len(), times(36).len(), times(0).len()], [7, 0, 0, 1]);
+        // The fans for n = 1…5 (a negative angle a degree up).
+        let fan = |n: u32| (0..n).map(|index| ghost_turn(index, n)).collect::<Vec<_>>();
+        assert_eq!(fan(1), [1.0]);
+        assert_eq!(fan(2), [90.0, 270.0]);
+        assert_eq!(fan(3), [0.0, 90.0, 180.0]);
+        assert_eq!(fan(4), [-29.0, 30.0, 90.0, 150.0]);
+        assert_eq!(fan(5), [-44.0, 0.0, 45.0, 90.0, 135.0]);
+        // Dark Strike's are red (particle5), Soul Strike's not; none for 8.
+        let start = Instant::now();
+        let mut prims = Prims::default();
+        prims.soul_strike([0.0; 3], [0.0, 0.0, 40.0], 3, start, true);
+        prims.soul_strike([0.0; 3], [0.0, 0.0, 40.0], 3, start, false);
+        prims.soul_strike([0.0; 3], [0.0, 0.0, 40.0], 8, start, true);
+        assert_eq!(prims.builders.len(), 2);
+        prims.advance(start + TICK * 7);
+        assert_eq!(prims.ghosts.iter().map(|ghost| ghost.red).collect::<Vec<_>>(), [true, false]);
+        assert!(RED_GHOST_SPRITE.ends_with("particle5") && GHOST_SPRITE.ends_with("particle1"));
     }
 
     #[test]

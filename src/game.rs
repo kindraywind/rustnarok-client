@@ -1306,7 +1306,17 @@ impl Game {
         // From and to are the feet as drawn, not the cells' centres.
         let now = control::now();
         if let (Some(from), Some(to)) = (self.feet(caster, now), self.feet(target, now)) {
-            self.effects.aimed(gpu, grf, table, effect, (caster != self.account_id).then_some(caster), from, to, hits, Instant::now());
+            self.effects.aimed(
+                gpu,
+                grf,
+                table,
+                effect,
+                ((caster != self.account_id).then_some(caster), target, self.account_id),
+                from,
+                to,
+                hits,
+                Instant::now(),
+            );
         }
     }
 
@@ -1315,7 +1325,7 @@ impl Game {
         let now = control::now();
         let Some(from) = self.feet(unit, now) else { return };
         let to = [self.world.gat.width as f32 * world::CELL / 2.0, from[1], self.world.gat.height as f32 * world::CELL / 2.0];
-        self.effects.aimed(gpu, grf, table, effect, (unit != self.account_id).then_some(unit), from, to, 1, Instant::now());
+        self.effects.aimed(gpu, grf, table, effect, ((unit != self.account_id).then_some(unit), 0, self.account_id), from, to, 0, Instant::now());
     }
 
     /// Plays an effect on a unit told the skill's hit count (a bolt drops an arrow a hit).
