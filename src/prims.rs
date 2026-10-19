@@ -1,9 +1,10 @@
 //! The game's hand-made effects: a builder per effect id that runs once a 16 ms tick and lets out primitives, each
 //! moved once a tick by its own rule, drawn as a sprite with trail copies, a shape in the world or flat on the screen.
 //! Soul Strike's ghosts, the cold hit and Frost Diver's ice spikes here; what flies to a target in `balls`, stone
-//! spikes in `stone`.
+//! spikes in `stone`, the bolts' arrows in `bolts`.
 
 pub mod balls;
+pub mod bolts;
 pub mod stone;
 
 use std::collections::VecDeque;
@@ -72,6 +73,7 @@ pub struct Prims {
     spikes: Vec<Spike>,
     pub balls: balls::Balls,
     pub stone: stone::Stone,
+    pub volleys: Vec<bolts::Volley>,
 }
 
 /// An ice spike (the game's prim kind 9): an open four-sided pyramid, its base `half` units out each way and its tip
@@ -400,6 +402,7 @@ impl Prims {
         self.spikes.retain(|spike| now < spike.start || due(spike.start) < SPIKE_LIFE);
         self.balls.advance(now);
         self.stone.advance(now);
+        self.volleys.retain(|volley| volley.alive(now));
     }
 
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is
