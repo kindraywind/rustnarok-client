@@ -1,0 +1,27 @@
+{
+  "about": "The guild storage log (issue #512), sent by our NPCs (npc/guild-storage-log.txt) as rathena's Guild Warehouse Manager does with guildopenstorage_log. With no history the red line 'Log does not exist.' shows and no window opens. With eleven entries the 400 x 250 log opens at (212, 159), newest first, reading 01 / 02; In lists only the stored ones; Esc leaves it open; its Close button shuts it.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 120"}, {"settle": 1500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/guild-storage-log.txt"}, {"wait": 1500},
+    {"click_unit": {"kind": "npc", "name": "Log Empty"}},
+    {"wait_for": {"packet": "0x09da", "ms": 3000}}, {"wait": 300},
+    {"expect": {"chat": "Log does not exist.", "state": {"storage_log": null}}},
+    {"click_unit": {"kind": "npc", "name": "Log Test"}},
+    {"wait_for": {"packet": "0x09da", "ms": 3000}}, {"wait": 300},
+    {"expect": {"state": {"storage_log.position": [212.0, 159.0], "storage_log.page": "01 / 02", "storage_log.listed": 11}}},
+    {"move": [1000, 750]},
+    {"shot": "guild-storage-log", "crop": [202, 149, 420, 270], "threshold": 5},
+    {"click_on": {"button": "storage_log_forward"}}, {"wait": 200},
+    {"expect": {"state": {"storage_log.page": "02 / 02"}}},
+    {"click_on": {"button": "storage_log_tab:1"}}, {"wait": 200},
+    {"expect": {"state": {"storage_log.tab": "In", "storage_log.page": "01 / 01", "storage_log.listed": 8}}},
+    {"key": "Escape"}, {"wait": 300},
+    {"expect": {"state": {"storage_log.tab": "In"}}},
+    {"click_on": {"button": "storage_log_close"}}, {"wait": 300},
+    {"expect": {"state": {"storage_log": null}}},
+    {"click_unit": {"kind": "npc", "name": "Log Empty"}}, {"wait": 800},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/guild-storage-log.txt"}, {"wait": 500}
+  ]
+}

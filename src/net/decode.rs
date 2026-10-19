@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// One entry of ZC_ACK_GUILDSTORAGE_LOG.
+const GUILD_STORAGE_ENTRY: usize = 93;
+
 pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
     if packet.len() < 2 {
         return None;
@@ -738,6 +741,33 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_DEL_QUEST => MapEvent::QuestRemoved(u32_at(2)),
         ZC_ACTIVE_QUEST => MapEvent::QuestActive { id: u32_at(2), active: packet[6] != 0 },
         // Each mail: box, ID, read, flags, sender, seconds left, title (its length first).
+        // The result, the count, then 93-byte entries.
+        ZC_ACK_GUILDSTORAGE_LOG => {
+            let entries = packet
+                .get(8..)
+                .unwrap_or_default()
+                .chunks_exact(GUILD_STORAGE_ENTRY)
+                .take(usize::from(u16_at(6)))
+                .map(|entry| {
+                    let at = |offset: usize| u32::from_le_bytes(entry[offset..offset + 4].try_into().unwrap());
+                    GuildStorageEntry {
+                        id: at(0),
+                        item: at(4),
+                        amount: at(8) as i32,
+                        stored: entry[12] == 1,
+                        refine: at(13) as i32,
+                        unique_id: u64_at(entry, 17),
+                        identified: entry[25] != 0,
+                        kind: u16::from_le_bytes([entry[26], entry[27]]),
+                        cards: [28, 32, 36, 40].map(at),
+                        name: c_string(&entry[44..68]),
+                        time: c_string(&entry[68..92]),
+                        damaged: entry[92] == 1,
+                    }
+                })
+                .collect();
+            MapEvent::GuildStorageLog { result: u16_at(4), entries }
+        }
         ZC_ACK_MAIL_LIST3 => {
             let mut mails = Vec::new();
             let mut at = 5;

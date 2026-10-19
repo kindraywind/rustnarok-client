@@ -1973,6 +1973,52 @@ fn decodes_battlegrounds() {
 }
 
 #[test]
+fn decodes_the_guild_storage_log() {
+    // Two entries as clif_guild_storage_log writes them: a stored Red Potion, a damaged Knife +4 taken.
+    let entry = |id: u32, item: u32, amount: i32, stored: bool, refine: i32, name: &str, time: &str, damaged: bool| {
+        let mut bytes = id.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&item.to_le_bytes());
+        bytes.extend_from_slice(&amount.to_le_bytes());
+        bytes.push(u8::from(stored));
+        bytes.extend_from_slice(&refine.to_le_bytes());
+        bytes.extend_from_slice(&77u64.to_le_bytes());
+        bytes.push(1);
+        bytes.extend_from_slice(&(if stored { 0u16 } else { 5 }).to_le_bytes());
+        for card in [4001u32, 0, 0, 0] {
+            bytes.extend_from_slice(&card.to_le_bytes());
+        }
+        bytes.extend_from_slice(&name_field(name));
+        bytes.extend_from_slice(&name_field(time));
+        bytes.push(u8::from(damaged));
+        bytes
+    };
+    let log = |result: u16, entries: Vec<Vec<u8>>| {
+        let mut packet = ZC_ACK_GUILDSTORAGE_LOG.to_le_bytes().to_vec();
+        let body: Vec<u8> = entries.concat();
+        packet.extend_from_slice(&((8 + body.len()) as u16).to_le_bytes());
+        packet.extend_from_slice(&result.to_le_bytes());
+        packet.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        packet.extend_from_slice(&body);
+        packet
+    };
+    let two = vec![entry(9, 501, 10, true, 0, "LaneA1", "2026-10-19 14:00:00", false), entry(8, 1201, 1, false, 4, "LaneA2", "2026-10-19 13:00:00", true)];
+    assert_eq!(two[0].len(), 93);
+    let Some(MapEvent::GuildStorageLog { result: 1, entries }) = decode_map_packet(&log(1, two)) else { panic!() };
+    assert_eq!(entries.len(), 2);
+    assert_eq!((entries[0].id, entries[0].item, entries[0].amount, entries[0].stored, entries[0].damaged), (9, 501, 10, true, false));
+    assert_eq!((entries[1].refine, entries[1].stored, entries[1].damaged, entries[1].kind), (4, false, true, 5));
+    assert_eq!(
+        (entries[1].name.as_str(), entries[1].time.as_str(), entries[1].cards, entries[1].unique_id),
+        ("LaneA2", "2026-10-19 13:00:00", [4001, 0, 0, 0], 77)
+    );
+    for result in [0, 2, 3] {
+        assert!(
+            matches!(decode_map_packet(&log(result, Vec::new())), Some(MapEvent::GuildStorageLog { result: found, entries }) if found == result && entries.is_empty())
+        );
+    }
+}
+
+#[test]
 fn decodes_mail() {
     // The list as clif_Mail_refreshinbox writes it: length, a byte, then per mail its box, ID, read, flags,
     // sender, seconds left, title length and title.

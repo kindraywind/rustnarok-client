@@ -1,0 +1,20 @@
+// Guild storage log (issue #512): Log Test writes eleven entries for the player's guild (none: guild 0), every
+// third one taken, the third refined +4 and the fourth damaged, a minute apart, then sends the log
+// (guildopenstorage_log). Log Empty deletes them and sends the log, which then has none. Loaded and unloaded by
+// scenarios/guild-storage-log.json.
+prontera,150,125,4	script	Log Test	86,{
+	.@g = getcharid(2);
+	query_sql "DELETE FROM `guild_storage_log` WHERE `guild_id` = " + .@g + " AND `char_id` = " + getcharid(0);
+	setarray .@items, 501, 909, 1201, 502;
+	for (.@i = 0; .@i < 11; .@i++) {
+		.@amount = (.@i % 3 == 2) ? -2 : 5;
+		query_sql "INSERT INTO `guild_storage_log` (`guild_id`, `time`, `char_id`, `name`, `nameid`, `amount`, `identify`, `refine`, `attribute`) VALUES (" + .@g + ", NOW() - INTERVAL " + .@i + " MINUTE, " + getcharid(0) + ", '" + strcharinfo(0) + "', " + .@items[.@i % 4] + ", " + .@amount + ", 1, " + (.@i == 2 ? 4 : 0) + ", " + (.@i == 3 ? 1 : 0) + ")";
+	}
+	guildopenstorage_log;
+	end;
+}
+prontera,162,125,4	script	Log Empty	86,{
+	query_sql "DELETE FROM `guild_storage_log` WHERE `guild_id` = " + getcharid(2) + " AND `char_id` = " + getcharid(0);
+	guildopenstorage_log;
+	end;
+}

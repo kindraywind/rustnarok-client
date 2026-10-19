@@ -538,6 +538,8 @@ impl App {
                     queue_window: battle_queue::QueueWindow::default(),
                     memorial: memorial::Window::default(),
                     memorial_asked: false,
+                    storage_log: None,
+                    storage_log_heard: Vec::new(),
                     queued: None,
                     queue_asked: None,
                     camp_looks: None,
@@ -3835,6 +3837,20 @@ impl App {
             }
             // ponytail: no client line fits a failed style change, so the result is printed plainly. The window stays.
             MapEvent::StyleChanged(true) => game.chat_line(stylist::FAILED_LINE.to_owned(), CHAT_ERROR),
+            // The guild storage's log: pages gather until the last, which opens the window with all of them; no log
+            // or a refusal says so in red and drops what was heard.
+            MapEvent::GuildStorageLog { result, entries } => match result {
+                0 => game.storage_log_heard.extend(entries),
+                1 => {
+                    game.storage_log_heard.extend(entries);
+                    game.storage_log = Some(storage_log::Log::new(std::mem::take(&mut game.storage_log_heard), screen()));
+                }
+                _ => {
+                    game.storage_log_heard.clear();
+                    let line = if result == 2 { storage_log::NO_LOG } else { storage_log::LOG_FAILED };
+                    game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            },
             MapEvent::InstanceCreate { name, place } => {
                 game.memorial.instance = Some(memorial::Instance::waiting(name, place));
                 game.show_memorial();

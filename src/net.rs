@@ -1301,6 +1301,8 @@ const CZ_OPEN_MAILBOX2: u16 = 0x0AC0;
 const CZ_REQ_REFRESH_MAIL_LIST2: u16 = 0x0AC1;
 const CZ_CLOSE_MAILBOX: u16 = 0x09E9;
 const ZC_ACK_MAIL_LIST3: u16 = 0x0AC2;
+/// The guild storage's usage log, a page of entries at a time (clif_guild_storage_log).
+const ZC_ACK_GUILDSTORAGE_LOG: u16 = 0x09DA;
 const CZ_REQ_READ_MAIL: u16 = 0x09EA;
 const ZC_ACK_READ_RODEX: u16 = 0x0B63;
 const CZ_REQ_ZENY_FROM_MAIL: u16 = 0x09F1;
@@ -1975,6 +1977,26 @@ pub struct Quest {
 pub const MAIL_ZENY: u8 = 0x2;
 pub const MAIL_ITEM: u8 = 0x4;
 pub const MAIL_NPC: u8 = 0x8;
+
+/// An entry of the guild storage's log (ZC_ACK_GUILDSTORAGE_LOG): who stored or took what, and when.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GuildStorageEntry {
+    pub id: u32,
+    pub item: u32,
+    pub amount: i32,
+    /// Stored (rathena's action 1), else taken.
+    pub stored: bool,
+    pub refine: i32,
+    pub unique_id: u64,
+    pub identified: bool,
+    pub kind: u16,
+    pub cards: [u32; 4],
+    pub name: String,
+    /// The server's time text.
+    pub time: String,
+    /// Its attribute 1: damaged.
+    pub damaged: bool,
+}
 
 /// A mail in the mailbox list.
 #[derive(Debug, Clone, Default, PartialEq)]
