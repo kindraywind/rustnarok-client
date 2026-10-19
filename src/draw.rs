@@ -2619,6 +2619,8 @@ impl App {
             Some(id) => feet_of.get(&id).copied(),
         };
         game.effects.aim_arrows(now, feet_of_unit);
+        game.effects.dim = game.map.trim_end_matches(".gat") == "ecl_fild01";
+        game.effects.follow_boomerangs(now, feet_of_unit);
         let ground = &game.world.gat;
         game.effects.settle_hits(now, feet_of_unit, |x, z| -ground.height_at([x / world::CELL, z / world::CELL]));
         let (mut effect_quads, mut effect_meshes) = (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit));

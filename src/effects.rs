@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, bolts, burst, sage, stone};
+use crate::prims::{balls, bolts, boomerang, burst, sage, stone};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -1283,6 +1283,8 @@ pub struct Effects {
     pub only_forced: bool,
     /// /mineffect: the lighter effects (`min_file`, the hit spark's ring only).
     pub min: bool,
+    /// On ecl_fild01, where Shield Boomerang's alpha is cut to 100.
+    pub dim: bool,
     /// Bows' arrows, and the arrow sprite's layers by direction.
     arrows: crate::arrows::Arrows,
     arrow: Vec<Vec<Placed>>,
@@ -1489,10 +1491,12 @@ const SOUL_STRIKE: u32 = 15;
 const FIRE_BALL: u32 = 24;
 /// EF_SPEARBMR: Spear Boomerang's four spears from the caster to the target (`prims::balls`).
 const SPEAR_BOOMERANG: u32 = 80;
+/// EF_SHIELDBOOMERANG: Shield Boomerang's shield, out to the target, round and back past the caster (`prims::boomerang`).
+const SHIELD_BOOMERANG: u32 = 249;
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 6] = [SOUL_STRIKE, FIRE_BALL, FROST_DIVER, JUPITEL, GRIMTOOTH, SPEAR_BOOMERANG];
+pub const AIMED: [u32; 7] = [SOUL_STRIKE, FIRE_BALL, FROST_DIVER, JUPITEL, GRIMTOOTH, SPEAR_BOOMERANG, SHIELD_BOOMERANG];
 /// EF_EARTHSPIKE and EF_HEAVENSDRIVE: stone spikes where they play (`prims`).
 const EARTH_SPIKE: u32 = 79;
 const HEAVENS_DRIVE: u32 = 142;
@@ -1868,7 +1872,7 @@ impl Effects {
 
     /// An effect launched on the caster at `from`, aimed at `to` (one of `AIMED`), told the skill's hit count.
     #[allow(clippy::too_many_arguments)]
-    pub fn aimed(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, from: Vector, to: Vector, hits: u16, now: Instant) {
+    pub fn aimed(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, caster: Option<u32>, from: Vector, to: Vector, hits: u16, now: Instant) {
         match id {
             SOUL_STRIKE => self.soul_strike(grf, from, to, hits, now),
             FROST_DIVER => self.frost_diver(gpu, grf, from, to, now),
@@ -1879,6 +1883,11 @@ impl Effects {
                     self.play_sounds(table, id, from, now + crate::prims::TICK * tick);
                 }
                 self.prims.balls.fire_ball(from, to, now);
+            }
+            SHIELD_BOOMERANG => {
+                self.textures.entry(boomerang::SHIELD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, boomerang::SHIELD, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.boomerangs.throw(caster, from, to, now, self.dim);
             }
             SPEAR_BOOMERANG => {
                 self.sprites.entry(balls::SPEAR_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, balls::SPEAR_SPRITE));
@@ -1915,6 +1924,11 @@ impl Effects {
     pub fn shoot_arrow(&mut self, grf: &Grf, feet: Vector, aim: crate::arrows::Aim, now: Instant, wait: Duration) {
         self.sprites.entry(crate::arrows::SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::arrows::SPRITE));
         self.arrows.shoot(feet, aim, now, wait);
+    }
+
+    /// Shields in flight turn back to where their casters are (`position_of`).
+    pub fn follow_boomerangs(&mut self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) {
+        self.prims.boomerangs.advance(now, position_of);
     }
 
     /// Arrows leaving now take their aim at where their units are (`position_of`).
@@ -2410,6 +2424,7 @@ impl Effects {
         }
         let fire_ball = self.sprites.get(balls::FIRE_BALL_SPRITE).and_then(Option::as_ref);
         let spear = (self.sprites.get(balls::SPEAR_SPRITE).and_then(Option::as_ref), self.spear.as_slice());
+        quads.extend(self.prims.boomerangs.quads(self.textures.get(boomerang::SHIELD).and_then(Option::as_ref)));
         quads.extend(self.prims.balls.quads(fire_ball, &self.fire_ball, spear, &self.textures, self.yaw));
         quads
     }
