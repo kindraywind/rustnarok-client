@@ -332,6 +332,7 @@ impl App {
                     targeting: None,
                     capturing: false,
                     slot_sprite: SpriteSet::at(&self.grf, "data\\sprite\\slotmachine"),
+                    quest_npc: None,
                     slot: None,
                     casts: HashMap::new(),
                     progress: ProgressBar::default(),

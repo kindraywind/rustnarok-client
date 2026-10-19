@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use rustnarok_client::grf::Grf;
+use rustnarok_client::lua::ItemInfo;
 use rustnarok_client::net::Quest;
 use rustnarok_client::text::Font;
 
@@ -60,24 +61,59 @@ const LOCK: [f32; 2] = [306.0, 22.0];
 const LOCK_SIZE: [f32; 2] = [20.0, 17.0];
 const CHECK_TIP: usize = 3409;
 const LOCK_TIP: usize = 3407;
-/// The details beside the window.
+/// The details window, right of the list: places from its corner.
 const DETAIL_WIDTH: f32 = 342.0;
-const DETAIL_HEIGHT: f32 = 412.0;
-const DETAIL_TEXT_TOP: f32 = 70.0;
+pub const DETAIL_HEIGHT: f32 = 412.0;
+const DETAIL_BACKGROUND: [f32; 2] = [0.0, 17.0];
+const DETAIL_BASE: [f32; 2] = [3.0, 3.0];
+const DETAIL_CLOSE: [f32; 2] = [288.0, 388.0];
+const DETAIL_TITLE_TOP: f32 = 39.0;
+const DETAIL_TITLE_COLOR: [u8; 3] = [0x1D, 0x32, 0x55];
+/// The scroll area and its bar; three panels in it, 335 wide.
+const SCROLL_AREA: [f32; 4] = [0.0, 62.0, 342.0, 322.0];
+const DETAIL_SCROLLBAR_X: f32 = 335.0;
+const PANEL_WIDTH: f32 = 335.0;
+/// In a panel: the bullet, the header, the text box; a panel is as tall as its lowest part and 9.
+const BULLET: [f32; 2] = [9.0, 9.0];
+const HEADER: [f32; 2] = [25.0, 9.0];
+const TEXT_BOX: [f32; 2] = [32.0, 30.0];
+const TEXT_BOX_WIDTH: f32 = 290.0;
+const PANEL_BELOW: f32 = 9.0;
+// ponytail: the details' lines are 16 px apart.
 const DETAIL_LINE: f32 = 16.0;
-const GREY: [u8; 3] = [0x70, 0x70, 0x70];
-/// "Quest List", "Description", "Target monsters", "Show Quest", "Time Limit".
+const DETAIL_TEXT_COLOR: [u8; 3] = [0x2E, 0x30, 0x38];
+/// The Reward panel: 122 tall; its labels and values, the item list, the NPC's picture.
+const REWARD_HEIGHT: f32 = 122.0;
+const REWARD_ROWS: [f32; 3] = [30.0, 51.0, 72.0];
+const REWARD_LABEL: f32 = 32.0;
+const REWARD_VALUE: f32 = 110.0;
+const REWARD_COLOR: [u8; 3] = [0x1D, 0x55, 0xA0];
+const ITEM_LIST: [f32; 4] = [110.0, 72.0, 225.0, 41.0];
+const ITEM_LIST_BAR: f32 = 218.0;
+const ITEM_ICON: [f32; 2] = [7.0, 7.0];
+const ITEM_NAME: [f32; 2] = [46.0, 5.0];
+const ITEM_COUNT: [f32; 2] = [46.0, 20.0];
+const NPC_BOX: [f32; 4] = [237.0, 9.0, 75.0, 145.0];
+const DEADLINE: [f32; 2] = [13.0, 393.0];
+const DEADLINE_COLOR: [u8; 3] = [0xD2, 0x1B, 0x16];
+/// "Quest List", "Description", "Monster", "Reward", "Base EXP", "Job EXP", "Item", "%d ea.", "Deadline", "Show Quest".
 const TITLE: usize = 3400;
 const DESCRIPTION: usize = 3401;
-const HUNTS: usize = 2191;
+const MONSTERS: usize = 3402;
+const REWARD: usize = 3403;
+const REWARD_EXP: usize = 3404;
+const REWARD_JOB_EXP: usize = 3405;
+const REWARD_ITEMS: usize = 3406;
+const EACH: usize = 182;
+const DEADLINE_MESSAGE: usize = 2195;
 const SHOW_TRACKER: usize = 2019;
-const TIME_LIMIT: usize = 2194;
 
 /// A quest's words, from questid2display.txt.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct QuestText {
     pub title: String,
-    pub description: String,
+    /// The description, a line an entry.
+    pub description: Vec<String>,
     pub summary: String,
     /// The quest NPC's cell on the big minimap, when the quest info lists one.
     pub npc: Option<[i32; 2]>,
@@ -85,6 +121,12 @@ pub struct QuestText {
     pub cooldown: bool,
     /// Its type icon's file under renew_questui, when the quest info names one.
     pub icon: Option<String>,
+    /// Its NPC's sprite and the map to find it on; what it rewards (base and job exp as written, items and counts).
+    pub npc_sprite: String,
+    pub npc_map: String,
+    pub reward_exp: String,
+    pub reward_job_exp: String,
+    pub reward_items: Vec<(u32, u32)>,
 }
 
 /// The quests' words: the translation's quest info Lua where there is one, else questid2display.txt.
@@ -93,7 +135,19 @@ pub fn texts(grf: &Grf) -> HashMap<u32, QuestText> {
         grf.read("data\\questid2display.txt").map(|bytes| parse_texts(&encoding_rs::EUC_KR.decode(&bytes).0)).unwrap_or_default();
     for (id, info) in rustnarok_client::lua::quest_info(grf).unwrap_or_default() {
         let icon = (!info.icon.is_empty()).then_some(info.icon);
-        let text = QuestText { title: info.title, description: info.description, summary: info.summary, npc: info.npc, cooldown: info.cooldown, icon };
+        let text = QuestText {
+            title: info.title,
+            description: info.description,
+            summary: info.summary,
+            npc: info.npc,
+            cooldown: info.cooldown,
+            icon,
+            npc_sprite: info.npc_sprite,
+            npc_map: info.npc_map,
+            reward_exp: info.reward_exp,
+            reward_job_exp: info.reward_job_exp,
+            reward_items: info.reward_items,
+        };
         texts.insert(id, text);
     }
     texts
@@ -105,14 +159,7 @@ fn parse_texts(text: &str) -> HashMap<u32, QuestText> {
     fields
         .chunks_exact(6)
         .filter_map(|entry| {
-            let text = QuestText {
-                title: entry[1].to_owned(),
-                description: entry[4].to_owned(),
-                summary: entry[5].to_owned(),
-                npc: None,
-                cooldown: false,
-                icon: None,
-            };
+            let text = QuestText { title: entry[1].to_owned(), description: vec![entry[4].to_owned()], summary: entry[5].to_owned(), ..QuestText::default() };
             Some((entry[0].parse().ok()?, text))
         })
         .collect()
@@ -136,8 +183,11 @@ pub struct Assets {
     /// The scrollbar's arrows (up, down) and thumb (top, middle, bottom).
     arrows: [Texture; 2],
     thumb: [Texture; 3],
+    /// The details: background, the bullet, the line between panels, an item's frame.
     detail: Texture,
-    detail_icon: Texture,
+    bullet: Texture,
+    line: Texture,
+    item_frame: Texture,
 }
 
 impl Assets {
@@ -158,8 +208,10 @@ impl Assets {
             lock: ["bt_lock", "bt_lock_open"].map(image),
             arrows: ["bt_scrollbar_arrow_upper", "bt_scrollbar_arrow_down"].map(image),
             thumb: ["bt_scrollbar_up", "bt_scrollbar_mid", "bt_scrollbar_down"].map(image),
-            detail: image("bg_questsub"),
-            detail_icon: image("img_questiocn"),
+            detail: image("bg_detail_quest"),
+            bullet: image("img_poring"),
+            line: image("img_line"),
+            item_frame: image("img_questiocn"),
         }
     }
 }
@@ -177,7 +229,10 @@ pub enum Hit {
     Close,
     ScrollUp,
     ScrollDown,
+    /// The details: Close, the NPC's picture, anywhere else (it drags).
     DetailClose,
+    DetailNpc,
+    Detail,
     /// Anywhere else: the window drags from it.
     Window,
 }
@@ -191,6 +246,29 @@ fn tab_of(quest: &Quest, texts: &HashMap<u32, QuestText>) -> usize {
     } else {
         2
     }
+}
+
+/// The details' place: right of the list with the tops aligned, or with the list shut, the middle of the screen.
+pub fn details_place(list: Option<[f32; 2]>, screen: [f32; 2]) -> [f32; 2] {
+    match list {
+        Some(list) => offset(list, [WIDTH, 0.0]),
+        None => [((screen[0] - DETAIL_WIDTH) / 2.0).floor(), ((screen[1] - DETAIL_HEIGHT) / 2.0).floor()],
+    }
+}
+
+/// The panels' heights in the scroll area: Description and Monster by their lines (the header alone when there are
+/// none), then Reward.
+fn panel_heights(description: usize, hunts: usize) -> [f32; 3] {
+    let text = |lines: usize| if lines == 0 { HEADER[1] + DETAIL_LINE } else { TEXT_BOX[1] + lines as f32 * DETAIL_LINE } + PANEL_BELOW;
+    [text(description), text(hunts), REWARD_HEIGHT]
+}
+
+/// The Deadline line for an end time, local, or none for 0.
+fn deadline_line(message: &str, end: u32, offset: i64) -> Option<String> {
+    (end > 0).then(|| {
+        let [year, month, day, hour, minute, _] = crate::char_select::local_date(i64::from(end), offset);
+        format!("{message} [{year:04}/{month:02}/{day:02} {hour:02}:{minute:02}]")
+    })
 }
 
 /// Where the window opens: the middle of the screen, (W/2 − 190, H/2 − 233).
@@ -216,6 +294,12 @@ pub struct QuestWindow {
     scroll: usize,
     /// The quest whose details show.
     pub picked: Option<u32>,
+    /// The details' window (open while a quest is picked), how far its panels are scrolled (px), the reward items scrolled
+    /// past, and the description's lines wrapped as last drawn.
+    pub detail: Frame,
+    detail_scroll: f32,
+    reward_scroll: usize,
+    description: Vec<String>,
     /// The quest tracker shows on screen.
     pub tracker: bool,
     /// Quests whose switch is off: the tracker leaves them out (saved, as the game's OngoingSimpleViewList).
@@ -224,7 +308,18 @@ pub struct QuestWindow {
 
 impl Default for QuestWindow {
     fn default() -> Self {
-        Self { frame: Frame::new(centred(crate::screen()), WIDTH), tab: 0, scroll: 0, picked: None, tracker: true, hidden: HashSet::new() }
+        Self {
+            frame: Frame::new(centred(crate::screen()), WIDTH),
+            tab: 0,
+            scroll: 0,
+            picked: None,
+            detail: Frame::new([0.0; 2], DETAIL_WIDTH),
+            detail_scroll: 0.0,
+            reward_scroll: 0,
+            description: Vec::new(),
+            tracker: true,
+            hidden: HashSet::new(),
+        }
     }
 }
 
@@ -244,8 +339,85 @@ pub fn hidden_text(hidden: &HashSet<u32>) -> String {
 }
 
 impl QuestWindow {
-    fn detail_corner(&self) -> [f32; 2] {
-        offset(self.frame.position, [WIDTH + 2.0, 24.0])
+    /// Shows a quest's details: right of the list, or in the middle of the screen with the list shut.
+    pub fn pick(&mut self, id: u32, screen: [f32; 2]) {
+        self.picked = Some(id);
+        self.detail.position = details_place(self.frame.open.then_some(self.frame.position), screen);
+        self.detail_scroll = 0.0;
+        self.reward_scroll = 0;
+    }
+
+    /// Wraps the picked quest's description to the text box, for the panels' heights.
+    pub fn lay_out(&mut self, font: &Font, texts: &HashMap<u32, QuestText>) {
+        let lines = self.picked.and_then(|id| texts.get(&id)).map_or(&[][..], |text| &text.description[..]);
+        self.description = lines.iter().flat_map(|line| window::wrap(font, line, TEXT_BOX_WIDTH, 99)).collect();
+    }
+
+    /// The hunts' lines of the picked quest.
+    fn hunt_lines(&self, quests: &[Quest], messages: &[String]) -> Vec<String> {
+        let quest = self.picked.and_then(|id| quests.iter().find(|quest| quest.id == id));
+        quest.map_or(Vec::new(), |quest| quest.hunts.iter().filter_map(|hunt| crate::quest_tracker::hunt_line(hunt, messages)).collect())
+    }
+
+    /// The panels' tops in the scroll area, scrolled.
+    fn panel_tops(&self, hunts: usize) -> [f32; 3] {
+        let [description, monsters, _] = panel_heights(self.description.len(), hunts);
+        let top = SCROLL_AREA[1] - self.detail_scroll;
+        [top, top + description, top + description + monsters]
+    }
+
+    /// The wheel on the details: over the reward items an item a notch, elsewhere the panels a line a notch, as far as
+    /// they go.
+    pub fn scroll_details(&mut self, rows: i32, cursor: [f32; 2], quests: &[Quest], texts: &HashMap<u32, QuestText>) {
+        let hunts = self.hunt_count(quests);
+        let [x, y, w, h] = ITEM_LIST;
+        let [_, _, reward] = self.panel_tops(hunts);
+        if contains(self.detail.at([x, reward + y]), [w, h], cursor) {
+            let count = self.picked.and_then(|id| texts.get(&id)).map_or(0, |text| text.reward_items.len());
+            self.reward_scroll = (self.reward_scroll as i32 + rows).clamp(0, count.saturating_sub(1) as i32) as usize;
+            return;
+        }
+        let total: f32 = panel_heights(self.description.len(), hunts).iter().sum();
+        let most = (total - SCROLL_AREA[3]).max(0.0);
+        self.detail_scroll = (self.detail_scroll + rows as f32 * DETAIL_LINE).clamp(0.0, most);
+    }
+
+    /// Whether the pointer is on the details.
+    pub fn on_details(&self, cursor: [f32; 2]) -> bool {
+        self.picked.is_some() && contains(self.detail.position, [DETAIL_WIDTH, DETAIL_HEIGHT], cursor)
+    }
+
+    /// The NPC's picture on screen, when the picked quest has one.
+    fn npc_box(&self, texts: &HashMap<u32, QuestText>, hunts: usize) -> Option<[f32; 4]> {
+        let text = texts.get(&self.picked?)?;
+        if text.npc_sprite.is_empty() {
+            return None;
+        }
+        let [x, y, w, h] = NPC_BOX;
+        let [_, _, reward] = self.panel_tops(hunts);
+        let [left, top] = self.detail.at([x, reward + y]);
+        Some([left, top, w, h])
+    }
+
+    /// How many hunt lines the picked quest has (those with a count to reach).
+    fn hunt_count(&self, quests: &[Quest]) -> usize {
+        let quest = self.picked.and_then(|id| quests.iter().find(|quest| quest.id == id));
+        quest.map_or(0, |quest| quest.hunts.iter().filter(|hunt| hunt.needed > 0).count())
+    }
+
+    /// The NPC's sprite to show and where its feet go (the picture's box, bottom middle), when it's in the scroll area.
+    pub fn npc_sprite(&self, texts: &HashMap<u32, QuestText>, quests: &[Quest]) -> Option<(String, [f32; 2])> {
+        let [x, y, w, h] = self.npc_box(texts, self.hunt_count(quests))?;
+        let area_top = self.detail.at([0.0, SCROLL_AREA[1]])[1];
+        let sprite = texts.get(&self.picked?)?.npc_sprite.clone();
+        // ponytail: drawn while its box's top is in the scroll area, feet 8 px above the box's bottom.
+        (y >= area_top && y < area_top + SCROLL_AREA[3]).then_some((sprite, [x + w / 2.0, y + h - 8.0]))
+    }
+
+    /// The picked quest's NPC: its map and cell, to navigate to.
+    pub fn npc_place(&self, texts: &HashMap<u32, QuestText>) -> Option<(String, [i32; 2])> {
+        let text = texts.get(&self.picked?)?;
+        (!text.npc_map.is_empty()).then(|| (text.npc_map.clone(), text.npc.unwrap_or_default()))
     }
 
     /// The window with the hidden quests as saved.
@@ -325,21 +497,21 @@ impl QuestWindow {
 
     /// Whether the window (or its details) is under the pointer.
     pub fn covers(&self, cursor: [f32; 2]) -> bool {
-        self.hit(cursor, &[], &HashMap::new()).is_some()
+        self.on_details(cursor) || self.hit(cursor, &[], &HashMap::new()).is_some()
     }
 
     pub fn hit(&self, cursor: [f32; 2], quests: &[Quest], texts: &HashMap<u32, QuestText>) -> Option<Hit> {
-        if !self.frame.open {
-            return None;
-        }
-        if self.picked.is_some() {
-            let detail = self.detail_corner();
-            if contains(offset(detail, [DETAIL_WIDTH - 14.0, 3.0]), [11.0, 11.0], cursor) {
+        if self.on_details(cursor) {
+            if contains(self.detail.at(DETAIL_CLOSE), CLOSE_SIZE, cursor) {
                 return Some(Hit::DetailClose);
             }
-            if contains(detail, [DETAIL_WIDTH, DETAIL_HEIGHT], cursor) {
-                return Some(Hit::Window);
+            if self.npc_box(texts, self.hunt_count(quests)).is_some_and(|[x, y, w, h]| contains([x, y], [w, h], cursor)) {
+                return Some(Hit::DetailNpc);
             }
+            return Some(Hit::Detail);
+        }
+        if !self.frame.open {
+            return None;
         }
         let local = self.frame.local(cursor, HEIGHT)?;
         if let Some(tab) = TAB_TOPS.iter().position(|&top| contains([0.0, top], TAB_SIZE, local)) {
@@ -377,6 +549,13 @@ impl QuestWindow {
         let mut boxes: Vec<(String, [f32; 4])> =
             TAB_TOPS.iter().enumerate().map(|(tab, &top)| (format!("quest_tab:{tab}"), place([0.0, top], TAB_SIZE))).collect();
         boxes.push(("quest_close".into(), place(CLOSE, CLOSE_SIZE)));
+        if self.picked.is_some() {
+            let [x, y] = self.detail.at(DETAIL_CLOSE);
+            boxes.push(("quest_detail_close".into(), [x, y, CLOSE_SIZE[0], CLOSE_SIZE[1]]));
+            if let Some(area) = self.npc_box(texts, self.hunt_count(quests)) {
+                boxes.push(("quest_detail_npc".into(), area));
+            }
+        }
         for (row, quest) in self.shown(quests, texts).into_iter().skip(self.scroll).take(ROWS).enumerate() {
             let top = offset(LIST, [0.0, row as f32 * ROW[1]]);
             boxes.push((format!("quest_row_{}", quest.id), place(top, ROW)));
@@ -395,7 +574,10 @@ impl QuestWindow {
                 self.scroll = 0;
             }
             // A row always opens its details.
-            Hit::Row(place) => self.picked = Some(self.shown(quests, texts).get(place)?.id),
+            Hit::Row(place) => {
+                let id = self.shown(quests, texts).get(place)?.id;
+                self.pick(id, crate::screen());
+            }
             Hit::Lock(place) => {
                 let quest = *self.shown(quests, texts).get(place)?;
                 return Some((quest.id, !quest.active));
@@ -409,21 +591,44 @@ impl QuestWindow {
             Hit::ScrollUp => self.scroll_by(-1, quests, texts),
             Hit::ScrollDown => self.scroll_by(1, quests, texts),
             Hit::DetailClose => self.picked = None,
-            Hit::Window => {}
+            Hit::DetailNpc | Hit::Detail | Hit::Window => {}
         }
         None
     }
 
-    /// The listed quests' type icons, to load before drawing.
-    pub fn icons(&self, quests: &[Quest], texts: &HashMap<u32, QuestText>) -> Vec<String> {
-        if !self.frame.open {
-            return Vec::new();
+    /// The listed quests' type icons and the picked one's reward items', to load before drawing.
+    pub fn icons(&self, quests: &[Quest], texts: &HashMap<u32, QuestText>, items: &HashMap<u32, ItemInfo>) -> Vec<String> {
+        let rewards = self.picked.and_then(|id| texts.get(&id)).map_or(&[][..], |text| &text.reward_items[..]);
+        let mut icons: Vec<String> = rewards.iter().filter_map(|(item, _)| items.get(item).map(|info| crate::inventory::icon_path(info, true))).collect();
+        if self.frame.open {
+            icons.extend(self.shown(quests, texts).into_iter().filter_map(|quest| texts.get(&quest.id)?.icon.as_deref().map(icon_path)));
         }
-        self.shown(quests, texts).into_iter().filter_map(|quest| texts.get(&quest.id)?.icon.as_deref().map(icon_path)).collect()
+        icons
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn draw<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        icons: &'a HashMap<String, Option<Texture>>,
+        items: &HashMap<u32, ItemInfo>,
+        font: &Font,
+        messages: &[String],
+        quests: &[Quest],
+        texts: &HashMap<u32, QuestText>,
+        pointer: ([f32; 2], bool),
+    ) {
+        if self.frame.open {
+            self.draw_list(layer, tooltip, chrome, assets, icons, font, messages, quests, texts, pointer);
+        }
+        self.draw_details(layer.window(), chrome, assets, icons, items, font, messages, quests, texts, pointer);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_list<'a>(
         &self,
         layer: &mut Layer<'a>,
         tooltip: &mut Layer<'a>,
@@ -436,9 +641,6 @@ impl QuestWindow {
         texts: &HashMap<u32, QuestText>,
         pointer: ([f32; 2], bool),
     ) {
-        if !self.frame.open {
-            return;
-        }
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
         let title = |id: u32| texts.get(&id).map_or_else(|| id.to_string(), |text| text.title.clone());
         let at = |local: [f32; 2]| self.frame.at(local);
@@ -510,32 +712,117 @@ impl QuestWindow {
         let show = &assets.show[usize::from(self.tracker)];
         layer.sprites.push((show, at(SHOW_BOX), SHOW_BOX_SIZE));
         layer.texts.push((message(SHOW_TRACKER).to_owned(), at(SHOW_LABEL), [0, 0, 0]));
-        // The picked quest beside the list: its title and summary, description, hunts and time limit.
-        let Some(quest) = self.picked.and_then(|id| quests.iter().find(|quest| quest.id == id)) else { return };
-        let corner = self.detail_corner();
-        layer.sprites.push((&assets.detail, corner, assets.detail.size));
-        let detail = Frame::new(corner, DETAIL_WIDTH);
-        detail.draw_bare_title(layer, chrome, message(DESCRIPTION), pointer.0);
-        layer.sprites.push((&assets.detail_icon, offset(corner, [8.0, 20.0]), assets.detail_icon.size));
-        layer.texts.push((window::fit(font, &title(quest.id), 270.0), offset(corner, [52.0, 25.0]), [0, 0, 0]));
-        let text = texts.get(&quest.id).cloned().unwrap_or_default();
-        layer.texts.push((window::fit(font, &text.summary, 270.0), offset(corner, [52.0, 42.0]), GREY));
-        let mut lines: Vec<(String, [u8; 3])> =
-            window::wrap(font, &text.description, DETAIL_WIDTH - 30.0, 12).into_iter().map(|line| (line, [0, 0, 0])).collect();
-        if !quest.hunts.is_empty() {
-            lines.push((String::new(), [0, 0, 0]));
-            lines.push((message(HUNTS).to_owned(), GREY));
-            lines.extend(quest.hunts.iter().map(|hunt| (format!("{} ({}/{})", hunt.name, hunt.count, hunt.needed), [0, 0, 0])));
+    }
+
+    /// The details: the title, the Description, Monster and Reward panels (scrolled), the Deadline and Close. The NPC's
+    /// picture is a sprite: the caller draws it (`npc_sprite`).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_details<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        icons: &'a HashMap<String, Option<Texture>>,
+        items: &HashMap<u32, ItemInfo>,
+        font: &Font,
+        messages: &[String],
+        quests: &[Quest],
+        texts: &HashMap<u32, QuestText>,
+        pointer: ([f32; 2], bool),
+    ) {
+        let Some(id) = self.picked else { return };
+        let message = |id: usize| messages.get(id).map_or("", String::as_str);
+        let at = |local: [f32; 2]| self.detail.at(local);
+        let hit = self.hit(pointer.0, quests, texts);
+        let text = texts.get(&id).cloned().unwrap_or_default();
+        // The title bar (the base button alone), the background, the quest's title in the middle.
+        chrome.draw_title_bar(layer, at([0.0, 0.0]), DETAIL_WIDTH);
+        let base = chrome.button(0, contains(at(DETAIL_BASE), window::BUTTON_SIZE, pointer.0));
+        layer.sprites.push((base, at(DETAIL_BASE), base.size));
+        let title_top = ((window::TITLE_HEIGHT - font.line_height()) / 2.0).floor();
+        layer.texts.push((message(TITLE).to_owned(), at([BAR_TITLE, title_top]), [0, 0, 0]));
+        layer.sprites.push((&assets.detail, at(DETAIL_BACKGROUND), assets.detail.size));
+        let title = if text.title.is_empty() { id.to_string() } else { text.title.clone() };
+        let title = window::fit(font, &title, DETAIL_WIDTH - 8.0);
+        layer.texts.push((title.clone(), at([((DETAIL_WIDTH - font.width(&title)) / 2.0).floor(), DETAIL_TITLE_TOP]), DETAIL_TITLE_COLOR));
+        // ponytail: what doesn't fit whole in the scroll area isn't drawn.
+        let inside = |top: f32, height: f32| top >= SCROLL_AREA[1] && top + height <= SCROLL_AREA[1] + SCROLL_AREA[3];
+        let hunts = self.hunt_lines(quests, messages);
+        let tops = self.panel_tops(hunts.len());
+        let heading = |layer: &mut Layer<'a>, top: f32, header: usize| {
+            if inside(top + BULLET[1], assets.bullet.size[1]) {
+                layer.sprites.push((&assets.bullet, at([BULLET[0], top + BULLET[1]]), assets.bullet.size));
+            }
+            if inside(top + HEADER[1], DETAIL_LINE) {
+                layer.texts.push((message(header).to_owned(), at([HEADER[0], top + HEADER[1]]), [0, 0, 0]));
+            }
+        };
+        for (panel, (header, lines)) in [(DESCRIPTION, &self.description), (MONSTERS, &hunts)].into_iter().enumerate() {
+            heading(layer, tops[panel], header);
+            for (row, line) in lines.iter().enumerate() {
+                let top = tops[panel] + TEXT_BOX[1] + row as f32 * DETAIL_LINE;
+                if inside(top, DETAIL_LINE) {
+                    layer.texts.push((line.clone(), at([TEXT_BOX[0], top]), DETAIL_TEXT_COLOR));
+                }
+            }
+            if inside(tops[panel + 1], 1.0) {
+                layer.sprites.push((&assets.line, at([1.0, tops[panel + 1]]), [PANEL_WIDTH - 1.0, 1.0]));
+            }
         }
-        if quest.end > 0 {
-            let left =
-                u64::from(quest.end).saturating_sub(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs()));
-            lines.push((String::new(), [0, 0, 0]));
-            lines.push((format!("{} : {}:{:02}:{:02}", message(TIME_LIMIT), left / 3600, left / 60 % 60, left % 60), GREY));
+        // Reward: base and job exp in blue, the items one at a time with their bar.
+        let top = tops[2];
+        heading(layer, top, REWARD);
+        for (row, (label, value)) in
+            [(REWARD_EXP, text.reward_exp.as_str()), (REWARD_JOB_EXP, text.reward_job_exp.as_str()), (REWARD_ITEMS, "")].into_iter().enumerate()
+        {
+            let row_top = top + REWARD_ROWS[row];
+            if inside(row_top, DETAIL_LINE) {
+                layer.texts.push((message(label).to_owned(), at([REWARD_LABEL, row_top]), [0, 0, 0]));
+                layer.texts.push((value.to_owned(), at([REWARD_VALUE, row_top]), REWARD_COLOR));
+            }
         }
-        for (row, (line, color)) in lines.into_iter().take(19).enumerate() {
-            layer.texts.push((line, offset(corner, [14.0, DETAIL_TEXT_TOP + row as f32 * DETAIL_LINE]), color));
+        let [x, y, w, h] = ITEM_LIST;
+        if let Some(&(item, count)) = text.reward_items.get(self.reward_scroll)
+            && inside(top + y, h)
+        {
+            let corner = [x, top + y];
+            layer.sprites.push((&assets.item_frame, at(corner), assets.item_frame.size));
+            let icon = items.get(&item).and_then(|info| icons.get(&crate::inventory::icon_path(info, true))).and_then(Option::as_ref);
+            if let Some(icon) = icon {
+                layer.sprites.push((icon, at(offset(corner, ITEM_ICON)), icon.size));
+            }
+            let name = crate::inventory::item_name(items, item, true, 0);
+            layer.texts.push((window::fit(font, &name, w - ITEM_NAME[0] - SCROLL_WIDTH), at(offset(corner, ITEM_NAME)), [0, 0, 0]));
+            let each = rustnarok_client::messages::fill(message(EACH), &[&count]);
+            layer.texts.push((each, at(offset(corner, ITEM_COUNT)), REWARD_COLOR));
+            self.scrollbar(layer, assets, at([x + ITEM_LIST_BAR, top + y]), h, text.reward_items.len(), 1, self.reward_scroll);
         }
+        // The panels' bar, the Deadline as a local date, Close.
+        let total: f32 = panel_heights(self.description.len(), hunts.len()).iter().sum();
+        let lines = (total / DETAIL_LINE).ceil() as usize;
+        let shown = (SCROLL_AREA[3] / DETAIL_LINE) as usize;
+        self.scrollbar(layer, assets, at([DETAIL_SCROLLBAR_X, SCROLL_AREA[1]]), SCROLL_AREA[3], lines, shown, (self.detail_scroll / DETAIL_LINE) as usize);
+        let end = quests.iter().find(|quest| quest.id == id).map_or(0, |quest| quest.end);
+        if let Some(line) = deadline_line(message(DEADLINE_MESSAGE), end, crate::char_select::local_offset()) {
+            layer.texts.push((line, at(DEADLINE), DEADLINE_COLOR));
+        }
+        let close = if hit == Some(Hit::DetailClose) { 1 + usize::from(pointer.1) } else { 0 };
+        layer.sprites.push((&assets.close[close], at(DETAIL_CLOSE), CLOSE_SIZE));
+    }
+
+    /// A 7-wide scrollbar `height` tall at `corner`: its arrows, and a thumb for `shown` of `count` rows from `first`.
+    #[allow(clippy::too_many_arguments)]
+    fn scrollbar<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, corner: [f32; 2], height: f32, count: usize, shown: usize, first: usize) {
+        layer.sprites.push((&assets.arrows[0], corner, [SCROLL_WIDTH, ARROW_HEIGHT]));
+        layer.sprites.push((&assets.arrows[1], offset(corner, [0.0, height - ARROW_HEIGHT]), [SCROLL_WIDTH, ARROW_HEIGHT]));
+        let track = height - 2.0 * ARROW_HEIGHT;
+        let most = count.saturating_sub(shown);
+        let thumb = (track * shown as f32 / count.max(shown).max(1) as f32).max(3.0 * THUMB_PIECE).min(track);
+        let top = corner[1] + ARROW_HEIGHT + if most == 0 { 0.0 } else { (track - thumb) * first.min(most) as f32 / most as f32 };
+        let [up, middle, down] = &assets.thumb;
+        layer.sprites.push((up, [corner[0], top], [SCROLL_WIDTH, THUMB_PIECE]));
+        layer.sprites.push((middle, [corner[0], top + THUMB_PIECE], [SCROLL_WIDTH, thumb - 2.0 * THUMB_PIECE]));
+        layer.sprites.push((down, [corner[0], top + thumb - THUMB_PIECE], [SCROLL_WIDTH, THUMB_PIECE]));
     }
 }
 
@@ -615,9 +902,22 @@ mod tests {
     }
 
     #[test]
+    fn lays_the_details_out() {
+        // Right of the list with the tops aligned; with the list shut, the middle of the screen.
+        assert_eq!(details_place(Some([322.0, 151.0]), [1024.0, 768.0]), [703.0, 151.0]);
+        assert_eq!(details_place(None, [1024.0, 768.0]), [341.0, 178.0]);
+        // Description and Monster by their lines (the header alone when empty), each with 9 below; Reward 122.
+        assert_eq!(panel_heights(3, 0), [30.0 + 48.0 + 9.0, 9.0 + 16.0 + 9.0, 122.0]);
+        // The Deadline: the end time local, none for 0.
+        let end = 1_792_398_605; // 2026-10-19 08:30:05 UTC
+        assert_eq!(deadline_line("Deadline", end, 39_600).as_deref(), Some("Deadline [2026/10/19 19:30]"));
+        assert_eq!(deadline_line("Deadline", 0, 39_600), None);
+    }
+
+    #[test]
     fn reads_quest_texts() {
         let texts = parse_texts("1#Ransom#SG_FEEL#QUE_NOIMAGE#\nTurtle#\nCarapace#\n\n101#Professor#SG_FEEL#QUE_NOIMAGE#\nGo up.#\nTalk#\n");
-        let professor = QuestText { title: "Professor".into(), description: "Go up.".into(), summary: "Talk".into(), npc: None, cooldown: false, icon: None };
+        let professor = QuestText { title: "Professor".into(), description: vec!["Go up.".into()], summary: "Talk".into(), ..QuestText::default() };
         assert_eq!(texts[&101], professor);
         assert_eq!(texts[&1].summary, "Carapace");
     }

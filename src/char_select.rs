@@ -197,7 +197,7 @@ fn unix_now() -> i64 {
 
 /// How far east of UTC local time is, in seconds.
 // ponytail: std has no time zones; this asks `date +%z` once, and takes UTC where that isn't there.
-fn local_offset() -> i64 {
+pub(crate) fn local_offset() -> i64 {
     static OFFSET: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
     *OFFSET.get_or_init(|| {
         let out = std::process::Command::new("date").arg("+%z").output().ok().and_then(|out| String::from_utf8(out.stdout).ok()).unwrap_or_default();
@@ -217,8 +217,8 @@ fn parse_offset(text: &str) -> Option<i64> {
     Some(sign * (hours * 3600 + minutes * 60))
 }
 
-/// A Unix time `offset` seconds east of UTC as (month, day, hour, minute, second).
-fn local_date(unix: i64, offset: i64) -> [i64; 5] {
+/// A Unix time `offset` seconds east of UTC as (year, month, day, hour, minute, second).
+pub(crate) fn local_date(unix: i64, offset: i64) -> [i64; 6] {
     let seconds = unix + offset;
     let (days, rest) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
     // Days since 1970-01-01 to a civil date (Howard Hinnant's days-to-civil).
@@ -230,13 +230,14 @@ fn local_date(unix: i64, offset: i64) -> [i64; 5] {
     let month_index = (5 * day_of_year + 2) / 153;
     let day = day_of_year - (153 * month_index + 2) / 5 + 1;
     let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
-    [month, day, rest / 3600, rest / 60 % 60, rest % 60]
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    [year, month, day, rest / 3600, rest / 60 % 60, rest % 60]
 }
 
 /// A deletion's two lines: the day, and the time, at `unix` local time.
 fn date_lines(messages: &[String], unix: i64, offset: i64) -> [String; 2] {
     let message = |id: usize| messages.get(id).map_or("", String::as_str);
-    let [month, day, hour, minute, second] = local_date(unix, offset);
+    let [_, month, day, hour, minute, second] = local_date(unix, offset);
     [messages::fill(message(DATE_MESSAGE), &[&month, &day]), messages::fill(message(TIME_MESSAGE), &[&hour, &minute, &second])]
 }
 
@@ -663,10 +664,10 @@ mod tests {
         assert_eq!([parse_offset("+1100"), parse_offset("-0330"), parse_offset("x")], [Some(39_600), Some(-12_600), None]);
         // 2026-10-19 08:30:05 UTC is 19:30:05 at +11:00, and the next day's 03:30:05 at +19:00.
         let unix = 1_792_398_605;
-        assert_eq!(local_date(unix, 0), [10, 19, 8, 30, 5]);
-        assert_eq!(local_date(unix, 39_600), [10, 19, 19, 30, 5]);
-        assert_eq!(local_date(unix, 19 * 3600), [10, 20, 3, 30, 5]);
-        assert_eq!(local_date(951_782_400, 0)[..2], [2, 29], "a leap day");
+        assert_eq!(local_date(unix, 0), [2026, 10, 19, 8, 30, 5]);
+        assert_eq!(local_date(unix, 39_600), [2026, 10, 19, 19, 30, 5]);
+        assert_eq!(local_date(unix, 19 * 3600), [2026, 10, 20, 3, 30, 5]);
+        assert_eq!(local_date(951_782_400, 0)[..3], [2000, 2, 29], "a leap day");
         let mut messages = vec![String::new(); TIME_MESSAGE + 1];
         messages[DATE_MESSAGE] = "%d/%d".into();
         messages[TIME_MESSAGE] = "%d:%d:%d".into();

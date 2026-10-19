@@ -237,6 +237,15 @@ impl App {
                     let _ = game.session.claim_achievement(id);
                 }
             }
+            // The quest details' NPC picture: navigation to it, as a <NAVI> link.
+            Scene::Game(game) if game.quest_window.hit(cursor, &game.quests, &self.quest_texts) == Some(quest::Hit::DetailNpc) => {
+                if let Some((map, cell)) = game.quest_window.npc_place(&self.quest_texts) {
+                    let map = navigation::map_key(&map);
+                    let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
+                    let cell = (cell != [0, 0]).then(|| cell.map(|value| value.clamp(0, i32::from(u16::MAX)) as u16));
+                    game.navigation = Some(navigation::Active::new(navigation::Target { cell, monster: None, name, map }, NAVI_SERVICES));
+                }
+            }
             Scene::Game(game) if game.quest_window.covers(cursor) => {
                 let hit = game.quest_window.hit(cursor, &game.quests, &self.quest_texts).unwrap();
                 let tracker = game.quest_window.tracker;
@@ -452,9 +461,9 @@ impl App {
                         let _ = game.session.kick_from_chat_room(&name);
                     }
                 }
+                // The details alone, beside the list when it's open, else in the middle.
                 Some(Choice::QuestInfo(id)) => {
-                    game.quest_window.open();
-                    game.quest_window.picked = Some(id);
+                    game.quest_window.pick(id, screen());
                     game.sync_esc();
                 }
                 Some(Choice::QuestAside(id)) => {
@@ -1746,6 +1755,7 @@ impl App {
             }
             game.mail.drag_to(self.cursor);
             game.quest_window.frame.drag_to(self.cursor, 466.0);
+            game.quest_window.detail.drag_to(self.cursor, quest::DETAIL_HEIGHT);
             game.minimap_window.frame.drag_to(self.cursor, minimap_window::HEIGHT);
             game.say.frame.drag_to(self.cursor, npc_say::SIZE[1]);
             if let Some(cutin) = &mut game.cutin {
@@ -2224,6 +2234,7 @@ impl App {
                 }
                 _ if on_pick => game.pick.as_mut().unwrap().0.scroll_by(rows),
                 _ if game.achievement_window.covers(self.cursor) => game.achievement_window.scroll_by(rows, &self.achievement_info),
+                _ if game.quest_window.on_details(self.cursor) => game.quest_window.scroll_details(rows, self.cursor, &game.quests, &self.quest_texts),
                 _ if game.quest_window.covers(self.cursor) => game.quest_window.scroll_by(rows, &game.quests, &self.quest_texts),
                 Some(Panel::Inventory) => game.inventory.wheel(rows),
                 Some(Panel::Cart) => game.cart.wheel(rows),
@@ -2432,6 +2443,7 @@ impl App {
                     | game.card_window.as_mut().is_some_and(|window| window.drop_drag())
                     | game.mail.drop_drag()
                     | game.quest_window.frame.drop_drag()
+                    | game.quest_window.detail.drop_drag()
                     | game.achievement_window.frame.drop_drag()
                     | game.synthesis.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag())
@@ -2875,9 +2887,12 @@ impl App {
         if let Scene::Game(game) = &mut self.scene
             && let Some(hit) = game.quest_window.hit(cursor, &game.quests, &self.quest_texts)
         {
-            // It drags from anywhere that isn't a control (its details stay put).
+            // Each drags from anywhere that isn't a control (the details stay put when the list moves).
             if hit == quest::Hit::Window && game.quest_window.frame.local(cursor, 466.0).is_some() {
                 game.quest_window.frame.start_drag(cursor);
+            }
+            if hit == quest::Hit::Detail {
+                game.quest_window.detail.start_drag(cursor);
             }
             return;
         }
