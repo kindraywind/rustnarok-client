@@ -40,6 +40,7 @@ pub const CART_REVOLUTION: u32 = 170;
 pub const FIRST_AID: u32 = 309;
 pub const SPRINKLE_SAND: u32 = 310;
 pub const HEAL_UNDEAD: u32 = 320;
+pub const ASPERSIO: u32 = 86;
 
 pub fn makes(effect: u32) -> bool {
     matches!(
@@ -56,6 +57,7 @@ pub fn makes(effect: u32) -> bool {
             | FIRST_AID
             | SPRINKLE_SAND
             | HEAL_UNDEAD
+            | ASPERSIO
     )
 }
 
@@ -69,6 +71,7 @@ fn length(effect: u32) -> u32 {
         FIRST_AID => 299,
         SPRINKLE_SAND => 300,
         HEAL_UNDEAD => 100,
+        ASPERSIO => 175,
         _ => 50,
     }
 }
@@ -221,6 +224,12 @@ impl First {
                     seed(born, y, [d, speed, half, 0.0]);
                 }
             }
+            ASPERSIO => {
+                // A sparkle every 5 ticks from 65 to 135, each with a bearing.
+                for born in (65..=135).step_by(5) {
+                    seed(born, rand(360) as f32, [0.0; 4]);
+                }
+            }
             CART_REVOLUTION => {
                 // A ring and a sphere at ticks 7 and 20.
                 seed(7, 0.0, [0.0; 4]);
@@ -298,7 +307,7 @@ impl First {
             id,
             start: now,
             unit,
-            follows: !matches!(id, MAGNUM_BREAK | STEAL | DETOXIFY | CART_REVOLUTION | FIRST_AID | SPRINKLE_SAND | HEAL_UNDEAD),
+            follows: !matches!(id, MAGNUM_BREAK | STEAL | DETOXIFY | CART_REVOLUTION | FIRST_AID | SPRINKLE_SAND | HEAL_UNDEAD | ASPERSIO),
             at,
             seeds,
             sparks,
@@ -562,6 +571,16 @@ impl First {
         for effect in &self.list {
             let Some(at) = Self::place(effect, &position_of) else { continue };
             match effect.id {
+                ASPERSIO => {
+                    for seed in &effect.seeds {
+                        let Some(a) = Self::age(effect, now, seed.born, 40) else { continue };
+                        let k = (a + 1) as f32;
+                        let (sin, cos) = trig(seed.y);
+                        let place = [at[0] + 3.0 * sin, at[1] + 30.0 - 0.19 * k - 0.005 * k * (k + 1.0), at[2] + 3.0 * cos];
+                        let alpha = if a <= 29 { 254.0 } else { (254.0 - 25.4 * (a - 29) as f32).max(0.0) };
+                        particles.push(Particle { sprite: STAR, at: place, scale: 1.2, alpha, spin: 0.0 });
+                    }
+                }
                 SMALL_HEAL => {
                     for seed in &effect.seeds {
                         let Some(a) = Self::age(effect, now, seed.born, 50) else { continue };
@@ -929,6 +948,25 @@ mod tests {
         assert!(near(particle(9).alpha, 254.0) && near(particle(31).alpha, 254.0) && near(particle(32).alpha, 222.25) && near(particle(39).alpha, 0.0));
         assert!(near(particle(0).alpha, 25.4) && near(particle(2).spin, 9.0));
         assert!(first.particles(tick(start, 40), |_| None).iter().all(|particle| particle.at[1] > 0.0));
+    }
+
+    #[test]
+    fn aspersio_lets_fifteen_sparkles_fall() {
+        let (first, start) = effect_at(ASPERSIO, |_| 0, false);
+        assert_eq!(first.list[0].seeds.iter().map(|seed| seed.born).collect::<Vec<_>>(), (65..=135).step_by(5).collect::<Vec<_>>());
+        assert_eq!(first.list[0].seeds.len(), 15);
+        let at = |e: u32| first.particles(tick(start, e), |_| Some([100.0, 0.0, 0.0]));
+        // None at 60, one at 65 (from age 0), the height 29.80, 27.55 at 9, 24.10 at 19, 19.65 at 29, 14.20 at 39 (on 3 round the feet).
+        assert!(at(60).is_empty() && at(65).len() == 1);
+        let height = |k: u32| at(65 + k)[0].at[1];
+        assert!(near(height(0), 29.80) && near(height(9), 27.55) && near(height(19), 24.10) && near(height(29), 19.65) && near(height(39), 14.20));
+        assert!(near(f32::hypot(at(65)[0].at[0], at(65)[0].at[2]), 3.0) && at(65)[0].scale == 1.2);
+        // Alpha 254 to age 29, 228.6 at 30, 0 at 39; 40 draws; fixed when the target walks off.
+        let alpha = |k: u32| at(65 + k)[0].alpha;
+        assert!(near(alpha(29), 254.0) && near(alpha(30), 228.6) && near(alpha(39), 0.0));
+        assert_eq!((0..175).filter(|&e| at(e).iter().any(|_| true) && e < 105).count(), 40);
+        assert!(at(100).iter().all(|particle| particle.at[0].abs() < 4.0));
+        assert!(at(175).is_empty());
     }
 
     #[test]

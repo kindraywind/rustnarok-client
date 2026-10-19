@@ -34,6 +34,10 @@ const FROST_DEPTH: f32 = 30.0;
 const ICE_WALL_TICKS: u32 = 9999;
 const ICE_WALL_ALPHA: f32 = 200.0;
 const ICE_WALL_HALF: f32 = 2.5;
+/// Storm Gust's crystals stand until the effect's tick 215, 20 tall, from 20 under the ground.
+const STORM_GUST_END: u32 = 215;
+const STORM_GUST_HEIGHT: f32 = 20.0;
+const STORM_GUST_DEPTH: f32 = 20.0;
 
 /// A spike: an open pyramid `half` wide each way from its middle at the base and `height` from the base to the apex
 /// along its axis (world units), moving along that axis.
@@ -313,6 +317,25 @@ impl Stone {
         self.spikes.retain(|spike| spike.unit != Some(unit));
     }
 
+    /// Storm Gust's ice crystals (EF_STORMGUST) round `at` from `now`: two at each of the effect's ticks 58, 87, 116 and 145,
+    /// each an open pyramid 20 tall and pitched 100° rising 1.5 a tick for four ticks from 20 under the ground, standing until
+    /// the effect's tick 215. Its choices from `rand(n)`: yaw, distance, bearing and half-width, per crystal.
+    pub fn storm_gust(&mut self, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        for tick in [58u32, 87, 116, 145] {
+            for _ in 0..2 {
+                let yaw = rand(360) as f32;
+                let distance = 3.0 + rand(25) as f32;
+                let bearing = rand(360) as f32;
+                let half = (400 + rand(100)) as f32 / 100.0;
+                let (sin, cos) = bearing.to_radians().sin_cos();
+                let spot = [at[0] + distance * sin, at[1], at[2] - distance * cos];
+                let life = STORM_GUST_END - tick;
+                let spike = Spike::new(now + TICK * tick, spot, STORM_GUST_DEPTH, [yaw, 100.0], [half, STORM_GUST_HEIGHT], life, life);
+                self.spikes.push(Spike { texture: ICE_TEXTURE, speed: 1.5, stop: 3, alpha: 250.0, ..spike });
+            }
+        }
+    }
+
     /// Stops the lines of spikes still to come (Frost Diver's, under /mineffect): the ones not yet born.
     pub fn stop_lines(&mut self, now: Instant) {
         self.spikes.retain(|spike| spike.born <= now);
@@ -493,6 +516,39 @@ mod tests {
         spikes.frost_hit([0.0; 3], start + TICK * 3, |_| 0);
         spikes.stop_lines(start + TICK * 3);
         assert_eq!(spikes.spikes.len(), 12, "the hit's own spikes aren't a line's");
+    }
+
+    #[test]
+    fn storm_gust_pops_pairs_of_ice_crystals() {
+        let start = Instant::now();
+        let mut spikes = Stone::default();
+        // Every draw 0: yaw 0, distance 3, bearing 0, half-width 4.0.
+        spikes.storm_gust([10.0, 0.0, 20.0], start, |_| 0);
+        assert_eq!(spikes.spikes.len(), 8);
+        assert_eq!(spikes.spikes.iter().map(|spike| (spike.born - start).as_millis() / 16).collect::<Vec<_>>(), [58, 58, 87, 87, 116, 116, 145, 145]);
+        let spike = &spikes.spikes[0];
+        assert_eq!((spike.texture, spike.half, spike.height), (ICE_TEXTURE, 4.0, 20.0));
+        // The base 3 from the cell on bearing 0 (toward −z), 20 under the ground.
+        assert!((spike.base[0] - 10.0).abs() < 1e-4 && (spike.base[2] - 17.0).abs() < 1e-4 && spike.base[1] == -20.0);
+        // Lives 157, 128, 99, 70 ticks; alpha 250 until 10 before its end.
+        assert_eq!([0, 2, 4, 6].map(|index| spikes.spikes[index].life), [157, 128, 99, 70]);
+        // The axis for a yaw: pitch 100°.
+        let axis = spike.axes[2];
+        assert!((axis[1] - 0.9848).abs() < 1e-3 && (axis[0]).abs() < 1e-3 && (axis[2] + 0.1736).abs() < 1e-3);
+        let turned = axes(90.0, 100.0)[2];
+        assert!((turned[0] + 0.1736).abs() < 1e-3 && turned[2].abs() < 1e-3);
+        // It rises 1.5 on each of its first four ticks (6.0), then stays, and the ground hides most of it.
+        spikes.advance(start + TICK * 58);
+        assert!((spikes.spikes[0].rise - 1.5).abs() < 1e-4);
+        spikes.advance(start + TICK * 70);
+        assert!((spikes.spikes[0].rise - 6.0).abs() < 1e-4);
+        // The alpha 250 to age 147, 225 … 0 at its last ticks; gone by tick 215.
+        spikes.advance(start + TICK * (58 + 146));
+        assert_eq!(spikes.spikes[0].alpha, 250.0);
+        spikes.advance(start + TICK * (58 + 147));
+        assert!((spikes.spikes[0].alpha - 225.0).abs() < 1e-3, "{}", spikes.spikes[0].alpha);
+        spikes.advance(start + TICK * 215);
+        assert!(spikes.spikes.is_empty());
     }
 
     #[test]

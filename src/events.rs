@@ -3476,6 +3476,7 @@ impl App {
                 match (table.ground(skill), gpu) {
                     (Some(ground), Some(gpu)) => {
                         for &(who, effect) in ground {
+                            let effect = effects::storm_gust_effect(skill, effect, game.effects.min);
                             match who {
                                 effects::Who::Caster => game.play_effect(gpu, grf, table, effect, source),
                                 _ => game.play_effect_at(gpu, grf, table, effect, cell),
