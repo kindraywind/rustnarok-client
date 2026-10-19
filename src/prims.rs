@@ -8,6 +8,7 @@ pub mod blitz;
 pub mod bolts;
 pub mod boomerang;
 pub mod burst;
+pub mod first;
 pub mod huujin;
 pub mod napalm;
 pub mod sage;
@@ -97,6 +98,7 @@ pub struct Prims {
     pub spheres: tanji::Spheres,
     pub huujin: huujin::Huujin,
     pub throws: throw::Throws,
+    pub first: first::First,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -413,6 +415,7 @@ impl Prims {
         }
         shapes.extend(self.bursts.iter().flat_map(|burst| burst.shapes(now)));
         shapes.extend(self.napalms.iter().flat_map(|napalm| napalm.shapes(now)));
+        shapes.extend(self.first.shapes(now));
         shapes
     }
 

@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, blitz, bolts, boomerang, burst, huujin, sage, stone, tanji, throw};
+use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, sage, stone, tanji, throw};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -1294,6 +1294,8 @@ pub struct Effects {
     /// fire ball's frame by frame, and the camera's turn in degrees (fire balls turn with it).
     prims: crate::prims::Prims,
     ghost: Vec<Placed>,
+    /// The first jobs' star sprites' layers (one frame each), by path.
+    stars: HashMap<&'static str, Vec<Placed>>,
     /// Dark Strike's red ghost sprite's layers.
     red_ghost: Vec<Placed>,
     fire_ball: Vec<Vec<Placed>>,
@@ -1693,6 +1695,16 @@ impl Effects {
             self.load_sage(gpu, grf, id);
             self.prims.sage.look(id, at, now);
         }
+        // The first jobs' small heal, Endure, Magnum Break, Steal, Detoxify and Decrease AGI, built in code (a status plays it once).
+        if let (true, Target::Unit(unit) | Target::Status(unit, _)) = (first::makes(id), target) {
+            for path in [first::ALPHA_DOWN, first::ENDURE, first::RING_YELLOW, first::DOME, first::SLOW, first::STREAK] {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            for path in [first::STAR, first::GOLD_STAR, first::CYAN_STAR] {
+                self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
+            }
+            self.prims.first.play(id, unit, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+        }
         if let (BASH | TURN_UNDEAD | SONIC_BLOW, Target::Unit(unit)) = (id, target) {
             for path in [burst::DISC, burst::RAY, burst::RING] {
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
@@ -1877,6 +1889,7 @@ impl Effects {
     /// Hits landing by `now` stay where their targets' feet are (`position_of`), and their sparks' paths are worked out
     /// over the ground there (`ground_at(x, z)`: the ground's height in the world).
     pub fn settle_hits(&mut self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>, ground_at: impl Fn(f32, f32) -> f32) {
+        self.prims.first.advance(now, &ground_at);
         for hit in self.hits.iter_mut().filter(|hit| hit.paths.is_none() && hit.start <= now) {
             let Some(at) = hit.anchor.place(&position_of) else { continue };
             hit.anchor = Anchor::At(at);
@@ -2121,6 +2134,12 @@ impl Effects {
         if let Some(Some(sprite)) = self.sprites.get_mut(crate::prims::GHOST_SPRITE) {
             self.ghost = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
         }
+        for path in [first::STAR, first::GOLD_STAR, first::CYAN_STAR] {
+            if let (Some(Some(sprite)), false) = (self.sprites.get_mut(path), self.stars.contains_key(path)) {
+                let layers = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
+                self.stars.insert(path, layers);
+            }
+        }
         if let Some(Some(sprite)) = self.sprites.get_mut(crate::prims::RED_GHOST_SPRITE) {
             self.red_ghost = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
         }
@@ -2295,6 +2314,11 @@ impl Effects {
     /// Shapes drawn over everything, with no depth test: Blessing's glow lying flat under the feet, and the songs' puffs.
     pub fn top_meshes(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<EffectMesh<'_>> {
         let mut meshes = self.puff_meshes(now, &position_of);
+        // Magnum Break's rings lie over the units and the ground.
+        if !self.only_forced {
+            let rings = self.prims.first.top_meshes(now);
+            meshes.extend(rings.into_iter().filter_map(|(path, triangles)| Some((self.textures.get(path)?.as_ref()?, triangles, false))));
+        }
         let Some(Some(texture)) = self.textures.get(BLESSING_GLOW).filter(|_| self.shows(42)) else { return meshes };
         let glows = self.blessings.iter().filter(|blessing| blessing.start <= now).filter_map(|blessing| {
             let at = blessing.anchor.place(&position_of)?;
@@ -2415,6 +2439,13 @@ impl Effects {
             .chain(self.prims.throws.meshes(|path| self.textures.get(path).and_then(Option::as_ref), self.pitch))
             .collect();
         // The spikes, in ice and in stone, blended over.
+        let first_meshes: Vec<EffectMesh<'_>> = self
+            .prims
+            .first
+            .meshes(now, &position_of)
+            .into_iter()
+            .filter_map(|(path, triangles)| Some((self.textures.get(path)?.as_ref()?, triangles, false)))
+            .collect();
         let spikes = [crate::prims::ICE_TEXTURE, stone::STONE]
             .into_iter()
             .filter_map(|path| Some((self.textures.get(path)?.as_ref()?, self.prims.stone.mesh(path), false)));
@@ -2434,7 +2465,8 @@ impl Effects {
             Some((texture, corners.into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] }).collect(), additive))
         });
         // The effects made in code are none of them force-drawn.
-        let prims = spikes.chain(bolt_meshes).chain(blitz_meshes).chain(sphere_meshes).chain(sage).chain(burst_rings).filter(|_| !self.only_forced);
+        let prims =
+            spikes.chain(bolt_meshes).chain(blitz_meshes).chain(sphere_meshes).chain(first_meshes).chain(sage).chain(burst_rings).filter(|_| !self.only_forced);
         rings.chain(models).chain(hits).chain(auras).chain(prims).collect()
     }
 
@@ -2636,6 +2668,14 @@ impl Effects {
         quads.extend(self.prims.boomerangs.quads(self.textures.get(boomerang::SHIELD).and_then(Option::as_ref)));
         if !self.only_forced {
             quads.extend(self.prims.spheres.quads(self.textures.get(tanji::SPHERE).and_then(Option::as_ref)));
+            // The first jobs' sparkles and sparks.
+            for particle in self.prims.first.particles(now, &position_of) {
+                let Some(Some(sprite)) = self.sprites.get(particle.sprite) else { continue };
+                for &(key, position, size, layer_angle) in self.stars.get(particle.sprite).into_iter().flatten() {
+                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle + particle.spin, uv).0.map(|value| value * particle.scale));
+                    quads.push((sprite.texture(key), particle.at, corners, [1.0, 1.0, 1.0, particle.alpha.trunc().clamp(0.0, 255.0) / 255.0], false, false));
+                }
+            }
         }
         quads.extend(self.prims.balls.quads(fire_ball, &self.fire_ball, spear, &self.textures, self.yaw));
         quads.extend(self.prims.sparkle_quads(now, self.dim, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
@@ -3263,6 +3303,12 @@ mod tests {
         assert_eq!(sounds.len(), 11);
         assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
         assert!(!table.sounds.contains_key(&149));
+        // Heal (small), Endure, Magnum Break, Steal, Detoxify and Decrease AGI are built in code: no generic parts or rings,
+        // their sounds stay.
+        for id in [7, 11, 17, 18, 21, 38] {
+            assert!(first::makes(id) && !table.floaters.contains_key(&id) && !table.rings.contains_key(&id) && !table.parts.contains_key(&id), "{id}");
+            assert!(table.sounds.contains_key(&id), "{id}");
+        }
         // The pitchers throw their item at the packet (ok = 1 only), through the aimed effects; no generic part and no
         // `effectId` fallback for Potion Pitcher.
         assert_eq!([thrown_item(231), thrown_item(446), thrown_item(2481), thrown_item(28)], [Some(299), Some(541), Some(914), None]);
