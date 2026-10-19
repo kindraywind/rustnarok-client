@@ -3324,6 +3324,8 @@ impl App {
                         for hit in 1..u32::from(act.hits) {
                             source.swing_later(swing, now + gap * hit, scale);
                         }
+                        // ponytail: free to walk through the swings and half a second after the last starts.
+                        source.flurry(now + gap * u32::from(act.hits) + Duration::from_millis(500));
                     }
                     let hit_ms = game.skill_motion(
                         act.source,
