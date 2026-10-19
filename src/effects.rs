@@ -1481,6 +1481,9 @@ pub const COLD_HIT: u32 = 51;
 /// EF_NAPALMBEAT: explosion puffs flat on the screen round the target (`prims::napalm`).
 pub const NAPALM_BEAT: u32 = 32;
 
+/// EF_HALLUTIME: white glints round a copy (`prims::sparkle`).
+pub const HALLUTIME: u32 = crate::prims::sparkle::EF_HALLUTIME;
+
 /// EF_BASH: the burst on a damaging skill's caster (`prims::burst`); none at all under /mineffect.
 const BASH: u32 = 16;
 /// EF_TURNUNDEAD: its burst round the priest and the ring on the ground (`prims::burst`).
@@ -1623,6 +1626,17 @@ impl Effects {
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
             }
             self.prims.napalm_beat(unit, now, |n| pick(0, n.saturating_sub(1)));
+        }
+        // EF_HALLUTIME (793): white glints round a copy.
+        if id == HALLUTIME {
+            for path in crate::prims::sparkle::TEXTURES {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            let unit = match target {
+                Target::Unit(unit) | Target::Status(unit, _) => unit,
+                _ => None,
+            };
+            self.prims.sparkle(unit, at, now, |n| pick(0, n.saturating_sub(1)));
         }
         let anchor = |attached: bool| match target {
             Target::Unit(unit) if attached => Anchor::Unit(unit),
@@ -2106,6 +2120,7 @@ impl Effects {
     pub fn forget(&mut self, unit: u32) {
         self.prims.sage.forget(unit);
         self.prims.stone.forget(unit);
+        self.prims.forget(unit);
         self.hits.retain(|hit| !hit.anchor.on(unit));
         self.status_prims.retain(|prim| !prim.anchor.on(unit));
         self.blessings.retain(|blessing| !blessing.anchor.on(unit));
@@ -2436,6 +2451,7 @@ impl Effects {
         let spear = (self.sprites.get(balls::SPEAR_SPRITE).and_then(Option::as_ref), self.spear.as_slice());
         quads.extend(self.prims.boomerangs.quads(self.textures.get(boomerang::SHIELD).and_then(Option::as_ref)));
         quads.extend(self.prims.balls.quads(fire_ball, &self.fire_ball, spear, &self.textures, self.yaw));
+        quads.extend(self.prims.sparkle_quads(now, self.dim, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         quads
     }
 }

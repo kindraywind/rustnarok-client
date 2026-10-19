@@ -9,12 +9,13 @@ pub mod boomerang;
 pub mod burst;
 pub mod napalm;
 pub mod sage;
+pub mod sparkle;
 pub mod stone;
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::world::Vector;
+use crate::world::{EffectQuad, Vector};
 
 /// The game's world tick: effects move in steps of it, whatever the frame rate.
 pub const TICK: Duration = Duration::from_millis(16);
@@ -81,6 +82,7 @@ pub struct Prims {
     pub bursts: Vec<burst::Burst>,
     pub boomerangs: boomerang::Boomerangs,
     pub napalms: Vec<napalm::Napalm>,
+    pub sparkles: Vec<sparkle::Hallutime>,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -272,6 +274,27 @@ impl Prims {
         self.napalms.push(napalm::Napalm::new(unit, now, rand));
     }
 
+    /// EF_HALLUTIME (793) round an Escape copy's feet.
+    pub fn sparkle(&mut self, unit: Option<u32>, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.sparkles.push(sparkle::Hallutime::new(unit, at, now, rand));
+    }
+
+    /// Drops any prims attached to `unit`.
+    pub fn forget(&mut self, unit: u32) {
+        self.sparkles.retain(|s| s.unit != Some(unit));
+    }
+
+    /// The camera-facing squares for effect 793 at `now`.
+    pub fn sparkle_quads<'a>(
+        &self,
+        now: Instant,
+        dim: bool,
+        texture_of: impl Fn(&str) -> Option<&'a crate::render::Texture>,
+        position_of: &impl Fn(Option<u32>) -> Option<Vector>,
+    ) -> Vec<EffectQuad<'a>> {
+        self.sparkles.iter().flat_map(|s| s.quads(now, dim, &texture_of, position_of)).collect()
+    }
+
     /// What the cold hits and bursts draw at `now`, in screen pixels from their units' feet.
     pub fn screen_shapes(&self, now: Instant) -> Vec<ScreenShape> {
         let mut shapes = Vec::new();
@@ -317,6 +340,7 @@ impl Prims {
         self.sage.advance(now);
         self.bursts.retain(|burst| burst.alive(now));
         self.napalms.retain(|napalm| napalm.alive(now));
+        self.sparkles.retain(|sparkle| sparkle.alive(now));
     }
 
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is
@@ -413,5 +437,21 @@ mod tests {
         assert_eq!(prims.napalms.len(), 1);
         prims.advance(start + TICK * 28);
         assert!(prims.napalms.is_empty());
+    }
+
+    #[test]
+    fn sparkle_advances_and_forgets() {
+        let start = Instant::now();
+        let mut prims = Prims::default();
+        prims.sparkle(Some(55), [0.0; 3], start, |_| 0);
+        assert_eq!(prims.sparkles.len(), 1);
+        prims.advance(start + TICK * 99);
+        assert_eq!(prims.sparkles.len(), 1);
+        prims.advance(start + TICK * 100);
+        assert!(prims.sparkles.is_empty());
+
+        prims.sparkle(Some(55), [0.0; 3], start, |_| 0);
+        prims.forget(55);
+        assert!(prims.sparkles.is_empty());
     }
 }
