@@ -48,8 +48,9 @@ pub const WRAP_WIDTH: f32 = 576.0;
 /// The scrollbar at the log's right: its width and its arrows' height.
 const SCROLLBAR: f32 = 13.0;
 const ARROW: f32 = 10.0;
-/// Battle mode's line icon (chatmode_on / chatmode_off), 16 px left of the filter button; a press counts at y 1 to 13.
-const MODE_ICON: ([f32; 2], [f32; 2]) = ([554.0, 4.0], [14.0, 9.0]);
+/// The lock, at the right of the top row. A press in the 9×9 just right of x 580 toggles it (y 1 to 13).
+const LOCK_AT: [f32; 2] = [WIDTH - 20.0, 4.0];
+const LOCK_HIT: [f32; 2] = [9.0, 9.0];
 /// The invisible strip along the top that resizes the window, and the tallest it goes.
 const RESIZE: ([f32; 2], [f32; 2]) = ([3.0, 16.0], [574.0, 6.0]);
 const TOP_ROW: f32 = 20.0;
@@ -59,10 +60,6 @@ const SIZE_BUTTON: [f32; 2] = [586.0, 7.0];
 const BUTTON_SIZE: [f32; 2] = [11.0, 11.0];
 /// The input bar buttons' tooltips: the whisper list, the receiving group, the size.
 const TOOLTIPS: [usize; 3] = [3187, 3188, 3189];
-/// The stick, battle-option and option buttons right after the two tabs, and the lock at the strip's right.
-const FUNCTION_BUTTONS: [[f32; 2]; 3] = [[2.0 * TAB_WIDTH + 4.0, 4.0], [2.0 * TAB_WIDTH + 19.0, 5.0], [2.0 * TAB_WIDTH + 34.0, 5.0]];
-// ponytail: the lock's x; at the right end of the tab strip.
-const LOCK_BUTTON: [f32; 2] = [WIDTH - 18.0, 4.0];
 const TAB_MESSAGES: [usize; 2] = [1291, 1292];
 /// The line over the input bar.
 const FRAME_LINE: [u8; 4] = [142, 142, 142, 0xFF];
@@ -294,8 +291,11 @@ pub struct Assets {
     input: Texture,
     list: Texture,
     base: Texture,
-    /// The stick, battle-option and option buttons after the tabs: normal and pressed.
-    functions: Vec<[Texture; 2]>,
+    /// Remove tab, add tab, tear-off and tab settings: each normal and pressed.
+    remove_tab: [Texture; 2],
+    add_tab: [Texture; 2],
+    tear: [Texture; 2],
+    tab_settings: [Texture; 2],
     /// The lock at the strip's right: locked and not.
     lock: [Texture; 2],
     dark: Texture,
@@ -325,13 +325,11 @@ impl Assets {
             input: image("dialog_bg"),
             list: image("dialog_btn0"),
             base: image("sys_base_off"),
-            // ponytail: _a is the normal look and _b the pressed one; this data has no battle_option.bmp for the third,
-            // so it takes battle_option2.
-            functions: vec![
-                [image("stickoff_a"), image("stickoff_b")],
-                [image("battle_option_a"), image("battle_option_b")],
-                [image("battle_option2_a"), image("battle_option2_b")],
-            ],
+            // ponytail: _a is the normal look and _b the pressed one.
+            remove_tab: [image("wnd_mini_a"), image("wnd_mini_b")],
+            add_tab: [image("battle_option_a"), image("battle_option_b")],
+            tear: [image("stickoff_a"), image("stickoff_b")],
+            tab_settings: [image("battle_option2_a"), image("battle_option2_b")],
             lock: [image("lock_dragwnd"), image("unlock_dragwnd")],
             dark: gpu.solid(DARK),
             darker: gpu.solid(DARKER),
@@ -356,7 +354,15 @@ impl Assets {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Hit {
     Tab(usize),
+    /// Remove a tab. Drawn and pressed; the client keeps its two tabs.
+    // ponytail: nothing to remove until tabs can be added.
+    RemoveTab,
+    /// Add a tab. Drawn and pressed; the client keeps its two tabs.
+    // ponytail: nothing to add until tabs can be added.
+    AddTab,
+    /// Tear the tab off the bottom of the screen (back to the corner, here).
     Stick,
+    /// Tab settings.
     Options,
     Lock,
     /// The bare window outside the top row (the margins beside the log): it drags the window, unlocked.
@@ -377,6 +383,33 @@ pub enum Hit {
     Name,
     Message,
     Log,
+}
+
+/// One button of the top row: where it sits, how big it is, and the driver's name for it.
+struct RowButton {
+    hit: Hit,
+    x: f32,
+    size: [f32; 2],
+    name: &'static str,
+}
+
+const fn row_button(hit: Hit, x: f32, width: f32, height: f32, name: &'static str) -> RowButton {
+    RowButton { hit, x, size: [width, height], name }
+}
+
+/// Unlocked, right to left from the lock: remove, add, tear-off, settings, the chat-mode icon.
+const OPEN_ROW: [RowButton; 5] = [
+    row_button(Hit::RemoveTab, 570.0, 8.0, 8.0, "chat_remove_tab"),
+    row_button(Hit::AddTab, 560.0, 8.0, 8.0, "chat_add_tab"),
+    row_button(Hit::Stick, 544.0, 14.0, 9.0, "chat_stick"),
+    row_button(Hit::Options, 533.0, 9.0, 9.0, "chat_options"),
+    row_button(Hit::ModeIcon, 517.0, 14.0, 9.0, "chat_mode"),
+];
+/// Locked: only tab settings, then the icon.
+const LOCKED_ROW: [RowButton; 2] = [row_button(Hit::Options, 569.0, 9.0, 9.0, "chat_options"), row_button(Hit::ModeIcon, 553.0, 14.0, 9.0, "chat_mode")];
+
+fn top_row(locked: bool) -> &'static [RowButton] {
+    if locked { &LOCKED_ROW } else { &OPEN_ROW }
 }
 
 pub struct Chat {
@@ -571,9 +604,6 @@ impl Chat {
                 Hit::Message
             });
         }
-        if self.step() > 0 && self.mode_icon.is_some() && on(MODE_ICON.0, MODE_ICON.1) && (1.0..=13.0).contains(&local[1]) {
-            return Some(Hit::ModeIcon);
-        }
         if self.step() > 0 && on(RESIZE.0, RESIZE.1) {
             return Some(Hit::Resize);
         }
@@ -588,18 +618,24 @@ impl Chat {
             });
         }
         if local[1] < TAB_HEIGHT {
-            let small = [14.0, 14.0];
-            return Some(if let Some(tab) = (0..2).find(|&tab| on([tab as f32 * TAB_WIDTH, 0.0], [TAB_WIDTH, TAB_HEIGHT])) {
-                Hit::Tab(tab)
-            } else if on(FUNCTION_BUTTONS[0], small) {
-                Hit::Stick
-            } else if on(FUNCTION_BUTTONS[1], small) || on(FUNCTION_BUTTONS[2], small) {
-                Hit::Options
-            } else if on(LOCK_BUTTON, small) {
-                Hit::Lock
-            } else {
-                Hit::TopRow
-            });
+            if let Some(tab) = (0..2).find(|&tab| on([tab as f32 * TAB_WIDTH, 0.0], [TAB_WIDTH, TAB_HEIGHT])) {
+                return Some(Hit::Tab(tab));
+            }
+            let on_row = (1.0..=13.0).contains(&local[1]);
+            if on_row && local[0] > LOCK_AT[0] && local[0] < LOCK_AT[0] + LOCK_HIT[0] {
+                return Some(Hit::Lock);
+            }
+            for button in top_row(self.locked) {
+                let hit = if button.hit == Hit::ModeIcon {
+                    self.mode_icon.is_some() && on_row && (button.x..button.x + button.size[0]).contains(&local[0])
+                } else {
+                    on([button.x, 4.0], button.size)
+                };
+                if hit {
+                    return Some(button.hit);
+                }
+            }
+            return Some(Hit::TopRow);
         }
         Some(if on(LOG_BOX, [LOG_WIDTH, bar - LOG_BOX[1]]) {
             Hit::Log
@@ -625,19 +661,16 @@ impl Chat {
             ("chat_size", area([SIZE_BUTTON[0], bar + SIZE_BUTTON[1]], BUTTON_SIZE)),
         ];
         if self.step() > 0 {
-            let small = [14.0, 14.0];
             boxes.extend([
                 ("chat_tab_0", area([0.0, 0.0], [TAB_WIDTH, TAB_HEIGHT])),
                 ("chat_tab_1", area([TAB_WIDTH, 0.0], [TAB_WIDTH, TAB_HEIGHT])),
-                ("chat_stick", area(FUNCTION_BUTTONS[0], small)),
-                ("chat_options", area(FUNCTION_BUTTONS[2], small)),
-                ("chat_lock", area(LOCK_BUTTON, small)),
+                ("chat_lock", area(LOCK_AT, LOCK_HIT)),
                 ("chat_strip", area([0.0, TOP_ROW + 4.0], [LOG_BOX[0] - 1.0, 12.0])),
-                ("chat_mode", area(MODE_ICON.0, MODE_ICON.1)),
                 ("chat_resize", area([RESIZE.0[0] + 300.0, RESIZE.0[1]], [100.0, RESIZE.1[1]])),
                 ("chat_scroll_up", area(self.scrollbar_corner(), [SCROLLBAR, ARROW])),
                 ("chat_scroll_down", area([self.scrollbar_corner()[0], LOG_BOX[1] + self.log_height() - ARROW], [SCROLLBAR, ARROW])),
             ]);
+            boxes.extend(top_row(self.locked).iter().map(|button| (button.name, area([button.x, 4.0], button.size))));
         }
         boxes
     }
@@ -897,8 +930,10 @@ impl Chat {
             Some(Hit::ScrollDown) => self.scroll_by(1),
             Some(Hit::Track(above)) => self.page(!above, false),
             Some(Hit::Tab(tab)) => self.tab = tab,
-            // ponytail: "stick" puts the window back at the screen's bottom left.
-            Some(Hit::Stick) => self.corner = None,
+            // Add and remove tab are drawn; the client keeps its two tabs.
+            Some(Hit::RemoveTab | Hit::AddTab) => {}
+            // Tear-off puts the window back at the screen's bottom left. Locked, the button isn't there.
+            Some(Hit::Stick) if !self.locked => self.corner = None,
             Some(Hit::Options) => self.settings = if self.settings.is_some() { None } else { Some(Settings::new(self.tab)) },
             Some(Hit::Lock) => self.locked = !self.locked,
             Some(Hit::Size) => self.cycle_size(),
@@ -1026,21 +1061,13 @@ impl Chat {
         let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, kinds_text(&kinds)));
     }
 
-    /// The recent-name list next to the whisper name box is open.
-    pub fn whisper_list_open(&self) -> bool {
-        self.list_open
-    }
-
-    /// Closes the recent-name list.
-    pub fn close_whisper_list(&mut self) {
-        self.list_open = false;
-    }
-
-    /// Closes the battle-mode line: the typed text stays in the box until a key no shortcut takes.
+    /// Closes the battle-mode line: the typed text stays in the box until a key no shortcut takes, and the
+    /// whisper-name list goes with the line.
     pub fn close_battle_line(&mut self) {
         self.preedit.clear();
         self.naming = false;
         self.stale = !self.input.is_empty();
+        self.list_open = false;
     }
 
     /// The line opened again: what was typed is kept.
@@ -1089,18 +1116,28 @@ impl Chat {
                 layer.texts.push((label.to_owned(), [x + 1.0, top + 2.0], [0, 0, 0]));
                 layer.texts.push((label.to_owned(), [x, top + 1.0], [255; 3]));
             }
-            // The buttons after the tabs: the options one pressed while the settings are open.
-            for (index, (images, corner)) in assets.functions.iter().zip(FUNCTION_BUTTONS).enumerate() {
-                let pressed = (index == 0 && self.corner.is_none()) || (index > 0 && self.settings.is_some());
+            // The row, right to left from the lock. Locking leaves only tab settings and moves the icon.
+            for button in top_row(self.locked) {
+                let images = match button.hit {
+                    Hit::RemoveTab => &assets.remove_tab,
+                    Hit::AddTab => &assets.add_tab,
+                    Hit::Stick => &assets.tear,
+                    Hit::Options => &assets.tab_settings,
+                    Hit::ModeIcon => {
+                        if let Some(open) = self.mode_icon {
+                            let icon = &assets.mode_icon[usize::from(!open)];
+                            layer.sprites.push((icon, at([button.x, 4.0]), button.size));
+                        }
+                        continue;
+                    }
+                    _ => continue,
+                };
+                let pressed = (button.hit == Hit::Stick && self.corner.is_none()) || (button.hit == Hit::Options && self.settings.is_some());
                 let image = &images[usize::from(pressed)];
-                layer.sprites.push((image, at(corner), image.size));
+                layer.sprites.push((image, at([button.x, 4.0]), image.size));
             }
             let lock = &assets.lock[usize::from(!self.locked)];
-            layer.sprites.push((lock, at(LOCK_BUTTON), lock.size));
-            if let Some(open) = self.mode_icon {
-                let icon = &assets.mode_icon[usize::from(!open)];
-                layer.sprites.push((icon, at(MODE_ICON.0), MODE_ICON.1));
-            }
+            layer.sprites.push((lock, at(LOCK_AT), lock.size));
 
             // The log: translucent black between white edges, newest line at the bottom.
             let corner = at(LOG_BOX);
@@ -1193,7 +1230,9 @@ pub struct Settings {
 const SETTINGS_WIDTH: f32 = 200.0;
 const SETTINGS_ROW: f32 = 18.0;
 const SETTINGS_TOP: f32 = TITLE_HEIGHT + 6.0;
-const SETTINGS_HEIGHT: f32 = SETTINGS_TOP + Kind::ALL.len() as f32 * SETTINGS_ROW + 8.0;
+/// The kinds the settings window lists. Party search stays a kind; the game skips that row.
+const SETTINGS_KINDS: [Kind; 8] = [Kind::Public, Kind::Own, Kind::Whisper, Kind::Party, Kind::Guild, Kind::Clan, Kind::Battle, Kind::System];
+const SETTINGS_HEIGHT: f32 = SETTINGS_TOP + SETTINGS_KINDS.len() as f32 * SETTINGS_ROW + 8.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SettingsHit {
@@ -1215,12 +1254,16 @@ impl Settings {
             return Some(SettingsHit::Title(hit));
         }
         let row = ((local[1] - SETTINGS_TOP) / SETTINGS_ROW).floor();
-        Some(if local[1] >= SETTINGS_TOP && (row as usize) < Kind::ALL.len() { SettingsHit::Kind(Kind::ALL[row as usize]) } else { SettingsHit::Window })
+        Some(if local[1] >= SETTINGS_TOP && (row as usize) < SETTINGS_KINDS.len() {
+            SettingsHit::Kind(SETTINGS_KINDS[row as usize])
+        } else {
+            SettingsHit::Window
+        })
     }
 
     /// Each kind's row on screen (for the test driver), named "tab_<kind>".
     pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
-        Kind::ALL
+        SETTINGS_KINDS
             .iter()
             .enumerate()
             .map(|(row, kind)| {
@@ -1242,7 +1285,7 @@ impl Settings {
             layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, SETTINGS_HEIGHT - TITLE_HEIGHT]));
         }
         layer.sprites.push((&chrome.border, at([0.0, SETTINGS_HEIGHT - 1.0]), [SETTINGS_WIDTH, 1.0]));
-        for (row, kind) in Kind::ALL.iter().enumerate() {
+        for (row, kind) in SETTINGS_KINDS.iter().enumerate() {
             let mark = if kinds.contains(kind) { "■" } else { "□" };
             layer.texts.push((format!("{mark} {}", kind.label(messages)), at([8.0, SETTINGS_TOP + row as f32 * SETTINGS_ROW]), [0, 0, 0]));
         }
@@ -1299,6 +1342,8 @@ pub enum Command {
     Zoom,
     /// /noctrl, /nc: a click on a monster keeps attacking without Ctrl, on or off.
     NoCtrl,
+    /// /skillfail, /sf: the red lines for some skill failures, on or off.
+    SkillFail,
     /// /snap, /itemsnap, /skillsnap: the cursor jumps to the middle of a monster, of an item, or of a monster while
     /// aiming a skill; each on or off.
     Snap,
@@ -1349,6 +1394,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/emblem" => Command::Emblem,
         "/notrade" | "/nt" => Command::NoTrade,
         "/noctrl" | "/nc" => Command::NoCtrl,
+        "/skillfail" | "/sf" => Command::SkillFail,
         "/snap" => Command::Snap,
         "/itemsnap" => Command::ItemSnap,
         "/skillsnap" => Command::SkillSnap,
@@ -1433,7 +1479,6 @@ mod tests {
         assert_eq!(local(LIST_BUTTON), [97.0, h - 21.0]);
         assert_eq!((local(MESSAGE_BOX.0), MESSAGE_BOX.1), ([110.0, h - 20.0], [460.0, 16.0]));
         assert_eq!([local(SEND_TO_BUTTON), local(SIZE_BUTTON)], [[572.0, h - 17.0], [586.0, h - 17.0]]);
-        assert_eq!(FUNCTION_BUTTONS, [[224.0, 4.0], [239.0, 5.0], [254.0, 5.0]]);
         // The boxes take the caret, the size button the size, the receiving group turns.
         let mut chat = fresh();
         chat.click([50.0, screen()[1] - 12.0]);
@@ -1456,7 +1501,7 @@ mod tests {
         };
         // An empty list says so.
         assert_eq!(chat.click(middle(&chat, "whisper_list")), Some(NO_WHISPER_LIST));
-        assert!(!chat.whisper_list_open());
+        assert!(!chat.list_open);
         // Names go at the end, once each; a received whisper doesn't fill the box.
         chat.whispered_by("Drops");
         chat.note_recent("Poring");
@@ -1464,7 +1509,7 @@ mod tests {
         assert_eq!(chat.recent, ["Drops", "Poring"]);
         assert_eq!(chat.whisper, "");
         assert_eq!(chat.click(middle(&chat, "whisper_list")), None);
-        assert!(chat.whisper_list_open());
+        assert!(chat.list_open);
         let names: Vec<String> = chat.list_boxes().into_iter().skip(1).map(|(name, _)| name).collect();
         assert_eq!(names, ["recent:Drops", "recent:Poring", "recent:"]);
         // 112 wide, its bottom one pixel over the input bar's top, at x 1.
@@ -1472,7 +1517,7 @@ mod tests {
         assert_eq!([x, y + h, w], [1.0, screen()[1] - INPUT_HEIGHT + 1.0, 112.0]);
         chat.click(middle(&chat, "recent:Poring"));
         assert_eq!(chat.whisper, "Poring");
-        assert!(!chat.whisper_list_open());
+        assert!(!chat.list_open);
         // The blank row empties the box; at most five rows, the newest.
         chat.click(middle(&chat, "whisper_list"));
         chat.click(middle(&chat, "recent:"));
@@ -1639,25 +1684,42 @@ mod tests {
     #[test]
     fn shows_the_battle_mode_icon_and_keeps_text_esc_left() {
         let mut chat = fresh();
-        let icon = |chat: &Chat, local: [f32; 2]| chat.hit([local[0], top(chat) + local[1]]);
-        assert_eq!(MODE_ICON, ([554.0, 4.0], [14.0, 9.0]));
-        // Out of battle mode there is nothing there; in it, the icon takes presses at y 4 to 13.
-        assert_ne!(icon(&chat, [560.0, 8.0]), Some(Hit::ModeIcon));
+        let at = |chat: &Chat, local: [f32; 2]| [local[0], top(chat) + local[1]];
+        let x_of = |chat: &Chat, name: &str| chat.button_boxes().into_iter().find(|(button, _)| *button == name).map(|(_, box_)| box_[0]);
+        // Unlocked, right to left from the lock: remove, add, tear-off, settings, icon.
+        assert_eq!(
+            ["chat_remove_tab", "chat_add_tab", "chat_stick", "chat_options", "chat_mode", "chat_lock"].map(|name| x_of(&chat, name)),
+            [Some(570.0), Some(560.0), Some(544.0), Some(533.0), Some(517.0), Some(580.0)]
+        );
+        // Locking leaves only settings and moves the icon.
+        chat.locked = true;
+        assert_eq!(["chat_options", "chat_mode", "chat_remove_tab", "chat_stick"].map(|name| x_of(&chat, name)), [Some(569.0), Some(553.0), None, None]);
+        chat.locked = false;
+        // Out of battle mode the icon's place is empty; in it, (518, 5) hits it unlocked and (554, 5) locked.
+        assert_ne!(chat.hit(at(&chat, [518.0, 5.0])), Some(Hit::ModeIcon));
         chat.mode_icon = Some(true);
-        assert_eq!(icon(&chat, [560.0, 8.0]), Some(Hit::ModeIcon));
-        assert_ne!(icon(&chat, [560.0, 14.0]), Some(Hit::ModeIcon));
-        assert!(chat.button_boxes().iter().any(|(name, _)| *name == "chat_mode"));
+        assert_eq!(chat.hit(at(&chat, [518.0, 5.0])), Some(Hit::ModeIcon));
+        assert_ne!(chat.hit(at(&chat, [518.0, 14.0])), Some(Hit::ModeIcon));
+        chat.locked = true;
+        assert_eq!(chat.hit(at(&chat, [554.0, 5.0])), Some(Hit::ModeIcon));
+        assert_ne!(chat.hit(at(&chat, [518.0, 5.0])), Some(Hit::ModeIcon));
         // Not while the log is down to the input bar.
+        chat.locked = false;
         chat.size = 0;
-        assert_eq!(chat.hit([560.0, top(&chat) + 8.0]), Some(Hit::Message));
-        // Esc keeps "abc"; opening again keeps it; a key on the closed line empties it.
+        assert_eq!(chat.hit(at(&chat, [518.0, 5.0])), Some(Hit::Message));
+        // Esc keeps "abc" and closes the whisper list; opening again keeps the text; a key on the closed line empties it.
         chat.input = "abc".into();
+        chat.note_recent("Ann");
+        chat.click(at(&chat, [LIST_BUTTON[0] + 1.0, chat.height() - INPUT_HEIGHT + LIST_BUTTON[1] + 1.0]));
+        assert!(chat.list_open);
         chat.close_battle_line();
+        assert!(!chat.list_open);
         chat.reopened();
         assert_eq!(chat.input, "abc");
         chat.close_battle_line();
         chat.drop_stale();
         assert_eq!(chat.input, "");
+        assert!(Settings::new(0).button_boxes().iter().all(|(name, _)| name != "tab_party_search"));
     }
 
     #[test]
@@ -1779,6 +1841,7 @@ mod tests {
         assert_eq!(command("/emblem"), Some(Command::Emblem));
         assert_eq!([command("/notrade"), command("/nt")], [Some(Command::NoTrade), Some(Command::NoTrade)]);
         assert_eq!([command("/noctrl"), command("/nc")], [Some(Command::NoCtrl), Some(Command::NoCtrl)]);
+        assert_eq!([command("/skillfail"), command("/sf")], [Some(Command::SkillFail), Some(Command::SkillFail)]);
         assert_eq!([command("/snap"), command("/itemsnap"), command("/skillsnap")], [Some(Command::Snap), Some(Command::ItemSnap), Some(Command::SkillSnap)]);
         assert_eq!(command("/camera"), Some(Command::Camera));
         assert_eq!(command("/zoom"), Some(Command::Zoom));

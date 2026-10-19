@@ -385,6 +385,7 @@ impl App {
                     cooldown_line: self.messages.get(COOLDOWN_REFUSED).cloned().unwrap_or_default(),
                     effects: effects::Effects::default(),
                     deal_choice: None,
+                    deal_frame: window::Frame::new(shop::deal_box_position(), shop::DEAL_SIZE[0]),
                     shop: None,
                     deal_confirm: None,
                     shop_asked: None,
@@ -535,6 +536,7 @@ impl App {
                     companion_mark: None,
                     camera_snap: settings_path("camerasnap").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     no_ctrl: settings_path("noctrl").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
+                    skill_fail: settings_path("skillfail").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
                     snaps: Snaps::load(),
                     cursor_at: [-1.0; 2],
                     attack: None,
@@ -1373,7 +1375,7 @@ impl App {
                 // The mirror's status ends with the warp.
                 game.boss = None;
                 game.materials = None;
-                game.deal_choice = None;
+                game.close_deal_choice();
                 game.attack = None;
                 // The merge window closes without a word.
                 if matches!(game.pick, Some((_, Picking::Merge))) {
@@ -3505,34 +3507,20 @@ impl App {
                 game.casts.remove(&caster);
                 game.cast_squares.remove(&caster);
             }
-            MapEvent::SkillFailed { skill, detail, cause, .. } => {
-                game.casts.remove(&None);
-                // The client's messages for why: a skill's own reason, else the general cause.
-                let by_skill = (detail != 0).then(|| match skill {
-                    1 if detail < 7 => 159 + detail as usize,
-                    1 if detail == 7 => 383,
-                    27 => 214,
-                    50 => 205,
-                    52 => 207,
-                    _ => 204,
-                });
-                let by_cause = match cause {
-                    1 => Some(202),
-                    2 => Some(203),
-                    3 => Some(808),
-                    4 => Some(219),
-                    5 => Some(233),
-                    6 => Some(239),
-                    7 => Some(246),
-                    8 => Some(247),
-                    9 => Some(580),
-                    10 => Some(285),
-                    13 => Some(1398),
-                    83 => Some(661),
-                    _ => None,
-                };
-                if let Some(id) = by_cause.or(by_skill) {
-                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+            // Why the server refused a skill, in red. The cast bar and the cast square stay.
+            MapEvent::SkillFailed { skill, detail, item, cause, .. } => {
+                let skill_name = self.skill_info.get(&skill).map_or_else(|| skill.to_string(), |info| info.name.clone());
+                let item_name = self.items.get(&item).map_or_else(|| item.to_string(), |info| info.name(true).to_owned());
+                for (id, fill) in skills::refusal_lines(skill, detail, cause, game.skill_fail) {
+                    let Some(template) = self.messages.get(id).filter(|template| !template.is_empty()) else { continue };
+                    let line = match fill {
+                        skills::Fill::Nothing => template.clone(),
+                        skills::Fill::Skill => messages::fill(template, &[&skill_name]),
+                        skills::Fill::Item => messages::fill(template, &[&item_name]),
+                        skills::Fill::ItemCount(count) => messages::fill(template, &[&item_name, &count]),
+                        skills::Fill::Number(number) => messages::fill(template, &[&number]),
+                    };
+                    game.chat_line(line, CHAT_ERROR);
                 }
             }
             // A pushcart comes and goes as a status, its type the status's value.
@@ -3771,9 +3759,10 @@ impl App {
             MapEvent::DealChoice { npc } => {
                 game.dismiss_dialog();
                 game.deal_choice = Some(npc);
+                game.deal_frame.open = true;
                 // Dev switch: answer at once.
                 if let Ok(deal) = std::env::var("RUSTNAROK_CLIENT_DEAL") {
-                    game.deal_choice = None;
+                    game.close_deal_choice();
                     let _ = game.session.choose_deal(npc, deal.starts_with("sell"));
                 }
             }

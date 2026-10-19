@@ -1,4 +1,4 @@
-//! Shortcuts between keys and actions. Defaults come from `hotkey_v2.lub`; `UserKeys.lua` replaces a row.
+//! Shortcuts between keys and actions. Defaults come from `hotkey.lub`; `UserKeys.lua` replaces a row.
 //!
 //! `action` is the whole check: one key event in, the action to fire or none.
 
@@ -121,6 +121,8 @@ pub struct KeyEvent<'a> {
     /// Tab held down (not the Tab press itself).
     pub tab: bool,
     pub repeat: bool,
+    /// The key pressed last. A repeat fires only when it is this key.
+    pub last: Option<&'a Key>,
     /// A text box has the caret.
     pub text_focus: bool,
     /// The hotbar showing (1 or 2): only its slot keys fire.
@@ -129,11 +131,13 @@ pub struct KeyEvent<'a> {
 
 /// The action this key press should fire, or none.
 ///
-/// An auto-repeated key-down (`repeat`) never fires. While a text box has focus, only Tab, Enter,
-/// Shift, Ctrl, Alt, Caps Lock, Insert, F1–F12, any Alt combination, and Ctrl combinations other
-/// than Ctrl+A/C/V/X are considered. One modifier counts: Alt, then Shift, then Ctrl.
+/// An auto-repeat fires again only for the key pressed last. Esc, Enter and Print Screen still ignore
+/// repeats. While a text box has focus, only Tab, Enter, Shift, Ctrl, Alt, Caps Lock, Insert, F1–F12,
+/// any Alt combination, and Ctrl combinations other than Ctrl+A/C/V/X are considered. One modifier
+/// counts: Alt, then Shift, then Ctrl.
 pub fn action(shortcuts: &Shortcuts, event: &KeyEvent<'_>) -> Option<Action> {
-    if event.repeat || !reaches(event) {
+    let quiet = matches!(event.key, Key::Named(NamedKey::Escape | NamedKey::Enter | NamedKey::PrintScreen));
+    if event.repeat && (quiet || event.last != Some(event.key)) || !reaches(event) {
         return None;
     }
     let modifier = counted_modifier(event);
@@ -209,7 +213,7 @@ impl Shortcuts {
         self.bindings.iter().any(|binding| binding.action == Action::Inventory && binding.key.is_some())
     }
 
-    /// The game's usual defaults, used when hotkey_v2.lub can't be read.
+    /// The game's usual defaults, used when hotkey.lub can't be read.
     pub fn builtin() -> Self {
         Self::from_lua(DEFAULTS).unwrap_or_else(|_| Self { bindings: Vec::new() })
     }
@@ -679,7 +683,7 @@ fn exe_action(exe: &str, table: u8, index: u16) -> Action {
     if name.contains("EXE") || name.contains("COMMAND") {
         return Action::Commands;
     }
-    // ponytail: the friend-setup row in hotkey_v2.lub isn't identified. A name with FRIEND and SETUP opens
+    // ponytail: the friend-setup row in hotkey.lub isn't identified. A name with FRIEND and SETUP opens
     // the two checkboxes until that row is known.
     if name.contains("FRIEND") && name.contains("SETUP") {
         return Action::FriendSetup;
@@ -704,6 +708,10 @@ fn exe_action(exe: &str, table: u8, index: u16) -> Action {
     }
     if name.contains("SKILL") {
         return Action::Skills;
+    }
+    // ponytail: hide-player and equipment properties have no window yet. Before EQUIP, which would take the second.
+    if name.contains("HIDE_PLAYER") || name.contains("EQUIPMENT_PROPERTIES") {
+        return Action::Unused;
     }
     if name.contains("EQUIP") {
         return Action::Equipment;
@@ -818,9 +826,9 @@ pub fn chord(key: ShortcutKey, modifier: Modifier) -> String {
     }
 }
 
-/// The usual defaults, in the shape of hotkey_v2.lub, for a grf that doesn't have the file.
+/// The usual defaults, in the shape of hotkey.lub, for a grf that doesn't have the file.
 /// ponytail: the newer rows (clan, bank, status, rotate, tip, costume, party board, hunting) use the
-/// MSI_HK_ names and the keys from the issue; a hotkey_v2.lub in the data replaces this whole list.
+/// MSI_HK_ names and the keys from the issue; a hotkey.lub in the data replaces this whole list.
 const DEFAULTS: &str = r#"
 HOTKEY_1 = {
     [0] = { EXE = "MSI_HK_SKILLBAR1_1", KEY1 = 112 },
@@ -899,6 +907,9 @@ HOTKEY_2 = {
     [40] = { EXE = "MSI_HK_TIPWND_ONOFF", KEY1 = 68, KEY2 = 18 },
     [41] = { EXE = "MSI_HK_COSTUMEWND_ONOFF", KEY1 = 88, KEY2 = 18 },
     [42] = { EXE = "MSI_HK_HUNTINGWND_ONOFF", KEY1 = 72, KEY2 = 17 },
+    [43] = { EXE = "MSI_HK_HIDE_PLAYER", KEY1 = 35, KEY2 = 17 },
+    [44] = { EXE = "MSI_HK_REPUTE" },
+    [45] = { EXE = "MSI_HK_EQUIPMENT_PROPERTIES", KEY1 = 81, KEY2 = 17 },
 }
 HOTKEY_3 = {
     [0] = { EXE = "MSI_HK_MACRO_1", KEY1 = 49, KEY2 = 18 },
@@ -989,7 +1000,7 @@ mod tests {
     }
 
     fn fire(shortcuts: &Shortcuts, key: &Key, alt: bool, shift: bool, ctrl: bool, repeat: bool, text_focus: bool) -> Option<Action> {
-        fire_at(shortcuts, key, None, alt, shift, ctrl, repeat, text_focus)
+        fire_at(shortcuts, key, None, alt, shift, ctrl, repeat, text_focus, None)
     }
 
     fn fire_at(
@@ -1001,8 +1012,9 @@ mod tests {
         ctrl: bool,
         repeat: bool,
         text_focus: bool,
+        last: Option<&Key>,
     ) -> Option<Action> {
-        action(shortcuts, &KeyEvent { key, physical, alt, shift, ctrl, tab: false, repeat, text_focus, bar: 1 })
+        action(shortcuts, &KeyEvent { key, physical, alt, shift, ctrl, tab: false, repeat, last, text_focus, bar: 1 })
     }
 
     #[test]
@@ -1032,6 +1044,7 @@ mod tests {
             ctrl,
             tab,
             repeat: false,
+            last: None,
             text_focus: false,
             bar: 1,
         };
@@ -1050,15 +1063,36 @@ mod tests {
     fn a_text_box_keeps_shifted_keys() {
         let shortcuts = sample();
         let f1 = Key::Named(NamedKey::F1);
-        let typing =
-            |alt: bool, shift: bool, ctrl: bool| KeyEvent { key: &f1, physical: None, alt, shift, ctrl, tab: false, repeat: false, text_focus: true, bar: 1 };
+        let typing = |alt: bool, shift: bool, ctrl: bool| KeyEvent {
+            key: &f1,
+            physical: None,
+            alt,
+            shift,
+            ctrl,
+            tab: false,
+            repeat: false,
+            last: None,
+            text_focus: true,
+            bar: 1,
+        };
         // No modifier: F-keys still reach shortcuts; Shift: nothing does; Ctrl: all but A, C, V and X; Alt: all.
         assert!(reaches(&typing(false, false, false)));
         assert!(!reaches(&typing(false, true, false)));
         assert_eq!(action(&shortcuts, &typing(false, true, false)), None);
         assert!(reaches(&typing(false, false, true)) && reaches(&typing(true, true, false)));
         let c = Key::Character("c".into());
-        assert!(!reaches(&KeyEvent { key: &c, physical: None, alt: false, shift: false, ctrl: true, tab: false, repeat: false, text_focus: true, bar: 1 }));
+        assert!(!reaches(&KeyEvent {
+            key: &c,
+            physical: None,
+            alt: false,
+            shift: false,
+            ctrl: true,
+            tab: false,
+            repeat: false,
+            last: None,
+            text_focus: true,
+            bar: 1
+        }));
     }
 
     #[test]
@@ -1155,13 +1189,21 @@ mod tests {
     }
 
     #[test]
-    fn a_repeated_keydown_does_not_fire() {
+    fn a_repeat_of_the_last_key_fires() {
         let shortcuts = Shortcuts::builtin();
         let f1 = Key::Named(NamedKey::F1);
-        assert_eq!(fire(&shortcuts, &f1, false, false, false, true, false), None);
+        let f2 = Key::Named(NamedKey::F2);
+        let again = |key: &Key, last: Option<&Key>| fire_at(&shortcuts, key, None, false, false, false, true, false, last);
+        // The first press fires. A repeat of that key fires again; a repeat of one still held does not.
         assert_eq!(fire(&shortcuts, &f1, false, false, false, false, false), Some(Action::Hotbar { bar: 1, slot: 0 }));
-        // Pressing again, not a repeat, fires at once.
-        assert_eq!(fire(&shortcuts, &f1, false, false, false, false, true), Some(Action::Hotbar { bar: 1, slot: 0 }));
+        assert_eq!(again(&f1, Some(&f1)), Some(Action::Hotbar { bar: 1, slot: 0 }));
+        assert_eq!(again(&f2, Some(&f1)), None);
+        assert_eq!(again(&f1, None), None);
+        // Esc, Enter and Print Screen ignore repeats even when they were pressed last.
+        let enter = Key::Named(NamedKey::Enter);
+        let bound = Shortcuts::from_lua(r#"HOTKEY_2 = { [9] = { EXE = "MSI_HK_ITEMWND_ONOFF", KEY1 = 13 } }"#).unwrap();
+        assert_eq!(fire(&bound, &enter, false, false, false, false, false), Some(Action::Inventory));
+        assert_eq!(fire_at(&bound, &enter, None, false, false, false, true, false, Some(&enter)), None);
     }
 
     #[test]
@@ -1189,6 +1231,36 @@ mod tests {
         assert_eq!(fire(&shortcuts, &insert, false, false, false, false, true), Some(Action::Sit));
         let shot = Key::Named(NamedKey::PrintScreen);
         assert_eq!(fire(&shortcuts, &shot, false, false, false, false, true), Some(Action::Screenshot));
+    }
+
+    #[test]
+    fn reads_hotkey_lub_tables() {
+        // hotkey.lub: 1 hotbar 1, 2 interface, 3 macros, 4 hotbar 2. Inventory is Alt+E; hotbar 2 takes HOTKEY_4.
+        let mut shortcuts = Shortcuts::from_lua(
+            r#"
+            HOTKEY_1 = { [0] = { EXE = "MSI_HK_SKILLBAR1_1", KEY1 = 112 } }
+            HOTKEY_2 = {
+                [9] = { EXE = "MSI_HK_ITEMWND_ONOFF", KEY1 = 69, KEY2 = 18 },
+                [43] = { EXE = "MSI_HK_HIDE_PLAYER", KEY1 = 35, KEY2 = 17 },
+                [44] = { EXE = "MSI_HK_REPUTE" },
+                [45] = { EXE = "MSI_HK_EQUIPMENT_PROPERTIES", KEY1 = 81, KEY2 = 17 },
+            }
+            HOTKEY_4 = { [0] = { EXE = "MSI_HK_SKILLBAR5_1", KEY1 = 49 } }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(shortcuts.labels()["inventory"], "Alt+E");
+        assert_eq!(shortcuts.labels()["hotbar_2_1"], "1");
+        let properties = shortcuts.bindings().iter().find(|binding| binding.exe.contains("EQUIPMENT_PROPERTIES")).unwrap();
+        assert_eq!(properties.action, Action::Unused);
+        assert_eq!(shortcuts.bindings().iter().find(|binding| binding.exe.contains("HIDE_PLAYER")).unwrap().action, Action::Unused);
+        assert_eq!(shortcuts.bindings().iter().find(|binding| binding.exe.contains("REPUTE")).unwrap().action, Action::Reputation);
+        // Ctrl+Q is taken by equipment properties, so binding it elsewhere clears that row.
+        let inventory = shortcuts.bindings().iter().position(|binding| binding.action == Action::Inventory).unwrap();
+        let properties_at = shortcuts.bindings().iter().position(|binding| binding.exe.contains("EQUIPMENT_PROPERTIES")).unwrap();
+        assert_eq!(shortcuts.holder(inventory, ShortcutKey::Char('q'), Modifier::Ctrl), Some(properties_at));
+        shortcuts.bind(inventory, Some(ShortcutKey::Char('q')), Modifier::Ctrl);
+        assert_eq!(shortcuts.bindings()[properties_at].key, None);
     }
 
     #[test]
@@ -1228,7 +1300,7 @@ mod tests {
         let on = |bar: u8| {
             action(
                 &shortcuts,
-                &KeyEvent { key: &queue, physical: None, alt: false, shift: false, ctrl: false, tab: false, repeat: false, text_focus: false, bar },
+                &KeyEvent { key: &queue, physical: None, alt: false, shift: false, ctrl: false, tab: false, repeat: false, last: None, text_focus: false, bar },
             )
         };
         assert_eq!(on(1), Some(Action::Hotbar { bar: 1, slot: 9 }));
@@ -1257,6 +1329,12 @@ mod tests {
         assert_eq!(labels["memorial"], "Alt+B");
         assert_eq!(labels["commands"], "Alt+Y");
         assert_eq!(labels["hunting"], "Ctrl+H");
+        assert_eq!(labels["MSI_HK_HIDE_PLAYER"], "Ctrl+End");
+        assert_eq!(labels["MSI_HK_EQUIPMENT_PROPERTIES"], "Ctrl+Q");
+        assert!(labels.get("MSI_HK_REPUTE").is_none());
+        let queue = Key::Character(SmolStr::new("q"));
+        assert_eq!(fire(&shortcuts, &queue, false, false, true, false, false), Some(Action::Unused));
+        assert_eq!(fire(&shortcuts, &queue, true, false, false, false, false), Some(Action::Equipment));
         let f11 = Key::Named(NamedKey::F11);
         assert_eq!(fire(&shortcuts, &f11, false, false, false, false, true), Some(Action::CloseWindows));
     }

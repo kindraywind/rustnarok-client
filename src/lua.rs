@@ -1978,8 +1978,8 @@ fn read_reform(entry: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> Option<Ref
     })
 }
 
-/// `data\luafiles514\lua files\hotkey_v2.lub`: the game's shortcut defaults.
-const HOTKEY_V2: &str = "data\\luafiles514\\lua files\\hotkey_v2.lub";
+/// `data\luafiles514\lua files\hotkey.lub`: the game's shortcut defaults.
+const HOTKEY_LUB: &str = "data\\luafiles514\\lua files\\hotkey.lub";
 
 /// One row of `HOTKEY_<n>` or `USERKEY_<n>`: the action name and the virtual-key codes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1995,12 +1995,12 @@ pub struct HotkeyRow {
     pub user: bool,
 }
 
-/// The shortcut tables in `grf`'s hotkey_v2.lub.
+/// The shortcut tables in `grf`'s hotkey.lub.
 pub fn hotkey_defaults(grf: &Grf) -> io::Result<Vec<HotkeyRow>> {
-    hotkey_bytes(&grf.read(HOTKEY_V2)?)
+    hotkey_bytes(&grf.read(HOTKEY_LUB)?)
 }
 
-/// Shortcut rows from a Lua source in the same shape as hotkey_v2.lub or UserKeys.lua.
+/// Shortcut rows from a Lua source in the same shape as hotkey.lub or UserKeys.lua.
 pub fn hotkey_rows(source: &str) -> io::Result<Vec<HotkeyRow>> {
     hotkey_bytes(source.as_bytes())
 }
@@ -2011,7 +2011,7 @@ const MSGSTRID: &str = "MsgStrID = setmetatable({}, { __index = function(_, name
 fn hotkey_bytes(bytes: &[u8]) -> io::Result<Vec<HotkeyRow>> {
     let lua = new_lua()?;
     lua.load(MSGSTRID).exec().map_err(lua_error)?;
-    exec_bytes(&lua, HOTKEY_V2, bytes.to_vec())?;
+    exec_bytes(&lua, HOTKEY_LUB, bytes.to_vec())?;
     let mut rows = Vec::new();
     for table in 1..=4 {
         rows.extend(hotkey_table(&lua, &format!("HOTKEY_{table}"), table, false)?);

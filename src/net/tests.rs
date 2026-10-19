@@ -156,6 +156,39 @@ fn decodes_character_info() {
 }
 
 #[test]
+fn reads_the_second_outfit_body() {
+    // The u16 just before the name: stand 0x09ff at 82, new 0x09fe at 81, move 0x09fd at 88.
+    let entry = |id: u16, at: usize, body: u16| {
+        let mut packet = vec![0u8; 120];
+        packet[..2].copy_from_slice(&id.to_le_bytes());
+        packet[at..at + 2].copy_from_slice(&body.to_le_bytes());
+        packet
+    };
+    let body_of = |packet: &[u8]| match decode_map_packet(packet) {
+        Some(MapEvent::Unit(unit)) => unit.body,
+        Some(MapEvent::UnitWalk { unit, .. }) => unit.body,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(body_of(&entry(ZC_NOTIFY_STANDENTRY, 82, 1)), 1);
+    assert_eq!(body_of(&entry(ZC_NOTIFY_NEWENTRY, 81, 4332)), 4332);
+    assert_eq!(body_of(&entry(ZC_NOTIFY_MOVEENTRY, 88, 4344)), 4344);
+
+    // Character list: the i16 at 88, between hair and weapon.
+    let mut info = vec![0u8; CHARACTER_INFO_SIZE];
+    info[88..90].copy_from_slice(&4332u16.to_le_bytes());
+    assert_eq!(decode_character(&info).body, 4332);
+
+    // ZC_SPRITE_CHANGE2, look type 13.
+    let mut change = ZC_SPRITE_CHANGE.to_le_bytes().to_vec();
+    change.extend(150_001u32.to_le_bytes());
+    change.push(LOOK_BODY);
+    change.extend(4332u32.to_le_bytes());
+    change.extend(0u32.to_le_bytes());
+    assert_eq!(change.len(), packet_length(ZC_SPRITE_CHANGE).unwrap() as usize);
+    assert!(matches!(decode_map_packet(&change), Some(MapEvent::LookChange { id: 150_001, kind: LOOK_BODY, value: 4332, extra: 0 })));
+}
+
+#[test]
 fn reads_reputation() {
     let mut packet = ZC_REPUTE_INFO.to_le_bytes().to_vec();
     packet.extend(0u16.to_le_bytes());
@@ -218,6 +251,18 @@ fn writes_the_room_owners_requests() {
     let kick = encode_room_kick("LaneA1");
     assert_eq!(kick.len(), packet_length(CZ_REQ_EXPEL_MEMBER).unwrap() as usize);
     assert_eq!((&kick[..2], &kick[2..8], kick[8]), (&[0xE2, 0x00][..], &b"LaneA1"[..], 0));
+}
+
+#[test]
+fn reads_a_refused_skill() {
+    // ZC_ACK_TOUSESKILL: skill, detail, the item, then ok and the cause.
+    let mut packet = ZC_ACK_TOUSESKILL.to_le_bytes().to_vec();
+    packet.extend(19u16.to_le_bytes());
+    packet.extend(7u32.to_le_bytes());
+    packet.extend(501u32.to_le_bytes());
+    packet.extend([0, 1]);
+    assert_eq!(packet.len(), packet_length(ZC_ACK_TOUSESKILL).unwrap() as usize);
+    assert!(matches!(decode_map_packet(&packet), Some(MapEvent::SkillFailed { skill: 19, detail: 7, item: 501, ok: false, cause: 1 })));
 }
 
 #[test]
