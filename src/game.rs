@@ -1728,6 +1728,15 @@ impl Game {
                 self.chat_line(line, CHAT_ITEM);
                 Ok(())
             }
+            chat::Command::SkillFail => {
+                self.skill_fail = !self.skill_fail;
+                if let Some(path) = settings_path("skillfail") {
+                    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if self.skill_fail { "1" } else { "0" }));
+                }
+                let line = messages.get(if self.skill_fail { SKILL_FAIL_ON } else { SKILL_FAIL_OFF }).cloned().unwrap_or_default();
+                self.chat_line(line, CHAT_ITEM);
+                Ok(())
+            }
             // ponytail: no line of the client's own for /notrade is known; a plain one, as /noshift prints.
             chat::Command::NoTrade => {
                 self.no_trade = !self.no_trade;

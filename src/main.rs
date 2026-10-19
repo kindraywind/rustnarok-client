@@ -1465,6 +1465,8 @@ struct Game {
     hover_block: Option<(Vec<String>, Option<[f32; 4]>)>,
     /// /noctrl: a click on a monster keeps attacking without Ctrl (saved; on unless turned off).
     no_ctrl: bool,
+    /// /skillfail: the red lines for some skill failures (saved; on unless turned off).
+    skill_fail: bool,
     /// /snap, /itemsnap, /skillsnap (saved; only /skillsnap on unless changed).
     snaps: Snaps,
     /// Where the cursor is drawn: the pointer, or the middle of what it snapped to.
@@ -3380,6 +3382,9 @@ const ALL_RIDING: u16 = 613;
 /// /noctrl's lines: on, off.
 const NO_CTRL_ON: usize = 717;
 const NO_CTRL_OFF: usize = 718;
+/// /skillfail's lines: on, off.
+const SKILL_FAIL_ON: usize = 730;
+const SKILL_FAIL_OFF: usize = 731;
 
 /// What the player is doing, as far as a pending attack goes (`Game::player_motion`).
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -1354,6 +1354,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             // The attack asked for with the mouse (null: none), kept up or only while held.
             "attack": game.attack.map(|attack| json!({"target": attack.target, "continuous": attack.continuous})),
             "no_ctrl": game.no_ctrl,
+            "skill_fail": game.skill_fail,
             // The skill being aimed (null: none), and the last one sent by aiming, at a cell or a unit.
             "aiming": game.targeting.map(|(skill, level)| json!({"skill": skill, "level": level})),
             "skill_sent": game.skill_sent.map(|(skill, level, target)| match target {

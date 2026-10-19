@@ -221,6 +221,18 @@ fn writes_the_room_owners_requests() {
 }
 
 #[test]
+fn reads_a_refused_skill() {
+    // ZC_ACK_TOUSESKILL: skill, detail, the item, then ok and the cause.
+    let mut packet = ZC_ACK_TOUSESKILL.to_le_bytes().to_vec();
+    packet.extend(19u16.to_le_bytes());
+    packet.extend(7u32.to_le_bytes());
+    packet.extend(501u32.to_le_bytes());
+    packet.extend([0, 1]);
+    assert_eq!(packet.len(), packet_length(ZC_ACK_TOUSESKILL).unwrap() as usize);
+    assert!(matches!(decode_map_packet(&packet), Some(MapEvent::SkillFailed { skill: 19, detail: 7, item: 501, ok: false, cause: 1 })));
+}
+
+#[test]
 fn reads_a_cancelled_cast() {
     let mut packet = ZC_DISPEL.to_le_bytes().to_vec();
     packet.extend(150_004u32.to_le_bytes());

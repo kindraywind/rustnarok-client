@@ -125,7 +125,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_NOTIFY_GROUNDSKILL => MapEvent::GroundSkill { skill: u16_at(2), source: u32_at(4), level: u16_at(8), cell: [u16_at(10), u16_at(12)] },
         ZC_SKILL_ENTRY => MapEvent::SkillUnit { id: u32_at(4), kind: u32_at(16), cell: [u16_at(12), u16_at(14)] },
         ZC_SKILL_DISAPPEAR => MapEvent::SkillUnitGone { id: u32_at(2) },
-        ZC_ACK_TOUSESKILL => MapEvent::SkillFailed { skill: u16_at(2), detail: u32_at(4) as i32, ok: packet[12] != 0, cause: packet[13] },
+        ZC_ACK_TOUSESKILL => MapEvent::SkillFailed { skill: u16_at(2), detail: u32_at(4) as i32, item: u32_at(8), ok: packet[12] != 0, cause: packet[13] },
         ZC_RECOVERY => MapEvent::Recovered { kind: u16_at(2), amount: u32_at(4) as i32 },
         ZC_MSG_STATE_CHANGE3 => {
             MapEvent::StatusIcon { kind: u16_at(2), id: u32_at(4), on: packet[8] != 0, total_ms: u32_at(9), left_ms: u32_at(13), value: u32_at(17) as i32 }

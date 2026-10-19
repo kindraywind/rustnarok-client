@@ -1406,11 +1406,12 @@ pub enum MapEvent {
     SkillUnitGone {
         id: u32,
     },
-    /// The player's skill didn't go off (ZC_ACK_TOUSESKILL) unless `ok`: rathena's `useskill_fail_cause`, and a
-    /// skill-specific detail (`btype`).
+    /// The player's skill didn't go off (ZC_ACK_TOUSESKILL) unless `ok`: rathena's `useskill_fail_cause`, a
+    /// skill-specific detail (`btype`) and the item it's about.
     SkillFailed {
         skill: u16,
         detail: i32,
+        item: u32,
         ok: bool,
         cause: u8,
     },
