@@ -2524,6 +2524,7 @@ impl App {
             effects: &effect_quads,
             meshes: &effect_meshes,
             time: now.duration_since(game.entered).as_secs_f32(),
+            blind: game.player.health_state & 0x10 != 0,
         };
         if let Some(path) = self.print_screen.take() {
             let _ = path.parent().map(std::fs::create_dir_all);
