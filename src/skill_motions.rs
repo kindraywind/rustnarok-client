@@ -66,6 +66,9 @@ pub fn ready_instead(job: u16) -> bool {
     JOBS.contains(&job)
 }
 
+/// Time between the hits of damage from a skill's ground unit (Storm Gust's, say), from the packet on.
+pub const UNIT_HIT_GAP_MS: u64 = 200;
+
 /// Time between a multi-hit's hits: Pierce's are 280 ms apart, the rest 200.
 pub fn hit_gap_ms(skill: u16) -> u64 {
     if skill == 56 { 280 } else { 200 }

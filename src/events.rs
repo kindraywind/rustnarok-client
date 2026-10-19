@@ -365,6 +365,7 @@ impl App {
                     progress: ProgressBar::default(),
                     opened_page: None,
                     cast_squares: HashMap::new(),
+                    skill_lands: HashMap::new(),
                     // ponytail: on at the start by the user's choice; the game starts it off.
                     ground_cursor: true,
                     ground_mark: None,
@@ -3204,34 +3205,70 @@ impl App {
             MapEvent::SkillHit { skill, level, act } => {
                 game.casts.remove(&(act.source != game.account_id).then_some(act.source));
                 let me = game.account_id;
-                let target_cell = if act.target == me { Some(game.player.cell) } else { game.units.get(&act.target).map(|actor| actor.cell) };
-                let source = if act.source == me { Some(&mut game.player) } else { game.units.get_mut(&act.source) };
-                if let Some(source) = source {
-                    if let Some(cell) = target_cell.filter(|_| act.source != act.target) {
-                        source.face(cell);
+                // Damage from a skill's unit on the ground (Storm Gust, Thunderstorm, Lord of Vermilion, Meteor Storm,
+                // Heaven's Drive): no caster to move, its own hit effect, hits from now.
+                if act.source != me && !game.units.contains_key(&act.source) && game.skill_units.contains_key(&act.source) {
+                    if act.damage != 0 {
+                        let gap = Duration::from_millis(skill_motions::UNIT_HIT_GAP_MS);
+                        game.show_hit(&act, Some(0.0), gap, HitFrom::Unit);
+                        if let (Some(gpu), Some(effect)) = (gpu, effects::unit_hit_effect(skill)) {
+                            let now = Instant::now();
+                            for hit in 0..u32::from(act.hits.max(1)) {
+                                game.play_effect_from(gpu, grf, table, effect, act.target, now + gap * hit);
+                            }
+                        }
                     }
-                    // Monsters swing as for an attack; players take the skill's motion (`skill_motion`).
-                    if source.kind != PLAYER {
-                        source.play_at_pace(actor::combat_actions(source.kind).0, Instant::now(), actor::attack_scale(act.source_speed, false), false);
-                    }
+                    return;
                 }
+                let target_cell = if act.target == me { Some(game.player.cell) } else { game.units.get(&act.target).map(|actor| actor.cell) };
                 let scale = actor::attack_scale(act.source_speed, false);
-                let hit_ms =
-                    game.skill_motion(act.source, skill, i32::from(level as i16), overhead::Shout::Hit, scale, &self.skill_info, look_tables, &self.messages);
-                // Hits land on the motion's hit frame (else after the attack motion), each `hit_gap_ms` after the last.
-                let hit_ms = hit_ms.unwrap_or(act.source_speed.max(0) as f32);
                 let gap = Duration::from_millis(skill_motions::hit_gap_ms(skill));
+                // A splash's other targets (Fire Ball's): the caster isn't touched again; one hit, no hit effects,
+                // landing with the main target's.
+                let splash = matches!(act.kind, 5 | 14) && !effects::SPLASH_FULL.contains(&skill);
+                let hit_ms = if splash {
+                    game.skill_lands
+                        .get(&act.source)
+                        .map_or(act.source_speed.max(0) as f32, |&lands| lands.saturating_duration_since(Instant::now()).as_secs_f32() * 1000.0)
+                } else {
+                    let source = if act.source == me { Some(&mut game.player) } else { game.units.get_mut(&act.source) };
+                    if let Some(source) = source {
+                        if let Some(cell) = target_cell.filter(|_| act.source != act.target) {
+                            source.face(cell);
+                        }
+                        // Monsters swing as for an attack; players take the skill's motion (`skill_motion`).
+                        if source.kind != PLAYER {
+                            source.play_at_pace(actor::combat_actions(source.kind).0, Instant::now(), scale, false);
+                        }
+                    }
+                    let hit_ms = game.skill_motion(
+                        act.source,
+                        skill,
+                        i32::from(level as i16),
+                        overhead::Shout::Hit,
+                        scale,
+                        &self.skill_info,
+                        look_tables,
+                        &self.messages,
+                    );
+                    // Hits land on the motion's hit frame (else after the attack motion), each `hit_gap_ms` after the last.
+                    let hit_ms = hit_ms.unwrap_or(act.source_speed.max(0) as f32);
+                    game.skill_lands.insert(act.source, Instant::now() + Duration::from_secs_f32(hit_ms / 1000.0));
+                    hit_ms
+                };
                 if act.damage != 0 && !(act.source == act.target && act.kind == 6) {
-                    game.show_hit(&act, Some(hit_ms), gap);
-                    // Hit by hit, as each lands: the skill's hit effects on the target. A skill the table lacks: what
-                    // comes at the target first (a bolt's arrows), then what shows as it lands.
-                    if let Some(gpu) = gpu {
+                    let hits = net::Act { hits: if splash { 1 } else { act.hits }, ..act };
+                    game.show_hit(&hits, Some(hit_ms), gap, if splash { HitFrom::Splash } else { HitFrom::Skill });
+                    // Hit by hit, as each lands: the skill's hit effects on the target; the second only with the first
+                    // hit. A skill the table lacks: what comes at the target first (a bolt's arrows), then what shows
+                    // as it lands.
+                    if let Some(gpu) = gpu.filter(|_| !splash) {
                         let now = Instant::now();
                         let lands = now + Duration::from_secs_f32(hit_ms / 1000.0);
                         for hit in 0..u32::from(act.hits.max(1)) {
                             match table.hit(skill) {
-                                Some(effects) => {
-                                    for effect in effects.into_iter().flatten() {
+                                Some([first, second]) => {
+                                    for effect in first.into_iter().chain(second.filter(|_| hit == 0)) {
                                         game.play_effect_from(gpu, grf, table, effect, act.target, lands + gap * hit);
                                     }
                                 }
@@ -3247,10 +3284,15 @@ impl App {
                         }
                     }
                 }
-                // As the packet comes: the caster's effect, and the skill's own (on the caster or the target).
+                // As the packet comes: the caster's effect (not for a splash's other targets), and the skill's own (on
+                // the caster or the target).
                 if let Some(gpu) = gpu {
-                    if let Some(effect) = table.caster(skill) {
+                    if let Some(effect) = table.caster(skill).filter(|_| !splash) {
                         game.play_effect(gpu, grf, table, effect, act.source);
+                        // A cast aura blooms on the caster again with the damage (Jupitel Thunder, Earth Spike).
+                        if effects::is_cast_aura(effect) {
+                            game.effects.bloom_aura(gpu, grf, (act.source != me).then_some(act.source), effect, Instant::now());
+                        }
                     }
                     if let Some(struck) = table.struck(skill) {
                         // Told the hit count, as the game tells them: a bolt drops an arrow a hit.

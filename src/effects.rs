@@ -808,7 +808,7 @@ struct Banded {
 }
 
 /// A cast's aura: one a caster has at a time.
-fn is_cast_aura(effect: u32) -> bool {
+pub fn is_cast_aura(effect: u32) -> bool {
     matches!(effect, 12 | 54..=59)
 }
 
@@ -1158,6 +1158,25 @@ impl Floating {
     }
 }
 
+/// Skills whose splash's other targets still get the whole hit (hit effects, the caster's pose): Napalm Beat, Arrow
+/// Shower, Asura Strike's combo finish, a Taekwon kick, and one newer one.
+// ponytail: the game's list (0xcca5b0) has a few more of the newer jobs'.
+pub const SPLASH_FULL: [u16; 5] = [11, 47, 273, 413, 732];
+
+/// The hit effect on each hit of damage from a skill's ground unit: Fire Wall's FIREHIT, Magnus Exorcismus's,
+/// Lord of Vermilion's WINDHIT, Storm Gust's and its monster version's COLDHIT, else EF_HIT1 below skill 493.
+// ponytail: the game's table goes on for higher ids (428–430, 0xa1b, 0x1461, 5219–5371); EF_HIT1 stands in below 493 only.
+pub fn unit_hit_effect(skill: u16) -> Option<u32> {
+    match skill {
+        18 => Some(49),
+        79 => Some(152),
+        85 => Some(52),
+        89 | 723 => Some(51),
+        _ if skill < 493 => Some(0),
+        _ => None,
+    }
+}
+
 /// EF_SOULSTRIKE: ghosts from the caster to the target, a hit each (`prims`).
 pub const SOUL_STRIKE: u32 = 15;
 
@@ -1311,6 +1330,13 @@ impl Effects {
         let anchor = Anchor::Unit(unit);
         self.auras.retain(|aura| !(is_cast_aura(aura.effect) && matches!(aura.anchor, Anchor::Unit(each) if each == unit)));
         self.auras.push(Banded { effect, anchor, start, ticks: aura_ticks(effect, cast_ms), turns: [0.0; 2], sparkles: Vec::new() });
+    }
+
+    /// A cast aura launched again with a skill's damage: it blooms for its own length, beside any cast's aura.
+    pub fn bloom_aura(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, effect: u32, start: Instant) {
+        let texture = aura_texture(effect);
+        self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
+        self.auras.push(Banded { effect, anchor: Anchor::Unit(unit), start, ticks: aura_ticks(effect, 0), turns: [0.0; 2], sparkles: Vec::new() });
     }
 
     /// Queues a camera shake starting at `start` for `length` (`QUAKE_SHORT` or `QUAKE_LONG`).
@@ -1706,6 +1732,14 @@ mod tests {
     }
 
     #[test]
+    fn ground_units_hit_with_their_own_effect() {
+        // Storm Gust COLDHIT, Lord of Vermilion WINDHIT, Fire Wall FIREHIT, Heaven's Drive EF_HIT1, none for new jobs.
+        assert_eq!([89, 85, 18, 91, 2000].map(unit_hit_effect), [Some(51), Some(52), Some(49), Some(0), None]);
+        // Napalm Beat's splash targets still get the whole hit; Fire Ball's don't.
+        assert!(SPLASH_FULL.contains(&11) && !SPLASH_FULL.contains(&17));
+    }
+
+    #[test]
     fn bolts_drop_an_arrow_a_hit() {
         let ms = |drops: Vec<Duration>| drops.into_iter().map(|drop| drop.as_millis()).collect::<Vec<_>>();
         // Fire Bolt level 5: five arrows, 192 ms in and 160 ms apart; Cold Bolt alike; other effects play once.
@@ -1719,8 +1753,9 @@ mod tests {
     #[test]
     fn says_what_skills_show() {
         let table = Table::load();
-        // Hit effects: Bash 0, Magnum Break 49 on each target, Pierce none (not in the table, so the skill lines).
-        assert_eq!((table.hit(5), table.hit(7)), (Some([Some(0), None]), Some([Some(49), None])));
+        // Hit effects: Bash 0 and EF_HIT2 with its first hit, Magnum Break 49 on each target, Pierce none (not in the
+        // table, so the skill lines).
+        assert_eq!((table.hit(5), table.hit(7)), (Some([Some(0), Some(1)]), Some([Some(49), None])));
         assert_eq!(table.hit(56), None);
         // On the caster: Bash and the default 16, Brandish Spear 144, the bolts none, the newest jobs' none.
         assert_eq!((table.caster(5), table.caster(57), table.caster(19), table.caster(5450)), (Some(16), Some(144), None, None));

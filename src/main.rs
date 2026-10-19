@@ -528,6 +528,16 @@ const BOW: u32 = 11;
 /// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
 const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
 
+/// Where a hit's damage came from: an attack, a skill used by a unit (or reaching one of its splash's other targets),
+/// or a skill's unit on the ground.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum HitFrom {
+    Attack,
+    Skill,
+    Splash,
+    Unit,
+}
+
 /// What a unit coming into view shows. Only a spawn in view (ZC_NOTIFY_NEWENTRY) of a unit the client doesn't have,
 /// and not our own character: a player gets the blue rings unless a GM hides it; anything else fades in.
 #[derive(Debug, PartialEq)]
@@ -1195,6 +1205,8 @@ struct Game {
     progress: ProgressBar,
     /// The magic squares under ground skills being cast, by caster (None = the player); each goes with its cast.
     cast_squares: HashMap<Option<u32>, cast_square::Square>,
+    /// When each caster's last skill hit lands, for its splash's other targets.
+    skill_lands: HashMap<u32, Instant>,
     /// The ground cursor (Alt+Home, on at the start): whether it's on, and the cell it shows.
     ground_cursor: bool,
     ground_mark: Option<[i32; 2]>,
