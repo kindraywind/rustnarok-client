@@ -2495,6 +2495,7 @@ impl App {
         };
         let (mut effect_quads, mut effect_meshes) =
             if effects_on { (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit)) } else { (Vec::new(), Vec::new()) };
+        let screen_shapes = if effects_on { game.effects.screen_shapes(now, feet_of_unit) } else { Vec::new() };
         // Max-level auras under the feet of those in sight, with the effects (unless /aura2 has them off).
         if effects_on && !self.graphics.aura_off {
             let seconds = now.duration_since(game.entered).as_secs_f32();
@@ -2548,6 +2549,7 @@ impl App {
             shadows,
             effects: &effect_quads,
             meshes: &effect_meshes,
+            screen: &screen_shapes,
             time: now.duration_since(game.entered).as_secs_f32(),
             blind: game.player.health_state & 0x10 != 0,
         };

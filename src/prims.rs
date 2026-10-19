@@ -1,5 +1,6 @@
 //! The game's hand-made effects: a builder per effect id that runs once a 16 ms tick and lets out primitives, each
-//! moved once a tick by its own rule and drawn as a sprite with trail copies. So far Soul Strike's ghosts.
+//! moved once a tick by its own rule and drawn as a sprite with trail copies, or flat on the screen. So far Soul Strike's
+//! ghosts and the cold hit.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -52,11 +53,120 @@ struct Ghost {
     trail: VecDeque<Vector>,
 }
 
-/// The ghosts in flight and the Soul Strikes letting them out.
+/// The ghosts in flight and the Soul Strikes letting them out; the cold hits bursting.
 #[derive(Default)]
 pub struct Prims {
     builders: Vec<Builder>,
     ghosts: Vec<Ghost>,
+    cold_hits: Vec<ColdHit>,
+}
+
+/// COLDHIT's shard and smoke textures.
+pub const ICE_TEXTURE: &str = "data\\texture\\effect\\ice.tga";
+pub const SMOKE_TEXTURE: &str = "data\\texture\\effect\\smoke.tga";
+/// How long COLDHIT's shards and puffs live, in ticks; when the second puff comes.
+const SHARD_LIFE: u32 = 15;
+const SMOKE_LIFE: u32 = 25;
+const SECOND_SMOKE: u32 = 7;
+
+/// One of COLDHIT's ice shards (the game's prim kind 2): a thin four-point quad on the screen, flying out from just over
+/// the target's feet the way its head points and slowing to a third.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shard {
+    /// Heading in degrees, 0 up the screen, turning clockwise; also how the quad is turned.
+    yaw: f32,
+    /// Length and width in screen pixels.
+    length: f32,
+    width: f32,
+    /// Speed at first, screen pixels a tick.
+    speed: f32,
+    /// Where it starts, screen pixels from the target's feet (y down).
+    start: [f32; 2],
+}
+
+/// One of COLDHIT's smoke puffs (the game's prim kind 0): a soft upright square growing fast, then slowly, drifting up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Smoke {
+    yaw: f32,
+    /// The tick it comes on.
+    born: u32,
+}
+
+/// COLDHIT (51) on a unit: nine shards and a puff at once, a second puff 7 ticks later.
+struct ColdHit {
+    start: Instant,
+    unit: Option<u32>,
+    shards: [Shard; 9],
+    smokes: [Smoke; 2],
+}
+
+/// A shape drawn in screen pixels from a unit's feet: its texture, then each corner's place (y down), texture
+/// coordinate and color.
+pub type ScreenShape = (&'static str, Option<u32>, Vec<([f32; 2], [f32; 2], [f32; 4])>);
+
+/// COLDHIT's nine shards, from `rand(n)` (0 to n − 1): every 40° from up the screen, turned −15…+44°; the 0°, 120°
+/// and 240° ones long, the rest short; each starting up to 4 px from 20 px over the feet.
+pub fn shards(mut rand: impl FnMut(u32) -> u32) -> [Shard; 9] {
+    std::array::from_fn(|index| {
+        let slot = index as f32 * 40.0;
+        let yaw = rand(60) as f32 + slot - 15.0;
+        let long = index % 3 == 0;
+        let (length, width) = if long { (rand(10) as f32 + 100.0, 10.0) } else { (rand(5) as f32 + 45.0, 4.0) };
+        let speed = (rand(45) / 10) as f32 + if long { 12.8 } else { 4.8 };
+        let out = rand(5) as f32;
+        let (sin, cos) = slot.to_radians().sin_cos();
+        Shard { yaw, length, width, speed, start: [sin * out, -cos * out - 20.0] }
+    })
+}
+
+impl Shard {
+    /// Where its middle is after `tick` ticks (from 0): each tick the speed drops by a 22.5th of the first, then it moves.
+    fn place(&self, tick: u32) -> [f32; 2] {
+        let (sin, cos) = self.yaw.to_radians().sin_cos();
+        let moved: f32 = (0..=tick).map(|step| self.speed - (step + 1) as f32 * self.speed / 22.5).sum();
+        [self.start[0] + sin * moved, self.start[1] - cos * moved]
+    }
+
+    /// Its opacity at a tick: 200 for five ticks, then 20 less a tick.
+    fn alpha(tick: u32) -> f32 {
+        (200.0 - 20.0 * tick.saturating_sub(4) as f32).max(0.0) / 255.0
+    }
+
+    /// Its two triangles at a tick: head, sides and tail turned by its heading; the tail always opaque white.
+    fn shape(&self, tick: u32) -> Vec<([f32; 2], [f32; 2], [f32; 4])> {
+        let middle = self.place(tick);
+        let (sin, cos) = self.yaw.to_radians().sin_cos();
+        let [half, side] = [self.length / 2.0, self.width / 2.0];
+        let point = |[x, y]: [f32; 2]| [middle[0] + x * cos - y * sin, middle[1] + x * sin + y * cos];
+        let color = [1.0, 1.0, 1.0, Self::alpha(tick)];
+        let (head, tail) = ((point([0.0, -half]), [0.5, 0.0], color), (point([0.0, half]), [0.5, 1.0], [1.0; 4]));
+        let (left, right) = ((point([-side, -half / 6.0]), [0.0, 0.5], color), (point([side, half / 6.0]), [1.0, 0.5], color));
+        vec![left, tail, head, right, tail, head]
+    }
+}
+
+impl Smoke {
+    /// Its half-size after `tick` ticks of its own: 6 px more a tick up to 61, then half a pixel.
+    fn half(tick: u32) -> f32 {
+        if tick <= 9 { 1.0 + 6.0 * (tick + 1) as f32 } else { 61.0 + 0.5 * (tick - 9) as f32 }
+    }
+
+    /// Its opacity: 254 to tick 16, then down 31.75 a tick.
+    fn alpha(tick: u32) -> f32 {
+        (254.0 - 31.75 * tick.saturating_sub(16) as f32).max(0.0) / 255.0
+    }
+
+    fn shape(&self, tick: u32) -> Vec<([f32; 2], [f32; 2], [f32; 4])> {
+        let (sin, cos) = self.yaw.to_radians().sin_cos();
+        let drift = 0.85 * (tick + 1) as f32;
+        let middle = [sin * drift - 0.5, -cos * drift - 0.5];
+        let half = Self::half(tick);
+        let color = [1.0, 1.0, 1.0, Self::alpha(tick)];
+        let corner = |x: f32, y: f32, uv: [f32; 2]| ([middle[0] + x, middle[1] + y], uv, color);
+        let [bottom_left, top_left, bottom_right, top_right] =
+            [corner(-half, half, [0.0, 1.0]), corner(-half, -half, [0.0, 0.0]), corner(half, half, [1.0, 1.0]), corner(half, -half, [1.0, 0.0])];
+        vec![bottom_left, top_left, bottom_right, bottom_right, top_left, top_right]
+    }
 }
 
 /// When the `index`th of a Soul Strike's ghosts (from 0) leaves, in ticks: 6, then every 11.
@@ -128,6 +238,30 @@ impl Prims {
         self.builders.push(Builder { start: now, ticks: 0, from, to, count: u32::from(count.clamp(1, 7)) });
     }
 
+    /// COLDHIT (EF_COLDHIT) on a unit (None = the player) from `now`, its random choices from `rand(n)`.
+    pub fn cold_hit(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let shards = shards(&mut rand);
+        let smokes = [0, SECOND_SMOKE].map(|born| Smoke { yaw: rand(40) as f32 - 20.0, born });
+        self.cold_hits.push(ColdHit { start: now, unit, shards, smokes });
+    }
+
+    /// What the cold hits draw at `now`, in screen pixels from their units' feet.
+    pub fn screen_shapes(&self, now: Instant) -> Vec<ScreenShape> {
+        let mut shapes = Vec::new();
+        for hit in &self.cold_hits {
+            let Some(tick) = now.checked_duration_since(hit.start).map(|age| (age.as_millis() / TICK.as_millis()) as u32) else { continue };
+            if tick < SHARD_LIFE {
+                for shard in &hit.shards {
+                    shapes.push((ICE_TEXTURE, hit.unit, shard.shape(tick)));
+                }
+            }
+            for smoke in hit.smokes.iter().filter(|smoke| tick >= smoke.born && tick - smoke.born < SMOKE_LIFE) {
+                shapes.push((SMOKE_TEXTURE, hit.unit, smoke.shape(tick - smoke.born)));
+            }
+        }
+        shapes
+    }
+
     /// Runs the builders and the ghosts up to `now`, a tick at a time.
     pub fn advance(&mut self, now: Instant) {
         let due = |start: Instant| (now.saturating_duration_since(start).as_millis() / TICK.as_millis()) as u32;
@@ -147,6 +281,7 @@ impl Prims {
             }
         }
         self.ghosts.retain(|ghost| due(ghost.start) < GHOST_LIFE);
+        self.cold_hits.retain(|hit| due(hit.start) < SECOND_SMOKE + SMOKE_LIFE);
     }
 
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is
@@ -168,6 +303,35 @@ impl Prims {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cold_hit_bursts_shards_and_smoke() {
+        // With every random draw 0: shards at −15°, 25°, … ; the 0°, 120°, 240° ones long (100 × 10 px, 12.8 px a
+        // tick at first), the rest short (45 × 4, 4.8); all from 20 px over the feet.
+        let shards = shards(|_| 0);
+        assert_eq!((shards[0].yaw, shards[1].yaw, shards[3].yaw), (-15.0, 25.0, 105.0));
+        assert_eq!((shards[0].length, shards[0].width, shards[0].speed), (100.0, 10.0, 12.8));
+        assert_eq!((shards[1].length, shards[1].width, shards[1].speed), (45.0, 4.0, 4.8));
+        assert_eq!(shards[4].start, [0.0, -20.0]);
+        // A shard flies 9.67 times its first speed over its 15 ticks, slowing to a third.
+        let straight = Shard { yaw: 90.0, ..shards[0] };
+        let flown = straight.place(SHARD_LIFE - 1)[0] - straight.start[0];
+        assert!((flown - 12.8 * (15.0 - 15.0 * 16.0 / 45.0)).abs() < 0.01, "{flown}");
+        // Alpha 200 for 5 ticks, then down to 0 at tick 14; the smoke 254 to tick 16, 0 at 24; its half-size 61 at
+        // tick 9, 68.5 at 24.
+        assert_eq!([0, 4, 5, 14].map(Shard::alpha), [200.0 / 255.0, 200.0 / 255.0, 180.0 / 255.0, 0.0]);
+        assert_eq!([16, 24].map(Smoke::alpha), [254.0 / 255.0, 0.0]);
+        assert_eq!([0, 9, 24].map(Smoke::half), [7.0, 61.0, 68.5]);
+        // Nine shards and a puff at first, the second puff from tick 7, nothing after tick 31.
+        let start = Instant::now();
+        let mut prims = Prims::default();
+        prims.cold_hit(None, start, |_| 0);
+        assert_eq!(prims.screen_shapes(start).len(), 10);
+        assert_eq!(prims.screen_shapes(start + TICK * 7).len(), 11);
+        assert_eq!(prims.screen_shapes(start + TICK * 20).len(), 2);
+        prims.advance(start + TICK * 40);
+        assert!(prims.cold_hits.is_empty());
+    }
 
     #[test]
     fn soul_strike_lets_a_ghost_out_a_hit() {
