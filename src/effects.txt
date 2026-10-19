@@ -1524,9 +1524,6 @@ ring	7	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;bottomSize=0.95;
 ring	8	alphaMax=0.8;animation=4;attachedEntity=true;bottomSize=10;duration=1000;duplicate=4;fade=true;height=0;posZ=0.1;textureName=ring_yellow;timeBetweenDupli=300;topSize=13
 ring	9	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;bottomSize=0.95;duration=2000;fade=true;height=10;textureName=alpha_down;topSize=0.95
 ring	14	alphaMax=0.2;animation=1;attachedEntity=true;blendMode=2;bottomSize=0.95;duration=2000;fade=true;height=10;rotate=true;red=0.1;green=0.5;blue=1;textureName=ring_blue;topSize=0.95;wav=_heal_effect
-ring	16	textureName=alpha_down;alphaMax=0.6;duration=1000;rotate=true;fade=true;angleX=-90;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.1;topSize=2;animation=2;zIndex=1;wav=effect/ef_bash;attachedEntity=true
-ring	16	textureName=alpha_center;alphaMax=0.6;duration=1000;duplicate=10;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;rotate=true;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=2.5;animation=2;zIndex=1.1;attachedEntity=true
-ring	16	textureName=alpha_center;alphaMax=0.6;duration=1000;duplicate=8;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;rotate=true;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4;animation=2;zIndex=1.2;attachedEntity=true
 ring	17	alphaMax=0.7;animation=4;attachedEntity=true;bottomSize=4;duration=300;fade=true;height=1;rotate=true;textureName=ring_yellow;topSize=6
 ring	17	alphaMax=0.6;animation=4;attachedEntity=true;bottomSize=4;duration=300;fade=true;height=4;rotate=true;textureName=대폭발;topSize=1;wav=effect/ef_magnumbreak
 ring	34	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=8;bottomSize=0.8;duration=1000;fade=true;red=1;green=1;blue=1;height=35;rotate=true;textureName=ring_blue;topSize=0.7;wav=effect/ef_teleportation
