@@ -2558,6 +2558,28 @@ mod tests {
     }
 
     #[test]
+    fn skills_play_their_rows_as_the_game() {
+        let table = Table::load();
+        let ms = Duration::from_millis;
+        // Meteor Storm: Meteor1–3 at random, one long shake 640 ms in.
+        assert_eq!(table.parts[&92][0].random, Some((1, 3)));
+        assert_eq!(table.quakes[&92], [(ms(640), QUAKE_LONG)]);
+        // Lord of Vermilion: four shakes and its 11 sounds; Bowling Bash's shockwave is silent.
+        assert_eq!(table.quakes[&90], [800, 1600, 2400, 3200].map(|at| (ms(at), QUAKE_LONG)));
+        let sounds: Vec<(&str, u64)> = table.sounds[&90].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect();
+        assert_eq!(sounds.len(), 11);
+        assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
+        assert!(!table.sounds.contains_key(&149));
+        // Sonic Blow: its flash and SonicBlow.str on the caster.
+        assert_eq!(table.struck(136), Some(&[(Who::Caster, 121), (Who::Caster, 143)][..]));
+        // A skill's fallback effect never repeats one of its hit effects (Holy Light's 152 plays once, at the hit).
+        for (&skill, hit) in &table.hits {
+            let repeated = table.skill(skill, "effectId").into_iter().any(|effect| hit.contains(&Some(effect)));
+            assert!(table.struck(skill).is_some() || !repeated, "skill {skill}");
+        }
+    }
+
+    #[test]
     fn reads_sprites_quakes_and_ground_units() {
         let table = Table::load();
         // Blessing's angel: action 0 at 30 ms a frame for 1.5 s, above the head.

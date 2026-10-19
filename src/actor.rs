@@ -86,6 +86,13 @@ const DELAY_UNIT_MS: f32 = 24.0;
 const WALK_FRAMES: f32 = 1.48;
 /// An attack plays at its ACT pace times min(attackMT, ATTACK_PACE) / ATTACK_PACE (a bow, uncapped).
 const ATTACK_PACE: f32 = 432.0;
+/// A player's swing with a bow lands this much after its hit frame: the arrow's flight.
+const BOW_FLIGHT_MS: f32 = 192.0;
+
+/// When a swing's hit lands, `hit_ms` being its hit frame: with a `bow`, the arrow's flight later.
+pub fn bow_flight(hit_ms: f32, bow: bool) -> f32 {
+    if bow { hit_ms + BOW_FLIGHT_MS } else { hit_ms }
+}
 
 /// The frame of `count` a looping action shows `ms` in, at an ACT delay of `delay` units.
 pub fn loop_frame(ms: f32, delay: f32, count: usize) -> usize {
@@ -103,9 +110,13 @@ pub fn walk_frame(distance: f32, delay: f32, count: usize) -> usize {
 }
 
 /// How much an attack's ACT pace is stretched for an attack motion of `attack_ms` (ZC_NOTIFY_ACT's source speed):
-/// capped at ATTACK_PACE, except for players shooting a bow.
+/// capped at ATTACK_PACE, except for players shooting a bow. An attack motion of 0 (Arrow Shower's) plays at the ACT's
+/// own pace.
 pub fn attack_scale(attack_ms: i32, bow: bool) -> f32 {
-    let motion = attack_ms.max(1) as f32;
+    if attack_ms <= 0 {
+        return 1.0;
+    }
+    let motion = attack_ms as f32;
     (if bow { motion } else { motion.min(ATTACK_PACE) }) / ATTACK_PACE
 }
 
@@ -2149,6 +2160,28 @@ impl Actor {
         self.head_direction = self.kept_head;
     }
 
+    /// Shows `action`'s last frame from `start` for `ms` (Meteor Storm's caster), then stands; walking ends it.
+    pub fn freeze_last(&mut self, action: usize, start: Instant, ms: f32) {
+        let length = self.sprites.as_ref().and_then(|sprites| sprites.index_ms(action * 8 + usize::from(self.direction % 8))).unwrap_or(0.0);
+        let started = start.checked_sub(Duration::from_secs_f32(length / 1000.0)).unwrap_or(start);
+        self.shot = Some(Shot { action, started, pace: Pace::Hold((length + ms) / length.max(1.0)), hold: false });
+    }
+
+    /// Its attack action: a player's swing for its weapon.
+    pub fn attack_motion(&self, tables: &LookTables) -> usize {
+        self.look.as_ref().map_or(combat_actions(self.kind).0, |look| attack_action(look.job, look.sex, tables.weapon_type(look.weapon)))
+    }
+
+    /// A player holding a bow: its swings play at an uncapped pace and land with their arrow.
+    pub fn holds_bow(&self, tables: &LookTables) -> bool {
+        self.look.as_ref().is_some_and(|look| tables.weapon_type(look.weapon) == crate::BOW)
+    }
+
+    /// In `action` now, played once or held (a swing, a skill's motion, a cast), rather than standing or walking.
+    pub fn playing(&self, action: usize, now: Instant) -> bool {
+        matches!(self.animation(now), (playing, Timing::Once(..) | Timing::Span(_)) if playing == action)
+    }
+
     /// Back to standing from a held `action` (a cast cut short).
     pub fn stop_holding(&mut self, action: usize) {
         if self.shot.as_ref().is_some_and(|shot| shot.action == action) {
@@ -2687,11 +2720,13 @@ mod tests {
         // Walking: frames by distance (a cell is 5 units), the same whatever the speed.
         assert_eq!([0.0, 2.7, 2.71, 5.0, 10.8].map(|distance| walk_frame(distance, 1.0, 8)), [0, 3, 4, 7, 7]);
         assert_eq!(walk_frame(30.0, 4.0, 8), 3);
-        // The attack's pace: attackMT over 432, capped there unless a bow.
+        // The attack's pace: attackMT over 432, capped there unless a bow; 0 is the ACT's own.
         assert_eq!(
-            [attack_scale(200, false), attack_scale(432, false), attack_scale(800, false), attack_scale(800, true)],
-            [200.0 / 432.0, 1.0, 1.0, 800.0 / 432.0]
+            [attack_scale(200, false), attack_scale(432, false), attack_scale(800, false), attack_scale(800, true), attack_scale(0, true)],
+            [200.0 / 432.0, 1.0, 1.0, 800.0 / 432.0, 1.0]
         );
+        // A bow's swing lands 192 ms after its hit frame.
+        assert_eq!([bow_flight(300.0, true), bow_flight(300.0, false)], [492.0, 300.0]);
     }
 
     #[test]
@@ -3485,6 +3520,22 @@ mod tests {
             unmounted,
             delay: Default::default(),
         }
+    }
+
+    #[test]
+    fn freezes_the_last_frame_till_its_time_or_a_walk() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut actor = Actor::new("Me".into(), None, [10, 10], 0, 150);
+        actor.sprites = Some(test_player(false, None));
+        // Meteor Storm: the third attack's last frame (of 2, 96 ms each) at once, for a second, then standing.
+        actor.freeze_last(11, start, 1000.0);
+        let last = |ms| matches!(actor.animation(at(ms)), (11, Timing::Once(elapsed, _)) if once_frame(elapsed, 4.0, 2) == 1);
+        assert!(last(0) && last(999));
+        assert!(actor.playing(11, at(500)) && !actor.playing(11, at(1001)));
+        // A walk ends it.
+        actor.walk_from([10, 10], [8, 8], vec![[11, 10]], start, start, true);
+        assert!(!actor.playing(11, start));
     }
 
     #[test]
