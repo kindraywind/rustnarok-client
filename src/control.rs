@@ -5,6 +5,8 @@
 //! ignores the real mouse and keyboard, opens behind the window in use and draws on screen only while it has the focus
 //! (click it to watch); screenshots don't need that.
 //!
+//! With `RUSTNAROK_CLIENT_CONTROL_SHARED` as well, the player plays the same client (see mcp.rs).
+//!
 //! The `rustnarok-client-mcp` binary (src/bin/rustnarok-client-mcp.rs) offers these commands to Claude Code as MCP tools. Build with
 //! `cargo build --release`, then register it once with
 //! `claude mcp add rustnarok-client-dev -- <repo>/target/release/rustnarok-client-mcp`.
@@ -45,6 +47,8 @@
 //! - `clock` `{action: "pause"|"resume"|"step", ms?}`: the animation clock; a step freezes it `ms` (16) further on.
 //! - `trace` `{last?, events?}`: the last packets received (20), as `RUSTNAROK_CLIENT_TRACE` prints them; with `events`, the
 //!   events they made in between (`==` lines, with what they say: a disconnection's reason, say).
+//! - `inbox` `{ms?}` and `reply` `{text}`: the chat's MCP tab, in a client shared with the player (see mcp.rs): what the player
+//!   typed there since the last `inbox` (waiting up to `ms` for some), and an answer shown there.
 //! - `quit`.
 
 use std::collections::{HashMap, VecDeque};
@@ -69,6 +73,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, NativeKeyCode, PhysicalKey, SmolStr};
 
 use crate::actor::Look;
+use crate::mcp;
 use crate::render::{Gpu, Sprite, WorldPass};
 use crate::{App, DialogButton, Game, HOMUNCULUS, MERCENARY, MONSTER, NPC, NetEvent, Owner, PET, PLAYER, Panel, Scene, inventory};
 
@@ -127,6 +132,14 @@ pub enum Command {
         text: String,
     },
     Say {
+        text: String,
+    },
+    /// What the player typed in the chat's MCP tab since the last call; waits up to `ms` for some (see mcp.rs).
+    Inbox {
+        ms: Option<u64>,
+    },
+    /// An answer in the chat's MCP tab.
+    Reply {
         text: String,
     },
     /// A button goes down at a point and stays down until `mouse_up`.
@@ -328,6 +341,7 @@ fn serve(stream: Stream, proxy: &EventLoopProxy<NetEvent>, token: Option<&str>) 
         let reply = match serde_json::from_str::<Command>(&line) {
             Ok(Command::Wait { ms, packet, event, sent, fresh, pause, first }) => wait(proxy, ms, (packet, event, sent), fresh, pause, first),
             Ok(Command::Trace { last, events }) => trace(last.unwrap_or(20), events),
+            Ok(Command::Inbox { ms }) => mcp::inbox(Duration::from_millis(ms.unwrap_or(0))),
             Ok(command) => {
                 MARK.store(LOG.lock().unwrap().next, Ordering::Relaxed);
                 forward(proxy, command)
@@ -430,15 +444,20 @@ fn trace_ms() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() % 100_000
 }
 
-/// Whether the client takes commands from the socket. Then the real mouse and keyboard are ignored: between commands
-/// they'd move the pointer, type into the chat line or hold modifiers down.
+/// Whether the client takes commands from the socket and is the driver's alone. Then the real mouse and keyboard are
+/// ignored: between commands they'd move the pointer, type into the chat line or hold modifiers down.
 pub fn driven() -> bool {
+    ON.load(Ordering::Relaxed) && !mcp::shared()
+}
+
+/// Whether the control socket is open, shared with the player or not.
+fn socket_on() -> bool {
     ON.load(Ordering::Relaxed)
 }
 
 /// Notes an effect sound played (`wait` event `Sound <file>`, the file under data\wav\ as asked for).
 pub fn sound_played(name: &str) {
-    if driven() {
+    if socket_on() {
         record(Seen::Event(format!("Sound {name}")), format!("{:05} == Sound {name}", trace_ms()));
         RECENT_SOUNDS.lock().unwrap().push_back((now(), name.to_owned()));
     }
@@ -456,7 +475,7 @@ fn recent_sounds() -> Vec<String> {
 
 /// Notes an event from the servers for `wait`: its variant's name, and what it says (a disconnection's reason, say).
 pub fn observe(event: &NetEvent) {
-    if !driven() {
+    if !socket_on() {
         return;
     }
     let (name, debug) = match event {
@@ -497,6 +516,7 @@ pub fn run(app: &mut App, event_loop: &ActiveEventLoop, Request { command, reply
 }
 
 fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Result<Value, String> {
+    mcp::note(&mut app.scene, &command);
     match command {
         Command::Screenshot { crop, scale } => screenshot(app, event_loop, crop, scale),
         Command::MouseDown { x, y, button } | Command::MouseUp { x, y, button } => {
@@ -593,6 +613,7 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             game.session.chat(&game.me.name, &text).map_err(|error| error.to_string())?;
             Ok(Value::Null)
         }
+        Command::Reply { text } => mcp::reply(&mut app.scene, text),
         Command::State => Ok(state(app)),
         Command::Clock { action, ms } => {
             let mut frozen = FROZEN.lock().unwrap();
@@ -607,7 +628,7 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             event_loop.exit();
             Ok(Value::Null)
         }
-        Command::Wait { .. } | Command::Trace { .. } => Err("wait and trace can't be run by wait".into()),
+        Command::Wait { .. } | Command::Trace { .. } | Command::Inbox { .. } => Err("wait, trace and inbox can't be run by wait".into()),
     }
 }
 
@@ -1590,12 +1611,13 @@ fn game_state(app: &App, game: &Game) -> Value {
             "owner": room.members.iter().find(|(_, owner)| *owner).map(|(name, _)| name.clone()),
             "members": room.members.len(),
         })),
-        // The navigation under way: where to, and how long the trail on this map is.
+        // The navigation under way: where to, how long the trail on this map is, and its cells from the player's on.
         "navigation": game.navigation.as_ref().map(|active| json!({
             "map": active.target.map,
             "cell": active.target.cell,
             "monster": active.target.monster,
             "trail": active.trail.len(),
+            "trail_cells": active.trail,
         })),
         // Reputation points by reputation type.
         "reputation": game.reputation.iter().map(|(kind, points)| (kind.to_string(), json!(points))).collect::<serde_json::Map<_, _>>(),

@@ -35,6 +35,7 @@ fn tools() -> Value {
                 "account": {"type": "string", "description": "which pair of lines: \"2\" for `username2:` and `password2:` (the first by default)"},
                 "slot": {"type": "integer", "description": "character slot to play"},
                 "timeout_s": {"type": "integer", "description": "how long to wait for the client (90 by default)"},
+                "shared": {"type": "boolean", "description": "true (the default): the player plays the same client with the real mouse and keyboard, and its chat has an MCP tab listing what you do. false: the client is yours alone and ignores the real mouse and keyboard"},
             }),
             &[],
         ),
@@ -74,6 +75,13 @@ fn tools() -> Value {
             &["text"]
         ),
         tool("say", "Say a chat line, or run a GM command like \"@monster poring\" or \"@heal\".", json!({"text": {"type": "string"}}), &["text"]),
+        tool(
+            "inbox",
+            "What the player typed in the chat's MCP tab since the last call (a client launched shared). Waits up to ms for a line, 0 by default; answer with reply.",
+            json!({"ms": {"type": "integer", "description": "how long to wait for a line, at most 100000"}}),
+            &[],
+        ),
+        tool("reply", "Answer the player in the chat's MCP tab, which shows what you do there.", json!({"text": {"type": "string"}}), &["text"]),
         tool(
             "state",
             "The scene; in the game the map, the player (cell, HP/SP, levels, zeny, screen box), open windows, the NPC dialog, the aimed skill, units and ground items nearest first (id, kind, name, cell, screen box [left, top, right, bottom]), counts, status icons and the last chat lines.",
@@ -162,6 +170,9 @@ impl Server {
         let mut command = Command::new(&game);
         // The client finds data.grf and the data folders in the repository.
         command.current_dir(env!("CARGO_MANIFEST_DIR")).env("RUSTNAROK_CLIENT_CONTROL", &self.socket);
+        if arguments["shared"].as_bool().unwrap_or(true) {
+            command.env("RUSTNAROK_CLIENT_CONTROL_SHARED", "1");
+        }
         if let Some(server) = arguments["server"].as_str() {
             command.env("RUSTNAROK_CLIENT_SERVER", server);
         }

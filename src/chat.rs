@@ -61,6 +61,8 @@ const BUTTON_SIZE: [f32; 2] = [11.0, 11.0];
 /// The input bar buttons' tooltips: the whisper list, the receiving group, the size.
 const TOOLTIPS: [usize; 3] = [3187, 3188, 3189];
 const TAB_MESSAGES: [usize; 2] = [1291, 1292];
+/// The tab an agent's actions go to, after the game's two; only a client on a shared control socket has it.
+const MCP_TAB: usize = 2;
 /// The line over the input bar.
 const FRAME_LINE: [u8; 4] = [142, 142, 142, 0xFF];
 /// The most the whisper name and the message take, in bytes as sent (CP949).
@@ -122,6 +124,8 @@ pub enum Kind {
     PartySearch,
     Battle,
     System,
+    /// What an agent on the control socket does, shown in its own tab (not in `ALL`: no settings, nothing saved).
+    Mcp,
 }
 
 impl Kind {
@@ -154,6 +158,7 @@ impl Kind {
             Kind::PartySearch => message(1549, "Party member search"),
             Kind::Battle => "Battle Messages".into(),
             Kind::System => "System Messages".into(),
+            Kind::Mcp => "MCP".into(),
         }
     }
 
@@ -168,6 +173,7 @@ impl Kind {
             Kind::PartySearch => "party_search",
             Kind::Battle => "battle",
             Kind::System => "system",
+            Kind::Mcp => "mcp",
         }
     }
 }
@@ -186,6 +192,11 @@ impl Tab {
     fn new(kinds: HashSet<Kind>) -> Self {
         Self { kinds, rows: Vec::new(), fresh: Vec::new(), scroll: 0 }
     }
+}
+
+/// A tab's label: the game's for its two, "MCP" for the third.
+fn tab_title(tab: usize, messages: &[String]) -> &str {
+    TAB_MESSAGES.get(tab).map_or("MCP", |&message| messages.get(message).map_or("", String::as_str))
 }
 
 /// A row of a log: its text, colour, kind and speaker (public, party, guild and clan lines).
@@ -429,7 +440,7 @@ pub struct Chat {
     list_open: bool,
     /// The size step, 0 to 15.
     size: usize,
-    pub tabs: [Tab; 2],
+    pub tabs: Vec<Tab>,
     /// The tab shown.
     pub tab: usize,
     /// Where the window's bottom left corner is, once moved (else the screen's bottom left).
@@ -464,11 +475,26 @@ impl Default for Chat {
             (chat.corner, chat.size, chat.hidden) = (corner, size, hidden);
         }
         chat.saved = chat.saved_text();
+        if crate::mcp::shared() {
+            chat.add_mcp_tab();
+        }
         chat
     }
 }
 
 impl Chat {
+    /// Whether the MCP tab is the one shown: what is typed then goes to the agent.
+    pub fn on_mcp_tab(&self) -> bool {
+        self.tab == MCP_TAB && self.tabs.len() > MCP_TAB
+    }
+
+    /// The third tab, for what an agent on the control socket does (`Kind::Mcp` lines).
+    pub fn add_mcp_tab(&mut self) {
+        if self.tabs.len() == MCP_TAB {
+            self.tabs.push(Tab::new(HashSet::from([Kind::Mcp])));
+        }
+    }
+
     pub fn with_kinds(kinds: [HashSet<Kind>; 2]) -> Self {
         let [public, battle] = kinds;
         Self {
@@ -482,7 +508,7 @@ impl Chat {
             recent: Vec::new(),
             list_open: false,
             size: DEFAULT_STEP,
-            tabs: [Tab::new(public), Tab::new(battle)],
+            tabs: vec![Tab::new(public), Tab::new(battle)],
             tab: 0,
             corner: None,
             drag: None,
@@ -618,7 +644,7 @@ impl Chat {
             });
         }
         if local[1] < TAB_HEIGHT {
-            if let Some(tab) = (0..2).find(|&tab| on([tab as f32 * TAB_WIDTH, 0.0], [TAB_WIDTH, TAB_HEIGHT])) {
+            if let Some(tab) = (0..self.tabs.len()).find(|&tab| on([tab as f32 * TAB_WIDTH, 0.0], [TAB_WIDTH, TAB_HEIGHT])) {
                 return Some(Hit::Tab(tab));
             }
             let on_row = (1.0..=13.0).contains(&local[1]);
@@ -671,6 +697,9 @@ impl Chat {
                 ("chat_scroll_down", area([self.scrollbar_corner()[0], LOG_BOX[1] + self.log_height() - ARROW], [SCROLLBAR, ARROW])),
             ]);
             boxes.extend(top_row(self.locked).iter().map(|button| (button.name, area([button.x, 4.0], button.size))));
+            if self.tabs.len() > MCP_TAB {
+                boxes.push(("chat_tab_2", area([MCP_TAB as f32 * TAB_WIDTH, 0.0], [TAB_WIDTH, TAB_HEIGHT])));
+            }
         }
         boxes
     }
@@ -934,7 +963,7 @@ impl Chat {
             Some(Hit::RemoveTab | Hit::AddTab) => {}
             // Tear-off puts the window back at the screen's bottom left. Locked, the button isn't there.
             Some(Hit::Stick) if !self.locked => self.corner = None,
-            Some(Hit::Options) => self.settings = if self.settings.is_some() { None } else { Some(Settings::new(self.tab)) },
+            Some(Hit::Options) => self.settings = if self.settings.is_some() { None } else { Some(Settings::new(self.tab.min(MCP_TAB - 1))) },
             Some(Hit::Lock) => self.locked = !self.locked,
             Some(Hit::Size) => self.cycle_size(),
             // ponytail: "Select receiving group" turns where a line goes: public, the party, the guild.
@@ -1104,14 +1133,14 @@ impl Chat {
         let at = |local: [f32; 2]| self.at(local);
         if self.step() > 0 {
             // Tabs: the shown one in the open look.
-            for (tab, &message) in TAB_MESSAGES.iter().enumerate() {
+            for tab in 0..self.tabs.len() {
                 let [left, top] = at([tab as f32 * TAB_WIDTH, 0.0]);
                 let (fill, border) = if tab == self.tab { (&assets.dark, &assets.white) } else { (&assets.darker, &assets.tab_border) };
                 layer.sprites.push((fill, [left, top + 1.0], [TAB_WIDTH, TAB_HEIGHT - 1.0]));
                 layer.sprites.push((border, [left, top], [TAB_WIDTH, 1.0]));
                 layer.sprites.push((border, [left, top], [1.0, TAB_HEIGHT]));
                 layer.sprites.push((border, [left + TAB_WIDTH - 1.0, top], [1.0, TAB_HEIGHT]));
-                let label = messages.get(message).map_or("", String::as_str);
+                let label = tab_title(tab, messages);
                 let x = (left + (TAB_WIDTH - font.width(label)) / 2.0).round();
                 layer.texts.push((label.to_owned(), [x + 1.0, top + 2.0], [0, 0, 0]));
                 layer.texts.push((label.to_owned(), [x, top + 1.0], [255; 3]));
@@ -1141,11 +1170,12 @@ impl Chat {
 
             // The log: translucent black between white edges, newest line at the bottom.
             let corner = at(LOG_BOX);
+            let tabs_end = self.tabs.len() as f32 * TAB_WIDTH;
             let size = [LOG_WIDTH, self.height() - LOG_UNDER];
             layer.sprites.push((&assets.dark, corner, size));
             layer.sprites.push((&assets.white, corner, [1.0, size[1]]));
             layer.sprites.push((&assets.white, [corner[0] + size[0] - 1.0, corner[1]], [1.0, size[1]]));
-            layer.sprites.push((&assets.white, at([2.0 * TAB_WIDTH, LOG_BOX[1]]), [LOG_BOX[0] + size[0] - 2.0 * TAB_WIDTH, 1.0]));
+            layer.sprites.push((&assets.white, at([tabs_end, LOG_BOX[1]]), [LOG_BOX[0] + size[0] - tabs_end, 1.0]));
             // The rows from the top down, then the scrollbar at the right.
             let (start, end) = self.shown_range();
             for (row, (line, color, ..)) in self.tabs[self.tab].rows[start..end].iter().enumerate() {
@@ -1275,7 +1305,7 @@ impl Settings {
 
     pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, messages: &[String], kinds: &HashSet<Kind>, pointer: [f32; 2]) {
         let at = |local: [f32; 2]| self.frame.at(local);
-        let title = messages.get(TAB_MESSAGES[self.tab]).cloned().unwrap_or_default();
+        let title = tab_title(self.tab, messages).to_owned();
         self.frame.draw_title(layer, chrome, &title, pointer);
         if self.frame.minimized {
             return;
@@ -1606,6 +1636,34 @@ mod tests {
         chat.push("Leader : again".into(), PARTY);
         assert_eq!(texts(&chat, 0), ["Poring : hi", "Leader : party", "( From A ) : psst"]);
         assert_eq!(texts(&chat, 1).last().map(String::as_str), Some("Leader : again"));
+    }
+
+    #[test]
+    fn has_an_mcp_tab_only_when_added() {
+        let mut chat = fresh();
+        let strip = top(&chat) + 8.0;
+        let texts = |chat: &Chat, tab: usize| chat.tab_lines(tab).iter().map(|(text, ..)| text.clone()).collect::<Vec<_>>();
+        // Without it the third tab's place is the strip, and an MCP line shows nowhere.
+        assert_eq!(chat.hit([250.0, strip]), Some(Hit::TopRow));
+        chat.push_kind("click (1, 2)".into(), [200, 170, 255], Kind::Mcp);
+        assert!(chat.tabs.iter().all(|tab| texts(&chat, chat.tabs.iter().position(|other| other == tab).unwrap()).is_empty()));
+        chat.add_mcp_tab();
+        chat.add_mcp_tab();
+        assert_eq!(chat.tabs.len(), 3);
+        assert_eq!(chat.hit([250.0, strip]), Some(Hit::Tab(2)));
+        assert!(chat.button_boxes().iter().any(|(name, _)| *name == "chat_tab_2"));
+        // Its lines go to it alone, and nothing else goes to it.
+        chat.push_kind("click (1, 2)".into(), [200, 170, 255], Kind::Mcp);
+        chat.push("Poring : hi".into(), PUBLIC);
+        assert_eq!(texts(&chat, 2), ["click (1, 2)"]);
+        assert_eq!(texts(&chat, 0), ["Poring : hi"]);
+        assert_eq!(texts(&chat, 1), Vec::<String>::new());
+        // Picking it and opening the tab settings opens a client tab's, not one past the two.
+        chat.click([250.0, strip]);
+        assert_eq!(chat.tab, 2);
+        // The tab kinds saved stay the two tabs'.
+        assert_eq!(kinds_from(&kinds_text(&default_kinds())), Some(default_kinds()));
+        assert_eq!(tab_title(2, &[]), "MCP");
     }
 
     #[test]
