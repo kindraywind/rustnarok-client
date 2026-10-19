@@ -701,9 +701,7 @@ fn scale_frame(placed: &mut [actor::Placed], scale: f32) {
 // ponytail: dialog layout eyeballed from the classic client; calibrate against a screenshot of the real one.
 /// Offsets inside the 280x120 dialog bitmaps (win_login, win_service, win_msgbox).
 const LEFT_BUTTON: [f32; 2] = [189.0, 96.0];
-/// A shop's question: buy, sell or cancel, in a message box.
-const DEAL_BUTTONS: [[f32; 2]; 3] = [[144.0, 96.0], [189.0, 96.0], [234.0, 96.0]];
-const DEAL_MESSAGE: usize = 92;
+pub use shop::{DEAL_BUTTONS, DEAL_MESSAGE, deal_box_position};
 const RIGHT_BUTTON: [f32; 2] = [235.0, 96.0];
 const FIELD_PADDING: f32 = 3.0;
 /// The login window (bg_login.tga) and its parts, window-local: the account drop-down, the ID and password boxes, the
@@ -1243,8 +1241,9 @@ struct Game {
     /// The lines of the status icon tooltip showing, if one is.
     status_tip: Option<Vec<String>>,
     effects: effects::Effects,
-    /// An NPC shop asking whether to buy or sell, and the open shop.
+    /// An NPC shop asking whether to buy or sell, its box's frame, and the open shop.
     deal_choice: Option<u32>,
+    deal_frame: window::Frame,
     shop: Option<shop::Shop>,
     /// A vendor's deal, waiting in "Confirm Deal".
     deal_confirm: Option<shop::Confirm>,
@@ -1994,6 +1993,7 @@ fn character_look(character: &Character) -> Look {
         head_bottom: character.head_bottom,
         robe: character.robe,
         option: character.option & actor::BODY_OPTIONS,
+        body: character.body,
     }
 }
 
@@ -2011,6 +2011,7 @@ fn unit_look(unit: &net::Unit) -> Look {
         head_bottom: unit.head_bottom,
         robe: unit.robe,
         option: unit.option & actor::BODY_OPTIONS,
+        body: unit.body,
     }
 }
 
@@ -2074,6 +2075,7 @@ fn change_look(look: &mut Look, kind: u8, value: u32, extra: u32) -> bool {
         net::LOOK_CLOTHES_COLOR => look.clothes_color = short,
         net::LOOK_SHIELD => look.shield = value,
         net::LOOK_ROBE => look.robe = short,
+        net::LOOK_BODY => look.body = short,
         _ => {}
     }
     *look != before
@@ -3142,6 +3144,8 @@ const SHOP_SIZE: &str = "shop_size";
 const SHOP_DEAL_SIZE: &str = "shop_deal_size";
 /// The party window's size mode, kept with the places.
 const PARTY_MODE: &str = "party_mode";
+/// Each party window mode's corner grip rows (0: the mode's own height).
+const PARTY_SIZE: &str = "party_size";
 const VEND_SIZE: &str = "vend_size";
 const SKILL_LIST_SIZE: &str = "skill_list_size";
 /// The homunculus's and the mercenary's skill lists' heights.
@@ -3285,12 +3289,6 @@ fn remember_id(id: Option<&str>) {
 /// A message's last sentence (after its last ". "), or all of it.
 fn last_sentence(text: &str) -> &str {
     text.rsplit_once(". ").map_or(text, |(_, last)| last)
-}
-
-/// The deal-type box (Buy, Sell, Cancel): right of the middle, 300 of 480 down; (377, 480) at 1024×768.
-fn deal_box_position() -> [f32; 2] {
-    let [width, height] = screen();
-    [((width - 640.0) / 2.0 + 185.0).floor(), (300.0 * height / 480.0).floor()]
 }
 
 fn dialog_position(_dialog: &Texture) -> [f32; 2] {
@@ -4295,6 +4293,8 @@ struct App {
     quitting: bool,
     /// Tab is held down (the fourth shortcut modifier).
     tab_held: bool,
+    /// The key pressed last. An auto-repeat fires its shortcut only for this key.
+    last_key: Option<Key>,
     /// The game went back to character select at least once.
     returned: bool,
     /// The slot of the character last played, selected again back at character select.
@@ -5358,6 +5358,7 @@ fn main() {
         char_server: 0,
         quitting: false,
         tab_held: false,
+        last_key: None,
         returned: false,
         account: None,
         playing: None,
@@ -5901,7 +5902,6 @@ mod tests {
         assert_eq!(esc_panel(Panel::Storage), None);
         let typing = escape::EscView {
             battle_line: false,
-            whisper_list: false,
             focused: Some(escape::WindowId::Storage),
             conversation: false,
             question: false,

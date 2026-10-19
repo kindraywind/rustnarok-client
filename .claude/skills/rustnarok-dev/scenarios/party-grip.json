@@ -1,0 +1,19 @@
+{
+  "about": "The party window's corner grip (issue #426): only its height changes, in 23 px rows from 58 + 2·23 to 58 + 12·23; the width stays the size mode's (273). Dragged 150 px up from 326, it asks 176: 5 rows, 173 tall, three 34 px member rows. Then down to the screen's bottom: 12 rows, 334 tall, eight member rows.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"key": "Alt+Z"}, {"wait": 400},
+    {"expect": {"windows_open": ["Party"], "state": {"party_window_size": {"size": [273.0, 326.0], "rows": 7}}}},
+    {"mouse_down": {"button": "party_resize"}}, {"move": [565, 368]}, {"wait": 200},
+    {"mouse_up": {"point": [565, 368]}}, {"wait": 300},
+    {"expect": {"state": {"party_window_size": {"size": [273.0, 173.0], "rows": 3}}}},
+    {"move": [900, 720]},
+    {"shot": "party-grip-173", "crop": [280, 180, 320, 360], "threshold": 5},
+    {"mouse_down": {"button": "party_resize"}}, {"move": [565, 760]}, {"wait": 200},
+    {"mouse_up": {"point": [565, 760]}}, {"wait": 300},
+    {"expect": {"state": {"party_window_size": {"size": [273.0, 334.0], "rows": 8}}}},
+    {"key": "Alt+Z"}, {"wait": 300}
+  ]
+}

@@ -17,8 +17,8 @@
 //!   buttons, through the same code as the mouse.
 //! - `key` `{key, repeat?, hold?}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End",
 //!   "PageUp", "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12", "PrintScreen", "ScrollLock" or one
-//!   character, after modifiers like "Alt+" or "Ctrl+". `repeat` is an auto-repeat; shortcuts ignore it. `hold` is
-//!   milliseconds to keep the key down, auto-repeating after the first press.
+//!   character, after modifiers like "Alt+" or "Ctrl+". `repeat` is an auto-repeat; a shortcut fires again only
+//!   for the key pressed last. `hold` is milliseconds to keep the key down, auto-repeating after the first press.
 //! - `type` `{text}`: into the focused field; non-ASCII runs (Hangul) come in as the input method's commit.
 //! - `say` `{text}`: a chat line or a GM command.
 //! - `state`: the scene and the login server; at character select the characters, selected slot and `pin` ("ask",
@@ -35,7 +35,7 @@
 //!   name.
 //!   `homunculus` is `{id, name, level, hunger, intimacy, hp, skill_points, vaporized, following}` or null; the skill
 //!   list's level up buttons are targets named `raise:<skill id>`. `player.look` is the real look (hair, hair color,
-//!   clothes color, head top, mid and bottom). The stylist's buttons are targets (`hair_style_<row>`, `hair_color_<row>`,
+//!   clothes color, head top, mid and bottom, and `body` for the 2nd outfit). The stylist's buttons are targets (`hair_style_<row>`, `hair_color_<row>`,
 //!   `clothes_color_<row>`, `tab_hair`, `tab_accessory`, `buy`, `refresh`, `rotate_left`, `rotate_right`, `close`).
 //! - `wait` `{ms?, packet?, event?, fresh?, pause?, do?}`: sleeps `ms`; with a `packet` id ("0x08c8") or an `event`
 //!   (a `MapEvent`/`CharEvent` variant like "Act", "LoginAccepted"/"LoginRefused", or "Sound <file>" for an effect
@@ -110,7 +110,7 @@ pub enum Command {
     },
     Key {
         key: String,
-        /// An auto-repeat of a held key. Shortcuts ignore it; typing still takes it.
+        /// An auto-repeat of a held key. The shortcut fires again only for the key pressed last.
         #[serde(default)]
         repeat: bool,
         /// Hold the key this many milliseconds, sending auto-repeats. One command, so a following `wait` still sees what the first press caused.
@@ -214,7 +214,7 @@ pub struct KeyPress {
     pub logical_key: Key,
     pub physical_key: PhysicalKey,
     pub text: Option<String>,
-    /// An auto-repeated key-down. Shortcuts and Esc ignore it; typing still takes it.
+    /// An auto-repeated key-down. A shortcut fires again only for the key pressed last; Esc still ignores it.
     pub repeat: bool,
 }
 
@@ -562,7 +562,7 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
                     app.key(&release);
                     return;
                 };
-                // Auto-repeats while the key stays down. Shortcuts fire on the first press only.
+                // Auto-repeats while the key stays down. The key pressed last fires its shortcut on each one.
                 key.repeat = true;
                 let end = Instant::now() + Duration::from_millis(ms);
                 while Instant::now() < end {
@@ -919,10 +919,19 @@ fn game_state(app: &App, game: &Game) -> Value {
     });
     // The deal-type box's Buy, Sell and Cancel.
     let deal_buttons = app.assets.as_ref().filter(|_| game.deal_choice.is_some()).into_iter().flat_map(|assets| {
-        let dialog = crate::deal_box_position();
+        let dialog = game.deal_frame.position;
         ["deal_buy", "deal_sell", "deal_cancel"].into_iter().zip(crate::DEAL_BUTTONS).zip(assets.shop_buttons()).map(move |((name, place), images)| {
             let [x, y] = crate::offset(dialog, place);
             json!({"kind": "button", "name": name, "box": [x, y, images[0].size[0], images[0].size[1]]})
+        })
+    });
+    // The amount box's buttons (OK and Cancel, or OK alone).
+    let amount_buttons = app.assets.as_ref().and_then(|assets| game.amount.as_ref().map(|amount| (assets, amount))).into_iter().flat_map(|(assets, amount)| {
+        let dialog = crate::dialog_position(&assets.message);
+        amount.buttons().into_iter().map(move |(place, ok)| {
+            let (name, button) = if ok { ("ok", &assets.ok) } else { ("cancel", &assets.cancel) };
+            let [x, y] = crate::offset(dialog, place);
+            json!({"kind": "button", "name": name, "box": [x, y, button[0].size[0], button[0].size[1]]})
         })
     });
     // The party invitation's, at its own place.
@@ -1102,6 +1111,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.shop.iter().flat_map(crate::shop::Shop::row_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.vend_setup.iter().flat_map(|setup| setup.row_boxes(&game.cart.items)).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.storage.grip_box().map(|area| json!({"kind": "button", "name": "storage_resize", "box": area})))
+        .chain(game.party_window.grip_box().map(|area| json!({"kind": "button", "name": "party_resize", "box": area})))
         .chain(
             app.assets
                 .as_ref()
@@ -1219,6 +1229,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.trade.iter().flat_map(|trade| trade.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.card_view.iter().map(|view| json!({"kind": "button", "name": "card_picture_close", "box": view.close_box()})))
         .chain(question_buttons)
+        .chain(amount_buttons)
         .chain(game.slot.iter().map(|_| {
             let [x, y] = crate::taming::place(crate::screen());
             json!({"kind": "button", "name": "slot_machine", "box": [x, y, crate::taming::SIZE[0], crate::taming::SIZE[1]]})
@@ -1737,6 +1748,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     });
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
     state["storage_rows"] = game.storage.rows().into();
+    // The party window's size, and the rows it shows.
+    state["party_window_size"] = json!({"size": game.party_window.size(), "rows": game.party_window.shown_rows()});
     // The guild storage log: null when shut, else its place, tab, page and how many it lists.
     state["storage_log"] = game
         .storage_log
@@ -1880,6 +1893,7 @@ fn player_look(look: &Look) -> Value {
         "head_top": look.head_top,
         "head_mid": look.head_mid,
         "head_bottom": look.head_bottom,
+        "body": look.body,
     })
 }
 
@@ -2004,6 +2018,6 @@ mod tests {
     #[test]
     fn reports_the_players_look() {
         let look = Look { hair: 1, hair_color: 3, clothes_color: 2, head_top: 16, head_mid: 0, head_bottom: 4, ..Look::default() };
-        assert_eq!(player_look(&look), json!({"hair": 1, "hair_color": 3, "clothes_color": 2, "head_top": 16, "head_mid": 0, "head_bottom": 4}));
+        assert_eq!(player_look(&look), json!({"hair": 1, "hair_color": 3, "clothes_color": 2, "head_top": 16, "head_mid": 0, "head_bottom": 4, "body": 0}));
     }
 }

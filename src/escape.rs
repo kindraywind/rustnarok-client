@@ -274,9 +274,7 @@ pub fn sync(order: &mut Vec<WindowId>, open: &[WindowId]) {
 /// What one Esc press does. A repeating key does nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EscAct {
-    /// Battle-mode chat (#179): the whisper-name list was open.
-    CloseWhisperList,
-    /// Battle-mode chat (#179): close the line.
+    /// Battle-mode chat: close the line. The whisper-name list goes with it.
     CloseBattleChat,
     /// A text box in this window has focus: the window cancels.
     Cancel(WindowId),
@@ -295,7 +293,6 @@ pub enum EscAct {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EscView {
     pub battle_line: bool,
-    pub whisper_list: bool,
     pub focused: Option<WindowId>,
     /// An NPC's text window or choice menu is up.
     pub conversation: bool,
@@ -308,9 +305,9 @@ pub fn decide(repeat: bool, view: EscView) -> Option<EscAct> {
     if repeat {
         return None;
     }
-    // 1. Battle-mode chat line. Closed until #179 opens it; this arm stays first.
+    // 1. Battle-mode chat line. An open line closes, whisper-name list or not.
     if view.battle_line {
-        return Some(if view.whisper_list { EscAct::CloseWhisperList } else { EscAct::CloseBattleChat });
+        return Some(EscAct::CloseBattleChat);
     }
     // 2. A text box in a window, not the chat line. An NPC's input box and the storage's search keep Esc and do
     // nothing with it.
@@ -520,32 +517,16 @@ mod tests {
 
     #[test]
     fn esc_follows_the_first_rule() {
-        let window =
-            EscView { battle_line: false, whisper_list: false, focused: None, conversation: false, question: false, newest: Some(WindowId::Inventory) };
+        let window = EscView { battle_line: false, focused: None, conversation: false, question: false, newest: Some(WindowId::Inventory) };
         // A repeating key does nothing, even with a window up.
         assert_eq!(decide(true, window), None);
         // A closed battle-mode line is not the first case: the window closes.
         assert_eq!(decide(false, window), Some(EscAct::Close(WindowId::Inventory)));
-        // An open battle-mode line is first: the whisper list, else the line. Windows and questions wait.
-        let battle = EscView {
-            battle_line: true,
-            whisper_list: true,
-            focused: Some(WindowId::Mailbox),
-            conversation: false,
-            question: true,
-            newest: Some(WindowId::Skills),
-        };
-        assert_eq!(decide(false, battle), Some(EscAct::CloseWhisperList));
-        assert_eq!(decide(false, EscView { whisper_list: false, ..battle }), Some(EscAct::CloseBattleChat));
+        // An open battle-mode line is first, even while the whisper list is up. Windows and questions wait.
+        let battle = EscView { battle_line: true, focused: Some(WindowId::Mailbox), conversation: false, question: true, newest: Some(WindowId::Skills) };
+        assert_eq!(decide(false, battle), Some(EscAct::CloseBattleChat));
         // A text box beats a question and the newest window.
-        let typing = EscView {
-            battle_line: false,
-            whisper_list: false,
-            focused: Some(WindowId::VendSetup),
-            conversation: false,
-            question: true,
-            newest: Some(WindowId::Shop),
-        };
+        let typing = EscView { battle_line: false, focused: Some(WindowId::VendSetup), conversation: false, question: true, newest: Some(WindowId::Shop) };
         assert_eq!(decide(false, typing), Some(EscAct::Cancel(WindowId::VendSetup)));
         // A question beats the newest window.
         let question = EscView { focused: None, ..typing };
