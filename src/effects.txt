@@ -1801,11 +1801,12 @@ wav	93	effect\hunter_shockwavetrap	0
 wav	95	effect\wizard_quagmire	0
 wav	96	effect\wizard_fire_pillar_a	0
 wav	97	effect\wizard_fire_pillar_b	0
-wav	98	effect\black_adrenalinerush_b	0
+wav	98	effect\black_adrenalinerush_a	0
+wav	98	effect\black_adrenalinerush_b	480
 wav	99	effect\hunter_flasher	0
 wav	100	effect\hunter_removetrap	0
-wav	101	effect\black_weapon_repair_a	480
-wav	101	effect\black_weapon_repair_a	1320
+wav	101	effect\black_weapon_repair_a	320
+wav	101	effect\black_weapon_repair_a	880
 wav	102	effect\black_hammerfall	0
 wav	103	effect\black_weapon_perfection	0
 wav	105	effect\hun_anklesnare	0
@@ -4171,6 +4172,7 @@ struck	271	target	266
 struck	337	caster	494
 struck	339	caster	450
 struck	341	caster	93
+struck	341	caster	93
 struck	344	target	271
 struck	345	target	272
 struck	346	target	270
@@ -4766,6 +4768,9 @@ trap	216	107
 trap	218	464
 trap	222	464
 trap	268	1602
+trap	191	99
+trap	194	99
+trap	264	99
 unit	126	315
 unit	127	25
 unit	237	25

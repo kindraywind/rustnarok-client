@@ -66,8 +66,9 @@ fn spear_turn(heading: f32, yaw: f32) -> f32 {
 /// it's aimed after its life.
 struct Flight {
     born: Instant,
-    /// Ticks run.
+    /// Ticks run, and how many of them moved it (Jupitel Thunder's ball stops short of the aim).
     ticks: u32,
+    moves: u32,
     from: Vector,
     step: [f32; 2],
     aim: [f32; 2],
@@ -76,11 +77,10 @@ struct Flight {
 }
 
 impl Flight {
-    // ponytail: Jupitel Thunder's ball goes straight at the target; the game's turn truncates to whole degrees, 1–2° off.
     fn new(born: Instant, from: Vector, rise: f32, to: Vector, life: u32) -> Self {
         let step = [(to[0] - from[0]) / life as f32, (to[2] - from[2]) / life as f32];
         let bearing = crate::actor::step_rot(to[0] - from[0], to[2] - from[2]);
-        Self { born, ticks: 0, from: [from[0], from[1] + rise, from[2]], step, aim: [to[0], to[2]], bearing }
+        Self { born, ticks: 0, moves: 0, from: [from[0], from[1] + rise, from[2]], step, aim: [to[0], to[2]], bearing }
     }
 
     /// Like `new`, but along the whole degree before the heading's own (up to 2° off the line, as the game's fire balls
@@ -93,10 +93,16 @@ impl Flight {
         Self { step: [each * sin, -each * cos], ..Self::new(born, from, rise, to, life) }
     }
 
-    /// Where it is: a step on for each tick run.
+    /// Where it is: a step on for each tick that moved it.
     fn at(&self) -> Vector {
-        let steps = self.ticks as f32;
+        let steps = self.moves as f32;
         [self.from[0] + self.step[0] * steps, self.from[1], self.from[2] + self.step[1] * steps]
+    }
+
+    /// A tick that moves it on.
+    fn go(&mut self) {
+        self.ticks += 1;
+        self.moves += 1;
     }
 
     fn near(&self) -> bool {
@@ -141,7 +147,10 @@ impl Balls {
 
     /// Jupitel Thunder from `from` at `to` from `now`: one ball, over the target 20 ticks (320 ms) later.
     pub fn thunder(&mut self, from: Vector, to: Vector, now: Instant) {
-        self.thunder.push(Flight::new(now, from, THUNDER_RISE, to, THUNDER_LIFE));
+        // ponytail: a caster within 3 of the aim draws nothing (the game draws the quads, unrotated, at the caster's feet).
+        if f32::hypot(to[0] - from[0], to[2] - from[2]) > FIRE_BALL_NEAR {
+            self.thunder.push(Flight::skewed(now, from, THUNDER_RISE, to, THUNDER_LIFE));
+        }
     }
 
     /// Spear Boomerang from `from` at `to` from `now`: four spears at ticks 0, 4, 8 and 12, each reaching over the target
@@ -165,7 +174,7 @@ impl Balls {
         self.spear_boomerangs.retain(|launch| launch.ticks <= SPEAR_TICKS[3]);
         for spear in &mut self.spears {
             while !spear.gone && spear.flight.ticks < passes(spear.flight.born, now).min(SPEAR_LIFE) {
-                spear.flight.ticks += 1;
+                spear.flight.go();
                 spear.gone = spear.flight.near();
             }
         }
@@ -183,13 +192,20 @@ impl Balls {
         self.fire_balls.retain(|fire_ball| fire_ball.ticks <= FIRE_BALL_TICKS[3]);
         for ball in &mut self.balls {
             while !ball.gone && ball.flight.ticks < passes(ball.flight.born, now).min(FIRE_BALL_LIFE) {
-                ball.flight.ticks += 1;
+                ball.flight.go();
                 ball.gone = ball.flight.near();
             }
         }
         self.balls.retain(|ball| !ball.gone && passes(ball.flight.born, now) <= FIRE_BALL_LIFE);
+        // At the start of each tick the ball is measured to the aim: within 3 it stays where it was (and keeps its texture).
         for flight in &mut self.thunder {
-            flight.ticks = flight.ticks.max(passes(flight.born, now).min(THUNDER_LIFE));
+            while flight.ticks < passes(flight.born, now).min(THUNDER_LIFE) {
+                if flight.near() {
+                    flight.ticks += 1;
+                } else {
+                    flight.go();
+                }
+            }
         }
         self.thunder.retain(|flight| passes(flight.born, now) <= THUNDER_LIFE);
     }
@@ -229,7 +245,7 @@ impl Balls {
         // ponytail: the core's alpha 170 does nothing as the game adds it on (one to one); both draw at full strength.
         let pixels = 35.0 / world::CELL;
         for flight in self.thunder.iter().filter(|flight| flight.ticks > 0) {
-            let ball = THUNDER_BALL[flight.ticks as usize % THUNDER_BALL.len()];
+            let ball = THUNDER_BALL[flight.moves as usize % THUNDER_BALL.len()];
             for (path, size) in [THUNDER_CORE, ball].into_iter().zip(THUNDER_SIZES) {
                 let Some(Some(texture)) = textures.get(path) else { continue };
                 let half = size * pixels;
@@ -320,7 +336,7 @@ mod tests {
             let mut flight = Flight::skewed(start, [0.0; 3], SPEAR_RISE, [0.0, 0.0, distance], SPEAR_LIFE);
             let mut shown = 0;
             while flight.ticks < SPEAR_LIFE {
-                flight.ticks += 1;
+                flight.go();
                 if flight.near() {
                     break;
                 }
@@ -334,15 +350,33 @@ mod tests {
     }
 
     #[test]
-    fn jupitel_thunder_flies_one_ball_20_ticks() {
+    fn jupitel_thunder_flies_1_to_2_degrees_off_and_stops_short() {
         let start = Instant::now();
         let mut balls = Balls::default();
-        balls.thunder([0.0; 3], [40.0, 0.0, 0.0], start);
+        // 45 units due north (+z): along 179°, 2.25 a step, 5 up, stopping when within 3 of the aim: at age 19.
+        balls.thunder([0.0; 3], [0.0, 0.0, 45.0], start);
         balls.advance(start);
-        assert_eq!(balls.thunder[0].at(), [2.0, 5.0, 0.0]);
+        let (sin, cos) = 179.0_f32.to_radians().sin_cos();
+        let at = balls.thunder[0].at();
+        assert!((at[0] - 2.25 * sin).abs() < 1e-4 && (at[2] + 2.25 * cos).abs() < 1e-4 && at[1] == 5.0, "{at:?}");
+        balls.advance(start + TICK * 17);
+        assert_eq!((balls.thunder[0].ticks, balls.thunder[0].moves), (18, 18));
+        balls.advance(start + TICK * 18);
+        let short = balls.thunder[0].at();
+        assert_eq!((balls.thunder[0].ticks, balls.thunder[0].moves), (19, 19));
+        assert!((f32::hypot(short[0], short[2] - 45.0) - 2.25).abs() < 0.2, "about 2.25 short: {short:?}");
+        // Ages 18 and 19 show the same spot, and the texture stays.
         balls.advance(start + TICK * 19);
-        assert_eq!(balls.thunder[0].at(), [40.0, 5.0, 0.0]);
+        assert_eq!((balls.thunder[0].ticks, balls.thunder[0].moves, balls.thunder[0].at()), (20, 19, short));
         balls.advance(start + TICK * 20);
         assert!(balls.thunder.is_empty());
+        // 200 units: never within 3, 20 moves, ends 3.49 east of the aim.
+        balls.thunder([0.0; 3], [0.0, 0.0, 200.0], start);
+        balls.advance(start + TICK * 19);
+        assert_eq!(balls.thunder[0].moves, 20);
+        assert!((balls.thunder[0].at()[0] - 3.49).abs() < 0.01);
+        // A caster within 3 of the aim draws nothing.
+        balls.thunder([0.0; 3], [0.0, 0.0, 2.5], start);
+        assert_eq!(balls.thunder.len(), 1);
     }
 }

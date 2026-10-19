@@ -6,6 +6,7 @@
 use std::time::Instant;
 
 use super::{ScreenShape, TICK};
+use crate::world::Vector;
 
 pub const DISC: &str = "data\\texture\\effect\\alpha_down.tga";
 pub const RAY: &str = "data\\texture\\effect\\alpha_center.tga";
@@ -47,6 +48,11 @@ struct Look {
     rise: f32,
     ray_life: u32,
     half_base: f32,
+    /// Whether it has its disc, what a ray's growth is divided by (10, or 13), and whether a ray reloads at age 40 (its length
+    /// stops and its turn becomes a constant of its own: Adrenaline Rush).
+    disc: bool,
+    growth_div: f32,
+    reload: bool,
     /// Sonic Blow's flat ring instead of a disc and rays.
     band: bool,
 }
@@ -65,6 +71,9 @@ const BASH: Look = Look {
     rise: RISE,
     ray_life: LIFE,
     half_base: 5.0,
+    disc: true,
+    growth_div: 10.0,
+    reload: false,
     band: false,
 };
 const TURN_UNDEAD: Look = Look {
@@ -81,6 +90,9 @@ const TURN_UNDEAD: Look = Look {
     rise: RISE,
     ray_life: 20,
     half_base: 5.0,
+    disc: true,
+    growth_div: 10.0,
+    reload: false,
     band: false,
 };
 /// Signum Crucis' burst (half a second into its STR): Bash's with its own numbers, centred 120 px over the feet.
@@ -98,6 +110,50 @@ const SIGNUM: Look = Look {
     rise: -120.0,
     ray_life: 35,
     half_base: 15.0,
+    disc: true,
+    growth_div: 10.0,
+    reload: false,
+    band: false,
+};
+/// Adrenaline Rush's rays: no disc, 20 rays living 80 ticks that grow for 40 ticks and then turn at a pace of their own, at full
+/// alpha to the end.
+const ADRENALINE: Look = Look {
+    life: 80,
+    radius: 0.0,
+    shrink: 0.0,
+    disc_alpha: (0.0, 0.0, 0),
+    rays: 20,
+    length: (0, 0.0),
+    growth: (20, 50.0, 1.0),
+    drag: 120.0,
+    ray_alpha: (254.0, 254.0, 999),
+    ring: false,
+    rise: RISE,
+    ray_life: 80,
+    half_base: 5.0,
+    disc: false,
+    growth_div: 13.0,
+    reload: true,
+    band: false,
+};
+/// Flasher's rays: no disc, 20 rays living 70 ticks.
+const FLASHER: Look = Look {
+    life: 70,
+    radius: 0.0,
+    shrink: 0.0,
+    disc_alpha: (0.0, 0.0, 0),
+    rays: 20,
+    length: (40, 20.0),
+    growth: (30, 50.0, 1.0),
+    drag: 105.0,
+    ray_alpha: (20.0, 200.0, 47),
+    ring: false,
+    rise: RISE,
+    ray_life: 70,
+    half_base: 5.0,
+    disc: false,
+    growth_div: 10.0,
+    reload: false,
     band: false,
 };
 const SONIC_BLOW: Look = Look {
@@ -114,6 +170,9 @@ const SONIC_BLOW: Look = Look {
     rise: RISE,
     ray_life: 0,
     half_base: 0.0,
+    disc: true,
+    growth_div: 10.0,
+    reload: false,
     band: true,
 };
 
@@ -170,6 +229,8 @@ struct Ray {
     half: f32,
     length: f32,
     growth: f32,
+    /// The constant turn it takes at age 40 (Adrenaline Rush's).
+    reload: f32,
 }
 
 impl Ray {
@@ -178,16 +239,19 @@ impl Ray {
         let angle = draw(360);
         let turn = (draw(60) + 10.0) / 10.0;
         let half = (draw(25) + look.half_base) / 10.0;
-        let length = draw(look.length.0) + look.length.1;
+        let length = if look.length.0 == 0 { look.length.1 } else { draw(look.length.0) + look.length.1 };
         let (spread, base, sign) = look.growth;
-        let growth = sign * (draw(spread) + base) / 10.0;
-        Self { angle, turn, half, length, growth }
+        let growth = sign * (draw(spread) + base) / look.growth_div;
+        let reload = if look.reload { (draw(10) + 15.0) / 10.0 } else { 0.0 };
+        Self { angle, turn, half, length, growth, reload }
     }
 
-    /// Its angle and length at drawn tick `n`, after `n + 1` steps, its turn slowing by turn / `drag` before each.
-    fn at(&self, n: u32, drag: f32) -> (f32, f32) {
-        let steps = (n + 1) as f32;
-        (self.angle + self.turn * steps - self.turn / drag * steps * (steps + 1.0) / 2.0, self.length + self.growth * steps)
+    /// Its angle and length at drawn tick `n`, after `n + 1` steps, its turn slowing by turn / `drag` before each. A ray that
+    /// reloads has, from age 40, its length stopped and a constant turn of its own.
+    fn at(&self, n: u32, look: &Look) -> (f32, f32) {
+        let steps = (n.min(if look.reload { 39 } else { n }) + 1) as f32;
+        let (angle, length) = (self.angle + self.turn * steps - self.turn / look.drag * steps * (steps + 1.0) / 2.0, self.length + self.growth * steps);
+        if look.reload && n >= 40 { (angle + self.reload * (n - 39) as f32, length) } else { (angle, length) }
     }
 }
 
@@ -199,6 +263,8 @@ pub struct Burst {
     rays: Vec<Ray>,
     /// The ticks its disc and rays are drawn: their life, unless the effect ends first.
     drawn: u32,
+    /// A burst over a place in the world (Flasher's) rather than a unit.
+    pub fixed: Option<Vector>,
 }
 
 impl Burst {
@@ -210,6 +276,16 @@ impl Burst {
     /// Sonic Blow's ring, on the caster.
     pub fn sonic_blow(unit: Option<u32>, now: Instant) -> Self {
         Self::new(&SONIC_BLOW, unit, now, LIFE, |_| 0)
+    }
+
+    /// Adrenaline Rush's rays on a unit (None = the player).
+    pub fn adrenaline(unit: Option<u32>, now: Instant, length: u32, rand: impl FnMut(u32) -> u32) -> Self {
+        Self::new(&ADRENALINE, unit, now, length, rand)
+    }
+
+    /// Flasher's rays over the trap's cell `at`.
+    pub fn flasher(at: Vector, now: Instant, length: u32, rand: impl FnMut(u32) -> u32) -> Self {
+        Self { fixed: Some(at), ..Self::new(&FLASHER, None, now, length, rand) }
     }
 
     /// Signum Crucis' burst on a unit, from `start` (480 ms into the effect, whose length is `length` ticks).
@@ -225,7 +301,7 @@ impl Burst {
     /// Parts outliving a shorter effect never show (a quick cast's aura).
     fn new(look: &'static Look, unit: Option<u32>, now: Instant, length: u32, mut rand: impl FnMut(u32) -> u32) -> Self {
         let drawn = if length < look.life { 0 } else { look.life.min(length - 1) };
-        Self { start: now, unit, look, rays: (0..look.rays).map(|_| Ray::new(look, &mut rand)).collect(), drawn }
+        Self { start: now, unit, look, rays: (0..look.rays).map(|_| Ray::new(look, &mut rand)).collect(), drawn, fixed: None }
     }
 
     fn tick(&self, now: Instant) -> Option<u32> {
@@ -293,11 +369,11 @@ impl Burst {
         let (step, max, fade) = look.ray_alpha;
         let ray_tint = tint(alpha(n, 0.0, step, max, fade, look.life));
         let rays = self.rays.iter().filter(|_| n < look.ray_life).map(|ray| {
-            let (angle, length) = ray.at(n, look.drag);
+            let (angle, length) = ray.at(n, look);
             let corners = [(center, [0.5, 0.0]), (point(center, length, angle - ray.half), [1.0, 1.0]), (point(center, length, angle + ray.half), [0.0, 1.0])];
             (RAY, self.unit, corners.map(|(at, uv)| (at, uv, ray_tint)).to_vec())
         });
-        std::iter::once((DISC, self.unit, disc)).chain(rays).collect()
+        look.disc.then_some((DISC, self.unit, disc)).into_iter().chain(rays).collect()
     }
 }
 
@@ -321,8 +397,8 @@ mod tests {
         // A ray from fixed draws: angle 100, turn 3.0, half-width 1.0, length 30, growth 3.0.
         let mut draws = [100, 20, 5, 10, 10].into_iter();
         let ray = Ray::new(&BASH, |_| draws.next().unwrap());
-        assert_eq!(ray, Ray { angle: 100.0, turn: 3.0, half: 1.0, length: 30.0, growth: 3.0 });
-        let (angle, length) = ray.at(9, BASH.drag);
+        assert_eq!(ray, Ray { angle: 100.0, turn: 3.0, half: 1.0, length: 30.0, growth: 3.0, reload: 0.0 });
+        let (angle, length) = ray.at(9, &BASH);
         assert!((angle - (100.0 + 3.0 * 10.0 * (1.0 - 11.0 / 120.0))).abs() < 1e-3 && length == 60.0);
         // Drawn ticks 0 to 38: the disc and 20 rays; nothing at tick 39.
         let start = Instant::now();
@@ -364,6 +440,50 @@ mod tests {
     }
 
     #[test]
+    fn adrenaline_rush_turns_rays_that_reload_at_age_40() {
+        // Per ray, in order: angle, ω0, half-width, growth, ω1 (no length draw): 100, 3.0, 1.0, 5 draws then 15…24.
+        let mut draws = [100, 20, 5, 13, 5].into_iter();
+        let ray = Ray::new(&ADRENALINE, |_| draws.next().unwrap());
+        assert_eq!(ray, Ray { angle: 100.0, turn: 3.0, half: 1.0, length: 0.0, growth: 63.0 / 13.0, reload: 2.0 });
+        // Ages 0…39: angle a0 + ω0 (a + 1)(1 − (a + 2)/240), length growth (a + 1); from 40 the length stops and the turn is 2 a tick.
+        let near = |got: f32, want: f32| (got - want).abs() < 1e-3;
+        let (angle0, length0) = ray.at(0, &ADRENALINE);
+        assert!(near(angle0, 100.0 + 3.0 * (1.0 - 2.0 / 240.0)) && near(length0, 63.0 / 13.0));
+        let (angle39, length39) = ray.at(39, &ADRENALINE);
+        assert!(near(angle39, 100.0 + 3.0 * 40.0 * (1.0 - 41.0 / 240.0)) && near(length39, 63.0 / 13.0 * 40.0));
+        let (angle40, length40) = ray.at(40, &ADRENALINE);
+        assert!(near(angle40, angle39 + 2.0) && near(length40, length39));
+        assert!(near(ray.at(41, &ADRENALINE).0, angle39 + 4.0));
+        // 20 rays and no disc at the screen's centre 40 px up, alpha 254 with no fade, drawn ages 0…79, gone at 80.
+        let start = Instant::now();
+        let burst = Burst::adrenaline(None, start, 300, |_| 1);
+        assert_eq!(burst.shapes(start).len(), 20);
+        assert!(burst.shapes(start).iter().all(|(path, ..)| *path == RAY));
+        assert_eq!(burst.shapes(start + TICK * 79).len(), 20);
+        assert!(burst.shapes(start + TICK * 80).is_empty());
+        assert_eq!(burst.shapes(start + TICK * 79)[0].2[0].0, [0.0, RISE]);
+        assert!((burst.shapes(start + TICK * 79)[0].2[0].2[3] - 254.0 / 255.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn flasher_rays_follow_the_trap_cell() {
+        // Rand order: angle, ω0, half-width, length, growth; the turn slows by ω0/105; alpha 20 a tick to 200 at age 9, 200 to 46, then down.
+        let mut draws = [100, 20, 5, 0, 0].into_iter();
+        let ray = Ray::new(&FLASHER, |_| draws.next().unwrap());
+        assert_eq!(ray, Ray { angle: 100.0, turn: 3.0, half: 1.0, length: 20.0, growth: 5.0, reload: 0.0 });
+        let rays: Vec<f32> = (0..70).map(|n| alpha(n, 0.0, 20.0, 200.0, 47, 70)).collect();
+        assert_eq!((rays[0], rays[9], rays[46]), (20.0, 200.0, 200.0));
+        assert_eq!((rays[47], rays[68], rays[69]), (191.0, 8.0, 0.0));
+        // It sits over a cell, not a unit: its shapes are the fixed ones.
+        let start = Instant::now();
+        let burst = Burst::flasher([5.0, 6.0, 7.0], start, 250, |n| n / 2);
+        assert_eq!(burst.fixed, Some([5.0, 6.0, 7.0]));
+        assert_eq!(burst.shapes(start).len(), 20);
+        assert_eq!(burst.shapes(start + TICK * 69).len(), 20);
+        assert!(burst.shapes(start + TICK * 70).is_empty());
+    }
+
+    #[test]
     fn signum_crucis_burst() {
         // The disc's alpha over its 40 drawn ticks: 28 … 170 (ages 5–26), then down to 0 at age 39; rays 20 … 200 at age 9, held to age 34.
         let disc: Vec<f32> = (0..40).map(|n| alpha(n, 0.0, 170.0 / 6.0, 170.0, 27, LIFE)).collect();
@@ -374,8 +494,8 @@ mod tests {
         // A ray from fixed draws: angle 100, turn 3.0, half-width (R(25) = 0 → 1.5), length 30, growth 9.5; the turn slows by turn / 52.5.
         let mut draws = [100, 20, 0, 0, 0].into_iter();
         let ray = Ray::new(&SIGNUM, |_| draws.next().unwrap());
-        assert_eq!(ray, Ray { angle: 100.0, turn: 3.0, half: 1.5, length: 30.0, growth: 9.5 });
-        let (angle, length) = ray.at(9, SIGNUM.drag);
+        assert_eq!(ray, Ray { angle: 100.0, turn: 3.0, half: 1.5, length: 30.0, growth: 9.5, reload: 0.0 });
+        let (angle, length) = ray.at(9, &SIGNUM);
         assert!((angle - (100.0 + 3.0 * 10.0 * (1.0 - 11.0 / 105.0))).abs() < 1e-3 && (length - (30.0 + 95.0)).abs() < 1e-3);
         // Nothing before its start; 21 shapes from it (the disc and 20 rays) for 35 ticks, the disc alone to 39, the centre 120 px up.
         let start = Instant::now();
@@ -405,7 +525,7 @@ mod tests {
         let mut draws = [0, 0, 0, 10, 10].into_iter();
         let ray = Ray::new(&TURN_UNDEAD, |_| draws.next().unwrap());
         assert_eq!((ray.length, ray.growth), (360.0, -16.0));
-        assert_eq!((ray.at(0, TURN_UNDEAD.drag).1, ray.at(19, TURN_UNDEAD.drag).1), (344.0, 40.0));
+        assert_eq!((ray.at(0, &TURN_UNDEAD).1, ray.at(19, &TURN_UNDEAD).1), (344.0, 40.0));
         let start = Instant::now();
         let burst = Burst::turn_undead(Some(7), start, |n| n / 2);
         let shapes = burst.shapes(start);

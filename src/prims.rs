@@ -415,10 +415,19 @@ impl Prims {
         for hit in self.cold_hits.iter().filter(|hit| now >= hit.start) {
             shapes.extend(hit.shapes(now));
         }
-        shapes.extend(self.bursts.iter().flat_map(|burst| burst.shapes(now)));
+        shapes.extend(self.bursts.iter().filter(|burst| burst.fixed.is_none()).flat_map(|burst| burst.shapes(now)));
         shapes.extend(self.napalms.iter().flat_map(|napalm| napalm.shapes(now)));
         shapes.extend(self.first.shapes(now));
         shapes
+    }
+
+    /// What the bursts over a place in the world (Flasher's) draw at `now`: the place, and the shapes in screen pixels from it.
+    pub fn fixed_shapes(&self, now: Instant) -> Vec<(Vector, ScreenShape)> {
+        self.bursts
+            .iter()
+            .filter_map(|burst| Some((burst.fixed?, burst)))
+            .flat_map(|(at, burst)| burst.shapes(now).into_iter().map(move |shape| (at, shape)))
+            .collect()
     }
 
     /// Runs the builders and the ghosts up to `now`, a tick at a time.

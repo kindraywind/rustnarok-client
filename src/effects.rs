@@ -1552,6 +1552,13 @@ pub const NAPALM_BEAT: u32 = 32;
 /// EF_HALLUTIME: white glints round a copy (`prims::sparkle`).
 pub const HALLUTIME: u32 = crate::prims::sparkle::EF_HALLUTIME;
 
+/// EF_QUAGMIRE: only its sound is handled in code (one time in 12, quietly).
+const QUAGMIRE: u32 = 95;
+/// Whether a Quagmire cell's launch makes its sound, by one draw of 12: one time in 12.
+pub fn quagmire_heard(draw: u32) -> bool {
+    draw == 0
+}
+
 /// EF_STORMGUST: its STR (`stormgust`, or `storm_min` for the ground skills under /mineffect, effect 708) and the ice crystals.
 const STORM_GUST: u32 = 89;
 /// EF_SIGHTRASHER: its 64 sprites and ring, made in code (`prims::sight`); it ends the caster's Sight (22).
@@ -1573,7 +1580,7 @@ const FIRE_BALL: u32 = 24;
 /// Whether the server sends this effect (ZC_NOTIFY_EFFECT2) with no target, so it flies from its unit at the map's
 /// centre: Fire Ball's and Frost Diver's.
 pub fn aimed_at_centre(effect: u32) -> bool {
-    matches!(effect, FIRE_BALL | FROST_DIVER | SPHERE | STRAIGHT_SPHERE | POTION_PITCHER | BERSERK_PITCHER | SPORE_EXPLOSION)
+    matches!(effect, FIRE_BALL | FROST_DIVER | JUPITEL | SPHERE | STRAIGHT_SPHERE | POTION_PITCHER | BERSERK_PITCHER | SPORE_EXPLOSION)
 }
 
 /// The effect that throws the item of a skill used (ZC_USE_SKILL): Potion Pitcher's, Berserk Pitcher's, Spore
@@ -1663,7 +1670,14 @@ impl Effects {
         if id == BASH && self.min {
             return;
         }
-        self.play_sounds(table, id, at, now);
+        // Quagmire sounds one time in 12, from 100 units under the ground (so quietly); each of its cells launches its own.
+        if id == QUAGMIRE {
+            if quagmire_heard(pick(0, 11)) {
+                self.play_sounds(table, id, [at[0], at[1] - 100.0, at[2]], now);
+            }
+        } else {
+            self.play_sounds(table, id, at, now);
+        }
         self.show(gpu, grf, table, id, target, at, now);
     }
 
@@ -1749,7 +1763,13 @@ impl Effects {
             self.prims.sage.look(id, at, now);
         }
         // The first jobs' small heal, Endure, Magnum Break, Steal, Detoxify and Decrease AGI, built in code (a status plays it once).
-        if let (true, Target::Unit(unit) | Target::Status(unit, _)) = (first::makes(id), target) {
+        // (Flasher's and Remove Trap's play at a trap's cell.)
+        let first_unit = match target {
+            Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
+            _ if matches!(id, first::FLASHER_FX | first::REMOVE_TRAP) => Some(None),
+            _ => None,
+        };
+        if let (true, Some(unit)) = (first::makes(id), first_unit) {
             for path in [
                 first::ALPHA_DOWN,
                 first::ENDURE,
@@ -1769,6 +1789,18 @@ impl Effects {
                 self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
             }
             self.prims.first.play(id, unit, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+        }
+        // Adrenaline Rush's rays follow its unit on the screen; Flasher's burst from the trap's cell stays put.
+        if matches!(id, first::ADRENALINE_RUSH | first::FLASHER_FX) {
+            for path in [burst::DISC, burst::RAY, burst::RING] {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            let rand = |n: u32| pick(0, n.saturating_sub(1));
+            match (id, target) {
+                (first::ADRENALINE_RUSH, Target::Unit(unit)) => self.prims.bursts.push(burst::Burst::adrenaline(unit, now, 300, rand)),
+                (first::FLASHER_FX, _) => self.prims.bursts.push(burst::Burst::flasher(at, now, 250, rand)),
+                _ => {}
+            }
         }
         // Storm Gust's ice crystals, not under /mineffect.
         if id == STORM_GUST && !self.min {
@@ -2619,6 +2651,7 @@ impl Effects {
             .screen_shapes(now)
             .into_iter()
             .filter_map(|(path, unit, corners)| Some((self.textures.get(path)?.as_ref()?, position_of(unit)?, corners)))
+            .chain(self.prims.fixed_shapes(now).into_iter().filter_map(|(at, (path, _, corners))| Some((self.textures.get(path)?.as_ref()?, at, corners))))
             .collect()
     }
 
@@ -3549,6 +3582,20 @@ mod tests {
         assert_eq!(sounds.len(), 11);
         assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
         assert!(!table.sounds.contains_key(&149));
+        // Jupitel Thunder from the server flies one ball from its unit at the map's centre; Dark Thunder launches two; Quagmire
+        // sounds one time in 12; Repair Weapon sounds at 320 and 880 ms; Adrenaline Rush at 0 and 480 ms.
+        assert!(aimed_at_centre(93) && AIMED.contains(&93));
+        assert_eq!(table.struck(341), Some(&[(Who::Caster, 93), (Who::Caster, 93)][..]));
+        assert_eq!((0..12).filter(|&draw| quagmire_heard(draw)).count(), 1);
+        assert_eq!(table.sounds[&101].iter().map(|sound| sound.delay_ms).collect::<Vec<_>>(), [320, 880]);
+        assert_eq!(
+            table.sounds[&98].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(),
+            [("effect\\black_adrenalinerush_a", 0), ("effect\\black_adrenalinerush_b", 480)]
+        );
+        assert!(
+            [99, 100, 98].iter().all(|&id| first::makes(id))
+                && [150, 191, 194, 264].iter().all(|&kind| table.trap(kind) == Some(99) || kind == 150 && table.trap(kind).is_some())
+        );
         // The priests' sounds at their own ticks, Aspersio's sparkles in code, Melody of Sink's Lex Divina once, Storm Gust's
         // light STR under /mineffect.
         let delays = |id: u32| table.sounds[&id].iter().map(|sound| sound.delay_ms).collect::<Vec<_>>();
