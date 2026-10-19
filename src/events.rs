@@ -497,6 +497,10 @@ impl App {
                     cursor_at: [-1.0; 2],
                     attack: None,
                     last_attack: None,
+                    attack_was: None,
+                    walk_cell: None,
+                    last_chase_walk: None,
+                    player_motion: (actor::IDLE, false),
                     riding: false,
                     chat_mode: battle_mode::Mode::load(),
                     map_type: None,
@@ -3701,11 +3705,25 @@ impl App {
             }
             // Out of reach after all: chase it again, as asked (kept up unless it was only while held).
             // ponytail: the chase starts from the client's positions, not the server's in the packet.
-            MapEvent::TooFar { target, range, .. } => {
+            MapEvent::TooFar { target, target_cell, cell, range } => {
                 game.attack_range = i32::from(range);
-                let (continuous, held) = game.attack.map_or((true, false), |attack| (attack.continuous, attack.held));
-                game.attack = Some(Attack { held, ..Attack::new(target, continuous) });
-                game.attack_step(Instant::now());
+                // Both where the server has them: one standing goes to its cell's centre, one walking walks on.
+                // ponytail: a walking target keeps its own destination (a fast chase's aim) until its next move.
+                let clock = control::now();
+                if let Some(unit) = game.units.get_mut(&target).filter(|unit| !unit.moving()) {
+                    unit.place_at(target_cell.map(i32::from), clock);
+                }
+                if !game.player.moving() {
+                    game.player.place_at(cell.map(i32::from), clock);
+                }
+                game.walk_cell = None;
+                // Chased again at once (`rearmed`).
+                if !game.player.sitting && game.player.option & 0x2 == 0 {
+                    let now = Instant::now();
+                    game.attack = Some(rearmed(game.attack, game.attack_was, target));
+                    game.last_chase_walk = Some(whole_ms(now).saturating_sub(ATTACK_GAP_MS));
+                    game.attack_step(now);
+                }
             }
             MapEvent::StyleChanged(false) => {
                 game.stylist = None;

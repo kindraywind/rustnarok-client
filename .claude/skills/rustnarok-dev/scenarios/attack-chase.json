@@ -1,0 +1,21 @@
+{
+  "about": "Walking into attack reach (issue #590): a click on a training dummy 6 cells east (npc/attack-chase.txt) sends CZ_REQUEST_MOVE (0x035f) to the chase cell beside it, and CZ_REQUEST_ACT (0x0437) only once the player has walked into reach: not right behind the walk, and no 0x0139 from rathena. It used to send the attack on the frame after the walk, before the player moved.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild06 180 180"}, {"settle": 1500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/attack-chase.txt"}, {"wait": 1500},
+    {"expect": {"state": {"player.cell": [180, 180]}}},
+    {"click_on": {"unit": "Dummy 10"}},
+    {"wait_for": {"sent": "0x035f", "ms": 3000}},
+    {"wait_for": {"sent": "0x0437", "ms": 300}, "none": true},
+    {"wait_for": {"sent": "0x0437", "ms": 4000}},
+    {"wait_for": {"packet": "0x0139", "ms": 800}, "none": true},
+    {"wait": 600},
+    {"move": [1000, 750]},
+    {"shot": "attack-chase", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"expect": {"state": {"player.cell": [185, 180], "player.moving": false}}},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/attack-chase.txt"}, {"wait": 300},
+    {"say": "@killmonster2"}, {"wait": 500}
+  ]
+}

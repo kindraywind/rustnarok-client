@@ -1421,6 +1421,13 @@ struct Game {
     /// attack.
     attack: Option<Attack>,
     last_attack: Option<Instant>,
+    /// The attack as the last frame left it, for a 0x0139 after it ended.
+    attack_was: Option<Attack>,
+    /// The cell the last walk toward an attack asked for (`chase_walk`), when that was asked (whole ms), and the
+    /// player's drawn action and whether it was dead at the last frame (`clears_walk_cell`).
+    walk_cell: Option<[i32; 2]>,
+    last_chase_walk: Option<u64>,
+    player_motion: (usize, bool),
     riding: bool,
     /// ChangeChatMode (/bm): the chat line stays closed and letter keys are shortcuts.
     chat_mode: battle_mode::Mode,
@@ -3094,10 +3101,22 @@ struct Attack {
     held: bool,
     /// The attack packet went out.
     sent: bool,
-    /// A walk toward it went out (to where), and when a cell in reach was last looked for.
-    chased: bool,
-    chase_cell: Option<[i32; 2]>,
-    last_chase: Option<Instant>,
+    /// Fixed at the click (`slow_target`): a fast target is chased toward where it's walking to, every CHASE_GAP_MS;
+    /// a slow one toward where it's drawn, every ATTACK_GAP_MS.
+    fast: bool,
+}
+
+/// The attack a 0x0139 brings back on `target`, not sent, fast and slow swapped (anything but fast becomes fast).
+/// The one under way keeps its Ctrl and held state; one that had ended comes back the way its click left it: one
+/// swing, or kept up with Ctrl or /noctrl.
+fn rearmed(attack: Option<Attack>, was: Option<Attack>, target: u32) -> Attack {
+    let (continuous, held) = match (attack, was) {
+        (Some(attack), _) => (attack.continuous, attack.held),
+        (None, Some(was)) => (was.continuous, false),
+        (None, None) => (true, false),
+    };
+    let fast = !attack.or(was).is_some_and(|attack| attack.fast);
+    Attack { held, fast, ..Attack::new(target, continuous) }
 }
 
 /// What letting go of the button does to an attack.
@@ -3110,7 +3129,7 @@ enum Release {
 
 impl Attack {
     fn new(target: u32, continuous: bool) -> Self {
-        Self { target, continuous, held: true, sent: false, chased: false, chase_cell: None, last_chase: None }
+        Self { target, continuous, held: true, sent: false, fast: true }
     }
 
     fn release(&mut self) -> Release {
@@ -3127,9 +3146,11 @@ impl Attack {
     }
 }
 
-/// An attack packet goes no sooner than this after the last; out of reach, a cell in reach is looked for this often.
+/// An attack packet goes no sooner than this after the last.
 const ATTACK_GAP: Duration = Duration::from_millis(1200);
-const CHASE_GAP: Duration = Duration::from_millis(450);
+/// A chase walk goes more than this many whole ms after the last one: toward a fast target, a slow one.
+const CHASE_GAP_MS: u64 = 450;
+const ATTACK_GAP_MS: u64 = 1200;
 /// "Attacks and skills cannot be used when your Weight is over 90%.", "Unable to attack while riding."
 const OVERWEIGHT: usize = 307;
 const RIDING_NO_ATTACK: usize = 1885;
@@ -3139,10 +3160,29 @@ const ALL_RIDING: u16 = 613;
 const NO_CTRL_ON: usize = 717;
 const NO_CTRL_OFF: usize = 718;
 
-/// In reach to attack: at most range × 5 + 5.5 world units away (a cell is 5).
-fn in_attack_reach(from: [i32; 2], to: [i32; 2], range: i32) -> bool {
-    let [dx, dy] = [(from[0] - to[0]) as f32, (from[1] - to[1]) as f32];
-    dx.hypot(dy) * 5.0 <= range as f32 * 5.0 + 5.5
+/// A target is slow when 4/3 of the player's ms per cell (whole ms, truncated) is less than its own; otherwise fast.
+fn slow_target(own_ms: f32, target_ms: f32) -> bool {
+    (4 * own_ms as u32) / 3 < target_ms as u32
+}
+
+/// One frame of a chase out of reach: the cell to ask a walk to, when it isn't the walk cell already and more than
+/// `gap` whole ms passed since the last chase walk. It becomes the walk cell, asked for at `now`, whether or not the
+/// move limit then lets it out.
+fn chase_walk(cell: [i32; 2], walk_cell: &mut Option<[i32; 2]>, last_chase: &mut Option<u64>, gap: u64, now: u64) -> Option<[i32; 2]> {
+    if *walk_cell == Some(cell) || last_chase.is_some_and(|last| now <= last + gap) {
+        return None;
+    }
+    (*walk_cell, *last_chase) = (Some(cell), Some(now));
+    Some(cell)
+}
+
+/// Whether the player's own motion changed in a way that clears the walk cell: anything but starting a walk (a stop,
+/// a swing, a flinch, sitting or standing up, a cast, the pickup, dying), and nothing while dead. Standing ready or
+/// not is the same motion.
+fn clears_walk_cell(before: (usize, bool), now: usize) -> bool {
+    let standing = |action| if action == actor::READY { actor::IDLE } else { action };
+    let (action, dead) = before;
+    !dead && standing(action) != standing(now) && now != actor::WALK
 }
 
 fn may_attack(last: Option<Instant>, now: Instant) -> bool {
@@ -4377,6 +4417,12 @@ impl ApplicationHandler<NetEvent> for App {
                 let now = Instant::now();
                 game.attack_step(now);
                 game.pending_step(now);
+                // The walk cell goes with a change of the player's own motion.
+                let action = game.player.animation(control::now()).0;
+                if clears_walk_cell(game.player_motion, action) {
+                    game.walk_cell = None;
+                }
+                game.player_motion = (action, game.player.dead);
                 // The goal kept while busy goes out as it is when the player stops being busy (not on dying).
                 if let Some(goal) = game.stored_walk.frame(game.player.busy(control::now()), game.player.dead) {
                     game.send_walk(goal, now);
@@ -5501,11 +5547,46 @@ mod tests {
     }
 
     #[test]
+    fn chases_slow_and_fast_targets() {
+        // Slow when 4/3 of the player's ms per cell, truncated, is less than the target's.
+        assert!(!slow_target(150.0, 200.0) && slow_target(150.0, 201.0));
+        assert!(!slow_target(100.0, 133.0) && slow_target(100.0, 134.0));
+        // A walk goes out only to a new cell, more than the gap after the last chase walk.
+        let (mut walk_cell, mut last) = (None, None);
+        assert_eq!(chase_walk([39, 32], &mut walk_cell, &mut last, CHASE_GAP_MS, 1000), Some([39, 32]));
+        assert_eq!(chase_walk([39, 32], &mut walk_cell, &mut last, CHASE_GAP_MS, 2000), None, "the same cell");
+        assert_eq!(chase_walk([39, 33], &mut walk_cell, &mut last, CHASE_GAP_MS, 1450), None, "450 ms isn't more than 450");
+        assert_eq!(chase_walk([39, 33], &mut walk_cell, &mut last, CHASE_GAP_MS, 1451), Some([39, 33]));
+        assert_eq!(chase_walk([39, 34], &mut walk_cell, &mut last, ATTACK_GAP_MS, 2651), None);
+        assert_eq!(chase_walk([39, 34], &mut walk_cell, &mut last, ATTACK_GAP_MS, 2652), Some([39, 34]));
+        // A re-click on the monster being chased: the walk cell and the last walk are the player's, so nothing new.
+        assert_eq!(chase_walk([39, 34], &mut walk_cell, &mut last, CHASE_GAP_MS, 4000), None);
+        // A walk the move limit drops still set the walk cell: not asked for again while the cell stays.
+        assert!(!may_move(Some(4000), 4100));
+        assert_eq!(chase_walk([38, 34], &mut walk_cell, &mut last, CHASE_GAP_MS, 4100), Some([38, 34]));
+        assert_eq!(chase_walk([38, 34], &mut walk_cell, &mut last, CHASE_GAP_MS, 4700), None);
+        // Arrived mid-step: the drawn position crosses into the walk cell halfway from (37, 34) to (38, 34).
+        let arrived = |x: f32| Some(world::floor_cell(world::drawn_point([x, 34.0]))) == walk_cell;
+        assert!(!arrived(37.49) && arrived(37.5));
+        // The walk cell goes with the player's own motion, except starting a walk, and never while dead.
+        assert!(clears_walk_cell((actor::WALK, false), actor::IDLE));
+        assert!(clears_walk_cell((actor::IDLE, false), actor::SIT));
+        assert!(clears_walk_cell((actor::WALK, false), 5));
+        assert!(!clears_walk_cell((actor::IDLE, false), actor::WALK));
+        assert!(!clears_walk_cell((actor::READY, false), actor::IDLE));
+        assert!(!clears_walk_cell((8, true), actor::IDLE));
+        // 0x0139 swaps slow and fast and brings an ended single swing back as one swing, a Ctrl attack kept up.
+        let single = Attack { held: false, sent: true, fast: true, ..Attack::new(5, false) };
+        let again = rearmed(None, Some(single), 5);
+        assert!(!again.fast && !again.sent && again.action() == net::ACT_ATTACK);
+        let kept = Attack { sent: true, fast: false, ..Attack::new(5, true) };
+        let again = rearmed(None, Some(kept), 5);
+        assert!(again.fast && again.action() == net::ACT_ATTACK_REPEAT);
+        assert!(rearmed(None, None, 7).fast);
+    }
+
+    #[test]
     fn attacks_as_the_player_asked() {
-        // Reach: range × 5 + 5.5 units.
-        assert!(in_attack_reach([0, 0], [2, 0], 1));
-        assert!(!in_attack_reach([0, 0], [2, 1], 1));
-        assert!(in_attack_reach([0, 0], [10, 0], 9) && !in_attack_reach([0, 0], [11, 0], 9));
         let start = Instant::now();
         assert!(may_attack(None, start) && !may_attack(Some(start), start + Duration::from_millis(1199)));
         assert!(may_attack(Some(start), start + ATTACK_GAP));

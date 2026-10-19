@@ -174,42 +174,63 @@ impl Game {
 
     /// Attacks `target` and keeps at it, walking into reach first.
     pub(crate) fn attack(&mut self, target: u32) {
-        self.attack = Some(Attack::new(target, true));
+        self.attack = Some(Attack { fast: self.fast_target(target), ..Attack::new(target, true) });
         self.attack_step(Instant::now());
     }
 
-    /// Moves the attack along: once in reach (or once a walk toward it has ended) the one attack packet goes out, no
-    /// sooner than ATTACK_GAP after the last; out of reach, every CHASE_GAP a cell in reach is looked for, and walked
-    /// to when it changed. A target gone (or dying) ends it; after the packet the server keeps at it (or swings once).
+    /// Whether an attack on `target` chases it as a fast one (`slow_target`); ground skill units are.
+    pub(crate) fn fast_target(&self, target: u32) -> bool {
+        self.units.get(&target).is_none_or(|unit| !slow_target(self.player.step_ms, unit.step_ms))
+    }
+
+    /// Where the attack's target is drawn and where a chase aims, as ground points: a unit's drawn position, aimed at
+    /// the centre of the cell it walks to when fast; a ground skill unit's cell centre. None when it's gone.
+    fn attack_points(&self, attack: Attack, now: Instant) -> Option<([f32; 2], [f32; 2])> {
+        let cell = attack_goal(&self.units, &self.skill_units, attack.target)?;
+        let Some(unit) = self.units.get(&attack.target) else {
+            let centre = world::drawn_point(cell.map(|value| value as f32));
+            return Some((centre, centre));
+        };
+        let drawn = world::drawn_point(unit.position(now));
+        let aim = if attack.fast { world::drawn_point(unit.destination().map(|value| value as f32)) } else { drawn };
+        Some((drawn, aim))
+    }
+
+    /// Moves the attack along, from where the player and the target are drawn: in reach (`world::in_attack_reach`,
+    /// with heights) or arrived on the walk cell, the one attack packet goes out, no sooner than ATTACK_GAP after the
+    /// last; out of reach, a walk to the chase cell (`world::chase_cell`) when it isn't the walk cell and the target's
+    /// gap has passed (`chase_walk`). A target gone (or dying) ends it; after the packet the server keeps at it (or
+    /// swings once).
     pub(crate) fn attack_step(&mut self, now: Instant) {
         let Some(mut attack) = self.attack else { return };
-        let Some(goal) = attack_goal(&self.units, &self.skill_units, attack.target) else {
+        let clock = control::now();
+        let Some((drawn, aim)) = self.attack_points(attack, clock) else {
             self.attack = None;
             return;
         };
         if attack.sent || self.store_open() {
             return;
         }
-        let from = self.player.cell;
-        if in_attack_reach(from, goal, self.attack_range) || (attack.chased && !self.player.moving()) {
+        let from = world::drawn_point(self.player.position(clock));
+        let gat = &self.world.gat;
+        let arrived = self.walk_cell == Some(world::floor_cell(from));
+        if arrived || world::in_attack_reach(world::attack_distance(gat, from, drawn), self.attack_range) {
             if may_attack(self.last_attack, now) {
                 let _ = self.session.act(attack.target, attack.action());
                 self.last_attack = Some(now);
                 attack.sent = true;
             }
-        } else if attack.last_chase.is_none_or(|last| now.saturating_duration_since(last) >= CHASE_GAP) {
-            attack.last_chase = Some(now);
-            let path = world::find_path(&self.world.gat, from, goal);
-            let stop = path.and_then(|path| path.into_iter().find(|&cell| in_attack_reach(cell, goal, self.attack_range)));
-            if let Some(stop) = stop.filter(|&stop| attack.chase_cell != Some(stop))
+        } else {
+            let cell = world::chase_cell(gat, from, aim, self.attack_range);
+            let gap = if attack.fast { CHASE_GAP_MS } else { ATTACK_GAP_MS };
+            if let Some(cell) = chase_walk(cell, &mut self.walk_cell, &mut self.last_chase_walk, gap, whole_ms(now))
                 && may_move(self.last_move, whole_ms(now))
             {
                 self.last_move = Some(whole_ms(Instant::now()));
-                attack.chase_cell = Some(stop);
-                attack.chased = true;
-                let _ = self.session.walk(stop.map(|value| value as u16));
+                let _ = self.session.walk(cell.map(|value| value as u16));
             }
         }
+        self.attack_was = Some(attack);
         // A one swing that went out is over; so is one let go of.
         self.attack = Some(attack).filter(|attack| !(attack.sent && !attack.continuous && !attack.held));
     }
