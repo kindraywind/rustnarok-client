@@ -4,8 +4,8 @@
 //!
 //! Dev switches: `RUSTNAROK_CLIENT_GRF` (data.grf path), `RUSTNAROK_CLIENT_SERVER` (login server, over the data folder's
 //! clientinfo.xml and the default 127.0.0.1:6900),
-//! `RUSTNAROK_CLIENT_LOGIN=user:password` (fill in and submit on start), `RUSTNAROK_CLIENT_AUTOSTART=<slot>` (then pick the first
-//! server and play that slot; any other value stops at character select), `RUSTNAROK_CLIENT_PIN=<4 digits>` (enter that PIN when
+//! `RUSTNAROK_CLIENT_LOGIN=user:password` (fill in and submit on start), `RUSTNAROK_CLIENT_AUTOSTART=<slot>` (then pick the saved
+//! server, or the first, and play that slot; any other value stops at character select), `RUSTNAROK_CLIENT_PIN=<4 digits>` (enter that PIN when
 //! the char server asks), `RUSTNAROK_CLIENT_WALK=x,y` (walk there a second after entering the map),
 //! `RUSTNAROK_CLIENT_TALK=<name>[:<n>]` (talk to that NPC, pressing "next" or "close" up to n times), `RUSTNAROK_CLIENT_ATTACK=1` (attack the
 //! nearest monster in view), `RUSTNAROK_CLIENT_SAY=<text>[|<text>...]` (type each into the chat a second after entering, e.g.
@@ -121,6 +121,7 @@ mod render;
 mod reputation;
 mod roulette;
 mod screenshot;
+mod servers;
 mod shop;
 mod shortcuts;
 mod skill_descript;
@@ -2550,6 +2551,8 @@ enum Scene {
     ServerSelect {
         accepted: LoginAccepted,
         selected: usize,
+        /// The first row on screen, so the selection stays among the nine that show.
+        scroll: usize,
     },
     CharSelect(Box<char_select::Select>),
     /// Making a character, with the select screen to go back to.
@@ -2759,6 +2762,9 @@ struct Assets {
     white: Texture,
     grey: Texture,
     selection: Texture,
+    /// The char-server list's #F0F0F0 fill, and the bar along the bottom of its window.
+    server_fill: Texture,
+    server_bar: Texture,
     say: npc_say::Assets,
     npc_menu: npc_menu::Assets,
     npc_input: npc_input::Assets,
@@ -2874,6 +2880,8 @@ impl Assets {
             white: gpu.solid([255; 4]),
             grey: gpu.solid([0x9C, 0x9C, 0x9C, 0xFF]),
             selection: gpu.solid(SELECTION_COLOR),
+            server_fill: gpu.solid(servers::LIST_COLOR),
+            server_bar: image(format!("{UI}basic_interface\\btnbar_mid2.bmp")),
             say: npc_say::Assets::load(gpu),
             npc_menu: npc_menu::Assets::load(gpu, grf),
             npc_input: npc_input::Assets::load(gpu),
@@ -3151,6 +3159,20 @@ fn saved_id() -> Option<String> {
     let id = std::fs::read_to_string(saved_id_path()?).ok()?;
     let id = id.trim();
     (!id.is_empty()).then(|| id.to_owned())
+}
+
+/// The char-server row picked last time.
+fn saved_server() -> Option<usize> {
+    std::fs::read_to_string(settings_path("saved_server")?).ok()?.trim().parse().ok()
+}
+
+/// Keeps that row for the next login. Dev runs (`RUSTNAROK_CLIENT_LOGIN`) leave it alone, like the saved ID.
+fn remember_server(row: usize) {
+    if std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_some() {
+        return;
+    }
+    let Some(path) = settings_path("saved_server") else { return };
+    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, row.to_string()));
 }
 
 /// Keeps the ID for next time, or forgets it.
@@ -4124,6 +4146,8 @@ struct App {
     focus: usize,
     cursor: [f32; 2],
     mouse_down: bool,
+    /// Clicks on the char-server list, so a second one on the same row enters it.
+    server_clicks: window::Clicks,
     /// The right button is down: a left press on the ground then neither walks nor turns.
     right_down: bool,
     button: ButtonRead,
@@ -4219,12 +4243,25 @@ impl App {
         self.scene = Scene::Login;
     }
 
+    /// OK, Enter, or a double click: the button sound, then the picked char server.
+    fn confirm_server(&mut self) {
+        if let Some(audio) = &mut self.audio {
+            audio.play(&self.grf, "버튼소리.wav", 1.0);
+        }
+        self.enter_char_server();
+    }
+
     fn enter_char_server(&mut self) {
-        let Scene::ServerSelect { accepted, selected } = &self.scene else { return };
+        let (server, selected, accepted) = {
+            let Scene::ServerSelect { accepted, selected, .. } = &self.scene else { return };
+            let Some(server) = accepted.char_servers.get(*selected).cloned() else { return };
+            (server, *selected, accepted.clone())
+        };
+        remember_server(selected);
         let proxy = self.proxy.clone();
         self.account = Some(accepted.clone());
-        self.char_server = *selected;
-        match CharSession::connect(&accepted.char_servers[*selected], accepted, move |event| {
+        self.char_server = selected;
+        match CharSession::connect(&server, &accepted, move |event| {
             let _ = proxy.send_event(NetEvent::Char(event));
         }) {
             Ok(session) => {
@@ -5175,6 +5212,7 @@ fn main() {
             })
             .unwrap_or([-1.0; 2]),
         mouse_down: false,
+        server_clicks: window::Clicks::default(),
         right_down: false,
         button: ButtonRead::default(),
         auto_input: {

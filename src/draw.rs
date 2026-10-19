@@ -146,15 +146,40 @@ impl App {
                     base.texts.push((connection.display.clone(), offset(list, [4.0, row as f32 * SERVER_ROW[1] + 3.0]), TEXT_COLOR));
                 }
             }
-            Scene::ServerSelect { accepted, selected } => {
-                let service = service_position(&assets.service);
-                let list = offset(service, SERVER_LIST);
-                base.sprites.push((&assets.service, service, assets.service.size));
-                base.sprites.push((&assets.selection, offset(list, [0.0, *selected as f32 * SERVER_ROW[1]]), SERVER_ROW));
-                base.sprites.push(button_sprite(base_pointer, offset(service, LEFT_BUTTON), &assets.ok));
-                base.sprites.push(button_sprite(base_pointer, offset(service, RIGHT_BUTTON), &assets.cancel));
-                for (row, server) in accepted.char_servers.iter().enumerate() {
-                    base.texts.push((format!("{} ({})", server.name, server.users), offset(list, [4.0, row as f32 * SERVER_ROW[1] + 3.0]), TEXT_COLOR));
+            Scene::ServerSelect { accepted, selected, scroll } => {
+                let place = servers::place(screen());
+                let body = servers::HEIGHT - window::TITLE_HEIGHT;
+                // Grey edge, white body, then the bottom bar over the foot of it.
+                base.sprites.push((&assets.chrome.border, offset(place, [0.0, window::TITLE_HEIGHT]), [servers::WIDTH, body]));
+                base.sprites.push((&assets.chrome.white, offset(place, [1.0, window::TITLE_HEIGHT]), [servers::WIDTH - 2.0, body - 1.0]));
+                let footer = servers::HEIGHT - servers::FOOTER;
+                base.sprites.push((&assets.server_bar, offset(place, [0.0, footer]), [servers::WIDTH, servers::FOOTER]));
+                let list = offset(place, servers::LIST);
+                base.sprites.push((&assets.server_fill, list, servers::LIST_SIZE));
+                if servers::shown(*scroll, accepted.char_servers.len()).contains(selected) {
+                    let band = (*selected - *scroll) as f32 * servers::ROW;
+                    base.sprites.push((&assets.white, offset(list, [0.0, band]), servers::BAND));
+                }
+                let mut frame = window::Frame::new(place, servers::WIDTH);
+                frame.open = true;
+                let title = self.messages.get(servers::TITLE).map(String::as_str).unwrap_or("");
+                frame.draw_title(&mut base, &assets.chrome, title, base_pointer.0);
+                base.sprites.push(button_sprite(base_pointer, offset(place, servers::OK), &assets.ok));
+                base.sprites.push(button_sprite(base_pointer, offset(place, servers::CANCEL), &assets.cancel));
+                let words = servers::Words::from_messages(&self.messages);
+                let text_y = ((servers::ROW - font.line_height()).max(0.0) / 2.0).floor();
+                for row in servers::shown(*scroll, accepted.char_servers.len()) {
+                    let server = &accepted.char_servers[row];
+                    let text = servers::row(&server.name, server.users, server.kind, server.new, &words);
+                    let at = offset(list, [servers::TEXT_X, (row - *scroll) as f32 * servers::ROW + text_y]);
+                    if text.crowd.is_empty() {
+                        base.texts.push((text.rest, at, TEXT_COLOR));
+                    } else {
+                        base.texts.push((text.crowd.clone(), at, text.color));
+                        if !text.rest.is_empty() {
+                            base.texts.push((text.rest, [at[0] + font.width(&text.crowd), at[1]], TEXT_COLOR));
+                        }
+                    }
                 }
             }
             Scene::CharSelect(select) => {

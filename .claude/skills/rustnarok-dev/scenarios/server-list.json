@@ -1,0 +1,20 @@
+{
+  "start": "server_select",
+  "steps": [
+    {
+      "expect": {
+        "state": {
+          "scene": "server_select",
+          "server_window.0": 377,
+          "server_window.1": 400,
+          "server_window.2": 280,
+          "server_window.3": 200
+        }
+      }
+    },
+    {"shot": "server-list", "crop": [377, 400, 280, 200]},
+    {"click_on": {"button": "selected"}, "count": 2},
+    {"wait": 5000},
+    {"expect": {"state": {"scene": "char_select"}}}
+  ]
+}

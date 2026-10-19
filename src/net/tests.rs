@@ -71,12 +71,14 @@ fn decodes_accept_and_refuse() {
     server[4..6].copy_from_slice(&6121u16.to_le_bytes());
     server[6..13].copy_from_slice(b"rAthena");
     server[26..28].copy_from_slice(&3u16.to_le_bytes());
+    server[28..30].copy_from_slice(&2u16.to_le_bytes());
+    server[30..32].copy_from_slice(&1u16.to_le_bytes());
 
     let accepted = decode_reply(&packet).unwrap();
     assert_eq!(accepted.account_id, 2_000_000);
     assert_eq!(accepted.sex, 1);
     assert_eq!(accepted.web_token, "0123456789abcdef");
-    assert_eq!(accepted.char_servers, vec![CharServer { ip: [127, 0, 0, 1], port: 6121, name: "rAthena".into(), users: 3 }]);
+    assert_eq!(accepted.char_servers, vec![CharServer { ip: [127, 0, 0, 1], port: 6121, name: "rAthena".into(), users: 3, kind: 2, new: 1 }]);
 
     let mut refuse = vec![0u8; 26];
     refuse[..2].copy_from_slice(&AC_REFUSE_LOGIN.to_le_bytes());

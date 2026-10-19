@@ -93,8 +93,12 @@ def launch(n="", slot="0", binary=None, env_extra=None, quiet=False):
         RUSTNAROK_CLIENT_CONTROL=SOCK,
         RUSTNAROK_CLIENT_SERVER=os.environ.get("RUSTNAROK_CLIENT_SERVER", "127.0.0.1:6900"),
         RUSTNAROK_CLIENT_LOGIN=f"{user}:{password}",
-        RUSTNAROK_CLIENT_AUTOSTART=slot,
     )
+    # None stays on the char-server list (a server_select scenario). Anything else autostarts.
+    if slot is None:
+        env.pop("RUSTNAROK_CLIENT_AUTOSTART", None)
+    else:
+        env["RUSTNAROK_CLIENT_AUTOSTART"] = slot
     if os.path.exists(SOCK):
         os.remove(SOCK)
     os.makedirs(os.path.dirname(LOG), exist_ok=True)

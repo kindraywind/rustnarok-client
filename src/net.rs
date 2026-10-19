@@ -30,6 +30,10 @@ pub struct CharServer {
     pub port: u16,
     pub name: String,
     pub users: u16,
+    /// PACKET_AC_ACCEPT_LOGIN_sub::type (2 age 18+, 3 paid, 4 free).
+    pub kind: u16,
+    /// PACKET_AC_ACCEPT_LOGIN_sub::new_ (1 when the server is new).
+    pub new: u16,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,6 +131,8 @@ fn decode_reply(packet: &[u8]) -> Result<LoginAccepted, LoginError> {
                     port: u16::from_le_bytes([server[4], server[5]]),
                     name: c_string(&server[6..26]),
                     users: u16::from_le_bytes([server[26], server[27]]),
+                    kind: u16::from_le_bytes([server[28], server[29]]),
+                    new: u16::from_le_bytes([server[30], server[31]]),
                 })
                 .collect(),
         }),
