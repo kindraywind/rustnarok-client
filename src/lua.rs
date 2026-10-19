@@ -343,6 +343,80 @@ fn sky_from_lua(lua: &Lua, key: &str) -> Option<SkyRow> {
     Some(SkyRow { color, fog })
 }
 
+/// A map's sky effects (`MapSkyData`): stars (`Star_Effect`), the sky types of `Old_Cloud_Effect` in order, and the
+/// cloud fields of `Cloud_Effect`. Empty for a map not in the table.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SkyEffects {
+    pub stars: bool,
+    pub types: Vec<u32>,
+    pub fields: Vec<CloudField>,
+}
+
+/// A `Cloud_Effect` entry: `num` clouds over the whole map, at `height` plus rand % `height_extra` (GAT units), of
+/// `size` plus rand % `size_extra` pulsing by `expand_rate`, in `color`. They gain `alpha_inc_speed` a tick while young
+/// (`alpha_inc_time` plus rand % `alpha_dec_time_extra`) and lose `alpha_dec_speed` a tick from `alpha_dec_time` plus
+/// rand % `alpha_dec_time_extra`; drawn within `cull_dist` of the player.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CloudField {
+    pub num: u32,
+    pub height: f32,
+    pub height_extra: u32,
+    pub size: f32,
+    pub size_extra: u32,
+    pub expand_rate: f32,
+    pub color: [u8; 3],
+    pub alpha_inc_time: u32,
+    pub alpha_inc_speed: f32,
+    pub alpha_dec_time: u32,
+    pub alpha_dec_time_extra: u32,
+    pub alpha_dec_speed: f32,
+    pub cull_dist: f32,
+}
+
+/// The sky effects of `map` (a name, or `name.rsw`).
+pub fn sky_effects(grf: &Grf, map: &str) -> SkyEffects {
+    load_sky(grf).ok().map(|lua| sky_effects_from_lua(&lua, &sky_key(map))).unwrap_or_default()
+}
+
+fn sky_effects_from_lua(lua: &Lua, key: &str) -> SkyEffects {
+    let Some(entry) = lua.globals().get::<mlua::Table>("MapSkyData").ok().and_then(|table| table.get::<mlua::Table>(key).ok()) else {
+        return SkyEffects::default();
+    };
+    let stars = entry.get::<mlua::Value>("Star_Effect").ok().is_some_and(|value| lua_truth(&value));
+    let types = entry.get::<mlua::Table>("Old_Cloud_Effect").map(|list| list.sequence_values::<u32>().flatten().collect()).unwrap_or_default();
+    let fields = entry
+        .get::<mlua::Table>("Cloud_Effect")
+        .map(|list| {
+            list.sequence_values::<mlua::Table>()
+                .flatten()
+                .map(|field| {
+                    let number = |name: &str| field.get::<f32>(name).unwrap_or(0.0);
+                    let whole = |name: &str| number(name).max(0.0) as u32;
+                    CloudField {
+                        num: whole("Num"),
+                        height: number("Height"),
+                        height_extra: whole("Height_Extra"),
+                        size: number("Size"),
+                        size_extra: whole("Size_Extra"),
+                        expand_rate: number("Expand_Rate"),
+                        color: field
+                            .get::<mlua::Table>("Color")
+                            .map(|color| [1, 2, 3].map(|index| color.get::<f32>(index).unwrap_or(255.0) as u8))
+                            .unwrap_or([255; 3]),
+                        alpha_inc_time: whole("Alpha_Inc_Time"),
+                        alpha_inc_speed: number("Alpha_Inc_Speed"),
+                        alpha_dec_time: whole("Alpha_Dec_Time"),
+                        alpha_dec_time_extra: whole("Alpha_Dec_Time_Extra"),
+                        alpha_dec_speed: number("Alpha_Dec_Speed"),
+                        cull_dist: number("CullDist"),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    SkyEffects { stars, types, fields }
+}
+
 fn call_value(lua: &Lua, name: &str, key: &str) -> Option<mlua::Value> {
     lua.globals().get::<mlua::Function>(name).ok()?.call(key).ok()
 }
@@ -1918,6 +1992,28 @@ fn hotkey_table(lua: &Lua, name: &str, table: u8, user: bool) -> io::Result<Vec<
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
+
+    #[test]
+    fn reads_the_sky_effects() {
+        let lua = super::new_lua().unwrap();
+        lua.load(
+            r#"MapSkyData = {
+                ["dali.rsw"] = { Star_Effect = true, BG_Color = { 6, 21, 35 } },
+                ["t_crack.rsw"] = { Star_Effect = true, Old_Cloud_Effect = { 11, 1 } },
+                ["1@exds.rsw"] = { Cloud_Effect = { { Num = 500, Height = 40, Height_Extra = 10, Size = 20, Size_Extra = 20,
+                    Expand_Rate = 0.05, Color = { 255, 250, 240 }, Alpha_Inc_Time = 80, Alpha_Inc_Time_Extra = 50,
+                    Alpha_Inc_Speed = 1, Alpha_Dec_Time = 300, Alpha_Dec_Time_Extra = 200, Alpha_Dec_Speed = 0.5, CullDist = 200 } } },
+            }"#,
+        )
+        .exec()
+        .unwrap();
+        let read = |key: &str| super::sky_effects_from_lua(&lua, key);
+        assert_eq!(read("dali.rsw"), super::SkyEffects { stars: true, types: vec![], fields: vec![] });
+        assert_eq!(read("t_crack.rsw").types, [11, 1]);
+        let fields = read("1@exds.rsw").fields;
+        assert_eq!((fields.len(), fields[0].num, fields[0].color, fields[0].alpha_dec_time_extra, fields[0].cull_dist), (1, 500, [255, 250, 240], 200, 200.0));
+        assert_eq!(read("prontera.rsw"), super::SkyEffects::default());
+    }
 
     #[test]
     fn reads_navigation_tables() {

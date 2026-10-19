@@ -254,6 +254,7 @@ impl App {
         };
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
+                let sky = sky::for_map(&self.grf, &map, &world, position);
                 let _ = session.loaded();
                 // The player's own title comes with their own name tag.
                 let _ = session.ask_name(account.account_id);
@@ -459,6 +460,7 @@ impl App {
                     blind: effects::BlindView::default(),
                     deep_blind: false,
                     scene,
+                    sky,
                     right_press: None,
                     party: None,
                     status_window: {
@@ -734,6 +736,8 @@ impl App {
                 let (ambient, diffuse) = game.world.light_rgb();
                 game.scene.reload(ambient, diffuse);
                 game.map = map;
+                // The sky starts again on every load, a same-map teleport too.
+                game.sky = sky::for_map(&self.grf, &game.map, &game.world, position);
                 game.units.clear();
                 game.skill_units.clear();
                 game.spirits.clear();
@@ -3673,6 +3677,18 @@ impl App {
                 }
             }
             // Weather comes as effects on the player: it shows until the map changes.
+            // A sky effect on the player (the clouds, clouds2 and fog weather among them) builds its sky type's puffs.
+            MapEvent::Effect { id, effect } if id == game.account_id && sky::sky_type_of(effect).is_some() => {
+                if weather::is_weather(effect) {
+                    let at = game.world.cell_position(game.player.cell.map(|cell| cell as f32));
+                    game.weather.start(effect, control::now(), at);
+                }
+                let player = game.world.cell_position(game.player.position(control::now()));
+                let map = game.map.clone();
+                if let Some(sky_type) = sky::sky_type_of(effect) {
+                    game.sky.add(sky_type, &map, player, &sky::ground_of(&game.world.gat));
+                }
+            }
             MapEvent::Effect { id, effect } if id == game.account_id && weather::is_weather(effect) => {
                 let at = game.world.cell_position(game.player.cell.map(|cell| cell as f32));
                 game.weather.start(effect, control::now(), at);

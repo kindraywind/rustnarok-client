@@ -10,7 +10,6 @@ use rustnarok_client::sprite::{Act, Spr};
 
 use crate::render::{Gpu, Texture};
 use crate::world::{Billboard, DepthLayer, EffectQuad, Vector};
-use crate::{Layer, screen};
 
 pub const SNOW: u32 = 162;
 pub const SAKURA: u32 = 163;
@@ -89,8 +88,6 @@ pub struct Assets {
     flakes: Pictures,
     petals: Pictures,
     leaves: Pictures,
-    clouds: Vec<Texture>,
-    fogs: Vec<Texture>,
     /// `pok1.tga`, the fireworks spark. Missing data leaves the sparks unseen.
     spark: Option<Texture>,
     /// `data\etcinfo.txt`: map name to the effects a load starts, and how many of each.
@@ -138,15 +135,11 @@ impl Assets {
                 .unwrap_or_default();
             Pictures { images, actions }
         };
-        let textures =
-            |names: &[String]| names.iter().filter_map(|name| gpu.try_load_texture(grf, &format!("data\\texture\\effect\\{name}"), true).ok()).collect();
         let text = grf.read("data\\etcinfo.txt").map(|bytes| String::from_utf8_lossy(&bytes).into_owned()).unwrap_or_default();
         Self {
             flakes: sprite("ef_snow"),
             petals: sprite("sakura01"),
             leaves: sprite("단풍"),
-            clouds: textures(&(1..=7).map(|n| format!("cloud{n}.tga")).collect::<Vec<_>>()),
-            fogs: textures(&(1..=3).map(|n| format!("fog{n}.tga")).collect::<Vec<_>>()),
             spark: gpu.try_load_texture(grf, "data\\texture\\effect\\pok1.tga", true).ok(),
             etc: parse_etcinfo(&text),
         }
@@ -353,61 +346,12 @@ impl Weather {
         }
         sprites
     }
-
-    // ponytail: clouds and fog still drift over the screen (no count or speed for them); snow, sakura and leaves are
-    // the world sprites above.
-    pub fn draw<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, now: Instant) {
-        for running in &self.running {
-            let seconds = now.saturating_duration_since(running.start).as_secs_f32();
-            match running.effect {
-                CLOUDS => drifting(layer, &assets.clouds, running.effect, seconds, &Drift { count: 14, speed: [12.0, 24.0], rise: 0.0, scale: 3.0 }),
-                CLOUDS2 => drifting(layer, &assets.clouds, running.effect, seconds, &Drift { count: 10, speed: [-90.0, -60.0], rise: -12.0, scale: 2.5 }),
-                FOG => drifting(layer, &assets.fogs, running.effect, seconds, &Drift { count: 8, speed: [6.0, 12.0], rise: 0.0, scale: 4.0 }),
-                _ => {}
-            }
-        }
-    }
 }
 
 /// A camera-facing sprite centered on `at`. `scale` is a fraction of the picture's size; alpha is 0–1.
 fn centered<'a>(texture: &'a Texture, at: Vector, scale: f32, alpha: f32) -> Billboard<'a> {
     let size = [texture.size[0] * scale, texture.size[1] * scale];
     (texture, at, [-size[0] / 2.0, -size[1] / 2.0], size, [1.0, 1.0, 1.0, alpha], 0.0, DepthLayer::default())
-}
-
-/// Large pictures drifting across the screen.
-struct Drift {
-    count: u64,
-    /// Pixels a second sideways (below 0 to the left), the slowest and the fastest.
-    speed: [f32; 2],
-    /// Pixels a second down (below 0 up).
-    rise: f32,
-    scale: f32,
-}
-
-fn drifting<'a>(layer: &mut Layer<'a>, images: &'a [Texture], effect: u32, seconds: f32, drift: &Drift) {
-    if images.is_empty() {
-        return;
-    }
-    for n in 0..drift.count {
-        let [a, b, c, _] = randoms(effect, n);
-        let image = &images[n as usize % images.len()];
-        let size = [image.size[0] * drift.scale, image.size[1] * drift.scale];
-        let room = [screen()[0] + size[0], screen()[1] + size[1]];
-        let x = (a * room[0] + seconds * between(drift.speed, b)).rem_euclid(room[0]) - size[0];
-        let y = (c * room[1] + seconds * drift.rise).rem_euclid(room[1]) - size[1];
-        layer.sprites.push((image, [x.round(), y.round()], size));
-    }
-}
-
-fn between(range: [f32; 2], fraction: f32) -> f32 {
-    range[0] + (range[1] - range[0]) * fraction
-}
-
-/// Four fractions in [0, 1) fixed for each particle, so a frame depends only on the time.
-fn randoms(effect: u32, n: u64) -> [f32; 4] {
-    let seed = mix(u64::from(effect) << 32 | n);
-    [0, 16, 32, 48].map(|shift| ((seed >> shift) & 0xFFFF) as f32 / 65536.0)
 }
 
 /// splitmix64's finalizer.
@@ -813,13 +757,6 @@ weather#other.rsw#rain#
         weather.step(later, [140.0, 6.0, 10.0], 0.0);
         assert!(weather.sparks.iter().all(|launch| launch.origin == [125.0, 6.0, 10.0]));
         assert_eq!(weather.ids(), [FIREWORKS, FIREWORKS_SOUND], "160 launches are still one fireworks id");
-    }
-
-    #[test]
-    fn particles_stay_put_for_a_moment() {
-        assert_eq!(randoms(SNOW, 4), randoms(SNOW, 4));
-        assert_ne!(randoms(SNOW, 4), randoms(SNOW, 5));
-        assert!(randoms(FOG, 9).iter().all(|value| (0.0..1.0).contains(value)));
     }
 
     fn fallen(effect: u32, ticks: u32) -> Weather {

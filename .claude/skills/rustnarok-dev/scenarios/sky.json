@@ -1,0 +1,22 @@
+{
+  "about": "The sky in the world (issue #520). Yuno: 240 white puffs (sky type 1) round the player, below the city's edge, fading in together after arriving. Einbroch: 320 #FCAB8F smog puffs 20-24 above the ground. Dali: 260 twinkling stars. Prontera, not in MapSkyData, has none. @clouds on prontera builds 160 type-2 puffs in the world, not over the screen.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp yuno 157 50"}, {"settle": 1500},
+    {"wait": 1500},
+    {"expect": {"state": {"sky_puffs": 240}, "state_at_least": {"sky_shown": 200}}},
+    {"move": [1000, 750]},
+    {"shot": "sky-yuno", "threshold": 5},
+    {"say": "@warp einbroch 64 200"}, {"settle": 1500},
+    {"wait": 2000},
+    {"expect": {"state": {"sky_puffs": 320}}},
+    {"move": [1000, 750]},
+    {"shot": "sky-einbroch", "threshold": 5},
+    {"say": "@warp dali 135 107"}, {"settle": 1500},
+    {"wait": 1500},
+    {"expect": {"state": {"sky_puffs": 260}}},
+    {"say": "@warp prontera 156 120"}, {"settle": 1500},
+    {"expect": {"state": {"sky_puffs": 0}}}
+  ]
+}
