@@ -1576,6 +1576,8 @@ pub enum Command {
     Quake,
     /// /mineffect: lighter effects on or off.
     MinEffect,
+    /// /fog: the map's depth fog on or off.
+    Fog,
     /// /aura: the max-level aura in full or simplified; /aura2: none at all.
     Aura,
     AuraOff,
@@ -1641,6 +1643,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/effect" => Command::Effect,
         "/quake" => Command::Quake,
         "/mineffect" => Command::MinEffect,
+        "/fog" => Command::Fog,
         "/aura" => Command::Aura,
         "/aura2" => Command::AuraOff,
         "/emo" | "/emotion" => Command::EmotionList,
@@ -2232,6 +2235,7 @@ mod tests {
         assert_eq!(command("/effect"), Some(Command::Effect));
         assert_eq!(command("/quake"), Some(Command::Quake));
         assert_eq!(command("/mineffect"), Some(Command::MinEffect));
+        assert_eq!(command("/fog"), Some(Command::Fog));
         assert_eq!(command("/emo"), Some(Command::EmotionList));
         assert_eq!(command("/achievement"), Some(Command::Achievements));
         assert_eq!(command("/emotion"), Some(Command::EmotionList));
