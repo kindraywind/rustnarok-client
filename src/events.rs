@@ -3306,6 +3306,11 @@ impl App {
                                 game.soul_strike(grf, act.source, act.target, act.hits);
                                 continue;
                             }
+                            // Frost Diver's ice spikes run from the caster to the target.
+                            if effect == effects::FROST_DIVER {
+                                game.frost_diver(gpu, grf, act.source, act.target);
+                                continue;
+                            }
                             let unit = if who == effects::Who::Caster { act.source } else { act.target };
                             game.play_effect_hits(gpu, grf, table, effect, unit, Instant::now(), act.hits);
                         }

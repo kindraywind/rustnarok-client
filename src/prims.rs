@@ -59,6 +59,74 @@ pub struct Prims {
     builders: Vec<Builder>,
     ghosts: Vec<Ghost>,
     cold_hits: Vec<ColdHit>,
+    spikes: Vec<Spike>,
+}
+
+/// An ice spike (the game's prim kind 9): an open four-sided pyramid, its base `half` units out each way and its tip
+/// `height` up its own axis. Born 30 units under where it stands, it rises up its axis 3 units the first tick, slowing
+/// by 0.15 a tick, and stops after 21 ticks (28.35 up); it lives 40 ticks, fading over the last 10.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spike {
+    start: Instant,
+    /// Where its base starts (world units), and its axes: across, across, and up to the tip.
+    base: Vector,
+    axes: [Vector; 3],
+    half: f32,
+    height: f32,
+    /// Its opacity before it fades, 0 to 1.
+    alpha: f32,
+}
+
+/// Frost Diver's spikes start 5 units out toward the target and come 2 units further each tick, one a tick, the last
+/// within 2.5 of the target (or for the effect's 150 ticks if it never gets there).
+const FROST_FIRST: f32 = 5.0;
+const FROST_STEP: f32 = 2.0;
+const FROST_REACH: f32 = 2.5;
+const FROST_TICKS: u32 = 150;
+const SPIKE_LIFE: u32 = 40;
+const SPIKE_DEPTH: f32 = 30.0;
+
+/// How far up its axis a spike has risen after `tick` ticks (from 0): 3, slowing by 0.15 a tick, still after tick 20.
+fn spike_rise(tick: u32) -> f32 {
+    let moving = tick.min(20) + 1;
+    (1..=moving).map(|step| 3.0 - 0.15 * step as f32).sum()
+}
+
+/// A spike's axes for its pitch and yaw (degrees): the tip leans `90 − pitch` from straight up toward `yaw`.
+fn spike_axes(pitch: f32, yaw: f32) -> [Vector; 3] {
+    let ((sin_p, cos_p), (sin_y, cos_y)) = (pitch.to_radians().sin_cos(), yaw.to_radians().sin_cos());
+    [[cos_y, 0.0, -sin_y], [-sin_p * sin_y, cos_p, -sin_p * cos_y], [cos_p * sin_y, sin_p, cos_p * cos_y]]
+}
+
+impl Spike {
+    /// A spike at `at` (where its base settles), `around` units off it the way `turn` points, from `rand(n)`.
+    #[allow(clippy::too_many_arguments)]
+    fn new(start: Instant, at: Vector, around: f32, turn: f32, half: f32, height: f32, pitch: f32, yaw: f32, alpha: f32) -> Self {
+        let (sin, cos) = turn.to_radians().sin_cos();
+        let base = [at[0] + around * sin, at[1] - SPIKE_DEPTH, at[2] - around * cos];
+        Spike { start, base, axes: spike_axes(pitch, yaw), half, height, alpha }
+    }
+
+    fn opacity(&self, tick: u32) -> f32 {
+        self.alpha * (1.0 - tick.saturating_sub(SPIKE_LIFE - 10) as f32 / 10.0).max(0.0)
+    }
+
+    /// Its four faces at a tick, each (corner, tip, corner), the texture's u stepping 0.2 a face.
+    pub fn faces(&self, tick: u32) -> Vec<(Vector, [f32; 2], f32)> {
+        let rise = spike_rise(tick);
+        let [across, along, up] = self.axes;
+        let point = |x: f32, y: f32, z: f32| std::array::from_fn(|axis| self.base[axis] + up[axis] * (rise + z) + across[axis] * x + along[axis] * y);
+        let (s, alpha) = (self.half, self.opacity(tick));
+        let tip = point(0.0, 0.0, self.height);
+        [((-s, -s), (s, -s)), ((-s, -s), (-s, s)), ((-s, s), (s, s)), ((s, s), (s, -s))]
+            .into_iter()
+            .enumerate()
+            .flat_map(|(face, ((ax, ay), (cx, cy)))| {
+                let u = 0.2 * face as f32;
+                [(point(ax, ay, 0.0), [u, 1.0], alpha), (tip, [u, 0.0], alpha), (point(cx, cy, 0.0), [u + 0.2, 1.0], alpha)]
+            })
+            .collect()
+    }
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -245,6 +313,41 @@ impl Prims {
         self.cold_hits.push(ColdHit { start: now, unit, shards, smokes });
     }
 
+    /// Frost Diver (EF_FROSTDIVER) from `from` at `to`: one spike a tick in a line toward the target.
+    pub fn frost_diver(&mut self, from: Vector, to: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let [dx, dz] = [to[0] - from[0], to[2] - from[2]];
+        let distance = f32::hypot(dx, dz);
+        let way = if distance > 0.0 { [dx / distance, dz / distance] } else { [0.0, 1.0] };
+        for tick in 0..FROST_TICKS {
+            let out = FROST_FIRST + FROST_STEP * tick as f32;
+            let at = [from[0] + way[0] * out, from[1], from[2] + way[1] * out];
+            let [turn, around, half, height, yaw, pitch] = [rand(360), rand(10), rand(40), rand(30), rand(360), rand(30)];
+            let (around, half, height) = ((around + 5) as f32 / 10.0, (half + 60) as f32 / 100.0, (height + 150) as f32 / 10.0);
+            let pitch = (pitch + 75) as f32;
+            self.spikes.push(Spike::new(now + TICK * tick, at, around, turn as f32, half, height, pitch, yaw as f32, 254.0 / 255.0));
+            if f32::hypot(to[0] - at[0], to[2] - at[2]) <= FROST_REACH {
+                break;
+            }
+        }
+    }
+
+    /// Frost Diver's second hit effect (EF_FROSTDIVER2) at `at`: eight bigger spikes round the target at once.
+    pub fn frost_hit(&mut self, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        for _ in 0..8 {
+            let [turn, around, half, height, yaw, pitch] = [rand(360), rand(4), rand(250), rand(100), rand(360), rand(20)];
+            let (around, half, height) = ((around + 1) as f32 / 10.0, (half + 100) as f32 / 100.0, (height + 200) as f32 / 10.0);
+            self.spikes.push(Spike::new(now, at, around, turn as f32, half, height, (pitch + 80) as f32, yaw as f32, 200.0 / 255.0));
+        }
+    }
+
+    /// The spikes showing at `now` and their ticks.
+    pub fn spikes(&self, now: Instant) -> impl Iterator<Item = (&Spike, u32)> {
+        self.spikes.iter().filter_map(move |spike| {
+            let tick = (now.checked_duration_since(spike.start)?.as_millis() / TICK.as_millis()) as u32;
+            (tick < SPIKE_LIFE).then_some((spike, tick))
+        })
+    }
+
     /// What the cold hits draw at `now`, in screen pixels from their units' feet.
     pub fn screen_shapes(&self, now: Instant) -> Vec<ScreenShape> {
         let mut shapes = Vec::new();
@@ -282,6 +385,7 @@ impl Prims {
         }
         self.ghosts.retain(|ghost| due(ghost.start) < GHOST_LIFE);
         self.cold_hits.retain(|hit| due(hit.start) < SECOND_SMOKE + SMOKE_LIFE);
+        self.spikes.retain(|spike| now < spike.start || due(spike.start) < SPIKE_LIFE);
     }
 
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is
@@ -303,6 +407,32 @@ impl Prims {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frost_diver_lays_spikes_to_the_target() {
+        // A target 45 units off: spikes 5, 7, … 43 units out, 20 of them, one a tick.
+        let start = Instant::now();
+        let mut prims = Prims::default();
+        prims.frost_diver([0.0; 3], [0.0, 0.0, 45.0], start, |_| 0);
+        assert_eq!(prims.spikes.len(), 20);
+        // (each a little off its point: half a unit the way its random turn points)
+        assert_eq!((prims.spikes[1].start - start, prims.spikes[19].base[2]), (TICK, 42.5));
+        assert_eq!(prims.spikes(start + TICK * 5).count(), 6);
+        // A spike rises 2.85 the first tick and settles 28.35 up after tick 20, 30 under where it stands at first.
+        assert!((spike_rise(0) - 2.85).abs() < 1e-4 && (spike_rise(20) - 28.35).abs() < 1e-4 && spike_rise(39) == spike_rise(20));
+        assert_eq!(prims.spikes[0].base[1], -SPIKE_DEPTH);
+        // Straight up at pitch 90; four faces of three corners; fading over its last 10 ticks.
+        let up = spike_axes(90.0, 0.0)[2];
+        assert!((up[1] - 1.0).abs() < 1e-6 && up[0].abs() < 1e-6 && up[2].abs() < 1e-6);
+        assert_eq!(prims.spikes[0].faces(0).len(), 12);
+        assert_eq!((prims.spikes[0].opacity(29), prims.spikes[0].opacity(35)), (254.0 / 255.0, 254.0 / 255.0 * 0.5));
+        // Its hit: eight spikes at once, 200 alpha.
+        prims.frost_hit([0.0; 3], start, |_| 0);
+        assert_eq!(prims.spikes.len(), 28);
+        assert_eq!(prims.spikes[27].alpha, 200.0 / 255.0);
+        prims.advance(start + TICK * 100);
+        assert!(prims.spikes.is_empty());
+    }
 
     #[test]
     fn cold_hit_bursts_shards_and_smoke() {

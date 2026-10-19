@@ -1177,6 +1177,11 @@ pub fn unit_hit_effect(skill: u16) -> Option<u32> {
     }
 }
 
+/// EF_FROSTDIVER: Frost Diver's line of ice spikes from the caster to the target; EF_FROSTDIVER2: the spikes round the
+/// target with its first hit (`prims`).
+pub const FROST_DIVER: u32 = 27;
+pub const FROST_DIVER_HIT: u32 = 28;
+
 /// EF_COLDHIT: Cold Bolt's, Frost Diver's and Storm Gust's hit, ice shards and smoke drawn on the screen (`prims`).
 pub const COLD_HIT: u32 = 51;
 
@@ -1236,6 +1241,11 @@ impl Effects {
     /// What effect `id` draws, from `now` on.
     #[allow(clippy::too_many_arguments)]
     fn show(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
+        // Frost Diver's second hit effect: ice spikes round the target.
+        if id == FROST_DIVER_HIT {
+            self.textures.entry(crate::prims::ICE_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crate::prims::ICE_TEXTURE, true).ok());
+            self.prims.frost_hit(at, now, |n| pick(0, n.saturating_sub(1)));
+        }
         // COLDHIT is drawn in code, flat on the screen over its unit.
         if let (COLD_HIT, Target::Unit(unit)) = (id, target) {
             for path in [crate::prims::ICE_TEXTURE, crate::prims::SMOKE_TEXTURE] {
@@ -1414,6 +1424,12 @@ impl Effects {
         due.into_iter().map(|(_, file, at)| (file, at)).collect()
     }
 
+    /// Frost Diver from `from` at `to`: its line of ice spikes.
+    pub fn frost_diver(&mut self, gpu: &Gpu, grf: &Grf, from: Vector, to: Vector, now: Instant) {
+        self.textures.entry(crate::prims::ICE_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crate::prims::ICE_TEXTURE, true).ok());
+        self.prims.frost_diver(from, to, now, |n| pick(0, n.saturating_sub(1)));
+    }
+
     /// Soul Strike from `from` at `to` with `hits` hits: a ghost a hit, each with its sound as it leaves.
     #[allow(clippy::too_many_arguments)]
     pub fn soul_strike(&mut self, grf: &Grf, from: Vector, to: Vector, hits: u16, now: Instant) {
@@ -1581,7 +1597,13 @@ impl Effects {
                 (texture, triangles, additive)
             })
         });
-        rings.chain(models).chain(hits).chain(auras).collect()
+        // Frost Diver's ice spikes, blended over.
+        let ice = self.textures.get(crate::prims::ICE_TEXTURE).and_then(Option::as_ref);
+        let spikes = self.prims.spikes(now).filter_map(|(spike, tick)| {
+            let vertices = spike.faces(tick).into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] }).collect();
+            Some((ice?, vertices, false))
+        });
+        rings.chain(models).chain(hits).chain(auras).chain(spikes).collect()
     }
 
     /// What's drawn flat on the screen over units now (COLDHIT's shards and smoke): texture, the unit's feet, and the
