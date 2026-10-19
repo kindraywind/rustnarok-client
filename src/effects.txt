@@ -1696,7 +1696,7 @@ part	327	2D	file=effect/foot_r_b.tga;attachedEntity=false;duration=800;fadeOut=t
 func	79	quake	0	200
 func	92	quake	600	650
 func	102	quake	350	650
-func	142	quake	0	200
+func	142	quake	0	650
 func	183	quake	0	200
 func	220	quake	200	200
 func	303	quake	132	650
@@ -3399,6 +3399,8 @@ struck	58	caster	150
 struck	59	caster	80
 struck	62	caster	149
 struck	77	caster	82
+# Jupitel Thunder launches its ball twice, both aimed alike: one brighter ball.
+struck	84	caster	93
 struck	84	caster	93
 struck	86	caster	117
 struck	90	target	79

@@ -3302,14 +3302,9 @@ impl App {
                     if let Some(struck) = table.struck(skill) {
                         // Told the hit count, as the game tells them: a bolt drops an arrow a hit.
                         for &(who, effect) in struck {
-                            // Soul Strike's ghosts fly from the caster to the target.
-                            if effect == effects::SOUL_STRIKE {
-                                game.soul_strike(grf, act.source, act.target, act.hits);
-                                continue;
-                            }
-                            // Frost Diver's ice spikes run from the caster to the target.
-                            if effect == effects::FROST_DIVER {
-                                game.frost_diver(gpu, grf, act.source, act.target);
+                            // What flies or runs from the caster to the target (Soul Strike's ghosts, Frost Diver's ice…).
+                            if effects::AIMED.contains(&effect) {
+                                game.aimed(gpu, grf, table, effect, act.source, act.target, act.hits);
                                 continue;
                             }
                             let unit = if who == effects::Who::Caster { act.source } else { act.target };

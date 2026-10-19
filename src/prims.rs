@@ -1,6 +1,10 @@
 //! The game's hand-made effects: a builder per effect id that runs once a 16 ms tick and lets out primitives, each
-//! moved once a tick by its own rule and drawn as a sprite with trail copies, or flat on the screen. So far Soul Strike's
-//! ghosts and the cold hit.
+//! moved once a tick by its own rule, drawn as a sprite with trail copies, a shape in the world or flat on the screen.
+//! Soul Strike's ghosts, the cold hit and Frost Diver's ice spikes here; what flies to a target in `balls`, stone
+//! spikes in `stone`.
+
+pub mod balls;
+pub mod stone;
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -9,6 +13,11 @@ use crate::world::Vector;
 
 /// The game's world tick: effects move in steps of it, whatever the frame rate.
 pub const TICK: Duration = Duration::from_millis(16);
+
+/// How many ticks something whose first tick is at `start` has run by `now`, that first one included.
+fn passes(start: Instant, now: Instant) -> u32 {
+    if now < start { 0 } else { (now.duration_since(start).as_millis() / TICK.as_millis()) as u32 + 1 }
+}
 
 /// Soul Strike's ghost sprite (under data\sprite\이팩트\).
 pub const GHOST_SPRITE: &str = "data\\sprite\\이팩트\\particle1";
@@ -53,13 +62,16 @@ struct Ghost {
     trail: VecDeque<Vector>,
 }
 
-/// The ghosts in flight and the Soul Strikes letting them out; the cold hits bursting.
+/// The ghosts in flight and the Soul Strikes letting them out; the cold hits bursting; Frost Diver's ice spikes; Fire
+/// Ball's and Jupitel Thunder's balls; stone spikes.
 #[derive(Default)]
 pub struct Prims {
     builders: Vec<Builder>,
     ghosts: Vec<Ghost>,
     cold_hits: Vec<ColdHit>,
     spikes: Vec<Spike>,
+    pub balls: balls::Balls,
+    pub stone: stone::Stone,
 }
 
 /// An ice spike (the game's prim kind 9): an open four-sided pyramid, its base `half` units out each way and its tip
@@ -386,6 +398,8 @@ impl Prims {
         self.ghosts.retain(|ghost| due(ghost.start) < GHOST_LIFE);
         self.cold_hits.retain(|hit| due(hit.start) < SECOND_SMOKE + SMOKE_LIFE);
         self.spikes.retain(|spike| now < spike.start || due(spike.start) < SPIKE_LIFE);
+        self.balls.advance(now);
+        self.stone.advance(now);
     }
 
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is
